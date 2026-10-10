@@ -8,6 +8,8 @@ export type TerminalLaunchProcess = Readonly<{
   file: string;
   args: readonly string[];
   env?: Readonly<Record<string, string | undefined>> | undefined;
+  /** Final host-rendered Windows argv; the PTY must not quote it again. */
+  windowsVerbatimArguments?: boolean;
   initialInput?: string;
 }>;
 

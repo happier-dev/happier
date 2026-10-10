@@ -34,7 +34,8 @@ export async function resolvePrepareTargetDirectPeerMetadataPreflight(input: Rea
   sourceExportStore: SessionHandoffSourceExportStore;
 }>): Promise<SessionHandoffPrepareTargetErrorResponse | null> {
   if (
-    input.request.negotiatedTransportStrategy !== 'direct_peer'
+    input.request.stateTransfer === 'existing'
+    || input.request.negotiatedTransportStrategy !== 'direct_peer'
     || input.request.handoffMetadataV2 !== undefined
   ) {
     return null;

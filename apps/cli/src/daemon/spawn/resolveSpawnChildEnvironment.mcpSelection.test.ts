@@ -6,6 +6,33 @@ import { buildSpawnChildProcessEnv } from './buildSpawnChildProcessEnv';
 import { captureSessionLaunchControlMetadata, createSessionMetadata } from '@/agent/runtime/createSessionMetadata';
 
 describe('resolveSpawnChildEnvironment (mcp selection)', () => {
+  it('carries only admitted fresh identity into host metadata, excluding ambient and Profile overrides', async () => {
+    const identity = { bot: { kind: 'bot' as const }, createdAsBot: true as const };
+    for (const existingSessionId of [undefined, 'existing-session']) {
+      const options: SpawnSessionOptions = { directory: '/tmp/project', identity, memoryEnabled: false, existingSessionId,
+        environmentVariables: { HAPPIER_SESSION_INITIAL_IDENTITY_JSON: '{"createdAsBot":false}',
+          HAPPIER_SESSION_INITIAL_MEMORY_ENABLED: 'true' } };
+      const processEnv = { HAPPIER_SESSION_INITIAL_IDENTITY_JSON: JSON.stringify(identity),
+        happier_session_initial_identity_json: JSON.stringify(identity), HAPPIER_SESSION_INITIAL_MEMORY_ENABLED: 'true' };
+      const result = await resolveSpawnChildEnvironment({
+        options, processEnv, daemonSpawnHooks: null,
+        profileEnvironmentVariables: { HAPPIER_SESSION_INITIAL_IDENTITY_JSON: '{"createdAsBot":false}',
+          HAPPIER_SESSION_INITIAL_MEMORY_ENABLED: 'true' },
+        logDebug: () => {}, logInfo: () => {}, logWarn: () => {},
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error(result.errorMessage);
+      const childEnvironment = buildSpawnChildProcessEnv({ processEnv, extraEnv: result.extraEnvForChild });
+      expect(childEnvironment.happier_session_initial_identity_json).toBeUndefined();
+      const { metadata } = createSessionMetadata({
+        flavor: 'test-agent', machineId: 'machine-1', directory: options.directory,
+        launchControlMetadata: captureSessionLaunchControlMetadata({ processEnvironment: childEnvironment }),
+      });
+      if (existingSessionId) expect(metadata).not.toHaveProperty('bot');
+      else expect(metadata).toMatchObject(identity);
+      expect(metadata).toHaveProperty('work.memoryEnabled', false);
+    }
+  });
   it.each(['managed', 'path'] as const)('publishes the %s directory kind solely from the private spawn option', async (directoryKind) => {
     const options: SpawnSessionOptions & { directoryKind: 'managed' | 'path' } = {
       directory: '/tmp/session-working-directory',

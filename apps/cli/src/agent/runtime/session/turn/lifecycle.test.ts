@@ -22,6 +22,24 @@ function canonicalRuntimeEvent(input: Readonly<Record<string, unknown>>): AgentS
 }
 
 describe('createSessionTurnLifecycle', () => {
+    it('persists qualified quota attribution and the current Agent from a canonical diagnostic', async () => {
+        const mutations: SessionTurnMutationV1[] = [];
+        const lifecycle = createSessionTurnLifecycle({ agentId: 'agy',
+            session: { sessionId: 'quota-session', enqueueSessionTurnMutation: async mutation => { mutations.push(mutation); } },
+        });
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({ kind: 'turn-start', sessionId: 'quota-session', emittedAtMs: 100, turnId: 'quota-turn' }));
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({ kind: 'turn-failed', sessionId: 'quota-session', emittedAtMs: 200, turnId: 'quota-turn',
+            diagnostic: { code: 'provider_usage_limit', severity: 'error', message: 'Usage Limit Reached', details: { v: 1, source: 'usage_limit', runtimeAuthClassification: {
+                kind: 'usage_limit', limitCategory: 'usage_limit', serviceId: 'happier.agent.antigravity/antigravity-account', profileId: 'selected-profile', groupId: 'selected-pool',
+                resetsAtMs: null, retryAfterMs: null, quotaScope: 'account', planType: null, rateLimits: null, source: 'stable_provider_message',
+            } } },
+        }));
+        await lifecycle.drainAcceptedLifecycle();
+        expect(mutations.find(mutation => mutation.action === 'fail')).toMatchObject({ issue: { agentId: 'agy', source: 'usage_limit', usageLimit: {
+            connectedService: { serviceId: 'happier.agent.antigravity/antigravity-account', profileId: 'selected-profile', groupId: 'selected-pool' },
+        } } });
+    });
+
     it('awaits startup failure persistence before draining without daemon marker callbacks', async () => {
         let releasePersistence!: () => void;
         const persistence = new Promise<void>((resolve) => { releasePersistence = resolve; });

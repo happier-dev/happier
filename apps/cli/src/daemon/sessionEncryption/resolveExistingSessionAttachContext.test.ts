@@ -103,7 +103,7 @@ describe('resolveExistingSessionAttachContext', () => {
     );
 
     const out = await resolveExistingSessionAttachContext({ token: 't', sessionId: 'sess_plain', credentials: null });
-    expect(out).toEqual({
+    expect(out).toMatchObject({
       ok: true,
       attachPayload: {
         v: 2,
@@ -154,6 +154,7 @@ describe('resolveExistingSessionAttachContext', () => {
     const ownerMetadata: SessionOwnerMetadataV1 = {
       v: 1,
       workspace: { path: '/tmp/plain-token-only' },
+      runtime: { hostPid: 1234, hostProcessStartTimeMs: 5678 },
       nativeSession: { codexSessionId: 'vendor-plain-token-only' },
     };
     const ownerMetadataEnvelope =
@@ -179,6 +180,7 @@ describe('resolveExistingSessionAttachContext', () => {
       credentials: { token: 'plain-token', encryption: null },
     })).resolves.toMatchObject({
       ok: true,
+      metadata: { path: '/tmp/plain-token-only', hostPid: 1234, hostProcessStartTimeMs: 5678 },
       attachPayload: {
         encryptionMode: 'plain',
         snapshot: {
@@ -448,7 +450,7 @@ describe('resolveExistingSessionAttachContext', () => {
       credentials: null,
     });
 
-    expect(out).toEqual({
+    expect(out).toMatchObject({
       ok: true,
       attachPayload: {
         v: 2,
@@ -611,7 +613,7 @@ describe('resolveExistingSessionAttachContext', () => {
       credentials: null,
     });
 
-    expect(out).toEqual({
+    expect(out).toMatchObject({
       ok: true,
       attachPayload: {
         v: 2,
@@ -681,6 +683,7 @@ describe('resolveExistingSessionAttachContext', () => {
     const ownerMetadata: SessionOwnerMetadataV1 = {
       v: 1,
       workspace: { path: '/tmp/e2ee' },
+      runtime: { hostPid: 2345, hostProcessStartTimeMs: 6789 },
       nativeSession: { codexSessionId: 'vendor-e2ee-1' },
     };
     const ownerMetadataEnvelope = sealSessionOwnerMetadataEnvelopeV1({
@@ -705,7 +708,7 @@ describe('resolveExistingSessionAttachContext', () => {
     );
 
     const out = await resolveExistingSessionAttachContext({ token: 't', sessionId: 'sess_e2ee', credentials });
-    expect(out).toMatchObject({ ok: true });
+    expect(out).toMatchObject({ ok: true, metadata: { path: '/tmp/e2ee', hostPid: 2345, hostProcessStartTimeMs: 6789 } });
 
     if (!out || !('ok' in out) || out.ok !== true) {
       throw new Error('Expected successful attach context');

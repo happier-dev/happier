@@ -13,6 +13,9 @@ import { resolve } from 'node:path';
 import { buildSessionWorkspaceLocationV1 } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
 import { parseSessionMcpSelectionV1Json } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
 import type { SessionMetadata, SessionModelSelectionIntentV1, RuntimeDescriptorV1 } from '@happier-dev/protocol';
+import { SessionIdentityAdditionsV1Schema, type SessionIdentityAdditions } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { SessionPromptStackV1Schema, type SessionPromptStackV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
 import {
     applyAcpConfigOptionIntentSessionMetadata,
     applyAcpSessionModeIntentSessionMetadata,
@@ -54,12 +57,19 @@ export type BackendFlavor = string;
  * Options for creating session metadata.
  */
 export interface CreateSessionMetadataOptions {
+    /** Admitted birth facts from the ordinary Session creation owner. */
+    identity?: SessionIdentityAdditions;
+    memoryEnabled?: boolean;
+    promptStack?: SessionPromptStackV1;
+    accountSettings?: Readonly<Record<string, unknown>>;
     /** Selected runtime intent captured before this fresh Session is committed. */
     runtimeDescriptorV1?: RuntimeDescriptorV1;
     /** Backend flavor identifier. */
     flavor: BackendFlavor;
     /** Machine ID for server identification */
     machineId: string;
+    /** OS process generation captured by the runner before session creation. */
+    hostProcessStartTimeMs?: number;
     /** Working directory for the session (defaults to process.cwd()). */
     directory?: string;
     /** How the session was started */
@@ -86,6 +96,8 @@ type LaunchControlEnvKey =
     | 'HAPPIER_SESSION_PROFILE_ID'
     | 'HAPPIER_SESSION_CONFIG_OPTION_OVERRIDES_JSON'
     | 'HAPPIER_SESSION_MCP_SELECTION_JSON'
+    | 'HAPPIER_SESSION_INITIAL_IDENTITY_JSON'
+    | 'HAPPIER_SESSION_INITIAL_MEMORY_ENABLED'
     | typeof SESSION_DIRECTORY_KIND_ENV
     | typeof SESSION_MACHINE_WORKSPACE_PATH_ENV
     | typeof HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY
@@ -94,6 +106,8 @@ type LaunchControlEnvKey =
 const ONE_SHOT_LAUNCH_CONTROL_ENV_KEYS = [
     'HAPPIER_SESSION_CONFIG_OPTION_OVERRIDES_JSON',
     'HAPPIER_SESSION_MCP_SELECTION_JSON',
+    'HAPPIER_SESSION_INITIAL_IDENTITY_JSON',
+    'HAPPIER_SESSION_INITIAL_MEMORY_ENABLED',
     SESSION_MACHINE_WORKSPACE_PATH_ENV,
     SESSION_DIRECTORY_KIND_ENV,
     HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY,
@@ -101,6 +115,8 @@ const ONE_SHOT_LAUNCH_CONTROL_ENV_KEYS = [
 ] as const satisfies readonly LaunchControlEnvKey[];
 
 export type SessionLaunchControlMetadata = Readonly<{
+    identity?: SessionIdentityAdditions;
+    memoryEnabled?: boolean;
     profileId?: string | null;
     mcpSelection: ReturnType<typeof parseSessionMcpSelectionV1Json>;
     connectedServices: ReturnType<typeof parseSessionConnectedServicesBindingsJson>;
@@ -128,7 +144,16 @@ export function captureSessionLaunchControlMetadata(params: Readonly<{
     };
 
     const profileIdRaw = read('HAPPIER_SESSION_PROFILE_ID');
+    const identityRaw = read('HAPPIER_SESSION_INITIAL_IDENTITY_JSON');
+    const memoryEnabledRaw = read('HAPPIER_SESSION_INITIAL_MEMORY_ENABLED');
+    const identity = identityRaw === undefined ? undefined : SessionIdentityAdditionsV1Schema.parse(JSON.parse(identityRaw));
+    const memoryEnabled: unknown = memoryEnabledRaw === undefined ? undefined : JSON.parse(memoryEnabledRaw);
+    if (memoryEnabled !== undefined && typeof memoryEnabled !== 'boolean') {
+        throw new Error('Invalid initial Session memory choice');
+    }
     const captured: SessionLaunchControlMetadata = Object.freeze({
+        ...(identity !== undefined ? { identity } : {}),
+        ...(memoryEnabled !== undefined ? { memoryEnabled } : {}),
         ...(profileIdRaw !== undefined ? { profileId: profileIdRaw.trim() || null } : {}),
         mcpSelection: parseSessionMcpSelectionV1Json(readNonEmpty('HAPPIER_SESSION_MCP_SELECTION_JSON')),
         connectedServices: parseSessionConnectedServicesBindingsJson(
@@ -147,6 +172,25 @@ export function captureSessionLaunchControlMetadata(params: Readonly<{
         delete processEnvironment[key];
     }
     return captured;
+}
+
+/** All fresh row creators use the same birth facts; source metadata cannot choose a child's kind. */
+export function applyInitialSessionCreationFactsToMetadata<TMetadata extends SessionMetadata & Pick<Metadata, 'work'>>(
+    metadata: TMetadata,
+    facts: Readonly<{ identity?: SessionIdentityAdditions; memoryEnabled?: boolean; promptStack?: SessionPromptStackV1;
+        accountSettings?: Readonly<Record<string, unknown>> }>,
+): Omit<TMetadata, 'bot' | 'createdAsBot' | 'work'> & SessionIdentityAdditions & { work: NonNullable<Metadata['work']> } {
+    const { bot: _inheritedBot, createdAsBot: _inheritedBirthFact, work, ...base } = metadata;
+    const identity = facts.identity === undefined ? undefined : SessionIdentityAdditionsV1Schema.parse(facts.identity);
+    const settings = accountSettingsParse(facts.accountSettings ?? {});
+    return {
+        ...base,
+        ...identity,
+        work: { ...work,
+            ...(facts.promptStack === undefined ? {} : { promptStack: SessionPromptStackV1Schema.parse(facts.promptStack) }),
+            memoryEnabled: facts.memoryEnabled ?? (identity?.bot?.kind === 'bot'
+                ? settings.memoryUseInNewBots : settings.memoryUseInNewSessions) },
+    };
 }
 
 export function applySessionConfigOptionOverridesToMetadata<TMetadata extends SessionMetadata>(
@@ -245,6 +289,7 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
         happyToolsDir: resolve(projectPath(), 'tools', 'unpacked'),
         startedFromDaemon: opts.startedBy === 'daemon',
         hostPid: process.pid,
+        hostProcessStartTimeMs: opts.hostProcessStartTimeMs,
         sessionLogPath: logger.getLogPath(),
         startedBy: opts.startedBy || 'terminal',
         lifecycleState: 'running',
@@ -268,7 +313,12 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
 
     const metadata = (opts.augmentMetadata ?? ((current) => current))(
         applySessionConfigOptionOverridesToMetadata(
-            applyInitialIntentMetadata(metadataBase, opts),
+            applyInitialIntentMetadata(applyInitialSessionCreationFactsToMetadata(metadataBase, {
+                identity: opts.identity ?? launchControlMetadata.identity,
+                memoryEnabled: opts.memoryEnabled ?? launchControlMetadata.memoryEnabled,
+                promptStack: opts.promptStack,
+                accountSettings: opts.accountSettings,
+            }), opts),
             launchControlMetadata.sessionConfigOptionOverrides,
         ),
     );

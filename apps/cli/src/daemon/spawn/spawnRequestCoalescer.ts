@@ -143,6 +143,8 @@ function buildSpawnSemanticFingerprint(options: SpawnSessionOptions): Json {
       : sha256Hex(stableJsonStringify(options.initialAccess)),
     primaryTeamId: options.primaryTeamId === undefined ? null : [options.primaryTeamId],
     reportsTo: options.reportsTo ?? null,
+    identity: options.identity ?? null,
+    memoryEnabled: options.memoryEnabled ?? null,
     initialSessionRolesHash: options.initialSessionRolesV1 === undefined
       ? null
       : sha256Hex(stableJsonStringify(options.initialSessionRolesV1)),
@@ -225,6 +227,8 @@ export function createSpawnRequestCoalescer(params: Readonly<{
   nowMs?: () => number;
 }>) {
   const inFlightByKey = new Map<string, Promise<SpawnSessionResult>>();
+  const changeListeners = new Set<() => void>();
+  const notifyChanged = () => { for (const listener of changeListeners) listener(); };
   const inFlightKeyByAuthorizationKey = new Map<string, string>();
   const serializationTailByKey = new Map<string, Promise<SpawnSessionResult>>();
   const recentSuccessByKey = new Map<string, { result: SpawnSessionResult; atMs: number }>();
@@ -273,6 +277,11 @@ export function createSpawnRequestCoalescer(params: Readonly<{
   };
 
   return {
+    readInFlightRequests: () => [...inFlightByKey.values()],
+    subscribeChanges(listener: () => void) {
+      changeListeners.add(listener);
+      return () => { changeListeners.delete(listener); };
+    },
     run: async (key: DaemonSpawnRequestKey, work: () => Promise<SpawnSessionResult>): Promise<SpawnSessionResult> => {
       const recentSuccess = tryGetRecent(recentSuccessByKey, key, ttlMs);
       if (recentSuccess) return recentSuccess;
@@ -314,6 +323,7 @@ export function createSpawnRequestCoalescer(params: Readonly<{
         } finally {
           if (inFlightByKey.get(key.key) === promise) {
             inFlightByKey.delete(key.key);
+            notifyChanged();
           }
           if (
             key.kind === 'existing'
@@ -331,6 +341,7 @@ export function createSpawnRequestCoalescer(params: Readonly<{
         }
       })();
       inFlightByKey.set(key.key, promise);
+      notifyChanged();
       if (key.kind === 'existing') {
         serializationTailByKey.set(key.serializationKey, promise);
         if (key.authorizationKey) {

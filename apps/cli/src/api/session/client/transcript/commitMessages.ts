@@ -5,6 +5,9 @@ import type {
 import { prepareAcpTranscriptDispatch } from '../../outbound/transcriptDispatch';
 import { buildUserTextMessageContent } from '../../outbound/shared';
 import { resolveAcpSessionMessageRole } from '../../messageRole';
+import { getToolCallNameKey } from '../../toolCallInputHints';
+import { resolveTranscriptSessionBoardItemReferenceV1 } from '@happier-dev/protocol/sessions/board';
+import type { SessionTranscriptSurfaceItemReferenceV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 
 import type { SessionClientTranscriptSendPort } from './sendMessages';
 
@@ -22,7 +25,12 @@ export async function prepareCommittedAgentMessageViaPort(
   sidechainId: string | null;
   payload: PlainOrEncryptedPayload;
   messageRole: SessionMessageRole;
+  surfaceItemReference?: SessionTranscriptSurfaceItemReferenceV1;
 }>> {
+  // The canonical normalizer consumes the call input at terminal result reconciliation.
+  const key = body.type === 'tool-result' ? getToolCallNameKey(provider, body.callId) : null;
+  const acknowledgedInput = key ? port.toolCallInputByProviderAndId.get(key) : undefined;
+  const mapping = key ? port.toolCallCanonicalNameByProviderAndId.get(key) : undefined;
   const { normalizedBody, content, localId, sidechainId } = prepareAcpTranscriptDispatch({
     provider,
     body,
@@ -34,12 +42,24 @@ export async function prepareCommittedAgentMessageViaPort(
     maxToolCallCacheEntries: port.maxToolCallCacheEntries,
   });
 
+  const reference = normalizedBody.type === 'tool-result' && key && mapping && normalizedBody.isError !== true
+    ? resolveTranscriptSessionBoardItemReferenceV1({
+      toolName: mapping.rawToolName, state: 'completed', input: acknowledgedInput,
+      result: normalizedBody.output,
+      address: port.serverId ? { serverId: port.serverId, sessionId: port.sessionId } : null,
+    }) : null;
+  const surfaceItemReference: SessionTranscriptSurfaceItemReferenceV1 | undefined = reference?.itemRevision
+    && (reference.itemDestination === 'transcript' || reference.itemDestination === 'both')
+    ? { v: 1, itemId: reference.itemId, itemRevision: reference.itemRevision, sourceAddress: reference.address }
+    : undefined;
+
   return {
     normalizedBody,
     localId,
     sidechainId,
     payload: port.buildOutboundSessionMessagePayload(content),
     messageRole: resolveAcpSessionMessageRole(normalizedBody),
+    ...(surfaceItemReference ? { surfaceItemReference } : {}),
   };
 }
 

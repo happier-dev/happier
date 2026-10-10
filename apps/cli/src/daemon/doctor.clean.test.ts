@@ -75,13 +75,7 @@ describe.sequential('doctor clean process custody', () => {
         controlToken: 'test-token',
       }), 'utf-8');
       mkdirSync(dirname(configuration.daemonLockFile), { recursive: true });
-      writeFileSync(configuration.daemonLockFile, JSON.stringify({
-        t: 'happier_daemon_lock_v1',
-        pid: daemonPid,
-        ownerToken: '00000000-0000-4000-8000-000000000001',
-        processStartedAtMs: 1_000,
-        createdAtMs: 1,
-      }), 'utf-8');
+      writeFileSync(configuration.daemonLockFile, String(daemonPid), 'utf-8');
       const killSpy = vi.spyOn(process, 'kill').mockImplementation(((pid: number, signal?: NodeJS.Signals | 0) => {
         if (pid !== daemonPid) return realKill(pid as any, signal as any);
         if (signal === 0) return undefined as any;

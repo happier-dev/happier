@@ -271,7 +271,9 @@ function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
 }
 
 function readRuntimeAuthClassification(error: unknown): Readonly<Record<string, unknown>> | null {
-  return sanitizeConnectedServiceRuntimeFailureClassification(readRecord(readRecord(error)?.runtimeAuthClassification));
+  const record = readRecord(error);
+  return sanitizeConnectedServiceRuntimeFailureClassification(record?.runtimeAuthClassification
+    ?? readRecord(record?.details)?.runtimeAuthClassification);
 }
 
 function buildUsageLimitDetailsFromRuntimeAuthClassification(

@@ -10,14 +10,17 @@ import {
   startDirectPeerTransferServer,
   type DirectPeerOnDemandTransferScope,
   type PublishedDirectPeerTransfer,
+  type PreparedFilesystemExportSettlement,
 } from './directPeerTransport';
-import type { DirectTransferImportOpenRequest } from './directTransferImportSession';
+import type { DirectTransferImportOpenRequest, PreparedImportTransferSettlement } from './directTransferImportSession';
+import type { PreparedFilesystemTransferScope } from './preparedFilesystemTransferScope';
 import type { TransferPayloadFileResult } from './transferPayloadFileSink';
 import type { TransferPayloadSource } from './transferPayloadSource';
 import { resolveDirectPeerTransferBindHost } from './transferRuntimeConfig';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { ComposerMediaStageUploadTargetDeps } from '@/transfers/targets/resolveComposerMediaStageUploadTarget';
 import type { TransferUploadInitAttachmentDeps } from '@/transfers/targets/resolveTransferUploadInitTarget';
+import type { LiveWorkProducerV1, LiveWorkInventoryV1, LiveWorkItemV1 } from '@/daemon/lifecycle/managedActivity';
 
 export type DirectTransferListenerClass =
   | 'loopback_http'
@@ -28,6 +31,7 @@ type DirectTransferPublishInput = Readonly<{
   payload?: Buffer;
   payloadSource?: TransferPayloadSource;
   onDemandScope?: DirectPeerOnDemandTransferScope;
+  filesystemScope?: PreparedFilesystemTransferScope;
 }>;
 
 export type DirectTransferServerLifecycleState = Readonly<{
@@ -38,11 +42,12 @@ export type DirectTransferServerLifecycleState = Readonly<{
 }>;
 
 export type DirectTransferServerLifecycle = Readonly<{
+  activity: LiveWorkProducerV1;
   /** Starts/reuses the canonical loopback listener and returns its actual bound port. */
   ensureListening: () => Promise<number>;
   publishTransfer: (input: DirectTransferPublishInput) => PublishedDirectPeerTransfer;
   publishTransferWhenReady: (input: DirectTransferPublishInput) => Promise<PublishedDirectPeerTransfer>;
-  prepareImportSession: (input: DirectTransferImportOpenRequest) => Promise<Readonly<{
+  prepareImportSession: (input: DirectTransferImportOpenRequest, filesystemScope?: PreparedFilesystemTransferScope, privateStagingDirectory?: string) => Promise<Readonly<{
     uploadId: string;
     destDisplayPath: string;
     expectedSizeBytes: number;
@@ -53,7 +58,9 @@ export type DirectTransferServerLifecycle = Readonly<{
   }>>;
   abortImportSession: (
     input: Readonly<{ uploadId: string }>,
+    filesystemScope?: PreparedFilesystemTransferScope | null,
   ) => Promise<void | Readonly<{ aborted: boolean }>>;
+  waitForImportTransferSettlement: (uploadId: string, filesystemScope: PreparedFilesystemTransferScope) => Promise<PreparedImportTransferSettlement>;
   requestPayloadFile: (input: Readonly<{
     transferId: string;
     endpointCandidates: readonly TransferEndpointCandidate[];
@@ -66,7 +73,8 @@ export type DirectTransferServerLifecycle = Readonly<{
     timeoutMs?: number;
     signal?: AbortSignal;
   }>) => Promise<TransferPayloadFileResult>;
-  clearPublishedTransfer: (transferId: string) => void;
+  clearPublishedTransfer: (transferId: string, filesystemScope?: PreparedFilesystemTransferScope | null) => boolean;
+  waitForFilesystemExportSettlement: (transferId: string, filesystemScope: PreparedFilesystemTransferScope) => Promise<PreparedFilesystemExportSettlement>;
   stop: () => Promise<void>;
   getState: () => DirectTransferServerLifecycleState;
 }>;
@@ -75,15 +83,15 @@ type RunningDirectPeerTransferServer = Awaited<ReturnType<typeof startDirectPeer
 type StartDirectPeerTransferServer = (
   params: Parameters<typeof startDirectPeerTransferServer>[0],
 ) => Promise<
-  Omit<RunningDirectPeerTransferServer, 'cleanupExpiredImportSessions' | 'getNextImportSessionExpiryAt'>
-  & Partial<Pick<RunningDirectPeerTransferServer, 'cleanupExpiredImportSessions' | 'getNextImportSessionExpiryAt'>>
+  Omit<RunningDirectPeerTransferServer, 'cleanupExpiredImportSessions' | 'getNextImportSessionExpiryAt' | 'activity' | 'releasePublishedTransferHandles'>
+  & Partial<Pick<RunningDirectPeerTransferServer, 'cleanupExpiredImportSessions' | 'getNextImportSessionExpiryAt' | 'activity' | 'releasePublishedTransferHandles'>>
 >;
 type DirectPeerTransferRegistry = ReturnType<typeof createDirectPeerTransferRegistry>;
 type CreateDirectPeerTransferRegistry = (
   params: Parameters<typeof createDirectPeerTransferRegistry>[0],
 ) =>
-  Omit<DirectPeerTransferRegistry, 'cleanupExpiredPublishedTransfers' | 'getNextPublishedTransferExpiryAt'>
-  & Partial<Pick<DirectPeerTransferRegistry, 'cleanupExpiredPublishedTransfers' | 'getNextPublishedTransferExpiryAt'>>;
+  Omit<DirectPeerTransferRegistry, 'cleanupExpiredPublishedTransfers' | 'getNextPublishedTransferExpiryAt' | 'activity' | 'retainPayloadFileRequest'>
+  & Partial<Pick<DirectPeerTransferRegistry, 'cleanupExpiredPublishedTransfers' | 'getNextPublishedTransferExpiryAt' | 'activity' | 'retainPayloadFileRequest'>>;
 type RequestDirectPeerTransferToFile = typeof requestDirectPeerTransferToFile;
 
 function stripTrailingSlashes(value: string): string {
@@ -147,6 +155,7 @@ function resolveAdvertisedEndpointCandidates(params: Readonly<{
 }
 
 export function createDirectTransferServerLifecycle(params: Readonly<{
+  admissionDrain?: Parameters<StartDirectPeerTransferServer>[0]['admissionDrain'];
   attachmentUpload?: TransferUploadInitAttachmentDeps;
   bindPort: number;
   bindHost?: string;
@@ -201,11 +210,18 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
   const stoppedServers = new WeakSet<object>();
   const inFlightServerStops = new WeakMap<object, Promise<void>>();
   const pendingServerStops = new Set<Promise<void>>();
+  const activityListeners = new Set<() => void>();
+  const notifyActivity = (): void => {
+    for (const listener of activityListeners) {
+      try { listener(); } catch { /* Observation cannot change listener custody. */ }
+    }
+  };
 
   const hasActivity = (): boolean =>
     registry.hasPublishedTransfers() || activeImportSessionCount > 0;
 
   const emitState = async (status: DirectTransferServerLifecycleState['status']): Promise<void> => {
+    notifyActivity();
     if (!params.onStateChange) {
       return;
     }
@@ -246,9 +262,11 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
     }).finally(() => {
       inFlightServerStops.delete(target);
       pendingServerStops.delete(stopping);
+      notifyActivity();
     });
     inFlightServerStops.set(target, stopping);
     pendingServerStops.add(stopping);
+    notifyActivity();
     return stopping;
   };
 
@@ -295,8 +313,9 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
     }
 
     if (!currentlyActive && !server) {
-      shouldStopWhenStarted = true;
-      void ensureServerStarted().catch(() => undefined);
+      // Outgoing custody is observable without an incoming listener. Only
+      // dispose a listener whose startup is already owned by a publication.
+      shouldStopWhenStarted = startPromise !== null;
       return;
     }
 
@@ -338,6 +357,7 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
   registry = createRegistry({
     advertisedPort: params.bindPort,
     now,
+    beforeDisposePayloadSource: async transferToken => { await server?.releasePublishedTransferHandles?.(transferToken); },
     onPublishedTransfersChanged: () => {
       scheduleLifecycleTimer();
       void emitState(server ? 'running' : startPromise ? 'starting' : 'stopped');
@@ -357,8 +377,10 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
     startPromise = (async () => {
       void emitState('starting');
       const started = await startServer({
+        admissionDrain: params.admissionDrain,
         ...(params.attachmentUpload ? { attachmentUpload: params.attachmentUpload } : {}),
         readPublishedTransfer: (input) => registry?.readPublishedTransfer(input) ?? null,
+        completeFilesystemExport: (input) => registry.completeFilesystemExport(input),
         ...(typeof params.bindPort === 'number' && params.bindPort > 0
           ? { bindPort: params.bindPort }
           : {}),
@@ -372,7 +394,7 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
           scheduleLifecycleTimer();
           void emitState(server ? 'running' : 'starting');
         },
-        onImportSessionActivity: scheduleLifecycleTimer,
+        onImportSessionActivity: () => { scheduleLifecycleTimer(); notifyActivity(); },
       });
       if (terminalStopped) {
         return started;
@@ -404,10 +426,28 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
       return await startPromise;
     } finally {
       startPromise = null;
+      notifyActivity();
     }
   };
 
+  const activity: LiveWorkProducerV1 = Object.freeze({
+    async read(): Promise<Omit<LiveWorkInventoryV1, 'idleSince'>> {
+      const published = registry.activity ? await registry.activity.read() : { items: [], coverage: 'unknown' as const };
+      const receiving = server?.activity ? await server.activity.read()
+        : { items: [], coverage: server ? 'unknown' as const : 'complete' as const };
+      const items: LiveWorkItemV1[] = [...published.items, ...receiving.items,
+        ...[...(startPromise ? [startPromise] : []), ...pendingServerStops].map(ownerRef => ({
+          category: 'transfer' as const, ownerRef, attribution: { kind: 'unknown' as const }, state: 'active' as const,
+        }))];
+      return { items, coverage: published.coverage === 'unknown' || receiving.coverage === 'unknown' ? 'unknown' : 'complete' };
+    },
+    subscribe(listener: () => void): () => void {
+      activityListeners.add(listener);
+      return () => { activityListeners.delete(listener); };
+    },
+  });
   return {
+    activity,
     ensureListening: async () => (await ensureServerStarted()).port,
     publishTransfer(input) {
       if (terminalStopped) {
@@ -458,7 +498,7 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
         }),
       };
     },
-    prepareImportSession: async (input) => {
+    prepareImportSession: async (input, filesystemScope, privateStagingDirectory) => {
       if (terminalStopped) {
         throw new Error('Direct transfer server lifecycle is stopped');
       }
@@ -468,7 +508,7 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
       if (terminalStopped) {
         throw new Error('Direct transfer server lifecycle is stopped');
       }
-      const prepared = await started.openTrustedImportSession(input);
+      const prepared = await started.openTrustedImportSession(input, filesystemScope, privateStagingDirectory);
       if (!prepared.success) {
         throw new Error(prepared.error);
       }
@@ -491,7 +531,7 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
         endpointCandidates,
       };
     },
-    abortImportSession: async (input) => {
+    abortImportSession: async (input, filesystemScope) => {
       if (terminalStopped) {
         return { aborted: false };
       }
@@ -499,17 +539,28 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
       if (!started) {
         return { aborted: false };
       }
-      const result = await started.abortImportTransferSession(input);
+      const result = await started.abortImportTransferSession(input, filesystemScope);
       scheduleLifecycleTimer();
       void emitState(server ? 'running' : 'stopped');
       return result;
     },
-    requestPayloadFile: async (input) => await requestPayloadFile(input),
-    clearPublishedTransfer: (transferId) => {
-      registry?.clearPublishedTransfer(transferId);
+    requestPayloadFile: async (input) => {
+      if (terminalStopped) throw new Error('Direct transfer server lifecycle is stopped');
+      const request = requestPayloadFile(input);
+      return registry.retainPayloadFileRequest ? await registry.retainPayloadFileRequest(request) : await request;
+    },
+    waitForImportTransferSettlement: async (uploadId, filesystemScope) => {
+      const started = server ?? (startPromise ? await startPromise : null);
+      if (!started) return { success: false, error: 'Prepared import transfer owner is unavailable', errorCode: 'indeterminate' };
+      return await started.waitForImportTransferSettlement(uploadId, filesystemScope);
+    },
+    clearPublishedTransfer: (transferId, filesystemScope) => {
+      const changed = registry.clearPublishedTransfer(transferId, filesystemScope);
       scheduleLifecycleTimer();
       void emitState(server ? 'running' : 'stopped');
+      return changed;
     },
+    waitForFilesystemExportSettlement: (transferId, filesystemScope) => registry.waitForFilesystemExportSettlement(transferId, filesystemScope),
     stop: () => {
       if (terminalStopPromise) {
         return terminalStopPromise;

@@ -1,10 +1,10 @@
 import type { Metadata, PermissionMode } from '@/api/types';
+import { computeMonotonicUpdatedAt } from '@happier-dev/agents/session/timestamps/monotonic';
 import {
-    computeMonotonicUpdatedAt,
     readAcpSessionModeIntentFromMetadata,
     readPermissionModeIntentFromMetadata,
     resolveModelSelectionIntentFromSessionMetadata,
-} from '@happier-dev/agents';
+} from '@happier-dev/agents/session/state/metadataReaders';
 import {
     applyAcpConfigOptionIntentSessionMetadata,
     applyAcpSessionModeIntentSessionMetadata,
@@ -391,6 +391,15 @@ export function mergeSessionMetadataForStartup(opts: {
             if (typeof key !== 'string' || !key.trim()) continue;
             delete (merged as Record<string, unknown>)[key];
         }
+
+        // Host-owned retained choices are not fresh runtime defaults, even
+        // when the process is replacing the physical workspace identity.
+        if (opts.current.work !== undefined) merged.work = opts.current.work;
+        else delete merged.work;
+        if (opts.current.bot !== undefined) merged.bot = opts.current.bot;
+        else delete merged.bot;
+        if (opts.current.createdAsBot !== undefined) merged.createdAsBot = opts.current.createdAsBot;
+        else delete merged.createdAsBot;
     }
 
     const perm = resolvePermissionModeForStartup({

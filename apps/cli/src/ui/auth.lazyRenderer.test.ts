@@ -50,6 +50,8 @@ it('keeps the interactive renderer and protocol root barrel unloaded through dae
     expect(rendererLoaded()).toBe(false);
     expect.soft(authRootLoaded, 'auth startup must not load the protocol root').toBe(false);
     expect(rootLoaded(), 'daemon startup must not load the protocol root').toBe(false);
+    const acpRuntimeScripts = scripts.filter(({ url }) => /(?:node_modules\/@agentclientprotocol\/sdk\/|\/agent\/acp\/(?:AcpBackend|runtime\/publicSession\/createPublicAcpSession)\.(?:ts|js)$)/u.test(url));
+    expect(acpRuntimeScripts.map(({ url }) => url), 'idle daemon admission must not load an unused ACP runtime').toEqual([]);
     const startupBarrelFacades = new Set([
       'machines', 'providers/safety', 'runtime/catalog', 'rpc',
       'plugins/ui', 'devices/simulator', 'runtime/input', 'installables/definitions',

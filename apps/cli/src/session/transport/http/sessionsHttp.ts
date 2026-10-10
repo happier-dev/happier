@@ -6,14 +6,17 @@ import { SESSION_CREATION_AUTHORIZATION_HEADER_V1 } from '@happier-dev/protocol/
 import { agentEventLocalIdAttentionImpact } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
 import type { SessionMessageAttentionImpact, SessionStoredMessageContent, V2SessionByIdResponse, V2SessionListResponse, SessionLookupByTagsResponseV2, SessionMetadataInactiveModelIntentExpectationV1, SessionMetadataInactiveModelIntentOwnerPatchV1, SessionMetadataInactiveModelIntentPatchV1, SessionMetadataTuplePatchV1, SessionOrganizationPlacementV1, SessionTurnsProjectionV1, AccountEncryptionCurrentnessResponse, SessionListQueryV1, SessionListQueryResponseV1, SessionListUnavailableQueryV1, SessionInitialAccessDraftV1, SessionAttentionSetResultV1, SessionReportsToSetActionInputV1, SessionReportsToSetResultV1, SessionReportsToV1 } from '@happier-dev/protocol';
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+import { SessionTranscriptSurfaceItemReferenceV1Schema, type SessionTranscriptSurfaceItemReferenceV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { SessionLookupByTagsRequestV2Schema, SessionLookupByTagsResponseV2Schema, V2SessionByIdResponseSchema, V2SessionListResponseSchema, V2SessionMessageResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { SessionTurnsProjectionV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import { SessionMetadataActiveConflictV1Schema, SessionMetadataInactiveModelIntentPatchSuccessV1Schema, SessionMetadataInactiveModelIntentVersionConflictV1Schema, SessionMetadataTuplePatchSuccessV1Schema, SessionMetadataVersionConflictV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
 import { normalizeSessionCreationOrganizationPlacementV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { SessionListQueryResponseV1Schema, SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
-import { SessionListUnavailableQueryV1Schema } from '@happier-dev/protocol/sessions/listing/query';
+import { buildSessionListServerQueryV1, SessionListUnavailableQueryV1Schema } from '@happier-dev/protocol/sessions/listing/query';
 import { SessionAttentionSetResultV1Schema, buildSessionAttentionStandingHttpPath } from '@happier-dev/protocol/sessions/organization/attentionAction';
+import { SetSessionPinRequestSchema, SetSessionPinResponseSchema, type SetSessionPinRequest, type SetSessionPinResponse } from '@happier-dev/protocol/sessions/organization/mutations';
+import { buildSessionOrganizationPinHttpPathV1 } from '@happier-dev/protocol/sessions/organization/pins';
 import { SessionReportsToSetActionInputV1Schema, SessionReportsToSetResultV1Schema } from '@happier-dev/protocol/sessions/relations/sessionReportsToV1';
 import { SessionTeamCredentialBindingMutationRejectionV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingV1';
 import type { SessionTeamCredentialBindingIntentV1, SessionTeamCredentialBindingIntentListV1, SessionTeamCredentialBindingMetadataPatchV1, SessionTeamCredentialBindingRejectionV1 } from '@happier-dev/protocol/teams';
@@ -38,7 +41,6 @@ import {
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from './serverHttpBaseUrl';
 import { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
-import { resolveSessionRoleSnapshotCreationMetadata } from '@/session/metadata/resolveSessionRoleSnapshotCreationMetadata';
 import {
   buildSessionInitialAccessCreateFields,
   materializeSessionInitialAccessCreateFields,
@@ -48,6 +50,43 @@ import {
 } from '@/api/session/sessionCreationInitialAccess';
 
 export type RawSessionRecord = V2SessionByIdResponse['session'];
+
+/** Personal pin writes use the Account HTTP owner, without waking a Session host. */
+export async function setSessionOrganizationPin(params: Readonly<{
+  token: string;
+  sessionId: string;
+  request: SetSessionPinRequest;
+  signal?: AbortSignal;
+  resolveAuthorizationHeaders?: (request: Readonly<{ method: 'PUT'; path: string; body: unknown }>) => Readonly<Record<string, string>> | null;
+}>): Promise<SetSessionPinResponse | Readonly<{
+  ok: false; errorCode: 'session_not_found' | 'session_pin_limit_exceeded' | 'unsupported_action'; error: string;
+}>> {
+  const path = buildSessionOrganizationPinHttpPathV1(params.sessionId);
+  const body = SetSessionPinRequestSchema.parse(params.request);
+  const authorizationHeaders = params.resolveAuthorizationHeaders?.({ method: 'PUT', path, body })
+    ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.token}` });
+  if (!authorizationHeaders) throw new Error('External Action authorization unavailable');
+  const response = await axios.put(`${resolveServerHttpBaseUrl()}${path}`, body, {
+    headers: { ...authorizationHeaders, 'Content-Type': 'application/json' },
+    ...(params.signal ? { signal: params.signal } : {}),
+    timeout: configuration.sessionControlHttpTimeoutMs,
+    validateStatus: () => true,
+  });
+  const payload: unknown = response.data;
+  const error = payload !== null && typeof payload === 'object' && 'error' in payload ? payload.error : undefined;
+  if (response.status === 404) {
+    const errorCode = error === 'Session not found' ? 'session_not_found' : 'unsupported_action';
+    return { ok: false, errorCode, error: errorCode };
+  }
+  if (response.status === 409 && error === 'session-pin-limit-exceeded') {
+    return { ok: false, errorCode: 'session_pin_limit_exceeded', error: 'session_pin_limit_exceeded' };
+  }
+  if (isAuthenticationStatus(response.status)) throwAuthenticationStatusError(response.status);
+  if (response.status !== 200) throwUnexpectedStatusError(path, response.status);
+  const result = SetSessionPinResponseSchema.safeParse(response.data);
+  if (!result.success) throw new Error('Unexpected Session pin response shape');
+  return result.data;
+}
 
 export async function setSessionReportsTo(params: SessionReportsToSetActionInputV1 & Readonly<{
   token: string;
@@ -185,20 +224,41 @@ class SessionListQueryHttpError extends HttpStatusError {
 
 type SessionByIdHttpResponse = AxiosResponse<unknown>;
 
+function parseSessionDetailSchema<T>(schema: z.ZodType<T>, payload: unknown, schemaName: string): T {
+  const parsed = schema.safeParse(payload);
+  if (!parsed.success) {
+    // Keep only structural diagnostics. Zod messages/inputs can contain private values.
+    const issues = parsed.error.issues.map(({ path, code }) => ({ path, code }));
+    throw Object.assign(
+      new Error(`Unexpected /v2/sessions response shape (${schemaName}: ${issues.map(({ path, code }) => `${path.join('.') || '<root>'}: ${code}`).join(', ')})`),
+      { code: 'session_detail_invalid_response', schema: schemaName, issues },
+    );
+  }
+  return parsed.data;
+}
+
+function throwSessionDetailProjectionUnavailable(): never {
+  throw createHttpStatusError(
+    404,
+    'The server does not provide the requested /v2/sessions current detail projection',
+    'session_detail_projection_unavailable',
+  );
+}
+
 function parseSessionByIdResponse(
   payload: unknown,
   accessProjectionVersion: 1 | undefined,
 ): RawSessionRecord {
-  const session = parseOrThrow<V2SessionByIdResponse>(
+  const session = parseSessionDetailSchema(
     V2SessionByIdResponseSchema,
     payload,
-    'Unexpected /v2/sessions response shape',
+    'v2_session_detail',
   ).session;
   if (accessProjectionVersion === 1) {
-    return parseOrThrow<RawSessionRecord>(
+    return parseSessionDetailSchema(
       SessionCurrentProjectionRecordV1Schema,
       session,
-      'Unexpected /v2/sessions response shape',
+      'current_access_projection_v1',
     );
   }
   return session;
@@ -364,7 +424,7 @@ export async function fetchSessionById(params: Readonly<{
       accessProjectionVersion === 1
       && looksLikeMissingV2SessionRoute404(response.data, params.sessionId)
     ) {
-      throw new Error('Unexpected /v2/sessions response shape');
+      throwSessionDetailProjectionUnavailable();
     }
     return null;
   }
@@ -573,7 +633,7 @@ export async function fetchSessionByIdCompat(params: Readonly<{
   if (response.status === 404) {
     if (!looksLikeMissingV2SessionRoute404(response.data, params.sessionId)) return null;
     if (accessProjectionVersion === 1) {
-      throw new Error('Unexpected /v2/sessions response shape');
+      throwSessionDetailProjectionUnavailable();
     }
 
     let cursor: string | undefined = undefined;
@@ -1203,13 +1263,14 @@ export async function fetchSessionsQueryPage(params: Readonly<{
     throw error;
   }
   const path = '/v2/sessions/query';
+  const query = buildSessionListServerQueryV1(params.query);
   const authorizationHeaders = params.resolveAuthorizationHeaders?.({
-    method: 'POST', path, body: params.query,
+    method: 'POST', path, body: query,
   }) ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.token}` });
   if (!authorizationHeaders) throw new Error('External Action authorization unavailable');
   const response = await axios.post(
     `${resolveServerHttpBaseUrl()}${path}`,
-    params.query,
+    query,
     {
       headers: {
         ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
@@ -1340,6 +1401,7 @@ export async function importHistoricalSessionTranscript(params: Readonly<{
   items: readonly Readonly<{
     id: string;
     content?: unknown;
+    surfaceItemReference?: SessionTranscriptSurfaceItemReferenceV1;
   }>[];
 }>): Promise<{ imported: number; cursor: string | null }> {
   const items = params.items.map((item) => {
@@ -1348,7 +1410,9 @@ export async function importHistoricalSessionTranscript(params: Readonly<{
     if (!localId || !content.success) {
       throw new Error('Invalid transcript import item');
     }
-    return { localId, content: content.data };
+    const surfaceItemReference = item.surfaceItemReference === undefined ? undefined
+      : SessionTranscriptSurfaceItemReferenceV1Schema.parse(item.surfaceItemReference);
+    return { localId, content: content.data, ...(surfaceItemReference ? { surfaceItemReference } : {}) };
   });
   if (items.length === 0) {
     return { imported: 0, cursor: null };
@@ -1356,10 +1420,8 @@ export async function importHistoricalSessionTranscript(params: Readonly<{
 
   const serverUrl = resolveServerHttpBaseUrl();
   const encodedSessionId = encodeSessionIdPathSegment(params.sessionId);
-  const path = `/v2/sessions/${encodedSessionId}/transcript/import`;
-  const response = await axios.post(`${serverUrl}${path}`, {
-    items,
-  }, {
+  let path = `/v${items.some((item) => item.surfaceItemReference) ? 3 : 2}/sessions/${encodedSessionId}/transcript/import`;
+  const config = {
     headers: {
       ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
       Authorization: `Bearer ${params.token}`,
@@ -1367,7 +1429,18 @@ export async function importHistoricalSessionTranscript(params: Readonly<{
     },
     timeout: 20_000,
     validateStatus: () => true,
-  });
+  };
+  let response = await axios.post(`${serverUrl}${path}`, {
+    items,
+  }, config);
+  if (path.startsWith('/v3/') && response.status === 404
+    && !(response.data && typeof response.data === 'object' && response.data.error === 'Session not found')) {
+    // Supported older Homes preserve the transcript, never a false association.
+    path = `/v2/sessions/${encodedSessionId}/transcript/import`;
+    response = await axios.post(`${serverUrl}${path}`, {
+      items: items.map(({ surfaceItemReference: _reference, ...item }) => item),
+    }, config);
+  }
 
   if (isAuthenticationStatus(response.status)) {
     throwAuthenticationStatusError(response.status);
@@ -1446,12 +1519,7 @@ export async function getOrCreateSessionByTag(params: Readonly<import('@happier-
   } = encryptionModeResolution;
 
   const initialAccessFields = buildSessionInitialAccessCreateFields(params, serverFeaturesSnapshot);
-  const creationMetadata = await resolveSessionRoleSnapshotCreationMetadata({
-    metadata: params.metadata,
-    readLeadSession: (sessionId) => fetchSessionById({
-      token: params.credentials.token, sessionId, serverFeaturesSnapshot,
-    }),
-  });
+  const creationMetadata = params.metadata;
   const sessionEncryptionContext =
     desiredSessionEncryptionMode === 'e2ee'
       ? resolveSessionEncryptionContext(params.credentials)

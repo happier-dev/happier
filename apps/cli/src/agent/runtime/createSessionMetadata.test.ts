@@ -1,8 +1,10 @@
+import { mergeSessionMetadataForStartup } from './mergeSessionMetadataForStartup';
 import { describe, expect, it } from 'vitest';
 
 import type { Metadata } from '@/api/types';
 
 import {
+    applyInitialSessionCreationFactsToMetadata,
     captureSessionLaunchControlMetadata,
     createSessionMetadata,
 } from './createSessionMetadata';
@@ -23,6 +25,119 @@ function createMetadata(
 }
 
 describe('createSessionMetadata', () => {
+    it('clears a previous runner generation when the replacement process cannot read its generation', () => {
+        const next = createMetadata({ flavor: 'test-agent', machineId: 'machine-1' }).metadata;
+        const current = { ...next, hostProcessStartTimeMs: 123456 };
+        expect(mergeSessionMetadataForStartup({ current, next, mode: 'attach', nowMs: 1 }).hostProcessStartTimeMs)
+            .toBeUndefined();
+    });
+
+    it('publishes the runner process generation before the session is created', () => {
+        expect(createMetadata({
+            flavor: 'test-agent', machineId: 'machine-1', hostProcessStartTimeMs: 123456,
+        }).metadata).toMatchObject({ hostPid: process.pid, hostProcessStartTimeMs: 123456 });
+    });
+
+    it('publishes selected qualified Instructions with the other birth facts before Agent preparation', () => {
+        const promptStack = [{
+            id: 'session.instructions',
+            ref: { kind: 'doc', serverId: 'instructions-home', artifactId: 'caretaker-instructions' },
+            enabled: true,
+            required: true,
+            placement: 'system_append',
+        }] as const;
+        expect(applyInitialSessionCreationFactsToMetadata({ path: '/project', host: 'machine' }, {
+            identity: { bot: { kind: 'bot' }, createdAsBot: true }, promptStack,
+        })).toMatchObject({ bot: { kind: 'bot' }, work: { promptStack } });
+        const { metadata } = createMetadata({
+            flavor: 'test-agent', machineId: 'machine-1',
+            identity: { bot: { kind: 'bot' }, createdAsBot: true }, promptStack,
+            augmentMetadata: (current) => {
+                expect(current.work?.promptStack).toEqual(promptStack);
+                return current;
+            },
+        });
+        expect(metadata.work?.promptStack).toEqual(promptStack);
+        expect(metadata).not.toHaveProperty('work.instructions');
+        expect(metadata).not.toHaveProperty('work.sessionInstructions');
+    });
+
+    it('uses the admitted Account default only at creation and gives an explicit choice precedence', () => {
+        const source = { path: '/project', host: 'machine', work: { memoryEnabled: true } };
+        expect(applyInitialSessionCreationFactsToMetadata(source, {
+            accountSettings: { memoryUseInNewSessions: true, memoryUseInNewBots: false },
+        })).toHaveProperty('work.memoryEnabled', true);
+        expect(applyInitialSessionCreationFactsToMetadata(source, {
+            identity: { bot: { kind: 'bot' }, createdAsBot: true },
+            accountSettings: { memoryUseInNewSessions: true, memoryUseInNewBots: false },
+        })).toHaveProperty('work.memoryEnabled', false);
+        expect(applyInitialSessionCreationFactsToMetadata(source, {
+            identity: { bot: { kind: 'bot' } },
+            accountSettings: { memoryUseInNewSessions: true, memoryUseInNewBots: false },
+        })).toHaveProperty('work.memoryEnabled', false);
+        expect(applyInitialSessionCreationFactsToMetadata(source, {
+            identity: { createdAsBot: true },
+            accountSettings: { memoryUseInNewSessions: true, memoryUseInNewBots: false },
+        })).toHaveProperty('work.memoryEnabled', true);
+        expect(applyInitialSessionCreationFactsToMetadata(source, {
+            memoryEnabled: false, accountSettings: { memoryUseInNewSessions: true },
+        })).toHaveProperty('work.memoryEnabled', false);
+    });
+    it('starts a fresh replay child from admitted birth facts, not its source Bot marker or memory preference', () => {
+        const source = { path: '/project', host: 'machine', bot: { kind: 'bot' as const },
+            createdAsBot: true as const, work: { memoryEnabled: true } };
+        const ordinary = applyInitialSessionCreationFactsToMetadata(source, {});
+        expect(ordinary).not.toHaveProperty('bot');
+        expect(ordinary).not.toHaveProperty('createdAsBot');
+        expect(ordinary).toHaveProperty('work.memoryEnabled', false);
+        expect(applyInitialSessionCreationFactsToMetadata(source, {
+            identity: { bot: { kind: 'bot' }, createdAsBot: true }, memoryEnabled: false,
+        })).toMatchObject({ bot: { kind: 'bot' }, createdAsBot: true, work: { memoryEnabled: false } });
+    });
+    it.each([
+        [undefined, undefined, false],
+        [{ bot: { kind: 'bot' } }, undefined, true],
+        [{ createdAsBot: true }, undefined, false],
+        [{ bot: { kind: 'bot' }, createdAsBot: true }, undefined, true],
+        [{ bot: { kind: 'bot' }, createdAsBot: true }, false, false],
+        [undefined, true, true],
+    ])('initializes memory from the admitted kind and explicit creation choice (%j, %s)', (identity, memoryEnabled, expected) => {
+        const launchControlMetadata = captureSessionLaunchControlMetadata({ processEnvironment: {
+            ...(identity ? { HAPPIER_SESSION_INITIAL_IDENTITY_JSON: JSON.stringify(identity) } : {}),
+            ...(memoryEnabled !== undefined ? { HAPPIER_SESSION_INITIAL_MEMORY_ENABLED: JSON.stringify(memoryEnabled) } : {}),
+        } });
+        const { metadata } = createMetadata({ flavor: 'test-agent', machineId: 'machine-1', launchControlMetadata });
+        expect(metadata).toHaveProperty('work.memoryEnabled', expected);
+        expect(metadata.createdAsBot).toBe(launchControlMetadata.identity?.createdAsBot);
+        expect(metadata).not.toHaveProperty('work.memoryDocRef');
+    });
+    it('publishes admitted Bot birth facts before Agent metadata augmentation and consumes the launch carrier once', () => {
+        const identity = { bot: { kind: 'bot' }, createdAsBot: true };
+        const processEnvironment: NodeJS.ProcessEnv = {
+            HAPPIER_SESSION_INITIAL_IDENTITY_JSON: JSON.stringify(identity),
+        };
+        const launchControlMetadata = captureSessionLaunchControlMetadata({ processEnvironment });
+        const { metadata } = createMetadata({
+            flavor: 'test-agent', machineId: 'machine-1', launchControlMetadata,
+            augmentMetadata: (current) => {
+                expect(current).toMatchObject(identity);
+                return current;
+            },
+        });
+        expect(metadata).toMatchObject(identity);
+        expect(metadata).not.toHaveProperty('work.sessionInstructions');
+        expect(processEnvironment.HAPPIER_SESSION_INITIAL_IDENTITY_JSON).toBeUndefined();
+        expect(createMetadata({
+            flavor: 'test-agent', machineId: 'machine-2',
+            launchControlMetadata: captureSessionLaunchControlMetadata({ processEnvironment }),
+        }).metadata).not.toHaveProperty('bot');
+    });
+
+    it('refuses malformed identity rather than creating an ordinary Session after a requested Bot launch', () => {
+        expect(() => captureSessionLaunchControlMetadata({ processEnvironment: {
+            HAPPIER_SESSION_INITIAL_IDENTITY_JSON: JSON.stringify({ bot: { kind: 'bot', avatarId: 'override' } }),
+        } })).toThrow();
+    });
     it.each([undefined, 'path', 'Managed', ' managed ', 'invalid'])('does not classify an invalid directory marker %s as managed', (value) => {
         const processEnvironment: NodeJS.ProcessEnv = { HAPPIER_SESSION_DIRECTORY_KIND: value };
         const launchControlMetadata = captureSessionLaunchControlMetadata({ processEnvironment });

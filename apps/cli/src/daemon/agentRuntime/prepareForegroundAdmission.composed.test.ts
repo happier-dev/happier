@@ -7,10 +7,40 @@ import { configuration } from '@/configuration';
 import { consumeProviderBindingLaunchHandoffFromEnvironments } from '@/plugins/runtime/providerBindings/handoff';
 import { createProviderBindingLaunchMaterializationCleanup } from '@/providers/spawn/compose';
 import { withForegroundProviderFixture } from './prepareForegroundAdmission.providers.testkit';
+import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { refreshActiveProfileCatalog } from '@/settings/profiles/hydrateProfileCatalog';
+import { readStoredCredentials } from '@/persistence';
+import { ProfileRecordV1Schema } from '@happier-dev/protocol/profiles/profileRecordV1';
 
 afterEach(() => vi.restoreAllMocks());
 
 describe('foreground admission composed real Provider authorization seam', () => {
+  it('refuses a destination Profile changed without a Settings revision before final claim', async () => {
+    await withForegroundProviderFixture({}, async (fixture) => {
+      const record = ProfileRecordV1Schema.parse({ v: 1, id: 'profile-1', enabled: true,
+        definition: { kind: 'inline', profile: { v: 2, id: 'profile-1', name: 'Profile', createdAt: 1, updatedAt: 1,
+          envVarRequirements: [{ name: 'PROFILE_SECRET', kind: 'secret', required: true }] } },
+        promptStack: [], secretBindings: { PROFILE_SECRET: fixture.sharedReference },
+      });
+      fixture.publishProfileRecord(record, 1);
+      const credentials = await readStoredCredentials();
+      if (!credentials) throw new Error('Physical foreground credentials unavailable');
+      expect(await refreshActiveProfileCatalog({ credentials })).toMatchObject({ status: 'ready', source: 'destination' });
+      expect(fixture.runtime.registry.contributes.agentDefinitionsById.get(fixture.agentId))
+        .toMatchObject({ id: fixture.agentId, pluginId: fixture.agentPluginId });
+      const settingsVersion = getActiveAccountSettingsSnapshot()?.settingsVersion;
+      const admitted = await fixture.prepare({ selection: undefined, profileRecordRevision: 1 });
+      expect(admitted).toMatchObject({ ok: true });
+      if (!admitted.ok) throw new Error(admitted.error.code);
+      fixture.publishProfileRecord(record, 2);
+      expect(getActiveAccountSettingsSnapshot()?.settingsVersion).toBe(settingsVersion);
+      await expect(admitted.prepared.claim({ canonicalSessionId: 'canonical-session-stale-profile-row', httpPort: 40123,
+        foregroundSatisfiedProfileSecretRequirementNames: [],
+      })).resolves.toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
+      await admitted.prepared.cleanup();
+    });
+  });
+
   it('refreshes a persisted shared Profile binding before creating Session bootstrap effects', async () => {
     await withForegroundProviderFixture({
       settings: { version: 1, profileSecretRef: 'happier:shared-secret:v1:resource-profile-shared' },

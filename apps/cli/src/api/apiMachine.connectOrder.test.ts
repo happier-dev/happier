@@ -18,6 +18,7 @@ const callOrder = vi.hoisted(() => [] as string[]);
 const ioMock = vi.hoisted(() => vi.fn());
 const probeReadinessMock = vi.hoisted(() => vi.fn(async () => ({ status: 'ready' as const })));
 const loggerWarnMock = vi.hoisted(() => vi.fn());
+const loggerDebugMock = vi.hoisted(() => vi.fn());
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
@@ -49,11 +50,14 @@ vi.mock('@/configuration', () => ({
   configuration: {
     serverUrl: 'https://example.test',
     apiServerUrl: 'https://example.test',
+    activeServerId: 'connect-order-home',
     currentCliVersion: '0.0.0-test',
     socketForceWebsocketOnly: false,
     socketIoTransports: ['polling', 'websocket'],
     activeServerDir: '/private/tmp/happier-api-machine-connect-order',
     happyHomeDir: '/private/tmp/happier-api-machine-connect-order-home',
+    executionRunsMaxConcurrentPerSession: null,
+    oneShotTasksMaxConcurrentPerSession: null,
   },
 }));
 
@@ -67,15 +71,10 @@ vi.mock('@/api/connection/createLoopbackReadinessProbe', () => ({
 
 vi.mock('@/ui/logger', () => ({
   logger: {
-    debug: () => undefined,
+    debug: loggerDebugMock,
     warn: loggerWarnMock,
     debugLargeJson: () => undefined,
   },
-}));
-
-vi.mock('@/plugins/daemon/currentCatalog', () => ({
-  readCurrentDaemonPluginCatalog: async () => [],
-  readCurrentDaemonPluginCatalogSnapshot: async () => ({ plugins: [], tools: [] }),
 }));
 
 describe('ApiMachineClient connect ordering', () => {
@@ -83,11 +82,12 @@ describe('ApiMachineClient connect ordering', () => {
     callOrder.length = 0;
     probeReadinessMock.mockClear();
     loggerWarnMock.mockClear();
+    loggerDebugMock.mockClear();
     ioMock.mockReset();
     vi.unstubAllEnvs();
   });
 
-  it('installs the RPC listener before connecting and replays client handlers before state on every generation', async () => {
+  it.each([0, 7])('installs the RPC listener before connecting and replays client handlers before state on every generation (projection revision %i)', async (projectionRevision) => {
     vi.stubEnv('HAPPY_ENABLE_V2_CHANGES', 'false');
     const firstSocket = createApiSessionSocketStub({
       id: 'machine-socket-1',
@@ -153,7 +153,9 @@ describe('ApiMachineClient connect ordering', () => {
       encryptionVariant: 'legacy',
       metadata: null,
       metadataVersion: 0,
-      daemonState: null,
+      daemonState: projectionRevision === 0
+        ? null
+        : { status: 'running', contributionRegistryProjectionRevision: projectionRevision },
       daemonStateVersion: 0,
     });
 
@@ -170,11 +172,18 @@ describe('ApiMachineClient connect ordering', () => {
     try {
       client.connect();
       await vi.waitFor(() => expect(ioMock).toHaveBeenCalledTimes(1));
-      await vi.waitFor(() => expect(firstSocket.connect).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(firstSocket.connect,
+        JSON.stringify({ warnings: loggerWarnMock.mock.calls, debug: loggerDebugMock.mock.calls })).toHaveBeenCalledTimes(1));
       await vi.waitFor(() => expect(rpcHandlerManager.waitForRegisteredHandlers).toHaveBeenCalledTimes(1));
       expect(callOrder).not.toContain('state:machine-socket-1');
       firstReadiness.resolve({ status: 'ready' });
       await vi.waitFor(() => expect(callOrder).toContain('state:machine-socket-1'));
+      const runningPublication = firstSocket.emitWithAck.mock.calls.find(([event]) => event === 'machine-update-state');
+      expect(runningPublication).toBeDefined();
+      // Exercise the actual encrypted publication, not only its scheduling.
+      const { decodeBase64, decryptResult } = await import('@/api/encryption');
+      const runningState = decryptResult(new Uint8Array(32).fill(1), 'legacy', decodeBase64((runningPublication![1] as { daemonState: string }).daemonState));
+      expect(runningState).toMatchObject({ status: 'authenticated', value: { contributionRegistryProjectionRevision: projectionRevision } });
       firstSocket.disconnect();
       await vi.waitFor(() => expect(
         waitForRegisteredHandlersSpy.mock.calls.length,
@@ -270,10 +279,9 @@ describe('ApiMachineClient connect ordering', () => {
         {
           machineId: 'machine-1',
           capabilities: {
-            sessionInputAdmission: { protocolVersions: [1, 2] },
-            sessionSpawn: { protocolVersions: [1] },
+            sessionInputAdmission: { protocolVersions: [1] },
+            sessionSpawn: { protocolVersions: [1, 2] },
             pluginWebhookClaim: { protocolVersions: [1] },
-            externalActionExecutionAuthorization: { protocolVersions: [1] },
             sessionFollow: { contextV1: true, wakeOnHumanChangeV1: true },
           },
         },
@@ -475,10 +483,9 @@ describe('ApiMachineClient connect ordering', () => {
         {
           machineId: 'machine-1',
           capabilities: {
-            sessionInputAdmission: { protocolVersions: [1, 2] },
-            sessionSpawn: { protocolVersions: [1] },
+            sessionInputAdmission: { protocolVersions: [1] },
+            sessionSpawn: { protocolVersions: [1, 2] },
             pluginWebhookClaim: { protocolVersions: [1] },
-            externalActionExecutionAuthorization: { protocolVersions: [1] },
             sessionFollow: { contextV1: true, wakeOnHumanChangeV1: true },
           },
         },
@@ -802,10 +809,9 @@ describe('ApiMachineClient connect ordering', () => {
       expect(capabilityPayloads.at(-1)).toEqual({
         machineId: 'machine-1',
         capabilities: {
-          sessionInputAdmission: { protocolVersions: [1, 2] },
-          sessionSpawn: { protocolVersions: [1] },
+          sessionInputAdmission: { protocolVersions: [1] },
+          sessionSpawn: { protocolVersions: [1, 2] },
           pluginWebhookClaim: { protocolVersions: [1] },
-          externalActionExecutionAuthorization: { protocolVersions: [1] },
           sessionFollow: { contextV1: true, wakeOnHumanChangeV1: true },
         },
       });

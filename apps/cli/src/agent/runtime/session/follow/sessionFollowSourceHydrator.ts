@@ -25,6 +25,7 @@ import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/session
 import { TranscriptRawAgentEventV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
 import { WorkerUpdateV1Schema, workerDeliverablesBelongToSessionV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { StoredCredentials } from '@/persistence';
@@ -765,7 +766,7 @@ export function createSessionFollowSourceHydrator(input: Readonly<{
           }
           if (row.content && typeof row.content === 'object' && !Array.isArray(row.content)
             && 'type' in row.content && row.content.type === 'event' && 'data' in row.content) {
-            const event = TranscriptRawAgentEventV1Schema.safeParse(row.content.data);
+            const event = createStoredReadSchema(TranscriptRawAgentEventV1Schema).safeParse(row.content.data);
             if (event.success && event.data.type === 'worker-report' && row.seq > deliveredSeq
               && workerDeliverablesBelongToSessionV1(event.data.deliverables, observation.sourceSessionId)) {
               publishedReport = { text: event.data.summary, seq: row.seq, ...(event.data.deliverables ? { deliverables: event.data.deliverables } : {}) };

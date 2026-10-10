@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { accountSettingsParse } from '@happier-dev/protocol';
+import { clearActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { AgentState } from '@/api/types';
 import { CodexLikePermissionHandler } from './CodexLikePermissionHandler';
@@ -21,6 +23,28 @@ function fixture() {
 }
 
 describe('BasePermissionHandler hands-off policy', () => {
+  beforeEach(() => {
+    resetActiveAccountSettingsSnapshotForTests();
+    setActiveAccountSettingsSnapshot({ scopeKey: 'permission-test', source: 'network', settingsVersion: 1, settings: accountSettingsParse({}),
+      rawSettings: {}, settingsSecretsReadKeys: [], loadedAtMs: 1,
+      promptLibraryCatalog: { status: 'ready', rows: [], tombstones: [], diagnostics: [] } });
+  });
+  afterEach(() => resetActiveAccountSettingsSnapshotForTests());
+  it.each(['codex-like', 'provider-enforced'] as const)('reads current Account deny and refuses unavailable authority before YOLO (%s)', async (kind) => {
+    const { session, setMetadata } = fixture();
+    setMetadata({ work: { sessionRolesV1: { roleId: 'builder', overrides: {}, sessionRoles: {}, notes: '' } } });
+    const handler = kind === 'codex-like'
+      ? new CodexLikePermissionHandler({ session, logPrefix: '[HandsOff]' })
+      : new ProviderEnforcedPermissionHandler(session, { logPrefix: '[HandsOff]' });
+    handler.setPermissionMode('yolo');
+    setActiveAccountSettingsSnapshot({ scopeKey: 'permission-test', source: 'network', settingsVersion: 2, settings: accountSettingsParse({}),
+      rawSettings: { rolesV1: { overrides: { builder: { roleId: 'builder', workspaceWrites: 'deny' } } } }, settingsSecretsReadKeys: [], loadedAtMs: 2 });
+    expect(handler.getImmediateDecision('write', 'Write', { path: '/workspace/a' })).toEqual({ decision: 'denied' });
+    clearActiveAccountSettingsSnapshot();
+    expect(handler.getImmediateDecision('unavailable', 'Write', { path: '/workspace/a' })).toEqual({ decision: 'denied' });
+    expect(handler.getImmediateDecision('read', 'Bash', { command: 'git status' })?.decision).not.toBe('denied');
+    await handler.reset();
+  });
   it.each(['codex-like', 'provider-enforced'] as const)('uses the current host-resolved role ceiling (%s)', async (kind) => {
     const { session, setMetadata } = fixture();
     setMetadata(null);

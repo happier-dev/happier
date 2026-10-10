@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 
 import {
     createSessionSyncPendingInputServerContractController,
     resolveMachineSessionInputAdmissionCapability,
+    resolveMachinePendingResetStartCapability,
     resolveSessionServerCapabilities,
 } from './sessionSyncPendingInputServerContract';
 
@@ -40,6 +42,15 @@ function createSocket() {
 }
 
 describe('Session server capability detection', () => {
+    it('advertises reset start only when its owner is installed and the cached Home implements Pending V4', () => {
+        const v4 = { status: 'ready' as const, features: FeaturesResponseSchema.parse(currentFeatures({ pendingInput: { protocolVersion: 4 } })) };
+        const v3 = { status: 'ready' as const, features: FeaturesResponseSchema.parse(currentFeatures({ pendingInput: { protocolVersion: 3 } })) };
+        expect(resolveMachinePendingResetStartCapability(v4, true)).toEqual({ protocolVersions: [1] });
+        expect(resolveMachinePendingResetStartCapability(v4, false)).toBeUndefined();
+        expect(resolveMachinePendingResetStartCapability(v3, true)).toBeUndefined();
+        expect(resolveMachinePendingResetStartCapability(undefined, true)).toBeUndefined();
+        expect(resolveMachinePendingResetStartCapability({ status: 'error', reason: 'network' }, true)).toBeUndefined();
+    });
     it('publishes target Machine admission only for a cached Pending V3 server', () => {
         expect(resolveMachineSessionInputAdmissionCapability(undefined)).toEqual({ protocolVersions: [1] });
         expect(resolveMachineSessionInputAdmissionCapability({

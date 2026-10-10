@@ -7,8 +7,71 @@ import { describe, expect, it, vi } from 'vitest';
 import type { SessionHandoffAgentBundle } from '../types';
 import { readSessionHandoffAgentBundleFile } from '../agentBundle/file';
 import { createSessionHandoffSourceExportStore } from './sessionHandoffSourceExportStore';
+import { createSessionHandoffStatusGetActionHandler } from '@/api/machine/sessionHandoff/statusGet';
+import { createSessionHandoffPrepareTargetJobStore } from '../prepare/sessionHandoffPrepareTargetJobStore';
+import { buildStartPendingStatus, invalidRequest, readPersistedPrepareJob } from '@/api/machine/sessionHandoff/prepareTargetState';
+import { createRequesterSessionCredentialCustody, requesterSessionCredentialPath } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 
 describe('sessionHandoffSourceExportStore', () => {
+  it('holds the existing requester credential reference until export release without copying its bearer', async () => {
+    const happyHomeDir = await mkdtemp(join(os.tmpdir(), 'happier-handoff-existing-custody-'));
+    try {
+      const binding = { happyHomeDir, sessionId: 'same-session', attribution: { serverId: 'home', accountId: 'bob',
+        machineId: 'source', installationId: 'source-installation' } };
+      await createRequesterSessionCredentialCustody({ ...binding, credentials: { token: 'existing-bob-bearer', encryption: null } });
+      const activeServerDir = join(happyHomeDir, 'active-server');
+      const store = createSessionHandoffSourceExportStore({ activeServerDir, happyHomeDir });
+      await Reflect.apply(store.save, store, [{ handoffId: 'handoff-custody', sessionId: binding.sessionId,
+        sourceMachineId: 'source', targetMachineId: 'target', exportedAtMs: 1,
+        requesterSessionCredentialBinding: { sessionId: binding.sessionId, attribution: binding.attribution } }]);
+      const record = await store.load('handoff-custody');
+      expect(record).toMatchObject({ requesterSessionCredentialBinding: { sessionId: binding.sessionId, attribution: binding.attribution } });
+      expect(JSON.stringify(record)).not.toContain('existing-bob-bearer');
+      expect((await stat(requesterSessionCredentialPath(binding))).isFile()).toBe(true);
+      await createSessionHandoffSourceExportStore({ activeServerDir, happyHomeDir }).releaseTransferFiles('handoff-custody');
+      await expect(stat(requesterSessionCredentialPath(binding))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await store.load('handoff-custody')).not.toHaveProperty('requesterSessionCredentialBinding');
+      const targetBinding = { ...binding, attribution: { ...binding.attribution, machineId: 'target', installationId: 'target-installation' } };
+      await createRequesterSessionCredentialCustody({ ...targetBinding, credentials: { token: 'existing-target-bearer', encryption: null } });
+      await store.save({ handoffId: 'handoff-target', sessionId: targetBinding.sessionId, sourceMachineId: 'source',
+        targetMachineId: 'target', exportedAtMs: 2,
+        requesterSessionCredentialBinding: { sessionId: targetBinding.sessionId, attribution: targetBinding.attribution } });
+      await store.releaseTransferFiles('handoff-target', { preserveRequesterSessionCustody: true });
+      expect((await stat(requesterSessionCredentialPath(targetBinding))).isFile()).toBe(true);
+      expect(await store.load('handoff-target')).not.toHaveProperty('requesterSessionCredentialBinding');
+    } finally { await rm(happyHomeDir, { recursive: true, force: true }); }
+  });
+  it('retains the exact accepted root proof across export publication and cold reads without disclosing it in status', async () => {
+    const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-handoff-root-custody-'));
+    try {
+      const store = createSessionHandoffSourceExportStore({ activeServerDir });
+      const rootAuthorization = { v: 1, token: 'home-signed-original-handoff-secret', binding: {
+        accountId: 'bob', authentication: { kind: 'account', tokenEpoch: 7 }, serverIdentityId: 'srv_home',
+        machineId: 'source', custodianAccountId: 'alice', installationId: 'source-installation',
+        actionId: 'session.handoff', requestId: 'root-request', requestEnvelopeDigest: 'a'.repeat(43),
+        target: { kind: 'machine', machineId: 'source' },
+        handoffAdmission: { sessionId: 'same-session', sourceMachineId: 'source', targetMachineId: 'target',
+          sourceInstallationId: 'source-installation', targetInstallationId: 'target-installation' },
+      } };
+      const accepted = { handoffId: 'handoff-root', sessionId: 'same-session', sourceMachineId: 'source',
+        targetMachineId: 'target', exportedAtMs: 1, acceptedHandoffAuthorization: rootAuthorization };
+      // The persisted proof is custody data; only the Home verifier can admit it as authority.
+      await Reflect.apply(store.save, store, [accepted]);
+      await store.save({ handoffId: accepted.handoffId, sessionId: accepted.sessionId,
+        sourceMachineId: accepted.sourceMachineId, targetMachineId: accepted.targetMachineId, exportedAtMs: 2 });
+      const recovered = createSessionHandoffSourceExportStore({ activeServerDir });
+      expect(await recovered.load(accepted.handoffId)).toMatchObject({ acceptedHandoffAuthorization: rootAuthorization });
+      const status = createSessionHandoffStatusGetActionHandler({ sourceExportStore: recovered,
+        prepareJobStore: createSessionHandoffPrepareTargetJobStore({ activeServerDir }),
+        readPersistedPrepareJob, buildStartPendingStatus, invalidRequest });
+      expect(JSON.stringify(await status({ handoffId: accepted.handoffId }))).not.toContain(rootAuthorization.token);
+      await expect(recovered.save({ handoffId: accepted.handoffId, sessionId: 'different-session',
+        sourceMachineId: accepted.sourceMachineId, targetMachineId: accepted.targetMachineId, exportedAtMs: 3 })).rejects.toThrow();
+      expect(await recovered.load(accepted.handoffId)).toMatchObject({ sessionId: accepted.sessionId,
+        acceptedHandoffAuthorization: rootAuthorization });
+    } finally { await rm(activeServerDir, { recursive: true, force: true }); }
+  });
+
   it('saves and loads a schema-versioned source export record', async () => {
     const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-store-'));
     try {

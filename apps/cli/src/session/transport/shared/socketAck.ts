@@ -1,3 +1,5 @@
+import { isSocketIoAckTimeoutError } from '@happier-dev/sync-client';
+
 import { resolveSessionControlSocketAckTimeoutMs } from './sessionTimeouts';
 
 type AckableSocket<TEvent extends string = string, TPayload = unknown> = Readonly<{
@@ -106,7 +108,9 @@ export async function emitSocketWithAck<
     params.signal?.addEventListener('abort', onAbort, { once: true });
     ackPromise.then(
       (value) => settle(() => resolve(value as T)),
-      (error) => settle(() => reject(error)),
+      (error: unknown) => settle(() => reject(isSocketIoAckTimeoutError(error)
+        ? new SocketAckError({ code: 'socket_ack_timeout', event: params.event, timeoutMs })
+        : error)),
     );
   });
 }

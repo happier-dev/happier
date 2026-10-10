@@ -22,9 +22,15 @@ This is different from:
 ## Development status
 
 This capability exists in the current development source and is **not yet available in released
-Happier builds**. It has not passed an integrated live gate, so treat the behavior below as the
-current development contract rather than as shipped behavior. Availability, copy, and failure
+Happier builds**. Treat the behavior below as the current development contract rather than as
+shipped behavior. Availability, copy, and failure
 handling can still change.
+
+Configured ACP continuation is still under development, including the picker integration. Its
+intended behavior treats two configurations of the same executable as distinct targets. The chosen
+configuration starts a fresh ACP conversation with the text recap described below; an ACP
+conversation ID from the previous configuration does not carry over. A missing or unusable
+configuration must be unavailable before the current session stops.
 
 ## Selecting is arming
 
@@ -49,6 +55,18 @@ running Agent's own row clears the arm and the button returns to **Send**.
 Happier re-validates a restored arm rather than trusting it: if the Agent is no longer offered for
 that session, is no longer eligible, or the session has since changed Agents underneath you, the arm
 is dropped instead of firing at the wrong target.
+
+While armed, the composer shows the selected Agent's models and permission choices. Its auth chip
+previews that Agent's configured default and is read-only; an unavailable configured account or Team
+resource stays visible as unavailable. Edit target model, mode and config choices in the Agent
+picker. The current Agent's status and recovery controls still describe the running session.
+
+With permission changes set to apply on the next prompt, a changed permission choice needs a daemon
+that supports transferring that intent during continuation. If support is unavailable, the arm and
+draft remain intact and nothing is stopped. Retries keep the first submitted message and its authored
+permission intent; a different permission choice made later stays pending for a later prompt. When
+the first choice was equivalent to the committed session policy, a compatible older daemon can apply
+the latest committed policy, including an immediate permission edit made while stopping.
 
 ## What happens when you send
 

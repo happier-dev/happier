@@ -181,7 +181,7 @@ function createCurrentOwner(
       source: Object.freeze({ kind: 'testSource' }),
       externalLinkedTakeoverWriterSafety: 'unsupported' as const,
     })),
-    admitPersistedTakeoverSource: vi.fn(() => Object.freeze({
+    admitPersistedTakeoverSource: vi.fn(async () => Object.freeze({
       source: Object.freeze({ kind: 'testSource' }),
       externalLinkedTakeoverWriterSafety: 'unsupported' as const,
     })),
@@ -197,6 +197,10 @@ function createCurrentOwner(
       }),
     }),
     compositionPort: Object.freeze({
+      resolveSourceIdentity: vi.fn(async () => Object.freeze({
+        status: 'unavailable' as const,
+        code: 'test_unavailable',
+      })),
       resolveFollowTarget: vi.fn(async () => Object.freeze({
         status: 'unavailable' as const,
         code: 'test_unavailable',

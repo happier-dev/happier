@@ -218,6 +218,44 @@ The [Session prompt-plan producer](../apps/cli/src/agent/prompting/coding/sessio
 
 The host fits retained WorkerUpdates against the current optional context allowance before dispatch. A still-deliverable wake that cannot fit stays with the input consumer until context/source, metadata, admission or user input changes; parking neither commits a transcript event nor acknowledges provider acceptance. Source admission is rechecked before parking, so a withdrawn wake releases custody even if it still cannot fit. User input keeps priority, and the retained wake is reconsidered afterward without selecting its producer again.
 
+### Roles and managed work (0.3 development source)
+
+Protocol's [role resolver](../packages/protocol/src/prompts/roles/resolveRoleSelectionV1.ts)
+owns effective role fields; its
+[renderer](../packages/protocol/src/prompts/roles/renderSessionRoleBlockV1.ts)
+supplies the host prompt-plan role block. Plugins contribute source instructions
+and preferences through the declarative catalog, not another prompt or Session
+lifecycle owner. A Session's complete role snapshot and notes are owned by
+`work.sessionRolesV1`. Worker starts copy the effective set; explicit same-Account
+bulk application is separate from selecting a role or editing the lead later.
+Context documents remain in the Session Context stack, not a role-memory field.
+Native delegation remains the default where it satisfies the request; explicit
+Happier-managed delegation uses the existing Session/Run start owners.
+
+Creation origin, current turn initiator and causal work depth are separate host
+facts. The [turn stamper](../apps/cli/src/agent/runtime/session/turn/stampTurnFacts.ts)
+distinguishes user, agent-session, workflow and host input; a user turn has depth
+zero, while the start-policy witness retains the Session's starter depth as well.
+Reporting membership can change without rewriting these facts. The shared start
+policy enforces role engines, permission ceilings and the Account work-depth
+limit; consumers do not infer authority from a tree row or worker result.
+
+The strict [WorkerUpdate](../packages/protocol/src/sessions/relations/workerUpdateV1.ts)
+envelope carries actual engine facts when available, owner outcome, source
+pointer and optional deliverables. Truncated results require a source pointer.
+It is host context, never a fabricated user message. A Session worker's pending
+turn-end review postpones settled delivery; inactive leads are not resumed just
+because a result exists. Source and permission admission remain current at the
+eligible input boundary. Work/Inbox are projections of these owners, not a second
+turn scheduler or permission ledger.
+
+The approval reviewer is a request-scoped client of the existing permission
+owner. That owner rejects ineligible effects before starting a no-tools review
+with a redacted request, then rechecks current request/policy before an allow-once
+claim. Human notification and human answers are not held behind review. Escalation
+or failure leaves the human request pending; a successful automatic answer records
+the reviewer actor and creates no reusable grant or permission-mode change.
+
 Native interaction lifetime is separate from causal turn identity. Ordinary requests default to turn lifetime and retire with the matching terminal turn (including ordinary requests without a turn witness); native Codex asynchronous questions explicitly use occurrence lifetime. Those questions keep their causal turn id after completion and retire when their Session/plugin occurrence retires. The permission coordinator owns this distinction; terminal callbacks do not cancel every request owned by the plugin.
 
 Whole-Session permission reset reaches the existing Session request store even when the current coordinator has no local waiters, including after handler replacement. The store cancels pending requests and delivers their response targets. Cancellation waits for in-flight coordinator completion persistence before writing the terminal result; plugin-scoped cancellation retains its owner filter and performs no write for an empty local scope.
@@ -384,6 +422,14 @@ Current development source projects current execution-run work from the existing
 A retained provider-session handle proves which native session to resume, not that its state still exists. A definitive native resume rejection is classified by the Agent plugin; Codex's `thread/resume` application rejection for missing rollout state carries `AGENT_RESUME_PROVIDER_STATE_MISSING` through startup sanitization. The host resume owner records `execution_run_provider_state_missing`, and the lifecycle owner projects that retained Run as unavailable. Transient or unclassified failures remain indeterminate. Recovery never substitutes a fresh native thread for the requested identity.
 
 CLI `execution.run.wait` observations reattach to the original Run through the existing connection supervisor after transport loss. Reattachment invokes the same daemon event-backed wait, without launching work, replaying input or polling `execution.run.get`. A disconnected occurrence cannot settle the observation with a late acknowledgement. Caller cancellation retires only that waiter. The service's original finite observation deadline spans connection, reconnect and snapshot output backpressure. Requests resubmit the remaining budget with the wire's existing one-second quantum, while the caller signal enforces the precise deadline. Expiration ends observation and returns `ok:false, code:'observation_timeout'` when no completed owner reply is available; it supplies no invented Run status and does not reconnect after expiration. Unbounded observations remain unbounded.
+
+Input admission is not turn completion. The execution bridge's send acknowledgement
+settles when the input is admitted, including bounded recovery; later output and
+outcome settlement remain with the same retained Run. The existing
+`execution.run.get({ waitForInputId })` request observes an exact current/last input
+turn when its caller has that identity. It does not create input or await every
+future turn of a long-lived Run. Run-terminal observation uses `execution.run.wait`
+and the completion barrier below, rather than interpreting send success as output.
 
 Terminal and combined terminal matches, including an initially terminal public snapshot, cross the host's completion barrier and then re-read the settled result. A terminal projection alone can precede transcript publication and retained completion custody, whose failure can change the Run's final status. Expiration during that barrier returns an observation timeout rather than matched completion. Passive state snapshots remain immediate projections, and an attention-only observation does not treat terminal state as an attention match.
 

@@ -32,16 +32,13 @@ export function stripUnsetEnvironmentVariables(
   return compactEnvironment;
 }
 
-export function buildScopedProcessEnv(params: Readonly<{
+/** Merge authored values using the operating system's environment-key identity. */
+export function mergeProcessEnv(params: Readonly<{
   baseEnv: Readonly<NodeJS.ProcessEnv>;
   explicitEnv?: Readonly<Record<string, string | undefined>>;
-  unsetEnvKeys?: readonly string[];
   platform?: NodeJS.Platform;
 }>): NodeJS.ProcessEnv {
-  const scopedEnvironment = stripUnsetEnvironmentVariables(
-    params.baseEnv,
-    params.unsetEnvKeys,
-  );
+  const scopedEnvironment = { ...params.baseEnv };
   const explicitEnv: Record<string, string> = {};
   for (const [key, value] of Object.entries(params.explicitEnv ?? {})) {
     if (typeof value === 'string') {
@@ -60,5 +57,15 @@ export function buildScopedProcessEnv(params: Readonly<{
     }
     scopedEnvironment[key] = value;
   }
-  return stripCliApiTokenEnvironment(scopedEnvironment);
+  return scopedEnvironment;
+}
+
+export function buildScopedProcessEnv(params: Readonly<{
+  baseEnv: Readonly<NodeJS.ProcessEnv>;
+  explicitEnv?: Readonly<Record<string, string | undefined>>;
+  unsetEnvKeys?: readonly string[];
+  platform?: NodeJS.Platform;
+}>): NodeJS.ProcessEnv {
+  return stripCliApiTokenEnvironment(mergeProcessEnv({ ...params,
+    baseEnv: stripUnsetEnvironmentVariables(params.baseEnv, params.unsetEnvKeys) }));
 }

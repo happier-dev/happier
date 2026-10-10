@@ -179,13 +179,14 @@ describe('BasePermissionHandler permission-response routing (gap 28/29)', () => 
     new CodexLikePermissionHandler({ session: session as never, logPrefix: '[Test]' });
     const rpc = session.rpcHandlerManager.handlers.get('session.permission.respond');
     await expect(rpc!({
-      id: 'action-confirmation', turnId: 'turn-action', approved: true, decision: 'approved',
+      id: 'action-confirmation', turnId: 'turn-action', approved: true, decision: 'approved', answeringClientCategory: 'ios',
     })).resolves.toBeUndefined();
     expect(session.agentState.requests['action-confirmation']).toBeUndefined();
     expect(session.agentState.completedRequests['action-confirmation']).toEqual(expect.objectContaining({
       status: 'approved',
       decision: 'approved',
       turnId: 'turn-action',
+      answeringClientCategory: 'ios',
       permissionDecisionActorV1: expect.objectContaining({ accountId: 'account-owner' }),
     }));
   });

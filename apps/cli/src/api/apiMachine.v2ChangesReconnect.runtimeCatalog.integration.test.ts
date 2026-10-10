@@ -5,10 +5,21 @@ import { join } from 'node:path';
 import type { ReadinessProbeResult } from '@happier-dev/connection-supervisor';
 import { buildConnectedServiceCredentialRecord, FeaturesResponseSchema } from '@happier-dev/protocol';
 import { CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE } from '@happier-dev/plugins-claude/agent';
+import { buildProjectAccountRowPhysicalKeyV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { buildProfilePhysicalKey, ProfileRecordV1Schema } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { refreshActiveProfileCatalog } from '@/settings/profiles/hydrateProfileCatalog';
+import { refreshActivePromptLibraryCatalog } from '@/settings/prompts/hydratePromptLibraryCatalog';
+import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { emptyAccountSettingsHistoryCaptureResponse } from '@/settings/accountSettings/emptyAccountSettingsHistoryCapture.testkit';
+import { buildPromptLibraryPhysicalKeyV1, PromptLibraryCatalogKeyV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
+import { emptyPromptLibraryRecordV1, readPromptLibraryCatalogRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
+import * as persistence from '@/persistence';
 
 import type { Machine } from '@/api/types';
 import { encodeBase64, encrypt } from '@/api/encryption';
 import { configuration } from '@/configuration';
+import { readProjectAccountRows, getActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import {
     clearActiveAccountSettingsSnapshot,
@@ -33,6 +44,7 @@ const { claudeProvenanceReplaceCount } = vi.hoisted(() => ({
 const {
     mockIo,
     axiosGet,
+    axiosPost,
     axiosIsAxiosError,
         readAccountChangesCursor,
         retirePluginAccountCollectionWatchScope,
@@ -43,6 +55,7 @@ const {
     return {
         mockIo: vi.fn(),
         axiosGet: vi.fn(),
+        axiosPost: vi.fn(),
         axiosIsAxiosError: vi.fn((error: unknown) => (
             typeof error === 'object' && error !== null && (error as { isAxiosError?: unknown }).isAxiosError === true
         )),
@@ -77,6 +90,7 @@ vi.mock('socket.io-client', () => ({
 vi.mock('axios', () => ({
     default: {
         get: axiosGet,
+        post: axiosPost,
         isAxiosError: axiosIsAxiosError,
     },
     isAxiosError: axiosIsAxiosError,
@@ -170,6 +184,309 @@ function createMachineSocket(options: {
 }
 
 describe('ApiMachineClient /v2/changes reconnect', () => {
+    it('reopens a demanded Provider catalog on its content-free Account hint without advancing Settings', async () => {
+        const previous = getActiveAccountSettingsSnapshot();
+        const credentials = { token: 'provider-row-change-token', encryption: null };
+        const stored = vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
+        clearActiveAccountSettingsSnapshot();
+        setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 7,
+            loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKeyForToken(credentials.token),
+            providerConnectionsCatalog: { status: 'ready', revision: 1, catalog: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 } });
+        axiosGet.mockImplementation(async (url: string) => {
+            const path = new URL(url).pathname;
+            if (path === '/v1/account/profile') return { status: 200, data: { id: 'provider-row-account' } };
+            if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
+                mode: 'plain', version: 1, settingsVersion: 7, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+            if (path === '/v1/account/entity-rows/provider-connections') return { status: 200, data: { status: 'deleted', revision: 2 } };
+            if (path === '/v2/account/settings') return { status: 200, data: { version: 7, content: { t: 'plain', v: {} } } };
+            if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
+            const historyResponse = emptyAccountSettingsHistoryCaptureResponse(path);
+            if (historyResponse) return historyResponse;
+            if (path === '/v2/changes') return { status: 200, data: { changes: [{ cursor: 4, kind: 'account',
+                entityId: PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1, changedAt: 1, hint: { providerConnections: true, revision: 2 } }], nextCursor: 4 } };
+            throw new Error(`Unexpected Provider observer boundary: ${path}`);
+        });
+        const machine: Machine = { id: 'provider-row-machine', encryptionMode: 'plain', metadata: null,
+            metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
+        const client = new ApiMachineClient(credentials.token, machine);
+        const settingsHint = vi.fn();
+        client.onAccountSettingsVersionHint(settingsHint);
+        try {
+            await (client as unknown as { syncChangesOnConnect(options: { reason: 'live' }): Promise<void> }).syncChangesOnConnect({ reason: 'live' });
+            expect(getActiveAccountSettingsSnapshot()?.providerConnectionsCatalog).toMatchObject({ status: 'ready', revision: 2 });
+            expect(getActiveAccountSettingsSnapshot()?.settingsVersion).toBe(7);
+            expect(settingsHint).not.toHaveBeenCalled();
+        } finally {
+            await client.shutdown(); stored.mockRestore(); clearActiveAccountSettingsSnapshot();
+            if (previous) setActiveAccountSettingsSnapshot(previous);
+        }
+    });
+    it('refreshes demanded prompt catalogs on content-free Account hints without advancing Settings', async () => {
+        const previous = getActiveAccountSettingsSnapshot();
+        const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'prompt-library-account' })).toString('base64url')}.signature`, encryption: null };
+        const stored = vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
+        clearActiveAccountSettingsSnapshot();
+        setActiveAccountSettingsSnapshot({ source: 'network', settings: {} as never, rawSettings: {}, settingsVersion: 7,
+            loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKeyForToken(credentials.token) });
+        let revision = 1;
+        axiosGet.mockImplementation(async (url: string) => {
+            const path = new URL(url).pathname;
+            if (path === '/v1/account/profile') return { status: 200, data: { id: 'prompt-library-account' } };
+            if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
+                mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+            if (path === '/v1/account/entity-rows/prompt-library') return { status: 200, data: {
+                status: 'listed', rows: PromptLibraryCatalogKeyV1Schema.options.map(key => ({ key, revision, content: { t: 'plain', v: key === 'coding' ? { key: 'coding', value: {
+                    v: 1, scope: { kind: 'coding' }, entries: [{ id: `entry-${revision}`, ref: { kind: 'doc', artifactId: `doc-${revision}` },
+                        enabled: true, placement: 'system_append' }],
+                } } : emptyPromptLibraryRecordV1(key) } })),
+            } };
+            if (path === '/v2/changes') return { status: 200, data: { changes: [{ cursor: 4, kind: 'account',
+                entityId: buildPromptLibraryPhysicalKeyV1('coding'), changedAt: 1, hint: { promptLibrary: true, key: 'coding', revision } }], nextCursor: 4 } };
+            throw new Error(`Unexpected prompt catalog observer boundary: ${path}`);
+        });
+        const machine: Machine = { id: 'prompt-library-machine', encryptionMode: 'plain', metadata: null,
+            metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
+        const client = new ApiMachineClient(credentials.token, machine);
+        const settingsHint = vi.fn();
+        client.onAccountSettingsVersionHint(settingsHint);
+        try {
+            await refreshActivePromptLibraryCatalog({ credentials });
+            revision = 2;
+            await (client as unknown as { syncChangesOnConnect(options: { reason: 'live' }): Promise<void> }).syncChangesOnConnect({ reason: 'live' });
+            const catalog = getActiveAccountSettingsSnapshot()?.promptLibraryCatalog ?? { status: 'loading' as const };
+            expect(readPromptLibraryCatalogRecordV1({ catalog, key: 'coding' })).toMatchObject({ status: 'ready', authority: 'active',
+                revision: 2, record: { value: { entries: [{ id: 'entry-2' }] } } });
+            expect(getActiveAccountSettingsSnapshot()?.settingsVersion).toBe(7);
+            expect(settingsHint).not.toHaveBeenCalled();
+        } finally {
+            await client.shutdown(); stored.mockRestore(); clearActiveAccountSettingsSnapshot();
+            if (previous) setActiveAccountSettingsSnapshot(previous);
+        }
+    });
+    it('refreshes a demanded Profile row on its Account hint without any Settings revision advance', async () => {
+        const previous = getActiveAccountSettingsSnapshot();
+        const credentials = { token: 'profile-row-change-token', encryption: null };
+        const stored = vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
+        clearActiveAccountSettingsSnapshot();
+        setActiveAccountSettingsSnapshot({ source: 'network', settings: {} as never, settingsVersion: 7,
+            loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKeyForToken(credentials.token) });
+        let revision = 1;
+        const control = { status: 'present', revision: 1, content: { t: 'plain', v: {
+            v: 1, phase: 'active', sourceSettingsVersion: 1, migratedLogicalRevision: 1, inventory: [],
+        } } };
+        axiosGet.mockImplementation(async (url: string) => {
+            const path = new URL(url).pathname;
+            if (path === '/v1/account/profile') return { status: 200, data: { id: 'profile-row-account' } };
+            if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
+                mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+            if (path.endsWith('/reference-guard')) return { status: 200, data: { status: 'ready', revision } };
+            if (path.endsWith('/transfer')) return { status: 200, data: control };
+            if (path === '/v1/account/entity-rows/profiles') return { status: 200, data: {
+                status: 'listed', rows: [{ id: 'focused', revision, content: { t: 'plain', v: ProfileRecordV1Schema.parse({
+                    v: 1, id: 'focused', enabled: revision === 1, promptStack: [], secretBindings: {},
+                    definition: { kind: 'inline', profile: { v: 2, id: 'focused', name: 'Focused', createdAt: 1, updatedAt: 1 } },
+                }) } }], nextCursor: null, complete: true, diagnostics: [], referenceGuardRevision: revision, transferControl: control } };
+            if (path === '/v2/changes') return { status: 200, data: { changes: [{ cursor: 4, kind: 'account',
+                entityId: buildProfilePhysicalKey('focused'), changedAt: 1, hint: { profiles: true, id: 'focused', revision } }], nextCursor: 4 } };
+            throw new Error(`Unexpected Profile observer boundary: ${path}`);
+        });
+        const machine: Machine = { id: 'profile-row-machine', encryptionMode: 'plain', metadata: null,
+            metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
+        const client = new ApiMachineClient(credentials.token, machine);
+        const settingsHint = vi.fn();
+        client.onAccountSettingsVersionHint(settingsHint);
+        try {
+            await refreshActiveProfileCatalog({ credentials });
+            revision = 2;
+            await (client as unknown as { syncChangesOnConnect(options: { reason: 'live' }): Promise<void> }).syncChangesOnConnect({ reason: 'live' });
+            expect(getActiveAccountSettingsSnapshot()?.profileCatalog).toMatchObject({ status: 'ready',
+                records: [{ revision: 2, record: { enabled: false } }] });
+            expect(getActiveAccountSettingsSnapshot()?.settingsVersion).toBe(7);
+            expect(settingsHint).not.toHaveBeenCalled();
+        } finally {
+            await client.shutdown();
+            stored.mockRestore();
+            clearActiveAccountSettingsSnapshot();
+            if (previous) setActiveAccountSettingsSnapshot(previous);
+        }
+    });
+    it('loads keyless Project rows through daemon bootstrap and releases its listener on retirement', async () => {
+        const previousSettings = getActiveAccountSettingsSnapshot();
+        clearActiveAccountSettingsSnapshot();
+        const tempRoot = await mkdtemp(join(tmpdir(), 'project-row-daemon-'));
+        const credentials = { token: 'project-row-daemon-token', encryption: null };
+        const machine: Machine = { id: 'project-row-daemon-machine', encryptionMode: 'plain',
+            metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
+        const key = { kind: 'workspace-ref' as const, serverId: configuration.activeServerId, id: 'project-row-daemon-ref' };
+        const ref = { id: key.id, serverId: key.serverId, machineId: machine.id, rootPath: '/daemon-project', createdAtMs: 1 };
+        const socket = createMachineSocket();
+        socket.connect.mockImplementation(() => { socket.connected = true; return socket; });
+        bindApiSessionSocketMock(mockIo, socket);
+        axiosGet.mockImplementation(async (url: string) => {
+            if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'project-row-daemon-account' } };
+            if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+            if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 7 } };
+            if (url.includes('/v2/changes')) return { status: 200, data: { changes: [
+                { cursor: 4, kind: 'account', entityId: buildProjectAccountRowPhysicalKeyV1(key), changedAt: 1, hint: { projectAccountRow: true, key, revision: 2 } },
+            ], nextCursor: 4 } };
+            if (url.includes('/v2/sessions')) return { status: 200, data: { sessions: [], nextCursor: null } };
+            throw new Error(`unexpected url: ${url}`);
+        });
+        axiosPost.mockImplementation(async (url: string) => {
+            if (url.endsWith('/v1/account/project-rows/list')) return { status: 200, data: {
+                status: 'listed', coverage: 'complete', rows: [{ key, revision: 2, content: { t: 'plain', v: { key, value: ref } } }],
+            } };
+            throw new Error(`unexpected url: ${url}`);
+        });
+        const client = new ApiMachineClient(credentials.token, machine);
+        const bootstrap = await bootstrapMachineSyncRuntime({
+            cliVersion: '0.0.0-test', machineId: machine.id, machine, credentials,
+            deviceLocalSecretStorage: { sealJson: () => 'sealed', openJson: () => null, deriveOpaqueIdentity: () => 'a'.repeat(64) } as never,
+            preferredHost: 'host.local', happyHomeDir: tempRoot, happyLibDir: tempRoot,
+            filesystemAccessPolicy: { kind: 'osUser' }, takeoverRequested: false, isShuttingDown: () => false,
+            createConnectedApiMachine: () => client, attachTransferRuntimeStatePublisher: async () => {},
+            startAutomationWorkerForMachine: () => ({ stop: () => {}, refreshAssignments: async () => {}, pause: () => {}, resume: () => {}, handleServerUpdate: () => {} }),
+            startMemoryWorkerForMachine: async () => null, startVoiceInferenceWorkerForMachine: async () => null,
+            spawnSession: async () => ({ type: 'success', sessionId: 'unused' }), stopSession: async () => ({ status: 'stopped' }),
+            isSessionAlreadyRunning: async () => false, loadLocalSessionMetadataForHandoff: async () => null,
+            beforeShutdown: async () => {}, requestShutdown: () => {}, directPeerServerLifecycle: null,
+            directTransferPromptAssetAdapterRegistry: createPromptAssetAdapterRegistry(), directTransferPromptRegistryRegistry: createPromptRegistryAdapterRegistry(),
+            connectedServiceRefreshLoopHandle: null, connectedServiceQuotasLoopHandle: null, daemonServerWorkScheduler: {} as never,
+        });
+        try {
+            // Bootstrap's real Plain Account reader must admit before Profile migration;
+            // no daemon-only content key or synthetic empty snapshot substitutes for it.
+            await vi.waitFor(() => expect(getActiveAccountSettingsSnapshot()).toMatchObject({
+                source: 'network', settingsVersion: 7, scopeKey: resolveAccountSettingsScopeKeyForToken(credentials.token),
+            }));
+            const sync = () => (client as unknown as { syncChangesOnConnect(options: { reason: 'live' }): Promise<void> }).syncChangesOnConnect({ reason: 'live' });
+            await sync();
+            expect(getActiveProjectAccountRowsSnapshot()?.workspaceRefs).toEqual([ref]);
+            bootstrap.machineConnectionStateCleanup?.();
+            const published = getActiveProjectAccountRowsSnapshot();
+            axiosPost.mockClear();
+            await sync();
+            expect(getActiveProjectAccountRowsSnapshot()).toBe(published);
+            expect(axiosPost).not.toHaveBeenCalled();
+        } finally {
+            bootstrap.machineConnectionStateCleanup?.();
+            bootstrap.disposeInactiveSessionUsageLimitRecovery();
+            bootstrap.automationWorker?.stop();
+            await bootstrap.stopPeerMediationLoopbackServer();
+            await client.shutdown();
+            clearActiveAccountSettingsSnapshot();
+            if (previousSettings) setActiveAccountSettingsSnapshot(previousSettings);
+            await rm(tempRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('refetches Project rows for a row-only Account hint without refreshing Account settings', async () => {
+        const credentials = { token: 'project-row-token', encryption: null };
+        const machine: Machine = {
+            id: 'machine-1', encryptionKey: new Uint8Array(32).fill(7), encryptionVariant: 'legacy',
+            metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+        };
+        const key = { kind: 'workspace-ref' as const, serverId: configuration.activeServerId, id: 'project-row-ref' };
+        const ref = { id: key.id, serverId: key.serverId, machineId: machine.id, rootPath: '/project-row', createdAtMs: 1 };
+        axiosGet.mockImplementation(async (url: string) => {
+            if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'project-row-account' } };
+            if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain' } };
+            if (url.includes('/v2/changes')) return { status: 200, data: { changes: [
+                { cursor: 4, kind: 'account', entityId: buildProjectAccountRowPhysicalKeyV1(key), changedAt: 1, hint: { projectAccountRow: true, key, revision: 2 } },
+            ], nextCursor: 4 } };
+            throw new Error(`unexpected url: ${url}`);
+        });
+        axiosPost.mockImplementation(async (url: string) => {
+            if (url.endsWith('/v1/account/project-rows/list')) return { status: 200, data: {
+                status: 'listed', coverage: 'complete', rows: [{ key, revision: 2, content: { t: 'plain', v: { key, value: ref } } }],
+            } };
+            throw new Error(`unexpected url: ${url}`);
+        });
+        writeAccountChangesCursor.mockClear();
+        const client = new ApiMachineClient(credentials.token, machine);
+        const settingsHint = vi.fn();
+        client.onAccountSettingsVersionHint(settingsHint);
+        client.onAccountProjectRowsChanged(async ({ signal }) => {
+            await readProjectAccountRows({ credentials, signal });
+        });
+
+        await (client as unknown as { syncChangesOnConnect(options: { reason: 'live' }): Promise<void> })
+            .syncChangesOnConnect({ reason: 'live' });
+
+        expect(getActiveProjectAccountRowsSnapshot()?.workspaceRefs).toEqual([ref]);
+        expect(settingsHint).not.toHaveBeenCalled();
+        expect(writeAccountChangesCursor).toHaveBeenCalledWith('project-row-account', 4);
+    });
+
+    it('retains the Account cursor when Project-row delivery fails and replays it on retry', async () => {
+        const credentials = { token: 'project-row-token', encryption: null };
+        const key = { kind: 'relationship-graph' as const };
+        const machine: Machine = {
+            id: 'machine-1', encryptionKey: new Uint8Array(32).fill(7), encryptionVariant: 'legacy',
+            metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+        };
+        axiosGet.mockImplementation(async (url: string) => {
+            if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'project-row-account' } };
+            if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain' } };
+            if (url.includes('/v2/changes')) return { status: 200, data: { changes: [
+                { cursor: 4, kind: 'account', entityId: buildProjectAccountRowPhysicalKeyV1(key), changedAt: 1, hint: {
+                    projectAccountRow: true, key, revision: 2,
+                } },
+            ], nextCursor: 4 } };
+            throw new Error(`unexpected url: ${url}`);
+        });
+        writeAccountChangesCursor.mockClear();
+        const client = new ApiMachineClient(credentials.token, machine);
+        let unavailable = true;
+        axiosPost.mockImplementation(async (url: string) => {
+            if (url.endsWith('/v1/account/project-rows/list')) return { status: 200, data: unavailable
+                ? { status: 'account-mode-mismatch' }
+                : { status: 'listed', coverage: 'complete', rows: [] } };
+            throw new Error(`unexpected url: ${url}`);
+        });
+        client.onAccountProjectRowsChanged(async ({ signal }) => {
+            await readProjectAccountRows({ credentials, signal });
+        });
+        const sync = () => (client as unknown as { syncChangesOnConnect(options: { reason: 'live' }): Promise<void> })
+            .syncChangesOnConnect({ reason: 'live' });
+
+        await expect(sync()).rejects.toThrow('project_account_rows_account-mode-mismatch');
+        expect(getActiveProjectAccountRowsSnapshot()).toBeNull();
+        expect(writeAccountChangesCursor).not.toHaveBeenCalled();
+        unavailable = false;
+        await sync();
+        expect(writeAccountChangesCursor).toHaveBeenCalledWith('project-row-account', 4);
+    });
+
+    it.each(['reconnect', 'cursor-gone', 'page-limit'] as const)('refreshes Project rows when changes completeness is lost: %s', async (recovery) => {
+        const machine: Machine = {
+            id: 'machine-1', encryptionKey: new Uint8Array(32).fill(7), encryptionVariant: 'legacy',
+            metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+        };
+        axiosGet.mockImplementation(async (url: string) => {
+            if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'project-row-account' } };
+            if (url.includes('/v2/changes')) {
+                if (recovery === 'cursor-gone') return { status: 410, data: { error: 'cursor-gone', currentCursor: 9 } };
+                return { status: 200, data: { changes: recovery === 'page-limit'
+                    ? Array.from({ length: 200 }, (_, cursor) => ({ cursor: cursor + 1, kind: 'account', entityId: 'other', changedAt: 1, hint: null }))
+                    : [], nextCursor: 9 } };
+            }
+            if (url.includes('/v1/machines/')) return { status: 200, data: { machine: {
+                id: machine.id, metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+            } } };
+            throw new Error(`unexpected url: ${url}`);
+        });
+        writeAccountChangesCursor.mockClear();
+        const client = new ApiMachineClient('project-row-token', machine);
+        client.onConnectedServicesProjection(async () => {});
+        const notifications: string[] = [];
+        client.onAccountProjectRowsChanged(async ({ source }) => { notifications.push(source); });
+        await (client as unknown as { syncChangesOnConnect(options: { reason: 'live' | 'reconnect' }): Promise<void> })
+            .syncChangesOnConnect({ reason: recovery === 'reconnect' ? 'reconnect' : 'live' });
+        expect(notifications).toEqual([recovery]);
+        expect(writeAccountChangesCursor).toHaveBeenCalledWith('project-row-account', 9);
+    });
+
     it('advances a Saved Secret AccountChange cursor without hydration retries when Teams is disabled', async () => {
         const machine: Machine = {
             id: 'machine-1',
@@ -682,6 +999,29 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             source: 'changes',
         });
         expect(order).toEqual(['activation', 'cursor']);
+    });
+
+    it('accepts only the strict exact-Machine non-content Pending ephemeral carrier without advancing its Account cursor', async () => {
+        const machine: Machine = { id: 'machine-1', encryptionKey: new Uint8Array(32).fill(7), encryptionVariant: 'legacy',
+            metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
+        const socket = createMachineSocket();
+        bindApiSessionSocketMock(mockIo, socket);
+        const activation = vi.fn(async () => {});
+        const client = new ApiMachineClient('token', machine);
+        client.onPendingSessionActivationHint(activation);
+        client.onConnectedServicesProjection(async () => {});
+        client.connect();
+        const target = { homeId: 'requester-home', accountId: 'bob', sessionId: 'inactive-session',
+            machineId: machine.id, installationId: 'installation-1' };
+        const hint = { type: 'pending-activation-requested', target, requestId: 'pending-request', requestedAt: 12, pendingVersion: 9 };
+        socket.trigger('ephemeral', { ...hint, target: { ...target, machineId: 'other-machine' } });
+        socket.trigger('ephemeral', { ...hint, prompt: 'must-not-be-accepted' });
+        socket.trigger('ephemeral', hint);
+        await vi.waitFor(() => expect(activation).toHaveBeenCalledExactlyOnceWith({
+            sessionId: target.sessionId, target, requestId: hint.requestId, requestedAt: hint.requestedAt,
+            pendingVersion: hint.pendingVersion, source: 'live',
+        }));
+        expect(writeAccountChangesCursor).not.toHaveBeenCalled();
     });
 
     it('surfaces the same exact Pending authorization from a live machine-only update', async () => {
@@ -2096,6 +2436,45 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             },
         });
         expect(order).toEqual(['deleted', 'cursor']);
+    });
+
+    it('delivers same-sequence transcript revisions before acknowledging the Account cursor', async () => {
+        const machine: Machine = { id: 'machine-memory-revision', encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
+        axiosGet.mockImplementation(async (url: string) => {
+            if (url.includes('/v1/account/profile')) return { status: 200, data: { id: 'account-memory-revision' } };
+            if (url.includes('/v2/changes')) return { status: 200, data: {
+                changes: [{ cursor: 12, kind: 'session', entityId: 'session-edited', changedAt: 2,
+                    hint: { updatedMessageSeq: 8, updatedMessageId: 'message-edited' } },
+                    { cursor: 13, kind: 'session', entityId: 'session-coalesced', changedAt: 3,
+                        hint: { lastMessageSeq: 9 } }], nextCursor: 13,
+                sessionAccessWitness: { v: 1, throughCursor: 13,
+                    entries: [{ sessionId: 'session-edited', cursor: 12, status: 'available' },
+                        { sessionId: 'session-coalesced', cursor: 13, status: 'available' }] },
+            } };
+            throw new Error(`unexpected url: ${url}`);
+        });
+        const order: string[] = [];
+        const revisions: unknown[] = [];
+        writeAccountChangesCursor.mockClear();
+        writeAccountChangesCursor.mockImplementation(async () => { order.push('cursor'); });
+        const client = new ApiMachineClient('fake-token', machine);
+        client.onConnectedServicesProjection(async () => {});
+        // The optional lookup leaves the current client executable so RED is
+        // the missing revision delivery, not a missing-method setup exception.
+        const revisionClient = client as unknown as { onSessionTranscriptRevised?: (
+            listener: (change: unknown) => Promise<void>,
+        ) => () => void };
+        const dispose = revisionClient.onSessionTranscriptRevised?.(async change => {
+            revisions.push(change); order.push('revision');
+        });
+        try {
+            await (client as unknown as { syncChangesOnConnect: (opts: { reason: 'live' }) => Promise<void> })
+                .syncChangesOnConnect({ reason: 'live' });
+            expect(revisions).toEqual([{ sessionId: 'session-edited', seq: 8, messageId: 'message-edited', cursor: 12 },
+                { sessionId: 'session-coalesced', seq: 9, cursor: 13 }]);
+            expect(order).toEqual(['revision', 'revision', 'cursor']);
+        } finally { dispose?.(); await client.shutdown(); }
     });
 
     it('retains the Account cursor when authoritative Session cleanup is deferred', async () => {

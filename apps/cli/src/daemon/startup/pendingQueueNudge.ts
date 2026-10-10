@@ -1,4 +1,6 @@
 import type { StoredCredentials } from '@/persistence';
+import type { AdmittedRequesterSessionBootstrap } from '../sessionEncryption/requesterSessionCredentials';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/session/transport/encryption/sessionEncryptionContext';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
@@ -19,19 +21,25 @@ export type ExistingSessionServiceability =
   | Readonly<{ state: 'recoverable_unservable'; reason: 'encryption_material_unavailable' | 'runtime_upgrade_required' | 'malformed_response' | 'rpc_method_unavailable' }>
   | Readonly<{ state: 'unknown'; reason: 'no_token' | 'shutdown' | 'transport_unavailable' | 'rpc_failed' }>;
 
-type ServiceabilityParams = Readonly<{ sessionId: string; credentials: StoredCredentials }> & Cancellation;
+type ServiceabilityParams = Readonly<{ sessionId: string; credentials: StoredCredentials;
+  requesterSessionBootstrap?: AdmittedRequesterSessionBootstrap }> & Cancellation;
 type CapabilityDiscovery =
   | Readonly<{ result: Extract<ExistingSessionServiceability, { state: 'servable' }>; transport: Parameters<typeof callSessionRpc>[0] }>
   | Readonly<{ result: Exclude<ExistingSessionServiceability, { state: 'servable' }>; error?: unknown }>;
 
 async function discoverPendingQueueCapability(params: ServiceabilityParams): Promise<CapabilityDiscovery> {
-  const token = params.credentials.token.trim();
+  const bootstrap = params.requesterSessionBootstrap;
+  const current = async () => !cancelled(params) && (!bootstrap
+    || bootstrap.getBoundSessionId() === params.sessionId && await bootstrap.isCurrent());
+  if (!await current()) return { result: { state: 'unknown', reason: cancelled(params) ? 'shutdown' : 'transport_unavailable' } };
+  const credentials = bootstrap?.credentials ?? params.credentials;
+  const token = credentials.token.trim();
   if (!token) return { result: { state: 'unknown', reason: 'no_token' } };
   if (cancelled(params)) return { result: { state: 'unknown', reason: 'shutdown' } };
   try {
     const rawSession = await fetchSessionByIdCompat({ token, sessionId: params.sessionId });
     if (!rawSession) return { result: { state: 'unknown', reason: 'transport_unavailable' } };
-    if (cancelled(params)) return { result: { state: 'unknown', reason: 'shutdown' } };
+    if (!await current()) return { result: { state: 'unknown', reason: cancelled(params) ? 'shutdown' : 'transport_unavailable' } };
     const mode = resolveSessionStoredContentEncryptionMode(rawSession);
     const transport = mode === 'plain'
       ? {
@@ -43,7 +51,7 @@ async function discoverPendingQueueCapability(params: ServiceabilityParams): Pro
           request: {},
         } satisfies Parameters<typeof callSessionRpc>[0]
       : (() => {
-          const ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, rawSession);
+          const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
           if (!ctx) return null;
           return {
             token,
@@ -62,7 +70,9 @@ async function discoverPendingQueueCapability(params: ServiceabilityParams): Pro
         },
       };
     }
+    if (!await current()) return { result: { state: 'unknown', reason: 'transport_unavailable' } };
     const capabilityRaw = await callSessionRpc(transport);
+    if (!await current()) return { result: { state: 'unknown', reason: 'transport_unavailable' } };
     const capability = SessionPendingQueueWakeCapabilityResponseV1Schema.safeParse(capabilityRaw);
     if (!capability.success || (capability.data.ok && capability.data.method !== SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_WAKE_V1)) {
       return { result: { state: 'recoverable_unservable', reason: 'malformed_response' } };
@@ -78,19 +88,27 @@ async function discoverPendingQueueCapability(params: ServiceabilityParams): Pro
 
 /** Exact-session capability probe only; never invokes the wake method. */
 export async function probeAlreadyRunningExistingSessionServiceability(params: ServiceabilityParams): Promise<ExistingSessionServiceability> {
-  return (await discoverPendingQueueCapability(params)).result;
+  const read = async () => (await discoverPendingQueueCapability(params)).result;
+  return params.requesterSessionBootstrap
+    ? await runWithServerHttpBaseUrl(params.requesterSessionBootstrap.serverHttpBaseUrl, read) : await read();
 }
 
-export async function nudgeAlreadyRunningExistingSessionPendingQueue(params: Readonly<{
-  sessionId: string;
-  credentials: StoredCredentials;
-}> & Cancellation): Promise<PendingQueueNudgeResult> {
+export async function nudgeAlreadyRunningExistingSessionPendingQueue(params: ServiceabilityParams): Promise<PendingQueueNudgeResult> {
+  const nudge = () => nudgePendingQueueInAccountScope(params);
+  return params.requesterSessionBootstrap
+    ? await runWithServerHttpBaseUrl(params.requesterSessionBootstrap.serverHttpBaseUrl, nudge) : await nudge();
+}
+
+async function nudgePendingQueueInAccountScope(params: ServiceabilityParams): Promise<PendingQueueNudgeResult> {
   const discovery = await discoverPendingQueueCapability(params);
   if (!('transport' in discovery)) {
     return { type: 'unavailable', reason: discovery.result.reason, ...(discovery.error === undefined ? {} : { error: discovery.error }) };
   }
   try {
     if (cancelled(params)) return { type: 'unavailable', reason: 'shutdown' };
+    if (params.requesterSessionBootstrap && !await params.requesterSessionBootstrap.isCurrent()) {
+      return { type: 'unavailable', reason: 'transport_unavailable' };
+    }
     const wakeRaw = await callSessionRpc({ ...discovery.transport, method: `${params.sessionId}:${SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_WAKE_V1}`, request: { protocolVersion: 1 } });
     const wake = SessionPendingQueueWakeResponseV1Schema.safeParse(wakeRaw);
     if (!wake.success) return { type: 'unavailable', reason: 'malformed_response' };

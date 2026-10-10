@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { performance } from 'node:perf_hooks';
 import { Server } from 'socket.io';
 import { describe, expect, it } from 'vitest';
 
@@ -40,8 +41,12 @@ describe('Home-backed transcript Action waits', () => {
       expect(registry.activeCount()).toBe(1);
       rows = [{ id: 'row-1', seq: 1, localId: null, createdAt: 1, updatedAt: 1,
         content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'appended' } } } }];
+      const emittedAt = performance.now();
       update({ t: 'new-message', sid: 'session-1', message: rows[0] });
       await expect(first).resolves.toMatchObject({ ok: true, items: [{ seq: 1 }], nextCursor: '1' });
+      const socketToActionMs = performance.now() - emittedAt;
+      console.info('WAKE_TIMING', JSON.stringify({ socketToActionMs }));
+      expect(socketToActionMs).toBeLessThan(1000);
       // A revision between Action calls must survive on the retained lease.
       update({ t: 'message-updated', sid: 'session-1', message: { ...rows[0], updatedAt: 2 } });
       await new Promise<void>((resolve) => setImmediate(resolve));

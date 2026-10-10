@@ -1,6 +1,10 @@
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
-import type { ComposerAttachmentValueV1, ComposerAttachmentResolveRequestV1, ComposerAttachmentResolveResultV1, PluginContributionIdentityV1 } from '@happier-dev/protocol';
+import type { ComposerAttachmentValueV1, ComposerAttachmentResolveRequestV1, ComposerAttachmentResolveResultV1, PluginContributionIdentityV1, ProviderBoundModelRef } from '@happier-dev/protocol';
+import { randomUUID } from 'node:crypto';
+import { UsagePromptCompositionSchema, type UsagePromptComposition, type UsagePromptCompositionComponent } from '@happier-dev/protocol/usage/coach/usagePromptComposition';
+import { createPromptCompositionScope, type PromptCompositionScope } from '@/agent/prompting/promptComposition';
+import { logger } from '@/ui/logger';
 import type { PermissionModeQueuedPrompt } from '@/agent/runtime/permissions/queuedPrompt';
 import { isAbortLikeError } from '@/agent/runtime/lifecycle/classifyAbortLikeError';
 import {
@@ -52,6 +56,12 @@ export type SessionInputDispatchServices = Readonly<{
   catalogs?: StructuredInputCatalogReaders;
   resolveComposerReference?: StructuredInputComposerReferenceResolver['resolve'];
   resolveComposerAttachmentForDispatch?: ComposerAttachmentDispatchResolver;
+  /** Only exact host-plan fragments actually injected into this dispatch. */
+  injectedPromptComponents?: readonly UsagePromptCompositionComponent[];
+  retainPromptComposition?: (composition: UsagePromptComposition) => Promise<void>;
+  /** Ephemeral identity of the complete dispatched host request, never a quality measurement. */
+  modelRequest?: Readonly<{ scope: PromptCompositionScope; startupInstructions: string; toolSelection?: unknown;
+    selection?: ProviderBoundModelRef; readSelection?: () => ProviderBoundModelRef }>;
 }>;
 
 /** The shared final host preparation boundary for normal input and in-flight steer. */
@@ -64,6 +74,8 @@ export async function prepareSessionInputForProviderDispatch(input: Readonly<{
   services?: SessionInputDispatchServices;
 }>) {
   const services = input.services;
+  const compositionScope = createPromptCompositionScope();
+  let finalPrompt = '';
   const sessionId = services?.sessionId;
   const attachmentResolver = services?.resolveComposerAttachmentForDispatch;
   const context = await resolveStructuredInputProviderDispatchContext({
@@ -95,12 +107,40 @@ export async function prepareSessionInputForProviderDispatch(input: Readonly<{
       ...optionalContext,
       transformedUserText: input.providerNativeCommand ? '' : input.transformedUserText,
     });
-    return input.providerNativeCommand
+    finalPrompt = input.providerNativeCommand
       ? [input.transformedUserText, rendered].filter(Boolean).join('\n\n')
       : rendered;
+    return finalPrompt;
   };
   const requiredPrompt = renderPrompt();
+  const readComposition = (observation: Readonly<{
+    deliveryKind: UsagePromptComposition['deliveryKind']; observedAtMs: number; turnId: string | null;
+  }>): UsagePromptComposition | null => {
+    if (!sessionId) return null;
+    const injected = services?.injectedPromptComponents ?? [];
+    const request = services?.modelRequest;
+    const selection = request?.readSelection?.() ?? request?.selection;
+    const requestIdentity = request && selection ? request.scope.identifyRequest(JSON.stringify([
+      finalPrompt, context.structuredInput ? normalizeStrictJsonValue(context.structuredInput) : null,
+      request.startupInstructions, request.toolSelection ?? null,
+    ]), selection) : undefined;
+    return UsagePromptCompositionSchema.parse({ v: 1, evidenceId: randomUUID(), sessionId,
+      inputId: input.localId, ...observation, boundary: 'host_pre_dispatch', coverage: 'host_only',
+      components: [compositionScope.measure('dispatch-payload', finalPrompt, 'other', 'user',
+        injected.length ? 'known' : 'none'), ...injected],
+      nativePrefix: null, contextWindowTokens: null, ...(requestIdentity ? { requestIdentity } : {}) });
+  };
+  const retainComposition = async (observation: Parameters<typeof readComposition>[0]): Promise<void> => {
+    if (!services?.retainPromptComposition) return;
+    try {
+      const composition = readComposition(observation);
+      if (composition) await services.retainPromptComposition(composition);
+    }
+    catch { logger.debug('[Usage composition] Session detail retention unavailable'); }
+  };
   return {
+    readComposition,
+    retainComposition,
     renderPrompt,
     requiredPrompt,
     requiredProviderContextForBudget: context.structuredInput

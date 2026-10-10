@@ -3,6 +3,8 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { DirectTransferImportOpenRequest } from '@/machines/transfer/directTransferImportSession';
 import { DirectTransferImportOpenRequestSchema } from '@/machines/transfer/directTransferImportOpenRequest';
+import type { PreparedFilesystemTransferScope } from '@/machines/transfer/preparedFilesystemTransferScope';
+import type { DaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 
 import type { RpcHandlerRegistrar } from '../rpc/types';
 
@@ -31,6 +33,7 @@ type DirectTransferImportAbortResponse = Readonly<
 const DIRECT_TRANSFER_IMPORT_UPLOAD_ID_MAX_CHARS = 256;
 
 export function registerMachineDirectTransferImportRpcHandlers(params: Readonly<{
+  admissionDrain?: Pick<DaemonAdmissionDrain, 'isQuiescing' | 'isFinalShutdown'>;
   rpcHandlerManager: RpcHandlerRegistrar;
   prepareImportSession: (input: DirectTransferImportOpenRequest) => Promise<Readonly<{
     uploadId: string;
@@ -43,6 +46,7 @@ export function registerMachineDirectTransferImportRpcHandlers(params: Readonly<
   }>>;
   abortImportSession: (
     input: Readonly<{ uploadId: string }>,
+    filesystemScope?: PreparedFilesystemTransferScope | null,
   ) => Promise<void | Readonly<{ aborted: boolean }>>;
 }>): void {
   params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_PREPARE, async (data: unknown) => {
@@ -51,6 +55,10 @@ export function registerMachineDirectTransferImportRpcHandlers(params: Readonly<
       return { success: false, error: 'Invalid direct transfer import request' } satisfies DirectTransferImportPrepareResponse;
     }
     const request = parsedRequest.data;
+    if (params.admissionDrain?.isQuiescing()) {
+      return { success: false, error: params.admissionDrain.isFinalShutdown()
+        ? 'The daemon is shutting down.' : 'The daemon is draining.' } satisfies DirectTransferImportPrepareResponse;
+    }
 
     try {
       const prepared = await params.prepareImportSession(request);
@@ -79,7 +87,7 @@ export function registerMachineDirectTransferImportRpcHandlers(params: Readonly<
     }
 
     try {
-      const result = await params.abortImportSession({ uploadId });
+      const result = await params.abortImportSession({ uploadId }, null);
       return {
         success: true,
         ...(result ? { aborted: result.aborted } : {}),

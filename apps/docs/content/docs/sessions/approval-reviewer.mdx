@@ -1,0 +1,70 @@
+---
+title: Approval reviewer
+description: Opt in to request-scoped review of routine session tool permissions while keeping consequential decisions with you.
+---
+
+Let a reviewer consider routine tool-permission requests when you leave work
+running. Requests it cannot safely answer remain pending for you in Inbox.
+
+## Availability and prerequisites
+
+This is **unreleased 0.3 development source**. It is off by default and needs
+a matching daemon, a usable Approval reviewer role and an Agent that can run
+background work. It applies in the session's default permission mode and the
+explicit Accept edits mode. It does not approve higher-level Happier Action
+requests or user-action questions.
+
+## Turn it on deliberately
+
+Open **Settings → Delegation** and enable **Approval reviewer** to set the
+Account default. New sessions, including workflow step sessions, can use that
+default. A session-specific choice takes precedence. Adjust the Approval
+reviewer role in [Roles](/agents/roles) if you need a different usable engine.
+
+Direct configuration requires a present user. The current development Action
+catalog can also expose a request for that configuration through human
+approval; an agent request alone never enables it. That requestable surface
+is still under contract reconciliation, so use the user control for setup.
+
+## What it can decide
+
+The permission owner first excludes credentials, network operations,
+destructive shell commands, pushes and writes outside the workspace. Unknown
+effects also stay with you. These requests do not reach the review model.
+
+An eligible request goes to a background run with no tool access and a
+redacted request projection. The reviewer can answer **allow once** or
+**escalate**. Allow once applies to this request only; it creates no permanent
+grant, exec-policy amendment or permission-mode change. The decision records
+the approval reviewer as actor rather than attributing it to a person.
+
+You can still answer the request while review runs. Human notification is not
+delayed; the first valid answer claims the decision. If the request or its
+policy changes, the reviewer must recheck it before completing an answer.
+An escalation claims nothing and leaves the human request pending.
+
+## When review is unavailable
+
+If the reviewer cannot start, returns an invalid answer, encounters a failure,
+or the request is ineligible, answer it in [Inbox](/sessions/inbox-and-approvals)
+or the session. Turning the feature on never guarantees that unattended work
+will continue without you. It cannot exceed the session's permission ceiling
+or bypass Hands-off.
+
+## The same tasks through Actions
+
+`settings.get` and `settings.update` read and change the declared Account
+preference `approvalReviewerEnabled`; normal authority and approval rules
+still apply. `session.approval_reviewer.set` with `sessionId` and `enabled`
+sets the per-session choice. Use the
+[host Action reference](/plugins/api/host-actions) for the current catalog
+exposure. `roles.get` and `roles.override.set` read and customize the reviewer
+role. The actual automated answer stays with the host permission owner;
+there is no caller-supplied Action for forging a reviewer claim.
+
+## Related
+
+- [Permissions](/sessions/permissions)
+- [Inbox and approvals](/sessions/inbox-and-approvals)
+- [Orchestrator sessions](/sessions/orchestrator)
+- [Roles](/agents/roles)

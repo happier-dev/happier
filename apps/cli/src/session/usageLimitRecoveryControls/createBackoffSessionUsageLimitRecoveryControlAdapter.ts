@@ -294,7 +294,7 @@ export function createBackoffSessionUsageLimitRecoveryControlAdapter(options: Se
       const fallbackBackoffMs = readNonNegativeIntegerFromEnv(
         processEnv,
         options.fallbackBackoffEnvKey,
-        options.defaultFallbackBackoffMs,
+        options.defaultFallbackBackoffMs ?? 600_000,
       );
       const intent = persistedIntent && persistedIntent.status !== 'cancelled'
         ? persistedIntent
@@ -307,7 +307,7 @@ export function createBackoffSessionUsageLimitRecoveryControlAdapter(options: Se
             maxAttempts: readNonNegativeIntegerFromEnv(
               processEnv,
               options.maxAttemptsEnvKey,
-              options.defaultMaxAttempts,
+              options.defaultMaxAttempts ?? 3,
             ),
             nowMs: now,
           })

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { access, mkdtemp, readdir, rm } from 'node:fs/promises';
+import { access, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,6 +10,12 @@ import { createEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/nod
 import { createTailscaleTransferServeLifecycle } from './tailscaleTransferServeLifecycle';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';
+import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
+import { registerMachineDirectTransferImportRpcHandlers } from '@/api/machine/rpcHandlers.directTransferImports';
+import { registerMachineDirectTransferExportRpcHandlers } from '@/api/machine/rpcHandlers.directTransferExports';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { RpcHandlerRegistrar } from '@/api/rpc/types';
+import { prepareWorkspaceFileExport } from './prepareWorkspaceFileExport';
 
 type StartServer = NonNullable<Parameters<typeof createDirectTransferServerLifecycle>[0]['startServer']>;
 type RunTailscaleServeEnable = NonNullable<Parameters<typeof createTailscaleTransferServeLifecycle>[0]['runTailscaleServeEnable']>;
@@ -38,11 +44,136 @@ function createStubDirectTransferServer(
       success: false as const,
       error: 'unused',
     })),
+    waitForImportTransferSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
     abortImportTransferSession: vi.fn(async () => {}),
   };
 }
 
 describe('createDirectTransferServerLifecycle', () => {
+  it('refuses fresh raw Machine PREPARE during a closed drain and preserves admitted import and export custody', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-raw-transfer-drain-'));
+    const admissionDrain = createDaemonAdmissionDrain();
+    const manager = createDirectTransferImportSessionManager({ admissionDrain,
+      accessPolicy: { kind: 'restrictedRoots', roots: [root] } });
+    const handlers = new Map<string, (data: unknown) => Promise<unknown>>();
+    // The registrar is the inbound RPC transport boundary, not a mocked owner.
+    const rpcHandlerManager: RpcHandlerRegistrar = { registerHandler(method, handler) {
+      handlers.set(method, async data => await handler(data as never));
+    } };
+    let listenerStarts = 0;
+    let holdStartup = false;
+    let notifyListenerStarted!: () => void;
+    let releaseListener!: () => void;
+    const listenerStarted = new Promise<void>(resolve => { notifyListenerStarted = resolve; });
+    const listenerRelease = new Promise<void>(resolve => { releaseListener = resolve; });
+    const lifecycle = createDirectTransferServerLifecycle({ admissionDrain, bindPort: 46001,
+      listenerClasses: ['loopback_http'], startServer: async () => {
+        listenerStarts += 1;
+        if (holdStartup) { notifyListenerStarted(); await listenerRelease; }
+        return { ...createStubDirectTransferServer(async () => { await manager.close(); }), activity: manager.activity,
+          openTrustedImportSession: manager.openTrustedImportSession,
+          abortImportTransferSession: manager.abortImportTransferSession,
+          waitForImportTransferSettlement: manager.waitForImportTransferSettlement };
+      } });
+    registerMachineDirectTransferImportRpcHandlers({ rpcHandlerManager, admissionDrain,
+      prepareImportSession: lifecycle.prepareImportSession, abortImportSession: lifecycle.abortImportSession });
+    registerMachineDirectTransferExportRpcHandlers({ rpcHandlerManager, admissionDrain,
+      prepareExportSession: async request => {
+        if (request.t !== 'workspace_file_download_v1') throw new Error('Expected file source');
+        return await prepareWorkspaceFileExport({ lifecycle, request,
+          accessPolicy: { kind: 'restrictedRoots', roots: [root] } });
+      }, releaseExportSession: transferId => { lifecycle.clearPublishedTransfer(transferId); } });
+    const importing = { t: 'session_file_upload_v1', workingDirectory: root,
+      path: 'received.bin', sizeBytes: 3, overwrite: false };
+    const exporting = { t: 'workspace_file_download_v1', workingDirectory: root, path: 'source.bin', asZip: false };
+    const prepareImport = handlers.get(RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_PREPARE)!;
+    const prepareExport = handlers.get(RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE)!;
+    try {
+      await writeFile(join(root, 'source.bin'), Buffer.from([0, 255, 128]));
+      admissionDrain.beginUnusedStopDrain();
+      await expect(prepareImport(importing)).resolves.toMatchObject({ success: false });
+      await expect(prepareExport(exporting)).resolves.toMatchObject({ success: false });
+      expect(manager.countActiveImportSessions()).toBe(0);
+      expect(lifecycle.getState().publishedTransferCount).toBe(0);
+      expect(listenerStarts).toBe(0);
+      admissionDrain.resumeUnusedStop();
+      holdStartup = true;
+      const preparingImport = prepareImport(importing);
+      await listenerStarted;
+      admissionDrain.beginUnusedStopDrain();
+      const freshWhilePreparing = prepareImport({ ...importing, path: 'other.bin' });
+      releaseListener();
+      await expect(freshWhilePreparing).resolves.toMatchObject({ success: false });
+      const admittedImport = await preparingImport;
+      admissionDrain.resumeUnusedStop();
+      const admittedExport = await prepareExport(exporting);
+      expect(admittedImport).toMatchObject({ success: true });
+      expect(admittedExport).toMatchObject({ success: true, sizeBytes: 3 });
+      if (!admittedImport || typeof admittedImport !== 'object' || !('uploadId' in admittedImport)
+        || typeof admittedImport.uploadId !== 'string' || !admittedExport || typeof admittedExport !== 'object'
+        || !('transferId' in admittedExport) || typeof admittedExport.transferId !== 'string') throw new Error('Expected admitted custody');
+      admissionDrain.beginUnusedStopDrain();
+      await expect(prepareImport(importing)).resolves.toMatchObject({ success: false });
+      await expect(prepareExport(exporting)).resolves.toMatchObject({ success: false });
+      expect(manager.countActiveImportSessions()).toBe(1);
+      expect(lifecycle.getState().publishedTransferCount).toBe(1);
+      await expect(handlers.get(RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_ABORT)!({ uploadId: admittedImport.uploadId }))
+        .resolves.toMatchObject({ success: true });
+      await expect(handlers.get(RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_RELEASE)!({ transferId: admittedExport.transferId }))
+        .resolves.toMatchObject({ success: true });
+      expect(manager.countActiveImportSessions()).toBe(0);
+      expect(lifecycle.getState().publishedTransferCount).toBe(0);
+    } finally { releaseListener(); await lifecycle.stop(); await manager.close(); await rm(root, { recursive: true, force: true }); }
+  });
+  it('preserves admitted lower transfer publication and outgoing custody through a closed drain', async () => {
+    const admissionDrain = createDaemonAdmissionDrain();
+    let listenerStarts = 0;
+    let networkStarts = 0;
+    let release!: (result: import('./transferPayloadFileSink').TransferPayloadFileResult) => void;
+    const network = new Promise<import('./transferPayloadFileSink').TransferPayloadFileResult>(resolve => { release = resolve; });
+    const lifecycle = createDirectTransferServerLifecycle({ admissionDrain, bindPort: 46001,
+      listenerClasses: ['loopback_http'],
+      // Listener creation and the outgoing network request are genuine OS/IO boundaries.
+      startServer: async () => { listenerStarts += 1; return createStubDirectTransferServer(async () => {}, 47321); },
+      requestPayloadFile: () => { networkStarts += 1; return network; },
+    });
+    const publish = { transferId: 'incumbent-export', payload: Buffer.from([0, 255, 128]) };
+    const downloading = { transferId: 'incumbent-export', endpointCandidates: [], destinationPath: '/received' };
+    try {
+      await lifecycle.publishTransferWhenReady(publish);
+      const admittedDownload = lifecycle.requestPayloadFile(downloading);
+      expect(listenerStarts).toBe(1);
+      expect(networkStarts).toBe(1);
+      admissionDrain.beginUnusedStopDrain();
+      await expect(lifecycle.ensureListening()).resolves.toBe(47321);
+      expect(lifecycle.clearPublishedTransfer(publish.transferId)).toBe(true);
+      expect(await lifecycle.activity.read()).toMatchObject({ items: expect.arrayContaining([
+        expect.objectContaining({ ownerRef: network, state: 'active' }),
+      ]) });
+      const received = { destinationPath: '/received', manifestHash: 'sha256:received', sizeBytes: 3 };
+      release(received);
+      await expect(admittedDownload).resolves.toEqual(received);
+      expect(networkStarts).toBe(1);
+    } finally { release({ destinationPath: '/received', manifestHash: 'sha256:received', sizeBytes: 3 }); await lifecycle.stop(); }
+  });
+
+  it('projects an outgoing request at the real transfer owner without opening an incoming listener', async () => {
+    let release!: (result: import('./transferPayloadFileSink').TransferPayloadFileResult) => void;
+    const download = new Promise<import('./transferPayloadFileSink').TransferPayloadFileResult>(resolve => { release = resolve; });
+    const lifecycle = createDirectTransferServerLifecycle({ bindPort: 46001, listenerClasses: ['loopback_http'],
+      requestPayloadFile: async () => await download });
+    const request = lifecycle.requestPayloadFile({ transferId: 'transfer', endpointCandidates: [], destinationPath: '/received' });
+    try {
+      expect(lifecycle.getState().status).toBe('stopped');
+      expect(await lifecycle.activity.read()).toMatchObject({ coverage: 'complete', items: [
+        { category: 'transfer', state: 'active' },
+      ] });
+      release({ destinationPath: '/received', manifestHash: 'sha256:empty', sizeBytes: 0 });
+      await request;
+      expect(await lifecycle.activity.read()).toEqual({ coverage: 'complete', items: [] });
+    } finally { release({ destinationPath: '/received', manifestHash: 'sha256:empty', sizeBytes: 0 }); await lifecycle.stop(); }
+  });
+
   afterEach(() => {
     vi.useRealTimers();
     delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_TTL_MS;
@@ -70,6 +201,7 @@ describe('createDirectTransferServerLifecycle', () => {
           expiresAt: 2_000,
         },
       })),
+      waitForImportTransferSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
       abortImportTransferSession: vi.fn(async () => {}),
     }));
 
@@ -93,8 +225,11 @@ describe('createDirectTransferServerLifecycle', () => {
       }),
       readPublishedTransfer: vi.fn(() => null),
       resolveOnDemandTransferOnOpen: vi.fn(async () => null),
+      completeFilesystemExport: async () => ({ success: false as const, error: "unused" }),
+      waitForFilesystemExportSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
       clearPublishedTransfer: vi.fn(() => {
         publishedTransfers = Math.max(0, publishedTransfers - 1);
+        return true;
       }),
       dispose: vi.fn(async () => {
         publishedTransfers = 0;
@@ -153,6 +288,7 @@ describe('createDirectTransferServerLifecycle', () => {
         success: false as const,
         error: 'unused',
       })),
+      waitForImportTransferSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
       abortImportTransferSession: vi.fn(async () => {}),
     }));
     const dispose = vi.fn(async () => {});
@@ -203,6 +339,7 @@ describe('createDirectTransferServerLifecycle', () => {
         success: false as const,
         error: 'unused',
       })),
+      waitForImportTransferSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
       abortImportTransferSession: vi.fn(async () => {}),
     }));
     const lifecycle = createDirectTransferServerLifecycle({
@@ -258,6 +395,7 @@ describe('createDirectTransferServerLifecycle', () => {
           expiresAt: 2_000,
         },
       }),
+      waitForImportTransferSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
       abortImportTransferSession: async () => {},
     }));
     const lifecycle = createDirectTransferServerLifecycle({
@@ -300,6 +438,7 @@ describe('createDirectTransferServerLifecycle', () => {
         expiresAt: 5_000,
       })),
       openTrustedImportSession,
+      waitForImportTransferSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
       abortImportTransferSession: vi.fn(async () => {}),
     }));
 
@@ -319,7 +458,7 @@ describe('createDirectTransferServerLifecycle', () => {
     });
 
     expect(startServer).toHaveBeenCalledTimes(1);
-    expect(openTrustedImportSession).toHaveBeenCalledWith({
+    expect(openTrustedImportSession.mock.calls[0]?.[0]).toEqual({
       t: 'session_file_upload_v1',
       workingDirectory: '/repo',
       path: 'payload.bin',
@@ -443,6 +582,7 @@ describe('createDirectTransferServerLifecycle', () => {
         stop,
         issueImportOpenAuthorizationToken: (input) => manager!.issueImportOpenAuthorizationToken(input),
         openTrustedImportSession: async (input) => await manager!.openTrustedImportSession(input),
+        waitForImportTransferSettlement: (uploadId, scope) => manager!.waitForImportTransferSettlement(uploadId, scope),
         abortImportTransferSession: async (input) => {
           await manager!.abortImportTransferSession(input);
         },
@@ -582,6 +722,7 @@ describe('createDirectTransferServerLifecycle', () => {
           expiresAt: 5_000,
         },
       })),
+      waitForImportTransferSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
       abortImportTransferSession: vi.fn(async () => {}),
     }));
 
@@ -618,6 +759,7 @@ describe('createDirectTransferServerLifecycle', () => {
         success: false as const,
         error: 'unused',
       })),
+      waitForImportTransferSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
       abortImportTransferSession: vi.fn(async () => {}),
     }));
     const lifecycle = createDirectTransferServerLifecycle({
@@ -668,6 +810,7 @@ describe('createDirectTransferServerLifecycle', () => {
         expiresAt: 5_000,
       })),
       openTrustedImportSession,
+      waitForImportTransferSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
       abortImportTransferSession: vi.fn(async () => {}),
     }));
 
@@ -720,6 +863,7 @@ describe('createDirectTransferServerLifecycle', () => {
         expiresAt: 5_000,
       })),
       openTrustedImportSession,
+      waitForImportTransferSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
       abortImportTransferSession: vi.fn(async () => {}),
     }));
 
@@ -785,6 +929,7 @@ describe('createDirectTransferServerLifecycle', () => {
             expiresAt: 5_000,
           })),
           openTrustedImportSession,
+          waitForImportTransferSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
           abortImportTransferSession: vi.fn(async () => ({ aborted: false })),
         })),
         resolveTailscaleServeHttpsBaseUrl: () =>
@@ -904,6 +1049,7 @@ describe('createDirectTransferServerLifecycle', () => {
           success: false as const,
           error: 'unused',
         })),
+        waitForImportTransferSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
         abortImportTransferSession: vi.fn(async () => ({ aborted: false })),
       })),
       resolveTailscaleServeHttpsBaseUrl: () =>
@@ -971,6 +1117,7 @@ describe('createDirectTransferServerLifecycle', () => {
           success: false as const,
           error: 'unused',
         })),
+        waitForImportTransferSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
         abortImportTransferSession: vi.fn(async () => ({ aborted: false })),
       })),
       resolveTailscaleServeHttpsBaseUrl: () =>
@@ -1013,6 +1160,7 @@ describe('createDirectTransferServerLifecycle', () => {
           expiresAt: 2_000,
         },
       })),
+      waitForImportTransferSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
       abortImportTransferSession: vi.fn(async () => {}),
     }));
 
@@ -1032,6 +1180,8 @@ describe('createDirectTransferServerLifecycle', () => {
       })),
       readPublishedTransfer: vi.fn(() => null),
       resolveOnDemandTransferOnOpen: vi.fn(async () => null),
+      completeFilesystemExport: async () => ({ success: false as const, error: "unused" }),
+      waitForFilesystemExportSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
       clearPublishedTransfer: vi.fn(() => undefined),
       dispose: vi.fn(async () => undefined),
       hasPublishedTransfers: vi.fn(() => true),
@@ -1086,6 +1236,7 @@ describe('createDirectTransferServerLifecycle', () => {
         expiresAt: 5_000,
       })),
       openTrustedImportSession,
+      waitForImportTransferSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
       abortImportTransferSession: vi.fn(async () => {}),
     }));
     const createRegistry = vi.fn(() => ({
@@ -1102,6 +1253,8 @@ describe('createDirectTransferServerLifecycle', () => {
       })),
       readPublishedTransfer: vi.fn(() => null),
       resolveOnDemandTransferOnOpen: vi.fn(async () => null),
+      completeFilesystemExport: async () => ({ success: false as const, error: "unused" }),
+      waitForFilesystemExportSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
       clearPublishedTransfer: vi.fn(() => undefined),
       dispose: vi.fn(async () => undefined),
       hasPublishedTransfers: vi.fn(() => true),
@@ -1163,6 +1316,7 @@ describe('createDirectTransferServerLifecycle', () => {
           expiresAt: 2_000,
         },
       })),
+      waitForImportTransferSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
       abortImportTransferSession: vi.fn(async () => {}),
     }));
 
@@ -1182,6 +1336,8 @@ describe('createDirectTransferServerLifecycle', () => {
       })),
       readPublishedTransfer: vi.fn(() => null),
       resolveOnDemandTransferOnOpen: vi.fn(async () => null),
+      completeFilesystemExport: async () => ({ success: false as const, error: "unused" }),
+      waitForFilesystemExportSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
       clearPublishedTransfer: vi.fn(() => undefined),
       dispose: vi.fn(async () => undefined),
       hasPublishedTransfers: vi.fn(() => true),
@@ -1229,6 +1385,7 @@ describe('createDirectTransferServerLifecycle', () => {
           success: false as const,
           error: 'unused',
         })),
+        waitForImportTransferSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
         abortImportTransferSession: vi.fn(async () => {}),
       })),
     });
@@ -1293,6 +1450,7 @@ describe('createDirectTransferServerLifecycle', () => {
         success: false as const,
         error: 'unused',
       })),
+      waitForImportTransferSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
       abortImportTransferSession: vi.fn(async () => {}),
     });
 
@@ -1334,6 +1492,7 @@ describe('createDirectTransferServerLifecycle', () => {
           success: false as const,
           error: 'unused',
         })),
+        waitForImportTransferSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
         abortImportTransferSession: vi.fn(async () => {}),
       };
     });
@@ -1399,6 +1558,7 @@ describe('createDirectTransferServerLifecycle', () => {
       stop: vi.fn(async () => {}),
       issueImportOpenAuthorizationToken: vi.fn(() => ({ authorizationToken: 'unused', expiresAt: 2_000 })),
       openTrustedImportSession: vi.fn(async () => ({ success: false as const, error: 'unused' })),
+      waitForImportTransferSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
       abortImportTransferSession: vi.fn(async () => {}),
     }));
     const lifecycle = createDirectTransferServerLifecycle({

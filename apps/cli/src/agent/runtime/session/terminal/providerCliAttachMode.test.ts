@@ -143,6 +143,26 @@ it.skipIf(process.platform === 'win32').for([false, true, 'client', 'command', '
                 notifyDaemonSessionStartedFn: async () => ({ status: 'ok' }),
             }),
         });
+        if (restoredPreparation === false) {
+            let remoteEnded = false;
+            const remote = binding.terminalRemoteModeLoop.runRemote().then(() => { remoteEnded = true; });
+            try {
+                await binding.runtime.resetOrDisposeRuntime('session_closed', { kind: 'create' });
+                await new Promise<void>(resolve => setImmediate(resolve));
+                expect(remoteEnded).toBe(false);
+            } finally {
+                await binding.runtime.resetOrDisposeRuntime('session_closed');
+                await remote;
+            }
+            // This binding was finally disposed; subsequent presentation checks
+            // belong to a fresh Session-scoped binding.
+            binding = createNativeAgentProviderAttachModeBinding({ runtime, attach, session,
+                agentId: 'opencode', topology: 'shared', remoteWritable: true, startingMode: 'remote',
+                reportSessionMetadataToDaemon: opts => reportSessionToDaemonIfRunning(opts, {
+                    notifyDaemonSessionStartedFn: async () => ({ status: 'ok' }),
+                }),
+            });
+        }
         if (restoredPreparation) {
             await expect(session.rpcHandlerManager.invokeLocal('session.providerCliAttach.prepare.v1', {
                 providerSessionId: 'native-one',

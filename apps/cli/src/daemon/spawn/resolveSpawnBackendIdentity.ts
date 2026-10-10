@@ -4,6 +4,7 @@ import {
   type SessionOwnerMetadataV1,
 } from '@happier-dev/protocol';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import { AgentExecutionTargetV1Schema, CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import type { SessionAttachFilePayload } from '@/agent/runtime/sessionAttachPayload';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import {
@@ -85,6 +86,7 @@ type ResolveSpawnBackendIdentitySuccess = Readonly<{
   normalizedExistingSessionId: string;
   effectiveResume: string;
   effectiveBackendTargetV2: BackendTargetRefV2;
+  effectiveAgentTarget: AgentExecutionTargetV1 | undefined;
   sessionAttachPayload: SessionAttachFilePayload | null;
   catalogAgentId: CatalogAgentId | null;
   ownerMetadata: SessionOwnerMetadataV1 | null;
@@ -106,10 +108,22 @@ export async function resolveSpawnBackendIdentity(params: Readonly<{
   const normalizedExistingSessionId = params.existingSessionId.trim();
   // Opaque Agent identity: presence is decided, bytes are never rewritten.
   let effectiveResume = readNonBlankOpaqueIdentifier(params.resume) ?? '';
-  const resolvedAgentRoutingId = params.agentTarget
-    ? await resolveCurrentExternalSessionAgentRoutingId(params.agentTarget.identity)
+  const hasBackendTargetInput = params.backendTarget !== undefined;
+  const compatibilityBackendTarget = normalizeDaemonBackendTargetV2Input(params.backendTarget);
+  const requestedAgentTarget = params.agentTarget ?? (compatibilityBackendTarget?.sourceKind === 'configured'
+    ? { kind: 'agent' as const, identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1,
+      definitionId: compatibilityBackendTarget.configuredBackendId ?? compatibilityBackendTarget.backendId }
+    : undefined);
+  const parsedAgentTarget = requestedAgentTarget === undefined ? null : AgentExecutionTargetV1Schema.safeParse(requestedAgentTarget);
+  if (parsedAgentTarget && !parsedAgentTarget.success) {
+    return { ok: false, error: { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+      errorMessage: 'Selected Agent target is incomplete or invalid' } };
+  }
+  let effectiveAgentTarget = parsedAgentTarget?.success ? parsedAgentTarget.data : undefined;
+  const resolvedAgentRoutingId = effectiveAgentTarget
+    ? await resolveCurrentExternalSessionAgentRoutingId(effectiveAgentTarget.identity)
     : null;
-  if (params.agentTarget && !resolvedAgentRoutingId) {
+  if (effectiveAgentTarget && !resolvedAgentRoutingId) {
     return {
       ok: false,
       error: {
@@ -119,14 +133,13 @@ export async function resolveSpawnBackendIdentity(params: Readonly<{
       },
     };
   }
-  const hasBackendTargetInput = params.backendTarget !== undefined;
-  const compatibilityBackendTarget = normalizeDaemonBackendTargetV2Input(params.backendTarget);
   if (
     resolvedAgentRoutingId
     && compatibilityBackendTarget
     && (
       compatibilityBackendTarget.sourceKind === 'configured'
-      || compatibilityBackendTarget.backendId !== resolvedAgentRoutingId
+        ? (compatibilityBackendTarget.configuredBackendId ?? compatibilityBackendTarget.backendId) !== effectiveAgentTarget?.definitionId
+        : compatibilityBackendTarget.backendId !== resolvedAgentRoutingId
     )
   ) {
     return {
@@ -171,10 +184,19 @@ export async function resolveSpawnBackendIdentity(params: Readonly<{
     ownerMetadata = attachContext.ownerMetadata ?? null;
     existingSessionWorkspacePath =
       attachContext.existingSessionWorkspacePath ?? null;
-    if (!params.agentTarget && attachContext.backendTarget) {
+    if (!requestedAgentTarget && attachContext.backendTarget) {
       const attachedBackendTarget = resolveConcreteCompatBackendTargetRefs(attachContext.backendTarget);
       if (attachedBackendTarget) {
         effectiveBackendTargetV2 = attachedBackendTarget.backendTargetV2;
+        if (effectiveBackendTargetV2.sourceKind === 'configured') {
+          effectiveAgentTarget = AgentExecutionTargetV1Schema.parse({ kind: 'agent',
+            identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1,
+            definitionId: effectiveBackendTargetV2.configuredBackendId ?? effectiveBackendTargetV2.backendId });
+          const routingId = await resolveCurrentExternalSessionAgentRoutingId(effectiveAgentTarget.identity);
+          if (!routingId) return { ok: false, error: { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+            errorMessage: 'Selected Agent is not installed or unavailable' } };
+          effectiveBackendTargetV2 = { kind: 'backend', backendId: routingId, sourceKind: 'built_in' };
+        }
       }
     }
     const linkedVendorResumeId = readNonBlankOpaqueIdentifier(attachContext.linkedVendorResumeId) ?? '';
@@ -220,6 +242,7 @@ export async function resolveSpawnBackendIdentity(params: Readonly<{
     normalizedExistingSessionId,
     effectiveResume,
     effectiveBackendTargetV2: resolvedBackendTargetV2,
+    effectiveAgentTarget,
     sessionAttachPayload,
     catalogAgentId,
     ownerMetadata,

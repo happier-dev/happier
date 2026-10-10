@@ -1,8 +1,9 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import axios from 'axios';
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
@@ -26,9 +27,26 @@ import { buildExecutionRunProfileCatalog } from '@/agent/executionRuns/profiles/
 import { runGit } from '@/scm/rpc/__tests__/testRpcHarness';
 import {
   accountSettingsParse,
+  buildSystemSessionMetadataV1,
   sealSavedSecretResourceStoredContentV1,
 } from '@happier-dev/protocol';
+import { VOICE_CONVERSATION_SYSTEM_SESSION_KEY } from '@happier-dev/protocol/voice/sessionBinding';
+import { resolveCliVoicePromptPreparation } from '@/agent/prompts/library/resolveCliVoicePromptStackBlocks';
 import { SavedSecretOperationAdmissionError } from '@/settings/secrets/hydrateSavedSecretCatalog';
+import { registerExecutionRunRpcHandlers } from '@/rpc/handlers/executionRuns/registerExecutionRunRpcHandlers';
+import * as daemonControlHttp from '@/daemon/controlHttp';
+import { configuration } from '@/configuration';
+import { resolveCurrentCliHomeTarget } from '@/server/homeTarget';
+import { normalizeServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import {
+  clearActiveAccountSettingsSnapshot,
+  setActiveAccountSettingsSnapshot,
+  getActiveAccountSettingsSnapshotLifetimeToken,
+  commitActivePromptLibraryCatalog,
+  commitActiveProfileCatalog,
+} from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 
 type TestRuntimeFactoryInput = Readonly<{
   cwd: string;
@@ -72,6 +90,11 @@ let defaultExecutionRunManagerPluginHomeDir = '';
 let shutdownDefaultExecutionRunManagerPluginRuntime:
   | (() => Promise<void>)
   | null = null;
+const defaultVoiceAccountCredentials: StoredCredentials = {
+  token: `header.${Buffer.from(JSON.stringify({ sub: 'execution-run-manager-account' })).toString('base64url')}.signature`,
+  encryption: null,
+};
+let restoreDefaultVoiceAccountHttp: (() => void) | null = null;
 
 const {
   createExecutionRunRuntimeMock,
@@ -134,6 +157,10 @@ beforeAll(async () => {
   const registry = await resolveExecutablePluginRuntimeRegistry({
     happyHomeDir: defaultExecutionRunManagerPluginHomeDir,
     generation: 1,
+    // These bridge tests inject the external Agent runtime factory. Their real
+    // host registry has no installed plugin demand; unrelated bundled Agents
+    // must not be activated without their own admitted source custody.
+    pluginIds: [],
   });
   const adoption = await pluginReloadController.adoptPreparedRuntimeRegistry({
     registry,
@@ -169,6 +196,40 @@ beforeEach(() => {
   runtimeFactoryRef.current = null;
   createExecutionRunRuntimeMock.mockClear();
   dispatchBridgeLifecycleHookEvent.mockClear();
+});
+
+function admitDefaultVoiceAccountFixture() {
+  if (restoreDefaultVoiceAccountHttp) return;
+  const scopeKey = resolveAccountSettingsScopeKey(defaultVoiceAccountCredentials);
+  setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), rawSettings: {},
+    settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey });
+  const bound = { scopeKey, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken() };
+  commitActivePromptLibraryCatalog({ ...bound, catalog: { status: 'ready', rows: [{ revision: 1,
+    record: { key: 'voice', value: { v: 1, scope: { kind: 'voice' }, entries: [] } } }],
+    tombstones: [], diagnostics: [] } });
+  commitActiveProfileCatalog({ ...bound, catalog: { status: 'ready', authority: 'active', control: null,
+    controlRevision: 'absent', referenceGuardRevision: 'absent', diagnostics: [], records: [] } });
+  // Generic bridge fixtures still prepare through the real qualified reader.
+  // This HTTP boundary represents their ordinary, plain Account Sessions.
+  const http = vi.spyOn(axios, 'get').mockImplementation(async url => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 0,
+      signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0 } };
+    if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+    if (!path.startsWith('/v2/sessions/')) throw new Error(`Unexpected manager Account read: ${path}`);
+    const id = path.slice('/v2/sessions/'.length);
+    return { status: 200, data: { session: { id, seq: 1, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
+      archivedAt: null, encryptionMode: 'plain', metadataVersion: 0, agentState: null, agentStateVersion: 0,
+      pendingCount: 0, pendingVersion: 0, share: null, dataEncryptionKey: null, metadata: '{}' } } };
+  });
+  restoreDefaultVoiceAccountHttp = () => http.mockRestore();
+}
+
+afterEach(() => {
+  if (!restoreDefaultVoiceAccountHttp) return;
+  restoreDefaultVoiceAccountHttp?.();
+  restoreDefaultVoiceAccountHttp = null;
+  clearActiveAccountSettingsSnapshot();
 });
 
 it.each([
@@ -372,6 +433,13 @@ function createExecutionRunManager(
   return new ExecutionRunManager({
     ...bridgeOptions,
     cwd: bridgeOptions.cwd === process.cwd() ? defaultExecutionRunManagerTestCwd : bridgeOptions.cwd,
+    // The production RPC factory supplies these authenticated inputs. A bare
+    // bridge has no Account authority and correctly refuses bound preparation.
+    resolveVoicePromptPreparation: bridgeOptions.resolveVoicePromptPreparation ?? (async args => {
+      admitDefaultVoiceAccountFixture();
+      return await resolveCliVoicePromptPreparation({ ...args, credentials: defaultVoiceAccountCredentials,
+        serverId: configuration.activeServerId, directory: args.workingDirectory ?? undefined });
+    }),
   });
 }
 
@@ -3387,6 +3455,152 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     }
   });
 
+  it('prepares the captured target through production RPC construction and admitted Account catalogs', async () => {
+    const prompts: string[] = [];
+    let markdown = 'RPC_TARGET_PERSONA_OLD';
+    const home = await resolveCurrentCliHomeTarget();
+    const serverUrl = home.applicationUrl;
+    const accountId = 'rpc-voice-account';
+    const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    const credentials = { token, encryption: null };
+    const scopeKey = resolveAccountSettingsScopeKey(credentials);
+    setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), rawSettings: {},
+      settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey });
+    const bound = { scopeKey, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken() };
+    const entry = (id: string) => ({ id, ref: { kind: 'doc' as const, artifactId: id }, enabled: true,
+      required: true, placement: 'system_append' as const });
+    commitActivePromptLibraryCatalog({ ...bound, catalog: { status: 'ready', rows: [{ revision: 1,
+      record: { key: 'voice', value: { v: 1, scope: { kind: 'voice' }, entries: [entry('rpc-account-doc')] } } }],
+      tombstones: [], diagnostics: [] } });
+    commitActiveProfileCatalog({ ...bound, catalog: { status: 'ready', authority: 'active', control: null,
+      controlRevision: 'absent', referenceGuardRevision: 'absent', diagnostics: [], records: [{ revision: 1,
+        record: { v: 1, id: 'rpc-target-profile', enabled: true, secretBindings: {},
+          definition: { kind: 'artifact', artifactId: 'profile-definition' }, promptStack: [entry('rpc-profile-doc')] } }] } });
+    const hidden = buildSystemSessionMetadataV1({ key: VOICE_CONVERSATION_SYSTEM_SESSION_KEY, hidden: true });
+    // Local daemon control and Account HTTP are genuine external transports;
+    // the RPC factory, bridge, Voice manager, catalogs and D2 preparation run.
+    const admission = vi.spyOn(daemonControlHttp, 'daemonPost').mockImplementation(async path => {
+      if (path !== '/execution-run/admission') throw new Error(`Unexpected daemon effect: ${path}`);
+      return { admitted: true };
+    });
+    const http = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const address = new URL(String(url));
+      expect(new URL(normalizeServerHttpBaseUrl(String(url))).origin).toBe(new URL(normalizeServerHttpBaseUrl(serverUrl)).origin);
+      const path = address.pathname;
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 0,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0 } };
+      if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+      if (path === '/v1/artifacts') return { status: 200, data: ['rpc-account-doc', 'rpc-profile-doc', 'rpc-session-doc'].map(id => ({
+        id, ownerAccountId: accountId, access: 'owner', encryptionMode: 'plain',
+        header: encodePlainArtifactStoredContent({ v: 1, kind: 'prompt_doc.v2', title: 'Instructions' }),
+        dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1,
+        seq: 1, createdAt: 1, updatedAt: 1,
+      })) };
+      if (path.startsWith('/v2/sessions/')) {
+        const id = path.slice('/v2/sessions/'.length);
+        const metadata = id === 'rpc-history' ? { ...hidden, profileId: 'misleading-history-profile',
+          voiceConversationBindingV1: { v: 1, adapterId: 'local', controlSessionId: 'voice-global',
+            transcriptMode: 'synthetic', targetSessionId: 'rpc-target', updatedAt: 1 } }
+          : id === 'rpc-target' ? { profileId: 'rpc-target-profile', work: { promptStack: [entry('rpc-session-doc')] } }
+            : (() => { throw new Error(`Unexpected target: ${id}`); })();
+        return { status: 200, data: { session: { id, seq: 1, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
+          archivedAt: null, encryptionMode: 'plain', metadataVersion: 0, agentState: null, agentStateVersion: 0,
+          pendingCount: 0, pendingVersion: 0, share: null, dataEncryptionKey: null, metadata: JSON.stringify(metadata) } } };
+      }
+      if (path.startsWith('/v1/artifacts/')) {
+        const id = path.slice('/v1/artifacts/'.length);
+        const content = id === 'rpc-session-doc' ? markdown : id === 'rpc-account-doc' ? 'RPC_ACCOUNT_PERSONA'
+          : id === 'rpc-profile-doc' ? 'RPC_PROFILE_PERSONA' : (() => { throw new Error(`Unexpected Artifact: ${id}`); })();
+        return { status: 200, data: { id, ownerAccountId: accountId, access: 'owner', encryptionMode: 'plain',
+          header: encodePlainArtifactStoredContent({ v: 1, kind: 'prompt_doc.v2', title: 'Instructions' }),
+          body: encodePlainArtifactStoredContent({ body: JSON.stringify({ v: 1, markdown: content, createdAtMs: 1, updatedAtMs: 1 }) }),
+          dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1,
+          seq: 1, createdAt: 1, updatedAt: 1 } };
+      }
+      throw new Error(`Unexpected Account read: ${path}`);
+    });
+    const captured: { manager: ExecutionRunManager | null } = { manager: null };
+    runtimeFactoryRef.current = () => createPromptRuntime((runtime, _id, prompt) => {
+      prompts.push(prompt);
+      runtime.emitMessage({ type: 'model-output', fullText: prompt.includes('reply with exactly READY') ? 'READY' : 'hello' });
+    });
+    try {
+      registerExecutionRunRpcHandlers({ registerHandler: () => {} }, {
+        sessionId: 'rpc-history', cwd: defaultExecutionRunManagerTestCwd, serverId: configuration.activeServerId,
+        serverUrl, parentProvider: TEST_PRIMARY_BACKEND_ID,
+        readPromptCredentials: async () => credentials, resolveAccountSettings: () => ({}), sendAcp: async () => {},
+        executionRunProfileCatalog: buildExecutionRunProfileCatalog(),
+        onManagerCreated: manager => { captured.manager = manager; },
+      });
+      if (!captured.manager) throw new Error('Production RPC factory did not publish its manager');
+      const manager = captured.manager;
+      const startResult = await manager.start({ sessionId: 'rpc-history', intent: 'voice_agent',
+        backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID }, permissionMode: 'read_only',
+        retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
+        chatModelId: 'chat', commitModelId: 'commit', idleTtlSeconds: 60 })
+        .then(started => ({ ok: true as const, started }), error => ({ ok: false as const, error: String(error) }));
+      expect(startResult.ok, JSON.stringify({ startResult, reads: http.mock.calls.map(([url]) => String(url)) })).toBe(true);
+      if (!startResult.ok) throw new Error(startResult.error);
+      const started = startResult.started;
+      markdown = 'RPC_TARGET_PERSONA_CURRENT';
+      const welcomed = await manager.applyAction(started.runId, { actionId: 'voice_agent.welcome', input: {} });
+      expect(welcomed.ok).toBe(true);
+      const prompt = prompts.at(-1);
+      expect(prompt).toContain('RPC_ACCOUNT_PERSONA');
+      expect(prompt).toContain('RPC_PROFILE_PERSONA');
+      expect(prompt).toContain('RPC_TARGET_PERSONA_CURRENT');
+      expect(prompt).not.toContain('RPC_TARGET_PERSONA_OLD');
+      expect(prompt).not.toContain('misleading-history-profile');
+    } finally {
+      await captured.manager?.dispose();
+      clearActiveAccountSettingsSnapshot();
+      http.mockRestore();
+      admission.mockRestore();
+    }
+  });
+
+  it('prepares the actual hidden history binding target again before Voice bridge dispatch', async () => {
+    const prompts: string[] = [];
+    let markdown = 'BRIDGE_STARTUP_PERSONA';
+    const hidden = buildSystemSessionMetadataV1({ key: VOICE_CONVERSATION_SYSTEM_SESSION_KEY, hidden: true });
+    const http = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 0,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0 } };
+      const id = path.slice('/v2/sessions/'.length);
+      const metadata = id === 'history-session' ? { ...hidden, profileId: 'wrong-history-profile', voiceConversationBindingV1: {
+        v: 1, adapterId: 'local', controlSessionId: 'voice-global', transcriptMode: 'synthetic', targetSessionId: 'attached-target', updatedAt: 1,
+      } } : id === 'attached-target' ? { work: { promptStack: [{ id: 'target-doc', enabled: true,
+        ref: { kind: 'doc', artifactId: 'target-doc' }, placement: 'system_append', required: true }] } }
+        : (() => { throw new Error(`Unexpected qualified Voice Session: ${path}`); })();
+      return { status: 200, data: { session: { id, seq: 1, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
+        archivedAt: null, encryptionMode: 'plain', metadataVersion: 0, agentState: null, agentStateVersion: 0,
+        pendingCount: 0, pendingVersion: 0, share: null, dataEncryptionKey: null, metadata: JSON.stringify(metadata) } } };
+    });
+    const manager = createExecutionRunManager({ parentProvider: TEST_PRIMARY_BACKEND_ID, cwd: process.cwd(),
+      sendAcp: async () => {}, createRuntime: () => createPromptRuntime((runtime, _id, prompt) => {
+        prompts.push(prompt);
+        runtime.emitMessage({ type: 'model-output', fullText: prompt.includes('reply with exactly READY') ? 'READY' : 'hello' });
+      }), resolveVoicePromptPreparation: async args => await resolveCliVoicePromptPreparation({ ...args,
+        credentials: { token: 'bridge-target-reader', encryption: null }, accountEntries: [], profileEntries: [],
+        readArtifactHeader: async () => ({ header: { v: 1, kind: 'prompt_doc.v2', title: 'Instructions' } }),
+        readArtifact: async ref => ({ id: ref.artifactId, header: { v: 1, kind: 'prompt_doc.v2', title: 'Instructions' },
+          revision: { headerVersion: 1, bodyVersion: 1 }, body: JSON.stringify({ v: 1, markdown, createdAtMs: 1, updatedAtMs: 1 }) }),
+      }),
+    });
+    try {
+      const started = await manager.start({ sessionId: 'history-session', intent: 'voice_agent',
+        backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID }, permissionMode: 'read_only',
+        retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
+        chatModelId: 'chat', commitModelId: 'commit', idleTtlSeconds: 60 });
+      markdown = 'BRIDGE_CURRENT_TARGET_PERSONA';
+      const welcomed = await manager.applyAction(started.runId, { actionId: 'voice_agent.welcome', input: {} });
+      expect(welcomed.ok).toBe(true);
+      expect(prompts.at(-1)).toContain('BRIDGE_CURRENT_TARGET_PERSONA');
+      expect(prompts.at(-1)).not.toContain('BRIDGE_STARTUP_PERSONA');
+    } finally { await manager.dispose(); http.mockRestore(); }
+  });
+
   it('builds voice-agent prompts from resolved account settings instead of local CLI settings', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
     const seenCalls: Array<{ settings?: unknown; profileId?: string | null; sessionId?: string | null; workingDirectory?: string | null }> = [];
@@ -3416,9 +3630,9 @@ describe('ExecutionRunManager (long-lived runs)', () => {
         sent.push({ provider, body, meta: opts?.meta });
       },
       resolveAccountSettings: async () => ({ promptStacksSource: 'account-settings' }),
-      resolveVoicePromptStackBlocks: async ({ settings, profileId, sessionId, workingDirectory }) => {
+      resolveVoicePromptPreparation: async ({ settings, profileId, sessionId, workingDirectory }) => {
         seenCalls.push({ settings, profileId, sessionId, workingDirectory });
-        return ['Voice stack block'];
+        return { systemAppendBlocks: ['Voice stack block'], memoryRecallGuidanceEnabled: false, disabledActionIds: [] };
       },
       getNowMs: () => 1_700_000_000_000,
     });
@@ -3444,12 +3658,12 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       maxEvents: 128,
     });
     expect(JSON.stringify(events)).toContain('Voice stack block');
-    expect(seenCalls).toEqual([{
+    expect(seenCalls).toEqual(Array(2).fill({
       settings: { promptStacksSource: 'account-settings' },
       profileId: 'work',
       sessionId: 'parent_session_1',
       workingDirectory: defaultExecutionRunManagerTestCwd,
-    }]);
+    }));
 
     const stopped = await manager.stop(started.runId);
     expect(stopped.ok).toBe(true);

@@ -3,6 +3,30 @@ import { describe, expect, it, vi } from 'vitest';
 import { createKeyedStreamedTranscriptBridge } from './createKeyedStreamedTranscriptBridge';
 
 describe('keyed transcript recovery', () => {
+  it('flushes only selected stream scope and leaves child text open for later deltas', async () => {
+    vi.useFakeTimers();
+    const stored: unknown[] = [];
+    const bridge = createKeyedStreamedTranscriptBridge<{ streamKey: string; sidechainId: string | null; foregroundTurnId?: string }>({
+      provider: 'codex', initialCheckpointDelayMs: 60_000,
+      createSessionForStream: () => ({
+        sendAgentMessageEphemeral: () => ({ accepted: true, epoch: 0 }),
+        enqueueAgentMessageCommitted: async (_provider, body) => {
+          stored.push(body); return { persisted: true, delivered: false };
+        },
+      }),
+    });
+    bridge.appendAssistantDelta({ streamKey: 'foreground', sidechainId: null, foregroundTurnId: 'turn-1', deltaText: 'Foreground' });
+    bridge.appendAssistantDelta({ streamKey: 'child', sidechainId: 'child-1', deltaText: 'Before ' });
+    await bridge.flushAll({ reason: 'abort', interruptedReason: 'cancelled', selectStream: (stream) => stream.foregroundTurnId === 'turn-1' });
+    expect(stored).toEqual([{ type: 'message', message: 'Foreground' }]);
+    bridge.appendAssistantDelta({ streamKey: 'child', sidechainId: 'child-1', deltaText: 'after' });
+    await bridge.flushAll({ reason: 'turn-end' });
+    expect(stored).toEqual([
+      { type: 'message', message: 'Foreground' },
+      { type: 'message', message: 'Before after', sidechainId: 'child-1' },
+    ]);
+  });
+
   it('retains a failed terminal checkpoint without absorbing a successor or changing its state', async () => {
     vi.useFakeTimers();
     let connected = true;

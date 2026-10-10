@@ -60,6 +60,24 @@ export async function prepareStartedState(input: Readonly<{
   }>) => SessionHandoffStatus;
 }>): Promise<PrepareStartedStateResult> {
   const { callInput } = input;
+  if (callInput.request.stateTransfer === 'existing') {
+    const targetPath = typeof callInput.request.targetPath === 'string'
+      ? callInput.request.targetPath
+      : typeof callInput.metadata.path === 'string' ? callInput.metadata.path.trim() : '';
+    if (!targetPath) throw new Error('Session path is unavailable for handoff');
+    await input.sourceExportStore.save({
+      handoffId: callInput.handoffId,
+      sessionId: callInput.request.sessionId,
+      sourceMachineId: callInput.request.sourceMachineId,
+      targetMachineId: callInput.request.targetMachineId,
+      stateTransfer: 'existing',
+      exportedAtMs: Date.now(),
+    });
+    return { targetPath, endpointCandidates: [], nextState: {
+      status: input.buildStartPendingStatus({ handoffId: callInput.handoffId, sourceStopState: callInput.sourceStopState }),
+      sourceMachineId: callInput.request.sourceMachineId, targetMachineId: callInput.request.targetMachineId,
+    } };
+  }
   let agentBundlePayloadSource: TransferPayloadSource | null =
     callInput.preExportedAgentBundle?.agentBundlePayloadSource ?? null;
   let agentBundleTransferPublication: SessionHandoffAgentBundleTransferPublication | null =

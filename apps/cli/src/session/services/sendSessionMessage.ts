@@ -20,7 +20,8 @@ import {
   enqueuePendingQueueV2MessageViaHttp,
   enqueuePendingExecutionRunMessageViaHttp,
   listPendingQueueV2DeliveryStatusesFromServer,
-  readBlockedPendingQueueV2DeliveryByLocalIdFromServer,
+  readPendingQueueV2DeliveryFailureByLocalIdFromServer,
+  type PendingQueueDeliveryFailure,
   type PendingQueueDeliveryBlockedReason,
 } from '@/api/session/pendingQueueV2Transport';
 import {
@@ -579,20 +580,21 @@ const ASSISTANT_TURN_SCAN_PAGE_LIMIT = 100;
 type CurrentPromptDeliveryOutcome =
   | Readonly<{ kind: 'missing' }>
   | Readonly<{ kind: 'materialized'; message: TranscriptMessageLookupResult }>
-  | Readonly<{ kind: 'blocked'; reason: PendingQueueDeliveryBlockedReason }>;
+  | Readonly<{ kind: 'blocked'; reason: PendingQueueDeliveryBlockedReason }>
+  | Readonly<{ kind: 'cancelled' }>;
 
 function formatBlockedPromptDeliveryFailure(reason: PendingQueueDeliveryBlockedReason): string {
   return `Current turn failed: pending delivery blocked (${reason})`;
 }
 
-async function readBlockedPromptDeliveryReason(params: Readonly<{
+async function readPromptDeliveryFailureReason(params: Readonly<{
   token: string;
   sessionId: string;
   localId: string;
   resolveAuthorizationHeaders?: ResolveSessionMessageAuthorizationHeaders;
-}>): Promise<PendingQueueDeliveryBlockedReason | null> {
+}>): Promise<PendingQueueDeliveryFailure['reason'] | null> {
   try {
-    return (await readBlockedPendingQueueV2DeliveryByLocalIdFromServer(params))?.reason ?? null;
+    return (await readPendingQueueV2DeliveryFailureByLocalIdFromServer(params))?.reason ?? null;
   } catch {
     return null;
   }
@@ -625,8 +627,9 @@ async function waitForCurrentPromptDelivery(params: Readonly<{
       });
       params.signal?.throwIfAborted();
       if (materialized) return { kind: 'materialized', message: materialized };
-      const blockedReason = await readBlockedPromptDeliveryReason(params);
-      if (blockedReason) return { kind: 'blocked', reason: blockedReason };
+      const failureReason = await readPromptDeliveryFailureReason(params);
+      if (failureReason === 'session_input_cancelled') return { kind: 'cancelled' };
+      if (failureReason) return { kind: 'blocked', reason: failureReason };
       if (!(await events.waitForChange(revision, params))) break;
     }
     return { kind: 'missing' };
@@ -1073,6 +1076,10 @@ export async function waitForSessionInputResult(
       ...(params.beforeInputObservation ? { beforeInputObservation: params.beforeInputObservation } : {}),
       ...(params.signal ? { signal: params.signal } : {}),
     });
+    if (promptDelivery.kind === 'cancelled') {
+      return { ok: true, sessionId: sessionTarget.sessionId, localId,
+        result: { kind: 'cancelled', message: formatStructuredTurnFailureMessage('cancelled') } };
+    }
     if (promptDelivery.kind === 'blocked') {
       return {
         ok: true,
@@ -1665,6 +1672,10 @@ export async function sendSessionMessage(
         ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders }
         : {}),
     });
+    if (promptDelivery.kind === 'cancelled') {
+      return { ok: false, code: 'cancelled', message: formatStructuredTurnFailureMessage('cancelled'),
+        ...(admissionResult ? { admissionResult } : {}) };
+    }
     if (promptDelivery.kind === 'blocked') {
       return {
         ok: false,

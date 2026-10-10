@@ -4,8 +4,15 @@ import { NO_TEAM_CAPABILITIES_V1 } from '@happier-dev/protocol/teams';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import fs from 'node:fs/promises';
 
 import type { Credentials } from '@/persistence';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { configuration } from '@/configuration';
 
 const spawnDaemonSession = vi.hoisted(() => vi.fn());
 const resolveDaemonSpawnSessionByNonce = vi.hoisted(() => vi.fn());
@@ -69,8 +76,15 @@ import {
   deriveSessionCreationTagV1,
   buildSessionSpawnInitialInputLocalIdV1,
   snapshotSessionRolesAtSpawnV1,
+  createSessionOwnerMetadataV1,
   BUILT_IN_ROLES_V1,
   type SessionInitialAccessDraftV1,
+  admitAgentStartV1,
+  DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+  openWorkflowProgressStoredEnvelopeV1,
+  parseWorkflowStoredContentEnvelopeV1,
+  sealWorkflowProgressStoredEnvelopeV1,
+  serializeWorkflowStoredContentEnvelopeV1,
 } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
@@ -78,6 +92,14 @@ import { buildSessionSpawnInitialInputAdmissionForLocalIdV1 } from './sessionInp
 import { createProductionFreshWorkflowSessionConversation } from '@/daemon/workflows/sessionStepExecutor';
 import { readSessionWorkspaceWritesV1, type ResolvedRoleV1 } from '@happier-dev/protocol';
 import { SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
+import { registerPrivateSpawnSessionRpcHandlers } from '@/rpc/handlers/sessionLifecycle';
+import { createSpawnNewSessionLifecycleActionHandler } from '@/session/actions/lifecycle/createSpawnNewSessionLifecycleActionHandler';
+import type { RpcHandler } from '@/api/rpc/types';
+import { createProductionWorkflowRunCoordinator } from '@/daemon/workflows/production';
+import { createWorkflowRunStorageTestkit } from '@/daemon/workflows/workflowRunStorage.testkit';
+import { prepareWorkflowAcceptedWorkspaceTarget } from '@/daemon/workflows/resolveWorkflowWorkspace';
+import { executeClaimedRun } from '@/daemon/automation/automationRunExecutor';
+import { WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 const initialAccess: SessionInitialAccessDraftV1 = {
   grants: [{ subject: { kind: 'team', teamId: 'team-1' }, accessLevel: 'edit', canApprovePermissions: false }],
@@ -139,6 +161,40 @@ describe('createSpawnedSession settlement', () => {
     expect(validateStoredAuthTokenAgainstActiveServer).not.toHaveBeenCalled();
   });
 
+  it.each(['session', 'run_step'] as const)('inherits the lead Context memory at %s birth without copying instructions or Bot identity', async (originKind) => {
+    const plainCredentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'context-owner' })).toString('base64url')}.signature`, encryption: null };
+    const memory = { id: 'session.memory', ref: { kind: 'doc' as const, artifactId: 'lead-memory' }, enabled: true, placement: 'system_append' as const };
+    const instruction = { ...memory, id: 'session.instructions', ref: { kind: 'doc' as const, artifactId: 'lead-instructions' } };
+    const lead = createSessionRecordFixture({ id: 'context-lead', encryptionMode: 'plain', machineId: 'machine-1',
+      metadata: JSON.stringify({ path: '/repo', machineId: 'machine-1', bot: { kind: 'bot' }, createdAsBot: true,
+        work: { memoryEnabled: true, promptStack: [instruction, memory] } }),
+      effectiveAccess: { level: 'owner', capabilities: { readTranscript: true, readOwnerMetadata: true } },
+    });
+    fetchSessionById.mockResolvedValue(lead);
+    setActiveAccountSettingsSnapshot({ source: 'network', scopeKey: resolveAccountSettingsScopeKey(plainCredentials),
+      settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
+      promptLibraryCatalog: { status: 'ready', rows: [{ revision: 1, record: { key: 'coding', value: { v: 1, scope: { kind: 'coding' }, entries: [] } } }], tombstones: [], diagnostics: [] } });
+    const read = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      if (String(url).endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (String(url).endsWith('/v1/artifacts')) return { status: 200, data: [
+        ['lead-memory', 'memory_doc.v1'], ['lead-instructions', 'prompt_doc.v2'],
+      ].map(([id, kind]) => ({ id, header: encodePlainArtifactStoredContent({ v: 1, kind, title: id }), body: null,
+        dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 })) };
+      throw new Error(`Unexpected inheritance read: ${url}`);
+    });
+    const spawn = vi.fn(async () => ({ type: 'success', sessionId: 'context-worker', sessionCreationOutcome: creationOutcome }));
+    try {
+      await createSpawnedSession({ credentials: plainCredentials, directory: '/worker', machineId: 'machine-1',
+        accountSettings: {}, backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+        originKind, originSessionId: 'context-lead', ...(originKind === 'session' ? { reportsTo: { sessionId: 'context-lead' } } : { originRunId: 'workflow-run' }),
+        directTransport: { spawn, resolveSpawnSessionByNonce: async () => ({ status: 'unsupported' }) } });
+      expect(spawn.mock.calls[0]?.[0]).toMatchObject({ memoryEnabled: true,
+        promptStack: [{ ...memory, ref: { ...memory.ref, serverId: configuration.activeServerId } }] });
+      expect(spawn.mock.calls[0]?.[0]).not.toHaveProperty('identity');
+      expect(JSON.stringify(spawn.mock.calls[0]?.[0])).not.toContain('lead-instructions');
+    } finally { read.mockRestore(); resetActiveAccountSettingsSnapshotForTests(); }
+  });
+
   it.each([undefined, { sessionSpawn: { protocolVersions: [1] } }])(
     'refuses a remote role-bearing spawn before creation when the target lacks current spawn support (%j)',
     async (operationProtocolCapabilities) => {
@@ -162,7 +218,6 @@ describe('createSpawnedSession settlement', () => {
           initialSessionRolesV1: {
             ...snapshotSessionRolesAtSpawnV1({
               leadSessionId: 'lead-session',
-              sameAccount: false,
               roles: { builder: { ...BUILT_IN_ROLES_V1.builder, roleId: 'builder' } },
             }),
             roleId: 'builder',
@@ -291,6 +346,8 @@ describe('createSpawnedSession settlement', () => {
       sessionCreationCorrespondence,
       organizationPlacement: { folderId: null, tagIds: [] },
       initialTitle: 'Atomic first title',
+      identity: { bot: { kind: 'bot' }, createdAsBot: true },
+      memoryEnabled: false,
       initialAccess,
       primaryTeamId: 'team-1',
       initialInput: { text: 'Inspect this repo' },
@@ -311,6 +368,8 @@ describe('createSpawnedSession settlement', () => {
       sessionCreationTag,
       sessionCreationCorrespondence,
       initialTitle: 'Atomic first title',
+      identity: { bot: { kind: 'bot' }, createdAsBot: true },
+      memoryEnabled: false,
       initialAccess,
       primaryTeamId: 'team-1',
       agentSessionStartupInstructionsV1,
@@ -342,6 +401,193 @@ describe('createSpawnedSession settlement', () => {
     expect(spawnDaemonSession).not.toHaveBeenCalled();
   });
 
+  it('launches the R19 Workflow Agent selection through the real private spawn lifecycle', async () => {
+    const directory = '/home/ubuntu';
+    // Only filesystem readiness and physical runner launch are replaced;
+    // target preparation, Workflow creation, transport parsing and lifecycle stay real.
+    const access = vi.spyOn(fs, 'access').mockResolvedValue(undefined);
+    const launches: Parameters<Parameters<typeof createSpawnNewSessionLifecycleActionHandler>[0]['spawnSession']>[0][] = [];
+    const handlers = new Map<string, RpcHandler>();
+    registerPrivateSpawnSessionRpcHandlers({
+      rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } },
+      spawnLifecycleHandler: createSpawnNewSessionLifecycleActionHandler({
+        spawnSession: async options => {
+          launches.push(options);
+          return { type: 'success', sessionId: 'r19-agent-session', sessionCreationOutcome: creationOutcome };
+        },
+      }),
+    });
+    callMachineRpc.mockImplementation(async ({ method, request }) => {
+      const handler = handlers.get(method);
+      if (!handler) throw new Error(`Unexpected private Machine RPC: ${method}`);
+      return handler(request);
+    });
+    fetchSessionById.mockResolvedValue({ id: 'r19-agent-session', createdAt: 1, updatedAt: 1,
+      active: true, activeAt: 1, pendingCount: 0, metadataVersion: 1, metadata: { path: directory, host: 'host' } });
+    const selection = {
+      agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+      acpSessionModeId: 'default',
+      connectedServices: { v: 2 as const, bindingsByServiceId: {
+        'happier.agent.claude/claude-subscription': { source: 'connected' as const,
+          selection: 'profile' as const, profileId: '00ae5eea-6286-48bc-b82a-30a5f8492864' },
+        'happier.agent.claude/anthropic': { source: 'native' as const },
+      } },
+      modelSelection: { v: 1 as const, updatedAt: 1791524847849, ref: {
+        agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'claude-haiku-4-5',
+      } },
+    } satisfies Parameters<ReturnType<typeof createProductionFreshWorkflowSessionConversation>>[0]['selection'];
+    try {
+      const create = createProductionFreshWorkflowSessionConversation({ credentials, serverId: 'server-1',
+        machineId: '2481f422-055e-4922-ba85-aa3253fda9e3', workDepth: 0,
+        originRunId: '8d2650cf-c89a-4238-9275-0da8f42741aa',
+        machineAdmissionTransport: async () => ({ status: 'accepted', localId: 'unused' }),
+      });
+      await expect(create({ selection, workspace: { machineId: '2481f422-055e-4922-ba85-aa3253fda9e3',
+        directory, checkoutRootPath: directory },
+        creationKey: 'workflow:8d2650cf-c89a-4238-9275-0da8f42741aa:be62f627-1261-48f9-a8d0-487ed7c478c9',
+      })).resolves.toMatchObject({ sessionId: 'r19-agent-session' });
+      expect(launches).toHaveLength(1);
+      expect(launches[0]).toMatchObject({ directory, agentTarget: selection.agentTarget,
+        connectedServices: selection.connectedServices, modelSelection: selection.modelSelection, agentModeId: 'default',
+        originKind: 'run_step', originRunId: '8d2650cf-c89a-4238-9275-0da8f42741aa', workDepth: 1 });
+      expect(callMachineRpc.mock.calls[0]?.[0].request).not.toHaveProperty('backendTarget');
+    } finally {
+      access.mockRestore();
+    }
+  });
+
+  it.each(['definite_refusal', 'lost_admission', 'uncorrelated_failure'] as const)('settles only proven no-launch Workflow failure through the real claim owner (%s)', async failure => {
+    const runId = '8d2650cf-c89a-4238-9275-0da8f42741aa';
+    const machineId = '2481f422-055e-4922-ba85-aa3253fda9e3';
+    const accountId = 'account-1';
+    const witness = { mode: 'plain' as const, version: 1, contentKeyFingerprint: null };
+    const directory = '/home/ubuntu';
+    const access = vi.spyOn(fs, 'access').mockResolvedValue(undefined);
+    const boundary = createWorkflowRunStorageTestkit({ runId, machineId, accountId,
+      origin: { kind: 'automation', automationId: 'automation-1' } });
+    const definitionEnvelope = JSON.stringify({ t: 'plain', v: { inlineDefinition: {
+      version: 1, inputs: [], defaults: { agentTarget: { kind: 'agent',
+        identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
+      blocks: [{ kind: 'step', id: 'step-1', document: { text: 'Reply only ready.', references: [], attachments: [] },
+        execution: { connectedServices: { v: 2, bindingsByServiceId: {} } }, input: [], result: { kind: 'text' } }],
+    }, workspace: { directory }, executionTarget: { kind: 'session' } } });
+    // Private Machine transport returns a correlated refusal, or loses its
+    // response after dispatch. The creator, coordinator, store and claim stay real.
+    callMachineRpc.mockImplementation(async ({ method }) => {
+      if (method === RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE) return { status: 'not_found' };
+      if (method !== RPC_METHODS.SPAWN_HAPPY_SESSION) throw new Error(`Unexpected RPC: ${method}`);
+      if (failure === 'lost_admission') throw Object.assign(new Error('admission acknowledgement lost'), { code: 'MACHINE_RPC_TIMEOUT' });
+      if (failure === 'uncorrelated_failure') throw Object.assign(new Error('uncorrelated transport validation failure'), {
+        code: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+      });
+      return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'Selected model is unavailable for this Agent.' };
+    });
+    const coordinate = createProductionWorkflowRunCoordinator({ token: credentials.token, accountId, machineId,
+      storage: boundary, resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode: 'yolo' }),
+      resolveAccountEncryption: async () => ({ kind: 'available', witness }), isAcceptedAuthorizationCurrent: async () => true,
+      resolveMaterializationHost: async target => ({ effects: { resolveTargetAvailability: async () => true },
+        admitLeaf: async (leaf, facts) => admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, { kind: 'workflow_run_leaf', leaf }, {
+          caller: { kind: 'originless', runId: target.runId, runDepth: target.workDepth },
+          baseline: { machineId, directory: target.directory }, ledSubtreeSessionIds: [],
+          roles: {}, workDepthLimit: 4, callerPermissionCeiling: facts.permissionCeiling,
+        }),
+      }),
+      prepareAcceptedWorkspaceTarget: input => prepareWorkflowAcceptedWorkspaceTarget({ ...input,
+        pathIsDirectory: async () => true, inspectLocation: async () => null }),
+      workspaceScm: { inspectLocation: async () => null, verifyRecordedWorkspace: async () => 'available' },
+      onCommittedTransition: async () => {},
+      execution: { credentials, serverId: 'server-1',
+        machineAdmissionTransport: async () => { throw new Error('No input may follow spawn refusal'); },
+        resolveExistingSessionConversation: async () => null,
+        detachedRun: { actionExecutor: { execute: async () => { throw new Error('Unexpected detached execution'); } },
+          buildActionContext: () => ({ surface: 'cli', authority: 'account_automation' }) },
+      },
+    });
+    const claimClient = { heartbeatRun: async () => {}, failRun: vi.fn(async () => {}) };
+    try {
+      await executeClaimedRun({ machineId, claimClient, coordinateWorkflowRun: coordinate,
+        heartbeatMs: 60_000, leaseDurationMs: 120_000,
+        claimed: { protocol: 'v3', accountCurrentness: witness,
+          automation: { id: 'automation-1', name: 'Agent refusal', enabled: true },
+          run: { id: runId, automationId: 'automation-1', attempt: 0, revision: 0,
+            recipeKind: 'workflow-v2', executionInputEnvelope: definitionEnvelope,
+            triggerId: null, cause: { kind: 'manual', invokedAt: 1 }, causeWorkDepth: 0,
+            resultDelivery: { kind: 'none' } },
+        },
+      });
+      const cancelAndReclaim = async () => {
+        boundary.requestControl('cancel_requested');
+        await executeClaimedRun({ machineId, claimClient, coordinateWorkflowRun: coordinate,
+          heartbeatMs: 60_000, leaseDurationMs: 120_000,
+          claimed: { protocol: 'v3', accountCurrentness: witness,
+            automation: { id: 'automation-1', name: 'Agent refusal', enabled: true },
+            run: { id: runId, automationId: 'automation-1', attempt: 1, revision: boundary.run().revision,
+              recipeKind: 'workflow-v2', executionInputEnvelope: definitionEnvelope,
+              triggerId: null, cause: { kind: 'manual', invokedAt: 1 }, causeWorkDepth: 0,
+              resultDelivery: { kind: 'none' }, workflowAcceptedSnapshotEnvelope: boundary.acceptedEnvelope()! },
+          },
+        });
+      };
+      if (failure !== 'definite_refusal') {
+        expect(boundary.run().state).toBe('running');
+        expect(boundary.run().workflowCustodyState).toBe('pending');
+        expect(boundary.rows().some(row => row.index.lifecycle === 'failed')).toBe(false);
+        expect(boundary.resultEnvelope()).toBeNull();
+        // Redacted R19 public progress (fin-qa19/agent-child-final.json).
+        // Map only opaque row ids to the real owner-created fixture ids. No
+        // Session correspondence or no-launch proof may be invented on rejoin.
+        const historic = boundary.rows().find(row => row.index.parentRecordId !== null);
+        if (!historic) throw new Error('Missing historic Agent invocation');
+        historic.contentEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
+          mode: 'plain', binding: { v: 1, purpose: 'invocation_progress', accountId, runId,
+            recordId: historic.index.id, sequence: historic.index.sequence, parentRecordId: historic.index.parentRecordId,
+            memberOrdinal: historic.index.memberOrdinal, attempt: historic.index.attempt },
+          progress: { kind: 'happier.workflow-progress.v1', invocationPath: { blockId: 'step-1', scope: [] },
+            blockKind: 'step', attempt: '0', input: { document: {
+              text: 'Reply exactly QA-FIN19_AGENT_READY. Do not use tools, edit files, or run commands.',
+              attachments: [], references: [] }, input: [] },
+            workspace: { descriptor: { machineId, directory, checkoutRootPath: directory } },
+            logicalInvocationRecordId: historic.index.id },
+        }));
+        historic.index = { ...historic.index, contentRevision: '3', lifecycle: 'cancel_requested' };
+        await cancelAndReclaim();
+        expect(boundary.run()).toMatchObject({ state: 'cancelled', workflowCustodyState: 'pending' });
+        expect(await boundary.execute({ operation: 'wait', runId })).toMatchObject({
+          observation: 'terminal', matchedCondition: 'terminal', run: { state: 'cancelled', workflowCustodyState: 'pending' },
+        });
+        expect(boundary.rows().some(row => row.index.parentRecordId !== null && row.index.lifecycle === 'cancel_requested')).toBe(true);
+        expect(callMachineRpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.SPAWN_HAPPY_SESSION)).toHaveLength(1);
+        expect(claimClient.failRun).not.toHaveBeenCalled();
+        return;
+      }
+      expect(boundary.run().state).toBe('interrupted');
+      const leaf = boundary.rows().find(row => row.index.parentRecordId !== null && row.index.lifecycle === 'failed');
+      expect(leaf).toBeDefined();
+      if (!leaf) throw new Error('Missing proven failure');
+      const opened = openWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+        binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: leaf.index.id,
+          sequence: leaf.index.sequence, parentRecordId: leaf.index.parentRecordId, memberOrdinal: leaf.index.memberOrdinal,
+          attempt: leaf.index.attempt }, envelope: parseWorkflowStoredContentEnvelopeV1(leaf.contentEnvelope) });
+      expect(opened).toMatchObject({ kind: 'available', content: { reason: {
+        code: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        message: 'Selected model is unavailable for this Agent.',
+      } } });
+      // An authorized cancellation follows the proven failure. Reconstruct the
+      // production coordinator from stored facts; no second spawn is permitted.
+      await cancelAndReclaim();
+      expect(boundary.run()).toMatchObject({ state: 'cancelled', workflowCustodyState: 'settled' });
+      expect(await boundary.execute({ operation: 'wait', runId })).toMatchObject({
+        observation: 'terminal', matchedCondition: 'terminal', run: { state: 'cancelled' },
+      });
+      expect(boundary.rows().some(row => WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1
+        .some(lifecycle => lifecycle === row.index.lifecycle))).toBe(false);
+      expect(callMachineRpc).toHaveBeenCalledTimes(1);
+      expect(sendSessionMessage).not.toHaveBeenCalled();
+      expect(claimClient.failRun).not.toHaveBeenCalled();
+    } finally { access.mockRestore(); }
+  });
+
   it.each(['private_default', 'team_required', null] as const)('creates fresh Workflow steps with Team policy %s, accepted depth and frozen role workspace ceiling', async (policy) => {
     const directory = await mkdtemp(join(tmpdir(), 'workflow-frozen-role-'));
     vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: {
@@ -350,6 +596,7 @@ describe('createSpawnedSession settlement', () => {
             defaultSessionHistoryAccess: 'from_membership', admissionMode: 'invite_only', authenticationPolicy: null },
           viewerRole: 'owner', capabilities: NO_TEAM_CAPABILITIES_V1,
           admission: { historyChoice: { admin: 'choice', member: 'choice', guest: 'hidden' } },
+          counts: null,
         } });
     const machineRead = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { machine: {
       id: 'machine-1', revokedAt: null, replacedByMachineId: null, operationProtocolCapabilitiesRevision: 1,
@@ -368,12 +615,16 @@ describe('createSpawnedSession settlement', () => {
       await expect(create({ selection: {
         agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
         connectedServices: { v: 2, bindingsByServiceId: {} }, permissionMode: 'read_only',
+        launchEnvironment: { values: { OPENAI_API_KEY: 'retained-private-value', task_name: 'daily' }, unset: [] },
+        providerSessionResume: { kind: 'provider_session.v1', providerSessionId: 'native-conversation-2' },
       }, workspace: { machineId: 'machine-1', directory, checkoutRootPath: directory },
         creationKey: 'workflow:workflow-run:invocation', frozenRole: role,
       })).resolves.toMatchObject({ sessionId: 'frozen-step' });
       const transmitted = SpawnDaemonSessionRequestSchema.parse(callMachineRpc.mock.calls[0]?.[0].request);
       expect(transmitted).toMatchObject({ workDepth: 3, originKind: 'run_step', originRunId: 'workflow-run',
         initialSessionRolesV1: { roleId: 'reviewer', sessionRoles: { reviewer: role } },
+        environmentVariables: { OPENAI_API_KEY: 'retained-private-value', task_name: 'daily' },
+        resume: 'native-conversation-2',
       });
       if (policy) {
         expect(transmitted.initialAccess).toEqual({ grants: [{ subject: { kind: 'team', teamId: 'team-1' }, accessLevel: 'view', canApprovePermissions: false }] });
@@ -1105,9 +1356,11 @@ describe('createSpawnedSession settlement', () => {
       machineId: 'machine-exact',
       method: RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE,
       request: { spawnNonce: 'exact-machine-action-1', timeoutMs: expect.any(Number) },
-      timeoutMs: expect.any(Number),
+      timeoutMs: null,
+      signal: expect.any(AbortSignal),
+      reattachOnReconnect: { readRequest: expect.any(Function) },
     });
-    expect(callMachineRpc.mock.calls[1]?.[0]?.timeoutMs).toBeGreaterThan(20_000);
+    expect(callMachineRpc.mock.calls[1]?.[0]?.request?.timeoutMs).toBeGreaterThan(20_000);
     expect(spawnDaemonSession).not.toHaveBeenCalled();
     expect(resolveDaemonSpawnSessionByNonce).not.toHaveBeenCalled();
   });
@@ -1156,7 +1409,7 @@ describe('createSpawnedSession settlement', () => {
     );
     expect(directTransport.resolveSpawnSessionByNonce).toHaveBeenCalledWith(
       'direct-target-action-1',
-      { signal: controller.signal, timeoutMs: expect.any(Number) },
+      { signal: expect.any(AbortSignal), timeoutMs: expect.any(Number) },
     );
     expect(callMachineRpc).not.toHaveBeenCalled();
     expect(spawnDaemonSession).not.toHaveBeenCalled();
@@ -1578,7 +1831,9 @@ describe('createSpawnedSession settlement', () => {
       machineId: 'machine-1',
       method: RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE,
       request: { spawnNonce: 'provider-action-1', timeoutMs: expect.any(Number) },
-      timeoutMs: expect.any(Number),
+      timeoutMs: null,
+      signal: expect.any(AbortSignal),
+      reattachOnReconnect: { readRequest: expect.any(Function) },
     });
     expect(spawnDaemonSession).not.toHaveBeenCalled();
     expect(resolveDaemonSpawnSessionByNonce).not.toHaveBeenCalled();
@@ -1701,7 +1956,9 @@ describe('createSpawnedSession settlement', () => {
       machineId: 'machine-1',
       method: RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE,
       request: { spawnNonce: 'provider-action-retry', timeoutMs: expect.any(Number) },
-      timeoutMs: expect.any(Number),
+      timeoutMs: null,
+      signal: expect.any(AbortSignal),
+      reattachOnReconnect: { readRequest: expect.any(Function) },
     });
     expect(spawnDaemonSession).not.toHaveBeenCalled();
     expect(resolveDaemonSpawnSessionByNonce).not.toHaveBeenCalled();
@@ -1910,7 +2167,13 @@ describe('createSpawnedSession replay-seeded creation', () => {
   }
 
   beforeEach(() => {
-    vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { accessKey: 'existing' } } as never);
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(url).pathname;
+      if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+      if (path.startsWith('/v1/access-keys/')) return { status: 200, data: { accessKey: 'existing' } };
+      throw new Error(`Unexpected replay creation HTTP read: ${url}`);
+    });
     vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { success: true } } as never);
     spawnDaemonSession.mockReset();
     resolveDaemonSpawnSessionByNonce.mockReset();
@@ -1949,6 +2212,8 @@ describe('createSpawnedSession replay-seeded creation', () => {
     });
 
     await createSpawnedSession(replaySeededParams({
+      // This access-key boundary case starts after Account creation settings admission.
+      accountSettings: {},
       directTransport: {
         spawn: directSpawn,
         resolveSpawnSessionByNonce: async () => ({ status: 'unsupported' as const }),
@@ -1956,12 +2221,19 @@ describe('createSpawnedSession replay-seeded creation', () => {
     }));
 
     expect(order).toEqual(['access-key', 'spawn']);
-    expect(vi.mocked(axios.get).mock.calls[0]?.[0]).toContain('/v1/access-keys/replay-child-bind-order/machine-1');
+    expect(vi.mocked(axios.get).mock.calls.some(([url]) => String(url).includes('/v1/access-keys/replay-child-bind-order/machine-1'))).toBe(true);
   });
 
-  it('commits the row from the recipe and attaches the launched runner to it', async () => {
+  it.each([
+    { identity: { bot: { kind: 'bot' as const }, createdAsBot: true as const }, memoryEnabled: false, expectedMemory: false, roleWorker: true, profileId: 'worker-profile' },
+    { identity: undefined, memoryEnabled: undefined, expectedMemory: false, roleWorker: true, profileId: 'worker-profile' },
+    { identity: { bot: { kind: 'bot' as const }, createdAsBot: true as const }, memoryEnabled: undefined, expectedMemory: true, roleWorker: true, profileId: 'worker-profile' },
+    { identity: undefined, memoryEnabled: undefined, expectedMemory: false, roleWorker: false, profileId: 'worker-profile' },
+    { identity: undefined, memoryEnabled: undefined, expectedMemory: false, roleWorker: true, profileId: null },
+    { identity: undefined, memoryEnabled: undefined, expectedMemory: false, roleWorker: false, profileId: undefined },
+  ])('commits the row from the recipe and attaches the launched runner to it', async ({ identity, memoryEnabled, expectedMemory, roleWorker, profileId }) => {
     const initialSessionRolesV1 = { ...snapshotSessionRolesAtSpawnV1({
-      leadSessionId: 'lead-1', sameAccount: true, notes: 'Preserve launch notes',
+      leadSessionId: 'lead-1', notes: 'Preserve launch notes',
       roles: { builder: { roleId: 'builder', name: 'Builder', instructions: 'Complete role instructions',
         engine: { agentTargetKey: 'agent:codex', modelId: 'worker-model' }, runsAs: { kind: 'session' },
         workspaceWrites: 'allow', secondOpinion: 'off', enabled: true } },
@@ -1972,8 +2244,16 @@ describe('createSpawnedSession replay-seeded creation', () => {
 
     const created = await createSpawnedSession(replaySeededParams({
       initialAccess,
+      identity,
+      memoryEnabled,
       primaryTeamId: 'team-1',
-      initialSessionRolesV1,
+      profileId,
+      ...(roleWorker ? { initialSessionRolesV1 } : { reportsTo: { sessionId: 'lead-1' } }),
+      replaySeededCreation: { tag: 'replay:parent-session:12:attempt', flavor: 'codex',
+        metadata: { ...replayMetadata, profileId: 'lead-profile', work: { promptStack: [{ id: 'lead-context', enabled: true, placement: 'system_append', ref: { kind: 'doc', artifactId: 'lead-doc' } }],
+          disabledInheritedEntryIds: ['account.context'], memoryEnabled: !expectedMemory,
+          sessionRolesV1: { overrides: {}, sessionRoles: {}, notes: 'Lead notes', memoryDocRef: { kind: 'doc', artifactId: 'lead-memory' } } } },
+        sourceRecipe: { sourceSessionId: 'parent-session', cutoffSeqInclusive: 12 } },
       directTransport: {
         spawn: directSpawn,
         resolveSpawnSessionByNonce: async () => ({ status: 'unsupported' as const }),
@@ -1988,14 +2268,25 @@ describe('createSpawnedSession replay-seeded creation', () => {
     expect(directSpawn.mock.calls[0]?.[0]).not.toHaveProperty('initialAccess');
     expect(directSpawn.mock.calls[0]?.[0]).not.toHaveProperty('primaryTeamId');
     expect(directSpawn.mock.calls[0]?.[0]).not.toHaveProperty('initialSessionRolesV1');
+    expect(directSpawn.mock.calls[0]?.[0]).not.toHaveProperty('identity');
+    expect(directSpawn.mock.calls[0]?.[0]).not.toHaveProperty('memoryEnabled');
     expect(creationCall.metadata).toMatchObject({
       tag: 'replay:parent-session:12:attempt',
       path: '/repo',
       flavor: 'codex',
+      ...(typeof profileId === 'string' ? { profileId } : {}),
       forkV1: replayMetadata.forkV1,
       replaySeedV1: replayMetadata.replaySeedV1,
-      work: { sessionRolesV1: initialSessionRolesV1 },
+      ...identity,
+      work: { ...(roleWorker ? { sessionRolesV1: initialSessionRolesV1 } : {}), memoryEnabled: expectedMemory },
     });
+    expect(creationCall.metadata).not.toHaveProperty('work.promptStack');
+    expect(creationCall.metadata).not.toHaveProperty('work.disabledInheritedEntryIds');
+    const storedOwner = createSessionOwnerMetadataV1({ metadata: creationCall.metadata });
+    expect(storedOwner).toMatchObject({ ok: true });
+    if (!storedOwner.ok) throw new Error('Expected canonical persisted worker metadata');
+    expect(storedOwner.ownerMetadata.work).not.toHaveProperty('promptStack');
+    if (typeof profileId !== 'string') expect(creationCall.metadata).not.toHaveProperty('profileId');
     expect(directSpawn.mock.calls[0]?.[0]).toMatchObject({
       existingSessionId: 'replay-child',
       freshSessionCreation: true,
@@ -2004,6 +2295,29 @@ describe('createSpawnedSession replay-seeded creation', () => {
     // Identity is already committed by the row creation, so the creator must
     // not fall back to nonce settlement for it.
     expect(resolveDaemonSpawnSessionByNonce).not.toHaveBeenCalled();
+  });
+
+  it('preserves the source Profile and Session context for ordinary replay without a worker relation', async () => {
+    const promptStack = [{ id: 'source-context', enabled: true, placement: 'system_append' as const,
+      ref: { kind: 'doc' as const, artifactId: 'source-doc' } }];
+    await createSpawnedSession(replaySeededParams({
+      replaySeededCreation: { tag: 'replay:parent-session:12:attempt', flavor: 'codex',
+        metadata: { ...replayMetadata, profileId: 'source-profile', work: {
+          promptStack, disabledInheritedEntryIds: ['account.context'],
+          sessionRolesV1: { overrides: {}, sessionRoles: {}, notes: 'Source notes', memoryDocRef: { kind: 'doc', artifactId: 'source-memory' } },
+        } }, sourceRecipe: { sourceSessionId: 'parent-session', cutoffSeqInclusive: 12 } },
+      directTransport: { spawn: async () => ({ type: 'success', sessionId: 'replay-child' }),
+        resolveSpawnSessionByNonce: async () => ({ status: 'unsupported' as const }) },
+    }));
+    expect(getOrCreateSessionByTag.mock.calls[0]?.[0].metadata).toMatchObject({
+      profileId: 'source-profile', work: { promptStack, disabledInheritedEntryIds: ['account.context'] },
+    });
+    const storedOwner = createSessionOwnerMetadataV1({ metadata: getOrCreateSessionByTag.mock.calls[0]?.[0].metadata });
+    expect(storedOwner).toMatchObject({ ok: true });
+    if (!storedOwner.ok) throw new Error('Expected canonical persisted replay metadata');
+    expect(storedOwner.ownerMetadata.work).toMatchObject({ promptStack: [...promptStack, {
+      id: 'session.legacy-role-memory', enabled: true, placement: 'system_append', ref: { kind: 'doc', artifactId: 'source-memory' },
+    }] });
   });
 
   it('reports the persisted empty cross-machine managed fork and never sends a source seed', async () => {

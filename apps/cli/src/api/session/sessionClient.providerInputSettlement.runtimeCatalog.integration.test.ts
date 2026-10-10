@@ -10,6 +10,7 @@ import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { logger } from '@/ui/logger';
+import { decodeBase64, decrypt } from '@/api/encryption';
 import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
 import {
   type ApiSessionSocketStub,
@@ -1576,6 +1577,8 @@ describe('ApiSessionClient provider-input settlement', () => {
     expect(resolveAcceptedMock).toHaveBeenCalledTimes(2);
     expect(client.hasPendingProviderInput('accepted-local')).toBe(false);
     expect(client.getCommittedUserMessageSeq('accepted-local')).toBe(43);
+    expect(resolveAcceptedMock.mock.calls[0][0].acceptedDelivery).toBeUndefined();
+    expect(resolveAcceptedMock.mock.calls[1][0].acceptedDelivery).toBeUndefined();
     expect(infoFileSpy).not.toHaveBeenCalled();
     expect(warnSpy).not.toHaveBeenCalled();
   });
@@ -1652,7 +1655,7 @@ describe('ApiSessionClient provider-input settlement', () => {
     expect(client.hasPendingProviderInput(localId)).toBe(true);
   });
 
-  it('records the exact committed message returned by a first accepted settlement', async () => {
+  it.each(['plain', 'e2ee'] as const)('records the exact committed message returned by a first accepted settlement (%s)', async (mode) => {
     resolveAcceptedMock.mockResolvedValueOnce({
       didResolve: true,
       pendingQueueState: { known: true, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 2 },
@@ -1660,18 +1663,33 @@ describe('ApiSessionClient provider-input settlement', () => {
     });
     sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
     userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
-    const client = createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({ id: 's1' }));
-    (client as any).materializationRuntime.markPendingQueueMaterializedLocalId('accepted-first-local');
+    const encryptionKey = new Uint8Array(32).fill(7);
+    const session = mode === 'plain' ? createPlainSessionFixture({ id: 's1' }) : {
+      ...createPlainSessionFixture({ id: 's1' }), encryptionMode: 'e2ee' as const,
+      encryptionKey, encryptionVariant: 'dataKey' as const,
+    };
+    const client = createTestApiSessionClient(ApiSessionClient, 'tok', session);
+    markMaterializedProviderInput(client, 'accepted-first-local');
 
     client.observeProviderInputSettlement({
       kind: 'accepted',
       localId: 'accepted-first-local',
       userMessageSeq: null,
+      providerDeliveryKind: 'steer',
+      providerTurnId: 'turn-observed',
+      acceptedAtMs: 1234,
     });
 
     await vi.waitFor(() => expect(resolveAcceptedMock).toHaveBeenCalledTimes(1));
     await vi.waitFor(() => expect(client.hasPendingProviderInput('accepted-first-local')).toBe(false));
     expect(client.getCommittedUserMessageSeq('accepted-first-local')).toBe(44);
+    const acceptedDelivery = resolveAcceptedMock.mock.calls[0][0].acceptedDelivery;
+    const facts = { v: 1, acceptedAtMs: 1234, delivery: { kind: 'steer', turnId: 'turn-observed' } };
+    if (mode === 'plain') expect(acceptedDelivery).toEqual({ t: 'plain', v: facts });
+    else {
+      expect(acceptedDelivery).toEqual({ t: 'encrypted', c: expect.any(String) });
+      expect(decrypt(encryptionKey, 'dataKey', decodeBase64(acceptedDelivery.c))).toEqual(facts);
+    }
   });
 
   it('rejoins once after socket ACK response loss, then stops after a second failure and ignores later wakes', async () => {
@@ -1784,6 +1802,9 @@ describe('ApiSessionClient provider-input settlement', () => {
       kind: 'accepted',
       localId: 'accepted-while-disconnected',
       userMessageSeq: null,
+      providerDeliveryKind: 'followUp',
+      providerTurnId: 'turn-before-reconnect',
+      acceptedAtMs: 987,
     })).resolves.toBe(false);
 
     expect(resolveAcceptedMock).not.toHaveBeenCalled();
@@ -1796,5 +1817,8 @@ describe('ApiSessionClient provider-input settlement', () => {
     await vi.waitFor(() => expect(resolveAcceptedMock).toHaveBeenCalledTimes(1));
     expect(client.hasPendingProviderInput('accepted-while-disconnected')).toBe(false);
     expect(client.getCommittedUserMessageSeq('accepted-while-disconnected')).toBe(45);
+    expect(resolveAcceptedMock.mock.calls[0][0].acceptedDelivery).toEqual({ t: 'plain', v: {
+      v: 1, acceptedAtMs: 987, delivery: { kind: 'followUp', turnId: 'turn-before-reconnect' },
+    } });
   });
 });

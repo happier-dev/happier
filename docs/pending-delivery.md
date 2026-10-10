@@ -1,5 +1,44 @@
 # Pending delivery architecture
 
+## Quota reset starts (development)
+
+Reset start changes the requested action of one already admitted main-conversation
+Pending row to `reset_start`; it does not enqueue another input. The binding names
+the qualified B source, record, meter, and exact accepted history witness. Protected
+reset dates and window details stay in the Account-mode B envelope, not in Pending
+metadata. The server's canonical provider selector withholds this action before
+claiming delivery, independently of the connected runner's version.
+
+The existing admitted Machine recovery scheduler opens the exact witness and current
+B observation. Its shared readiness evaluator requires current authority, a fresh
+usable observation, and the witnessed actual window transition. Unknown, stale,
+changed, or unavailable facts leave the same input held with an explicit reason.
+Existing Pending updates, reconnect, and settled quota-loop ticks wake this owner;
+the hold has no arbitrary expiry or separate durable queue.
+
+Release uses the installed Machine socket and the ordinary requested-action CAS.
+The server rechecks the retained admission target, current installation and reset
+operation support before replacing the exact witnessed hold with ordinary enqueue
+and authorizing existing activation. User cancellation uses semantic withdrawal;
+once delivery custody is consumed it reports the existing delivered/unknown outcome,
+not successful cancellation. Unsupported Machines cannot admit the reset action.
+The incumbent Home Pending Input revision 4 identifies support for this arm and
+its release/read transports. The daemon publishes reset operation support only
+when that cached Home revision is available and its actual reset owner is mounted;
+older or unavailable Homes retain their existing capability projection.
+
+Quota reads obtain source-filtered waiting metadata from the existing Pending read
+owner, under canonical Session access. Its `authorityCurrent` fact comes from the
+same admission checks used by set/release. Clients open B to project readiness; the
+server does not decrypt quota facts. Predecessor UI readers treat an unknown non-null
+requested action as an unsupported blocked row rather than defaulting it to enqueue.
+Current delegation is not a promise that a daemon is online or that its private
+requester custody is readable. Foreign hosted Sessions use the already admitted
+requester runtime context and currentness checks; missing or retired contexts cannot
+borrow the custodian's B credentials. Only the captured Machine recovery owner can
+release after its actual B opens succeed. Ordinary shared Session input remains
+supported, but shared edit permission alone cannot author an owner-Account reset.
+
 ## Explicit non-interrupting delivery (development)
 
 **Steer now** requests immediate delivery of the exact Pending row without
@@ -29,6 +68,15 @@ Pending provider acceptance carries the exact `localId` through `SessionClient`
 to server settlement. The server transaction
 commits or updates the transcript message and removes that Pending row.
 Transcript and Pending state are then published through separate events.
+
+The acceptance operation optionally retains the host-witnessed acceptance time,
+actual delivery kind (`newTurn`, `followUp`, or `steer`), and turn identity in that
+same user Message's `deliveryResolution`, using the explicit private Session-mode
+envelope described in [encryption](encryption.md#private-accepted-delivery-and-human-completion-facts-03-development).
+The canonical writer rejects mode mismatches before mutation, and replay preserves
+the first retained facts. Missing historical detail remains unknown; requested
+steering intent and server settlement time are not acceptance evidence. This adds
+no transcript row, accounting event, or second lifecycle owner.
 
 The UI applies transcript-authority filtering before matching committed user
 `localId`s against displayed `server_pending` rows. Each matching queue requests

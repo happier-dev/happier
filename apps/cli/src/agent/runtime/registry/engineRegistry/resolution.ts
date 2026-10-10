@@ -25,6 +25,8 @@ import {
     toEngineSelectedSource,
 } from './contributions';
 import { resolveLeasedAgentRuntime } from './agentRuntimeLease';
+import { resolveAccountConfiguredAcpLaunchForAgent } from './accountConfiguredAcp';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { createAgentExternalSessionsExecutionSurface } from '../agentExternalSessionsExecutionSurface';
 import type { ExternalSessionExecutionSurface } from '@/session/external/providerOps';
 import type {
@@ -100,6 +102,9 @@ function resolveRegisteredAgentAuxiliarySurfaces(
 
 export async function resolveEngineAdapterResolutionFromRegistry(params: Readonly<{
     backendId: string;
+    agentTarget?: ResolveEngineRegistryParams['agentTarget'];
+    startupRuntimeDescriptorV1?: ResolveEngineRegistryParams['startupRuntimeDescriptorV1'];
+    savedSecretOperationContext?: ResolveEngineRegistryParams['savedSecretOperationContext'];
     contributions: ResolvedContributionRegistry;
     runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null;
     resolveCurrentPluginMaterializationRef?: NonNullable<
@@ -142,8 +147,13 @@ export async function resolveEngineAdapterResolutionFromRegistry(params: Readonl
     const agent = matchingRunnerSource?.agentContribution
         ?? params.contributions.agentDefinitionsById.get(backend.agentId);
     if (!agent) return null;
+    if (params.agentTarget && (!agent.identity || buildQualifiedPluginContributionKey(agent.identity) !== buildQualifiedPluginContributionKey(params.agentTarget.identity))) {
+        throw Object.assign(new Error('Selected Agent target does not match its contributed runtime'), { code: 'AGENT_TARGET_CONTRIBUTION_MISMATCH' });
+    }
     const runnerRuntimeSource =
         matchingRunnerSource;
+    const startupRuntimeDescriptorV1 = runnerRuntimeSource?.startupRuntimeDescriptorV1
+        ?? params.startupRuntimeDescriptorV1;
     // A Session runner never co-locates the daemon/machine execution runtime.
     // Combined Agents resolve that bounded lifecycle separately without the
     // runner source, preserving one runtime owner per process lifetime.
@@ -161,6 +171,7 @@ export async function resolveEngineAdapterResolutionFromRegistry(params: Readonl
                 runnerRuntimeSource.prepareManagedProviderBinding,
             prepareNativeTeamCredentialProviderBinding:
                 runnerRuntimeSource.prepareTeamCredentialProviderBinding,
+            managedProviderRunServices: runnerRuntimeSource.managedProviderRunServices,
             createNativeAgentInvocationServices:
                 runnerRuntimeSource.createInvocationServices,
             authorizeNativeAgentNewTurn:
@@ -281,6 +292,14 @@ export async function resolveEngineAdapterResolutionFromRegistry(params: Readonl
         ...engineSurfaces,
         externalSession: registeredAgentSurfaces.externalSession,
     };
+    const configuredLaunch = agent.identity
+        ? await resolveAccountConfiguredAcpLaunchForAgent({
+            identity: agent.identity,
+            agentTarget: params.agentTarget,
+            startupRuntimeDescriptorV1,
+            savedSecretOperationContext: params.savedSecretOperationContext,
+        })
+        : null;
     const engineAdapter = await resolveBackendRuntimeCore({
         backend,
         agent,
@@ -297,6 +316,13 @@ export async function resolveEngineAdapterResolutionFromRegistry(params: Readonl
         ...(params.happyHomeDir ? { happyHomeDir: params.happyHomeDir } : {}),
         nativeAgentRuntime: leasedRuntime,
         ...runnerRuntimeCoreParams,
+        ...(startupRuntimeDescriptorV1 ? { startupRuntimeDescriptorV1 } : {}),
+        ...(configuredLaunch ? {
+            nativeAgentSessionCapabilities: configuredLaunch.sessionCapabilities,
+            nativeAgentSessionProjection: configuredLaunch.sessionProjection,
+            nativeAgentAcpRuntimeDefinition: configuredLaunch.runtimeDefinition,
+            resolveNativeAgentAcpHostLaunch: configuredLaunch.resolveHostLaunch,
+        } : {}),
     });
     return {
         backendId: backend.id,
@@ -318,4 +344,5 @@ export async function resolveEngineAdapterResolutionFromRegistry(params: Readonl
             ? { publishHostEvent: runtimeRegistry.publishHostEvent }
             : {}),
     };
+
 }

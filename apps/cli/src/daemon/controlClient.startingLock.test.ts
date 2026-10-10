@@ -70,13 +70,7 @@ describe('daemon control client startup lock inspection', () => {
         import('@/persistence'),
       ]);
       mkdirSync(dirname(configuration.daemonLockFile), { recursive: true });
-      writeFileSync(configuration.daemonLockFile, JSON.stringify({
-        t: 'happier_daemon_lock_v1',
-        pid: process.pid,
-        ownerToken: '7dca87df-aef3-47d7-870f-a30cc5f8e73a',
-        processStartedAtMs: Date.now() - 60_000,
-        createdAtMs: Date.now(),
-      }), 'utf8');
+      writeFileSync(configuration.daemonLockFile, String(process.pid), 'utf8');
       writeDaemonState({ pid: 999_999_999, httpPort: 3025, startedAt: Date.now(), startedWithCliVersion: '0.2.10' });
 
       await expect(inspectDaemonRunningStateAndCleanupStaleState()).resolves.toEqual({

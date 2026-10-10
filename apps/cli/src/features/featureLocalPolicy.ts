@@ -33,3 +33,10 @@ export function resolveCliLocalFeaturePolicyEnabled(featureId: FeatureId, env: N
   if (!resolver) return true;
   return resolver(env);
 }
+
+/** Snapshot the declared local decisions without duplicating their environment vocabulary. */
+export function readCliLocalFeaturePolicySnapshot(env: NodeJS.ProcessEnv): Readonly<Record<string, boolean>> {
+  return Object.fromEntries(Object.keys(LOCAL_POLICY_BY_FEATURE).map(featureId => [
+    featureId, resolveCliLocalFeaturePolicyEnabled(featureId as FeatureId, env),
+  ]));
+}

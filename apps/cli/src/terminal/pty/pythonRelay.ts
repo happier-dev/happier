@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { spawn as spawnChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn as spawnChildProcess, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { accessSync, constants as fsConstants } from 'node:fs';
 import { delimiter, join } from 'node:path';
 
@@ -12,9 +12,9 @@ type PythonSpawnProcess = (
   options: Readonly<{
     cwd?: string;
     env?: NodeJS.ProcessEnv;
-    stdio: 'pipe';
+    stdio: ['pipe', 'pipe', 'pipe', 'pipe'];
   }>,
-) => ChildProcessWithoutNullStreams;
+) => ChildProcess;
 
 const relayKillFallbackMs = 2_000;
 
@@ -62,6 +62,11 @@ def _configure_child_terminal():
 
 child = subprocess.Popen(argv, stdin=slave_fd, stdout=slave_fd, stderr=slave_fd, close_fds=True, preexec_fn=_configure_child_terminal)
 os.close(slave_fd)
+# This private carrier pipe is not inherited by the command (close_fds=True).
+# Popen returned after setsid completed, so child.pid is the owned group, not
+# the Python carrier's PID. No user output can supply this custody fact.
+os.write(3, (str(child.pid) + '\n').encode('ascii'))
+os.close(3)
 
 def _forward(sig, _frame):
     try:
@@ -210,6 +215,20 @@ function childToPtyProcess(child: ChildProcessWithoutNullStreams): PtyProcess {
   let completedExit: PtyExitEvent | null = null;
   let relayInputClosed = false;
   let killFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+  let ownedProcessGroupId: number | null = null;
+  let controlBytes = '';
+  const control = child.stdio?.[3];
+  const readOwnedGroup = (chunk: Buffer | string) => {
+    controlBytes += Buffer.isBuffer(chunk) ? chunk.toString('ascii') : chunk;
+    const newline = controlBytes.indexOf('\n');
+    if (newline < 0) return;
+    const value = controlBytes.slice(0, newline);
+    const parsed = /^\d+$/u.test(value) ? Number(value) : NaN;
+    if (Number.isInteger(parsed) && parsed > 1 && parsed <= 2_147_483_647) ownedProcessGroupId = parsed;
+    control?.off('data', readOwnedGroup);
+    controlBytes = '';
+  };
+  control?.on('data', readOwnedGroup);
 
   const emitExit = (event: PtyExitEvent) => {
     if (completedExit) return;
@@ -272,6 +291,7 @@ function childToPtyProcess(child: ChildProcessWithoutNullStreams): PtyProcess {
 
   return {
     pid: typeof child.pid === 'number' && Number.isInteger(child.pid) && child.pid > 0 ? child.pid : 0,
+    get ownedProcessGroupId() { return ownedProcessGroupId; },
     write: (data) => {
       assertRelayInputWritable(child, relayInputClosed);
       child.stdin.write(data);
@@ -387,9 +407,14 @@ export function createPythonPtyRelayProvider(params?: Readonly<{
           cols: spawnParams.options.cols,
           rows: spawnParams.options.rows,
         }),
-        stdio: 'pipe',
+        stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
       });
+      if (!hasRelayPipeStdio(child)) throw new Error('terminal_spawn_failed');
       return childToPtyProcess(child);
     },
   };
+}
+
+function hasRelayPipeStdio(child: ChildProcess): child is ChildProcessWithoutNullStreams {
+  return child.stdin !== null && child.stdout !== null && child.stderr !== null;
 }

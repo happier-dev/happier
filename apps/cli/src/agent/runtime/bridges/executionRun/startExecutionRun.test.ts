@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { tmpdir } from 'node:os';
+import { mkdtemp } from 'node:fs/promises';
+import { join } from 'node:path';
 import { getAgentStaticModels } from '@happier-dev/agents';
+import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
 
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
@@ -16,10 +19,19 @@ import type { ExecutionRunState } from './executionRunTypes';
 import type { ExecutionRunStructuredMeta } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 import { VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
 import { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
-import { BUILT_IN_ROLES_V1, resolveRoleSelectionV1 } from '@happier-dev/protocol';
+import { accountSettingsParse, BUILT_IN_ROLES_V1, resolveRoleSelectionV1 } from '@happier-dev/protocol';
 import { TaskProfile } from '@/agent/executionRuns/profiles/task/TaskProfile';
 import { projectRetainedExecutionRunState, projectExecutionRunHostLoss } from './retainedState';
 import { projectExecutionRunPublicState } from './publicState';
+import { resumeBackendControllerForResumableRun } from './resumeBackendController';
+import { createLocalScmRepositoryFixture } from '@/scm/contracts/scmBackendContractFixtures';
+import { removeTempDir } from '@/testkit/fs/tempDir';
+import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
+import { ScmDiffSummaryProfile } from './kinds/scmDiffSummary/ScmDiffSummaryProfile';
+import { clearActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { reloadConfiguration } from '@/configuration';
+import { listExecutionRunMarkers } from '@/daemon/executionRunRegistry';
+import { finishExecutionRun } from './finishExecutionRun';
 
 const TEST_BACKEND_ID = `${'summary'}.${'backend'}` as never;
 
@@ -106,12 +118,173 @@ function createProvisioningRuntime(): TestExecutionRunHostRuntime {
   });
 }
 
+function publishEmptyAccountRoleOverrides(): void {
+  setActiveAccountSettingsSnapshot({
+    scopeKey: 'start-execution-run-role-fixture', source: 'network',
+    settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 1, loadedAtMs: 1,
+    settingsSecretsReadKeys: [],
+    promptLibraryCatalog: {
+      status: 'ready', tombstones: [], diagnostics: [],
+      rows: [{ revision: 1, record: { key: 'role-overrides', value: { v: 1, overrides: {} } } }],
+    },
+  });
+}
+
 describe('startExecutionRun', () => {
   beforeEach(() => {
     vi.stubEnv('HAPPIER_CLAUDE_PATH', process.execPath);
     vi.stubEnv('HAPPIER_CLAUDE_DYNAMIC_MODEL_PROBE_ENABLED', '0');
   });
   afterEach(() => vi.unstubAllEnvs());
+  it('refuses unsupported inherited Team Voice custody before publishing a Run', async () => {
+    const runs = new Map<string, ExecutionRunState>();
+    const controllers = new Map<string, ExecutionRunController>();
+    const createRuntime = () => createProvisioningRuntime();
+    const voiceAgentManager = new VoiceAgentManager({ createRuntime });
+    try {
+      await expect(startExecutionRun({
+        params: { sessionId: 'parent_session_1', intent: 'voice_agent', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+          permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming' },
+        childSelectionContext: { lifecycle: 'attached', readAppliedParentSelection: () => ({
+          status: 'applied', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, modelId: 'team-model', connectedServices: null,
+          teamCredentialModel: { kind: 'team_credential_provider_model', resourceId: 'resource', teamId: 'team',
+            expectedResourceRevision: 2, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'team-model', deliveryMode: 'brokered' },
+        }) },
+        parentProvider: 'codex', sendAcp: async () => {}, streamedTranscriptSession: null, createRuntime,
+        getNowMs: () => 1, budgetRegistry: null, runs, controllers, enqueueMarkerWrite: async () => {},
+        writeActivityMarker: async () => {}, finishRun: async () => {}, executeBoundedRun: async () => {},
+        send: async () => ({ ok: true }), voiceAgentManager,
+      })).rejects.toMatchObject({ code: 'execution_run_child_choice_required' });
+      expect(runs.size).toBe(0);
+    } finally { await voiceAgentManager.dispose(); }
+  });
+  it('admits an attached child from applied parent route and retains it independently of later parent changes', async () => {
+    const markerDirectory = await mkdtemp(join(tmpdir(), 'happier-child-summary-'));
+    vi.stubEnv('HAPPIER_HOME_DIR', markerDirectory);
+    reloadConfiguration();
+    const runs = new Map<string, ExecutionRunState>();
+    const controllers = new Map<string, ExecutionRunController>();
+    const createRuntime = () => createProvisioningRuntime();
+    const voiceAgentManager = new VoiceAgentManager({ createRuntime });
+    const applied = {
+      status: 'applied' as const,
+      backendTarget: { kind: 'builtInAgent' as const, agentId: 'claude' },
+      modelId: 'parent-model',
+      modelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: 'parent-provider', modelId: 'parent-model' },
+      connectedServices: null,
+    };
+    try {
+      const started = await startExecutionRun({
+        params: { sessionId: 'parent_session_1', intent: 'delegate', backendTarget: applied.backendTarget,
+          permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response' },
+        childSelectionContext: { lifecycle: 'attached', readAppliedParentSelection: () => applied },
+        parentProvider: 'claude', sendAcp: async () => {}, streamedTranscriptSession: null,
+        createRuntime, getNowMs: () => 1, budgetRegistry: null, runs, controllers,
+        enqueueMarkerWrite: async (_runId, write) => write(), writeActivityMarker: async () => {}, finishRun: async () => {},
+        executeBoundedRun: async () => {}, send: async () => ({ ok: true }), voiceAgentManager,
+      });
+      const retained = projectRetainedExecutionRunState(runs.get(started.runId)!);
+      applied.modelId = 'later-parent-model';
+      applied.modelSelection = { ...applied.modelSelection, providerConnectionId: 'later-parent-provider', modelId: 'later-parent-model' };
+      expect(retained.launch).toMatchObject({
+        modelId: 'parent-model', selectionSource: 'inherited', connectedServicesSelection: null,
+        modelSelection: { providerConnectionId: 'parent-provider', modelId: 'parent-model' },
+      });
+      expect(projectExecutionRunPublicState(runs.get(started.runId)!)).toMatchObject({
+        resolvedSelection: { source: 'inherited', modelId: 'parent-model', modelSelection: { providerConnectionId: 'parent-provider' } },
+      });
+      const resolvedSelection = projectExecutionRunPublicState(runs.get(started.runId)!).resolvedSelection;
+      expect.soft((await listExecutionRunMarkers()).find((marker) => marker.runId === started.runId))
+        .toHaveProperty('resolvedSelection', resolvedSelection);
+      await finishExecutionRun({ runId: started.runId, next: { status: 'succeeded', finishedAtMs: 2 },
+        toolResult: { output: 'complete' }, runs, controllers, budgetRegistry: null, parentProvider: 'claude',
+        sendAcp: async () => {}, enqueueMarkerWrite: async (_runId, write) => write(), terminalMarkerWritePromises: new Map() });
+      expect((await listExecutionRunMarkers()).find((marker) => marker.runId === started.runId))
+        .toMatchObject({ status: 'succeeded', resolvedSelection });
+    } finally {
+      await Promise.all([...controllers.values()].flatMap((controller) => controller.kind === 'backend' ? [controller.backend.dispose()] : []));
+      await voiceAgentManager.dispose();
+      vi.unstubAllEnvs();
+      reloadConfiguration();
+      await removeTempDir(markerDirectory);
+    }
+  });
+
+  it('refuses attached omission when applied parent state is unavailable before creating or materializing a run', async () => {
+    const runs = new Map<string, ExecutionRunState>();
+    const voiceAgentManager = new VoiceAgentManager({ createRuntime: () => { throw new Error('unused'); } });
+    try {
+      await expect(startExecutionRun({
+        params: { sessionId: 'parent_session_1', intent: 'delegate', backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response' },
+        childSelectionContext: { lifecycle: 'attached', readAppliedParentSelection: () => ({ status: 'unavailable' }) },
+        parentProvider: 'claude', sendAcp: async () => {}, streamedTranscriptSession: null,
+        createRuntime: () => { throw new Error('Materialization reached'); }, getNowMs: () => 1, budgetRegistry: null,
+        runs, controllers: new Map(), enqueueMarkerWrite: async () => {}, writeActivityMarker: async () => {},
+        finishRun: async () => {}, executeBoundedRun: async () => {}, send: async () => ({ ok: true }), voiceAgentManager,
+      })).rejects.toMatchObject({ code: 'execution_run_parent_selection_unavailable' });
+      expect(runs.size).toBe(0);
+    } finally { await voiceAgentManager.dispose(); }
+  });
+  it.each(['ephemeral', 'resumable'] as const)('publishes provisioning, idle, active and resumed work for a %s backend handle', async (retentionPolicy) => {
+    let releaseProvision!: () => void;
+    let releaseTurn!: () => void;
+    const provisionGate = new Promise<void>((resolve) => { releaseProvision = resolve; });
+    const turnGate = new Promise<void>((resolve) => { releaseTurn = resolve; });
+    const runs = new Map<string, ExecutionRunState>();
+    const controllers = new Map<string, ExecutionRunController>();
+    const publicStates: Array<Readonly<{ status: string; turnInFlight?: boolean }>> = [];
+    const runtimes: TestExecutionRunHostRuntime[] = [];
+    const createRuntime = () => {
+      const runtime = createTestExecutionRunHostRuntime({
+        replayResumeSupported: true, providerSessionId: 'retained-vendor-session',
+        onProvisionRuntime: async (options) => { if (!options?.resumeRuntimeId) await provisionGate; },
+        onWaitForTurnCompletion: async () => { await turnGate; },
+      });
+      runtimes.push(runtime);
+      return runtime;
+    };
+    const voiceAgentManager = new VoiceAgentManager({ createRuntime });
+    const common = {
+      parentProvider: TEST_BACKEND_ID, sendAcp: async () => {}, streamedTranscriptSession: null,
+      createRuntime, getNowMs: () => 1, budgetRegistry: null, runs, controllers,
+      writeActivityMarker: async () => {},
+      onPublicStateUpdated: (id: string) => publicStates.push(projectExecutionRunPublicState(runs.get(id)!, controllers.get(id) ?? null)),
+    };
+    try {
+      const started = await startExecutionRun({ ...common,
+        params: { sessionId: 'parent_session_1', intent: 'delegate',
+          backendTarget: { kind: 'builtInAgent', agentId: TEST_BACKEND_ID },
+          permissionMode: 'read_only', retentionPolicy, runClass: 'long_lived', ioMode: 'streaming' },
+        enqueueMarkerWrite: async () => {}, finishRun: async () => {}, executeBoundedRun: async () => {},
+        send: async () => ({ ok: true }), voiceAgentManager,
+      });
+      expect.soft(projectExecutionRunPublicState(runs.get(started.runId)!, controllers.get(started.runId))).not.toHaveProperty('turnInFlight');
+      releaseProvision();
+      const controller = controllers.get(started.runId);
+      if (controller?.kind !== 'backend') throw new Error('Expected backend controller');
+      await controller.provisioningPromise;
+      expect(publicStates.at(-1)).toMatchObject({ status: 'running', turnInFlight: false });
+      expect(await sendBackendLongLivedRun({ ...common, runId: started.runId, params: { message: 'continue' },
+        maxTurns: null, finishRun: async () => {} })).toEqual({ ok: true });
+      expect.soft(publicStates.at(-1)).toMatchObject({ status: 'running', turnInFlight: true });
+      releaseTurn();
+      await vi.waitFor(() => expect(publicStates.at(-1)).toMatchObject({ status: 'running', turnInFlight: false }));
+      expect(runs.get(started.runId)?.status).toBe('running');
+      expect(await stopExecutionRun({ runId: started.runId, runs, controllers, getNowMs: common.getNowMs, voiceAgentManager,
+        finishRun: async (id, next) => { runs.set(id, { ...runs.get(id)!, ...next }); },
+        onPublicStateUpdated: common.onPublicStateUpdated })).toEqual({ ok: true });
+      expect(publicStates.at(-1)?.status).toBe('cancelled');
+      if (retentionPolicy === 'resumable') {
+        expect(await resumeBackendControllerForResumableRun({ ...common, runId: started.runId,
+          run: runs.get(started.runId)!, requireReplayCapture: true })).toEqual({ ok: true });
+        expect(publicStates.at(-1)).toMatchObject({ status: 'running', turnInFlight: false });
+      }
+    } finally {
+      releaseProvision(); releaseTurn(); await Promise.all(runtimes.map((runtime) => runtime.dispose())); await voiceAgentManager.dispose();
+    }
+  });
+
   it('retains an admitted Workflow origin through host loss and public terminal observation', async () => {
     const runs = new Map<string, ExecutionRunState>();
     const voiceAgentManager = new VoiceAgentManager({ createRuntime: () => { throw new Error('unused'); } });
@@ -132,7 +305,8 @@ describe('startExecutionRun', () => {
       });
     } finally { await voiceAgentManager.dispose(); }
   });
-  it('refuses a role start without a target-host admission snapshot before creating a run', async () => {
+  it('refuses a role start without Account role-override authority before creating a run', async () => {
+    clearActiveAccountSettingsSnapshot();
     const runs = new Map<string, ExecutionRunState>();
     const voiceAgentManager = new VoiceAgentManager({ createRuntime: () => { throw new Error('unused'); } });
     try {
@@ -145,7 +319,7 @@ describe('startExecutionRun', () => {
         getNowMs: () => 1, budgetRegistry: null, runs, controllers: new Map(),
         enqueueMarkerWrite: async () => {}, writeActivityMarker: async () => {}, finishRun: async () => {},
         executeBoundedRun: async () => {}, send: async () => ({ ok: true }), voiceAgentManager,
-      })).rejects.toMatchObject({ code: 'target_unavailable' });
+      })).rejects.toMatchObject({ code: 'account_role_overrides_unavailable' });
       expect(runs.size).toBe(0);
     } finally { await voiceAgentManager.dispose(); }
   });
@@ -202,6 +376,7 @@ describe('startExecutionRun', () => {
     const voiceAgentManager = new VoiceAgentManager({
       createRuntime: () => { throw new Error('voice runtime is unused'); },
     });
+    if (intent === 'review') publishEmptyAccountRoleOverrides();
     try {
       const result = await startExecutionRun({
         params: {
@@ -219,6 +394,7 @@ describe('startExecutionRun', () => {
       expect(runs.get(result.runId)?.notifyParentOnCompletion).toBe(expected);
     } finally {
       await voiceAgentManager.dispose();
+      if (intent === 'review') clearActiveAccountSettingsSnapshot();
     }
   });
 
@@ -336,6 +512,11 @@ describe('startExecutionRun', () => {
     const createRuntime = vi.fn(() => createProvisioningRuntime());
     const onPublicStateUpdated = vi.fn();
     const finishRun = vi.fn(async () => {});
+    const budgetRegistry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null });
+    let preparing!: () => void;
+    let releasePreparation!: () => void;
+    const enteredPreparation = new Promise<void>(resolve => { preparing = resolve; });
+    const preparation = new Promise<void>(resolve => { releasePreparation = resolve; });
     const voiceAgentManager = new VoiceAgentManager({
       createRuntime: () => {
         throw new Error('voice runtime should not be used by delegate runs');
@@ -343,7 +524,7 @@ describe('startExecutionRun', () => {
     });
 
     try {
-      await expect(startExecutionRun({
+      const rejected = expect(startExecutionRun({
         params: {
           sessionId: 'session_1',
           intent: 'delegate',
@@ -368,12 +549,16 @@ describe('startExecutionRun', () => {
         streamedTranscriptSession: null,
         createRuntime,
         admitSecretReferenceOverlay: async () => {
+          // The Saved Secret service is the credential/network boundary; all
+          // admission and budget custody beneath it remains the real owner.
+          preparing();
+          await preparation;
           throw Object.assign(new Error('Saved Secret reference changed'), {
             code: 'provider_binding_changed',
           });
         },
         getNowMs: () => 1_700_000_000_000,
-        budgetRegistry: null,
+        budgetRegistry,
         runs,
         controllers,
         enqueueMarkerWrite,
@@ -390,6 +575,14 @@ describe('startExecutionRun', () => {
         },
       });
 
+      await enteredPreparation;
+      expect(runs.size).toBe(0);
+      expect(budgetRegistry.getLiveWorkProducer().read()).toMatchObject({ items: [{ category: 'execution_run', state: 'active' }] });
+      expect(budgetRegistry.getInFlightSnapshot()).toEqual({ executionRuns: 0, oneShotTasks: 0 });
+      releasePreparation();
+      await rejected;
+      expect(budgetRegistry.getLiveWorkProducer().read()).toEqual({ coverage: 'complete', items: [] });
+
       expect(runs.size).toBe(0);
       expect(controllers.size).toBe(0);
       expect(enqueueMarkerWrite).not.toHaveBeenCalled();
@@ -398,6 +591,7 @@ describe('startExecutionRun', () => {
       expect(onPublicStateUpdated).not.toHaveBeenCalled();
       expect(finishRun).not.toHaveBeenCalled();
     } finally {
+      releasePreparation();
       await voiceAgentManager.dispose();
     }
   });
@@ -601,6 +795,7 @@ describe('startExecutionRun', () => {
         throw new Error('voice runtime should not be used by review runs');
       },
     });
+    publishEmptyAccountRoleOverrides();
 
     try {
       const createRuntime = vi.fn(() => createProvisioningRuntime());
@@ -642,6 +837,7 @@ describe('startExecutionRun', () => {
       expect(runs.size).toBe(2);
     } finally {
       await voiceAgentManager.dispose();
+      clearActiveAccountSettingsSnapshot();
     }
   });
 
@@ -661,7 +857,7 @@ describe('startExecutionRun', () => {
       await expect(startExecutionRun({
         params: {
           sessionId: null,
-          intent: 'scm_diff_summary',
+          intent: 'memory_hints',
           backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
           instructions: 'Explain this captured change.',
           permissionMode: 'read_only',
@@ -698,7 +894,60 @@ describe('startExecutionRun', () => {
     }
   });
 
+  it('prepares a workspace-native saved comparison through the real detached diff-summary Run profile', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-detached-summary-start-' });
+    const runs = new Map<string, ExecutionRunState>();
+    const controllers = new Map<string, ExecutionRunController>();
+    const runtime = createProvisioningRuntime();
+    const voiceAgentManager = new VoiceAgentManager({ createRuntime: () => runtime });
+    try {
+      const request = {
+        sessionId: null, cwd: fixture.rootPath, intent: 'scm_diff_summary',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, modelId: readOfferedSummaryModelId(),
+        instructions: 'Explain the captured workspace.', intentInput: { cwd: fixture.rootPath,
+          source: { kind: 'workingTree' }, outputs: ['summary'] },
+        permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
+      } satisfies StartExecutionRunArgs['params'];
+      // HostBridge prepares the profile before invoking the shared Run start owner.
+      const preparation = await ScmDiffSummaryProfile.prepareStartParams!({
+        request, cwd: fixture.rootPath, sessionId: null,
+      });
+      const result = await startExecutionRun({
+        params: { ...request, ...preparation },
+        parentProvider: TEST_BACKEND_ID, sendAcp: async () => {}, streamedTranscriptSession: null,
+        // Only the native Agent process is replaced by the incumbent runtime testkit.
+        createRuntime: () => runtime, getNowMs: () => 1_700_000_000_000,
+        budgetRegistry: null, runs, controllers, enqueueMarkerWrite: async (_runId, write) => await write(),
+        writeActivityMarker: async () => {}, finishRun: async () => {}, executeBoundedRun: async () => {},
+        send: async () => ({ ok: true }), voiceAgentManager,
+      });
+      const prepared = runs.get(result.runId)!;
+      expect(prepared.sessionId).toBeNull();
+      const intentInput = prepared.intentInput as { resultId: string; comparison: { id: string } };
+      expect(await scmDiffSummaryResultStore.readStoredScope({ cwd: fixture.rootPath, resultId: intentInput.resultId }))
+        .toEqual({ cwd: fixture.rootPath });
+      expect(await scmDiffSummaryResultStore.read({ cwd: fixture.rootPath, resultId: intentInput.resultId }))
+        .toMatchObject({ success: true, result: { output: { comparison: { id: intentInput.comparison.id } } } });
+    } finally {
+      await runtime.dispose();
+      await voiceAgentManager.dispose();
+      await removeTempDir(fixture.rootPath);
+    }
+  });
+
   it('finishes cached SCM diff-summary runs without creating a backend runtime', async () => {
+    const comparison = ScmComparisonSchema.parse({
+      id: 'turnCheckpoint:turn_1:checkpoint.diff_computed',
+      source: { kind: 'turnCheckpoint' },
+      repository: { rootPath: tmpdir() },
+      endpoints: {},
+      inventory: { state: 'complete', reasons: [], files: [] },
+    });
+    const metadata = {
+      source: comparison.source,
+      sourceKey: comparison.id,
+      checkpointReceiptId: 'checkpoint.diff_computed',
+    };
     const runs = new Map<string, ExecutionRunState>();
     const controllers = new Map<string, ExecutionRunController>();
     let resolveFinishAdmission!: () => void;
@@ -732,16 +981,19 @@ describe('startExecutionRun', () => {
           instructions: 'SCM diff summary cache hit; no generation required.',
           modelId: readOfferedSummaryModelId(),
           intentInput: {
+            comparison,
+            metadata,
+            outputs: ['summary'],
             cachedOutput: {
               success: true,
               summaryMarkdown: '## Summary\n\nCached checkpoint.',
-              sourceKey: 'turnCheckpoint:turn_1:checkpoint.diff_computed',
+              sourceKey: comparison.id,
               checkpointReceiptId: 'checkpoint.diff_computed',
-              metadata: {
-                source: { kind: 'turnCheckpoint' },
-                sourceKey: 'turnCheckpoint:turn_1:checkpoint.diff_computed',
-                checkpointReceiptId: 'checkpoint.diff_computed',
-              },
+              comparison,
+              metadata,
+              requestedOutputs: ['summary'],
+              outputs: { summary: { state: 'complete', value: { summaryMarkdown: '## Summary\n\nCached checkpoint.' } } },
+              analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] },
             },
           },
           permissionMode: 'read_only',
@@ -1082,7 +1334,6 @@ describe('startExecutionRun', () => {
     });
     const runs = new Map<string, ExecutionRunState>();
     const controllers = new Map<string, ExecutionRunController>();
-    const dispose = vi.fn(async () => {});
     const finishRun = vi.fn(async (runId: string, next) => {
       const current = runs.get(runId);
       if (current) runs.set(runId, { ...current, ...next });
@@ -1093,7 +1344,6 @@ describe('startExecutionRun', () => {
       readResumeSupport: async () => {
         throw new Error('resume support inspection failed');
       },
-      dispose,
     } satisfies TestExecutionRunHostRuntime;
     const voiceAgentManager = new VoiceAgentManager({
       createRuntime: () => {
@@ -1138,8 +1388,12 @@ describe('startExecutionRun', () => {
         status: 'failed',
         error: { code: 'execution_run_failed', message: 'resume support inspection failed' },
       });
-      expect(dispose).toHaveBeenCalledTimes(1);
-      expect(controllers.size).toBe(0);
+      // Host terminal truth precedes detached provider cleanup. Observe the
+      // fixture's real disposal lifetime instead of its scheduling turn.
+      await vi.waitFor(() => {
+        expect(controllers.size).toBe(0);
+        expect(runtime.getRuntimeLifetimeSignal().aborted).toBe(true);
+      });
     } finally {
       await voiceAgentManager.dispose();
     }
@@ -1360,9 +1614,13 @@ describe('startExecutionRun', () => {
     }
   });
 
-  it('orders an immediate detached send after initial instructions while long-lived provisioning is pending', async () => {
+  it('keeps initial detached work busy after provisioning and orders a follow-up after completion', async () => {
     let releaseProvision!: () => void;
     let markProvisionStarted!: () => void;
+    let releaseInitialTurn!: () => void;
+    const initialTurnGate = new Promise<void>((resolve) => {
+      releaseInitialTurn = resolve;
+    });
     const provisionGate = new Promise<void>((resolve) => {
       releaseProvision = resolve;
     });
@@ -1380,7 +1638,9 @@ describe('startExecutionRun', () => {
       onSendPrompt: async (_sessionId, prompt) => {
         prompts.push(prompt);
       },
-      onWaitForTurnCompletion: async () => {},
+      onWaitForTurnCompletion: async () => {
+        if (prompts.length === 1) await initialTurnGate;
+      },
     });
     const runs = new Map<string, ExecutionRunState>();
     const controllers = new Map<string, ExecutionRunController>();
@@ -1453,8 +1713,16 @@ describe('startExecutionRun', () => {
 
       releaseProvision();
       const started = await startPromise;
-      await expect(followUp).resolves.toEqual({ ok: true });
+      await expect(followUp).resolves.toMatchObject({ ok: false, errorCode: 'execution_run_busy' });
       expect(startOutcome).toMatchObject({ kind: 'started', started: { runId: started.runId } });
+      expect(prompts).toHaveLength(1);
+      releaseInitialTurn();
+      await vi.waitFor(() => {
+        const controller = controllers.get(started.runId);
+        expect(controller?.kind).toBe('backend');
+        if (controller?.kind === 'backend') expect(controller.turnInFlight).toBe(false);
+      });
+      await expect(send(started.runId, { message: 'Follow-up work.' })).resolves.toEqual({ ok: true });
       await vi.waitFor(() => expect(prompts).toHaveLength(2));
       expect(prompts[0]).toContain('Initial work.');
       expect(prompts[1]).toBe('Follow-up work.');
@@ -1468,6 +1736,7 @@ describe('startExecutionRun', () => {
       });
     } finally {
       releaseProvision();
+      releaseInitialTurn();
       await voiceAgentManager.dispose();
     }
   });

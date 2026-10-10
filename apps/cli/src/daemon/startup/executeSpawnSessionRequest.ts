@@ -90,7 +90,8 @@ import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifet
 import { refreshActiveAcpCatalog } from '@/agent/acp/catalog/hydrateAcpCatalog';
 import { AcpCatalogUnavailableError } from '@/agent/acp/catalog/configured/resolveBackend';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
-import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { createAccountScopedProviderModelProjectionReader } from '@/providers/modelManagement/remoteProjection';
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { resolveSpawnLaunchProfileDefaults } from '../spawn/resolveSpawnLaunchProfileDefaults';
 import { readProfileSettingsFromAccountSnapshot,
@@ -174,7 +175,7 @@ export async function executeSpawnSessionRequest(
     const requesterRuntime = options.requesterSessionBootstrap ? params.requesterSessionRuntimeContext : undefined;
     if (options.requesterSessionBootstrap) {
         if (!requesterRuntime || requesterRuntime.bootstrap !== options.requesterSessionBootstrap
-            || !await requesterRuntime.bootstrap.savedSecretOperationContext.isCurrent()) {
+            || !await requesterRuntime.isCurrent()) {
             return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
                 errorMessage: 'Requester Account runtime unavailable' };
         }
@@ -486,6 +487,18 @@ export async function executeSpawnSessionRequest(
             // runtime, so every refusal this owner can already establish is
             // established first.
             const daemonProviderLaunch = await prepareDaemonProviderLaunch({
+                readModelProjection: createAccountScopedProviderModelProjectionReader({
+                    serverUrl: requesterRuntime?.bootstrap.savedSecretOperationContext.serverHttpBaseUrl
+                        ?? resolveServerHttpBaseUrl(),
+                    readCredentials: async () => params.credentials,
+                    readAccountSettingsSnapshot: async () => requesterRuntime
+                        ? requesterRuntime.bootstrap.savedSecretOperationContext.readSnapshot()
+                        : getActiveAccountSettingsSnapshot(),
+                    isCurrent: async () => requesterRuntime
+                        ? await requesterRuntime.isCurrent()
+                        : getActiveAccountSettingsSnapshotLifetimeToken() === acpLifetimeToken
+                            && getActiveAccountSettingsSnapshot()?.scopeKey === resolveAccountSettingsScopeKey(params.credentials),
+                }),
                 ...(requesterRuntime ? { accountSettingsSnapshot: requesterRuntime.readAccountSettingsSnapshot(),
                     readAccountSettingsSnapshot: () => requesterRuntime.bootstrap.savedSecretOperationContext.readSnapshot(),
                     providerRuntimeHomeDir: requesterRuntime.activeServerDir,
@@ -983,6 +996,7 @@ export async function executeSpawnSessionRequest(
             }
             const childEnvironment = await prepareDaemonSpawnChildEnvironment({
                 options: effectiveOptionsForSpawn,
+                existingSessionMetadata: launchSessionAttachPayload?.snapshot?.metadata ?? null,
                 resolvedAgentId: catalogAgentId,
                 effectiveModelSelection: modelSelection,
                 terminal: options.terminal,

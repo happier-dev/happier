@@ -27,6 +27,23 @@ import {
   readConnectedServiceMaterializationIdentityFromSpawnOptions,
 } from '@/daemon/connectedServices/materialization/identity';
 import { readPersistedProviderResumeState } from '@/providers/lifecycle/readPersistedResumeSelection';
+import { PortableRuntimeDescriptorV1Schema, readRuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtimeDescriptorV1';
+
+export class SessionRuntimeDescriptorSelectionError extends Error {
+  readonly code = 'session_runtime_descriptor_agent_mismatch';
+  constructor() { super('session_runtime_descriptor_agent_mismatch'); }
+}
+
+/** Authored launch choices may change a driver, never Session/native identity. */
+function resolveRuntimeDescriptorSelection(params: ResolveSessionRuntimeSnapshotParams): SessionRuntimeSnapshot['runtimeDescriptorV1'] {
+  const persisted = readRuntimeDescriptorV1FromMetadata(params.persistedMetadata);
+  const authored = PortableRuntimeDescriptorV1Schema.safeParse(readRuntimeDescriptorV1(params.incomingOptions.runtimeDescriptorV1));
+  if (!authored.success) return persisted;
+  const actualAgentId = persisted?.agentId ?? resolveAgentIdFromSessionMetadata(params.persistedMetadata);
+  if (actualAgentId && actualAgentId !== authored.data.agentId) throw new SessionRuntimeDescriptorSelectionError();
+  if (params.resolutionMode === 'retained_live_process') return persisted;
+  return persisted ? { ...persisted, agent: { ...persisted.agent, ...authored.data.agent } } : authored.data;
+}
 
 type SnapshotValue<T> = Readonly<{ value: T; updatedAt: number }>;
 
@@ -51,6 +68,8 @@ export type ResolveSessionRuntimeSnapshotParams = Readonly<{
   incomingOptions: SpawnSessionOptions;
   persistedMetadata?: Record<string, unknown> | null;
   trackedSpawnOptions?: SpawnSessionOptions | null;
+  /** Canonical tracked intent includes clears, unlike launch-only model refs. */
+  trackedModelSelection?: SessionRuntimeSnapshot['modelSelection'];
   persistedVendorResumeId?: string | null;
   trackedVendorResumeId?: string | null;
   /**
@@ -344,6 +363,10 @@ function applySnapshotToSpawnOptions(
     executionAuthorization: _executionAuthorization,
     freshSessionCreation: _freshSessionCreation,
     managedDirectorySeed: _managedDirectorySeed,
+    verifyRequesterMachineAdmissionCurrent: _verifyRequesterMachineAdmissionCurrent,
+    requesterSessionCredentialFile: _requesterSessionCredentialFile,
+    requesterSessionBootstrap: _requesterSessionBootstrap,
+    requesterSessionRuntimeContext: _requesterSessionRuntimeContext,
     ...durableOptions
   } = options;
   const next: SpawnSessionOptions = { ...durableOptions };
@@ -481,7 +504,7 @@ export function resolveSessionRuntimeSnapshot(
       parseMcpSelection(params.persistedMetadata?.mcpSelectionV1)
       ?? parseMcpSelection(params.incomingOptions.mcpSelection)
       ?? parseMcpSelection(params.trackedSpawnOptions?.mcpSelection),
-    runtimeDescriptorV1: readRuntimeDescriptorV1FromMetadata(params.persistedMetadata),
+    runtimeDescriptorV1: resolveRuntimeDescriptorSelection(params),
     permissionMode: chooseTimestamped([
       readPermissionFromMetadata(params.persistedMetadata),
       readPermissionFromOptions(params.trackedSpawnOptions, 'tracked'),
@@ -496,7 +519,9 @@ export function resolveSessionRuntimeSnapshot(
       ? readModelFromOptions(retainedLiveRuntimeOptions, retainedLiveRuntimeSource!)
       : chooseTimestamped([
         readModelFromMetadata(params.persistedMetadata, modelTargetKey),
-        readModelFromOptions(params.trackedSpawnOptions, 'tracked'),
+        params.trackedModelSelection
+          ? { source: 'tracked', ...params.trackedModelSelection }
+          : readModelFromOptions(params.trackedSpawnOptions, 'tracked'),
         readModelFromOptions(params.incomingOptions, 'incoming'),
       ]),
     teamCredentialBindings: (() => {
@@ -517,6 +542,14 @@ export function resolveSessionRuntimeSnapshot(
     explicitResumeId,
     retainedLiveRuntimeOptions,
   );
+  // Only the tracked launch of this exact Session can supply missing facts.
+  // Server metadata is never a producer of admitted requester attribution.
+  const sessionId = readSessionId(params.incomingOptions);
+  if (!spawnOptions.requesterWorkAttributionV1 && sessionId
+    && params.trackedSpawnOptions?.requesterWorkAttributionV1
+    && readSessionId(params.trackedSpawnOptions) === sessionId) {
+    spawnOptions.requesterWorkAttributionV1 = params.trackedSpawnOptions.requesterWorkAttributionV1;
+  }
   const directoryKind = params.incomingOptions.freshSessionCreation === true && params.incomingOptions.directoryKind === 'managed'
     ? 'managed'
     : params.persistedMetadata

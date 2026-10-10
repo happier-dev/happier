@@ -10,6 +10,30 @@ describe('retireExactTerminalControlServiceability', () => {
         vi.restoreAllMocks();
     });
 
+    it('refuses a terminal metadata CAS when requester admission is lost during Account currentness read', async () => {
+        let current = true;
+        vi.spyOn(axios, 'get').mockImplementation(async (url) => {
+            if (String(url).includes('/encryption/currentness')) {
+                current = false;
+                return { status: 200, data: { mode: 'plain', version: 1,
+                    signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+            }
+            return { status: 200, data: { session: createSessionRecordFixture({ id: 'session-bob',
+                encryptionMode: 'plain', metadataLayoutVersion: 0, metadataVersion: 1,
+                metadata: JSON.stringify({ path: '/repo', terminal: { mode: 'tmux', controlServiceabilityV1: {
+                    v: 1, attachmentId: 'attachment-bob', state: 'servable', observedAt: 1,
+                } } }), dataEncryptionKey: null }) } };
+        });
+        const patch = vi.spyOn(axios, 'patch').mockResolvedValue({ status: 200, data: {
+            success: true, metadataLayoutVersion: 1, sharedMetadata: { version: 2 }, agentState: { version: 0 },
+        } });
+        const input = { credentials: { token: 'bob', encryption: null }, sessionId: 'session-bob',
+            attachmentId: 'attachment-bob', terminalMode: 'tmux' as const,
+            currentness: { verifyCurrent: async () => current } };
+        await expect(retireExactTerminalControlServiceability(input)).rejects.toMatchObject({ code: 'session_publisher_authority_lost' });
+        expect(patch).not.toHaveBeenCalled();
+    });
+
     it('retires a plain Session projection with token-only credentials', async () => {
         const get = vi.spyOn(axios, 'get')
             .mockResolvedValueOnce({

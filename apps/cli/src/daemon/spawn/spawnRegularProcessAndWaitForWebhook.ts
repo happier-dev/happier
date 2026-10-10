@@ -393,6 +393,7 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
   });
 
   params.pidToTrackedSession.set(pid, trackedSession);
+  params.spawnLifecycleCallbacks.onTrackedSessionRegistered?.();
   params.spawnLifecycleCallbacks.consumeSessionAttachCleanupForPid(pid);
   params.spawnLifecycleCallbacks.registerSpawnResourceCleanupForPid(pid);
   params.logDebug(`[DAEMON RUN] Waiting for session webhook for PID ${pid}`);

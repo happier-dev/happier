@@ -1,8 +1,60 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createDaemonControlApp } from './controlServer';
+import { createDaemonAdmissionDrain } from './lifecycle/admissionDrain';
+import { applyTrackedSessionTurnLifecycle } from './sessions/applyTrackedSessionTurnLifecycle';
+import type { TrackedSession } from './types';
 
 describe('daemon control server quiescing producer routes', () => {
+  it('reopens the same control ingress after a temporary drain without final teardown', async () => {
+    const admissionDrain = createDaemonAdmissionDrain();
+    const tracked: TrackedSession = { pid: 44_001, startedBy: 'daemon', happySessionId: 'happy-test-123', activeTurnId: 'turn-test' };
+    const app = createDaemonControlApp({
+      getChildren: () => [],
+      stopSession: async () => ({ status: 'not_found' as const }),
+      spawnSession: async () => ({ type: 'success' as const, sessionId: 'happy-test-123' }),
+      requestShutdown: () => {},
+      onHappySessionWebhook: () => {},
+      controlToken: 'test-token',
+      machineId: 'machine-local',
+      admissionDrain,
+      verifyRunMaterializeToken: (token) => token === 'run-token',
+      handleConnectedServiceTurnLifecycle: async (request) => ({ status: 'continue' as const,
+        turnCustody: await applyTrackedSessionTurnLifecycle({ trackedSessions: [tracked], ...request,
+          // Marker persistence is the filesystem boundary; turn custody stays real.
+          updateSessionMarkerActiveTurn: async () => true }) }),
+    });
+    try {
+      await app.ready();
+      const spawn = () => app.inject({ method: 'POST', url: '/spawn-session',
+        headers: { 'x-happier-daemon-token': 'test-token' }, payload: { directory: '/repo' } });
+      const runAdmission = () => app.inject({ method: 'POST', url: '/execution-run/admission',
+        headers: { 'x-happier-daemon-token': 'run-token' }, payload: {} });
+      expect((await app.inject({ method: 'POST', url: '/execution-run/admission',
+        headers: { 'x-happier-daemon-token': 'test-token' }, payload: {} })).statusCode).toBe(401);
+      admissionDrain.beginTemporaryDrain();
+      expect((await runAdmission()).json()).toEqual({ admitted: false, reason: 'daemon_draining' });
+      expect((await app.inject({ method: 'POST', url: '/connected-service-turn-lifecycle',
+        headers: { 'x-happier-daemon-token': 'test-token' },
+        payload: { sessionId: 'happy-test-123', turnId: 'turn-test', event: 'assistant_message_end' } })).json())
+        .toMatchObject({ ok: true, result: { status: 'continue', turnCustody: { status: 'recorded', activeTurnId: null } } });
+      expect(tracked.activeTurnId).toBeUndefined();
+      expect((await app.inject({ method: 'POST', url: '/connected-service-turn-lifecycle',
+        headers: { 'x-happier-daemon-token': 'test-token' },
+        payload: { sessionId: 'happy-test-123', turnId: 'turn-next', event: 'task_started' } })).json())
+        .toMatchObject({ ok: true, result: { status: 'continue', turnCustody: { status: 'recorded', activeTurnId: 'turn-next' } } });
+      expect(tracked.activeTurnId).toBe('turn-next');
+      expect((await spawn()).statusCode).toBe(503);
+      expect(admissionDrain.isPublicationQuiescing()).toBe(false);
+      admissionDrain.resume();
+      expect((await runAdmission()).json()).toEqual({ admitted: true });
+      expect((await spawn()).json()).toMatchObject({ success: true, sessionId: 'happy-test-123' });
+      admissionDrain.beginShutdown();
+      admissionDrain.resume();
+      expect((await runAdmission()).json()).toEqual({ admitted: false, reason: 'daemon_shutting_down' });
+      expect((await spawn()).statusCode).toBe(503);
+    } finally { await app.close(); }
+  });
   it('rejects runtime producer routes while shutdown is quiescing new work', async () => {
     const handleSessionConnectedServiceAuthSwitch = vi.fn(async () => ({ status: 'switched' }));
     const handleSessionRunnerRestart = vi.fn(async () => ({

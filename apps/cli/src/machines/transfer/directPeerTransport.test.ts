@@ -1,10 +1,24 @@
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import type { FileHandle } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createDirectPeerTransferApp, createDirectPeerTransferRegistry } from './directPeerTransport';
+import { createDirectPeerTransferApp, createDirectPeerTransferRegistry, startDirectPeerTransferServer } from './directPeerTransport';
+import { createDirectTransferServerLifecycle } from './directTransferServerLifecycle';
+import { createDirectTransferImportSessionManager } from './directTransferImportSession';
+import { createBufferTransferPayloadSource, createFileTransferPayloadSource } from './transferPayloadSource';
+
+const fileOpenBoundary = vi.hoisted(() => ({ observe: vi.fn() }));
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, open: async (...args: Parameters<typeof actual.open>) => {
+    const handle = await actual.open(...args);
+    fileOpenBoundary.observe(handle, args[0]);
+    return handle;
+  } };
+});
 
 function encodeDirectPeerTransferPathKey(transferId: string): string {
   return Buffer.from(transferId, 'utf8').toString('base64url');
@@ -41,6 +55,199 @@ async function reserveFreeTcpPort(): Promise<number> {
 }
 
 describe('direct peer machine transfer', () => {
+  it.each(['complete', 'clear', 'expiry', 'stop'] as const)('closes every cached publication handle before captured files are disposed on %s', async (ending) => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-export-handle-custody-'));
+    const sourcePath = join(directory, 'manifest.bin');
+    const blobPath = join(directory, 'blob.bin');
+    const bytes = Buffer.from([0, 255, 128, 10]);
+    await Promise.all([writeFile(sourcePath, bytes), writeFile(blobPath, bytes)]);
+    const handles: FileHandle[] = [];
+    // Track real OS handles; all transfer/cache/lifecycle logic remains real.
+    fileOpenBoundary.observe.mockImplementation((handle: FileHandle, path: unknown) => {
+      if (path === sourcePath || path === blobPath) handles.push(handle);
+    });
+    let now = Date.now();
+    const lifecycle = createDirectTransferServerLifecycle({ bindPort: await reserveFreeTcpPort(), listenerClasses: ['loopback_http'], now: () => now });
+    let disposed!: () => void;
+    const disposal = new Promise<void>(resolve => { disposed = resolve; });
+    let handlesAtDisposal: number[] | undefined;
+    const payload = createBufferTransferPayloadSource(bytes);
+    const scope = { rootPath: directory, requesterAccountId: 'account-one', destinationId: 'destination-one' };
+    try {
+      const published = await lifecycle.publishTransferWhenReady({ transferId: 'manifest', filesystemScope: scope,
+        payloadSource: createFileTransferPayloadSource({ filePath: sourcePath, sizeBytes: bytes.length, manifestHash: payload.manifestHash,
+          dispose: async () => { handlesAtDisposal = handles.map(handle => handle.fd); await rm(directory, { recursive: true, force: true }); disposed(); } }),
+        onDemandScope: { allowTransferId: id => id === 'blob', resolvePayloadSourceOnOpen: async () =>
+          createFileTransferPayloadSource({ filePath: blobPath, sizeBytes: bytes.length, manifestHash: payload.manifestHash }) } });
+      const port = lifecycle.getState().port!;
+      const { deriveBoxPublicKeyFromSeed } = await import('@happier-dev/protocol');
+      const headers = { authorization: `Bearer ${published.transferToken}`,
+        'x-happier-transfer-recipient-public-key': Buffer.from(deriveBoxPublicKeyFromSeed(new Uint8Array(32).fill(7))).toString('base64') };
+      const origin = `http://127.0.0.1:${port}`;
+      for (const id of ['manifest', 'blob']) {
+        expect((await fetch(`${origin}${buildDirectPeerOpenUrl(id)}`, { method: 'POST', headers })).status).toBe(200);
+        expect((await fetch(`${origin}${buildDirectPeerChunkUrl(id, 0)}`, { headers })).status).toBe(200);
+      }
+      expect(handles).toHaveLength(2);
+      expect(handles.every(handle => handle.fd >= 0)).toBe(true);
+      if (ending === 'complete') {
+        const response = await fetch(`${origin}/machine-transfers/direct/${encodeDirectPeerTransferPathKey('manifest')}/complete`, {
+          method: 'POST', headers: { ...headers, 'content-type': 'application/json' },
+          body: JSON.stringify({ destinationId: scope.destinationId, success: true, sizeBytes: bytes.length, manifestHash: payload.manifestHash }) });
+        expect(response.status).toBe(200);
+      } else if (ending === 'clear') {
+        expect(lifecycle.clearPublishedTransfer('manifest', scope)).toBe(true);
+      } else if (ending === 'expiry') {
+        now = published.expiresAt + 1;
+        expect(lifecycle.getState().publishedTransferCount).toBe(0);
+      } else await lifecycle.stop();
+      await disposal;
+      expect(handlesAtDisposal).toEqual([-1, -1]);
+    } finally {
+      await lifecycle.stop();
+      fileOpenBoundary.observe.mockReset();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps prepared tree payload imports in admitted private staging through the real listener adapter', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-prepared-root-'));
+    const staging = await mkdtemp(join(tmpdir(), 'happier-prepared-private-'));
+    const server = await startDirectPeerTransferServer({ readPublishedTransfer: () => null, bindPort: await reserveFreeTcpPort(),
+      accessPolicy: { kind: 'restrictedRoots', roots: [root] } });
+    try {
+      const bytes = Buffer.from([0, 255, 128, 10]);
+      const path = join(staging, 'payload-0');
+      const prepared = await server.openTrustedImportSession({ t: 'session_file_upload_v1', workingDirectory: staging,
+        path, sizeBytes: bytes.length, overwrite: false }, { rootPath: root, requesterAccountId: 'account-one' }, staging);
+      expect(prepared.success).toBe(true);
+      if (!prepared.success) throw new Error(prepared.error);
+      const { createEncryptedTransferChunkEnvelope } = await import('@happier-dev/transfers/node');
+      const envelope = createEncryptedTransferChunkEnvelope({ transferId: prepared.response.uploadId, sequence: 0,
+        payload: bytes, recipientPublicKeyBase64: prepared.response.recipientPublicKeyBase64 });
+      const endpoint = `http://127.0.0.1:${server.port}/machine-transfers/direct/imports/${prepared.response.uploadId}`;
+      const chunk = await fetch(`${endpoint}/chunks/0`, { method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ payloadBase64: envelope.payloadBase64, encryptedDataKeyEnvelopeBase64: envelope.encryptedDataKeyEnvelopeBase64 }) });
+      expect(chunk.status).toBe(200);
+      const finalized = await fetch(`${endpoint}/finalize`, { method: 'POST' });
+      expect(finalized.status).toBe(200);
+      expect(await finalized.json()).toMatchObject({ success: true });
+      expect(await readFile(path)).toEqual(bytes);
+      expect(await readdir(root)).toEqual([]);
+    } finally { await server.stop(); await Promise.all([rm(root, { recursive: true, force: true }), rm(staging, { recursive: true, force: true })]); }
+  });
+
+  it('never emits an idle gap while disposing an actual published source', async () => {
+    const registry = createDirectPeerTransferRegistry({ advertisedPort: 46001 });
+    let release!: () => void;
+    const cleanup = new Promise<void>(resolve => { release = resolve; });
+    registry.publishTransfer({ transferId: 'disposing', payloadSource: {
+      ...createBufferTransferPayloadSource(Buffer.from('payload')), dispose: () => cleanup,
+    } });
+    const observations: unknown[] = [];
+    const unsubscribe = registry.activity.subscribe(() => observations.push(registry.activity.read()));
+    const disposal = registry.dispose();
+    try {
+      expect(registry.activity.read()).toMatchObject({ items: [expect.objectContaining({ state: 'active' })] });
+      expect(observations).not.toContainEqual({ coverage: 'complete', items: [] });
+      release();
+      await disposal;
+      expect(registry.activity.read()).toEqual({ coverage: 'complete', items: [] });
+    } finally { release(); unsubscribe(); await disposal; }
+  });
+  it('retains real outgoing transfer lifetime alongside published source custody', async () => {
+    const registry = createDirectPeerTransferRegistry({ advertisedPort: 46001 });
+    let release!: (value: import('./transferPayloadFileSink').TransferPayloadFileResult) => void;
+    const request = new Promise<import('./transferPayloadFileSink').TransferPayloadFileResult>(resolve => { release = resolve; });
+    const observations: unknown[] = [];
+    const unsubscribe = registry.activity.subscribe(() => observations.push(registry.activity.read()));
+    const held = registry.retainPayloadFileRequest(request);
+    try {
+      expect(registry.activity.read()).toMatchObject({ coverage: 'complete', items: [
+        { category: 'transfer', ownerRef: request, state: 'active' },
+      ] });
+      release({ destinationPath: '/received', sizeBytes: 0, manifestHash: 'sha256:empty' });
+      await held;
+      expect(registry.activity.read()).toEqual({ coverage: 'complete', items: [] });
+      expect(observations).toContainEqual({ coverage: 'complete', items: [] });
+    } finally { release({ destinationPath: '/received', sizeBytes: 0, manifestHash: 'sha256:empty' }); unsubscribe(); await registry.dispose(); }
+  });
+
+  it('settles an export only after the owning destination acknowledges verified binary bytes', async () => {
+    const registry = createDirectPeerTransferRegistry({ advertisedPort: 46001 });
+    const scope = { rootPath: '/repo', requesterAccountId: 'account-one', destinationId: 'destination-one' };
+    const payloadSource = createBufferTransferPayloadSource(Buffer.from([0, 255, 128, 10]));
+    const published = registry.publishTransfer({ transferId: 'binary-export', payloadSource, filesystemScope: scope });
+    expect(registry.activity.read()).toMatchObject({ coverage: 'complete', items: [
+      { category: 'transfer', ownerRef: 'binary-export', state: 'active' },
+    ] });
+    const settlement = registry.waitForFilesystemExportSettlement(published.transferId, scope);
+    const app = createDirectPeerTransferApp({ readPublishedTransfer: registry.readPublishedTransfer,
+      completeFilesystemExport: registry.completeFilesystemExport });
+    try {
+      await expect(registry.completeFilesystemExport({ transferId: published.transferId, transferToken: published.transferToken,
+        outcome: { destinationId: 'destination-two', success: true, sizeBytes: 4, manifestHash: payloadSource.manifestHash! } }))
+        .resolves.toMatchObject({ success: false });
+      await expect(registry.completeFilesystemExport({ transferId: published.transferId, transferToken: published.transferToken,
+        outcome: { destinationId: 'destination-one', success: true, sizeBytes: 4, manifestHash: 'sha256:wrong' } }))
+        .resolves.toMatchObject({ success: false });
+      expect(registry.countPublishedTransfers()).toBe(1);
+      const completed = await app.inject({ method: 'POST', url: `/machine-transfers/direct/${encodeDirectPeerTransferPathKey(published.transferId)}/complete`,
+        headers: { authorization: `Bearer ${published.transferToken}` },
+        payload: { destinationId: 'destination-one', success: true, sizeBytes: 4, manifestHash: payloadSource.manifestHash! } });
+      expect(completed.statusCode).toBe(200);
+      expect(completed.json()).toEqual({ success: true });
+      await expect(settlement).resolves.toEqual({ success: true, sizeBytes: 4, manifestHash: payloadSource.manifestHash });
+      expect(registry.countPublishedTransfers()).toBe(0);
+    } finally { await app.close(); await registry.dispose(); }
+  });
+  it('uses the incumbent opaque import capability for HTTP cleanup while raw RPC cancellation remains scoped', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-scoped-http-abort-'));
+    const manager = createDirectTransferImportSessionManager();
+    const app = createDirectPeerTransferApp({ readPublishedTransfer: () => null, importSessionManager: manager });
+    try {
+      const opened = await manager.openTrustedImportSession({ workingDirectory,
+        t: 'session_file_upload_v1', path: 'binary.dat', sizeBytes: 4, overwrite: false },
+      { rootPath: workingDirectory, requesterAccountId: 'account-one' });
+      if (!opened.success) throw new Error(opened.error);
+      await expect(manager.abortImportTransferSession({ uploadId: opened.response.uploadId }, null))
+        .rejects.toMatchObject({ errorCode: 'FILESYSTEM_TRANSFER_SCOPE_MISMATCH' });
+      const missing = await app.inject({ method: 'POST', url: '/machine-transfers/direct/imports/abort' });
+      expect(missing.statusCode).not.toBe(200);
+      await app.inject({ method: 'POST', url: '/machine-transfers/direct/imports/not-an-owned-capability/abort' });
+      expect(manager.countActiveImportSessions()).toBe(1);
+      const response = await app.inject({ method: 'POST',
+        url: `/machine-transfers/direct/imports/${opened.response.uploadId}/abort` });
+      expect(response.statusCode).toBe(200);
+      expect(manager.countActiveImportSessions()).toBe(0);
+    } finally {
+      await app.close();
+      await manager.close();
+      await rm(workingDirectory, { recursive: true, force: true });
+    }
+  });
+  it('refuses cancellation outside the prepared filesystem requester and root', async () => {
+    const registry = createDirectPeerTransferRegistry({ advertisedPort: 46001 });
+    const scope = { rootPath: '/repo', requesterAccountId: 'account-one' };
+    const published = registry.publishTransfer({ transferId: 'scoped-download',
+      payload: Buffer.from([0, 255, 128, 10]), filesystemScope: scope });
+    const settlement = registry.waitForFilesystemExportSettlement(published.transferId, scope);
+    try {
+      expect(() => registry.clearPublishedTransfer(published.transferId, { ...scope, requesterAccountId: 'account-two' }))
+        .toThrowError(expect.objectContaining({ errorCode: 'FILESYSTEM_TRANSFER_SCOPE_MISMATCH' }));
+      expect(() => registry.clearPublishedTransfer(published.transferId, { ...scope, rootPath: '/other' }))
+        .toThrowError(expect.objectContaining({ errorCode: 'FILESYSTEM_TRANSFER_SCOPE_MISMATCH' }));
+      expect(() => registry.clearPublishedTransfer(published.transferId, null))
+        .toThrowError(expect.objectContaining({ errorCode: 'FILESYSTEM_TRANSFER_SCOPE_MISMATCH' }));
+      expect(registry.readPublishedTransfer({ transferId: published.transferId, transferToken: published.transferToken }))
+        .not.toBeNull();
+      expect(registry.clearPublishedTransfer(published.transferId, scope)).toBe(true);
+      expect(registry.clearPublishedTransfer(published.transferId, scope)).toBe(false);
+      await expect(settlement).resolves.toMatchObject({ success: false, errorCode: 'cancelled' });
+      expect(registry.readPublishedTransfer({ transferId: published.transferId, transferToken: published.transferToken }))
+        .toBeNull();
+    } finally { await registry.dispose(); }
+  });
   afterEach(() => {
     delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS;
     delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT;

@@ -1,3 +1,4 @@
+import { isSessionScopedRuntimeTranscriptEvent } from '../events/runtimeTranscriptScope';
 import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import type { AgentSessionRuntimeEvent } from '@happier-dev/protocol/runtime';
 import type { PluginDiagnosticData } from '@happier-dev/plugin-sdk';
@@ -90,6 +91,7 @@ function readAgentTurnId(event: AgentSessionRuntimeEvent): string | null {
 }
 
 function isTurnScopedEvent(event: AgentSessionRuntimeEvent): boolean {
+    if (isSessionScopedRuntimeTranscriptEvent(event)) return false;
     if (event.kind === 'transcript-message-committed'
         || event.kind === 'usage-observed'
         || event.kind === 'context-compaction') {

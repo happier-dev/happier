@@ -1,7 +1,7 @@
 import {
   resolveSessionMetadataAgentIdentity,
 } from '@happier-dev/agents';
-import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
+import { AgentExecutionTargetV1Schema, CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { agentRoutingIdAddressesContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
@@ -119,10 +119,19 @@ export function resolveSessionPersistedRuntimeIdentity(metadata: Record<string, 
   if (!backendTarget) return null;
 
   if (backendTarget.sourceKind === 'configured') {
+    const definitionId = backendTarget.configuredBackendId ?? backendTarget.backendId;
     const flavorBackendId = readLegacyConfiguredAcpBackendId(metadata.flavor);
-    if (flavorBackendId !== null && flavorBackendId !== (backendTarget.configuredBackendId ?? backendTarget.backendId)) return null;
-    // A configured ACP backend must carry no built-in Agent evidence at all;
-    // any is a contradiction between the persisted target and the identity.
+    if (flavorBackendId !== null && flavorBackendId !== definitionId) return null;
+    if (runtimeDescriptorV1
+      && agentRoutingIdAddressesContributionIdentityV1(runtimeDescriptorV1.agentId, CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1)) {
+      if (identity.agentId !== runtimeDescriptorV1.agentId || runtimeDescriptorV1.agent.definitionId !== definitionId) return null;
+      return {
+        agentTarget: AgentExecutionTargetV1Schema.parse({ kind: 'agent', identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, definitionId }),
+        runtimeDescriptorV1,
+      };
+    }
+    // The predecessor carrier has no contribution identity. Foreign Agent
+    // evidence contradicts it rather than supplying a configured runtime.
     if (identity.agentId || identity.vendorResumeKeyAgentIds.length > 0 || runtimeDescriptorV1) return null;
   } else {
     if (!isCatalogAgentId(backendTarget.backendId)) return null;

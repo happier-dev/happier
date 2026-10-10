@@ -28,6 +28,7 @@ export type RuntimeExactProviderInputOutcome =
     | (RuntimeExactProviderInputOutcomeBase & Readonly<{
         type: 'input-accepted';
         delivery: NativeInputAcceptedEvent['delivery'];
+        acceptedAtMs?: number;
     }>)
     | (RuntimeExactProviderInputOutcomeBase & Readonly<{
         type: 'input-rejected';
@@ -103,6 +104,7 @@ export type SessionProviderInputOutcome =
         kind: 'accepted';
         providerTurnId?: string;
         providerDeliveryKind?: RuntimeAcceptedOutcome['delivery']['kind'];
+        acceptedAtMs?: number;
         appliedModel?: Readonly<{
             provider: string;
             selection: ProviderBoundModelRef;
@@ -243,6 +245,8 @@ export function normalizeHostProviderInputOutcome(
                 ...identity,
                 providerTurnId,
                 providerDeliveryKind: outcome.delivery.kind,
+                ...(Number.isSafeInteger(outcome.acceptedAtMs) && outcome.acceptedAtMs! >= 0
+                    ? { acceptedAtMs: outcome.acceptedAtMs } : {}),
             };
         }
         case 'input-rejected':

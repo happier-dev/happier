@@ -2,6 +2,8 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { networkInterfaces } from 'node:os';
 import * as fsPromises from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
+import type { LiveWorkProducerV1, LiveWorkInventoryV1, LiveWorkItemV1 } from '@/daemon/lifecycle/managedActivity';
+import type { TransferPayloadFileResult } from './transferPayloadFileSink';
 
 import fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -54,6 +56,7 @@ import {
   type DirectTransferImportOpenRequest,
   type DirectTransferImportOpenResponse,
   type DirectTransferImportSessionManager,
+  type PreparedImportTransferSettlement,
 } from './directTransferImportSession';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { DirectTransferImportOpenRequestSchema } from './directTransferImportOpenRequest';
@@ -61,6 +64,7 @@ import type { ComposerMediaStageUploadTargetDeps } from '@/transfers/targets/res
 import type { TransferUploadInitAttachmentDeps } from '@/transfers/targets/resolveTransferUploadInitTarget';
 import type { WorkspaceFinalizeFileOperationsFactory } from '@/transfers/targets/resolveWorkspaceFileUploadTarget';
 import { TRANSFER_FINALIZE_RECOVERY_REQUIRED_ERROR_CODE } from '@happier-dev/transfers/node';
+import { assertPreparedFilesystemTransferScope, type PreparedFilesystemTransferScope } from './preparedFilesystemTransferScope';
 
 // Direct-peer transfers are used for session handoff and finite workspace transfers, which can take
 // significantly longer than 30s on large repos/slow disks/VMs (host <-> Lima). Keep the default
@@ -111,6 +115,7 @@ type PublishDirectPeerTransferInput = Readonly<{
   payload?: Buffer;
   payloadSource?: TransferPayloadSource;
   onDemandScope?: DirectPeerOnDemandTransferScope;
+  filesystemScope?: PreparedFilesystemTransferScope;
 }>;
 
 type StoredPublishedTransfer = Readonly<{
@@ -118,7 +123,22 @@ type StoredPublishedTransfer = Readonly<{
   transferTokenDigest: Buffer;
   expiresAt: number;
   payloadSource: TransferPayloadSource;
+  filesystemScope?: PreparedFilesystemTransferScope;
+  filesystemSettlement?: Readonly<{
+    result: Promise<PreparedFilesystemExportSettlement>;
+    settle: (result: PreparedFilesystemExportSettlement) => void;
+  }>;
 }>;
+
+export type PreparedFilesystemExportSettlement = Readonly<
+  | { success: true; sizeBytes: number; manifestHash: string }
+  | { success: false; error: string; errorCode?: string }
+>;
+
+export type PreparedFilesystemExportOutcome = Readonly<{ destinationId: string }> & Readonly<
+  | { success: true; sizeBytes: number; manifestHash: string }
+  | { success: false; error: string; errorCode?: string }
+>;
 
 export type DirectPeerOnDemandTransferScope = Readonly<{
   allowTransferId: (transferId: string) => boolean;
@@ -206,36 +226,48 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
   now?: () => number;
   networkInterfacesFn?: typeof networkInterfaces;
   onPublishedTransfersChanged?: () => void;
+  beforeDisposePayloadSource?: (transferToken: string) => Promise<void>;
 }>) {
   const now = params.now ?? Date.now;
   const networkInterfacesFn = params.networkInterfacesFn ?? networkInterfaces;
   const publishedTransfers = new Map<string, StoredPublishedTransfer>();
   const onDemandScopesByToken = new Map<string, StoredOnDemandScope>();
-  const inFlightOnDemandTransfers = new Map<string, Promise<TransferPayloadSource | null>>();
+  const inFlightOnDemandTransfers = new Map<string | Promise<TransferPayloadFileResult>,
+    Readonly<{ kind: 'source'; request: Promise<TransferPayloadSource | null> }>
+    | Readonly<{ kind: 'download'; request: Promise<TransferPayloadFileResult> }>>();
+  const activityListeners = new Set<() => void>();
   const disposedPayloadSources = new WeakSet<object>();
   const pendingPayloadDisposals = new Set<Promise<void>>();
   let disposed = false;
   let disposePromise: Promise<void> | null = null;
 
-  const disposePayloadSourceOnce = (source: TransferPayloadSource): Promise<void> => {
+  const disposePayloadSourceOnce = (source: TransferPayloadSource, transferToken?: string): Promise<void> => {
     if (disposedPayloadSources.has(source)) {
       return Promise.resolve();
     }
     disposedPayloadSources.add(source);
-    const disposal = disposeTransferPayloadSource(source)
+    const disposal = (async () => {
+      if (transferToken) await params.beforeDisposePayloadSource?.(transferToken);
+      await disposeTransferPayloadSource(source);
+    })()
       .catch(() => undefined)
       .finally(() => {
         pendingPayloadDisposals.delete(disposal);
+        emitPublishedTransfersChanged();
       });
     pendingPayloadDisposals.add(disposal);
+    emitPublishedTransfersChanged();
     return disposal;
   };
 
-  const disposePayloadSourceBestEffort = (source: TransferPayloadSource): void => {
-    void disposePayloadSourceOnce(source);
+  const disposePayloadSourceBestEffort = (source: TransferPayloadSource, transferToken?: string): void => {
+    void disposePayloadSourceOnce(source, transferToken);
   };
 
   const emitPublishedTransfersChanged = (): void => {
+    for (const listener of activityListeners) {
+      try { listener(); } catch { /* Observation cannot alter transfer custody. */ }
+    }
     try {
       params.onPublishedTransfersChanged?.();
     } catch {
@@ -251,8 +283,9 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
         continue;
       }
       publishedTransfers.delete(candidateId);
+      entry.filesystemSettlement?.settle({ success: false, error: 'Prepared filesystem export ended without destination completion', errorCode: 'indeterminate' });
       changed = true;
-      disposePayloadSourceBestEffort(entry.payloadSource);
+      disposePayloadSourceBestEffort(entry.payloadSource, token);
     }
     return changed;
   };
@@ -348,11 +381,17 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
       ));
     const endpointCandidates: TransferEndpointCandidate[] = [...httpEndpointCandidates];
 
+    let settleFilesystemExport!: (result: PreparedFilesystemExportSettlement) => void;
+    const filesystemSettlement = input.filesystemScope
+      ? new Promise<PreparedFilesystemExportSettlement>((resolve) => { settleFilesystemExport = resolve; })
+      : null;
     publishedTransfers.set(input.transferId, {
       transferToken,
       transferTokenDigest: hashTransferToken(transferToken),
       expiresAt,
       payloadSource,
+      ...(input.filesystemScope ? { filesystemScope: input.filesystemScope } : {}),
+      ...(filesystemSettlement ? { filesystemSettlement: { result: filesystemSettlement, settle: settleFilesystemExport } } : {}),
     });
 
     if (input.onDemandScope) {
@@ -427,8 +466,8 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
     }
     const inFlightKey = `${input.transferToken}\0${input.transferId}`;
     const existingResolution = inFlightOnDemandTransfers.get(inFlightKey);
-    if (existingResolution) {
-      return await existingResolution;
+    if (existingResolution?.kind === 'source') {
+      return await existingResolution.request;
     }
 
     const resolution = (async (): Promise<TransferPayloadSource | null> => {
@@ -468,25 +507,31 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
       emitPublishedTransfersChanged();
       return payloadSource;
     })();
-    inFlightOnDemandTransfers.set(inFlightKey, resolution);
+    const retained = { kind: 'source' as const, request: resolution };
+    inFlightOnDemandTransfers.set(inFlightKey, retained);
+    emitPublishedTransfersChanged();
     try {
       return await resolution;
     } finally {
-      if (inFlightOnDemandTransfers.get(inFlightKey) === resolution) {
+      if (inFlightOnDemandTransfers.get(inFlightKey) === retained) {
         inFlightOnDemandTransfers.delete(inFlightKey);
+        emitPublishedTransfersChanged();
       }
     }
   }
 
-  function clearPublishedTransfer(transferId: string): void {
+  function clearPublishedTransfer(transferId: string, filesystemScope?: PreparedFilesystemTransferScope | null): boolean {
     const stored = publishedTransfers.get(transferId);
     if (!stored) {
-      return;
+      return false;
     }
+    assertPreparedFilesystemTransferScope(stored.filesystemScope, filesystemScope);
+    if (filesystemScope) stored.filesystemSettlement?.settle({ success: false, error: 'Download cancelled', errorCode: 'cancelled' });
 
     // Clearing a token carrier should also clear any on-demand transfers resolved under the same token.
     const changed = clearPublishedTransfersForToken(stored.transferToken);
     if (changed) emitPublishedTransfersChanged();
+    return changed;
   }
 
   function dispose(): Promise<void> {
@@ -495,26 +540,86 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
     }
 
     disposed = true;
+    for (const entry of publishedTransfers.values()) {
+      entry.filesystemSettlement?.settle({ success: false, error: 'Prepared filesystem export owner stopped', errorCode: 'indeterminate' });
+    }
     onDemandScopesByToken.clear();
-    const retainedPayloadSources = [...publishedTransfers.values()].map((entry) => entry.payloadSource);
-    const inFlightResolutions = [...inFlightOnDemandTransfers.values()];
+    const retainedPayloadSources = [...publishedTransfers.values()];
+    const inFlightResolutions = [...inFlightOnDemandTransfers.values()].map(entry => entry.request);
     publishedTransfers.clear();
-    inFlightOnDemandTransfers.clear();
+    // Transfer the source's real lifetime into existing disposal custody
+    // before publishing removal; readers must not observe an idle gap.
+    const payloadDisposals = retainedPayloadSources.map(entry => disposePayloadSourceOnce(entry.payloadSource, entry.transferToken));
     emitPublishedTransfersChanged();
 
     disposePromise = (async () => {
-      await Promise.allSettled(retainedPayloadSources.map(disposePayloadSourceOnce));
+      await Promise.allSettled(payloadDisposals);
       await Promise.allSettled(inFlightResolutions);
       await Promise.allSettled([...pendingPayloadDisposals]);
     })();
     return disposePromise;
   }
 
+  const activity: LiveWorkProducerV1 = Object.freeze({
+    read(): Omit<LiveWorkInventoryV1, 'idleSince'> {
+      const references: unknown[] = [...publishedTransfers.keys(), ...onDemandScopesByToken.values(),
+        ...[...inFlightOnDemandTransfers.values()].map(entry => entry.request), ...pendingPayloadDisposals];
+      const items: LiveWorkItemV1[] = references.map(ownerRef => ({
+        category: 'transfer', ownerRef, attribution: { kind: 'unknown' }, state: 'active',
+      }));
+      return { items, coverage: 'complete' };
+    },
+    subscribe(listener: () => void): () => void {
+      activityListeners.add(listener);
+      return () => { activityListeners.delete(listener); };
+    },
+  });
   return {
+    activity,
+    async retainPayloadFileRequest(request: Promise<TransferPayloadFileResult>): Promise<TransferPayloadFileResult> {
+      if (disposed) throw new Error('Direct peer transfer registry is disposed');
+      const retained = { kind: 'download' as const, request };
+      inFlightOnDemandTransfers.set(request, retained);
+      emitPublishedTransfersChanged();
+      try { return await request; }
+      finally { if (inFlightOnDemandTransfers.get(request) === retained) inFlightOnDemandTransfers.delete(request); emitPublishedTransfersChanged(); }
+    },
     publishTransfer,
     readPublishedTransfer,
     resolveOnDemandTransferOnOpen,
     clearPublishedTransfer,
+    async completeFilesystemExport(input: Readonly<{
+      transferId: string;
+      transferToken: string;
+      outcome: PreparedFilesystemExportOutcome;
+    }>): Promise<Readonly<{ success: true } | { success: false; error: string }>> {
+      const stored = publishedTransfers.get(input.transferId);
+      if (!stored?.filesystemScope?.destinationId || !stored.filesystemSettlement
+        || stored.filesystemScope.destinationId !== input.outcome.destinationId
+        || !readPublishedTransfer(input)) return { success: false, error: 'Prepared filesystem export is unavailable' };
+      if (input.outcome.success) {
+        const [sizeBytes, manifestHash] = await Promise.all([
+          resolveTransferPayloadSizeBytes(stored.payloadSource),
+          resolveTransferPayloadManifestHash(stored.payloadSource),
+        ]);
+        if (input.outcome.sizeBytes !== sizeBytes || input.outcome.manifestHash !== manifestHash) {
+          return { success: false, error: 'Prepared filesystem destination bytes do not match the source' };
+        }
+        if (publishedTransfers.get(input.transferId) !== stored) return { success: false, error: 'Prepared filesystem export is unavailable' };
+        stored.filesystemSettlement.settle({ success: true, sizeBytes, manifestHash });
+      } else {
+        stored.filesystemSettlement.settle({ success: false, error: input.outcome.error,
+          ...(input.outcome.errorCode ? { errorCode: input.outcome.errorCode } : {}) });
+      }
+      clearPublishedTransfer(input.transferId);
+      return { success: true };
+    },
+    async waitForFilesystemExportSettlement(transferId: string, filesystemScope: PreparedFilesystemTransferScope): Promise<PreparedFilesystemExportSettlement> {
+      const stored = publishedTransfers.get(transferId);
+      if (!stored?.filesystemSettlement) return { success: false, error: 'Prepared filesystem export is unavailable', errorCode: 'indeterminate' };
+      assertPreparedFilesystemTransferScope(stored.filesystemScope, filesystemScope);
+      return await stored.filesystemSettlement.result;
+    },
     cleanupExpiredPublishedTransfers,
     getNextPublishedTransferExpiryAt,
     dispose,
@@ -621,6 +726,7 @@ function applyDirectTransferCorsHeaders(params: Readonly<{
 }
 
 export function createDirectPeerTransferApp(params: Readonly<{
+  admissionDrain?: NonNullable<Parameters<typeof createDirectTransferImportSessionManager>[0]>['admissionDrain'];
   readPublishedTransfer: (input: Readonly<{
     transferId: string;
     transferToken: string;
@@ -632,6 +738,9 @@ export function createDirectPeerTransferApp(params: Readonly<{
     requestBody: unknown;
   }>) => Promise<TransferPayloadSource | null>;
   importSessionManager?: DirectTransferImportSessionManager;
+  completeFilesystemExport?: (input: Readonly<{ transferId: string; transferToken: string;
+    outcome: PreparedFilesystemExportOutcome }>) => Promise<Readonly<{ success: true } | { success: false; error: string }>>;
+  onPublishedTransferCacheReady?: (releaseHandles: (transferToken: string) => Promise<void>) => void;
 }>): FastifyInstance {
   const OPEN_METADATA_CACHE_MAX_ENTRIES = 256;
   const OPEN_FILE_HANDLE_CACHE_MAX_ENTRIES = 64;
@@ -640,7 +749,7 @@ export function createDirectPeerTransferApp(params: Readonly<{
   const openManifestHashCache = new Map<string, Promise<string>>();
   const openFileHandleCache = new Map<string, Promise<FileHandle>>();
   const openTransferTokenDigestCache = new Map<string, Buffer>();
-  const importSessionManager = params.importSessionManager ?? createDirectTransferImportSessionManager();
+  const importSessionManager = params.importSessionManager ?? createDirectTransferImportSessionManager({ admissionDrain: params.admissionDrain });
 
   const readOpenCacheKeyFromDigest = (transferId: string, transferTokenDigest: Buffer): string =>
     `${transferId}:${transferTokenDigest.toString('base64url')}`;
@@ -698,14 +807,28 @@ export function createDirectPeerTransferApp(params: Readonly<{
     parseTransferRecipientPublicKeyBase64(recipientPublicKeyBase64);
   };
 
-  const closeFileHandleBestEffort = async (handlePromise: Promise<FileHandle>): Promise<void> => {
-    try {
-      const handle = await handlePromise;
-      await handle.close();
-    } catch {
-      // ignore
+  const closeCachedFileHandle = async (key: string, handlePromise: Promise<FileHandle>): Promise<void> => {
+    let handle: FileHandle;
+    try { handle = await handlePromise; }
+    catch {
+      if (openFileHandleCache.get(key) === handlePromise) openFileHandleCache.delete(key);
+      return; // Failed opens own no OS handle.
     }
+    await handle.close();
+    if (openFileHandleCache.get(key) === handlePromise) openFileHandleCache.delete(key);
   };
+
+  const releasePublishedTransferHandles = async (transferToken: string): Promise<void> => {
+    const suffix = `:${hashTransferToken(transferToken).toString('base64url')}`;
+    await Promise.all([...openFileHandleCache.entries()]
+      .filter(([key]) => key.endsWith(suffix))
+      .map(([key, handle]) => closeCachedFileHandle(key, handle)));
+    for (const cache of [openSizeBytesCache, openManifestHashCache]) {
+      for (const key of cache.keys()) if (key.endsWith(suffix)) cache.delete(key);
+    }
+    openTransferTokenDigestCache.delete(transferToken);
+  };
+  params.onPublishedTransferCacheReady?.(releasePublishedTransferHandles);
 
   const cacheFileHandle = (key: string, filePath: string): Promise<FileHandle> => {
     const cached = openFileHandleCache.get(key);
@@ -713,7 +836,18 @@ export function createDirectPeerTransferApp(params: Readonly<{
       return cached;
     }
 
-    const created = fsPromises.open(filePath, 'r');
+    // Keep an evicted handle in the same cache until close completes. Publication
+    // disposal can then await it, including while its replacement is still opening.
+    const created = (async () => {
+      while (openFileHandleCache.size >= OPEN_FILE_HANDLE_CACHE_MAX_ENTRIES) {
+        const oldestKey = openFileHandleCache.keys().next().value;
+        if (!oldestKey || oldestKey === key) break;
+        const evicted = openFileHandleCache.get(oldestKey);
+        if (!evicted) continue;
+        await closeCachedFileHandle(oldestKey, evicted);
+      }
+      return await fsPromises.open(filePath, 'r');
+    })();
     openFileHandleCache.set(key, created);
 
     // If open fails, don't pin a rejected promise indefinitely.
@@ -722,16 +856,6 @@ export function createDirectPeerTransferApp(params: Readonly<{
         openFileHandleCache.delete(key);
       }
     });
-
-    while (openFileHandleCache.size > OPEN_FILE_HANDLE_CACHE_MAX_ENTRIES) {
-      const oldestKey = openFileHandleCache.keys().next().value as string | undefined;
-      if (!oldestKey) break;
-      const evicted = openFileHandleCache.get(oldestKey);
-      openFileHandleCache.delete(oldestKey);
-      if (evicted) {
-        void closeFileHandleBestEffort(evicted);
-      }
-    }
 
     return created;
   };
@@ -768,10 +892,11 @@ export function createDirectPeerTransferApp(params: Readonly<{
   const typed = app.withTypeProvider<ZodTypeProvider>();
 
   app.addHook('onClose', async () => {
-    const handles = Array.from(openFileHandleCache.values());
-    openFileHandleCache.clear();
-    await Promise.all(handles.map(closeFileHandleBestEffort));
-    await importSessionManager.close();
+    try {
+      await Promise.all([...openFileHandleCache.entries()].map(([key, handle]) => closeCachedFileHandle(key, handle)));
+    } finally {
+      await importSessionManager.close();
+    }
   });
 
   app.addHook('onRequest', async (request, reply) => {
@@ -901,9 +1026,10 @@ export function createDirectPeerTransferApp(params: Readonly<{
       reply.code(400);
       return { success: false as const, error: 'Missing uploadId' };
     }
-    await importSessionManager.abortImportTransferSession({
-      uploadId: request.params.uploadId,
-    });
+    // Like chunk/finalize, this incumbent data-plane route consumes the opaque
+    // prepared uploadId as a bearer capability. It does not derive requester
+    // identity from the finite carrier grant. Raw RPC retains null scope.
+    await importSessionManager.abortImportTransferSession({ uploadId: request.params.uploadId });
     return { success: true as const };
   });
 
@@ -992,6 +1118,30 @@ export function createDirectPeerTransferApp(params: Readonly<{
         ? { name: payloadSource.name }
         : {}),
     };
+  });
+
+  typed.post('/machine-transfers/direct/:transferId/complete', {
+    schema: {
+      params: z.object({ transferId: z.string().min(1) }).strict(),
+      headers: z.object({ authorization: z.string().min(1) }).passthrough(),
+      body: z.union([
+        z.object({ destinationId: z.string().min(1), success: z.literal(true), sizeBytes: z.number().int().nonnegative(),
+          manifestHash: z.string().regex(/^sha256:[a-f0-9]{64}$/i) }).strict(),
+        z.object({ destinationId: z.string().min(1), success: z.literal(false), error: z.string(), errorCode: z.string().optional() }).strict(),
+      ]),
+      response: { 200: DirectTransferImportAbortResponseSchema, 400: z.object({ success: z.literal(false), error: z.string() }).strict() },
+    },
+  }, async (request, reply) => {
+    const transferId = decodeDirectPeerTransferPathKey(request.params.transferId);
+    const transferToken = readDirectPeerAuthorizationToken(request.headers.authorization);
+    if (!transferId || !transferToken || transferToken.length > DIRECT_PEER_AUTH_TOKEN_HARD_MAX_CHARS
+      || !params.completeFilesystemExport) {
+      reply.code(400);
+      return { success: false as const, error: 'Prepared filesystem export is unavailable' };
+    }
+    const result = await params.completeFilesystemExport({ transferId, transferToken, outcome: request.body });
+    if (!result.success) reply.code(400);
+    return result;
   });
 
   typed.get('/machine-transfers/direct/:transferId/chunks/:sequence', {
@@ -1088,6 +1238,7 @@ export function createDirectPeerTransferApp(params: Readonly<{
 }
 
 export async function startDirectPeerTransferServer(params: Readonly<{
+  admissionDrain?: NonNullable<Parameters<typeof createDirectTransferImportSessionManager>[0]>['admissionDrain'];
   attachmentUpload?: TransferUploadInitAttachmentDeps;
   readPublishedTransfer: (input: Readonly<{
     transferId: string;
@@ -1095,6 +1246,7 @@ export async function startDirectPeerTransferServer(params: Readonly<{
     transferTokenDigest?: Buffer;
   }>) => TransferPayloadSource | null;
   resolveOnDemandTransfer?: Parameters<typeof createDirectPeerTransferApp>[0]['resolveOnDemandTransfer'];
+  completeFilesystemExport?: Parameters<typeof createDirectPeerTransferApp>[0]['completeFilesystemExport'];
   accessPolicy?: FilesystemAccessPolicy;
   bindPort?: number;
   bindHost?: string;
@@ -1110,23 +1262,28 @@ export async function startDirectPeerTransferServer(params: Readonly<{
     : never;
   finalizeFileOperations?: WorkspaceFinalizeFileOperationsFactory;
 }>): Promise<Readonly<{
+  activity: LiveWorkProducerV1;
   port: number;
   stop: () => Promise<void>;
+  releasePublishedTransferHandles: (transferToken: string) => Promise<void>;
   issueImportOpenAuthorizationToken: (input: DirectTransferImportOpenRequest) => Readonly<{
     authorizationToken: string;
     expiresAt: number;
   }>;
-  openTrustedImportSession: (input: DirectTransferImportOpenRequest) => Promise<
+  openTrustedImportSession: (input: DirectTransferImportOpenRequest, filesystemScope?: PreparedFilesystemTransferScope, privateStagingDirectory?: string) => Promise<
     | Readonly<{ success: true; response: DirectTransferImportOpenResponse }>
     | Readonly<{ success: false; error: string }>
   >;
   abortImportTransferSession: (
     input: Readonly<{ uploadId: string }>,
+    filesystemScope?: PreparedFilesystemTransferScope | null,
   ) => Promise<void | Readonly<{ aborted: boolean }>>;
+  waitForImportTransferSettlement: (uploadId: string, filesystemScope: PreparedFilesystemTransferScope) => Promise<PreparedImportTransferSettlement>;
   cleanupExpiredImportSessions: (now?: number) => void;
   getNextImportSessionExpiryAt: () => number | null;
 }>> {
   const importSessionManager = createDirectTransferImportSessionManager({
+    admissionDrain: params.admissionDrain,
     ...(params.attachmentUpload ? { attachmentUpload: params.attachmentUpload } : {}),
     onActiveSessionCountChanged: params.onImportSessionCountChanged,
     onActivity: params.onImportSessionActivity,
@@ -1137,9 +1294,11 @@ export async function startDirectPeerTransferServer(params: Readonly<{
       ? { finalizeFileOperations: params.finalizeFileOperations }
       : {}),
   });
+  let releasePublishedTransferHandles!: (transferToken: string) => Promise<void>;
   const app = createDirectPeerTransferApp({
     ...params,
     importSessionManager,
+    onPublishedTransferCacheReady: release => { releasePublishedTransferHandles = release; },
   });
   await app.ready();
   // bindHost is local listener configuration. Clamp it independently from any advertised remote
@@ -1155,10 +1314,13 @@ export async function startDirectPeerTransferServer(params: Readonly<{
   }
   return {
     port,
+    activity: importSessionManager.activity,
+    releasePublishedTransferHandles,
     issueImportOpenAuthorizationToken: (input) => importSessionManager.issueImportOpenAuthorizationToken(input),
-    openTrustedImportSession: async (input) => await importSessionManager.openTrustedImportSession(input),
-    abortImportTransferSession: async (input) =>
-      await importSessionManager.abortImportTransferSession(input),
+    openTrustedImportSession: async (input, filesystemScope, privateStagingDirectory) => await importSessionManager.openTrustedImportSession(input, filesystemScope, privateStagingDirectory),
+    abortImportTransferSession: async (input, filesystemScope) =>
+      await importSessionManager.abortImportTransferSession(input, filesystemScope),
+    waitForImportTransferSettlement: (uploadId, filesystemScope) => importSessionManager.waitForImportTransferSettlement(uploadId, filesystemScope),
     cleanupExpiredImportSessions: (now) => importSessionManager.cleanupExpiredImportSessions(now),
     getNextImportSessionExpiryAt: () => importSessionManager.getNextImportSessionExpiryAt(),
     stop: async () => {

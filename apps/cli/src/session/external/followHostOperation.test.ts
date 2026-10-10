@@ -1,10 +1,17 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { AgentExternalSessionsContribution } from '@happier-dev/plugin-sdk/sessions/external';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createExternalSessionFollowLeaseManager } from '@/api/session/external/leases/createExternalSessionFollowLeaseManager';
 import type { HostExternalTranscriptFollowEvent } from './privateContract';
 import type { ExternalSessionTranscriptReadAfter } from './providerOps';
 import { createExternalSessionHostOperationOwner } from './hostOperationOwner';
-import { invokeBoundedExternalSessionsOperation } from './agentExternalSessionsInvocation';
+import { createBoundedAgentExternalSessionsContribution, invokeBoundedExternalSessionsOperation } from './agentExternalSessionsInvocation';
+import { createAgentExternalSessionsExecutionSurface } from '@/agent/runtime/registry/agentExternalSessionsExecutionSurface';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 
 const mocks = vi.hoisted(() => ({
     loadLinkedExternalSession: vi.fn(),
@@ -621,15 +628,16 @@ describe('createExternalSessionFollowHostOperation', () => {
         expect(release).toHaveBeenCalledOnce();
     });
 
-    it('durably replays initial pages in chronological order before following their captured tail', async () => {
+    it('replays historical display and correlation source rows in order before following their captured tail', async () => {
         const pageTranscript = vi.fn(async (request: Readonly<{
             direction: 'older' | 'newer';
             cursor?: string;
             deadlineAtMs?: number;
+            projection?: 'terminal';
         }>) => {
             if (request.direction === 'older' && request.cursor === undefined) {
                 return {
-                    items: [{ id: 'newer', localId: 'fact-newer', createdAtMs: 2, raw: { role: 'agent', content: { type: 'output', data: { type: 'message', message: 'newer' } } } }],
+                    items: [...(request.projection === 'terminal' ? [{ id: 'newer-source', createdAtMs: 2, raw: { role: 'source_observation', content: { type: 'queue-operation', operation: 'remove' } } }] : []), { id: 'newer', localId: 'fact-newer', createdAtMs: 2, raw: { role: 'agent', content: { type: 'output', data: { type: 'message', message: 'newer' } } } }],
                     nextCursor: 'backward-1',
                     tailCursor: 'captured-tail',
                     hasMore: true,
@@ -638,7 +646,7 @@ describe('createExternalSessionFollowHostOperation', () => {
             }
             if (request.direction === 'older' && request.cursor === 'backward-1') {
                 return {
-                    items: [{ id: 'older', localId: 'fact-older', createdAtMs: 1, raw: { role: 'agent', content: { type: 'output', data: { type: 'message', message: 'older' } } } }],
+                    items: [{ id: 'older', localId: 'fact-older', createdAtMs: 1, raw: { role: 'agent', content: { type: 'output', data: { type: 'message', message: 'older' } } } }, ...(request.projection === 'terminal' ? [{ id: 'older-source', createdAtMs: 1, raw: { role: 'source_observation', content: { type: 'queue-operation', operation: 'enqueue' } } }] : [])],
                     nextCursor: null,
                     tailCursor: 'captured-tail',
                     hasMore: false,
@@ -675,7 +683,7 @@ describe('createExternalSessionFollowHostOperation', () => {
             machineId: 'machine-1',
             ref,
             source,
-            options: { initialReplay: true, admissionDeadlineAtMs },
+            options: { initialReplay: true, projection: 'terminal', admissionDeadlineAtMs },
             listener,
             isCurrent: () => true,
         } as Parameters<typeof operation.execute>[0]);
@@ -688,22 +696,119 @@ describe('createExternalSessionFollowHostOperation', () => {
             expect.objectContaining({
                 kind: 'data',
                 phase: 'initial_replay',
+                providerSessionId: ref.remoteSessionId,
                 fromCursor: null,
                 nextCursor: 'backward-1',
-                items: [expect.objectContaining({ id: 'older', localId: 'fact-older' })],
+                items: [expect.objectContaining({ id: 'older', localId: 'fact-older' }), expect.objectContaining({ id: 'older-source', kind: 'source_observation', data: { type: 'queue-operation', operation: 'enqueue' } })],
             }),
             expect.objectContaining({
                 kind: 'data',
                 phase: 'initial_replay',
+                providerSessionId: ref.remoteSessionId,
                 fromCursor: 'backward-1',
                 nextCursor: 'captured-tail',
-                items: [expect.objectContaining({ id: 'newer', localId: 'fact-newer' })],
+                items: [expect.objectContaining({ id: 'newer-source', kind: 'source_observation', data: { type: 'queue-operation', operation: 'remove' } }), expect.objectContaining({ id: 'newer', localId: 'fact-newer' })],
             }),
         ]);
         expect(pageTranscript.mock.calls.every(([request]) =>
             request.deadlineAtMs === admissionDeadlineAtMs)).toBe(true);
         if (result.status === 'following') await result.subscription.dispose();
     });
+
+    it.each(['beyond_display_tail', 'oversized_native_row'] as const)(
+        'delivers the complete native correlation baseline with a bounded display replay (%s)', async (kind) => {
+            const root = await mkdtemp(join(tmpdir(), 'happier-cold-native-baseline-'));
+            try {
+                const configDir = join(root, '.claude');
+                const projectId = 'cold-history';
+                const remoteSessionId = 'cold-native';
+                const nativeSource = { kind: 'claudeConfig' as const, configDir, projectId };
+                const transcriptDir = join(configDir, 'projects', projectId);
+                await mkdir(transcriptDir, { recursive: true });
+                const launch = {
+                    type: 'assistant', uuid: 'old-launch', parentUuid: null, session_id: remoteSessionId,
+                    message: { content: [{ type: 'tool_use', id: 'old-agent-tool', name: 'Agent', input: { description: 'existing worker' } }] },
+                    ...(kind === 'oversized_native_row' ? { pad: '🙂'.repeat(2_100_000) } : {}),
+                };
+                const alias = {
+                    type: 'user', uuid: 'old-alias', parentUuid: launch.uuid, session_id: remoteSessionId,
+                    message: { content: [{ type: 'tool_result', tool_use_id: 'old-agent-tool', content: 'launched' }] },
+                    toolUseResult: { status: 'async_launched', agentId: 'existing-native-child' },
+                };
+                const displayRows = kind === 'beyond_display_tail'
+                    ? Array.from({ length: 1_100 }, (_, index) => ({
+                        type: 'assistant', uuid: `display-${index}`, parentUuid: index === 0 ? alias.uuid : `display-${index - 1}`,
+                        message: { content: [{ type: 'text', text: 'x'.repeat(4_096) }] },
+                    })) : [];
+                const current = { type: 'assistant', uuid: 'current-answer',
+                    parentUuid: displayRows.at(-1)?.uuid ?? alias.uuid,
+                    message: { content: [{ type: 'text', text: 'current answer' }] } };
+                await writeFile(join(transcriptDir, `${remoteSessionId}.jsonl`),
+                    [launch, alias, ...displayRows, current].map(row => JSON.stringify(row)).join('\n') + '\n');
+                const modulePath = '../../../../../packages/plugins/claude/src/agent/surfaces/sessions/external/contribution.js';
+                const contributionModule = await import(modulePath);
+                const factory = Reflect.get(contributionModule, 'createClaudeExternalSessionsContribution');
+                if (typeof factory !== 'function') throw new Error('expected Claude contribution factory');
+                const contribution = factory({ env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir } }) as AgentExternalSessionsContribution;
+                const providerOps = createAgentExternalSessionsExecutionSurface(createBoundedAgentExternalSessionsContribution({
+                    contribution,
+                    identity: { pluginId: 'claude', agentId: 'claude', occurrenceId: resource.occurrenceId,
+                        contributionQualifiedId: 'claude/agents/claude', sourceCustody: { kind: 'development', registeredRootId: 'cold-history-fixture' } },
+                    isCurrent: () => true,
+                    retirementSignal: new AbortController().signal,
+                    createInvocationExec: async () => createUnavailablePluginServices().exec,
+                }));
+                mocks.loadLinkedExternalSession.mockResolvedValue({ ok: true, session: {
+                    ...linkedSession, agentId: 'claude', source: nativeSource, remoteSessionId,
+                } });
+                mocks.resolveExternalSessionObservationLinkInput.mockResolvedValue({
+                    ...observation,
+                    resource: { ...observation.resource, agentId: 'claude' },
+                    link: { ...observation.link, remoteSessionId },
+                    target: { remoteSessionId, source: nativeSource },
+                });
+                const operation = createExternalSessionFollowHostOperation({
+                    machineId: 'machine-1', followLeaseManager: createExternalSessionFollowLeaseManager(),
+                    observationProjection: { reconcileTranscriptDemand: async ({ demanded }: Readonly<{ demanded: boolean }>) => ({ state: demanded ? 'observing' : 'idle' }) } as never,
+                });
+                const observed: Array<{ uuid?: unknown; toolUseResult?: unknown }> = [];
+                let displayBytes = 0;
+                let currentAnswer = false;
+                const result = await operation.execute({
+                    pluginId: 'claude', contributionId: 'claude', occurrenceId: resource.occurrenceId,
+                    sessionId: 'linked-session-1', machineId: 'machine-1',
+                    ref: { ...ref, agentId: 'claude', remoteSessionId }, source: nativeSource, providerOps,
+                    options: { initialReplay: true, projection: 'terminal' }, isCurrent: () => true,
+                    listener: async event => {
+                        if (event.kind !== 'data') return;
+                        expect(event.phase).toBe('initial_replay');
+                        for (const item of event.items) {
+                            if (item.kind === 'source_observation' && item.data && typeof item.data === 'object' && !Array.isArray(item.data)) {
+                                observed.push({ uuid: item.data.uuid, toolUseResult: item.data.toolUseResult });
+                            } else {
+                                const encoded = JSON.stringify(item);
+                                displayBytes += Buffer.byteLength(encoded);
+                                if (encoded.includes('current answer')) currentAnswer = true;
+                            }
+                        }
+                    },
+                });
+                try {
+                    expect(result).toMatchObject({ status: 'following' });
+                    expect(observed.filter(row => row.uuid === launch.uuid || row.uuid === alias.uuid)).toEqual([
+                        { uuid: launch.uuid, toolUseResult: undefined },
+                        { uuid: alias.uuid, toolUseResult: alias.toolUseResult },
+                    ]);
+                    expect(currentAnswer).toBe(true);
+                    expect(displayBytes).toBeLessThanOrEqual(4 * 1024 * 1024);
+                } finally {
+                    if (result.status === 'following') await result.subscription.dispose();
+                }
+            } finally {
+                await rm(root, { recursive: true, force: true });
+            }
+        },
+    );
 
     it('replays a deeply nested canonical item instead of overflowing the replay byte accounting', async () => {
         // The canonical transcript schema deliberately carries no generic depth

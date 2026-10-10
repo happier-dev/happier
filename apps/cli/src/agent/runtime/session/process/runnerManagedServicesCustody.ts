@@ -504,6 +504,7 @@ const ManagedServiceSpecWireSchema = lazyZodSchema(() => z.union([
             kind: z.literal('spawn'),
             launch: ExecSpawnRequestWireSchema,
             endpoint: z.discriminatedUnion('kind', [
+                z.object({ kind: z.literal('none') }).strict(),
                 z.object({
                     kind: z.literal('detectAfterLaunch'),
                     minimumConfidence: z.enum(['high', 'medium', 'low'])
@@ -642,6 +643,7 @@ const ManagedServiceSnapshotSchema: z.ZodType<ManagedServiceSnapshot> =
         id: HostManagedServiceLocalIdSchema,
         state: z.enum([
             'starting',
+            'running',
             'detecting',
             'healthy',
             'unhealthy',
@@ -961,6 +963,12 @@ export function encodeRunnerManagedServiceSpecWireV1(
     spec: ManagedServiceSpec,
 ): RunnerManagedServiceSpecWireV1 {
     const normalizedSpec = normalizeManagedServiceSpec(spec);
+    if (normalizedSpec.mode.kind === 'native') {
+        throw new PluginError({
+            code: 'plugin_managed_service_unavailable',
+            message: 'Native service lifetime requires daemon custody',
+        });
+    }
     if (isAttachManagedServiceSpec(normalizedSpec)) {
         const {
             mode: _mode,

@@ -1,3 +1,5 @@
+import { getPriority } from 'node:os';
+
 import { execFileWithDeadline } from '@happier-dev/cli-common/process';
 import {
   HAPPIER_CRITICAL_SLICE_MEMORY_LOW_BYTES,
@@ -142,7 +144,9 @@ export async function isSystemdUserResourceGovernorReady(params: Readonly<{
 export function buildSystemdUserScopedLaunchSpec(params: Readonly<{
   launchSpec: SystemdUserScopedLaunchSpec;
 }>): SystemdUserScopedLaunchSpec {
-  return buildSystemdUserScopedLaunchSpecForSlice(params, HAPPIER_JOBS_SLICE_NAME, ['--nice=10']);
+  // Raising an inherited nice value requires privileges that agent runners may not have.
+  const niceValue = Math.max(10, getPriority());
+  return buildSystemdUserScopedLaunchSpecForSlice(params, HAPPIER_JOBS_SLICE_NAME, [`--nice=${niceValue}`]);
 }
 
 export async function isSystemdUserCriticalResourceGovernorReady(params: Readonly<{

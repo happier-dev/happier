@@ -65,6 +65,10 @@ import type {
 } from './mediation/permissionMediationRecordStore';
 import { createPermissionMediationRecordStore } from './mediation/permissionMediationRecordStore';
 import { readSessionWorkspaceWritesV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
+import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import type { AccountRoleOverridesReadV1 } from '@happier-dev/protocol/prompts/roles/roleOverrideRecordV1';
 import { isWorkspaceWriteDeniedByRole } from './workspaceWritePolicy';
 import type { CodingPromptBehaviorV1 } from '@happier-dev/protocol';
 
@@ -92,6 +96,7 @@ export interface PermissionResponse {
     turnId?: string;
     approved: boolean;
     decision?: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort';
+    answeringClientCategory?: import('@happier-dev/protocol/sessions/permissions/respondRpcParamsV1').SessionPermissionAnsweringClientCategoryV1;
     // When the user chooses "don't ask again (session)", the UI may send a tool allowlist.
     allowedTools?: string[];
     allowTools?: string[]; // legacy alias
@@ -648,6 +653,7 @@ export abstract class BasePermissionHandler {
     private readonly getAccountSettingsSnapshotFn: () => AccountSettings | null;
     private readonly getCodingPromptBehaviorFn: (() => CodingPromptBehaviorV1 | null) | null;
     private readonly getWorkspaceWrites: (() => 'allow' | 'deny' | undefined) | null;
+    private readonly getAccountRoleOverrides: () => AccountRoleOverridesReadV1;
     private readonly toolTrace: { protocol: ToolTraceProtocol; provider: string } | null;
     private readonly triggerAbortCallbackOnAbortDecision: boolean;
     /** Runtime-registry currentness for a mediator whose grant may have survived admission. */
@@ -690,9 +696,17 @@ export abstract class BasePermissionHandler {
 
     /** Re-evaluated for pending responses as well as fresh calls, before YOLO or grants. */
     protected resolveWorkspaceWriteDecision(toolName: string, input: unknown): PermissionResult | null {
-        const workspaceWrites = this.getWorkspaceWrites ? this.getWorkspaceWrites() : readSessionWorkspaceWritesV1(this.session.getMetadataSnapshot(), {
-            settingsOverrides: this.getAccountSettingsSnapshot()?.rolesV1.overrides,
-        });
+        let workspaceWrites: 'allow' | 'deny' | undefined;
+        if (this.getWorkspaceWrites) workspaceWrites = this.getWorkspaceWrites();
+        else {
+            const metadata = this.session.getMetadataSnapshot();
+            const read = this.getAccountRoleOverrides();
+            const roles = readSessionRolesV1(metadata);
+            const inherited = roles?.roleId ? roles.sessionRoles[roles.roleId] : undefined;
+            workspaceWrites = read.status === 'ready'
+                ? readSessionWorkspaceWritesV1(metadata, { settingsOverrides: read.overrides })
+                : inherited ? readSessionWorkspaceWritesV1(metadata) : 'deny';
+        }
         return isWorkspaceWriteDeniedByRole({ workspaceWrites, toolName, toolInput: input }) ? { decision: 'denied' } : null;
     }
 
@@ -882,6 +896,10 @@ export abstract class BasePermissionHandler {
         this.getAccountSettingsSnapshotFn = typeof opts?.getAccountSettings === 'function' ? opts.getAccountSettings : (() => null);
         this.getCodingPromptBehaviorFn = opts?.getCodingPromptBehavior ?? null;
         this.getWorkspaceWrites = opts?.getWorkspaceWrites ?? null;
+        const accountScope = getActiveAccountSettingsSnapshot()?.scopeKey;
+        this.getAccountRoleOverrides = accountScope
+            ? createActionSettingsProvider({ scopeKey: accountScope }).getAccountRoleOverrides
+            : () => ({ status: 'unavailable', reason: 'source-unavailable' });
         // A remote grant is an external authorization effect. A host runtime
         // that has not supplied the registry-owned lifecycle read must not
         // continue using it after mediator state changes.
@@ -1534,7 +1552,10 @@ export abstract class BasePermissionHandler {
             ...(typeof derivedAllowTools !== 'undefined' ? { allowedTools: derivedAllowTools } : {}),
             ...(typeof updatedPermissions !== 'undefined' ? { updatedPermissions } : {}),
             ...(permissionDecisionActorV1 ? {
-                extraCompletedFields: { permissionDecisionActorV1 },
+                extraCompletedFields: {
+                    permissionDecisionActorV1,
+                    ...(response.answeringClientCategory ? { answeringClientCategory: response.answeringClientCategory } : {}),
+                },
             } : remoteMediationSettlementId ? {
                 // The encrypted, host-owned System Record is the sole place
                 // that carries the asserted external person. AgentState keeps

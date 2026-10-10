@@ -19,8 +19,7 @@ const credentials = { token: 'origin-transport-token', encryption: null } as con
 const rolesEnvKey = 'HAPPIER_SESSION_CREATE_ROLES_V1_JSON';
 const initialSessionRolesV1: SessionRolesV1 = {
   ...snapshotSessionRolesAtSpawnV1({
-    leadSessionId: 'lead-1', sameAccount: false, notes: 'Keep the agreed boundary',
-    memoryDocRef: { kind: 'doc', artifactId: 'private-memory' },
+    leadSessionId: 'lead-1', notes: 'Keep the agreed boundary',
     roles: { builder: { roleId: 'builder', name: 'Builder', instructions: 'Resolved lead instructions',
       engine: { agentTargetKey: 'agent:codex', modelId: 'worker-model', effort: 'high' },
       runsAs: { kind: 'session' }, workspaceWrites: 'allow', secondOpinion: 'encouraged', enabled: true } },
@@ -227,34 +226,24 @@ describe('host-stamped Session creation facts transport', () => {
     expect(SpawnDaemonSessionRequestSchema.safeParse({ directory: '/repo', initialSessionRolesV1: { ...initialSessionRolesV1, inventedAuthority: true } }).success).toBe(false);
   });
 
-  it.each(['runner', 'replay'] as const)('filters inherited memory using the target owner projection at the %s HTTP creator', async (creator) => {
-    const candidate = { ...initialSessionRolesV1, memoryDocRef: { kind: 'doc' as const, artifactId: 'private-memory' } };
+  it.each(['runner', 'replay'] as const)('creates a worker without lead Session context at the %s HTTP creator', async (creator) => {
     const currentness = { mode: 'plain', version: 1, signingKeyFingerprint: null,
       contentKeyFingerprint: null, updatedAt: 1,
       recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } };
-    const lead = { id: 'lead-1', seq: 0, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
-      metadata: '{"v":1}', metadataVersion: 0, metadataLayoutVersion: 1,
-      ownerMetadata: { t: 'plain', v: { v: 1 } }, share: null, dataEncryptionKey: null,
-      agentState: null, agentStateVersion: 0 };
     const post = vi.spyOn(axios, 'post').mockRejectedValue(new Error('observed-create-boundary'));
     const api = await ApiClient.create(credentials);
-    for (const sameAccount of [true, false]) {
-      const { ownerMetadata: _ownerMetadata, ...sharedLead } = lead;
-      vi.mocked(axios.get).mockResolvedValueOnce({ status: 200, data: currentness })
-        .mockResolvedValueOnce({ status: 200, data: { session: sameAccount ? lead
-          : { ...sharedLead, share: { accessLevel: 'edit', canApprovePermissions: false } } } });
-      const metadata = { ...runnerMetadata, work: { sessionRolesV1: candidate } };
+      vi.mocked(axios.get).mockResolvedValueOnce({ status: 200, data: currentness });
+      const metadata = { ...runnerMetadata, work: { sessionRolesV1: initialSessionRolesV1 } };
       const create = creator === 'runner'
-        ? api.getOrCreateSession({ tag: `memory-${sameAccount}`, metadata, state: null })
-        : getOrCreateSessionByTag({ credentials, tag: `memory-${sameAccount}`, metadata, agentState: null });
+        ? api.getOrCreateSession({ tag: 'worker-create', metadata, state: null })
+        : getOrCreateSessionByTag({ credentials, tag: 'worker-create', metadata, agentState: null });
       await expect(create).rejects.toThrow('observed-create-boundary');
       const input = post.mock.calls.at(-1)?.[1];
       expect(input).toMatchObject({ ownerMetadata: { t: 'plain', v: { work: { sessionRolesV1: {
         roleId: 'builder', sessionRoles: initialSessionRolesV1.sessionRoles, notes: initialSessionRolesV1.notes,
       } } } } });
-      if (sameAccount) expect(input).toHaveProperty('ownerMetadata.v.work.sessionRolesV1.memoryDocRef', candidate.memoryDocRef);
-      else expect(input).not.toHaveProperty('ownerMetadata.v.work.sessionRolesV1.memoryDocRef');
-    }
+      expect(input).not.toHaveProperty('ownerMetadata.v.work.sessionRolesV1.memoryDocRef');
+      expect(input).not.toHaveProperty('ownerMetadata.v.work.promptStack');
   });
 
   it('does not inherit role creation content from profile, hook or parent process', async () => {

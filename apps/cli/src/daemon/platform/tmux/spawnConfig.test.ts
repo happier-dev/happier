@@ -1,12 +1,21 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { getPriority, tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Scheduling priority is an OS boundary; keep the shared launch policy real.
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return { ...actual, getPriority: vi.fn(() => 0) };
+});
 
 import { buildTmuxSpawnConfig } from './spawnConfig';
 
 describe('tmux session resource policy', () => {
+  beforeEach(() => {
+    vi.mocked(getPriority).mockReturnValue(0);
+  });
   const originalPlatform = process.platform;
   let commandDirectory: string | null = null;
 
@@ -35,6 +44,7 @@ describe('tmux session resource policy', () => {
   }
 
   it('uses the same provisioned jobs scope and child environment as regular session launches', async () => {
+    vi.mocked(getPriority).mockReturnValue(19);
     await provisionJobsProbe();
     const config = await buildTmuxSpawnConfig({
       agent: 'codex',
@@ -49,7 +59,7 @@ describe('tmux session resource policy', () => {
 
     expect(config.commandTokens[0]).toBe('systemd-run');
     expect(config.commandTokens).toEqual(expect.arrayContaining([
-      '--slice=happier-jobs.slice', '--nice=10', '/test/admitted-runner.mjs', 'codex',
+      '--slice=happier-jobs.slice', '--nice=19', '/test/admitted-runner.mjs', 'codex',
     ]));
     expect(config.tmuxEnv.DBUS_SESSION_BUS_ADDRESS).toBe('unix:path=/test/session-bus');
     expect(config.tmuxEnv.XDG_RUNTIME_DIR).toBe('/test/runtime');

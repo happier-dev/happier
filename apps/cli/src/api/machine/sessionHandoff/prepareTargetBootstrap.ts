@@ -8,6 +8,7 @@ import {
   type SessionHandoffPrepareTargetJobRecordV2,
 } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import { createSessionHandoffSourceExportStore } from '../../../session/handoff/state/sessionHandoffSourceExportStore';
+import { readSessionHandoffAgentBundleFile } from '../../../session/handoff/agentBundle/file';
 
 import {
   buildPrepareJobId,
@@ -19,8 +20,13 @@ import {
 import { runSessionHandoffPrepareTargetJob } from './prepareTargetRunJob';
 import {
   resolvePrepareTargetResponseAfterFastPath,
+  type SessionHandoffPrepareTargetErrorResponse,
   type SessionHandoffPrepareTargetResponse,
 } from './prepareTargetResponse';
+import {
+  canUseDirectPeerForSessionHandoffAgentBundle,
+  directPeerTransferUnavailable,
+} from './prepareTransport';
 import type { SessionHandoffRuntimeConfig } from './runtimeConfig';
 
 type SessionHandoffPrepareTargetJobStore = ReturnType<typeof createSessionHandoffPrepareTargetJobStore>;
@@ -29,7 +35,7 @@ type SessionHandoffPrepareTargetJobInput = Parameters<typeof runSessionHandoffPr
 
 type SessionHandoffPrepareTargetBootstrapResponse = Readonly<{
   kind: 'response';
-  response: SessionHandoffPrepareTargetResponse;
+  response: SessionHandoffPrepareTargetResponse | SessionHandoffPrepareTargetErrorResponse;
 }>;
 
 type SessionHandoffPrepareTargetBootstrapRun = Readonly<{
@@ -55,6 +61,7 @@ export type ResolvePrepareTargetBootstrapInput = Readonly<{
   machineTransferChannel: SessionHandoffPrepareTargetJobInput['machineTransferChannel'];
   directPeerTransfer: SessionHandoffPrepareTargetJobInput['directPeerTransfer'];
   importSessionBundle: SessionHandoffPrepareTargetJobInput['importSessionBundle'];
+  resolveExistingSessionState?: SessionHandoffPrepareTargetJobInput['resolveExistingSessionState'];
   getTransferRouteCache: SessionHandoffPrepareTargetJobInput['getTransferRouteCache'];
   invalidateDirectPeerRouteCacheForHandoffMachines: SessionHandoffPrepareTargetJobInput['invalidateDirectPeerRouteCacheForHandoffMachines'];
 }>;
@@ -63,7 +70,7 @@ export async function resolvePrepareTargetResponseAfterBootstrap(input: Readonly
   handoffId: string;
   bootstrap: SessionHandoffPrepareTargetBootstrapResult;
   prepareJobStore: SessionHandoffPrepareTargetJobStore;
-}>): Promise<SessionHandoffPrepareTargetResponse> {
+}>): Promise<SessionHandoffPrepareTargetResponse | SessionHandoffPrepareTargetErrorResponse> {
   if (input.bootstrap.kind === 'response') {
     return input.bootstrap.response;
   }
@@ -131,6 +138,23 @@ export async function resolvePrepareTargetBootstrap(
     }
   }
 
+  if (input.request.stateTransfer !== 'existing' && input.request.negotiatedTransportStrategy === 'direct_peer'
+    && (input.request.allowServerRoutedFallback === false || !input.machineTransferChannel)) {
+    const localSourceExport = await input.sourceExportStore.load(input.request.handoffId);
+    const localAgentBundle = localSourceExport?.agentBundle
+      ? await readSessionHandoffAgentBundleFile(localSourceExport.agentBundle.filePath).catch(() => null)
+      : null;
+    if (!canUseDirectPeerForSessionHandoffAgentBundle({
+      request: input.request,
+      directPeerRequesterAvailable: typeof input.directPeerTransfer?.requestPayloadFile === 'function',
+      hasLocalAgentBundle: Boolean(localAgentBundle),
+      localAgentBundleEndpointCandidates: localSourceExport?.agentBundle?.endpointCandidates,
+      nowMs: Date.now(),
+    })) {
+      return { kind: 'response', response: directPeerTransferUnavailable() };
+    }
+  }
+
   const jobId = persistedJob?.jobId ?? buildPrepareJobId(input.request.handoffId);
   const pendingUpdatedAtMs = Date.now();
   const createdAtMs = persistedJob?.createdAtMs ?? pendingUpdatedAtMs;
@@ -183,6 +207,7 @@ export async function resolvePrepareTargetBootstrap(
       machineTransferChannel: input.machineTransferChannel,
       directPeerTransfer: input.directPeerTransfer,
       importSessionBundle: input.importSessionBundle,
+      ...(input.resolveExistingSessionState ? { resolveExistingSessionState: input.resolveExistingSessionState } : {}),
       getTransferRouteCache: input.getTransferRouteCache,
       invalidateDirectPeerRouteCacheForHandoffMachines: input.invalidateDirectPeerRouteCacheForHandoffMachines,
     }).finally(() => {

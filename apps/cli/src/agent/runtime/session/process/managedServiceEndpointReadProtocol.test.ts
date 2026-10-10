@@ -21,6 +21,7 @@ function runtimeBindingBasis(): ProviderRuntimeBindingBasisV1 {
         v: 1,
         deployment: {
             kind: 'managedLocal',
+            gatewayPlacement: { kind: 'sessionMachine' },
             implementationIdentity: {
                 pluginId: 'acme.providers',
                 localId: 'gateway',

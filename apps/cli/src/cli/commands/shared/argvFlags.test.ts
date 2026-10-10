@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   argvBeforeOptionTerminator,
+  assertCommandArguments,
   hasFlag,
   readCommandPositionals,
   readFlagValue,
@@ -11,6 +12,13 @@ import {
 } from './argvFlags';
 
 describe('long option parsing', () => {
+  it('accepts whitespace-only literal file names in an explicitly byte-preserving valued flag', () => {
+    expect(() => assertCommandArguments(['command', '--source-path= '], { usage: 'command', startIndex: 1,
+      valueFlags: ['--source-path'], literalValueFlags: ['--source-path'] })).not.toThrow();
+    expect(readRawFlagValue(['command', '--source-path= '], '--source-path')).toBe(' ');
+    expect(() => assertCommandArguments(['command', '--source-path='], { usage: 'command', startIndex: 1,
+      valueFlags: ['--source-path'], literalValueFlags: ['--source-path'] })).toThrow();
+  });
   it('exposes only pre-terminator bytes to global option consumers', () => {
     expect(argvBeforeOptionTerminator(['session', 'send', '--json', '--', '--help', '--tmux']))
       .toEqual(['session', 'send', '--json']);

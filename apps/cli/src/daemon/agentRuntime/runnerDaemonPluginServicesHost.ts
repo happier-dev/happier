@@ -36,6 +36,7 @@ import type {
 import type {
     RunnerDaemonManagedProviderBootstrapV1,
     RunnerDaemonManagedProviderRetentionV1,
+    RunnerDaemonSharedGatewayHttpBindingV1,
     RunnerDaemonPluginServiceOperationV1,
     RunnerDaemonPluginServiceResultV1,
     RunnerDaemonPluginServiceSubscriptionEventV1,
@@ -114,6 +115,7 @@ type ManagedProviderInvocation = Readonly<{
         serverId: string,
     ): RunnerManagedProviderServerLaunchAuthority | null;
     start(): void | Promise<void>;
+    readSharedGatewayAccess?(signal?: AbortSignal): Promise<RunnerDaemonSharedGatewayHttpBindingV1>;
     materializeAgentBinding(input: Readonly<{
         endpointUrl: string;
         credentialPlaceholder: string | null;
@@ -1056,13 +1058,13 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                 const expected = Object.freeze({
                     v: 1 as const,
                     scope: managedProvider.bootstrap.scope,
+                    ...(managedProvider.bootstrap.custody ? { custody: managedProvider.bootstrap.custody } : {}),
                     providerPluginHardRevocationRevisionAtAdmission:
                         managedProvider.bootstrap
                             .providerPluginHardRevocationRevisionAtAdmission,
                 });
                 if (
-                    JSON.stringify(operation.retained)
-                        !== JSON.stringify(expected)
+                    !isDeepStrictEqual(operation.retained, expected)
                 ) {
                     return fail(
                         'plugin_services_managed_provider_retention_mismatch',
@@ -1086,13 +1088,13 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                 const expected = Object.freeze({
                     v: 1 as const,
                     scope: managedProvider.bootstrap.scope,
+                    ...(managedProvider.bootstrap.custody ? { custody: managedProvider.bootstrap.custody } : {}),
                     providerPluginHardRevocationRevisionAtAdmission:
                         managedProvider.bootstrap
                             .providerPluginHardRevocationRevisionAtAdmission,
                 });
                 if (
-                    JSON.stringify(operation.retained)
-                        !== JSON.stringify(expected)
+                    !isDeepStrictEqual(operation.retained, expected)
                 ) {
                     return fail(
                         'plugin_services_managed_provider_retention_mismatch',
@@ -1148,6 +1150,30 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                     await invocation
                         .managedProviderMaterialization.promise,
                 );
+            }
+            case 'plugin_services.managed_provider.read_shared_gateway_access_v1': {
+                const managedProvider = await requireManagedProvider();
+                const expected = {
+                    v: 1 as const,
+                    scope: managedProvider.bootstrap.scope,
+                    ...(managedProvider.bootstrap.custody ? { custody: managedProvider.bootstrap.custody } : {}),
+                    providerPluginHardRevocationRevisionAtAdmission: managedProvider.bootstrap.providerPluginHardRevocationRevisionAtAdmission,
+                };
+                if (!isDeepStrictEqual(operation.retained, expected)) {
+                    return fail('plugin_services_managed_provider_retention_mismatch', 'Shared Provider access requires exact retained authority');
+                }
+                if (managedProvider.bootstrap.custody !== 'daemonShared' || !managedProvider.readSharedGatewayAccess) {
+                    return fail('plugin_services_managed_provider_authority_unavailable', 'Shared Provider access is unavailable');
+                }
+                if (!invocation.managedProviderStart) {
+                    return fail('plugin_services_managed_provider_start_required', 'Shared Provider must start before access');
+                }
+                await invocation.managedProviderStart;
+                const access = await managedProvider.readSharedGatewayAccess(operationOptions.signal);
+                if (!await managedProvider.isCurrent()) {
+                    return fail('plugin_services_managed_provider_authority_unavailable', 'Shared Provider authority changed during access');
+                }
+                return result(operation, access);
             }
             case 'plugin_storage.get_v1':
                 return result(

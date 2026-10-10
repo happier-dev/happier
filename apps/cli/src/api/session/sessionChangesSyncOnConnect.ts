@@ -1,5 +1,6 @@
 import type { ManagedConnectionSupervisor } from '@happier-dev/connection-supervisor';
 import { fetchChanges } from '../changes';
+import { readSessionTranscriptChangeHintV1 } from '@happier-dev/protocol/changes';
 import { serializeAxiosErrorForLog } from '../client/serializeAxiosErrorForLog';
 import { handleRequestAuthenticationFailure } from '@/api/connection/requestSupervision/reportRequestOutcomeToSupervisor';
 import { readKnownPendingQueueState, readPendingExecutionRunIds, type KnownPendingQueueState } from './pendingQueueState';
@@ -23,19 +24,6 @@ function reportReconnectCatchUpFailure(params: { onDebug: (message: string, data
     params.onDebug('[API] Failed to catch up session messages after reconnect', {
         error: serializeAxiosErrorForLog(error),
     });
-}
-
-function readSessionMessageChangeHint(hint: unknown): { seq: number } | null {
-    if (!hint || typeof hint !== 'object') return null;
-    const record = hint as Record<string, unknown>;
-    const seq =
-        typeof record.lastMessageSeq === 'number'
-            ? record.lastMessageSeq
-            : typeof record.updatedMessageSeq === 'number'
-                ? record.updatedMessageSeq
-                : null;
-    if (seq === null || !Number.isSafeInteger(seq) || seq < 0) return null;
-    return { seq };
 }
 
 function snapshotReasonForChangesFallback(reason: 'connect' | 'reconnect'): SessionSnapshotRefreshReason {
@@ -171,7 +159,7 @@ export async function runSessionChangesSyncOnConnect(params: {
             params.applyPendingQueueState?.(pendingQueueState);
             continue;
         }
-        const messageChange = readSessionMessageChangeHint(change.hint);
+        const messageChange = readSessionTranscriptChangeHintV1(change);
         if (messageChange) {
             if (params.reason !== 'connect' && messageChange.seq > params.lastObservedMessageSeq) {
                 shouldCatchUpSessionMessages = true;

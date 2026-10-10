@@ -13,9 +13,24 @@ vi.mock('@/agent/catalog/snapshot', () => ({
   readAgentCatalogSnapshot,
 }));
 
-import { buildInactiveSessionResumeSpawnOptions } from './buildInactiveSessionResumeSpawnOptions';
+import { buildInactiveSessionResumeSpawnOptions, resolveSessionPersistedRuntimeIdentity } from './buildInactiveSessionResumeSpawnOptions';
 
 describe('buildInactiveSessionResumeSpawnOptions', () => {
+  it.each(['custom-acp', 'happier.agent.custom-acp/custom-acp'])('retains the exact configured definition when resuming the declared %s Agent', (agentId) => {
+    const descriptor = { v: 1, agentId, agent: { definitionId: 'review-bot' } };
+    const metadata = {
+      flavor: 'custom-acp', runtimeDescriptorV1: descriptor,
+      acpConfiguredBackendV1: { v: 1, updatedAt: 1, backendId: 'review-bot', title: 'Review Bot' },
+    };
+    expect(resolveSessionPersistedRuntimeIdentity(metadata)).toEqual({
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: 'review-bot' },
+      runtimeDescriptorV1: descriptor,
+    });
+    expect(resolveSessionPersistedRuntimeIdentity({ ...metadata,
+      runtimeDescriptorV1: { ...descriptor, agent: { definitionId: 'other-bot' } },
+    })).toBeNull();
+  });
+
   it('does not consent to recreating a managed session directory during an automatic resume', () => {
     const result = buildInactiveSessionResumeSpawnOptions({
       sessionId: 'session-managed',

@@ -2,13 +2,15 @@ import type { StoredCredentials } from '@/persistence';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { ProviderBoundModelRefSchema, SessionModelSelectionResolutionError } from '@happier-dev/protocol/providers/model-selection';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
-import { SessionModelTransitionResultV1Schema } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
+import { SessionModelTransitionResultV1Schema, type SessionModelMutationExpectedV1, type SessionModelMutationReversalV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
 import { isModelRefGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { CallerInputConstraintsV1, ProviderConnectionId, ProviderBoundModelRef, SessionModelSelectionV2, SessionModelTransitionResultV1 } from '@happier-dev/protocol';
 import { TeamCredentialProviderModelSelectionV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { configuration } from '@/configuration';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import {
   resolveAmbientProviderConnectionForModelIntent,
   resolveModelSelectionIntentFromSessionMetadata,
@@ -53,6 +55,7 @@ type SetSessionModelInactiveResult = Readonly<{
   updatedAt: number;
   metadata: Record<string, unknown>;
   version: number;
+  reversal?: Extract<SessionModelMutationReversalV1, { owner: 'inactive' }>;
 }>;
 
 type SetSessionTeamModelInactiveResult = Readonly<{
@@ -147,11 +150,17 @@ async function invokeActiveModelTransition(params: Readonly<{
   credentials: StoredCredentials;
   sessionTarget: ResolvedSessionTransportContext;
   selection: ProviderBoundModelRef;
+  captureBefore?: boolean;
+  expected?: SessionModelMutationExpectedV1;
   callerInputConstraints?: CallerInputConstraintsV1;
   externalAction?: Parameters<typeof callSessionRpc>[0]['externalAction'];
 }>): Promise<SetSessionModelActiveResult | SetSessionModelGrantFailure> {
   if (params.callerInputConstraints && !isModelRefGrantedV1(params.callerInputConstraints, params.selection)) {
     return { ok: false, code: 'model_not_granted', sessionId: params.sessionTarget.sessionId };
+  }
+  if (params.expected?.owner === 'inactive') {
+    return { ok: false, status: 'superseded', sessionId: params.sessionTarget.sessionId,
+      activeSelection: params.selection, requestedSelection: params.selection, reason: 'model_mutation_owner_changed' };
   }
   try {
     const result = SessionModelTransitionResultV1Schema.parse(
@@ -160,7 +169,9 @@ async function invokeActiveModelTransition(params: Readonly<{
         ...params.sessionTarget,
         method:
           `${params.sessionTarget.sessionId}:${SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION}`,
-        request: { v: 1, selection: params.selection },
+        request: { v: 1, selection: params.selection,
+          ...(params.captureBefore !== undefined ? { captureBefore: params.captureBefore } : {}),
+          ...(params.expected ? { expected: params.expected } : {}) },
         ...(params.externalAction ? { externalAction: params.externalAction } : {}),
       }),
     );
@@ -183,7 +194,11 @@ async function invokeActiveModelTransition(params: Readonly<{
 export async function setSessionModel(params: Readonly<{
   credentials: StoredCredentials;
   idOrPrefix: string;
+  /** Captured by the existing exact-Home Action/CLI invocation, never caller input. */
+  serverId?: string;
   modelId?: string;
+  captureBefore?: boolean;
+  expected?: SessionModelMutationExpectedV1;
   providerConnectionId?: ProviderConnectionId | string | null;
   teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
   teamVisibilityGrantConsent?: Readonly<{ teamId: string }>;
@@ -196,6 +211,8 @@ export async function setSessionModel(params: Readonly<{
     method: 'GET' | 'POST' | 'PATCH'; path: string; body?: unknown;
   }>) => Readonly<Record<string, string>> | null;
 }>): Promise<SetSessionModelResult> {
+  const mutationServerId = params.serverId ?? params.credentials.requesterSessionCredentialScope?.serverId ?? configuration.activeServerId;
+  const mutationAccountId = readAccountIdFromToken(params.credentials.token);
   const sessionTarget = await resolveSessionTransportContext({
     credentials: params.credentials,
     idOrPrefix: params.idOrPrefix,
@@ -211,6 +228,7 @@ export async function setSessionModel(params: Readonly<{
   }
 
   if (params.teamCredentialModel !== undefined) {
+    if (params.captureBefore || params.expected) return { ok: false, code: 'unsupported' };
     // Team refs are not encodable in the finite ProviderBoundModelRef grant vocabulary.
     if (params.callerInputConstraints && !isModelRefGrantedV1(params.callerInputConstraints, 'automatic')) {
       return { ok: false, code: 'model_not_granted', sessionId: sessionTarget.sessionId };
@@ -342,12 +360,20 @@ export async function setSessionModel(params: Readonly<{
         credentials: params.credentials,
         sessionTarget,
         selection: request.selection,
+        captureBefore: params.captureBefore,
+        expected: params.expected,
         callerInputConstraints: params.callerInputConstraints,
         externalAction: params.externalAction,
       }),
     updateInactiveIntent: async () => {
+      if (params.expected?.owner === 'active') return { ok: false as const, status: 'superseded' as const,
+        sessionId: sessionTarget.sessionId, activeSelection: request.currentSelection,
+        requestedSelection: request.selection, reason: 'model_mutation_owner_changed' };
       const candidate = createModelIntentMetadataCasCandidate({
         selection: request.selection,
+        captureBefore: params.captureBefore,
+        ...(mutationAccountId ? { ownerScope: { serverId: mutationServerId, accountId: mutationAccountId, sessionId: sessionTarget.sessionId } } : {}),
+        ...(params.expected ? { expected: params.expected } : {}),
       });
       const result = await updateSessionMetadataWithRetry({
         token: params.credentials.token,
@@ -363,7 +389,7 @@ export async function setSessionModel(params: Readonly<{
       if (!candidateState.accepted || candidateState.updatedAt === null) {
         return {
           ok: false as const,
-          status: 'superseded' as const,
+          status: candidateState.refusal === 'unsupported' ? 'unsupported' as const : 'superseded' as const,
           sessionId: sessionTarget.sessionId,
           activeSelection: request.currentSelection,
           requestedSelection: request.selection,
@@ -378,6 +404,7 @@ export async function setSessionModel(params: Readonly<{
         updatedAt: candidateState.updatedAt,
         metadata: result.metadata,
         version: result.version,
+        ...(candidateState.reversal ? { reversal: candidateState.reversal } : {}),
       };
     },
     resolveAndInvokeActiveOwnerAfterConflict: async () => {
@@ -418,6 +445,8 @@ export async function setSessionModel(params: Readonly<{
         credentials: params.credentials,
         sessionTarget: refreshedTarget,
         selection: refreshedRequest.selection,
+        captureBefore: params.captureBefore,
+        expected: params.expected,
         callerInputConstraints: params.callerInputConstraints,
         externalAction: params.externalAction,
       });

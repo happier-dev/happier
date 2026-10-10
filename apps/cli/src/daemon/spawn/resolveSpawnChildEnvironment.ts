@@ -3,9 +3,11 @@ import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract'
 import type { SpawnSessionErrorCode } from '@/session/shared/spawnSessionContract';
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { SessionEnvOverlayV1Schema } from '@happier-dev/protocol/spawn/envOverlay';
+import { SessionIdentityAdditionsV1Schema } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import type { ProviderErrorV1, SessionEnvOverlayV1 } from '@happier-dev/protocol';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import type { ProviderBindingLaunchHandoffV1 } from '@/plugins/runtime/providerBindings/handoff';
+import { AgentProviderRequirementsV1Schema } from '@happier-dev/protocol/providers/compatibility/v1';
 import { readCanonicalSpawnRuntimeSelection } from '@/rpc/handlers/spawnRuntimeSelection';
 import { expandEnvironmentVariables } from '@/utils/expandEnvVars';
 import { sanitizeEnvVarRecord } from '@/terminal/runtime/envVarSanitization';
@@ -46,6 +48,7 @@ import { resolveSpawnHookInstallablesRegistry } from './spawnHookInstallablesReg
 import { HAPPIER_SESSION_CREATE_ORIGIN_ENV_KEY, pickSessionCreateOriginFields } from '@/session/shared/sessionCreateOrigin';
 import { HAPPIER_SESSION_CREATE_REPORTS_TO_ENV_KEY } from '@/session/shared/sessionCreateReportsTo';
 import { HAPPIER_SESSION_CREATE_ROLES_ENV_KEY } from '@/session/shared/sessionCreateRoles';
+import { resolveExistingSessionHandoffState } from '@/session/handoff/agentBundle/import';
 
 type ResolveSpawnChildEnvironmentSuccess = {
   ok: true;
@@ -159,6 +162,7 @@ export async function resolveSpawnChildEnvironment(params: {
   happyHomeDir?: string;
   pluginRuntimeRegistry?: ResolvedExecutablePluginRuntimeRegistry;
   options: SpawnSessionOptions;
+  existingSessionMetadata?: Readonly<Record<string, unknown>> | null;
   /** Registry-resolved routing id for a canonical `agentTarget`. */
   resolvedAgentId?: string | null;
   profileEnvironmentVariables: Record<string, string>;
@@ -172,12 +176,14 @@ export async function resolveSpawnChildEnvironment(params: {
     cleanupOnFailure: (() => void | Promise<void>) | null;
     cleanupOnExit: (() => void | Promise<void>) | null;
     diagnostics?: readonly ConnectedServicesMaterializationDiagnostic[];
+    targetMaterializedRoot?: string | null;
   } | null;
   providerEnvironmentOverlay?: SessionEnvOverlayV1;
   materializeProviderBindingAfterHooks?: () => Promise<LateProviderBindingMaterialization>;
   providerBindingContext?: ProviderBindingPrerequisiteContext;
   providerBindingPrerequisitesOnly?: boolean;
   runtimePrerequisitesAlreadyResolved?: boolean;
+  allowNativeAccountCredentials?: boolean;
 }): Promise<ResolveSpawnChildEnvironmentResult> {
   try {
     return await resolveSpawnChildEnvironmentImpl(params);
@@ -197,6 +203,7 @@ async function resolveSpawnChildEnvironmentImpl(params: {
   happyHomeDir?: string;
   pluginRuntimeRegistry?: ResolvedExecutablePluginRuntimeRegistry;
   options: SpawnSessionOptions;
+  existingSessionMetadata?: Readonly<Record<string, unknown>> | null;
   resolvedAgentId?: string | null;
   profileEnvironmentVariables: Record<string, string>;
   daemonSpawnHooks: DaemonSpawnHooks | null;
@@ -209,12 +216,14 @@ async function resolveSpawnChildEnvironmentImpl(params: {
     cleanupOnFailure: (() => void | Promise<void>) | null;
     cleanupOnExit: (() => void | Promise<void>) | null;
     diagnostics?: readonly ConnectedServicesMaterializationDiagnostic[];
+    targetMaterializedRoot?: string | null;
   } | null;
   providerEnvironmentOverlay?: SessionEnvOverlayV1;
   materializeProviderBindingAfterHooks?: () => Promise<LateProviderBindingMaterialization>;
   providerBindingContext?: ProviderBindingPrerequisiteContext;
   providerBindingPrerequisitesOnly?: boolean;
   runtimePrerequisitesAlreadyResolved?: boolean;
+  allowNativeAccountCredentials?: boolean;
 }): Promise<ResolveSpawnChildEnvironmentResult> {
   const connectedCleanupOnFailure = params.connectedServiceAuth?.cleanupOnFailure ?? null;
   const connectedCleanupOnExit = params.connectedServiceAuth?.cleanupOnExit ?? null;
@@ -426,7 +435,7 @@ async function resolveSpawnChildEnvironmentImpl(params: {
 
   const expandedProfileEnv = expandEnvironmentVariables(
     { ...profileEnv, ...sessionProfileEnv },
-    { ...params.processEnv, ...profileEnv, ...sessionProfileEnv },
+    { ...(params.allowNativeAccountCredentials === false ? {} : params.processEnv), ...profileEnv, ...sessionProfileEnv },
   );
   // Connected Account materialization is producer-authored credential output,
   // not a profile template. Preserve its bytes exactly even when a secret
@@ -624,6 +633,33 @@ async function resolveSpawnChildEnvironmentImpl(params: {
     }
   }
   const providerUnsetIdentities = new Set(providerUnsetEnvKeys.map((name) => name.toLowerCase()));
+  if (params.allowNativeAccountCredentials === false && resolvedAgentId) {
+    const entry = params.pluginRuntimeRegistry?.acquireAgentCatalogEntry
+      ? await params.pluginRuntimeRegistry.acquireAgentCatalogEntry(resolvedAgentId)
+      : params.pluginRuntimeRegistry?.contributes.catalogEntriesById[resolvedAgentId];
+    const descriptor = await entry?.getConnectedServiceStateSharingDescriptor?.();
+    const homeKey = descriptor?.nativeHome?.environmentKey;
+    const root = params.connectedServiceAuth?.targetMaterializedRoot;
+    // Only the actual materializer's isolated requester home can replace the
+    // custodian's native login/configuration. An API key alone proves neither.
+    if (!homeKey || !root || sanitizedAuthEnv[homeKey] !== root) return {
+      ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+      errorMessage: 'Requester Agent credential isolation unavailable', agentId: resolvedAgentId,
+      cleanupOnFailure, cleanupOnExit, ...(materializationDiagnostics ? { materializationDiagnostics } : {}),
+    };
+    const rawRequirements = params.pluginRuntimeRegistry?.contributes.agentDefinitionsById.get(resolvedAgentId)?.definition.providerRequirements;
+    const requirements = AgentProviderRequirementsV1Schema.safeParse(rawRequirements);
+    const inheritedCredentialKeys = new Set([
+      ...selectedAgentCredentialEnvironmentVariables,
+      ...(requirements.success ? requirements.data.authIsolation.ownedEnvKeys : []),
+    ]);
+    for (const name of inheritedCredentialKeys) {
+      if (Object.hasOwn(sanitizedAuthEnv, name) || Object.hasOwn(providerEnv, name) || Object.hasOwn(expandedProfileEnv, name)) continue;
+      delete extraEnvForChild[name];
+      providerUnsetEnvKeys.push(name);
+      providerUnsetIdentities.add(name.toLowerCase());
+    }
+  }
   for (const key of Object.keys(extraEnvForChild)) {
     if (providerUnsetIdentities.has(key.toLowerCase())) {
       delete extraEnvForChild[key];
@@ -655,15 +691,29 @@ async function resolveSpawnChildEnvironmentImpl(params: {
       ...(materializationDiagnostics ? { materializationDiagnostics } : {}),
     };
   }
-  if (resolvedAgentId) {
-    const effectiveAgentEnvironment: NodeJS.ProcessEnv = {
+  const effectiveAgentEnvironment: NodeJS.ProcessEnv = {
       ...params.processEnv,
       ...extraEnvForChild,
       ...(params.happyHomeDir ? { HAPPIER_HOME_DIR: params.happyHomeDir } : {}),
-    };
-    for (const key of Object.keys(effectiveAgentEnvironment)) {
-      if (providerUnsetIdentities.has(key.toLowerCase())) delete effectiveAgentEnvironment[key];
+  };
+  for (const key of Object.keys(effectiveAgentEnvironment)) {
+    if (providerUnsetIdentities.has(key.toLowerCase())) delete effectiveAgentEnvironment[key];
+  }
+  if (params.options.handoffStateTransfer === 'existing') {
+    try {
+      if (!params.existingSessionMetadata || !explicitResumeId) throw new Error('Existing Session metadata is unavailable');
+      const state = await resolveExistingSessionHandoffState({ metadata: { ...params.existingSessionMetadata },
+        targetPath: params.options.directory, sessionStorageMode: params.options.transcriptStorage,
+        environmentVariables: Object.fromEntries(Object.entries(effectiveAgentEnvironment).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) });
+      if (state.remoteSessionId !== explicitResumeId) throw new Error('Existing native Session identity changed before launch');
+    } catch (error) {
+      const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'existing_session_state_verification_failed';
+      return { ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+        errorMessage: `${code}: ${error instanceof Error ? error.message : 'Existing native state could not be verified'}`,
+        cleanupOnFailure, cleanupOnExit, ...(materializationDiagnostics ? { materializationDiagnostics } : {}) };
     }
+  }
+  if (resolvedAgentId) {
     const validation = validateAgentCliLaunch(resolvedAgentId, effectiveAgentEnvironment);
     if (!validation.ok) {
       return {
@@ -686,7 +736,10 @@ async function resolveSpawnChildEnvironmentImpl(params: {
         resolvedPath: agentCliLaunchSpec.resolvedPath,
         processEnv: effectiveAgentEnvironment,
         ...(params.pluginRuntimeRegistry ? {
-          authSpec: await params.pluginRuntimeRegistry.contributes.catalogEntriesById[resolvedAgentId]?.getCliAuthSpec?.() ?? null,
+          authSpec: await (params.pluginRuntimeRegistry.acquireAgentCatalogEntry
+            ? await params.pluginRuntimeRegistry.acquireAgentCatalogEntry(resolvedAgentId)
+            : params.pluginRuntimeRegistry.contributes.catalogEntriesById[resolvedAgentId]
+          )?.getCliAuthSpec?.() ?? null,
         } : {}),
       });
     if (auth?.state === 'logged_out') {
@@ -715,6 +768,14 @@ async function resolveSpawnChildEnvironmentImpl(params: {
   }
   if (params.options.sessionConfigOptionOverrides) {
     extraEnvForChild.HAPPIER_SESSION_CONFIG_OPTION_OVERRIDES_JSON = JSON.stringify(params.options.sessionConfigOptionOverrides);
+  }
+  if (!params.options.existingSessionId && params.options.identity !== undefined) {
+    extraEnvForChild.HAPPIER_SESSION_INITIAL_IDENTITY_JSON = JSON.stringify(
+      SessionIdentityAdditionsV1Schema.parse(params.options.identity),
+    );
+  }
+  if (!params.options.existingSessionId && params.options.memoryEnabled !== undefined) {
+    extraEnvForChild.HAPPIER_SESSION_INITIAL_MEMORY_ENABLED = JSON.stringify(params.options.memoryEnabled);
   }
   const connectedServicesBindingsJson = serializeSessionConnectedServicesBindingsForEnv(params.options.connectedServices);
   if (connectedServicesBindingsJson) {

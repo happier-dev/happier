@@ -1,4 +1,8 @@
-import { SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1, SessionTranscriptObservationCapabilityAckV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
+import {
+    SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
+    SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V2,
+    SessionTranscriptObservationCapabilityAckSchema,
+} from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 
 import {
     supportsSessionSyncPendingInputV1,
@@ -13,6 +17,7 @@ type TranscriptCapabilitySocket = Readonly<{
 }>;
 
 export type SessionTranscriptTransportContract =
+    | Readonly<{ mode: 'session_transcript_observation_v2' }>
     | Readonly<{ mode: 'session_transcript_observation_v1' }>
     | Readonly<{ mode: 'released_server_v0_2_1' }>
     | Readonly<{
@@ -65,16 +70,28 @@ export async function resolveSessionClientConnectionContract(params: Readonly<{
     }
 
     try {
-        const raw = await emitSocketWithAck({
+        let raw = await emitSocketWithAck({
             socket: params.socket,
             event: SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
-            payload: { v: 1, sessionId: params.sessionId },
+            payload: { v: 2, sessionId: params.sessionId },
         });
-        const parsed = SessionTranscriptObservationCapabilityAckV1Schema.safeParse(raw);
+        let parsed = SessionTranscriptObservationCapabilityAckSchema.safeParse(raw);
+        // V1 servers reject the unrecognized epoch before resolving the Session.
+        // A denied publisher or failed probe must not be treated as an old server.
+        if (parsed.success && !parsed.data.ok
+            && (parsed.data.error === 'invalid_session' || parsed.data.error === 'unsupported')) {
+            raw = await emitSocketWithAck({
+                socket: params.socket,
+                event: SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
+                payload: { v: 1, sessionId: params.sessionId },
+            });
+            parsed = SessionTranscriptObservationCapabilityAckSchema.safeParse(raw);
+        }
         return {
             ...params.serverContract,
             transcriptTransport: parsed.success && parsed.data.ok === true
-                ? { mode: 'session_transcript_observation_v1' }
+                ? { mode: parsed.data.capability === SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V2
+                    ? 'session_transcript_observation_v2' : 'session_transcript_observation_v1' }
                 : {
                     mode: 'unavailable',
                     reason: 'capability_missing_or_unsupported',

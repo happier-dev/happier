@@ -15,19 +15,23 @@ import {
     materializeNextPendingQueueV2MessageViaHttp,
     materializeNextPendingQueueV2MessageViaReleasedServerSocket,
     readAcceptedPendingQueueV2DeliveryRetryDirective,
-    readBlockedPendingQueueV2DeliveryByLocalIdFromServer,
+    readPendingQueueV2DeliveryFailureByLocalIdFromServer,
     readPendingQueueV2MessageContentByLocalIdFromServer,
     readPendingQueueV2ActivationEligibilityFromServer,
     resolveAcceptedPendingQueueV2Delivery,
     resolveAcceptedPendingExecutionRunDelivery,
     settlePendingQueueV2Admission,
     withdrawPendingQueueV2Message,
+    listPendingQueueV2ResetStartDemands,
+    updatePendingQueueV2RequestedAction,
+    readPendingResetStartsForSource,
 } from './pendingQueueV2Transport';
 
-const { mockGet, mockPost, mockDelete } = vi.hoisted(() => ({
+const { mockGet, mockPost, mockDelete, mockPatch } = vi.hoisted(() => ({
     mockGet: vi.fn(),
     mockPost: vi.fn(),
     mockDelete: vi.fn(),
+    mockPatch: vi.fn(),
 }));
 
 vi.mock('axios', () => ({
@@ -35,6 +39,7 @@ vi.mock('axios', () => ({
         get: mockGet,
         post: mockPost,
         delete: mockDelete,
+        patch: mockPatch,
         isAxiosError: (error: unknown) => Boolean(
             error && typeof error === 'object' && (error as { isAxiosError?: unknown }).isAxiosError === true,
         ),
@@ -46,6 +51,44 @@ describe('pendingQueueV2Transport', () => {
         mockGet.mockReset();
         mockPost.mockReset();
         mockDelete.mockReset();
+        mockPatch.mockReset();
+    });
+
+    it('reads only reset-held queued inputs, preserving exact accepted witness identity', async () => {
+        const reset = { source: { bindingKind: 'account', ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai' }, accountId: 'account' } },
+            recordId: 'paug_v1_abcdefgh', meterId: 'weekly', witness: { id: 'history-entry', observedAtMs: 1000 } };
+        const requestedAction = { v: 1, kind: 'reset_start', reset };
+        mockGet.mockResolvedValueOnce({ data: { pending: [
+            { localId: 'held', status: 'queued', requestedAction },
+            { localId: 'consumed', status: 'queued', deliveryState: 'delivering', requestedAction },
+            { localId: 'discarded', status: 'discarded', requestedAction },
+            { localId: 'ordinary', status: 'queued', requestedAction: { v: 1, kind: 'enqueue' } },
+        ] } });
+        expect(await listPendingQueueV2ResetStartDemands({ token: 'token', sessionId: 'session' })).toEqual([{ localId: 'held', reset }]);
+    });
+
+    it('reads source waiting metadata with exact signed request and rejects missing authority facts', async () => {
+        const source = { bindingKind: 'account', ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai' }, accountId: 'account' } } as const;
+        mockPost.mockResolvedValueOnce({ data: { entries: [{ sessionId: 'session', localId: 'held', reset: {
+            source, recordId: 'paug_v1_abcdefgh', meterId: 'weekly', witness: { id: 'accepted', observedAtMs: 1000 },
+        } }] } });
+        await expect(readPendingResetStartsForSource({ token: 'must-not-cross', source,
+            authorizeRequest: () => ({ 'x-execution-proof': 'signed-read' }) })).rejects.toThrow();
+        expect(mockPost.mock.calls[0]?.[2]?.headers).not.toHaveProperty('Authorization');
+        mockPost.mockResolvedValueOnce({ data: { entries: [] } });
+        expect(await readPendingResetStartsForSource({ token: 'token', source })).toEqual({ entries: [] });
+    });
+
+    it('refuses unsupported reset mutation at the PATCH boundary without immediate-send fallback', async () => {
+        const requestedAction = { v: 1, kind: 'reset_start', reset: {
+            source: { bindingKind: 'account', ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai' }, accountId: 'account' } },
+            recordId: 'paug_v1_abcdefgh', meterId: 'weekly', witness: { id: 'history-entry', observedAtMs: 1000 },
+        } } as const;
+        const denial = new Error('reset-start-unsupported');
+        mockPatch.mockRejectedValueOnce(denial);
+        await expect(updatePendingQueueV2RequestedAction({ token: 'must-not-use', sessionId: 'session', localId: 'held', requestedAction,
+            resolveAuthorizationHeaders: () => ({ 'x-execution-proof': 'signed' }) })).rejects.toBe(denial);
+        expect(mockPost).not.toHaveBeenCalled();
     });
 
     it.each([undefined, 'run/one'])('withdraws through the exact semantic POST owner with full body-bound authority (run %s)', async (targetExecutionRunId) => {
@@ -1113,6 +1156,22 @@ describe('pendingQueueV2Transport', () => {
         expect(mockPost).not.toHaveBeenCalled();
     });
 
+    it('retains sealed host-observed acceptance in the publisher settlement request', async () => {
+        const socket = {
+            connected: true,
+            timeout: vi.fn(() => socket),
+            emitWithAck: vi.fn(async () => ({
+                ok: true, didResolve: false, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 10,
+            })),
+        };
+        const acceptedDelivery = { t: 'encrypted', c: 'sealed-exact-acceptance' } as const;
+        const request = { socket: socket as never, sessionId: 'session-1', localId: 'accepted-local', acceptedDelivery };
+        await resolveAcceptedPendingQueueV2Delivery(request);
+        expect(socket.emitWithAck).toHaveBeenCalledWith('pending-delivery-accepted-v1', {
+            v: 1, sessionId: 'session-1', localId: 'accepted-local', acceptedDelivery,
+        });
+    });
+
     it('preserves didResolve false from an accepted-delivery no-op response', async () => {
         const transport = await import('./pendingQueueV2Transport');
         const socket = {
@@ -1341,7 +1400,7 @@ describe('pendingQueueV2Transport', () => {
             },
         });
 
-        await expect(readBlockedPendingQueueV2DeliveryByLocalIdFromServer({
+        await expect(readPendingQueueV2DeliveryFailureByLocalIdFromServer({
             token: 'token',
             sessionId: 'session/with spaces',
             localId: 'blocked-local',
@@ -1374,7 +1433,7 @@ describe('pendingQueueV2Transport', () => {
             },
         });
 
-        await expect(readBlockedPendingQueueV2DeliveryByLocalIdFromServer({
+        await expect(readPendingQueueV2DeliveryFailureByLocalIdFromServer({
             token: 'token',
             sessionId: 'session/with spaces',
             localId: 'blocked-local',

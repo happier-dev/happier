@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AccountSettings } from '@happier-dev/protocol';
+import { accountSettingsParse } from '@happier-dev/protocol';
+import { AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 
 import type { StoredCredentials } from '@/persistence';
 import { buildConfiguredAcpBackendSessionMetadata } from '@/agent/acp/catalog/configured/sessionMetadata';
@@ -8,6 +9,7 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import {
     resetActiveAccountSettingsSnapshotForTests,
     setActiveAccountSettingsSnapshot,
+    getActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 
@@ -41,7 +43,6 @@ function configuredBackendEntry(params: Readonly<{
         command: `${params.id}-acp`,
         args: ['--stdio'],
         env: {},
-        transportProfile: 'generic',
         capabilities: {
             supportsLoadSession: params.supportsLoadSession,
             supportsModes: 'unknown',
@@ -54,13 +55,12 @@ function configuredBackendEntry(params: Readonly<{
     };
 }
 
-// One Account document feeds both sides of the seam: the fork owner resolves the
-// backend target from it, and the daemon admission owner proves load-session
-// support from it. A divergence in either reader shows up as a refusal here.
-const ACCOUNT_SETTINGS = {
-    acpCatalogSettingsV1: {
-        v: 2,
-        backends: [
+// One opened catalog feeds fork membership and daemon load-session admission.
+// Preferences have no retained ACP root to fall back to.
+const ACCOUNT_SETTINGS = accountSettingsParse({});
+const ACP_CATALOG = AcpCatalogRecordV1Schema.parse({
+        v: 1,
+        definitions: [
             configuredBackendEntry({
                 id: RESUMABLE_BACKEND_ID,
                 title: 'Review Bot',
@@ -72,8 +72,7 @@ const ACCOUNT_SETTINGS = {
                 supportsLoadSession: false,
             }),
         ],
-    },
-} as unknown as AccountSettings;
+});
 
 async function forkThenAdmitSpawn(params: Readonly<{
     parentMetadata: Record<string, unknown>;
@@ -99,6 +98,7 @@ async function forkThenAdmitSpawn(params: Readonly<{
                 ...(params.resume ? { resume: params.resume } : {}),
             },
             accountSettings: ACCOUNT_SETTINGS,
+            acpCatalogSnapshot: getActiveAccountSettingsSnapshot()?.acpCatalog,
             credentials,
         },
         validateEnvVarRecordStrict: () => ({ ok: true, env: {} }),
@@ -116,6 +116,7 @@ describe('configured ACP fork composed with daemon spawn admission', () => {
             loadedAtMs: 1,
             settingsSecretsReadKeys: [],
             scopeKey: resolveAccountSettingsScopeKey(credentials),
+            acpCatalog: { status: 'ready', revision: 2, record: ACP_CATALOG },
         });
     });
 

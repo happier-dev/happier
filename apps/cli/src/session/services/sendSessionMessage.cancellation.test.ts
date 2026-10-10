@@ -10,7 +10,7 @@ vi.mock('./resolveSessionTransportContext', () => ({
 }));
 vi.mock('@/api/session/pendingQueueV2Transport', () => ({
   enqueuePendingQueueV2MessageViaHttp: mocks.enqueuePendingQueueV2MessageViaHttp,
-  readBlockedPendingQueueV2DeliveryByLocalIdFromServer: vi.fn(),
+  readPendingQueueV2DeliveryFailureByLocalIdFromServer: vi.fn(),
 }));
 
 import { sendSessionMessage } from './sendSessionMessage';

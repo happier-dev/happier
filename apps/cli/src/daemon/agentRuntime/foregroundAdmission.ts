@@ -23,6 +23,7 @@ import type {
   RunnerAgentInvocationContext,
 } from '@/daemon/types';
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams';
+import type { RequesterSessionRuntimeContext } from '../sessionEncryption/requesterSessionCredentials';
 import type { AgentCliSessionCommandBuildInputV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ProviderSessionRuntimePreferences } from '@/agent/catalog/types';
 import { normalizeAgentCliSessionCommandOptions } from '@/plugins/projection/registry/agentCatalogEntryHooks';
@@ -31,6 +32,8 @@ import { runnerPinnedBundledCustodyCanSupersedeBootstrap } from '@/plugins/runti
 type Cleanup = () => void | Promise<void>;
 
 export type PreparedForegroundAgentRuntimeAdmission = Readonly<{
+  /** Host-only custody transferred to the existing tracked Session on promotion. */
+  requesterSessionRuntimeContext?: RequesterSessionRuntimeContext;
   authorization: ForegroundAgentRuntimeBootstrapAuthorization;
   /** Session Team slot bindings the foreground Session must be created with. */
   teamCredentialBindings?: SessionTeamCredentialBindingIntentListV1;
@@ -75,6 +78,7 @@ export type PreparedForegroundAgentRuntimeAdmission = Readonly<{
 }>;
 
 type Admission = {
+  requesterSessionRuntimeContext?: RequesterSessionRuntimeContext;
   request: ForegroundAgentRuntimeAdmissionOwnerRequestV1;
   authorization: ForegroundAgentRuntimeBootstrapAuthorization;
   runtimeSessionId: string | null;
@@ -137,6 +141,7 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
   isProcessAlive?(pid: number): boolean;
   getHttpPort?(): number;
   promoteDaemonServiceAuthority?(input: Readonly<{
+    requesterSessionRuntimeContext?: RequesterSessionRuntimeContext;
     canonicalSessionId: string;
     foregroundPid: number;
     authorityFilePath: string;
@@ -274,6 +279,8 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
           );
         }
         const admission: Admission = {
+          ...(prepared.requesterSessionRuntimeContext
+            ? { requesterSessionRuntimeContext: prepared.requesterSessionRuntimeContext } : {}),
           request,
           authorization: prepared.authorization,
           runtimeSessionId: null,
@@ -542,6 +549,8 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
         if (dependencies.promoteDaemonServiceAuthority) {
           const promoted =
             await dependencies.promoteDaemonServiceAuthority({
+              ...(admission.requesterSessionRuntimeContext
+                ? { requesterSessionRuntimeContext: admission.requesterSessionRuntimeContext } : {}),
               canonicalSessionId: claimRequest.canonicalSessionId,
               foregroundPid: claimRequest.foregroundPid,
               authorityFilePath:

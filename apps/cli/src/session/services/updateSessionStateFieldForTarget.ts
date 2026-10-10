@@ -24,10 +24,15 @@ const CLI_SESSION_STATE_METADATA_CAPABILITIES: SessionStateCapabilitiesV1 = {
     permissionMode: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
     acpSessionMode: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
     acpConfigOption: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
+    context: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
+    memoryEnabled: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
+    voicePreference: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
   },
   display: {
     title: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
+    bot: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
   },
+  view: { transcriptToolCalls: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } } },
 };
 
 function isForbiddenMetadataUpdateError(error: unknown): boolean {
@@ -56,6 +61,7 @@ function resolveMetadataPortFailureCode(
   const code = typeof (error as { code?: unknown } | null)?.code === 'string'
     ? (error as { code: string }).code
     : '';
+  if (code === 'metadata_tuple_conflict') return 'conflict';
   if (code === 'unsupported' || code === 'conflict' || code === 'forbidden' || code === 'unknown_error') {
     return code;
   }
@@ -75,6 +81,7 @@ export async function updateSessionStateFieldForTarget<F extends SessionStateFie
   fieldId: F;
   value: SessionStateFieldWriteValue<F>;
   metadataReason: string;
+  expectedMetadataRevision?: number;
   currentness?: SessionMetadataMutationCurrentness;
   maxAttempts?: number;
 }>): Promise<UpdateSessionMetadataForTargetResult> {
@@ -99,6 +106,7 @@ export async function updateSessionStateFieldForTarget<F extends SessionStateFie
               : {}),
             idOrPrefix: sessionId,
             updater,
+            expectedMetadataRevision: params.expectedMetadataRevision,
             currentness: params.currentness,
             ...(typeof opts.maxAttempts === 'number' ? { maxAttempts: opts.maxAttempts } : {}),
           });

@@ -6,6 +6,49 @@ import {
 } from './sessionOutboundMessageNormalization';
 
 describe('normalizeAcpSessionMessageBody', () => {
+  it('projects a failed title Action as a typed error instead of treating a JSON key as the title', () => {
+    const caches = {
+      toolCallCanonicalNameByProviderAndId: new Map<string, { rawToolName: string; canonicalToolName: string }>(),
+      permissionToolCallRawInputByProviderAndId: new Map<string, unknown>(),
+      toolCallInputByProviderAndId: new Map<string, unknown>(),
+    };
+    normalizeAcpSessionMessageBody({ ...caches, provider: 'claude', body: {
+      type: 'tool-call', callId: 'title', name: 'mcp__happier__change_title',
+      input: { title: 'Explore project directory' }, id: 'title-call',
+    } });
+    const failure = JSON.stringify({ errorCode: 'change_title_failed', error: 'target_unavailable' });
+    const result = normalizeAcpSessionMessageBody({ ...caches, provider: 'claude', body: {
+      type: 'tool-result', callId: 'title', id: 'title-result', isError: true,
+      output: { content: failure, tool_use_result: `Error: ${failure}` },
+    } });
+    if (result.type !== 'tool-result') throw new Error('expected tool-result');
+    expect(result.isError).toBe(true);
+    expect(result.output).toMatchObject({ success: false, errorCode: 'change_title_failed', errorMessage: 'target_unavailable' });
+    expect(result.output).not.toHaveProperty('title');
+    expect(result.output).not.toHaveProperty('content');
+    expect(result.output).not.toHaveProperty('tool_use_result');
+  });
+
+  it.each([
+    { content: '/workspace/package.json\n', isError: false },
+    { content: 'Exit code 127\nls: command not found', isError: true },
+  ])('retains native shell report text in the canonical streams ($isError)', ({ content, isError }) => {
+    const caches = {
+      toolCallCanonicalNameByProviderAndId: new Map<string, { rawToolName: string; canonicalToolName: string }>(),
+      permissionToolCallRawInputByProviderAndId: new Map<string, unknown>(),
+      toolCallInputByProviderAndId: new Map<string, unknown>(),
+    };
+    normalizeAcpSessionMessageBody({ ...caches, provider: 'claude', body: {
+      type: 'tool-call', callId: 'shell', name: 'Bash', input: { command: 'find /workspace -type f' }, id: 'shell-call',
+    } });
+    const result = normalizeAcpSessionMessageBody({ ...caches, provider: 'claude', body: {
+      type: 'tool-result', callId: 'shell', id: 'shell-result', isError,
+      output: { content, tool_use_result: isError ? `Error: ${content}` : { stdout: content, stderr: '' } },
+    } });
+    if (result.type !== 'tool-result') throw new Error('expected tool-result');
+    expect(result.output).toMatchObject({ stdout: content });
+  });
+
   it('diagnoses an unmatched Codex tool result at the normalization owner', () => {
     const debug = vi.fn();
 

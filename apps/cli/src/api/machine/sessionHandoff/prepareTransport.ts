@@ -55,6 +55,22 @@ export function directPeerTransferUnavailable() {
   } as const;
 }
 
+export function canUseDirectPeerForSessionHandoffAgentBundle(input: Readonly<{
+  request: SessionHandoffPrepareTargetRequest;
+  directPeerRequesterAvailable: boolean;
+  hasLocalAgentBundle: boolean;
+  localAgentBundleEndpointCandidates?: readonly TransferEndpointCandidate[];
+  nowMs: number;
+}>): boolean {
+  const endpointCandidates =
+    input.request.handoffMetadataV2?.agentBundleTransferPublication?.endpointCandidates
+    ?? input.localAgentBundleEndpointCandidates
+    ?? input.request.endpointCandidates;
+  return input.hasLocalAgentBundle
+    || (input.directPeerRequesterAvailable
+      && endpointCandidates.some((candidate) => candidate.expiresAt >= input.nowMs));
+}
+
 /** Shared seed materialization below WorkspaceRef admission, carried by handoff's existing transports. */
 export async function materializePrepareManagedWorkspaceSeed(params: Readonly<{
   request: SessionHandoffPrepareTargetRequest;

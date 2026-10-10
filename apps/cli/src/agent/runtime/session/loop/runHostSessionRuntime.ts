@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { configuration } from '@/configuration';
 
 import type {
   AccountSettings,
@@ -41,10 +42,14 @@ import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaq
 import { WORKFLOW_STEP_INPUT_EVENT_MESSAGE, isSessionContextOnlyHostInput } from '@/session/shared/sessionTurnLifecycle';
 import { createWorkflowOriginContextInputPort } from '@/agent/runtime/session/contextOnly/workflowOriginInput';
 import { createWorkflowRunStorageClient } from '@/daemon/workflows/workflowRunStorageClient';
+import { readAppliedParentConnectedServices } from '@/daemon/controlClient';
+import type { ExecutionRunAppliedParentSelection } from '@/agent/runtime/bridges/executionRun/runtime/openInputs';
+import { filterSuppressedConnectedServiceBindings } from '@/providers/spawn/authorize';
 import { resolveAutomationWorkerAccountEncryption } from '@/daemon/automation/automationWorker';
 import { findTranscriptEncryptedMessageByLocalIdV2 } from '@/api/session/transcriptMessageLookup';
 import { openSessionMessageContent } from '@/session/transport/encryption/sessionEncryptionContext';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { resolveCliVoicePromptPreparation } from '@/agent/prompts/library/resolveCliVoicePromptStackBlocks';
 import { clearInitialGoalFromEnv, readInitialGoalFromEnv } from '@/daemon/spawn/initialGoal';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
@@ -99,14 +104,19 @@ import type { AgentCompositionToolSelection } from '@/plugins/runtime/hooks/exec
 import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
 import {
   getActiveAccountSettingsSnapshot,
+  getActiveAccountSettingsSnapshotLifetimeToken,
+  readActiveAccountRoleOverrides,
   subscribeActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { prepareActiveMcpServerCatalog } from '@/settings/mcp/hydrateMcpServerCatalog';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers';
 import { applyRunnerMcpSessionContext } from '@/mcp/runtime/applyRunnerMcpSessionContext';
 import { createSessionRoleContext } from '@/session/roles/sessionRoleContext';
 import { createWorkspaceWritesPolicyPreparation } from '@/session/roles/workspaceWritesPolicyPreparation';
+import { prepareActiveAccountRoleOverrides } from '@/settings/prompts/hydratePromptLibraryCatalog';
 import { createRoleSourceReader } from '@/session/roles/roleSources';
 import { createSessionPromptPlanResolver, type SessionPromptPlanResolver } from '@/agent/prompting/coding/sessionPromptPlan';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
@@ -157,6 +167,7 @@ import {
   type HostProviderInputOutcomeEvidence,
 } from '@/agent/runtime/session/input/providerInputOutcome';
 import { registerSessionProviderInputAdmissionRpc } from '@/agent/runtime/session/input/sessionProviderInputAdmissionRpc';
+import { notifyDaemonSessionActivityChanged } from '@/daemon/controlClient';
 import { createSessionProviderInputConsumerSessionAdapter } from '@/agent/runtime/waitForNextPermissionModeMessage';
 import { commitRuntimeSessionEvent } from '@/agent/runtime/session/transcripts/publishRuntimeSessionEvent';
 import { resolveInitialHostSessionModelSelection } from '@/agent/runtime/session/loop/resolveInitialModelSelection';
@@ -430,7 +441,10 @@ export type HostRuntimeReplacementLifecycle = Readonly<{
 }>;
 
 export type HostSessionRuntimeHookRuntime = Readonly<{
+  readAppliedTeamCredentialModel?: () => import('@happier-dev/protocol').TeamCredentialProviderModelSelectionV1 | null | undefined;
+  openedWithoutConnectedServices?: () => boolean;
   prepareRunTeamCredentialProviderBinding?: SessionRuntimeControls['prepareRunTeamCredentialProviderBinding'];
+  managedProviderRunServices?: SessionRuntimeControls['managedProviderRunServices'];
   setRuntimeReplacementLifecycle?: (lifecycle: HostRuntimeReplacementLifecycle) => void;
   connectedServiceApplicationSettled?: AgentSessionRuntime['connectedServiceApplicationSettled'];
   models?: AgentSessionModelsSource;
@@ -503,6 +517,7 @@ export type HostSessionRuntimeFactoryParams = Readonly<{
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
   accountSettings?: AccountSettings | null;
+  resolveAccountSettingsSnapshot?: (input?: Readonly<{ mcpServerCatalog?: boolean; signal?: AbortSignal }>) => Promise<import('@/settings/accountSettings/activeAccountSettingsSnapshot').ActiveAccountSettingsSnapshot | null>;
   /** Explicit scope for Account-settings consumers; Session scope is fail-closed. */
   accountSettingsAuthority?: HostSessionRuntimeAuthority['scope'];
   /** Explicit runtime credential reader for scoped compositions; ordinary hosts use their existing persistence reader. */
@@ -775,6 +790,7 @@ export type HostSessionRuntimeConfig = {
   providerSessionMetadataKey?: string | null;
   checkpointToolProtocol?: RuntimeCheckpointToolProtocolV1;
   supportsMcpServers?: boolean;
+  mcpBindingIdentities?: Readonly<Record<string, import('@happier-dev/protocol/usage/coach/usageMcpBindingUsage').UsageMcpBindingIdentity>>;
   runtimeActivityApplicability: RuntimeActivityApplicability;
   /** Scoped source DEKs for restricted runtimes; ordinary runtimes omit this. */
   sessionFollowSourceMaterialResolver?: SessionFollowSourceMaterialController | null;
@@ -1387,6 +1403,7 @@ export async function runHostSessionRuntime(
     typeof createPreparedDeferredStartupBootstrap = async (params) =>
       await createPreparedDeferredStartupBootstrapFn({
         ...params,
+        hostProcessStartTimeMs: runnerProcessIdentity?.processStartTimeMs,
         retainedTerminalRecovery: config.initializeSession?.retainedTerminalRecovery,
         augmentSessionMetadata,
         transformSessionInputBeforeCommit,
@@ -1453,6 +1470,7 @@ export async function runHostSessionRuntime(
       flavor: config.flavor,
       runtimeDescriptorV1: runtimeOpts.runtimeDescriptorV1,
       machineId,
+      hostProcessStartTimeMs: runnerProcessIdentity?.processStartTimeMs,
       directory: runtimeOpts.directory,
       startedBy: runtimeOpts.startedBy,
       terminalRuntime: runtimeOpts.terminalRuntime ?? null,
@@ -1572,6 +1590,7 @@ export async function runHostSessionRuntime(
   let unsubscribePendingQueueDeliveryTimingForConstructionCleanup:
     | (() => void)
     | null = null;
+  let unsubscribeSessionLiveWorkForConstructionCleanup: (() => void) | null = null;
   let mcpServerForConstructionCleanup: { stop: () => void } | null = null;
   let sessionStateMetadataObserverForConstructionCleanup:
     | { dispose: () => void }
@@ -1627,6 +1646,8 @@ export async function runHostSessionRuntime(
       await runCleanupStep('unsubscribe pending delivery timing', () => {
         unsubscribePendingQueueDeliveryTimingForConstructionCleanup?.();
         unsubscribePendingQueueDeliveryTimingForConstructionCleanup = null;
+        unsubscribeSessionLiveWorkForConstructionCleanup?.();
+        unsubscribeSessionLiveWorkForConstructionCleanup = null;
       });
       await runCleanupStep('dispose session-state metadata observer', () => {
         sessionStateMetadataObserverForConstructionCleanup?.dispose();
@@ -1948,21 +1969,38 @@ export async function runHostSessionRuntime(
     ? 'rich_sender'
     : 'home_required';
   session.setOwnerActivityDelivery?.(ownerActivityDelivery);
+  const roleAccountScopeKey = runtimeOpts.accountSettingsContext?.scopeKey;
+  const roleAccountLifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
   const readRoleAccountSnapshot = () => {
     if (runtimeAuthority.scope !== 'account') return null;
     const current = getActiveAccountSettingsSnapshot();
-    const initial = runtimeOpts.accountSettingsContext;
-    return current && initial?.scopeKey && current.scopeKey === initial.scopeKey ? current : initial ?? null;
+    return current && roleAccountScopeKey && current.scopeKey === roleAccountScopeKey
+      && getActiveAccountSettingsSnapshotLifetimeToken() === roleAccountLifetimeToken ? current : null;
   };
   const readRoleSources = createRoleSourceReader(runtimeAuthority.scope === 'account' && runtimeAuthority.accountCredentials
     ? { artifactStore: createCredentialedAccountArtifactStore(runtimeAuthority.accountCredentials),
         accountId: readAccountIdFromToken(runtimeAuthority.accountCredentials.token) ?? undefined,
-        readRawAccountSettings: async () => readRoleAccountSnapshot()?.rawSettings ?? {}, }
+        readRawAccountSettings: async () => {
+          const current = readRoleAccountSnapshot();
+          if (!current?.rawSettings || current.source === 'none') {
+            throw Object.assign(new Error('role_overrides_unavailable'), { code: 'role_overrides_unavailable' });
+          }
+          return current.rawSettings;
+        }, }
     : {});
   const sessionRoleContext = createSessionRoleContext({
     readMetadata: () => currentLifecycleSession.getMetadataSnapshot?.() ?? runtimeMetadata,
     readRoleSources,
-    readSettings: () => readRoleAccountSnapshot()?.settings ?? null,
+    readAccountRoleOverrides: () => runtimeAuthority.scope !== 'account'
+      ? { status: 'ready', overrides: {} }
+      : roleAccountScopeKey ? readActiveAccountRoleOverrides({ scopeKey: roleAccountScopeKey, lifetimeToken: roleAccountLifetimeToken })
+        : { status: 'unavailable', reason: 'source-unavailable' },
+    prepareAccountRoleOverrides: async (signal) => {
+      if (runtimeAuthority.scope === 'account' && roleAccountScopeKey && runtimeAuthority.accountCredentials) {
+        await prepareActiveAccountRoleOverrides({ credentials: runtimeAuthority.accountCredentials,
+          scopeKey: roleAccountScopeKey, lifetimeToken: roleAccountLifetimeToken, signal });
+      }
+    },
     readDefaultEngine: () => ({ agentTargetKey: modelTargetKey }),
     readOrganization: (signal) => session.readRolePromptOrganization(signal),
   });
@@ -1971,8 +2009,9 @@ export async function runHostSessionRuntime(
   });
   const resolveSessionRolePromptContext = (signal?: AbortSignal) => sessionRoleContext.resolvePromptContext(signal);
   const prepareSessionRolePromptPolicy = async () => {
+    await sessionRoleContext.prepare();
     const workspaceWrites = sessionRoleContext.readWorkspaceWrites();
-    if (workspaceWrites !== undefined && runtimeForInFlightSteer) {
+    if (runtimeForInFlightSteer) {
       const prepared = await prepareWorkspaceWritesPolicy(workspaceWrites);
       if (!prepared.ok) throw Object.assign(new Error(prepared.errorCode), { code: prepared.errorCode });
     }
@@ -2063,20 +2102,26 @@ export async function runHostSessionRuntime(
     },
     registerProviderAcceptedEffect,
     prepareHostContext: effectivePrepareHostContext,
-    readStructuredInputDispatchServices: () => ({
-      sessionId: currentLifecycleSession.sessionId,
-      catalogs: {
-        ...(runtimeForInFlightSteer?.listSkills ? { listSkills: () => runtimeForInFlightSteer!.listSkills!() } : {}),
-        ...(runtimeForInFlightSteer?.listVendorPlugins ? { listVendorPlugins: () => runtimeForInFlightSteer!.listVendorPlugins!() } : {}),
-      },
-      ...(daemonTurnContributionsBridge ? {
-        resolveComposerReference: async (input) => await daemonTurnContributionsBridge.resolveComposerReference({
-          sessionId: currentLifecycleSession.sessionId,
-          ...input,
-        }),
-        resolveComposerAttachmentForDispatch: async (input) => await daemonTurnContributionsBridge.resolveComposerAttachment(input),
-      } : {}),
-    }),
+    readStructuredInputDispatchServices: () => {
+      const targetSession = currentLifecycleSession;
+      return {
+        sessionId: targetSession.sessionId,
+        retainPromptComposition: async composition => {
+          await targetSession.enqueueSessionEventCommitted({ type: 'prompt-composition', composition });
+        },
+        catalogs: {
+          ...(runtimeForInFlightSteer?.listSkills ? { listSkills: () => runtimeForInFlightSteer!.listSkills!() } : {}),
+          ...(runtimeForInFlightSteer?.listVendorPlugins ? { listVendorPlugins: () => runtimeForInFlightSteer!.listVendorPlugins!() } : {}),
+        },
+        ...(daemonTurnContributionsBridge ? {
+          resolveComposerReference: async (input) => await daemonTurnContributionsBridge.resolveComposerReference({
+            sessionId: currentLifecycleSession.sessionId,
+            ...input,
+          }),
+          resolveComposerAttachmentForDispatch: async (input) => await daemonTurnContributionsBridge.resolveComposerAttachment(input),
+        } : {}),
+      };
+    },
     steerText: async (text, options) => {
       const runtime = runtimeForInFlightSteer;
       if (!runtime?.steerPrompt) {
@@ -2297,6 +2342,12 @@ export async function runHostSessionRuntime(
     serviceId: string;
     groupId: string;
   }>) => Promise<void>) | null = null;
+  const unsubscribeSessionLiveWork = inputConsumer.subscribeLiveWork(() => {
+    void notifyDaemonSessionActivityChanged(currentLifecycleSession.sessionId).catch(() => {
+      logger.debug('[HOST RUNTIME] Session activity invalidation could not reach daemon');
+    });
+  });
+  unsubscribeSessionLiveWorkForConstructionCleanup = unsubscribeSessionLiveWork;
   registerSessionProviderInputAdmissionRpc({
     consumer: inputConsumer,
     rpcHandlerRegistrar: currentControlRpcRegistrar.registrar,
@@ -2334,19 +2385,24 @@ export async function runHostSessionRuntime(
   const effectiveRunnerMcpAccountSettings = runtimeAuthority.accountCredentials
     ? runnerMcpAccountSettings
     : null;
-  const activeRunnerMcpAccountSnapshot = getActiveAccountSettingsSnapshot();
-  const runnerMcpSavedSecretResources = effectiveRunnerMcpAccountSettings !== null
-    && activeRunnerMcpAccountSnapshot?.settings === effectiveRunnerMcpAccountSettings
-    ? activeRunnerMcpAccountSnapshot.savedSecretResources
-    : effectiveRunnerMcpAccountSettings !== null
-      && runtimeOpts.accountSettingsContext?.settings === effectiveRunnerMcpAccountSettings
-      ? runtimeOpts.accountSettingsContext.savedSecretResources
-      : undefined;
   const agentToolsDelivery = resolveAgentToolsDelivery(
     policyAgentId,
     config.pluginRuntimeRegistryLease?.registry.contributes,
   );
   const supportsMcpServers = (config.supportsMcpServers ?? true) && agentToolsDelivery === 'native_mcp';
+  const mcpAccountLifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
+  const mcpAccountScopeKey = runtimeAuthority.accountCredentials ? resolveAccountSettingsScopeKey(runtimeAuthority.accountCredentials) : null;
+  const resolveMcpAccountSettingsSnapshot: NonNullable<HostSessionRuntimeFactoryParams['resolveAccountSettingsSnapshot']> = async input => {
+    if (effectiveRunnerMcpAccountSettings === null || !runtimeAuthority.accountCredentials || !mcpAccountScopeKey) return null;
+    const current = () => getActiveAccountSettingsSnapshot()?.scopeKey === mcpAccountScopeKey
+      && getActiveAccountSettingsSnapshotLifetimeToken() === mcpAccountLifetimeToken;
+    if (!current()) return null;
+    await prepareActiveMcpServerCatalog({ credentials: runtimeAuthority.accountCredentials, scopeKey: mcpAccountScopeKey,
+      lifetimeToken: mcpAccountLifetimeToken, signal: input?.signal });
+    return current() ? getActiveAccountSettingsSnapshot() : null;
+  };
+  const activeRunnerMcpAccountSnapshot = supportsMcpServers ? await resolveMcpAccountSettingsSnapshot() : null;
+  const runnerMcpSavedSecretResources = activeRunnerMcpAccountSnapshot?.savedSecretResources;
   let activeAgentCompositionToolSelection: AgentCompositionToolSelection | null = null;
   const runnerMcpSession = applyRunnerMcpSessionContext(currentLifecycleSession, {
     getCurrentResolvedRoles: sessionRoleContext.readResolvedRoles,
@@ -2403,12 +2459,13 @@ export async function runHostSessionRuntime(
         : {}),
     });
   }
-  const { happierMcpServer, mcpServers } = supportsMcpServers
+  const { happierMcpServer, mcpServers, mcpBindingIdentities } = supportsMcpServers
     ? await resolveRunnerMcpServersFn({
       session: runnerMcpSession,
       credentials: runtimeAuthority.sessionCredentials,
       accountCredentials: runtimeAuthority.accountCredentials,
       accountSettings: effectiveRunnerMcpAccountSettings,
+      accountSettingsSnapshot: activeRunnerMcpAccountSnapshot,
       ...(config.runtimeActionSettingsProvider
         ? { actionsSettingsProvider: config.runtimeActionSettingsProvider }
         : {}),
@@ -2423,7 +2480,7 @@ export async function runHostSessionRuntime(
       sessionMetadata: runtimeSessionMetadataSnapshot ?? runtimeMetadata,
       ...(config.resolvedMcpServers ? { resolvedMcpServers: config.resolvedMcpServers } : {}),
     })
-    : { happierMcpServer: { stop: () => undefined }, mcpServers: {} };
+    : { happierMcpServer: { stop: () => undefined }, mcpServers: {}, mcpBindingIdentities: undefined };
   mcpServerForConstructionCleanup = happierMcpServer;
   const memoryRecallGuidanceEnabled = await resolveCliMemoryRecallGuidanceEnabled();
   const messageBuffer = new MessageBuffer();
@@ -2514,6 +2571,7 @@ export async function runHostSessionRuntime(
     messageBuffer,
     mcpServers,
     accountSettings: runnerMcpAccountSettings,
+    resolveAccountSettingsSnapshot: resolveMcpAccountSettingsSnapshot,
     accountSettingsAuthority: runtimeAuthority.scope,
     ...(runtimeAuthority.scope === 'session'
       ? { readCredentials: async () => runtimeAuthority.sessionCredentials }
@@ -2585,6 +2643,14 @@ export async function runHostSessionRuntime(
   let presentationOwnsCurrentTerminalDisplay = false;
   const hookRuntime = (nativeRuntime ?? runtime) as HostSessionRuntimeHookRuntime;
   constructedRuntimeForConstructionCleanup = hookRuntime;
+  if (hookRuntime.openedWithoutConnectedServices?.()) {
+    // The accepted native open proves CS absence once at startup. Subsequent
+    // reads use only the auth lifecycle's applied registry, including failure.
+    await readAppliedParentConnectedServices({
+      sessionId: currentLifecycleSession.sessionId, runnerPid: process.pid,
+      agentId: policyAgentId, initialEmpty: true,
+    }).catch(() => ({ status: 'unavailable' as const }));
+  }
   if (typeof hookRuntime.setOnPromptDeliveryOutcome !== 'function') {
     throw new Error(
       'An admitted host Session runtime must provide the canonical provider delivery outcome port',
@@ -2719,18 +2785,29 @@ export async function runHostSessionRuntime(
           'runtime_apply',
         )
       : null;
+  const modelMutationAccountCredentials = runtimeAuthority.scope === 'account' ? runtimeAuthority.accountCredentials : null;
+  const modelMutationAccountId = modelMutationAccountCredentials ? readAccountIdFromToken(modelMutationAccountCredentials.token) : null;
+  const modelMutationScope = modelMutationAccountId ? {
+    serverId: modelMutationAccountCredentials?.requesterSessionCredentialScope?.serverId ?? configuration.activeServerId,
+    accountId: modelMutationAccountId,
+    sessionId: session.sessionId,
+  } : undefined;
   modelTransitionCoordinator = createSessionModelTransitionCoordinator({
     runId: sessionTag,
     agentTargetKey: modelTargetKey,
+    ...(modelMutationScope ? { ownerScope: modelMutationScope } : {}),
     initialActiveTarget,
     isCurrentRun: () => modelTransitionOwnerCurrent,
     checkCurrentPublisherAuthority:
       checkCurrentModelPublisherAuthority,
     authorize: authorizeModelTransition,
-    publishIntent: async (selection) => {
+    publishIntent: async (selection, expected, requiredBefore) => {
       const candidate = createModelIntentMetadataCasCandidate({
         selection,
         nowMs: () => Math.max(Date.now(), lastAcceptedModelIntentUpdatedAt + 1),
+        ...(modelMutationScope ? { ownerScope: modelMutationScope } : {}),
+        ...(requiredBefore ? { captureBefore: true, requiredBefore } : {}),
+        ...(expected && modelMutationScope ? { expected: { owner: 'inactive', scope: modelMutationScope, ...expected } } : {}),
       });
       await modelTransitionMetadataSession
         .updateMetadataAsCurrentPublisher(candidate.update);
@@ -2931,6 +3008,8 @@ export async function runHostSessionRuntime(
       return SessionModelTransitionResultV1Schema.parse(
         await modelTransitionCoordinator!.submit(request.selection, {
           source: 'command',
+          ...(request.captureBefore !== undefined ? { captureBefore: request.captureBefore } : {}),
+          ...(request.expected ? { expected: request.expected } : {}),
           ...(rpcContext?.callerInputConstraints ? { callerInputConstraints: rpcContext.callerInputConstraints } : {}),
         }),
       );
@@ -3179,6 +3258,21 @@ export async function runHostSessionRuntime(
           rpc: currentControlRpcRegistrar.registrar,
           runtime: nativeRuntime,
           getHappierSessionId: () => session.sessionId,
+          resolveSystemAppendBlocks: async ({ sessionId, signal }) => {
+            if (currentLifecycleSession.sessionId !== sessionId) throw new Error('Voice Session changed');
+            const credentials = runtimeAuthority.scope === 'account' ? runtimeAuthority.accountCredentials : runtimeAuthority.sessionCredentials;
+            const accountId = credentials ? readAccountIdFromToken(credentials.token) : null;
+            const serverId = credentials?.requesterSessionCredentialScope?.serverId ?? configuration.activeServerId;
+            const prepared = await resolveCliVoicePromptPreparation({
+              credentials,
+              sessionMetadata: currentLifecycleSession.getMetadataSnapshot?.() ?? runtimeMetadata,
+              roleContext: await sessionRoleContext.resolvePromptContext(signal, { modality: 'voice' }),
+              machineId, directory: runtimeDirectory, signal,
+              serverId, scope: accountId ? { serverId, accountId, sessionId } : null,
+            });
+            if (currentLifecycleSession.sessionId !== sessionId) throw new Error('Voice Session changed');
+            return prepared.systemAppendBlocks;
+          },
           ownerId: sessionTag,
           agentGeneration: voiceAuthority.occurrenceId,
           isOccurrenceCurrent: voiceAuthority.isCurrent,
@@ -3193,6 +3287,34 @@ export async function runHostSessionRuntime(
         modelSelection: modelTransitionCoordinator?.readActiveTarget().selection ?? null,
         permissionMode: permissionModeState.getCurrentPermissionMode() ?? initialPermissionMode,
       }),
+      readAppliedChildSelection: async (): Promise<ExecutionRunAppliedParentSelection> => {
+        if (!modelTransitionCoordinator) return { status: 'unavailable' };
+        const before = await modelTransitionCoordinator.readAppliedTarget();
+        if (before.status !== 'applied') return { status: 'unavailable' };
+        const appliedTarget = before.target;
+        const teamCredentialModel = hookRuntime.readAppliedTeamCredentialModel?.();
+        if (teamCredentialModel === undefined) return { status: 'unavailable' };
+        if (teamCredentialModel && (teamCredentialModel.modelId !== appliedTarget.selection.modelId
+          || appliedTarget.selection.providerConnectionId !== null)) return { status: 'unavailable' };
+        const connected = await readAppliedParentConnectedServices({
+          sessionId: currentLifecycleSession.sessionId, runnerPid: process.pid, agentId: policyAgentId,
+        }).catch(() => ({ status: 'unavailable' as const }));
+        const after = await modelTransitionCoordinator.readAppliedTarget();
+        if (connected.status !== 'applied' || after.status !== 'applied' || after.target !== appliedTarget
+          || JSON.stringify(hookRuntime.readAppliedTeamCredentialModel?.()) !== JSON.stringify(teamCredentialModel)) return { status: 'unavailable' };
+        const unknownNativeModel = !teamCredentialModel && appliedTarget.selection.modelId === 'default'
+          && appliedTarget.selection.providerConnectionId === null;
+        return {
+          status: 'applied',
+          backendTarget: runtimeOpts.backendTarget ?? { kind: 'backend', backendId: policyAgentId },
+          modelId: unknownNativeModel ? null : appliedTarget.selection.modelId,
+          ...(teamCredentialModel ? { teamCredentialModel } : unknownNativeModel ? {} : { modelSelection: appliedTarget.selection }),
+          connectedServices: filterSuppressedConnectedServiceBindings({
+            bindings: connected.connectedServices,
+            suppressConnectedServiceIds: appliedTarget.runtimeBindingBasis?.agentSupport.authIsolation.suppressConnectedServiceIds ?? [],
+          }).bindings,
+        };
+      },
       ...(readWorkflowInputPort() ? { withdrawWorkflowStepInput: async (input: Readonly<{ localInputId: string }>) => {
         if (!config.hostContextOnlyInput && await readWorkflowDispatchFact(input.localInputId, new AbortController().signal) === 'dispatched') {
           workflowStepWithdrawal.observeWorkflowStepDispatched(input);
@@ -3212,6 +3334,7 @@ export async function runHostSessionRuntime(
               ),
           }
         : {}),
+      ...(nativeRuntime.managedProviderRunServices ? { managedProviderRunServices: nativeRuntime.managedProviderRunServices } : {}),
       ...(typeof nativeRuntime.prepareRunTeamCredentialProviderBinding === 'function'
         ? { prepareRunTeamCredentialProviderBinding: nativeRuntime.prepareRunTeamCredentialProviderBinding.bind(nativeRuntime) }
         : {}),
@@ -3310,6 +3433,7 @@ export async function runHostSessionRuntime(
       opts: runtimeOpts,
       config: {
         ...config,
+        mcpBindingIdentities,
         ...(presentationOwnsCurrentTerminalDisplay ? { shouldRenderTerminalDisplay: () => false } : {}),
         onRuntimeStopReady: (stop) => {
           runtimeStopDelegate = stop;
@@ -3424,6 +3548,7 @@ export async function runHostSessionRuntime(
     unsubscribeExecutionRunActivity?.();
     runtimeActivityProjection?.dispose();
     unsubscribePendingQueueDeliveryTiming();
+    unsubscribeSessionLiveWork();
     unsubscribeRuntimePublication();
     if (!startupCoordinatorStart) {
       await startupBootstrapCleanup?.();

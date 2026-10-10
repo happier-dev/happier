@@ -9,7 +9,7 @@ import {
   clearSessionStateFieldFromMetadata,
   type SessionStateMetadataUpdateV1,
 } from '@happier-dev/agents/session/state/metadataWriters';
-import { SESSION_METADATA_LAYOUT_VERSION_V1, SessionSharedMetadataV1Schema, projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SESSION_METADATA_LAYOUT_VERSION_V1, StoredSessionSharedMetadataV1Schema, projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { buildLinkedExternalSessionMetadataV1, resolveExternalHistoryImportV1FromMetadata, readNonAuthoritativeLinkedExternalSessionV1FromMetadata, resolveLinkedExternalSessionMetadataV1, normalizeLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import type { ExternalSessionsAgentId, ExternalSessionsSource, LinkedExternalSessionV1, LinkedExternalSessionQualifiedIdentityV1, PluginAgentExternalSessionLinkData, RuntimeDescriptorV1, SessionOwnerMetadataV1, SessionSharedMetadataV1, AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
@@ -656,7 +656,7 @@ export async function resolveExternalSessionIndexedTagLookup(params: Readonly<{
     row.metadataLayoutVersion,
   );
   const sharedMetadata = metadataLayoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1
-    ? SessionSharedMetadataV1Schema.safeParse(sharedOrLegacyMetadata)
+    ? StoredSessionSharedMetadataV1Schema.safeParse(sharedOrLegacyMetadata)
     : null;
   const ownerMetadata = metadataLayoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1
     ? tryDecryptSessionOwnerMetadata({

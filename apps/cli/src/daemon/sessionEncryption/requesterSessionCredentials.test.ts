@@ -23,6 +23,8 @@ import { normalizeServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/clie
 import { probeAlreadyRunningExistingSessionServiceability } from '@/daemon/startup/pendingQueueNudge';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createSessionLifecycleRpcActionExecutor } from '@/rpc/handlers/sessionLifecycle';
+import * as sessionLifecycleRpc from '@/rpc/handlers/sessionLifecycle';
+import { sealSessionRequesterHandoffPreflightBootstrapRpcRequestV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { createForkSessionLifecycleActionHandler } from '@/session/actions/lifecycle/createForkSessionLifecycleActionHandler';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
@@ -122,13 +124,61 @@ async function home(options: Readonly<{ sessionId?: string; creationMachineId?: 
   restore = installAxiosFastifyAdapter({ app, origin });
   const boundary: RequesterSessionMachineAdmissionBoundary = { machineId: 'machine', daemonToken: 'alice-daemon',
     isHomeCurrent: () => true, readInstallation: () => ({ installationId, privateKey: keyPair.secretKey }) };
-  return { boundary, requests, correspondence, setAccess: (value: boolean) => { access = value; },
+  return { boundary, requests, correspondence, keyPair, setAccess: (value: boolean) => { access = value; },
     setAccountId: (value: string) => { accountId = value; }, setAccountMode: (value: 'plain' | 'e2ee') => { accountMode = value; },
     setSessionRole: (value: 'owner' | 'view') => { sessionRole = value; },
     replaceDuringVerification: () => { loseDuringVerification = true; } };
 }
 
 describe('requester Session lifecycle custody', () => {
+  it('hydrates a sealed handoff preflight for an ephemeral requester read without retaining transfer custody', async () => {
+    const host = await home({ creationMachineId: 'source-machine' });
+    const hydrate = sessionLifecycleRpc.withSessionHandoffRequesterBootstrap;
+    const current = () => verifyRequesterSessionMachineAdmissionCurrent({ credentials, attribution, sessionId: 'session',
+      serverHttpBaseUrl: origin, boundary: host.boundary });
+    const request = { kind: 'requester_session_handoff_preflight_bootstrap_v1' as const,
+      input: { sessionId: 'session', sourceMachineId: 'source-machine', targetMachineId: 'machine',
+        targetPath: '/destination', sourceSessionStorageMode: 'persisted' as const },
+      requesterBootstrap: { v: 1 as const, disposition: 'ordinary_requester' as const,
+        credentials: encodeStoredCredentials({ ...credentials }) } };
+    const sealed = sealSessionRequesterHandoffPreflightBootstrapRpcRequestV1({ request,
+      installationId: 'installation', installationPublicKey: host.keyPair.publicKey,
+      randomBytes: length => new Uint8Array(length).fill(7) });
+    const boundary = { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory!,
+      getObservedServerIdentityId: () => 'srv_requester_home',
+      readInstallation: async () => ({ machineId: 'machine', identity: { installationId: 'installation',
+        version: 1 as const, createdAt: 1, publicKey: Buffer.from(host.keyPair.publicKey).toString('base64url'),
+        privateKey: Buffer.from(host.keyPair.secretKey).toString('base64url') } }) };
+    let bootstrap: requesterCredentialOwner.AdmittedRequesterSessionBootstrap | undefined;
+    const context = { signal: new AbortController().signal, callerAuthority: 'present_user' as const,
+      machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'alice', machineId: 'machine',
+        installationId: 'installation', role: 'use' as const, encryptionMode: 'plain' as const },
+      verifyMachineAdmissionCurrent: current };
+    const result = await hydrate({ method: RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3,
+      input: sealed, context, boundary, handler: async (_input, admitted) => {
+        bootstrap = admitted?.requesterSessionBootstrap;
+        return { ok: true, sessionId: bootstrap?.getBoundSessionId(), current: await bootstrap?.isCurrent() };
+      } });
+    expect(result).toEqual({ ok: true, sessionId: 'session', current: true });
+    expect(host.requests.every(request => request.path.endsWith('/admission/verify') || request.bearer === 'Bearer bob-ordinary')).toBe(true);
+    expect(host.requests.some(request => request.path.includes('/access-keys/'))).toBe(false);
+    expect(await listRequesterSessionCredentialBindings({ happyHomeDir: directory!, ...attribution })).toEqual({ status: 'ready', bindings: [] });
+    expect(await bootstrap?.isCurrent()).toBe(false);
+    expect(await hydrate({ method: RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3,
+      input: { ...sealed, input: { ...sealed.input, sessionId: 'another-session' } }, context, boundary,
+      handler: async () => ({ ok: true }) })).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+    const cancelled = new AbortController();
+    const cancellation = new Error('Caller cancelled native preflight');
+    await expect(hydrate({ method: RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3,
+      input: sealed, context: { ...context, signal: cancelled.signal }, boundary,
+      handler: async (_input, admitted) => {
+        bootstrap = admitted?.requesterSessionBootstrap;
+        cancelled.abort(cancellation);
+        cancelled.signal.throwIfAborted();
+        return { ok: true };
+      } })).rejects.toBe(cancellation);
+    expect(await bootstrap?.isCurrent()).toBe(false);
+  });
   it('signs the exact requester Session currentness purpose without pretending to spawn a Session', async () => {
     const host = await home();
     expect(await verifyRequesterSessionMachineAdmissionCurrent({ credentials, attribution, sessionId: 'session',

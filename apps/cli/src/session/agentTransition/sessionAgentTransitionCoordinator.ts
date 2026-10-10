@@ -5,7 +5,6 @@ import { isSessionStopConfirmed } from '@happier-dev/protocol/sessions/control/c
 import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import type { SessionAgentTransitionCurrentViewCommitted, SessionAgentTransitionRejectedCodeV1, SessionAgentTransitionRequestV1, SessionAgentTransitionResultV1, SessionAgentTransitionSelectionV1, SessionAgentTransitionSourceUntouched, AgentNativeResumeIdentityV1 } from '@happier-dev/protocol';
 import {
-  resolveAgentIdFromSessionMetadata,
   parsePermissionIntentAlias,
   projectCurrentAgentSessionView,
   type AgentId,
@@ -68,7 +67,9 @@ import {
   buildSessionAgentTransitionDividerPayload,
   sealSessionAgentTransitionCurrentView,
 } from './sessionAgentTransitionCutoverPayload';
-import { resolveSessionContinuationTargetAgent } from './sessionContinuationInspection';
+import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
+import { buildAcpConfiguredBackendV1, type AcpConfiguredBackendV1 } from '@happier-dev/protocol/sessions/metadata/acpConfiguredBackendV1';
+import { resolveSessionContinuationTargetAgent, resolveSessionContinuationCurrentAgentId } from './sessionContinuationInspection';
 import { resolveCurrentProviderSpawnDefinitiveRejection } from '@/providers/spawn/currentDefinitiveRejection';
 
 /**
@@ -226,6 +227,7 @@ function mapTransportResolutionFailure(
  */
 function buildTargetCurrentViewProjection(params: Readonly<{
   targetAgentId: AgentId;
+  configuredBackend: AcpConfiguredBackendV1 | null;
   selection: SessionAgentTransitionSelectionV1;
   modelSelectionRef: ProviderBoundModelRef | null;
   nativeResumeIdentity: AgentNativeResumeIdentityV1 | null;
@@ -251,6 +253,7 @@ function buildTargetCurrentViewProjection(params: Readonly<{
       // carried across Agents: the projector clears every other Agent's key, and
       // the returning Agent republishes its own runtime descriptor either way.
       agentId: params.targetAgentId,
+      configuredBackend: params.configuredBackend,
       nativeResumeIdentity: params.nativeResumeIdentity,
       runtimeDescriptor: null,
       agentScopedCurrentState: 'clear',
@@ -748,11 +751,11 @@ export async function runSessionAgentTransition(
   // switchable there and then refused here — least of all at activation, after
   // the source is already stopped. It answers Sessions capability as well as
   // catalog identity and representability.
-  const target = resolveSessionContinuationTargetAgent({
+  const target = await resolveSessionContinuationTargetAgent({
     readAgentCatalogSnapshot: deps.readAgentCatalogSnapshot,
     agentId: request.selection.agentId,
   });
-  const currentAgentId = resolveAgentIdFromSessionMetadata(sourceMetadata);
+  const currentAgentId = resolveSessionContinuationCurrentAgentId(sourceMetadata);
 
   // Whether the Session already IS the requested target is a fact about the
   // committed current view, so it is decided against the REQUESTED selection,
@@ -866,7 +869,7 @@ export async function runSessionAgentTransition(
   });
   if (
     !preStopMetadata
-    || resolveAgentIdFromSessionMetadata(preStopMetadata) !== sourceAgentId
+    || resolveSessionContinuationCurrentAgentId(preStopMetadata) !== sourceAgentId
     || ((preStop.rawSession as { archivedAt?: unknown }).archivedAt ?? null) !== null
   ) {
     return await fenced.rejected('stale_selection');
@@ -877,7 +880,7 @@ export async function runSessionAgentTransition(
   // possible. It never gates the transition and never takes an exit, so the
   // fence contract above is untouched: the record decides only whether a FUTURE
   // return is native.
-  if (sourceAgentId) {
+  if (sourceAgentId && readLegacyConfiguredAcpBackendId(sourceAgentId) === null) {
     await captureDepartingAgentNativeResumeRecord({
       store: deps.localAgentNativeResumeRecordStore,
       sessionId,
@@ -945,7 +948,7 @@ export async function runSessionAgentTransition(
     accountEncryptionMode: stoppedSession.accountEncryptionCurrentness.mode,
   });
   if (!stoppedMetadata) return stopped.sourceStopped('context_unavailable');
-  if (resolveAgentIdFromSessionMetadata(stoppedMetadata) !== sourceAgentId) {
+  if (resolveSessionContinuationCurrentAgentId(stoppedMetadata) !== sourceAgentId) {
     return stopped.sourceStopped('cutover_conflict');
   }
   if (((stoppedSession.rawSession as { archivedAt?: unknown }).archivedAt ?? null) !== null) {
@@ -956,7 +959,7 @@ export async function runSessionAgentTransition(
   // 10.1 risk spot 3 is exactly the inversion — choosing a narrower context
   // bound and only then discovering that native return is unavailable omits
   // history the fresh target needs, and nothing in the result would say so.
-  const nativeReturn = await resolveAgentNativeReturnIdentity({
+  const nativeReturn = target.configuredBackend ? null : await resolveAgentNativeReturnIdentity({
     store: deps.localAgentNativeResumeRecordStore,
     sessionId,
     targetAgentId: target.agentId,
@@ -999,14 +1002,17 @@ export async function runSessionAgentTransition(
   })).catch((): SessionAgentTransitionActivationBriefV1 => ({ status: 'unavailable' }));
   if (brief.status !== 'available') return stopped.sourceStopped('context_unavailable');
 
+  const updatedAtMs = deps.nowMs();
   const projectTargetView = buildTargetCurrentViewProjection({
     targetAgentId: target.agentId,
+    configuredBackend: target.configuredBackend
+      ? buildAcpConfiguredBackendV1({ ...target.configuredBackend, updatedAt: updatedAtMs }) : null,
     selection: request.selection,
     modelSelectionRef,
     nativeResumeIdentity: nativeReturn?.identity ?? null,
     activationSeed: brief.seed,
     connectedServices: targetConnectedServices.connectedServices,
-    updatedAtMs: deps.nowMs(),
+    updatedAtMs,
   });
 
   const divider = buildSessionAgentTransitionDividerPayload({
@@ -1068,7 +1074,7 @@ export async function runSessionAgentTransition(
     if (
       !refreshed?.ok
       || !refreshedMetadata
-      || resolveAgentIdFromSessionMetadata(refreshedMetadata) !== sourceAgentId
+      || resolveSessionContinuationCurrentAgentId(refreshedMetadata) !== sourceAgentId
       || ((refreshed.rawSession as { archivedAt?: unknown }).archivedAt ?? null) !== null
     ) {
       return stopped.sourceStopped('cutover_conflict');

@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import type { AgentId } from '@happier-dev/agents';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
-import { convertBackendTargetRefV2ToV1, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { convertBackendTargetRefV2ToV1, readBackendTargetRefV2, writePersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import type { AccountSettings, AcpConfigOptionOverridesV1, BackendTargetRefV1, BackendTargetRefV2, BackendTargetRefV2Input, ConnectedServiceBindingsV2, ExecutionRunConnectedServicesLaunchV1, PluginContributionIdentityV1, ProviderBoundModelRef, TeamCredentialProviderModelSelectionV1, SessionInputCausalPermissionAuthorityV1, SecretReferenceOverlayV1 } from '@happier-dev/protocol';
 
 import type {
@@ -32,8 +33,12 @@ import {
     LaunchSecretReferenceOverlayError,
     readLaunchSecretReferenceOverlayProviderErrorCodeV1,
     resolveSecretReferenceOverlayEnvironment,
-} from '@/daemon/agentRuntime/resolveForegroundProfileSavedSecretEnvironment';
+} from '@/settings/secrets/secretReferenceOverlay';
 import { createProviderRedactionLease } from '@/providers/spawn/redaction';
+import type { ResolveManagedProviderPurposeBindingIntent } from '@/providers/managed/resolvePurposeBindingSnapshot';
+import type { ProviderRuntimeModelProjectionReader } from '@/providers/spawn/runtimeCatalog';
+import type { DirectManagedProviderEndpointPreparer } from '@/providers/lifecycle/prepareDirectLaunch';
+import { createProviderLaunchResourceScope } from '@/providers/lifecycle/resourceScope';
 
 import { withExecutionRunHostRuntimeCleanup } from '../hostRuntime/cleanup';
 import { createLazyExecutionRunHostRuntime } from '../hostRuntime/lazy';
@@ -132,7 +137,9 @@ function resolveExecutionRunPluginIsolationBundle(opts: Readonly<{
     };
 }
 
-type LazyExecutionRunRuntimeShellConfig = Parameters<typeof createLazyExecutionRunHostRuntime>[0];
+type LazyExecutionRunRuntimeShellConfig = Parameters<typeof createLazyExecutionRunHostRuntime>[0] & Readonly<{
+    retireProviderResources(): Promise<void>;
+}>;
 
 function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
     cwd: string;
@@ -144,6 +151,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
     getPermissionRequestStore?: ExecutionRunPermissionRequestStoreProvider;
     backendId: string;
     backendTarget?: BackendTargetRefV2Input;
+    agentTarget?: AgentExecutionTargetV1;
     backendSourceKind?: string;
     modelId?: string;
     onEffectiveEngine?: (engine: Readonly<{ agentId: string; modelId?: string }>) => void;
@@ -173,20 +181,31 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
     onConnectedServicesSelection?: (selection: ExecutionRunConnectedServicesSelectionReport) => void | Promise<void>;
     machineId?: string;
     resolveProvidersFeatureEnabled?: () => boolean | Promise<boolean>;
+    resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
+    readModelProjection?: ProviderRuntimeModelProjectionReader;
+    prepareManagedEndpoint?: DirectManagedProviderEndpointPreparer;
     resolveAccountSettingsSnapshot?: (input?: Readonly<{
         secretReferenceOverlay?: SecretReferenceOverlayV1;
+        mcpServerCatalog?: boolean;
+        signal?: AbortSignal;
     }>) => Promise<ActiveAccountSettingsSnapshot | null>;
 }>): LazyExecutionRunRuntimeShellConfig {
     let resolvedBackendPromise: Promise<ExecutionRunHostRuntime> | null = null;
     let activeConnectedServicesEnv: Awaited<ReturnType<typeof resolveExecutionRunConnectedServicesEnv>> = null;
+    // Retain the incumbent per-attempt launch scopes before preparation can
+    // reject, including attempts replaced by existing rejected-start recovery.
+    const providerResources = createProviderLaunchResourceScope();
 
     const resolveBackend = async (): Promise<ExecutionRunHostRuntime> => {
         if (resolvedBackendPromise) return await resolvedBackendPromise;
         resolvedBackendPromise = (async () => {
             const engineResolution = opts.engineRegistry
-                ? await opts.engineRegistry.resolveForBackendId(opts.backendId)
+                ? opts.agentTarget
+                    ? await opts.engineRegistry.resolveForAgentTarget(opts.agentTarget)
+                    : await opts.engineRegistry.resolveForBackendId(opts.backendId)
                 : await resolveBackendEngineAdapterResolution(opts.backendId, {
                     happyHomeDir: opts.happyHomeDir ?? configuration.happyHomeDir,
+                    ...(opts.agentTarget ? { agentTarget: opts.agentTarget } : {}),
                 });
             if (engineResolution) {
                 throwIfPluginRuntimeStartBlocked(engineResolution);
@@ -227,7 +246,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                 : null;
             const connectedServicesSelection =
                 await resolveExecutionRunConnectedServicesSelection({
-                    backendId: opts.backendId,
+                    backendId: engineResolution.backendId,
                     backendSourceKind:
                         opts.backendSourceKind ?? 'built_in',
                     ...(opts.connectedServices !== undefined
@@ -267,6 +286,10 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                         opts.happyHomeDir ?? configuration.happyHomeDir,
                     accountSettingsSnapshot:
                         await opts.resolveAccountSettingsSnapshot?.() ?? null,
+                    ...(opts.resolveManagedPurposeBindingIntent ? { resolveManagedPurposeBindingIntent: opts.resolveManagedPurposeBindingIntent } : {}),
+                    ...(opts.readModelProjection ? { readModelProjection: opts.readModelProjection } : {}),
+                    ...(opts.prepareManagedEndpoint ? { prepareManagedEndpoint: opts.prepareManagedEndpoint } : {}),
+                    retainCleanup: providerResources.register,
                     ...(prepareRunTeamCredentialProviderBinding
                         ? { prepareTeamCredentialProviderBinding: prepareRunTeamCredentialProviderBinding }
                         : {}),
@@ -312,7 +335,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                 }
                 connectedServicesEnv = await resolveExecutionRunConnectedServicesEnv({
                     runId: connectedServicesRunKey,
-                    backendId: opts.backendId,
+                    backendId: engineResolution.backendId,
                     backendSourceKind: opts.backendSourceKind ?? 'built_in',
                     ...(opts.connectedServices !== undefined
                         ? {
@@ -396,7 +419,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                 ...(opts.getPermissionRequestStore
                     ? { getPermissionRequestStore: opts.getPermissionRequestStore }
                     : {}),
-                backendId: opts.backendId,
+                backendId: engineResolution.backendId,
                 backendTarget: opts.backendTarget,
                 modelId: opts.modelId,
                 ...(boundedOpenInputs?.modelSelection
@@ -431,6 +454,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                 permissionMode: opts.permissionMode,
                 workspaceWrites: opts.workspaceWrites,
                 accountSettings: opts.accountSettings ?? null,
+                ...(opts.resolveAccountSettingsSnapshot ? { resolveAccountSettingsSnapshot: opts.resolveAccountSettingsSnapshot } : {}),
                 start: opts.start ?? null,
                 ...(opts.parentSessionStateTarget ? { parentSessionStateTarget: opts.parentSessionStateTarget } : {}),
                 ...(opts.happierSessionId ? { happierSessionId: opts.happierSessionId } : {}),
@@ -528,6 +552,12 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
 
     return {
         resolveRuntime: resolveBackend,
+        async retireProviderResources() {
+            // Generic lazy disposal intentionally does not await provisioning.
+            // Provider acquisition must settle before its retained scopes retire.
+            await resolvedBackendPromise?.catch(() => undefined);
+            await providerResources.retire();
+        },
         async recoverRejectedStart(error) {
             const retry = await activeConnectedServicesEnv?.recoverRejectedStart(error.classification) ?? false;
             if (retry) resolvedBackendPromise = null;
@@ -572,8 +602,13 @@ export function createExecutionRunRuntime(opts: Readonly<{
     onConnectedServicesSelection?: (selection: ExecutionRunConnectedServicesSelectionReport) => void | Promise<void>;
     machineId?: string;
     resolveProvidersFeatureEnabled?: () => boolean | Promise<boolean>;
+    resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
+    readModelProjection?: ProviderRuntimeModelProjectionReader;
+    prepareManagedEndpoint?: DirectManagedProviderEndpointPreparer;
     resolveAccountSettingsSnapshot?: (input?: Readonly<{
         secretReferenceOverlay?: SecretReferenceOverlayV1;
+        mcpServerCatalog?: boolean;
+        signal?: AbortSignal;
     }>) => Promise<ActiveAccountSettingsSnapshot | null>;
 }>): ExecutionRunHostRuntime {
     const resolvedBackendTarget = resolveExecutionRunCompatBackendTarget(opts.backendTarget);
@@ -592,9 +627,11 @@ export function createExecutionRunRuntime(opts: Readonly<{
             settings: accountSettings,
         });
     }
-    const runtimeBackendId = resolvedBackendTarget?.canonical.sourceKind === 'configured'
-        ? resolvedBackendTarget.canonical.configuredBackendId ?? resolvedBackendTarget.canonical.backendId
-        : backendId;
+    const persistedTarget = resolvedBackendTarget
+        ? writePersistedBackendTargetRefV2(resolvedBackendTarget.canonical) : null;
+    const agentTarget = persistedTarget?.kind === 'agent' && persistedTarget.definitionId !== undefined
+        ? persistedTarget : undefined;
+    const runtimeBackendId = backendId;
     const runtimeBackendTarget = resolvedBackendTarget?.canonical.sourceKind === 'configured'
         ? {
             ...resolvedBackendTarget.canonical,
@@ -613,6 +650,7 @@ export function createExecutionRunRuntime(opts: Readonly<{
                 ? { getPermissionRequestStore: opts.getPermissionRequestStore }
                 : {}),
             backendId: runtimeBackendId,
+            ...(agentTarget ? { agentTarget } : {}),
             ...(runtimeBackendTarget ? { backendTarget: runtimeBackendTarget } : {}),
             backendSourceKind: resolvedBackendTarget?.canonical.sourceKind ?? 'built_in',
             modelId: opts.modelId,
@@ -668,6 +706,12 @@ export function createExecutionRunRuntime(opts: Readonly<{
             ...(opts.resolveAccountSettingsSnapshot
                 ? { resolveAccountSettingsSnapshot: opts.resolveAccountSettingsSnapshot }
                 : {}),
+            ...(opts.resolveManagedPurposeBindingIntent ? { resolveManagedPurposeBindingIntent: opts.resolveManagedPurposeBindingIntent } : {}),
+            ...(opts.readModelProjection ? { readModelProjection: opts.readModelProjection } : {}),
+            ...(opts.prepareManagedEndpoint ? { prepareManagedEndpoint: opts.prepareManagedEndpoint } : {}),
         });
-    return createLazyExecutionRunHostRuntime(runtimeShellConfig);
+    const runtime = createLazyExecutionRunHostRuntime(runtimeShellConfig);
+    return opts.modelSelection?.providerConnectionId
+        ? withExecutionRunHostRuntimeCleanup(runtime, runtimeShellConfig.retireProviderResources)
+        : runtime;
 }

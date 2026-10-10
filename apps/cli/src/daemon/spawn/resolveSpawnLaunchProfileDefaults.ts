@@ -1,9 +1,11 @@
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { BackendTargetRefV2, ArtifactSharingResourceV1 } from '@happier-dev/protocol';
+import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
 
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import { resolveCanonicalSpawnProfile } from '@/settings/profiles/validateSpawnProfile';
+import type { AccountSettingsProfilesSnapshot } from '@/settings/profiles/readProfilesFromAccountSettings';
 
 export type ResolveSpawnLaunchProfileDefaultsResult =
   | Readonly<{ ok: true; options: SpawnSessionOptions }>
@@ -34,13 +36,17 @@ export function resolveSpawnLaunchProfileDefaults(input: Readonly<{
   effectiveBackendTarget: BackendTargetRefV2;
   rawSettings: Readonly<Record<string, unknown>> | null | undefined;
   artifactsById?: ReadonlyMap<string, ArtifactSharingResourceV1>;
+  profileCatalog?: ProfileCatalogSnapshotV1;
+  profilesSnapshot?: AccountSettingsProfilesSnapshot;
 }>): ResolveSpawnLaunchProfileDefaultsResult {
-  const profileId = input.options.profileId?.trim() ?? '';
+  const profileId = input.options.profileId ?? '';
   if (!profileId) return { ok: true, options: input.options };
   const resolved = resolveCanonicalSpawnProfile({
     rawSettings: input.rawSettings,
     profileId,
     artifactsById: input.artifactsById,
+    profileCatalog: input.profileCatalog,
+    profilesSnapshot: input.profilesSnapshot,
   });
   if (!resolved.ok) return refuseProfile(resolved.message);
   // Legacy profiles retain their existing caller-projected compatibility path.

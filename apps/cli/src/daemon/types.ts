@@ -5,6 +5,7 @@
 import { Metadata, type SessionCreationOutcome } from '@/api/types';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { ChildProcess } from 'child_process';
+import type { ProcessIdentityWitness } from '@happier-dev/cli-common/processInstance';
 import type {
   AgentSessionStartupInstructionsMarkerV1,
   PluginSourceCustodyV1,
@@ -160,8 +161,8 @@ export interface TrackedSession {
   hostedTerminal?: Metadata['terminal'];
   /** In-memory-only exact packaged executable/argv evidence for one Windows Terminal launch. */
   windowsTerminalLaunchCustody?: WindowsTerminalLaunchCustody;
-  /** In-memory-only exact Agent tree cancellation target captured from the canonical webhook. */
-  windowsTerminalCancellationIdentity?: ExactWindowsProcessCancellationIdentity;
+  /** In-memory-only runner PID and generation captured by canonical session-report correlation. */
+  runnerProcessIdentity?: Readonly<Required<ProcessIdentityWitness>>;
   /** One-shot in-memory bridge from exact webhook capture to the existing accepted-marker owner. */
   persistWindowsTerminalAcceptedAgentMarker?: (
     identity: ExactWindowsProcessCancellationIdentity,

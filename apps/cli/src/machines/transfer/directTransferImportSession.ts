@@ -22,7 +22,11 @@ import { randomBytes } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { copyFile, rename, rm } from 'node:fs/promises';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
+import { assertPreparedFilesystemTransferScope, type PreparedFilesystemTransferScope } from './preparedFilesystemTransferScope';
+import type { LiveWorkProducerV1, LiveWorkInventoryV1, LiveWorkItemV1 } from '@/daemon/lifecycle/managedActivity';
+import type { DaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 
 export type DirectTransferImportOpenRequest = Readonly<{
   workingDirectory: string;
@@ -39,12 +43,18 @@ export type DirectTransferImportOpenResponse = Readonly<{
   expiresAt: number;
 }>;
 
+export type PreparedImportTransferSettlement = Readonly<
+  | { success: true; finalized: FinalizedImportTransferResult; sha256: string }
+  | { success: false; error: string; errorCode?: string }
+>;
+
 export type DirectTransferImportSessionManager = Readonly<{
+  activity: LiveWorkProducerV1;
   issueImportOpenAuthorizationToken: (input: DirectTransferImportOpenRequest) => Readonly<{
     authorizationToken: string;
     expiresAt: number;
   }>;
-  openTrustedImportSession: (input: DirectTransferImportOpenRequest) => Promise<
+  openTrustedImportSession: (input: DirectTransferImportOpenRequest, filesystemScope?: PreparedFilesystemTransferScope, privateStagingDirectory?: string) => Promise<
     | Readonly<{ success: true; response: DirectTransferImportOpenResponse }>
     | Readonly<{ success: false; error: string }>
   >;
@@ -72,7 +82,9 @@ export type DirectTransferImportSessionManager = Readonly<{
   >;
   abortImportTransferSession: (
     input: Readonly<{ uploadId: string }>,
+    filesystemScope?: PreparedFilesystemTransferScope | null,
   ) => Promise<void | Readonly<{ aborted: boolean }>>;
+  waitForImportTransferSettlement: (uploadId: string, filesystemScope: PreparedFilesystemTransferScope) => Promise<PreparedImportTransferSettlement>;
   cleanupExpiredImportSessions: (now?: number) => void;
   getNextImportSessionExpiryAt: () => number | null;
   countActiveImportSessions: () => number;
@@ -131,6 +143,7 @@ function fingerprintImportOpenAuthorizationScope(input: DirectTransferImportOpen
 }
 
 export function createDirectTransferImportSessionManager(params?: Readonly<{
+  admissionDrain?: Pick<DaemonAdmissionDrain, 'isQuiescing' | 'isFinalShutdown'>;
   ttlMs?: number;
   chunkSizeBytes?: number;
   accessPolicy?: FilesystemAccessPolicy;
@@ -153,21 +166,38 @@ export function createDirectTransferImportSessionManager(params?: Readonly<{
   });
   const authorizationTtlMs = params?.ttlMs ?? configuration.filesTransferSessionTtlMs;
   const importOpenAuthorizations = new Map<string, ImportOpenAuthorizationRecord>();
-  const activeImportSessionIds = new Set<string>();
+  const activeImportSessionIds = new Map<string | Promise<unknown>, Readonly<{
+    filesystemScope?: PreparedFilesystemTransferScope;
+    settlement: Promise<PreparedImportTransferSettlement>;
+    settle: (result: PreparedImportTransferSettlement) => void;
+  }>>();
+  const activityListeners = new Set<() => void>();
   let closePromise: Promise<void> | null = null;
+  const assertCurrentFilesystemOwner = async (scope: PreparedFilesystemTransferScope): Promise<void> => {
+    if (closePromise) throw new Error('The prepared import owner is stopped');
+    await scope.assertCurrentAuthority?.();
+    if (closePromise) throw new Error('The prepared import owner is stopped');
+  };
+  const activeSessionCount = (): number => [...activeImportSessionIds.keys()].filter(key => typeof key === 'string').length;
 
   const publishActiveSessionCount = (): void => {
+    for (const listener of activityListeners) {
+      try { listener(); } catch { /* Observation cannot alter upload custody. */ }
+    }
     if (!params?.onActiveSessionCountChanged) {
       return;
     }
     try {
-      params.onActiveSessionCountChanged(activeImportSessionIds.size);
+      params.onActiveSessionCountChanged(activeSessionCount());
     } catch {
       // Best-effort only; observer failures must never break transfer finalization.
     }
   };
 
   const emitActivity = (): void => {
+    for (const listener of activityListeners) {
+      try { listener(); } catch { /* Observation cannot alter upload custody. */ }
+    }
     if (!params?.onActivity) {
       return;
     }
@@ -178,16 +208,18 @@ export function createDirectTransferImportSessionManager(params?: Readonly<{
     }
   };
 
-  const trackActiveImportSession = (uploadId: string): void => {
-    activeImportSessionIds.add(uploadId);
-    publishActiveSessionCount();
+  const trackActiveImportSession = (uploadId: string | Promise<unknown>, filesystemScope?: PreparedFilesystemTransferScope): void => {
+    let settle!: (result: PreparedImportTransferSettlement) => void;
+    const settlement = new Promise<PreparedImportTransferSettlement>((resolve) => { settle = resolve; });
+    activeImportSessionIds.set(uploadId, { ...(filesystemScope ? { filesystemScope } : {}), settlement, settle });
+    if (typeof uploadId === 'string') publishActiveSessionCount(); else emitActivity();
   };
 
-  const untrackActiveImportSession = (uploadId: string): void => {
+  const untrackActiveImportSession = (uploadId: string | Promise<unknown>): void => {
     if (!activeImportSessionIds.delete(uploadId)) {
       return;
     }
-    publishActiveSessionCount();
+    if (typeof uploadId === 'string') publishActiveSessionCount(); else emitActivity();
   };
 
   const cleanupExpiredImportOpenAuthorizations = (now = Date.now()): void => {
@@ -195,6 +227,18 @@ export function createDirectTransferImportSessionManager(params?: Readonly<{
       if (authorization.expiresAt > now) continue;
       importOpenAuthorizations.delete(authorizationToken);
     }
+  };
+
+  const cleanupExpiredImportSessions = (now = Date.now()): void => {
+    const previousCount = activeSessionCount();
+    store.cleanupExpiredBestEffort(now);
+    for (const [uploadId, active] of activeImportSessionIds) {
+      if (typeof uploadId !== 'string') continue;
+      if (store.getUploadSession(uploadId)) continue;
+      active.settle({ success: false, error: 'Prepared import transfer expired', errorCode: 'indeterminate' });
+      activeImportSessionIds.delete(uploadId);
+    }
+    if (activeSessionCount() !== previousCount) publishActiveSessionCount();
   };
 
   const issueImportOpenAuthorizationToken = (input: DirectTransferImportOpenRequest): Readonly<{
@@ -227,13 +271,15 @@ export function createDirectTransferImportSessionManager(params?: Readonly<{
     return authorization.scopeFingerprint === input.authorizationScopeFingerprint;
   };
 
-  const openResolvedImportSession = async (
+  const prepareImportSession = async (
     input: DirectTransferImportOpenRequest,
+    filesystemScope?: PreparedFilesystemTransferScope,
+    privateStagingDirectory?: string,
   ): Promise<
     | Readonly<{ success: true; response: DirectTransferImportOpenResponse }>
     | Readonly<{ success: false; error: string }>
   > => {
-    store.cleanupExpiredBestEffort();
+    cleanupExpiredImportSessions();
     const {
       workingDirectory,
       additionalAllowedWriteDirs,
@@ -242,9 +288,32 @@ export function createDirectTransferImportSessionManager(params?: Readonly<{
       ...transferRequest
     } = input as DirectTransferImportOpenRequest & Readonly<{ authorizationToken?: unknown }>;
     void _authorizationToken;
+    const finalizeFileOperations: WorkspaceFinalizeFileOperationsFactory | undefined = filesystemScope
+      ? input => {
+        const operations = params?.finalizeFileOperations?.(input);
+        let commitAdmitted = false;
+        const admitCommit = async () => {
+          if (commitAdmitted) return;
+          await assertCurrentFilesystemOwner(filesystemScope);
+          commitAdmitted = true;
+        };
+        return {
+          copyFile: async (source, destination, mode) => {
+            await admitCommit();
+            await (operations?.copyFile ?? copyFile)(source, destination, mode);
+          },
+          rename: async (source, destination) => {
+            await admitCommit();
+            await (operations?.rename ?? rename)(source, destination);
+          },
+          // Once commit is admitted, incumbent cleanup/rollback must remain
+          // able to settle; revocation cannot prevent destination restoration.
+          rm: operations?.rm ?? rm,
+        };
+      } : params?.finalizeFileOperations;
     const resolvedTarget = await resolveTransferUploadInitTarget({
       workingDirectory,
-      accessPolicy: params?.accessPolicy,
+      accessPolicy: privateStagingDirectory ? { kind: 'restrictedRoots', roots: [privateStagingDirectory] } : params?.accessPolicy,
       request: transferRequest as TransferUploadInitRequest,
       tempUploadRoot: attachmentTempUploadRoot,
       additionalAllowedWriteDirs,
@@ -252,8 +321,8 @@ export function createDirectTransferImportSessionManager(params?: Readonly<{
       ...(params?.attachmentUpload ? { attachmentUpload: params.attachmentUpload } : {}),
       ...(params?.composerMediaStage ? { composerMediaStage: params.composerMediaStage } : {}),
       ...(params?.promptAssetUpload ? { promptAssetUpload: params.promptAssetUpload } : {}),
-      ...(params?.finalizeFileOperations
-        ? { finalizeFileOperations: params.finalizeFileOperations }
+      ...(finalizeFileOperations
+        ? { finalizeFileOperations }
         : {}),
     });
 
@@ -264,12 +333,15 @@ export function createDirectTransferImportSessionManager(params?: Readonly<{
     const recipientKeyPair = createTransferRecipientKeyPair();
     const session = await openUploadTransferSession<unknown>({
       lifecycle,
-      target: resolvedTarget.target,
+      target: filesystemScope ? { ...resolvedTarget.target, finalizeUpload: async input => {
+        await assertCurrentFilesystemOwner(filesystemScope);
+        return await resolvedTarget.target.finalizeUpload(input);
+      } } : resolvedTarget.target,
       sha256Expected: resolvedTarget.sha256Expected,
       recipientSecretKeySeed: recipientKeyPair.recipientSecretKeySeed,
       recipientPublicKeyBase64: recipientKeyPair.recipientPublicKeyBase64,
     });
-    trackActiveImportSession(session.uploadId);
+    trackActiveImportSession(session.uploadId, filesystemScope);
     emitActivity();
 
     return {
@@ -285,10 +357,30 @@ export function createDirectTransferImportSessionManager(params?: Readonly<{
     };
   };
 
+  const openResolvedImportSession = async (input: DirectTransferImportOpenRequest, filesystemScope?: PreparedFilesystemTransferScope, privateStagingDirectory?: string) => {
+    if (closePromise) return { success: false as const, error: 'Import transfer owner is stopped' };
+    const preparation = prepareImportSession(input, filesystemScope, privateStagingDirectory);
+    trackActiveImportSession(preparation, filesystemScope);
+    try { return await preparation; }
+    finally { untrackActiveImportSession(preparation); }
+  };
+  const activity: LiveWorkProducerV1 = Object.freeze({
+    read(): Omit<LiveWorkInventoryV1, 'idleSince'> {
+      const items: LiveWorkItemV1[] = [...activeImportSessionIds.keys()].map(ownerRef => ({
+        category: 'transfer', ownerRef, attribution: { kind: 'unknown' }, state: 'active',
+      }));
+      return { items, coverage: 'complete' };
+    },
+    subscribe(listener: () => void): () => void {
+      activityListeners.add(listener);
+      return () => { activityListeners.delete(listener); };
+    },
+  });
   return {
+    activity,
     issueImportOpenAuthorizationToken,
 
-    openTrustedImportSession: async (input) => await openResolvedImportSession(input),
+    openTrustedImportSession: async (input, filesystemScope, privateStagingDirectory) => await openResolvedImportSession(input, filesystemScope, privateStagingDirectory),
 
     async openImportSession(input) {
       const authorizationToken = input.authorizationToken?.trim() ?? '';
@@ -301,6 +393,12 @@ export function createDirectTransferImportSessionManager(params?: Readonly<{
       });
       if (!authorized) {
         return { success: false as const, error: 'Import session open authorization required' };
+      }
+      // An issued authorization is not an admitted upload. Existing upload IDs
+      // retain their byte, finalization, and cleanup custody through a drain.
+      if (params?.admissionDrain?.isQuiescing()) {
+        return { success: false as const, error: params.admissionDrain.isFinalShutdown()
+          ? 'The daemon is shutting down.' : 'The daemon is draining.' };
       }
       return await openResolvedImportSession(input);
     },
@@ -326,6 +424,7 @@ export function createDirectTransferImportSessionManager(params?: Readonly<{
           lifecycle,
           uploadId: input.uploadId,
         });
+        activeImportSessionIds.get(input.uploadId)?.settle(result);
         if (result.success || result.keepSession !== true) {
           untrackActiveImportSession(input.uploadId);
         }
@@ -344,12 +443,15 @@ export function createDirectTransferImportSessionManager(params?: Readonly<{
       }
     },
 
-    async abortImportTransferSession(input) {
+    async abortImportTransferSession(input, filesystemScope) {
+      if (!activeImportSessionIds.has(input.uploadId)) return { aborted: false };
+      assertPreparedFilesystemTransferScope(activeImportSessionIds.get(input.uploadId)?.filesystemScope, filesystemScope);
       try {
         const result = await abortUploadTransferSession({
           lifecycle,
           uploadId: input.uploadId,
         });
+        activeImportSessionIds.get(input.uploadId)?.settle({ success: false, error: 'Upload cancelled', errorCode: 'cancelled' });
         untrackActiveImportSession(input.uploadId);
         return result;
       } finally {
@@ -357,23 +459,21 @@ export function createDirectTransferImportSessionManager(params?: Readonly<{
       }
     },
 
-    cleanupExpiredImportSessions(now = Date.now()) {
-      store.cleanupExpiredBestEffort(now);
-      for (const uploadId of [...activeImportSessionIds]) {
-        if (store.getUploadSession(uploadId)) {
-          continue;
-        }
-        activeImportSessionIds.delete(uploadId);
-      }
-      publishActiveSessionCount();
+    async waitForImportTransferSettlement(uploadId, filesystemScope) {
+      const active = activeImportSessionIds.get(uploadId);
+      if (!active) return { success: false, error: 'Prepared import transfer is unavailable', errorCode: 'indeterminate' };
+      assertPreparedFilesystemTransferScope(active.filesystemScope, filesystemScope);
+      return await active.settlement;
     },
+
+    cleanupExpiredImportSessions,
 
     getNextImportSessionExpiryAt() {
       return store.getNextExpiryAt();
     },
 
     countActiveImportSessions() {
-      return activeImportSessionIds.size;
+      return activeSessionCount();
     },
 
     async close() {
@@ -383,9 +483,16 @@ export function createDirectTransferImportSessionManager(params?: Readonly<{
 
       closePromise = (async () => {
         importOpenAuthorizations.clear();
+        await Promise.allSettled([...activeImportSessionIds.keys()].filter((key): key is Promise<unknown> => typeof key !== 'string'));
+        for (const active of activeImportSessionIds.values()) {
+          active.settle({ success: false, error: 'Prepared import transfer owner stopped', errorCode: 'indeterminate' });
+        }
         activeImportSessionIds.clear();
+        const disposal = store.dispose();
+        trackActiveImportSession(disposal);
         publishActiveSessionCount();
-        await store.dispose();
+        try { await disposal; }
+        finally { untrackActiveImportSession(disposal); }
       })();
 
       return await closePromise;

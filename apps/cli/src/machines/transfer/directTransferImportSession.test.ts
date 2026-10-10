@@ -12,17 +12,25 @@ import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptA
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';
 import { createOneBitGrayscalePng } from '@/testkit/media/pngFixtures';
+import { createDirectPeerTransferApp } from './directPeerTransport';
+import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 
 let failNextUploadPromotionWithExdev = false;
 let failNextUploadSourceCleanup = false;
 let failDestinationBackupRestore = false;
 let destinationBackupPath: string | null = null;
+let beforeImportDestinationCommit: ((path: string) => Promise<void>) | undefined;
 
 vi.mock('node:fs/promises', async () => {
   const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
 
   return {
     ...actual,
+    stat: vi.fn(async (...args: Parameters<typeof actual.stat>) => {
+      const result = await actual.stat(...args);
+      await beforeImportDestinationCommit?.(String(args[0]));
+      return result;
+    }),
     rename: vi.fn(async (from: string, to: string) => {
       if (failNextUploadPromotionWithExdev && from.endsWith('.upload')) {
         failNextUploadPromotionWithExdev = false;
@@ -55,6 +63,7 @@ afterEach(() => {
   failNextUploadSourceCleanup = false;
   failDestinationBackupRestore = false;
   destinationBackupPath = null;
+  beforeImportDestinationCommit = undefined;
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
@@ -64,6 +73,173 @@ async function expectPathMissing(path: string): Promise<void> {
 }
 
 describe('direct transfer import session manager', () => {
+  it('rejects fresh HTTP imports during a closed drain while admitted binary chunks and finalization continue', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-import-admission-'));
+    const admissionDrain = createDaemonAdmissionDrain();
+    const manager = createDirectTransferImportSessionManager({ admissionDrain,
+      accessPolicy: { kind: 'restrictedRoots', roots: [root] } });
+    const app = createDirectPeerTransferApp({ readPublishedTransfer: () => null, importSessionManager: manager });
+    const bytes = Buffer.from([0, 255, 128, 10]);
+    const request = { t: 'session_file_upload_v1' as const, workingDirectory: root,
+      path: 'binary.dat', sizeBytes: bytes.length, overwrite: false };
+    try {
+      const unacceptedAuthorization = manager.issueImportOpenAuthorizationToken(request);
+      admissionDrain.beginUnusedStopDrain();
+      const refused = await app.inject({ method: 'POST', url: '/machine-transfers/direct/imports/open',
+        headers: { authorization: `Bearer ${unacceptedAuthorization.authorizationToken}` }, payload: request });
+      expect(refused.statusCode).toBe(400);
+      expect(manager.countActiveImportSessions()).toBe(0);
+      expect(manager.activity.read()).toEqual({ coverage: 'complete', items: [] });
+      admissionDrain.resumeUnusedStop();
+      const authorization = manager.issueImportOpenAuthorizationToken(request);
+      const opened = await app.inject({ method: 'POST', url: '/machine-transfers/direct/imports/open',
+        headers: { authorization: `Bearer ${authorization.authorizationToken}` }, payload: request });
+      expect(opened.statusCode).toBe(200);
+      const prepared = opened.json<import('./directTransferImportSession').DirectTransferImportOpenResponse>();
+      admissionDrain.beginUnusedStopDrain();
+      const encrypted = createEncryptedTransferChunkEnvelope({ transferId: prepared.uploadId, sequence: 0,
+        payload: bytes, recipientPublicKeyBase64: prepared.recipientPublicKeyBase64 });
+      const chunk = await app.inject({ method: 'PUT',
+        url: `/machine-transfers/direct/imports/${prepared.uploadId}/chunks/0`,
+        payload: { payloadBase64: encrypted.payloadBase64, encryptedDataKeyEnvelopeBase64: encrypted.encryptedDataKeyEnvelopeBase64 } });
+      expect(chunk.statusCode).toBe(200);
+      const finalized = await app.inject({ method: 'POST', url: `/machine-transfers/direct/imports/${prepared.uploadId}/finalize` });
+      expect(finalized.statusCode).toBe(200);
+      expect(await readFile(join(root, 'binary.dat'))).toEqual(bytes);
+      expect(manager.countActiveImportSessions()).toBe(0);
+    } finally { await app.close(); await manager.close(); await rm(root, { recursive: true, force: true }); }
+  });
+  it('keeps the original prepared requester authority through finalization and refuses retirement during the destination observation before commit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-import-current-owner-'));
+    const path = join(root, 'binary.dat');
+    const incumbent = Buffer.from([0, 255, 128]);
+    const replacement = Buffer.from([1, 0, 128, 255]);
+    await writeFile(path, incumbent);
+    let current = true;
+    const scope = { rootPath: root, requesterAccountId: 'original-requester', assertCurrentAuthority: async () => {
+      if (!current) throw new Error('The admitted requester owner is retired');
+    } };
+    let observed!: () => void; let release!: () => void;
+    const observation = new Promise<void>(resolve => { observed = resolve; });
+    const continueCommit = new Promise<void>(resolve => { release = resolve; });
+    beforeImportDestinationCommit = async candidate => {
+      if (candidate === path) { observed(); await continueCommit; }
+    };
+    const manager = createDirectTransferImportSessionManager({ accessPolicy: { kind: 'restrictedRoots', roots: [root] } });
+    try {
+      const prepared = await manager.openTrustedImportSession({ t: 'session_file_upload_v1', workingDirectory: root,
+        path, overwrite: true, sizeBytes: replacement.length, sha256: createHash('sha256').update(replacement).digest('hex') }, scope);
+      if (!prepared.success) throw new Error(prepared.error);
+      const uploadId = prepared.response.uploadId;
+      const settlement = manager.waitForImportTransferSettlement(uploadId, scope);
+      const encrypted = createEncryptedTransferChunkEnvelope({ transferId: uploadId, sequence: 0,
+        payload: replacement, recipientPublicKeyBase64: prepared.response.recipientPublicKeyBase64 });
+      await expect(manager.writeImportTransferChunk({ uploadId, index: 0,
+        payloadBase64: encrypted.payloadBase64, encryptedDataKeyEnvelopeBase64: encrypted.encryptedDataKeyEnvelopeBase64 })).resolves.toEqual({ success: true });
+      const finalized = manager.finalizeImportTransferSession({ uploadId });
+      await observation;
+      current = false;
+      release();
+      await expect(finalized).resolves.toMatchObject({ success: false });
+      await expect(settlement).resolves.toMatchObject({ success: false });
+      expect(await readFile(path)).toEqual(incumbent);
+      expect(manager.countActiveImportSessions()).toBe(0);
+    } finally {
+      release(); beforeImportDestinationCommit = undefined;
+      await manager.close(); await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('stages owned copy bytes outside the admitted workspace without widening its public import policy', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-copy-root-'));
+    const staging = await mkdtemp(join(tmpdir(), 'happier-copy-stage-'));
+    const manager = createDirectTransferImportSessionManager({ accessPolicy: { kind: 'restrictedRoots', roots: [root] } });
+    const scope = { rootPath: root, requesterAccountId: 'account-one' };
+    const input = { t: 'session_file_upload_v1' as const, workingDirectory: staging, path: join(staging, 'manifest'), sizeBytes: 0, overwrite: false };
+    try {
+      expect((await manager.openTrustedImportSession(input, scope)).success).toBe(false);
+      const prepared = await manager.openTrustedImportSession(input, scope, staging);
+      if (!prepared.success) throw new Error(prepared.error);
+      await expect(manager.abortImportTransferSession({ uploadId: prepared.response.uploadId }, { ...scope, requesterAccountId: 'other' })).rejects.toMatchObject({ errorCode: 'FILESYSTEM_TRANSFER_SCOPE_MISMATCH' });
+      const settled = manager.waitForImportTransferSettlement(prepared.response.uploadId, scope);
+      expect((await manager.finalizeImportTransferSession({ uploadId: prepared.response.uploadId })).success).toBe(true);
+      await expect(settled).resolves.toMatchObject({ success: true, finalized: { path: input.path } });
+      expect((await manager.openTrustedImportSession({ ...input, path: join(root, 'escape') }, scope, staging)).success).toBe(false);
+    } finally { await manager.close(); await Promise.all([root, staging].map(path => rm(path, { recursive: true, force: true }))); }
+  });
+  it('settles an expired prepared operation when opening the next import cleans its session', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-prepared-import-expiry-'));
+    let now = 1_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const manager = createDirectTransferImportSessionManager({ ttlMs: 1_000 });
+    const scope = { rootPath: workingDirectory, requesterAccountId: 'account-one' };
+    try {
+      const first = await manager.openTrustedImportSession({ workingDirectory,
+        t: 'session_file_upload_v1', path: 'first.dat', sizeBytes: 4, overwrite: false }, scope);
+      if (!first.success) throw new Error(first.error);
+      const settlement = manager.waitForImportTransferSettlement(first.response.uploadId, scope);
+      now = 3_000;
+      const next = await manager.openTrustedImportSession({ workingDirectory,
+        t: 'session_file_upload_v1', path: 'next.dat', sizeBytes: 4, overwrite: false }, scope);
+      expect(next.success).toBe(true);
+      await expect(settlement).resolves.toMatchObject({ success: false, errorCode: 'indeterminate' });
+      expect(manager.countActiveImportSessions()).toBe(1);
+    } finally {
+      await manager.close();
+      await rm(workingDirectory, { recursive: true, force: true });
+    }
+  });
+  it('retains the prepared filesystem requester and root until cancellation or finalization', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-prepared-filesystem-scope-'));
+    const manager = createDirectTransferImportSessionManager();
+    const scope = { rootPath: workingDirectory, requesterAccountId: 'account-one' };
+    try {
+      const opening = manager.openTrustedImportSession({ workingDirectory,
+        t: 'session_file_upload_v1', path: 'binary.dat', sizeBytes: 4, overwrite: false }, scope);
+      expect(manager.activity.read()).toMatchObject({ coverage: 'complete', items: [
+        { category: 'transfer', state: 'active' },
+      ] });
+      const opened = await opening;
+      if (!opened.success) throw new Error(opened.error);
+      const uploadId = opened.response.uploadId;
+      expect(manager.activity.read()).toMatchObject({ coverage: 'complete', items: [
+        { category: 'transfer', ownerRef: uploadId, state: 'active' },
+      ] });
+      const cancelled = manager.waitForImportTransferSettlement(uploadId, scope);
+      await expect(manager.abortImportTransferSession({ uploadId }, { ...scope, requesterAccountId: 'account-two' }))
+        .rejects.toMatchObject({ errorCode: 'FILESYSTEM_TRANSFER_SCOPE_MISMATCH' });
+      await expect(manager.abortImportTransferSession({ uploadId }, { ...scope, rootPath: join(workingDirectory, 'other') }))
+        .rejects.toMatchObject({ errorCode: 'FILESYSTEM_TRANSFER_SCOPE_MISMATCH' });
+      await expect(manager.abortImportTransferSession({ uploadId }, null))
+        .rejects.toMatchObject({ errorCode: 'FILESYSTEM_TRANSFER_SCOPE_MISMATCH' });
+      expect(manager.countActiveImportSessions()).toBe(1);
+      await expect(manager.abortImportTransferSession({ uploadId }, scope)).resolves.toMatchObject({ aborted: true });
+      await expect(cancelled).resolves.toMatchObject({ success: false, errorCode: 'cancelled' });
+      await expect(manager.abortImportTransferSession({ uploadId }, scope)).resolves.toEqual({ aborted: false });
+      expect(manager.countActiveImportSessions()).toBe(0);
+      expect(manager.activity.read()).toEqual({ items: [], coverage: 'complete' });
+      const payload = Buffer.from([0, 255, 128, 10]);
+      const sha256 = createHash('sha256').update(payload).digest('hex');
+      const replacement = await manager.openTrustedImportSession({ workingDirectory,
+        t: 'session_file_upload_v1', path: 'binary.dat', sizeBytes: payload.length, overwrite: false, sha256 }, scope);
+      if (!replacement.success) throw new Error(replacement.error);
+      const completed = manager.waitForImportTransferSettlement(replacement.response.uploadId, scope);
+      const chunk = createEncryptedTransferChunkEnvelope({ transferId: replacement.response.uploadId,
+        sequence: 0, payload, recipientPublicKeyBase64: replacement.response.recipientPublicKeyBase64 });
+      await expect(manager.writeImportTransferChunk({ uploadId: replacement.response.uploadId, index: 0,
+        payloadBase64: chunk.payloadBase64, encryptedDataKeyEnvelopeBase64: chunk.encryptedDataKeyEnvelopeBase64 }))
+        .resolves.toEqual({ success: true });
+      await expect(manager.finalizeImportTransferSession({ uploadId: replacement.response.uploadId }))
+        .resolves.toMatchObject({ success: true, sha256 });
+      await expect(completed).resolves.toMatchObject({ success: true, sha256,
+        finalized: { path: replacement.response.destDisplayPath, sizeBytes: payload.length } });
+      expect(await readFile(join(workingDirectory, 'binary.dat'))).toEqual(payload);
+      expect(manager.countActiveImportSessions()).toBe(0);
+    } finally {
+      await manager.close();
+      await rm(workingDirectory, { recursive: true, force: true });
+    }
+  });
   it('never advertises an import chunk size larger than the encrypted-transfer hard limit', async () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-direct-transfer-import-chunk-limit-'));
     const manager = createDirectTransferImportSessionManager({
@@ -797,7 +973,9 @@ describe('direct transfer import session manager', () => {
         path: 'after-close.txt',
         sizeBytes: payload.length,
         overwrite: true,
-      })).rejects.toThrow('Transfer session store is disposed');
+      })).resolves.toMatchObject({ success: false });
+      expect(manager.countActiveImportSessions()).toBe(0);
+      await expectPathMissing(join(workingDirectory, 'after-close.txt'));
     } finally {
       tempEnv.restore();
       await rm(workingDirectory, { recursive: true, force: true }).catch(() => undefined);

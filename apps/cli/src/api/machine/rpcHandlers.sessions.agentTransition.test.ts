@@ -122,7 +122,7 @@ vi.mock('@/session/transport/encryption/sessionEncryptionContext', async (import
 vi.mock('@/api/session/pendingQueueV2Transport', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/api/session/pendingQueueV2Transport')>(),
   enqueuePendingQueueV2MessageViaHttp: mocks.enqueuePendingQueueV2MessageViaHttp,
-  readBlockedPendingQueueV2DeliveryByLocalIdFromServer: vi.fn(),
+  readPendingQueueV2DeliveryFailureByLocalIdFromServer: vi.fn(),
 }));
 vi.mock('@/session/services/resolveSessionMessageModel', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/session/services/resolveSessionMessageModel')>(),

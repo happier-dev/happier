@@ -19,6 +19,7 @@ import type {
   ProviderInputActionRequiredDisposition,
   SessionProviderInputConsumer,
   SessionProviderInputConsumerSession,
+  SessionInputLiveWork,
   WaitForNextProviderInputOptions,
 } from './_types';
 import type {
@@ -190,6 +191,18 @@ export function createSessionProviderInputConsumer<Mode, Message>(
   let reservedBatch: MessageBatch<Mode, Message> | null = null;
   let deferredContextOnlyBatch: MessageBatch<Mode, Message> | null = null;
   let deferredContextOnlyWaitingForChange = false;
+  let releasedInputBatch: MessageBatch<Mode, Message> | null = null;
+  const liveWorkListeners = new Set<() => void>();
+  let liveWorkObservation: AbortController | null = null;
+  let unsubscribeQueueLiveWork: (() => void) | null = null;
+  let priorLiveWorkNotification: string | null = null;
+  const notifyLiveWorkChanged = (): void => {
+    if (liveWorkListeners.size === 0) return;
+    const signature = readLiveWorkNotificationSignature();
+    if (signature === priorLiveWorkNotification) return;
+    priorLiveWorkNotification = signature;
+    for (const listener of liveWorkListeners) listener();
+  };
   const admissionKey = (scope: ProviderInputActionRequiredDisposition) =>
     `${scope.reason}\u0000${scope.serviceId}\u0000${scope.groupId}`;
   const admissions = new Map<string, ProviderInputActionRequiredDisposition>();
@@ -204,11 +217,27 @@ export function createSessionProviderInputConsumer<Mode, Message>(
   let passSequence = 0;
   const markPassDirty = (): void => {
     passSequence += 1;
+    notifyLiveWorkChanged();
   };
 
   const hasLocalInputCustody = (): boolean =>
     reservedBatch !== null
     || opts.messageQueue.size() > 0;
+  const hasAcceptedInputCustody = (): boolean => hasLocalInputCustody()
+    || releasedInputBatch !== null || deferredContextOnlyBatch !== null
+    || activeProviderInputDispatches > 0 || activePendingMaterializationTurns > 0;
+  const readSessionLiveState = (): SessionInputLiveWork['session'] => {
+    const tail = opts.session.readRuntimeActivitySnapshotTail?.();
+    return tail && readExactIdleRuntimeActivityRevision(tail) !== undefined
+      ? 'settled' : tail?.custody?.value.state === 'active'
+        || tail?.settlement?.committedProjection.state === 'active' ? 'active' : 'unknown';
+  };
+  const readLiveWorkNotificationSignature = (): string => {
+    const pending = opts.session.getPendingQueueState?.();
+    return JSON.stringify({ session: readSessionLiveState(),
+      input: hasAcceptedInputCustody() || (pending?.known && pending.pendingCount > 0)
+        ? 'active' : pending?.known ? 'settled' : 'unknown' });
+  };
 
   const runPendingMaterializationExclusive = async <Value>(
     operation: () => Promise<Value>,
@@ -221,11 +250,13 @@ export function createSessionProviderInputConsumer<Mode, Message>(
     pendingMaterializationTurn = previousTurn.catch(() => undefined).then(() => currentTurn);
 
     activePendingMaterializationTurns += 1;
+    notifyLiveWorkChanged();
     try {
       await previousTurn.catch(() => undefined);
       return await operation();
     } finally {
       activePendingMaterializationTurns -= 1;
+      notifyLiveWorkChanged();
       if (activePendingMaterializationTurns === 0) {
         for (const notify of [...activePendingMaterializationDrainWaiters]) {
           activePendingMaterializationDrainWaiters.delete(notify);
@@ -278,11 +309,13 @@ export function createSessionProviderInputConsumer<Mode, Message>(
   const dispatchWithCustody = async <Value>(dispatch: () => Promise<Value>): Promise<Value> => {
     const custody = { active: true };
     activeProviderInputDispatches += 1;
+    notifyLiveWorkChanged();
     try {
       return await providerInputDispatchCustody.run(custody, dispatch);
     } finally {
       custody.active = false;
       activeProviderInputDispatches -= 1;
+      notifyLiveWorkChanged();
       // A caller holding its own custody can finish draining at one remaining
       // dispatch; external callers recheck until all dispatches have settled.
       for (const notify of [...activeDispatchDrainWaiters]) {
@@ -412,9 +445,67 @@ export function createSessionProviderInputConsumer<Mode, Message>(
   };
 
   return {
+    async readLiveWork(): Promise<SessionInputLiveWork> {
+      let pendingKnown = false;
+      let pendingActive = false;
+      try {
+        if (opts.session.readPendingQueueStateForLiveWork) {
+          const pending = await opts.session.readPendingQueueStateForLiveWork();
+          pendingKnown = pending.known;
+          pendingActive = pending.known && pending.pendingCount > 0;
+        }
+      } catch {
+        // An old empty observation cannot prove current Pending settlement.
+      }
+      const session = readSessionLiveState();
+      const input = hasAcceptedInputCustody() || pendingActive
+        ? 'active' : pendingKnown ? 'settled' : 'unknown';
+      return { session, input };
+    },
+    subscribeLiveWork(listener) {
+      liveWorkListeners.add(listener);
+      if (liveWorkObservation === null) {
+        const controller = new AbortController();
+        liveWorkObservation = controller;
+        priorLiveWorkNotification = readLiveWorkNotificationSignature();
+        unsubscribeQueueLiveWork = opts.messageQueue.subscribeChanges(batch => {
+          // Transfer custody synchronously with queue removal, before any asynchronous fresh read.
+          if (batch) releasedInputBatch = batch;
+          notifyLiveWorkChanged();
+        });
+        const observe = async (wait: () => Promise<boolean>): Promise<void> => {
+          while (!controller.signal.aborted) {
+            if (!await wait()) break;
+            if (!controller.signal.aborted) notifyLiveWorkChanged();
+          }
+        };
+        void observe(() => opts.session.waitForMetadataUpdate(controller.signal)).catch(notifyLiveWorkChanged);
+        if (opts.session.readRuntimeActivitySnapshotTail && opts.session.waitForRuntimeActivitySnapshotTailChange) {
+          void observe(() => opts.session.waitForRuntimeActivitySnapshotTailChange!(
+            opts.session.readRuntimeActivitySnapshotTail!().sequence, controller.signal,
+          )).catch(notifyLiveWorkChanged);
+        }
+      }
+      return () => {
+        liveWorkListeners.delete(listener);
+        if (liveWorkListeners.size === 0) {
+          liveWorkObservation?.abort();
+          liveWorkObservation = null;
+          unsubscribeQueueLiveWork?.();
+          unsubscribeQueueLiveWork = null;
+          priorLiveWorkNotification = null;
+        }
+      };
+    },
+    releaseInputBatch() {
+      if (releasedInputBatch === null) return;
+      releasedInputBatch = null;
+      markPassDirty();
+    },
     deferContextOnlyInput(batch) {
       deferredContextOnlyBatch = batch;
       deferredContextOnlyWaitingForChange = true;
+      markPassDirty();
     },
     async finalizeContextOnlyInput(finalizeOpts) {
       if (finalizeOpts.abortSignal.aborted || !await finalizeOpts.recheck()) return 'withdrawn';
@@ -494,7 +585,7 @@ export function createSessionProviderInputConsumer<Mode, Message>(
         if (!canStart || waitOpts.abortSignal.aborted) {
           return null;
         }
-        return await waitForNextInput({
+        const batch = await waitForNextInput({
           ...opts,
           ...waitOpts,
           abortSignal: waitOpts.abortSignal,
@@ -523,6 +614,11 @@ export function createSessionProviderInputConsumer<Mode, Message>(
           readPassSequence: () => passSequence,
           runPendingMaterializationExclusive,
         });
+        if (batch) {
+          releasedInputBatch = batch;
+          markPassDirty();
+        }
+        return batch;
       } finally {
         releaseTurn();
       }

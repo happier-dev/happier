@@ -10,7 +10,7 @@ import {
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { agentRoutingIdAddressesContributionIdentityV1, buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { registerSensitiveDiagnosticValues } from '@happier-dev/protocol/bugs/reports/redaction';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type { ProviderErrorV1, QualifiedConnectedAccountRef, ArtifactSharingResourceV1 } from '@happier-dev/protocol';
@@ -54,6 +54,7 @@ import {
   attachExactRunnerRetainedPluginGenerations,
 } from '@/plugins/store/registry/generationCustodyRetirement';
 import { readLeasedAgentProviderRequirements } from '@/plugins/runtime/providerBindings/adapter';
+import { resolveAccountConfiguredAcpLaunchForAgent } from '@/agent/runtime/registry/engineRegistry/accountConfiguredAcp';
 import {
   HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY,
   serializeProviderBindingLaunchHandoffForEnv,
@@ -693,9 +694,28 @@ export async function prepareForegroundAgentRuntimeAdmission(
         activeProviderLaunch.transferLaunchMaterializationCleanupOwnership;
     }
     await assertSessionAccountCurrent();
+    const selectedAgent = lease.registry.contributes.agentDefinitionsById.get(request.agentId);
+    if (request.agentTarget && (!selectedAgent?.identity
+      || selectedAgent.identity.pluginId !== request.agentTarget.identity.pluginId
+      || selectedAgent.identity.localId !== request.agentTarget.identity.localId)
+      || request.runtimeDescriptorV1 && (!selectedAgent?.identity
+        || !agentRoutingIdAddressesContributionIdentityV1(request.runtimeDescriptorV1.agentId, selectedAgent.identity))) {
+      return refusal(createProviderErrorV1('provider_agent_runtime_unsupported', { machineId: request.machineId }));
+    }
+    if (selectedAgent?.identity) {
+      // Bind the selected Account row through the same launch owner as daemon
+      // and direct Session execution before creating foreground bootstrap files.
+      await resolveAccountConfiguredAcpLaunchForAgent({
+        identity: selectedAgent.identity,
+        agentTarget: request.agentTarget,
+        startupRuntimeDescriptorV1: request.runtimeDescriptorV1,
+        savedSecretOperationContext: requester?.savedSecretOperationContext,
+      });
+    }
     const bridge = await prepareForegroundAgentRuntimeBootstrapForLease({
       target: request.backendTarget,
       lease,
+      ...(request.runtimeDescriptorV1 ? { launch: { runtimeDescriptorV1: request.runtimeDescriptorV1 } } : {}),
     });
     const registration = lease.registry.agentRuntimesByAgentId.get(
       request.agentId,

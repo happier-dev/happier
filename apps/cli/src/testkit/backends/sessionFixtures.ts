@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { registerPluginCatalogSignal } from '@/api/session/client/registerPluginCatalogSignal';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 
 import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
@@ -174,6 +175,11 @@ export function createMutableApiSessionClientFixture<TMetadata extends Record<st
     const fixture = {
         sessionId,
         rpcHandlerManager,
+        subscribeDaemonPluginCatalogChanges: registerPluginCatalogSignal({ rpcHandlerManager, events }),
+        getEphemeralStreamConnectionEpoch: () => 0,
+        // Offline Session boundary: hints reach the real registered local RPC
+        // handler. Live Sessions require the authenticated relay's ack.
+        isDaemonPluginCatalogSignalReady: () => true,
         keepAlive() {},
         async enqueueAgentMessageCommitted() {
             return { persisted: true, delivered: false };

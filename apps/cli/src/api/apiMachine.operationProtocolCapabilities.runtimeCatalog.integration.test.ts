@@ -4,6 +4,7 @@ import type { Machine } from '@/api/types';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 
 import { ApiMachineClient } from './apiMachine';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 
 function createMachine(): Machine {
   return {
@@ -29,6 +30,59 @@ function createCapabilityPublicationClient(): ApiMachineClient {
 }
 
 describe('ApiMachineClient operation protocol capability publication', () => {
+  it('keeps reset start out of older Home projections and out of daemons without the mounted owner', async () => {
+    for (const [protocolVersion, installed] of [[4, true], [4, false], [3, true]] as const) {
+      const client = createCapabilityPublicationClient();
+      Reflect.set(client, 'sessionSpawnV1OutcomeRequired', true);
+      Reflect.set(client, 'sessionPendingResetStartInstalled', installed);
+      Reflect.set(client, 'lifecycleDependencies', {
+        resolveServerFeaturesSnapshot: async () => ({ status: 'ready', features: FeaturesResponseSchema.parse({
+          features: {}, capabilities: { session: { pendingInput: { protocolVersion } } },
+        }) }),
+      });
+      // The Home socket ACK is the boundary; projection and replace-all publication remain real.
+      const published: Array<Record<string, unknown>> = [];
+      Reflect.set(client, 'socket', { connected: true, timeout: () => ({ emitWithAck: async (_event: string, body: { capabilities: Record<string, unknown> }) => {
+        published.push(body.capabilities); return { v: 1, result: 'success', revision: 3 };
+      } }) });
+      await client.setProjectFiniteExecutionLive(true);
+      expect(published[0]?.sessionPendingResetStart).toEqual(protocolVersion >= 4 && installed ? { protocolVersions: [1] } : undefined);
+      expect(published[0]?.sessionInputAdmission).toEqual({ protocolVersions: [1, 2] });
+    }
+  });
+  it('withdraws installed finite execution through Home before shutdown retires its live socket', async () => {
+    const client = new ApiMachineClient('finite-shutdown-owner', createMachine());
+    // The authenticated Home ACK is the system boundary. Shutdown, socket
+    // lifetime and complete capability publication remain their real owners.
+    const emitWithAck = vi.fn(async () => ({ v: 1, result: 'success', revision: 3 }));
+    Reflect.set(client, 'socket', { connected: true, timeout: () => ({ emitWithAck }) });
+    await client.setProjectFiniteExecutionLive(true);
+    await client.shutdown();
+    expect(emitWithAck).toHaveBeenLastCalledWith('machine-update-operation-protocol-capabilities', {
+      machineId: 'machine-1', capabilities: {},
+    });
+    expect(client.isProjectFiniteExecutionLive()).toBe(false);
+  });
+
+  it('publishes finite execution only for the installed handler and withdraws it before retirement', async () => {
+    const client = createCapabilityPublicationClient();
+    const emitWithAck = vi.fn(async () => ({ v: 1, result: 'success', revision: 3 }));
+    Reflect.set(client, 'socket', { connected: true, timeout: () => ({ emitWithAck }) });
+    const internal = client as unknown as {
+      resolveCurrentMachineOperationProtocolCapabilitiesForPublication(): Promise<Record<string, unknown> | null>;
+    };
+    await expect(internal.resolveCurrentMachineOperationProtocolCapabilitiesForPublication()).resolves.toBeNull();
+    await client.setProjectFiniteExecutionLive(true);
+    expect(emitWithAck).toHaveBeenLastCalledWith('machine-update-operation-protocol-capabilities', {
+      machineId: 'machine-1', capabilities: { projectFiniteExecution: { protocolVersions: [1] } },
+    });
+    await client.setProjectFiniteExecutionLive(false);
+    expect(emitWithAck).toHaveBeenLastCalledWith('machine-update-operation-protocol-capabilities', {
+      machineId: 'machine-1', capabilities: {},
+    });
+    await expect(internal.resolveCurrentMachineOperationProtocolCapabilitiesForPublication()).resolves.toBeNull();
+  });
+
   it('advertises native preview only while the composed adapter is live', async () => {
     const client = createCapabilityPublicationClient();
     // Socket acknowledgement is the external Home boundary; projection and publication stay real.

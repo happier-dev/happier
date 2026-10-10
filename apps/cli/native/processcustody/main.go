@@ -9,6 +9,8 @@
 //     instruction, resumes it, and waits. `terminate` / `query` act on a job by
 //     name and prove full membership absence. Stdin/stdout/stderr and the
 //     environment are the caller's, inherited unchanged by the target.
+//     `run --wait-for-job-empty` retains natural descendants until the same
+//     job is positively empty, then returns the observed target-root code.
 //   - darwin: `pid-startidentity <pid>` reports the native subsecond process
 //     start identity (kinfo_proc p_starttime) via the numeric sysctl MIB
 //     {CTL_KERN, KERN_PROC, KERN_PROC_PID, pid}. The parse is validated at
@@ -67,7 +69,7 @@ func emit(payload map[string]any) error {
 func usage() {
 	fmt.Fprintln(os.Stderr, strings.TrimSpace(`
 usage:
-  happier-process-custody run --job=<name> [--target-windows-verbatim] [--target-inherited-stdin-arg=<arg>] -- <command> [args...]
+  happier-process-custody run --job=<name> [--wait-for-job-empty] [--target-windows-verbatim] [--target-inherited-stdin-arg=<arg>] -- <command> [args...]
   happier-process-custody terminate --job=<name> [--timeout-ms=<ms>]
   happier-process-custody query --job=<name>
   happier-process-custody pid-startidentity <pid>

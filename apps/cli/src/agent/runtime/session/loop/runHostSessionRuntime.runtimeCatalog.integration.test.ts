@@ -6,10 +6,22 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { reloadConfiguration } from '@/configuration';
 import { clearDaemonStateForTestTeardown, writeDaemonState } from '@/persistence';
 import axios from 'axios';
+import { UserMessageSchema } from '@/api/types';
+import * as machineRpcTransport from '@/session/transport/rpc/machineRpc';
+import * as storedAuthTransport from '@/auth/validateStoredAuthTokenAgainstActiveServer';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { createProductionFreshWorkflowSessionConversation, createProductionWorkflowSessionStepExecutor } from '@/daemon/workflows/sessionStepExecutor';
+import { registerPrivateSpawnSessionRpcHandlers } from '@/rpc/handlers/sessionLifecycle';
+import { createSpawnNewSessionLifecycleActionHandler } from '@/session/actions/lifecycle/createSpawnNewSessionLifecycleActionHandler';
+import type { RpcHandler } from '@/api/rpc/types';
+import type { WorkflowStepExecutor } from '@/daemon/workflows/coordinator';
+import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
+import { resolveExecutionRunChildSelection } from '@/agent/runtime/bridges/executionRun/runtime/openInputs';
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   buildBackendTargetKey,
+  buildBackendTargetKeyV2,
   DEFAULT_SESSION_PENDING_QUEUE_DELIVERY_TIMING,
   deriveSessionFollowWakeEventLocalIdV1,
   deriveSessionCreationTagV1,
@@ -25,8 +37,10 @@ import {
   type WorkflowRunRecipientCensusResponseV1,
   type PluginContributionIdentityV1,
   type VoiceProviderContribution,
+  type BackendTargetRefV2Input,
 } from '@happier-dev/protocol';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SessionModelMutationReversalV1Schema } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import type {
   AgentSessionRealtimeConversation,
   AgentSessionRealtimeHandle,
@@ -98,6 +112,7 @@ import {
   type ApiSessionClientOptions,
 } from '@/api/session/sessionClient';
 import { createPlainSessionFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { DeferredApiSessionClient } from '@/agent/runtime/startup/DeferredApiSessionClient';
 // The composed Follow gate below runs the real prompt loop over the real admitted
 // permission-mode queue, so this is the production owner rather than a test double.
@@ -105,6 +120,10 @@ import { runPermissionModePromptLoop } from '@/agent/runtime/runPermissionModePr
 import { publishSessionFollowWakeInvalidation } from '@/agent/runtime/session/follow/sessionFollowWakeSignal';
 import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt, type PermissionModeQueuedPromptMode } from '@/agent/runtime/permissions/queuedPrompt';
 import type { HostProviderInputOutcomeEvidence } from '@/agent/runtime/session/input/providerInputOutcome';
+import {
+  CONNECTED_SERVICE_APPLIED_PARENT_SELECTION_PATH,
+  ConnectedServiceAppliedParentSelectionRequestSchema,
+} from '@/daemon/connectedServices/runs/materializeContract';
 
 vi.mock('@/api/session/client/transport/initializeSessionClientConnection', () => ({
   initializeSessionClientConnection: (params: {
@@ -349,6 +368,12 @@ function createSessionFixture(sessionId: string) {
     fetchLatestUserPermissionIntentFromTranscript: vi.fn(async () => null),
     waitForMetadataUpdate: vi.fn(async () => false),
     hasPendingProviderInput: vi.fn(() => true),
+    getPendingQueueState: () => ({
+      known: true,
+      pendingCount: session.hasPendingProviderInput() ? 1 : 0,
+      pendingBlockedCount: 0,
+      pendingVersion: 0,
+    }),
     observeProviderInputSettlement: vi.fn(),
     confirmUserMessageLocallyConsumed: vi.fn(),
     updateMetadata: vi.fn(),
@@ -360,6 +385,7 @@ function createSessionFixture(sessionId: string) {
     hasOwnerMetadataAuthority: vi.fn(() => true),
     on: vi.fn(),
     off: vi.fn(),
+    onUserMessage: vi.fn(),
     refreshSessionSnapshotFromServerRequired: vi.fn(async () => undefined),
     enqueueSessionTurnMutation: vi.fn(async () => undefined),
     enqueueRegisteredSessionStateFieldMutation: vi.fn(async () => undefined),
@@ -405,7 +431,10 @@ function createHarness() {
   let onAfterStartCalls = 0;
   let onAfterResetCalls = 0;
   let permissionResetCalls = 0;
-  let queueResetCalls = 0;
+  const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(
+    mode => mode.permissionMode, { batcher: combinePermissionModeQueuedPrompts },
+  );
+  const queueReset = vi.spyOn(queue, 'reset');
   let killHandler: (() => void | Promise<void>) | null = null;
   const killHandlersBySessionId = new Map<string, () => void | Promise<void>>();
 
@@ -579,12 +608,7 @@ function createHarness() {
       updateSession: () => undefined,
     }),
     createPermissionModeQueueStateFn: () => ({
-      messageQueue: {
-        reset: () => {
-          queueResetCalls += 1;
-        },
-        size: () => 0,
-      },
+      messageQueue: queue,
       rebindSession: () => undefined,
       getCurrentPermissionMode: () => 'default',
       setCurrentPermissionMode: () => undefined,
@@ -627,6 +651,7 @@ function createHarness() {
     deps,
     session,
     runtime,
+    queue,
     handlers,
     metrics: {
       get defaultReadyCalls() {
@@ -654,7 +679,7 @@ function createHarness() {
         return permissionResetCalls;
       },
       get queueResetCalls() {
-        return queueResetCalls;
+        return queueReset.mock.calls.length;
       },
       get killHandler() {
         return killHandler;
@@ -799,8 +824,333 @@ describe('runHostSessionRuntime', () => {
     await pluginReloadController.shutdown({ timeoutMs: 5_000 });
   });
 
+  it('starts an Account-scoped queued prompt with the canonical Agent identity at the daemon auth boundary', async () => {
+    const harness = createHarness();
+    harness.opts.credentials = {
+      token: `header.${Buffer.from(JSON.stringify({ sub: 'queued-workflow-account' })).toString('base64url')}.signature`,
+      encryption: null,
+    };
+    // The server queue is materialized, while this exact input retains provider custody.
+    harness.session.hasPendingProviderInput = vi.fn((localId?: string) => localId === 'queued-workflow-input');
+    harness.session.enqueueAgentMessageCommitted = vi.fn(async () => ({ persisted: true, delivered: false }));
+    harness.session.enqueueSessionEventCommitted = vi.fn(async () => ({ persisted: true, delivered: true }));
+    harness.session.getCommittedUserMessageSeq = (localId: string) => localId === 'queued-workflow-input' ? 1 : null;
+    let userMessageHandler: ((message: import('@/api/types').UserMessage) => boolean | void) | null = null;
+    harness.session.onUserMessage = (handler: typeof userMessageHandler) => { userMessageHandler = handler; };
+    delete harness.deps.createPermissionModeQueueStateFn;
+    delete harness.deps.createSessionMetadataFn;
+    delete harness.deps.createProviderEnforcedPermissionHandlerFn;
+    delete harness.deps.registerKillSessionHandlerFn;
+    delete harness.deps.sendReadyWithPushNotificationFn;
+    delete harness.deps.cleanupBackendRunResourcesFn;
+    harness.runtime.openedWithoutConnectedServices = () => true;
+    // The provider boundary exposes a normalized lifecycle facade, not a receiver-bound method.
+    harness.runtime.resetOrDisposeRuntime = async () => { await harness.runtime.reset(); };
+    harness.runtime.beginTurnLifecycle = () => { harness.runtime.beginTurn(); };
+    harness.runtime.waitForTurnCompletion = async () => { await harness.runtime.flushTurn(); };
+    harness.runtime.readSessionIdentity = () => ({ sessionId: null });
+    harness.runtime.updateSessionRuntimeConfig = async () => ({ status: 'applied' });
+    let providerOutcome: ((outcome: HostProviderInputOutcomeEvidence) => void) | null = null;
+    harness.runtime.setOnPromptDeliveryOutcome = (handler: typeof providerOutcome) => { providerOutcome = handler; };
+    const prompts: string[] = [];
+    harness.runtime.sendTurnPrompt = async (prompt: string, meta?: { localId?: string }) => {
+      prompts.push(prompt);
+      if (!meta?.localId) throw new Error('Expected the original queued input identity');
+      providerOutcome?.({ type: 'input-accepted', localInputId: meta.localId, userMessageSeq: 1,
+        delivery: { kind: 'newTurn', turnId: 'queued-workflow-turn' } });
+    };
+    let completed = false;
+    harness.deps.runPermissionModePromptLoopFn = async (params: Parameters<typeof runPermissionModePromptLoop>[0]) => {
+      if (!userMessageHandler) throw new Error('Expected the real Session queue callback');
+      userMessageHandler({ role: 'user', content: { type: 'text', text: 'Reply exactly QA_FIN21_REPLY.' },
+        localId: 'queued-workflow-input', meta: {} });
+      await runPermissionModePromptLoop({ ...params, shouldExit: () => completed, sendReady: () => { params.sendReady(); completed = true; } });
+    };
+    const home = await mkdtemp(join(tmpdir(), 'queued-workflow-startup-'));
+    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+    const authRequests: unknown[] = [];
+    // Reuse the Session/process bootstrap boundary fixture. Account scope,
+    // metadata, permissions, queue binding, input custody and prompt loop stay real.
+    const server = createServer((request, response) => {
+      let body = '';
+      request.setEncoding('utf8');
+      request.on('data', (chunk: string) => { body += chunk; });
+      request.on('end', () => {
+        response.setHeader('content-type', 'application/json');
+        if (request.url === CONNECTED_SERVICE_APPLIED_PARENT_SELECTION_PATH) {
+          const parsed: unknown = JSON.parse(body);
+          authRequests.push(parsed);
+          response.statusCode = ConnectedServiceAppliedParentSelectionRequestSchema.safeParse(parsed).success ? 200 : 400;
+          response.end(JSON.stringify({ status: 'unavailable' }));
+        } else response.end(JSON.stringify({ success: true }));
+      });
+    });
+    try {
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected daemon listener');
+      envScope.patch({ HAPPIER_HOME_DIR: home });
+      reloadConfiguration();
+      writeDaemonState({ pid: process.pid, httpPort: address.port, startedAt: Date.now(),
+        startedWithCliVersion: 'test', controlToken: 'test-token' });
+      await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+      expect(authRequests).toEqual([expect.objectContaining({ agentId: harness.config.policyAgentId,
+        sessionId: harness.session.sessionId, runnerPid: process.pid, initialEmpty: true })]);
+      // The real prompt owner prepends Agent instructions; the original user input remains one intact delivery.
+      expect(prompts).toEqual([expect.stringMatching(/(?:^|\n\n)Reply exactly QA_FIN21_REPLY\.$/)]);
+      expect(completed).toBe(true);
+      expect(harness.session.observeProviderInputSettlement).toHaveBeenCalledWith(expect.objectContaining({
+        kind: 'accepted', localId: 'queued-workflow-input', userMessageSeq: 1,
+        providerTurnId: 'queued-workflow-turn', providerDeliveryKind: 'newTurn',
+      }));
+    } finally {
+      await clearDaemonStateForTestTeardown();
+      envScope.restore();
+      reloadConfiguration();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+    { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+  ] satisfies BackendTargetRefV2Input[])('inherits the applied $kind parent target through the attached child reader', async (backendTarget) => {
+    const harness = createHarness();
+    harness.config.policyAgentId = 'codex';
+    harness.opts.backendTarget = backendTarget;
+    harness.opts.credentials = {
+      token: `header.${Buffer.from(JSON.stringify({ sub: 'attached-parent-account' })).toString('base64url')}.signature`,
+      encryption: null,
+    };
+    harness.opts.modelSelection = { v: 1, updatedAt: 1, ref: {
+      agentTargetKey: buildBackendTargetKeyV2(backendTarget), providerConnectionId: null, modelId: 'parent-model',
+    } };
+    // Real queue and model-transition owner; only Session/native Agent and daemon HTTP are boundaries.
+    delete harness.deps.createPermissionModeQueueStateFn;
+    harness.runtime.updateSessionRuntimeConfig = async () => ({ status: 'applied' });
+    harness.runtime.resetOrDisposeRuntime = async () => { await harness.runtime.reset(); };
+    harness.runtime.readSessionIdentity = () => ({ sessionId: null });
+    harness.runtime.readAppliedTeamCredentialModel = () => null;
+    let controls: SessionRuntimeControls | null = null;
+    harness.session.setSessionRuntimeControls = (next: SessionRuntimeControls | null) => { controls = next; };
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      if (!controls?.readAppliedChildSelection) throw new Error('Attached parent reader was not installed');
+      const parent = await controls.readAppliedChildSelection();
+      expect(parent).toMatchObject({ status: 'applied', backendTarget, modelId: 'parent-model' });
+      const child = resolveExecutionRunChildSelection({ backendTarget, lifecycle: 'attached', parent });
+      expect(child).toMatchObject({ selectionSource: 'inherited', inheritedFromDifferentAgent: false,
+        modelId: 'parent-model', connectedServices: { v: 2, bindingsByServiceId: {} } });
+    };
+    const home = await mkdtemp(join(tmpdir(), 'attached-parent-selection-'));
+    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+    const server = createServer((request, response) => {
+      let body = '';
+      request.setEncoding('utf8');
+      request.on('data', (chunk: string) => { body += chunk; });
+      request.on('end', () => {
+        response.setHeader('content-type', 'application/json');
+        if (request.url === CONNECTED_SERVICE_APPLIED_PARENT_SELECTION_PATH) {
+          ConnectedServiceAppliedParentSelectionRequestSchema.parse(JSON.parse(body));
+          response.end(JSON.stringify({ status: 'applied', connectedServices: { v: 2, bindingsByServiceId: {} } }));
+        } else response.end(JSON.stringify({ success: true }));
+      });
+    });
+    try {
+      await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Daemon boundary did not bind');
+      envScope.patch({ HAPPIER_HOME_DIR: home });
+      reloadConfiguration();
+      writeDaemonState({ pid: process.pid, httpPort: address.port, startedAt: Date.now(),
+        startedWithCliVersion: 'test', controlToken: 'test-token' });
+      await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    } finally {
+      await clearDaemonStateForTestTeardown();
+      envScope.restore();
+      reloadConfiguration();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('completes a fresh Workflow Agent step through real spawn, Session runtime and exact input observation', async () => {
+    const harness = createHarness();
+    harness.session.sessionId = 'workflow-composed-session';
+    harness.config.policyAgentId = 'claude';
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'composed-workflow-account' })).toString('base64url')}.signature`, encryption: null };
+    harness.opts.credentials = credentials;
+    const directory = await mkdtemp(join(tmpdir(), 'workflow-runtime-composition-'));
+    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+    const input = createDeferred<import('@/api/types').UserMessage>();
+    const loopReady = createDeferred<void>();
+    let runtimeRun: Promise<void> | null = null;
+    let inputLocalId: string | null = null;
+    let metadata = createTestMetadata({ path: directory, machineId: 'machine-1', permissionMode: 'default', flavor: 'claude' });
+    let userHandler: ((message: import('@/api/types').UserMessage) => boolean | void) | null = null;
+    let completed = false;
+    const prompts: string[] = [];
+    const transcript: { id: string; seq: number; localId: string | null; createdAt: number; updatedAt: number; content: { t: 'plain'; v: unknown } }[] = [];
+    const authRequests: unknown[] = [];
+    const unexpectedRequests: string[] = [];
+    harness.session.getMetadataSnapshot = () => metadata;
+    harness.session.hasPendingProviderInput = (localId?: string) => localId !== undefined && localId === inputLocalId;
+    harness.session.getCommittedUserMessageSeq = (localId: string) => localId === inputLocalId ? 1 : null;
+    harness.session.onUserMessage = (handler: typeof userHandler) => { userHandler = handler; };
+    harness.session.enqueueAgentMessageCommitted = async (_agent: unknown, body: unknown) => {
+      transcript.push({ id: `output-${transcript.length}`, seq: transcript.length + 1, localId: null,
+        createdAt: Date.now(), updatedAt: Date.now(), content: { t: 'plain', v: { role: 'agent', content: { type: 'acp', data: body } } } });
+      return { persisted: true, delivered: true };
+    };
+    harness.session.enqueueSessionEventCommitted = async (event: unknown) => {
+      transcript.push({ id: `event-${transcript.length}`, seq: transcript.length + 1, localId: null,
+        createdAt: Date.now(), updatedAt: Date.now(), content: { t: 'plain', v: { role: 'event', content: { type: 'event', data: event } } } });
+      return { persisted: true, delivered: true };
+    };
+    for (const key of ['createPermissionModeQueueStateFn', 'createSessionMetadataFn', 'createProviderEnforcedPermissionHandlerFn',
+      'registerKillSessionHandlerFn', 'sendReadyWithPushNotificationFn', 'cleanupBackendRunResourcesFn']) delete harness.deps[key];
+    // Only process bootstrap and the native Agent are substituted. Queue,
+    // permissions, spawn normalization, input admission and observation stay real.
+    harness.deps.initializeBackendRunSessionFn = async (params: InitializeBackendRunSessionOptions) => {
+      metadata = params.metadata;
+      return { session: harness.session, reconnectionHandle: null, reportedSessionId: harness.session.sessionId, attachedToExistingSession: false };
+    };
+    harness.runtime.openedWithoutConnectedServices = () => true;
+    harness.runtime.resetOrDisposeRuntime = async () => { await harness.runtime.reset(); };
+    harness.runtime.beginTurnLifecycle = () => { harness.runtime.beginTurn(); };
+    harness.runtime.waitForTurnCompletion = async () => { await harness.runtime.flushTurn(); };
+    harness.runtime.readSessionIdentity = () => ({ sessionId: null });
+    harness.runtime.updateSessionRuntimeConfig = async () => ({ status: 'applied' });
+    let providerOutcome: ((outcome: HostProviderInputOutcomeEvidence) => void) | null = null;
+    harness.runtime.setOnPromptDeliveryOutcome = (handler: typeof providerOutcome) => { providerOutcome = handler; };
+    harness.runtime.sendTurnPrompt = async (prompt: string, meta?: { localId?: string }) => {
+      if (!meta?.localId || meta.localId !== inputLocalId) throw new Error('Lost Workflow input correspondence');
+      prompts.push(prompt);
+      providerOutcome?.({ type: 'input-accepted', localInputId: meta.localId, userMessageSeq: 1,
+        delivery: { kind: 'newTurn', turnId: 'workflow-composed-turn' } });
+      const base = { sessionId: harness.session.sessionId, emittedAtMs: Date.now() };
+      harness.runtime.emitRuntimeMessage({ ...base, kind: 'transcript-message-committed', sequence: 1,
+        messageId: 'workflow-answer', role: 'assistant', text: 'QA_FIN21_REPLY' });
+    };
+    harness.deps.runPermissionModePromptLoopFn = async (params: Parameters<typeof runPermissionModePromptLoop>[0]) => {
+      loopReady.resolve();
+      const message = await input.promise;
+      if (!userHandler) throw new Error('Missing real Session queue callback');
+      userHandler(message);
+      await runPermissionModePromptLoop({ ...params, shouldExit: () => completed, sendReady: () => { params.sendReady(); completed = true; } });
+    };
+    const rawSession = () => createSessionRecordFixture({ id: harness.session.sessionId, active: true, encryptionMode: 'plain',
+      machineId: 'machine-1', metadata: JSON.stringify(metadata) });
+    const server = createServer((request, response) => {
+      let body = '';
+      request.setEncoding('utf8');
+      request.on('data', (chunk: string) => { body += chunk; });
+      request.on('end', () => {
+        const path = new URL(request.url ?? '/', 'http://localhost').pathname;
+        response.setHeader('content-type', 'application/json');
+        let data: unknown;
+        if (path === CONNECTED_SERVICE_APPLIED_PARENT_SELECTION_PATH) {
+          data = JSON.parse(body);
+          authRequests.push(data);
+          response.statusCode = ConnectedServiceAppliedParentSelectionRequestSchema.safeParse(data).success ? 200 : 400;
+          data = { status: 'unavailable' };
+        } else if (path === '/v1/account/encryption/currentness') data = { mode: 'plain', version: 1, signingKeyFingerprint: null,
+          contentKeyFingerprint: null, updatedAt: 1, recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } };
+        else if (path === '/v2/sessions/lookup-by-tags') data = { sessions: [] };
+        else if (path === `/v2/sessions/${harness.session.sessionId}`) data = { session: rawSession() };
+        else if (path.includes('/messages/by-local-id/')) {
+          const requestedLocalId = decodeURIComponent(path.slice(path.lastIndexOf('/') + 1));
+          const message = transcript.find(row => row.localId === requestedLocalId);
+          if (!message) { response.statusCode = 404; data = { error: 'Message not found' }; }
+          else data = { message };
+        }
+        else if (path === `/v1/sessions/${harness.session.sessionId}/messages`) data = { messages: transcript };
+        else if (path === '/v1/account/settings') data = { settings: null, settingsVersion: 0 };
+        else if (path === '/session-activity-changed') data = { success: true };
+        // This transport fixture supplies exact HTTP facts, not a socket server
+        // or a parent Run store. Optional invalidation/origin reads are unavailable.
+        else if (path === '/v1/updates/' || path === '/v3/automations/runs/workflow-storage') {
+          response.statusCode = 404; data = { error: 'Not found' };
+        }
+        else if (path.startsWith('/session/')) data = { success: true };
+        else { unexpectedRequests.push(`${request.method} ${path}`); response.statusCode = 404; data = { error: 'Not found' }; }
+        response.end(JSON.stringify(data));
+      });
+    });
+    const privateHandlers = new Map<string, RpcHandler>();
+    registerPrivateSpawnSessionRpcHandlers({ rpcHandlerManager: { registerHandler: (method, handler) => { privateHandlers.set(method, handler); } },
+      spawnLifecycleHandler: createSpawnNewSessionLifecycleActionHandler({ spawnSession: async options => {
+        Object.assign(harness.opts, options);
+        runtimeRun = runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+        // Process readiness is observed, not fabricated before host startup.
+        await Promise.race([loopReady.promise, runtimeRun.then(() => { throw new Error('Runtime exited before readiness'); })]);
+        return { type: 'success', sessionId: harness.session.sessionId,
+          sessionCreationOutcome: { disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } };
+      } }) });
+    const rpc = vi.spyOn(machineRpcTransport, 'callMachineRpc').mockImplementation(async ({ method, request }) => {
+      const handler = privateHandlers.get(method);
+      if (!handler) throw new Error(`Unexpected Machine transport ${method}`);
+      return handler(request);
+    });
+    // The external Home enrollment carrier is not needed to exercise creation.
+    const auth = vi.spyOn(storedAuthTransport, 'validateStoredAuthTokenAgainstActiveServer').mockResolvedValue({ state: 'valid', httpStatus: 200 });
+    const admission: NonNullable<Parameters<typeof createProductionFreshWorkflowSessionConversation>[0]['machineAdmissionTransport']> = async request => {
+      if (request.content.t !== 'plain') throw new Error('Expected plain Account input');
+      inputLocalId = request.localId;
+      const message = { ...UserMessageSchema.parse(request.content.v), localId: request.localId };
+      transcript.push({ id: 'workflow-input', seq: 1, localId: request.localId, createdAt: Date.now(), updatedAt: Date.now(), content: request.content });
+      input.resolve(message);
+      if (!runtimeRun) throw new Error('Input admitted without a spawned runtime');
+      await runtimeRun;
+      return { status: 'accepted', localId: request.localId };
+    };
+    try {
+      await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected HTTP listener');
+      envScope.patch({ HAPPIER_HOME_DIR: directory });
+      reloadConfiguration();
+      writeDaemonState({ pid: process.pid, httpPort: address.port, startedAt: Date.now(), startedWithCliVersion: 'test', controlToken: 'test-token' });
+      const createFreshConversation = createProductionFreshWorkflowSessionConversation({ credentials, serverId: 'server-1',
+        machineId: 'machine-1', workDepth: 0, originRunId: 'workflow-composed-run', machineAdmissionTransport: admission });
+      const execute = createProductionWorkflowSessionStepExecutor({ credentials, machineId: 'machine-1', workDepth: 0, machineAdmissionTransport: admission,
+        createFreshConversation, resolveSharedRunConversation: async () => null, resolveProducerConversation: async () => null,
+        resolveExistingSessionConversation: async () => null });
+      const params = { runId: 'workflow-composed-run', invocationRecordId: 'workflow-composed-invocation',
+        step: { kind: 'step', id: 'agent', document: { text: 'Reply exactly QA_FIN21_REPLY.', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
+        invocation: { kind: 'happier.workflow-progress.v1', blockKind: 'step', invocationPath: { blockId: 'agent', scope: [] }, attempt: '0', logicalInvocationRecordId: 'workflow-composed-invocation' },
+        input: { text: 'Reply exactly QA_FIN21_REPLY.', references: [], attachments: [], values: [] },
+        execution: { conversation: { kind: 'fresh' }, agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+          connectedServices: { v: 2, bindingsByServiceId: {} } }, executionTarget: { kind: 'session' },
+        authorization: { admittedPermissionCeiling: 'default', principal: { kind: 'host' } },
+        workspace: { machineId: 'machine-1', directory, checkoutRootPath: directory }, beforeInputAdmission: async () => {},
+        onInputAccepted: async () => {} } satisfies Parameters<WorkflowStepExecutor>[0];
+      const result = await runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, () => execute(params));
+      expect(unexpectedRequests).toEqual([]);
+      expect(result, JSON.stringify(transcript)).toEqual({ kind: 'completed', result: 'QA_FIN21_REPLY' });
+      expect(authRequests).toEqual([expect.objectContaining({ agentId: 'claude', sessionId: harness.session.sessionId })]);
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]).toContain('Reply exactly QA_FIN21_REPLY.');
+      expect(completed).toBe(true);
+      expect(harness.session.observeProviderInputSettlement).toHaveBeenCalledWith(expect.objectContaining({ kind: 'accepted', localId: inputLocalId }));
+    } finally {
+      rpc.mockRestore(); auth.mockRestore();
+      await clearDaemonStateForTestTeardown(); envScope.restore(); reloadConfiguration();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('uses the admitted creation tag for server create-or-load instead of minting a random tag', async () => {
     const harness = createHarness();
+    // An Account-subject token reaches model-mutation scope admission during startup;
+    // the harness's opaque token otherwise skips that production path.
+    harness.opts.credentials = {
+      ...harness.opts.credentials,
+      token: `header.${Buffer.from(JSON.stringify({ sub: 'runtime-account' })).toString('base64url')}.signature`,
+    };
+    // Use the real permission queue owner so startup exercises live-work admission.
+    delete harness.deps.createPermissionModeQueueStateFn;
     const sessionCreationTag = 'create:v1:9Qf8pTqHIQxEYXv3sHohC0y7sD2pRqclZxY_V_GKcJ0';
     const initializeBackendRunSessionFn = vi.fn(harness.deps.initializeBackendRunSessionFn);
     harness.deps.initializeBackendRunSessionFn = initializeBackendRunSessionFn;
@@ -3336,7 +3686,6 @@ describe('runHostSessionRuntime', () => {
     }, null);
     harness.session.getMetadataSnapshot = () => ({
       path: '/tmp/workspace',
-      permissionMode: 'default',
       ...forkOverrides.metadata,
     });
     harness.config.sessionState = {
@@ -3415,10 +3764,7 @@ describe('runHostSessionRuntime', () => {
     harness.deps.createPermissionModeQueueStateFn = (params: any) => {
       currentPermissionMode = params.initialPermissionMode;
       return {
-        messageQueue: {
-          reset: () => undefined,
-          size: () => 0,
-        },
+        messageQueue: harness.queue,
         rebindSession: () => undefined,
         getCurrentPermissionMode: () => currentPermissionMode,
         setCurrentPermissionMode: (mode: PermissionMode | undefined) => {
@@ -3820,10 +4166,7 @@ describe('runHostSessionRuntime', () => {
     harness.deps.createPermissionModeQueueStateFn = (params: any) => {
       currentPermissionMode = params.initialPermissionMode;
       return {
-        messageQueue: {
-          reset: () => undefined,
-          size: () => 0,
-        },
+        messageQueue: harness.queue,
         rebindSession: () => undefined,
         getCurrentPermissionMode: () => currentPermissionMode,
         setCurrentPermissionMode: (mode: PermissionMode | undefined) => {
@@ -5647,6 +5990,58 @@ describe('runHostSessionRuntime', () => {
     expect(harness.session.close).toHaveBeenCalledOnce();
     expect(harness.session.endSessionAndClose).not.toHaveBeenCalled();
     expect(runSessionLoopLifecycleFn).not.toHaveBeenCalled();
+  });
+
+  it('preserves exact capture and conditional refusal through the registered live model RPC owner', async () => {
+    const harness = createHarness();
+    let swapSession: InitializeBackendRunSessionOptions['onSessionSwap'] | undefined;
+    const initialize = harness.deps.initializeBackendRunSessionFn;
+    harness.deps.initializeBackendRunSessionFn = async (options: InitializeBackendRunSessionOptions) => {
+      swapSession = options.onSessionSwap;
+      return await initialize(options);
+    };
+    const before = { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'old-model' };
+    harness.config.policyAgentId = 'claude';
+    harness.opts.credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'owner-account' })).toString('base64url')}.signature`, encryption: null };
+    harness.opts.modelSelection = { v: 1, updatedAt: 10, ref: before };
+    let metadata: Record<string, unknown> = { path: '/tmp/workspace', permissionMode: 'default',
+      modelSelectionIntentV1: { v: 1, updatedAt: 10, selection: before } };
+    // The Session fixture is the durable transport boundary; the host, actual
+    // authorizer, coordinator and metadata candidate remain real beneath it.
+    harness.session.getMetadataSnapshot = () => metadata;
+    harness.session.updateMetadata.mockImplementation(async (update: Record<string, unknown> | ((current: Record<string, unknown>) => Record<string, unknown>)) => {
+      metadata = typeof update === 'function' ? update(metadata) : update;
+    });
+    harness.runtime.updateSessionRuntimeConfig.mockImplementation(async () => ({ status: 'applied' as const }));
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      const transition = harness.handlers.get(SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION);
+      expect(transition).toBeTypeOf('function');
+      const next = { ...before, modelId: 'next-model' };
+      const applied = await transition?.({ v: 1, selection: next, captureBefore: true });
+      expect(applied).toMatchObject({ ok: true, reversal: { before, applied: next, scope: { accountId: 'owner-account', sessionId: 'session-1' } } });
+      if (!applied || typeof applied !== 'object' || !('reversal' in applied)) throw new Error('Expected exact owner receipt');
+      const reversal = SessionModelMutationReversalV1Schema.parse(applied.reversal);
+      if (reversal.owner !== 'active') throw new Error('Expected live owner receipt');
+      const expected = { owner: 'active' as const, scope: reversal.scope, runId: reversal.runId, selection: reversal.applied, updatedAt: reversal.updatedAt };
+      const incumbent = metadata;
+      expect(await transition?.({ v: 1, selection: before, expected: { ...expected, scope: { ...expected.scope, serverId: 'another-home' } } }))
+        .toMatchObject({ ok: false, status: 'superseded' });
+      expect(metadata).toBe(incumbent);
+      expect(await transition?.({ v: 1, selection: before, expected })).toMatchObject({ ok: true, activeSelection: before });
+      expect(metadata.modelSelectionIntentV1).toMatchObject({ selection: before });
+      const swapped = harness.createSessionFixture('session-2');
+      let swappedMetadata: Record<string, unknown> = { path: '/tmp/workspace', permissionMode: 'default',
+        modelSelectionIntentV1: { v: 1, updatedAt: 10, selection: before } };
+      swapped.session.getMetadataSnapshot = () => swappedMetadata;
+      swapped.session.updateMetadata.mockImplementation(async (update: Record<string, unknown> | ((current: Record<string, unknown>) => Record<string, unknown>)) => {
+        swappedMetadata = typeof update === 'function' ? update(swappedMetadata) : update;
+      });
+      await swapSession?.(swapped.session);
+      const swappedTransition = swapped.handlers.get(SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION);
+      expect(await swappedTransition?.({ v: 1, selection: next, captureBefore: true }))
+        .toMatchObject({ ok: true, reversal: { before, applied: next, scope: { accountId: 'owner-account', sessionId: 'session-2' } } });
+    };
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
   });
 
   it('classifies a spawn-only Agent native model change as restart-required before runtime effect', async () => {
@@ -7883,10 +8278,7 @@ describe('runHostSessionRuntime', () => {
     harness.deps.createPermissionModeQueueStateFn = (params: any) => {
       inFlightSteer = params.inFlightSteer;
       return {
-        messageQueue: {
-          reset: () => undefined,
-          size: () => 0,
-        },
+        messageQueue: harness.queue,
         rebindSession: () => undefined,
         getCurrentPermissionMode: () => 'default',
         setCurrentPermissionMode: () => undefined,
@@ -8734,10 +9126,7 @@ describe('runHostSessionRuntime', () => {
     const harness = createHarness();
     const rebindSession = vi.fn();
     harness.deps.createPermissionModeQueueStateFn = () => ({
-      messageQueue: {
-        reset: () => undefined,
-        size: () => 0,
-      },
+      messageQueue: harness.queue,
       rebindSession,
       getCurrentPermissionMode: () => 'default',
       setCurrentPermissionMode: () => undefined,
@@ -8912,7 +9301,7 @@ describe('runHostSessionRuntime', () => {
     harness.deps.createPermissionModeQueueStateFn = (params: any) => {
       observed = params.resolvePermissionModeQueueKey ?? null;
       return {
-        messageQueue: { reset: () => undefined, size: () => 0 },
+        messageQueue: harness.queue,
         rebindSession: () => undefined,
         getCurrentPermissionMode: () => 'default',
         setCurrentPermissionMode: () => undefined,

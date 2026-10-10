@@ -7,6 +7,7 @@ import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 import { spawnSleepyDetachedProcess, withConfiguredDaemonTestHome } from './testkit/fakeDaemonLifecycle.testkit';
 import { readProcessIdentityByPid } from './processIdentity';
 import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
+import { reserveEphemeralPort } from '@/testkit/http/portUtils';
 
 describe.sequential('daemon control client PID safety', () => {
   let envScope = createEnvKeyScope([
@@ -201,13 +202,14 @@ describe.sequential('daemon control client PID safety', () => {
       ]);
 
       // Exactly the observed precondition: state and lock both still name the dead daemon
-      // (nothing cleans them up, because the refusal happens before cleanup), and the HTTP
-      // port is dead so the graceful stop falls through to the force path.
+      // and its real control listener is closed. A forbidden fetch port would prove neither
+      // control absence nor completed retirement of an otherwise hidden daemon.
+      const closedControlPort = await reserveEphemeralPort();
       writeFileSync(
         configuration.daemonStateFile,
         JSON.stringify({
           pid: exitedPid,
-          httpPort: 1,
+          httpPort: closedControlPort,
           startedAt: Date.now(),
           startedWithCliVersion: '0.0.0-test',
           controlToken: 'token-123',
@@ -216,17 +218,11 @@ describe.sequential('daemon control client PID safety', () => {
       );
       writeFileSync(
         configuration.daemonLockFile,
-        JSON.stringify({
-          t: 'happier_daemon_lock_v1',
-          pid: exitedPid,
-          ownerToken: '00000000-0000-4000-8000-000000000123',
-          processStartedAtMs: Date.now() - 60_000,
-          createdAtMs: Date.now() - 60_000,
-        }),
+        String(exitedPid),
         'utf-8',
       );
 
-      await expect(stopDaemon()).resolves.toMatchObject({ status: 'stopped' });
+      await expect(stopDaemon()).resolves.toMatchObject({ status: 'not_running' });
     } finally {
       removeTempDirSync(homeDir);
     }

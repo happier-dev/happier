@@ -46,7 +46,10 @@ import {
   type ExecutionRunProfileContributionCatalog,
 } from '@/agent/executionRuns/profiles/intentRegistry';
 import { createExecutionRunBridgeRuntime } from './createExecutionRunBridgeRuntime';
-import type { ExecutionRunTeamCredentialProviderBindingPreparer } from './runtime/providerLaunch';
+import { admitExecutionRunInheritedProviderSelection, type ExecutionRunTeamCredentialProviderBindingPreparer } from './runtime/providerLaunch';
+import type { ExecutionRunManagedProviderEndpointPreparer } from './runtime/managedProvider';
+import type { ResolveManagedProviderPurposeBindingIntent } from '@/providers/managed/resolvePurposeBindingSnapshot';
+import type { ProviderRuntimeModelProjectionReader } from '@/providers/spawn/runtimeCatalog';
 import type { ExecutionRunConnectedServicesSelectionReport } from './runtime/create';
 import { withExecutionRunHostRuntimeCleanup } from './hostRuntime/cleanup';
 import {
@@ -95,7 +98,7 @@ import type { ExecutionRunTranscriptPublisher } from './executionRunTranscriptPu
 import type { ExecutionRunSessionStateTarget } from './sessionStateDelivery';
 import { enqueueExecutionRunMarkerWrite, writeExecutionRunActivityMarker } from './activityMarkers';
 import type { ExecutionRunHostBridgeContract } from './executionRunBridgeContract';
-import { matchesExecutionRunLegacyBackendId } from './backendTargets';
+import { matchesExecutionRunLegacyBackendId, resolveExecutionRunRuntimeBackendId } from './backendTargets';
 import {
   readExecutionRunPermissionResponseApprovedFromDispatch,
   observeExecutionRunPermissionStore,
@@ -305,6 +308,9 @@ export type ExecutionRunHostBridgeOptions = Readonly<{
   budgetRegistry?: ExecutionBudgetRegistry;
   getPermissionRequestStore?: ExecutionRunPermissionRequestStoreProvider | null;
   resolveAccountSettings?: () => Promise<Record<string, unknown> | null> | Record<string, unknown> | null;
+  resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
+  readModelProjection?: ProviderRuntimeModelProjectionReader;
+  prepareManagedEndpoint?: ExecutionRunManagedProviderEndpointPreparer;
   resolveVoicePromptPreparation?: (args: Readonly<{
     settings?: unknown;
     profileId?: string | null;
@@ -380,6 +386,9 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   private readonly resolveProvidersFeatureEnabled: ExecutionRunHostBridgeOptions['resolveProvidersFeatureEnabled'];
   private readonly resolveAccountSettingsSnapshot: ExecutionRunHostBridgeOptions['resolveAccountSettingsSnapshot'];
   private readonly resolveAccountSettings: ExecutionRunHostBridgeOptions['resolveAccountSettings'];
+  private readonly resolveManagedPurposeBindingIntent: ExecutionRunHostBridgeOptions['resolveManagedPurposeBindingIntent'];
+  private readonly readModelProjection: ExecutionRunHostBridgeOptions['readModelProjection'];
+  private readonly prepareManagedEndpoint: ExecutionRunHostBridgeOptions['prepareManagedEndpoint'];
   /** Rebuildable projection of the marker owner's retained terminal completions. Taking never consumes. */
   private readonly workerUpdates = new Map<string, RetainedExecutionRunWorkerUpdate>();
   private readonly workerUpdateWaiters = new Set<(sessionId: string) => void>();
@@ -429,6 +438,14 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     if (run.status !== 'running') return deny('terminal');
     const controller = this.controllers.get(run.runId);
     if (!controller || controller.cancelled) return deny('runtime_unavailable');
+    if (request.expectedProviderConnectionModel) {
+      const expected = request.expectedProviderConnectionModel;
+      const accepted = run.launch?.modelSelection;
+      if (!accepted || run.backendId !== expected.agentId
+        || accepted.agentTargetKey !== expected.agentTargetKey
+        || accepted.providerConnectionId !== expected.providerConnectionId
+        || accepted.modelId !== expected.modelId) return deny('identity_mismatch');
+    }
     // The Run's own accepted provider-model selection; null when it selected
     // nothing and inherits its parent Session's. One derivation serves the
     // direct-material expectation below and the broker attestation returned.
@@ -952,6 +969,9 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     this.resolveProvidersFeatureEnabled = opts.resolveProvidersFeatureEnabled;
     this.resolveAccountSettingsSnapshot = opts.resolveAccountSettingsSnapshot;
     this.resolveAccountSettings = opts.resolveAccountSettings;
+    this.resolveManagedPurposeBindingIntent = opts.resolveManagedPurposeBindingIntent;
+    this.readModelProjection = opts.readModelProjection;
+    this.prepareManagedEndpoint = opts.prepareManagedEndpoint;
     this.onPublicStateUpdated = typeof opts.onPublicStateUpdated === 'function' ? opts.onPublicStateUpdated : null;
     this.onVoiceAgentWelcomed = typeof opts.onVoiceAgentWelcomed === 'function' ? opts.onVoiceAgentWelcomed : null;
     this.executionRunProfileCatalog = opts.executionRunProfileCatalog ?? buildExecutionRunProfileCatalog();
@@ -1242,6 +1262,24 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       ...(this.resolveAccountSettingsSnapshot
         ? { resolveAccountSettingsSnapshot: this.resolveAccountSettingsSnapshot }
         : {}),
+      ...(this.resolveManagedPurposeBindingIntent ? { resolveManagedPurposeBindingIntent: this.resolveManagedPurposeBindingIntent } : {}),
+      ...(this.readModelProjection ? { readModelProjection: this.readModelProjection } : {}),
+      ...(this.prepareManagedEndpoint ? { prepareManagedEndpoint: async (input) => {
+        const runId = opts.runId;
+        const controller = runId ? this.controllers.get(runId) : null;
+        if (!runId || !controller || controller.kind !== 'backend'
+          || controller.controllerOccurrenceId !== opts.controllerOccurrenceId) {
+          throw Object.assign(new Error('provider_authorization_changed'), { code: 'provider_authorization_changed' });
+        }
+        const signal = controller.backend.getRuntimeLifetimeSignal();
+        const isCurrent = () => !signal.aborted && this.runs.get(runId)?.status === 'running'
+          && isExecutionRunControllerCurrent({ runId, controller, controllers: this.controllers });
+        if (!isCurrent()) throw Object.assign(new Error('provider_authorization_changed'), { code: 'provider_authorization_changed' });
+        const acceptedRun = this.runs.get(runId);
+        if (!acceptedRun) throw Object.assign(new Error('provider_authorization_changed'), { code: 'provider_authorization_changed' });
+        return await this.prepareManagedEndpoint!({ ...input, agentId: acceptedRun.backendId,
+          executionRunOccurrenceId: controller.controllerOccurrenceId, signal, isCurrent });
+      } } : {}),
     });
     // Preserve runtime accessors (notably dynamic permission capabilities).
     return Object.create(runtime, {
@@ -1794,6 +1832,26 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       const started = await startExecutionRun({
         admitStart: this.admitStart,
         params: preparedParams,
+        childSelectionContext: {
+          lifecycle: preparedParams.sessionId === null || preparedParams.workflowRunId ? 'independent' : 'attached',
+          readAppliedParentSelection: this.sessionInteractionHost?.readAppliedChildSelection,
+        },
+        admitInheritedProviderSelection: async (selection, runId) => {
+          if (!selection.modelSelection) return;
+          await admitExecutionRunInheritedProviderSelection({
+            selection: selection.modelSelection,
+            backendTarget: preparedParams.backendTarget,
+            agentId: resolveExecutionRunRuntimeBackendId(preparedParams.backendTarget),
+            runId,
+            ...(this.machineId ? { machineId: this.machineId } : {}),
+            connectedServices: selection.connectedServices,
+            featureEnabled: await this.resolveProvidersFeatureEnabled?.() ?? false,
+            happyHomeDir: this.happyHomeDir ?? configuration.happyHomeDir,
+            accountSettingsSnapshot: await this.resolveAccountSettingsSnapshot?.() ?? null,
+            ...(this.resolveManagedPurposeBindingIntent ? { resolveManagedPurposeBindingIntent: this.resolveManagedPurposeBindingIntent } : {}),
+            ...(this.readModelProjection ? { readModelProjection: this.readModelProjection } : {}),
+          });
+        },
         profileCatalog: resolution.profileCatalog,
         ...(resolution.engineRegistry
           ? { contributions: resolution.engineRegistry.contributions }
@@ -2395,7 +2453,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     resume?: boolean;
     causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
   }>): Promise<
-    | { ok: true; runId: string; created: boolean }
+    | { ok: true; runId: string; created: false }
+    | (ExecutionRunStartResult & { ok: true; created: true })
     | { ok: false; errorCode?: string; error: string }
   > {
     const runId = typeof params.runId === 'string' ? params.runId.trim() : '';
@@ -2412,7 +2471,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
 
     if (!params.start) return { ok: false, error: 'Missing start params', errorCode: 'execution_run_invalid_action_input' };
     const started = await this.start(params.start);
-    return { ok: true, runId: started.runId, created: true };
+    return { ok: true, ...started, created: true };
   }
 
   async startTurnStream(

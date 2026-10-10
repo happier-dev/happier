@@ -1,5 +1,6 @@
 import type { StoredCredentials } from '@/persistence';
-import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
+import { updateSessionMetadataWithRetry, verifySessionMetadataMutationCurrentness,
+    type SessionMetadataMutationCurrentness } from '@/session/metadata/updateSessionMetadataWithRetry';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import type { TerminalMode } from '@/terminal/runtime/terminalConfig';
 
@@ -12,7 +13,9 @@ export async function retireExactTerminalControlServiceability(params: Readonly<
     sessionId: string;
     attachmentId: string;
     terminalMode: TerminalMode;
+    currentness?: SessionMetadataMutationCurrentness;
 }>): Promise<ExactTerminalControlServiceabilityRetirement> {
+    await verifySessionMetadataMutationCurrentness(params.currentness);
     const rawSession = await fetchSessionByIdCompat({
         token: params.credentials.token,
         sessionId: params.sessionId,
@@ -25,6 +28,7 @@ export async function retireExactTerminalControlServiceability(params: Readonly<
         credentials: params.credentials,
         sessionId: params.sessionId,
         rawSession,
+        currentness: params.currentness,
         updater: (metadata) => clearTerminalControlServiceabilityProjection({
             metadata,
             retiredAttachmentId: params.attachmentId,

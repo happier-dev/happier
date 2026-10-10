@@ -54,6 +54,12 @@ export function createSessionProviderInputConsumerSessionAdapter(
       ? { materializeNextPendingMessageSafely: (materializeOpts) => materializeNextPendingMessageSafely.call(session, materializeOpts) }
       : {}),
     getMetadataSnapshot: () => session.getMetadataSnapshot(),
+    getPendingQueueState: () => session.getPendingQueueState(),
+    readPendingQueueStateForLiveWork: async () => {
+      await session.refreshSessionSnapshotFromServerRequired({ reason: 'explicit-drain' });
+      if (!await session.reconcilePendingProviderInputCustodyBeforeMaterialization()) return { known: false };
+      return session.getPendingQueueState();
+    },
     shouldAttemptPendingMaterialization: () =>
       session.shouldAttemptPendingMaterialization?.() ?? true,
     hasPendingProviderInput: () => {
@@ -67,7 +73,7 @@ export function createSessionProviderInputConsumerSessionAdapter(
         }
       : {}),
     reconcilePendingQueueState: async (reconcileOpts) => {
-      await session.reconcilePendingQueueState?.(reconcileOpts);
+      return await session.reconcilePendingQueueState?.(reconcileOpts);
     },
   };
 }

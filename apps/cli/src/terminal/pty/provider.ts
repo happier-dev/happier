@@ -6,9 +6,11 @@ import { basename, dirname, join } from 'node:path';
 import { isEmbeddedBunBundlePath } from '@/packagedRuntime/js/isEmbeddedBunBundlePath';
 import { logger } from '@/ui/logger';
 import { isBun } from '@/utils/runtime';
+import type { ProcessCustodySpawnSpec, resolveProcessCustodyRuntimeExecutable } from '@/subprocess/supervision/processCustody';
 import { createNodePtyRelayProvider } from './nodeRelay';
 import { createUtf8StreamDecoder } from './decode';
 import { createPythonPtyRelayProvider } from './pythonRelay';
+import { withWindowsFiniteCustody } from './windowsCustody';
 
 export type Disposable = Readonly<{ dispose: () => void }>;
 
@@ -36,6 +38,11 @@ export type PtyProcess = Readonly<{
    * `0`, and the owner skips registration rather than registering a bogus pid.
    */
   pid: number;
+  /** Positive POSIX group custody from forkpty/setsid, never a relay PID guess.
+   * Null or missing evidence cannot prove finite tree settlement. */
+  ownedProcessGroupId?: number | null;
+  /** Private, exact native Job custody; establishment is never inferred from a carrier PID. */
+  windowsJobCustody?: ProcessCustodySpawnSpec & Readonly<{ established: Promise<Readonly<{ pid: number }> | null> }>;
   write: (data: string) => void;
   resize: (cols: number, rows: number) => void;
   kill: (signal?: string) => void;
@@ -48,6 +55,8 @@ export type PtySpawnParams = Readonly<{
   file: string;
   args: string[] | string;
   options: PtyForkOptions;
+  /** Finite launch classification from the incumbent process owner, not a public terminal input. */
+  finiteProcess?: true;
 }>;
 
 export type PtyProvider = Readonly<{
@@ -369,7 +378,7 @@ function installWindowsNativePtyErrorGuard(
   return pty;
 }
 
-function wrapPtyProcess(process: NativePtyProcess): PtyProcess {
+function wrapPtyProcess(process: NativePtyProcess, platform: NodeJS.Platform): PtyProcess {
   const write = process.write.bind(process);
   const resize = process.resize.bind(process);
   const kill = process.kill.bind(process);
@@ -379,6 +388,10 @@ function wrapPtyProcess(process: NativePtyProcess): PtyProcess {
 
   return {
     pid: typeof process.pid === 'number' && Number.isInteger(process.pid) && process.pid > 0 ? process.pid : 0,
+    // Native POSIX backends use forkpty or POSIX_SPAWN_SETSID. Windows finite
+    // launches obtain their distinct Job witness at the shared launch adapter.
+    ownedProcessGroupId: platform !== 'win32' && Number.isInteger(process.pid)
+      && process.pid > 1 && process.pid <= 2_147_483_647 ? process.pid : null,
     write,
     resize,
     kill,
@@ -410,6 +423,7 @@ export function createNodePtyProvider(params?: Readonly<{
   fallbackBackendName?: string | null;
   argv?: readonly string[];
   currentExecPath?: string;
+  resolveProcessCustodyRuntimeExecutable?: typeof resolveProcessCustodyRuntimeExecutable;
 }>): PtyProvider {
   const platform = params?.platform ?? process.platform;
   const currentExecPath = params?.currentExecPath ?? process.execPath;
@@ -482,7 +496,7 @@ export function createNodePtyProvider(params?: Readonly<{
   let loggedNativeFailureFallback = false;
   let loggedSecondaryNativeFallback = false;
 
-  return {
+  return withWindowsFiniteCustody({
     spawn: (params) => {
       let lastError: unknown = null;
       if (!preferred) {
@@ -501,7 +515,7 @@ export function createNodePtyProvider(params?: Readonly<{
         return wrapPtyProcess(installWindowsNativePtyErrorGuard(
           preferred.module.spawn(params.file, params.args, params.options) as unknown as NativePtyProcess,
           { platform, backendName: preferred.id },
-        ));
+        ), platform);
       } catch (e) {
         lastError = e;
         if (fallback) {
@@ -517,7 +531,7 @@ export function createNodePtyProvider(params?: Readonly<{
             return wrapPtyProcess(installWindowsNativePtyErrorGuard(
               fallback.module.spawn(params.file, params.args, params.options) as unknown as NativePtyProcess,
               { platform, backendName: fallback.id },
-            ));
+            ), platform);
           } catch (fallbackError) {
             lastError = fallbackError;
           }
@@ -536,5 +550,5 @@ export function createNodePtyProvider(params?: Readonly<{
         throw lastError;
       }
     },
-  };
+  }, { platform, resolveProcessCustodyRuntimeExecutable: params?.resolveProcessCustodyRuntimeExecutable });
 }

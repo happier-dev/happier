@@ -1,5 +1,5 @@
 import { MUTAGEN_ENGINE_VERSION } from '@happier-dev/cli-common/firstPartyRuntime';
-import { AccountSettingsSchema } from '@happier-dev/protocol';
+import type { ActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import { access, mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -52,28 +52,19 @@ function session(overrides: Readonly<Record<string, unknown>> = {}) {
 
 function snapshot(
   relationships = [relationship],
-  rawRelationships: unknown = relationships,
-  settingsVersion = 1,
-) {
+  graphRevision: number | 'absent' = 1,
+): ActiveProjectAccountRowsSnapshot {
   return {
     source: 'network' as const,
-    settings: AccountSettingsSchema.parse({
-      workspaceRefsV1: [
+    workspaceRefs: [
         { id: 'alpha-ref', serverId: 'server-1', machineId: 'machine-1', rootPath: '/canonical/alpha', createdAtMs: 1 },
         { id: 'beta-ref', serverId: 'server-1', machineId: 'machine-2', rootPath: '/canonical/beta', createdAtMs: 1 },
-      ],
-      workspaceSyncRelationshipsV1: relationships,
-    }),
-    rawSettings: {
-      workspaceRefsV1: [
-        { id: 'alpha-ref', serverId: 'server-1', machineId: 'machine-1', rootPath: '/canonical/alpha', createdAtMs: 1 },
-        { id: 'beta-ref', serverId: 'server-1', machineId: 'machine-2', rootPath: '/canonical/beta', createdAtMs: 1 },
-      ],
-      workspaceSyncRelationshipsV1: rawRelationships,
-    },
-    settingsVersion,
+    ],
+    relationships,
+    graphRevision,
+    organizations: [],
+    rows: [],
     loadedAtMs: 1,
-    settingsSecretsReadKeys: [],
     scopeKey: 'account-1',
   };
 }
@@ -86,6 +77,7 @@ function boundaries(options: Readonly<{
   let remainingArtifactFailures = options.artifactFailureCount ?? (options.artifactFailure ? Number.POSITIVE_INFINITY : 0);
   let activeRelationships = false;
   let relationshipPaused = false;
+  let currentProjectSnapshot: ActiveProjectAccountRowsSnapshot | null = snapshot([]);
   let listener: ((previous: ReturnType<typeof snapshot> | null, next: ReturnType<typeof snapshot> | null) => void) | undefined;
   let terminateActiveSidecar: ((event: { type: 'exited'; code: number }) => void) | null = null;
   const command = vi.fn(async (input: Readonly<{ t: string }>) => {
@@ -143,7 +135,7 @@ function boundaries(options: Readonly<{
     return { currentPath: '/installed/current', resolvedCurrentPath: '/installed/version' } as any;
   });
   const resolveDataLayout = vi.fn(() => ({ rootDir: '/daemon/workspace-sync/mutagen', dataDir: '/daemon/workspace-sync/mutagen/data', brokerDir: '/daemon/workspace-sync/mutagen/broker' }));
-  const unsubscribeSettings = vi.fn();
+  const unsubscribeProjects = vi.fn();
   const prepareRelationshipTarget = vi.fn(async () => undefined);
   return {
     deps: {
@@ -154,6 +146,7 @@ function boundaries(options: Readonly<{
       rootOwnershipManager: {
         tryAcquire: vi.fn(async (owner) => ({
           owner: { ...owner, rootFingerprint: null },
+          assertCurrentRootIdentity: async () => undefined,
           bindCurrentRootIdentity: async () => undefined,
           renew: async () => undefined,
           release: async () => undefined,
@@ -169,13 +162,23 @@ function boundaries(options: Readonly<{
       }),
       ensurePrivateDirectory: vi.fn(async () => undefined),
       randomBytes: () => new Uint8Array(32).fill(7), randomId: () => 'opaque-id',
-      getSettingsSnapshot: () => null,
-      subscribeSettingsSnapshot: (nextListener: typeof listener) => { listener = nextListener; return unsubscribeSettings; },
+      getProjectSnapshot: () => currentProjectSnapshot,
+      subscribeProjectSnapshot: (nextListener: typeof listener) => { listener = nextListener; return unsubscribeProjects; },
       resolveInstalledComponentPaths, ensureInstalledComponent, resolveArtifactPaths, assertArtifactPayload, resolveDataLayout,
     } satisfies DaemonWorkspaceSyncRuntimeDependencies,
-    activateRelationships: () => { activeRelationships = true; relationshipPaused = false; listener?.(null, snapshot()); },
-    publishSnapshot: (next: ReturnType<typeof snapshot>) => { listener?.(null, next); },
-    command, closeBroker, stopSidecar, spawnSidecar, createBroker, unsubscribeSettings,
+    activateRelationships: () => {
+      activeRelationships = true;
+      relationshipPaused = false;
+      const previous = currentProjectSnapshot;
+      currentProjectSnapshot = snapshot();
+      listener?.(previous, currentProjectSnapshot);
+    },
+    publishSnapshot: (next: ReturnType<typeof snapshot> | null) => {
+      const previous = currentProjectSnapshot;
+      currentProjectSnapshot = next;
+      listener?.(previous, next);
+    },
+    command, closeBroker, stopSidecar, spawnSidecar, createBroker, unsubscribeProjects,
     resolveInstalledComponentPaths, ensureInstalledComponent, resolveArtifactPaths, assertArtifactPayload, resolveDataLayout,
     readFileAtTarget, brokerBootstrapDescriptor,
     prepareRelationshipTarget,
@@ -183,6 +186,48 @@ function boundaries(options: Readonly<{
 }
 
 describe('createDaemonWorkspaceSyncRuntime', () => {
+  it('reconciles an authoritative empty Project snapshot before the graph row exists', async () => {
+    const harness = boundaries();
+    const runtime = createDaemonWorkspaceSyncRuntime({
+      ...harness.deps,
+      getProjectSnapshot: () => snapshot([], 'absent'),
+    });
+    await runtime.start();
+    await runtime.whenProjectsSettled({ graphRevision: 'absent', scopeKey: 'account-1' });
+    expect(harness.command).not.toHaveBeenCalledWith(expect.objectContaining({ t: 'create' }), expect.anything());
+    await runtime.stop();
+  });
+
+  it('refuses an unavailable Project snapshot before starting the engine', async () => {
+    const harness = boundaries();
+    const runtime = createDaemonWorkspaceSyncRuntime({
+      ...harness.deps,
+      getProjectSnapshot: () => null,
+    });
+    await expect(runtime.start()).rejects.toMatchObject({ code: 'project_account_rows_unavailable' });
+    expect(harness.spawnSidecar).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
+  it('preserves accepted relationships while the Project snapshot is unavailable', async () => {
+    const harness = boundaries();
+    const runtime = createDaemonWorkspaceSyncRuntime(harness.deps);
+    await runtime.start();
+    harness.activateRelationships();
+    await runtime.whenProjectsSettled();
+    harness.command.mockClear();
+
+    harness.publishSnapshot(null);
+    await expect(runtime.whenProjectsSettled()).rejects.toMatchObject({ code: 'project_account_rows_unavailable' });
+    await expect(runtime.whenProjectsSettled({ graphRevision: 1, scopeKey: 'account-1' }))
+      .rejects.toMatchObject({ code: 'project_account_rows_unavailable' });
+    expect(harness.command).not.toHaveBeenCalledWith(expect.objectContaining({ t: 'terminate' }), expect.anything());
+    await expect(runtime.managedWorkspaceSync.get(relationship.relationshipId)).resolves.toMatchObject({
+      relationshipId: relationship.relationshipId,
+    });
+    await runtime.stop();
+  });
+
   it('applies the canonical protected ACL after creating both Windows runtime directories', async () => {
     const harness = boundaries();
     const root = await mkdtemp(join(tmpdir(), 'workspace-sync-private-windows-'));
@@ -268,44 +313,44 @@ describe('createDaemonWorkspaceSyncRuntime', () => {
     }
   });
 
-  it('terminates disabled settings relationships, recreates them on enable, and terminates them on removal', async () => {
+  it('terminates disabled Project relationships, recreates them on enable, and terminates them on removal', async () => {
     const harness = boundaries();
     const runtime = createDaemonWorkspaceSyncRuntime(harness.deps);
     await runtime.start();
     harness.activateRelationships();
-    await runtime.whenSettingsSettled();
+    await runtime.whenProjectsSettled();
     harness.command.mockClear();
 
-    harness.publishSnapshot(snapshot([{ ...relationship, enabled: false, updatedAtMs: 2 }], undefined, 2));
-    await runtime.whenSettingsSettled({ settingsVersion: 2, scopeKey: 'account-1' });
+    harness.publishSnapshot(snapshot([{ ...relationship, enabled: false, updatedAtMs: 2 }], 2));
+    await runtime.whenProjectsSettled({ graphRevision: 2, scopeKey: 'account-1' });
     expect(harness.command).toHaveBeenCalledWith(expect.objectContaining({ t: 'terminate' }), undefined);
     await expect(runtime.managedWorkspaceSync.get(relationship.relationshipId)).resolves.toBeNull();
 
     harness.command.mockClear();
-    harness.publishSnapshot(snapshot([{ ...relationship, updatedAtMs: 3 }], undefined, 3));
-    await runtime.whenSettingsSettled({ settingsVersion: 3, scopeKey: 'account-1' });
+    harness.publishSnapshot(snapshot([{ ...relationship, updatedAtMs: 3 }], 3));
+    await runtime.whenProjectsSettled({ graphRevision: 3, scopeKey: 'account-1' });
     expect(harness.command).toHaveBeenCalledWith(expect.objectContaining({ t: 'create' }), undefined);
     expect(harness.command).toHaveBeenCalledWith(expect.objectContaining({ t: 'resume' }), undefined);
 
     harness.command.mockClear();
-    harness.publishSnapshot(snapshot([], undefined, 4));
-    await runtime.whenSettingsSettled({ settingsVersion: 4, scopeKey: 'account-1' });
+    harness.publishSnapshot(snapshot([], 4));
+    await runtime.whenProjectsSettled({ graphRevision: 4, scopeKey: 'account-1' });
     expect(harness.command).toHaveBeenCalledWith(expect.objectContaining({ t: 'terminate' }), undefined);
     await runtime.stop();
   });
 
-  it('waits for the requested settings version even when its subscription callback is queued later', async () => {
+  it('waits for the requested graph revision even when its subscription callback is queued later', async () => {
     const harness = boundaries();
     const runtime = createDaemonWorkspaceSyncRuntime(harness.deps);
     await runtime.start();
 
     let settled = false;
-    const waiting = runtime.whenSettingsSettled({ settingsVersion: 2, scopeKey: 'account-1' })
+    const waiting = runtime.whenProjectsSettled({ graphRevision: 2, scopeKey: 'account-1' })
       .then(() => { settled = true; });
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(settled).toBe(false);
 
-    harness.publishSnapshot(snapshot([], undefined, 2));
+    harness.publishSnapshot(snapshot([], 2));
     await waiting;
     expect(settled).toBe(true);
     await runtime.stop();
@@ -313,10 +358,10 @@ describe('createDaemonWorkspaceSyncRuntime', () => {
 
   it('does not recreate a missing session for a disabled restart record', async () => {
     const harness = boundaries();
-    const disabledSnapshot = snapshot([{ ...relationship, enabled: false, updatedAtMs: 2 }], undefined, 2);
+    const disabledSnapshot = snapshot([{ ...relationship, enabled: false, updatedAtMs: 2 }], 2);
     const runtime = createDaemonWorkspaceSyncRuntime({
       ...harness.deps,
-      getSettingsSnapshot: () => disabledSnapshot,
+      getProjectSnapshot: () => disabledSnapshot,
     });
 
     await runtime.start();
@@ -326,7 +371,7 @@ describe('createDaemonWorkspaceSyncRuntime', () => {
     await runtime.stop();
   });
 
-  it('composes one shared lifecycle/controller/adapter, applies settings updates, and stops once', async () => {
+  it('composes one shared lifecycle/controller/adapter, applies Project row updates, and stops once', async () => {
     const harness = boundaries();
     const runtime = createDaemonWorkspaceSyncRuntime(harness.deps);
 
@@ -340,14 +385,14 @@ describe('createDaemonWorkspaceSyncRuntime', () => {
     });
     expect(harness.spawnSidecar.mock.calls[0]?.[0].environment).toBeUndefined();
     harness.activateRelationships();
-    await runtime.whenSettingsSettled();
+    await runtime.whenProjectsSettled();
     expect(harness.prepareRelationshipTarget).toHaveBeenCalledWith(relationship, undefined);
     expect(await runtime.managedWorkspaceSync.get(relationship.relationshipId)).toMatchObject({ relationshipId: relationship.relationshipId });
 
     await Promise.all([runtime.stop(), runtime.stop()]);
     expect(harness.stopSidecar).not.toHaveBeenCalled();
     expect(harness.closeBroker).toHaveBeenCalledTimes(1);
-    expect(harness.unsubscribeSettings).toHaveBeenCalledTimes(1);
+    expect(harness.unsubscribeProjects).toHaveBeenCalledTimes(1);
   });
 
   it('keeps admission closed but retries a failed runtime cleanup on a later stop', async () => {
@@ -395,6 +440,7 @@ describe('createDaemonWorkspaceSyncRuntime', () => {
       releases.set(request.canonicalRoot, release);
       const handle = Object.freeze({
         owner: { ...request, rootFingerprint: null as null },
+        assertCurrentRootIdentity: async () => undefined,
         bindCurrentRootIdentity: async () => undefined,
         release,
       });
@@ -424,7 +470,7 @@ describe('createDaemonWorkspaceSyncRuntime', () => {
 
     await runtime.start();
     harness.activateRelationships();
-    await runtime.whenSettingsSettled();
+    await runtime.whenProjectsSettled();
 
     expect(tryAcquire.mock.calls.map(([request]) => [request.canonicalRoot, request.operation])).toEqual([
       ['/canonical/alpha', 'sync'],
@@ -457,31 +503,8 @@ describe('createDaemonWorkspaceSyncRuntime', () => {
     expect(harness.command.mock.calls).toHaveLength(commandsBeforeUpdate);
 
     releaseTarget();
-    await runtime.whenSettingsSettled();
+    await runtime.whenProjectsSettled();
     expect(harness.command.mock.calls.length).toBeGreaterThan(commandsBeforeUpdate);
-    await runtime.stop();
-  });
-
-  it('preserves the last-known-good relationships when the raw settings field is malformed', async () => {
-    const harness = boundaries();
-    const runtime = createDaemonWorkspaceSyncRuntime(harness.deps);
-    await runtime.start();
-    harness.activateRelationships();
-    await runtime.whenSettingsSettled();
-    harness.command.mockClear();
-
-    harness.publishSnapshot(snapshot([], [{ ...relationship, mode: 'unsupported-mode' }]));
-
-    await expect(runtime.whenSettingsSettled()).rejects.toMatchObject({
-      code: 'workspace_sync_settings_invalid',
-    });
-    expect(harness.command).not.toHaveBeenCalledWith(
-      expect.objectContaining({ t: 'terminate' }),
-      expect.anything(),
-    );
-    await expect(runtime.managedWorkspaceSync.get(relationship.relationshipId)).resolves.toMatchObject({
-      relationshipId: relationship.relationshipId,
-    });
     await runtime.stop();
   });
 
@@ -500,7 +523,7 @@ describe('createDaemonWorkspaceSyncRuntime', () => {
     expect(harness.createBroker).not.toHaveBeenCalled();
     expect(harness.spawnSidecar).not.toHaveBeenCalled();
     await runtime.stop();
-    expect(harness.unsubscribeSettings).toHaveBeenCalledTimes(1);
+    expect(harness.unsubscribeProjects).toHaveBeenCalledTimes(1);
   });
 
   it('acquires and validates a transiently missing artifact before starting', async () => {
@@ -518,7 +541,7 @@ describe('createDaemonWorkspaceSyncRuntime', () => {
     }));
 
     await runtime.stop();
-    expect(harness.unsubscribeSettings).toHaveBeenCalledTimes(1);
+    expect(harness.unsubscribeProjects).toHaveBeenCalledTimes(1);
   });
 
   it('closes a partial broker start while retaining the one recoverable settings subscription', async () => {
@@ -528,9 +551,9 @@ describe('createDaemonWorkspaceSyncRuntime', () => {
     await expect(runtime.start()).rejects.toMatchObject({ code: 'engine_unavailable' });
     expect(harness.createBroker).toHaveBeenCalledTimes(1);
     expect(harness.closeBroker).toHaveBeenCalledTimes(1);
-    expect(harness.unsubscribeSettings).not.toHaveBeenCalled();
+    expect(harness.unsubscribeProjects).not.toHaveBeenCalled();
     await runtime.stop();
-    expect(harness.unsubscribeSettings).toHaveBeenCalledTimes(1);
+    expect(harness.unsubscribeProjects).toHaveBeenCalledTimes(1);
   });
 
   it('reconciles the current settings through the controller after a supervised sidecar restart', async () => {
@@ -586,7 +609,7 @@ describe('createDaemonWorkspaceSyncRuntime', () => {
     });
     const runtime = createDaemonWorkspaceSyncRuntime({
       ...harness.deps,
-      getSettingsSnapshot: () => currentSnapshot,
+      getProjectSnapshot: () => currentSnapshot,
       spawnSidecar,
       createBroker,
     });
@@ -601,7 +624,7 @@ describe('createDaemonWorkspaceSyncRuntime', () => {
       exits[0]?.({ type: 'exited', code: 1 });
       currentSnapshot = snapshot();
       harness.activateRelationships();
-      const settingsSettled = runtime.whenSettingsSettled();
+      const settingsSettled = runtime.whenProjectsSettled();
       await vi.advanceTimersByTimeAsync(20_000);
 
       expect(spawnSidecar).toHaveBeenCalledTimes(2);
@@ -630,7 +653,7 @@ describe('createDaemonWorkspaceSyncRuntime', () => {
       });
       await runtime.start();
       harness.activateRelationships();
-      await runtime.whenSettingsSettled();
+      await runtime.whenProjectsSettled();
 
       await runtime.openExternalStream({ endpointId: deriveWorkspaceSyncEndpointId(relationship.relationshipId, 'alpha') });
       const canonicalRoot = await realpath(root);
@@ -655,7 +678,7 @@ describe('createDaemonWorkspaceSyncRuntime', () => {
     });
     await runtime.start();
     harness.activateRelationships();
-    await runtime.whenSettingsSettled();
+    await runtime.whenProjectsSettled();
     const brokerConfig = harness.createBroker.mock.calls[0]?.[0];
     if (!brokerConfig) throw new Error('broker was not created');
     const abort = new AbortController();
@@ -675,7 +698,7 @@ describe('createDaemonWorkspaceSyncRuntime', () => {
     const runtime = createDaemonWorkspaceSyncRuntime(harness.deps);
     await runtime.start();
     harness.activateRelationships();
-    await runtime.whenSettingsSettled();
+    await runtime.whenProjectsSettled();
 
     await expect(runtime.managedWorkspaceSync.readFile({
       relationshipId: relationship.relationshipId,

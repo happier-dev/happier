@@ -126,7 +126,7 @@ function isJsonContentType(contentType: string | null): boolean {
   return normalized.startsWith('application/json');
 }
 
-async function readJsonResponseWithBodyLimit(params: Readonly<{
+export async function readJsonResponseWithBodyLimit(params: Readonly<{
   response: Response;
   maxBodyBytes: number;
   onInvalidJson: () => Error;

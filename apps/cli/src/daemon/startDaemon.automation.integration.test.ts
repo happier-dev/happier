@@ -1102,7 +1102,10 @@ describe('startDaemon automation wiring (integration)', () => {
         throw new Error('expected daemon-state currentness updater');
       }
       const currentDaemonState = Object.freeze({ status: 'running' as const, pid: 17 });
-      expect(updateDaemonState(currentDaemonState)).toBe(currentDaemonState);
+      expect(updateDaemonState(currentDaemonState)).toEqual({
+        ...currentDaemonState,
+        contributionRegistryProjectionRevision: 1,
+      });
 
       harness.apiMachine.updateDaemonState.mockClear();
       const onRuntimeProjectionInvalidated = pluginRuntimeOwnerParams.current

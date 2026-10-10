@@ -414,12 +414,16 @@ export function createNativeAgentProviderAttachModeBinding<TRuntime extends Runt
             reason?: RuntimeTurnDisposeReason,
             nextSessionOpenIntent?: RuntimeTurnSessionOpenIntent,
         ) {
-            lifecycleAbortController.abort();
-            await retireExternalClient();
-            await clientAdmission;
-            await activeAttach;
-            params.session.off('metadata-updated', onMetadataUpdated);
-            await params.disposePresentation?.();
+            // A successor replaces the native incarnation, not this Session's
+            // presentation/control lifetime. Only final disposal ends its loop.
+            if (!nextSessionOpenIntent) {
+                lifecycleAbortController.abort();
+                await retireExternalClient();
+                await clientAdmission;
+                await activeAttach;
+                params.session.off('metadata-updated', onMetadataUpdated);
+                await params.disposePresentation?.();
+            }
             await params.runtime.resetOrDisposeRuntime(
                 reason,
                 nextSessionOpenIntent,

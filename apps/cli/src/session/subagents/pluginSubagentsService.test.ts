@@ -64,6 +64,19 @@ describe('createPluginSubagentsService', () => {
     expect(await store.list()).toEqual([]);
   });
 
+  it('returns an immutable replay receipt without rewinding the newer host mirror', async () => {
+    const store = createHostSubagentStore();
+    const service = createPluginSubagentsService({ store, identity, isCurrent: () => true, durableCustody: createDurableCustody() });
+    const running = { observationId: 'child', status: 'running' as const, detail: { progress: 'started' } };
+    const first = await service.observe(running);
+    const completed = await service.observe({ observationId: 'child', status: 'completed', detail: { result: 'done' } });
+    const replay = await service.observe(running);
+    expect(replay).toEqual(first);
+    expect((await store.list())[0]?.status).toBe('completed');
+    expect((await store.list())[0]?.agentMetadata?.pluginServiceV1).toMatchObject({ revision: '2' });
+    expect(await service.get(first.id)).toEqual(completed);
+  });
+
   it('accepts provider observations while keeping custody correlation and revisions host-owned', async () => {
     const store = createHostSubagentStore();
     const custody = createDurableCustody();

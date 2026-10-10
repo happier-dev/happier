@@ -41,6 +41,13 @@ import { createAccountSessionClientTransport } from './client/createAccountSessi
 import { ensureSessionMachineAccessKeyBinding } from './session/ensureSessionMachineAccessKeyBinding';
 import { openTeamCredentialProviderBroker } from './client/providerBrokerApi';
 import {
+  PROVIDER_BROKER_ACCOUNT_OPEN_HTTP_PATH_V2, PROVIDER_BROKER_ACCOUNT_ADMIT_HTTP_PATH_V2,
+  ProviderBrokerAccountOpenRequestV2Schema, ProviderBrokerAccountOpenResponseV2Schema,
+  ProviderBrokerAccountAdmissionV2Schema, ProviderBrokerAccountAdmissionResponseV2Schema,
+  type ProviderBrokerAccountOpenRequestV2, type ProviderBrokerAccountOpenResponseV2,
+  type ProviderBrokerAccountAdmissionV2, type ProviderBrokerAccountAdmissionResponseV2,
+} from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import {
   ApiMachineClient,
   type ApiMachineClientLifecycleDependencies,
 } from './apiMachine';
@@ -1106,6 +1113,38 @@ export class ApiClient {
       request,
       ...(options?.signal ? { signal: options.signal } : {}),
     });
+  }
+
+  async openAccountConnectionProviderBroker(request: ProviderBrokerAccountOpenRequestV2,
+    options?: Readonly<{ signal?: AbortSignal }>): Promise<ProviderBrokerAccountOpenResponseV2> {
+    options?.signal?.throwIfAborted();
+    try {
+      const response = await axios.post(`${resolveServerHttpBaseUrl()}${PROVIDER_BROKER_ACCOUNT_OPEN_HTTP_PATH_V2}`,
+        ProviderBrokerAccountOpenRequestV2Schema.parse(request), {
+          headers: { Authorization: `Bearer ${this.credential.token}`, 'Content-Type': 'application/json' },
+          ...(options?.signal ? { signal: options.signal } : {}),
+        });
+      return ProviderBrokerAccountOpenResponseV2Schema.parse(response.data);
+    } catch (error) {
+      options?.signal?.throwIfAborted();
+      return { ok: false, reasonCode: axios.isAxiosError(error) && error.response?.status === 404 ? 'update_required' : 'broker_unavailable' };
+    }
+  }
+
+  async admitAccountConnectionProviderBroker(request: ProviderBrokerAccountAdmissionV2,
+    options?: Readonly<{ signal?: AbortSignal }>): Promise<ProviderBrokerAccountAdmissionResponseV2> {
+    options?.signal?.throwIfAborted();
+    try {
+      const response = await axios.post(`${resolveServerHttpBaseUrl()}${PROVIDER_BROKER_ACCOUNT_ADMIT_HTTP_PATH_V2}`,
+        ProviderBrokerAccountAdmissionV2Schema.parse(request), {
+          headers: { Authorization: `Bearer ${this.credential.token}`, 'Content-Type': 'application/json' },
+          ...(options?.signal ? { signal: options.signal } : {}),
+        });
+      return ProviderBrokerAccountAdmissionResponseV2Schema.parse(response.data);
+    } catch (error) {
+      options?.signal?.throwIfAborted();
+      return { ok: false, reasonCode: axios.isAxiosError(error) && error.response?.status === 404 ? 'update_required' : 'broker_unavailable' };
+    }
   }
 
   async getTeamCredentialResource(

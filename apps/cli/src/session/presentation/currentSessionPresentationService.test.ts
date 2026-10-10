@@ -13,7 +13,8 @@ import {
   CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD,
   CURRENT_SESSION_PRESENTATION_UNBIND_RPC_METHOD,
   CurrentSessionPresentationStateV1Schema,
-} from '@happier-dev/protocol/sessions';
+  CurrentSessionPresentationIntentV1Schema,
+} from '@happier-dev/protocol/sessions/presentation/currentSessionPresentationV1';
 import { SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS } from '@happier-dev/protocol/rpc';
 
 import { createCurrentSessionPresentationService } from './currentSessionPresentationService';
@@ -102,6 +103,155 @@ const defaultOwner = {
 } as const;
 
 describe('current-session presentation service', () => {
+  it('admits UI semantic input only from the focused bound origin and waits for its acknowledgement', async () => {
+    const harness = createHarness();
+    await harness.handlers.get(CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD)?.({
+      clientId: 'retired-client', focused: true, draftRevision: 0,
+    }, presentationContext('stale-connection'));
+    const bound = await harness.handlers.get(CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD)?.({
+      clientId: 'viewer-client', focused: true, draftRevision: 0,
+    }, presentationContext('viewer-connection')) as { hostNonce: string };
+    const apply = harness.handlers.get('session.presentation.apply');
+    expect(apply).toBeTypeOf('function');
+    const attempts = harness.readStateWriteAttemptCount();
+    await expect(apply!({ intent: { kind: 'viewer.expand' } }, presentationContext('stale-connection')))
+      .resolves.toMatchObject({ ok: false, errorCode: 'current_session_presentation_not_current' });
+    expect(harness.readStateWriteAttemptCount()).toBe(attempts);
+    await harness.handlers.get(CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD)?.({
+      clientId: 'viewer-client', focused: false, draftRevision: 0,
+    }, presentationContext('viewer-connection'));
+    await expect(apply!({ intent: { kind: 'viewer.expand' } }, presentationContext('viewer-connection')))
+      .resolves.toMatchObject({ ok: false, errorCode: 'current_session_presentation_not_current' });
+    await harness.handlers.get(CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD)?.({
+      clientId: 'viewer-client', focused: true, draftRevision: 0,
+    }, presentationContext('viewer-connection'));
+    await expect(apply!({ intent: { kind: 'viewer.dock' } }, presentationContext('viewer-connection')))
+      .resolves.toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(harness.readStateWriteAttemptCount()).toBe(attempts);
+    let publishedRevision = 0;
+    harness.setAfterStateWrite(() => {
+      const state = harness.readState();
+      const command = state.command;
+      if (command?.kind !== 'presentation.apply') return;
+      publishedRevision = state.revision;
+      expect(command).toMatchObject({ clientId: 'viewer-client', intent: { kind: 'viewer.expand' } });
+      void harness.handlers.get(CURRENT_SESSION_PRESENTATION_ACK_RPC_METHOD)?.({
+        hostNonce: bound.hostNonce, clientId: 'viewer-client', commandId: command.id,
+        result: { status: 'applied' },
+      }, presentationContext('viewer-connection'));
+    });
+    const result = await apply!({ intent: { kind: 'viewer.expand' } }, presentationContext('viewer-connection'));
+    expect(result).toEqual({ status: 'applied', revision: `${bound.hostNonce}:${publishedRevision}` });
+    expect(harness.readState().command).toBeUndefined();
+  });
+
+  it('does not publish a UI semantic request after its exact binding retires', async () => {
+    const harness = createHarness();
+    await harness.handlers.get(CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD)?.({
+      clientId: 'viewer-client', focused: true, draftRevision: 0,
+    }, presentationContext('viewer-connection'));
+    await harness.handlers.get(CURRENT_SESSION_PRESENTATION_UNBIND_RPC_METHOD)?.({ clientId: 'viewer-client' }, presentationContext('viewer-connection'));
+    const apply = harness.handlers.get('session.presentation.apply');
+    expect(apply).toBeTypeOf('function');
+    const attempts = harness.readStateWriteAttemptCount();
+    await expect(apply!({ intent: { kind: 'viewer.close' } }, presentationContext('viewer-connection')))
+      .resolves.toMatchObject({ ok: false, errorCode: 'current_session_presentation_not_current' });
+    expect(harness.readStateWriteAttemptCount()).toBe(attempts);
+  });
+
+  it.each([
+    [{ kind: 'viewer.open', source: 'computer' }, 'applied', 'applied', undefined],
+    [{ kind: 'viewer.close' }, 'unchanged', 'unchanged', undefined],
+    [{ kind: 'viewer.source.select', source: 'browser' }, 'invalidTarget', 'unavailable', 'current_session_presentation_invalid_target'],
+    [{ kind: 'viewer.expand' }, 'unavailable', 'unavailable', 'current_session_presentation_unavailable'],
+    [{ kind: 'viewer.restore' }, 'notCurrent', 'unavailable', 'current_session_presentation_not_current'],
+  ] as const)('publishes %j only to the current bound client and preserves its %s result', async (rawIntent, status, expectedStatus, code) => {
+    const intent = CurrentSessionPresentationIntentV1Schema.parse(rawIntent);
+    const harness = createHarness();
+    const bound = await harness.handlers.get(CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD)?.({
+      clientId: 'viewer-client', focused: true, draftRevision: 0,
+    }, presentationContext('viewer-connection')) as { hostNonce: string };
+    let publishedRevision: number | undefined;
+    harness.setAfterStateWrite(() => {
+      const state = harness.readState();
+      const command = state.command;
+      if (command?.kind !== 'presentation.apply') return;
+      publishedRevision = state.revision;
+      expect(command).toEqual({ id: 'viewer-operation', clientId: 'viewer-client', kind: 'presentation.apply', intent });
+      void harness.handlers.get(CURRENT_SESSION_PRESENTATION_ACK_RPC_METHOD)?.({
+        hostNonce: bound.hostNonce, clientId: 'viewer-client', commandId: command.id, result: { status },
+      }, presentationContext('viewer-connection'));
+    });
+    const result = await harness.presentation.present({ operationId: 'viewer-operation', intent });
+    expect(result).toMatchObject({ status: expectedStatus });
+    if (code) expect(result).toMatchObject({ diagnostic: { code } });
+    else expect(result).toEqual({ status, revision: `${bound.hostNonce}:${publishedRevision}` });
+    expect(harness.readState().command).toBeUndefined();
+  });
+
+  it('never republishes a retired viewer intent to its successor or accepts its late acknowledgement', async () => {
+    const harness = createHarness({ ackTimeoutMs: 1_000 });
+    const bound = await harness.handlers.get(CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD)?.({
+      clientId: 'viewer-a', focused: true, draftRevision: 0,
+    }, presentationContext('connection-a')) as { hostNonce: string };
+    const pending = harness.presentation.present({
+      operationId: 'close-old-viewer', intent: CurrentSessionPresentationIntentV1Schema.parse({ kind: 'viewer.close' }),
+    });
+    await vi.waitFor(() => expect(harness.readState().command?.id).toBe('close-old-viewer'));
+    await harness.handlers.get(CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD)?.({
+      clientId: 'viewer-b', focused: true, draftRevision: 0,
+    }, presentationContext('connection-b'));
+    await expect(pending).resolves.toMatchObject({ status: 'outcomeUnknown' });
+    expect(harness.readState().command).toBeUndefined();
+    await expect(harness.handlers.get(CURRENT_SESSION_PRESENTATION_ACK_RPC_METHOD)?.({
+      hostNonce: bound.hostNonce, clientId: 'viewer-a', commandId: 'close-old-viewer', result: { status: 'applied' },
+    }, presentationContext('connection-a'))).resolves.toEqual({ status: 'ignored' });
+  });
+
+  it('refuses viewer publication without a focused current binding or after cancellation', async () => {
+    const harness = createHarness();
+    const request = { operationId: 'open-viewer', intent: CurrentSessionPresentationIntentV1Schema.parse({ kind: 'viewer.open', source: 'browser' }) };
+    await expect(harness.presentation.present(request)).resolves.toMatchObject({
+      status: 'unavailable', diagnostic: { code: 'current_session_presentation_not_current' },
+    });
+    expect(harness.readStateWriteAttemptCount()).toBe(0);
+    await harness.handlers.get(CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD)?.({ clientId: 'viewer', focused: false, draftRevision: 0 });
+    const attempts = harness.readStateWriteAttemptCount();
+    await expect(harness.presentation.present(request)).resolves.toMatchObject({ status: 'conflict' });
+    const cancellation = new AbortController();
+    cancellation.abort();
+    await expect(harness.presentation.present(request, { signal: cancellation.signal })).resolves.toMatchObject({ status: 'unavailable' });
+    expect(harness.readStateWriteAttemptCount()).toBe(attempts);
+  });
+
+  it.each([
+    ['socket_not_connected', 'unavailable'],
+    ['response_lost', 'outcomeUnknown'],
+  ] as const)('preserves %s publication failure for a viewer without replay', async (code, status) => {
+    const harness = createHarness();
+    await harness.handlers.get(CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD)?.({ clientId: 'viewer', focused: true, draftRevision: 0 });
+    harness.setFailStateWrite(Object.assign(new Error('transport failed'), { code }));
+    await expect(harness.presentation.present({
+      operationId: 'open-viewer', intent: CurrentSessionPresentationIntentV1Schema.parse({ kind: 'viewer.open', source: 'browser' }),
+    })).resolves.toMatchObject({ status });
+    expect(harness.readState().command).toBeUndefined();
+  });
+
+  it('returns an unknown viewer outcome when no acknowledgement arrives and clears only its command', async () => {
+    vi.useFakeTimers();
+    try {
+      const harness = createHarness();
+      await harness.handlers.get(CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD)?.({ clientId: 'viewer', focused: true, draftRevision: 0 });
+      const pending = harness.presentation.present({
+        operationId: 'restore-viewer', intent: CurrentSessionPresentationIntentV1Schema.parse({ kind: 'viewer.restore' }),
+      });
+      await vi.advanceTimersByTimeAsync(20);
+      await expect(pending).resolves.toMatchObject({ status: 'outcomeUnknown' });
+      expect(harness.readState().command).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it('keeps the same binding and metadata revision when its identical bind repeats', async () => {
     const harness = createHarness();
     const bind = { clientId: 'client-a', focused: true, draftRevision: 3 } as const;
@@ -678,7 +828,7 @@ describe('current-session presentation service', () => {
     }, presentationContext('connection-a')) as { hostNonce: string };
     const pending = harness.presentation.present({
       operationId: 'origin-fenced-ack',
-      intent: { kind: 'chat.return' },
+      intent: { kind: 'viewer.restore' },
     });
     await vi.waitFor(() => expect(harness.readState().command?.id).toBe('origin-fenced-ack'));
     const ack = {
@@ -687,6 +837,14 @@ describe('current-session presentation service', () => {
       commandId: 'origin-fenced-ack',
       result: { status: 'applied' },
     } as const;
+
+    for (const fields of [
+      { hostNonce: 'old-host' }, { clientId: 'other-viewer' }, { commandId: 'other-operation' },
+    ]) {
+      await expect(harness.handlers.get(CURRENT_SESSION_PRESENTATION_ACK_RPC_METHOD)?.(
+        { ...ack, ...fields }, presentationContext('connection-a'),
+      )).resolves.toEqual({ status: 'ignored' });
+    }
 
     await expect(harness.handlers.get(CURRENT_SESSION_PRESENTATION_ACK_RPC_METHOD)?.(
       ack,

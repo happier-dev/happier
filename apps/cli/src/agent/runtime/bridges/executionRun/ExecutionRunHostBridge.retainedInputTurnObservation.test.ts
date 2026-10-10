@@ -9,6 +9,8 @@ import { createExactTurnUsageAccumulator } from '@/usage/exactTurnUsage';
 import { ScmComparisonSchema, readActionCompletionRunObservationV1, ExecutionRunGetResponseSchema } from '@happier-dev/protocol';
 import { startExecutionRun } from './startExecutionRun';
 import { VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
+import { createTestExecutionRunHostRuntime } from './testkit';
+import type { ExecutionRunPublicState } from '@happier-dev/protocol';
 import { createExecutionRunRpcActionDeps } from '@/rpc/handlers/executionRuns/dispatchExecutionRunRpcAction';
 import { finishExecutionRun } from './finishExecutionRun';
 import { ScmDiffSummaryProfile } from './kinds/scmDiffSummary/ScmDiffSummaryProfile';
@@ -39,7 +41,7 @@ type RuntimeEvent = Parameters<NonNullable<ExecutionRunBackendController['backen
  * provider runtime (its event stream) and the parent Session's Pending transport
  * are boundaries.
  */
-function composeRetainedRun(admissionFailure?: 'rejected' | 'outcomeUnknown') {
+function composeRetainedRun(admissionFailure?: 'rejected' | 'outcomeUnknown', onPublicStateUpdated?: (run: ExecutionRunPublicState) => void) {
     const admittedParts: { text: string; localId: string }[] = [];
     const runtimeLifetime = new AbortController();
     let emit: ((event: RuntimeEvent) => void) | null = null;
@@ -85,6 +87,7 @@ function composeRetainedRun(admissionFailure?: 'rejected' | 'outcomeUnknown') {
         parentProvider: TEST_BACKEND_ID,
         cwd: '/repo',
         sendAcp: async () => undefined,
+        onPublicStateUpdated,
         sessionInteractionHost: {
             session: {
                 sessionId: 'session-1',
@@ -115,6 +118,8 @@ function composeRetainedRun(admissionFailure?: 'rejected' | 'outcomeUnknown') {
     const internals = manager as unknown as {
         runs: Map<string, ExecutionRunState>;
         controllers: Map<string, ExecutionRunBackendController>;
+        voiceAgentManager: VoiceAgentManager;
+        emitPublicStateUpdated(runId: string): void;
         attachRetainedRunSessionInput(input: {
             runId: string; sidechainId: string; controller: ExecutionRunBackendController;
         }): { release(): Promise<void> } | null;
@@ -155,6 +160,40 @@ function composeRetainedRun(admissionFailure?: 'rejected' | 'outcomeUnknown') {
 }
 
 describe('ExecutionRunHostBridge retained exact input observation', () => {
+    it('publishes active Voice turns independently of the retained handle and unread stream', async () => {
+        const publicStates: ExecutionRunPublicState[] = [];
+        const { manager, internals, attachment } = composeRetainedRun(undefined, (run) => publicStates.push(run));
+        let releaseTurn!: () => void;
+        const turnGate = new Promise<void>((resolve) => { releaseTurn = resolve; });
+        const runtime = createTestExecutionRunHostRuntime({
+            onSendPrompt: async () => { runtime.emitMessage({ type: 'model-output', fullText: 'answer' }); },
+            onWaitForTurnCompletion: async () => { await turnGate; },
+        });
+        try {
+            const started = await startExecutionRun({
+                params: { sessionId: 'session-1', intent: 'voice_agent',
+                    backendTarget: { kind: 'builtInAgent', agentId: TEST_BACKEND_ID }, permissionMode: 'read_only',
+                    retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming' },
+                parentProvider: TEST_BACKEND_ID, sendAcp: async () => {}, streamedTranscriptSession: null,
+                createRuntime: () => runtime, getNowMs: () => 1, budgetRegistry: null, runs: internals.runs,
+                controllers: internals.controllers, enqueueMarkerWrite: async () => {}, writeActivityMarker: async () => {},
+                finishRun: async () => {}, executeBoundedRun: async () => {}, send: async () => ({ ok: true }),
+                voiceAgentManager: internals.voiceAgentManager,
+                onPublicStateUpdated: (id) => internals.emitPublicStateUpdated(id),
+            });
+            expect.soft(manager.getPublic(started.runId)).toMatchObject({ status: 'running', turnInFlight: false });
+            const stream = await manager.startTurnStream(started.runId, { message: 'hello' });
+            expect(stream).toMatchObject({ ok: true });
+            expect.soft(manager.getPublic(started.runId)).toMatchObject({ status: 'running', turnInFlight: true });
+            expect.soft(publicStates.at(-1)).toMatchObject({ runId: started.runId, status: 'running', turnInFlight: true });
+            releaseTurn();
+            await vi.waitFor(() => expect(publicStates.at(-1)).toMatchObject({ runId: started.runId, status: 'running', turnInFlight: false }));
+            expect(manager.get(started.runId)?.status).toBe('running');
+        } finally {
+            releaseTurn(); await attachment?.release(); await manager.dispose();
+        }
+    });
+
     it('uses the admitted initial basis for optional-ID completion and never lets an old controller resurrect a replacement', async () => {
         const { internals, attachment, emitRuntimeEvent, prepareScmInput } = composeRetainedRun();
         const controller = internals.controllers.get('run-1')!;

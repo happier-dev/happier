@@ -6,6 +6,8 @@ import type { Metadata } from '@/api/types';
 import { deterministicStringify } from '@/utils/deterministicJson';
 import { applyRegisteredSessionStateFieldMutationToMetadata } from './applyRegisteredSessionStateFieldMutation';
 import type { RegisteredSessionStateFieldMutationV1 } from './sessionClientDurableMutationTypes';
+import { createRegisteredSessionStateFieldMutation } from './sessionClientDurableMutationTypes';
+import { parseRuntimeSessionClientDurableMutation } from './sessionClientDurableMutationPersistence';
 
 const runtimeState = {
     v: 1,
@@ -69,6 +71,54 @@ const baseMetadata: Metadata = {
 };
 
 describe('applyRegisteredSessionStateFieldMutationToMetadata', () => {
+    it('requires the reviewed revision for durable Session voice preference mutations', () => {
+        expect(() => createRegisteredSessionStateFieldMutation({ sessionId: 'sess-1', fieldId: 'intent.voicePreference',
+            source: 'ui', op: { kind: 'set', value: null } })).toThrow('reviewed Session metadata revision');
+        expect(createRegisteredSessionStateFieldMutation({ sessionId: 'sess-1', fieldId: 'intent.voicePreference',
+            source: 'ui', expectedMetadataRevision: 4, op: { kind: 'set', value: null } }))
+            .toMatchObject({ expectedMetadataRevision: 4, deliveryClass: 'durable_required' });
+    });
+    it('rehydrates only a reviewed canonical Session voice preference from the durable outbox', () => {
+        const preference = { providerContributionId: 'acme.voice/conversation', settingFieldPath: 'voice', value: 'custom' };
+        const payload = { ...mutation({ kind: 'set', value: preference }, 'intent.voicePreference'),
+            source: 'ui' as const, deliveryClass: 'durable_required' as const, expectedMetadataRevision: 4 };
+        const queued = { kind: 'registered_session_state_field', payload, mutationId: payload.mutationId, attempts: 0, createdAt: 1 };
+        expect(parseRuntimeSessionClientDurableMutation(queued, 'sess-1').mutations).toHaveLength(1);
+        expect(parseRuntimeSessionClientDurableMutation({ ...queued, payload: { ...payload, expectedMetadataRevision: undefined } }, 'sess-1').mutations).toEqual([]);
+        expect(parseRuntimeSessionClientDurableMutation({ ...queued, payload: { ...payload,
+            op: { kind: 'set', value: { ...preference, futureAnnotation: true } } } }, 'sess-1').mutations[0]?.payload)
+            .toEqual(payload);
+        expect(parseRuntimeSessionClientDurableMutation({ ...queued, payload: { ...payload,
+            op: { kind: 'set', value: { ...preference, settingFieldPath: 'constructor.voice' } } } }, 'sess-1').mutations).toEqual([]);
+    });
+    it('applies and clears the registered Session voice without altering neighboring work', () => {
+        const preference = { providerContributionId: 'acme.voice/conversation', settingFieldPath: 'voice', value: 'custom' };
+        const original = { ...baseMetadata, work: { memoryEnabled: false } };
+        const applied = applyRegisteredSessionStateFieldMutationToMetadata(original,
+            mutation({ kind: 'set', value: preference }, 'intent.voicePreference'));
+        expect(applied).toEqual({ ...original, work: { ...original.work, voicePreference: preference } });
+        expect(applyRegisteredSessionStateFieldMutationToMetadata(applied,
+            mutation({ kind: 'clear' }, 'intent.voicePreference'))).toEqual(original);
+        expect(() => applyRegisteredSessionStateFieldMutationToMetadata(original,
+            mutation({ kind: 'set', value: { ...preference, forged: true } }, 'intent.voicePreference'))).toThrow();
+    });
+    it('applies context entry and inherited-switch intents without replacing neighboring work', () => {
+        const first = { id: 'first', ref: { kind: 'doc' as const, artifactId: 'first' }, enabled: true, placement: 'system_append' as const };
+        const second = { ...first, id: 'second', ref: { kind: 'doc' as const, artifactId: 'second' } };
+        const original = { ...baseMetadata, work: { promptStack: [first], memoryEnabled: true,
+            sessionRolesV1: { overrides: {}, sessionRoles: {}, notes: 'Keep notes' } } };
+        const attached = applyRegisteredSessionStateFieldMutationToMetadata(original,
+            mutation({ kind: 'set', value: { kind: 'attach', entry: second } }, 'intent.context'));
+        expect(attached).toMatchObject({ work: { ...original.work, promptStack: [first, second] } });
+        const disabled = applyRegisteredSessionStateFieldMutationToMetadata(attached,
+            mutation({ kind: 'set', value: { kind: 'inherited_enable', entryId: 'account.context', enabled: false } }, 'intent.context'));
+        expect(disabled).toMatchObject({ work: { promptStack: [first, second], disabledInheritedEntryIds: ['account.context'] } });
+        const off = applyRegisteredSessionStateFieldMutationToMetadata(disabled,
+            mutation({ kind: 'set', value: false }, 'intent.memoryEnabled'));
+        expect(off).toMatchObject({ work: { ...disabled.work, memoryEnabled: false } });
+        expect(() => applyRegisteredSessionStateFieldMutationToMetadata(off,
+            mutation({ kind: 'set', value: { kind: 'attach', entry: { ...second, id: 'third', authority: 'forged' } } }, 'intent.context'))).toThrow();
+    });
     it('preserves neighboring owner work metadata when applying roles and active role mutations', () => {
         const roles = { overrides: {}, sessionRoles: {}, notes: 'CURRENT_NOTES' };
         const original = { ...baseMetadata, work: { keep: 'other-lane', sessionRolesV1: { overrides: {}, sessionRoles: {}, notes: 'PREVIOUS_NOTES' } } };

@@ -1,3 +1,4 @@
+import { bindTrackedSessionIdentity } from './sessionReportCorrelation';
 import { createPersistedTakeoverAdmissionWaiter } from '../spawn/persistedTakeoverAdmission';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -44,6 +45,40 @@ function createMetadata(pid: number, startedBy: 'daemon' | 'terminal', rootPath 
 }
 
 describe('createOnHappySessionWebhook', () => {
+  it('preserves canonical marker custody validation after early fresh-session identity binding', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'happier-early-startup-marker-'));
+    const originalHome = Object.getOwnPropertyDescriptor(configuration, 'happyHomeDir')!;
+    // Isolate the real persistence owner through its environment boundary.
+    Object.defineProperty(configuration, 'happyHomeDir', { ...originalHome, value: dir });
+    try {
+      const pid = 649123;
+      const tracked: TrackedSession = {
+        pid, startedBy: 'daemon', happySessionId: 'PID-' + pid,
+        agentRuntimeDaemonServiceAuthorityFilePath: path.join(dir, 'authority.json'),
+        acceptedSpawnMarkerGate: Promise.resolve(true),
+        spawnOptions: { directory: dir, backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, spawnNonce: 'current-launch' },
+      };
+      await writeSessionMarker({
+        pid, happySessionId: 'PID-' + pid, startedBy: 'daemon', cwd: dir, processStartTimeMs: 123456,
+        respawn: { version: 1, directory: dir, backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, spawnNonce: 'different-launch' },
+      });
+      bindTrackedSessionIdentity(tracked, 'session-before-webhook');
+      const onTrackedSessionReady = vi.fn();
+      const report = createOnHappySessionWebhook({
+        pidToTrackedSession: new Map([[pid, tracked]]), pidToAwaiter: new Map([[pid, () => {}]]),
+        readProcessIdentityByPidFn: async () => ({ pid, processStartTimeMs: 123456 }),
+        readCredentialsFn: async () => null, onTrackedSessionReady,
+      });
+      await expect(report('session-before-webhook', createMetadata(pid, 'daemon', dir)))
+        .rejects.toThrow('session_marker_canonical_adoption_ownership_mismatch');
+      expect((await readSessionMarkerForPid(pid))?.happySessionId).toBe('PID-' + pid);
+      expect(onTrackedSessionReady).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(configuration, 'happyHomeDir', originalHome);
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('registers accepted canonical Sessions only after startup readiness, preserving their nested directory', async () => {
     const accepted: string[] = [];
     const metadata = createMetadata(process.pid, 'daemon', '/repo/packages/app');
@@ -629,7 +664,7 @@ describe('createOnHappySessionWebhook', () => {
     expect(sessionAttachCleanupByPid.has(windowsTerminalHostPid))
       .toBe(false);
     expect(sessionAttachCleanupByPid.get(agentPid)).toBe(attachCleanup);
-    expect(tracked.windowsTerminalCancellationIdentity).toEqual({
+    expect(tracked.runnerProcessIdentity).toEqual({
       pid: agentPid,
       processStartTimeMs: 2_000,
       processCommandHash: hashProcessCommand(processCommand),
@@ -845,7 +880,7 @@ describe('createOnHappySessionWebhook', () => {
     expect(pidToTrackedSession.get(hostPid)).toBe(tracked);
     expect(pidToTrackedSession.has(agentPid)).toBe(false);
     expect(tracked.startedBy).toBe('daemon');
-    expect(tracked.windowsTerminalCancellationIdentity).toEqual({
+    expect(tracked.runnerProcessIdentity).toEqual({
       pid: agentPid,
       processStartTimeMs: 3_300,
       processCommandHash: hashProcessCommand(processCommand),

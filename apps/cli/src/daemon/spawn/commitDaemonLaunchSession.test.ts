@@ -97,12 +97,34 @@ describe('commitDaemonLaunchSession', () => {
 
   it('commits a complete role snapshot before launch instead of transporting role text in the process environment', () => {
     const initialSessionRolesV1 = snapshotSessionRolesAtSpawnV1({
-      leadSessionId: 'lead-1', sameAccount: false,
+      leadSessionId: 'lead-1',
       roles: { builder: { roleId: 'builder', name: 'Builder', instructions: 'Build carefully',
         engine: { agentTargetKey: 'agent:codex' }, runsAs: { kind: 'session' },
         workspaceWrites: 'allow', secondOpinion: 'off', enabled: true } },
     });
     expect(daemonLaunchRequiresCommittedSession({ directory: '/repo', initialSessionRolesV1 })).toBe(true);
+  });
+
+  it('commits qualified selected Instructions before the runner and consumes the fresh-only context', async () => {
+    const promptStack = [{ id: 'session.instructions',
+      ref: { kind: 'doc', serverId: 'guide-home', artifactId: 'guide-doc' },
+      enabled: true, required: true, placement: 'system_append' }] as const;
+    const options = { directory: '/repo', promptStack };
+    expect(daemonLaunchRequiresCommittedSession(options)).toBe(true);
+    expect(daemonLaunchRequiresCommittedSession({ directory: '/repo', promptStack: [] })).toBe(false);
+    // This API port is the Home create transport; metadata and attach preparation stay real.
+    const getOrCreateSession = vi.fn(async (input: { metadata: Record<string, unknown> }) => ({
+      id: 'session-instructions', metadata: input.metadata,
+      sessionCreationOutcome: { disposition: 'created' as const, organizationPlacement: { folderId: null, tagIds: [] } },
+    }));
+    network.fetchSessionByIdCompat.mockImplementation(async () =>
+      plainSessionRow('session-instructions', getOrCreateSession.mock.calls[0]![0].metadata));
+    const committed = await commitDaemonLaunchSession({ api: { getOrCreateSession } as never, credentials, options, directory: '/repo' });
+    expect(committed.ok).toBe(true);
+    expect(getOrCreateSession.mock.calls[0]![0].metadata).toMatchObject({ work: { promptStack } });
+    if (!committed.ok) return;
+    expect(withoutFreshSessionCreationFields(committed.session.options)).not.toHaveProperty('promptStack');
+    expect(committed.session.attachPayload).not.toHaveProperty('promptStack');
   });
 
   it('commits initial triggers at birth and consumes them before the runner attaches', async () => {
@@ -115,7 +137,8 @@ describe('commitDaemonLaunchSession', () => {
       triggers: [{ triggerId: 'trigger-initial', trigger: { kind: 'sessionLifecycle', enabled: true,
         events: ['sessionStarted'], policy: { kind: 'firstMatch' } } }],
     })];
-    const options = { directory: '/repo', initialTriggers };
+    const identity = { bot: { kind: 'bot' as const }, createdAsBot: true as const };
+    const options = { directory: '/repo', initialTriggers, identity, memoryEnabled: false };
     expect(daemonLaunchRequiresCommittedSession(options)).toBe(true);
     const getOrCreateSession = vi.fn(async (input: { metadata: Record<string, unknown> }) => ({
       id: 'session-initial-trigger', metadata: input.metadata,
@@ -127,14 +150,17 @@ describe('commitDaemonLaunchSession', () => {
     expect(committed.ok).toBe(true);
     expect(getOrCreateSession.mock.calls[0]![0]).toMatchObject({ initialTriggers });
     expect(getOrCreateSession.mock.calls[0]![0].metadata).not.toHaveProperty('summary');
+    expect(getOrCreateSession.mock.calls[0]![0].metadata).toMatchObject({ ...identity, work: { memoryEnabled: false } });
     if (!committed.ok) return;
     expect(withoutFreshSessionCreationFields(committed.session.options)).not.toHaveProperty('initialTriggers');
+    expect(withoutFreshSessionCreationFields(committed.session.options)).not.toHaveProperty('identity');
+    expect(withoutFreshSessionCreationFields(committed.session.options)).not.toHaveProperty('memoryEnabled');
     expect(committed.session.attachPayload).not.toHaveProperty('initialTriggers');
   });
 
   it('creates the Session with its Team slot binding before launch, then continues as an attach to it', async () => {
     const initialSessionRolesV1 = { ...snapshotSessionRolesAtSpawnV1({
-      leadSessionId: 'lead-1', sameAccount: true, notes: 'Keep notes', memoryDocRef: { kind: 'doc', artifactId: 'memory' },
+      leadSessionId: 'lead-1', notes: 'Keep notes',
       roles: { builder: { roleId: 'builder', name: 'Builder', instructions: 'Resolved instructions',
         engine: { agentTargetKey: 'agent:codex', modelId: 'builder-model' }, runsAs: { kind: 'session' },
         workspaceWrites: 'allow', secondOpinion: 'off', enabled: true } },

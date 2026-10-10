@@ -16,6 +16,7 @@ import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract
 import { configuration } from '@/configuration';
 import { readLeasedAgentProviderRequirements } from '@/plugins/runtime/providerBindings/adapter';
 import { createProviderRuntimeStateStore } from '@/providers/runtimeState';
+import type { ProviderRuntimeModelProjectionReader } from '@/providers/spawn/runtimeCatalog';
 import { prepareProviderLaunch } from '@/providers/lifecycle/prepareLaunch';
 import type { ProviderLaunchResourceScope } from '@/providers/lifecycle/resourceScope';
 import type { ProviderSpawnAuthorizationAttempt } from '@/providers/spawn/authorize';
@@ -24,12 +25,15 @@ import { resolveAgentNativeSpawnDefinitiveRejection } from '@/providers/spawn/cu
 import {
     getActiveAccountSettingsSnapshot,
     subscribeActiveAccountSettingsSnapshot,
+    type ActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { validateSpawnProfileEnvironment } from '@/settings/profiles/validateSpawnProfile';
+import { readProfileSettingsFromAccountSnapshot } from '@/settings/profiles/readProfilesFromAccountSettings';
 import { logger } from '@/ui/logger';
 import type {
     ResolveManagedProviderPurposeBindingIntent,
 } from '@/providers/managed/resolvePurposeBindingSnapshot';
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 
 import { resolveSpawnChildEnvironment } from './resolveSpawnChildEnvironment';
 import type { SpawnPluginRuntimeLease } from './spawnPluginRuntimeLease';
@@ -63,6 +67,11 @@ export async function prepareDaemonProviderLaunch(input: Readonly<{
     resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
     processEnv: NodeJS.ProcessEnv;
     launchProfileArtifacts?: ReadonlyMap<string, ArtifactSharingResourceV1>;
+    accountSettingsSnapshot?: ActiveAccountSettingsSnapshot;
+    readAccountSettingsSnapshot?: () => ActiveAccountSettingsSnapshot | null;
+    providerRuntimeHomeDir?: string;
+    savedSecretOperationContext?: SavedSecretOperationContextV1;
+    readModelProjection?: ProviderRuntimeModelProjectionReader;
 }>): Promise<PreparedDaemonProviderLaunch | DaemonProviderLaunchRefusal> {
     const nativePreflight = resolveAgentNativeSpawnDefinitiveRejection({
         agentId: input.catalogAgentId,
@@ -96,8 +105,10 @@ export async function prepareDaemonProviderLaunch(input: Readonly<{
                     ?.authIsolation.ownedEnvKeys ?? []
                 : [],
         );
+        const accountSnapshot = input.accountSettingsSnapshot ?? getActiveAccountSettingsSnapshot();
         const profileValidation = validateSpawnProfileEnvironment({
-            rawSettings: getActiveAccountSettingsSnapshot()?.settings,
+            rawSettings: readProfileSettingsFromAccountSnapshot(accountSnapshot),
+            profileCatalog: accountSnapshot?.profileCatalog,
             profileId: input.options.profileId,
             artifactsById: input.launchProfileArtifacts,
             providedEnvironmentVariables: input.profileEnvironmentVariables,
@@ -183,14 +194,18 @@ export async function prepareDaemonProviderLaunch(input: Readonly<{
                 agentTargetKey,
                 agentId,
                 lease: appliedPluginRuntimeLease,
-                getAccountSettingsSnapshot: getActiveAccountSettingsSnapshot,
-                subscribeAccountSettingsSnapshot: (listener) =>
-                    subscribeActiveAccountSettingsSnapshot(() => listener()),
+                getAccountSettingsSnapshot: input.readAccountSettingsSnapshot ?? (input.accountSettingsSnapshot
+                    ? () => input.accountSettingsSnapshot ?? null : getActiveAccountSettingsSnapshot),
+                subscribeAccountSettingsSnapshot: input.accountSettingsSnapshot || input.readAccountSettingsSnapshot
+                    ? () => () => undefined
+                    : (listener) => subscribeActiveAccountSettingsSnapshot(() => listener()),
                 runtimeStateStore: createProviderRuntimeStateStore({
-                    happyHomeDir: configuration.happyHomeDir,
+                    happyHomeDir: input.providerRuntimeHomeDir ?? configuration.happyHomeDir,
                     machineId,
                 }),
-                materializationBaseDir: join(configuration.happyHomeDir, 'providers', 'materialized'),
+                ...(input.readModelProjection ? { readModelProjection: input.readModelProjection } : {}),
+                materializationBaseDir: join(input.providerRuntimeHomeDir ?? configuration.happyHomeDir, 'providers', 'materialized'),
+                ...(input.savedSecretOperationContext ? { savedSecretOperationContext: input.savedSecretOperationContext } : {}),
                 ...(providerSessionId ? { sessionId: providerSessionId } : {}),
                 ...(input.resolveManagedPurposeBindingIntent
                     ? {

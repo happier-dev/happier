@@ -97,6 +97,8 @@ export type ExecutionRunHostRunScopeBinding = Readonly<{
 }>;
 
 export type NativeAgentSessionInteractionHostBinding = Readonly<{
+    readAppliedChildSelection?: () => import('@/agent/runtime/bridges/executionRun/runtime/openInputs').ExecutionRunAppliedParentSelection
+        | Promise<import('@/agent/runtime/bridges/executionRun/runtime/openInputs').ExecutionRunAppliedParentSelection>;
     /** Parent Session custody used by the hidden retained Voice interaction. */
     session: Pick<ApiSessionClient,
         | 'sessionId'
@@ -190,6 +192,7 @@ export type CreateCliExecutionRunBackendParams = Readonly<{
     /** Host-only active-turn authority; never a public backend request field. */
     causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
     accountSettings?: AccountSettings | null;
+    resolveAccountSettingsSnapshot?: (input?: Readonly<{ mcpServerCatalog?: boolean; signal?: AbortSignal }>) => Promise<import('@/settings/accountSettings/activeAccountSettingsSnapshot').ActiveAccountSettingsSnapshot | null>;
     start?: ExecutionRunBackendStartContext | null;
     isolation?: ExecutionRunBackendIsolation;
     parentSessionStateTarget?: ExecutionRunSessionStateTarget | null;
@@ -241,24 +244,12 @@ export type EngineResolutionDiagnostic = Readonly<{
     detailCode?: string;
 }>;
 
-export type EngineResolutionSelectedSource = 'system' | 'managed' | 'plugin' | 'configured';
+export type EngineResolutionSelectedSource = 'system' | 'managed' | 'plugin';
+export type EngineResolutionProvenance = ResolvedContributionProvenance;
+export type EngineResolutionBackend = ResolvedAgentRuntimeContribution;
+export type EngineResolutionAgent = ResolvedAgentContribution;
 
-export type ConfiguredEngineResolutionSource = Readonly<{ kind: 'configured' }>;
-export type EngineResolutionProvenance = ResolvedContributionProvenance | 'configured';
-export type EngineResolutionBackend = ResolvedAgentRuntimeContribution | Readonly<
-    Omit<ResolvedAgentRuntimeContribution, 'provenance' | 'source'> & {
-        provenance: 'configured';
-        source: ConfiguredEngineResolutionSource;
-    }
->;
-export type EngineResolutionAgent = ResolvedAgentContribution | Readonly<
-    Omit<ResolvedAgentContribution, 'provenance' | 'source'> & {
-        provenance: 'configured';
-        source: ConfiguredEngineResolutionSource;
-    }
->;
-
-export type BackendRuntimeOwnerKind = 'plugin_engine' | 'host_configured';
+export type BackendRuntimeOwnerKind = 'plugin_engine';
 
 export type BackendRuntimeOwnerCandidate = Readonly<{
     kind: BackendRuntimeOwnerKind;
@@ -294,6 +285,8 @@ export type ResolvedCliEngineRegistry = Readonly<{
         options?: import('@/agent/executionRuns/profiles/intentRegistry').ExecutionRunProfileCatalogOptions,
     ): Promise<import('@/agent/executionRuns/profiles/intentRegistry').ExecutionRunProfileContributionCatalog>;
     resolveForBackendId(backendId: string): Promise<EngineAdapterResolution | null>;
+    /** Contribution-addressed resolution preserves the exact configured instance. */
+    resolveForAgentTarget(target: import('@happier-dev/protocol/agents/executionTargetV1').AgentExecutionTargetV1): Promise<EngineAdapterResolution | null>;
     resolveExecutionSurfaces(backendId?: string | null): Promise<BackendExecutionSurfaces>;
 }>;
 

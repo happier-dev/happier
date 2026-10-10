@@ -38,6 +38,42 @@ const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({
 describe('requester HTTP authority on the existing external Action carrier', () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it('derives read-only handoff preflight without custody and rejects a changed root digest', async () => {
+    const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'original-root', binding: {
+      accountId: 'bob', authentication: { kind: 'account', tokenEpoch: 7 }, serverIdentityId: 'srv_bob_home',
+      machineId: 'source', custodianAccountId: 'alice', installationId: 'source-installation', actionId: 'session.handoff',
+      requestId: 'original-request', requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'source' },
+      handoffAdmission: { sessionId: 'same-session', sourceMachineId: 'source', targetMachineId: 'target',
+        sourceInstallationId: 'source-installation', targetInstallationId: 'target-installation' },
+    } });
+    let changeRoot = false;
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
+      const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+      expect(request.handoffPreflight).toEqual({ authorization: root });
+      expect(request.handoffContinuation).toBeUndefined();
+      expect(config?.headers).not.toHaveProperty('Authorization');
+      expect(verifyExternalActionMachineRequestV1({ authorizationToken: root.token, effectActionId: 'session.handoff',
+        target: root.binding.target, installationId: 'source-installation', requestId: root.binding.requestId,
+        method: 'POST', path: new URL(String(url)).pathname, body, publicKey: keys.publicKey,
+        signature: String(config?.headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]) })).toBe(true);
+      return { status: 200, data: { v: 1, token: 'preflight-child', binding: { ...root.binding,
+        machineId: 'target', installationId: 'target-installation', target: request.envelope.target,
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+        handoffPreflight: { rootRequestId: root.binding.requestId,
+          rootRequestEnvelopeDigest: changeRoot ? 'b'.repeat(43) : root.binding.requestEnvelopeDigest },
+      } } };
+    });
+    const prepare = Reflect.get(executionAuthorizationOwner, 'prepareExternalActionHandoffPreflightAuthorization');
+    expect(typeof prepare).toBe('function');
+    if (typeof prepare !== 'function') return;
+    const input = { authorization: root, input: { sessionId: 'same-session', sourceMachineId: 'source', targetMachineId: 'target' },
+      machineId: 'target', sourceMachineId: 'source', sourceInstallationId: 'source-installation',
+      privateKey: keys.secretKey, serverHttpBaseUrl: 'https://bob-home.test' };
+    expect(await prepare(input)).toMatchObject({ token: 'preflight-child' });
+    changeRoot = true;
+    expect(await prepare(input)).toBeNull();
+  });
+
   it('derives a handoff child from the retained exact root after Session quiescence and refuses a changed root binding', async () => {
     const origin = SessionActionRpcOriginV1Schema.parse({ v: 1,
       caller: { kind: 'session', sessionId: 'same-session', starterDepth: 1, turnDepth: 2 },

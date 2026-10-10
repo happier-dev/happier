@@ -257,11 +257,15 @@ export function createExternalSessionObservationDaemonProjection(
             : {}),
     });
 
-    return createExternalSessionObservationProjection({
+    const projection = createExternalSessionObservationProjection({
         reconciler,
         publishField,
         ...(params.now ? { now: params.now } : {}),
         ...(params.setTimer ? { setTimer: params.setTimer } : {}),
         ...(params.clearTimer ? { clearTimer: params.clearTimer } : {}),
     });
+    return {
+        ...projection,
+        registerAccountingSource: reconciler.registerAccountingSource,
+    };
 }

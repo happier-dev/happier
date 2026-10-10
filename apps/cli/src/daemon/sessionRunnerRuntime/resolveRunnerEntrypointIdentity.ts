@@ -57,6 +57,7 @@ function isCliEntrypointPath(pathLike: string): boolean {
   return (
     normalized.endsWith('/package-dist/index.mjs') ||
     normalized.endsWith('/dist/index.mjs') ||
+    normalized.endsWith('/src/index.mjs') ||
     normalized.endsWith('/src/index.ts')
     || /\/\.runner-snapshots\/[^/]+\/(?:(?:dist|package-dist)\/)?index\.mjs$/i.test(normalized)
   );

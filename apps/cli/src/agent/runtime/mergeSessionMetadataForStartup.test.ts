@@ -6,6 +6,27 @@ import { mergeSessionMetadataForStartup } from './mergeSessionMetadataForStartup
 
 describe('mergeSessionMetadataForStartup', () => {
     it.each([
+        { work: { memoryEnabled: true }, bot: { kind: 'bot' as const }, createdAsBot: true as const },
+        { work: { memoryEnabled: false }, bot: undefined, createdAsBot: true as const },
+        { work: undefined, bot: undefined, createdAsBot: undefined },
+    ])('preserves retained owner-work and birth identity instead of fresh process defaults on attach (%j)', (facts) => {
+        const current = createTestMetadata({ path: '/repo', host: 'original',
+            ...(facts.work ? { work: facts.work } : {}),
+            ...(facts.bot ? { bot: facts.bot } : {}),
+            ...(facts.createdAsBot ? { createdAsBot: facts.createdAsBot } : {}),
+        });
+        const next = createTestMetadata({ path: '/runtime', host: 'runtime',
+            bot: { kind: 'bot' }, createdAsBot: true, work: { memoryEnabled: false },
+        });
+        const merged = mergeSessionMetadataForStartup({ current, next, mode: 'attach', nowMs: 100,
+            attachMetadataIdentityPolicy: 'replace_with_runtime_identity' });
+        for (const field of ['work', 'bot', 'createdAsBot'] as const) {
+            expect(merged[field]).toBe(current[field]);
+            if (current[field] === undefined) expect(merged).not.toHaveProperty(field);
+        }
+        expect(merged.host).toBe('runtime');
+    });
+    it.each([
         { intent: 'personal rename', summary: { text: 'My investigation', updatedAt: 7 } },
         { intent: 'empty personal title', summary: { text: '', updatedAt: 8 } },
         { intent: 'cleared or absent title', summary: undefined },

@@ -203,6 +203,9 @@ import {
 } from '@/daemon/actionOperations';
 import type { RegisterActionSpecRpcHandlersParams } from '@/rpc/handlers/registerActionSpecRpcHandlers';
 import type { RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
+import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
+import { admitSessionHandoffExistingState, type createSessionHandoffPreflightMachineRpc } from '@/session/handoff/sessionHandoffPreflightMachineRpc';
+import type { StoredCredentials } from '@/persistence';
 import type { SessionSpawnDirectTargetTransport } from '@/session/actions/createCliActionDeps';
 import {
   registerExternalActionRpcHandler,
@@ -320,6 +323,10 @@ export type MachineRpcHandlerDeps = Readonly<{
   sessionHandoffCoordinator?: NonNullable<
     Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['coordinateSessionHandoff']
   >;
+  sessionHandoffPreflight?: Readonly<{
+    readCredentials: () => Promise<StoredCredentials | null>;
+    callMachine: ReturnType<typeof createSessionHandoffPreflightMachineRpc>;
+  }>;
   resolveServerFeaturesSnapshot?: () => Promise<CliServerFeaturesSnapshot | undefined> | CliServerFeaturesSnapshot | undefined;
   workspaceSync?: MachineWorkspaceSyncRpcService;
   /** Passive Project setup producer plus authenticated Account row composition. */
@@ -386,6 +393,18 @@ export type MachineRpcHandlerDeps = Readonly<{
   /** Authenticated Home at this Machine RPC receiver, never a request-body selector. */
   currentServerId?: string;
   executionRunRuntimeAccountId?: string;
+  openAccountConnectionManagedConsumerSource?: import('@/agent/runtime/bridges/executionRun/runtime/managedProvider').ExecutionRunManagedProviderSourceOpener;
+  resolveManagedPurposeBindingIntent?: import('@/providers/managed/resolvePurposeBindingSnapshot').ResolveManagedProviderPurposeBindingIntent;
+  /** Invocation-owned Settings from this daemon's captured Home and authenticated Account. */
+  executionRunAccountSettings?: Readonly<{
+    serverUrl: string;
+    resolveAccountSettings: NonNullable<Parameters<typeof registerExecutionRunHandlers>[1]['resolveAccountSettings']>;
+    resolveAccountSettingsSnapshot: NonNullable<Parameters<typeof registerExecutionRunHandlers>[1]['resolveAccountSettingsSnapshot']>;
+    resolveManagedPurposeBindingIntent?: Parameters<typeof registerExecutionRunHandlers>[1]['resolveManagedPurposeBindingIntent'];
+    readModelProjection?: Parameters<typeof registerExecutionRunHandlers>[1]['readModelProjection'];
+    prepareManagedEndpoint?: Parameters<typeof registerExecutionRunHandlers>[1]['prepareManagedEndpoint'];
+    actionsSettingsProvider: RuntimeActionSettingsProvider;
+  }>;
   /** Review transport bound to this daemon's exact authenticated Home credentials. */
   executionRunApprovalDeps?: Parameters<typeof registerExecutionRunHandlers>[1]['actionApprovalDeps'];
   /** Daemon-owned exact Team binding opener for detached explicit Runs. */
@@ -570,7 +589,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   registerExecutionRunHandlers(rpcHandlerManager, {
     sessionId: null,
     budgetRegistry: executionBudgetRegistry,
-    serverId: configuration.activeServerId,
+    serverId: params.deps?.currentServerId ?? configuration.activeServerId,
     ...(params.deps?.executionRunRuntimeAccountId
       ? { runtimeAccountId: params.deps.executionRunRuntimeAccountId }
       : {}),
@@ -582,6 +601,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     ...(params.deps?.actionsSettingsProvider
       ? { actionsSettingsProvider: params.deps.actionsSettingsProvider }
       : {}),
+    ...(params.deps?.executionRunAccountSettings ?? {}),
     ...(params.deps?.prepareRunTeamCredentialProviderBinding
       ? { prepareRunTeamCredentialProviderBinding: params.deps.prepareRunTeamCredentialProviderBinding }
       : {}),
@@ -952,8 +972,28 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
       releaseExportSession: handlers.directTransferExport.releaseExportSession,
     });
   }
+  const sessionHandoffPreflight = params.deps?.sessionHandoffPreflight;
+  const admitExistingSessionState: NonNullable<Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['admitExistingSessionState']> | undefined = sessionHandoffPreflight
+    ? async (peerMachineId, context, checkRequest) => {
+        const unavailable = () => ({ ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable' });
+        if (!checkRequest || peerMachineId !== checkRequest.targetMachineId) return unavailable();
+        const requester = context?.requesterSessionBootstrap;
+        // A signed or foreign requester cannot borrow this installation's Account credentials.
+        if (!requester && (context?.callerInputAuthorization
+          || context?.machineAdmission && context.machineAdmission.actorAccountId !== context.machineAdmission.custodianAccountId)) return unavailable();
+        const credentials = requester?.credentials ?? await sessionHandoffPreflight.readCredentials();
+        if (!credentials || requester && !await requester.isCurrent()) return unavailable();
+        const actionContext = context ? buildActionExecutorContextForRpc({ ...context,
+          actionId: 'session.handoff', defaultSessionId: checkRequest.sessionId }) : undefined;
+        if (context?.callerInputAuthorization && actionContext?.externalActionExecutionAuthorization !== context.callerInputAuthorization) return unavailable();
+        return await admitSessionHandoffExistingState({ credentials, request: checkRequest,
+          ...(actionContext ? { context: actionContext } : {}), rpc: sessionHandoffPreflight.callMachine,
+          ...(context?.signal ? { signal: context.signal } : {}) });
+      }
+    : undefined;
   registerMachineSessionHandoffRpcHandlers({
     rpcHandlerManager,
+    ...(admitExistingSessionState ? { admitExistingSessionState } : {}),
     ...(params.deps?.requesterSessionRuntime ? { requesterSessionRuntime: params.deps.requesterSessionRuntime } : {}),
     ...(params.deps?.requesterBootstrapBoundary ? { requesterBootstrapBoundary: params.deps.requesterBootstrapBoundary } : {}),
     sessionOperationExclusion: externalSessionOperationExclusion,

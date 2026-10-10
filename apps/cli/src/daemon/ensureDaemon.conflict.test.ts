@@ -1,4 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { dirname, join } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { renderSystemdServiceUnit } from '@happier-dev/cli-common/service';
@@ -6,16 +8,50 @@ import { renderSystemdServiceUnit } from '@happier-dev/cli-common/service';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleText } from '@/testkit/logger/captureOutput';
+import { configuration, reloadConfiguration } from '@/configuration';
+import { writeDaemonState } from '@/persistence';
+import { ensureDaemonRunningForSessionCommand } from '@/daemon/ensureDaemon';
+import { resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths } from '@/daemon/service/cli';
 
-const spawnDetachedDaemonStartSyncMock = vi.fn(async () => ({ unref() {} }));
+const { spawnDetachedDaemonStartSyncMock } = vi.hoisted(() => ({
+    spawnDetachedDaemonStartSyncMock: vi.fn(async () => ({ unref() {} })),
+}));
 vi.mock('@/daemon/runtime/spawnDetachedDaemonStartSync', () => ({
     spawnDetachedDaemonStartSync: spawnDetachedDaemonStartSyncMock,
 }));
 
 describe('ensureDaemonRunningForSessionCommand conflict handling', () => {
+    // A live PID alone is not daemon identity. Exercise the real ownership
+    // inspection against an authenticated control endpoint as well as a PID.
+    const server = createServer((request, response) => {
+        request.resume();
+        if (request.method !== 'POST' || request.url !== '/ping') {
+            response.writeHead(404).end();
+            return;
+        }
+        if (request.headers['x-happier-daemon-token'] !== 'test-control-token') {
+            response.writeHead(401).end();
+            return;
+        }
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ status: 'ok' }));
+    });
+    let httpPort: number;
+    beforeAll(async () => {
+        server.listen(0, '127.0.0.1');
+        await once(server, 'listening');
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('Missing server address');
+        httpPort = address.port;
+    });
+    afterAll(async () => {
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+    });
     const envScope = createEnvKeyScope([
         'HAPPIER_HOME_DIR',
         'HAPPIER_ACTIVE_SERVER_ID',
+        'HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID',
         'HAPPIER_PUBLIC_RELEASE_CHANNEL',
         'HAPPIER_DAEMON_STARTUP_SOURCE',
         'HAPPIER_DAEMON_SERVICE_PLATFORM',
@@ -32,9 +68,9 @@ describe('ensureDaemonRunningForSessionCommand conflict handling', () => {
 
     afterEach(() => {
         envScope.restore();
-        spawnDetachedDaemonStartSyncMock.mockClear();
+        reloadConfiguration();
+        spawnDetachedDaemonStartSyncMock.mockReset();
         vi.restoreAllMocks();
-        vi.resetModules();
     });
 
     it('warns and skips autostart when a different background service already owns the relay', async () => {
@@ -42,18 +78,15 @@ describe('ensureDaemonRunningForSessionCommand conflict handling', () => {
             envScope.patch({
                 HAPPIER_HOME_DIR: homeDir,
                 HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+                HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: '',
                 HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
             });
-            vi.resetModules();
-
-            const [{ writeDaemonState }, { ensureDaemonRunningForSessionCommand }] = await Promise.all([
-                import('@/persistence'),
-                import('@/daemon/ensureDaemon'),
-            ]);
+            reloadConfiguration();
 
             writeDaemonState({
                 pid: process.pid,
-                httpPort: 43112,
+                httpPort,
+                controlToken: 'test-control-token',
                 startedAt: Date.now(),
                 startedWithCliVersion: '0.0.0-other',
                 startedWithPublicReleaseChannel: 'preview',
@@ -82,18 +115,15 @@ describe('ensureDaemonRunningForSessionCommand conflict handling', () => {
             envScope.patch({
                 HAPPIER_HOME_DIR: homeDir,
                 HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+                HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: '',
                 HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
             });
-            vi.resetModules();
-
-            const [{ writeDaemonState }, { ensureDaemonRunningForSessionCommand }] = await Promise.all([
-                import('@/persistence'),
-                import('@/daemon/ensureDaemon'),
-            ]);
+            reloadConfiguration();
 
             writeDaemonState({
                 pid: process.pid,
-                httpPort: 43113,
+                httpPort,
+                controlToken: 'test-control-token',
                 startedAt: Date.now(),
                 startedWithCliVersion: '0.0.0-other',
                 startedWithPublicReleaseChannel: 'preview',
@@ -122,6 +152,7 @@ describe('ensureDaemonRunningForSessionCommand conflict handling', () => {
             envScope.patch({
                 HAPPIER_HOME_DIR: happierHomeDir,
                 HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+                HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: '',
                 HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
                 HAPPIER_DAEMON_STARTUP_SOURCE: '',
                 HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
@@ -135,27 +166,21 @@ describe('ensureDaemonRunningForSessionCommand conflict handling', () => {
                 HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS: '50',
                 HAPPIER_DAEMON_START_WAIT_POLL_MS: '5',
             });
-            vi.resetModules();
-
-            // This test is about "autostart when no current relay owner exists", not about daemon-state
-            // fallback discovery. Stub the control client inspection to avoid scanning a developer's real
-            // servers dir if configuration was loaded before the test's env patch.
-            const isDaemonRunningMock = vi.fn()
-                .mockResolvedValueOnce(false)
-                .mockResolvedValueOnce(true);
-            vi.doMock('@/daemon/controlClient', async (importOriginal) => {
-                const actual = await importOriginal<typeof import('@/daemon/controlClient')>();
-                return {
-                    ...actual,
-                    inspectDaemonRunningStateAndCleanupStaleState: vi.fn(async () => ({ status: 'not-running' as const })),
-                    isDaemonRunningCurrentlyInstalledHappyVersion: isDaemonRunningMock,
-                };
+            reloadConfiguration();
+            // Simulate only the process-launch boundary. The newly started
+            // daemon publishes state and answers the real readiness probe.
+            spawnDetachedDaemonStartSyncMock.mockImplementationOnce(async () => {
+                writeDaemonState({
+                    pid: process.pid,
+                    httpPort,
+                    controlToken: 'test-control-token',
+                    startedAt: Date.now(),
+                    startedWithCliVersion: configuration.currentCliVersion,
+                    startedWithPublicReleaseChannel: 'stable',
+                    startupSource: 'manual',
+                });
+                return { unref() {} };
             });
-
-            const [{ ensureDaemonRunningForSessionCommand }, { resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths }] = await Promise.all([
-                import('@/daemon/ensureDaemon'),
-                import('@/daemon/service/cli'),
-            ]);
 
             const runtime = resolveDaemonServiceCliRuntimeFromEnv({ processEnv: process.env });
             const paths = resolveDaemonServicePaths(runtime);

@@ -45,6 +45,74 @@ The root Session screen keeps the controls that affect how you work day to day:
 
 This keeps the root screen focused on common workflow choices instead of mixing them with large advanced settings groups.
 
+## Session Instructions (development integration)
+
+Development source lets an ordinary Session or Bot select a Prompt Library
+document as its Instructions. The selection changes only its reserved Session
+context entry, preserving other context, Roles and Notes. Detaching leaves the
+document in the library. Empty instructions are valid; a deleted required document
+needs repair or detachment before another preparation can proceed.
+
+Supported coding and bound Voice preparations read the current document again.
+Changes take effect from the next supported preparation, while an already-prepared
+turn or Voice attempt keeps its instructions. Temporary read failures keep new
+preparation pending for retry. This is development integration: the Work editor
+and all-carrier Voice delivery are not released workflows.
+
+Sharing a Session does not share its Instructions document. A separate document
+grant permits its covered content, while the owner's Session selection and Voice
+preference stay private. Document edits use ordinary Actions approval and the
+Action's exact surface setting across Sessions, rather than a Bot-specific grant.
+See [Prompts and skills](/extending/prompts-and-skills) and
+[Inbox and approvals](/sessions/inbox-and-approvals).
+
+## Memory upkeep for new Bots (development integration)
+
+The development Account preference **Memory upkeep for new Bots** defaults on.
+Normal Bot creation uses it once to install the weekly memory-upkeep habit,
+independently of whether the Session uses memory. The habit is visible in
+**Triggers** and can be paused there. Changing the preference does not install,
+remove or change habits on existing Bots, including Sessions later promoted to
+Bots or resumed Bots.
+
+The preference uses the existing Account-settings Actions. Its visual settings
+row is still being integrated; this is not a claim of released availability.
+
+## Per-session Voice preference (development integration)
+
+Development source adds a private voice preference for one session, separate
+from the account-wide settings described above. Unset follows the account's voice
+provider. A selected voice changes only that provider's declared voice choice and
+keeps credentials, model and speed inherited. Missing, unsupported or
+other-provider choices require repair; they do not silently select a new provider.
+This preference stays owner-private when the Session is shared, even if an
+associated instructions document is separately shared.
+Saving a choice does not start Voice or rename the voice already speaking.
+Voice controls retain their normal human approval and microphone-permission flow.
+
+The Work picker and bound-instruction carriers are still being integrated, so this
+is not released availability or all-carrier support. [Voice](/voice) explains the
+distinction between an exact session target and global mode.
+
+## Per-session tool-call visibility (development)
+
+Development source supports a human-owned tool-call visibility preference for
+one Session. Show or hide tool calls for that Session, or reset the preference
+to follow its default. This changes transcript presentation, not which tools
+the Agent can use.
+
+Agents and MCP callers can read settings, but cannot change this visibility
+preference. The Session preference is development integration, not a claim of
+released availability.
+
+## Confidential credential requests (development)
+
+Confidential credential requests are handled in the existing Session/Inbox request
+detail, not in Session settings or chat. The 0.3 development flow offers masked
+one-time entry and explicit, off-by-default Remember, with separate entry, submit,
+and save outcomes. See [confidential browser entry](/agents/profiles#confidential-browser-entry-development)
+for its target review and current limits.
+
 ## Session handoff settings
 
 The dedicated **Session handoff** screen controls the defaults used when you move a session between machines.
@@ -179,6 +247,62 @@ Use **Immediate** when you want the running session to react right away. Use **N
 The same screen can also show related permission/session-default controls such as where prompts appear and transcript-storage defaults for backend choices when those features are available.
 
 Full guide: [Permissions](/sessions/permissions)
+
+## Watching a computer in development builds
+
+Computer watching is a **0.3 development-build feature**. It uses the session's
+machine, including an enrolled graphical guest, and the same viewer on desktop
+and phone. A machine must be online, have a desktop, and have its native screen
+driver ready. Opening the viewer does not start or wake a managed machine.
+
+**Watch** opens the viewer. On a desktop it floats beside the conversation,
+above the composer; the reading column moves aside so nothing is covered, and
+the viewer keeps clear of the Voice orb or island and the pet. Who is acting
+(the agent, or you after **Take control**) shows below the picture. While you
+only watch, drag the picture itself to move the viewer and double-click it to
+expand; once you take control, the picture takes your clicks and keys and the
+viewer moves by its controls or the corner grip. Snap it to a corner with the
+arrow keys or its menu, and resize it from the grip. **Expand view** covers the
+conversation on purpose; **Restore view**, Escape or Back returns it to its
+corner. **Dock view** puts the same picture in the Session's pane. Pressing the
+current **Computer** source opens the window and display picker beside it; a
+watched browser's Back, Forward and Reload are in the viewer's menu. On a phone
+the viewer sits at the top of the conversation with its controls always
+visible. **Close view** only closes the
+viewer: the session, the machine and any shared window keep running, and the
+viewer stays closed until you open it again. Stopping sharing is a separate
+choice in the viewer's menu.
+
+Choose an actual window or display from that machine's source picker. An empty
+window list does not authorize sharing a display. Sharing a whole display exposes
+everything visible there, including other apps and notifications; review that
+consequence when choosing what to share. Viewing and mouse/keyboard use are
+separate choices, subject to current machine access and your Actions approval
+preferences.
+
+Linux X11 window and primary-display capture are supported by the development
+native driver. The macOS implementation uses the same source and control path;
+physical macOS permission and input certification remains pending. The current
+driver exposes the primary display, not an independently selectable list of
+physical monitors. Windows and Wayland computer capture remain unsupported.
+
+On a Mac, **Screen Recording** permits watching, while **Accessibility** permits
+mouse and keyboard use. Grant them on the target Mac, even when watching from a
+phone. Opening privacy settings only opens the relevant OS page: grant the
+permission yourself, return to Happier, and check the sources again. A fresh
+permission check must confirm the grant. You can still choose viewing only when
+capture is allowed and input is denied.
+Viewing-only access limits the Agent, not your own controls: you can still use the
+shared computer yourself when its OS input permission is granted.
+
+If a window closes, a display becomes unavailable, or access is removed, choose
+an available source again. A changed screen size or scale needs a fresh capture
+before input. If Happier cannot confirm the last input or that the Agent stopped,
+check the screen before continuing; retrying must not repeat that physical input.
+A missing screen driver needs setup on the target machine; a headless machine
+may still provide its terminal or browser. Native confidential credential entry
+is currently unavailable because the driver cannot verify the exact focused
+field; ordinary keyboard entry is not a substitute for secure fill.
 
 ## New session shortcut settings
 

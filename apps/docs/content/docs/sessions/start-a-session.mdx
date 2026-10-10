@@ -67,6 +67,41 @@ These controls are contextual:
 - changes apply to the session you are about to start
 - they do not silently rewrite your saved global defaults unless you explicitly edit those defaults in Settings
 
+## Bot drafts in development
+
+<Callout type="info">
+  Bot creation is being integrated into the 0.3 development line. This is not a
+  released New bot workflow; its visual controls and integrated checks are still in progress.
+</Callout>
+
+Bot drafts reuse ordinary session creation. An explicit name stays with the draft
+when you reopen it and Send. Leaving the name empty keeps automatic naming; the
+“New bot” placeholder is never saved as its name. Opening or editing the draft does
+not start the Agent. Only an explicit Send requests creation on the selected machine.
+
+New Bot drafts default to the selected machine's home folder, including a dedicated
+machine's own home after it joins. The ordinary folder chip remains available for
+any folder or Project. Session home-folder labels read **No folder**; this means the
+real home directory, not a private Bot directory. Ordinary session drafts keep their
+recent-folder default.
+
+Instructions remain local while you edit. Saving creates a reusable PromptDoc;
+Send saves any still-unsaved Instructions before requesting the session. A failed
+session start keeps that document and its selected reference with the draft. An
+untouched blank draft creates no Instructions document.
+
+The development **Ask Happier** command opens an ordinary Bot draft named
+**Happier**, with an editable built-in guide selected as Instructions. That
+explicit Start creates the guide in your Prompt Library; viewing an offer or
+release note does not. You can edit the name and question before Send, and
+opening the draft does not start the Agent.
+
+A Start before sign-in retains the authoring choice for the selected Home's
+normal sign-in continuation, without creating an anonymous session. Selected
+release notes and limited current-screen context can seed the same draft.
+The offer, showcase and changelog buttons are still being integrated; this does
+not establish their released availability.
+
 ## Choosing the machine and folder
 
 The most common start flow is:

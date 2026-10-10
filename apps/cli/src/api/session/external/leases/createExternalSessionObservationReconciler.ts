@@ -53,6 +53,20 @@ type LinkRecord = {
     onFacts: (facts: readonly ExternalAgentObservationLeafFactV1[]) => void;
 };
 
+export type ExternalSessionAccountingSourceDemand = Readonly<{
+    resource: ExternalSessionObservationResourceIdentity;
+    source: AgentExternalSessionSource;
+    changeObservation: ExternalAgentObservationResourceDescriptorV1['changeObservation'];
+    watchFileChanges?: ExternalAgentObservationWatchFileChangesV1;
+    onChange(input: Readonly<{
+        reason: 'file_changed' | 'topology_changed' | 'source_changed';
+        changedFile?: string;
+        changedNativeSessionIds?: readonly string[];
+    }>): void;
+}>;
+
+type AccountingRecord = { active: boolean; demand: ExternalSessionAccountingSourceDemand };
+
 type LinkRedescription = Readonly<{
     resource: ExternalSessionObservationResourceIdentity;
     link: ExternalSessionObservationLinkIdentity;
@@ -119,6 +133,7 @@ type ResourceRecord = {
         ExternalAgentObservationResourceDescriptorV1['changeObservation'] | null;
     active: boolean;
     links: Set<LinkRecord>;
+    accounting: Set<AccountingRecord>;
     linksByLinkKey: Map<ExternalAgentObservationLinkKeyV1, Set<LinkRecord>>;
     observer: ObserverRecord | null;
     fileWatchersByPath: Map<string, FileWatcherRecord>;
@@ -139,12 +154,9 @@ type ExternalSessionObservationReconcilerParams = Readonly<{
     acquireObserver: (input: Readonly<{
         resource: ExternalSessionObservationResourceIdentity;
         managedEndpointSource: AgentExternalSessionSource;
-        requestTranscriptRefresh(
-            linkKey: ExternalAgentObservationLinkKeyV1,
-        ): void;
     }> & Pick<
         AgentExternalSessionObservationObserveResourceRequest,
-        'signal' | 'emit' | 'requestReconcile'
+        'signal' | 'emit' | 'requestReconcile' | 'requestTranscriptRefresh'
     >) => Disposable | Promise<Disposable>;
     requestTranscriptRefresh?: (input: Readonly<{
         sessionId: string;
@@ -319,6 +331,22 @@ export function createExternalSessionObservationReconciler(
         && link.resource.links.has(link)
     );
 
+    const notifyAccounting = (
+        resource: ResourceRecord,
+        input: Parameters<ExternalSessionAccountingSourceDemand['onChange']>[0],
+    ): void => {
+        if (disposed || !resource.active || resourcesByKey.get(resource.key) !== resource) return;
+        for (const record of resource.accounting) {
+            if (!record.active) continue;
+            if (input.changedFile && !record.demand.watchFileChanges?.files.includes(input.changedFile)) continue;
+            try {
+                record.demand.onChange(input);
+            } catch {
+                // A consumer cannot prevent the shared source invalidation.
+            }
+        }
+    };
+
     const routeBatch = (
         resource: ResourceRecord,
         batch: ExternalAgentObservationLinkEvidenceBatchV1['items']
@@ -422,6 +450,10 @@ export function createExternalSessionObservationReconciler(
                 desired.add(file);
             }
         }
+        for (const record of resource.accounting) {
+            if (!record.active || record.demand.changeObservation !== 'watch_file_changes') continue;
+            for (const file of record.demand.watchFileChanges?.files ?? []) desired.add(file);
+        }
         return desired;
     };
 
@@ -468,6 +500,7 @@ export function createExternalSessionObservationReconciler(
                 ) {
                     return;
                 }
+                notifyAccounting(resource, { reason: 'file_changed', changedFile: file });
                 requestFileChangeRedescription(resource, file);
             });
             watcher.dispose = watched.dispose;
@@ -504,6 +537,10 @@ export function createExternalSessionObservationReconciler(
             ) {
                 desired.add(directory);
             }
+        }
+        for (const record of resource.accounting) {
+            if (!record.active || record.demand.changeObservation !== 'watch_file_changes') continue;
+            for (const directory of record.demand.watchFileChanges?.topologyDirectories ?? []) desired.add(directory);
         }
         return desired;
     };
@@ -601,6 +638,7 @@ export function createExternalSessionObservationReconciler(
                         ) {
                             return;
                         }
+                        notifyAccounting(resource, { reason: 'topology_changed' });
                         requestTopologyResourceRedescription(resource);
                     },
                 })),
@@ -652,6 +690,7 @@ export function createExternalSessionObservationReconciler(
     };
 
     const hasObserverDemand = (resource: ResourceRecord): boolean => {
+        if ([...resource.accounting].some((record) => record.active && record.demand.changeObservation === 'observe_resource')) return true;
         for (const link of resource.links) {
             if (
                 isCurrentLink(link)
@@ -703,7 +742,8 @@ export function createExternalSessionObservationReconciler(
         resource.observer = observer;
         const managedEndpointSource = [...resource.links]
             .find((link) => isCurrentLink(link))
-            ?.identity.linkedSource.source;
+            ?.identity.linkedSource.source
+            ?? [...resource.accounting].find((record) => record.active)?.demand.source;
         if (!managedEndpointSource) {
             resource.observer = null;
             return;
@@ -722,8 +762,9 @@ export function createExternalSessionObservationReconciler(
                         return;
                     }
                     routeBatch(resource, batch.items, undefined, true);
+                    notifyAccounting(resource, { reason: 'source_changed' });
                 },
-                requestReconcile: () => {
+                requestReconcile: (nativeSessionId) => {
                     if (
                         !observer.active
                         || resource.observer !== observer
@@ -733,8 +774,11 @@ export function createExternalSessionObservationReconciler(
                     }
                     requestObservedResourceReconciliation(resource);
                     requestObservedResourceTranscriptRefresh(resource);
+                    notifyAccounting(resource, { reason: 'source_changed',
+                        ...(nativeSessionId ? { changedNativeSessionIds: [nativeSessionId] } : {}),
+                    });
                 },
-                requestTranscriptRefresh: (linkKey) => {
+                requestTranscriptRefresh: (linkKey, nativeSessionId) => {
                     if (
                         !observer.active
                         || resource.observer !== observer
@@ -743,6 +787,9 @@ export function createExternalSessionObservationReconciler(
                         return;
                     }
                     requestTranscriptRefreshForLinkKey(resource, linkKey);
+                    notifyAccounting(resource, { reason: 'source_changed',
+                        ...(nativeSessionId ? { changedNativeSessionIds: [nativeSessionId] } : {}),
+                    });
                 },
             }))
             .then(async (acquiredObserver) => {
@@ -806,6 +853,7 @@ export function createExternalSessionObservationReconciler(
             changeObservation: changeObservation ?? null,
             active: true,
             links: new Set(),
+            accounting: new Set(),
             linksByLinkKey: new Map(),
             observer: null,
             fileWatchersByPath: new Map(),
@@ -863,6 +911,8 @@ export function createExternalSessionObservationReconciler(
     };
 
     const releaseResourceLogicalLinks = (resource: ResourceRecord): void => {
+        for (const record of resource.accounting) record.active = false;
+        resource.accounting.clear();
         for (const link of resource.links) {
             if (linksBySessionId.get(link.identity.sessionId) === link) {
                 linksBySessionId.delete(link.identity.sessionId);
@@ -938,7 +988,7 @@ export function createExternalSessionObservationReconciler(
         link: LinkRecord,
         options?: Readonly<{ retainResource?: boolean }>,
     ): Promise<void> => {
-        if (!options?.retainResource && link.resource.links.size === 1) {
+        if (!options?.retainResource && link.resource.links.size === 1 && link.resource.accounting.size === 0) {
             await deactivateResource(link.resource);
             return;
         }
@@ -1572,6 +1622,34 @@ export function createExternalSessionObservationReconciler(
 
     return {
         reconcileLink,
+
+        async registerAccountingSource(input: ExternalSessionAccountingSourceDemand): Promise<Disposable> {
+            if (disposed || input.resource.retirementSignal?.aborted) {
+                throw new Error('External accounting observation authority is retired');
+            }
+            const resource = getOrCreateResource(input.resource, input.changeObservation);
+            if (!resource || !resource.active) throw new Error('External accounting observation resource is unavailable');
+            const record: AccountingRecord = { active: true, demand: input };
+            resource.accounting.add(record);
+            const release = async (): Promise<void> => {
+                if (!record.active) return;
+                record.active = false;
+                resource.accounting.delete(record);
+                if (resource.links.size === 0 && resource.accounting.size === 0) {
+                    await deactivateResource(resource);
+                } else {
+                    await reconcileObserverDemand(resource);
+                }
+            };
+            try {
+                await reconcileObserverDemand(resource);
+                if (!record.active || !resource.active) throw new Error('External accounting observation authority retired during admission');
+            } catch (error) {
+                await release();
+                throw error;
+            }
+            return Object.freeze({ dispose: release });
+        },
 
         async reconcileResource(
             identity: ExternalSessionObservationResourceIdentity,

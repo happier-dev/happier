@@ -1,3 +1,4 @@
+import { isForegroundTurnRuntimeTranscriptEvent, isSessionScopedRuntimeTranscriptEvent } from '../events/runtimeTranscriptScope';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { resolveRuntimeCheckpointToolProtocol } from '@happier-dev/agents/session/controls/checkpoints';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -70,6 +71,7 @@ import { resolvePendingQueueHandoff } from '@/agent/runtime/mode/switching/pendi
 import { createTerminalTurnStateMachine } from '@/agent/runtime/terminal/turnStateMachine';
 import { mapRuntimeMessageToTerminalLifecycleObservation } from '@/agent/runtime/terminal/runtimeMessageObservationAdapter';
 import {
+  abortAndDisposeRunnerRuntime,
   requestExplicitRunnerStop,
   resolveRunnerRuntimeDisposalReason,
 } from './runnerRuntimeDisposal';
@@ -119,7 +121,6 @@ import { stampTurnFacts } from '@/agent/runtime/session/turn/stampTurnFacts';
 export const HOST_SESSION_RUNTIME_PLAN_KIND = 'hostSessionRuntimePlan' as const;
 
 const KEEP_ALIVE_DUPLICATE_SUPPRESSION_MS = 100;
-const DEFAULT_RUNTIME_TRANSCRIPT_PROJECTION_DRAIN_TIMEOUT_MS = 5_000;
 
 type RuntimeTranscriptAgentCommitEvent = Extract<AgentSessionRuntimeEvent, { kind: 'transcript-message-committed' }>;
 type RuntimeTurnFailedEvent = Extract<AgentSessionRuntimeEvent, { kind: 'turn-failed' }>;
@@ -188,14 +189,14 @@ function createRuntimeFailureTranscriptProjector(params: Readonly<{
     }
 
     if (event.kind === 'transcript-message-committed') {
-      if (activeTurnId && isVisibleAssistantMessage(event)) {
+      if (isForegroundTurnRuntimeTranscriptEvent(event) && activeTurnId === event.turnId && activeTurnId && isVisibleAssistantMessage(event)) {
         visibleAssistantTurnIds.add(activeTurnId);
       }
       return null;
     }
 
     if (event.kind === 'message-delta') {
-      if (event.text.length > 0) {
+      if (isForegroundTurnRuntimeTranscriptEvent(event) && event.text.length > 0) {
         visibleAssistantTurnIds.add(event.turnId);
       }
       return null;
@@ -307,7 +308,6 @@ export type SessionLoopLifecycleDeps = Readonly<{
     runtime: HostSessionRuntimeHookRuntime;
   }>) => void | Promise<void>;
   remoteOnlyTerminalDisplayComponent?: React.ComponentType<RemoteOnlyTerminalDisplayProps>;
-  runtimeTranscriptProjectionDrainTimeoutMs?: number;
 }>;
 
 async function observeAgentStreamTokenEvent(params: Readonly<{
@@ -316,7 +316,8 @@ async function observeAgentStreamTokenEvent(params: Readonly<{
   observeAgentStreamToken?: (payload: Record<string, unknown>) => void | Promise<void>;
   uiLogPrefix: string;
 }>): Promise<void> {
-  if (!params.observeAgentStreamToken || params.event.kind !== 'message-delta') {
+  if (!params.observeAgentStreamToken || params.event.kind !== 'message-delta'
+    || !isForegroundTurnRuntimeTranscriptEvent(params.event)) {
     return;
   }
   const tokenText = params.event.text;
@@ -447,12 +448,6 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
   const startRemoteModeStaticControlFn = params.deps.startRemoteModeStaticControlFn ?? startRemoteModeStaticControl;
   const runTerminalRemoteSessionModeLoopFn = params.deps.runTerminalRemoteSessionModeLoopFn ?? runTerminalRemoteSessionModeLoop;
   const onBeforeSessionClose = params.deps.onBeforeSessionClose;
-  const runtimeTranscriptProjectionDrainTimeoutMs =
-    typeof params.deps.runtimeTranscriptProjectionDrainTimeoutMs === 'number'
-    && Number.isFinite(params.deps.runtimeTranscriptProjectionDrainTimeoutMs)
-    && params.deps.runtimeTranscriptProjectionDrainTimeoutMs >= 0
-      ? params.deps.runtimeTranscriptProjectionDrainTimeoutMs
-      : DEFAULT_RUNTIME_TRANSCRIPT_PROJECTION_DRAIN_TIMEOUT_MS;
   const notifyDaemonConnectedServiceTurnLifecycleFn =
     params.deps.notifyDaemonConnectedServiceTurnLifecycleFn ?? notifyDaemonConnectedServiceTurnLifecycle;
   const daemonTurnContributionsBridge =
@@ -541,41 +536,11 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
     };
     void projection.then(removeSettledProjection, removeSettledProjection);
   };
-  const waitForRuntimeTranscriptProjectionBatch = async (
-    projections: readonly Promise<void>[],
-    reason: string,
-  ): Promise<'settled' | 'timeout'> => {
-    if (projections.length === 0) return 'settled';
-    let timeout: NodeJS.Timeout | null = null;
-    const timeoutPromise = new Promise<'timeout'>((resolve) => {
-      timeout = setTimeout(() => resolve('timeout'), runtimeTranscriptProjectionDrainTimeoutMs);
-      timeout.unref?.();
-    });
-    const outcome = await Promise.race([
-      Promise.allSettled(projections).then(() => 'settled' as const),
-      timeoutPromise,
-    ]);
-    if (timeout) clearTimeout(timeout);
-    if (outcome !== 'timeout') return 'settled';
-    logger.debug(
-      reason === 'terminal_turn_mutation_required'
-        ? `${params.config.uiLogPrefix} Required runtime transcript projection drain timed out`
-        : `${params.config.uiLogPrefix} Runtime transcript projection drain timed out (non-fatal)`,
-      {
-        reason,
-        pendingCount: projections.length,
-        timeoutMs: runtimeTranscriptProjectionDrainTimeoutMs,
-      },
-    );
-    return 'timeout';
-  };
-  const drainRuntimeTranscriptProjections = async (reason: string): Promise<void> => {
+  // Delivery and runner termination own their budgets. A shorter projection
+  // deadline would release ordering and fail valid output still awaiting its ACK.
+  const drainRuntimeTranscriptProjections = async (): Promise<void> => {
     while (pendingRuntimeTranscriptProjections.size > 0) {
-      const outcome = await waitForRuntimeTranscriptProjectionBatch(
-        [...pendingRuntimeTranscriptProjections],
-        reason,
-      );
-      if (outcome === 'timeout') return;
+      await Promise.allSettled([...pendingRuntimeTranscriptProjections]);
     }
   };
   const enqueueSessionTurnMutation = (
@@ -595,16 +560,6 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       }
       let transcriptAdmissionFailure: RuntimeTranscriptRequiredAdmissionError | null = null;
       try {
-        const outcome = await waitForRuntimeTranscriptProjectionBatch(
-          projectionsBeforeTerminalMutation,
-          'terminal_turn_mutation_required',
-        );
-        if (outcome === 'timeout') {
-          throw new RuntimeTranscriptRequiredAdmissionError(
-            'projection_drain_timed_out',
-            mutation.action,
-          );
-        }
         await Promise.all(projectionsBeforeTerminalMutation);
         if ('turnId' in mutation) {
           const earlierFailure = requiredTranscriptAdmissionFailureByTurnId.get(mutation.turnId);
@@ -755,9 +710,11 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
     const parsedProjectionTurnId = parsedRuntimeEvent.success && 'turnId' in parsedRuntimeEvent.data
       ? parsedRuntimeEvent.data.turnId
       : null;
-    const projectionTurnId = typeof parsedProjectionTurnId === 'string'
-      ? parsedProjectionTurnId
-      : activeRuntimeTranscriptTurnId;
+    const projectionTurnId = parsedRuntimeEvent.success && isSessionScopedRuntimeTranscriptEvent(parsedRuntimeEvent.data)
+      ? null
+      : typeof parsedProjectionTurnId === 'string'
+        ? parsedProjectionTurnId
+        : activeRuntimeTranscriptTurnId;
     if (parsedRuntimeEvent.success && params.config.publishHostRuntimeEvent) {
       try {
         params.config.publishHostRuntimeEvent(parsedRuntimeEvent.data);
@@ -777,6 +734,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
           runtimeMessageDeltaBridge,
           normalizedToolTurnChangeTracker,
           toolNormalizationProtocol,
+          mcpBindingIdentities: params.config.mcpBindingIdentities,
           event: message,
         });
       } catch (error) {
@@ -822,10 +780,10 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
     );
     void loggedTranscriptProjection;
     trackRuntimeTranscriptProjection(transcriptProjection);
-    runtimeTranscriptProjectionSerial = waitForRuntimeTranscriptProjectionBatch(
-      [transcriptProjection],
-      'runtime_transcript_projection_serial',
-    ).then(() => undefined);
+    runtimeTranscriptProjectionSerial = transcriptProjection.then(
+      () => undefined,
+      () => undefined,
+    );
     observeRuntimeMessageForSessionTurnLifecycle({
       lifecycle: sessionTurnLifecycle,
       message,
@@ -882,6 +840,11 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
   let cleanupPromise: Promise<void> | null = null;
   let runnerTerminationWork: Promise<void> | null = null;
   let runtimeDisposeReason: RuntimeTurnDisposeReason = 'runtime_recovery';
+  let runtimeDisposePromise: Promise<void> | null = null;
+  const disposeRuntimeOnce = (reason: RuntimeTurnDisposeReason): Promise<void> => {
+    runtimeDisposePromise ??= Promise.resolve().then(() => runtimeForPromptLoop.resetOrDisposeRuntime(reason));
+    return runtimeDisposePromise;
+  };
   let startupCoordinatorStarted = false;
 
   const startStartupCoordinator = async (): Promise<void> => {
@@ -995,15 +958,17 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
   const cleanupOnce = (): Promise<void> => {
     cleanupPromise ??= (async () => {
       unsubscribeRuntimeEventsOnce();
-      await drainRuntimeTranscriptProjections('cleanup');
-      sessionTurnLifecycle.retireAcceptedLifecyclePublication();
+      await drainRuntimeTranscriptProjections();
+      // Normal completion retains accepted marker custody until it drains.
+      // Termination retires publication separately when the daemon is quiescing.
       await sessionTurnLifecycle.drainAcceptedLifecycle();
+      sessionTurnLifecycle.retireAcceptedLifecyclePublication();
       await params.config.lifecycleHooks?.onBeforeDispose?.({ session: params.session, runtime: hookRuntimeForCallbacks });
       await cleanupBackendRunResourcesFn({
         keepAliveInterval,
         reconnectionHandle: params.reconnectionHandle,
         stopMcpServer: () => params.happyMcpServerStop(),
-        resetRuntime: () => runtimeForPromptLoop.resetOrDisposeRuntime(runtimeDisposeReason),
+        resetRuntime: () => disposeRuntimeOnce(runtimeDisposeReason),
         unmountUi: unmountTerminalDisplay,
       });
       await params.startupCoordinator?.cleanup?.();
@@ -1023,12 +988,16 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       const work = (async () => {
         runtimeDisposeReason = resolveRunnerRuntimeDisposalReason(event);
         shouldExit = true;
-        await handleAbort();
-        unsubscribeRuntimeEventsOnce();
-        await drainRuntimeTranscriptProjections('termination');
-        sessionTurnLifecycle.retireAcceptedLifecyclePublication();
-        await sessionTurnLifecycle.drainAcceptedLifecycle();
         try {
+          await abortAndDisposeRunnerRuntime({
+            abortActiveTurn: handleAbort,
+            disposeRuntime: disposeRuntimeOnce,
+            reason: runtimeDisposeReason,
+          });
+          unsubscribeRuntimeEventsOnce();
+          await drainRuntimeTranscriptProjections();
+          sessionTurnLifecycle.retireAcceptedLifecyclePublication();
+          await sessionTurnLifecycle.drainAcceptedLifecycle();
           await onBeforeSessionClose?.({
             session: params.session,
             runtime: hookRuntimeForCallbacks,
@@ -1057,7 +1026,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
     logger.debug(`${params.config.uiLogPrefix} Kill session requested`);
     await requestExplicitRunnerStop({
       abortActiveTurn: handleAbort,
-      disposeRuntime: (reason) => runtimeForPromptLoop.resetOrDisposeRuntime(reason),
+      disposeRuntime: disposeRuntimeOnce,
       requestTermination: terminationHandlers.requestTermination,
       whenTerminated: terminationHandlers.whenTerminated,
     });
@@ -1361,6 +1330,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
           // The native delivered marker is supplied only by the accepted full-plan producer.
         };
       },
+      readSessionPromptPlanComposition: () => resolveFreshSessionSystemPrompt.readComposition?.() ?? null,
       resolveAgentCompositionBeforeDispatch: async ({ signal }) => {
         const executionRunsFeatureEnabled = resolveCliFeatureDecision({
           featureId: 'execution.runs',
@@ -1441,7 +1411,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
           : undefined,
       onAfterLoopBoundary:
         async (loopParams) => {
-          await drainRuntimeTranscriptProjections('loop_boundary');
+          await drainRuntimeTranscriptProjections();
           await params.sessionSwapStrategy.flushPendingSessionSwap?.();
           await params.config.lifecycleHooks?.onAfterLoopBoundary?.({ ...loopParams, session: params.session, runtime: hookRuntimeForCallbacks });
         },

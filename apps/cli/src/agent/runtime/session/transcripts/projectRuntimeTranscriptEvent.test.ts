@@ -40,6 +40,27 @@ function canonicalRuntimeEvent(input: Readonly<Record<string, unknown>>): AgentS
 }
 
 describe('projectRuntimeTranscriptEvent', () => {
+  it('retains native MCP counts only with the host selected binding identities and removes native names', async () => {
+    const { projectRuntimeTranscriptEvent } = await import('./projectRuntimeTranscriptEvent');
+    const capture = createCommittedAgentMessageCapture();
+    const event = canonicalRuntimeEvent({ kind: 'mcp-tool-usage', sessionId: 'session-1', turnId: 'turn',
+      emittedAtMs: 200, window: { startMs: 100, endMs: 200 }, coverage: 'complete',
+      servers: [{ serverName: 'private-server-name', toolCallCount: 0, schemaBytes: null }] });
+    const session = { sessionId: 'session-1', enqueueAgentMessageCommitted: capture.enqueueAgentMessageCommitted };
+    await projectRuntimeTranscriptEvent({ session, provider: 'claude', event, mcpBindingIdentities: {
+      'private-server-name': { serverId: 'server', bindingId: 'binding', serverRevision: 10, bindingRevision: 20, catalogRevision: 40 },
+    } });
+    expect(capture.bodies).toMatchObject([{ type: 'event', data: { type: 'mcp-binding-usage', usage: {
+      sessionId: 'session-1', turnId: 'turn', coverage: 'complete', window: { startMs: 100, endMs: 200 },
+      bindings: [{ serverId: 'server', bindingId: 'binding', serverRevision: 10, bindingRevision: 20, catalogRevision: 40,
+        toolCallCount: 0, schemaBytes: null }],
+    } } }]);
+    expect(JSON.stringify(capture.bodies)).not.toContain('private-server-name');
+    const absent = createCommittedAgentMessageCapture();
+    await projectRuntimeTranscriptEvent({ session: { ...session, enqueueAgentMessageCommitted: absent.enqueueAgentMessageCommitted },
+      provider: 'claude', event });
+    expect(absent.bodies).toEqual([]);
+  });
   it('preserves provider message identities from live deltas through durable commit and cold reconciliation', async () => {
     const { createKeyedStreamedTranscriptBridge } = await import('@/api/session/createKeyedStreamedTranscriptBridge');
     const { projectRuntimeTranscriptEvent } = await import('./projectRuntimeTranscriptEvent');
@@ -325,6 +346,7 @@ describe('projectRuntimeTranscriptEvent', () => {
     const runtimeMessageDeltaBridge = {
       appendAssistantDelta: vi.fn(),
       appendThinkingDelta: vi.fn(),
+      discardStream: vi.fn(),
       flushAll: vi.fn(async () => []),
     };
     const session = {
@@ -368,7 +390,7 @@ describe('projectRuntimeTranscriptEvent', () => {
       sidechainId: null,
       toolCallId: 'call-1',
     });
-    expect(runtimeMessageDeltaBridge.flushAll).toHaveBeenCalledWith({ reason: 'tool-call-boundary' });
+    expect(runtimeMessageDeltaBridge.flushAll).toHaveBeenCalledWith(expect.objectContaining({ reason: 'tool-call-boundary' }));
     expect(session.enqueueAgentMessageCommitted).toHaveBeenCalledWith(
       'codex',
       {
@@ -419,6 +441,7 @@ describe('projectRuntimeTranscriptEvent', () => {
     const runtimeMessageDeltaBridge = {
       appendAssistantDelta: vi.fn(),
       appendThinkingDelta: vi.fn(),
+      discardStream: vi.fn(),
       flushAll: vi.fn(async () => []),
     };
     const { bodies, enqueueAgentMessageCommitted } = createCommittedAgentMessageCapture();
@@ -502,6 +525,7 @@ describe('projectRuntimeTranscriptEvent', () => {
       runtimeMessageDeltaBridge: {
         appendAssistantDelta: vi.fn(),
         appendThinkingDelta: vi.fn(),
+        discardStream: vi.fn(),
         flushAll: vi.fn(async () => []),
       },
       normalizedToolTurnChangeTracker: new NormalizedToolTurnChangeTracker({ provider: 'codex' }),
@@ -579,6 +603,7 @@ describe('projectRuntimeTranscriptEvent', () => {
       runtimeMessageDeltaBridge: {
         appendAssistantDelta: vi.fn(),
         appendThinkingDelta: vi.fn(),
+        discardStream: vi.fn(),
         flushAll: vi.fn(async () => []),
       },
       normalizedToolTurnChangeTracker: new NormalizedToolTurnChangeTracker({ provider: 'codex' }),
@@ -634,6 +659,7 @@ describe('projectRuntimeTranscriptEvent', () => {
     const runtimeMessageDeltaBridge = {
       appendAssistantDelta: vi.fn(),
       appendThinkingDelta: vi.fn(),
+      discardStream: vi.fn(),
       flushAll: vi.fn(async () => []),
     };
     const { bodies, enqueueAgentMessageCommitted } = createCommittedAgentMessageCapture();
@@ -901,6 +927,7 @@ describe('projectRuntimeTranscriptEvent', () => {
     const runtimeMessageDeltaBridge = {
       appendAssistantDelta: vi.fn(),
       appendThinkingDelta: vi.fn(),
+      discardStream: vi.fn(),
       flushAll: vi.fn(async () => []),
     };
 
@@ -973,6 +1000,7 @@ describe('projectRuntimeTranscriptEvent', () => {
     const runtimeMessageDeltaBridge = {
       appendAssistantDelta: vi.fn(),
       appendThinkingDelta: vi.fn(),
+      discardStream: vi.fn(),
       flushAll: vi.fn(async () => [{
         assistant: { sawText: true, didDurablyFlush: false },
         assistantRoot: { sawText: true, didDurablyFlush: false },

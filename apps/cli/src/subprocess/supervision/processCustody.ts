@@ -21,6 +21,9 @@ import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliR
  *   starts the target suspended, assigns it before its first instruction, and
  *   resumes it; this module owns the tagged job identity, the post-assignment
  *   handshake, and terminate/query-by-job with full membership absence proofs.
+ *   Finite PTY mode retains natural descendants and the observed root code
+ *   until whole-job absence; explicit query/Stop recovers missed native empty
+ *   notifications through the same job, without polling or a guessed PID.
  * - Darwin: the native subsecond start identity (`darwin-proc`), read through
  *   the helper's validated numeric sysctl witness.
  * - Peer identity (`peer-identity`): the one exact OS peer-identity boundary
@@ -78,6 +81,36 @@ export type ProcessCustodySpawnSpec = Readonly<{
     /** Post-assignment marker the helper writes once the target is resumed. */
     handshakePath: string;
 }>;
+
+/**
+ * The finite PTY carrier uses the same suspended/assigned Windows launch, but
+ * retains the job after target-root exit until its complete membership is
+ * positively empty. Ordinary SVC09 `run` keeps its root-exit cleanup policy.
+ * A raw Windows argument tail is already rendered by its caller; the native
+ * verbatim mode must append it unchanged rather than CRT-quote it as one arg.
+ */
+export function createFiniteProcessCustodyInvocation(input: Readonly<{
+    custody: ProcessCustodySpawnSpec;
+    command: string;
+    args: readonly string[] | string;
+    windowsVerbatimArguments?: boolean;
+}>): Readonly<{ command: string; args: string[]; custody: ProcessCustodySpawnSpec }> {
+    const verbatim = typeof input.args === 'string' || input.windowsVerbatimArguments === true;
+    return {
+        command: input.custody.executablePath,
+        args: [
+            'run',
+            `--job=${input.custody.jobName}`,
+            `--handshake=${input.custody.handshakePath}`,
+            '--wait-for-job-empty',
+            ...(verbatim ? ['--target-windows-verbatim'] : []),
+            '--',
+            input.command,
+            ...(typeof input.args === 'string' ? [input.args] : input.args),
+        ],
+        custody: input.custody,
+    };
+}
 
 export type ProcessCustodyJobOutcome =
     | 'absent'

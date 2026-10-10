@@ -22,6 +22,18 @@ const withProfile = {
 };
 
 describe('foreground admission secretReferenceOverlay compatibility', () => {
+  it('carries the selected destination Profile revision independently of Settings revision', () => {
+    const parsed = ForegroundAgentRuntimeAdmissionRequestV1Schema.safeParse(admissionRequest({
+      ...withProfile,
+      profileRecordRevision: 12,
+    }));
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && Reflect.get(parsed.data, 'profileRecordRevision')).toBe(12);
+    expect(ForegroundAgentRuntimeAdmissionRequestV1Schema.safeParse(admissionRequest({
+      profileRecordRevision: 12,
+    })).success).toBe(false);
+  });
+
   it('accepts an overlay alongside an exact Profile pin', () => {
     const parsed = ForegroundAgentRuntimeAdmissionRequestV1Schema.safeParse(admissionRequest({
       ...withProfile,

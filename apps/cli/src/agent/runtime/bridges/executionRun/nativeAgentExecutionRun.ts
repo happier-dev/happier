@@ -169,12 +169,14 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
     callId: string;
     sidechainId: string;
     resolveAcpHostLaunch?: Parameters<typeof createPublicAcpRuntimeProtocols>[0]['resolveHostLaunch'];
+    acpRuntimeDefinition?: Parameters<typeof createPublicAcpRuntimeProtocols>[0]['runtimeDefinition'];
     transformAgentRequest?: Parameters<typeof createPublicAcpRuntimeProtocols>[0]['transformAgentRequest'];
     runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null;
     runtimeAuthority?: PluginRuntimeAuthoritySnapshotV1;
     directory: string;
     machineId: string;
     accountSettings: AccountSettings | null;
+    resolveAccountSettingsSnapshot?: (input?: Readonly<{ mcpServerCatalog?: boolean; signal?: AbortSignal }>) => Promise<import('@/settings/accountSettings/activeAccountSettingsSnapshot').ActiveAccountSettingsSnapshot | null>;
     permissionMode: string;
     workspaceWrites?: 'allow' | 'deny';
     start: ExecutionRunBackendStartContext;
@@ -332,6 +334,7 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
             directory: params.directory,
             machineId: params.machineId,
             accountSettings: params.accountSettings,
+            resolveAccountSettingsSnapshot: params.resolveAccountSettingsSnapshot,
             ...(params.mcpSelection ? { mcpSelection: params.mcpSelection } : {}),
             runtimeRegistry: params.runtimeRegistry,
             ...(params.runtimeAuthority ? { runtimeAuthority: params.runtimeAuthority } : {}),
@@ -352,10 +355,11 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
                 currentSession: bound.currentSession,
                 executionRunServices,
                 ...(readActiveTurnAdmissionWitness ? { readActiveTurnAdmissionWitness } : {}),
-                ...(params.resolveAcpHostLaunch || params.transformAgentRequest
+                ...(params.resolveAcpHostLaunch || params.transformAgentRequest || params.acpRuntimeDefinition
                     ? {
                         protocolOptions: {
                             ...(params.resolveAcpHostLaunch ? { resolveHostLaunch: params.resolveAcpHostLaunch } : {}),
+                            ...(params.acpRuntimeDefinition ? { runtimeDefinition: params.acpRuntimeDefinition } : {}),
                             ...(params.transformAgentRequest ? { transformAgentRequest: params.transformAgentRequest } : {}),
                         },
                     }
@@ -608,7 +612,7 @@ function createNativeAgentInvocationContext(params: Readonly<{
     invokedAtMs: number;
     protocolOptions?: Pick<
         Parameters<typeof createPublicAcpRuntimeProtocols>[0],
-        'resolveHostLaunch' | 'transformAgentRequest'
+        'resolveHostLaunch' | 'transformAgentRequest' | 'runtimeDefinition'
     >;
     currentSession?: Parameters<typeof createPluginInvocationPresentation>[0]['currentSession'];
     readActiveTurnAdmissionWitness?: () => AgentInvocationTurnAdmissionWitness | null;

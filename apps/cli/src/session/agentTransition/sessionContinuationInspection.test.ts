@@ -1,9 +1,22 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { accountSettingsParse, AccountEncryptionCurrentnessResponseSchema, V2SessionRecordSchema } from '@happier-dev/protocol';
+import { setActiveAccountSettingsSnapshot, clearActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot, commitActiveAcpCatalog, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 import type { StoredCredentials } from '@/persistence';
+import { AcpCatalogRecordV1Schema, type AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { createCustomAcpAdmittedRuntimeFixture } from '@/plugins/testkit/customAcp';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 
 const mocks = vi.hoisted(() => ({
   fetchAccountMachineReplacements: vi.fn(),
+  readStoredCredentials: vi.fn(),
+}));
+
+// Stored credentials are the persistence boundary; configured engine resolution stays real.
+vi.mock('@/persistence', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/persistence')>(),
+  readStoredCredentials: mocks.readStoredCredentials,
 }));
 
 vi.mock('@/api/machine/fetchAccountMachineReplacements', () => ({
@@ -13,8 +26,12 @@ vi.mock('@/api/machine/fetchAccountMachineReplacements', () => ({
 const {
   inspectSessionContinuation,
   inspectSessionContinuations,
+  resolveSessionContinuationCurrentAgentId,
+  resolveSessionContinuationTargetAgent,
 } = await import('./sessionContinuationInspection');
 const { buildAgentCatalogContribution } = await import('./sessionAgentTransitionTestkit');
+// Load real runtime modules during collection, outside per-test execution budgets.
+const { readAgentCatalogSnapshot } = await import('@/agent/catalog/snapshot');
 
 /**
  * The inspection answers for THIS exact machine. A Session hosted elsewhere is
@@ -218,5 +235,175 @@ describe('sessionContinuationInspection', () => {
 
     expect(inspection).toEqual({ type: 'unavailable', reason: 'unsupported_session' });
     expect(deps.resolveCurrentProviderSpawnDefinitiveRejection).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('configured continuation target resolution', () => {
+  let runtimeFixture: Awaited<ReturnType<typeof createCustomAcpAdmittedRuntimeFixture>> | undefined;
+
+  beforeAll(async () => {
+    runtimeFixture = await createCustomAcpAdmittedRuntimeFixture({
+      controller: pluginReloadController,
+    });
+  });
+
+  beforeEach(() => {
+    mocks.readStoredCredentials.mockResolvedValue({
+      token: 'test-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    });
+  });
+
+  afterEach(() => {
+    clearActiveAccountSettingsSnapshot();
+  });
+
+  afterAll(async () => {
+    await runtimeFixture?.dispose();
+    runtimeFixture = undefined;
+  });
+
+  it('projects the canonical Custom ACP instance onto the existing continuation wire selector', () => {
+    for (const definitionId of ['target-a', 'target-b']) {
+      const metadata = {
+        flavor: 'custom-acp',
+        runtimeDescriptorV1: { v: 1, agentId: 'custom-acp', agent: { definitionId } },
+        acpConfiguredBackendV1: { v: 1, backendId: definitionId, title: definitionId, updatedAt: 1 },
+      };
+      expect(resolveSessionContinuationCurrentAgentId(metadata)).toBe(`acp:${definitionId}`);
+      expect(resolveSessionContinuationCurrentAgentId({ ...metadata,
+        runtimeDescriptorV1: { v: 1, agentId: 'custom-acp', agent: { definitionId: 'different-definition' } },
+      })).toBeNull();
+    }
+  });
+
+  it('refuses the captured target when its catalog changes during runtime composition', async () => {
+    const record = AcpCatalogRecordV1Schema.parse({ v: 1, definitions: [{
+      id: 'target-a', name: 'target-a', title: 'Before refresh', command: process.execPath,
+      args: [], env: {}, capabilities: { supportsLoadSession: true }, createdAt: 1, updatedAt: 1,
+    }] });
+    const scopeKey = resolveAccountSettingsScopeKey({ token: 'test-token', encryption: null });
+    setActiveAccountSettingsSnapshot({
+      source: 'network', settings: accountSettingsParse({}), settingsVersion: 1,
+      loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey,
+      acpCatalog: { status: 'ready', revision: 1, record },
+    });
+    // Credential persistence is the real async boundary. Domain publication and
+    // runtime composition remain real, including the replacement ready facet.
+    mocks.readStoredCredentials.mockImplementationOnce(async () => {
+      commitActiveAcpCatalog({ scopeKey, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
+        catalog: { status: 'ready', revision: 2, record: {
+          ...record, definitions: record.definitions.map(definition => ({ ...definition, title: 'After refresh' })),
+        } },
+      });
+      return { token: 'test-token', encryption: null };
+    });
+    try {
+      await expect(resolveSessionContinuationTargetAgent({
+        readAgentCatalogSnapshot,
+        agentId: 'acp:target-a',
+      })).resolves.toBeNull();
+    } finally {
+      clearActiveAccountSettingsSnapshot();
+    }
+  });
+
+  it('resolves two configurations sharing an executable as distinct exact Session targets', async () => {
+    const configuredCatalog = AcpCatalogRecordV1Schema.parse({ v: 1, definitions: ['target-a', 'target-b'].map(id => ({
+      id, name: id, title: id, command: process.execPath, args: [id], env: {},
+      capabilities: { supportsLoadSession: true }, createdAt: 1, updatedAt: 1,
+    })) });
+    setActiveAccountSettingsSnapshot({
+      source: 'network',
+      settings: accountSettingsParse({
+        schemaVersion: 6,
+      }),
+      settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
+      scopeKey: resolveAccountSettingsScopeKey({ token: 'test-token', encryption: null }),
+      acpCatalog: { status: 'ready', revision: 1, record: configuredCatalog },
+    });
+    try {
+      const a = await resolveSessionContinuationTargetAgent({
+        readAgentCatalogSnapshot,
+        agentId: 'acp:target-a',
+      });
+      const b = await resolveSessionContinuationTargetAgent({
+        readAgentCatalogSnapshot,
+        agentId: 'acp:target-b',
+      });
+      expect(a).toMatchObject({ agentId: 'acp:target-a', backendTargetKey: 'agent:happier.agent.custom-acp/custom-acp:definition:target-a' });
+      expect(b).toMatchObject({ agentId: 'acp:target-b', backendTargetKey: 'agent:happier.agent.custom-acp/custom-acp:definition:target-b' });
+      expect(await resolveSessionContinuationTargetAgent({
+        readAgentCatalogSnapshot,
+        agentId: 'acp:missing',
+      })).toBeNull();
+      const sourceMetadata = {
+        flavor: 'acp:target-a', path: '/work/repo', machineId: 'machine-1',
+        acpConfiguredBackendV1: { v: 1, backendId: 'target-a', title: 'target-a', updatedAt: 1 },
+      };
+      // Parse boundary fixtures before entering transport: a malformed fixture must
+      // fail here rather than masquerading as an unavailable source Session.
+      const rawSession = V2SessionRecordSchema.parse({ id: 'source-session', machineId: 'machine-1', encryptionMode: 'plain',
+        metadata: JSON.stringify(sourceMetadata), metadataVersion: 1, metadataLayoutVersion: 0,
+        agentState: null, agentStateVersion: 1, active: false, seq: 1,
+        createdAt: 1, updatedAt: 1, activeAt: 1, dataEncryptionKey: null });
+      const accountEncryptionCurrentness = AccountEncryptionCurrentnessResponseSchema.parse({
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+      });
+      const inspections = await inspectSessionContinuations({
+        credentials,
+        request: { v: 1, sourceSessionId: 'source-session', selections: [
+          { v: 1, agentId: 'acp:target-a' }, { v: 1, agentId: 'acp:target-b' },
+        ] },
+        deps: {
+          // The network transport is replaced; metadata decryption, exact persisted
+          // identity, configured engine, and Provider preflight all stay real.
+          resolveSessionTransportContext: async () => ({
+            ok: true, sessionId: 'source-session',
+            rawSession, accountEncryptionCurrentness, ctx: null, mode: 'plain',
+          }),
+        },
+      });
+      expect(inspections.inspections).toEqual([
+        { type: 'available', protocolVersion: 1, sameSessionTransition: false },
+        { type: 'available', protocolVersion: 1, sameSessionTransition: true },
+      ]);
+      const snapshot = getActiveAccountSettingsSnapshot();
+      if (!snapshot) throw new Error('Expected the configured Account fixture');
+      setActiveAccountSettingsSnapshot({
+        ...snapshot, settingsVersion: 2,
+        settings: accountSettingsParse({ ...snapshot.settings,
+          backendEnabledByTargetKey: { 'backend:target-b:configured:target-b': false },
+        }),
+      });
+      expect(await resolveSessionContinuationTargetAgent({
+        readAgentCatalogSnapshot,
+        agentId: 'acp:target-b',
+      })).toBeNull();
+    } finally {
+      clearActiveAccountSettingsSnapshot();
+    }
+  });
+
+  it.each<AcpCatalogSnapshotV1>([
+    { status: 'loading' }, { status: 'unavailable', reason: 'account-mode-mismatch' },
+    { status: 'partial', reason: 'incomplete-inventory', record: { v: 1, definitions: [] }, diagnostics: [] },
+  ])('refuses a configured continuation before runtime composition when the catalog is $status', async catalog => {
+    setActiveAccountSettingsSnapshot({
+      source: 'network', settings: accountSettingsParse({ acpCatalogSettingsV1: { v: 2, backends: [{
+        id: 'target-a', name: 'target-a', title: 'target-a', command: process.execPath,
+        args: [], env: {}, capabilities: {}, createdAt: 1, updatedAt: 1,
+      }] } }), settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
+      scopeKey: resolveAccountSettingsScopeKey({ token: 'test-token', encryption: null }), acpCatalog: catalog,
+    });
+    try {
+      expect(await resolveSessionContinuationTargetAgent({
+        readAgentCatalogSnapshot,
+        agentId: 'acp:target-a',
+      })).toBeNull();
+    } finally {
+      clearActiveAccountSettingsSnapshot();
+    }
   });
 });

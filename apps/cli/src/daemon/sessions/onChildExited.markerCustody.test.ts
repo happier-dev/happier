@@ -117,3 +117,46 @@ it.skipIf(process.platform === 'win32').each([false, true])('joins held accepted
     if (parent.exitCode === null && parent.signalCode === null) parent.kill('SIGTERM');
   }
 });
+
+
+it.each(['present', 'reused', 'unknown', 'stopped'] as const)('promotes wrapper custody only for the captured runner generation (%s)', async (state) => {
+  const pid = 683101;
+  const runnerPid = 683102;
+  const command = 'happier codex --existing-session paired-runner';
+  const processCommandHash = hashProcessCommand(command);
+  const tracked: TrackedSession = {
+    pid, startedBy: 'daemon', happySessionId: 'paired-runner', sessionRunnerPid: runnerPid,
+    runnerProcessIdentity: { pid: runnerPid, processStartTimeMs: 2000, processCommandHash },
+  };
+  const sessions = new Map([[pid, tracked]]);
+  const originalKill = process.kill.bind(process);
+  const signalProbe = vi.spyOn(process, 'kill').mockImplementation((target, signal) => {
+    if (target === runnerPid && signal === 0) return true;
+    return originalKill(target, signal);
+  });
+  const exit = createOnChildExited({
+    pidToTrackedSession: sessions, spawnResourceCleanupByPid: new Map(),
+    sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null,
+    processPresenceDependencies: {
+      readProcessRunState: async () => {
+        if (state === 'unknown') throw new Error('OS run state unavailable');
+        return state === 'stopped' ? 'stopped' : 'servable';
+      },
+      readProcessIdentityByPid: async () => state === 'unknown' ? null : {
+        pid: runnerPid, processStartTimeMs: state === 'reused' ? 9000 : 2000, command,
+      },
+    },
+    // Filesystem boundary models the marker committed for the live captured runner.
+    promoteSessionMarkerFn: async () => ({ sourceMarkerOwnership: null,
+      targetMarkerOwnership: { happySessionId: 'paired-runner', processStartTimeMs: 2000, processCommandHash } }),
+    removeSessionMarkerFn: async () => {}, stageObservedExitFn: async () => {},
+  });
+  try {
+    await exit(pid, { reason: 'process-exited', code: 0, signal: null });
+    expect(sessions.get(runnerPid)).toBe(state === 'present' ? tracked : undefined);
+    // A proven reused runner begins retirement, but absent Machine terminal authority
+    // retains the existing no-turn Session custody rather than fabricating finalization.
+    expect(sessions.get(pid)).toBe(state === 'present' ? undefined : tracked);
+    expect(tracked.reportMarkerCustody?.retiring).toBe(state === 'reused' ? true : undefined);
+  } finally { signalProbe.mockRestore(); }
+});

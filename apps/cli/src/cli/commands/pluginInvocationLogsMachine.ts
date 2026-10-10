@@ -75,7 +75,10 @@ export async function resolvePluginInvocationLogTarget(params: Readonly<{
   }
 
   const serverUrl = resolveServerHttpBaseUrl();
-  const snapshot = await fetchServerFeaturesSnapshot({ serverUrl });
+  const snapshot = await fetchServerFeaturesSnapshot({
+    serverUrl,
+    ...(params.signal ? { signal: params.signal } : {}),
+  });
   params.signal?.throwIfAborted();
   const serverIdentityId = snapshot.status === 'ready'
     ? snapshot.features.capabilities.serverIdentity.serverIdentityId

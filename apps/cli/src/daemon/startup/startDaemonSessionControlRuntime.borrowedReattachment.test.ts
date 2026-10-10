@@ -19,6 +19,7 @@ import { createHerdrTerminalHostAdapter } from '@/integrations/herdr/adapter';
 import { withHerdrApi } from '@/integrations/herdr/herdrApi.testkit';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { publishReportedTerminalControlServiceability } from './publishReportedTerminalControlServiceability';
+import { startDaemonControlServer } from '../controlServer';
 
 const boundary = vi.hoisted(() => ({
     metadata: {} as Record<string, unknown>,
@@ -142,6 +143,11 @@ describe('startup borrowed-terminal reattachment', () => {
                     beforeShutdown: async () => {}, onHappySessionWebhook: async () => {}, requestShutdown: () => {}, processEnv: {},
                 });
                 try {
+                    // Real startup wrapper and feed; only the loopback HTTP listener is replaced.
+                    // An unmounted native owner cannot establish authoritative empty custody.
+                    const routes = vi.mocked(startDaemonControlServer).mock.calls.at(-1)?.[0].localServicesLauncher;
+                    await expect(routes?.getSnapshot({ projection: 'managed_bindings', scope: 'workspace', workspaceRoot: '/unmounted-project' }))
+                        .rejects.toMatchObject({ code: 'project_service_bindings_unavailable' });
                     await runtime.onChildExited(pid, { reason: 'process-exited', code: 1, signal: null });
                     expect(trackedSessions.has(pid)).toBe(false);
                     await hookRemoval.completion;

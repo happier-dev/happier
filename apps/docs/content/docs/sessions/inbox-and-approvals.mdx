@@ -44,6 +44,66 @@ Queued messages do not make a session “unread”.
 
 Instead, the session shows its own pending-message badge and pending UI. See [Pending queue](/sessions/pending-queue).
 
+## Work attention in 0.3 development
+
+In **unreleased 0.3 development source**, Inbox also brings together reporting
+sessions and workflow runs that need your review. Work is grouped under its
+root where that relation is available. A step session's request can appear
+under its run instead of as an unrelated conversation. A reporting relation
+does not grant you the right to answer another Account's requests.
+
+Open a row or **Review** to inspect its current request. On a wide page,
+selection opens its detail beside the list; on a phone it opens the detail
+screen. An unavailable attention source is reported as unavailable or unable
+to refresh, rather than proof that you are caught up. Reconnect and use the
+offered retry. Previously loaded content may remain visible with its freshness
+state. A stale request needs a current read before you answer it.
+
+**Stalled** identifies a worker whose machine became unavailable with a turn
+in flight. Inspect the session and restore connectivity before assuming the
+work failed or launching it again. See [Work](/sessions/work).
+
+### Settle or snooze a session
+
+Use the session row's menu to **Settle** when you have reviewed it and do not
+want to keep it standing in attention. Settle clears your attention standing
+and marks the session read. It does not stop work, archive the session,
+answer a permission request or clear another viewer's read state. New activity
+or a stronger actionable request can still bring it back.
+
+**Snooze** selects a future reminder time. It changes your attention handling,
+not execution; remove the reminder to cancel that choice. For reminder timing
+and the interaction with kept/unread sessions, see
+[Session read and unread state](/organize/session-read-state).
+
+The development **Landing** presentation depends on a current linked PR state.
+That producer and the full open-PR/automatic-settle-on-merge journey are still
+being integrated; an idle session or a PR number alone is not proof of merge.
+Use explicit Settle after reviewing work rather than assuming automatic cleanup.
+
+### The same tasks through Actions
+
+Settle uses `session.attention.set` with `standing: false`, followed by
+`session.read_state.set` with `read: true`. Snooze uses `session.attention.set`
+with `remindAt` in epoch milliseconds; `null` removes the reminder.
+`inbox.mark_all_read` covers the bulk read operation. These use the same
+Account-scoped owners and normal Action approval for agent requests.
+
+Approval requests use `approval.request.create`, `.get`, `.list` and `.decide`;
+deciding still needs authenticated human or the explicitly admitted approval
+credential. Tool answers use `session.permission.respond`, while structured
+user questions use `session.user_action.answer`. In development, the host
+agent/MCP permission-answer path requires approval by default; an explicit
+Action waiver changes that requirement without bypassing pending-request,
+offered-answer or viewer-access checks. Requesting approval never supplies
+the human decision itself. The optional [Approval reviewer](/sessions/approval-reviewer)
+has its own request-scoped host decision path.
+
+Inspect the [host Action reference](/plugins/api/host-actions) for the exact
+inputs and available surfaces. CLI calls use
+`happier actions invoke <action-id> --input-json '<json>'`; the app's row
+selection and detail placement are presentation, not another mutation owner.
+
 ## Attention indicators across the app
 
 Inbox is only one part of the attention model.
@@ -126,6 +186,23 @@ reports that the approval is stale and asks you to start the operation again.
 The person who approves an item authorizes the decision but does not become the
 operation's identity: Happier rechecks the original Account, Home, runtime,
 target, Action policy, and resource access before the effect runs.
+
+### Reviewed prompt edits (development integration)
+
+A prompt-document update can carry the revision read for its reviewed change.
+If someone edits that document before execution, Happier returns a conflict and
+keeps the winning content. Read the current version and review the proposed change
+again; approval does not silently rebase it. A competing write during execution
+is checked too. An update without a reviewed revision retains the write-time
+check, but cannot establish that an earlier preview is still current.
+
+Prompt edits proposed by automation use ordinary Actions approval, defaulting to
+**Ask first**. An explicit **Allowed** setting covers that Action on its exact
+surface across Sessions; it does not grant one Bot special authority. Agents and
+Voice can request required approval, but the decision requires authenticated human
+authority. **Approved** records that decision; only the execution result establishes
+that the document saved. The Session Work editor and its review presentation are
+still being integrated, so this is not a released editor workflow.
 
 ### Why Happier uses approvals
 

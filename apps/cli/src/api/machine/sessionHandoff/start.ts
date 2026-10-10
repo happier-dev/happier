@@ -1,3 +1,5 @@
+import os from 'node:os';
+import { resolveSessionHandoffLocalDirectory, resolveSessionHandoffLocalHomeDir } from '../../../session/handoff/paths/sessionHandoffPathNormalization';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import type { SessionHandoffMetadataV2, SessionHandoffStartRequest, SessionHandoffStatus, TransferEndpointCandidate } from '@happier-dev/protocol';
@@ -14,6 +16,7 @@ import type {
   ExternalSessionOperationExclusion,
 } from '@/session/external/operationExclusion';
 import type { RpcHandlerContext } from '@/api/rpc/types';
+import type { SessionHandoffExistingStateCheckRequestV3 } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
 import {
   ExternalSessionOperationClaimLostError,
   maintainExternalSessionOperationClaim,
@@ -61,10 +64,12 @@ export type RegisterSessionHandoffStartRpcHandlerInput = Readonly<{
   loadSessionMetadata: (
     sessionId: string,
     sourceMachineId?: string,
+    context?: RpcHandlerContext,
   ) => Promise<Record<string, unknown> | null>;
   machineTransferChannelPresent: boolean;
   directPeerTransfer: SessionHandoffDirectPeerTransferHandle | undefined;
   resolveServerFeaturesSnapshot?: () => Promise<CliServerFeaturesSnapshot | undefined> | CliServerFeaturesSnapshot | undefined;
+  admitExistingSessionState?: (peerMachineId: string, context?: RpcHandlerContext, checkRequest?: SessionHandoffExistingStateCheckRequestV3) => Promise<Readonly<{ ok: false; errorCode: string; error?: string }> | null>;
   stopSessionForHandoff?: (sessionId: string) => Promise<SessionHandoffSourceStopState>;
   prepareJobStore: SessionHandoffPrepareJobStoreLike;
   sourceExportStore: SessionHandoffSourceExportStoreLike;
@@ -144,7 +149,7 @@ function shouldDeferSourcePreparation(
 ): boolean {
   const crossMachine = request.sourceMachineId !== request.targetMachineId;
   // Managed preparation publishes its workspace seed before the target consumer starts.
-  if (!crossMachine || request.targetDirectory?.kind === 'managed') {
+  if (request.stateTransfer === 'existing' || !crossMachine || request.targetDirectory?.kind === 'managed') {
     return false;
   }
 
@@ -203,7 +208,13 @@ export function createSessionHandoffStartActionHandler(
         error: 'Session handoff is disabled on the selected server',
       } as const;
     }
-    const transport = resolveMachineTransferRoute({
+    const sameMachine = parsed.data.sourceMachineId === parsed.data.targetMachineId;
+    if (parsed.data.stateTransfer === 'existing' && !params.admitExistingSessionState) {
+      return { ok: false, errorCode: 'handoff_existing_state_update_required' } as const;
+    }
+    const transport = sameMachine
+      ? { kind: 'available' as const, strategy: 'direct_peer' as const }
+      : resolveMachineTransferRoute({
       serverFeatures,
       preferredStrategies: parsed.data.negotiatedTransportStrategy
         ? [parsed.data.negotiatedTransportStrategy, ...parsed.data.preferredTransportStrategies]
@@ -247,9 +258,17 @@ export function createSessionHandoffStartActionHandler(
       });
     };
 
-    const metadata = await loadSessionMetadata(request.sessionId, request.sourceMachineId);
+    const metadata = await loadSessionMetadata(request.sessionId, request.sourceMachineId, context);
     if (!metadata) {
       return { ok: false, errorCode: 'session_not_found' } as const;
+    }
+    if (sameMachine && request.targetDirectory?.kind !== 'managed') {
+      const homeDir = resolveSessionHandoffLocalHomeDir({ activeServerDir, fallbackHomeDir: os.homedir() });
+      const targetDirectory = await resolveSessionHandoffLocalDirectory({ path: typeof request.targetPath === 'string' ? request.targetPath : request.stateTransfer === 'existing' && typeof metadata.path === 'string' ? metadata.path : '', homeDir });
+      const sourceDirectory = await resolveSessionHandoffLocalDirectory({ path: typeof metadata.path === 'string' ? metadata.path : '', homeDir });
+      if (!targetDirectory || !sourceDirectory || (request.stateTransfer !== 'existing' && targetDirectory === sourceDirectory)) {
+        return { ok: false, errorCode: 'invalid_target_path', error: 'Choose a different working directory for same-machine handoff' } as const;
+      }
     }
     // Storage authority is the SOURCE daemon's to derive, from the full owner
     // metadata it just loaded, and it is derived HERE — before the operation
@@ -270,6 +289,16 @@ export function createSessionHandoffStartActionHandler(
         errorCode: 'session_storage_mode_mismatch',
         error: 'The source Session storage mode changed before handoff started',
       } as const;
+    }
+    if (request.stateTransfer === 'existing') {
+      const targetPath = typeof request.targetPath === 'string' ? request.targetPath : resolveSessionHandoffTargetPathFromMetadata(metadata);
+      if (!targetPath) return { ok: false, errorCode: 'invalid_target_path' } as const;
+      const refusal = await params.admitExistingSessionState!(request.targetMachineId, context, {
+        sessionId: request.sessionId, sourceMachineId: request.sourceMachineId, targetMachineId: request.targetMachineId,
+        targetPath, sourceSessionStorageMode: request.sessionStorageMode,
+      });
+      if (refusal) return refusal;
+      context?.signal?.throwIfAborted();
     }
     invalidateDirectPeerRouteCacheForHandoffMachines([request.sourceMachineId, request.targetMachineId]);
 
@@ -397,6 +426,18 @@ export function createSessionHandoffStartActionHandler(
     };
 
     try {
+    if (context?.callerInputAuthorization || context?.requesterSessionBootstrap) {
+      // Accept the original Home root before quiescing its Session publisher.
+      // Later phases derive their authority from this same protected record.
+      await claimMaintenance.race(() => sourceExportStore.save({ handoffId,
+        sessionId: request.sessionId, sourceMachineId: request.sourceMachineId,
+        targetMachineId: request.targetMachineId, exportedAtMs: Date.now(),
+        ...(context.callerInputAuthorization ? { acceptedHandoffAuthorization: context.callerInputAuthorization } : {}),
+        ...(context.requesterSessionBootstrap?.getBoundSessionId() === request.sessionId ? {
+          requesterSessionCredentialBinding: { sessionId: request.sessionId, attribution: context.requesterSessionBootstrap.attribution },
+        } : {}),
+      }));
+    }
     const pendingStatus: SessionHandoffStatus = {
       ...buildStartPendingStatus({
         handoffId,

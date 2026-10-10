@@ -3,7 +3,7 @@ import axios from 'axios';
 import {
   SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
   SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 
 import { deliverTranscriptMessageMutation } from './deliverTranscriptMessageMutation';
 import { createTranscriptMessageAppendMutation } from './sessionClientDurableMutationTypes';
@@ -24,6 +24,90 @@ function serverContract(
 }
 
 describe('deliverTranscriptMessageMutation provenance boundary', () => {
+  const surfaceItemReference = {
+    v: 1 as const,
+    itemId: 'visual-1',
+    itemRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ',
+    sourceAddress: { serverId: 'home-1', sessionId: 'session-1' },
+  };
+
+  it('delivers an encrypted visual association only after v2 negotiation', async () => {
+    const observations: unknown[] = [];
+    const socket = {
+      connected: true,
+      emit: vi.fn(),
+      emitWithAck: vi.fn(async (event: string, payload: unknown) => {
+        if (event === SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1) {
+          expect(payload).toEqual({ v: 2, sessionId: 'session-1' });
+          return { ok: true, capability: 'session-transcript-observation-v2' };
+        }
+        observations.push(payload);
+        return { ok: true, status: 'observed', id: 'message-1', seq: 1,
+          localId: 'visual-result', didWrite: true, ingestedAt: 300 };
+      }),
+    };
+    const connectionContract = await resolveSessionClientConnectionContract({
+      serverContract: serverContract(socket), sessionId: 'session-1', socket,
+    });
+    expect(connectionContract.transcriptTransport.mode).toBe('session_transcript_observation_v2');
+    const mutation = createTranscriptMessageAppendMutation({
+      sessionId: 'session-1', localId: 'visual-result', content: 'sealed-tool-result',
+      createdAt: 100, provenance: { kind: 'non_dependent', source: 'background' },
+      surfaceItemReference,
+    });
+    await expect(deliverTranscriptMessageMutation({ token: 'token', socket, connectionContract, mutation }))
+      .resolves.toMatchObject({ delivered: true });
+    expect(observations).toEqual([expect.objectContaining({
+      v: 2, content: 'sealed-tool-result', surfaceItemReference,
+    })]);
+  });
+
+  it.each(['invalid_session', 'unsupported'])('falls back to v1 text after an older server returns %s', async (error) => {
+    const probes: unknown[] = [];
+    const observations: unknown[] = [];
+    const socket = {
+      connected: true,
+      emit: vi.fn(),
+      emitWithAck: vi.fn(async (event: string, payload: unknown) => {
+        if (event === SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1) {
+          probes.push(payload);
+          return probes.length === 1 ? { ok: false, error }
+            : { ok: true, capability: 'session-transcript-observation-v1' };
+        }
+        observations.push(payload);
+        return { ok: true, status: 'observed', id: 'message-1', seq: 1,
+          localId: 'visual-result', didWrite: true, ingestedAt: 300 };
+      }),
+    };
+    const connectionContract = await resolveSessionClientConnectionContract({
+      serverContract: serverContract(socket), sessionId: 'session-1', socket,
+    });
+    expect(probes).toEqual([{ v: 2, sessionId: 'session-1' }, { v: 1, sessionId: 'session-1' }]);
+    const mutation = createTranscriptMessageAppendMutation({
+      sessionId: 'session-1', localId: 'visual-result', content: 'sealed-tool-result',
+      createdAt: 100, provenance: { kind: 'non_dependent', source: 'background' },
+      surfaceItemReference,
+    });
+    await expect(deliverTranscriptMessageMutation({ token: 'token', socket, connectionContract, mutation }))
+      .resolves.toMatchObject({ delivered: true });
+    expect(observations).toEqual([expect.objectContaining({ v: 1, content: 'sealed-tool-result' })]);
+    expect(observations[0]).not.toHaveProperty('surfaceItemReference');
+    expect(mutation).toHaveProperty('surfaceItemReference', surfaceItemReference);
+  });
+
+  it('keeps a denied capability unavailable without downgrading its authority', async () => {
+    const probes: unknown[] = [];
+    const socket = { connected: true, emitWithAck: async (_event: string, payload: unknown) => {
+      probes.push(payload);
+      return { ok: false, error: 'forbidden' };
+    } };
+    const connectionContract = await resolveSessionClientConnectionContract({
+      serverContract: serverContract(socket), sessionId: 'session-1', socket,
+    });
+    expect(connectionContract.transcriptTransport.mode).toBe('unavailable');
+    expect(probes).toEqual([{ v: 2, sessionId: 'session-1' }]);
+  });
+
   it('fails closed before every transport for a recovered provenance-free mutation', async () => {
     const socket = {
       connected: true,
@@ -60,7 +144,7 @@ describe('deliverTranscriptMessageMutation provenance boundary', () => {
       emitWithAck: vi.fn(async (event: string, payload: unknown) => {
         events.push(event);
         if (event === SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1) {
-          expect(payload).toEqual({ v: 1, sessionId: 'session-1' });
+          expect(payload).toEqual({ v: 2, sessionId: 'session-1' });
           return { ok: true, capability: 'session-transcript-observation-v1' };
         }
         expect(event).toBe(SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1);

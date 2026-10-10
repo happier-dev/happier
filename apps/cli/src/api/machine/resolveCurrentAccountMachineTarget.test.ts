@@ -30,6 +30,17 @@ beforeEach(() => {
 });
 
 describe('resolveCurrentAccountMachineTarget', () => {
+  it('preserves accessible Machine readiness and never auto-selects a pending shared target', async () => {
+    const access = { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use', resourceMode: 'e2ee', accessState: 'key_pending' };
+    boundaries.axiosGet.mockResolvedValue({ data: [{ ...currentMachine('shared'), access }] });
+    expect(await listCurrentAccountMachines({ token: 'token' })).toEqual([
+      { id: 'shared', label: 'shared', kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null, access },
+    ]);
+    expect(await resolveCurrentAccountMachineTarget({ token: 'token' })).toMatchObject({ kind: 'unavailable', code: 'no_current_machine' });
+    boundaries.axiosGet.mockResolvedValue({ data: [{ ...currentMachine('shared'), access: { ...access, accessState: 'ready' } }] });
+    expect(await resolveCurrentAccountMachineTarget({ token: 'token' })).toMatchObject({ kind: 'selected', target: { machineId: 'shared' } });
+  });
+
   it('projects the complete signed Account inventory without hiding revoked machines', async () => {
     boundaries.axiosGet.mockResolvedValue({ data: [
       currentMachine('machine-current', 'desk'),

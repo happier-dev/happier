@@ -8,6 +8,10 @@ import { resolveSessionStartupTimeoutMs } from '@/daemon/spawn/waitForSessionWeb
 export type SpawnSessionNonceResolver = (
   spawnNonce: string,
   remainingTimeoutMs?: number,
+  observation?: Readonly<{
+    signal: AbortSignal;
+    readRemainingTimeoutMs: () => number;
+  }>,
 ) => Promise<SpawnSessionNonceResolution>;
 
 export type AwaitSpawnedSessionIdResult =
@@ -95,9 +99,15 @@ export async function awaitSpawnedSessionId(params: Readonly<{
   const settled = await new Promise<SpawnSessionNonceResolution | { status: 'timeout' }>((resolve) => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadlineAtMs = Date.now() + Math.max(0, timeoutMs);
+    const observation = new AbortController();
+    const readRemainingTimeoutMs = () => Math.max(0, deadlineAtMs - Date.now());
+    let finished = false;
     const finish = (result: SpawnSessionNonceResolution | { status: 'timeout' }) => {
+      if (finished) return;
+      finished = true;
       clearTimeout(timer);
       params.signal?.removeEventListener('abort', abort);
+      observation.abort();
       resolve(result);
     };
     const abort = () => finish({ status: 'timeout' });
@@ -113,7 +123,13 @@ export async function awaitSpawnedSessionId(params: Readonly<{
     if (params.signal?.aborted || timeoutMs <= 0) { abort(); return; }
     // The daemon owner parks this one observation until terminal or deadline.
     // A transport error cannot prove that the accepted spawn failed.
-    void Promise.resolve().then(() => params.resolveSpawnSessionByNonce(params.spawnNonce, timeoutMs)).then(
+    void Promise.resolve().then(() => {
+      observation.signal.throwIfAborted();
+      return params.resolveSpawnSessionByNonce(params.spawnNonce, readRemainingTimeoutMs(), {
+        signal: observation.signal,
+        readRemainingTimeoutMs,
+      });
+    }).then(
       (resolution) => { if (resolution.status !== 'pending') finish(resolution); },
       () => {},
     );

@@ -4,7 +4,7 @@ One Happier Session keeps its identity and transcript while the Agent running it
 product name is **Continue with another Agent**; the machine RPC is `session.agentTransition`.
 
 > **Release status.** Unreleased. This exists in the current development source of `dev` and
-> `../0.2` and has **not** passed an integrated live gate. Do not describe it as available in a
+> `../0.2`. Do not describe it as available in a
 > stable or preview build. Execution ledger and gate standing:
 > `.project/plans/2026-08-15-same-session-cross-agent-continuation/PLAN.md` §12.4/§12.5; QA state:
 > the sibling `QA-MATRIX.md`.
@@ -59,6 +59,41 @@ Inspection returns `{ type: 'available', protocolVersion, sameSessionTransition 
 `{ type: 'unavailable', reason }`. `sameSessionTransition` is the only field. A `nativeReturn`
 diagnostic was removed under `AM-24`: it had zero readers on every released channel and cost a
 protected-file read plus a `stat()` per offered target on every picker open.
+
+## Configured ACP continuation
+
+The daemon and current-view producers below are implemented in development source.
+The configured picker/currentness projection remains incomplete on this line: its
+owner tests are blocked before dispatch by the canonical Protocol preparation gate.
+This section does not establish a usable configured continuation UI.
+
+Configured targets use the existing open `agentId`, `acp:<backendId>`, on the request,
+inspection batch, armed draft, preview, and divider. Two configurations of the same executable
+remain distinct targets. There is no additional wire identity or configured-only RPC on this line.
+
+`resolveSessionContinuationTargetAgent` is the shared inspection/mutation owner. For a configured
+ID it resolves the exact Account definition through the existing configured ACP engine owner,
+including launch-environment materialization, before stopping the source. Bundled targets retain
+catalog Sessions-surface inspection. Loading the configured engine is confined to that branch:
+bundled inspection does not activate the configured runtime composition path.
+
+The persisted identity owner, `resolveSessionPersistedRuntimeIdentity`, validates the configured
+metadata and rejects contradictory Agent evidence or a different `acp:` flavor. Continuation
+projects that exact identity onto the existing open ID for currentness and recovery; it does not
+broaden the generic Agent metadata resolver. The current-view projector writes the target's
+`acpConfiguredBackendV1` and clears the departing provider session identity through the canonical
+binding writer. Same-Agent carry retains its own configured metadata.
+Immutable `sessionCreationCorrespondenceV1` remains creation provenance, including its original
+profile and Saved Secret references. The persisted runtime owner uses its qualified target only
+while it addresses the current Agent; after a cutover it resolves the current persisted backend
+target without rewriting the original correspondence. This applies to configured and bundled
+cutovers alike.
+
+A configured cutover starts a fresh ACP conversation with Happier's conversation-text context.
+It neither transfers an opaque ACP session ID from another configuration nor claims that two
+configurations of the same executable share a native conversation. Removing a target definition
+after cutover does not erase the committed view: retry reconciliation first recognizes the exact
+requested ID and preserves the ordinary current-view-committed recovery result.
 
 ## The transition divider
 
@@ -585,6 +620,46 @@ Store: `apps/cli/src/session/handoff/metadata/localSessionHandoffMetadataStore.t
   either since nothing sweeps the directory. What makes that safe is that the id and the bound are
   written by the SAME departure, so a failed capture leaves both halves stale together and the replay
   bound is stale-LOW — a stale record OVER-covers and can never skip history.
+
+## Armed composer settings and input permission
+
+The in-session picker owns the armed continuation selection. `SessionView` projects its canonical
+Agent target into `AgentInput` and the connected-services auth hook; the source runtime remains the
+owner of the current-Agent rail, status, recovery and quota. Permission choices use the armed Agent's
+presentation, while their writer remains the Session-global permission owner. The source runtime's
+standalone model, mode, config and MCP editors are omitted while armed; target selection is edited in
+the existing Agent detail. The canonical destination decision precedes source busy-send preflight;
+an eligible armed destination bypasses that source-runtime choice. Other routes retain their existing
+preflight and refusal policies.
+
+Target auth is a read-only preview of the configured Account purpose defaults, resolved through
+`resolveAgentConnectedAccountPurposeDefaults` and projected with the existing binding owner. Requested
+profile, group and Team resource identity is preserved when unavailable. Team preview readiness uses
+`buildConnectedAccountPurposeTargetChoices`, including current resource witnesses, privacy and
+purpose eligibility; an eligible future Session resource is distinct from an operation probe. Model
+and config probes carry the same exact requested binding and cache identity. Sessionless Team probes
+refuse at the CLI connected-services preflight owner because Team authority requires an admitted
+Session; they must not silently probe Native or a personal Account instead.
+
+The first submitted input retains its canonical provider-neutral `input.meta.permissionMode` in the
+existing draft submission snapshot. Before retaining a first submission or dispatching, a changed
+draft-only permission intent requires the machine's live `tool.sessionAgentTransition` capability to
+return `data.supportsInputPermissionIntent === true`. Released unknown-capability responses refuse
+locally without stopping, submitting or clearing the arm and draft. Malformed responses and transport
+errors are indeterminate, rather than evidence that an upgrade is required. Canonically equivalent
+aliases need no transfer capability: a compatible older daemon may apply the latest committed
+Session-global policy, including an immediate permission edit made while stopping. The retained first
+wire input remains frozen on retries; this does not promise frozen effective permission on that older
+admission path. The released `cli-v0.2.14` contract and the coordinator's post-stop metadata-sealing
+test establish this compatibility boundary.
+
+Supporting CLI admission honors the explicit canonical input intent after cutover. Once canonical
+input custody is observed, `Sync.publishNextPromptPermissionModeAfterAdmission` applies the existing
+`next_prompt` publication policy shared with ordinary sends. It publishes the admitted frozen intent
+only while the Account/server lifetime and the same local permission selection remain current. A
+newer different local selection stays pending. The existing metadata writer rechecks that guard while
+acquiring and publishing the owner tuple; best-effort publication does not delay arm cleanup or turn
+an already admitted message into a rejection.
 
 ## Compatibility
 

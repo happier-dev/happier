@@ -68,6 +68,31 @@ function createQueue() {
 }
 
 describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
+  it('retains only content-free facts for the actually invoked steer request', async () => {
+    const { session, emitUserMessage } = createSessionHarness();
+    const { queue } = createQueue();
+    const events: unknown[] = [];
+    const steerText = vi.fn(async (_text: string) => {});
+    registerPermissionModeMessageQueueBinding({
+      session, queue, getCurrentPermissionMode: () => 'default', setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => true, supportsInFlightSteer: () => true, steerText,
+        registerProviderAcceptedEffect: () => undefined,
+        readStructuredInputDispatchServices: () => ({ sessionId: 'session-1',
+          retainPromptComposition: async (composition: unknown) => { events.push(composition); },
+        }),
+      },
+    });
+    emitUserMessage({ content: { text: 'PRIVATE steer /private/repo 🦉' }, localId: 'input-1', meta: {} });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ deliveryKind: 'steer', boundary: 'host_pre_dispatch', nativePrefix: null,
+      components: expect.arrayContaining([expect.objectContaining({ byteLength: Buffer.byteLength(steerText.mock.calls[0]![0]),
+        tokenCount: null, tokenizerId: null })]),
+    });
+    expect(JSON.stringify(events)).not.toContain('PRIVATE');
+    expect(JSON.stringify(events)).not.toContain('/private/repo');
+  });
   it.each([false, true])('resolves a selected skill at dispatch and steers its structured evidence (native command: %s)', async (nativeCommand) => {
     const text = nativeCommand ? '/goal $review' : 'run $review';
     const { session, emitUserMessage } = createSessionHarness();

@@ -12,6 +12,7 @@ type KeyedStreamArgs = Readonly<{
   streamKey: string;
   sidechainId: string | null;
   messageId?: string;
+  foregroundTurnId?: string;
 }>;
 
 export function createKeyedStreamedTranscriptBridge<TArgs extends KeyedStreamArgs>(params: Readonly<{
@@ -24,11 +25,11 @@ export function createKeyedStreamedTranscriptBridge<TArgs extends KeyedStreamArg
   liveSnapshotMinChars?: number | null;
   durableCommitsRequireExplicitEnable?: boolean | ((args: TArgs) => boolean);
 }>) {
-  const writerByStreamKey = new Map<string, StreamedTranscriptWriter>();
+  const writerByStreamKey = new Map<string, Readonly<{ writer: StreamedTranscriptWriter; args: TArgs }>>();
 
   const getOrCreateWriter = (args: TArgs): StreamedTranscriptWriter => {
     const existing = writerByStreamKey.get(args.streamKey);
-    if (existing) return existing;
+    if (existing) return existing.writer;
 
     const durableCommitsRequireExplicitEnable = typeof params.durableCommitsRequireExplicitEnable === 'function'
       ? params.durableCommitsRequireExplicitEnable(args)
@@ -45,7 +46,7 @@ export function createKeyedStreamedTranscriptBridge<TArgs extends KeyedStreamArg
       liveSnapshotMinChars: params.liveSnapshotMinChars,
       durableCommitsRequireExplicitEnable,
     });
-    writerByStreamKey.set(args.streamKey, writer);
+    writerByStreamKey.set(args.streamKey, { writer, args });
     return writer;
   };
 
@@ -71,24 +72,26 @@ export function createKeyedStreamedTranscriptBridge<TArgs extends KeyedStreamArg
     },
 
     discardStream(args: TArgs) {
-      const writer = writerByStreamKey.get(args.streamKey);
+      const writer = writerByStreamKey.get(args.streamKey)?.writer;
       if (!writer) return;
       writer.discard();
       writerByStreamKey.delete(args.streamKey);
     },
 
-    async flushAll(args: Readonly<{ reason: FlushReason; interruptedReason?: string }>) {
+    async flushAll(args: Readonly<{ reason: FlushReason; interruptedReason?: string; selectStream?: (stream: TArgs) => boolean }>) {
       const summaries: readonly StreamedTranscriptFlushSummary[] = await Promise.all(
-        Array.from(writerByStreamKey.values(), (writer) => writer.flushAll(args)),
+        Array.from(writerByStreamKey.values())
+          .filter((entry) => !args.selectStream || args.selectStream(entry.args))
+          .map((entry) => entry.writer.flushAll(args)),
       );
-      for (const [streamKey, writer] of writerByStreamKey) {
+      for (const [streamKey, { writer }] of writerByStreamKey) {
         if (!writer.hasPendingSegments()) writerByStreamKey.delete(streamKey);
       }
       return summaries;
     },
 
     clear() {
-      for (const writer of writerByStreamKey.values()) {
+      for (const { writer } of writerByStreamKey.values()) {
         writer.discard();
       }
       writerByStreamKey.clear();

@@ -14,6 +14,26 @@ import {
 } from './pendingSessionActivationRecovery';
 
 describe('pending session activation recovery', () => {
+  it('reconstructs reset demand for owned Pending rows through the same reconnect scan before activation', async () => {
+    const visited: string[] = [];
+    const activated: string[] = [];
+    const recovery = createPendingSessionActivationRecovery({
+      token: 'token',
+      activate: async input => { activated.push(input.sessionId); },
+      visitOwnedSession: async sessionId => { visited.push(sessionId); },
+      warn: vi.fn(),
+      fetchSessionsPage: async () => ({
+        sessions: createSessionListResponseFixture([
+          createSessionRecordFixture({ id: 'held-reset', pendingCount: 1 }),
+          createSessionRecordFixture({ id: 'shared', pendingCount: 1, share: { accessLevel: 'view', canApprovePermissions: false } }),
+        ]).sessions,
+        hasNext: false, nextCursor: null,
+      }),
+    });
+    await recovery.recoverAfterConnect();
+    expect(visited).toEqual(['held-reset']);
+    expect(activated).toEqual([]);
+  });
   it('routes live hints and the reconnect scan through one canonical activator', async () => {
     const activate = vi.fn(async (_input: PendingSessionActivationInput) => undefined);
     const fetchSessionsPage = vi.fn(async () => {

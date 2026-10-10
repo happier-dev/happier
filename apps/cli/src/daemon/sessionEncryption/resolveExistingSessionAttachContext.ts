@@ -31,6 +31,7 @@ const pendingExistingSessionAttachDetailReadSlots: Array<() => void> = [];
 export type ExistingSessionAttachContext = Readonly<{
   ok: true;
   attachPayload: SessionAttachFilePayload;
+  metadata: Metadata | null;
   vendorResumeId: string | null;
   linkedVendorResumeId?: string;
   backendTarget: BackendTargetRefV1 | null;
@@ -318,6 +319,7 @@ async function buildExistingSessionAttachContext(params: Readonly<{
   if (mode === 'plain') {
     return {
       ok: true,
+      metadata: authorityMetadataRecord as Metadata | null,
       attachPayload: {
         v: 2,
         encryptionMode: 'plain',
@@ -341,6 +343,7 @@ async function buildExistingSessionAttachContext(params: Readonly<{
 
   return {
     ok: true,
+    metadata: authorityMetadataRecord as Metadata | null,
     attachPayload: {
       v: 2,
       encryptionMode: 'e2ee',

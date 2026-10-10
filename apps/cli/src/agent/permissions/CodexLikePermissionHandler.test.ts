@@ -1,9 +1,19 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { accountSettingsParse } from '@happier-dev/protocol';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 import { buildHappierToolsShellBridgeCommand } from '@/agent/tools/happierTools/runtime/buildHappierToolsShellBridgeCommand';
 import { createRunScopedExecutionPermissionHandler } from '@/agent/executionRuns/policy/runScopedExecutionPermissionHandler';
 import { CodexLikePermissionHandler } from './CodexLikePermissionHandler';
 import { ServerBoundPermissionRpcHandlerManager } from './testkit/serverBoundPermissionRpcHandlerManager';
+
+beforeEach(() => {
+  resetActiveAccountSettingsSnapshotForTests();
+  setActiveAccountSettingsSnapshot({ scopeKey: 'permission-test', source: 'network', settingsVersion: 1, settings: accountSettingsParse({}),
+    rawSettings: {}, settingsSecretsReadKeys: [], loadedAtMs: 1,
+    promptLibraryCatalog: { status: 'ready', rows: [], tombstones: [], diagnostics: [] } });
+});
+afterEach(() => resetActiveAccountSettingsSnapshotForTests());
 
 class FakeSession {
   sessionId = 'session-test';

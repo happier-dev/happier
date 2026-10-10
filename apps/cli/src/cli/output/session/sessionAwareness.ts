@@ -143,6 +143,8 @@ function buildCliSessionAwarenessInputFromPresentationV1(
     nowMs: params.nowMs,
     sessionId: row.id.trim(),
     origin: row.origin,
+    ...(row.reportsTo !== undefined ? { reportsTo: row.reportsTo } : {}),
+    ...(row.reports !== undefined ? { reports: row.reports } : {}),
     ...(row.pendingReviewRuns !== undefined ? { pendingReviewRuns: row.pendingReviewRuns } : {}),
     title: readText(summary?.text) ?? readText(metadata?.name),
     lifecycle,

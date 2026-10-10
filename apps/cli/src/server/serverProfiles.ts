@@ -273,6 +273,29 @@ export async function isServerProfileHomeIdentity(profileId: string, homeServerI
   }
 }
 
+/** Establishes the saved profile's Home binding from its authenticated connection,
+ * including URL-only profiles provisioned without interactive enrollment. */
+export async function refreshServerProfileHomeConnectionDescriptor(params: Readonly<{
+  profileId: string;
+  serverUrl: string;
+  token: string;
+  signal?: AbortSignal;
+}>): Promise<'unavailable' | 'updated' | 'unchanged' | 'stale'> {
+  const profile = await getServerProfile(params.profileId);
+  const snapshot = await observeServerFeaturesSnapshot({
+    serverUrl: params.serverUrl, token: params.token, signal: params.signal,
+  });
+  const observation = resolveAuthenticatedExactHomeConnectionDescriptorObservation({
+    snapshot,
+    expectedHomeServerIdentityId: profile.homeConnectionDescriptor?.homeServerIdentityId
+      ?? (snapshot.status === 'ready' ? snapshot.features.capabilities.serverIdentity.serverIdentityId ?? '' : ''),
+  });
+  if (observation.kind !== 'available') return 'unavailable';
+  return (await adoptServerProfileHomeConnectionDescriptor({
+    descriptor: observation.descriptor, expectedProfileId: profile.id, observation: 'exact',
+  })).outcome;
+}
+
 function findProfileIdByComparableUrl(
   servers: Record<string, any>,
   serverUrlRaw: string,

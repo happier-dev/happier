@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { MachineOperationProtocolCapabilitiesV1Schema } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
+import { MachineOperationProtocolCapabilitiesV1StoredReadSchema } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import type { MachineOperationProtocolCapabilitiesV1 } from '@happier-dev/protocol';
 
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
@@ -34,7 +34,7 @@ export function readMachineOperationProtocolCapabilitiesProjectionV1(params: Rea
   if (!machineId || value?.id !== machineId) return null;
   if (value.revokedAt !== null || value.replacedByMachineId !== null) return null;
 
-  const capabilities = MachineOperationProtocolCapabilitiesV1Schema.safeParse(
+  const capabilities = MachineOperationProtocolCapabilitiesV1StoredReadSchema.safeParse(
     value.operationProtocolCapabilities,
   );
   const revision = value.operationProtocolCapabilitiesRevision;

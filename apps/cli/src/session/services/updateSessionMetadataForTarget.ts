@@ -19,6 +19,7 @@ export async function updateSessionMetadataForTarget(params: Readonly<{
   }>) => Readonly<Record<string, string>> | null;
   idOrPrefix: string;
   updater: Parameters<typeof updateSessionMetadataWithRetry>[0]['updater'];
+  expectedMetadataRevision?: number;
   currentness?: SessionMetadataMutationCurrentness;
   maxAttempts?: number;
   serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
@@ -52,6 +53,7 @@ export async function updateSessionMetadataForTarget(params: Readonly<{
     rawSession: sessionTarget.rawSession,
     accountEncryptionCurrentness: sessionTarget.accountEncryptionCurrentness,
     updater: params.updater,
+    expectedMetadataRevision: params.expectedMetadataRevision,
     currentness: params.currentness,
     ...(typeof params.maxAttempts === 'number' ? { maxAttempts: params.maxAttempts } : {}),
   });

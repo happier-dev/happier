@@ -86,6 +86,11 @@ describe('summarizeSessionRow', () => {
       workspace: {
         path: '/private/worktree',
         host: 'private-host',
+        machineId: 'machine-target',
+      },
+      runtime: {
+        permissionMode: 'acceptEdits',
+        permissionModeUpdatedAt: 123,
       },
       nativeSession: {
         tag: 'private-tag',
@@ -119,6 +124,8 @@ describe('summarizeSessionRow', () => {
       tag: 'private-tag',
       path: '/private/worktree',
       host: 'private-host',
+      machineId: 'machine-target',
+      permissionMode: 'safe-yolo',
       isSystem: true,
       systemPurpose: 'voice_carrier',
     });
@@ -134,7 +141,7 @@ describe('summarizeSessionRow', () => {
       },
     });
     expect(unreadableOwnerSummary.title).toBe('Recipient-safe title');
-    for (const key of ['tag', 'path', 'host', 'isSystem', 'systemPurpose'] as const) {
+    for (const key of ['tag', 'path', 'host', 'machineId', 'permissionMode', 'isSystem', 'systemPurpose'] as const) {
       expect(unreadableOwnerSummary).not.toHaveProperty(key);
     }
 
@@ -145,7 +152,7 @@ describe('summarizeSessionRow', () => {
         metadataLayoutVersion: 2,
       } as any,
     });
-    for (const key of ['title', 'tag', 'path', 'host', 'isSystem', 'systemPurpose'] as const) {
+    for (const key of ['title', 'tag', 'path', 'host', 'machineId', 'permissionMode', 'isSystem', 'systemPurpose'] as const) {
       expect(futureLayoutSummary).not.toHaveProperty(key);
     }
   });
@@ -249,6 +256,47 @@ describe('summarizeSessionRow', () => {
 
     expect(session.isSystem).toBeUndefined();
     expect(session.systemPurpose).toBeUndefined();
+    expect(session).not.toHaveProperty('machineId');
+    expect(session).not.toHaveProperty('permissionMode');
+  });
+
+  it.each([
+    ['read-only', 'read-only'],
+    ['safe-yolo', 'safe-yolo'],
+    ['yolo', 'yolo'],
+    ['plan', 'plan'],
+    ['default', 'default'],
+    ['acceptEdits', 'safe-yolo'],
+    ['bypassPermissions', 'yolo'],
+  ])('projects the Machine binding and canonical permission intent from retained metadata: %s', (permissionMode, expectedMode) => {
+    const metadata = encodeBase64(encryptLegacy({
+      machineId: ' machine-target ',
+      permissionMode,
+      permissionModeUpdatedAt: 123,
+    }, credentials.encryption.secret));
+    const session = summarizeSessionRow({
+      credentials,
+      row: createSessionRecordFixture({ id: 'session-binding', metadata }),
+    });
+
+    expect(session.machineId).toBe('machine-target');
+    expect(session.permissionMode).toBe(expectedMode);
+  });
+
+  it.each([
+    {},
+    { machineId: '  ', permissionMode: 'unknown' },
+    { machineId: 123, permissionMode: null },
+    { host: 'machine-target', path: '/workspace' },
+  ])('omits summary authority when metadata does not supply it: %j', (value) => {
+    const metadata = encodeBase64(encryptLegacy(value, credentials.encryption.secret));
+    const session = summarizeSessionRow({
+      credentials,
+      row: createSessionRecordFixture({ id: 'session-missing-authority', metadata }),
+    });
+
+    expect(session).not.toHaveProperty('machineId');
+    expect(session).not.toHaveProperty('permissionMode');
   });
 
   it('summarizes a plain Session with token-only credentials without fabricating encryption material', () => {
@@ -268,6 +316,8 @@ describe('summarizeSessionRow', () => {
           },
           path: '/worktree',
           host: 'plain-host',
+          machineId: 'machine-target',
+          permissionMode: 'default',
         }),
       }),
     });
@@ -280,6 +330,8 @@ describe('summarizeSessionRow', () => {
       title: 'Plain session',
       path: '/worktree',
       host: 'plain-host',
+      machineId: 'machine-target',
+      permissionMode: 'default',
     });
   });
 
@@ -303,5 +355,7 @@ describe('summarizeSessionRow', () => {
     });
     expect(session.title).toBeUndefined();
     expect(session.path).toBeUndefined();
+    expect(session).not.toHaveProperty('machineId');
+    expect(session).not.toHaveProperty('permissionMode');
   });
 });

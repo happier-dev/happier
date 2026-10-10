@@ -29,6 +29,10 @@ import { bootstrapAccountSettingsContext, resetInMemoryAccountSettingsContextFor
 import { deriveSettingsSecretsKeyForCredentials } from '@/settings/secrets/settingsSecretsKey';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { withRealForegroundAdmissionFixture } from './foregroundAdmission.testkit';
+import { sealProfileRecordContentV1, type ProfileRecordV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { sealProfileTransferContentV1 } from '@happier-dev/protocol/profiles/profileTransferV1';
+import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 
 type BaseContext = Parameters<Parameters<typeof withRealForegroundAdmissionFixture>[1]>[0];
 type RequestOverrides = NonNullable<Parameters<BaseContext['prepare']>[0]>;
@@ -132,6 +136,7 @@ type ProviderContext = BaseContext & Readonly<{
   agentTargetKey: string;
   scopeKey: string;
   publishSettings(options: SettingsOptions): Promise<void>;
+  publishProfileRecord(record: ProfileRecordV1, revision: number): void;
   bootstrapFiles(): Promise<readonly string[]>;
 }>;
 
@@ -149,6 +154,13 @@ export async function withForegroundProviderFixture<T>(options: FixtureOptions, 
     const originalFetch = globalThis.fetch;
     const accountSecret = new Uint8Array(32).fill(5);
     const credentials: Credentials = { token: 'foreground-account-token', encryption: { type: 'legacy', secret: accountSecret } };
+    const material = { type: 'legacy' as const, secret: accountSecret };
+    let profileRow: Readonly<{ id: string; revision: number; content: ReturnType<typeof sealProfileRecordContentV1> }> | null = null;
+    const transfer = () => profileRow ? { status: 'present' as const, revision: 1, content: sealProfileTransferContentV1({
+      mode: 'e2ee', material, record: { v: 1, phase: 'active', sourceSettingsVersion: 1,
+        migratedLogicalRevision: 1, inventory: [] },
+    }) } : { status: 'absent' as const };
+    let profileTransfer = transfer();
     let settingsResponse: Readonly<{ version: number; content: Readonly<{ t: 'encrypted'; c: string }> }> | null = null;
     const features = FeaturesResponseSchema.parse({ features: {
       providers: { enabled: options.providersFeatureEnabled ?? true }, teams: { enabled: true },
@@ -156,7 +168,16 @@ export async function withForegroundProviderFixture<T>(options: FixtureOptions, 
     app.get('/v1/features', async () => features);
     app.get('/v1/features/authenticated', async () => features);
     app.get('/v2/account/settings', async () => settingsResponse);
+    app.get('/v1/artifacts', async () => []);
     app.get('/v1/account/encryption', async () => ({ mode: 'e2ee', updatedAt: 0 }));
+    app.get('/v1/account/encryption/currentness', async () => ({ mode: 'e2ee', version: 1, updatedAt: 0,
+      signingKeyFingerprint: null, contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+        createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material }).contentPublicKeyFingerprint),
+    }));
+    app.get('/v1/account/entity-rows/profiles/reference-guard', async () => ({ status: 'ready', revision: profileRow?.revision ?? 'absent' }));
+    app.get('/v1/account/entity-rows/profiles/transfer', async () => profileTransfer);
+    app.get('/v1/account/entity-rows/profiles', async () => ({ status: 'listed', rows: profileRow ? [profileRow] : [],
+      nextCursor: null, complete: true, diagnostics: [], referenceGuardRevision: profileRow?.revision ?? 'absent', transferControl: profileTransfer }));
     app.get('/v1/account/saved-secrets/resources/materials', async (_request, reply) => {
       if (options.sharedSecretHttpStatus) return reply.code(options.sharedSecretHttpStatus).send({ error: 'access_removed' });
       return sharedMaterial(options);
@@ -187,7 +208,7 @@ export async function withForegroundProviderFixture<T>(options: FixtureOptions, 
         lifetime: createProviderOperationLifetime({ wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs }),
       });
       const resolved = resolveProviderConnectionForMachine({ connectionId, machineId: 'machine-1',
-        accountSettings: { providerSettingsV1: initialProviderSettings }, registry, dnsEvidenceByEndpointUrl });
+        providerSettings: initialProviderSettings, registry, dnsEvidenceByEndpointUrl });
       if (resolved.status !== 'resolved') throw new Error('Physical Provider connection did not resolve');
       const providerSettings = ProviderSettingsV1Schema.parse({ ...initialProviderSettings,
         accountGrants: [{ v: 1, connectionId, connectionSecurityFingerprint: resolved.record.connectionSecurityFingerprint, confirmedAt: 1 }],
@@ -226,6 +247,10 @@ export async function withForegroundProviderFixture<T>(options: FixtureOptions, 
       });
       return await run({ ...base, connectionId, contributionKey, sharedReference, agentId, agentPluginId, agentTargetKey,
         get scopeKey() { return scopeKey; }, request, publishSettings,
+        publishProfileRecord(record, revision) {
+          profileRow = { id: record.id, revision, content: sealProfileRecordContentV1({ mode: 'e2ee', material, record }) };
+          if (profileTransfer.status === 'absent') profileTransfer = transfer();
+        },
         prepare: (overrides = {}, dependencies = {}) => base.prepare(request(overrides), dependencies),
         async bootstrapFiles() {
           const directory = join(base.home, 'tmp', resolveReleaseRingScopedBasename('foreground-agent-runtime-bootstraps', configuration.publicReleaseRing));

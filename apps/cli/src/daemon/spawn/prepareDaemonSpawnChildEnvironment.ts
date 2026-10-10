@@ -38,6 +38,7 @@ import {
 type ConnectedServiceAuth = Awaited<ReturnType<typeof resolveConnectedServiceAuthForSpawn>>;
 export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
     options: SpawnSessionOptions;
+    existingSessionMetadata?: Readonly<Record<string, unknown>> | null;
     resolvedAgentId?: string | null;
     effectiveModelSelection: SpawnSessionOptions['modelSelection'];
     terminal: SpawnSessionOptions['terminal'];
@@ -84,6 +85,7 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
         happyHomeDir: configuration.happyHomeDir,
         pluginRuntimeRegistry: input.pluginRuntimeRegistry,
         options: input.options,
+        ...(input.existingSessionMetadata ? { existingSessionMetadata: input.existingSessionMetadata } : {}),
         resolvedAgentId: input.resolvedAgentId,
         profileEnvironmentVariables: input.profileEnvironmentVariables,
         daemonSpawnHooks: input.daemonSpawnHooks,
@@ -92,6 +94,7 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
         logInfo: (message) => logger.info(message),
         logWarn: (message) => logger.warn(message),
         connectedServiceAuth: input.connectedServiceAuth,
+        ...(input.options.requesterSessionBootstrap ? { allowNativeAccountCredentials: false } : {}),
         ...(providerBindingLaunchInput
             ? {
                 providerBindingContext: {
@@ -173,6 +176,15 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
         )
         : spawnEnvironment.extraEnvForChild;
     const extraEnvForChild = { ...connectedServiceChildEnvironment };
+    // Inherited daemon/tmux state is never requester authority. Only the
+    // admitted launch owner supplies this exact protected Session custody.
+    delete extraEnvForChild.HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE;
+    delete extraEnvForChild.HAPPIER_SESSION_REQUESTER_SESSION_ID;
+    if (input.options.requesterSessionCredentialFile) {
+        if (!input.options.existingSessionId) throw new Error('requester_session_custody_requires_committed_session');
+        extraEnvForChild.HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE = input.options.requesterSessionCredentialFile;
+        extraEnvForChild.HAPPIER_SESSION_REQUESTER_SESSION_ID = input.options.existingSessionId;
+    }
     delete extraEnvForChild[HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY];
     if (input.options.pendingFirstInput) {
         extraEnvForChild[HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY] =
@@ -198,6 +210,8 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
             HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY,
             HAPPIER_DAEMON_INITIAL_GOAL_ENV_KEY,
             HAPPIER_PERSISTED_TAKEOVER_ADMISSION_ENV_KEY,
+            'HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE',
+            'HAPPIER_SESSION_REQUESTER_SESSION_ID',
         ],
     });
     const {
@@ -211,6 +225,11 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
         managedDirectorySeed: _managedDirectorySeed,
         primaryTeamId: _primaryTeamId,
         persistedTakeoverAdmission: _persistedTakeoverAdmission,
+        verifyRequesterMachineAdmissionCurrent: _verifyRequesterMachineAdmissionCurrent,
+        beforeSessionRunnerLaunch: _beforeSessionRunnerLaunch,
+        requesterSessionCredentialFile: _requesterSessionCredentialFile,
+        requesterSessionBootstrap: _requesterSessionBootstrap,
+        requesterSessionRuntimeContext: _requesterSessionRuntimeContext,
         modelSelection: _requestedModelSelection,
         providerBindingMetadataV1: _priorProviderBindingMetadataV1,
         providerBindingSecurityChangeConfirmationV1: _transientProviderBindingSecurityChangeConfirmationV1,

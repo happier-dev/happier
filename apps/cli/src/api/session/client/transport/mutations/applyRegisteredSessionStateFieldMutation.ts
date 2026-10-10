@@ -7,6 +7,9 @@ import { SessionRunnerRuntimeStateV1Schema } from '@happier-dev/protocol/session
 import { SessionStateUsageLimitRecoveryValueSchema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
 import { SessionWorkStateV1Schema as SessionStateWorkStateValueSchema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
 import { SessionRuntimeActivitySnapshotSchema } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
+import { SessionContextIntentV1Schema, migrateRetainedSessionWorkContextV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
+import { SessionVoicePreferenceV1Schema } from '@happier-dev/protocol/sessions/instructions/sessionVoicePreferenceV1';
+import { z } from 'zod';
 
 import type { Metadata } from '@/api/types';
 import { mergeUsageLimitRecoveryFieldIntoMetadata } from '@/session/usageLimitRecoveryControls/mergeUsageLimitRecoveryFieldIntoMetadata';
@@ -50,12 +53,21 @@ export function applyRegisteredSessionStateFieldMutationToMetadata(
     }
 
     let value = mutation.op.value;
+    if (mutation.fieldId === 'intent.context') value = SessionContextIntentV1Schema.parse(value);
+    if (mutation.fieldId === 'intent.memoryEnabled') value = z.boolean().parse(value);
+    if (mutation.fieldId === 'intent.voicePreference') value = SessionVoicePreferenceV1Schema.nullable().parse(value);
 
     if (mutation.fieldId === 'intent.role') {
         value = SessionRoleIdV1Schema.parse(value);
     }
     if (mutation.fieldId === 'intent.sessionRoles') {
         value = SessionRoleConfigurationV1Schema.parse(value);
+        if (mutation.retainedSessionContextEntry) {
+            const roles = metadata.work?.sessionRolesV1 ?? { overrides: {}, sessionRoles: {}, notes: '' };
+            metadata = { ...metadata, work: migrateRetainedSessionWorkContextV1({ ...metadata.work,
+                sessionRolesV1: { ...roles, memoryDocRef: mutation.retainedSessionContextEntry.ref },
+            }) };
+        }
     }
 
     if (mutation.fieldId === 'runtime.workState') {

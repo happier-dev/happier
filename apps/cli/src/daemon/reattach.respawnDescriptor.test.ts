@@ -29,6 +29,25 @@ function adoptSessionsFromMarkers(params: Omit<AdoptionInput, 'processIdentityBy
 }
 
 describe('adoptSessionsFromMarkers respawn descriptor', () => {
+  it('recovers requester attribution only with the exact adopted process, keeping old markers unattributed', () => {
+    const pid = 116;
+    const command = 'happier codex --started-by daemon --existing-session requester-session';
+    const attribution = { serverId: 'home', accountId: 'alice', machineId: 'machine', installationId: 'installation' };
+    const marker = { pid, happySessionId: 'requester-session', happyHomeDir: '/tmp/happy-home',
+      createdAt: 1, updatedAt: 1, startedBy: 'daemon' as const, cwd: '/repo',
+      processStartTimeMs: 1000, processCommandHash: hashProcessCommand(command), requesterWorkAttributionV1: attribution };
+    const sessions = new Map<number, TrackedSession>();
+    const input = { markers: [marker], happyProcesses: [{ pid, command, type: 'daemon-spawned-session' }],
+      processIdentityByPid: new Map([[pid, { pid, command, processStartTimeMs: 1001 }]]), pidToTrackedSession: sessions };
+    expect(adoptSessionsFromMarkers(input).adopted).toBe(0);
+    input.processIdentityByPid.set(pid, { pid, command, processStartTimeMs: 1000 });
+    expect(adoptSessionsFromMarkers(input).adopted).toBe(1);
+    expect(sessions.get(pid)).toMatchObject({ requesterWorkAttributionV1: attribution });
+    sessions.clear();
+    const { requesterWorkAttributionV1: _attribution, ...oldMarker } = marker;
+    expect(adoptSessionsFromMarkers({ ...input, markers: [oldMarker] }).adopted).toBe(1);
+    expect(sessions.get(pid)).not.toHaveProperty('requesterWorkAttributionV1');
+  });
   it('retains canonical reader hashes when discovery has a longer command', () => {
     const pid = 116;
     const command = 'happier codex --started-by daemon ' + 'x'.repeat(1100);

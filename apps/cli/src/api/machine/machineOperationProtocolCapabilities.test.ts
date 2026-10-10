@@ -28,10 +28,16 @@ const validMachineSnapshot = {
 };
 
 describe('readMachineOperationProtocolCapabilitiesProjectionV1', () => {
-  it('accepts only a current complete strict Machine capability snapshot', () => {
+  it('accepts a current Machine snapshot while dropping stored capability extras', () => {
     expect(readMachineOperationProtocolCapabilitiesProjectionV1({
       machineId: 'machine-1',
-      value: validMachineSnapshot,
+      value: {
+        ...validMachineSnapshot,
+        operationProtocolCapabilities: {
+          sessionSpawn: { protocolVersions: [1], extra: true },
+          futureCapability: { protocolVersions: [1] },
+        },
+      },
     })).toEqual({
       capabilities: {
         sessionSpawn: { protocolVersions: [1] },
@@ -44,7 +50,7 @@ describe('readMachineOperationProtocolCapabilitiesProjectionV1', () => {
     ['missing capability projection', { ...validMachineSnapshot, operationProtocolCapabilities: undefined }],
     ['malformed capability projection', {
       ...validMachineSnapshot,
-      operationProtocolCapabilities: { sessionSpawn: { protocolVersions: [1], extra: true } },
+      operationProtocolCapabilities: { sessionSpawn: { protocolVersions: [2] } },
     }],
     ['missing revision', { ...validMachineSnapshot, operationProtocolCapabilitiesRevision: null }],
     ['non-positive revision', { ...validMachineSnapshot, operationProtocolCapabilitiesRevision: 0 }],

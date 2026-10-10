@@ -1,6 +1,7 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from 'axios';
 import type { Socket } from 'socket.io-client';
+import type { SessionMessageAcceptedDeliveryContentV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1';
 
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import type { ClientToServerEvents, ServerToClientEvents } from '../types';
@@ -9,7 +10,7 @@ import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
 import { ACCEPTED_PENDING_SETTLEMENT_EVENT_V1, AcceptedPendingSettlementRequestV1Schema, AcceptedPendingSettlementResponseV1Schema } from '@happier-dev/protocol/sessions/pending/acceptedPendingSettlementV1';
 import { normalizePendingDeliveryBlockedReason } from '@happier-dev/protocol/sessions/messages/pendingDeliveryBlockedReason';
 import { normalizePendingDeliveryStatusV1, parsePendingDeliveryStatusV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
-import { normalizePendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
+import { normalizePendingRequestedActionV1, PendingRequestedActionV1Schema, PendingResetStartSetResultV1Schema, type PendingRequestedActionV1, type PendingResetStartBindingV1, type PendingResetStartSetResultV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { PendingProviderActionSchema } from '@happier-dev/protocol/sessions/pending/pendingProviderAction';
 import { SessionInputAdmissionReceiptV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { SESSION_PENDING_ADMISSION_SETTLEMENT_EVENT_V1, SessionPendingAdmissionSettlementRequestV1Schema, SessionPendingAdmissionSettlementResponseV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingAdmissionSettlementV1';
@@ -23,8 +24,46 @@ import { SessionMessageContentSchema, type SessionMessageContent } from '../type
 import { readKnownPendingQueueState, type KnownPendingQueueState } from './pendingQueueState';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { PendingMessageWithdrawOutcomeV1Schema } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
+import { PendingResetStartsReadInputV1Schema, PendingResetStartsReadResultV1Schema, type PendingResetStartsReadInputV1, type PendingResetStartsReadResultV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 
 export type PendingMaterializationDeliveryTiming = 'after_foreground_ready' | 'after_runtime_idle';
+
+/** Source-filtered metadata from the existing Pending owner; signed reads never borrow a daemon bearer. */
+export async function readPendingResetStartsForSource(params: Readonly<{
+    token: string; source: PendingResetStartsReadInputV1['source']; signal?: AbortSignal;
+    authorizeRequest?: (request: Readonly<{ method: 'POST'; path: string; body: PendingResetStartsReadInputV1 }>) => Readonly<Record<string, string>> | null;
+}>): Promise<PendingResetStartsReadResultV1> {
+    const path = '/v2/pending/reset-starts/read';
+    const body = PendingResetStartsReadInputV1Schema.parse({ source: params.source });
+    const authorization = params.authorizeRequest ? params.authorizeRequest({ method: 'POST', path, body })
+        : { Authorization: `Bearer ${params.token}` };
+    if (!authorization) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
+    const response = await axios.post<unknown>(`${resolveServerHttpBaseUrl()}${path}`, body, {
+        headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...authorization },
+        ...(params.signal ? { signal: params.signal } : {}),
+    });
+    return PendingResetStartsReadResultV1Schema.parse(response.data);
+}
+
+/** Exact-row intent mutation. Unsupported Homes reject; this never sends another input. */
+export async function updatePendingQueueV2RequestedAction(params: Readonly<{
+    token: string; sessionId: string; localId: string; requestedAction: PendingRequestedActionV1; signal?: AbortSignal;
+    resolveAuthorizationHeaders: (request: Readonly<{ method: 'PATCH'; path: string; body: Readonly<{ requestedAction: PendingRequestedActionV1 }> }>) => Readonly<Record<string, string>> | null;
+}>): Promise<PendingResetStartSetResultV1> {
+    const path = `/v2/sessions/${encodeURIComponent(params.sessionId)}/pending/${encodeURIComponent(params.localId)}/action`;
+    const body = { requestedAction: PendingRequestedActionV1Schema.parse(params.requestedAction) };
+    const authorization = params.resolveAuthorizationHeaders({ method: 'PATCH', path, body });
+    if (!authorization) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
+    const response = await axios.patch<unknown>(`${resolveServerHttpBaseUrl()}${path}`, body, {
+        headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...authorization },
+        ...(params.signal ? { signal: params.signal } : {}),
+    });
+    const data = response.data;
+    if (!data || typeof data !== 'object' || Reflect.get(data, 'ok') !== true) {
+        throw new Error('Invalid Pending intent mutation acknowledgement');
+    }
+    return PendingResetStartSetResultV1Schema.parse({ didUpdate: Reflect.get(data, 'didUpdate'), requestedAction: Reflect.get(data, 'requestedAction') });
+}
 /** Semantic withdrawal reuses ordinary pending deletion, including its delivery fence. */
 export async function withdrawPendingQueueV2Message(params: Readonly<{
     token: string; sessionId: string; localId: string; targetExecutionRunId?: string; signal?: AbortSignal;
@@ -77,7 +116,7 @@ export type PendingQueueMaterializeNextResult = {
     pendingQueueState: KnownPendingQueueState | null;
     message: PendingQueueMaterializedMessage | null;
     deliveryState?: PendingMaterializationDeliveryState | null;
-    deferredReason?: 'waiting_for_foreground_turn' | 'waiting_for_runtime_activity' | 'runtime_activity_unknown' | 'waiting_for_predecessor' | 'steering_unavailable';
+    deferredReason?: 'waiting_for_foreground_turn' | 'waiting_for_runtime_activity' | 'runtime_activity_unknown' | 'waiting_for_predecessor' | 'waiting_for_quota_reset' | 'steering_unavailable';
 };
 
 export type PendingQueueMaterializationTransportClassification =
@@ -306,9 +345,9 @@ export function isAcceptedPendingQueueV2DeliveryAckResponseLoss(error: unknown):
     );
 }
 
-export type PendingQueueBlockedDelivery = Readonly<{
+export type PendingQueueDeliveryFailure = Readonly<{
     localId: string;
-    reason: PendingQueueDeliveryBlockedReason;
+    reason: PendingQueueDeliveryBlockedReason | 'session_input_cancelled';
 }>;
 
 function readResolvedLocalIds(value: unknown): string[] {
@@ -593,6 +632,7 @@ function readPendingMaterializeDeferredReason(value: unknown): PendingQueueMater
         || value === 'waiting_for_runtime_activity'
         || value === 'runtime_activity_unknown'
         || value === 'waiting_for_predecessor'
+        || value === 'waiting_for_quota_reset'
         || value === 'steering_unavailable'
         ? value
         : undefined;
@@ -710,6 +750,27 @@ export async function listPendingQueueV2LocalIdsFromServer(params: {
         }
         throw error;
     }
+}
+
+/** Reads the incumbent durable queue; claimed, withdrawn and ordinary inputs are not reset demand. */
+export async function listPendingQueueV2ResetStartDemands(params: Readonly<{
+    token: string; sessionId: string;
+}>): Promise<readonly Readonly<{ localId: string; reset: PendingResetStartBindingV1 }>[]> {
+    const response = await axios.get<unknown>(`${resolveServerHttpBaseUrl()}/v2/sessions/${encodeURIComponent(params.sessionId)}/pending`, {
+        headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${params.token}` },
+    });
+    const data = response.data;
+    if (!data || typeof data !== 'object' || !Array.isArray(Reflect.get(data, 'pending'))) {
+        throw new Error('Invalid Pending snapshot');
+    }
+    return (Reflect.get(data, 'pending') as unknown[]).flatMap(row => {
+        if (!row || typeof row !== 'object' || Array.isArray(row)) return [];
+        if (Reflect.get(row, 'status') !== 'queued' || Reflect.get(row, 'deliveryState') != null
+            || Reflect.get(row, 'recipient') != null) return [];
+        const localId = readPendingLocalId(Reflect.get(row, 'localId'));
+        const action = PendingRequestedActionV1Schema.safeParse(Reflect.get(row, 'requestedAction'));
+        return localId && action.success && action.data.kind === 'reset_start' ? [{ localId, reset: action.data.reset }] : [];
+    });
 }
 
 export type PendingQueueV2ActivationEligibility = 'eligible' | 'missing' | 'ineligible';
@@ -887,15 +948,15 @@ export async function listPendingQueueV2ProviderDeliveryLocalIdsFromServer(param
     }
 }
 
-export async function readBlockedPendingQueueV2DeliveryByLocalIdFromServer(params: {
+export async function readPendingQueueV2DeliveryFailureByLocalIdFromServer(params: {
     token: string;
     sessionId: string;
     localId: string;
     resolveAuthorizationHeaders?: ResolvePendingQueueAuthorizationHeaders;
-}): Promise<PendingQueueBlockedDelivery | null> {
+}): Promise<PendingQueueDeliveryFailure | null> {
     try {
         const serverUrl = resolveServerHttpBaseUrl();
-        const path = `/v2/sessions/${encodeURIComponent(params.sessionId)}/pending`;
+        const path = `/v2/sessions/${encodeURIComponent(params.sessionId)}/pending?includeDiscarded=true`;
         const authorizationHeaders = params.resolveAuthorizationHeaders?.({ method: 'GET', path })
             ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.token}` });
         if (!authorizationHeaders) throw new Error('External Action authorization unavailable');
@@ -910,6 +971,10 @@ export async function readBlockedPendingQueueV2DeliveryByLocalIdFromServer(param
             const record = row as Record<string, unknown>;
             const localId = record.localId;
             const deliveryStatus = readPendingDeliveryStatusFromRecord(record);
+            if (localId === params.localId && record.status === 'discarded'
+                && deliveryStatus.status === 'discarded' && deliveryStatus.reason === 'session_input_cancelled') {
+                return { localId: params.localId, reason: 'session_input_cancelled' };
+            }
             if (
                 localId !== params.localId
                 || record.status === 'discarded'
@@ -1036,13 +1101,17 @@ export async function resolveAcceptedPendingQueueV2Delivery(params: {
     socket: Socket<ServerToClientEvents, ClientToServerEvents>;
     sessionId: string;
     localId: string;
+    acceptedDelivery?: SessionMessageAcceptedDeliveryContentV1;
 }): Promise<{ didResolve: boolean; pendingQueueState?: KnownPendingQueueState; message?: PendingQueueMaterializedMessage | null }> {
     const localId = readPendingLocalId(params.localId);
     if (localId === null) throw new Error('Invalid pending delivery accepted local id');
     const raw = await emitSocketWithAck<Record<string, unknown>>({
         socket: createAcceptedPendingSettlementAckSocket(params.socket),
         event: ACCEPTED_PENDING_SETTLEMENT_EVENT_V1,
-        payload: { v: 1, sessionId: params.sessionId, localId },
+        payload: AcceptedPendingSettlementRequestV1Schema.parse({
+            v: 1, sessionId: params.sessionId, localId,
+            ...(params.acceptedDelivery === undefined ? {} : { acceptedDelivery: params.acceptedDelivery }),
+        }),
     });
     const parsed = AcceptedPendingSettlementResponseV1Schema.safeParse(raw);
     if (!parsed.success) throw new Error('Invalid pending delivery accepted settlement acknowledgement');

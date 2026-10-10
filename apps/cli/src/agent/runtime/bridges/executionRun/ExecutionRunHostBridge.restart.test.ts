@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fork } from 'node:child_process';
@@ -7,7 +7,8 @@ import { once } from 'node:events';
 import { isPidPresent } from '@happier-dev/cli-common/process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol';
-import { reloadConfiguration } from '@/configuration';
+import { configuration, reloadConfiguration } from '@/configuration';
+import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
 import { gcExecutionRunMarkers, readRetainedExecutionRunRecords, removeExecutionRunMarker } from '@/daemon/executionRunRegistry';
 import { ExecutionRunHostBridge } from './ExecutionRunHostBridge';
 import { finishExecutionRun } from './finishExecutionRun';
@@ -17,7 +18,7 @@ import type { ExecutionRunController } from '@/agent/executionRuns/controllers/t
 import { ensureExecutionRun } from './ensureExecutionRun';
 import { createTestExecutionRunHostRuntime } from './testkit';
 import { VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
-import { projectExecutionRunHostLoss, projectRetainedExecutionRunState } from './retainedState';
+import { RetainedExecutionRunRecordSchema, projectExecutionRunHostLoss, projectRetainedExecutionRunState } from './retainedState';
 
 // The observation transport is unavailable after the host has died. All
 // retained-state parsing, ownership and fallback selection remain real.
@@ -134,6 +135,13 @@ describe('execution lifecycle restart recovery', () => {
       enqueueMarkerWrite: async (_id, write) => { await write(); }, terminalMarkerWritePromises: new Map(),
     });
     await removeExecutionRunMarker(run.runId);
+    const storage = await readOrCreateDeviceLocalSecretStorage({ path: configuration.deviceLocalSecretKeyFile });
+    const path = join(directory, 'tmp', 'daemon-execution-runs', `state-${Buffer.from(run.runId).toString('base64url')}.sealed`);
+    const record = RetainedExecutionRunRecordSchema.parse(storage.openJson({ purpose: 'execution_run_state', ciphertext: readFileSync(path, 'utf8') }));
+    writeFileSync(path, storage.sealJson({ purpose: 'execution_run_state', value: { ...record, future: true,
+      state: { ...record.state, future: true, launch: { ...record.state.launch, future: true },
+        resumeHandle: { ...record.state.resumeHandle, future: true } },
+    } }));
     const restarted = bridge();
     await restarted.waitForTerminal(run.runId);
     expect(restarted.get(run.runId)).toMatchObject({
@@ -141,6 +149,7 @@ describe('execution lifecycle restart recovery', () => {
       launch: run.launch, resumeHandle: run.resumeHandle, latestToolResult: 'Finished text',
     });
     expect(restarted.getPublic(run.runId)?.lifecycle).toEqual({ v: 1, state: 'recoverable' });
+    expect(JSON.stringify(restarted.get(run.runId))).not.toContain('future');
     expect(restarted.listPublicForRequest({}, sessionId).map((item) => item.runId)).toEqual([run.runId]);
     const restored = restarted.get(run.runId);
     if (!restored) throw new Error('Expected restored control state');
@@ -164,6 +173,19 @@ describe('execution lifecycle restart recovery', () => {
     expect(resumedRuns.get(run.runId)).toMatchObject({ runId: run.runId, status: 'running', resumeHandle: run.resumeHandle });
     await runtime.dispose();
     await voiceAgentManager.dispose();
+  });
+
+  it('refuses corrupted known fields in a real sealed retained record', async () => {
+    const run = state('parent-session', 'resumable');
+    await writeExecutionRunActivityMarker({ runId: run.runId, nowMs: 10, opts: { force: true },
+      runs: new Map([[run.runId, run]]), controllers: new Map(), enqueueMarkerWrite: async (_id, write) => { await write(); } });
+    const storage = await readOrCreateDeviceLocalSecretStorage({ path: configuration.deviceLocalSecretKeyFile });
+    const path = join(directory, 'tmp', 'daemon-execution-runs', `state-${Buffer.from(run.runId).toString('base64url')}.sealed`);
+    const record = RetainedExecutionRunRecordSchema.parse(storage.openJson({ purpose: 'execution_run_state', ciphertext: readFileSync(path, 'utf8') }));
+    writeFileSync(path, storage.sealJson({ purpose: 'execution_run_state', value: { ...record,
+      state: { ...record.state, depth: -1 },
+    } }));
+    await expect(readRetainedExecutionRunRecords()).rejects.toMatchObject({ code: 'execution_run_state_unavailable' });
   });
 
   it.each(['ephemeral', 'resumable'] as const)('records abrupt host loss and exact input failure (%s)', async (retentionPolicy) => {

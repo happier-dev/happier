@@ -1,6 +1,7 @@
 import type { StoredCredentials } from '@/persistence';
 import { tryDecryptSessionPresentationMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { RawSessionListRow, RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+import { resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents/session/state/metadataReaders';
 import { readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol/sessions/control/contract';
 import type { SessionSummary as ProtocolSessionSummary, AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
 
@@ -81,6 +82,8 @@ export function summarizeSessionRow(params: Readonly<{
   const title = typeof summary?.text === 'string' ? summary.text.trim() : undefined;
   const path = typeof metadata?.path === 'string' ? metadata.path : undefined;
   const host = typeof metadata?.host === 'string' ? metadata.host : undefined;
+  const machineId = typeof metadata?.machineId === 'string' ? metadata.machineId.trim() : undefined;
+  const permissionMode = resolvePermissionIntentFromSessionMetadata(metadata)?.intent;
   const systemMetadata = metadata === null ? null : readSystemSessionMetadataFromMetadata({ metadata });
   const isSystem = systemMetadata !== null;
   const archivedAt = params.row.archivedAt;
@@ -99,6 +102,8 @@ export function summarizeSessionRow(params: Readonly<{
     ...(title ? { title } : {}),
     ...(path ? { path } : {}),
     ...(host ? { host } : {}),
+    ...(machineId ? { machineId } : {}),
+    ...(permissionMode ? { permissionMode } : {}),
     ...(isSystem ? { isSystem, systemPurpose: systemMetadata?.key ?? null } : {}),
     ...(params.row.effectiveAccess !== undefined
       ? { effectiveAccess: params.row.effectiveAccess }

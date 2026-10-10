@@ -86,6 +86,7 @@ export async function waitForTerminalHostedSessionWebhook(params: Readonly<{
   trackedSession.cancelStartupLaunchBeforeAck = cancelStartupLaunch;
 
   params.pidToTrackedSession.set(params.pid, trackedSession);
+  params.spawnLifecycleCallbacks.onTrackedSessionRegistered?.();
   params.spawnLifecycleCallbacks.registerSpawnResourceCleanupForPid(trackedSession.pid);
   params.spawnLifecycleCallbacks.consumeSessionAttachCleanupForPid(trackedSession.pid);
   const acceptedSpawnMarkerPromise = params.spawnLifecycleCallbacks.persistAcceptedSpawnMarker(trackedSession);

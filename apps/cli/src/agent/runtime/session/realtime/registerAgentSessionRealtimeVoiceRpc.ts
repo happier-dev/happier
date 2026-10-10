@@ -219,6 +219,7 @@ export function registerAgentSessionRealtimeVoiceRpc(input: Readonly<{
   rpc: RpcHandlerRegistrar;
   runtime: unknown;
   getHappierSessionId: () => string;
+  resolveSystemAppendBlocks?: (input: Readonly<{ sessionId: string; signal?: AbortSignal }>) => Promise<readonly string[]>;
   ownerId: string;
   agentGeneration: string;
   isOccurrenceCurrent: (provider: PluginContributionIdentityV1) => boolean;
@@ -448,10 +449,25 @@ export function registerAgentSessionRealtimeVoiceRpc(input: Readonly<{
         : pendingAttempt.abortController.signal;
       const startOptions = optionsFor(context, startSignal);
       try {
+        let systemAppendBlocks: readonly string[] | undefined;
+        try {
+          if (input.resolveSystemAppendBlocks) {
+            systemAppendBlocks = await input.resolveSystemAppendBlocks({ sessionId: happierSessionId, signal: startOptions.signal });
+          }
+        } catch {
+          if (pendingAttempt.stopRequested || startOptions.signal?.aborted || input.getHappierSessionId() !== happierSessionId) {
+            return { ok: true as const, status: 'aborted' as const };
+          }
+          return unavailable('agent_realtime_instructions_unavailable', 'Current Session instructions are unavailable.');
+        }
+        if (pendingAttempt.stopRequested || startOptions.signal?.aborted || input.getHappierSessionId() !== happierSessionId
+          || !input.isOccurrenceCurrent(parsed.data.provider)) {
+          return { ok: true as const, status: 'aborted' as const };
+        }
         let started;
         try {
           started = await resolved.conversation.start(
-            { transport: parsed.data.transport },
+            { transport: parsed.data.transport, ...(systemAppendBlocks ? { systemAppendBlocks } : {}) },
             startOptions,
           );
         } catch (error) {

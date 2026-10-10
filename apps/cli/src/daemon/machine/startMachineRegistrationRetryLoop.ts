@@ -52,10 +52,11 @@ function readSerializedErrorMessage(serialized: Record<string, unknown>): string
 
 function shouldArmReadinessWakeForRegistrationError(error: unknown): boolean {
   const classification = classifyDaemonServerWorkError(error);
+  // Home/auth readiness does not prove that a failing machine route recovered.
+  // An HTTP server error must retain registration's backoff, even on an online Home.
   return classification.retryable && (
     classification.kind === 'network' ||
-    classification.kind === 'timeout' ||
-    classification.kind === 'server_error'
+    classification.kind === 'timeout'
   );
 }
 

@@ -20,6 +20,8 @@ import { projectCliSessionAwarenessV1 } from '@/cli/output/session/sessionAwaren
 import { mapWithConcurrency } from '@/utils/async/mapWithConcurrency';
 import { buildSessionAwarenessListResultV1, markSessionListQueryResultV1 } from '@happier-dev/protocol/sessions/awareness/action';
 import type { SessionAwarenessListResultV1, SessionListQueryV1, SessionListViewV1 } from '@happier-dev/protocol';
+import { matchSessionBotFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import { tryDecryptSessionPresentationMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 
 const LIST_SESSION_PREVIEW_TEXT_LIMIT = 200;
 
@@ -52,6 +54,7 @@ type ListSessionsResultBase = Readonly<{
   hasNext: boolean;
   queryVersion?: 1;
   metadataUpgradeRequiredCount?: number;
+  botFilterUnavailableCount?: number;
 }>;
 
 export type ListSessionsResult = ListSessionsResultBase & (
@@ -301,9 +304,19 @@ export async function listSessions(params: ListSessionsParams): Promise<ListSess
   const rawRowById = new Map<string, (typeof initialPage.sessions)[number]>();
   const activityAtBySessionId = new Map<string, number>();
   const rowModels: CliSessionRowModel[] = [];
+  let botFilterUnavailableCount = 0;
   const appendPageRows = (rawRows: typeof initialPage.sessions) => {
     for (const rawRow of rawRows) {
       if (allowedSessionIds && !allowedSessionIds.has(rawRow.id)) continue;
+      if (query?.bot !== undefined) {
+        const match = matchSessionBotFilterV1(tryDecryptSessionPresentationMetadataView({
+          credentials: params.credentials,
+          accountEncryptionMode: accountEncryptionCurrentness.mode,
+          rawSession: rawRow,
+        }), query.bot);
+        if (match === 'unavailable') botFilterUnavailableCount += 1;
+        if (match !== 'match') continue;
+      }
       rawRowById.set(rawRow.id, rawRow);
       const meaningfulActivityAt = (rawRow as { meaningfulActivityAt?: unknown }).meaningfulActivityAt;
       activityAtBySessionId.set(
@@ -399,6 +412,7 @@ export async function listSessions(params: ListSessionsParams): Promise<ListSess
       nextCursor,
       hasNext,
       ...(metadataUpgradeRequiredCount > 0 ? { metadataUpgradeRequiredCount } : {}),
+      ...(botFilterUnavailableCount > 0 ? { botFilterUnavailableCount } : {}),
     };
     return query
       ? buildSessionAwarenessListResultV1({
@@ -446,6 +460,7 @@ export async function listSessions(params: ListSessionsParams): Promise<ListSess
     nextCursor,
     hasNext,
     ...(metadataUpgradeRequiredCount > 0 ? { metadataUpgradeRequiredCount } : {}),
+    ...(botFilterUnavailableCount > 0 ? { botFilterUnavailableCount } : {}),
     ...(params.includeRows === true ? { rows: limitedRows } : {}),
   };
   if (!query) {

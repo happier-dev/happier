@@ -213,6 +213,11 @@ export type HostExternalSessionsAuthorTranscriptFollowEvent = Parameters<
 
 /** Exact-generation, source-bearing Runtime composition authority. */
 export interface ExternalSessionsCompositionPort {
+  /** Positive native identity lookup without granting terminal-follow capability. */
+  resolveSourceIdentity(
+    input: Parameters<ExternalSessionsCompositionPort['resolveFollowTarget']>[0]
+      & Readonly<{ purpose?: 'accounting' | 'takeover' }>,
+  ): Promise<HostExternalSessionFollowTargetResolution>;
   resolveFollowTarget(input: {
     agentId: ExternalSessionAgentId;
     remoteSessionId: ExternalSessionRef['remoteSessionId'];

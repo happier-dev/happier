@@ -16,6 +16,8 @@ import {
 import { deepEqual } from '@/utils/deterministicJson';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBaseUrl';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 
 type PublishExternalAgentObservationFieldInput = Readonly<{
     sessionId: string;
@@ -77,7 +79,8 @@ async function dispatchExternalSessionReadyNotification(
     home: Readonly<{ token: string; serverUrl: string }>,
 ): Promise<void> {
     const settings = getActiveAccountSettingsSnapshot();
-    if (!settings || settings.source === 'none') {
+    const scopeKey = runWithServerHttpBaseUrl(home.serverUrl, () => resolveAccountSettingsScopeKeyForToken(home.token));
+    if (!settings || settings.source === 'none' || settings.scopeKey !== scopeKey) {
         return;
     }
     await dispatchActivityNotificationAsync({

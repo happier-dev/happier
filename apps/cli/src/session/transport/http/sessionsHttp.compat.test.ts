@@ -11,6 +11,7 @@ import {
 
 import {
   applySessionAgentTransitionCutover,
+  fetchSessionById,
   fetchSessionByIdCompat,
 } from './sessionsHttp';
 
@@ -42,7 +43,14 @@ describe('sessionControl.sessionsHttp.fetchSessionByIdCompat', () => {
       token: 't',
       sessionId: 's1',
       accessProjectionVersion: 1,
-    })).rejects.toThrow('Unexpected /v2/sessions response shape');
+    })).rejects.toMatchObject({
+      code: 'session_detail_invalid_response',
+      schema: 'current_access_projection_v1',
+      issues: expect.arrayContaining([
+        { path: ['responsibleAccountId'], code: 'invalid_type' },
+        { path: ['responsibleAccount'], code: 'invalid_type' },
+      ]),
+    });
   });
 
   it('rejects a qualified detail response that omits the negotiated effective-access projection', async () => {
@@ -58,24 +66,49 @@ describe('sessionControl.sessionsHttp.fetchSessionByIdCompat', () => {
       token: 't',
       sessionId: 's1',
       accessProjectionVersion: 1,
-    })).rejects.toThrow('Unexpected /v2/sessions response shape');
+    })).rejects.toMatchObject({
+      code: 'session_detail_invalid_response',
+      schema: 'current_access_projection_v1',
+      issues: expect.arrayContaining([{ path: ['effectiveAccess'], code: 'invalid_type' }]),
+    });
 
     expect(getSpy.mock.calls[0]?.[0]).toContain('accessProjectionVersion=1');
   });
 
-  it('does not reinterpret a qualified route miss through the released list fallback', async () => {
+  it.each([
+    { reader: 'direct', fetchDetail: fetchSessionById },
+    { reader: 'compat', fetchDetail: fetchSessionByIdCompat },
+  ])('identifies a qualified route miss without scanning the released list ($reader)', async ({ fetchDetail }) => {
     const getSpy = vi.spyOn(axios, 'get').mockResolvedValueOnce({
       status: 404,
       data: { error: 'Not found', path: '/v2/sessions/s1', method: 'GET' },
     } as any);
 
-    await expect(fetchSessionByIdCompat({
+    await expect(fetchDetail({
       token: 't',
       sessionId: 's1',
       accessProjectionVersion: 1,
-    })).rejects.toThrow('Unexpected /v2/sessions response shape');
+    })).rejects.toMatchObject({
+      code: 'session_detail_projection_unavailable',
+      response: { status: 404 },
+    });
 
     expect(getSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports envelope schema paths without exposing rejected response values', async () => {
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({
+      status: 200,
+      data: { session: { metadata: 'private-provider-text' } },
+    });
+    const error = await fetchSessionById({ token: 'private-token', sessionId: 's1' }).catch((error: unknown) => error);
+    expect(error).toMatchObject({
+      code: 'session_detail_invalid_response',
+      schema: 'v2_session_detail',
+      issues: expect.arrayContaining([{ path: ['session', 'id'], code: 'invalid_type' }]),
+    });
+    expect(String(error)).not.toContain('private-provider-text');
+    expect(JSON.stringify(error)).not.toMatch(/private-provider-text|private-token/);
   });
 
   it('continues accepting the released owner/direct detail shape for a bare request', async () => {

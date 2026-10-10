@@ -305,6 +305,7 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                         turnId: event.turnId,
                         ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
                         issue: classifyPrimarySessionRuntimeIssue({
+                            provider: params.agentId,
                             cause: 'session_error',
                             error: event.diagnostic,
                             occurredAt: event.emittedAtMs,

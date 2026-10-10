@@ -3,6 +3,14 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Machine } from '@/api/types';
 import type { BrowserRecordingSessionV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { createLocalServicesDaemonRuntime } from '@/daemon/local/services/runtime';
+import { createLocalServicesDaemonFeatureGate } from '@/daemon/local/services/featureGate';
+import { createLocalServicesDaemonRuntimeActionExecutor } from '@/daemon/local/services/actions/runtimeActionExecutor';
 
 import { ApiMachineClient } from './apiMachine';
 
@@ -47,102 +55,60 @@ const recording = {
 } satisfies BrowserRecordingSessionV1;
 
 describe('ApiMachineClient browser recording routes', () => {
-  it('attaches daemon local service routes to the machine RPC handler manager', async () => {
+  it('attaches real local service reads and policy-admitted controls to the machine RPC handler manager', async () => {
     const client = new ApiMachineClient('token', createMachine());
     const rpc = (client as unknown as {
-      rpcHandlerManager: {
-        invokeLocal(method: string, params: unknown): Promise<unknown>;
-      };
+      rpcHandlerManager: Pick<RpcHandlerManager, 'invokeLocal'>;
     }).rpcHandlerManager;
-    const typedClient = client as unknown as {
-      registerLocalServicesRoutes?: (routes: unknown) => void;
-    };
-
-    expect(typedClient.registerLocalServicesRoutes).toBeTypeOf('function');
-    typedClient.registerLocalServicesRoutes?.({
-      localServicesInventory: {
-        getSnapshot: vi.fn(async () => ({
-          v: 1,
-          machineId: 'machine_1',
-          generatedAt: 1_000,
-          refreshState: 'idle',
-          entries: [],
-          diagnostics: [],
-        })),
-        refreshSnapshot: vi.fn(),
-      },
-      localServicesLauncher: {
-        getSnapshot: vi.fn(async () => ({
-          v: 1,
-          machineId: 'machine_1',
-          updatedAt: 2_000,
-          targets: [],
-        })),
-        startTarget: vi.fn(async (request: { machineId: string; targetId: string }) => ({
-          protocolVersion: 1,
-          machineId: request.machineId,
-          targetId: request.targetId,
-          status: 'denied',
-          reasonCode: 'launcher_start_unsupported',
-          snapshot: {
-            v: 1,
-            machineId: request.machineId,
-            updatedAt: 2_500,
-            targets: [],
-          },
-        })),
-      },
-      localServicesActions: {
-        execute: vi.fn(async () => ({
-          v: 1,
-          requestId: 'request_1',
-          action: 'copy_url',
-          status: 'succeeded',
-          auditEvents: [{
-            v: 1,
-            eventId: 'request_1:0:succeeded',
-            requestId: 'request_1',
-            machineId: 'machine_1',
-            action: 'copy_url',
-            result: 'succeeded',
-            recordedAt: 3_000,
-          }],
-        })),
-      },
+    const machineId = createMachine().id;
+    const resolveServerFeaturesSnapshot = () => ({ status: 'ready' as const,
+      features: FeaturesResponseSchema.parse({ features: {
+        localServices: { enabled: true, inventory: { enabled: true }, launcher: { enabled: true }, actions: { enabled: true } },
+        browser: { enabled: true, viewTargets: { enabled: true } },
+      }, capabilities: {} }),
     });
-
-    await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT, {
-      machineId: 'machine_1',
-    })).resolves.toMatchObject({
-      protocolVersion: 1,
-      snapshot: { machineId: 'machine_1', generatedAt: 1_000 },
+    const runtime = createLocalServicesDaemonRuntime({ machineId, startLoop: false, processEnv: {}, now: () => 1_000,
+      resolveServerFeaturesSnapshot,
+      // OS inventory and accepted Account rows are external boundaries; domain routes stay real.
+      scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }),
+      workspaceFacts: () => ({ facts: [], acceptedWorkspaceRefs: [], diagnostics: [] }),
     });
-    await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT, {
-      machineId: 'machine_1',
-    })).resolves.toMatchObject({
-      protocolVersion: 1,
-      snapshot: { machineId: 'machine_1', updatedAt: 2_000 },
-    });
-    await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START, {
-      machineId: 'machine_1',
-      targetId: 'managed:web',
-    })).resolves.toMatchObject({
-      protocolVersion: 1,
-      machineId: 'machine_1',
-      targetId: 'managed:web',
-      status: 'denied',
-      reasonCode: 'launcher_start_unsupported',
-      snapshot: { machineId: 'machine_1', updatedAt: 2_500 },
-    });
-    await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_EXECUTE, {
-      requestId: 'request_1',
-      target: { kind: 'inventory_entry', inventoryEntryId: 'entry_1', machineId: 'machine_1' },
-      action: 'copy_url',
-      force: false,
-    })).resolves.toMatchObject({
-      protocolVersion: 1,
-      result: { requestId: 'request_1', status: 'succeeded' },
-    });
+    const gate = createLocalServicesDaemonFeatureGate({ env: {}, resolveServerFeaturesSnapshot });
+    await gate.refresh();
+    try {
+      client.registerLocalServicesRoutes({ machineId, localServicesInventory: runtime.inventoryRoutes,
+        localServicesLauncher: runtime.launcherRoutes, localServicesActions: runtime.actionRoutes,
+        resolveLauncherActionExecutor: ({ ingress }) => {
+          const executor = createActionExecutor({
+            isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId,
+              normalizeActionsSettingsV1(null), { surface: context.surface ?? null, authority: context.authority }),
+            // Account Artifact persistence/decision is the boundary, not policy or launcher dispatch.
+            approvalsCreate: async () => ({ artifactId: 'service-start-approval' }),
+            approvalsUpdate: async () => {},
+            approvalsWaitForDecision: async ({ request }) => ({ decision: 'reject' as const, request,
+              decisionAuthority: 'present_user' as const }),
+            runtimeActionExecute: createLocalServicesDaemonRuntimeActionExecutor({ featureGate: gate, ingress,
+              routes: { launcherRoutes: runtime.launcherRoutes, actionRoutes: runtime.actionRoutes } }),
+          });
+          return { execute: (actionId, input, context) => executor.execute(actionId, input, { serverId: 'home-a', ...context }) };
+        },
+      });
+      await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT, { machineId }))
+        .resolves.toMatchObject({ protocolVersion: 1, snapshot: { machineId, entries: [] } });
+      await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT, { machineId }))
+        .resolves.toMatchObject({ protocolVersion: 1, snapshot: { machineId, targets: [] } });
+      const invocation = { localActionContext: { surface: 'agent' as const, authority: 'account_automation' as const,
+        actionRequestId: 'service-policy-request' } };
+      await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START,
+        { machineId, targetId: 'unavailable-declaration' }, invocation))
+        .resolves.toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+      await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_EXECUTE, {
+        requestId: 'request_1', target: { kind: 'inventory_entry', inventoryEntryId: 'entry_1', machineId },
+        action: 'copy_url', force: false,
+      }, invocation)).resolves.toMatchObject({ protocolVersion: 1,
+        result: { requestId: 'request_1', status: 'denied', reasonCode: 'unknown_inventory_entry' } });
+      expect((await runtime.launcherRoutes.getSnapshot()).targets).toEqual([]);
+    } finally { await runtime.stop(); }
   });
 
   it('attaches daemon browser recording routes to the machine RPC handler manager', async () => {

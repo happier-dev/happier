@@ -1,35 +1,31 @@
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
-
-const { fetchServerFeaturesSnapshot } = vi.hoisted(() => ({
-    fetchServerFeaturesSnapshot: vi.fn(),
-}));
-
-vi.mock('@/features/serverFeaturesClient', () => ({
-    fetchServerFeaturesSnapshot,
-}));
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 
 import { createCurrentMachineExecutionOriginContextResolver } from './resolveCurrentMachineExecutionOriginContext';
 
-function readySnapshot(serverIdentityId = 'srv_current_machine_fixture'): CliServerFeaturesSnapshot {
-    return {
-        status: 'ready',
-        features: FeaturesResponseSchema.parse({
+function readyResponse(serverIdentityId = 'srv_current_machine_fixture'): Response {
+    return new Response(JSON.stringify(FeaturesResponseSchema.parse({
             features: {},
             capabilities: { serverIdentity: { serverIdentityId } },
-        }),
-    };
+        })), { status: 200, headers: { 'Content-Type': 'application/json' } });
 }
 
 describe('createCurrentMachineExecutionOriginContextResolver', () => {
     beforeEach(() => {
-        fetchServerFeaturesSnapshot.mockReset();
+        resetServerFeaturesClientForTests();
+    });
+    afterEach(() => vi.restoreAllMocks());
+
+    it('does not reuse a cached Home identity at the next execution admission', async () => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(readyResponse('srv_first_home')).mockResolvedValueOnce(readyResponse('srv_next_home'));
+        const resolve = createCurrentMachineExecutionOriginContextResolver({ serverUrl: 'https://server.example.test', resolveCurrentMachineId: () => 'machine' });
+        expect(await resolve()).toMatchObject({ serverIdentityId: 'srv_first_home' });
+        expect(await resolve()).toMatchObject({ serverIdentityId: 'srv_next_home' });
     });
 
     it('stamps only a fresh ready server identity paired with the current machine id', async () => {
-        fetchServerFeaturesSnapshot.mockResolvedValue(readySnapshot());
+        const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(readyResponse());
         const resolveCurrentMachineId = vi.fn(() => 'machine-current');
         const resolveCurrentMachineExecutionOriginContext = createCurrentMachineExecutionOriginContextResolver({
             serverUrl: 'https://server.example.test',
@@ -41,10 +37,7 @@ describe('createCurrentMachineExecutionOriginContextResolver', () => {
             serverIdentityId: 'srv_current_machine_fixture',
             machineId: 'machine-current',
         });
-        expect(fetchServerFeaturesSnapshot).toHaveBeenCalledWith({
-            serverUrl: 'https://server.example.test',
-            timeoutMs: 1_500,
-        });
+        expect(fetch).toHaveBeenCalledWith('https://server.example.test/v1/features', expect.objectContaining({ method: 'GET' }));
         expect(resolveCurrentMachineId).toHaveBeenCalledOnce();
     });
 
@@ -54,23 +47,22 @@ describe('createCurrentMachineExecutionOriginContextResolver', () => {
             resolveCurrentMachineId: () => null,
         });
 
-        fetchServerFeaturesSnapshot.mockResolvedValue({
-            status: 'unsupported',
-            reason: 'endpoint_missing',
-        });
+        const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 404 }));
         await expect(resolveCurrentMachineExecutionOriginContext()).resolves.toBeNull();
 
-        fetchServerFeaturesSnapshot.mockResolvedValue(readySnapshot());
+        fetch.mockResolvedValue(readyResponse());
         await expect(resolveCurrentMachineExecutionOriginContext()).resolves.toBeNull();
     });
 
     it('honors cancellation after the fresh server read before admitting an origin', async () => {
         const controller = new AbortController();
-        fetchServerFeaturesSnapshot.mockResolvedValue(readySnapshot());
+        vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+            controller.abort(new Error('cancelled after server read'));
+            return readyResponse();
+        });
         const resolveCurrentMachineExecutionOriginContext = createCurrentMachineExecutionOriginContextResolver({
             serverUrl: 'https://server.example.test',
             resolveCurrentMachineId: () => {
-                controller.abort(new Error('cancelled after server read'));
                 return 'machine-current';
             },
         });

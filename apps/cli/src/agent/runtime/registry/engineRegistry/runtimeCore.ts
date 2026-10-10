@@ -105,6 +105,7 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
             'prepareTeamCredentialProviderBinding'
         ]
     >;
+    managedProviderRunServices?: import('./types').RunnerAgentSessionRuntimeSource['managedProviderRunServices'];
     createNativeAgentInvocationServices?: CreateAgentInvocationServices;
     authorizeNativeAgentNewTurn?: NonNullable<
         import('./types').RunnerAgentSessionRuntimeSource[
@@ -151,6 +152,7 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
         Parameters<typeof createNativeAgentRuntimeSessionPlan>[0]['sessionProjection']
     >;
     resolveNativeAgentAcpHostLaunch?: PublicAcpHostLaunchResolver;
+    nativeAgentAcpRuntimeDefinition?: Parameters<typeof createPublicAcpRuntimeProtocols>[0]['runtimeDefinition'];
 }>): Promise<CliEngineAdapter | null> {
     const selectedOwnerKind = params.runtimeOwner.selected?.kind ?? null;
     if (!selectedOwnerKind) {
@@ -163,7 +165,7 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
         params.resolveCurrentMediatorContributionMaterializationRef
         ?? params.runtimeRegistry?.resolveCurrentMediatorContributionMaterializationRef;
 
-    if (selectedOwnerKind === 'plugin_engine' || selectedOwnerKind === 'host_configured') {
+    if (selectedOwnerKind === 'plugin_engine') {
         const runtimeRegistry = params.runtimeRegistry;
         const engineEntry = params.engineEntry;
         if ((runtimeRegistry && engineEntry)
@@ -258,6 +260,9 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                             ...(params.resolveNativeAgentAcpHostLaunch
                                 ? { resolveAcpHostLaunch: params.resolveNativeAgentAcpHostLaunch }
                                 : {}),
+                            ...(params.nativeAgentAcpRuntimeDefinition
+                                ? { acpRuntimeDefinition: params.nativeAgentAcpRuntimeDefinition }
+                                : {}),
                             executionSurfaces: params.executionSurfaces,
                             externalSessionHostOperations:
                                 params.externalSessionHostOperations,
@@ -279,6 +284,7 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                         params.prepareNativeTeamCredentialProviderBinding,
                                 }
                                 : {}),
+                            ...(params.managedProviderRunServices ? { managedProviderRunServices: params.managedProviderRunServices } : {}),
                             createSessionHostServiceOwners: ({
                                 hostRuntimeParams,
                                 sessionId,
@@ -292,6 +298,7 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                 hostSession: {
                                     session: hostRuntimeParams.session,
                                     machineId: hostRuntimeParams.machineId,
+                                    resolveAccountSettingsSnapshot: hostRuntimeParams.resolveAccountSettingsSnapshot,
                                     ...(hostRuntimeParams.accountSettings !== undefined
                                         ? { accountSettings: hostRuntimeParams.accountSettings }
                                         : {}),
@@ -601,6 +608,7 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                         hostSession: {
                                             session: host.session,
                                             machineId: host.machineId,
+                                            resolveAccountSettingsSnapshot: options.resolveAccountSettingsSnapshot,
                                             ...(options.accountSettings !== undefined
                                                 ? { accountSettings: options.accountSettings }
                                                 : {}),
@@ -722,9 +730,13 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                             services: invocationServices,
                                             interactions: currentSession.interactions,
                                             models: publications.services.models,
+                                            modes: publications.services.modes,
                                             transformAgentRequest: transformNativeAgentRequest,
                                             ...(params.resolveNativeAgentAcpHostLaunch
                                                 ? { resolveHostLaunch: params.resolveNativeAgentAcpHostLaunch }
+                                                : {}),
+                                            ...(params.nativeAgentAcpRuntimeDefinition
+                                                ? { runtimeDefinition: params.nativeAgentAcpRuntimeDefinition }
                                                 : {}),
                                             // The Run's own tool profile reaches the generic ACP composer
                                             // exactly as the main-Session path hands it `hostRuntimeParams.mcpServers`.
@@ -806,6 +818,7 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                 directory: options.cwd,
                                 machineId: options.machineId ?? '',
                                 accountSettings: options.accountSettings ?? null,
+                                resolveAccountSettingsSnapshot: options.resolveAccountSettingsSnapshot,
                                 agent: params.agent,
                                 sourceEnvironment: options.isolation?.env ?? {},
                                 ...(options.connectedServiceRuntimeAuthRefresh ? { refreshRuntimeAuthViaDaemon: options.connectedServiceRuntimeAuthRefresh } : {}),
@@ -825,6 +838,9 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                 transformAgentRequest: transformNativeAgentRequest,
                                 ...(params.resolveNativeAgentAcpHostLaunch
                                     ? { resolveAcpHostLaunch: params.resolveNativeAgentAcpHostLaunch }
+                                    : {}),
+                                ...(params.nativeAgentAcpRuntimeDefinition
+                                    ? { acpRuntimeDefinition: params.nativeAgentAcpRuntimeDefinition }
                                     : {}),
                                 ...(runtimeRegistry?.createAgentInvocationServices && engineEntry
                                     ? {
@@ -901,7 +917,7 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                             ...(executionRunContextV1 ? { executionRunContextV1 } : {}),
                             lease: runtimeLease,
                             options,
-                            supportsResume: openCapabilities?.includes('resume') === true,
+                            supportsResume: (detachedSessionPrimary ? sessionOpenCapabilities : openCapabilities)?.includes('resume') === true,
                             ...(agentRetirementSignal ? { generationSignal: agentRetirementSignal } : {}),
                             ...(services ? { services } : {}),
                             ...(detachedContextLeaseFactory

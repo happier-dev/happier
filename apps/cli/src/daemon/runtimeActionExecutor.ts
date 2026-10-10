@@ -142,6 +142,7 @@ export function createDaemonRuntimeActionExecutor(
       ? createBrowserRecordingAttachToComposer({
           routes: routes.browserRecording,
           attachToComposer: routes.attachBrowserRecordingToComposer,
+          resolveInputControl: routes.browserAutomation?.resolveInputControl,
         })
       : undefined;
     const browserRecordingActionRoutes = routes.browserRecording

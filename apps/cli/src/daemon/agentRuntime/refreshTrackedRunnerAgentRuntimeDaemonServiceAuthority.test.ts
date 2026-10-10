@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -136,7 +136,7 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority', () => {
           moduleUrl: pathToFileURL(join(daemonSnapshot.root, 'package-dist', 'daemon.mjs')).href,
         }),
       })).resolves.toMatchObject({
-        rootPath: join(runnerSnapshot.root, 'node_modules', '@happier-dev', 'plugins-antigravity'),
+        rootPath: await realpath(join(runnerSnapshot.root, 'node_modules', '@happier-dev', 'plugins-antigravity')),
       });
       const leaf = await loadRetainedAgentRuntimeLeaf({
         paths: resolvePluginStorePaths({ happyHomeDir }),

@@ -29,6 +29,7 @@ const RetainedRunStateSchema = z.object({
   notifyParentOnCompletion: z.boolean().optional(), turnCount: z.number().int().nonnegative().optional(),
   effectiveEngine: z.object({ agentId: z.string().min(1), modelId: z.string().optional() }).strict().optional(),
   launch: z.object({
+    selectionSource: z.enum(['explicit', 'inherited', 'independent', 'retained']).optional(),
     cwd: z.string().optional(), mcpSelection: SessionMcpSelectionV1Schema.optional(), acpSessionModeId: z.string().optional(),
     runtimeDescriptorV1: PortableRuntimeDescriptorV1Schema.optional(), launchOrigin: ExecutionRunLaunchOriginSchema.optional(),
     modelId: z.string().optional(), modelSelection: ProviderBoundModelRefSchema.optional(),
@@ -47,6 +48,7 @@ const RetainedRunStateSchema = z.object({
   voiceAgentConfig: z.object({
     profileId: z.string().nullable().optional(), chatModelId: z.string(), commitModelId: z.string(),
     chatModelSelection: ProviderBoundModelRefSchema.optional(), commitModelSelection: ProviderBoundModelRefSchema.optional(),
+    commitConnectedServices: ConnectedServiceBindingsV2Schema.nullable().optional(),
     commitIsolation: z.boolean(), permissionIntent: z.enum(PERMISSION_INTENTS), idleTtlSeconds: z.number(),
     initialContext: z.string(), initialContextMode: z.enum(['bootstrap', 'first_turn']), verbosity: z.enum(['short', 'balanced']),
     voicePolicy: ExecutionRunVoiceAgentIntentInputV1Schema.shape.voicePolicy,

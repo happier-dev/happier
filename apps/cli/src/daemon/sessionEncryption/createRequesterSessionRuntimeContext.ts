@@ -60,7 +60,7 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
   const bootstrap = input.bootstrap;
   const savedSecrets = bootstrap.savedSecretOperationContext;
   let disposed = false;
-  const isCurrent = async () => !disposed && await savedSecrets.isCurrent();
+  const isCurrent = async () => !disposed && await savedSecrets.isCurrent() && !disposed;
   if (!await isCurrent()) return null;
   const connectedServiceRuntimeRegistry = input.coordinatorInput.connectedServiceRuntimeRegistry.scopeToRequester(target => {
     const tracked = [...input.coordinatorInput.pidToTrackedSession.values()].find(candidate => candidate.happySessionId === target.sessionId);
@@ -221,7 +221,7 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
     await dispose();
     return null;
   }
-  return Object.freeze({ bootstrap, api, readAccountSettingsSnapshot: readSnapshot, refreshAccountSettings, readAccountLaunchProfiles,
+  return Object.freeze({ bootstrap, isCurrent, api, readAccountSettingsSnapshot: readSnapshot, refreshAccountSettings, readAccountLaunchProfiles,
     subscribeAccountSettingsSnapshot: (listener: () => void) => {
       if (disposed) throw new Error('requester_account_context_unavailable');
       listeners.add(listener);

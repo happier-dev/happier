@@ -19,6 +19,7 @@ import {
     resolvePluginMcpServersForExecutionScope,
     resolvePluginMcpServersForSession,
 } from '@/mcp/servers/resolvePluginMcpServersForSession';
+import { McpServerCatalogUnavailableError } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
 import type {
     McpSessionResolutionInput,
     PluginMcpSessionResolver,
@@ -32,7 +33,7 @@ import {
     createSessionHooksService,
     type HostSessionHooksOwner,
 } from '@/plugins/runtime/hooks/session/service';
-import { readActivePluginAccountSettings } from '@/plugins/runtime/context/accountSettingsStorage';
+import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createDaemonRuntimeAuthRefreshService, type RuntimeAuthRefreshViaDaemon } from '@/plugins/runtime/context/runtimeAuthRefresh';
 import type {
     EngineResolutionAgent,
@@ -187,6 +188,7 @@ export function createNativeAgentExecutionRunHostServices(params: Readonly<{
     directory: string;
     machineId: string;
     accountSettings: AccountSettings | null;
+    resolveAccountSettingsSnapshot?: (input?: Readonly<{ mcpServerCatalog?: boolean; signal?: AbortSignal }>) => Promise<ActiveAccountSettingsSnapshot | null>;
     mcpSelection?: SessionMcpSelectionV1;
     runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null;
     runtimeAuthority?: PluginRuntimeAuthoritySnapshotV1;
@@ -337,9 +339,14 @@ export function createNativeAgentExecutionRunHostServices(params: Readonly<{
             async resolveServers(options: Parameters<AgentSessionHostServices['mcp']['resolveServers']>[0]) {
                 assertActive();
                 options?.signal?.throwIfAborted();
+                const accountSettingsSnapshot = params.resolveAccountSettingsSnapshot
+                    ? await params.resolveAccountSettingsSnapshot({ mcpServerCatalog: true, signal: params.signal }) : null;
+                assertActive();
+                options?.signal?.throwIfAborted();
                 const servers = resolvePluginMcpServersForExecutionScope({
                     scope,
-                    accountSettings: params.accountSettings,
+                    accountSettings: accountSettingsSnapshot?.settings ?? params.accountSettings,
+                    accountSettingsSnapshot,
                     machineId: params.machineId,
                     directory: params.directory,
                     selection: params.mcpSelection ?? null,
@@ -381,6 +388,7 @@ export function createNativeAgentSessionHostServiceOwners(params: Readonly<{
         session: Pick<ApiSessionClient, 'getMetadataSnapshot'>;
         machineId: string;
         accountSettings?: AccountSettings | null;
+        resolveAccountSettingsSnapshot?: (input?: Readonly<{ mcpServerCatalog?: boolean; signal?: AbortSignal }>) => Promise<ActiveAccountSettingsSnapshot | null>;
         accountSettingsAuthority?: 'account' | 'session';
         permissionHandler: Pick<ProviderEnforcedPermissionHandler, 'handleToolCall'>;
     }>;
@@ -461,18 +469,24 @@ export function createNativeAgentSessionHostServiceOwners(params: Readonly<{
                 : {}),
         })
         : undefined;
-    const resolveBaseMcpServers = (
+    const resolveBaseMcpServers = async (
         input: McpSessionResolutionInput,
     ) => {
         params.signal.throwIfAborted();
         if (input.sessionId.trim() !== params.sessionId) return Object.freeze([]);
+        if (params.hostSession.accountSettingsAuthority === 'session') return Object.freeze([]);
+        const accountSettingsSnapshot = params.hostSession.resolveAccountSettingsSnapshot
+            ? await params.hostSession.resolveAccountSettingsSnapshot({ mcpServerCatalog: true, signal: params.signal })
+            : null;
+        params.signal.throwIfAborted();
+        if (!accountSettingsSnapshot && params.hostSession.accountSettingsAuthority === 'account') {
+            throw new McpServerCatalogUnavailableError('scope-retired');
+        }
         return resolvePluginMcpServersForSession({
             input,
-            accountSettings: params.hostSession.accountSettingsAuthority === 'session'
-                ? null
-                : params.hostSession.accountSettings
-                    ?? readActivePluginAccountSettings(),
+            accountSettings: accountSettingsSnapshot?.settings ?? params.hostSession.accountSettings ?? null,
             machineId: params.hostSession.machineId,
+            accountSettingsSnapshot,
             directory: params.directory,
             sessionMetadata: params.hostSession.session.getMetadataSnapshot(),
         });
@@ -508,7 +522,7 @@ export function createNativeAgentSessionHostServiceOwners(params: Readonly<{
                         bindingId: runtimeId,
                         sessionId: params.sessionId,
                         directory: params.directory,
-                        servers: resolveBaseMcpServers(input),
+                        servers: await resolveBaseMcpServers(input),
                         currentSession,
                     });
                 },

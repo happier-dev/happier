@@ -1,5 +1,7 @@
 import { deriveConnectedServiceRunMaterializeToken } from './connectedServices/runs/capabilityToken';
 import { classifyActionTransportFailure } from '@/api/client/classifyServerEndpointError';
+import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
+import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 
 export type DaemonControlRequestOptions = {
   timeoutMs?: number | null;
@@ -8,6 +10,7 @@ export type DaemonControlRequestOptions = {
 };
 
 type DaemonPostOptions = DaemonControlRequestOptions & {
+  authorityCeiling?: 'account_automation';
   mutation?: boolean;
   authScope?: 'daemon-control' | 'connected-service-run-materialize';
   authTokenOverride?: string;
@@ -21,11 +24,15 @@ function positiveTimeout(raw: string | number | undefined, fallback: number, max
 async function resolveTimeout(path: string, options: DaemonControlRequestOptions): Promise<number | null> {
   if (options.timeoutMs === null) return null;
   if (options.timeoutMs !== undefined) {
-    return positiveTimeout(options.timeoutMs, 10_000, path === '/connected-service-run/materialize' ? 600_000 : 300_000);
+    // An explicit deadline belongs to the containing caller, not this phase.
+    return Math.max(0, Math.trunc(options.timeoutMs));
   }
   // Runner exit and terminal retirement belong to the daemon Stop lifecycle.
   // Explicit caller deadlines and cancellation still apply.
   if (path === '/stop-session') return null;
+  // Catalog preparation follows its request lifetime. A loaded daemon may
+  // take longer than the generic control wait without being unavailable.
+  if (path === '/plugins/catalog/read') return null;
   if (path === '/spawn-session') {
     const { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS } = await import('@happier-dev/protocol');
     const raw = process.env.HAPPIER_DAEMON_SPAWN_HTTP_TIMEOUT;
@@ -49,16 +56,26 @@ export async function daemonPost(path: string, body?: unknown, options: DaemonPo
     return { error };
   }
   let requestIssued = false;
+  let cancelDeadline: (() => void) | undefined;
   try {
     const timeout = await resolveTimeout(path, options);
     const authToken = options.authTokenOverride ?? (options.authScope === 'connected-service-run-materialize'
       ? deriveConnectedServiceRunMaterializeToken(state.controlToken) : state.controlToken);
-    const timeoutSignal = timeout === null ? null : AbortSignal.timeout(timeout);
+    // Native Node timers cannot represent delays beyond signed-32 milliseconds.
+    // Chunk the timer through the shared owner without shortening the deadline.
+    const longDeadline = timeout !== null && timeout > 2_147_483_647 ? new AbortController() : null;
+    if (longDeadline && timeout !== null) {
+      cancelDeadline = armDeadlineTimer(Date.now() + timeout, () => longDeadline.abort(new DOMException('Timed out', 'TimeoutError')), { unref: true });
+    }
+    const timeoutSignal = longDeadline?.signal ?? (timeout === null ? null : AbortSignal.timeout(timeout));
     const signal = options.signal && timeoutSignal ? AbortSignal.any([options.signal, timeoutSignal]) : options.signal ?? timeoutSignal ?? undefined;
     signal?.throwIfAborted();
     requestIssued = true;
     const response = await fetch(`http://127.0.0.1:${state.httpPort}${path}`, {
-      method: 'POST', headers: buildDaemonControlHttpHeaders(authToken), body: JSON.stringify(body || {}),
+      method: 'POST', headers: {
+        ...buildDaemonControlHttpHeaders(authToken),
+        ...(options.authorityCeiling ? { [AUTHORITY_CEILING_HEADER_V1]: options.authorityCeiling } : {}),
+      }, body: JSON.stringify(body || {}),
       ...(signal ? { signal } : {}),
     });
     const raw = await response.text();
@@ -83,6 +100,8 @@ export async function daemonPost(path: string, body?: unknown, options: DaemonPo
       cancelled: options.signal?.aborted === true,
     });
     return { error, ...(failure && failure !== 'network' ? { errorCode: failure } : {}) };
+  } finally {
+    cancelDeadline?.();
   }
 }
 

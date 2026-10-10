@@ -1,13 +1,74 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
 import { AccountSettingsSchema, ProviderBoundModelRefSchema, readBackendTargetRefV2, type ConnectedServiceBindingsV2 } from '@happier-dev/protocol';
 import type { AgentRuntime, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
-import type { ExecutionRunState } from './executionRunTypes';
+import type { ExecutionRunManagerStartParams, ExecutionRunState } from './executionRunTypes';
 import { ensureExecutionRun } from './ensureExecutionRun';
 import { createNativeAgentSessionInteractionHostRuntime } from './nativeAgentExecutionRun';
 import { createVoiceSessionContextLease } from './testkit/nativeSessionContext';
+import { ExecutionRunHostBridge } from './ExecutionRunHostBridge';
+import { reloadConfiguration } from '@/configuration';
+
+describe('ExecutionRunHostBridge ensure-or-start response', () => {
+    it('preserves the complete created response when the accepted Run stops during transcript publication', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'happier-ensure-start-response-'));
+        vi.stubEnv('HAPPIER_HOME_DIR', directory);
+        vi.stubEnv('HAPPIER_PUBLIC_RELEASE_CHANNEL', undefined);
+        vi.stubEnv('HAPPIER_RELEASE_RING', undefined);
+        vi.stubEnv('HAPPIER_RELEASE_CHANNEL', undefined);
+        reloadConfiguration();
+        let bridge!: ExecutionRunHostBridge;
+        let publishedCallId: string | undefined;
+        try {
+            bridge = new ExecutionRunHostBridge({
+                parentProvider: 'codex', cwd: directory, happyHomeDir: directory,
+                // The Session transcript transport exposes creation before native
+                // provisioning; a user can cancel this accepted Run at that boundary.
+                sendAcp: async (_provider, message) => {
+                    if (message.type !== 'tool-call' || message.name !== 'SubAgentRun') return;
+                    publishedCallId = message.callId;
+                    const accepted = bridge.listPublic()[0];
+                    if (!accepted) throw new Error('Expected the accepted Run before transcript publication');
+                    expect(await bridge.stop(accepted.runId)).toEqual({ ok: true });
+                },
+            });
+            const start = {
+                sessionId: 'parent-session', intent: 'delegate', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                modelId: 'selected-model', modelSelection: null, connectedServices: null,
+                permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
+                sessionConfigOptionOverrides: { v: 1, updatedAt: 1, overrides: {
+                    reasoning_effort: { updatedAt: 1, value: 'high' },
+                } },
+            } satisfies ExecutionRunManagerStartParams;
+            const created = await bridge.ensureOrStart({ start });
+            if (!created.ok) throw new Error('Expected creation to return its accepted response');
+            const retained = bridge.get(created.runId);
+            expect(retained).toMatchObject({ status: 'cancelled', callId: publishedCallId });
+            if (!retained || !publishedCallId) throw new Error('Expected the retained and published creation identities');
+            expect(created).toEqual({
+                ok: true, created: true, runId: retained.runId, callId: publishedCallId, sidechainId: retained.sidechainId,
+                requestedConfiguration: { modelId: 'selected-model', reasoningEffort: 'high' },
+                resolvedSelection: { source: 'explicit', modelId: 'selected-model', connectedServices: null },
+            });
+            // A retained identity keeps ensure semantics even with start params:
+            // it cannot create a replacement for a stopped Run.
+            expect(await bridge.ensureOrStart({ runId: ` ${created.runId} `, start })).toMatchObject({
+                ok: false, errorCode: 'execution_run_not_allowed',
+            });
+            expect(bridge.listPublic()).toHaveLength(1);
+        } finally {
+            await bridge?.dispose();
+            vi.unstubAllEnvs();
+            reloadConfiguration();
+            rmSync(directory, { recursive: true, force: true });
+        }
+    });
+});
 
 describe('Voice execution-run resume launch custody', () => {
     it.each([null, {
@@ -16,6 +77,9 @@ describe('Voice execution-run resume launch custody', () => {
         const backendTarget = { kind: 'builtInAgent' as const, agentId: 'codex' };
         const chatModelSelection = ProviderBoundModelRefSchema.parse({ agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'original-chat-provider', modelId: 'chat-model' });
         const commitModelSelection = ProviderBoundModelRefSchema.parse({ ...chatModelSelection, providerConnectionId: 'original-commit-provider', modelId: 'commit-model' });
+        const commitConnectedServices: ConnectedServiceBindingsV2 = { v: 2, bindingsByServiceId: {
+            'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: 'original-commit-pool' },
+        } };
         const run: ExecutionRunState = {
             runId: 'voice-resume', callId: 'call', sidechainId: 'sidechain', sessionId: 'parent', depth: 0,
             intent: 'voice_agent', backendTarget, backendId: 'codex', instructions: '', permissionMode: 'read_only',
@@ -33,6 +97,7 @@ describe('Voice execution-run resume launch custody', () => {
             resumeHandle: { kind: 'voice_agent_sessions.v1', backendTarget: readBackendTargetRefV2(backendTarget), chatProviderSessionId: 'vendor-chat', commitProviderSessionId: 'vendor-commit' },
             voiceAgentConfig: {
                 chatModelId: 'chat-model', commitModelId: 'commit-model', chatModelSelection, commitModelSelection,
+                commitConnectedServices,
                 commitIsolation: true, permissionIntent: 'read-only', idleTtlSeconds: 60, initialContext: '',
                 initialContextMode: 'bootstrap', verbosity: 'short', disabledActionIds: [], transcript: { persistenceMode: 'ephemeral', epoch: 1 },
             },
@@ -56,7 +121,7 @@ describe('Voice execution-run resume launch custody', () => {
                     // The genuine Agent launch boundary selects native or the exact
                     // original account. An omitted selection would use a changed default.
                     expect(Object.hasOwn(options, 'connectedServices')).toBe(true);
-                    expect(options.connectedServices).toEqual(connectedServices);
+                    expect(options.connectedServices).toEqual(options.modelId === 'commit-model' ? commitConnectedServices : connectedServices);
                     const runtime: AgentRuntime = { sessions: { async open(request) {
                         expect(request).toMatchObject({ kind: 'resume', providerSessionId: options.modelId === 'chat-model' ? 'vendor-chat' : 'vendor-commit' });
                         let listener: ((event: AgentSessionRuntimeEvent) => void) | null = null;

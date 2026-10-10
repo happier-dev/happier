@@ -192,6 +192,7 @@ export async function ensureExecutionRun(args: Readonly<{
         commitModelId: config.commitModelId,
         ...(config.chatModelSelection ? { chatModelSelection: config.chatModelSelection } : {}),
         ...(config.commitModelSelection ? { commitModelSelection: config.commitModelSelection } : {}),
+        ...(config.commitConnectedServices !== undefined ? { commitConnectedServices: config.commitConnectedServices } : {}),
         ...(resumeBackendOptions.sessionConfigOptionOverrides
           ? { sessionConfigOptionOverrides: resumeBackendOptions.sessionConfigOptionOverrides }
           : {}),

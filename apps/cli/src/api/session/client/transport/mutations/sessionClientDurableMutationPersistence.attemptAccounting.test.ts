@@ -19,6 +19,7 @@ import {
     loadSessionClientDurableMutationOutbox,
     resolveSessionClientDurableMutationOutboxPath,
 } from './sessionClientDurableMutationPersistence';
+import { createTranscriptMessageAppendMutation } from './sessionClientDurableMutationTypes';
 
 function createPersistedSessionEndRow(overrides: Readonly<Record<string, unknown>> = {}): Record<string, unknown> {
     return {
@@ -51,6 +52,28 @@ describe('durable mutation attempt-accounting persistence', () => {
 
     afterEach(async () => {
         await rm(configurationMock.activeServerDir, { recursive: true, force: true });
+    });
+
+    it('retains an encrypted visual association through journal reload and quarantines malformed references', async () => {
+        const surfaceItemReference = { v: 1 as const, itemId: 'visual-1', itemRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ',
+            sourceAddress: { serverId: 'home-1', sessionId: 'session-1' } };
+        const payload = createTranscriptMessageAppendMutation({
+            sessionId: 'session-1', localId: 'visual-result', content: 'sealed-result',
+            createdAt: 100, provenance: { kind: 'non_dependent', source: 'background' },
+            surfaceItemReference,
+        });
+        await writeRawOutbox([{ kind: 'transcript_message_append', mutationId: payload.mutationId,
+            payload, createdAt: 100, attempts: 0, nextAttemptAt: 100 }]);
+        await expect(loadSessionClientDurableMutationOutbox('session-1')).resolves.toEqual([
+            expect.objectContaining({ payload: expect.objectContaining({ surfaceItemReference }) }),
+        ]);
+        await writeRawOutbox([{ kind: 'transcript_message_append', mutationId: payload.mutationId,
+            payload: { ...payload, surfaceItemReference: { ...surfaceItemReference, itemRevision: -1 } },
+            createdAt: 100, attempts: 0, nextAttemptAt: 100 }]);
+        await expect(loadSessionClientDurableMutationOutbox('session-1')).resolves.toEqual([]);
+        await expect(loadSessionClientDurableMutationDeadLetters('session-1')).resolves.toEqual([
+            expect.objectContaining({ reason: 'invalid_transcript_message_append_payload' }),
+        ]);
     });
 
     it('continues to accept legacy queued rows without typed attempt metadata', async () => {

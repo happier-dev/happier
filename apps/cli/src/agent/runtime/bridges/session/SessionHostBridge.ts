@@ -9,6 +9,7 @@ import type {
 } from '@happier-dev/protocol';
 import { SessionStateCapabilitiesV1Schema } from '@happier-dev/protocol/sessions/state/capabilitySchema';
 import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
+import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtimeDescriptorV1';
 
 import {
   resolveBackendEngineAdapterResolution,
@@ -150,6 +151,8 @@ export class SessionHostBridge implements SessionHostBridgeContract {
     }
     const record = params as Readonly<Record<string, unknown>>;
     const resolutionParams: {
+      agentTarget?: NonNullable<Parameters<typeof resolveBackendEngineAdapterResolution>[1]>['agentTarget'];
+      startupRuntimeDescriptorV1?: RuntimeDescriptorV1;
       happyHomeDir?: string;
       runtimeRegistry?: PluginRuntimeRegistryLease['registry'];
       requireRunnerAgentSessionRuntimeSource?: boolean;
@@ -160,6 +163,13 @@ export class SessionHostBridge implements SessionHostBridgeContract {
         Parameters<typeof resolveBackendEngineAdapterResolution>[1]
       >['prepareTeamCredentialProviderBinding'];
     } = {};
+
+    if (record.agentTarget !== undefined) {
+      resolutionParams.agentTarget = AgentExecutionTargetV1Schema.parse(record.agentTarget);
+    }
+    if (record.runtimeDescriptorV1 !== undefined) {
+      resolutionParams.startupRuntimeDescriptorV1 = RuntimeDescriptorV1Schema.parse(record.runtimeDescriptorV1);
+    }
 
     if (hostOptions?.pluginRuntimeRegistryLease) {
       resolutionParams.runtimeRegistry = hostOptions.pluginRuntimeRegistryLease.registry;

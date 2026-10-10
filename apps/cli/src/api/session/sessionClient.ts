@@ -1,4 +1,6 @@
 import { logger } from '@/ui/logger'
+import { registerPluginCatalogSignal } from './client/registerPluginCatalogSignal';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { createExternalActionAuthorizedRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { randomUUID } from 'node:crypto'
@@ -17,6 +19,7 @@ import { createSessionTranscriptStoredContentUnavailableError } from './sessionT
 import { TranscriptOpenedAgentStateV1Schema, TranscriptOpenedSharedMetadataV1Schema } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import type { TranscriptOpenedSharedMetadataV1 } from '@happier-dev/protocol';
+import { isExecutionRunActive } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import {
     updateSessionAgentStateWithAck,
     updateSessionMetadataWithAck,
@@ -166,6 +169,7 @@ import { SESSION_PUBLISHER_AUTHORITY_CHECK_EVENT, SESSION_RUNTIME_ACTIVITY_CLOSE
 import { SESSION_METADATA_LAYOUT_VERSION_V1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { SessionActionConfirmationsV1Schema, SessionActionConfirmationResponseTargetV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionActionConfirmationsV1';
 import { SessionAppliedModelV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import { SessionMessageAcceptedDeliveryFactsV1Schema, type SessionMessageAcceptedDeliveryContentV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1';
 import { SessionRuntimeActivitySnapshotSchema } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { SESSION_FOLLOW_OBSERVE_PENDING_EVENT_V1, SESSION_FOLLOW_ACKNOWLEDGE_EVENT_V1, SessionFollowObservePendingRequestV1Schema, SessionFollowObservePendingResponseV1Schema, SessionFollowAcknowledgeRequestV1Schema, SessionFollowAcknowledgeResponseV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
 import { ACCOUNT_VOICE_FOLLOW_OBSERVE_PENDING_EVENT_V1, ACCOUNT_VOICE_FOLLOW_ACKNOWLEDGE_EVENT_V1, AccountVoiceFollowObservePendingRequestV1Schema, AccountVoiceFollowObservePendingResponseV1Schema, AccountVoiceFollowAcknowledgeRequestV1Schema, AccountVoiceFollowAcknowledgeResponseV1Schema } from '@happier-dev/protocol/sessions/follow/accountVoiceFollowTransportV1';
@@ -216,7 +220,6 @@ import {
     readPermissionMediationRecordHttp,
     writePermissionMediationRecordHttp,
 } from '@/session/transport/http/sessionPermissionMediationRecordsHttp';
-import { resolveSessionControlSocketConnectTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
 import { serializeAxiosErrorForLog } from '../client/serializeAxiosErrorForLog';
 import { notifyDaemonConnectedServiceTurnLifecycle as notifyDaemonConnectedServiceTurnLifecycleViaControl } from '@/daemon/controlClient';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
@@ -561,7 +564,8 @@ export class ApiSessionClient extends EventEmitter {
     private readonly locallyAuthoredTranscriptObservationUserLocalIds = new Set<string>();
     private readonly pendingProviderInputSettlementWrites = new Set<Promise<void>>();
     private readonly acceptedPendingSettlementWrites = new Set<Promise<void>>();
-    private readonly acceptedPendingSettlementLocalIds = new Set<string>();
+    // Keep witnessed detail with the existing unresolved settlement custody across reconnects.
+    private readonly acceptedPendingSettlementLocalIds = new Map<string, SessionMessageAcceptedDeliveryContentV1 | undefined>();
     // Archived uncertainty is no longer eligible for queue materialization, but its exact local
     // provider custody must survive until delayed acceptance can settle the canonical server row.
     private readonly nonBlockingArchivedPendingDeliveryLocalIds = new Set<string>();
@@ -582,6 +586,7 @@ export class ApiSessionClient extends EventEmitter {
     private sessionActionConfirmationRecovery: Promise<void> | null = null;
     private disposeSessionFollowWakeReceiver: (() => void) | null = null;
     private readonly sessionHandlersRegistration: ReturnType<typeof registerSessionClientRuntimeHandlers>;
+    readonly subscribeDaemonPluginCatalogChanges: ReturnType<typeof registerPluginCatalogSignal>;
 
     /**
      * Returns the latest known agentState (may be stale if socket is disconnected).
@@ -708,7 +713,8 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     async respondToSessionActionConfirmation(
-        response: Readonly<{ id: string; turnId?: string; approved: boolean; decision?: string }>,
+        response: Readonly<{ id: string; turnId?: string; approved: boolean; decision?: string;
+            answeringClientCategory?: import('@happier-dev/protocol/sessions/permissions/respondRpcParamsV1').SessionPermissionAnsweringClientCategoryV1 }>,
         actor: import('@happier-dev/protocol').SessionPermissionAccountUserDecisionActorV1,
     ): Promise<'resolved' | 'not_found' | 'invalid'> {
         const store = this.getOrCreateScopedSessionActionConfirmationRequestStore();
@@ -763,7 +769,8 @@ export class ApiSessionClient extends EventEmitter {
             requestId: response.id,
             status: decision === 'approved' ? 'approved' : 'denied',
             decision,
-            extraCompletedFields: { permissionDecisionActorV1: actor },
+            extraCompletedFields: { permissionDecisionActorV1: actor,
+                ...(response.answeringClientCategory ? { answeringClientCategory: response.answeringClientCategory } : {}) },
             isCurrent: () => runtimeStillCurrent,
         });
         if (!completed) {
@@ -822,15 +829,12 @@ export class ApiSessionClient extends EventEmitter {
         const supervisor = this.sessionConnectionSupervisor;
         if (!supervisor) return;
 
-        const timeoutMs = resolveSessionControlSocketConnectTimeoutMs();
+        // The transport owns each connect attempt's budget. Offline startup
+        // stays with its reconnect supervisor until online, auth failure or
+        // Session disposal; it is not another failed connect attempt.
         await new Promise<void>((resolve, reject) => {
             let settled = false;
-            let timer: ReturnType<typeof setTimeout> | null = null;
             const cleanup = () => {
-                if (timer) {
-                    clearTimeout(timer);
-                    timer = null;
-                }
                 this.off(SESSION_CONNECTION_STATE_EVENT, onStateChange);
             };
             const settle = (fn: () => void) => {
@@ -865,15 +869,6 @@ export class ApiSessionClient extends EventEmitter {
             const onStateChange = () => check();
 
             this.on(SESSION_CONNECTION_STATE_EVENT, onStateChange);
-            timer = setTimeout(() => {
-                settle(() => reject(createSessionSocketNotReadyError({
-                    code: 'socket_not_connected',
-                    event,
-                    message: `${event} socket is not connected`,
-                    retryable: true,
-                })));
-            }, timeoutMs);
-            timer.unref?.();
 
             void ensureSessionConnectionSupervisionActive(supervisor).catch((error) => {
                 settle(() => reject(error));
@@ -1022,6 +1017,7 @@ export class ApiSessionClient extends EventEmitter {
             this.usageObservationPublisher = createSessionClientUsageObservationPublisher({
                 token: this.token,
                 transport: options.transport,
+                getSessionMetadata: () => this.metadata,
                 getSocket: () => ({
                     connected: this.socket?.connected ?? false,
                     emit: (event, report) => {
@@ -1219,7 +1215,7 @@ export class ApiSessionClient extends EventEmitter {
                 await this.updateMetadata((metadata) => applyRegisteredSessionStateFieldMutationToMetadata(
                     metadata,
                     mutation,
-                ));
+                ), { expectedMetadataRevision: mutation.expectedMetadataRevision });
                 this.emit('metadata-updated');
                 return {
                     delivered: true,
@@ -1254,6 +1250,7 @@ export class ApiSessionClient extends EventEmitter {
         };
         this.transcriptApi = createSessionClientTranscriptApi({
             serverUrl: this.transport.serverUrl,
+            serverId: this.serverBinding.serverId,
             token: this.token,
             sessionId: this.sessionId,
             turnAssistantTextSnapshotStore: this.turnAssistantTextSnapshotStore,
@@ -1291,6 +1288,7 @@ export class ApiSessionClient extends EventEmitter {
                         createdAt: params.createdAt,
                         updatedAt: params.updatedAt,
                         provenance: params.provenance,
+                        ...(params.surfaceItemReference === undefined ? {} : { surfaceItemReference: params.surfaceItemReference }),
                     }),
                     params.admission === undefined ? undefined : { admission: params.admission },
                 ),
@@ -1474,6 +1472,7 @@ export class ApiSessionClient extends EventEmitter {
                 }
             },
         });
+        this.subscribeDaemonPluginCatalogChanges = registerPluginCatalogSignal({ rpcHandlerManager: this.rpcHandlerManager, events: this });
         this.sessionHandlersRegistration = registerSessionClientRuntimeHandlers({
             rpcHandlerManager: this.rpcHandlerManager,
             token: this.token,
@@ -2478,6 +2477,10 @@ export class ApiSessionClient extends EventEmitter {
         return this.sessionConnectionEpoch;
     }
 
+    isDaemonPluginCatalogSignalReady(): boolean {
+        return this.rpcHandlerManager.isHandlerRegistrationAcknowledged(SESSION_RPC_METHODS.SESSION_PLUGIN_CATALOG_INVALIDATE_V1);
+    }
+
     async fetchRecentTranscriptTextItemsForAcpImport(opts?: { take?: number }): Promise<Array<{ role: 'user' | 'agent'; text: string }>> {
         return this.transcriptApi.fetchRecentTranscriptTextItemsForAcpImport(opts);
     }
@@ -2605,6 +2608,9 @@ export class ApiSessionClient extends EventEmitter {
                     });
                 },
                 handler: (metadata) => {
+                    if (request.mutation.expectedMetadataRevision !== undefined && this.metadataVersion !== request.mutation.expectedMetadataRevision) {
+                        throw Object.assign(new Error('Session context changed after review'), { code: 'metadata_tuple_conflict', retryable: false });
+                    }
                     if (usePreparedValue) {
                         usePreparedValue = false;
                         return request.updatedMetadata;
@@ -2688,9 +2694,9 @@ export class ApiSessionClient extends EventEmitter {
         };
     }
 
-    updateMetadata(handler: (metadata: Metadata) => Metadata): Promise<void> {
+    updateMetadata(handler: (metadata: Metadata) => Metadata, options?: Readonly<{ expectedMetadataRevision?: number }>): Promise<void> {
         return this.metadataLock.inLock(async () =>
-            await this.updateMetadataLocked(handler));
+            await this.updateMetadataLocked(handler, undefined, options?.expectedMetadataRevision));
     }
 
     updateMetadataAsCurrentPublisher(
@@ -2725,6 +2731,7 @@ export class ApiSessionClient extends EventEmitter {
     private async updateMetadataLocked(
         handler: (metadata: Metadata) => Metadata,
         publisherPrecondition?: SessionMetadataPublisherPreconditionV1,
+        expectedMetadataRevision?: number,
     ): Promise<void> {
         if (
             this.metadataLayoutVersion !== 0
@@ -2767,6 +2774,7 @@ export class ApiSessionClient extends EventEmitter {
                 ),
             mutation: {
                 kind: 'metadata',
+                ...(expectedMetadataRevision !== undefined ? { expectedMetadataRevision } : {}),
                 update: handler,
             },
             ...(publisherPrecondition
@@ -3167,7 +3175,11 @@ export class ApiSessionClient extends EventEmitter {
         const record = run as Record<string, unknown>;
         const runId = typeof record.runId === 'string' ? record.runId.trim() : '';
         if (!runId) return;
-        if (record.status === 'running') this.activeExecutionRunIds.add(runId);
+        if (isExecutionRunActive({
+            status: typeof record.status === 'string' ? record.status : undefined,
+            runClass: typeof record.runClass === 'string' ? record.runClass : undefined,
+            turnInFlight: typeof record.turnInFlight === 'boolean' ? record.turnInFlight : undefined,
+        })) this.activeExecutionRunIds.add(runId);
         else this.activeExecutionRunIds.delete(runId);
         for (const listener of this.executionRunActivityListeners) {
             listener(this.activeExecutionRunIds.size);
@@ -4102,13 +4114,16 @@ export class ApiSessionClient extends EventEmitter {
             for (let attempt = 0; attempt < 2; attempt += 1) {
                 if (!this.isAcceptedPendingSettlementOperationCurrent(authority, localId)) return;
                 try {
+                    const acceptedDelivery = this.acceptedPendingSettlementLocalIds.get(localId);
                     const result = authority.executionRun ? await resolveAcceptedPendingExecutionRunDelivery({
                         socket: authority.socket, sessionId: this.sessionId, localId,
                         recipient: authority.executionRun.recipient, sidechainId: authority.executionRun.sidechainId,
+                        ...(acceptedDelivery === undefined ? {} : { acceptedDelivery }),
                     }) : await resolveAcceptedPendingQueueV2Delivery({
                         socket: authority.socket,
                         sessionId: this.sessionId,
                         localId,
+                        ...(acceptedDelivery === undefined ? {} : { acceptedDelivery }),
                     });
                     if (!this.isAcceptedPendingSettlementOperationCurrent(authority, localId)) return;
                     if (!authority.executionRun && result.pendingQueueState && this.materializationRuntime.applyPendingQueueState(result.pendingQueueState)) {
@@ -4219,7 +4234,7 @@ export class ApiSessionClient extends EventEmitter {
                 providerInputConsumer: this.providerInputConsumer,
                 abortSignal: this.acceptedPendingSettlementOperationAbortController.signal,
             };
-            for (const localId of this.acceptedPendingSettlementLocalIds) {
+            for (const localId of this.acceptedPendingSettlementLocalIds.keys()) {
                 if (!this.hasPendingProviderInput(localId)) {
                     this.acceptedPendingSettlementLocalIds.delete(localId);
                     continue;
@@ -4251,7 +4266,21 @@ export class ApiSessionClient extends EventEmitter {
         let didRetireExactPreProviderCustody = false;
         const settlement = (async () => {
             if (outcome.kind === 'accepted') {
-                this.acceptedPendingSettlementLocalIds.add(localId);
+                if (!this.acceptedPendingSettlementLocalIds.has(localId)) {
+                    const facts = SessionMessageAcceptedDeliveryFactsV1Schema.safeParse({
+                        v: 1,
+                        acceptedAtMs: outcome.acceptedAtMs,
+                        delivery: { kind: outcome.providerDeliveryKind, turnId: outcome.providerTurnId },
+                    });
+                    let acceptedDelivery: SessionMessageAcceptedDeliveryContentV1 | undefined;
+                    if (facts.success) {
+                        const payload = this.commitQueueRuntime.buildOutboundSessionMessagePayload(facts.data);
+                        acceptedDelivery = typeof payload === 'string'
+                            ? { t: 'encrypted', c: payload }
+                            : { t: 'plain', v: facts.data };
+                    }
+                    this.acceptedPendingSettlementLocalIds.set(localId, acceptedDelivery);
+                }
                 if (outcome.appliedModel && !executionRun) {
                     const appliedModel = SessionAppliedModelV1Schema.parse({
                         v: 1,

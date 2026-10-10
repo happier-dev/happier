@@ -1,11 +1,43 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { spawnSupervisedPluginProcess } from '@/plugins/runtime/exec/processSupervisor';
+
 import {
   requestExplicitRunnerStop,
   resolveRunnerRuntimeDisposalReason,
 } from './runnerRuntimeDisposal';
 
 describe('runner runtime disposal', () => {
+  it('releases native process custody while native cancellation is still pending', async () => {
+    let releaseCancellation!: () => void;
+    const cancellation = new Promise<void>((resolve) => { releaseCancellation = resolve; });
+    const nativeProcess = spawnSupervisedPluginProcess({
+      command: process.execPath,
+      args: ['-e', 'setInterval(() => {}, 1000)'],
+      spawnOptions: { detached: process.platform !== 'win32' },
+    });
+    let settled = false;
+    const stopping = requestExplicitRunnerStop({
+      abortActiveTurn: () => cancellation,
+      disposeRuntime: async (reason) => {
+        expect(reason).toBe('session_closed');
+        await nativeProcess.dispose();
+      },
+      requestTermination: () => undefined,
+      whenTerminated: Promise.resolve(),
+    }).then(() => { settled = true; });
+    try {
+      await vi.waitFor(() => expect(
+        nativeProcess.child.exitCode !== null || nativeProcess.child.signalCode !== null,
+      ).toBe(true));
+      expect(settled).toBe(false);
+    } finally {
+      releaseCancellation();
+      await stopping;
+      await nativeProcess.dispose();
+    }
+  });
+
   it('disposes as session_closed before explicit runner termination', async () => {
     const order: string[] = [];
 

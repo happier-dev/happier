@@ -47,6 +47,28 @@ describe('createAccountArtifactStore', () => {
     expect(await store.read('required-doc')).toBeNull();
   });
 
+  it.each([
+    { error: 'public_share_isolation_unavailable', expected: 'public_share_isolation_unavailable' },
+    { error: 'untrusted_server_detail', expected: 'public_share_request_failed' },
+  ])('normalizes an HTTP 503 public-link refusal through the public Action (%j)', async ({ error, expected }) => {
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null }, getAccountEncryptionMode: async () => 'plain' });
+    mockGet.mockResolvedValue({ status: 200, data: {
+      id: 'document', ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
+      header: encodePlainArtifactStoredContent({ kind: 'workflow-definition.v1', definitionId: 'document',
+        revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Workflow' } }),
+      body: encodePlainArtifactStoredContent({ body: 'definition' }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+    } });
+    mockPost.mockResolvedValue({ status: 503, data: { error } });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      artifactAction: createCliArtifactActions({ store, beforeDelete: async () => {}, resolvePublishCaller: async () => null }),
+    });
+    expect(await executor.execute('artifact.public_link.create', { artifactId: 'document' },
+      { surface: 'cli', serverId: 'home', bypassApprovals: true })).toMatchObject({ ok: false, errorCode: expected, error: expected });
+    expect(mockPost).toHaveBeenCalledWith(expect.stringContaining('/v1/public-shares'),
+      expect.objectContaining({ subject: { kind: 'artifact', id: 'document' } }), expect.objectContaining({ validateStatus: expect.any(Function) }));
+  });
+
   it('projects current widget sharing and header-only revision from the actual Artifact access boundary', async () => {
     const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null }, getAccountEncryptionMode: async () => 'plain' });
     let access: 'owner' | 'view' | 'edit' = 'owner';
@@ -376,7 +398,7 @@ describe('createAccountArtifactStore', () => {
     }
   });
 
-  it.each(['plain', 'e2ee'] as const)('returns private HTML create/update previews assembled locally in %s mode', async (mode) => {
+  it.each(['plain', 'e2ee'] as const)('returns private HTML create/update acknowledgements without byte-bearing URLs in %s mode', async (mode) => {
     const secret = randomBytes(32);
     const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: mode === 'plain' ? null : {
       type: 'dataKey', publicKey: x25519.getPublicKey(secret), machineKey: secret,
@@ -389,44 +411,20 @@ describe('createAccountArtifactStore', () => {
         headerVersion: version, bodyVersion: version, seq: version, createdAt: 1, updatedAt: version };
       return { status: 200, data: { ...stored, success: true } };
     });
-    mockGet.mockImplementation(async (url: string) => ({ status: 200, data: url.endsWith('/html-preview')
-      ? { url: 'https://artifact-isolated.example/a/html-document' } : stored }));
+    mockGet.mockImplementation(async (url: string) => ({ status: 200, data: url.endsWith('/recipients')
+      ? { artifactId: 'html-document', ownerAccountId: 'owner', access: 'owner', encryptionMode: mode,
+        dataEncryptionKey: stored.dataEncryptionKey, callerDataEncryptionKey: stored.dataEncryptionKey, recipients: [] } : stored }));
     const body = '<!doctype html><h1>Private HTML</h1><script>document.title="Ready"</script>';
     const created = await store.create({ artifactId: 'html-document', header: { kind: 'html' }, body });
-    expect(created).toMatchObject({ artifactId: 'html-document', previewUrl: expect.stringMatching(/^https:\/\/artifact-isolated.example\/a\/html-document#d=.+$/) });
-    const previewUrl = Reflect.get(created, 'previewUrl') as string;
-    const bundle = JSON.parse(Buffer.from(new URL(previewUrl).hash.slice(3), 'base64url').toString('utf8'));
-    expect(Buffer.from(bundle.files[bundle.entrypoint].contentBase64, 'base64').toString('utf8')).toBe(body);
+    expect(created).toEqual({ artifactId: 'html-document', revision: { headerVersion: 1, bodyVersion: 1 } });
     const updated = await store.update({ artifactId: 'html-document', expectedRevision: created.revision,
       header: { kind: 'html' }, body: '<h1>Changed</h1>' });
-    expect(updated).toMatchObject({ ok: true, revision: { bodyVersion: 2 }, previewUrl: expect.any(String) });
+    expect(updated).toEqual({ ok: true, revision: { headerVersion: 2, bodyVersion: 2 } });
+    expect(await store.read('html-document')).toMatchObject({ body: '<h1>Changed</h1>' });
     expect(mockPost.mock.calls).toHaveLength(2);
     expect(JSON.stringify(mockGet.mock.calls)).not.toContain('#d=');
     expect(JSON.stringify(mockPost.mock.calls)).not.toContain('#d=');
-  });
-
-  it('keeps a committed HTML mutation truthful when the isolated preview origin is unavailable', async () => {
-    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null }, getAccountEncryptionMode: async () => 'plain' });
-    mockPost.mockImplementation(async (_url: string, input: Record<string, unknown>) => ({ status: 200, data: { id: input.id, headerVersion: 1, bodyVersion: 1 } }));
-    mockGet.mockResolvedValue({ status: 503, data: { error: 'artifact_html_preview_unavailable' } });
-    await expect(store.create({ artifactId: 'html-document', header: { kind: 'html' }, body: '<p>Saved</p>' })).resolves.toEqual({
-      artifactId: 'html-document', revision: { headerVersion: 1, bodyVersion: 1 }, previewError: 'artifact_html_preview_unavailable',
-    });
-    expect(mockPost).toHaveBeenCalledTimes(1);
-  });
-
-  it('never substitutes an origin for another Artifact after a committed HTML update', async () => {
-    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null }, getAccountEncryptionMode: async () => 'plain' });
-    const stored = { id: 'html-document', ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
-      dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, header: encodePlainArtifactStoredContent({ kind: 'html' }),
-      body: encodePlainArtifactStoredContent({ body: '<p>Before</p>' }), headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
-    mockGet.mockImplementation(async (url: string) => ({ status: 200, data: url.endsWith('/html-preview')
-      ? { url: 'https://isolated.example/a/another-artifact' } : stored }));
-    mockPost.mockResolvedValue({ status: 200, data: { success: true, headerVersion: 2, bodyVersion: 2 } });
-    await expect(store.update({ artifactId: 'html-document', expectedRevision: { headerVersion: 1, bodyVersion: 1 },
-      header: { kind: 'html' }, body: '<p>After</p>' })).resolves.toEqual({ ok: true,
-      revision: { headerVersion: 2, bodyVersion: 2 }, previewError: 'artifact_html_preview_unavailable' });
-    expect(mockPost).toHaveBeenCalledTimes(1);
+    expect(mockGet.mock.calls.some(([url]) => String(url).endsWith('/html-preview'))).toBe(false);
   });
 
   it('classifies a text body as one HTML document rather than a bundle from header metadata', async () => {
@@ -435,25 +433,12 @@ describe('createAccountArtifactStore', () => {
       data: { id: input.id, headerVersion: 1, bodyVersion: 1 } }));
     mockGet.mockResolvedValue({ status: 200, data: { url: 'https://isolated.example/a/html-document' } });
     const result = await store.create({ artifactId: 'html-document', header: { kind: 'html', mime: 'application/vnd.happier.html-bundle+json' }, body: '<p>Single HTML</p>' });
-    expect(result).toMatchObject({ previewUrl: expect.any(String) });
-    const bundle = JSON.parse(Buffer.from(new URL(Reflect.get(result, 'previewUrl') as string).hash.slice(3), 'base64url').toString('utf8'));
-    expect(bundle.entrypoint).toBe('index.html');
-    expect(Buffer.from(bundle.files['index.html'].contentBase64, 'base64').toString('utf8')).toBe('<p>Single HTML</p>');
+    expect(result).toEqual({ artifactId: 'html-document', revision: { headerVersion: 1, bodyVersion: 1 } });
+    expect(decodePlainArtifactStoredContent(String(mockPost.mock.calls[0]?.[1].body))).toEqual({ body: '<p>Single HTML</p>' });
     expect(mockPost.mock.calls[0]?.[1]).not.toHaveProperty('blob');
   });
 
-  it('does not issue an HTML preview on the captured application origin', async () => {
-    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null }, getAccountEncryptionMode: async () => 'plain' });
-    mockPost.mockImplementation(async (_url: string, input: Record<string, unknown>) => ({ status: 200,
-      data: { id: input.id, headerVersion: 1, bodyVersion: 1 } }));
-    mockGet.mockResolvedValue({ status: 200, data: { url: 'https://app.example/a/html-document' } });
-    const result = await runWithServerHttpBaseUrl('https://app.example', () => store.create({ artifactId: 'html-document', header: { kind: 'html' }, body: '<p>HTML</p>' }));
-    expect(result).toEqual({ artifactId: 'html-document', revision: { headerVersion: 1, bodyVersion: 1 },
-      previewError: 'artifact_html_preview_unavailable' });
-    expect(mockPost).toHaveBeenCalledTimes(1);
-  });
-
-it.each(['plain', 'e2ee'] as const)('retains every HTML bundle asset in one private blob and its %s preview', async (mode) => {
+  it.each(['plain', 'e2ee'] as const)('retains every HTML bundle asset in one private %s blob without a byte-bearing URL', async (mode) => {
     const secret = randomBytes(32);
     const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: mode === 'plain' ? null : {
       type: 'dataKey', publicKey: x25519.getPublicKey(secret), machineKey: secret,
@@ -481,9 +466,7 @@ it.each(['plain', 'e2ee'] as const)('retains every HTML bundle asset in one priv
         dataEncryptionKey: stored.dataEncryptionKey, callerDataEncryptionKey: stored.dataEncryptionKey, recipients: [] } : stored }));
     const result = await store.create({ artifactId: '00000000-0000-4000-8000-000000000011', header: { kind: 'html' },
       binary: { bytes, mime: 'application/vnd.happier.html-bundle+json' } });
-    expect(result).toMatchObject({ previewUrl: expect.any(String) });
-    const previewUrl = Reflect.get(result, 'previewUrl') as string;
-    expect(JSON.parse(Buffer.from(new URL(previewUrl).hash.slice(3), 'base64url').toString('utf8'))).toEqual(bundle);
+    expect(result).toEqual({ artifactId: '00000000-0000-4000-8000-000000000011', revision: { headerVersion: 1, bodyVersion: 1 } });
     const artifact = await store.read('00000000-0000-4000-8000-000000000011');
     expect(Buffer.from(await store.readBinary({ artifactId: '00000000-0000-4000-8000-000000000011', body: artifact!.body! }))).toEqual(bytes);
     expect(mockPost.mock.calls).toHaveLength(1);

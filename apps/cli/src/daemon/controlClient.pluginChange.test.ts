@@ -7,6 +7,9 @@ import { clearDaemonStateForTestTeardown, writeDaemonState } from '@/persistence
 import { createPluginInstallationReviewFixture } from '@happier-dev/protocol/testing/pluginInstallationReviewFixture';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { startHappyServer } from '@/mcp/startHappyServer';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 
 function listen(server: http.Server): Promise<{ port: number }> {
   return new Promise((resolve, reject) => {
@@ -399,9 +402,6 @@ describe('daemon control client plugin changes', () => {
         pid: process.pid, httpPort: port, startedAt: Date.now(),
         startedWithCliVersion: 'test', controlToken: 'control-token',
       });
-      const { startHappyServer } = await import('@/mcp/startHappyServer');
-      const { RpcHandlerManager } = await import('@/api/rpc/RpcHandlerManager');
-      const { classifyPrimarySessionRuntimeIssue } = await import('@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue');
       const outcome = await startHappyServer({
         sessionId: 'catalog-failure-session',
         getServerBinding: () => ({ serverId: 'test-home', serverUrl: 'https://test-home.example' }),
@@ -438,8 +438,6 @@ describe('daemon control client plugin changes', () => {
         pid: process.pid, httpPort: port, startedAt: Date.now(),
         startedWithCliVersion: 'test', controlToken: 'control-token',
       });
-      const { startHappyServer } = await import('@/mcp/startHappyServer');
-      const { RpcHandlerManager } = await import('@/api/rpc/RpcHandlerManager');
       mcp = await startHappyServer({
         sessionId: 'catalog-lost-session',
         getServerBinding: () => ({ serverId: 'test-home', serverUrl: 'https://test-home.example' }),

@@ -17,7 +17,7 @@ vi.mock('@/api/session/pendingQueueV2Transport', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/api/session/pendingQueueV2Transport')>(),
   enqueuePendingQueueV2MessageViaHttp: mocks.enqueuePendingQueueV2MessageViaHttp,
   listPendingQueueV2DeliveryStatusesFromServer: mocks.listPendingQueueV2DeliveryStatusesFromServer,
-  readBlockedPendingQueueV2DeliveryByLocalIdFromServer: vi.fn(),
+  readPendingQueueV2DeliveryFailureByLocalIdFromServer: vi.fn(),
 }));
 vi.mock('./requestInactiveSessionResume', () => ({
   requestInactiveSessionResume: mocks.requestInactiveSessionResume,

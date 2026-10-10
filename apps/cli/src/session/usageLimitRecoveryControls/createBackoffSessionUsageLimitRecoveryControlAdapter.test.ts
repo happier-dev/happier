@@ -85,6 +85,18 @@ function createAdapter() {
 }
 
 describe('createBackoffSessionUsageLimitRecoveryControlAdapter', () => {
+  it('uses the shared fallback policy when a provider supplies no overrides', async () => {
+    const params = createParams();
+    params.rawSession.lastRuntimeIssue!.usageLimit!.resetAtMs = null;
+    const adapter = createBackoffSessionUsageLimitRecoveryControlAdapter({
+      providerId: 'codex', fallbackBackoffEnvKey: 'HAPPIER_TEST_FALLBACK_BACKOFF_MS', maxAttemptsEnvKey: 'HAPPIER_TEST_MAX_ATTEMPTS',
+      nowMs: () => 1_700_000_000_000, processEnv: {},
+    });
+    expect(await adapter.checkNow?.(params)).toMatchObject({ status: 'waiting', metadata: { sessionUsageLimitRecoveryV1: {
+      nextCheckAtMs: 1_700_000_600_000, maxAttempts: 3,
+    } } });
+  });
+
   it('clears a persisted pending intent instead of declaring ready when the latest turn completed normally', async () => {
     const adapter = createAdapter();
 
@@ -150,7 +162,7 @@ describe('createBackoffSessionUsageLimitRecoveryControlAdapter', () => {
         sessionUsageLimitRecoveryV1: {
           selectedAuth: {
             kind: 'group',
-            serviceId: 'openai-codex',
+            serviceId: 'happier.agent.codex/openai-codex',
             groupId: 'codex-main',
             profileId: null,
           },

@@ -18,7 +18,7 @@ vi.mock('@/api/session/sockets', () => ({
 // exhausted an 8 GiB heap before the file could report a single result.
 const boundary = vi.hoisted(() => ({
   enqueuePendingQueueV2MessageViaHttp: vi.fn<(...args: readonly unknown[]) => Promise<unknown>>(),
-  readBlockedPendingQueueV2DeliveryByLocalIdFromServer:
+  readPendingQueueV2DeliveryFailureByLocalIdFromServer:
     vi.fn<(...args: readonly unknown[]) => Promise<unknown>>(),
   fetchEncryptedTranscriptPageAfterSeq: vi.fn<(...args: readonly unknown[]) => Promise<unknown>>(),
   waitForTranscriptEncryptedMessageByLocalId: vi.fn<(...args: readonly unknown[]) => Promise<unknown>>(),
@@ -27,8 +27,8 @@ const boundary = vi.hoisted(() => ({
 
 vi.mock('@/api/session/pendingQueueV2Transport', () => ({
   enqueuePendingQueueV2MessageViaHttp: boundary.enqueuePendingQueueV2MessageViaHttp,
-  readBlockedPendingQueueV2DeliveryByLocalIdFromServer:
-    boundary.readBlockedPendingQueueV2DeliveryByLocalIdFromServer,
+  readPendingQueueV2DeliveryFailureByLocalIdFromServer:
+    boundary.readPendingQueueV2DeliveryFailureByLocalIdFromServer,
 }));
 vi.mock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
   fetchEncryptedTranscriptPageAfterSeq: boundary.fetchEncryptedTranscriptPageAfterSeq,
@@ -136,14 +136,14 @@ describe('waitForSessionInputResult', () => {
     };
     const {
       enqueuePendingQueueV2MessageViaHttp,
-      readBlockedPendingQueueV2DeliveryByLocalIdFromServer,
+      readPendingQueueV2DeliveryFailureByLocalIdFromServer,
       fetchEncryptedTranscriptPageAfterSeq,
       waitForTranscriptEncryptedMessageByLocalId,
       resolveSessionTransportContext,
     } = boundary;
 
     enqueuePendingQueueV2MessageViaHttp.mockImplementation(async () => undefined);
-    readBlockedPendingQueueV2DeliveryByLocalIdFromServer.mockImplementation(async () => null);
+    readPendingQueueV2DeliveryFailureByLocalIdFromServer.mockImplementation(async () => null);
     fetchEncryptedTranscriptPageAfterSeq.mockImplementation(async () => [
       inputRow,
       ...params.rowsAfterInput().map((value, index) => ({

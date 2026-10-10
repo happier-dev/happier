@@ -141,6 +141,37 @@ describe('createHostTerminalTranscriptFollowService', () => {
         expect(followSignal.current?.aborted).toBe(true);
     });
 
+    it('replays source correlation even when the matching display row already has durable custody', async () => {
+        const published: HostExternalTranscriptFollowEvent[] = [];
+        const sourceObservation = {
+            id: 'committed-fact', timestampMs: 10, kind: 'source_observation' as const,
+            data: { type: 'user', uuid: 'committed-fact' },
+        };
+        const service = createHostTerminalTranscriptFollowService({
+            loadCommittedLocalIdBaseline: async () => ({ localIds: new Set(['committed-fact']), complete: true }),
+            signal: new AbortController().signal,
+            followProviderSession: async (_request, listener) => {
+                await listener({
+                    kind: 'data', phase: 'initial_replay', providerSessionId: 'native-1',
+                    fromCursor: null, nextCursor: 'tail',
+                    items: [
+                        { id: 'display-row', localId: 'committed-fact', kind: 'agent', data: { role: 'agent', text: 'already retained' } },
+                        sourceObservation,
+                    ],
+                });
+                return { status: 'following', startingCursor: 'tail', subscription: { dispose: async () => undefined } };
+            },
+            publish: async (event) => { published.push(event); },
+        });
+        const result = await service.bindProviderSession({ agentId: 'claude', providerSessionId: 'native-1' });
+        expect(result.status).toBe('following');
+        expect(published).toEqual([{
+            kind: 'data', phase: 'initial_replay', providerSessionId: 'native-1',
+            fromCursor: null, nextCursor: 'tail', items: [sourceObservation],
+        }]);
+        await service.releaseActiveBindings();
+    });
+
     it('restarts from committed local IDs instead of retaining an unscoped provider cursor', async () => {
         const requests: Array<Readonly<{ cursor?: string; initialReplay?: boolean }>> = [];
         const service = createHostTerminalTranscriptFollowService({

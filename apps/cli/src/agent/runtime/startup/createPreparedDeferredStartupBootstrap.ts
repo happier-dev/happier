@@ -21,6 +21,7 @@ import type { StoredCredentials } from '@/persistence';
 import type { SessionAttachSecret } from '@/agent/runtime/sessionAttach';
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import { configuration } from '@/configuration';
+import { resolveAvailableAccountSettings } from '@/settings/accountSettings/resolveAvailableAccountSettings';
 
 import { createTimedDeferredStartupBootstrap, type TimedDeferredStartupBootstrapResult } from './createTimedDeferredStartupBootstrap';
 import type { DeferredStartupBackendApiContextInitializer } from './createDeferredStartupBootstrap';
@@ -36,6 +37,7 @@ export async function createPreparedDeferredStartupBootstrap(params: Readonly<{
   workingDirectory: string;
   startedBy: 'terminal' | 'daemon';
   initialMachineId: string;
+  hostProcessStartTimeMs?: number;
   machineMetadata: MachineMetadata;
   uiLogPrefix: string;
   timingLogPrefix: string;
@@ -70,9 +72,13 @@ export async function createPreparedDeferredStartupBootstrap(params: Readonly<{
   machineAdmissionTransport?: ApiSessionClientOptions['machineAdmissionTransport'];
   initializeBackendApiContext?: DeferredStartupBackendApiContextInitializer;
 }>): Promise<TimedDeferredStartupBootstrapResult<DeferredStartupBootstrapResult>> {
+  const accountSettings = params.existingSessionId || params.sessionAttachFilePath
+    ? null
+    : await resolveAvailableAccountSettings({ credentials: params.credentials });
   const metadataPlan = createDeferredStartupMetadataPlan({
     flavor: params.flavor,
     initialMachineId: params.initialMachineId,
+    hostProcessStartTimeMs: params.hostProcessStartTimeMs,
     directory: params.workingDirectory,
     startedBy: params.startedBy,
     terminalRuntime: params.terminalRuntime ?? null,
@@ -84,6 +90,7 @@ export async function createPreparedDeferredStartupBootstrap(params: Readonly<{
     modelSelection: params.modelSelection,
     augmentSessionMetadata: params.augmentSessionMetadata,
     launchControlMetadata: params.launchControlMetadata,
+    ...(accountSettings ? { accountSettings } : {}),
   });
   const timing = createStartupTiming({ enabled: configuration.startupTimingEnabled, nowMs: () => Date.now() });
 

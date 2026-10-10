@@ -142,6 +142,66 @@ type ProviderBrokerBindingCloseOperation = Extract<
   { kind: 'provider_broker.binding.close' }
 >;
 
+type ManagedProviderOperation<Kind extends AgentRuntimeDaemonServiceRequestV1['operation']['kind']> =
+  Omit<Extract<AgentRuntimeDaemonServiceRequestV1['operation'], { kind: Kind }>, 'kind' | 'requestId'>;
+type ManagedProviderResult<Kind extends Extract<AgentRuntimeDaemonServiceResponseV1, { ok: true }>['result']['kind']> =
+  Extract<Extract<AgentRuntimeDaemonServiceResponseV1, { ok: true }>['result'], { kind: Kind }>;
+
+/** Closed, host-private Account Run ports. No capability or upstream credential
+ * is part of a plugin service, Account snapshot or synced Run record. */
+export type RunnerManagedProviderRunServices = Readonly<{
+  resolvePurpose(input: ManagedProviderOperation<'provider_managed.purpose.resolve'> & Readonly<{ signal: AbortSignal }>): Promise<ManagedProviderResult<'provider_managed.purpose'>>;
+  openBinding(input: ManagedProviderOperation<'provider_managed.binding.open'> & Readonly<{ signal: AbortSignal }>): Promise<ManagedProviderResult<'provider_managed.binding'>>;
+  readBinding(input: ManagedProviderOperation<'provider_managed.binding.read'> & Readonly<{ signal: AbortSignal }>): Promise<ManagedProviderResult<'provider_managed.binding'>>;
+  closeBinding(input: ManagedProviderOperation<'provider_managed.binding.close'>): Promise<void>;
+}>;
+
+export function createCurrentRunnerManagedProviderRunServices(
+  authority: AgentRuntimeDaemonServiceAuthorityExpectedInput,
+): RunnerManagedProviderRunServices {
+  const dispatch = async (operation: AgentRuntimeDaemonServiceRequestV1['operation'], signal?: AbortSignal) => {
+    const response = await dispatchCurrentAgentRuntimeDaemonServiceRequest({ authority,
+      createRequest: capability => ({ v: 1, context: { token: capability, sessionId: authority.sessionId }, operation }),
+      ...(signal ? { signal } : {}),
+    });
+    if (response.ok) return response.result;
+    const code = ProviderErrorCodeV1Schema.safeParse(response.error.code);
+    if (code.success) throw createProviderErrorV1(code.data,
+      'runtimeBindingBasis' in operation ? { connectionId: operation.runtimeBindingBasis.connectionId } : {});
+    throw createNativeAgentSessionEffectBoundaryError('authority_unavailable_before_effect');
+  };
+  const services: RunnerManagedProviderRunServices = {
+    async resolvePurpose({ signal, ...proof }) {
+      const result = await dispatch({ kind: 'provider_managed.purpose.resolve', requestId: randomUUID(), ...proof }, signal);
+      if (result.kind !== 'provider_managed.purpose') throw createNativeAgentSessionEffectBoundaryError('authority_unavailable_before_effect');
+      return result;
+    },
+    async openBinding({ signal, ...proof }) {
+      const result = await dispatch({ kind: 'provider_managed.binding.open', requestId: randomUUID(), ...proof }, signal);
+      if (result.kind !== 'provider_managed.binding') throw createNativeAgentSessionEffectBoundaryError('authority_unavailable_before_effect');
+      return result;
+    },
+    async readBinding({ signal, ...proof }) {
+      const result = await dispatchReadAcrossOneProvenAuthorityTransition(() =>
+        dispatchCurrentAgentRuntimeDaemonServiceRequest({ authority, signal,
+          createRequest: capability => ({ v: 1, context: { token: capability, sessionId: authority.sessionId },
+            operation: { kind: 'provider_managed.binding.read', requestId: randomUUID(), ...proof } }),
+        }));
+      if (result.ok && result.result.kind === 'provider_managed.binding') return result.result;
+      if (!result.ok) {
+        const code = ProviderErrorCodeV1Schema.safeParse(result.error.code);
+        if (code.success) throw createProviderErrorV1(code.data, { connectionId: proof.runtimeBindingBasis.connectionId });
+      }
+      throw createNativeAgentSessionEffectBoundaryError('authority_unavailable_before_effect');
+    },
+    async closeBinding(proof) {
+      const result = await dispatch({ kind: 'provider_managed.binding.close', requestId: randomUUID(), ...proof });
+      if (result.kind !== 'provider_managed.binding.closed') throw createNativeAgentSessionEffectBoundaryError('authority_unavailable_before_effect');
+    },
+  };
+  return Object.freeze(services);
+}
+
 export async function openCurrentRunnerTeamCredentialProviderBinding(
   input: Readonly<{
     authority: AgentRuntimeDaemonServiceAuthorityExpectedInput;

@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ExecutionRunState } from './executionRunTypes';
-import { reloadConfiguration } from '@/configuration';
+import { configuration, reloadConfiguration } from '@/configuration';
+import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
 import { ExecutionRunHostBridge } from './ExecutionRunHostBridge';
 import { finishExecutionRun } from './finishExecutionRun';
 
@@ -125,6 +126,19 @@ describe('execution-run retained WorkerUpdate inbox custody', () => {
 
   it('redelivers retained terminal state across restart until acceptance ACK reaches disk', async () => {
     const run = await retainTerminalRun();
+    const registry = await import('@/daemon/executionRunRegistry');
+    const [pending] = await registry.readPendingExecutionRunWorkerUpdates();
+    if (!pending) throw new Error('Expected retained terminal observation');
+    const markerDir = join(directory, 'tmp', 'daemon-execution-runs');
+    const entry = readdirSync(markerDir).find((name) => name.startsWith('worker-update-') && name.endsWith('.sealed'));
+    if (!entry) throw new Error('Expected terminal custody');
+    const storage = await readOrCreateDeviceLocalSecretStorage({ path: configuration.deviceLocalSecretKeyFile });
+    writeFileSync(join(markerDir, entry), storage.sealJson({ purpose: 'execution_run_worker_update', value: {
+      ...pending, future: true, update: { ...pending.update, future: true,
+        engine: { ...pending.update.engine, future: true }, transcriptPointer: { ...pending.update.transcriptPointer, future: true } },
+    } }));
+    // A retry compares known immutable custody, never echoes additive stored fields.
+    await registry.retainExecutionRunWorkerUpdate(pending);
     const bridge = await createBridge();
     const signal = new AbortController().signal;
     const original = await bridge.takeWorkerUpdate('parent_session', signal);
@@ -132,6 +146,7 @@ describe('execution-run retained WorkerUpdate inbox custody', () => {
     const replay = await restarted.takeWorkerUpdate('parent_session', signal);
     expect(replay?.localId).toBe(original?.localId);
     expect(replay?.update.workerId).toBe(run.runId);
+    expect(JSON.stringify(replay?.update)).not.toContain('future');
     replay?.acknowledgeAccepted();
     expect(await restarted.takeWorkerUpdate('parent_session', signal)).toBeNull();
     const afterAck = await createBridge();

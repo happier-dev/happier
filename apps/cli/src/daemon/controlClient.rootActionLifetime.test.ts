@@ -7,7 +7,7 @@ import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol';
 describe('signed root Action acknowledgement', () => {
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
-  it.each(['session.wait.idle', 'ui.find'] as const)('lets %s return after the generic transport deadline', async (actionId) => {
+  it.each(['session.wait.idle', 'ui.find', 'daemon.filesystem.upload', 'daemon.filesystem.download', 'daemon.filesystem.copy'] as const)('lets %s return after the generic transport deadline', async (actionId) => {
     vi.useFakeTimers();
     // Clock and HTTP are system boundaries; native AbortSignal timers use a separate clock.
     vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
@@ -20,7 +20,7 @@ describe('signed root Action acknowledgement', () => {
       options.signal?.addEventListener('abort', () => { clearTimeout(timer); reject(options.signal?.reason); }, { once: true });
     }));
     const result = requestDaemonSignedRootActionExecution({ actionId, input: actionId === 'ui.find'
-      ? { op: 'read' } : { sessionId: 'created-session', timeoutSeconds: 600 } }, {
+      ? { op: 'read' } : actionId === 'daemon.filesystem.copy' ? { kind: 'prepared_transfer' } : { sessionId: 'created-session', timeoutSeconds: 600 } }, {
       target: { pid: process.pid, httpPort: 1 },
     });
     const observed = result.then((value) => value);

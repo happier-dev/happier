@@ -16,6 +16,8 @@ import { recoverSessionHandoffPrepareTargetJobsAfterRestart } from '@/session/ha
 import type { TrackedSession } from '../types';
 import { cleanupPidSessionResources } from '../sessions/cleanupPidSessionResources';
 import { createOnChildExited } from '../sessions/onChildExited';
+import { classifyTrackedSessionProcessPresence } from '../sessions/isSessionRunnerActive';
+import { readProcessRunState } from '../processRunState';
 import { requestDaemonSelfRestart } from './requestDaemonSelfRestart';
 
 type RequestDaemonSelfRestart = typeof requestDaemonSelfRestart;
@@ -47,6 +49,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
   onTrackedSessionHealthy?: (tracked: TrackedSession) => Promise<void>;
   pidSafetyDependencies?: Readonly<{
     readProcessIdentityByPidFn?: typeof readProcessIdentityByPid;
+    readProcessRunStateFn?: typeof readProcessRunState;
   }>;
   controlPort: number;
   fileState: DaemonLocallyPersistedState;
@@ -162,6 +165,23 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
       for (const [pid, tracked] of pidToTrackedSession.entries()) {
         // The child handle remains authoritative until Node reports its exit.
         // A process-table observation can race that notification.
+        if (tracked.windowsTerminalLaunchCustody) {
+          const presence = await classifyTrackedSessionProcessPresence({
+            tracked,
+            readProcessRunState: pidSafetyDependencies?.readProcessRunStateFn ?? readProcessRunState,
+            readProcessIdentityByPid: pidSafetyDependencies?.readProcessIdentityByPidFn ?? readProcessIdentityByPid,
+          });
+          if (isShuttingDown?.() === true) return;
+          if (pidToTrackedSession.get(pid) !== tracked) continue;
+          if (presence === 'absent') {
+            await onChildExitedForPrune(pid, { reason: 'process-missing', code: null, signal: null });
+          } else if (presence === 'present') {
+            await observeHealthySession(tracked);
+          } else {
+            logger.infoFile('[DAEMON RUN] Pending Windows runner presence unresolved; retaining startup custody', { pid });
+          }
+          continue;
+        }
         const childProcess = tracked.childProcess;
         if (
           tracked.startedBy === 'daemon'

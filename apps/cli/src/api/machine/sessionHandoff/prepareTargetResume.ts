@@ -1,5 +1,6 @@
 import { SessionHandoffPrepareTargetResumeRequestSchema } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
 import type { SessionHandoffPrepareTargetResumeErrorCode, SessionHandoffPrepareTargetResumeResponse } from '@happier-dev/protocol';
+import type { RpcHandlerContext } from '@/api/rpc/types';
 
 import {
   createSessionHandoffPrepareTargetJobStore,
@@ -21,13 +22,13 @@ const ERROR_MESSAGES: Readonly<Record<SessionHandoffPrepareTargetResumeErrorCode
 
 export function createSessionHandoffPrepareTargetResumeActionHandler(params: Readonly<{
   prepareJobStore: SessionHandoffPrepareTargetJobStore;
-  resumePersistedPrepareTarget: (record: SessionHandoffPrepareTargetJobRecordV2) => Promise<void>;
+  resumePersistedPrepareTarget: (record: SessionHandoffPrepareTargetJobRecordV2, context?: RpcHandlerContext) => Promise<void>;
   nowMs?: () => number;
-}>): (raw: unknown) => Promise<SessionHandoffPrepareTargetResumeResponse> {
+}>): (raw: unknown, context?: RpcHandlerContext) => Promise<SessionHandoffPrepareTargetResumeResponse> {
   const activeAttempts = new Map<string, Promise<void>>();
   const nowMs = params.nowMs ?? Date.now;
 
-  return async (raw: unknown): Promise<SessionHandoffPrepareTargetResumeResponse> => {
+  return async (raw: unknown, context?: RpcHandlerContext): Promise<SessionHandoffPrepareTargetResumeResponse> => {
     const parsed = SessionHandoffPrepareTargetResumeRequestSchema.safeParse(raw);
     if (!parsed.success) {
       return {
@@ -64,7 +65,7 @@ export function createSessionHandoffPrepareTargetResumeActionHandler(params: Rea
 
     const attemptKey = `${accepted.record.jobId}\u0000${parsed.data.attemptId}`;
     if (!activeAttempts.has(attemptKey)) {
-      const continuation = params.resumePersistedPrepareTarget(accepted.record)
+      const continuation = params.resumePersistedPrepareTarget(accepted.record, context)
         .catch(() => undefined)
         .finally(() => {
           if (activeAttempts.get(attemptKey) === continuation) {

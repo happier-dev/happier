@@ -43,6 +43,7 @@ import {
 import { invokeBoundedExternalSessionsOperation } from './agentExternalSessionsInvocation';
 import type { ExternalSessionFollowProviderOps } from './providerOps';
 import { resolveExternalSessionLinkIdentityFromSurface } from './resolveExternalSessionLinkIdentity';
+import { preservesExternalSessionSourceIdentity } from './sourceIdentity';
 import {
   createExternalSessionsUnavailableCapabilities,
   type ExternalSessionsCompositionPort,
@@ -454,9 +455,9 @@ export type ConfiguredPluginExternalSessionsComposition = Readonly<{
   ): Promise<ContextualExternalSessionTakeoverResolution>;
   admitPersistedTakeoverSource(input: Readonly<{
     agentId: string;
-    sourceId: string;
+    remoteSessionId: string;
     source: ExternalSessionsSource;
-  }>): ContextualExternalSessionTakeoverResolution | null;
+  }>): Promise<ContextualExternalSessionTakeoverResolution | null>;
   compositionPort: ExternalSessionsCompositionPort;
   dispose: () => void;
 }>;
@@ -475,6 +476,7 @@ type AuthorTakeoverRef = Parameters<HostExternalSessionsAuthorService['takeover'
 type AuthorTakeoverRequest = Parameters<HostExternalSessionsAuthorService['takeover']>[1];
 type AuthorTakeoverOptions = Parameters<HostExternalSessionsAuthorService['takeover']>[2];
 type CompositionResolveInput = Parameters<ExternalSessionsCompositionPort['resolveFollowTarget']>[0];
+type CompositionResolveIdentityInput = Parameters<ExternalSessionsCompositionPort['resolveSourceIdentity']>[0];
 type CompositionFollowTarget = Parameters<ExternalSessionsCompositionPort['followTranscript']>[0];
 type CompositionFollowOptions = Parameters<ExternalSessionsCompositionPort['followTranscript']>[1];
 type CompositionFollowListener = Parameters<ExternalSessionsCompositionPort['followTranscript']>[2];
@@ -1428,30 +1430,41 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
         ops.externalLinkedTakeoverWriterSafety ?? 'unsupported',
     });
   };
-  const admitPersistedTakeoverSource = (input: Readonly<{
+  const admitPersistedTakeoverSource = async (input: Readonly<{
     agentId: string;
-    sourceId: string;
+    remoteSessionId: string;
     source: ExternalSessionsSource;
-  }>): ContextualExternalSessionTakeoverResolution | null => {
+  }>): Promise<ContextualExternalSessionTakeoverResolution | null> => {
     if (!isCurrent() || retirementSignal.aborted) return null;
     const agentId = ExternalSessionAgentIdSchema.safeParse(input.agentId);
-    const sourceId = ExternalSessionSourceIdSchema.safeParse(input.sourceId);
-    if (!agentId.success || !sourceId.success) return null;
+    if (!agentId.success) return null;
+    // The same positive identity owner normalizes forward-readable retained
+    // sources and verifies their exact native selector before a current root
+    // key is compared. Callers cannot derive that authority from old fields.
+    const target = await domain.compositionPort.resolveSourceIdentity({
+      agentId: agentId.data,
+      remoteSessionId: input.remoteSessionId,
+      boundSource: input.source,
+      purpose: 'takeover',
+      signal: retirementSignal,
+    });
+    if (target.status !== 'resolved' || !isCurrent() || retirementSignal.aborted) return null;
     const entry = snapshot.resolve(
       agentId.data,
-      sourceId.data,
+      target.ref.sourceId,
       params.readCurrentBasis(),
     );
-    if (!entry || !isDeepStrictEqual(entry.source, input.source)) return null;
+    if (!entry || !preservesExternalSessionSourceIdentity(entry.source, target.source)) return null;
     const declaration = params.agents.find((agent) => agent.id === agentId.data)
       ?.richDefinition?.definition.surfaces?.externalSession;
     return Object.freeze({
-      source: entry.source,
+      source: target.source,
       externalLinkedTakeoverWriterSafety:
         declaration?.externalLinkedTakeover?.writerSafety ?? 'unsupported',
     });
   };
   const compositionPort: ExternalSessionsCompositionPort = Object.freeze({
+    resolveSourceIdentity: async (input: CompositionResolveIdentityInput) => await domain.compositionPort.resolveSourceIdentity(input),
     resolveFollowTarget: async (input: CompositionResolveInput) => await domain.compositionPort.resolveFollowTarget(input),
     followTranscript: async (
       target: CompositionFollowTarget,
@@ -1802,10 +1815,11 @@ export async function createLiveConfiguredPluginExternalSessionsAdapter(params: 
   );
   const admitPersistedTakeoverSource = (
     input: Parameters<ConfiguredPluginExternalSessionsComposition['admitPersistedTakeoverSource']>[0],
-  ): ContextualExternalSessionTakeoverResolution | null => (
+  ): Promise<ContextualExternalSessionTakeoverResolution | null> => (
     current().admitPersistedTakeoverSource(input)
   );
   const compositionPort: ExternalSessionsCompositionPort = Object.freeze({
+    resolveSourceIdentity: async (input: CompositionResolveIdentityInput) => await current().compositionPort.resolveSourceIdentity(input),
     resolveFollowTarget: async (input: CompositionResolveInput) => await current().compositionPort.resolveFollowTarget(input),
     followTranscript: async (
       target: CompositionFollowTarget,

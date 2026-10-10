@@ -279,6 +279,9 @@ export interface TransportHandler {
     }>,
   ): string | null | undefined;
 
+  /** Session-owned native permission answers must not mutate or cancel a foreground turn. */
+  getPermissionRequestScope?(): 'session' | 'turn';
+
   /**
    * Optional provider hook to sanitize a `tool_call` / `tool_call_update` before the generic
    * normalizer reads its content. Used to fix provider-specific payload quirks (e.g. Cursor jams

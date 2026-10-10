@@ -21,6 +21,7 @@ export type DeferredStartupMetadataPlan = Readonly<{
 export function createDeferredStartupMetadataPlan(params: Readonly<{
     flavor: BackendFlavor;
     initialMachineId: string;
+    hostProcessStartTimeMs?: number;
     directory?: string;
     startedBy?: 'daemon' | 'terminal';
     terminalRuntime?: TerminalRuntimeFlags | null;
@@ -31,11 +32,13 @@ export function createDeferredStartupMetadataPlan(params: Readonly<{
     sessionModeUpdatedAt?: number;
     modelSelection?: SessionModelSelectionV1;
     launchControlMetadata: SessionLaunchControlMetadata;
+    accountSettings?: Readonly<Record<string, unknown>>;
     augmentSessionMetadata?: (metadata: Metadata) => Metadata;
 }>): DeferredStartupMetadataPlan {
     const createMetadata = (machineId: string): SessionMetadataResult => createSessionMetadata({
         flavor: params.flavor,
         machineId,
+        hostProcessStartTimeMs: params.hostProcessStartTimeMs,
         directory: params.directory,
         startedBy: params.startedBy,
         terminalRuntime: params.terminalRuntime ?? null,
@@ -51,6 +54,7 @@ export function createDeferredStartupMetadataPlan(params: Readonly<{
             : undefined,
         augmentMetadata: params.augmentSessionMetadata,
         launchControlMetadata: params.launchControlMetadata,
+        accountSettings: params.accountSettings,
     });
 
     return {

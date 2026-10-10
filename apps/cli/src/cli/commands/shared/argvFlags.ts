@@ -139,6 +139,8 @@ export type CommandArgumentPolicy = Readonly<{
   booleanFlags?: readonly string[];
   valueFlags?: readonly string[];
   inlineValueFlags?: readonly string[];
+  /** Literal path/content bytes may be whitespace-only but cannot be empty. */
+  literalValueFlags?: readonly string[];
   allowMissingValueFlags?: readonly string[];
   maxPositionals?: number;
 }>;
@@ -151,6 +153,7 @@ export function assertCommandArguments(argv: readonly string[], policy: CommandA
   const booleanFlags = new Set(policy.booleanFlags ?? []);
   const valueFlags = new Set(policy.valueFlags ?? []);
   const inlineValueFlags = new Set(policy.inlineValueFlags ?? policy.valueFlags ?? []);
+  const literalValueFlags = new Set(policy.literalValueFlags ?? []);
   const allowMissingValueFlags = new Set(policy.allowMissingValueFlags ?? []);
   let positionalOnly = false;
   let positionalCount = 0;
@@ -174,7 +177,8 @@ export function assertCommandArguments(argv: readonly string[], policy: CommandA
     if (!valueFlags.has(flag)) throw invalidCommandArguments(policy.usage, `Unknown option: ${argument}`);
     if (equalsIndex >= 0) {
       if (!inlineValueFlags.has(flag)) throw invalidCommandArguments(policy.usage, `Option ${flag} does not accept an inline value.`);
-      if (!argument.slice(equalsIndex + 1).trim()) throw invalidCommandArguments(policy.usage, `Option ${flag} requires a value.`);
+      const rawValue = argument.slice(equalsIndex + 1);
+      if (!(literalValueFlags.has(flag) ? rawValue : rawValue.trim())) throw invalidCommandArguments(policy.usage, `Option ${flag} requires a value.`);
       continue;
     }
     const value = argv[index + 1];

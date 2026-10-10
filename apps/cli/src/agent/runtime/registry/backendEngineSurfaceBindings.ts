@@ -567,6 +567,14 @@ function bindNativeAgentHandoffSurface(params: Readonly<{
             assertCurrentNativeAgentSurfaceGeneration(params);
             return result;
         },
+        ...(handoff.resolveExistingState ? {
+            resolveExistingState: async (request: Parameters<NonNullable<AgentRuntimeHandoffSurface['resolveExistingState']>>[0]) => {
+                const context = await resolveNativeAgentSurfaceInvocationContext({ ...params, cwd: request.targetDirectory });
+                const result = await handoff.resolveExistingState!(request, context);
+                assertCurrentNativeAgentSurfaceGeneration(params);
+                return result;
+            },
+        } : {}),
         ...(handoff.extractMediaScannableRecords
             ? {
                 extractMediaScannableRecords: async (

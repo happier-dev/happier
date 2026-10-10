@@ -1,5 +1,7 @@
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { findCatalogEntry } from '@/agent/catalog/registry';
+import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
+import { isCustomAcpAgentContributionIdentityV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { getVendorResumeSupport } from '@/session/runtime/catalogHooks';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { logger } from '@/ui/logger';
@@ -160,6 +162,7 @@ export async function prepareExecuteSpawnSessionRequest(
         normalizedExistingSessionId,
         effectiveResume,
         effectiveBackendTargetV2,
+        effectiveAgentTarget,
         sessionAttachPayload,
         catalogAgentId,
         ownerMetadata,
@@ -215,6 +218,17 @@ export async function prepareExecuteSpawnSessionRequest(
                 : {}),
             ...(catalogAgentId ? { agentId: catalogAgentId } : {}),
         });
+        if (effectiveAgentTarget?.definitionId && catalogAgentId) {
+            const existingDescriptor = runtimeSelection.runtimeDescriptorV1;
+            if (existingDescriptor?.agent.definitionId !== undefined
+                && existingDescriptor.agent.definitionId !== effectiveAgentTarget.definitionId) {
+                throw new Error('Selected ACP definition does not match the runtime descriptor');
+            }
+            runtimeSelection = { runtimeDescriptorV1: {
+                ...(existingDescriptor ?? { v: 1 as const, agentId: catalogAgentId }),
+                agent: { ...existingDescriptor?.agent, definitionId: effectiveAgentTarget.definitionId },
+            } };
+        }
     } catch (error) {
         return {
             type: 'error',
@@ -223,8 +237,19 @@ export async function prepareExecuteSpawnSessionRequest(
         };
     }
 
-    const configuredBackendId = effectiveBackendTargetV2.sourceKind === 'configured'
-        ? (effectiveBackendTargetV2.configuredBackendId ?? effectiveBackendTargetV2.backendId).trim() : null;
+    const contributionIdentity = catalogAgentId
+        ? readAgentCatalogSnapshot().agentDefinitionsById.get(catalogAgentId)?.identity : undefined;
+    const descriptorDefinitionId = runtimeSelection.runtimeDescriptorV1?.agent.definitionId;
+    const configuredBackendId = effectiveAgentTarget?.definitionId
+        ?? (contributionIdentity && isCustomAcpAgentContributionIdentityV1(contributionIdentity)
+            && typeof descriptorDefinitionId === 'string' ? descriptorDefinitionId : null);
+    if (contributionIdentity && isCustomAcpAgentContributionIdentityV1(contributionIdentity)
+        && configuredBackendId === null) {
+        return {
+            type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+            errorMessage: 'Custom ACP Agent requires a configured definition selection.',
+        };
+    }
     let configuredBackend: ReturnType<typeof resolveConfiguredAcpBackendFromAccountSettings> = null;
     if (configuredBackendId !== null) {
         try {
@@ -237,15 +262,15 @@ export async function prepareExecuteSpawnSessionRequest(
             if (!(error instanceof AcpCatalogUnavailableError)) throw error;
             return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST, errorMessage: error.message };
         }
-        if (!configuredBackend && !effectiveResume) return {
+        if (!configuredBackend) return {
             type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
             errorMessage: `Configured ACP backend '${configuredBackendId}' is unavailable.`,
         };
     }
     if (effectiveResume) {
-        if (effectiveBackendTargetV2.sourceKind === 'configured') {
-            // Configured ACP has no catalog Agent id; its load-session support is
-            // proven by the resolved Account declaration at this admission seam.
+        if (configuredBackendId !== null) {
+            // The declared contribution's selected Account definition owns
+            // load-session support, not a per-definition Agent identity.
             // The resume token is the provider Session id, and attach metadata
             // (when rejoining) has already established generation/materialization
             // correspondence. Unsupported or unavailable declarations fail closed.
@@ -257,14 +282,14 @@ export async function prepareExecuteSpawnSessionRequest(
                 };
             }
         }
-        if (effectiveBackendTargetV2.sourceKind !== 'configured' && !catalogAgentId) {
+        if (!catalogAgentId) {
             return {
                 type: 'error',
                 errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
                 errorMessage: 'Unknown backend target',
             };
         }
-        if (effectiveBackendTargetV2.sourceKind !== 'configured') {
+        if (configuredBackendId === null) {
             const vendorResumeSupport = await getVendorResumeSupport(catalogAgentId!);
             const ok = vendorResumeSupport({
                 ...(runtimeSelection.runtimeDescriptorV1

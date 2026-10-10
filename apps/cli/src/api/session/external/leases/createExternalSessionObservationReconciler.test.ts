@@ -7,6 +7,7 @@ import type {
 
 import {
     createExternalSessionObservationReconciler,
+    type ExternalSessionAccountingSourceDemand,
     type ExternalSessionObservationLinkIdentity,
     type ExternalSessionObservationResourceIdentity,
 } from './createExternalSessionObservationReconciler';
@@ -93,6 +94,73 @@ afterEach(() => {
 });
 
 describe('createExternalSessionObservationReconciler', () => {
+    it('routes an accounting-only managed source refresh without inventing a Session link', async () => {
+        let observerInput: Parameters<NonNullable<Parameters<typeof createExternalSessionObservationReconciler>[0]['acquireObserver']>>[0] | undefined;
+        let attached = false;
+        const changes: Parameters<ExternalSessionAccountingSourceDemand['onChange']>[0][] = [];
+        const reconciler = createExternalSessionObservationReconciler({
+            acquireObserver: async (input) => {
+                expect(attached).toBe(false);
+                attached = true;
+                observerInput = input;
+                return { dispose() { attached = false; } };
+            },
+        });
+        const subscription = await reconciler.registerAccountingSource({
+            resource: resource(), source: { kind: 'managed-source' }, changeObservation: 'observe_resource',
+            onChange: (change) => { changes.push(change); },
+        });
+        expect(observerInput?.managedEndpointSource).toEqual({ kind: 'managed-source' });
+        observerInput!.requestTranscriptRefresh('native-unlinked', 'native-session');
+        expect(changes).toEqual([{ reason: 'source_changed', changedNativeSessionIds: ['native-session'] }]);
+        observerInput!.requestReconcile();
+        expect(changes[1]).toEqual({ reason: 'source_changed' });
+        await subscription.dispose();
+        expect(attached).toBe(false);
+        observerInput!.requestTranscriptRefresh('native-unlinked');
+        expect(changes).toHaveLength(2);
+        await reconciler.dispose();
+    });
+    it('shares file and topology demand between consented accounting and real Session links and retires each independently', async () => {
+        const fileCallbacks = new Map<string, (file: string) => void>();
+        const activeFiles = new Set<string>();
+        let topologyChange: (() => void) | undefined;
+        let topologyActive = false;
+        const changes: string[] = [];
+        const reconciler = createExternalSessionObservationReconciler({
+            acquireObserver: async () => ({ dispose() {} }),
+            watchFile: (file, changed) => {
+                expect(activeFiles.has(file)).toBe(false);
+                activeFiles.add(file);
+                fileCallbacks.set(file, changed);
+                return () => { activeFiles.delete(file); };
+            },
+            watchTopologyDirectory: (_directory, changed) => {
+                expect(topologyActive).toBe(false);
+                topologyActive = true;
+                topologyChange = () => changed();
+                return () => { topologyActive = false; };
+            },
+        });
+        const watchFileChanges = { files: ['/tmp/accounting.jsonl'], topologyDirectories: ['/tmp'] };
+        const accounting = await reconciler.registerAccountingSource({
+            resource: resource(), source: { kind: 'fixture' }, changeObservation: 'watch_file_changes', watchFileChanges,
+            onChange: ({ reason }) => { changes.push(reason); },
+        });
+        await reconciler.reconcileLink({ resource: resource(), link: link(1, { changeObservation: 'watch_file_changes', watchFileChanges }), demand: demanded(), onFacts: () => {} });
+        expect(activeFiles).toEqual(new Set(['/tmp/accounting.jsonl']));
+        fileCallbacks.get('/tmp/accounting.jsonl')!('/tmp/accounting.jsonl');
+        topologyChange!();
+        expect(changes).toEqual(['file_changed', 'topology_changed']);
+        await reconciler.removeLink(link(1));
+        expect(activeFiles.has('/tmp/accounting.jsonl')).toBe(true);
+        await accounting.dispose();
+        expect(activeFiles.size).toBe(0);
+        expect(topologyActive).toBe(false);
+        fileCallbacks.get('/tmp/accounting.jsonl')!('/tmp/accounting.jsonl');
+        expect(changes).toEqual(['file_changed', 'topology_changed']);
+        await reconciler.dispose();
+    });
     it('acquires only the change-observation mechanism declared by each link', async () => {
         const acquireObserver = vi.fn(async () => ({ dispose: async () => {} }));
         const watchFile = vi.fn(() => () => {});

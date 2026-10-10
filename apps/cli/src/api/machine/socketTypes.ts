@@ -4,6 +4,7 @@ import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_OPERATION_RETIRE_EVENT_V1 } from '@ha
 import type { TeamCredentialExternalProviderOperationRetireV1, TeamCredentialExternalProviderOperationRetireResponseV1 } from '@happier-dev/protocol/teams';
 import { EXTERNAL_SESSION_OPERATION_SOCKET_EVENT_V1 } from '@happier-dev/protocol/sessions/external/operationActionsV1';
 import { EXTERNAL_SESSION_SOURCE_UNAVAILABLE_OCCURRENCE_EVENT_V1 } from '@happier-dev/protocol/sessions/external/secureRefreshV1';
+import { USAGE_SOURCES_INVALIDATION_EVENT_V1, type UsageSourcesInvalidationV1 } from '@happier-dev/protocol/usage/usageSources';
 import { EXTERNAL_SESSION_STATUS_DEMAND_EVENT_V1 } from '@happier-dev/protocol/sessions/external/statusDemandV1';
 import { MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1, MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1 } from '@happier-dev/protocol/sessions/control/machineSessionTerminalV1';
 import { SESSION_SERVER_START_INGRESS_EVENT_V1 } from '@happier-dev/protocol/sessions/creation/sessionServerStartV1';
@@ -15,6 +16,8 @@ import type { SessionPendingExecutionRunEnqueueByMachineRequestV2, SessionPendin
 import { MACHINE_LIVE_STREAM_SOCKET_EVENT } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT } from '@happier-dev/protocol/machines/peer/mediation/tunnel/relay';
 import { TRANSFER_RELAY_V2_SOCKET_EVENT } from '@happier-dev/protocol/transfers/relay/v2/socketEvents';
+import type { MachineUpdateStateRequest, MachineUpdateStateResponse } from '@happier-dev/protocol/machines/metadataUpdate';
+import { SESSION_PENDING_RESET_START_RELEASE_EVENT_V1, type PendingResetStartReleaseRequestV1, type PendingResetStartReleaseResponseV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 
 export interface ServerToDaemonEvents {
   update: (data: Update) => void;
@@ -33,6 +36,7 @@ export interface ServerToDaemonEvents {
 }
 
 export interface DaemonToServerEvents {
+  [SESSION_PENDING_RESET_START_RELEASE_EVENT_V1]: (data: PendingResetStartReleaseRequestV1, cb: (answer: PendingResetStartReleaseResponseV1) => void) => void;
   [TEAM_CREDENTIAL_EXTERNAL_PROVIDER_OPERATION_RETIRE_EVENT_V1]: (
     data: TeamCredentialExternalProviderOperationRetireV1,
     cb: (answer: TeamCredentialExternalProviderOperationRetireResponseV1) => void,
@@ -41,6 +45,7 @@ export interface DaemonToServerEvents {
   'session-end': (data: { sid: string; time: number; exit?: any }) => void;
   [ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1]: (data: ActionOperationRevisionEphemeralV1) => void;
   'external-session-transcript-invalidated': (data: ExternalSessionTranscriptInvalidationV1) => void;
+  [USAGE_SOURCES_INVALIDATION_EVENT_V1]: (data: UsageSourcesInvalidationV1) => void;
   [EXTERNAL_SESSION_SOURCE_UNAVAILABLE_OCCURRENCE_EVENT_V1]: (data: ExternalSessionSourceUnavailableOccurrenceV1) => void;
   [EXTERNAL_SESSION_OPERATION_SOCKET_EVENT_V1]: (
     data: ExternalSessionOperationSocketCommandV1,
@@ -77,13 +82,8 @@ export interface DaemonToServerEvents {
   ) => void;
 
   'machine-update-state': (
-    data: { machineId: string; daemonState: string; expectedVersion: number },
-    cb: (
-      answer:
-        | { result: 'error' }
-        | { result: 'version-mismatch'; version: number; daemonState: string }
-        | { result: 'success'; version: number; daemonState: string }
-    ) => void
+    data: MachineUpdateStateRequest,
+    cb: (answer: MachineUpdateStateResponse) => void
   ) => void;
 
   [SOCKET_RPC_EVENTS.REGISTER]: (data: { method: string }) => void;

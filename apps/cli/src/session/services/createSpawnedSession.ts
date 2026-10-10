@@ -3,6 +3,7 @@ import { readConnectedServiceMaterializationIdentityV1FromMetadata } from '@happ
 import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
 import { buildSpawnedFirstTurnLocalId, buildSessionSpawnInitialInputLocalIdV1 } from '@happier-dev/protocol/sessions/messages/spawnedFirstTurn';
 import { sessionCreationCorrespondenceMatchesV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { migrateRetainedSessionWorkContextV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
 import { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS, DEFAULT_SPAWN_INITIAL_INPUT_ADMISSION_TIMEOUT_MS } from '@happier-dev/protocol/sessions/creation/sessionSpawnBudget';
 import { SessionForkFilesNotCopiedV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { hasSessionInputContentV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAuthoringV1';
@@ -14,9 +15,11 @@ import type { SessionSpawnNewInitialInputV1 } from '@happier-dev/protocol/sessio
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 import { randomUUID } from 'node:crypto';
-import { isDefiniteReplaySeededPreAdmissionRejection } from './spawnPreAdmissionRejection';
+import { isDefiniteSpawnPreAdmissionRejection } from './spawnPreAdmissionRejection';
 import os from 'node:os';
 import { pickSessionCreateOriginFields } from '@/session/shared/sessionCreateOrigin';
+import { applyInitialSessionCreationFactsToMetadata } from '@/agent/runtime/createSessionMetadata';
+import { resolveAvailableAccountSettings } from '@/settings/accountSettings/resolveAvailableAccountSettings';
 
 import { createAuthenticationHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
 import { validateStoredAuthTokenAgainstActiveServer } from '@/auth/validateStoredAuthTokenAgainstActiveServer';
@@ -44,10 +47,11 @@ import { sendSessionMessage } from './sendSessionMessage';
 import { ensureSessionMachineAccessKeyBinding } from '@/api/session/ensureSessionMachineAccessKeyBinding';
 import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBaseUrl';
 import { resolveSessionUserMessageRequestedAction } from './resolveSessionUserMessageRequestedAction';
-import { abandonSpawnedSessionBestEffort, awaitSpawnedSessionId } from './awaitSpawnedSessionId';
+import { abandonSpawnedSessionBestEffort, awaitSpawnedSessionId, type SpawnSessionNonceResolver } from './awaitSpawnedSessionId';
 import { archiveSessionOnceInactive } from './archiveSessionOnceInactive';
 import { requestSessionStop } from './requestSessionStop';
 import { createStableSpawnNonce } from '@/session/shared/spawnNonce';
+import { seedForkVisualsBestEffort } from '@/session/fork/seedForkVisuals';
 import {
   createConnectedServiceChildLaunchContext,
   type ConnectedServiceChildLaunchContext,
@@ -61,7 +65,7 @@ import {
 export type DirectSpawnedSessionTransport = Readonly<{
   spawn: (
     request: SpawnDaemonSessionRequest,
-    options?: Readonly<{ signal?: AbortSignal }> & Pick<SpawnSessionOptions, 'creationAuthorization' | 'callerInputConstraints'>,
+    options?: Readonly<{ signal?: AbortSignal }> & Pick<SpawnSessionOptions, 'creationAuthorization' | 'callerInputConstraints' | 'requesterSessionBootstrap'>,
   ) => Promise<unknown>;
   resolveSpawnSessionByNonce: (
     spawnNonce: string,
@@ -107,6 +111,8 @@ export type ReplaySeededSessionCreationV1 = Readonly<{
 
 export type CreateSpawnedSessionParams = Readonly<import('@happier-dev/protocol').SessionCreateOriginFieldsV1 & {
   credentials: StoredCredentials;
+  /** Invocation-local Account policy supplied by the authenticated Action owner. */
+  accountSettings?: Readonly<Record<string, unknown>>;
   directory: string;
   directoryKind?: 'path' | 'managed';
   /**
@@ -135,6 +141,11 @@ export type CreateSpawnedSessionParams = Readonly<import('@happier-dev/protocol'
   modelSelection?: SessionModelSelectionV1;
   /** Mutable presentation written only through the fresh create envelope. */
   initialTitle?: string;
+  identity?: import('@happier-dev/protocol/sessions/identity/sessionBotV1').SessionIdentityAdditions;
+  memoryEnabled?: boolean;
+  promptStack?: import('@happier-dev/protocol/sessions/context/sessionContextV1').SessionPromptStackV1;
+  /** Fresh birth validates required qualified documents before any runner is dispatched. */
+  preparePromptStack?: () => Promise<void>;
   /**
    * Private sidecar from a provenance-bounded predecessor approval-artifact
    * replay; never accepted from live Action/RPC ingress or sent as a server
@@ -588,6 +599,9 @@ async function dispatchReplaySeededSpawn(args: Readonly<{
     initialTriggers: _creationOwnedInitialTriggers,
     reportsTo: _creationOwnedReportsTo,
     initialSessionRolesV1: _creationOwnedRoles,
+    identity: _creationOwnedIdentity,
+    memoryEnabled: _creationOwnedMemoryEnabled,
+    promptStack: _creationOwnedPromptStack,
     primaryTeamId: _creationOwnedPrimaryTeamId,
     originKind: _originKind,
     originSessionId: _originSessionId,
@@ -607,7 +621,7 @@ async function dispatchReplaySeededSpawn(args: Readonly<{
     const code = error && typeof error === 'object'
       ? (error as { code?: unknown }).code
       : undefined;
-    if (args.createdHere && isDefiniteReplaySeededPreAdmissionRejection(code)) {
+    if (args.createdHere && isDefiniteSpawnPreAdmissionRejection(code)) {
       await archiveSessionOnceInactive({ token: args.token, sessionId: args.sessionId })
         .catch(() => undefined);
     }
@@ -669,26 +683,32 @@ async function createReplaySeededSpawnedSession(args: Readonly<{
   // `legacyMetadataLabel` is the predecessor approval-artifact replay's private
   // label and writes the same `tag` metadata field this creation already owns.
   // The two never co-occur: that replay path carries no source recipe.
+  const accountSettings = params.accountSettings ?? await resolveAvailableAccountSettings({ credentials: params.credentials });
+  const isWorker = Boolean(params.initialSessionRolesV1 || params.reportsTo);
+  const replayMetadata = { ...replaySeededCreation.metadata };
+  // Workers use their own Profile, including an explicit or implicit no-Profile choice.
+  if (isWorker) delete replayMetadata.profileId;
   const created = await getOrCreateSessionByTag({
     ...(params.creationAuthorization ? { creationAuthorizationToken: params.creationAuthorization.token } : {}),
     ...pickSessionCreateOriginFields(params),
     credentials: params.credentials,
     tag,
-    metadata: {
+    metadata: applyInitialSessionCreationFactsToMetadata({
       tag,
       path: params.directory,
       host: os.hostname(),
       flavor: replaySeededCreation.flavor,
       ...(params.placementOrigin ? { placementOrigin: params.placementOrigin } : {}),
-      ...replaySeededCreation.metadata,
+      ...replayMetadata,
       ...connectedServiceChildLaunch.metadata,
+      ...(typeof params.profileId === 'string' ? { profileId: params.profileId } : {}),
       ...(params.directoryKind === 'managed' ? { sessionDirectoryV1: { v: 1, kind: 'managed' } } : {}),
-      ...(params.initialSessionRolesV1 ? { work: {
-        ...(replaySeededCreation.metadata.work && typeof replaySeededCreation.metadata.work === 'object'
-          ? replaySeededCreation.metadata.work : {}),
-        sessionRolesV1: SessionRolesV1Schema.parse(params.initialSessionRolesV1),
+      ...(isWorker ? { work: {
+        ...Object.fromEntries(Object.entries(migrateRetainedSessionWorkContextV1(replayMetadata.work))
+          .filter(([key]) => key !== 'promptStack' && key !== 'disabledInheritedEntryIds')),
+        ...(params.initialSessionRolesV1 ? { sessionRolesV1: SessionRolesV1Schema.parse(params.initialSessionRolesV1) } : {}),
       } } : {}),
-    },
+    }, { ...params, accountSettings: accountSettings ?? undefined }),
     agentState: null,
     ...(params.initialAccess !== undefined ? { initialAccess: params.initialAccess } : {}),
     ...(params.initialTriggers !== undefined ? { initialTriggers: params.initialTriggers } : {}),
@@ -813,7 +833,7 @@ async function createReplaySeededSpawnedSession(args: Readonly<{
     // can archive. Rejoins and ambiguous/post-admission outcomes may be live.
     if (
       created.created === true
-      && isDefiniteReplaySeededPreAdmissionRejection(spawnResponseRecord?.errorCode)
+      && isDefiniteSpawnPreAdmissionRejection(spawnResponseRecord?.errorCode)
     ) {
       await archiveSessionOnceInactive({ token: params.credentials.token, sessionId })
         .catch(() => undefined);
@@ -954,6 +974,9 @@ export async function createSpawnedSession(
       ? { sessionCreationCorrespondence: params.sessionCreationCorrespondence }
       : {}),
     ...(params.placementOrigin ? { placementOrigin: params.placementOrigin } : {}),
+    ...(params.identity !== undefined ? { identity: params.identity } : {}),
+    ...(params.memoryEnabled !== undefined ? { memoryEnabled: params.memoryEnabled } : {}),
+    ...(params.promptStack !== undefined ? { promptStack: params.promptStack } : {}),
     ...(typeof params.initialTitle === 'string' && params.initialTitle.trim().length > 0
       ? { initialTitle: params.initialTitle.trim() }
       : {}),
@@ -1091,6 +1114,10 @@ export async function createSpawnedSession(
         ...(params.signal ? { signal: params.signal } : {}),
       });
       const filesNotCopied = readForkFilesNotCopied(ownerMetadata);
+      if (params.replaySeededCreation?.sourceRecipe) await seedForkVisualsBestEffort({
+        credentials: params.credentials, sourceSessionId: params.replaySeededCreation.sourceRecipe.sourceSessionId,
+        cutoffSeqInclusive: params.replaySeededCreation.sourceRecipe.cutoffSeqInclusive, childSessionId: existing.id,
+      });
       return {
         disposition: 'rejoined',
         sessionId: existing.id,
@@ -1105,6 +1132,7 @@ export async function createSpawnedSession(
       };
     }
   }
+  if (params.resumeOnly !== true) await params.preparePromptStack?.();
   const preparedInitialTriggers = params.resumeOnly !== true && params.prepareInitialTriggers
     ? await params.prepareInitialTriggers()
     : params.initialTriggers;
@@ -1193,7 +1221,7 @@ export async function createSpawnedSession(
   };
 
   if (params.replaySeededCreation) {
-    return await createReplaySeededSpawnedSession({
+    const result = await createReplaySeededSpawnedSession({
       params: { ...params, ...(preparedInitialTriggers !== undefined ? { initialTriggers: preparedInitialTriggers } : {}) },
       replaySeededCreation: params.replaySeededCreation,
       spawnRequestInput: birthSpawnRequestInput,
@@ -1201,6 +1229,11 @@ export async function createSpawnedSession(
       initialInputLocalId,
       ...(initialInputHandoff ? { initialInputHandoff } : {}),
     });
+    if (params.replaySeededCreation.sourceRecipe) await seedForkVisualsBestEffort({
+      credentials: params.credentials, sourceSessionId: params.replaySeededCreation.sourceRecipe.sourceSessionId,
+      cutoffSeqInclusive: params.replaySeededCreation.sourceRecipe.cutoffSeqInclusive, childSessionId: result.sessionId,
+    });
+    return result;
   }
 
   let spawnResponse: unknown;
@@ -1209,11 +1242,8 @@ export async function createSpawnedSession(
   } else {
     spawnResponse = await dispatchSpawnRequest(birthSpawnRequest);
   }
-  const resolveSpawnSessionByNonce = async (
-    nonce: string,
-    signal?: AbortSignal,
-    timeoutMs?: number,
-  ): Promise<SpawnSessionNonceResolution> => {
+  const resolveSpawnSessionByNonce: SpawnSessionNonceResolver = async (nonce, timeoutMs, observation) => {
+    const signal = observation?.signal;
     try {
       if (params.directTransport) {
         return normalizeSpawnSessionNonceResolution(
@@ -1231,7 +1261,11 @@ export async function createSpawnedSession(
           machineId: exactMachineId,
           method: RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE,
           request: { spawnNonce: nonce, ...(timeoutMs !== undefined ? { timeoutMs } : {}) },
-          ...(typeof timeoutMs === 'number' && timeoutMs > 0 ? { timeoutMs } : {}),
+          timeoutMs: null,
+          reattachOnReconnect: {
+            readRequest: () => ({ spawnNonce: nonce,
+              timeoutMs: observation?.readRemainingTimeoutMs() ?? timeoutMs }),
+          },
           ...(signal ? { signal } : {}),
         });
       return normalizeSpawnSessionNonceResolution(resolved);
@@ -1272,11 +1306,7 @@ export async function createSpawnedSession(
       ? { type: 'success', spawnNonce, sessionIdStatus: 'pending' }
       : spawnResponse,
     spawnNonce,
-    resolveSpawnSessionByNonce: (nonce, remainingTimeoutMs) => resolveSpawnSessionByNonce(
-      nonce,
-      params.signal,
-      remainingTimeoutMs,
-    ),
+    resolveSpawnSessionByNonce,
     ...(params.signal ? { signal: params.signal } : {}),
   });
   if (settledSpawn.type === 'error') {
@@ -1289,7 +1319,7 @@ export async function createSpawnedSession(
       abandonSpawnedSessionBestEffort({
         spawnNonce,
         reason: settledSpawn.errorMessage,
-        resolveSpawnSessionByNonce: (nonce, timeoutMs) => resolveSpawnSessionByNonce(nonce, undefined, timeoutMs),
+        resolveSpawnSessionByNonce,
         stopSession: async (sessionId) => {
           const stopped = await requestSessionStop({ credentials: params.credentials, idOrPrefix: sessionId });
           return stopped.ok && stopped.stopped;

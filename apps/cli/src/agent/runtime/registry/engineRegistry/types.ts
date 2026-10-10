@@ -107,6 +107,7 @@ export type RunnerAgentSessionRuntimeSource = Readonly<{
         ): Readonly<Record<string, string>>;
         cleanup: (() => void) | null;
     }> | null>;
+    managedProviderRunServices?: import('@/agent/runtime/session/process/agentRuntimeDaemonServiceAuthorityClient').RunnerManagedProviderRunServices;
     prepareTeamCredentialProviderBinding?(params: Readonly<{
         sessionId: string;
         resourceId: string;
@@ -169,6 +170,9 @@ export type RunnerAgentSessionRuntimeSource = Readonly<{
 }>;
 
 export type ResolveEngineRegistryParams = Readonly<{
+    agentTarget?: import('@happier-dev/protocol/agents/executionTargetV1').AgentExecutionTargetV1;
+    startupRuntimeDescriptorV1?: AgentSessionOpenRequest['runtimeDescriptorV1'];
+    savedSecretOperationContext?: import('@/settings/secrets/hydrateSavedSecretCatalog').SavedSecretOperationContextV1;
     happyHomeDir?: string;
     backendId?: string;
     contributes?: ResolvedContributionRegistry;

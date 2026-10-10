@@ -57,6 +57,7 @@ describe('bootstrapMachineSyncRuntime memory startup ordering', () => {
       registerLiveStreamRelayRoutes: vi.fn(),
       onUpdate: vi.fn(() => () => {}),
       onAccountSettingsVersionHint: vi.fn(() => () => {}),
+      onAccountProjectRowsChanged: vi.fn(() => () => {}),
       onPendingSessionActivationHint: vi.fn(() => () => {}),
       onSessionDeletedChange: vi.fn((listener: NonNullable<typeof deletedListener>) => {
         deletedListener = listener;

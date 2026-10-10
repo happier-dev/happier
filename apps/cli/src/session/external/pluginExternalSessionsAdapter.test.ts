@@ -89,6 +89,7 @@ describe('createPluginExternalSessionsAdapter', () => {
     expect(Reflect.ownKeys(composition.compositionPort).sort()).toEqual([
       'followTranscript',
       'resolveFollowTarget',
+      'resolveSourceIdentity',
     ]);
     expect(Reflect.get(composition.compositionPort, 'list')).toBeUndefined();
     expectTypeOf<Parameters<ExternalSessionsCompositionPort['resolveFollowTarget']>[0]>()

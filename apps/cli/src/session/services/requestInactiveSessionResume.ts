@@ -4,7 +4,7 @@ import { SPAWN_SESSION_ERROR_CODES, SpawnSessionExecutionAuthorizationSchema } f
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 
-import { buildInactiveSessionResumeSpawnOptions } from '@/daemon/sessions/runtimeSnapshot/buildInactiveSessionResumeSpawnOptions';
+import { buildInactiveSessionResumeSpawnOptions, type InactiveSessionResumeRuntimeOptions } from '@/daemon/sessions/runtimeSnapshot/buildInactiveSessionResumeSpawnOptions';
 import type { StoredCredentials } from '@/persistence';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import { createStableSpawnNonce } from '@/session/shared/spawnNonce';
@@ -45,6 +45,7 @@ export function buildMachineResumeRequest(
     ...(options.backendTarget ? { backendTarget: options.backendTarget } : {}),
     ...(spawnNonce ? { spawnNonce } : {}),
     ...(options.resume ? { resume: options.resume } : {}),
+    ...(options.handoffStateTransfer ? { handoffStateTransfer: options.handoffStateTransfer } : {}),
     ...(options.runtimeDescriptorV1 ? { runtimeDescriptorV1: options.runtimeDescriptorV1 } : {}),
     ...(options.sessionCreationTag ? { sessionCreationTag: options.sessionCreationTag } : {}),
     ...(options.sessionCreationCorrespondence
@@ -114,9 +115,9 @@ function resolveThrownResumeFailureCode(
 export async function requestInactiveSessionResume(params: Readonly<{
   credentials: StoredCredentials;
   sessionId: string;
-  localId: string;
   rawSession: RawSessionRecord;
   metadata: Record<string, unknown>;
+  incomingOptions?: InactiveSessionResumeRuntimeOptions;
   timeoutMs?: number;
   signal?: AbortSignal;
   waitForReady?: boolean;
@@ -126,7 +127,8 @@ export async function requestInactiveSessionResume(params: Readonly<{
     request: unknown,
     options?: Readonly<{ signal?: AbortSignal }>,
   ) => Promise<unknown>;
-}>): Promise<InactiveSessionResumeResult> {
+}> & (Readonly<{ localId: string; requestId?: never }> | Readonly<{ requestId: string; localId?: never }>)): Promise<InactiveSessionResumeResult> {
+  const requestId = params.requestId ?? params.localId;
   const archivedAt = (params.rawSession as { archivedAt?: unknown }).archivedAt;
   if (archivedAt !== null && archivedAt !== undefined) {
     return {
@@ -165,12 +167,13 @@ export async function requestInactiveSessionResume(params: Readonly<{
 
   const executionAuthorization = SpawnSessionExecutionAuthorizationSchema.parse({
     provenance: 'user_request',
-    requestId: params.localId,
+    requestId,
   });
   const options = buildInactiveSessionResumeSpawnOptions({
     sessionId: params.sessionId,
     rawSession: params.rawSession,
     metadata: params.metadata,
+    ...(params.incomingOptions ? { incomingOptions: params.incomingOptions } : {}),
     ...(typeof params.rawSession.seq === 'number' ? { initialTranscriptAfterSeq: params.rawSession.seq } : {}),
     executionAuthorization,
   });
@@ -185,7 +188,7 @@ export async function requestInactiveSessionResume(params: Readonly<{
   const readinessSpawnNonce = params.waitForReady === true
     ? createStableSpawnNonce('inactive-session.resume', {
         sessionId: params.sessionId,
-        requestId: params.localId,
+        requestId,
       })
     : undefined;
 
@@ -256,14 +259,18 @@ export async function requestInactiveSessionResume(params: Readonly<{
         sessionIdStatus: 'pending',
       },
       spawnNonce: readinessSpawnNonce,
-      resolveSpawnSessionByNonce: async (spawnNonce, resolverTimeoutMs) => (
+      resolveSpawnSessionByNonce: async (spawnNonce, resolverTimeoutMs, observation) => (
         normalizeSpawnSessionNonceResolution(await callMachineRpc({
           credentials: params.credentials,
           machineId,
           method: RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE,
           request: { spawnNonce, ...(resolverTimeoutMs !== undefined ? { timeoutMs: resolverTimeoutMs } : {}) },
-          ...(typeof resolverTimeoutMs === 'number' ? { timeoutMs: resolverTimeoutMs } : {}),
-          ...(params.signal ? { signal: params.signal } : {}),
+          timeoutMs: null,
+          reattachOnReconnect: {
+            readRequest: () => ({ spawnNonce,
+              timeoutMs: observation?.readRemainingTimeoutMs() ?? resolverTimeoutMs }),
+          },
+          ...(observation ? { signal: observation.signal } : {}),
         }))
       ),
       ...(typeof remainingTimeoutMs === 'number' ? { timeoutMs: remainingTimeoutMs } : {}),

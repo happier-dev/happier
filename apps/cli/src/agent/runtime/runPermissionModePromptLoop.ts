@@ -76,6 +76,7 @@ import { prepareSessionInputForProviderDispatch, readStructuredInputPreparationF
 import { logger } from '@/ui/logger';
 import type { AgentCompositionToolSelection } from '@/plugins/runtime/hooks/execution/dispatchAgentTurnHooks';
 import type { HostPreparedContext } from '@/agent/runtime/session/contextOnly/hostContextOnlyInput';
+import { createPromptCompositionScope, type PromptPlanComposition } from '@/agent/prompting/promptComposition';
 
 export { projectSessionComposerAttachmentDispatchInput } from '@/agent/runtime/turns/prepareSessionInputForProviderDispatch';
 export type { ComposerAttachmentDispatchResolver } from '@/agent/runtime/turns/prepareSessionInputForProviderDispatch';
@@ -634,6 +635,7 @@ export async function runPermissionModePromptLoop(opts: {
     revisionChanges?: 'resume';
     nativeDeliveredMarker?: AgentSessionStartupInstructionsMarkerV1;
   }>;
+  readSessionPromptPlanComposition?: () => PromptPlanComposition | null;
   /**
    * Resolves bounded plugin-selected material for this next provider turn.
    * The loop owns placement; this callback cannot replace a provider prompt
@@ -698,6 +700,7 @@ export async function runPermissionModePromptLoop(opts: {
   ) => void;
   formatPromptErrorMessage: (error: unknown) => string;
 }): Promise<void> {
+  let modelRequestScope = createPromptCompositionScope();
   const prepareHostContext: PermissionModePromptLoopTurnOperations['prepareHostContext'] = opts.prepareHostContext
     ?? (async (input) => await opts.runtime.prepareHostContext?.(input) ?? null);
   let wasStarted = false;
@@ -981,6 +984,7 @@ export async function runPermissionModePromptLoop(opts: {
     };
 
     while (!opts.shouldExit()) {
+      try {
       // A seed the provider already ACCEPTED must be retired before any further provider input
       // is admitted. The admission boundary retries the same idempotent settler once; while the
       // retirement keeps failing, nothing is dispatched and nothing is consumed. The loop
@@ -1080,6 +1084,7 @@ export async function runPermissionModePromptLoop(opts: {
       resetAssistantTextSnapshotTurnScope(opts.session, 'mode_change');
       await opts.permissionHandler.reset();
       await opts.runtime.resetOrDisposeRuntime(undefined, nextSessionOpenIntent);
+      modelRequestScope = createPromptCompositionScope();
       wasStarted = false;
       nextSessionIsFresh = nextSessionOpenIntent.kind === 'create';
       if (nextSessionIsFresh) lastDeliveredSessionSystemPrompt = null;
@@ -1114,6 +1119,7 @@ export async function runPermissionModePromptLoop(opts: {
       resetAssistantTextSnapshotTurnScope(opts.session, 'clear');
       await opts.permissionHandler.reset();
       await opts.runtime.resetOrDisposeRuntime(undefined, { kind: 'create' });
+      modelRequestScope = createPromptCompositionScope();
       lastDeliveredSessionSystemPrompt = null;
       pendingSessionSystemPromptDelivery = null;
       wasStarted = false;
@@ -1427,6 +1433,7 @@ export async function runPermissionModePromptLoop(opts: {
           // A preserved terminal host retains old startup text. Close only the native runtime
           // incarnation and reopen the same conversation through its canonical factory.
           await opts.runtime.resetOrDisposeRuntime('session_closed', { ...nextIntent, startupInstructions });
+          modelRequestScope = createPromptCompositionScope();
           if (startupInstructions) {
             nativeSessionPlanRevision = startupInstructions.revision;
             hasNativeStartupPlan = true;
@@ -1476,6 +1483,16 @@ export async function runPermissionModePromptLoop(opts: {
           localId: localIds.length === 1 ? localId : null,
           services: {
             sessionId: opts.session.sessionId,
+            ...(opts.readActiveModelSelection ? { modelRequest: { scope: modelRequestScope,
+              startupInstructions: effectiveAppendSystemPrompt,
+              toolSelection: agentComposition ? { managedPluginIds: agentComposition.managedPluginIds,
+                selectedTools: agentComposition.selectedTools, selectedToolBindings: agentComposition.selectedToolBindings } : null,
+              readSelection: opts.readActiveModelSelection } } : {}),
+            ...(shouldApplyFreshSessionSystemPrompt && transformedDispatchPrompt === providerPrompt
+              ? { injectedPromptComponents: opts.readSessionPromptPlanComposition?.()?.components } : {}),
+            retainPromptComposition: async composition => {
+              await opts.session.enqueueSessionEventCommitted({ type: 'prompt-composition', composition });
+            },
             catalogs: {
               ...(typeof opts.runtime.listSkills === 'function' ? { listSkills: () => opts.runtime.listSkills!() } : {}),
               ...(typeof opts.runtime.listVendorPlugins === 'function' ? { listVendorPlugins: () => opts.runtime.listVendorPlugins!() } : {}),
@@ -1648,6 +1665,8 @@ export async function runPermissionModePromptLoop(opts: {
         const providerSend = Object.keys(promptDeliveryMeta).length === 0
           ? opts.runtime.sendTurnPrompt(dispatchPrompt)
           : opts.runtime.sendTurnPrompt(dispatchPrompt, promptDeliveryMeta);
+        void preparedDispatch.retainComposition({ deliveryKind: 'newTurn', observedAtMs: Date.now(),
+          turnId: promptDeliveryMeta.turnId ?? null });
         // Runtime adapters update exact steerability synchronously when provider dispatch
         // acquires a live turn. Re-check only at that lifecycle edge; no cadence or inferred
         // turn-in-flight state is allowed to start the Pending pump.
@@ -1812,6 +1831,9 @@ export async function runPermissionModePromptLoop(opts: {
         }
       }
     }
+      } finally {
+        inputConsumer.releaseInputBatch();
+      }
   }
 
   } finally {

@@ -56,6 +56,7 @@ describe('createSessionProviderInputOutcomeNormalizer', () => {
       localId: 'accepted-local',
       userMessageSeq: 41,
       delivery: { kind: 'newTurn', turnId: 'turn-1' },
+      acceptedAtMs: 1234,
     });
     observe({
       type: 'input-accepted',
@@ -65,6 +66,8 @@ describe('createSessionProviderInputOutcomeNormalizer', () => {
     });
 
     expect(observeSettlement).toHaveBeenCalledOnce();
+    expect(observeSettlement).toHaveBeenCalledWith(expect.objectContaining({ acceptedAtMs: 1234,
+      providerTurnId: 'turn-1', providerDeliveryKind: 'newTurn' }));
     expect(observeAcceptedEffect).toHaveBeenCalledExactlyOnceWith('accepted-local');
   });
 

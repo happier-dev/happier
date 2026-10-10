@@ -17,6 +17,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
 import { registerAgentSessionRealtimeVoiceRpc } from './registerAgentSessionRealtimeVoiceRpc';
+import { resolveCliVoicePromptStackBlocks } from '@/agent/prompts/library/resolveCliVoicePromptStackBlocks';
 
 const agentRef = { pluginId: 'happier.agent.codex', localId: 'codex' } as const;
 const providerRef = { pluginId: 'happier.agent.codex', localId: 'realtime-codex' } as const;
@@ -152,6 +153,7 @@ function register(
     isOccurrenceCurrent?: () => boolean;
     retirementSignal?: AbortSignal;
     resolveRetirementSignal?: () => AbortSignal | null;
+    resolveSystemAppendBlocks?: (input: Readonly<{ sessionId: string; signal: AbortSignal }>) => Promise<readonly string[]>;
   }>,
 ) {
   const handlers = new Map<string, Handler>();
@@ -170,6 +172,7 @@ function register(
     agentGeneration: 'daemon-generation-1',
     isOccurrenceCurrent: options?.isOccurrenceCurrent ?? (() => true),
     resolveProviderOccurrenceId: () => 'provider-generation-1',
+    ...(options?.resolveSystemAppendBlocks ? { resolveSystemAppendBlocks: options.resolveSystemAppendBlocks } : {}),
     resolveRetirementSignal: options?.resolveRetirementSignal
       ?? (() => options?.retirementSignal ?? null),
     resolveConversation: ({ runtime: candidate, provider }) => (
@@ -193,6 +196,62 @@ describe('Agent-session realtime Voice session RPC', () => {
   const canonicalSdpMaxBytes = resolveCanonicalSdpMaxBytes();
   const exactSdp = 'é'.repeat(canonicalSdpMaxBytes / 2);
   const oversizedSdp = `${exactSdp}x`;
+  it('refuses native start when the admitted required document cannot be read', async () => {
+    const fixture = runtimeFixture();
+    const handlers = register(fixture.runtime, undefined, {
+      resolveSystemAppendBlocks: ({ signal }) => resolveCliVoicePromptStackBlocks({
+        sessionEntries: [{ id: 'required', ref: { kind: 'doc', artifactId: 'missing' }, required: true,
+          enabled: true, placement: 'system_append' }],
+        signal, readArtifact: async () => null,
+      }),
+    });
+    await expect(handlers.get(SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_START)!({
+      v: 1, provider: providerRef, applicationAttemptId: 'required-missing', transport: { kind: 'webrtc', offerSdp: 'offer' },
+    })).resolves.toMatchObject({ status: 'unavailable', code: 'agent_realtime_instructions_unavailable' });
+    expect(fixture.start).not.toHaveBeenCalled();
+    handlers.dispose();
+  });
+  it('prepares fresh current-Session facts before each native carrier and refuses a target retired during the read', async () => {
+    const fixture = runtimeFixture();
+    let sessionId = 'bound-a';
+    let body = 'Current A instructions';
+    let release: (() => void) | undefined;
+    const seen: string[] = [];
+    const handlers = register(fixture.runtime, undefined, {
+      getHappierSessionId: () => sessionId,
+      resolveSystemAppendBlocks: async ({ sessionId: target, signal }) => {
+        seen.push(target);
+        return resolveCliVoicePromptStackBlocks({
+          sessionEntries: [{ id: 'persona', ref: { kind: 'doc', artifactId: target }, enabled: true, required: true, placement: 'system_append' }],
+          signal,
+          readArtifact: async ({ artifactId }) => {
+            if (body === 'pending') await new Promise<void>(resolve => { release = resolve; });
+            signal.throwIfAborted();
+            return { id: artifactId, header: { v: 1, kind: 'prompt_doc.v2', title: 'Persona' },
+              revision: { headerVersion: 1, bodyVersion: 1 },
+              body: JSON.stringify({ v: 1, markdown: body, createdAtMs: 1, updatedAtMs: 1 }) };
+          },
+        });
+      },
+    });
+    const start = (attempt: string) => handlers.get(SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_START)!({
+      v: 1, provider: providerRef, applicationAttemptId: attempt,
+      transport: { kind: 'webrtc', offerSdp: 'offer' },
+    });
+    await expect(start('first')).resolves.toMatchObject({ status: 'started' });
+    expect(fixture.start.mock.calls[0]?.[0]).toEqual({
+      transport: { kind: 'webrtc', offerSdp: 'offer' }, systemAppendBlocks: ['Current A instructions'],
+    });
+    body = 'pending';
+    const pending = start('second');
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    sessionId = 'bound-b';
+    release?.();
+    await expect(pending).resolves.toMatchObject({ status: 'aborted' });
+    expect(seen).toEqual(['bound-a', 'bound-a']);
+    expect(fixture.start).toHaveBeenCalledTimes(1);
+    handlers.dispose();
+  });
   it('relays one declaration-gated WebRTC attachment and its retained terminal fact', async () => {
     const fixture = runtimeFixture();
     const handlers = register(fixture.runtime);

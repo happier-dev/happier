@@ -6,6 +6,7 @@ import type { TrackedSession } from '../types';
 
 import { waitForVisibleConsoleSessionWebhook } from './visibleConsoleSpawnWaiter';
 import { createOnChildExited } from './onChildExited';
+import { armSessionWebhookStartupCustody } from '../spawn/waitForSessionWebhook';
 import { createOnHappySessionWebhook } from './onHappySessionWebhook';
 import { spawnInlineNodeParentWithChild } from '@/testkit/process/spawn';
 import { configuration } from '@/configuration';
@@ -114,81 +115,60 @@ describe('waitForVisibleConsoleSessionWebhook', () => {
     await vi.advanceTimersByTimeAsync(20);
 
     expect(onChildExited).toHaveBeenCalledWith(pid, {
-      reason: 'process-exited',
+      reason: 'process-missing',
       code: null,
       signal: null,
     });
   });
 
-  it('labels an exit observed while the webhook request is pending', async () => {
+  it('delegates pending runner absence to the canonical startup exit owner', async () => {
     vi.useFakeTimers();
-
     const aliveRef = { alive: true };
     installProcessKillMock(aliveRef);
     const pid = 12347;
-    const { pidToAwaiter, pidToSpawnResultResolver, pidToSpawnWebhookTimeout, onChildExited } = createWaiterState();
-    const promise = waitForVisibleConsoleSessionWebhook({
-      pid,
-      pollMs: 10,
-      pidToAwaiter,
-      pidToSpawnResultResolver,
-      pidToSpawnWebhookTimeout,
-      onChildExited,
+    const tracked: TrackedSession = { pid, startedBy: 'daemon' };
+    const sessions = new Map([[pid, tracked]]);
+    const state = createWaiterState();
+    const exit = createOnChildExited({ pidToTrackedSession: sessions,
+      spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+      getApiMachineForSessions: () => null, removeSessionMarkerFn: async () => {} });
+    const completion = waitForVisibleConsoleSessionWebhook({
+      ...state, pid, pollMs: 10, pidToTrackedSession: sessions, onChildExited: exit,
     });
-
+    armSessionWebhookStartupCustody(tracked, completion, Promise.resolve());
     aliveRef.alive = false;
     await vi.advanceTimersByTimeAsync(10);
-
-    await expect(promise).resolves.toEqual(expect.objectContaining({
-      type: 'error',
-      errorCode: 'CHILD_EXITED_BEFORE_WEBHOOK',
-    }));
-    expect(onChildExited).toHaveBeenCalledWith(pid, {
-      reason: 'process-exited-before-webhook',
-      code: null,
-      signal: null,
-    });
+    await expect(completion).resolves.toMatchObject({ type: 'error', errorCode: 'CHILD_EXITED_BEFORE_WEBHOOK' });
+    expect(state.pidToAwaiter.has(pid)).toBe(false);
+    expect(sessions.has(pid)).toBe(false);
   });
 
-  it('awaits canonical exit cleanup and reports incomplete retirement when it rejects', async () => {
+  it('retains physical custody when canonical exit cleanup rejects after startup failure', async () => {
     vi.useFakeTimers();
-
     const aliveRef = { alive: true };
     installProcessKillMock(aliveRef);
     const pid = 12348;
-    const {
-      pidToAwaiter,
-      pidToSpawnResultResolver,
-      pidToSpawnWebhookTimeout,
-    } = createWaiterState();
+    const tracked: TrackedSession = { pid, startedBy: 'daemon' };
+    const sessions = new Map([[pid, tracked]]);
+    const state = createWaiterState();
     let rejectCleanup!: (error: Error) => void;
-    const cleanup = new Promise<void>((_resolve, reject) => {
-      rejectCleanup = reject;
+    const cleanup = new Promise<void>((_resolve, reject) => { rejectCleanup = reject; });
+    // Owned external resource disposal is a system boundary; the exit/startup owners remain real.
+    const exit = createOnChildExited({ pidToTrackedSession: sessions,
+      spawnResourceCleanupByPid: new Map([[pid, async () => await cleanup]]), sessionAttachCleanupByPid: new Map(),
+      getApiMachineForSessions: () => null, removeSessionMarkerFn: async () => {} });
+    const completion = waitForVisibleConsoleSessionWebhook({
+      ...state, pid, pollMs: 10, pidToTrackedSession: sessions, onChildExited: exit,
     });
-    const onChildExited = vi.fn(async () => await cleanup);
-    const promise = waitForVisibleConsoleSessionWebhook({
-      pid,
-      pollMs: 10,
-      pidToAwaiter,
-      pidToSpawnResultResolver,
-      pidToSpawnWebhookTimeout,
-      onChildExited,
-    });
-    const settled = vi.fn();
-    void promise.then(settled);
-
+    armSessionWebhookStartupCustody(tracked, completion, Promise.resolve());
     aliveRef.alive = false;
     await vi.advanceTimersByTimeAsync(10);
-    expect(onChildExited).toHaveBeenCalledOnce();
-    expect(settled).not.toHaveBeenCalled();
-
+    await expect(completion).resolves.toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK });
+    expect(state.pidToAwaiter.has(pid)).toBe(false);
     rejectCleanup(new Error('provider retirement failed'));
-    await expect(promise).resolves.toEqual({
-      type: 'error',
-      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
-      errorMessage:
-        'startup_retirement_incomplete:exit_cleanup_incomplete',
-    });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(sessions.get(pid)).toBe(tracked);
+    expect(tracked.reportMarkerCustody?.retiring).toBe(true);
   });
 
   it('keeps exit polling active after webhook success so cleanup can run on process exit', async () => {
@@ -219,7 +199,7 @@ describe('waitForVisibleConsoleSessionWebhook', () => {
     await vi.advanceTimersByTimeAsync(20);
 
     expect(onChildExited).toHaveBeenCalledWith(pid, {
-      reason: 'process-exited',
+      reason: 'process-missing',
       code: null,
       signal: null,
     });
@@ -256,7 +236,7 @@ describe('waitForVisibleConsoleSessionWebhook', () => {
     await vi.advanceTimersByTimeAsync(20);
 
     expect(onChildExited).toHaveBeenCalledWith(pid, {
-      reason: 'process-exited',
+      reason: 'process-missing',
       code: null,
       signal: null,
     });

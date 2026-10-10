@@ -4,6 +4,26 @@ import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandler
 import { createSpawnRequestCoalescer, computeDaemonSpawnRequestKey } from './spawnRequestCoalescer';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 import type { ProviderConnectionId } from '@happier-dev/protocol';
+import { createDeferred } from '@/testkit/async/deferred';
+import type { SpawnSessionResult } from '@/session/shared/spawnSessionContract';
+
+describe('spawn preparation live custody', () => {
+  it('publishes coalesced accepted work through actual settlement without counting retained success', async () => {
+    const coalescer = createSpawnRequestCoalescer({ recentSuccessTtlMs: 1000 });
+    const work = createDeferred<SpawnSessionResult>();
+    const observations: number[] = [];
+    const dispose = coalescer.subscribeChanges(() => observations.push(coalescer.readInFlightRequests().length));
+    const key = computeDaemonSpawnRequestKey({ directory: '/tmp/project', spawnNonce: 'one-request' });
+    const first = coalescer.run(key, () => work.promise);
+    const duplicate = coalescer.run(key, () => { throw new Error('duplicate'); });
+    expect(coalescer.readInFlightRequests()).toHaveLength(1);
+    work.resolve({ type: 'success', sessionId: 'session' });
+    await Promise.all([first, duplicate]);
+    expect(coalescer.readInFlightRequests()).toHaveLength(0);
+    expect(observations).toEqual([1, 0]);
+    dispose();
+  });
+});
 
 function nativeModelSelection(agentId: string, modelId: string, updatedAt: number) {
   return {
@@ -61,6 +81,13 @@ const providerBindingSecurityChangeConfirmation = {
 };
 
 describe('computeDaemonSpawnRequestKey', () => {
+  it('does not reuse an unkeyed ordinary launch for a Bot or another explicit memory choice', () => {
+    const ordinary = { directory: '/workspace' };
+    const bot = { ...ordinary, identity: { bot: { kind: 'bot' as const }, createdAsBot: true as const } };
+    expect(computeDaemonSpawnRequestKey(ordinary).key).not.toBe(computeDaemonSpawnRequestKey(bot).key);
+    expect(computeDaemonSpawnRequestKey({ ...bot, memoryEnabled: false }).key)
+      .not.toBe(computeDaemonSpawnRequestKey({ ...bot, memoryEnabled: true }).key);
+  });
   it('does not coalesce managed and ordinary path launches at the same physical directory', () => {
     const base = { directory: '/private/chat' };
     expect(computeDaemonSpawnRequestKey({ ...base, directoryKind: 'managed' }).key)

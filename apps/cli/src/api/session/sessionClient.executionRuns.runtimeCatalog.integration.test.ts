@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { buildConfiguredAcpBackendSessionMetadata } from '@/agent/acp/catalog/configured/sessionMetadata';
-import { createPlainSessionFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createMutableApiSessionClientFixture, createPlainSessionFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { VOICE_AGENT_RUN_TRANSCRIPT_CONTRACT_VERSION } from './voiceAgentRunMetadataV1';
 import { registerSessionClientRuntimeHandlers } from './client/executionRuns/registerSessionClientRuntimeHandlers';
@@ -18,6 +18,7 @@ import { createExecutionRunRpcActionExecutor } from '@/rpc/handlers/executionRun
 import { resolveExecutionRunPolicy } from '@/agent/executionRuns/policy/executionRunPolicy';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol';
+import { SessionMetadataOwnerMigrationPatchV1Schema, projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { randomUUID } from 'node:crypto';
 
 // One runtime, one lifetime: the signal must stay stable across calls so
@@ -34,6 +35,7 @@ const sessionSocketStubState = vi.hoisted(() => ({
   executionRunHandlerContext: null as any,
   createExecutionRunRuntimeMock: vi.fn(),
   fetchSessionByIdCompatMock: vi.fn(),
+  patchSessionMetadataEnvelopeTupleMock: vi.fn<typeof import('@/session/transport/http/sessionsHttp').patchSessionMetadataEnvelopeTuple>(),
   fetchSessionByIdMock: vi.fn(),
   importHistoricalSessionTranscriptMock: vi.fn(),
   fetchSessionsPageMock: vi.fn(),
@@ -126,6 +128,8 @@ vi.mock('@/session/transport/http/sessionsHttp', async (importActual) => ({
     sessionSocketStubState.fetchSessionByIdMock(...args),
   fetchSessionByIdCompat: (...args: unknown[]) =>
     sessionSocketStubState.fetchSessionByIdCompatMock(...args),
+  patchSessionMetadataEnvelopeTuple: (...args: Parameters<typeof import('@/session/transport/http/sessionsHttp').patchSessionMetadataEnvelopeTuple>) =>
+    sessionSocketStubState.patchSessionMetadataEnvelopeTupleMock(...args),
   importHistoricalSessionTranscript: (...args: unknown[]) =>
     sessionSocketStubState.importHistoricalSessionTranscriptMock(...args),
   fetchSessionsPage: (...args: unknown[]) =>
@@ -202,6 +206,7 @@ describe('ApiSessionClient execution-run backend wiring', () => {
     sessionSocketStubState.executionRunHandlerContext = null;
     sessionSocketStubState.createExecutionRunRuntimeMock.mockReset();
     sessionSocketStubState.fetchSessionByIdCompatMock.mockReset();
+    sessionSocketStubState.patchSessionMetadataEnvelopeTupleMock.mockReset();
     sessionSocketStubState.fetchSessionByIdMock.mockReset();
     sessionSocketStubState.importHistoricalSessionTranscriptMock.mockReset();
     sessionSocketStubState.fetchSessionsPageMock.mockReset();
@@ -242,7 +247,7 @@ describe('ApiSessionClient execution-run backend wiring', () => {
     }
   });
 
-  it('projects the current canonical V2 Team model selection into exact Run broker custody', async () => {
+  it('opens only the resolved Run Team choice and never infers custody from pending parent intent', async () => {
     const prepareRunTeamCredentialProviderBinding = vi.fn(async () => ({
       providerBinding: {
         source: { kind: 'team_resource' as const, resourceId: 'resource-1', resourceRevision: 3 },
@@ -256,23 +261,16 @@ describe('ApiSessionClient execution-run backend wiring', () => {
     metadata.modelSelectionIntentV2 = {
       v: 2, updatedAt: 7,
       ref: {
-        source: 'team_resource', resourceId: 'resource-1', teamId: 'team-1',
-        expectedResourceRevision: 3, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'model-1',
+        source: 'team_resource', resourceId: 'pending-resource', teamId: 'team-1',
+        expectedResourceRevision: 3, deliveryMode: 'brokered', agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'model-1',
       },
     };
-    const session = {
-      sessionId: 's1',
-      getMetadataSnapshot: () => metadata,
-      updateMetadata: vi.fn(), updateAgentState: vi.fn(), enqueueAgentMessageCommitted: vi.fn(),
-    };
+    const session = createMutableApiSessionClientFixture({ sessionId: 's1', metadata });
 
     registerSessionClientRuntimeHandlers({
       ...TEST_SESSION_SERVER_BINDING,
       readOwnerAccountCredentials: async () => null,
-      rpcHandlerManager: new RpcHandlerManager({
-        scopePrefix: 's1', encryptionMode: 'plain', encryptionKey: new Uint8Array(32),
-        encryptionVariant: 'dataKey', logger: () => undefined,
-      }),
+      rpcHandlerManager: session.rpcHandlerManager,
       token: 'token-1', metadataPath: '/tmp/project', metadata, sessionId: 's1', session: session as never,
       getSessionMetadata: () => metadata as never,
       sessionRuntimeControls: { prepareRunTeamCredentialProviderBinding },
@@ -284,11 +282,20 @@ describe('ApiSessionClient execution-run backend wiring', () => {
       persistVoiceAgentRunMetadataFromPublicRun: vi.fn(), socketEmitExecutionRunUpdated: vi.fn(),
     });
 
+    const selection = {
+      kind: 'team_credential_provider_model' as const, teamId: 'team-1', resourceId: 'resource-1',
+      expectedResourceRevision: 3, deliveryMode: 'brokered' as const,
+      agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'model-1',
+    };
     await expect(sessionSocketStubState.executionRunHandlerContext.sessionInteractionHost
-      .prepareRunTeamCredentialProviderBinding({ runId: 'run-1', agentId: 'codex' }))
+      .prepareRunTeamCredentialProviderBinding({ runId: 'run-native-reset', agentId: 'codex' }))
+      .resolves.toBeNull();
+    expect(prepareRunTeamCredentialProviderBinding).not.toHaveBeenCalled();
+    await expect(sessionSocketStubState.executionRunHandlerContext.sessionInteractionHost
+      .prepareRunTeamCredentialProviderBinding({ runId: 'run-1', agentId: 'codex', selection }))
       .resolves.toMatchObject({ providerBinding: { source: { resourceId: 'resource-1' } } });
     expect(prepareRunTeamCredentialProviderBinding).toHaveBeenCalledWith({
-      runId: 'run-1', agentId: 'codex', resourceId: 'resource-1', modelId: 'model-1',
+      runId: 'run-1', agentId: 'codex', resourceId: 'resource-1', modelId: 'model-1', selection,
     });
     metadata.modelSelectionIntentV2 = {
       v: 2, updatedAt: 8,
@@ -1146,6 +1153,26 @@ describe('ApiSessionClient execution-run backend wiring', () => {
     await client.close();
   });
 
+  it('counts current work while retaining idle execution-run handles', async () => {
+    const client = createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({ id: 's1', metadata: createTestMetadata({ path: '/tmp/project' }) }));
+    const activeCounts: number[] = [];
+    const unsubscribe = client.subscribeExecutionRunActivitySnapshots((count) => activeCounts.push(count));
+    const observe = sessionSocketStubState.executionRunHandlerContext.onExecutionRunPublicStateUpdated as
+      ((run: Record<string, unknown>) => void);
+    try {
+      observe({ runId: 'interactive', status: 'running', runClass: 'long_lived' });
+      observe({ runId: 'interactive', status: 'running', runClass: 'long_lived', turnInFlight: false });
+      observe({ runId: 'interactive', status: 'running', runClass: 'long_lived', turnInFlight: true });
+      observe({ runId: 'bounded', status: 'running', runClass: 'bounded', turnInFlight: false });
+      observe({ runId: 'interactive', status: 'running', runClass: 'long_lived', turnInFlight: false });
+      observe({ runId: 'bounded', status: 'succeeded', runClass: 'bounded', turnInFlight: false });
+      expect(activeCounts).toEqual([0, 1, 0, 1, 2, 1, 0]);
+    } finally {
+      unsubscribe();
+      await client.close();
+    }
+  });
+
   it('publishes a terminal zero after execution-run activity finishes', async () => {
     const client = createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({ id: 's1', metadata: createTestMetadata({ path: '/tmp/project' }) }));
     const activeCounts: number[] = [];
@@ -1298,8 +1325,7 @@ describe('ApiSessionClient execution-run backend wiring', () => {
       id: 's1',
       metadata: createTestMetadata({ path: '/tmp/project' }),
     });
-    let persistedMetadata = session.metadata;
-    let persistedMetadataVersion = session.metadataVersion;
+    let persistedMetadata: unknown = session.metadata;
     sessionSocketStubState.fetchSessionByIdCompatMock.mockResolvedValue({
       ...session,
       metadataLayoutVersion: 0,
@@ -1309,22 +1335,20 @@ describe('ApiSessionClient execution-run backend wiring', () => {
       dataEncryptionKey: null,
     });
 
-    sessionSocketStubState.sessionSocketStub = createApiSessionSocketStub({
-      id: 'session-socket',
-      connected: true,
-      emitWithAck: async (event, payload) => {
-        if (event !== 'update-metadata') {
-          return { result: 'success', version: persistedMetadataVersion, metadata: JSON.stringify(persistedMetadata) };
-        }
-        const nextMetadata = JSON.parse(String((payload as { metadata?: string }).metadata ?? 'null'));
-        persistedMetadata = nextMetadata;
-        persistedMetadataVersion += 1;
-        return {
-          result: 'success' as const,
-          version: persistedMetadataVersion,
-          metadata: JSON.stringify(nextMetadata),
-        };
-      },
+    // Ordinary owner writes migrate this supported predecessor through the real
+    // tuple owner; this fixture substitutes only the Home's HTTP CAS boundary.
+    sessionSocketStubState.patchSessionMetadataEnvelopeTupleMock.mockImplementation(async (request) => {
+      const patch = SessionMetadataOwnerMigrationPatchV1Schema.parse(request.patch);
+      if (patch.target.ownerMetadata.t !== 'plain') throw new Error('Expected plain owner metadata');
+      persistedMetadata = projectSessionOwnerCompatibilityViewV1({
+        sharedMetadata: JSON.parse(patch.target.sharedMetadata.ciphertext),
+        ownerMetadata: patch.target.ownerMetadata.v,
+      });
+      return {
+        success: true, metadataLayoutVersion: 1,
+        sharedMetadata: { version: patch.source.metadata.version + 1 },
+        agentState: { version: patch.source.agentState.version + 1 },
+      };
     });
 
     const client = createTestApiSessionClient(ApiSessionClient, 'tok', session, {
@@ -1371,13 +1395,14 @@ describe('ApiSessionClient execution-run backend wiring', () => {
       });
     });
 
-    expect(sessionSocketStubState.sessionSocketStub.emitWithAck).toHaveBeenCalledWith(
-      'update-metadata',
-      expect.objectContaining({
-        sid: 's1',
-        expectedVersion: 0,
+    expect(sessionSocketStubState.patchSessionMetadataEnvelopeTupleMock).toHaveBeenCalledWith({
+      token: 'tok', sessionId: 's1',
+      patch: expect.objectContaining({
+        mode: 'owner_migration',
+        source: expect.objectContaining({ metadataLayoutVersion: 0, metadata: { version: 0, ciphertext: JSON.stringify(session.metadata) } }),
       }),
-    );
+    });
+    expect(client.getMetadataSnapshot()).toMatchObject({ voiceAgentRunV1: { runId: 'run_voice_1' } });
 
     await client.close();
   });

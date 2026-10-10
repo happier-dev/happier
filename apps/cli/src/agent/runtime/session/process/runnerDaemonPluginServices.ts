@@ -75,6 +75,8 @@ import {
     RunnerDaemonExternalSessionsTranscriptResultV1Schema,
     RunnerDaemonManagedProviderBootstrapV1Schema,
     RunnerDaemonManagedProviderRetentionV1Schema,
+    RunnerDaemonSharedGatewayHttpBindingV1Schema,
+    type RunnerDaemonSharedGatewayHttpBindingV1,
     RunnerDaemonPluginServiceSubscriptionEventV1Schema,
     decodeRunnerDaemonPluginServiceWireValueV1,
     encodeRunnerDaemonPluginServiceWireValueV1,
@@ -427,6 +429,7 @@ export async function prepareRunnerDaemonPluginServices(
         }>): PluginServices['managedServices'];
         onManagedProviderStarted?(input: Readonly<{
             bootstrap: RunnerDaemonManagedProviderBootstrapV1;
+            readSharedGatewayAccess(options?: Readonly<{ signal?: AbortSignal }>): Promise<RunnerDaemonSharedGatewayHttpBindingV1>;
             materialize(input: Readonly<{
                 endpointUrl: string;
                 credentialPlaceholder: string | null;
@@ -468,6 +471,7 @@ export async function prepareRunnerDaemonPluginServices(
     ): RunnerDaemonManagedProviderRetentionV1 => Object.freeze({
         v: 1 as const,
         scope: bootstrap.scope,
+        ...(bootstrap.custody ? { custody: bootstrap.custody } : {}),
         providerPluginHardRevocationRevisionAtAdmission:
             bootstrap
                 .providerPluginHardRevocationRevisionAtAdmission,
@@ -528,6 +532,7 @@ export async function prepareRunnerDaemonPluginServices(
                         .providerPluginHardRevocationRevisionAtAdmission
                         !== requestedRetention
                             .providerPluginHardRevocationRevisionAtAdmission
+                    || snapshot.managedProvider.custody !== requestedRetention.custody
                 )
             ) {
                 throw new PluginError({
@@ -2712,6 +2717,17 @@ export async function prepareRunnerDaemonPluginServices(
             const bootstrap = prepared.managedProvider;
             await input.onManagedProviderStarted({
                 bootstrap,
+                readSharedGatewayAccess: async (options) => {
+                    const currentBootstrap = prepared.managedProvider;
+                    if (currentBootstrap?.custody !== 'daemonShared') {
+                        throw new PluginError({ code: 'plugin_services_managed_provider_authority_unavailable', message: 'Shared Provider access is unavailable' });
+                    }
+                    return RunnerDaemonSharedGatewayHttpBindingV1Schema.parse(await dispatch({
+                        kind: 'plugin_services.managed_provider.read_shared_gateway_access_v1',
+                        requestId: randomUUID(), invocationId: input.invocationId,
+                        retained: retainedFromBootstrap(currentBootstrap),
+                    }, options));
+                },
                 registerLaunchEnvironmentTransformer(transform) {
                     if (launchEnvironmentTransformer) {
                         throw new PluginError({

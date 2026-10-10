@@ -164,6 +164,7 @@ export function buildWorkflowSessionInputAdmissionV2(
       runId: workflow.runId,
       invocationRecordId: workflow.invocationRecordId,
       ...(workflow.workDepth !== undefined ? { workDepth: workflow.workDepth } : {}),
+      ...(workflow.stepOrdinal !== undefined ? { stepOrdinal: workflow.stepOrdinal } : {}),
     }),
     request: SessionInputRequestV2Schema.parse({
       v: 2,

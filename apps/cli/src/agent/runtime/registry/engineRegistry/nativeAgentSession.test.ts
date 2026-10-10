@@ -86,6 +86,7 @@ import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { createRuntimeOverrideSynchronizers, createRuntimeOverrideTarget } from '@/agent/runtime/createRuntimeOverrideSynchronizers';
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
 import {
     resetActiveAccountSettingsSnapshotForTests,
     setActiveAccountSettingsSnapshot,
@@ -105,6 +106,7 @@ import { buildUsageEventIngestRequest } from '@/usage/buildUsageEventIngestReque
 import type { RuntimeTurnPromptMeta } from '@/agent/runtime/turns/runtimeTurnOperations';
 import { createPluginTerminalHostService } from '@/plugins/runtime/context/terminalHost';
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
+import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import { resolveCurrentSessionUiBinding } from '@/session/presentation/currentSessionUiBindings';
 import {
     HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY,
@@ -155,6 +157,13 @@ import { withCodexNativeAttachFixture } from '../../../../../../../packages/plug
 import { managedServiceHandle } from '../../../../../../../packages/plugins/opencode/src/agent/runtime/server/assembly.managedServices.testkit';
 import { resolveCodexAttachTarget, createCodexAttachArgs, resolveCodexAttachReachability } from '../../../../../../../packages/plugins/codex/src/agent/surfaces/sessions/attachDescriptor';
 import { resolveOpenCodeAttachTarget, createOpenCodeAttachArgs, resolveOpenCodeAttachReachability } from '../../../../../../../packages/plugins/opencode/src/agent/surfaces/sessions/attach/descriptor';
+import { createNativeSessionClientTestPort, createExternalContributionFixtures, createLease, createSessionHostServiceOwners } from './nativeAgentSession.testkit';
+import { createClaudeExternalSessionsContribution } from '../../../../../../../packages/plugins/claude/src/agent/surfaces/sessions/external/contribution';
+import { PLUGIN_MANIFEST as CLAUDE_ACCOUNTING_MANIFEST } from '../../../../../../../packages/plugins/claude/src/manifest';
+import { createBoundedAgentExternalSessionsContribution } from '@/session/external/agentExternalSessionsInvocation';
+import { createAgentExternalSessionsExecutionSurface } from '@/agent/runtime/registry/agentExternalSessionsExecutionSurface';
+import { resolveExternalSessionSourceFromAgentProjection } from '@/plugins/projection/registry/externalSessionSources';
+import { deriveNativeUsageAccountingIdentity } from '@/usage/collector/nativeUsageAccountingIdentity';
 
 vi.mock('node:fs', async (importOriginal) => {
     const fs = await importOriginal<typeof import('node:fs')>();
@@ -510,163 +519,9 @@ function managedProviderBindingMetadata(
     };
 }
 
-function createNativeSessionClientTestPort(
-    sessionId: string,
-    overrides: Readonly<Record<string, unknown>> = {},
-) {
-    let agentState: Record<string, unknown> = {};
-    let metadata: Record<string, unknown> = {
-        path: '/tmp/test', host: 'test', homeDir: '/tmp', happyHomeDir: '/tmp/.happier',
-        happyLibDir: '/tmp/.happier/lib', happyToolsDir: '/tmp/.happier/tools',
-    };
-    const handlers = new Map<string, (input: unknown) => unknown>();
-    const metadataListeners = new Set<() => void>();
-    const updateMetadata = async (
-        updater: (state: Record<string, unknown>) => Record<string, unknown>,
-    ) => {
-        metadata = updater(metadata);
-        for (const listener of metadataListeners) listener();
-    };
-    return {
-        sessionId,
-        rpcHandlerManager: {
-            registerHandler: (method: string, handler: (input: unknown) => unknown) => handlers.set(method, handler),
-            invokeLocal: async (method: string, input: unknown) => await handlers.get(method)?.(input),
-        },
-        updateAgentState: async (updater: (state: Record<string, unknown>) => Record<string, unknown>) => {
-            agentState = updater(agentState);
-        },
-        updateMetadata,
-        updateMetadataAsCurrentPublisher: updateMetadata,
-        getMetadataSnapshot: () => metadata,
-        getAgentStateSnapshot: () => agentState,
-        readSessionTurnsProjection: async () => null,
-        on: (event: string, listener: () => void) => {
-            if (event === 'metadata-updated') metadataListeners.add(listener);
-        },
-        off: (event: string, listener: () => void) => {
-            if (event === 'metadata-updated') metadataListeners.delete(listener);
-        },
-        ...overrides,
-    };
-}
-
 function readHostServices(context: AgentSessionRuntimeContext): HostPluginServices {
     // The public Agent context deliberately omits host-only session services.
     return context.services as HostPluginServices;
-}
-
-function createExternalContributionFixtures(
-    agentId: string,
-    sessionOpenKinds: readonly ('create' | 'resume' | 'fork')[] = ['create', 'resume'],
-) {
-    return {
-        backend: {
-            id: agentId,
-            agentId,
-            provenance: 'external',
-            source: { kind: 'path' },
-            definition: { kindVersion: 1, id: agentId, agentId },
-            pluginId: 'acme.agent-plugin',
-        },
-        agent: {
-            id: agentId,
-            provenance: 'external',
-            source: { kind: 'path' },
-            definition: { kindVersion: 1, id: agentId, ownedBackendIds: [agentId] },
-            richDefinition: {
-                provenance: 'external',
-                definition: {
-                    id: agentId,
-                    title: { key: 'agents.acme.title', fallback: 'Acme Agent' },
-                    description: { key: 'agents.acme.description', fallback: 'Acme Agent' },
-                    runtime: { kind: 'custom' },
-                    primary: 'sessions',
-                    capabilities: {
-                        sessions: {
-                            open: [...sessionOpenKinds],
-                            delivery: new Array<'newTurn' | 'steer' | 'followUp'>('newTurn'),
-                            cancel: false,
-                        },
-                    },
-                },
-            },
-            pluginId: 'acme.agent-plugin',
-        },
-    } satisfies Readonly<{
-        backend: ResolvedAgentRuntimeContribution;
-        agent: ResolvedAgentContribution;
-    }>;
-}
-
-function createLease(agentId: string): AgentRuntimeRegistrationLease {
-    return {
-        pluginId: 'acme.agent-plugin',
-        pluginVersion: '1.0.0',
-        agentId,
-        localAgentId: agentId,
-        occurrenceId: 'native-agent-session-fixture',
-        sourceCustody: {
-            kind: 'development',
-            registeredRootId: 'native-agent-session-fixture',
-        },
-        immutableGenerationId: null,
-        hasPrimaryRuntime: true,
-        isCurrent: () => true,
-        retirementSignal: new AbortController().signal,
-        async createAgentRuntimeSurfaceInvocationContext() {
-            throw new Error('Session adapter fixture should not create an Agent runtime surface invocation context');
-        },
-        createRuntime: async () => { throw new Error('not used by the session adapter'); },
-    };
-}
-
-function createSessionHostServiceOwners(): NativeAgentSessionHostServiceOwners {
-    return Object.freeze({
-        features: Object.freeze({ isEnabled: () => false }),
-        sessionHooks: Object.freeze({
-            startServer: async () => Object.freeze({
-                port: 4312,
-                stop: () => undefined,
-                dispose: async () => undefined,
-            }),
-            resolveForwarderAssets: async () => Object.freeze({
-                nodeExecutable: '/runtime/node',
-                sessionForwarderScript: '/runtime/session-forwarder.cjs',
-                permissionForwarderScript: '/runtime/permission-forwarder.cjs',
-            }),
-            createPluginDir: async () => '/tmp/plugin-dir',
-            disposePluginDir: async () => undefined,
-            publishProviderTranscript: async () => undefined,
-        }),
-        transcripts: Object.freeze({
-            fileFollow: Object.freeze({
-                follow: async () => Object.freeze({
-                    id: 'follow-1',
-                    drainNow: async () => undefined,
-                    close: async () => undefined,
-                }),
-            }),
-        }),
-        accountUsage: Object.freeze({
-            resolveSourceContext: async () => null,
-            recordSnapshot: async () => ({ status: 'unavailable' as const, reason: 'daemon_unavailable' as const }),
-            adoptProvisionalRecord: async () => ({ status: 'unavailable' as const, reason: 'daemon_unavailable' as const }),
-        }),
-        mcp: Object.freeze({ resolveForSession: async () => Object.freeze([]) }),
-        toolExecution: Object.freeze({
-            before: async (
-                request: Parameters<
-                    NativeAgentSessionHostServiceOwners['toolExecution']['before']
-                >[0],
-            ) => ({
-                status: 'continue' as const,
-                input: request.input,
-            }),
-            observeAfter: async () => undefined,
-        }),
-        dispose: async () => undefined,
-    });
 }
 
 function createWorkflowRunSystemRecordPayload() {
@@ -729,7 +584,7 @@ function createAgentActivityHeadline() {
 }
 
 describe('native Agent session host adapter', () => {
-    it.each(['fresh', 'resume', 'respawn', 'prompt-failure', 'claim-rejected'] as const)(
+    it.each(['fresh', 'resume', 'respawn', 'runtime-recovery', 'runtime-recovery-authority-missing', 'prompt-failure', 'claim-rejected'] as const)(
         'claims the real runner bootstrap before startup contributions (%s)', async (scenario) => {
         await withTempDir('native-runner-startup-authority-', async (temporaryDirectory) => {
             const directory = await realpath(temporaryDirectory);
@@ -819,7 +674,7 @@ describe('native Agent session host adapter', () => {
                 });
                 if (!plan.config.createSessionRuntime) throw new Error('Expected native Session construction');
                 const promptFailure = new Error('startup contribution failed');
-                const create = plan.config.createSessionRuntime({
+                const hostRuntimeParams = {
                     directory, metadata: {}, machineId: 'machine-1', session: createNativeSessionClientTestPort(sessionId),
                     transcriptSession: {}, messageBuffer: {}, mcpServers: {}, permissionHandler: {},
                     getPermissionMode: () => 'default', setThinking: () => undefined, memoryRecallGuidanceEnabled: false,
@@ -828,7 +683,8 @@ describe('native Agent session host adapter', () => {
                         if (scenario === 'prompt-failure') throw promptFailure;
                         return 'Use the claimed startup instructions.';
                     },
-                } as never);
+                };
+                const create = plan.config.createSessionRuntime(hostRuntimeParams as never);
                 if (scenario === 'claim-rejected') {
                     await expect(create).rejects.toThrow('Runner Agent canonical session authority is unavailable');
                     expect(events).toEqual([]);
@@ -841,6 +697,23 @@ describe('native Agent session host adapter', () => {
                     expect(created.operations.readSessionStartupInstructions?.()?.instructions).toBe('Use the claimed startup instructions.');
                     expect(events).toEqual(['claim', 'daemon-prompt']);
                     await created.operations.resetOrDisposeRuntime();
+                    if (scenario === 'runtime-recovery' || scenario === 'runtime-recovery-authority-missing') {
+                        expect(bootstrap.identity.isCurrent()).toBe(false);
+                        if (scenario === 'runtime-recovery-authority-missing') {
+                            await rm(issued.authorization.authorityFilePath);
+                            await expect(plan.config.createSessionRuntime(hostRuntimeParams as never))
+                                .rejects.toThrow('Runner Agent canonical session authority is unavailable');
+                            expect(bootstrap.identity.isCurrent()).toBe(false);
+                            expect(events).toEqual(['claim', 'daemon-prompt']);
+                            return;
+                        }
+                        const recovered = await plan.config.createSessionRuntime(hostRuntimeParams as never);
+                        expect(bootstrap.identity.isCurrent()).toBe(true);
+                        expect(recovered.operations.readSessionStartupInstructions?.()?.instructions)
+                            .toBe('Use the claimed startup instructions.');
+                        expect(events).toEqual(['claim', 'daemon-prompt', 'claim', 'daemon-prompt']);
+                        await recovered.operations.resetOrDisposeRuntime('session_closed');
+                    }
                 }
             } finally {
                 generation.abort();
@@ -1669,12 +1542,13 @@ describe('native Agent session host adapter', () => {
             readMetadata: () => ({ work: { sessionRolesV1: {
                 roleId: 'startup-role', overrides: {}, sessionRoles: {}, notes: '',
             } } }),
-            readOrganization: async () => ({}), readSettings: () => null,
+            readOrganization: async () => ({}),
+            readAccountRoleOverrides: () => ({ status: 'ready', overrides: {} }),
             readDefaultEngine: () => ({ agentTargetKey: buildBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' }) }),
-            readRoleSources: async () => [{
+            readRoleSources: async () => ({ status: 'ready', diagnostics: [], entries: [{
                 roleId: 'startup-role', role: { ...BUILT_IN_ROLES_V1.builder, workspaceWrites: roleWorkspaceWrites },
                 shared: false, viewOnly: false, migratedFromV0_2: false,
-            }],
+            }] }),
         });
         await roleContext.resolvePromptContext();
         expect(roleContext.readWorkspaceWrites()).toBe('allow');
@@ -6441,6 +6315,61 @@ describe('native Agent session host adapter', () => {
         await created.operations.resetOrDisposeRuntime();
     });
 
+    it('requires an own credential selection before a Run can use direct Session custody', async () => {
+        const agentId = 'acme-direct-run-custody';
+        const contributions = createExternalContributionFixtures(agentId);
+        const nativeSession: AgentSessionRuntime = {
+            send: async () => ({ status: 'admitted' }),
+            watch: () => ({ dispose: () => undefined }),
+            dispose: async () => undefined,
+        };
+        // Runner credential preparation is an out-of-process custody boundary.
+        const prepare = vi.fn<NonNullable<Parameters<typeof createNativeAgentRuntimeSessionPlan>[0]['prepareTeamCredentialProviderBinding']>>(async () => ({
+            providerBinding: {
+                source: { kind: 'team_resource', resourceId: 'resource-direct', resourceRevision: 3 },
+                model: { id: 'team-model', name: 'Team model' },
+                upstream: { protocol: 'openai-responses', normalizedUrl: 'https://provider.example/v1', credential: 'apiKey' },
+                materialization: { v: 1, kind: 'spawnEnv' },
+            },
+            environmentOverlay: [], additionalRedactionValues: [], cleanup: () => undefined,
+        }));
+        const plan = await createNativeAgentRuntimeSessionPlan({
+            runtime: { sessions: { open: async () => nativeSession } },
+            lease: createLease(agentId), backend: contributions.backend, agent: contributions.agent,
+            createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
+            prepareTeamCredentialProviderBinding: prepare,
+            sessionInput: buildPluginSessionBindingInput({
+                credentials, directory: `/tmp/${agentId}`, backendTarget: { kind: 'backend', backendId: agentId },
+                modelSelection: { v: 1, updatedAt: 1, ref: { agentTargetKey: `backend:${agentId}`, providerConnectionId: null, modelId: 'team-model' } },
+                teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: 'resource-direct', expectedResourceRevision: 3, deliveryMode: 'direct', teamId: 'team-1' }],
+            }),
+        });
+        if (!plan.config.createSessionRuntime) throw new Error('expected a session runtime factory');
+        const created = await plan.config.createSessionRuntime({
+            directory: `/tmp/${agentId}`, metadata: {}, machineId: 'machine-1',
+            session: createNativeSessionClientTestPort('session-direct-run-custody'),
+            transcriptSession: {}, messageBuffer: {}, mcpServers: {}, permissionHandler: {},
+            getPermissionMode: () => 'default', setThinking: () => undefined, memoryRecallGuidanceEnabled: false,
+        } as never);
+        try {
+            const prepareRun = created.operations.prepareRunTeamCredentialProviderBinding;
+            if (!prepareRun) throw new Error('expected Run credential controls');
+            await expect(prepareRun({ runId: 'run-inherited', agentId, resourceId: 'resource-direct', modelId: 'team-model' }))
+                .rejects.toMatchObject({ code: 'provider_run_credential_selection_required' });
+            expect(prepare.mock.calls.map(([request]) => request.consumer?.kind ?? 'session')).toEqual(['session']);
+            await expect(prepareRun({
+                runId: 'run-own-selection', agentId, resourceId: 'resource-direct', modelId: 'team-model',
+                selection: { kind: 'team_credential_provider_model', teamId: 'team-1', resourceId: 'resource-direct', expectedResourceRevision: 3, deliveryMode: 'direct', agentTargetKey: `backend:${agentId}`, modelId: 'team-model' },
+            })).resolves.toMatchObject({ providerBinding: { source: { resourceId: 'resource-direct' } } });
+            expect(prepare.mock.calls.at(-1)?.[0]).toMatchObject({
+                consumer: { kind: 'execution_run', executionRunId: 'run-own-selection' },
+                executionRunSelection: { teamId: 'team-1', deliveryMode: 'direct' },
+            });
+        } finally {
+            await created.operations.resetOrDisposeRuntime();
+        }
+    });
+
     it.each([
         {
             label: 'Provider-selected model without materialization',
@@ -7001,6 +6930,33 @@ describe('native Agent session host adapter', () => {
             await owners.dispose();
             await publications.dispose();
         }
+    });
+
+    it('refreshes memory write exposure from the live host Session metadata', async () => {
+        const session = createMutableApiSessionClientFixture({ sessionId: 'tools-memory-session',
+            metadata: createTestMetadata({ work: { memoryEnabled: true } }) });
+        const publications = createNativeAgentSessionPublications({ agentId: 'acme-tools-memory-agent',
+            session: null, signal: new AbortController().signal, isCurrent: () => true, supportsInFlightSteer: false });
+        const services = createNativeAgentSessionHostServices({
+            owners: createSessionHostServiceOwners(), agentId: 'acme-tools-memory-agent',
+            sessionId: session.sessionId, directory: '/tmp/acme-tools-memory-agent',
+            signal: new AbortController().signal, isCurrent: () => true,
+            session, publications: publications.services, readToolExecutionCapability: () => null,
+            toolsDelivery: 'shell_bridge', accountSettings: { actionsSettingsV1: { v: 1, actions: {
+                'memory.remember': { toolExposureModes: { agent: 'direct' } },
+                'memory.update': { toolExposureModes: { agent: 'direct' } },
+                'memory.forget': { toolExposureModes: { agent: 'direct' } },
+            } } },
+        });
+        const names = async () => (await services.happierTools?.resolveNativeBridge({ systemPrompt: '' }))?.tools.map(tool => tool.name) ?? [];
+        try {
+            expect(await names()).toEqual(expect.arrayContaining(['memory_remember', 'memory_update', 'memory_forget']));
+            await session.updateMetadata(metadata => ({ ...metadata, work: { ...metadata.work, memoryEnabled: false } }));
+            for (const name of ['memory_remember', 'memory_update', 'memory_forget']) expect(await names()).not.toContain(name);
+            expect(await names()).toContain('change_title');
+            await session.updateMetadata(metadata => ({ ...metadata, work: { ...metadata.work, memoryEnabled: true } }));
+            expect(await names()).toContain('memory_remember');
+        } finally { await publications.dispose(); }
     });
 
     it('does not advertise feature-gated Action tools when the exact Session Home disables them', async () => {
@@ -9139,6 +9095,27 @@ describe('native Agent session host adapter', () => {
         expect(JSON.stringify(events)).not.toContain('SPOOFED_NATIVE_AUTH_AGENT');
     });
 
+    it('preserves safe qualified quota provenance for public lifecycle listeners while dropping private evidence', () => {
+        const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
+        // The plugin SDK runtime is the genuine boundary; the host projection remains real.
+        const session: AgentSessionRuntime = { send: async () => ({ status: 'admitted' }), watch(listener) { listeners.add(listener); return { dispose() { listeners.delete(listener); } }; }, dispose() {} };
+        const runtime = createNativeAgentSessionOperations(session, 'quota-session');
+        const events: AgentSessionRuntimeEvent[] = [];
+        runtime.subscribeRuntimeEvents(event => { events.push(event); });
+        for (const listener of listeners) listener({ kind: 'turn-start', sequence: 1, sessionId: 'quota-session', emittedAtMs: 100, turnId: 'quota-turn', startedBy: 'provider' });
+        for (const listener of listeners) listener({ kind: 'turn-failed', sequence: 2, sessionId: 'quota-session', emittedAtMs: 200, turnId: 'quota-turn', diagnostic: {
+            code: 'provider_usage_limit', severity: 'error', message: 'Usage Limit Reached', details: { v: 1, source: 'usage_limit', providerPrivate: 'secret-raw-evidence', runtimeAuthClassification: {
+                kind: 'usage_limit', limitCategory: 'usage_limit', serviceId: 'happier.agent.antigravity/antigravity-account', profileId: 'selected-profile', groupId: 'selected-pool',
+                groupGeneration: 4, expectedCredentialRevision: 'csr_abcdefghijklmnopqrstuv', resetsAtMs: null, retryAfterMs: null, quotaScope: 'account', planType: null,
+                failingAccessTokenFingerprint: 'secret-token-fingerprint', rateLimits: { message: 'secret-provider-detail' }, source: 'stable_provider_message',
+            } },
+        } });
+        const event = events.find(event => event.kind === 'turn-failed');
+        expect(event).toMatchObject({ diagnostic: { details: { runtimeAuthClassification: { serviceId: 'happier.agent.antigravity/antigravity-account',
+            profileId: 'selected-profile', groupId: 'selected-pool', groupGeneration: 4, expectedCredentialRevision: 'csr_abcdefghijklmnopqrstuv' } } } });
+        expect(JSON.stringify(event)).not.toContain('secret-');
+    });
+
     it('preserves bounded native diagnostics while redacting private detail bags in public runtime listeners', async () => {
         const providerMessageSentinel = 'NATIVE_PRIVATE_MESSAGE_SENTINEL: user transcript';
         const providerAdditionalDetailsSentinel = 'NATIVE_PRIVATE_DETAILS_SENTINEL: startup instructions';
@@ -10613,6 +10590,43 @@ describe('native Agent session host adapter', () => {
         }
     });
 
+    it('forwards child tool output without consuming the foreground tool execution', async () => {
+        let publish!: (event: AgentSessionRuntimeEvent) => void;
+        const session: AgentSessionRuntime = {
+            send: async () => ({ status: 'admitted' }),
+            watch(listener) { publish = listener; return { dispose() {} }; },
+            dispose: vi.fn(),
+        };
+        const observeAfter = vi.fn(async () => undefined);
+        const runtime = createNativeAgentSessionOperations(session, 'session-1', undefined, undefined,
+            undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+            undefined, undefined, { capability: 'observable', observeAfter });
+        const events: AgentSessionRuntimeEvent[] = [];
+        runtime.subscribeRuntimeEvents((event) => events.push(event));
+        let sequence = 0;
+        const emit = (event: Record<string, unknown>) => publish(AgentSessionRuntimeEventSchema.parse({
+            sessionId: 'session-1', emittedAtMs: 1, sequence: ++sequence, ...event,
+        }));
+        emit({ kind: 'turn-start', turnId: 'turn-1', startedBy: 'provider' });
+        emit({ kind: 'tool-call', turnId: 'turn-1', toolCallId: 'call-1', toolName: 'Bash', input: { command: 'foreground' } });
+        emit({ kind: 'tool-call', turnId: 'turn-1', sidechainId: 'child-1', toolCallId: 'call-1', toolName: 'Bash', input: { command: 'child' } });
+        emit({ kind: 'tool-result', turnId: 'turn-1', sidechainId: 'child-1', toolCallId: 'call-1', output: 'child' });
+        await Promise.resolve();
+        expect(events.filter((event) => event.kind === 'tool-result')).toHaveLength(1);
+        expect(observeAfter).not.toHaveBeenCalled();
+        emit({ kind: 'tool-result', turnId: 'turn-1', toolCallId: 'call-1', output: 'foreground' });
+        await vi.waitFor(() => expect(observeAfter).toHaveBeenCalledOnce());
+        expect(observeAfter).toHaveBeenCalledWith(expect.objectContaining({
+            input: { command: 'foreground' }, outcome: { status: 'succeeded', result: 'foreground' },
+        }));
+        emit({ kind: 'turn-complete', turnId: 'turn-1' });
+        emit({ kind: 'tool-call', toolCallId: 'root-call', toolName: 'SubAgent', input: {} });
+        emit({ kind: 'tool-result', toolCallId: 'root-call', output: {} });
+        expect(events.filter((event) => event.kind === 'tool-result')).toHaveLength(3);
+        expect(observeAfter).toHaveBeenCalledOnce();
+        await runtime.resetOrDisposeRuntime('runtime_recovery');
+    });
+
     it('observes canonical Agent tool results once with their correlated accepted input', async () => {
         const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
         const session: AgentSessionRuntime = {
@@ -11011,6 +11025,7 @@ describe('native Agent session host adapter', () => {
         expect(deliveryOutcomes).toEqual([{
             type: 'input-accepted',
             localId: 'queue-local-1',
+            acceptedAtMs: 3,
             userMessageSeq: 41,
             userMessageSeqs: [41],
             delivery: { kind: 'newTurn', turnId: 'turn-1' },
@@ -11178,6 +11193,7 @@ describe('native Agent session host adapter', () => {
         expect(deliveryOutcomes).toEqual([{
             type: 'input-accepted',
             localId: opaqueLocalId,
+            acceptedAtMs: 1,
             userMessageSeq: 42,
             delivery: { kind: 'newTurn', turnId },
         }]);
@@ -11400,6 +11416,7 @@ describe('native Agent session host adapter', () => {
         expect(deliveryOutcomes).toEqual([{
             type: 'input-accepted',
             localId: 'queue-local-start',
+            acceptedAtMs: 1,
             userMessageSeq: null,
             delivery: { kind: 'newTurn', turnId: 'turn-steer-unknown' },
         }, {
@@ -11506,6 +11523,7 @@ describe('native Agent session host adapter', () => {
         expect(deliveryOutcomes).toEqual([{
             type: 'input-accepted',
             localId: 'queue-local-steer-throw-start',
+            acceptedAtMs: 1,
             userMessageSeq: null,
             delivery: { kind: 'newTurn', turnId: 'turn-steer-throw' },
         }, {
@@ -11575,6 +11593,7 @@ describe('native Agent session host adapter', () => {
         expect(deliveryOutcomes).toEqual([{
             type: 'input-accepted',
             localId: 'queue-local-delivery-failed',
+            acceptedAtMs: 1,
             userMessageSeq: null,
             delivery: { kind: 'newTurn', turnId: 'turn-delivery-failed' },
         }, {
@@ -11623,6 +11642,7 @@ describe('native Agent session host adapter', () => {
         expect(deliveryOutcomes).toEqual([{
             type: 'input-accepted',
             localId: 'queue-local-accepted-reset',
+            acceptedAtMs: 1,
             userMessageSeq: null,
             delivery: { kind: 'newTurn', turnId: 'turn-accepted-reset' },
         }]);
@@ -12505,6 +12525,9 @@ describe('native Agent session host adapter', () => {
 
 describe('native Agent terminal transcript follow admission (ES-PEP-03/ES-PEP-05)', () => {
     type TerminalFollowHarness = Readonly<{
+        runtime: Awaited<ReturnType<
+            NonNullable<Awaited<ReturnType<typeof createNativeAgentRuntimeSessionPlan>>['config']['createSessionRuntime']>
+        >>['operations'];
         modeLoop: NonNullable<Awaited<ReturnType<
             NonNullable<Awaited<ReturnType<typeof createNativeAgentRuntimeSessionPlan>>['config']['createSessionRuntime']>
         >>['terminalRemoteModeLoop']>;
@@ -12609,6 +12632,10 @@ describe('native Agent terminal transcript follow admission (ES-PEP-03/ES-PEP-05
         }));
         const open = vi.fn(async () => ({
             send: vi.fn(async () => ({ status: 'admitted' as const })),
+            prepareTerminalPresentation: async () => ({
+                kind: 'terminal_launch' as const,
+                plan: { argv: ['--terminal'] },
+            }),
             watch(listener: (event: AgentSessionRuntimeEvent) => void) {
                 listener({
                     sequence: 1,
@@ -12711,12 +12738,32 @@ describe('native Agent terminal transcript follow admission (ES-PEP-03/ES-PEP-05
             memoryRecallGuidanceEnabled: false,
             runWithTerminalModelSelection,
         } as never);
-        const modeLoop = created.terminalRemoteModeLoop;
+        const modeLoop = (await created.prepareStartupPresentation?.())?.terminalRemoteModeLoop
+            ?? created.terminalRemoteModeLoop;
         if (!modeLoop) throw new Error('expected a terminal remote mode loop');
         created.operations.subscribeRuntimeEvents(() => undefined);
         await vi.waitFor(() => expect(open).toHaveBeenCalled());
-        return { modeLoop, terminalLaunch, executeProviderSessionFollow, executeFollow };
+        return { runtime: created.operations, modeLoop, terminalLaunch, executeProviderSessionFollow, executeFollow };
     }
+
+    it('keeps the remote session loop alive across a native runtime reopen', async () => {
+        const harness = await createTerminalFollowHarness({
+            agentId: 'acme-reopen-agent',
+            providerSessionFollow: async () => ({ status: 'unavailable' }),
+            launch: async () => ({ type: 'process_exited', exitCode: 0 }),
+        });
+        let remoteEnded = false;
+        const remote = harness.modeLoop.runRemote().then(() => { remoteEnded = true; });
+        try {
+            await harness.runtime.resetOrDisposeRuntime('session_closed', { kind: 'create' });
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(remoteEnded).toBe(false);
+        } finally {
+            await harness.runtime.resetOrDisposeRuntime('session_closed');
+            await remote;
+        }
+        expect(remoteEnded).toBe(true);
+    });
 
     it('fails a configured Agent closed instead of following through the generic provider-session route', async () => {
         const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
@@ -13229,9 +13276,124 @@ describe('native Agent session usage bridge — full canonical UsageObservation 
         observation: UsageObservation;
         turnId: string | null;
         externalKey: string;
+        metadata?: Record<string, unknown>;
     };
 
-    function createUsagePublishHarness() {
+    it('correlates ordinary fresh nonterminal Session usage with its admitted native accounting source', async () => {
+        await withTempDir('fresh-native-accounting-', async (directory) => {
+            const configDir = join(directory, 'claude');
+            const projectDir = join(configDir, 'projects', 'native-project');
+            await mkdir(projectDir, { recursive: true });
+            await writeFile(join(projectDir, 'native-session.jsonl'), JSON.stringify({
+                type: 'assistant', sessionId: 'native-session', uuid: 'native-record', cwd: directory,
+                timestamp: '2026-01-01T00:00:00.000Z', message: {
+                    id: 'native-inference', model: 'claude-sonnet-4-20250514', content: [{ type: 'text', text: 'paid response' }],
+                    usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 3, cache_creation_input_tokens: 2 },
+                },
+            }) + '\n');
+            const declaration = CLAUDE_ACCOUNTING_MANIFEST.contributes.agents.find((agent) => agent.id === 'claude');
+            if (!declaration?.surfaces?.externalSession) throw new Error('Expected canonical Claude source declaration');
+            expect(declaration.surfaces.externalSession.sources.every((source) => !source.terminalFollow)).toBe(true);
+            const base = createExternalContributionFixtures('claude');
+            const agent = {
+                ...base.agent, pluginId: CLAUDE_ACCOUNTING_MANIFEST.id, provenance: 'first_party', source: { kind: 'bundled' },
+                identity: { pluginId: CLAUDE_ACCOUNTING_MANIFEST.id, localId: 'claude' },
+                richDefinition: { ...base.agent.richDefinition, provenance: 'first_party', definition: {
+                    ...base.agent.richDefinition.definition, surfaces: { externalSession: declaration.surfaces.externalSession },
+                } },
+            } satisfies ResolvedAgentContribution;
+            const lease = { ...createLease('claude'), pluginId: CLAUDE_ACCOUNTING_MANIFEST.id };
+            const bounded = createBoundedAgentExternalSessionsContribution({
+                contribution: createClaudeExternalSessionsContribution({ env: { CLAUDE_CONFIG_DIR: configDir } }),
+                identity: { pluginId: lease.pluginId, agentId: 'claude', occurrenceId: lease.occurrenceId,
+                    contributionQualifiedId: `${lease.pluginId}/agents/claude`, sourceCustody: lease.sourceCustody },
+                isCurrent: lease.isCurrent, retirementSignal: lease.retirementSignal,
+                createInvocationExec: async () => createUnavailablePluginServices().exec,
+            });
+            const resolved = await bounded.resolveSource({ source: { kind: 'claudeConfig' }, signal: new AbortController().signal });
+            if (!resolved.ok) throw new Error('Expected real source admission');
+            const sourceProjection = resolveExternalSessionSourceFromAgentProjection({ agents: [agent] }, 'claude', resolved.value.source);
+            if (!sourceProjection.ok) throw new Error('Expected canonical source key');
+            const capture = await bounded.readAccounting({ source: resolved.value.source, signal: new AbortController().signal });
+            if (!capture.ok || capture.value.outcome !== 'advanced') throw new Error('Expected real native accounting record');
+            const row = capture.value.observations[0];
+            expect(row).toMatchObject({ nativeSessionId: 'native-session', inferenceId: 'native-inference' });
+            const { metadata } = createSessionMetadata({ flavor: 'claude', machineId: 'machine', directory,
+                launchControlMetadata: captureSessionLaunchControlMetadata({ processEnvironment: {} }) });
+            expect(metadata.externalSessionV1).toBeUndefined();
+            const published: PublishInput[] = [];
+            const client = createNativeSessionClientTestPort('fresh-session', {
+                getMetadataSnapshot: () => metadata,
+                getServerBinding: () => ({ serverId: 'home' }),
+                publishUsageObservation: (input: PublishInput) => { published.push(input); },
+            });
+            const keyPath = join(directory, 'device.key');
+            setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}),
+                settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'fresh-native-accounting' });
+            const previousKeyPath = Object.getOwnPropertyDescriptor(happierConfiguration, 'deviceLocalSecretKeyFile');
+            Object.defineProperty(happierConfiguration, 'deviceLocalSecretKeyFile', { configurable: true, value: keyPath });
+            const nativeListeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
+            const nativeSession: AgentSessionRuntime = {
+                send: async () => ({ status: 'admitted' }),
+                watch: (listener) => { nativeListeners.add(listener); return { dispose: () => { nativeListeners.delete(listener); } }; },
+                dispose: async () => undefined,
+            };
+            let disposeRuntime: (() => Promise<void>) | undefined;
+            try {
+                const plan = await createNativeAgentRuntimeSessionPlan({
+                    lease, agent, backend: { ...base.backend, pluginId: lease.pluginId, provenance: 'first_party', source: { kind: 'bundled' } },
+                    // The vendor runtime transport is the substituted system boundary; source resolution is real.
+                    createRuntime: async () => ({ sessions: { open: async () => nativeSession } }),
+                    authorizeNewTurn: async () => ({ status: 'admitted' }),
+                    executionSurfaces: { externalSession: createAgentExternalSessionsExecutionSurface(bounded) },
+                    sessionInput: buildPluginSessionBindingInput({ directory, credentials: { ...credentials,
+                        token: `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature` } }),
+                    createSessionHostServiceOwners: ({ signal, sessionId }) => createRealNativeHostOwners({
+                        runtimeRegistry: null, identity: lease, agent, backend: base.backend,
+                        hostSession: { session: client as never, machineId: 'machine', permissionHandler: {
+                            handleToolCall: async () => ({ decision: 'denied' as const }),
+                        } }, sessionId, directory, signal, happyHomeDir: directory,
+                    }),
+                });
+                if (!plan.config.createSessionRuntime) throw new Error('Expected native Session factory');
+                const created = await plan.config.createSessionRuntime({ directory, metadata, machineId: 'machine', session: client,
+                    transcriptSession: {}, messageBuffer: {}, mcpServers: {}, permissionHandler: {},
+                    getPermissionMode: () => 'default', setThinking: () => undefined, memoryRecallGuidanceEnabled: false,
+                } as never);
+                disposeRuntime = () => created.operations.resetOrDisposeRuntime();
+                const publications: AgentSessionRuntimeEvent[] = [];
+                created.operations.subscribeRuntimeEvents((event) => { publications.push(event); });
+                const emit = (event: AgentSessionRuntimeEvent) => { for (const listener of nativeListeners) listener(event); };
+                emit({ kind: 'provider-session-id', sequence: 1, sessionId: 'fresh-session', emittedAtMs: 1,
+                    providerSessionId: 'native-session' });
+                expect(created.operations.readSessionIdentity().sessionId).toBe('native-session');
+                expect(publications).toContainEqual(expect.objectContaining({ kind: 'provider-session-id', providerSessionId: 'native-session' }));
+                emit({ kind: 'usage-observed', sequence: 2, sessionId: 'fresh-session', emittedAtMs: row.observedAt,
+                    observationId: 'live-record', source: 'native-claude', scope: 'turn_delta',
+                    accounting: { nativeSessionId: row.nativeSessionId, inferenceId: row.inferenceId },
+                    tokens: { input: 10, output: 5, reasoning: 0, cacheRead: 3, cacheWrite: 2, total: 20 } });
+                await vi.waitFor(() => expect(published).toHaveLength(1));
+                const storage = await readOrCreateDeviceLocalSecretStorage({ path: keyPath });
+                const expected = deriveNativeUsageAccountingIdentity({
+                    authority: { serverId: 'home', accountId: 'account', machineId: 'machine' }, storage,
+                    agent: agent.identity!, sourceKey: sourceProjection.sourceKey,
+                    nativeSessionId: row.nativeSessionId, inferenceId: row.inferenceId,
+                });
+                expect(published[0]).toMatchObject({ externalKey: expected.externalKey, metadata: {
+                    accountingSubject: { kind: 'native', machineId: 'machine', agent: agent.identity,
+                        sourceRootKey: expected.sourceRootKey, nativeSessionKey: expected.nativeSessionKey },
+                    usageAccounting: { path: 'runtime', status: 'available', inferenceId: expected.externalKey },
+                } });
+            } finally {
+                await disposeRuntime?.();
+                resetActiveAccountSettingsSnapshotForTests();
+                if (previousKeyPath) Object.defineProperty(happierConfiguration, 'deviceLocalSecretKeyFile', previousKeyPath);
+                else Reflect.deleteProperty(happierConfiguration, 'deviceLocalSecretKeyFile');
+            }
+        });
+    });
+
+    function createUsagePublishHarness(accountingWitness?: NonNullable<Parameters<typeof createNativeAgentSessionOperationsBase>[4]>['accountingWitness']) {
         const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
         const session: AgentSessionRuntime = {
             send: vi.fn(async () => ({ status: 'admitted' as const })),
@@ -13244,6 +13406,7 @@ describe('native Agent session usage bridge — full canonical UsageObservation 
         const published: PublishInput[] = [];
         const runtime = createNativeAgentSessionOperations(session, 'session-usage', undefined, undefined, {
             provider: 'agent-runtime-native',
+            ...(accountingWitness ? { accountingWitness } : {}),
             publish: (input) => { published.push(input as PublishInput); },
         });
         // A subscriber is required to activate the underlying session subscription.
@@ -13253,6 +13416,60 @@ describe('native Agent session usage bridge — full canonical UsageObservation 
         };
         return { emit, published, runtime };
     }
+
+    it('keeps rejected usage out of the reply stream and drains the accepted reply after transport acknowledgement', async () => {
+        const { createKeyedStreamedTranscriptBridge } = await import('@/api/session/createKeyedStreamedTranscriptBridge');
+        const { projectRuntimeTranscriptEvent } = await import('@/agent/runtime/session/transcripts/projectRuntimeTranscriptEvent');
+        const { emit, published, runtime } = createUsagePublishHarness();
+        const liveBodies: ACPMessageData[] = [];
+        const committedBodies: ACPMessageData[] = [];
+        let acknowledge!: () => void;
+        const acknowledgement = new Promise<void>((resolve) => { acknowledge = resolve; });
+        // Only the outward transcript transport is substituted; native admission,
+        // projection, stream segmentation, and terminal finalization remain real.
+        const transcript = {
+            sessionId: 'session-usage',
+            sendAgentMessageEphemeral: (_provider: ACPProvider, body: ACPMessageData) => {
+                liveBodies.push(body);
+                return { accepted: true as const, epoch: 0 };
+            },
+            enqueueAgentMessageCommitted: async (_provider: ACPProvider, body: ACPMessageData) => {
+                committedBodies.push(body);
+                await acknowledgement;
+                return { persisted: true, delivered: true };
+            },
+        };
+        const bridge = createKeyedStreamedTranscriptBridge({ provider: 'codex', createSessionForStream: () => transcript });
+        const acceptedKinds: string[] = [];
+        let projection = Promise.resolve();
+        const unsubscribe = runtime.subscribeRuntimeEvents((event) => {
+            acceptedKinds.push(event.kind);
+            projection = projection.then(async () => {
+                await projectRuntimeTranscriptEvent({ session: transcript, provider: 'codex', runtimeMessageDeltaBridge: bridge, event });
+            });
+        });
+        const shared = { sessionId: 'session-usage', emittedAtMs: 1 };
+        emit({ ...shared, sequence: 1, kind: 'turn-start', turnId: 'host-turn', agentTurnId: 'native-turn', startedBy: 'provider' });
+        emit(AgentSessionRuntimeEventSchema.parse({ ...shared, sequence: 2, kind: 'usage-observed', observationId: 'native-usage', turnId: 'native-turn',
+            scope: 'session_cumulative', source: 'codex-app-server-token-usage',
+            tokens: { input: 1, output: 1, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 2 } }));
+        emit({ ...shared, sequence: 3, kind: 'message-delta', turnId: 'host-turn', channel: 'assistant', text: 'QA_HOST_R6_OK' });
+        emit({ ...shared, sequence: 4, kind: 'turn-complete', turnId: 'host-turn', agentTurnId: 'native-turn' });
+
+        await vi.waitFor(() => expect(committedBodies).toEqual([{ type: 'message', message: 'QA_HOST_R6_OK' }]));
+        expect(acceptedKinds).toEqual(['turn-start', 'message-delta', 'turn-complete']);
+        expect(published).toEqual([]);
+        expect(liveBodies).toContainEqual({ type: 'message', message: 'QA_HOST_R6_OK' });
+        let drained = false;
+        void projection.then(() => { drained = true; });
+        await Promise.resolve();
+        expect(drained).toBe(false);
+        acknowledge();
+        await projection;
+        expect(drained).toBe(true);
+        unsubscribe();
+        await runtime.resetOrDisposeRuntime('runtime_recovery');
+    });
 
     it('publishes a rich usage-observed event as a full canonical observation reaching ingest with every field', () => {
         const { emit, published } = createUsagePublishHarness();
@@ -13270,6 +13487,7 @@ describe('native Agent session usage bridge — full canonical UsageObservation 
             emittedAtMs: 1_000,
             kind: 'usage-observed',
             observationId: 'obs-cumulative-1',
+            accounting: { nativeSessionId: 'native-session-1', inferenceId: 'native-inference-1' },
             turnId: 'turn-42',
             source: 'agent-runtime-native',
             scope: 'session_cumulative',
@@ -13300,6 +13518,10 @@ describe('native Agent session usage bridge — full canonical UsageObservation 
         expect(published).toHaveLength(1);
         const call = published[0];
         expect(call.externalKey).toBe('obs-cumulative-1');
+        expect(call.metadata).toEqual({ usageAccounting: {
+            path: 'runtime', status: 'unknown', asOfMs: 1_000,
+            nativeSessionId: 'native-session-1', inferenceId: 'native-inference-1',
+        } });
         expect(call.turnId).toBe('turn-42');
         expect(call.observedAt).toBe(1_000);
         expect(call.observation).toMatchObject({
@@ -13320,6 +13542,7 @@ describe('native Agent session usage bridge — full canonical UsageObservation 
             observation: call.observation,
             turnId: call.turnId,
             externalKey: call.externalKey,
+            metadata: call.metadata,
         });
         expect(ingest).toMatchObject({
             sessionId: 'session-usage',
@@ -13333,7 +13556,56 @@ describe('native Agent session usage bridge — full canonical UsageObservation 
             tokens: { input: 100, output: 40, reasoning: 8, cacheRead: 5, cacheWrite: 3, total: 156 },
             cost: { reportedUsd: 0.12, currency: 'USD', costSource: 'provider_reported', billingContext: 'api_usage' },
             context: { usedTokens: 156, windowTokens: 200_000 },
+            metadata: call.metadata,
         });
+    });
+
+    it('stamps only an exact positively linked native accounting witness with device-local opaque identities', async () => {
+        await withTempDir('usage-accounting-', async (directory) => {
+            const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });
+            const { emit, published, runtime } = createUsagePublishHarness({
+                authority: { serverId: 'home', accountId: 'account', machineId: 'machine' },
+                storage, agent: { pluginId: 'acme.native', localId: 'assistant' },
+                sourceKey: 'root:/private/native', nativeSessionId: 'native-session',
+            });
+            emit({ sequence: 1, sessionId: 'session-usage', emittedAtMs: 10, kind: 'turn-start', turnId: 'turn', startedBy: 'provider' });
+            const usage = { sessionId: 'session-usage', emittedAtMs: 11, kind: 'usage-observed' as const,
+                turnId: 'turn', scope: 'turn_delta' as const, source: 'fixture-native',
+                tokens: { input: 3, output: 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 5 } };
+            emit({ ...usage, sequence: 2, observationId: 'live-1', accounting: { nativeSessionId: 'native-session', inferenceId: 'native-inference' } });
+            emit({ ...usage, sequence: 3, observationId: 'live-2', accounting: { nativeSessionId: 'other-session', inferenceId: 'native-inference' } });
+            emit({ ...usage, sequence: 4, observationId: 'live-3', accounting: { nativeSessionId: 'native-session', inferenceId: 'partial-inference', historyComplete: false } });
+            expect(published).toHaveLength(3);
+            expect(published[0].metadata).toMatchObject({
+                accountingSubject: { kind: 'native', machineId: 'machine', agent: { pluginId: 'acme.native', localId: 'assistant' },
+                    sourceRootKey: expect.any(String), nativeSessionKey: expect.any(String) },
+                usageAccounting: { path: 'runtime', status: 'available', inferenceId: expect.any(String) },
+            });
+            expect(published[1].metadata).toBeUndefined();
+            expect(published[2].metadata).toMatchObject({
+                accountingSubject: published[0].metadata?.accountingSubject,
+                usageAccounting: { path: 'runtime', status: 'partial', historyComplete: false, inferenceId: expect.any(String) },
+            });
+            expect(published[2].observation.tokens).toEqual(usage.tokens);
+            const serialized = JSON.stringify(published[0].metadata);
+            expect(serialized).not.toContain('/private/native');
+            expect(serialized).not.toContain('native-session');
+            expect(serialized).not.toContain('native-inference');
+            await runtime.resetOrDisposeRuntime('runtime_recovery');
+        });
+    });
+
+    it('retains paid cumulative observations with explicit partial history but no guessed native source', () => {
+        const { emit, published } = createUsagePublishHarness();
+        emit({ sequence: 1, sessionId: 'session-usage', emittedAtMs: 10, kind: 'usage-observed',
+            observationId: 'partial-statistics', source: 'native-statistics', scope: 'session_cumulative',
+            accounting: { nativeSessionId: 'unlinked-native', historyComplete: false, inputIncludesCache: false, outputIncludesReasoning: false },
+            tokens: { input: 5, output: 3, reasoning: 0, cacheRead: 2, cacheWrite: 0, total: 10 },
+            cost: { currency: 'USD', reportedUsd: 0.5, estimatedUsd: 0, costSource: 'provider_reported' } });
+        expect(published).toHaveLength(1);
+        expect(published[0].observation).toMatchObject({ scope: 'session_cumulative', cost: { reportedUsd: 0.5 }, tokens: { input: 5, total: 10 } });
+        expect(published[0].metadata).toEqual({ usageAccounting: { path: 'runtime', status: 'partial', asOfMs: 10,
+            nativeSessionId: 'unlinked-native', historyComplete: false, inputIncludesCache: false, outputIncludesReasoning: false } });
     });
 
     it('preserves scope precedence, cumulative flag, and per-model separation across delta/cumulative/final observations', () => {

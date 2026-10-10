@@ -194,6 +194,7 @@ export type RunnerDaemonManagedProviderCustodyScopeV1 = Readonly<{
 
 export type RunnerDaemonManagedProviderBootstrapV1 = Readonly<{
     v: 1;
+    custody?: 'daemonShared';
     scope: RunnerDaemonManagedProviderCustodyScopeV1;
     requestAuth: Readonly<{
         capabilityPath: string;
@@ -237,6 +238,7 @@ export const RunnerDaemonManagedProviderBootstrapV1Schema:
     z.ZodType<RunnerDaemonManagedProviderBootstrapV1> = lazyZodSchema(() => z.object({
     v: z.literal(1),
     scope: RunnerDaemonManagedProviderCustodyScopeV1Schema,
+    custody: z.literal('daemonShared').optional(),
     requestAuth: z.object({
         capabilityPath: z.string().trim().min(1).max(32_768),
         requestAuthUses: ConnectedAccountRequestAuthUsesV1Schema,
@@ -253,8 +255,10 @@ export const RunnerDaemonManagedProviderBootstrapV1Schema:
         : [];
     const receivedUses = value.requestAuth?.requestAuthUses ?? [];
     if (
-        (expectedUses.length === 0) !== (value.requestAuth === null)
-        || JSON.stringify(receivedUses) !== JSON.stringify(expectedUses)
+        value.custody === 'daemonShared'
+            ? value.requestAuth !== null
+            : (expectedUses.length === 0) !== (value.requestAuth === null)
+                || JSON.stringify(receivedUses) !== JSON.stringify(expectedUses)
     ) {
         context.addIssue({
             code: 'custom',
@@ -287,6 +291,7 @@ export const RunnerDaemonManagedProviderBootstrapV1Schema:
 
 export type RunnerDaemonManagedProviderRetentionV1 = Readonly<{
     v: 1;
+    custody?: 'daemonShared';
     scope: RunnerDaemonManagedProviderCustodyScopeV1;
     providerPluginHardRevocationRevisionAtAdmission: number;
 }>;
@@ -294,10 +299,22 @@ export type RunnerDaemonManagedProviderRetentionV1 = Readonly<{
 export const RunnerDaemonManagedProviderRetentionV1Schema:
     z.ZodType<RunnerDaemonManagedProviderRetentionV1> = lazyZodSchema(() => z.object({
         v: z.literal(1),
+        custody: z.literal('daemonShared').optional(),
         scope: RunnerDaemonManagedProviderCustodyScopeV1Schema,
         providerPluginHardRevocationRevisionAtAdmission:
             SafeNonNegativeIntegerSchema,
     }).strict());
+
+/** Credential-bearing result stays on the authenticated host-private channel. */
+export const RunnerDaemonSharedGatewayHttpBindingV1Schema = lazyZodSchema(() => z.object({
+    endpointUrl: z.string().url().max(8_192).refine((value) => {
+        const url = new URL(value);
+        return url.protocol === 'http:' && ['127.0.0.1', '[::1]'].includes(url.hostname)
+            && url.username === '' && url.password === '' && url.hash === '' && url.search === '';
+    }),
+    headers: StringRecordSchema,
+}).strict());
+export type RunnerDaemonSharedGatewayHttpBindingV1 = z.infer<typeof RunnerDaemonSharedGatewayHttpBindingV1Schema>;
 
 const RunnerDaemonPluginServiceWireValueV1Schema: z.ZodType<
     RunnerDaemonPluginServiceWireValueV1
@@ -510,6 +527,11 @@ export const RUNNER_DAEMON_PLUGIN_SERVICE_OPERATION_V1_SCHEMAS = [
         endpointUrl: z.string().url().max(8_192),
         credentialPlaceholder:
             z.string().min(32).max(512).nullable(),
+    }).strict()),
+    lazyZodSchema(() => z.object({
+        kind: z.literal('plugin_services.managed_provider.read_shared_gateway_access_v1'),
+        ...OperationBaseSchema,
+        retained: RunnerDaemonManagedProviderRetentionV1Schema,
     }).strict()),
     lazyZodSchema(() => z.object({
         kind: z.literal('plugin_services.close_v1'),

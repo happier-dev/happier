@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { AgentSessionRuntimeEvent, AgentSessionStartupInstructionsMarkerV1, AgentSessionStartupInstructionsV1 } from '@happier-dev/protocol';
 import type { Metadata } from '@/api/types';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
@@ -7,7 +7,11 @@ import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { MessageQueue2 } from './modeMessageQueue';
 import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt, type PermissionModeQueuedPromptMode } from './permissions/queuedPrompt';
 import { runPermissionModePromptLoop } from './runPermissionModePromptLoop';
+import { createSessionProviderInputConsumerSessionAdapter } from './waitForNextPermissionModeMessage';
 import { createSessionProviderInputConsumer } from './session/input/sessionProviderInputConsumer';
+import { resolveEffectiveCodingPromptPlan } from '@/agent/prompting/coding/resolveEffectiveCodingPrompt';
+import type { PromptPlanComposition } from '@/agent/prompting/promptComposition';
+import { TranscriptRawAgentEventV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
 
 type PlanTurn = Readonly<{
   text: string;
@@ -16,16 +20,26 @@ type PlanTurn = Readonly<{
   compact?: 'started' | 'completed';
   compactionBeforeAcceptance?: boolean;
   deliveryState?: ReturnType<NonNullable<Parameters<typeof runPermissionModePromptLoop>[0]['readSessionPromptPlanDeliveryState']>>;
+  composition?: PromptPlanComposition;
 }>;
 
 async function dispatchPlans(turns: readonly PlanTurn[], nativePlans?: string[], initialNativePlan?: string,
-  nativeMarkers?: AgentSessionStartupInstructionsMarkerV1[], initialResumeId?: string) {
-  const session = createMutableApiSessionClientFixture<Metadata>();
+  nativeMarkers?: AgentSessionStartupInstructionsMarkerV1[], initialResumeId?: string,
+  retainedEvents?: unknown[]) {
+  const session = createMutableApiSessionClientFixture<Metadata>({ overrides: {
+    enqueueSessionEventCommitted: async event => {
+      retainedEvents?.push(event);
+      return { persisted: true, delivered: true };
+    },
+  } });
   session.__setMetadata(createTestMetadata({ permissionMode: 'default', permissionModeUpdatedAt: 0 }));
   const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(
     (mode) => JSON.stringify(mode), { batcher: combinePermissionModeQueuedPrompts },
   );
-  const inputConsumer = createSessionProviderInputConsumer({ messageQueue: queue, session });
+  const inputConsumer = createSessionProviderInputConsumer({
+    messageQueue: queue,
+    session: createSessionProviderInputConsumerSessionAdapter(session),
+  });
   const acceptedEffects = new Map<string, (() => void) | null>();
   const runtimeListeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
   const prompts: string[] = [];
@@ -97,6 +111,7 @@ async function dispatchPlans(turns: readonly PlanTurn[], nativePlans?: string[],
       return turns[index].plan;
     },
     readSessionPromptPlanDeliveryState: () => turns[index].deliveryState ?? { startupInstructionsSupported: false },
+    readSessionPromptPlanComposition: () => turns[index].composition ?? null,
     registerProviderAcceptedEffect: (localId, effect) => { acceptedEffects.set(localId, effect); },
     formatPromptErrorMessage: String,
   });
@@ -105,6 +120,48 @@ async function dispatchPlans(turns: readonly PlanTurn[], nativePlans?: string[],
 }
 
 describe('session prompt-plan re-delivery', () => {
+  it('retains content-free facts at the real normal dispatch without claiming an unavailable native prefix', async () => {
+    const retainedEvents: unknown[] = [];
+    const duplicate = 'PRIVATE instruction /private/repo 🦉';
+    const plan = await resolveEffectiveCodingPromptPlan({ settings: {}, profileId: null, baseOverride: null,
+      memoryRecallGuidanceEnabled: false, sessionTitleToolAvailable: false,
+      promptAssetBlocks: [{ id: 'private-source-one', scope: 'user_prompt', text: duplicate },
+        { id: 'private-source-two', scope: 'user_prompt', text: duplicate }] });
+    const prompts = await dispatchPlans([{ text: 'PRIVATE user 🦉', plan: plan.text, composition: plan.composition }],
+      undefined, undefined, undefined, undefined, retainedEvents);
+    const events = retainedEvents.filter(event => typeof event === 'object' && event !== null
+      && Reflect.get(event, 'type') === 'prompt-composition');
+    expect(events).toHaveLength(1);
+    expect(JSON.stringify(events)).not.toContain('PRIVATE');
+    expect(JSON.stringify(events)).not.toContain('/private/repo');
+    expect(events[0]).toMatchObject({ composition: { boundary: 'host_pre_dispatch',
+      deliveryKind: 'newTurn', coverage: 'host_only', nativePrefix: null, contextWindowTokens: null,
+      components: expect.arrayContaining([expect.objectContaining({ byteLength: Buffer.byteLength(prompts[0]!),
+        tokenCount: null, tokenizerId: null, cacheClass: 'unknown' })]),
+    } });
+    expect(events[0]).toMatchObject({ composition: { components: expect.arrayContaining([
+      expect.objectContaining({ kind: 'instructions', byteLength: Buffer.byteLength(duplicate), overlap: 'none' }),
+      expect.objectContaining({ kind: 'other', overlap: 'known' }),
+    ]) } });
+    const event = TranscriptRawAgentEventV1Schema.parse(events[0]);
+    if (event.type !== 'prompt-composition') throw new Error('Composition must use its canonical retained arm');
+    const composition = event.composition;
+    const duplicateComponents = composition.components.filter(component => component.kind === 'instructions'
+      && component.byteLength === Buffer.byteLength(duplicate));
+    expect(duplicateComponents).toHaveLength(2);
+    expect(duplicateComponents[0]!.digest).toBe(duplicateComponents[1]!.digest);
+
+    const nativeEvents: unknown[] = [];
+    const nativePrompts = await dispatchPlans([{ text: 'PRIVATE native user', plan: plan.text,
+      composition: plan.composition, deliveryState: { startupInstructionsSupported: true } }],
+      [], plan.text, undefined, undefined, nativeEvents);
+    expect(nativePrompts).toEqual(['PRIVATE native user']);
+    const nativeEvent = TranscriptRawAgentEventV1Schema.parse(nativeEvents[0]);
+    if (nativeEvent.type !== 'prompt-composition') throw new Error('Native delivery must retain host-only facts');
+    // Native startup owns the full plan. Prefix-free user dispatch cannot claim its reinjection.
+    expect(nativeEvent.composition).toMatchObject({ coverage: 'host_only', nativePrefix: null,
+      components: [{ kind: 'other', overlap: 'none', byteLength: Buffer.byteLength(nativePrompts[0]!) }] });
+  });
   const supersedingPlan = (plan: string) => `These instructions supersede the Happier startup instructions and any earlier Happier session plan.\n\n${plan}`;
   it('uses the initial native full plan without reopening, then keeps unsupported resume revisions on prefix fallback', async () => {
     const nativePlans: string[] = [];

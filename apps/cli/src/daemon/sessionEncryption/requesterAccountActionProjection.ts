@@ -43,7 +43,8 @@ export async function projectRequesterAccountActionAuthorization(
   const exactSource = source?.machineId === stamp.machineId && source.installationId === stamp.installationId
     && origin?.caller.kind === 'session' && bootstrap.getBoundSessionId?.() === origin.caller.sessionId;
   const handoff = parsed.success ? parsed.data.binding.handoffAdmission : undefined;
-  const exactHandoffTarget = parsed.success && parsed.data.binding.handoffContinuation !== undefined && handoff !== undefined
+  const exactHandoffTarget = parsed.success
+    && (parsed.data.binding.handoffContinuation !== undefined || parsed.data.binding.handoffPreflight !== undefined) && handoff !== undefined
     && handoff.targetMachineId === stamp.machineId && handoff.targetInstallationId === stamp.installationId
     && parsed.data.binding.machineId === stamp.machineId && parsed.data.binding.installationId === stamp.installationId
     && bootstrap.getBoundSessionId?.() === handoff.sessionId;

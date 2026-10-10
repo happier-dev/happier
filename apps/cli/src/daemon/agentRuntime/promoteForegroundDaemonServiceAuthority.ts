@@ -25,6 +25,7 @@ import {
 } from '@/plugins/runtime/runner/runnerManagedDependencyRetention';
 import { verifyPrivateBearer } from '@/daemon/privateBearerFile';
 import { isDeepStrictEqual } from 'node:util';
+import type { RequesterSessionRuntimeContext } from '../sessionEncryption/requesterSessionCredentials';
 import { processIdentityMatches } from '@happier-dev/cli-common/processInstance';
 import {
   readAgentRuntimeDaemonServiceAuthorityForVerifiedMarker,
@@ -70,6 +71,7 @@ function resolveRetainedAgentCurrentnessProof(
 }
 
 export async function promoteForegroundDaemonServiceAuthority(input: Readonly<{
+  requesterSessionRuntimeContext?: RequesterSessionRuntimeContext;
   happyHomeDir: string;
   publicReleaseRing: Parameters<
     typeof readAgentRuntimeDaemonServiceAuthorityForVerifiedMarker
@@ -110,6 +112,17 @@ export async function promoteForegroundDaemonServiceAuthority(input: Readonly<{
       )
     );
   const runner = input.runner;
+  const requester = input.requesterSessionRuntimeContext;
+  const isRequesterCurrent = async () => {
+    try {
+      return !requester || Boolean(requester.readAccountSettingsSnapshot())
+        && requester.bootstrap.getBoundSessionId() === input.canonicalSessionId
+        && (!tracked?.requesterSessionRuntimeContext || tracked.requesterSessionRuntimeContext === requester)
+        && (!tracked?.requesterWorkAttributionV1 || isDeepStrictEqual(tracked.requesterWorkAttributionV1, requester.bootstrap.attribution))
+        && await requester.isCurrent();
+    } catch { return false; }
+  };
+  if (!await isRequesterCurrent()) return false;
   if (
     !tracked
     || tracked.startedBy === 'daemon'
@@ -297,6 +310,7 @@ export async function promoteForegroundDaemonServiceAuthority(input: Readonly<{
         processCommandHash: runner.processCommandHash,
         processStartTimeMs: runner.processStartTimeMs,
         sourceCustody: input.retainedAgent.sourceCustody,
+        ...(requester ? { requesterWorkAttributionV1: requester.bootstrap.attribution } : {}),
       });
       if (!sourceCustodyPersisted) return false;
       return await (
@@ -350,6 +364,16 @@ export async function promoteForegroundDaemonServiceAuthority(input: Readonly<{
     await clearPersistedPromotion(true);
     await removeStaleAuthority();
     return false;
+  }
+  if (!await isRequesterCurrent()) {
+    clearPromotedAuthorityIfExact({ tracked, authorityFilePath: input.authorityFilePath, capabilityDigest: input.capabilityDigest });
+    await clearPersistedPromotion(true);
+    await removeStaleAuthority();
+    return false;
+  }
+  if (requester) {
+    tracked.requesterSessionRuntimeContext = requester;
+    tracked.requesterWorkAttributionV1 = requester.bootstrap.attribution;
   }
   return true;
 }

@@ -1,5 +1,10 @@
 import type { TrackedSession } from '@/daemon/types';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import type { ProviderSettingsV1 } from '@happier-dev/protocol/providers/settings/v1';
+import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken,
+  type ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { readProviderSettingsForCli } from '@/providers/settings/read';
+import { prepareProviderConnectionsCatalogForCli } from '@/providers/settings/hydrate';
 import { resolveTrackedSessionCatalogAgentId } from '@/daemon/sessions/resolveTrackedSessionCatalogAgentId';
 import type { AgentRuntimeRegistrationLease } from '@/plugins/runtime/lifecycle/contributions/targetAgents';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
@@ -21,7 +26,7 @@ export type SessionRunnerAgentRuntimeCurrentness = Readonly<{
 
 type ProviderResolutionContext = Readonly<{
   machineId: string;
-  accountSettings: unknown;
+  providerSettings: ProviderSettingsV1;
   registry: ProviderContributionRegistryView;
 }>;
 
@@ -149,7 +154,7 @@ export function resolveTrackedRunnerAgentRuntimeCurrentness(input: Readonly<{
   const providerResolution = resolveProviderConnectionForMachine({
     connectionId: selectedProviderConnectionId,
     machineId: input.providerResolution.machineId,
-    accountSettings: input.providerResolution.accountSettings,
+    providerSettings: input.providerResolution.providerSettings,
     registry: input.providerResolution.registry,
     dnsEvidenceByEndpointUrl: new Map(),
   });
@@ -170,7 +175,7 @@ export async function resolveAuthoritativeTrackedRunnerAgentRuntimeCurrentness(
   tracked: TrackedSession | null | undefined,
   providerResolution: Readonly<{
     machineId: string;
-    accountSettings: unknown;
+    accountSnapshot: ActiveAccountSettingsSnapshot | null;
   }>,
 ): Promise<SessionRunnerAgentRuntimeCurrentness> {
   if (!tracked) return UNKNOWN_AGENT_RUNTIME_CURRENTNESS;
@@ -179,6 +184,15 @@ export async function resolveAuthoritativeTrackedRunnerAgentRuntimeCurrentness(
     ReturnType<typeof acquireAuthoritativePluginRuntimeRegistryLease>
   > | null = null;
   try {
+    const captured = providerResolution.accountSnapshot;
+    const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
+    let providerSettings: ProviderSettingsV1 | undefined;
+    if (tracked.spawnOptions?.modelSelection?.ref.providerConnectionId && captured?.scopeKey) {
+      const catalog = await prepareProviderConnectionsCatalogForCli({ expectedScopeKey: captured.scopeKey });
+      const snapshot = getActiveAccountSettingsSnapshot();
+      if (catalog.status === 'ready' && snapshot?.scopeKey === captured.scopeKey
+        && getActiveAccountSettingsSnapshotLifetimeToken() === lifetimeToken) providerSettings = readProviderSettingsForCli(snapshot).settings;
+    }
     lease = await acquireAuthoritativePluginRuntimeRegistryLease();
     if (typeof lease.registry.generation !== 'number') {
       return UNKNOWN_AGENT_RUNTIME_CURRENTNESS;
@@ -186,14 +200,15 @@ export async function resolveAuthoritativeTrackedRunnerAgentRuntimeCurrentness(
     return resolveTrackedRunnerAgentRuntimeCurrentness({
       tracked,
       agentRuntimesByAgentId: lease.registry.agentRuntimesByAgentId,
-      providerResolution: {
-        ...providerResolution,
+      ...(providerSettings ? { providerResolution: {
+        machineId: providerResolution.machineId,
+        providerSettings,
         registry: resolveProviderContributionRegistryView(
           lease.registry.contributes,
           lease.registry.generation,
           lease.registry.readPluginOccurrenceId,
         ),
-      },
+      } } : {}),
     });
   } catch {
     return UNKNOWN_AGENT_RUNTIME_CURRENTNESS;

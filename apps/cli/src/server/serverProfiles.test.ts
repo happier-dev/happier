@@ -3,7 +3,7 @@ import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { configuration, reloadConfiguration } from '@/configuration';
-import { readCredentials, readSettings, updateSettings, writeCredentialsDataKey, writeCredentialsTokenOnlyForServerId } from '@/persistence';
+import { readCredentials, readSettings, readStoredCredentialsForServerId, updateSettings, writeCredentialsDataKey, writeCredentialsTokenOnlyForServerId, writeStoredCredentialsForServerId } from '@/persistence';
 import { deriveServerIdFromName, deriveServerIdFromUrl } from '@/server/serverId';
 import { existsSync, mkdirSync, renameSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -30,6 +30,68 @@ describe('server profiles', () => {
     envScope = createEnvKeyScope(envKeys);
     vi.resetModules();
   });
+
+  it.each(['tokenOnly', 'dataKey', 'legacy'] as const)('establishes the same exact Home binding for a seeded %s credential', async material => {
+    await withTempDir('happier-cli-seeded-home-', async homeDir => {
+      envScope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_ACTIVE_SERVER_ID: undefined,
+        HAPPIER_SERVER_URL: undefined, HAPPIER_WEBAPP_URL: undefined });
+      reloadConfiguration();
+      const { addServerProfile, getServerProfile, isServerProfileHomeIdentity, refreshServerProfileHomeConnectionDescriptor } = await import('./serverProfiles');
+      const serverUrl = 'https://seeded.example.test';
+      const profile = await addServerProfile({ name: 'seeded', serverUrl, webappUrl: serverUrl });
+      const focused = await addServerProfile({ name: 'other', serverUrl: 'https://other.example.test',
+        webappUrl: 'https://other.example.test', use: true });
+      const token = 'fixture-home-token';
+      const machineKey = new Uint8Array(32).fill(7);
+      await writeStoredCredentialsForServerId(profile.id, { token, encryption: material === 'tokenOnly' ? null
+        : material === 'legacy' ? { type: 'legacy', secret: machineKey }
+        : { type: 'dataKey', machineKey, publicKey: deriveBoxPublicKeyFromSeed(machineKey) } });
+      const credentials = await readStoredCredentialsForServerId(profile.id);
+      expect(credentials).not.toBeNull();
+      vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (url, init) => {
+        expect(String(url)).toBe(`${serverUrl}/v1/features/authenticated`);
+        expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${token}`);
+        return Response.json({ features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_seeded' } },
+          homeConnectionDescriptor: { v: 1, homeServerIdentityId: 'srv_seeded', canonicalServerUrl: serverUrl,
+            revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] } });
+      }));
+      expect(await isServerProfileHomeIdentity(profile.id, 'srv_seeded')).toBe(false);
+      expect(await refreshServerProfileHomeConnectionDescriptor({ profileId: profile.id, serverUrl, token: credentials!.token })).toBe('updated');
+      expect(await isServerProfileHomeIdentity(profile.id, 'srv_seeded')).toBe(true);
+      expect(await isServerProfileHomeIdentity(profile.id, 'srv_other')).toBe(false);
+      expect((await getServerProfile(focused.id)).homeConnectionDescriptor).toBeUndefined();
+      expect((await readSettings()).activeServerId).toBe(focused.id);
+      expect(await readStoredCredentialsForServerId(profile.id)).toEqual(credentials);
+    });
+  });
+
+  it.each(['public', 'unsupported', 'identity-mismatch', 'profile-mismatch'] as const)(
+    'does not assign exact authority from a %s observation', async scenario => {
+      await withTempDir('happier-cli-home-refusal-', async homeDir => {
+        envScope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_ACTIVE_SERVER_ID: undefined,
+          HAPPIER_SERVER_URL: undefined, HAPPIER_WEBAPP_URL: undefined });
+        reloadConfiguration();
+        const { addServerProfile, adoptServerProfileHomeConnectionDescriptor, getServerProfile,
+          isServerProfileHomeIdentity, refreshServerProfileHomeConnectionDescriptor } = await import('./serverProfiles');
+        const serverUrl = 'https://observed.example.test';
+        const profile = await addServerProfile({ name: 'observed', serverUrl, webappUrl: serverUrl });
+        const descriptor = { v: 1 as const, homeServerIdentityId: 'srv_observed', canonicalServerUrl: serverUrl,
+          revision: 1, endpoints: [{ kind: 'https' as const, url: serverUrl }] };
+        if (scenario === 'profile-mismatch') await adoptServerProfileHomeConnectionDescriptor({
+          expectedProfileId: profile.id, descriptor: { ...descriptor, homeServerIdentityId: 'srv_original' }, observation: 'exact' });
+        const before = await getServerProfile(profile.id);
+        vi.stubGlobal('fetch', vi.fn<typeof fetch>(async url => {
+          if (scenario === 'unsupported' || scenario === 'public' && String(url).endsWith('/authenticated')) return new Response(null, { status: 404 });
+          return Response.json({ features: {}, capabilities: { serverIdentity: { serverIdentityId:
+            scenario === 'identity-mismatch' ? 'srv_wrong' : descriptor.homeServerIdentityId } }, homeConnectionDescriptor: descriptor });
+        }));
+        const observation = refreshServerProfileHomeConnectionDescriptor({ profileId: profile.id, serverUrl, token: 'fixture-token' });
+        if (scenario === 'public' || scenario === 'unsupported') await expect(observation).resolves.toBe('unavailable');
+        else await expect(observation).rejects.toThrow();
+        expect(await getServerProfile(profile.id)).toEqual(before);
+        expect(await isServerProfileHomeIdentity(profile.id, 'srv_observed')).toBe(false);
+      });
+    });
 
   it.each(['refresh', 'alias', 'other-home', 'stale', 'public', 'unsafe-http'] as const)('reconciles a changed descriptor endpoint through authenticated Home publication: %s', async (scenario) => {
     await withTempDir('happier-cli-profile-port-', async (homeDir) => {

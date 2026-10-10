@@ -6,6 +6,7 @@ import { ExternalSessionCandidateThreadV1Schema, ExternalSessionCandidateMatchV1
 import { ExternalSessionTranscriptItemIdV1Schema, ExternalSessionTerminalSourceObservationV1Schema, ExternalSessionTranscriptSourceTimestampV1Schema } from '@happier-dev/protocol/sessions/external/sourceTranscriptItemV1';
 import { SidechainIdSchema } from '@happier-dev/protocol/sessions/idsV1';
 import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import { AgentExternalSessionAccountingSourceSchema, AgentExternalSessionAccountingChangedNativeSessionIdsSchema, AgentExternalSessionsReadAccountingResultSchema } from '@happier-dev/protocol/sessions/external/accounting';
 import { MAX_EXTERNAL_SESSIONS_SOURCE_KIND_CODE_UNITS } from '@happier-dev/protocol/sessions/external/sourceCatalog';
 import { MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_BYTES, PluginAgentExternalSessionLinkDataSchema } from '@happier-dev/protocol/plugins/contributions/agentExternalSessions';
 import { resolveTranscriptBodySemanticEvent, SessionMessageRoleSchema } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
@@ -27,6 +28,8 @@ import type {
     AgentExternalSessionSource,
     AgentExternalSessionsListCandidatesResult,
     AgentExternalSessionsReadAfterTranscriptResult,
+    AgentExternalSessionsReadAccountingRequest,
+    AgentExternalSessionsReadAccountingResult,
     AgentExternalSessionsResolveSourceResult,
     AgentExternalSessionsResolvedIdentity,
     AgentExternalSessionsTranscriptPage,
@@ -189,11 +192,14 @@ type WithoutHostStampedInvocationServices<T> = T extends unknown
  */
 export type BoundedAgentExternalSessionsContribution = Readonly<{
     [Method in keyof AgentExternalSessionsContribution]:
-        AgentExternalSessionsContribution[Method] extends (
+        NonNullable<AgentExternalSessionsContribution[Method]> extends (
             request: infer Request,
         ) => infer Result
             ? (request: WithoutHostStampedInvocationServices<Request>) => Result
             : never;
+}> & Readonly<{
+    supportsAccounting: boolean;
+    readAccounting(request: WithoutHostStampedInvocationServices<AgentExternalSessionsReadAccountingRequest>): Promise<AgentExternalSessionsResult<AgentExternalSessionsReadAccountingResult>>;
 }>;
 
 export async function bindAgentExternalSessionsManagedEndpointRead(input: Readonly<{
@@ -610,14 +616,18 @@ function parseFailure(value: unknown): AgentExternalSessionsResult<never> | null
 }
 
 function parseResolveSourceValue(value: unknown): AgentExternalSessionsResolveSourceResult | null {
-    const record = readStrictRecord(value, ['source'], ['transcriptMediaReadRoots']);
+    const record = readStrictRecord(value, ['source'], ['transcriptMediaReadRoots', 'accountingSource']);
     const parsedSource = record ? parseSource(record.source) : null;
     const transcriptMediaReadRoots = record
         ? parseTranscriptMediaReadRoots(record.transcriptMediaReadRoots)
         : null;
-    return parsedSource && transcriptMediaReadRoots !== null
+    const accountingSource = record?.accountingSource === undefined
+        ? undefined
+        : AgentExternalSessionAccountingSourceSchema.safeParse(record.accountingSource);
+    return parsedSource && transcriptMediaReadRoots !== null && (accountingSource === undefined || accountingSource.success)
         ? Object.freeze({
             source: parsedSource,
+            ...(accountingSource?.success ? { accountingSource: accountingSource.data } : {}),
             ...(transcriptMediaReadRoots === undefined ? {} : { transcriptMediaReadRoots }),
         })
         : null;
@@ -1090,6 +1100,41 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
         return Object.freeze({ managedEndpointRead, exec, ripgrep });
     };
     const wrap = Object.freeze({
+        supportsAccounting: typeof params.contribution.readAccounting === 'function',
+        async readAccounting(request) {
+            const terminal = terminalBeforeAdmission(request.signal);
+            if (terminal) return terminal;
+            const operation = params.contribution.readAccounting;
+            if (!operation) return Object.freeze({ ok: false as const, code: 'unsupported' as const });
+            const parsedSource = parseSource(request.source);
+            const maxSerializedBytes = request.maxSerializedBytes === undefined ? undefined : readMaxSerializedBytes(request.maxSerializedBytes);
+            // Accounting cursors are durable source frontiers, rather than the
+            // generation-qualified transcript pagination cursors. Retirement
+            // fences the call; restarting the daemon preserves this frontier.
+            if (!parsedSource || maxSerializedBytes === null || (request.cursor !== undefined && (typeof request.cursor !== 'string' || request.cursor.length === 0))) return invalidRequest();
+            const changes = request.changedNativeSessionIds === undefined ? undefined
+                : AgentExternalSessionAccountingChangedNativeSessionIdsSchema.safeParse(request.changedNativeSessionIds);
+            if (changes && !changes.success) return invalidRequest();
+            return await invokeBounded({
+                signal: request.signal,
+                retirementSignal: params.retirementSignal,
+                isCurrent: params.isCurrent,
+                deadlineAtMs: request.deadlineAtMs,
+                operation: async (signal, deadlineAtMs) => {
+                    const invocation = await bindInvocationContext(parsedSource, signal, maxSerializedBytes);
+                    return await operation.call(params.contribution, {
+                        source: parsedSource,
+                        ...(request.cursor === undefined ? {} : { cursor: request.cursor }),
+                        ...(changes?.success ? { changedNativeSessionIds: changes.data } : {}),
+                        signal, deadlineAtMs, maxSerializedBytes, ...invocation,
+                    });
+                },
+                parse: (value) => parseAndBoundResult(value, (candidate) => {
+                    const result = AgentExternalSessionsReadAccountingResultSchema.safeParse(candidate);
+                    return result.success ? result.data : null;
+                }, maxSerializedBytes),
+            });
+        },
         async resolveSource(request) {
             const terminal = terminalBeforeAdmission(request.signal);
             if (terminal) return terminal;

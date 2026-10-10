@@ -4,7 +4,6 @@ import { resolveAgentIdFromSessionMetadata, resolvePermissionIntentFromSessionMe
 import { parseSessionPermissionModeAlias } from '@happier-dev/protocol/sessions/metadata/permission-modes';
 import { readSessionWorkspaceWritesV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
 import { SessionAccessGrantSetActionInputV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessActionsV1';
-import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
 import type { AccountSettings, ActionExecutorDeps, TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
 import { notifyDaemonConnectedServiceUsageLimitWaitResumeCancel } from '@/daemon/controlClient';
@@ -37,6 +36,11 @@ import type { registerCapabilitiesHandlers } from '@/rpc/handlers/capabilities';
 import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
 import { registerExecutionRunHandlers } from '@/rpc/handlers/executionRuns';
 import { createExecutionRunRpcApprovalDeps } from '@/rpc/handlers/executionRuns/createExecutionRunRpcApprovalDeps';
+import { createAccountScopedProviderModelProjectionReader } from '@/providers/modelManagement/remoteProjection';
+import { createExecutionRunManagedProviderEndpointPreparer } from '@/agent/runtime/bridges/executionRun/runtime/managedProvider';
+import { createRunnerManagedProviderRunSourceOpener } from '@/agent/runtime/session/process/runnerManagedProviderConsumerAccess';
+import type { ResolveManagedProviderPurposeBindingIntent } from '@/providers/managed/resolvePurposeBindingSnapshot';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import {
@@ -333,12 +337,34 @@ export function registerSessionClientRuntimeHandlers(
     const resolveOwnerAccountSettings = async (): Promise<AccountSettings | null> => {
         return (await resolveOwnerAccountSettingsSnapshot())?.settings ?? null;
     };
+    const managedRunServices = params.sessionRuntimeControls?.managedProviderRunServices;
+    const resolveManagedPurposeBindingIntent: ResolveManagedProviderPurposeBindingIntent | undefined = managedRunServices
+        ? async input => {
+            const snapshot = await resolveOwnerAccountSettingsSnapshot({ signal: input.signal });
+            if (!snapshot?.scopeKey || !await ownerAccountIsCurrent()) throw createProviderErrorV1('provider_authorization_changed', {});
+            const result = await managedRunServices.resolvePurpose({ ...input, serviceRefs: [...input.serviceRefs],
+                expectedAccountSettingsScopeKey: snapshot.scopeKey });
+            input.signal.throwIfAborted();
+            if (!await ownerAccountIsCurrent()) throw createProviderErrorV1('provider_authorization_changed', {});
+            return result.binding;
+        }
+        : undefined;
+    const prepareManagedEndpoint = managedRunServices && resolveManagedPurposeBindingIntent && runtimeAccountId
+        ? createExecutionRunManagedProviderEndpointPreparer({ machineId: sessionMachineId, accountId: runtimeAccountId,
+            readAccountSettingsSnapshot: resolveOwnerAccountSettingsSnapshot,
+            resolveManagedPurposeBindingIntent,
+            openSource: createRunnerManagedProviderRunSourceOpener({ services: managedRunServices, isOwnerCurrent: ownerAccountIsCurrent }),
+        })
+        : undefined;
     const readCodingPromptBehavior = () => params.sessionRuntimeControls?.readCodingPromptBehavior?.() ?? null;
+    const readAppliedChildSelection = async () => await params.sessionRuntimeControls?.readAppliedChildSelection?.()
+        ?? { status: 'unavailable' as const };
     const sessionInteractionHost = parentSessionForTools
         ? {
             session: parentSessionForTools,
             machineId: sessionMachineId,
             readCodingPromptBehavior,
+            readAppliedChildSelection,
             permissionHandler: createProviderEnforcedPermissionHandler({
                 session: parentSessionForTools,
                 logPrefix: '[Voice Agent Session]',
@@ -371,27 +397,13 @@ export function registerSessionClientRuntimeHandlers(
                 selection?: TeamCredentialProviderModelSelectionV1;
             }>) => {
                 const prepare = params.sessionRuntimeControls?.prepareRunTeamCredentialProviderBinding;
-                if (!prepare) return null;
-                const inherited = explicitSelection
-                    ? null
-                    : SessionModelSelectionV2Schema.safeParse(
-                        (parentSessionForTools.getMetadataSnapshot() as Record<string, unknown> | null)?.modelSelectionIntentV2,
-                    );
-                const resourceId = explicitSelection?.resourceId
-                    ?? (inherited?.success && inherited.data.ref.source === 'team_resource'
-                        ? inherited.data.ref.resourceId
-                        : null);
-                const modelId = explicitSelection?.modelId
-                    ?? (inherited?.success && inherited.data.ref.source === 'team_resource'
-                        ? inherited.data.ref.modelId
-                        : null);
-                if (!resourceId || !modelId) return null;
+                if (!prepare || !explicitSelection) return null;
                 return await prepare({
                     runId,
                     agentId,
-                    resourceId,
-                    modelId,
-                    ...(explicitSelection ? { selection: explicitSelection } : {}),
+                    resourceId: explicitSelection.resourceId,
+                    modelId: explicitSelection.modelId,
+                    selection: explicitSelection,
                 });
             },
             ...(accountVoiceFollowReconciler
@@ -558,6 +570,7 @@ export function registerSessionClientRuntimeHandlers(
         token: params.token,
         sessionId: params.sessionId,
         getCurrentSessionMetadata: params.getSessionMetadata,
+        getCurrentAppliedChildSelection: readAppliedChildSelection,
         readRoleSources: params.readRoleSources ?? parentSessionForTools?.readRoleSources,
         getCurrentResolvedRoles: params.getCurrentResolvedRoles ?? (parentSessionForTools?.getCurrentResolvedRoles
             ? () => parentSessionForTools.getCurrentResolvedRoles!() : undefined),
@@ -648,7 +661,8 @@ export function registerSessionClientRuntimeHandlers(
             const roleParams = await resolveCredentialedRoleParams(context.signal);
             if (!roleParams) return null;
             return await runWithServerHttpBaseUrl(approvalServerApiUrl, () =>
-                createCliActionDeps(roleParams).resolveAgentStartContext?.(context) ?? null);
+                createCliActionDeps({ ...roleParams, getCurrentAppliedChildSelection: readAppliedChildSelection })
+                    .resolveAgentStartContext?.(context) ?? null);
         },
         sessionList: async (input) => {
             const roleParams = await resolveCredentialedRoleParams();
@@ -778,6 +792,11 @@ export function registerSessionClientRuntimeHandlers(
     registerExecutionRunHandlers(params.rpcHandlerManager, {
         sessionId: params.sessionId,
         readPromptCredentials: readOwnerAccountCredentials,
+        readModelProjection: createAccountScopedProviderModelProjectionReader({ serverUrl: params.serverUrl,
+            readCredentials: readOwnerAccountCredentials, readAccountSettingsSnapshot: resolveOwnerAccountSettingsSnapshot,
+            isCurrent: ownerAccountIsCurrent }),
+        ...(resolveManagedPurposeBindingIntent ? { resolveManagedPurposeBindingIntent } : {}),
+        ...(prepareManagedEndpoint ? { prepareManagedEndpoint } : {}),
         resolveAgentStartContext: async (context) => {
             // Public Session RPC carries role identity, never private admission
             // facts. Materialize them here from this exact Session/Home owner.

@@ -219,6 +219,7 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
         trackedSession.cancelStartupLaunchBeforeAck =
             cancelStartupLaunch;
         params.pidToTrackedSession.set(waitParams.pid, trackedSession);
+        params.spawnLifecycleCallbacks.onTrackedSessionRegistered?.();
         params.spawnLifecycleCallbacks.registerSpawnResourceCleanupForPid(trackedSession.pid);
         params.spawnLifecycleCallbacks.consumeSessionAttachCleanupForPid(trackedSession.pid);
         let acceptedSpawnMarkerPromise: Promise<void>;
@@ -369,7 +370,7 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
             if (resolved.type === 'success') {
                 delete trackedSession.cancelStartupLaunchBeforeAck;
                 delete trackedSession.windowsTerminalLaunchCustody;
-                delete trackedSession.windowsTerminalCancellationIdentity;
+                delete trackedSession.runnerProcessIdentity;
                 delete trackedSession
                     .persistWindowsTerminalAcceptedAgentMarker;
                 delete trackedSession
@@ -609,11 +610,11 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
                             launch:
                                 windowsTerminalLaunchCustody,
                             ...(tracked
-                                .windowsTerminalCancellationIdentity
+                                .runnerProcessIdentity
                                 ? {
                                     capturedIdentity:
                                         tracked
-                                            .windowsTerminalCancellationIdentity,
+                                            .runnerProcessIdentity,
                                 }
                                 : {}),
                             retirementNotBeforeMs,

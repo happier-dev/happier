@@ -1,6 +1,30 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ConnectedServicePoolSelectionGetResponseV1Schema } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
+import type { ConnectedServicePoolSelectionRead } from '@/api/machine/rpcHandlers.connectedAccounts';
 
 describe('daemon machine RPC route attachments', () => {
+  it('keeps the same pool selection owner available after replacing the machine transport', async () => {
+    const { createDaemonMachineRpcRouteAttachmentCache } = await import('./machineRpcRouteAttachments');
+    const request = { machineId: 'machine', group: { service: { pluginId: 'example.accounts', localId: 'service' }, groupId: 'pool' } };
+    const projection = ConnectedServicePoolSelectionGetResponseV1Schema.parse({
+      group: request.group, observedAtMs: 1_000,
+      selection: { selected: null, reason: 'manual_strategy', excluded: [], decisionTrace: {
+        activeProfileId: 'account', reason: 'manual_strategy', strategy: 'manual', selectionBasis: 'manual_strategy',
+        sticky: false, orderedEligibleCandidates: [], candidates: [],
+      } },
+    });
+    const read = async () => projection;
+    const unattached = async () => { throw new Error('pool selection owner is not attached'); };
+    let installed: ConnectedServicePoolSelectionRead = unattached;
+    const replacement = { registerConnectedServicePoolSelectionRead: (next: ConnectedServicePoolSelectionRead) => { installed = next; } };
+    const cache = createDaemonMachineRpcRouteAttachmentCache({ getApiMachineForSessions: () => null });
+    cache.attachConnectedServicePoolSelectionRead(read);
+    cache.prepareApiMachineForSessions(replacement as never);
+    expect(await installed(request)).toEqual(projection);
+    installed = unattached;
+    cache.attachApiMachineForSessions(replacement as never);
+    expect(await installed(request)).toEqual(projection);
+  });
   it('caches route families and reattaches browser recording routes when machine RPC becomes available later', async () => {
     const { createDaemonMachineRpcRouteAttachmentCache } = await import('./machineRpcRouteAttachments');
     const localServicesPreview = { getSnapshot: vi.fn() };

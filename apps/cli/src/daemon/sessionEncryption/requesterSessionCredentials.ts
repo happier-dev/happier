@@ -47,6 +47,8 @@ import type { ProviderAccountUsagePersistenceScheduler } from '../connectedServi
 /** Exact live Session Account ports; owned by ordinary daemon Session lifecycle, never serialized. */
 export type RequesterSessionRuntimeContext = Readonly<{
   bootstrap: AdmittedRequesterSessionBootstrap;
+  /** Includes admission, saved-secret custody and this runtime's retirement. */
+  isCurrent(): Promise<boolean>;
   api: ApiClient;
   readAccountSettingsSnapshot(): ActiveAccountSettingsSnapshot;
   readAccountLaunchProfiles(): Promise<Awaited<ReturnType<typeof import('@/settings/profiles/readProfilesFromAccountSettings').readAccountLaunchProfiles>>>;
@@ -82,7 +84,7 @@ export async function assertRequesterSessionAccountContextCurrent(input: Readonl
 }>): Promise<void> {
   if (input.expected) {
     const tracked = input.readTrackedContext();
-    if (tracked && tracked !== input.expected || !await input.expected.bootstrap.isCurrent()) {
+    if (tracked && tracked !== input.expected || !await input.expected.isCurrent()) {
       throw new Error('requester_session_not_current');
     }
     return;

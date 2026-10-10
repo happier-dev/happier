@@ -1,6 +1,7 @@
 import type { DaemonState, DaemonTransferListenerState } from '@/api/types';
 import type { MachinePublicationOutcome } from '@/api/apiMachine';
 import type { DirectTransferServerLifecycleState } from '@/machines/transfer/directTransferServerLifecycle';
+import { StoredMachinePublishedDaemonStateV1Schema, MachinePublishedTransferRuntimeV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 
 const SUPPRESSED_MACHINE_PUBLICATION_OUTCOME = 'suppressed' satisfies MachinePublicationOutcome;
 
@@ -127,6 +128,7 @@ export function createDaemonTransferRuntimeStatePublisher(params: Readonly<{
   publishTailscaleTransferListenerState: (state: DaemonTransferListenerState) => Promise<void>;
   resume: () => Promise<void>;
 }> {
+  const initialTransferState = MachinePublishedTransferRuntimeV1Schema.parse(params.initialTransferState);
   let apiMachine: DaemonTransferRuntimeStatePublisherApiMachine | null = null;
   let latestDirectLifecycleState: DirectTransferServerLifecycleState | null = null;
   let latestTailscaleTransferListenerState: DaemonTransferListenerState | null = null;
@@ -140,11 +142,11 @@ export function createDaemonTransferRuntimeStatePublisher(params: Readonly<{
     hasPendingState = false;
     try {
       const publicationOutcome = await apiMachine.updateDaemonState((state) => {
-        const baseState: DaemonState = state ?? {
+        const baseState: DaemonState = state === null ? {
           status: 'running',
-          transfer: params.initialTransferState,
-        };
-        let transferState = baseState.transfer ?? params.initialTransferState;
+          transfer: initialTransferState,
+        } : StoredMachinePublishedDaemonStateV1Schema.parse(state);
+        let transferState = baseState.transfer ?? initialTransferState;
         if (latestDirectLifecycleState) {
           transferState = applyDirectTransferServerLifecycleState(
             transferState,

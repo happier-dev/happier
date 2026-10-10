@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 
 import type { ApiClient } from '@/api/api';
 import type { DaemonState, Machine, MachineMetadata } from '@/api/types';
@@ -171,6 +172,7 @@ export async function ensureMachineRegistered(opts: Readonly<{
   daemonState?: DaemonState;
   timeoutMs?: number;
   caller?: string;
+  managedEnrollment?: ManagedEnrollmentCorrelationV1;
   recoveryLogger?: RecoveryLogger;
   isShuttingDown?: () => boolean;
 }>): Promise<{
@@ -194,6 +196,7 @@ export async function ensureMachineRegistered(opts: Readonly<{
       metadata: opts.metadata,
       daemonState: opts.daemonState,
       timeoutMs: opts.timeoutMs,
+      ...(opts.managedEnrollment ? { managedEnrollment: opts.managedEnrollment } : {}),
     });
     return await completed(machine, opts.machineId, false);
   } catch (error) {
@@ -217,6 +220,7 @@ export async function ensureMachineRegistered(opts: Readonly<{
         metadata: opts.metadata,
         daemonState: opts.daemonState,
         timeoutMs: opts.timeoutMs,
+        ...(opts.managedEnrollment ? { managedEnrollment: opts.managedEnrollment } : {}),
       });
 
       return await completed(machine, replacementMachineId, true);
@@ -241,6 +245,7 @@ export async function ensureMachineRegistered(opts: Readonly<{
       metadata: opts.metadata,
       daemonState: opts.daemonState,
       timeoutMs: opts.timeoutMs,
+      ...(opts.managedEnrollment ? { managedEnrollment: opts.managedEnrollment } : {}),
     });
 
     recoveryLogger.info(`[MACHINE] [RECOVERED] Machine id rotated${caller}: ${opts.machineId} -> ${rotated}`);

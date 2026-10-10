@@ -10,6 +10,8 @@ import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/ru
 
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
 import { createExecutionRunPermissionHandler } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
+import { createExecutionRunRuntime } from '@/agent/runtime/bridges/executionRun/runtime/create';
+import { SessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import type { EngineAdapterResolution } from '../engineRegistryTypes';
 import type { StoredCredentials } from '@/persistence';
 import { setActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot, commitActiveAcpCatalog,
@@ -19,9 +21,15 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { resolveCliEngineRegistry } from './registry';
+import { createCustomAcpAdmittedRuntimeFixture } from '@/plugins/testkit/customAcp';
+import { PLUGIN_MANIFEST } from '../../../../../../../packages/plugins/custom-acp/src/manifest';
+import type { ResolveEngineRegistryParams } from './types';
+import { resolveBackendEngineAdapterResolution, resolveCliEngineRegistry } from './registry';
 import { waitForCondition } from '@/testkit/async/waitFor';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { readNewSessionDraftFromRepository, writeNewSessionDraftToRepository } from '../../../../../../../apps/ui/sources/components/sessions/composer/newSessionDraftRepositoryAdapter';
+import { flushSessionDraft, resetSessionDraftRepositoryForTests } from '../../../../../../../apps/ui/sources/sync/ops/sessionDrafts/sessionDraftRepository';
+import { buildNewSessionAuthoringDraftFromPersistedDraft, buildSessionSpawnNewInputV2FromAuthoringDraft } from '../../../../../../../apps/ui/sources/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 
 const mocks = vi.hoisted(() => ({
   readStoredCredentials: vi.fn(),
@@ -31,11 +39,35 @@ vi.mock('@/persistence', () => ({
   readStoredCredentials: mocks.readStoredCredentials,
 }));
 
-const { resolveAccountConfiguredAcpBackend } = await import('./accountConfiguredAcp');
-
 const BACKEND_ID = 'review-bot';
 const PROVIDER_SESSION_ID = 'configured-provider-session';
+const CUSTOM_ACP_ID = 'custom-acp';
 let observedMaterialStatus: 'ready' | 'access_removed' = 'ready';
+const runtimeCleanups: Array<() => Promise<void>> = [];
+
+async function createContributedRuntimeFixture(definitionId = BACKEND_ID, savedSecretOperationContext?: ResolveEngineRegistryParams['savedSecretOperationContext']) {
+  const fixture = await createCustomAcpAdmittedRuntimeFixture();
+  runtimeCleanups.push(fixture.dispose);
+  const agent = [...fixture.registry.contributes.agentDefinitionsById.values()].find(value => value.identity?.pluginId === PLUGIN_MANIFEST.id);
+  if (!agent) throw new Error('The actual activation fixture did not project its Agent');
+  const registryParams = {
+    backendId: agent.id,
+    runtimeRegistry: fixture.registry,
+    agentTarget: { kind: 'agent', identity: { pluginId: PLUGIN_MANIFEST.id, localId: CUSTOM_ACP_ID }, definitionId },
+    savedSecretOperationContext,
+  } satisfies ResolveEngineRegistryParams;
+  return { fixture, registryParams };
+}
+
+async function createContributedRegistryParams(definitionId = BACKEND_ID, savedSecretOperationContext?: ResolveEngineRegistryParams['savedSecretOperationContext']) {
+  return (await createContributedRuntimeFixture(definitionId, savedSecretOperationContext)).registryParams;
+}
+
+async function resolveContributedConfiguredRuntime(definitionId = BACKEND_ID, savedSecretOperationContext?: ResolveEngineRegistryParams['savedSecretOperationContext']) {
+  const params = await createContributedRegistryParams(definitionId, savedSecretOperationContext);
+  const registry = await resolveCliEngineRegistry(params);
+  return registry.resolveForBackendId(params.backendId);
+}
 
 function createCredentials(): StoredCredentials {
   return {
@@ -196,12 +228,12 @@ function setConfiguredAcpAccountSettings(scriptPath: string): void {
 function createComposedRuntime(resolution: EngineAdapterResolution | null, cwd: string) {
   if (!resolution) throw new Error('Expected the configured engine adapter');
   const runtime = resolution.engineAdapter.runtimeCore.createExecutionRunBackend({
-    cwd, backendId: BACKEND_ID, runId: 'configured-host-run',
+    cwd, backendId: resolution.backendId, runId: 'configured-host-run',
     controllerOccurrenceId: 'configured-controller', scope: 'session_owned', permissionMode: 'read_only',
     start: { runClass: 'long_lived', retentionPolicy: 'resumable', ioMode: 'streaming' },
     sessionInteractionHost: {
       machineId: 'configured-machine',
-      permissionHandler: createExecutionRunPermissionHandler({ permissionMode: 'read_only', backendId: BACKEND_ID }),
+      permissionHandler: createExecutionRunPermissionHandler({ permissionMode: 'read_only', backendId: resolution.backendId }),
       // Genuine Session transport boundary, matching the incumbent native
       // Session context testkit. All runtime/context/ACP composition is real.
       session: {
@@ -217,7 +249,6 @@ function createComposedRuntime(resolution: EngineAdapterResolution | null, cwd: 
 
 describe('Account-configured ACP composed Session journey', () => {
   beforeEach(() => {
-    vi.resetModules();
     mocks.readStoredCredentials.mockReset();
     mocks.readStoredCredentials.mockResolvedValue(createCredentials());
     resetActiveAccountSettingsSnapshotForTests();
@@ -246,23 +277,143 @@ describe('Account-configured ACP composed Session journey', () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    for (const dispose of runtimeCleanups.splice(0).reverse()) await dispose();
+    resetSessionDraftRepositoryForTests();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
+  it('refuses a definition ID that has no declared executable Agent contribution', async () => {
+    setConfiguredAcpAccountSettings('/tmp/custom-acp.mjs');
+    const registry = await resolveCliEngineRegistry({ contributes: createResolvedContributionRegistry({}) });
+    expect(await registry.resolveForBackendId(BACKEND_ID)).toBeNull();
+  });
+
+  it('refuses a selected Agent target paired with another backend before sharing in-flight resolution', async () => {
+    setConfiguredAcpAccountSettings('/tmp/custom-acp.mjs');
+    const params = await createContributedRegistryParams();
+    const registry = await resolveCliEngineRegistry(params);
+    const selected = registry.resolveForBackendId(params.backendId);
+    await expect(registry.resolveForBackendId('another-agent')).rejects.toMatchObject({
+      code: 'AGENT_TARGET_CONTRIBUTION_MISMATCH',
+    });
+    expect(await selected).toMatchObject({ backendId: params.backendId });
+    await expect(resolveBackendEngineAdapterResolution('another-agent', params)).rejects.toMatchObject({
+      code: 'AGENT_TARGET_CONTRIBUTION_MISMATCH',
+    });
+  });
+
+  it('refuses a direct Session bridge target whose runtime descriptor names another contribution or definition', async () => {
+    setConfiguredAcpAccountSettings('/tmp/custom-acp.mjs');
+    const { fixture, registryParams } = await createContributedRuntimeFixture();
+    for (const [agentId, definitionId, reason] of [
+      [registryParams.backendId, 'another-definition', 'definition-mismatch'],
+      ['codex', BACKEND_ID, 'contribution-mismatch'],
+    ]) {
+      const outcome = await new SessionHostBridge().createSessionRuntime(registryParams.backendId, {
+        credentials: createCredentials(), directory: process.cwd(), startedBy: 'terminal',
+        agentTarget: registryParams.agentTarget,
+        runtimeDescriptorV1: { v: 1, agentId, agent: { definitionId } },
+      }, { pluginRuntimeRegistryLease: fixture.lease }).then(async plan => {
+        await plan.config.pluginRuntimeRegistryLease?.release();
+        return { ok: true };
+      }, (error: unknown) => ({
+        ok: false,
+        code: error instanceof Error && 'code' in error ? error.code : undefined,
+        reason: error instanceof Error && 'reason' in error ? error.reason : undefined,
+      }));
+      expect(outcome).toEqual({
+        ok: false, code: 'ACP_CATALOG_UNAVAILABLE', reason,
+      });
+    }
+  });
+
+  it('binds a direct Session bridge definition from its existing runtime descriptor', async () => {
+    setConfiguredAcpAccountSettings('/tmp/custom-acp.mjs');
+    const { fixture, registryParams } = await createContributedRuntimeFixture();
+    const runtimeDescriptorV1 = { v: 1, agentId: registryParams.backendId, agent: { definitionId: BACKEND_ID } };
+    const outcome = await new SessionHostBridge().createSessionRuntime(registryParams.backendId, {
+      credentials: createCredentials(), directory: process.cwd(), startedBy: 'terminal', runtimeDescriptorV1,
+    }, { pluginRuntimeRegistryLease: fixture.lease }).then(async plan => {
+      const descriptor = plan.opts.runtimeDescriptorV1;
+      await plan.config.pluginRuntimeRegistryLease?.release();
+      return { ok: true, runtimeDescriptorV1: descriptor };
+    }, (error: unknown) => ({
+      ok: false, code: error instanceof Error && 'code' in error ? error.code : undefined,
+    }));
+    expect(outcome).toEqual({ ok: true, runtimeDescriptorV1 });
+  });
+
+  it('flushes and reopens two definitions before launching each through the same contributed Agent with its own command and environment', async () => {
+    await withTempDir('happier-custom-acp-two-definitions-', async (dir) => {
+      const firstScript = writeConfiguredAcpAgentScript(dir, 'first.mjs');
+      const secondScript = writeConfiguredAcpAgentScript(dir, 'second.mjs');
+      setConfiguredAcpAccountSettings(firstScript);
+      const active = getActiveAccountSettingsSnapshot()!;
+      if (active.acpCatalog?.status !== 'ready') throw new Error('Missing test catalog');
+      const firstDefinition = active.acpCatalog.record.definitions[0]!;
+      commitActiveAcpCatalog({ scopeKey: active.scopeKey!, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
+        catalog: { ...active.acpCatalog, revision: 5, record: { v: 1, definitions: [firstDefinition,
+          { ...firstDefinition, id: 'second-definition', name: 'second-definition', args: [secondScript],
+            env: { CONFIGURED_ACP_LITERAL: { t: 'literal', v: 'second-environment' } } },
+        ] } } });
+      const definitions = [
+        [BACKEND_ID, firstScript, 'from-account-declaration'],
+        ['second-definition', secondScript, 'second-environment'],
+      ] as const;
+      const scope = { serverId: 'server-a', accountId: 'account-a' };
+      resetSessionDraftRepositoryForTests();
+      for (const [definitionId] of definitions) {
+        writeNewSessionDraftToRepository({ scope, draftId: definitionId, draft: {
+          input: 'Review this repository', composerAttachments: [], selectedMachineId: 'machine-b', selectedPath: dir,
+          entryIntent: 'session', selectedProfileId: null, selectedSecretId: null, agentType: 'codex',
+          permissionMode: 'default', acpSessionModeId: null, updatedAt: 10,
+          agentTarget: { kind: 'agent', identity: { pluginId: PLUGIN_MANIFEST.id, localId: CUSTOM_ACP_ID }, definitionId },
+          backendTarget: { kind: 'backend', backendId: definitionId, configuredBackendId: definitionId },
+          executionTarget: { kind: 'machine', target: { serverId: scope.serverId, machineId: 'machine-b' } },
+        } });
+        await flushSessionDraft({ scope, address: { kind: 'newSession', draftId: definitionId } });
+      }
+      resetSessionDraftRepositoryForTests();
+      for (const [definitionId, scriptPath, literal] of definitions) {
+        const reopened = readNewSessionDraftFromRepository({ scope, draftId: definitionId });
+        if (!reopened) throw new Error('Expected the flushed Custom ACP selection');
+        const spawn = buildSessionSpawnNewInputV2FromAuthoringDraft({
+          draft: buildNewSessionAuthoringDraftFromPersistedDraft(reopened),
+          creationKey: `manual:configured-${definitionId}`, permissionMode: 'default', configurationUpdatedAtMs: 10,
+        });
+        expect(spawn.agentTarget).toEqual({ kind: 'agent',
+          identity: { pluginId: PLUGIN_MANIFEST.id, localId: CUSTOM_ACP_ID }, definitionId });
+        const params = await createContributedRegistryParams();
+        const registry = await resolveCliEngineRegistry({ ...params, agentTarget: spawn.agentTarget });
+        const resolution = await registry.resolveForBackendId(params.backendId);
+        expect(resolution).toMatchObject({
+          runtimeOwner: { selected: { kind: 'plugin_engine', pluginId: 'happier.agent.custom-acp' } } });
+        const runtime = createComposedRuntime(resolution, dir);
+        try {
+          await runtime.provisionRuntime();
+          expect(readObserved(dir)).toMatchObject({ scriptPath, env: { CONFIGURED_ACP_LITERAL: literal } });
+        } finally { await runtime.dispose(); }
+        await expectAcpChildExited(readObserved(dir).pid);
+      }
+      resetSessionDraftRepositoryForTests();
+    });
+  }, 40_000);
+
   it('re-resolves configured launches after a catalog-only update through the retained registry', async () => {
     await withTempDir('happier-configured-acp-catalog-update-', async (dir) => {
     setConfiguredAcpAccountSettings(writeConfiguredAcpAgentScript(dir, 'first-acp.mjs'));
-    const registry = await resolveCliEngineRegistry({ contributes: createResolvedContributionRegistry({}) });
-    const first = await registry.resolveForBackendId(BACKEND_ID);
+    const params = await createContributedRegistryParams();
+    const registry = await resolveCliEngineRegistry(params);
+    const first = await registry.resolveForBackendId(params.backendId);
     const changedScript = writeConfiguredAcpAgentScript(dir, 'changed-acp.mjs');
     const active = getActiveAccountSettingsSnapshot()!;
     if (active.acpCatalog?.status !== 'ready') throw new Error('Missing test catalog');
     commitActiveAcpCatalog({ scopeKey: active.scopeKey!, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
       catalog: { status: 'ready', revision: 5, record: { ...active.acpCatalog.record,
         definitions: active.acpCatalog.record.definitions.map(definition => ({ ...definition, args: [changedScript] })) } } });
-    const second = await registry.resolveForBackendId(BACKEND_ID);
+    const second = await registry.resolveForBackendId(params.backendId);
     expect(second?.engineAdapter).not.toBe(first?.engineAdapter);
     expect(getActiveAccountSettingsSnapshot()?.settingsVersion).toBe(1);
     const runtime = createComposedRuntime(second, dir);
@@ -274,6 +425,64 @@ describe('Account-configured ACP composed Session journey', () => {
     });
   });
 
+  it('uses the selected definition resume capability for detached execution runs', async () => {
+    setConfiguredAcpAccountSettings('/tmp/custom-acp.mjs');
+    async function readDetachedResumeSupport() {
+      const resolution = await resolveContributedConfiguredRuntime();
+      if (!resolution) throw new Error('Expected the declared Agent runtime');
+      const runtime = resolution.engineAdapter.runtimeCore.createExecutionRunBackend({
+        cwd: process.cwd(), backendId: resolution.backendId, runId: 'configured-detached-run',
+        controllerOccurrenceId: 'configured-controller', callId: 'configured-call', sidechainId: 'configured-sidechain',
+        scope: 'detached', permissionMode: 'read_only',
+        start: { profileId: 'delegate', runClass: 'long_lived', retentionPolicy: 'resumable', ioMode: 'streaming' },
+      });
+      if (!runtime) throw new Error('Expected the detached runtime');
+      try { return await runtime.readResumeSupport(); }
+      finally { await runtime.dispose(); }
+    }
+    expect(await readDetachedResumeSupport()).toBe(true);
+    const active = getActiveAccountSettingsSnapshot()!;
+    if (active.acpCatalog?.status !== 'ready') throw new Error('Missing test catalog');
+    commitActiveAcpCatalog({ scopeKey: active.scopeKey!, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
+      catalog: { status: 'ready', revision: 5, record: { ...active.acpCatalog.record,
+        definitions: active.acpCatalog.record.definitions.map(definition => ({
+          ...definition, capabilities: { ...definition.capabilities, supportsLoadSession: false },
+        })),
+      } },
+    });
+    expect(await readDetachedResumeSupport()).toBe(false);
+  });
+
+  it('migrates a selected configured execution-run target through the contributed Agent', async () => {
+    await withTempDir('happier-custom-acp-selected-run-', async dir => {
+      const script = writeConfiguredAcpAgentScript(dir);
+      setConfiguredAcpAccountSettings(script);
+      const params = await createContributedRegistryParams();
+      const registry = await resolveCliEngineRegistry(params);
+      const runtime = createExecutionRunRuntime({
+        cwd: dir, backendId: params.backendId,
+        backendTarget: { kind: 'configuredAcpBackend', backendId: BACKEND_ID },
+        engineRegistry: registry, runId: 'selected-configured-run', controllerOccurrenceId: 'selected-controller',
+        scope: 'session_owned', permissionMode: 'read_only',
+        start: { runClass: 'long_lived', retentionPolicy: 'resumable', ioMode: 'streaming' },
+        sessionInteractionHost: {
+          machineId: 'configured-machine',
+          permissionHandler: createExecutionRunPermissionHandler({ permissionMode: 'read_only', backendId: params.backendId }),
+          session: {
+            sessionId: 'configured-host-session', getMetadataSnapshot: () => null,
+            updateMetadata: vi.fn(async () => {}), updateAgentState: vi.fn(async () => {}),
+            enqueueAgentMessageCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
+          },
+        },
+      });
+      try {
+        await runtime.provisionRuntime();
+        expect(readObserved(dir)).toMatchObject({ scriptPath: script, env: { CONFIGURED_ACP_LITERAL: 'from-account-declaration' } });
+      } finally { await runtime.dispose(); }
+      await expectAcpChildExited(readObserved(dir).pid);
+    });
+  }, 40_000);
+
   it('does not cache a configured miss after the Account row adds the backend', async () => {
     setConfiguredAcpAccountSettings('/tmp/new-acp.mjs');
     const active = getActiveAccountSettingsSnapshot()!;
@@ -281,10 +490,11 @@ describe('Account-configured ACP composed Session journey', () => {
     const record = active.acpCatalog.record;
     const scope = { scopeKey: active.scopeKey!, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken() };
     commitActiveAcpCatalog({ ...scope, catalog: { status: 'ready', revision: 5, record: { v: 1, definitions: [] } } });
-    const registry = await resolveCliEngineRegistry({ contributes: createResolvedContributionRegistry({}) });
-    expect(await registry.resolveForBackendId(BACKEND_ID)).toBeNull();
+    const params = await createContributedRegistryParams();
+    const registry = await resolveCliEngineRegistry(params);
+    await expect(registry.resolveForBackendId(params.backendId)).rejects.toMatchObject({ code: 'ACP_CATALOG_UNAVAILABLE', reason: 'definition-not-found' });
     commitActiveAcpCatalog({ ...scope, catalog: { status: 'ready', revision: 6, record } });
-    expect(await registry.resolveForBackendId(BACKEND_ID)).toMatchObject({ backendId: BACKEND_ID, provenance: 'configured' });
+    expect(await registry.resolveForBackendId(params.backendId)).toMatchObject({ backendId: params.backendId, provenance: 'first_party' });
   });
 
   it('resolves the configured runtime from the owning invocation without borrowing the focused Account', async () => {
@@ -302,10 +512,10 @@ describe('Account-configured ACP composed Session journey', () => {
     setActiveAccountSettingsSnapshot(focused);
     const focusedSnapshot = getActiveAccountSettingsSnapshot();
     mocks.readStoredCredentials.mockResolvedValue(focusedCredentials);
-    const params = { contributes: createResolvedContributionRegistry({}), savedSecretOperationContext: operationContext };
+    const params = await createContributedRegistryParams(BACKEND_ID, operationContext);
     const registry = await resolveCliEngineRegistry(params);
-    const resolution = await registry.resolveForBackendId(BACKEND_ID);
-    expect(resolution).toMatchObject({ backendId: BACKEND_ID, provenance: 'configured' });
+    const resolution = await registry.resolveForBackendId(params.backendId);
+    expect(resolution).toMatchObject({ backendId: params.backendId, provenance: 'first_party' });
     const runtime = createComposedRuntime(resolution, dir);
     try {
       await runtime.provisionRuntime();
@@ -320,8 +530,8 @@ describe('Account-configured ACP composed Session journey', () => {
     await withTempDir('happier-configured-acp-composed-create-', async (dir) => {
       setConfiguredAcpAccountSettings(writeConfiguredAcpAgentScript(dir));
 
-      const resolution = await resolveAccountConfiguredAcpBackend(BACKEND_ID);
-      expect(resolution?.provenance).toBe('configured');
+      const resolution = await resolveContributedConfiguredRuntime(BACKEND_ID);
+      expect(resolution?.agent.identity).toEqual({ pluginId: PLUGIN_MANIFEST.id, localId: CUSTOM_ACP_ID });
 
       const runtime = createComposedRuntime(resolution, dir);
       expect(runtime.interaction?.capabilities.open).toEqual(['create', 'resume']);
@@ -373,7 +583,7 @@ describe('Account-configured ACP composed Session journey', () => {
   it('refuses a configured launch after Home revokes its shared credential without a local notification', async () => {
     await withTempDir('happier-configured-acp-revoked-launch-', async (dir) => {
       setConfiguredAcpAccountSettings(writeConfiguredAcpAgentScript(dir));
-      const runtime = createComposedRuntime(await resolveAccountConfiguredAcpBackend(BACKEND_ID), dir);
+      const runtime = createComposedRuntime(await resolveContributedConfiguredRuntime(BACKEND_ID), dir);
       const active = getActiveAccountSettingsSnapshot()!;
       const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
       expect(active.savedSecretResources?.[0]?.materialStatus).toBe('ready');
@@ -392,7 +602,7 @@ describe('Account-configured ACP composed Session journey', () => {
     await withTempDir('happier-configured-acp-composed-resume-', async (dir) => {
       setConfiguredAcpAccountSettings(writeConfiguredAcpAgentScript(dir));
 
-      const runtime = createComposedRuntime(await resolveAccountConfiguredAcpBackend(BACKEND_ID), dir);
+      const runtime = createComposedRuntime(await resolveContributedConfiguredRuntime(BACKEND_ID), dir);
       const events: AgentSessionRuntimeEvent[] = [];
       const unsubscribe = runtime.subscribeRuntimeEvents?.((event) => { events.push(event); });
       try {
@@ -418,7 +628,7 @@ describe('Account-configured ACP composed Session journey', () => {
   it('cancels one provider-observed configured ACP turn without accepting uncertain input', async () => {
     await withTempDir('happier-configured-acp-composed-cancel-', async (dir) => {
       setConfiguredAcpAccountSettings(writeConfiguredAcpAgentScript(dir));
-      const runtime = createComposedRuntime(await resolveAccountConfiguredAcpBackend(BACKEND_ID), dir);
+      const runtime = createComposedRuntime(await resolveContributedConfiguredRuntime(BACKEND_ID), dir);
       const events: AgentSessionRuntimeEvent[] = [];
       const unsubscribe = runtime.subscribeRuntimeEvents?.((event) => { events.push(event); });
       try {

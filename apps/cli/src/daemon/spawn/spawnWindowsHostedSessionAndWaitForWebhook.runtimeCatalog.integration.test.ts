@@ -874,7 +874,7 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
       };
       tracked.happySessionId =
         'session-marker-cleanup-failure';
-      tracked.windowsTerminalCancellationIdentity =
+      tracked.runnerProcessIdentity =
         exactAgentIdentity;
       await tracked
         .persistWindowsTerminalAcceptedAgentMarker!(

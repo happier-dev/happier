@@ -22,6 +22,7 @@ export type RegisterSessionHandoffAbortRpcHandlerInput = Readonly<{
   prepareJobStore: SessionHandoffPrepareTargetJobStore;
   sourceExportStore: SessionHandoffSourceExportStore;
   directPeerTransfer: SessionHandoffDirectPeerTransferHandle | undefined;
+  stopSessionForHandoff?: (sessionId: string, options?: Readonly<{ expectedSpawnNonce: string }>) => Promise<'stopped' | 'already_inactive' | 'failed'>;
   readPersistedPrepareJob: (params: Readonly<{
     handoffId: string;
     jobStore: SessionHandoffPrepareTargetJobStore;
@@ -70,38 +71,81 @@ export function createSessionHandoffAbortActionHandler(
     const parsed = SessionHandoffAbortRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidRequest();
 
-    const persistedJob = await readPersistedPrepareJob({
+    let persistedJob = await readPersistedPrepareJob({
       handoffId: parsed.data.handoffId,
       jobStore: prepareJobStore,
     });
     const persistedSourceExport = await sourceExportStore.load(parsed.data.handoffId);
     if (!persistedJob && !persistedSourceExport) return { ok: false, errorCode: 'not_found' } as const;
 
+    if (persistedJob?.status.status === 'completed') return { handoffId: parsed.data.handoffId, status: persistedJob.status };
+    if (persistedJob?.schemaVersion === 2 && persistedJob.recordKind === 'prepared_target'
+      && persistedJob.terminal.status !== 'aborted') {
+      const claimed = await prepareJobStore.transitionPredecessorV2(persistedJob.jobId, current => {
+        if (current.recordKind !== 'prepared_target' || current.terminal.status === 'completed'
+          || current.terminal.status === 'aborted') return null;
+        const revision = current.transitionRevision + 1;
+        return { ...current, transitionRevision: revision, updatedAtMs: Date.now(),
+          cancelRequestedAtMs: current.cancelRequestedAtMs ?? Date.now(),
+          ...(current.resume.status === 'preexisting_unowned' ? {
+            targetCleanup: { status: 'not_owned' as const, reason: 'preexisting_or_adopted' as const },
+          } : current.resume.status === 'not_attempted' ? {
+            targetCleanup: { status: 'not_owned' as const, reason: 'resume_not_attempted' as const },
+          } : {}),
+          terminal: { status: 'aborting', operationId: current.terminal.status === 'aborting'
+            ? current.terminal.operationId : current.handoffId, claimedRevision: revision } };
+      });
+      if (claimed?.recordKind !== 'prepared_target' || claimed.terminal.status !== 'aborting') {
+        return { ok: false, errorCode: 'not_ready' } as const;
+      }
+      persistedJob = claimed;
+      if ((claimed.resume.status === 'attempted' || claimed.resume.status === 'confirmed')
+        && claimed.targetCleanup.status !== 'proved_absent') {
+        let stopResult: 'stopped' | 'already_inactive' | 'failed' = 'failed';
+        try { stopResult = await params.stopSessionForHandoff?.(claimed.sessionId,
+          { expectedSpawnNonce: claimed.resume.attemptId }) ?? 'failed'; } catch { /* Failed stop retains private custody. */ }
+        const settled = await prepareJobStore.transitionPredecessorV2(claimed.jobId, current => {
+          if (current.recordKind !== 'prepared_target' || current.terminal.status !== 'aborting') return null;
+          const revision = current.transitionRevision + 1;
+          const now = Date.now();
+          return { ...current, transitionRevision: revision, updatedAtMs: now,
+            terminal: { ...current.terminal, claimedRevision: revision },
+            targetCleanup: stopResult === 'failed' ? { status: 'failed', reason: 'failed', attemptedAtMs: now }
+              : { status: 'proved_absent', proof: stopResult, provedAtMs: now } };
+        });
+        if (stopResult === 'failed' || !settled) return { ok: false, errorCode: 'target_stop_failed' } as const;
+        persistedJob = settled;
+      }
+    }
+
     if (persistedJob) {
       const abortedAtMs = Date.now();
-      const status: SessionHandoffStatus = {
-        ...persistedJob.status,
-        status: 'aborted',
-      };
-      await prepareJobStore.write(buildPrepareJobRecord({
-        jobId: persistedJob.jobId,
-        handoffId: parsed.data.handoffId,
-        createdAtMs: persistedJob.createdAtMs,
-        updatedAtMs: abortedAtMs,
-        cancelRequestedAtMs: persistedJob.cancelRequestedAtMs ?? abortedAtMs,
-        abortedAtMs,
-        ...(persistedJob.failedAtMs ? { failedAtMs: persistedJob.failedAtMs } : {}),
-        ...(persistedJob.lastErrorMessage ? { lastErrorMessage: persistedJob.lastErrorMessage } : {}),
-        ...(persistedJob.lastErrorCode ? { lastErrorCode: persistedJob.lastErrorCode } : {}),
-        status,
-        ...(persistedJob.prepareTargetRequest ? { prepareTargetRequest: persistedJob.prepareTargetRequest } : {}),
-        ...(persistedJob.prepareTargetResult ? {
-          prepareTargetResult: {
-            ...persistedJob.prepareTargetResult,
-            status,
-          },
-        } : {}),
-      }));
+      const transitioned = await prepareJobStore.update(persistedJob.jobId, (current) => {
+        if (current.status.status === 'completed') return current;
+        const status: SessionHandoffStatus = { ...current.status, status: 'aborted' };
+        return {
+          ...current,
+          updatedAtMs: abortedAtMs,
+          cancelRequestedAtMs: current.cancelRequestedAtMs ?? abortedAtMs,
+          abortedAtMs,
+          status,
+          ...(current.prepareTargetResult ? {
+            prepareTargetResult: { ...current.prepareTargetResult, status },
+          } : {}),
+        };
+      });
+      if (transitioned?.status.status === 'completed') {
+        return { handoffId: parsed.data.handoffId, status: transitioned.status };
+      }
+      persistedJob = transitioned ?? persistedJob;
+      if (persistedJob.schemaVersion === 2 && persistedJob.terminal.status === 'aborting') {
+        persistedJob = await prepareJobStore.transitionPredecessorV2(persistedJob.jobId, current => {
+          if (current.terminal.status !== 'aborting') return null;
+          const revision = current.transitionRevision + 1;
+          return { ...current, transitionRevision: revision, updatedAtMs: Date.now(),
+            terminal: { status: 'aborted', operationId: current.terminal.operationId, completedRevision: revision } };
+        }) ?? persistedJob;
+      }
       const targetRequest = persistedJob.prepareTargetRequest;
       if (targetRequest?.targetDirectory?.kind === 'managed' && targetRequest.operationId && targetRequest.sessionId) {
         const activeServerDir = params.activeServerDir ?? configuration.activeServerDir;
@@ -153,7 +197,10 @@ export function createSessionHandoffAbortActionHandler(
     ]);
     directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffAgentBundleTransferId(parsed.data.handoffId));
     directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffWorkspaceSeedTransferId(parsed.data.handoffId));
-    await sourceExportStore.releaseTransferFiles(parsed.data.handoffId);
+    await sourceExportStore.releaseTransferFiles(parsed.data.handoffId, {
+      preserveRequesterSessionCustody: persistedJob?.schemaVersion === 2 && persistedJob.recordKind === 'prepared_target'
+        && persistedJob.resume.status === 'preexisting_unowned',
+    });
     return { handoffId: parsed.data.handoffId, status };
   };
 }

@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -34,6 +35,11 @@ var (
 	procTerminateProcess          = kernel32.NewProc("TerminateProcess")
 	procCloseHandle               = kernel32.NewProc("CloseHandle")
 	procGetStdHandle              = kernel32.NewProc("GetStdHandle")
+	procCreateIoCompletionPort    = kernel32.NewProc("CreateIoCompletionPort")
+	procGetQueuedCompletionStatus = kernel32.NewProc("GetQueuedCompletionStatus")
+	procCreateEventW              = kernel32.NewProc("CreateEventW")
+	procOpenEventW                = kernel32.NewProc("OpenEventW")
+	procSetEvent                  = kernel32.NewProc("SetEvent")
 )
 
 const (
@@ -41,7 +47,11 @@ const (
 	startfUseStdHandles             = 0x00000100
 	jobObjectLimitKillOnJobClose    = 0x00002000
 	jobObjectExtendedLimitInfoClass = 9
-	jobObjectBasicProcessIdList     = 3
+	jobObjectBasicAccountingClass   = 1
+	jobObjectCompletionPortClass    = 7
+	jobObjectMsgActiveProcessZero   = 4
+	finiteJobCompletionKey          = 1
+	eventModifyState                = 0x0002
 	jobObjectTerminate              = 0x0008
 	jobObjectQuery                  = 0x0004
 	// (DWORD)-10/-11/-12: the Win32 STD_*_HANDLE pseudo-handle numbers.
@@ -50,12 +60,127 @@ const (
 	stdErrorHandle     = ^uintptr(11) // -12
 	errorAlreadyExists = syscall.Errno(183)
 	errorFileNotFound  = syscall.Errno(2)
-	errorMoreData      = syscall.Errno(234)
 	waitInfinite       = 0xFFFFFFFF
 	waitFailed         = 0xFFFFFFFF
 	waitObject0        = 0
 	invalidHandleValue = ^uintptr(0)
 )
+
+type jobObjectBasicAccountingInformation struct {
+	TotalUserTime             int64
+	TotalKernelTime           int64
+	ThisPeriodTotalUserTime   int64
+	ThisPeriodTotalKernelTime int64
+	TotalPageFaultCount       uint32
+	TotalProcesses            uint32
+	ActiveProcesses           uint32
+	TotalTerminatedProcesses  uint32
+}
+
+type jobObjectAssociateCompletionPort struct {
+	CompletionKey  uintptr
+	CompletionPort uintptr
+}
+
+// One job-local wake primitive, not a custody registry. Microsoft documents
+// that job completion notifications are not guaranteed. Explicit query/Stop
+// therefore wakes this same event ONLY after observing an empty job; the
+// retained carrier always queries the job again before returning its root code.
+// https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_associate_completion_port
+type finiteJobCompletion struct {
+	port  uintptr
+	event uintptr
+}
+
+func createFiniteJobCompletion(jobHandle uintptr, jobName string) (*finiteJobCompletion, error) {
+	eventName, err := syscall.UTF16PtrFromString(jobName + "-finite-empty")
+	if err != nil {
+		return nil, err
+	}
+	event, _, callErr := procCreateEventW.Call(0, 0, 0, uintptr(unsafe.Pointer(eventName)))
+	if event == 0 {
+		return nil, fmt.Errorf("CreateEventW failed: %v", callErr)
+	}
+	if errnoOf(callErr) == errorAlreadyExists {
+		procCloseHandle.Call(event)
+		return nil, fmt.Errorf("finite custody event already exists")
+	}
+	port, _, callErr := procCreateIoCompletionPort.Call(invalidHandleValue, 0, 0, 1)
+	if port == 0 {
+		procCloseHandle.Call(event)
+		return nil, fmt.Errorf("CreateIoCompletionPort failed: %v", callErr)
+	}
+	completion := &finiteJobCompletion{port: port, event: event}
+	association := jobObjectAssociateCompletionPort{CompletionKey: finiteJobCompletionKey, CompletionPort: port}
+	if result, _, callErr := procSetInformationJobObject.Call(jobHandle, jobObjectCompletionPortClass,
+		uintptr(unsafe.Pointer(&association)), unsafe.Sizeof(association)); result == 0 {
+		completion.close()
+		return nil, fmt.Errorf("associate finite job completion port failed: %v", callErr)
+	}
+	// Drain lifecycle notifications throughout the target's lifetime, not only
+	// after root exit; child creation must not accumulate an unread port queue.
+	go completion.monitorNotifications()
+	return completion, nil
+}
+
+func (completion *finiteJobCompletion) close() {
+	procCloseHandle.Call(completion.port)
+	procCloseHandle.Call(completion.event)
+}
+
+func (completion *finiteJobCompletion) monitorNotifications() {
+	// Completion-port association belongs to an OS thread. Do not let the
+	// Go scheduler reuse that association for a different port between reads.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	for {
+		var message uint32
+		var key, overlapped uintptr
+		result, _, _ := procGetQueuedCompletionStatus.Call(completion.port,
+			uintptr(unsafe.Pointer(&message)), uintptr(unsafe.Pointer(&key)),
+			uintptr(unsafe.Pointer(&overlapped)), waitInfinite)
+		if result == 0 {
+			// Failed/missing notification is not an absence proof. The job
+			// remains held and explicit query/Stop can still wake its event.
+			return
+		}
+		if key == finiteJobCompletionKey && message == jobObjectMsgActiveProcessZero {
+			procSetEvent.Call(completion.event)
+		}
+	}
+}
+
+func (completion *finiteJobCompletion) awaitEmpty(jobHandle uintptr) error {
+	for {
+		// Root exit can precede the first port read. This initial observation
+		// closes that race; every subsequent wake is likewise only a hint.
+		if members, err := jobMemberCount(jobHandle); err == nil && members == 0 {
+			return nil
+		}
+		if result, _, callErr := procWaitForSingleObject.Call(completion.event, waitInfinite); result != waitObject0 {
+			return fmt.Errorf("finite custody event wait failed: %v", callErr)
+		}
+	}
+}
+
+func notifyFiniteJobEmpty(jobName string) error {
+	eventName, err := syscall.UTF16PtrFromString(jobName + "-finite-empty")
+	if err != nil {
+		return err
+	}
+	event, _, callErr := procOpenEventW.Call(eventModifyState, 0, uintptr(unsafe.Pointer(eventName)))
+	if event == 0 {
+		if errnoOf(callErr) == errorFileNotFound {
+			return nil // Ordinary SVC09 run has no finite event.
+		}
+		return fmt.Errorf("OpenEventW failed: %v", callErr)
+	}
+	defer procCloseHandle.Call(event)
+	if result, _, callErr := procSetEvent.Call(event); result == 0 {
+		return fmt.Errorf("SetEvent failed: %v", callErr)
+	}
+	return nil
+}
 
 type jobObjectBasicLimitInformation struct {
 	PerProcessUserTimeLimit int64
@@ -216,7 +341,7 @@ func writeHandshakeFile(path string, pid int, job string) error {
 	return os.Rename(temporary, path)
 }
 
-func parseRunArgs(args []string) (job string, handshakePath string, inheritedStdinArg string, verbatimArguments bool, target []string, err error) {
+func parseRunArgs(args []string) (job string, handshakePath string, inheritedStdinArg string, verbatimArguments bool, waitForJobEmpty bool, target []string, err error) {
 	parsingOptions := true
 	for _, arg := range args {
 		if parsingOptions && strings.HasPrefix(arg, "--job=") {
@@ -229,11 +354,11 @@ func parseRunArgs(args []string) (job string, handshakePath string, inheritedStd
 		}
 		if parsingOptions && strings.HasPrefix(arg, "--target-inherited-stdin-arg=") {
 			if inheritedStdinArg != "" {
-				return "", "", "", false, nil, fmt.Errorf("run accepts one --target-inherited-stdin-arg")
+				return "", "", "", false, false, nil, fmt.Errorf("run accepts one --target-inherited-stdin-arg")
 			}
 			inheritedStdinArg = strings.TrimPrefix(arg, "--target-inherited-stdin-arg=")
 			if inheritedStdinArg == "" || strings.ContainsRune(inheritedStdinArg, '\x00') {
-				return "", "", "", false, nil, fmt.Errorf("run requires a non-empty inherited stdin argument name")
+				return "", "", "", false, false, nil, fmt.Errorf("run requires a non-empty inherited stdin argument name")
 			}
 			continue
 		}
@@ -241,23 +366,27 @@ func parseRunArgs(args []string) (job string, handshakePath string, inheritedStd
 			verbatimArguments = true
 			continue
 		}
+		if parsingOptions && arg == "--wait-for-job-empty" {
+			waitForJobEmpty = true
+			continue
+		}
 		if parsingOptions && arg == "--" {
 			parsingOptions = false
 			continue
 		}
 		if parsingOptions {
-			return "", "", "", false, nil, fmt.Errorf("run requires --job=<name> before --")
+			return "", "", "", false, false, nil, fmt.Errorf("run requires --job=<name> before --")
 		}
 		target = append(target, arg)
 	}
 	if job == "" || len(target) == 0 {
-		return "", "", "", false, nil, fmt.Errorf("run requires --job=<name> and a target command after --")
+		return "", "", "", false, false, nil, fmt.Errorf("run requires --job=<name> and a target command after --")
 	}
-	return job, handshakePath, inheritedStdinArg, verbatimArguments, target, nil
+	return job, handshakePath, inheritedStdinArg, verbatimArguments, waitForJobEmpty, target, nil
 }
 
 func runCustodyCommand(args []string) error {
-	job, handshakePath, inheritedStdinArg, verbatimArguments, target, err := parseRunArgs(args)
+	job, handshakePath, inheritedStdinArg, verbatimArguments, waitForJobEmpty, target, err := parseRunArgs(args)
 	if err != nil {
 		usage()
 		os.Exit(exitUsage)
@@ -288,6 +417,16 @@ func runCustodyCommand(args []string) error {
 		unsafe.Sizeof(limits),
 	); result == 0 {
 		return fmt.Errorf("SetInformationJobObject failed: %v", callErr)
+	}
+	var completion *finiteJobCompletion
+	if waitForJobEmpty {
+		// Associate while the job is inactive, before even the suspended
+		// target exists, so early process transitions are already covered.
+		completion, err = createFiniteJobCompletion(jobHandle, job)
+		if err != nil {
+			return err
+		}
+		defer completion.close()
 	}
 
 	si := startupInfoW{Cb: uint32(unsafe.Sizeof(startupInfoW{}))}
@@ -328,8 +467,16 @@ func runCustodyCommand(args []string) error {
 	); result == 0 {
 		return fmt.Errorf("CreateProcessW failed: %v", callErr)
 	}
-	defer procCloseHandle.Call(pi.HThread)
-	defer procCloseHandle.Call(pi.HProcess)
+	defer func() {
+		if pi.HThread != 0 {
+			procCloseHandle.Call(pi.HThread)
+		}
+	}()
+	defer func() {
+		if pi.HProcess != 0 {
+			procCloseHandle.Call(pi.HProcess)
+		}
+	}()
 
 	// Assignment happens while the target is suspended: not one target
 	// instruction can run outside the job. On failure the suspended target is
@@ -374,9 +521,25 @@ func runCustodyCommand(args []string) error {
 	if result, _, callErr := procGetExitCodeProcess.Call(pi.HProcess, uintptr(unsafe.Pointer(&exitCode))); result == 0 {
 		return fmt.Errorf("GetExitCodeProcess failed: %v", callErr)
 	}
-	// Closing the last job handle here is containment enforcement, not
-	// cleanup: KILL_ON_JOB_CLOSE terminates every member that outlived the
-	// root, so descendants cannot escape through this process exiting.
+	if completion != nil {
+		// Keep the observed code, not an unnecessary terminated-root handle.
+		// Active-process accounting may retain terminated-process references;
+		// the whole-job wait must not itself keep such a reference alive.
+		if result, _, callErr := procCloseHandle.Call(pi.HThread); result == 0 {
+			return fmt.Errorf("close observed finite root thread failed: %v", callErr)
+		}
+		pi.HThread = 0
+		if result, _, callErr := procCloseHandle.Call(pi.HProcess); result == 0 {
+			return fmt.Errorf("close observed finite root handle failed: %v", callErr)
+		}
+		pi.HProcess = 0
+		if err := completion.awaitEmpty(jobHandle); err != nil {
+			return err
+		}
+	}
+	// Ordinary SVC09 run still enforces root-exit cleanup. Finite run reaches
+	// this point ONLY with positive whole-job absence; natural root exit never
+	// closes its containment prematurely or kills a surviving descendant.
 	procCloseHandle.Call(jobHandle)
 	os.Exit(int(exitCode))
 	return nil
@@ -403,31 +566,25 @@ func openJobByName(name string, access uint32) (uintptr, bool, error) {
 	return handle, true, nil
 }
 
-// jobMemberCount proves membership absence with the kernel's own member list:
-// a zero count is the "full membership absence" fact, not a heuristic.
+// jobMemberCount reads the kernel's active-process accounting, including nested
+// jobs. It neither guesses from a root PID nor truncates a PID census.
 func jobMemberCount(jobHandle uintptr) (int, error) {
-	buffer := make([]byte, 64*1024)
+	var accounting jobObjectBasicAccountingInformation
 	var returnLength uint32
 	result, _, callErr := procQueryInformationJobObject.Call(
 		jobHandle,
-		jobObjectBasicProcessIdList,
-		uintptr(unsafe.Pointer(&buffer[0])),
-		uintptr(len(buffer)),
+		jobObjectBasicAccountingClass,
+		uintptr(unsafe.Pointer(&accounting)),
+		unsafe.Sizeof(accounting),
 		uintptr(unsafe.Pointer(&returnLength)),
 	)
 	if result == 0 {
-		if errnoOf(callErr) == errorMoreData {
-			// More members than the bounded buffer can hold: report a
-			// fail-closed non-zero count instead of a guess.
-			return 1 << 30, nil
-		}
 		return 0, fmt.Errorf("QueryInformationJobObject failed: %v", callErr)
 	}
-	if returnLength < 8 {
-		return 0, fmt.Errorf("QueryInformationJobObject returned a truncated member list")
+	if uintptr(returnLength) < unsafe.Sizeof(accounting) {
+		return 0, fmt.Errorf("QueryInformationJobObject returned truncated accounting")
 	}
-	count := *(*uint32)(unsafe.Pointer(&buffer[4]))
-	return int(count), nil
+	return int(accounting.ActiveProcesses), nil
 }
 
 func parseJobArgs(args []string) (job string, timeoutMs int, err error) {
@@ -479,6 +636,9 @@ func terminateCustodyJob(args []string) error {
 			return err
 		}
 		if members == 0 {
+			if err := notifyFiniteJobEmpty(job); err != nil {
+				return err
+			}
 			return emit(map[string]any{"state": "absent"})
 		}
 		if time.Now().UnixMilli() >= deadline {
@@ -512,6 +672,9 @@ func queryCustodyJob(args []string) error {
 		return err
 	}
 	if members == 0 {
+		if err := notifyFiniteJobEmpty(job); err != nil {
+			return err
+		}
 		// The job husk exists but no process remains in it.
 		return emit(map[string]any{"state": "absent"})
 	}

@@ -7,7 +7,9 @@ import type {
     SessionStoredMessageContent,
     SessionTurnMutationV1,
 } from '@happier-dev/protocol';
-import { SessionTranscriptObservationProvenanceV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
+import { SessionTranscriptObservationProvenanceV1Schema, SessionTranscriptSurfaceItemReferenceV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
+import type { SessionTranscriptSurfaceItemReferenceV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
+import type { PromptStackEntryV1 } from '@happier-dev/protocol/prompts/library/promptStacksV1';
 import type { SessionTranscriptObservationProvenanceV1 } from '@happier-dev/protocol';
 
 export type SessionClientDurableMutationDependency = Readonly<{
@@ -84,6 +86,7 @@ export type TranscriptMessageAppendMutationV1 = Readonly<{
     updatedAt: number;
     sessionEventType?: 'ready';
     provenance: SessionTranscriptObservationProvenanceV1;
+    surfaceItemReference?: SessionTranscriptSurfaceItemReferenceV1;
 }>;
 
 /** Recovery-only shape for public-dev journals written before provenance became mandatory. */
@@ -130,6 +133,9 @@ export type RegisteredSessionStateFieldMutationV1 = Readonly<{
     source: 'runtime' | 'ui' | 'daemon' | 'server_reconcile' | 'compat';
     observedAt: number;
     dependsOn?: readonly SessionClientDurableMutationDependency[];
+    expectedMetadataRevision?: number;
+    /** Stored 68edc1dab944 Role queues only; ordinary Role writers cannot author this carrier. */
+    retainedSessionContextEntry?: PromptStackEntryV1;
 }>;
 
 export type DaemonUsageLimitRecoveryFieldMutation = RegisteredSessionStateFieldMutationV1 & Readonly<{
@@ -147,6 +153,7 @@ export type DaemonWorkStateFieldMutation = RegisteredSessionStateFieldMutationV1
 export type SessionClientDurableMutationAttemptReason =
     | 'delivery_not_confirmed'
     | 'delivery_error'
+    | 'metadata_tuple_conflict'
     | 'transcript_message_provenance_missing_or_invalid'
     | 'transcript_message_invalid_observation';
 
@@ -251,6 +258,7 @@ export function createTranscriptMessageAppendMutation(params: Readonly<{
     createdAt?: number;
     updatedAt?: number;
     provenance: SessionTranscriptObservationProvenanceV1;
+    surfaceItemReference?: SessionTranscriptSurfaceItemReferenceV1;
 }>): TranscriptMessageAppendMutationV1 {
     const sessionId = normalizeRequiredString(params.sessionId, 'sessionId');
     const localId = readRequiredOpaqueString(params.localId, 'localId');
@@ -269,6 +277,9 @@ export function createTranscriptMessageAppendMutation(params: Readonly<{
         createdAt,
         updatedAt: Math.max(createdAt, updatedAt),
         provenance: requireTranscriptMessageAppendProvenance(params.provenance),
+        ...(params.surfaceItemReference === undefined ? {} : {
+            surfaceItemReference: SessionTranscriptSurfaceItemReferenceV1Schema.parse(params.surfaceItemReference),
+        }),
         ...(params.sessionEventType ? { sessionEventType: params.sessionEventType } : {}),
     };
 }
@@ -326,8 +337,13 @@ export function createRegisteredSessionStateFieldMutation(params: Readonly<{
     deliveryClass?: RegisteredSessionStateFieldMutationV1['deliveryClass'];
     observedAt?: number;
     dependsOn?: readonly SessionClientDurableMutationDependency[];
+    expectedMetadataRevision?: number;
 }>): RegisteredSessionStateFieldMutationV1 {
     const sessionId = normalizeRequiredString(params.sessionId, 'sessionId');
+    if ((params.fieldId === 'intent.context' || params.fieldId === 'intent.memoryEnabled' || params.fieldId === 'intent.voicePreference')
+      && (!Number.isSafeInteger(params.expectedMetadataRevision) || (params.expectedMetadataRevision ?? -1) < 0)) {
+      throw Object.assign(new Error('A reviewed Session metadata revision is required'), { code: 'invalid_parameters' });
+    }
     return {
         v: 1,
         sessionId,
@@ -339,6 +355,7 @@ export function createRegisteredSessionStateFieldMutation(params: Readonly<{
         op: params.op,
         source: params.source,
         observedAt: normalizeObservedAt(params.observedAt ?? Date.now()),
+        ...(params.expectedMetadataRevision !== undefined ? { expectedMetadataRevision: params.expectedMetadataRevision } : {}),
         ...(params.dependsOn && params.dependsOn.length > 0 ? { dependsOn: normalizeDependencies(params.dependsOn) } : {}),
     };
 }

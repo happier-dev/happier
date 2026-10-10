@@ -218,6 +218,7 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
             };
             const replayInitialTranscript = async (): Promise<string> => {
                 const fresh = request.options.replay === 'fresh';
+                const terminal = fresh || request.options.projection === 'terminal';
                 let pageCursor: string | undefined;
                 let fromCursor: string | null = null;
                 const seenCursors = new Set<string>();
@@ -247,7 +248,7 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                         source: loaded.session.source,
                         remoteSessionId: loaded.session.remoteSessionId,
                         direction: fresh ? 'newer' : 'older',
-                        ...(fresh ? { projection: 'terminal' as const } : {}),
+                        ...(terminal ? { projection: 'terminal' as const } : {}),
                         ...(pageCursor ? { cursor: pageCursor } : {}),
                         maxBytes: EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxSerializedBytes,
                         maxItems: EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxItems,
@@ -293,7 +294,7 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                     }
                     seenCursors.add(nextCursor);
                     replayBatchesNewestFirst.push(Object.freeze({
-                        items: Object.freeze(page.items.map(fresh ? mapPluginExternalTerminalSourceItem : mapPluginExternalTranscriptItem)),
+                        items: Object.freeze(page.items.map(terminal ? mapPluginExternalTerminalSourceItem : mapPluginExternalTranscriptItem)),
                         fetchCursor: fresh ? page.nextCursor ?? null : fromCursor,
                     }));
                     if (!page.hasMore || !page.nextCursor) {
@@ -319,9 +320,8 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                     }
                     await emit(Object.freeze({
                         kind: 'data',
-                        ...(fresh
-                            ? { providerSessionId: request.ref.remoteSessionId }
-                            : { phase: 'initial_replay' as const }),
+                        ...(terminal ? { providerSessionId: request.ref.remoteSessionId } : {}),
+                        ...(!fresh ? { phase: 'initial_replay' as const } : {}),
                         items: Object.freeze(batch.items),
                         fromCursor: emittedFromCursor,
                         nextCursor: emittedNextCursor,

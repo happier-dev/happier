@@ -258,6 +258,17 @@ describe('derivePluginSessionInputLocalIdV1', () => {
     });
   });
 
+  it('stamps the step\'s visible ordinal on its provenance and binds it to the protected request (transcript step number)', async () => {
+    const { deriveWorkflowSessionInputLocalIdV2 } = await import('@happier-dev/protocol');
+    const workflow = { purpose: 'invocation' as const, runId: 'workflow-run-42', invocationRecordId: 'workflow-invocation-7', stepOrdinal: '4' };
+    const admission = buildWorkflowSessionInputAdmissionV2(workflow);
+    expect(admission.provenance).toMatchObject({ kind: 'workflow_invocation', stepOrdinal: '4' });
+    expect(admission.request.workflow).toMatchObject({ stepOrdinal: '4' });
+    // The number is presentation: the durable input identity is the same with or without it.
+    const { stepOrdinal: _ordinal, ...unnumbered } = workflow;
+    expect(deriveWorkflowSessionInputLocalIdV2(workflow)).toBe(deriveWorkflowSessionInputLocalIdV2(unnumbered));
+  });
+
   it('builds stable exact Workflow invocation Session admissions without an Automation id', () => {
     const invocation = buildWorkflowSessionInputAdmissionV2({
       runId: 'workflow-run-42',

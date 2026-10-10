@@ -66,6 +66,34 @@ describe('listSessions', () => {
     getSessionTranscript.mockReset();
   });
 
+  it.each(['summary', 'awareness'] as const)('filters %s using authorized Bot metadata and preserves incomplete page coverage', async (view) => {
+    const query: SessionListQueryV1 = {
+      v: 1, storage: 'active', includeInactive: true, scope: 'my_work', attention: 'any',
+      audiences: [], tagIds: [], bot: 'bot',
+    };
+    fetchSessionsQueryPage.mockResolvedValue({
+      sessions: [
+        createSessionRecordFixture({ id: 'bot', metadata: encryptedMetadata({ path: '/repo', bot: { kind: 'bot' } }) }),
+        createSessionRecordFixture({ id: 'ordinary', metadata: encryptedMetadata({ path: '/repo', tag: 'bot', summary: { text: 'Bot' } }) }),
+        createSessionRecordFixture({ id: 'locked', metadata: 'unreadable-ciphertext' }),
+      ],
+      nextCursor: 'cursor_v1_candidates', hasNext: true,
+      attentionNextCursor: 'cursor_v1_attention', attentionHasNext: true,
+    });
+    const { listSessions } = await import('./listSessions');
+    const result = await listSessions({ credentials, accountSettings: null, query, view, includeSystem: true, resumableOnly: false });
+    expect(result.sessions.map((session) => 'sessionId' in session ? session.sessionId : session.id)).toEqual(['bot']);
+    expect(result).toMatchObject({
+      nextCursor: 'cursor_v1_candidates', hasNext: true,
+      attentionNextCursor: 'cursor_v1_attention', attentionHasNext: true,
+      botFilterUnavailableCount: 1,
+    });
+    const ordinary = await listSessions({ credentials, accountSettings: null, query: { ...query, bot: 'ordinary' }, view,
+      includeSystem: true, resumableOnly: false });
+    expect(ordinary.sessions.map((session) => 'sessionId' in session ? session.sessionId : session.id)).toEqual(['ordinary']);
+    expect(ordinary).toMatchObject({ botFilterUnavailableCount: 1 });
+  });
+
   it('uses the strict query transport and preserves its ordinary and attention continuations', async () => {
     const query = {
       v: 1 as const,

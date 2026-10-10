@@ -2,7 +2,7 @@ import type { PersistedTakeoverAdmissionWaitRegistration } from '../spawn/persis
 import { isPidPresent } from '@happier-dev/cli-common/process';
 
 import type { SpawnSessionResult } from '@/session/shared/spawnSessionContract';
-import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
+import { logger } from '@/ui/logger';
 import type { ChildExit } from './onChildExited';
 import type { TrackedSession } from '../types';
 import { waitForSessionWebhook, type SessionWebhookCompletion } from '../spawn/waitForSessionWebhook';
@@ -35,37 +35,22 @@ export function waitForVisibleConsoleSessionWebhook(params: Readonly<{
     if (isPidPresent(currentPid)) return;
     if (exitObserved) return;
     exitObserved = true;
-    const exitedBeforeWebhook = completion.isPending();
     void (async () => {
       try {
         await onChildExited(currentPid, {
-          reason: exitedBeforeWebhook
-            ? 'process-exited-before-webhook'
-            : 'process-exited',
-          code: null,
-          signal: null,
+          reason: 'process-missing', code: null, signal: null,
         });
-        if (completion.getCurrentPid() !== currentPid && isPidPresent(completion.getCurrentPid())) {
+      } catch (error) {
+        logger.infoFile('[DAEMON RUN] Visible console process observation could not complete; retaining startup custody', { pid: currentPid, error });
+      } finally {
+        // The exit owner settles startup custody and transfers or retires tracking.
+        // A missing launcher alone is not an observed runner exit.
+        if (params.pidToTrackedSession && !params.pidToTrackedSession.has(completion.getCurrentPid())) {
+          if (interval) clearInterval(interval);
+        } else {
           exitObserved = false;
-          return;
         }
-      } catch {
-        if (interval) clearInterval(interval);
-        completion.settleFailure({
-          type: 'error',
-          errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
-          errorMessage:
-            'startup_retirement_incomplete:exit_cleanup_incomplete',
-        });
-        return;
       }
-      if (interval) clearInterval(interval);
-      completion.settleFailure({
-        type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
-        errorMessage:
-          `Child process exited before session webhook (pid=${currentPid})`,
-      });
     })();
   }, pollMs);
   if (typeof interval.unref === 'function') {

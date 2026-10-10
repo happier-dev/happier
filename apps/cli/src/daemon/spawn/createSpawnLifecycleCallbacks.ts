@@ -14,6 +14,7 @@ type SpawnResourceCleanup = () => void | Promise<void>;
 type SessionAttachCleanup = () => Promise<void>;
 
 export type SpawnLifecycleCallbacks = Readonly<{
+  onTrackedSessionRegistered?: () => void;
   persistAcceptedSpawnMarker: (
     trackedSession: TrackedSession,
     options?: Readonly<{
@@ -82,6 +83,7 @@ export function createSpawnLifecycleCallbacks<
   }>) => void;
   getSpawnResourceCleanupOnExit: () => SpawnResourceCleanup | null;
   onSpawnResourceCleanupArmed: () => void;
+  onTrackedSessionRegistered?: () => void;
   spawnResourceCleanupByPid: Map<number, SpawnResourceCleanup>;
   getSessionAttachCleanup: () => SessionAttachCleanup | null;
   setSessionAttachCleanup: (cleanup: SessionAttachCleanup | null) => void;
@@ -193,6 +195,7 @@ export function createSpawnLifecycleCallbacks<
   };
 
   return {
+    onTrackedSessionRegistered: params.onTrackedSessionRegistered,
     persistAcceptedSpawnMarker: async (trackedSession, options) => {
       if (params.activateConnectedAccountSessionBindingOnCanonicalSession) {
         let activationSessionId: string | null = null;

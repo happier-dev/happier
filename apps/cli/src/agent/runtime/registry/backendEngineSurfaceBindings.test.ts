@@ -57,6 +57,29 @@ async function allowCurrentPublisherEffect<T>(
 }
 
 describe('resolveBackendExecutionSurfacesFromNativeAgentRuntime', () => {
+  it('binds read-only existing-state resolution and refuses a result from a retired Agent generation', async () => {
+    let current = true;
+    const runtime = {
+      executionRuns: { open: async () => { throw new Error('Native execution was not requested'); } },
+      surfaces: { handoff: {
+        exportBundle: async () => ({ ok: false as const, code: 'target_import_failed' as const }),
+        importBundle: async () => ({ ok: false as const, code: 'target_import_failed' as const }),
+        resolveExistingState: async (_request: unknown, context: import('@happier-dev/plugin-sdk').PluginInvocationContext) => {
+          expect(Reflect.get(context, 'cwd')).toBe('/target');
+          current = false;
+          return { ok: false as const, code: 'existing_session_state_unavailable' as const };
+        },
+      } },
+    };
+    const surfaces = resolveBackendExecutionSurfacesFromNativeAgentRuntime({ backend: createBackend(), runtime,
+      agentId: 'acme.runtime.provider', isCurrent: () => current, declaredAgentSurfaceFamilies: new Set(), diagnostics: [],
+      createAgentRuntimeSurfaceInvocationContext: async ({ cwd }) => ({ cwd, signal: new AbortController().signal,
+        plugin: { id: 'acme.runtime', version: '1.0.0' }, contribution: { kind: 'agent', localId: 'acme' },
+        services: {} } as unknown as import('@happier-dev/plugin-sdk').PluginInvocationContext),
+    });
+    expect(surfaces.handoff?.resolveExistingState).toBeTypeOf('function');
+    await expect(surfaces.handoff!.resolveExistingState!({ sessionId: 'native', metadata: {}, targetDirectory: '/target' })).rejects.toThrow('retired runtime generation');
+  });
   it('retains concrete host attach readiness and fences its leased generation', async () => {
     let current = true;
     const children: ChildProcess[] = [];

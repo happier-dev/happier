@@ -2,6 +2,19 @@ import type {
   ExternalSessionDestructiveQuiescenceResultV1,
   ExternalSessionOperationRecordV1,
 } from '@happier-dev/protocol';
+import type { AgentExternalSessionsInvocation } from '@happier-dev/plugin-sdk/sessions/external';
+import { createUnavailableAgentExternalSessionsManagedEndpointRead } from '@/session/external/agentExternalSessionsInvocation';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+
+/** OS/API boundaries fail closed; real file-store and accounting logic still runs. */
+export function createExternalSessionsInvocationFixture(signal: AbortSignal): AgentExternalSessionsInvocation {
+  return {
+    signal,
+    managedEndpointRead: createUnavailableAgentExternalSessionsManagedEndpointRead(),
+    exec: createUnavailablePluginServices().exec,
+    ripgrep: { async run() { throw new Error('Packaged ripgrep is unavailable in this fixture'); } },
+  };
+}
 
 export function createStoppedTakeoverQuiescenceFixture(
   record: ExternalSessionOperationRecordV1,

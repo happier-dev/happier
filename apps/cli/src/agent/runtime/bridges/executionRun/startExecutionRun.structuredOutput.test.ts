@@ -5,6 +5,7 @@ import { VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
 import { createTestExecutionRunHostRuntime } from './testkit';
 import { startExecutionRun } from './startExecutionRun';
 import type { ExecutionRunState } from './executionRunTypes';
+import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
@@ -18,6 +19,51 @@ describe('structured analysis Run admission', () => {
     vi.stubEnv('HAPPIER_CLAUDE_DYNAMIC_MODEL_PROBE_ENABLED', '0');
   });
   afterEach(() => vi.unstubAllEnvs());
+  it('refuses a drained start before publishing a Run or constructing its native runtime', async () => {
+    const drain = createDaemonAdmissionDrain();
+    drain.beginTemporaryDrain();
+    const modelId = getAgentStaticModels('claude', { catalogOnly: true })[0]?.id;
+    if (!modelId) throw new Error('The native Claude offered-model catalog is unavailable');
+    const runs = new Map<string, ExecutionRunState>();
+    const voiceAgentManager = new VoiceAgentManager({ createRuntime: () => { throw new Error('Unused Voice boundary'); } });
+    let runtimeCreated = false;
+    try {
+      await expect(startExecutionRun({
+        params: { sessionId: 'parent-session', intent: 'scm_diff_summary', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, modelId,
+          instructions: '', permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'request_response' },
+        parentProvider: 'claude', sendAcp: async () => {}, streamedTranscriptSession: null,
+        admitStart: async () => { if (drain.isQuiescing()) throw Object.assign(new Error('draining'), { code: 'daemon_draining' }); },
+        createRuntime: () => { runtimeCreated = true; return createTestExecutionRunHostRuntime(); }, getNowMs: () => 1,
+        budgetRegistry: null, runs, controllers: new Map(), enqueueMarkerWrite: async () => {}, writeActivityMarker: async () => {},
+        finishRun: async () => {}, executeBoundedRun: async () => {}, send: async () => ({ ok: true }), voiceAgentManager,
+      })).rejects.toMatchObject({ code: 'daemon_draining', details: { executionRunStart: { runCreation: 'noRunCreated' } } });
+      expect(runs.size).toBe(0);
+      expect(runtimeCreated).toBe(false);
+    } finally { await voiceAgentManager.dispose(); }
+  });
+  it('joins an already accepted request while new Run admission is drained', async () => {
+    const drain = createDaemonAdmissionDrain();
+    const modelId = getAgentStaticModels('claude', { catalogOnly: true })[0]?.id;
+    if (!modelId) throw new Error('The native Claude offered-model catalog is unavailable');
+    const runs = new Map<string, ExecutionRunState>();
+    const voiceAgentManager = new VoiceAgentManager({ createRuntime: () => { throw new Error('Unused Voice boundary'); } });
+    const args = {
+      params: { actionRequestId: 'accepted-drain-request', sessionId: 'parent-session', intent: 'scm_diff_summary',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, modelId, instructions: '', permissionMode: 'read_only',
+        retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'request_response' },
+      parentProvider: 'claude', sendAcp: async () => {}, streamedTranscriptSession: null,
+      admitStart: async () => { if (drain.isQuiescing()) throw Object.assign(new Error('draining'), { code: 'daemon_draining' }); },
+      createRuntime: () => createTestExecutionRunHostRuntime(), getNowMs: () => 1,
+      budgetRegistry: null, runs, controllers: new Map(), enqueueMarkerWrite: async () => {}, writeActivityMarker: async () => {},
+      finishRun: async () => {}, executeBoundedRun: async () => {}, send: async () => ({ ok: true }), voiceAgentManager,
+    } satisfies Parameters<typeof startExecutionRun>[0];
+    try {
+      const accepted = await startExecutionRun(args);
+      drain.beginTemporaryDrain();
+      await expect(startExecutionRun(args)).resolves.toEqual(accepted);
+      expect(runs.size).toBe(1);
+    } finally { await voiceAgentManager.dispose(); }
+  });
   it.each([
     ['scm_diff_summary', 'freeform-not-in-native-catalog', false],
     ['scm_diff_summary', 'offered-native-model', true],

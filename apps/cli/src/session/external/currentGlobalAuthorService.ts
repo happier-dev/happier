@@ -96,9 +96,9 @@ export type CurrentGlobalExternalSessionsAuthorService =
     admitPersistedTakeoverSource(input: Readonly<{
       agentId: string;
       machineId: string;
-      sourceId: string;
+      remoteSessionId: string;
       source: ExternalSessionsSource;
-    }>): PersistedTakeoverSourceAdmission | null;
+    }>): Promise<PersistedTakeoverSourceAdmission | null>;
     bindCallerAuthorService(input: Readonly<{
       pluginId: string;
       contextualTakeover?: ContextualExternalSessionTakeoverAdapter;
@@ -758,12 +758,12 @@ export async function createCurrentGlobalExternalSessionsAuthorService(
       return owner.sourceRefusals;
     },
     takeoverSourceOps,
-    admitPersistedTakeoverSource(
+    async admitPersistedTakeoverSource(
       input: Parameters<CurrentGlobalExternalSessionsAuthorService['admitPersistedTakeoverSource']>[0],
     ) {
       const machineId = params.resolveMachineId()?.trim() ?? '';
       if (!machineId || input.machineId !== machineId) return null;
-      return owner.admitPersistedTakeoverSource(input);
+      return await owner.admitPersistedTakeoverSource(input);
     },
     bindCallerAuthorService({ contextualTakeover }) {
       return owner.bindAuthorService(

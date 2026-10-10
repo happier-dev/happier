@@ -3,10 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type {
     ProviderRuntimeBindingBasisV1,
 } from '@happier-dev/protocol';
-import {
-    PROVIDER_WIRE_PROTOCOL_LIMITS_V1,
-    ProviderConnectionIdSchema,
-} from '@happier-dev/protocol';
+import { PROVIDER_WIRE_PROTOCOL_LIMITS_V1 } from '@happier-dev/protocol/providers/capabilities/v1';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 
 import type {
     ManagedDependenciesService,
@@ -25,6 +23,7 @@ import {
     RunnerManagedServicesCustodyRequestV1Schema,
     RunnerManagedServicesCustodyResultV1Schema,
     createRunnerManagedServicesClient,
+    encodeRunnerManagedServiceSpecWireV1,
     createRunnerManagedServicesCustodyPort as createProductionRunnerManagedServicesCustodyPort,
     registerRunnerManagedServicesCustodyRpcHandler,
     type RunnerManagedProviderCustodyClaimV1,
@@ -130,6 +129,7 @@ function managedRuntimeBindingBasis(
         v: 1,
         deployment: {
             kind: 'managedLocal',
+            gatewayPlacement: { kind: 'sessionMachine' },
             implementationIdentity: {
                 pluginId,
                 localId: providerLocalId,
@@ -260,6 +260,59 @@ function jsonRpcDispatch(
 }
 
 describe('runner managed-services Provider custody', () => {
+    it('round-trips endpoint-free declarations through its custody wire', () => {
+        const scope = providerScope('session-worker-wire', 'provider-p');
+        const worker: ManagedServiceSpec = {
+            id: 'worker',
+            mode: {
+                kind: 'spawn',
+                launch: {
+                    executable: { kind: 'systemTool', id: 'gateway' },
+                },
+                endpoint: { kind: 'none' },
+            },
+        };
+        const request = {
+            v: 1,
+            kind: 'supervise',
+            scope,
+            spec: encodeRunnerManagedServiceSpecWireV1(worker),
+        };
+        expect(RunnerManagedServicesCustodyRequestV1Schema.parse(request)).toMatchObject({
+            spec: { mode: { endpoint: { kind: 'none' } } },
+        });
+    });
+
+    it('round-trips endpoint-free running snapshots through its custody wire', () => {
+        const scope = providerScope('session-worker-wire', 'provider-p');
+        const running: ManagedServiceSnapshot = {
+            ...snapshot('worker'),
+            mode: 'spawn',
+            state: 'running',
+            baseUrl: null,
+            lastHealthyAtMs: null,
+        };
+        expect(RunnerManagedServicesCustodyResultV1Schema.parse({
+            v: 1,
+            kind: 'handle',
+            custodyScope: scope,
+            snapshot: running,
+        })).toMatchObject({ snapshot: running });
+    });
+
+    it('refuses daemon-native lifetime at the runner boundary before encoding or dispatch', () => {
+        expect(() => encodeRunnerManagedServiceSpecWireV1({
+            id: 'compose',
+            mode: {
+                kind: 'native',
+                launch: { executable: { kind: 'systemTool', id: 'gateway' } },
+                instance: {
+                    adapter: { pluginId: 'fixture.plugin', localId: 'compose' },
+                    nativeResourceId: 'exact-project',
+                },
+            },
+        })).toThrow(expect.objectContaining({ code: 'plugin_managed_service_unavailable' }));
+    });
     it('accepts the approved public managed-service snapshot at the result wire boundary', () => {
         const scope = providerScope(
             'session-public-snapshot-wire',
@@ -1040,7 +1093,6 @@ describe('runner managed-services Provider custody', () => {
         }) satisfies ManagedServiceSpec;
         const explicitDefaults = Object.freeze({
             ...omittedDefaults,
-            startupTimeoutMs: 30_000,
             healthCheck: Object.freeze({
                 kind: 'http' as const,
                 timeoutMs: 5_000,

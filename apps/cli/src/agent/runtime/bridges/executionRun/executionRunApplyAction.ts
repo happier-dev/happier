@@ -197,13 +197,13 @@ export async function applyExecutionRunAction(args: Readonly<{
       }
       try {
         const welcomeText = (() => {
-          const v: any = args.params.input ?? null;
-          const raw = typeof v?.welcomeText === 'string' ? v.welcomeText.trim() : '';
-          return raw ? raw : undefined;
+          const input = args.params.input;
+          const raw: unknown = input && typeof input === 'object' ? Reflect.get(input, 'welcomeText') : undefined;
+          return typeof raw === 'string' ? raw : undefined;
         })();
         const welcomed = await args.voiceAgentManager.welcome({
           voiceAgentId: ctrl.voiceAgentId,
-          ...(welcomeText ? { welcomeText } : {}),
+          ...(welcomeText !== undefined ? { welcomeText } : {}),
           ...(args.causalPermissionAuthority
             ? { causalPermissionAuthority: args.causalPermissionAuthority }
             : {}),

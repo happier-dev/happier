@@ -13,7 +13,10 @@ import {
     createExternalAgentObservationFieldPublisher,
 } from './publishExternalAgentObservationField';
 import { createSessionNotificationContextFixture, createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
-import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests,
+  getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { NotificationChannelRecordV1Schema } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import * as pinnedHttp from '@/network/pinnedHttp';
 import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
@@ -179,19 +182,20 @@ describe('publishExternalAgentObservationField', () => {
         });
         setActiveAccountSettingsSnapshot({
             source: 'network', settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
+            scopeKey: runWithServerHttpBaseUrl('https://external-home.example.test', () => resolveAccountSettingsScopeKeyForToken('external-token')),
             settings: accountSettingsParse({
                 attentionDeliveryPolicyV1: { v: 1, privacy: { defaultPreviewBehavior: previewBehavior } },
-                notificationChannelsV1: [{
+            }), notificationChannelCatalog: { status: 'ready', revision: 1, diagnostics: [], channels: [NotificationChannelRecordV1Schema.parse({
                 v: 1, id: 'external-ready', kind: 'webhook', enabled: true,
-                url: 'https://93.184.216.34/happier', topics: { ready: true },
-            }] }),
+                url: 'https://93.184.216.34/happier', topics: { ready: true }, signingSecretRef: null,
+            })] },
         });
         const publish = createExternalAgentObservationFieldPublisher({
             shouldSendReadyNotification: () => true,
             readCredentials: async () => ({ token: 'external-token', encryption: null }),
         });
-        const send = (id: string) => runWithServerHttpBaseUrl('https://external-home.example.test', () => publish({
-            sessionId, fieldId: 'runtime.externalAgent', value: snapshot({ id, observedAtMs: suppressed ? 2_000 : 3_000 }),
+        const send = (id: string, observedAtMs = suppressed ? 2_000 : 3_000) => runWithServerHttpBaseUrl('https://external-home.example.test', () => publish({
+            sessionId, fieldId: 'runtime.externalAgent', value: snapshot({ id, observedAtMs }),
         }));
         await send('boundary-muted');
         expect(requests).toHaveLength(0);
@@ -207,6 +211,12 @@ describe('publishExternalAgentObservationField', () => {
             `https://external-home.example.test/v2/sessions/${sessionId}?accessProjectionVersion=1`,
             expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer external-token' }) }),
         );
+        const incumbent = getActiveAccountSettingsSnapshot();
+        if (!incumbent) throw new Error('Notification Account fixture retired');
+        setActiveAccountSettingsSnapshot({ ...incumbent,
+            scopeKey: runWithServerHttpBaseUrl('https://external-home.example.test', () => resolveAccountSettingsScopeKeyForToken('different-account-token')) });
+        await send('boundary-foreign-account', 4_000);
+        expect(requests).toHaveLength(1);
     });
 
     it('uses the canonical boundary advancement to suppress replay after restart', async () => {

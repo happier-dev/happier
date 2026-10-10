@@ -4,7 +4,6 @@ import {
   SPAWN_SESSION_ERROR_CODES,
 } from '@/session/shared/spawnSessionContract';
 import type { SessionCreationTerminalSpawnErrorDetail } from '@happier-dev/protocol';
-import { processIdentityMatches } from '@happier-dev/cli-common/processInstance';
 import { logger } from '@/ui/logger';
 import { readStoredCredentials } from '@/persistence';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
@@ -15,7 +14,7 @@ import {
   resolveVendorResumeIdFromSessionMetadata,
 } from '@happier-dev/agents';
 import { applyProviderSessionIdSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
-import { execFileSync } from 'node:child_process';
+import { adoptTrackedSessionRunnerIdentity, bindTrackedSessionIdentity, getParentPid, findTrackedSessionByRunnerPid, findPendingWindowsTerminalTrackedSession, resolveOrdinaryDaemonParentCorrelation } from './sessionReportCorrelation';
 
 import { findHappyProcessByPid } from '../doctor';
 import { readProcessIdentityByPid } from '../processIdentity';
@@ -23,6 +22,7 @@ import { readProcessRunState } from '../processRunState';
 import type { DaemonSpawnStartupReadinessFailure, TrackedSession } from '../types';
 import {
   hashProcessCommand,
+  isPidPlaceholderSessionId,
   listSessionMarkers,
   promoteSessionMarkerPid,
   removeSessionMarkerIfOwned,
@@ -33,18 +33,12 @@ import { hasSessionWebhookPidTimedOut } from '../spawn/waitForSessionWebhook';
 import { promoteTrackedSessionPidCustody } from './promoteTrackedSessionPidCustody';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import {
-  captureExactWindowsTerminalLaunchProcess,
   readAllWindowsProcessFacts,
-  type ExactWindowsProcessCancellationIdentity,
 } from '../platform/windows/windowsProcessCustody';
 import type {
   WindowsProcessInventoryFact,
 } from '../platform/windows/windowsProcessInventory';
 import type { DeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
-import { resolveWindowsHostedIdentity } from '../platform/windows/windowsHostedSessionRuntime';
-
-const DEFAULT_PARENT_PID_LOOKUP_TIMEOUT_MS = 1000;
-const PARENT_PID_LOOKUP_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_PARENT_PID_LOOKUP_TIMEOUT_MS';
 
 export function resolveSessionWebhookPath(
   inputPath: string,
@@ -54,13 +48,10 @@ export function resolveSessionWebhookPath(
   return expandHomeDirPath(inputPath.trim(), env, platform);
 }
 
-function isPidPlaceholderSessionId(value: string): boolean {
-  return /^PID-\d+$/.test(value);
-}
-
 function shouldRequireCanonicalRunnerMarkerAdoption(
   tracked: TrackedSession,
   isPlaceholderSessionId: boolean,
+  hasPendingStartup: boolean,
 ): boolean {
   return (
     !isPlaceholderSessionId
@@ -72,6 +63,12 @@ function shouldRequireCanonicalRunnerMarkerAdoption(
     && (
       !tracked.happySessionId?.trim()
       || isPidPlaceholderSessionId(tracked.happySessionId)
+      || (
+        hasPendingStartup
+        && !tracked.spawnStartupCanonicalSessionId
+        && tracked.spawnOptions !== undefined
+        && !tracked.spawnOptions.existingSessionId?.trim()
+      )
     )
   );
 }
@@ -94,163 +91,6 @@ function describeCanonicalStartupReadinessFailure(error: unknown): string {
   }
 }
 
-function resolveParentPidLookupTimeoutMs(): number {
-  const raw = String(process.env[PARENT_PID_LOOKUP_TIMEOUT_ENV_KEY] ?? '').trim();
-  if (!raw) return DEFAULT_PARENT_PID_LOOKUP_TIMEOUT_MS;
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_PARENT_PID_LOOKUP_TIMEOUT_MS;
-  // Keep this intentionally small: this runs on a webhook path.
-  return Math.max(50, Math.min(parsed, 5000));
-}
-
-/**
- * Get the parent PID of a process.
- *
- * Used to detect wrapper-script scenarios where the daemon spawns a wrapper
- * (e.g. Node.js entrypoint) that in turn spawns the actual session binary.
- * Returns null on Windows or if the lookup fails.
- */
-function getParentPid(pid: number): number | null {
-  if (process.platform === 'win32') return null;
-  if (!Number.isInteger(pid) || pid <= 0) return null;
-
-  try {
-    const stdout = execFileSync(
-      'ps',
-      ['-o', 'ppid=', '-p', String(pid)],
-      { encoding: 'utf-8', timeout: resolveParentPidLookupTimeoutMs(), stdio: ['ignore', 'pipe', 'ignore'] },
-    );
-    const ppid = Number.parseInt(stdout.trim(), 10);
-    if (!Number.isInteger(ppid) || ppid <= 0) return null;
-    return ppid;
-  } catch {
-    return null;
-  }
-}
-
-function findTrackedSessionByRunnerPid(
-  pidToTrackedSession: Map<number, TrackedSession>,
-  runnerPid: number,
-): TrackedSession | null {
-  for (const tracked of pidToTrackedSession.values()) {
-    if (tracked.sessionRunnerPid === runnerPid) return tracked;
-  }
-  return null;
-}
-
-type PendingWindowsTerminalMatch =
-  | Readonly<{ kind: 'none' }>
-  | Readonly<{ kind: 'refused' }>
-  | Readonly<{
-      kind: 'matched';
-      tracked: TrackedSession;
-      cancellationIdentity:
-        ExactWindowsProcessCancellationIdentity;
-    }>;
-
-async function findPendingWindowsTerminalTrackedSession(params: Readonly<{
-  pidToTrackedSession: Map<number, TrackedSession>;
-  webhookPid: number;
-  metadata: Metadata;
-  readProcessIdentityByPidFn: typeof readProcessIdentityByPid;
-  readAllWindowsProcessFactsFn: () => Promise<
-    ReadonlyMap<number, WindowsProcessInventoryFact>
-  >;
-}>): Promise<PendingWindowsTerminalMatch> {
-  if (params.metadata.startedBy !== 'daemon') {
-    return { kind: 'none' };
-  }
-  const pending: TrackedSession[] = [];
-  for (
-    const [trackedPid, tracked]
-    of params.pidToTrackedSession.entries()
-  ) {
-    if (trackedPid === params.webhookPid) continue;
-    if (tracked.startedBy !== 'daemon') continue;
-    if (!tracked.windowsTerminalLaunchCustody) continue;
-    pending.push(tracked);
-  }
-  if (pending.length === 0) return { kind: 'none' };
-
-  const reported =
-    resolveWindowsHostedIdentity(params.metadata.terminal);
-  if (!reported) return { kind: 'refused' };
-
-  const matches: TrackedSession[] = [];
-  for (const tracked of pending) {
-    const expected =
-      resolveWindowsHostedIdentity(tracked.hostedTerminal);
-    if (
-      expected?.mode !== reported.mode
-      || (
-        expected.mode === 'windows_terminal'
-        && reported.mode === 'windows_terminal'
-        && (
-          expected.windowId !== reported.windowId
-          || expected.title !== reported.title
-        )
-      )
-    ) {
-      continue;
-    }
-    matches.push(tracked);
-  }
-  if (matches.length === 0) return { kind: 'refused' };
-
-  let inventory:
-    ReadonlyMap<number, WindowsProcessInventoryFact>;
-  try {
-    inventory =
-      await params.readAllWindowsProcessFactsFn();
-  } catch {
-    return { kind: 'refused' };
-  }
-  const exactMatches = matches.flatMap((tracked) => {
-    const launch = tracked.windowsTerminalLaunchCustody;
-    if (!launch) return [];
-    return [...inventory.values()].flatMap((process) => {
-      const cancellationIdentity =
-        captureExactWindowsTerminalLaunchProcess({
-          process,
-          launch,
-        });
-      return cancellationIdentity
-        ? [{ tracked, cancellationIdentity }]
-        : [];
-    });
-  });
-  if (
-    exactMatches.length !== 1
-    || exactMatches[0]!.cancellationIdentity.pid
-      !== params.webhookPid
-  ) {
-    return { kind: 'refused' };
-  }
-  const current =
-    await params.readProcessIdentityByPidFn(
-      params.webhookPid,
-    );
-  const launch =
-    exactMatches[0]!.tracked.windowsTerminalLaunchCustody;
-  const revalidated =
-    current && launch
-      ? captureExactWindowsTerminalLaunchProcess({
-          process: current,
-          launch,
-        })
-      : null;
-  return (
-    revalidated
-    && processIdentityMatches(exactMatches[0]!.cancellationIdentity, revalidated)
-  )
-    ? {
-        kind: 'matched',
-        tracked: exactMatches[0]!.tracked,
-        cancellationIdentity: revalidated,
-      }
-    : { kind: 'refused' };
-}
-
 function didSessionWebhookTimeout(tracked: TrackedSession | null | undefined): boolean {
   return typeof tracked?.sessionWebhookTimedOutAtMs === 'number';
 }
@@ -271,40 +111,9 @@ function adoptReportedSessionIdentity(
   tracked: TrackedSession,
   sessionId: string,
   metadata: Metadata,
-  isPlaceholderSessionId: boolean,
+  _isPlaceholderSessionId: boolean,
 ): void {
-  if (tracked.reportMarkerCustody?.retiring) {
-    logger.infoFile('[DAEMON RUN] Warning: rejected session report during tracked retirement', { pid: tracked.pid });
-    throw new Error('Tracked session marker custody is retiring');
-  }
-  if (!isPlaceholderSessionId && tracked.startedBy === 'daemon') {
-    const currentSessionId =
-      typeof tracked.happySessionId === 'string'
-        ? tracked.happySessionId.trim()
-        : '';
-    const lockedSessionId =
-      tracked.spawnStartupCanonicalSessionId
-      ?? (
-        currentSessionId
-        && !isPidPlaceholderSessionId(
-          currentSessionId,
-        )
-          ? currentSessionId
-          : undefined
-      );
-    if (lockedSessionId && lockedSessionId !== sessionId) {
-      tracked.spawnStartupReadinessFailure ??= {
-        type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-        errorMessage: 'connected_account_canonical_session_identity_conflict',
-      };
-      return;
-    }
-    tracked.spawnStartupCanonicalSessionId ??=
-      sessionId;
-  }
-  tracked.happySessionId = sessionId;
-  tracked.happySessionMetadataFromLocalWebhook = metadata;
+  if (bindTrackedSessionIdentity(tracked, sessionId, true)) tracked.happySessionMetadataFromLocalWebhook = metadata;
 }
 
 function didDaemonWebhookPidTimeOut(
@@ -545,6 +354,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
         shouldRequireCanonicalRunnerMarkerAdoption(
           existingSession,
           isPlaceholderSessionId,
+          pidToAwaiter.has(existingSession.spawnStartupAwaiterPid ?? existingSession.pid),
         );
       // Update tracked session with latest webhook data.
       adoptReportedSessionIdentity(
@@ -601,9 +411,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
               'Windows Terminal Agent launch custody could not be revalidated',
             );
           }
-          trackedByRunnerPid
-            .windowsTerminalCancellationIdentity =
-              exactMatch.cancellationIdentity;
+          adoptTrackedSessionRunnerIdentity(trackedByRunnerPid, exactMatch.cancellationIdentity);
           windowsTerminalHostPid =
             trackedByRunnerPid.pid;
         }
@@ -612,6 +420,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
           shouldRequireCanonicalRunnerMarkerAdoption(
             trackedByRunnerPid,
             isPlaceholderSessionId,
+          pidToAwaiter.has(trackedByRunnerPid.spawnStartupAwaiterPid ?? trackedByRunnerPid.pid),
           );
         adoptReportedSessionIdentity(
           trackedByRunnerPid,
@@ -631,30 +440,14 @@ export function createOnHappySessionWebhook(params: Readonly<{
           );
         }
       } else {
-        const ordinaryParentPid =
-          normalizedMetadata.startedBy === 'daemon'
-          && pidToAwaiter.size > 0
-            ? getParentPidFn(pid)
-            : null;
-        const ordinaryParentSession =
-          typeof ordinaryParentPid === 'number'
-            ? pidToTrackedSession.get(ordinaryParentPid)
-              ?? null
-            : null;
-        const ordinaryParentHasAwaiter =
-          typeof ordinaryParentPid === 'number'
-          && pidToAwaiter.has(ordinaryParentPid);
-        const ordinaryParentHasChildHandle =
-          typeof ordinaryParentPid === 'number'
-          && ordinaryParentSession?.childProcess?.pid
-            === ordinaryParentPid;
-        const ordinaryParentEligible =
-          typeof ordinaryParentPid === 'number'
-          && ordinaryParentSession?.startedBy === 'daemon'
-          && (
-            ordinaryParentHasAwaiter
-            || ordinaryParentHasChildHandle
-          );
+        const ordinaryParent = resolveOrdinaryDaemonParentCorrelation({
+          metadata: normalizedMetadata, pid, pidToTrackedSession, pidToAwaiter, getParentPidFn,
+        });
+        const ordinaryParentPid = ordinaryParent.parentPid;
+        const ordinaryParentSession = ordinaryParent.tracked;
+        const ordinaryParentHasAwaiter = ordinaryParent.hasAwaiter;
+        const ordinaryParentHasChildHandle = ordinaryParent.hasChildHandle;
+        const ordinaryParentEligible = ordinaryParent.eligible;
         const windowsTerminalMatch =
           !ordinaryParentEligible
           && spawnResourceCleanupByPid
@@ -676,9 +469,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
           requiresCanonicalMarkerAdoption =
             !isPlaceholderSessionId;
               windowsTerminalSession.sessionRunnerPid = pid;
-          windowsTerminalSession
-            .windowsTerminalCancellationIdentity =
-                  windowsTerminalMatch.cancellationIdentity;
+          adoptTrackedSessionRunnerIdentity(windowsTerminalSession, windowsTerminalMatch.cancellationIdentity);
           if (
             windowsTerminalSession.hostedTerminal?.mode
               === 'windows_console'
@@ -754,6 +545,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
               shouldRequireCanonicalRunnerMarkerAdoption(
                 parentSession,
                 isPlaceholderSessionId,
+          pidToAwaiter.has(parentSession.spawnStartupAwaiterPid ?? parentSession.pid),
               );
             parentSession.sessionRunnerPid = pid;
             adoptReportedSessionIdentity(
@@ -933,6 +725,28 @@ export function createOnHappySessionWebhook(params: Readonly<{
         await persistSessionMarker(beforeStartupReadiness);
         return;
       }
+      if (trackedForPid && trackedForPid.runnerProcessIdentity?.pid !== pid) {
+        const runnerIdentity = currentSessionMarkerPid === pid
+          ? processIdentity
+          : await readProcessIdentityByPidFn(pid).catch((error) => {
+            logger.infoFile('[DAEMON RUN] Runner identity unavailable during session report', { pid, error });
+            return null;
+          });
+        await awaitTrackedMarkerPromotion();
+        if (!requiresCanonicalMarkerAdoption && reportTargetsTrackedOwner && trackedForPid.pid !== pid) return;
+        if (currentSessionMarkerPid !== resolveSessionMarkerPid()) {
+          await persistSessionMarker(beforeStartupReadiness);
+          return;
+        }
+        if (runnerIdentity?.processStartTimeMs !== undefined && typeof runnerIdentity.command === 'string' && runnerIdentity.command.trim()) {
+          adoptTrackedSessionRunnerIdentity(trackedForPid, {
+            pid: runnerIdentity.pid,
+            processStartTimeMs: runnerIdentity.processStartTimeMs,
+            processCommandHash: hashProcessCommand(runnerIdentity.command),
+          });
+        }
+      }
+
       const processCommand =
         typeof processIdentity?.command === 'string' && processIdentity.command.trim().length > 0
           ? processIdentity.command
@@ -1099,7 +913,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
       try {
         const exactAgentIdentity =
           trackedDaemonCanonicalSession
-            .windowsTerminalCancellationIdentity;
+            .runnerProcessIdentity;
         if (!exactAgentIdentity) {
           throw new Error(
             'Windows Terminal Agent cancellation identity was not captured',
@@ -1140,7 +954,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
           requireExactTargetOwnership: true,
           expectedTargetProcessIdentity:
             trackedDaemonCanonicalSession
-              .windowsTerminalCancellationIdentity,
+              .runnerProcessIdentity,
           targetMarkerAlreadyPersisted:
             trackedDaemonCanonicalSession
               .windowsTerminalAcceptedTargetMarkerPersisted

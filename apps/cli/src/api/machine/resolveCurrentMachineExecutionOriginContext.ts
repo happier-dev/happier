@@ -1,4 +1,4 @@
-import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { observeServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 
 /**
  * The daemon's fresh server/machine identity source for a machine-scoped
@@ -18,7 +18,7 @@ export function createCurrentMachineExecutionOriginContextResolver(params: Reado
 }>): (signal?: AbortSignal) => Promise<CurrentMachineExecutionOriginContext | null> {
   return async (signal?: AbortSignal): Promise<CurrentMachineExecutionOriginContext | null> => {
     signal?.throwIfAborted();
-    const snapshot = await fetchServerFeaturesSnapshot({
+    const snapshot = await observeServerFeaturesSnapshot({
       serverUrl: params.serverUrl,
       ...(params.timeoutMs === undefined ? {} : { timeoutMs: params.timeoutMs }),
     });

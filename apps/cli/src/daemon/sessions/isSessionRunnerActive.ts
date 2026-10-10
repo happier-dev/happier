@@ -96,16 +96,30 @@ async function classifyTrackedSessionPresence(params: {
 }): Promise<SessionRunnerProcessPresence> {
   if (!trackedSessionMatchesSessionId(params.tracked, params.sessionId)) return 'absent';
 
+  return await classifyTrackedSessionProcessPresence(params);
+}
+
+export async function classifyTrackedSessionProcessPresence(params: Readonly<{
+  tracked: TrackedSession;
+  readProcessRunState: ReadProcessRunState;
+  readProcessIdentityByPid: typeof readProcessIdentityByPid;
+  readProcessInstanceFingerprint?: SessionRunnerProcessInstanceFingerprintReader;
+}>): Promise<SessionRunnerProcessPresence> {
   const childPid = typeof params.tracked.childProcess?.pid === 'number' ? params.tracked.childProcess.pid : null;
-  const pidToCheck = childPid ?? params.tracked.pid;
+  const exactRunner = params.tracked.runnerProcessIdentity;
+  if (params.tracked.windowsTerminalLaunchCustody && !exactRunner
+    && (params.tracked.startupCustody || params.tracked.cancelStartupLaunchBeforeAck)) {
+    return 'unknown';
+  }
+  const pidToCheck = exactRunner?.pid ?? childPid ?? params.tracked.pid;
   const runState = await params.readProcessRunState(pidToCheck).catch(() => null);
   return await classifyStoredProcessPresence({
     runState,
-    storedProcessStartTimeMs: params.tracked.processStartTimeMs,
-    storedProcessCommandHash: params.tracked.processCommandHash,
+    storedProcessStartTimeMs: exactRunner?.processStartTimeMs ?? params.tracked.processStartTimeMs,
+    storedProcessCommandHash: exactRunner?.processCommandHash ?? params.tracked.processCommandHash,
     pid: pidToCheck,
     readProcessIdentityByPid: params.readProcessIdentityByPid,
-    readProcessInstanceFingerprint: params.readProcessInstanceFingerprint,
+    readProcessInstanceFingerprint: params.readProcessInstanceFingerprint ?? ((pid, expectedFingerprint) => readProcessInstanceFingerprintSync(pid, { expectedFingerprint })),
   });
 }
 

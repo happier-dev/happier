@@ -154,7 +154,7 @@ function createRunAgent() {
                 backendId,
                 agentId: backendId,
                 provenance: 'external',
-                runtimeOwner: { selected: { kind: 'host_configured' } },
+                runtimeOwner: { selected: { kind: 'plugin_engine' } },
                 backend: { id: backendId, agentId: backendId, provenance: 'external' },
                 agent: { id: backendId, provenance: 'external' },
                 engineAdapter: { runtimeCore: { createExecutionRunBackend } },

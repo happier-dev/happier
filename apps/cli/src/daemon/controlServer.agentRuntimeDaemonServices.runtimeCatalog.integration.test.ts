@@ -16,6 +16,7 @@ import {
 } from './agentRuntime/sessionBridgeAuthorization';
 import type { TrackedSession } from './types';
 import { clearTrackedRunnerAgentDaemonServiceAdmission } from './agentRuntime/clearTrackedRunnerAgentDaemonServiceAdmission';
+import { createDaemonAdmissionDrain } from './lifecycle/admissionDrain';
 
 type RecordAdmission = NonNullable<
   Parameters<typeof createDaemonControlApp>[0][
@@ -50,6 +51,57 @@ function createRetainedAgent() {
 }
 
 describe('daemon control server: runner-scoped Agent runtime services', () => {
+  it('parks fresh turn and managed-process authorization at retained-runner ingress while keeping accepted service reads open', async () => {
+    const sessionId = 'session-drain-admission';
+    const retainedAgent = createRetainedAgent();
+    const runner = { pid: 2237, processStartTimeMs: 1_717_171_717_300,
+      processCommandHash: 'd'.repeat(64), snapshotIdentity: 'snapshot:drain-admission' };
+    const authorityPath = await createAgentRuntimeDaemonServiceAuthorityPath({
+      happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing });
+    const authority = await publishAgentRuntimeDaemonServiceAuthority({
+      happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
+      path: authorityPath, sessionId, runner, retainedAgent, httpPort: 46_004,
+      capability: capabilityA, readPluginHardRevocationRevision: async () => 0 });
+    const tracked: TrackedSession = {
+      startedBy: 'daemon', pid: runner.pid, sessionRunnerPid: runner.pid, happySessionId: sessionId,
+      processStartTimeMs: runner.processStartTimeMs, processCommandHash: runner.processCommandHash,
+      agentRuntimeDaemonServiceAuthorityFilePath: authorityPath,
+      agentRuntimeDaemonServiceCapabilityHash: authority.capabilityDigest,
+      runnerAgentSourceCustodyV1: retainedAgent.sourceCustody,
+      runnerAgentInvocationContext: Object.freeze({ cwd: '/workspace', environment: Object.freeze({}), providerBindingActive: false }),
+    };
+    const admissionDrain = createDaemonAdmissionDrain();
+    const app = createDaemonControlApp({ getChildren: () => [tracked], machineId: 'machine-1',
+      stopSession: async () => ({ status: 'not_found' as const }),
+      spawnSession: async () => ({ type: 'success' as const, sessionId: 'unused' }),
+      requestShutdown: () => {}, onHappySessionWebhook: () => {}, controlToken: 'control-token', admissionDrain });
+    const send = (operation: unknown) => app.inject({ method: 'POST', url: AGENT_RUNTIME_DAEMON_SERVICES_PATH,
+      headers: { 'x-happier-daemon-token': capabilityA }, payload: { v: 1,
+        context: { token: capabilityA, sessionId }, operation } });
+    const turn = { kind: 'turn.admission.authorize', requestId: 'turn-request',
+      witness: { turnId: 'turn-1', inputId: 'input-1', userMessageSeq: 1, userMessageSeqs: [1] } };
+    const managedProcess = { kind: 'managed_server.supervision.authorize', requestId: 'spawn-request',
+      contributionId: 'acme-agent', serverId: 'native-server', executable: { kind: 'systemTool', id: 'native-cli' }, environmentKeys: [] };
+    try {
+      // No internal dispatcher is substituted. The real private authority gets
+      // through ingress to the unavailable-service boundary when admission is open.
+      for (const operation of [turn, managedProcess]) expect((await send(operation)).statusCode).toBe(501);
+      admissionDrain.beginTemporaryDrain();
+      for (const operation of [turn, managedProcess]) expect((await send(operation)).statusCode).toBe(503);
+      expect((await send({ kind: 'managed_server.endpoint.release', requestId: 'release-request',
+        pluginId: retainedAgent.pluginId, instanceId: 'accepted-instance', projectionToken: 'b'.repeat(64) })).statusCode).toBe(501);
+      admissionDrain.resume();
+      for (const operation of [turn, managedProcess]) expect((await send(operation)).statusCode).toBe(501);
+      admissionDrain.beginShutdown();
+      admissionDrain.resume();
+      expect((await send(turn)).statusCode).toBe(503);
+    } finally {
+      await app.close();
+      await removeAgentRuntimeDaemonServiceAuthorityIfOwned({ happyHomeDir: configuration.happyHomeDir,
+        publicReleaseRing: configuration.publicReleaseRing, path: authorityPath, capabilityDigest: authority.capabilityDigest });
+    }
+  });
+
   it.each([
     ['retained Agent', 'acme.plugin', 'before'],
     ['retained Agent', 'acme.plugin', 'during'],

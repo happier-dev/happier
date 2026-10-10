@@ -183,7 +183,7 @@ export function createExternalSessionTerminalFollowProjector(params: Readonly<{
     if (event.kind !== 'data') return;
     for (const item of event.items) {
       if (item.kind === 'source_observation') {
-        if (event.phase === 'initial_replay' || !event.providerSessionId || !params.observeSourceTranscript) {
+        if (!event.providerSessionId || !params.observeSourceTranscript) {
           throw new Error('external_session_terminal_source_observation_unavailable');
         }
         if (admission?.signal.aborted) throw admission.signal.reason;
@@ -191,6 +191,7 @@ export function createExternalSessionTerminalFollowProjector(params: Readonly<{
           providerSessionId: event.providerSessionId,
           sourceId: item.id,
           row: item.data,
+          ...(event.phase ? { phase: event.phase } : {}),
         });
         continue;
       }

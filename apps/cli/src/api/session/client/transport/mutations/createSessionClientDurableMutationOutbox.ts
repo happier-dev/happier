@@ -436,6 +436,7 @@ type DurableMutationDeliveryOutcome = Readonly<{
     ignoredLossy?: boolean;
     unsupportedCapability?: boolean;
     terminalFailureReason?:
+        | 'metadata_tuple_conflict'
         | 'transcript_message_provenance_missing_or_invalid'
         | 'transcript_message_invalid_observation';
     paused?: SessionClientDurableMutationPause;
@@ -495,6 +496,7 @@ type PendingRegisteredFieldSettlement = Readonly<{
     admissionOrder: number;
     group: RegisteredFieldSettlementGroup;
     status: RegisteredFieldSettlementStatus;
+    error?: unknown;
 }>;
 
 function readQueuedMutationObservedAt(mutation: QueuedSessionClientDurableMutation): number {
@@ -642,6 +644,7 @@ function readQueuedMutationCoalesceKey(mutation: QueuedSessionClientDurableMutat
     if (transcriptKey) return transcriptKey;
     if (mutation.kind === 'voice_agent_transcript_turn') return mutation.mutationId;
     if (mutation.kind === 'registered_session_state_field') {
+        if (mutation.payload.fieldId === 'intent.context') return mutation.mutationId;
         return `registered_session_state_field:${mutation.payload.sessionId}:${mutation.payload.fieldId}`;
     }
     return null;
@@ -2191,6 +2194,17 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                             delivered: false,
                             paused: createSessionAuthPause(error),
                         };
+                    } else if (mutation.kind === 'registered_session_state_field'
+                        && error !== null && typeof error === 'object'
+                        && 'code' in error && error.code === 'metadata_tuple_conflict') {
+                        outcome = { delivered: false, terminalFailureReason: 'metadata_tuple_conflict' };
+                        const group = registeredFieldSettlements.get(mutation.mutationId);
+                        const admissionOrder = readRegisteredFieldAdmissionOrder(mutation);
+                        if (group && admissionOrder !== null) {
+                            registeredFieldSettlementsPendingDurableCut.push({
+                                mutationId: mutation.mutationId, admissionOrder, group, status: 'failed', error,
+                            });
+                        }
                     } else {
                         attemptFailureReason = 'delivery_error';
                     }
@@ -2347,7 +2361,11 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                         pendingSettlement.group.activeMutationId === pendingSettlement.mutationId
                         && pendingSettlement.group.activeAdmissionOrder === pendingSettlement.admissionOrder
                     ) {
-                        settleRegisteredFieldGroup(pendingSettlement.group, pendingSettlement.status);
+                        if (pendingSettlement.error !== undefined) {
+                            rejectRegisteredFieldGroup(pendingSettlement.group, pendingSettlement.error);
+                        } else {
+                            settleRegisteredFieldGroup(pendingSettlement.group, pendingSettlement.status);
+                        }
                     }
                 }
                 if (

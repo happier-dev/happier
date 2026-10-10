@@ -169,6 +169,25 @@ describe('sessionControl.sessionsHttp URL encoding', () => {
     );
   });
 
+  it('negotiates the reference-bearing import epoch and preserves old-Home transcript fallback without references', async () => {
+    process.env.HAPPIER_SERVER_URL = 'http://server.example.test';
+    const { importHistoricalSessionTranscript } = await import('./sessionsHttp');
+    const surfaceItemReference = { v: 1 as const, itemId: 'child', itemRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ',
+      sourceAddress: { serverId: 'origin-home', sessionId: 'parent' } };
+    const content = { t: 'encrypted' as const, c: 'child-sealed' };
+    const postSpy = vi.spyOn(axios, 'post')
+      .mockResolvedValueOnce({ status: 404, data: { message: 'Route not found' } })
+      .mockResolvedValueOnce({ status: 200, data: { imported: 1, cursor: 8 } });
+    await expect(importHistoricalSessionTranscript({ token: 't', sessionId: 'child-session',
+      items: [{ id: 'row', content, surfaceItemReference }] })).resolves.toEqual({ imported: 1, cursor: '8' });
+    expect(postSpy.mock.calls.map(([url, body]) => ({ url, body }))).toEqual([
+      { url: 'http://server.example.test/v3/sessions/child-session/transcript/import',
+        body: { items: [{ localId: 'row', content, surfaceItemReference }] } },
+      { url: 'http://server.example.test/v2/sessions/child-session/transcript/import',
+        body: { items: [{ localId: 'row', content }] } },
+    ]);
+  });
+
   it('keeps an empty transcript.import as a local no-op', async () => {
     process.env.HAPPIER_SERVER_URL = 'http://server.example.test';
 

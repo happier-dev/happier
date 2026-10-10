@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { buildAgentEventLocalId } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
 
 import type {
     Metadata,
@@ -70,7 +71,9 @@ export function prepareSessionEventMessageViaPort(
         // authenticated persistent runtime binding at the Activity owner.
         localId: ownerActivityDelivery === 'home_required'
             ? `activity-ready-home_required:${randomUUID()}`
-            : randomUUID(),
+            : event.type === 'prompt-composition'
+                ? buildAgentEventLocalId(event.type, [event.composition.evidenceId])
+                : randomUUID(),
         messageRole: resolveSessionEventMessageRole(),
         sessionEventType: event.type === 'ready' ? 'ready' : undefined,
     };
@@ -78,6 +81,7 @@ export function prepareSessionEventMessageViaPort(
 
 export type SessionClientTranscriptSendPort = Readonly<{
     sessionId: string;
+    serverId?: string;
     turnAssistantTextSnapshotStore?: TurnAssistantTextSnapshotStore;
     socket: {
         connected: boolean;

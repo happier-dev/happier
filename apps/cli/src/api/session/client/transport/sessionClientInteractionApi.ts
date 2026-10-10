@@ -604,6 +604,9 @@ export function createSessionClientInteractionApi(
             if (materializeResult.deferredReason === 'waiting_for_runtime_activity') {
                 return { didMaterialize: false, result: { type: 'deferred', reason: 'runtime_activity_active' } };
             }
+            if (materializeResult.deferredReason === 'waiting_for_quota_reset') {
+                return { didMaterialize: false, result: { type: 'deferred', reason: 'waiting_for_quota_reset' } };
+            }
             return { didMaterialize: false, result: { type: 'no_pending' } };
         }
         const materializedLocalId = materializeResult.message?.localId ?? materializeResult.localId ?? null;

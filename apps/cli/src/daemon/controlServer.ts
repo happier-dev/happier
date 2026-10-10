@@ -8,6 +8,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { configuration } from '@/configuration';
+import { createDaemonAdmissionDrain, EXECUTION_RUN_ADMISSION_PATH, ExecutionRunDaemonAdmissionResponseSchema, type DaemonAdmissionDrain } from './lifecycle/admissionDrain';
 import { AUTHORITY_CEILING_HEADER_V1, resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { waitForTerminalPresentUserPolicyRefresh, type TerminalPresentUserPolicyScope } from '@/settings/accountSettings/resolveEffectiveTerminalPresentUserPolicy';
 import { logger } from '@/ui/logger';
@@ -29,6 +30,10 @@ import { isUnattestedPublicV1RunnerRolloutMutation } from './plannedRunnerRestar
 import { Metadata, type SessionCreationOutcome } from '@/api/types';
 import { CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER } from '@happier-dev/protocol/connect/connected-account-request-auth';
 import {
+  CONNECTED_SERVICE_APPLIED_PARENT_SELECTION_PATH,
+  ConnectedServiceAppliedParentSelectionRequestSchema,
+  ConnectedServiceAppliedParentSelectionResultSchema,
+  type ConnectedServiceAppliedParentSelectionReader,
   CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES,
   CONNECTED_SERVICE_RUN_MATERIALIZE_PATH,
   CONNECTED_SERVICE_RUN_GENERATION_CURRENT_PATH,
@@ -240,6 +245,7 @@ type DaemonSelfRestartRequest = Readonly<{
 }>;
 type DaemonExternalActionApi = Readonly<{
   currentServerId: string;
+  currentServerHttpBaseUrl?: string;
   terminalPolicyScope?: TerminalPresentUserPolicyScope;
   verifyPat: DaemonPatVerifier;
   readEncryptionAccess?: AccountServerPatEncryptionAccessReader;
@@ -247,6 +253,8 @@ type DaemonExternalActionApi = Readonly<{
   resolvePatExecutor?: Parameters<typeof registerDaemonExternalActionRoute>[1]['resolvePatExecutor'];
   mintExecutionAuthorization?: Parameters<typeof registerDaemonExternalActionRoute>[1]['mintExecutionAuthorization'];
   externalActionMachineRequestPrivateKey?: Parameters<typeof registerDaemonExternalActionRoute>[1]['externalActionMachineRequestPrivateKey'];
+  resolveInstallationId?: Parameters<typeof registerDaemonExternalActionRoute>[1]['resolveInstallationId'];
+  verifyExecutionAuthorization?: Parameters<typeof registerDaemonExternalActionRoute>[1]['verifyExecutionAuthorization'];
   resolveTarget: ResolveExternalActionTarget;
   resolveEncryption?: ResolveExternalActionEncryption;
 }>;
@@ -639,13 +647,16 @@ export function createDaemonControlApp({
   requestShutdown,
   beforeShutdown,
   isShuttingDown,
+  admissionDrain: suppliedAdmissionDrain,
   onHappySessionWebhook,
+  onSessionActivityChanged,
   onSessionStartupFailure,
   resolveRecoveredSpawnNonce,
   admitPersistedTakeover,
   controlToken,
   connectedAccountRequestAuth,
   verifyRunMaterializeToken,
+  readAppliedSessionConnectedServices,
   materializeConnectedServicesForExecutionRun,
   recoverConnectedServicesRejectedStartForExecutionRun,
   refreshConnectedServiceRuntimeAuthForExecutionRun,
@@ -683,10 +694,12 @@ export function createDaemonControlApp({
   externalActionApi,
   runtimeActionExecute,
   readPluginHardRevocationRevision,
+  readPluginCatalogProjection,
 }: {
   getChildren: () => TrackedSession[];
   machineId: string;
   runtimeId?: string;
+  readPluginCatalogProjection?: () => import('@/plugins/daemon/catalogProjection').DaemonPluginCatalogProjection;
   prepareStopSession?: (trackedSession: TrackedSession) => Promise<void> | void;
   stopSession: (sessionId: string) => Promise<StopSessionResult>;
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
@@ -695,12 +708,14 @@ export function createDaemonControlApp({
   // True once daemon shutdown / control-server stop has begun. Recovery handlers early-return when
   // set so switch/restart work is never run into a tearing-down daemon (a deferral, not an attempt).
   isShuttingDown?: () => boolean;
+  admissionDrain?: DaemonAdmissionDrain;
   onHappySessionWebhook: (
     sessionId: string,
     metadata: Metadata,
     reconcileCanonicalReadiness?: (tracked: TrackedSession) => Promise<void>,
     sessionCreationOutcome?: SessionCreationOutcome,
   ) => void | Promise<void>;
+  onSessionActivityChanged?: (sessionId: string) => void;
   /**
    * Settles the existing PID-correlated spawn waiter for a strict terminal
    * creation failure. It is intentionally separate from ordinary Session
@@ -728,6 +743,7 @@ export function createDaemonControlApp({
    * master control token. When unset the run bridge endpoints fail closed.
    */
   verifyRunMaterializeToken?: (provided: string) => boolean;
+  readAppliedSessionConnectedServices?: ConnectedServiceAppliedParentSelectionReader;
   /**
    * Resolves + materializes connected-service auth for an execution run (RUN-scoped
    * materialization key) and registers the run PID as a runtime-registry target. Implemented by
@@ -757,6 +773,7 @@ export function createDaemonControlApp({
     classification: ConnectedServiceRuntimeFailureClassification;
   }>) => Promise<RuntimeAuthFailureSourceAuthorization>;
   resolveConnectedServiceRuntimeAuthResumePromptMode?: (input: Readonly<{
+    sessionId: string;
     classification: ConnectedServiceRuntimeFailureClassification;
     explicit?: SessionUsageLimitRecoveryResumePromptModeV1;
   }>) => Promise<SessionUsageLimitRecoveryResumePromptModeV1>;
@@ -914,9 +931,9 @@ export function createDaemonControlApp({
     DEFAULT_SPAWN_NONCE_SUCCESS_TTL_MS,
   );
   const spawnNonceCorrelationByNonce = new Map<string, SpawnNonceCorrelationRecord>();
-  let daemonStopRequested = false;
   let restartState: 'idle' | 'restarting' = 'idle';
-  const isDaemonQuiescing = () => daemonStopRequested || isShuttingDown?.() === true;
+  const admissionDrain = suppliedAdmissionDrain ?? createDaemonAdmissionDrain({ isShutdownRequested: isShuttingDown });
+  const isDaemonQuiescing = admissionDrain.isQuiescing;
   const daemonShuttingDownResponse = () => ({
     ok: false as const,
     errorCode: 'daemon_shutting_down' as const,
@@ -1229,7 +1246,7 @@ export function createDaemonControlApp({
   const requireConnectedAccountRequestAuth = async (request: {
     headers: Record<string, unknown>;
   }, reply: FastifyReply): Promise<void> => {
-    if (isDaemonQuiescing()) {
+    if (admissionDrain.isPublicationQuiescing()) {
       return sendConnectedAccountRequestAuthError(
         reply,
         'request_auth_unavailable',
@@ -1309,6 +1326,21 @@ export function createDaemonControlApp({
     }
   };
 
+  typed.post(EXECUTION_RUN_ADMISSION_PATH, {
+    schema: { body: z.object({}).strict(), response: { 200: ExecutionRunDaemonAdmissionResponseSchema, 401: authSchema401 } },
+    preHandler: requireRunMaterializeAuth,
+  }, async () => admissionDrain.isQuiescing()
+    ? { admitted: false as const, reason: admissionDrain.isFinalShutdown() ? 'daemon_shutting_down' as const : 'daemon_draining' as const }
+    : { admitted: true as const });
+
+  typed.post(CONNECTED_SERVICE_APPLIED_PARENT_SELECTION_PATH, {
+    schema: { body: ConnectedServiceAppliedParentSelectionRequestSchema,
+      response: { 200: ConnectedServiceAppliedParentSelectionResultSchema, 401: authSchema401 } },
+    preHandler: requireRunMaterializeAuth,
+  }, async (request) => readAppliedSessionConnectedServices
+    ? await readAppliedSessionConnectedServices(request.body)
+    : { status: 'unavailable' as const });
+
   if (pluginChangeService) {
     registerDaemonPluginChangeRoutes(app, {
       service: pluginChangeService,
@@ -1362,6 +1394,7 @@ export function createDaemonControlApp({
       readCatalogSnapshot: async () => await readCurrentDaemonPluginCatalogSnapshot({
         reloadController: pluginReloadController,
       }),
+      ...(readPluginCatalogProjection ? { readCatalogProjection: readPluginCatalogProjection } : {}),
     });
   }
 
@@ -1580,7 +1613,7 @@ export function createDaemonControlApp({
         errorCode: 'connected_service_session_refresh_service_id_mismatch' as const,
       };
     }
-    if (isDaemonQuiescing()) {
+    if (admissionDrain.isPublicationQuiescing()) {
       reply.code(503);
       return daemonShuttingDownResponse();
     }
@@ -1778,6 +1811,24 @@ export function createDaemonControlApp({
   });
 
   // Session reports itself after creation
+  typed.post('/session-activity-changed', {
+    schema: {
+      body: z.object({ sessionId: z.string().min(1) }).strict(),
+      response: { 200: z.object({ ok: z.literal(true) }).strict(), 401: authSchema401,
+        503: daemonShuttingDownRouteResponseSchema },
+    },
+    preHandler: requireAuth,
+  }, async (request, reply) => {
+    if (admissionDrain.isPublicationQuiescing()) {
+      reply.code(503);
+      return daemonShuttingDownResponse();
+    }
+    if (getChildren().some(tracked => tracked.happySessionId === request.body.sessionId)) {
+      onSessionActivityChanged?.(request.body.sessionId);
+    }
+    return { ok: true as const };
+  });
+
   typed.post('/session-started', {
     schema: {
       body: SessionStartedReportSchema,
@@ -1985,11 +2036,12 @@ export function createDaemonControlApp({
       };
     }
     const resolvedResumePromptMode = await (resolveConnectedServiceRuntimeAuthResumePromptMode?.({
+      sessionId,
       classification,
       ...(request.body.resumePromptMode ? { explicit: request.body.resumePromptMode } : {}),
     }) ?? Promise.resolve(request.body.resumePromptMode ?? 'standard')).catch(() => 'standard' as const);
     let resumePromptMode = resolvedResumePromptMode;
-    if (daemonStopRequested || isShuttingDown?.() === true) {
+    if (admissionDrain.isPublicationQuiescing()) {
       return {
         ok: true as const,
         result: {
@@ -2215,7 +2267,8 @@ export function createDaemonControlApp({
     },
     preHandler: requireAuth,
   }, async (request, reply) => {
-    if (isDaemonQuiescing()) {
+    const releasesInput = request.body.event === 'prompt_or_steer';
+    if (releasesInput ? isDaemonQuiescing() : admissionDrain.isPublicationQuiescing()) {
       reply.code(503);
       return daemonShuttingDownResponse();
     }
@@ -2346,7 +2399,7 @@ export function createDaemonControlApp({
     },
     preHandler: requireAuth,
   }, async (request, reply) => {
-    if (isDaemonQuiescing()) {
+    if (admissionDrain.isPublicationQuiescing()) {
       reply.code(503);
       return daemonShuttingDownResponse();
     }
@@ -2412,7 +2465,7 @@ export function createDaemonControlApp({
 	    },
 	    preHandler: requireAuth,
 	  }, async (request, reply) => {
-        if (isDaemonQuiescing()) {
+        if (admissionDrain.isPublicationQuiescing()) {
           reply.code(503);
           return daemonShuttingDownResponse();
         }
@@ -2515,7 +2568,7 @@ export function createDaemonControlApp({
     },
     preHandler: requireRunMaterializeAuth,
   }, async (request) => {
-    const result = isDaemonQuiescing()
+    const result = admissionDrain.isPublicationQuiescing()
       ? { status: 'unavailable' as const, reason: 'daemon_shutting_down' }
       : refreshConnectedServiceRuntimeAuthForExecutionRun
         ? await refreshConnectedServiceRuntimeAuthForExecutionRun(request.body)
@@ -2878,7 +2931,10 @@ export function createDaemonControlApp({
         },
       };
     }
-    if (isDaemonQuiescing()) {
+    const releasesNewWork = request.body.operation.kind === 'turn.admission.authorize'
+      || request.body.operation.kind === 'session.input.admit'
+      || request.body.operation.kind === 'managed_server.supervision.authorize';
+    if (releasesNewWork ? isDaemonQuiescing() : admissionDrain.isPublicationQuiescing()) {
       reply.code(503);
       return daemonShuttingDownResponse();
     }
@@ -3893,7 +3949,7 @@ export function createDaemonControlApp({
     preHandler: requireAuth,
   }, async (request) => {
     const stopSessions = request.body?.stopSessions === true;
-    daemonStopRequested = true;
+    admissionDrain.beginShutdown();
     logger.debug('[CONTROL SERVER] Stop daemon request received', {
       stopSessions,
     });
@@ -3970,7 +4026,9 @@ export function startDaemonControlServer({
   requestShutdown,
   beforeShutdown,
   isShuttingDown,
+  admissionDrain,
   onHappySessionWebhook,
+  onSessionActivityChanged,
   onSessionStartupFailure,
   resolveRecoveredSpawnNonce,
   admitPersistedTakeover,
@@ -4003,6 +4061,7 @@ export function startDaemonControlServer({
   handleProviderAccountUsageSnapshot,
   handleProviderAccountUsageAdoption,
   verifyRunMaterializeToken,
+  readAppliedSessionConnectedServices,
   materializeConnectedServicesForExecutionRun,
   recoverConnectedServicesRejectedStartForExecutionRun,
   refreshConnectedServiceRuntimeAuthForExecutionRun,
@@ -4013,10 +4072,12 @@ export function startDaemonControlServer({
   pluginActionCurrentIntent,
   externalActionApi,
   runtimeActionExecute,
+  readPluginCatalogProjection,
 }: {
   getChildren: () => TrackedSession[];
   machineId: string;
   runtimeId?: string;
+  readPluginCatalogProjection?: () => import('@/plugins/daemon/catalogProjection').DaemonPluginCatalogProjection;
   prepareStopSession?: (trackedSession: TrackedSession) => Promise<void> | void;
   stopSession: (sessionId: string) => Promise<StopSessionResult>;
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
@@ -4025,12 +4086,14 @@ export function startDaemonControlServer({
   // True once daemon shutdown / control-server stop has begun. Recovery handlers early-return when
   // set so switch/restart work is never run into a tearing-down daemon (a deferral, not an attempt).
   isShuttingDown?: () => boolean;
+  admissionDrain?: DaemonAdmissionDrain;
   onHappySessionWebhook: (
     sessionId: string,
     metadata: Metadata,
     reconcileCanonicalReadiness?: (tracked: TrackedSession) => Promise<void>,
     sessionCreationOutcome?: SessionCreationOutcome,
   ) => void | Promise<void>;
+  onSessionActivityChanged?: (sessionId: string) => void;
   onSessionStartupFailure?: (input: Readonly<{
     spawnNonce: string;
     errorDetail: SessionCreationTerminalSpawnErrorDetail;
@@ -4049,6 +4112,7 @@ export function startDaemonControlServer({
   connectedAccountRequestAuth?: ConnectedAccountRequestAuthControlRoutes;
   /** Validates the scoped execution-run materialization token (see createDaemonControlApp). */
   verifyRunMaterializeToken?: (provided: string) => boolean;
+  readAppliedSessionConnectedServices?: ConnectedServiceAppliedParentSelectionReader;
   /** Execution-run connected-services materialization handler (see createDaemonControlApp). */
   materializeConnectedServicesForExecutionRun?: ConnectedServiceRunMaterializationHandler;
   recoverConnectedServicesRejectedStartForExecutionRun?: ConnectedServiceRunRejectedStartHandler;
@@ -4087,6 +4151,7 @@ export function startDaemonControlServer({
     classification: ConnectedServiceRuntimeFailureClassification;
   }>) => Promise<RuntimeAuthFailureSourceAuthorization>;
   resolveConnectedServiceRuntimeAuthResumePromptMode?: (input: Readonly<{
+    sessionId: string;
     classification: ConnectedServiceRuntimeFailureClassification;
     explicit?: SessionUsageLimitRecoveryResumePromptModeV1;
   }>) => Promise<SessionUsageLimitRecoveryResumePromptModeV1>;
@@ -4148,13 +4213,16 @@ export function startDaemonControlServer({
       requestShutdown,
       beforeShutdown,
       isShuttingDown,
+      admissionDrain,
       onHappySessionWebhook,
+      onSessionActivityChanged,
       onSessionStartupFailure,
       resolveRecoveredSpawnNonce,
       admitPersistedTakeover,
       controlToken,
       connectedAccountRequestAuth,
       verifyRunMaterializeToken,
+      readAppliedSessionConnectedServices,
       materializeConnectedServicesForExecutionRun,
       recoverConnectedServicesRejectedStartForExecutionRun,
       refreshConnectedServiceRuntimeAuthForExecutionRun,
@@ -4191,6 +4259,7 @@ export function startDaemonControlServer({
       pluginActionCurrentIntent,
       externalActionApi,
       runtimeActionExecute,
+      readPluginCatalogProjection,
     });
 
     app.listen({ port: resolveDaemonControlListenPort(process.env), host: '127.0.0.1' }, (err, address) => {

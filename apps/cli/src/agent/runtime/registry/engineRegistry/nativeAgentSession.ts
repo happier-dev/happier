@@ -1,3 +1,4 @@
+import { isForegroundTurnRuntimeTranscriptEvent } from '@/agent/runtime/session/events/runtimeTranscriptScope';
 import { randomUUID } from 'node:crypto';
 import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 import { realpath } from 'node:fs/promises';
@@ -6,6 +7,7 @@ import { isAbsolute, join, relative, sep } from 'node:path';
 
 import { AgentLaunchEnvironmentV1Schema, AgentRuntimeJsonValueV1Schema, AgentSessionConfigurationSnapshotV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import { AgentSessionStartupInstructionsV1Schema } from '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1';
+import { TeamCredentialProviderModelSelectionV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import type { AgentSessionStartupInstructionsV1 } from '@happier-dev/protocol/runtime';
 import { AgentStartSessionCallerV1Schema } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
 import { applySessionProviderBindingMetadataV1, projectAgentSessionProviderBindingV1, readSessionProviderBindingMetadataV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
@@ -14,6 +16,7 @@ import { materializeSessionInputCausalPermissionAuthorityV1 } from '@happier-dev
 import { readLeadingSlashCommandName } from '@happier-dev/protocol/sessions/slashCommands';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { readSessionWorkspaceWritesV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
+import { readSessionMemoryEnabledV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
 import { isSessionTerminalPermanentlyAbsent, SessionTerminalMetadataSchema } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
 import { registerSensitiveDiagnosticValues } from '@happier-dev/protocol/bugs/reports/redaction';
 import { resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
@@ -148,6 +151,7 @@ import type {
 } from '@/agent/runtime/turns/runtimeTurnOperations';
 import { createRuntimeTurnFailureAlreadySurfacedError } from '@/agent/runtime/turns/runtimeTurnOperations';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
 import { fetchAccountProfile } from '@/api/accountProfile';
 import { ensureExternalSessionLink } from '@/api/session/external/linking/ensureExternalSessionLink';
 import {
@@ -181,6 +185,9 @@ import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaq
 import { createPublicAcpRuntimeProtocols } from '@/agent/acp/runtime/publicSession/createPublicAcpRuntimeProtocols';
 import type { UsageObservation } from '@/usage/usageObservation';
 import type { UsageObservationPublishResult } from '@/usage/createUsageObservationPublisher';
+import { deriveNativeUsageAccountingIdentity, type NativeUsageAccountingIdentityInput } from '@/usage/collector/nativeUsageAccountingIdentity';
+import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { ResolvedSessionMcpServer } from '@/mcp/runtimeTypes';
 import { createNativeAgentSessionWorkStateService } from './nativeAgentSessionWorkState';
 import { createPluginInvocationPresentation } from '@/plugins/runtime/invocation/services/interactions';
@@ -557,7 +564,9 @@ function createNativeAgentTerminalModeBinding<TRuntime extends RuntimeTurnOperat
             reason?: RuntimeTurnDisposeReason,
             nextSessionOpenIntent?: RuntimeTurnSessionOpenIntent,
         ) {
-            lifecycleAbortController.abort();
+            // Native startup-plan delivery reopens an incarnation within this
+            // same Session. Its remote loop must outlive that replacement.
+            if (!nextSessionOpenIntent) lifecycleAbortController.abort();
             await params.runtime.resetOrDisposeRuntime(reason, nextSessionOpenIntent);
         },
     });
@@ -904,7 +913,7 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
     terminalHost?: NonNullable<AgentSessionHostServices['terminalHost']>;
     followSource?: AgentSessionHostServices['transcripts']['followSource'];
     nativeHome?: NonNullable<AgentSessionHostServices['nativeHome']>;
-    session: Pick<ApiSessionClient, 'updateMetadata' | 'enqueueAgentMessageCommitted'> & Readonly<{
+    session: Pick<ApiSessionClient, 'updateMetadata' | 'enqueueAgentMessageCommitted'> & Partial<Pick<ApiSessionClient, 'getMetadataSnapshot'>> & Readonly<{
         sessionId: string;
     }>;
     transcriptIdentity?: Readonly<{
@@ -1215,6 +1224,7 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
                     sessionId: params.sessionId,
                     sessionMachineId: params.sessionMachineId ?? null,
                     memoryRecallGuidanceEnabled: params.memoryRecallGuidanceEnabled === true,
+                    sessionMemoryEnabled: readSessionMemoryEnabledV1(params.session.getMetadataSnapshot?.()),
                     isServerFeatureEnabled: params.owners.features.isEnabled,
                 }),
                 launch: Object.freeze({
@@ -1534,15 +1544,22 @@ function toHostConfigurationOutcome(
 
 type NativeAgentSessionUsagePublisher = Readonly<{
     provider: string;
+    accountingWitness?: Omit<NativeUsageAccountingIdentityInput, 'inferenceId'> & Readonly<{ nativeSessionId: string }>;
+    boundNativeSessionId?: string;
+    resolveAccountingWitness?: (nativeSessionId: string) => Promise<NativeAgentSessionUsagePublisher['accountingWitness']>;
     publish(input: Readonly<{
         observedAt: number;
         observation: UsageObservation;
         turnId: string | null;
         externalKey: string;
+        metadata?: Record<string, unknown>;
     }>): void | Promise<void | UsageObservationPublishResult>;
 }>;
 
 type NativeAgentSessionDirectFacets = Readonly<{
+    managedProviderRunServices?: SessionRuntimeControls['managedProviderRunServices'];
+    readAppliedTeamCredentialModel?: () => import('@happier-dev/protocol').TeamCredentialProviderModelSelectionV1 | null | undefined;
+    openedWithoutConnectedServices?: () => boolean;
     getWorkspaceWrites?: () => 'allow' | 'deny' | undefined;
     prepareRunTeamCredentialProviderBinding?: SessionRuntimeControls['prepareRunTeamCredentialProviderBinding'];
     goals?: AgentSessionGoalControl;
@@ -1672,6 +1689,9 @@ type NativeAgentSessionInteractionLifecycle = Readonly<{
 }>;
 
 type NativeAgentSessionDirectHostControls = Readonly<{
+    managedProviderRunServices?: SessionRuntimeControls['managedProviderRunServices'];
+    readAppliedTeamCredentialModel?: () => import('@happier-dev/protocol').TeamCredentialProviderModelSelectionV1 | null | undefined;
+    openedWithoutConnectedServices?: () => boolean;
     prepareRunTeamCredentialProviderBinding?: SessionRuntimeControls['prepareRunTeamCredentialProviderBinding'];
     rollbackConversation?: (request: SessionRollbackRpcParams) => Promise<SessionRollbackRpcResult>;
     refreshGoal?: () => Promise<unknown>;
@@ -1759,12 +1779,19 @@ function projectPublicNativeAgentRuntimeDiagnostic(
     diagnostic: NativeAgentRuntimeDiagnostic,
 ): NativeAgentRuntimeDiagnostic {
     const source = readPublicNativeAgentRuntimeDiagnosticSource(diagnostic.details);
+    const details = diagnostic.details && typeof diagnostic.details === 'object' && !Array.isArray(diagnostic.details)
+        ? diagnostic.details as Readonly<Record<string, unknown>> : null;
+    const classification = sanitizeConnectedServiceRuntimeFailureClassification(details?.runtimeAuthClassification);
+    // Public lifecycle listeners need selected-account recovery facts, never private token evidence.
+    const publicClassification = classification
+        ? (({ failingAccessTokenFingerprint: _fingerprint, rateLimits: _raw, ...safe }) => safe)(classification)
+        : null;
     return {
         code: diagnostic.code,
         severity: diagnostic.severity,
         ...(diagnostic.message !== undefined ? { message: diagnostic.message } : {}),
         ...(diagnostic.remediation !== undefined ? { remediation: diagnostic.remediation } : {}),
-        ...(source ? { details: { v: 1, source } } : {}),
+        ...(source ? { details: { v: 1, source, ...(publicClassification ? { runtimeAuthClassification: publicClassification } : {}) } } : {}),
     };
 }
 
@@ -2580,6 +2607,7 @@ export function createNativeAgentSessionOperations(
                 type: 'input-accepted',
                 ...identity,
                 delivery: event.delivery,
+                acceptedAtMs: event.emittedAtMs,
             });
             return;
         }
@@ -2670,7 +2698,7 @@ export function createNativeAgentSessionOperations(
                 emittedAtMs: event.emittedAtMs,
             });
         }
-        if (toolExecutionLifecycle && event.kind === 'tool-call') {
+        if (toolExecutionLifecycle && event.kind === 'tool-call' && isForegroundTurnRuntimeTranscriptEvent(event)) {
             pendingToolExecutions.set(
                 toolExecutionKey(event.turnId, event.toolCallId),
                 Object.freeze({
@@ -2681,7 +2709,7 @@ export function createNativeAgentSessionOperations(
                 }),
             );
         }
-        if (toolExecutionLifecycle && event.kind === 'tool-result') {
+        if (toolExecutionLifecycle && event.kind === 'tool-result' && isForegroundTurnRuntimeTranscriptEvent(event)) {
             const key = toolExecutionKey(event.turnId, event.toolCallId);
             const pending = pendingToolExecutions.get(key);
             if (pending) {
@@ -2760,17 +2788,63 @@ export function createNativeAgentSessionOperations(
             publishCanonicalEvent?.(event);
         }
         if (event.kind === 'usage-observed' && usagePublisher) {
-            try {
+            const publishUsage = (witness: NativeAgentSessionUsagePublisher['accountingWitness']): void => {
+              if (disposeStarted) return;
+              try {
+                const accountingIdentity = witness && event.accounting?.nativeSessionId === witness.nativeSessionId
+                    ? deriveNativeUsageAccountingIdentity({ ...witness, inferenceId: event.accounting.inferenceId })
+                    : null;
+                const counterSemantics = {
+                    ...(event.accounting?.inputIncludesCache === undefined ? {} : { inputIncludesCache: event.accounting.inputIncludesCache }),
+                    ...(event.accounting?.outputIncludesReasoning === undefined ? {} : { outputIncludesReasoning: event.accounting.outputIncludesReasoning }),
+                    ...(event.accounting?.historyComplete === undefined ? {} : { historyComplete: event.accounting.historyComplete }),
+                };
+                const fallbackAccounting = {
+                    ...counterSemantics,
+                    ...(!witness && !usagePublisher.accountingWitness && !usagePublisher.boundNativeSessionId && event.accounting?.nativeSessionId ? { nativeSessionId: event.accounting.nativeSessionId } : {}),
+                    ...(!witness && !usagePublisher.accountingWitness && !usagePublisher.boundNativeSessionId && event.accounting?.inferenceId ? { inferenceId: event.accounting.inferenceId } : {}),
+                };
                 void Promise.resolve(usagePublisher.publish({
                     observedAt: event.emittedAtMs,
                     observation: toNativeAgentUsageObservation(event, usagePublisher.provider),
                     turnId: event.turnId ?? null,
-                    externalKey: event.observationId,
+                    externalKey: accountingIdentity?.externalKey ?? event.observationId,
+                    ...(accountingIdentity?.nativeSessionKey && witness ? {
+                        metadata: {
+                            accountingSubject: {
+                                kind: 'native', machineId: witness.authority.machineId, agent: witness.agent,
+                                sourceRootKey: accountingIdentity.sourceRootKey,
+                                nativeSessionKey: accountingIdentity.nativeSessionKey,
+                            },
+                            usageAccounting: {
+                                path: 'runtime',
+                                status: event.accounting?.historyComplete === false || !accountingIdentity.externalKey ? 'partial' : 'available',
+                                asOfMs: event.emittedAtMs,
+                                nativeSessionId: accountingIdentity.nativeSessionKey,
+                                ...(accountingIdentity.externalKey ? { inferenceId: accountingIdentity.externalKey } : {}),
+                                ...counterSemantics,
+                            },
+                        },
+                    } : Object.keys(fallbackAccounting).length > 0 ? {
+                        metadata: { usageAccounting: {
+                            path: 'runtime', status: event.accounting?.historyComplete === false ? 'partial' : 'unknown', asOfMs: event.emittedAtMs,
+                            ...fallbackAccounting,
+                        } },
+                    } : {}),
                 })).catch(() => {
                     logger.debug('[NativeAgentSession] failed to publish usage observation (non-fatal)');
                 });
-            } catch {
+              } catch {
                 logger.debug('[NativeAgentSession] failed to publish usage observation (non-fatal)');
+              }
+            };
+            if (event.accounting?.nativeSessionId && usagePublisher.resolveAccountingWitness) {
+                // The existing configured-source owner supplies root authority;
+                // a newly minted native id alone never establishes a source.
+                void usagePublisher.resolveAccountingWitness(event.accounting.nativeSessionId)
+                    .then(publishUsage, () => publishUsage(undefined));
+            } else {
+                publishUsage(usagePublisher.accountingWitness);
             }
         }
         if (
@@ -2870,6 +2944,12 @@ export function createNativeAgentSessionOperations(
         || directFacets?.context.signal.aborted === true;
     const directHostControls: NativeAgentSessionDirectHostControls = directFacets
         ? Object.freeze({
+            ...(directFacets.managedProviderRunServices ? { managedProviderRunServices: directFacets.managedProviderRunServices } : {}),
+            readAppliedTeamCredentialModel: () => activeControlUnavailable()
+                ? undefined
+                : directFacets.readAppliedTeamCredentialModel?.(),
+            openedWithoutConnectedServices: () => !activeControlUnavailable()
+                && (directFacets.openedWithoutConnectedServices?.() ?? false),
             ...(directFacets.prepareRunTeamCredentialProviderBinding
                 ? { prepareRunTeamCredentialProviderBinding: directFacets.prepareRunTeamCredentialProviderBinding }
                 : {}),
@@ -4045,11 +4125,11 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
     lease?: AgentRuntimeRegistrationLease;
     backend: EngineResolutionBackend;
     agent: EngineResolutionAgent;
-    /** Host-owned capabilities for a non-plugin configured Agent runtime. */
+    /** Instance capabilities admitted from the Account-configured ACP row. */
     sessionCapabilities?: AgentSessionCapabilities;
-    /** Exact host policy identity for a non-plugin configured Agent runtime. */
+    /** Optional host policy routing identity. */
     policyAgentId?: string;
-    /** Host-owned Session projection for a non-plugin configured Agent runtime. */
+    /** Instance-specific Session projection admitted from the Account catalog. */
     sessionProjection?: Readonly<{
         flavor: string;
         agentMessageType: HostSessionRuntimeConfig['agentMessageType'];
@@ -4057,6 +4137,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
     }>;
     /** Host-owned executable custody for Account-configured ACP. */
     resolveAcpHostLaunch?: PublicAcpHostLaunchResolver;
+    acpRuntimeDefinition?: Parameters<typeof createPublicAcpRuntimeProtocols>[0]['runtimeDefinition'];
     sessionInput: PluginSessionBindingInput;
     executionSurfaces?: Partial<Pick<BackendExecutionSurfaces, 'attach' | 'externalSession' | 'terminalRuntime' | 'resolveTerminalPresentation'>>;
     externalSessionHostOperations?: Readonly<{
@@ -4087,6 +4168,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
         ): Readonly<Record<string, string>>;
         cleanup: (() => void) | null;
     }> | null>;
+    managedProviderRunServices?: SessionRuntimeControls['managedProviderRunServices'];
     prepareTeamCredentialProviderBinding?: NonNullable<
         import('./types').RunnerAgentSessionRuntimeSource[
             'prepareTeamCredentialProviderBinding'
@@ -4492,6 +4574,8 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 params.agent,
                 hostRuntimeParams.metadata,
             );
+            const accountingAccountId = readAccountIdFromToken(params.sessionInput.credentials.token);
+            let resolveAccountingWitness: NonNullable<NativeAgentSessionUsagePublisher['resolveAccountingWitness']> = async () => undefined;
             const hasDeclaredInstances = params.agent.richDefinition?.definition.surfaces?.externalSession.sources.some(
                 (source) => (source.instances?.length ?? 0) > 0,
             ) === true;
@@ -4587,6 +4671,25 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 }
                 if (lifecycle) {
                     const configuredExternalSessions = lifecycle.compositionPort;
+                    resolveAccountingWitness = async (nativeSessionId) => {
+                        if (!accountingAccountId || !params.agent.identity || signal.aborted
+                            || !identity.isCurrent() || (boundExternalSessionSource && boundExternalSessionSource.remoteSessionId !== nativeSessionId)) return undefined;
+                        const target = await configuredExternalSessions.resolveSourceIdentity({
+                            agentId: params.agent.id,
+                            remoteSessionId: nativeSessionId,
+                            ...(boundExternalSessionSource ? { boundSource: boundExternalSessionSource.source } : {}),
+                            signal,
+                        });
+                        if (target.status !== 'resolved' || signal.aborted || !identity.isCurrent()) return undefined;
+                        const storage = await readOrCreateDeviceLocalSecretStorage({ path: happierConfiguration.deviceLocalSecretKeyFile });
+                        if (signal.aborted || !identity.isCurrent()) return undefined;
+                        return {
+                            authority: { serverId: hostRuntimeParams.session.getServerBinding().serverId,
+                                accountId: accountingAccountId, machineId: hostRuntimeParams.machineId },
+                            storage, agent: params.agent.identity,
+                            sourceKey: target.ref.sourceId, nativeSessionId: target.ref.remoteSessionId,
+                        };
+                    };
                     followProviderSession ??= async (
                         request,
                         listener,
@@ -4893,6 +4996,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             // (`teams-lane-10/PLAN.md` §2.3), never a later re-derivation.
             let liveTeamCredentialOpen: Readonly<{
                 resourceId: string;
+                teamId?: string;
                 expectedResourceRevision: number;
                 deliveryMode: string;
                 agentTargetKey: string;
@@ -4915,6 +5019,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 });
                 liveTeamCredentialOpen = Object.freeze({
                     resourceId: teamCredentialBinding.resourceId,
+                    ...(teamCredentialBinding.teamId ? { teamId: teamCredentialBinding.teamId } : {}),
                     expectedResourceRevision: teamCredentialBinding.expectedResourceRevision,
                     deliveryMode: teamCredentialBinding.deliveryMode,
                     agentTargetKey: modelSelection.ref.agentTargetKey,
@@ -5189,6 +5294,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     interactions: currentSessionUi.interactions,
                     media: currentSessionHandle.media,
                     models: publications.services.models,
+                    modes: publications.services.modes,
                     ...(transformAgentChildLaunchEnvironment
                         ? { transformAgentChildLaunchEnvironment }
                         : {}),
@@ -5202,6 +5308,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                                 }),
                         }
                         : {}),
+                    sidechainSession: hostRuntimeParams.session,
                     ...(openIntent.kind === 'resume' && openIntent.importHistory
                         ? { resumeHistorySession: hostRuntimeParams.session }
                         : {}),
@@ -5210,6 +5317,9 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         : {}),
                     ...(params.resolveAcpHostLaunch
                         ? { resolveHostLaunch: params.resolveAcpHostLaunch }
+                        : {}),
+                    ...(params.acpRuntimeDefinition
+                        ? { runtimeDefinition: params.acpRuntimeDefinition }
                         : {}),
                 }),
                 workState: createNativeAgentSessionWorkStateService({
@@ -5517,6 +5627,18 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             }
             let disposeOnScopeAbort: (() => void) | null = null;
             const toolExecutionCapability = runtime.toolExecution?.capability;
+            // Project only the custody actually accepted by this open. Missing
+            // legacy Team identity is unavailable, not proof of native routing.
+            const parsedAppliedTeamCredentialModel = liveTeamCredentialOpen === null
+                ? null
+                : TeamCredentialProviderModelSelectionV1Schema.safeParse({
+                    kind: 'team_credential_provider_model',
+                    ...liveTeamCredentialOpen,
+                });
+            const appliedTeamCredentialModel = parsedAppliedTeamCredentialModel === null
+                ? null
+                : parsedAppliedTeamCredentialModel.success ? Object.freeze(parsedAppliedTeamCredentialModel.data) : undefined;
+            const openedWithoutConnectedServices = (openRequest.connectedAccounts?.length ?? 0) === 0;
             operations = createNativeAgentSessionOperations(
                 session,
                 sessionId,
@@ -5546,11 +5668,16 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 resumeId ?? undefined,
                 {
                     provider: identity.agentId,
+                    ...(boundExternalSessionSource ? { boundNativeSessionId: boundExternalSessionSource.remoteSessionId } : {}),
+                    resolveAccountingWitness,
                     publish: (input) => hostRuntimeParams.session.publishUsageObservation(input),
                 },
                 openInputs.configuration,
                 () => ownedAbortController.abort(),
                 {
+                    readAppliedTeamCredentialModel: () => appliedTeamCredentialModel,
+                    ...(params.managedProviderRunServices ? { managedProviderRunServices: params.managedProviderRunServices } : {}),
+                    openedWithoutConnectedServices: () => openedWithoutConnectedServices,
                     ...(params.prepareTeamCredentialProviderBinding
                         ? {
                             prepareRunTeamCredentialProviderBinding: async (request: Readonly<{
@@ -5587,7 +5714,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                                     // credential instead.
                                     if (inherited.deliveryMode !== 'brokered') {
                                         const unavailable = createProviderErrorV1(
-                                            'provider_credential_transport_unavailable',
+                                            'provider_run_credential_selection_required',
                                             {},
                                         );
                                         throw Object.assign(new Error(unavailable.code), { code: unavailable.code });

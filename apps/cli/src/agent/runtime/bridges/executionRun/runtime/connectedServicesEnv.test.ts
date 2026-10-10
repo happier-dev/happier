@@ -20,6 +20,11 @@ import {
     resolveExecutionRunConnectedServicesEnv,
 } from './connectedServicesEnv';
 import type { ConnectedServiceRunRejectedStartRequest, ConnectedServiceRunRejectedStartResult } from '@/daemon/connectedServices/runs/materializeContract';
+import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
+import { projectActionWorkflowSelectionInputV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
+import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/startRequest';
+import { resolveSessionSpawnConnectedServicesDefaultsPayload } from '@/session/services/spawnConnectedServicesDefaults';
+import { resolveExecutionRunChildSelection } from './openInputs';
 
 const CONNECTED_BINDINGS = {
     v: 2,
@@ -79,6 +84,66 @@ function createDeps(overrides: Partial<{
 }
 
 describe('resolveExecutionRunConnectedServicesEnv', () => {
+    it('materializes an attached parent pool rather than Account defaults or the selected parent member', async () => {
+        const parentPool = { v: 2 as const, bindingsByServiceId: {
+            [OPENAI_CODEX_ACCOUNT_SERVICE_ID]: { source: 'connected' as const, selection: 'group' as const,
+                groupId: 'pool-X', profileId: 'parent-member' },
+        } };
+        const selected = resolveExecutionRunChildSelection({
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, lifecycle: 'attached',
+            parent: { status: 'applied', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                modelId: 'parent-model', connectedServices: parentPool },
+        });
+        const deps = createDeps({ resolveSessionSpawnDefaults: vi.fn(async () => ({
+            connectedServices: { v: 2, bindingsByServiceId: { [OPENAI_CODEX_ACCOUNT_SERVICE_ID]: {
+                source: 'connected', selection: 'group', groupId: 'pool-Y',
+            } } }, connectedServicesUpdatedAt: 1,
+        })) });
+        await resolveExecutionRunConnectedServicesEnv({
+            runId: 'run_1', backendId: 'codex', backendSourceKind: 'built_in', cwd: '/tmp/project',
+            connectedServices: selected.connectedServices, modelId: selected.modelId, deps,
+        });
+        expect(deps.requestMaterialization).toHaveBeenCalledWith(expect.objectContaining({
+            modelId: 'parent-model', connectedServices: { v: 2, bindingsByServiceId: {
+                [OPENAI_CODEX_ACCOUNT_SERVICE_ID]: { source: 'connected', selection: 'group', groupId: 'pool-X' },
+            } },
+        }));
+        expect(deps.resolveSessionSpawnDefaults).not.toHaveBeenCalled();
+        expect(deps.readCredentials).not.toHaveBeenCalled();
+    });
+    it.each([false, true])('preserves the admitted Workflow review choice through materialization (native=%s)', async (native) => {
+        const selection = native ? null : {
+            v: 2 as const, bindingsByServiceId: { [OPENAI_CODEX_ACCOUNT_SERVICE_ID]: {
+                source: 'connected' as const, selection: 'group' as const, groupId: 'pool-X',
+            } },
+        };
+        // Only daemon-control and credential storage boundaries are substituted. The action,
+        // receiver schema, selection/default owner and environment composer remain real.
+        const deps = { ...createDeps(), resolveSessionSpawnDefaults: resolveSessionSpawnConnectedServicesDefaultsPayload };
+        const executor = createActionExecutor({
+            reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
+            executionRunStart: async (_sessionId, raw) => {
+                const input = ExecutionRunStartRequestSchema.parse(raw);
+                await resolveExecutionRunConnectedServicesEnv({
+                    runId: 'run_1', backendId: 'codex', backendSourceKind: 'built_in', cwd: '/tmp/project',
+                    connectedServices: input.connectedServices,
+                    connectedServicesDefaultServiceIds: input.connectedServicesDefaultServiceIds,
+                    deps,
+                });
+                return { runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' };
+            },
+        } as ActionExecutorDeps);
+        const input = projectActionWorkflowSelectionInputV1('review.start', {
+            sessionId: 's1', engineIds: ['codex'], instructions: 'Review.',
+        }, { connectedServices: selection });
+        expect(await executor.execute('review.start', input, { surface: 'ui' })).toMatchObject({
+            ok: true, result: { results: [{ ok: true }] },
+        });
+        if (native) expect(deps.requestMaterialization).not.toHaveBeenCalled();
+        else expect(deps.requestMaterialization).toHaveBeenCalledWith(expect.objectContaining({ connectedServices: selection }));
+        expect(deps.readCredentials).not.toHaveBeenCalled();
+    });
+
     it('binds rejected-start recovery to its exact Run activation and requested model', async () => {
         const classification = {
             serviceId: OPENAI_CODEX_ACCOUNT_SERVICE_ID, profileId: 'profile_1', groupId: 'pool', groupGeneration: 1,

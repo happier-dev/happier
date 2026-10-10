@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Credentials, StoredCredentials } from '@/persistence';
 import type {
@@ -8,13 +8,12 @@ import type {
 
 const {
   readStoredCredentialsMock,
-  readAgentCatalogSnapshotMock,
   resolveExistingSessionAttachContextMock,
 } = vi.hoisted(() => ({
   readStoredCredentialsMock: vi.fn(async (): Promise<StoredCredentials | null> => null),
-  readAgentCatalogSnapshotMock: vi.fn(),
   resolveExistingSessionAttachContextMock: vi.fn(async (): Promise<ExistingSessionAttachContext | ExistingSessionAttachContextFailure> => ({
     ok: true,
+    metadata: null,
     attachPayload: { v: 2, encryptionMode: 'plain' },
     vendorResumeId: null,
     backendTarget: null,
@@ -25,15 +24,17 @@ vi.mock('@/persistence', () => ({
   readStoredCredentials: readStoredCredentialsMock,
 }));
 
-vi.mock('@/agent/catalog/snapshot', () => ({
-  readAgentCatalogSnapshot: readAgentCatalogSnapshotMock,
-}));
-
 vi.mock('../sessionEncryption/resolveExistingSessionAttachContext', () => ({
   resolveExistingSessionAttachContext: resolveExistingSessionAttachContextMock,
 }));
 
 import { resolveSpawnBackendIdentity } from './resolveSpawnBackendIdentity';
+import { createCustomAcpAdmissionRuntimeFixture } from '../startup/customAcpAdmission.testkit';
+
+let runtime: Awaited<ReturnType<typeof createCustomAcpAdmissionRuntimeFixture>>;
+beforeAll(async () => { runtime = await createCustomAcpAdmissionRuntimeFixture(); });
+afterAll(async () => { await runtime?.dispose(); });
+beforeEach(() => { readStoredCredentialsMock.mockClear(); });
 
 function createLegacyCredentials(token: string, seed: number): Credentials {
   return {
@@ -46,28 +47,13 @@ function createLegacyCredentials(token: string, seed: number): Credentials {
 }
 
 describe('resolveSpawnBackendIdentity credential precedence', () => {
-  beforeEach(() => {
-    readAgentCatalogSnapshotMock.mockReturnValue({
-      agentDefinitionsById: new Map(),
-      catalogEntriesById: {
-        codex: { id: 'codex', cliSubcommand: 'codex', vendorResumeSupport: 'supported' },
-        claude: { id: 'claude', cliSubcommand: 'claude', vendorResumeSupport: 'supported' },
-        antigravity: { id: 'antigravity', cliSubcommand: 'antigravity', vendorResumeSupport: 'supported' },
-        'acme-agent': {
-          id: 'acme-agent',
-          cliSubcommand: 'acme-agent',
-          vendorResumeSupport: 'supported',
-        },
-      },
-    });
-  });
-
   afterEach(() => {
     readStoredCredentialsMock.mockReset();
     readStoredCredentialsMock.mockResolvedValue(null);
     resolveExistingSessionAttachContextMock.mockReset();
     resolveExistingSessionAttachContextMock.mockResolvedValue({
       ok: true,
+      metadata: null,
       attachPayload: { v: 2, encryptionMode: 'plain' },
       vendorResumeId: null,
       backendTarget: null,
@@ -152,6 +138,7 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
     const liveCredentials = createLegacyCredentials('live-token', 4);
     resolveExistingSessionAttachContextMock.mockResolvedValueOnce({
       ok: true,
+      metadata: null,
       attachPayload: { v: 2, encryptionMode: 'plain' },
       vendorResumeId: 'sess-handoff-direct',
       backendTarget: null,
@@ -178,6 +165,7 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
     const liveCredentials = createLegacyCredentials('live-token', 16);
     resolveExistingSessionAttachContextMock.mockResolvedValueOnce({
       ok: true,
+      metadata: null,
       attachPayload: { v: 2, encryptionMode: 'plain' },
       vendorResumeId: 'sess-handoff-direct',
       backendTarget: null,
@@ -205,6 +193,7 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
     const liveCredentials = createLegacyCredentials('live-token', 14);
     resolveExistingSessionAttachContextMock.mockResolvedValueOnce({
       ok: true,
+      metadata: null,
       attachPayload: { v: 2, encryptionMode: 'plain' },
       vendorResumeId: 'acme-session-1',
       backendTarget: null,
@@ -229,13 +218,6 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
   });
 
   it('fails closed when an external Agent is unavailable rather than falling back to Claude', async () => {
-    readAgentCatalogSnapshotMock.mockReturnValue({
-      agentDefinitionsById: new Map(),
-      catalogEntriesById: {
-        codex: { id: 'codex', cliSubcommand: 'codex', vendorResumeSupport: 'supported' },
-      },
-    });
-
     const result = await resolveSpawnBackendIdentity({
       existingSessionId: '',
       resume: '',
@@ -281,6 +263,7 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
     const liveCredentials = createLegacyCredentials('live-token', 13);
     resolveExistingSessionAttachContextMock.mockResolvedValueOnce({
       ok: true,
+      metadata: null,
       attachPayload: { v: 2, encryptionMode: 'plain' },
       vendorResumeId: 'verified-linked-id',
       linkedVendorResumeId: 'verified-linked-id',
@@ -310,6 +293,7 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
     const liveCredentials = createLegacyCredentials('live-token', 5);
     resolveExistingSessionAttachContextMock.mockResolvedValueOnce({
       ok: true,
+      metadata: null,
       attachPayload: { v: 2, encryptionMode: 'plain' },
       vendorResumeId: null,
       backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
@@ -327,11 +311,12 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
       ok: true,
       effectiveBackendTargetV2: {
         kind: 'backend',
-        backendId: 'review-bot',
-        configuredBackendId: 'review-bot',
-        sourceKind: 'configured',
+        backendId: 'custom-acp',
+        sourceKind: 'built_in',
       },
-      catalogAgentId: null,
+      effectiveAgentTarget: { kind: 'agent',
+        identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: 'review-bot' },
+      catalogAgentId: 'custom-acp',
     });
   });
 
@@ -355,11 +340,12 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
       ok: true,
       effectiveBackendTargetV2: {
         kind: 'backend',
-        backendId: 'review-bot',
-        configuredBackendId: 'review-bot',
-        sourceKind: 'configured',
+        backendId: 'custom-acp',
+        sourceKind: 'built_in',
       },
-      catalogAgentId: null,
+      effectiveAgentTarget: { kind: 'agent',
+        identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: 'review-bot' },
+      catalogAgentId: 'custom-acp',
     });
   });
 
@@ -388,15 +374,6 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
 describe('resolveSpawnBackendIdentity opaque Agent resume id', () => {
   /** The Agent minted these bytes; the daemon hands them straight back. */
   const OPAQUE_RESUME_ID = ' provider\nsession ';
-
-  beforeEach(() => {
-    readAgentCatalogSnapshotMock.mockReturnValue({
-      agentDefinitionsById: new Map(),
-      catalogEntriesById: {
-        codex: { id: 'codex', cliSubcommand: 'codex', vendorResumeSupport: 'supported' },
-      },
-    });
-  });
 
   afterEach(() => {
     readStoredCredentialsMock.mockReset();
@@ -430,6 +407,7 @@ describe('resolveSpawnBackendIdentity opaque Agent resume id', () => {
   it('adopts an attached Session vendor resume id without renormalizing its bytes', async () => {
     resolveExistingSessionAttachContextMock.mockResolvedValue({
       ok: true,
+      metadata: null,
       attachPayload: { v: 2, encryptionMode: 'plain' },
       vendorResumeId: OPAQUE_RESUME_ID,
       backendTarget: null,

@@ -11,6 +11,7 @@ import type { ConnectedServiceRunRejectedStartRequest } from './connectedService
 import { createExecutionRunConnectedServicesBridge } from './connectedServices/runs/executionRunMaterialization';
 import { resolveConnectedServiceAuthForSpawn } from './connectedServices/resolveConnectedServiceAuthForSpawn';
 import type { ApiClient } from '@/api/api';
+import { ConnectedServiceRuntimeRegistry } from './connectedServices/runtimeRegistry/registry';
 
 const RUN_BINDINGS = {
     v: 1,
@@ -59,6 +60,32 @@ describe('connected-service run materialize capability token', () => {
 describe('createDaemonControlApp connected-service run materialization bridge', () => {
     const scopedToken = deriveConnectedServiceRunMaterializeToken('master-token');
     const activationId = '11111111-1111-4111-8111-111111111111';
+
+    it('reads applied parent bindings only with scoped auth and exact runtime identity', async () => {
+        const registry = new ConnectedServiceRuntimeRegistry();
+        registry.registerTarget({ pid: 4242, sessionId: 'parent', agentId: 'codex', connectedServicesBindingsRaw: {
+            v: 2, bindingsByServiceId: { 'happier.agent.codex/openai-codex': {
+                source: 'connected', selection: 'group', groupId: 'parent-pool', profileId: 'private-member',
+            } },
+        } });
+        const app = createApp({ readAppliedSessionConnectedServices: (input: { runnerPid: number; sessionId: string; agentId: string }) =>
+            registry.readAppliedSessionBindings(input) });
+        try {
+            const payload = { runnerPid: 4242, sessionId: 'parent', agentId: 'codex' };
+            const denied = await app.inject({ method: 'POST', url: '/connected-service-run/applied-parent-selection',
+                headers: { 'x-happier-daemon-token': 'master-token' }, payload });
+            expect(denied.statusCode).toBe(401);
+            const accepted = await app.inject({ method: 'POST', url: '/connected-service-run/applied-parent-selection',
+                headers: { 'x-happier-daemon-token': scopedToken }, payload });
+            expect(accepted.statusCode).toBe(200);
+            expect(accepted.json()).toEqual({ status: 'applied', connectedServices: { v: 2, bindingsByServiceId: {
+                'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: 'parent-pool' },
+            } } });
+            const unknown = await app.inject({ method: 'POST', url: '/connected-service-run/applied-parent-selection',
+                headers: { 'x-happier-daemon-token': scopedToken }, payload: { ...payload, sessionId: 'other' } });
+            expect(unknown.json()).toEqual({ status: 'unavailable' });
+        } finally { await app.close(); }
+    });
 
     it('admits rejected-start recovery only with scoped Run auth and sanitized evidence', async () => {
         // Unknown activation admission never reaches materialization, registry or filesystem I/O.

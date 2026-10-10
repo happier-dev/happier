@@ -1,6 +1,10 @@
 import type { AgentConnectedAccountLaunchContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { basename } from 'node:path';
 import {
   QualifiedConnectedAccountPurposeBindingsV1Schema,
+  PluginConnectedAccountDescriptorContributionV2Schema,
+  PluginManifestHostAccessV2Schema,
+  PluginAgentCliMetadataSchema,
   type QualifiedConnectedAccountPurposeBindingV1,
   type QualifiedConnectedAccountServiceRef,
   type PluginContributionIdentityV1,
@@ -79,11 +83,59 @@ export function createExternalConnectedAccountForegroundFixture(input: Readonly<
     '  } } };',
     '}',
   ].join('\n');
-  const plugins = [{
+  const descriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({
+    id: input.service.localId,
+    title: 'Foreground fixture Account',
+    authentication: { defaultModeId: 'fixture', modes: [{
+      id: 'fixture', kind: 'oauthDeviceCode', outcomeReconciliation: 'none',
+    }] },
+  });
+  // Claim runs the same real executable admission as daemon spawn. Use this
+  // test process's native executable; no vendor installer or CLI probe is needed.
+  const cli = PluginAgentCliMetadataSchema.parse({
+    executable: { binaryName: basename(process.execPath), sourcePreference: 'system-first' },
+    install: { manual: { kind: 'none' } },
+    auth: { support: 'unsupported', loginLaunches: [] },
+  });
+  const launchEnvironmentKeys = [...new Set([
+    ...(input.launch?.fileEnvironmentUses ?? []).map(use => use.environmentKey),
+    ...(input.launch?.environmentUses ?? []).map(use => use.environmentKey),
+    ...(input.launch?.stateSharingDescriptor?.nativeHome?.environmentKey
+      ? [input.launch.stateSharingDescriptor.nativeHome.environmentKey] : []),
+  ])];
+  const hostAccess = PluginManifestHostAccessV2Schema.parse({
+    required: launchEnvironmentKeys.length === 0 ? [] : [{
+      id: 'foreground-account-environment', reason: 'Expose the isolated foreground Account home',
+      capability: 'environment', scope: { keys: launchEnvironmentKeys },
+    }], optional: [],
+  });
+  const accountRegistrationSource = [
+    'const outsideFixtureBoundary = async () => { throw new Error("Foreground fixture Account operations must use the exact isolated Account-store boundary"); };',
+    `api.connectedAccounts.register(${JSON.stringify(input.service.localId)}, {`,
+    '  authentication: { modes: { fixture: { kind: "oauthDeviceCode",',
+    '    begin: outsideFixtureBoundary, poll: outsideFixtureBoundary, async cancel() {} } } },',
+    '  refresh: outsideFixtureBoundary, revoke: outsideFixtureBoundary,',
+    '  status: outsideFixtureBoundary, materialize: outsideFixtureBoundary,',
+    '});',
+  ];
+  // Admit the real referenced descriptor alongside the Agent. The purpose
+  // owner below supplies the isolated Account-store boundary, not a catalog mock.
+  const descriptorPlugins = input.service.pluginId === pluginId ? [] : [{
+    manifest: createPluginManifestV2Fixture({
+      id: input.service.pluginId,
+      contributes: { connectedAccountDescriptors: [descriptor] },
+    }),
+    files: { 'daemon.mjs': ['export function activate(api) {', ...accountRegistrationSource, '}'].join('\n') },
+  }];
+  const plugins = [...descriptorPlugins, {
     manifest: createPluginManifestV2Fixture({
       id: pluginId,
-      contributes: { agents: [{
+      hostAccess,
+      contributes: {
+        ...(input.service.pluginId === pluginId ? { connectedAccountDescriptors: [descriptor] } : {}),
+        agents: [{
         id: localId, title: 'Foreground Account Fixture', runtime: { kind: 'custom' }, primary: 'sessions',
+        cli,
         capabilities: { sessions: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true } },
         connectedAccounts: [{ purpose: 'primary', service: input.service, required: false, materializationKinds: input.materializationKinds }],
       }] },
@@ -93,6 +145,7 @@ export function createExternalConnectedAccountForegroundFixture(input: Readonly<
       'daemon.mjs': [
         'import { createRuntime } from "./agent-runtime.mjs";',
         'export function activate(api) {',
+        ...(input.service.pluginId === pluginId ? accountRegistrationSource : []),
         `  api.agents.register(${JSON.stringify(localId)}, createRuntime, {`,
         '    sessionRunnerFactory: { module: "./agent-runtime.mjs", export: "createRuntime", runtimeApiVersion: 1 },',
         ...(input.launch ? [`    connectedAccountLaunch: ${JSON.stringify(input.launch)},`] : []),

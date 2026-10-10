@@ -1,3 +1,4 @@
+import { homedir } from 'node:os';
 import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
 import type { RuntimeDescriptorV1, SessionHandoffPrepareTargetFailure, SessionHandoffPrepareTargetRequest, SessionHandoffPrepareTargetResultGetSuccessResponse, SessionHandoffResumePlan, SessionHandoffStatus } from '@happier-dev/protocol';
 
@@ -15,10 +16,13 @@ import {
   tryAcquireSessionHandoffPrepareTargetJobLease,
 } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobLease';
 import type { SessionHandoffAgentBundle } from '../../../session/handoff/types';
+import type { ImportedSessionHandoffBundle } from '../../../session/handoff/types';
 import { ensureSessionHandoffWorkspaceCwd } from '../../../session/handoff/paths/sessionHandoffWorkspaceCwd';
+import { expandHomeRelativePath, resolveSessionHandoffLocalHomeDir } from '../../../session/handoff/paths/sessionHandoffPathNormalization';
 import { createManagedSessionDirectories } from '../../../session/creation/managedSessionDirectories';
 
 import {
+  canUseDirectPeerForSessionHandoffAgentBundle,
   directPeerTransferUnavailable,
   resolvePrepareAgentBundle,
   materializePrepareManagedWorkspaceSeed,
@@ -54,6 +58,7 @@ export type RunSessionHandoffPrepareTargetJobInput = Readonly<{
   prepareTargetJobLeaseTtlMs: number;
   machineTransferChannel: MachineTransferChannel | undefined;
   directPeerTransfer: SessionHandoffDirectPeerTransferHandle | undefined;
+  resolveExistingSessionState?: (request: SessionHandoffPrepareTargetRequest, targetPath: string) => Promise<ImportedSessionHandoffBundle>;
   importSessionBundle: (
     bundle: SessionHandoffAgentBundle,
     targetPath: string,
@@ -76,6 +81,7 @@ function resolveTypedImportFailure(error: unknown): SessionHandoffPrepareTargetF
   if (!error || typeof error !== 'object') return null;
   const code = (error as Readonly<{ code?: unknown }>).code;
   return code === 'target_identity_conflict' || code === 'agent_version_unsupported'
+    || code === 'existing_session_state_unavailable' || code === 'existing_session_state_unsupported'
     ? { code }
     : null;
 }
@@ -83,12 +89,17 @@ function resolveTypedImportFailure(error: unknown): SessionHandoffPrepareTargetF
 function resolveTypedImportFailureMessage(
   failure: SessionHandoffPrepareTargetFailure,
 ): string {
+  if (failure.code === 'existing_session_state_unavailable') return 'The target native session state is unavailable. Turn on Transfer session data.';
+  if (failure.code === 'existing_session_state_unsupported') return 'This Agent cannot verify existing native session state';
   return failure.code === 'target_identity_conflict'
     ? 'The native handoff target conflicts with the exported session identity'
     : 'The installed Agent version cannot safely import this handoff';
 }
 
-function resolvePrepareTargetFailureCode(message: string): string | undefined {
+function resolvePrepareTargetFailureCode(message: string, error: unknown): string | undefined {
+  if (error && typeof error === 'object' && 'code' in error && error.code === 'handoff_existing_state_update_required') {
+    return error.code;
+  }
   if (message === directPeerTransferUnavailable().error) {
     return directPeerTransferUnavailable().errorCode;
   }
@@ -197,12 +208,14 @@ export async function runSessionHandoffPrepareTargetJob(
       }
 
       actualTransportStrategy = request.negotiatedTransportStrategy;
+      let localSourceExport: Awaited<ReturnType<SessionHandoffSourceExportStore['load']>> = null;
+      if (request.stateTransfer !== 'existing') {
       const requestResolvedHandoffMetadataV2 = request.handoffMetadataV2;
       const allowServerRoutedFallback = request.allowServerRoutedFallback !== false;
       const canFallbackToServerRouted = allowServerRoutedFallback
         && machineTransferChannel !== undefined;
       const directPeerRequester = directPeerTransfer?.requestPayloadFile;
-      const localSourceExport = await sourceExportStore.load(handoffId);
+      localSourceExport = await sourceExportStore.load(handoffId);
       const localAgentBundle =
         localSourceExport?.agentBundle
           ? await readSessionHandoffAgentBundleFile(localSourceExport.agentBundle.filePath).catch(() => null)
@@ -224,20 +237,13 @@ export async function runSessionHandoffPrepareTargetJob(
       }
 
       if (actualTransportStrategy === 'direct_peer') {
-        const providerEndpointCandidates =
-          requestResolvedHandoffMetadataV2?.agentBundleTransferPublication?.endpointCandidates
-          ?? localAgentBundleEndpointCandidates;
-        const providerCandidatesFallback = providerEndpointCandidates ?? request.endpointCandidates;
-        const nowMs = Date.now();
-        const hasUsableProviderEndpointCandidates =
-          Array.isArray(providerCandidatesFallback)
-          && providerCandidatesFallback.some((candidate) => candidate.expiresAt >= nowMs);
-        const canUseDirectPeerForAgentBundle =
-          Boolean(localAgentBundle)
-          || (
-            typeof directPeerRequester === 'function'
-            && hasUsableProviderEndpointCandidates
-          );
+        const canUseDirectPeerForAgentBundle = canUseDirectPeerForSessionHandoffAgentBundle({
+          request,
+          directPeerRequesterAvailable: typeof directPeerRequester === 'function',
+          hasLocalAgentBundle: Boolean(localAgentBundle),
+          localAgentBundleEndpointCandidates,
+          nowMs: Date.now(),
+        });
         if (!canUseDirectPeerForAgentBundle) {
           if (canFallbackToServerRouted) {
             actualTransportStrategy = 'server_routed_stream';
@@ -326,10 +332,16 @@ export async function runSessionHandoffPrepareTargetJob(
         }));
         return;
       }
+      }
 
       const targetPath = managedIdentity
         ? (await managedDirectories.allocateForHandoff(managedIdentity)).directory
-        : request.targetPath;
+        : request.sourceMachineId === request.targetMachineId
+          ? expandHomeRelativePath({
+            path: request.targetPath,
+            homeDir: resolveSessionHandoffLocalHomeDir({ activeServerDir, fallbackHomeDir: homedir() }),
+          })
+          : request.targetPath;
       managedAllocationPrepared = managedIdentity !== null;
       if (managedIdentity) {
         await materializePrepareManagedWorkspaceSeed({ request, targetPath, actualTransportStrategy,
@@ -341,18 +353,20 @@ export async function runSessionHandoffPrepareTargetJob(
         await ensureSessionHandoffWorkspaceCwd({
           workspaceRootPath: request.workspaceRootPath,
           sessionRelativeCwd: request.workspaceSessionRelativeCwd,
-          targetPath: request.targetPath,
+          targetPath,
         });
       }
-      const imported = await importSessionBundle(
-        agentBundle,
-        targetPath,
-        request.targetSessionStorageMode === 'persisted'
+      const sessionStorageMode = request.targetSessionStorageMode === 'persisted'
           ? 'persisted'
           : request.sourceSessionStorageMode === 'persisted'
             ? 'persisted'
-            : 'direct',
-      );
+            : 'direct';
+      const imported = request.stateTransfer === 'existing'
+        ? await (() => {
+            if (!params.resolveExistingSessionState) throw Object.assign(new Error('Existing native session resolver is unavailable'), { code: 'existing_session_state_unsupported' });
+            return params.resolveExistingSessionState(request, targetPath);
+          })()
+        : await importSessionBundle(agentBundle!, targetPath, sessionStorageMode);
       const directSource = ExternalSessionsSourceSchema.parse(imported.directSource);
       const readyForCutoverStatusBase: SessionHandoffStatus = {
         ...pendingStatus,
@@ -415,7 +429,7 @@ export async function runSessionHandoffPrepareTargetJob(
         : error instanceof Error
           ? error.message
           : 'Failed to prepare handoff target';
-      const lastErrorCode = resolvePrepareTargetFailureCode(lastErrorMessage);
+      const lastErrorCode = typedImportFailure?.code ?? resolvePrepareTargetFailureCode(lastErrorMessage, error);
       const { failure: _previousFailure, ...currentStatusWithoutFailure } =
         currentJob?.status ?? pendingStatus;
       const failedStatus: SessionHandoffStatus = {
@@ -424,7 +438,7 @@ export async function runSessionHandoffPrepareTargetJob(
           ? 'aborted'
           : typedImportFailure?.code === 'target_identity_conflict'
             ? 'reconciliation_required'
-            : typedImportFailure?.code === 'agent_version_unsupported'
+            : typedImportFailure
               ? 'failed'
               : 'awaiting_recovery',
         ...(typedImportFailure && !currentJob?.cancelRequestedAtMs

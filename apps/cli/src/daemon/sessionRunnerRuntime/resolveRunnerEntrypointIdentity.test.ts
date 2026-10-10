@@ -6,6 +6,21 @@ import {
 } from './resolveRunnerEntrypointIdentity';
 
 describe('runner entrypoint identity', () => {
+  it('recognizes the source-runtime CLI entrypoint used by source QA launches', () => {
+    const entrypoint = '/work/source-runtime/bundle-qa/apps/cli/src/index.mjs';
+    expect(resolveSessionRunnerEntrypointIdentityFromProcessCommand(
+      `node ${entrypoint} claude`,
+    )).toMatchObject({ status: 'known', comparableId: 'path:/work/source-runtime/bundle-qa/apps/cli' });
+    expect(resolveEntrypointIdentityFromLaunchSpec({
+      runtime: 'node', filePath: '/usr/bin/node', args: [entrypoint, 'claude'],
+    })).toMatchObject({ status: 'known', comparableId: 'path:/work/source-runtime/bundle-qa/apps/cli' });
+    expect(resolveSessionRunnerEntrypointIdentityFromProcessCommand(
+      'node "C:\\QA Stack\\source-runtime\\bundle-qa\\apps\\cli\\src\\index.mjs" claude',
+    )).toMatchObject({ status: 'known', comparableId: 'path:c:/qa stack/source-runtime/bundle-qa/apps/cli' });
+    expect(resolveSessionRunnerEntrypointIdentityFromProcessCommand(
+      'node /work/source-runtime/current/apps/cli/src/index.mjs claude',
+    )).toMatchObject({ status: 'unknown', reason: 'mutable_entrypoint_pointer' });
+  });
   it('attests runner snapshots by their immutable fingerprint', () => {
     expect(resolveSessionRunnerEntrypointIdentityFromProcessCommand(
       'node /work/apps/cli/.runner-snapshots/2ee2ef1b2f776a89/index.mjs claude --happy-starting-mode remote',

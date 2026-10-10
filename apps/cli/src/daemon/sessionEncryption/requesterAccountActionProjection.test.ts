@@ -142,17 +142,19 @@ describe('admitted requester Action projection', () => {
     expect(await projectRequesterAccountActionAuthorization({ authorization: sourceAuthorization,
       serverIdentityId: 'stable-home', bootstrap: { ...admitted, getBoundSessionId: () => 'another-session' } })).toBeNull();
   });
-  it('projects the verified handoff child to its exact admitted target Session without replacing the original source', async () => {
+  it.each(['continuation', 'preflight'] as const)('projects the verified handoff %s to its exact admitted target Session without replacing the original source', async phase => {
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', version: 1,
       signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } });
     const child = ExternalActionExecutionAuthorizationV1Schema.parse({ ...authorization, binding: {
-      ...authorization.binding, actionId: 'session.handoff.prepare',
+      ...authorization.binding, actionId: phase === 'preflight' ? 'session.handoff' : 'session.handoff.prepare',
       sessionActionOrigin: { v: 1, caller: { kind: 'session', sessionId: 'original-caller', starterDepth: 0, turnDepth: 0 },
         sourceTurnId: 'turn', callerPermissionMode: null, requestId: 'request' },
       sessionActionSource: { machineId: 'source', installationId: 'source-installation' },
       handoffAdmission: { sessionId: 'transferred-session', sourceMachineId: 'source', targetMachineId: 'machine',
         sourceInstallationId: 'source-installation', targetInstallationId: 'installation' },
-      handoffContinuation: { handoffId: 'handoff', rootRequestId: 'request', rootRequestEnvelopeDigest: 'b'.repeat(43) },
+      ...(phase === 'preflight'
+        ? { handoffPreflight: { rootRequestId: 'request', rootRequestEnvelopeDigest: 'b'.repeat(43) } }
+        : { handoffContinuation: { handoffId: 'handoff', rootRequestId: 'request', rootRequestEnvelopeDigest: 'b'.repeat(43) } }),
     } });
     const admitted = { ...bootstrap({ token: 'bob-ordinary', encryption: null }), getBoundSessionId: () => 'transferred-session' };
     expect((await projectRequesterAccountActionAuthorization({ authorization: child,

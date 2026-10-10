@@ -261,7 +261,7 @@ function withoutMirroredReplaySeedText(metadata: unknown): unknown {
   };
 }
 
-function isPidPlaceholderSessionId(value: string): boolean {
+export function isPidPlaceholderSessionId(value: string): boolean {
   return /^PID-\d+$/u.test(value);
 }
 

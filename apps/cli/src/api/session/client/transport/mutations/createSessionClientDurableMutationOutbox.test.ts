@@ -10,7 +10,7 @@ import { createRegisteredSessionStateFieldMutation } from './sessionClientDurabl
 import {
     SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
     SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { resolveSessionClientConnectionContract } from '../sessionClientConnectionContract';
 
 function serverContract(mode: 'session_sync_v2_pending_input_v1' | 'released_server_v0_2_1') {
@@ -213,6 +213,47 @@ function createStorageExhaustedError(): NodeJS.ErrnoException {
 }
 
 describe('createRuntimeSessionClientDurableMutationOutbox', () => {
+    it('retains distinct reviewed context intents rather than coalescing neighbor edits as one field snapshot', async () => {
+        const outbox = createRuntimeSessionClientDurableMutationOutbox({ token: 'token', sessionId: 'context-neighbors',
+            initiallyActive: false, flushOnReady: false, getSocket: () => null, requestReconnect: () => undefined });
+        await outbox.awaitReady();
+        for (const entryId of ['first', 'second']) {
+            await outbox.enqueueRegisteredSessionStateFieldMutation(createRegisteredSessionStateFieldMutation({
+                sessionId: 'context-neighbors', fieldId: 'intent.context', source: 'ui', expectedMetadataRevision: 4,
+                op: { kind: 'set', value: { kind: 'detach', entryId } },
+            }));
+        }
+        expect(persistenceMocks.save.mock.calls.at(-1)?.[1]).toMatchObject([
+            { payload: { op: { value: { entryId: 'first' } } } },
+            { payload: { op: { value: { entryId: 'second' } } } },
+        ]);
+        await outbox.close();
+    });
+    it('returns a typed reviewed context conflict and retains the draft without retrying stale intent', async () => {
+        let deliveries = 0;
+        const outbox = createRuntimeSessionClientDurableMutationOutbox({ token: 'token', sessionId: 'session-1',
+            flushOnReady: false, getSocket: () => createConnectedSocket(), requestReconnect: () => undefined,
+            // The outbound metadata CAS refused this reviewed revision.
+            deliverRegisteredSessionStateFieldMutation: async () => {
+                deliveries += 1;
+                throw Object.assign(new Error('Reviewed revision changed'), { code: 'metadata_tuple_conflict' });
+            },
+        });
+        await outbox.awaitReady();
+        const mutation = createRegisteredSessionStateFieldMutation({ sessionId: 'session-1', fieldId: 'intent.context',
+            source: 'ui', expectedMetadataRevision: 4, op: { kind: 'set', value: { kind: 'detach', entryId: 'session.instructions' } } });
+        const waiter = outbox.enqueueRegisteredSessionStateFieldMutationAndWaitForDelivery(mutation).catch((error: unknown) => error);
+        await drainAsyncWork();
+        await outbox.flush();
+        expect(persistenceMocks.appendDeadLetters.mock.calls[0]?.[1]).toEqual(expect.arrayContaining([
+            expect.objectContaining({ reason: 'metadata_tuple_conflict', queuedMutation: expect.objectContaining({
+                payload: expect.objectContaining({ expectedMetadataRevision: 4, op: mutation.op }),
+            }) }),
+        ]));
+        await expect(waiter).resolves.toMatchObject({ code: 'metadata_tuple_conflict' });
+        await outbox.flush();
+        expect(deliveries).toBe(1);
+    });
     beforeEach(() => {
         persistenceMocks.appendDeadLetters.mockResolvedValue({
             cappedDeadLetterCount: 0,

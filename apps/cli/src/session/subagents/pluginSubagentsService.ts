@@ -220,6 +220,13 @@ export function createPluginSubagentsService(params: Readonly<{
     return value;
   };
   const mirrorSummary = async (summary: PluginSubagentDurableSummary, observationId: string): Promise<SubagentSummary> => {
+    // Receipts replay immutable operation results. Their revision is not the current projection.
+    const existing = await params.store.get({ id: summary.id, parentSessionId: summary.parentSessionId });
+    const existingMetadata = existing ? readMetadata(existing) : null;
+    if (existingMetadata && Number(existingMetadata.revision) >= Number(summary.revision)) {
+      const { revision: _revision, ...receipt } = summary;
+      return Object.freeze(receipt);
+    }
     const stored = await params.store.upsert({
       actor: { kind: 'plugin', pluginId: params.identity.pluginId, agentId: params.identity.contributionId },
       input: {

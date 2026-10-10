@@ -1198,6 +1198,7 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
             context: AgentSessionRuntimeContext;
             dispose(): Promise<void>;
         }>>((resolve) => { resolveContext = resolve; });
+        let createContext!: () => ReturnType<typeof createVoiceSessionContextLease>;
         let current = true;
         const open = vi.fn(async () => {
             throw new Error('provider open must not be reached');
@@ -1220,17 +1221,16 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
                 start: Object.freeze({ intent: 'voice_agent' as const }),
             }),
             sessionCapabilities: VOICE_INTERACTION_SESSION_CAPABILITIES,
-            createSessionContext: () => contextPromise,
+            createSessionContext: ({ services, signal }) => {
+                createContext = () => createVoiceSessionContextLease({ services, signal, dispose: disposeContext });
+                return contextPromise;
+            },
         });
         const provisioning = host.provisionRuntime();
         await Promise.resolve();
         current = false;
         await host.dispose();
-        resolveContext(createVoiceSessionContextLease({
-            services: {} as AgentSessionRuntimeContext['services'],
-            signal: new AbortController().signal,
-            dispose: disposeContext,
-        }));
+        resolveContext(createContext());
         await expect(provisioning).rejects.toThrow(/retired generation|disposed/);
         expect(open).not.toHaveBeenCalled();
         expect(disposeContext).toHaveBeenCalledOnce();

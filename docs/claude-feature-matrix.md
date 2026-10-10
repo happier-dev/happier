@@ -2,7 +2,7 @@
 
 > **Historical snapshot — not current implementation guidance.** This matrix predates the completed Agent/Provider vocabulary split and plugin-owned UI migration. Its `provider` terminology, removed `packages/agents/src/providerSettings/**` paths, and retired `apps/ui/sources/agents/providers/**` paths are preserved only to explain older migration decisions. Use [Agents catalog](./agents-catalog.md) for executable Agent ownership and [Providers](./providers.md) for model-source architecture.
 
-This file must not be used to locate current owners or plan new changes. Re-derive any historical claim from the current plugin contribution, Agent catalog, and Provider contracts before acting on it.
+The tables must not be used to locate current owners or plan new changes. Re-derive any historical claim from the current plugin contribution, Agent catalog, and Provider contracts before acting on it. The development lifecycle notes below describe current unreleased source; the tables remain historical.
 
 ## Status legend
 
@@ -23,7 +23,90 @@ This file must not be used to locate current owners or plan new changes. Re-deri
 | Linked direct transcript source (`.claude/projects/...jsonl`) | `supported` | `packages/plugins/claude/src/agent/**` | When transcript storage is `direct`, `session.ts` writes `directSessionV1`; browse/tail reads provider-owned JSONL directly and supports backward paging plus forward tail-follow. | Replace `directSessionV1` and Claude-specific file cursors with a shared transcript-source contract used by browse, takeover, and handoff. |
 | Sidechains, subagents, and team inbox | `partial` | `packages/plugins/claude/src/agent/**`, `apps/ui/sources/sync/domains/session/participants/providers/claude/deriveClaudeTeamParticipants.ts`, `apps/ui/sources/components/tools/renderers/workflow/SubAgentRunView.tsx` | Remote mode has dedicated collectors for `Task` / `Agent` JSONL sidechains and team-inbox messages; UI then reconstructs team state, shutdown pruning, and run previews from normalized tool calls plus imported sidechain messages. | Centralize Claude sidechain/team normalization so CLI collectors and UI participant derivation stop re-encoding the same lifecycle rules. |
 
+In development source, native cross-session delivery is classified by
+`packages/plugins/claude/src/agent/transcripts/nativeSemanticProjection.ts`.
+Direct history, the Unified transcript source and remote SDK output share
+sender-labelled ACP text. Ordinary queue operations and copied human wrappers
+remain internal or human input. Native peer input cannot accept a queued human
+prompt or start a human turn.
+
+The remote SDK runtime applies permission configuration changes to its live
+queries through the existing native control transport. Normal sessions permit
+runtime permission switching at launch; an explicit tool permission policy
+remains authoritative. Claude still owns inbound delivery policy: its
+[non-interactive messaging contract](https://code.claude.com/docs/en/cross-session-messaging#non-interactive-sessions)
+does not expose the terminal approval dialog in `-p` sessions. Happier does not
+override that policy or automatically accept held messages.
+
 ## Session lifecycle surfaces
+
+In development source, Claude background activity and workflow history share
+`packages/plugins/claude/src/agent/transcripts/taskNotification.ts` for native
+execution facts. Handbacks report delivery; they do not prove settlement.
+Lifecycle notifications require USER `origin.kind: task-notification`, or a
+queued-command attachment with that origin or `commandMode: task-notification`.
+Copied user XML and bare queue-operation text cannot settle tasks. Normalization
+preserves native provenance; native notification text cannot accept a matching
+queued human prompt, including when the native row has no `isMeta` field.
+
+Current development conversation projection consumes the same native envelope
+reader. The ordered Unified source observer publishes a trusted terminal result
+once; its initial replay seeds correlation without emitting fresh results. SDK
+conversion uses the same presentation correlation record for exact task/tool
+identity, terminal-before-ACK delivery, and typed task-start identity. Successful
+native SendMessage resume clears obsolete presentation aliases. Projected results
+use the existing nonmeta tool-result shape; session-core also accepts previously
+persisted native-origin meta tool results. Copied XML remains ordinary user text.
+
+SDK child messages retain their exact parent tool-use identity through existing
+session-scoped output. A root task-ID notification can therefore settle its
+imported nested call. The generic reducer resolves explicit child scope and
+requires a unique owner for an unscoped result, then republishes the parent child
+projection. Permission-only mirrors remain distinct from foreground calls.
+The current Unified runtime does not import separate child JSONL files; the
+archived collector tables below describe the older implementation.
+
+Claude 2.1.291 emits an explicit `is_backgrounded` field on native local-agent
+starts, and SDK 0.2.123 retains it in its JSON transport. Exact true admits work
+through the existing task admission owner; missing or false remains known-only.
+The SDK loop publishes the final child tool result before retiring observation
+when the last background task settles after the parent result. Native failed and
+stopped/cancelled outcomes retain their outcome through conversation and roster
+projection. These are development-source corrections, not release certification.
+
+Async acknowledgements link the exact native task ID to its tool-use ID. Trusted
+outcomes can arrive before that acknowledgement while parent hooks await; the
+existing native correlation record retains the outcome until its alias binds.
+Authenticated `SubagentStart` reopens a known background invocation. A terminal
+identity alone does not prove background membership. Async Agent/Workflow
+acknowledgements prove membership; successful SendMessage `resumedAgentId` proves
+an asynchronous resume even when the original child was foreground.
+`SubagentStop` is progress because Claude can veto it and continue. Synchronous
+children finish on their tool results; asynchronous children finish on settled
+native evidence. Every tool block is folded and an implicit group closes when
+its children settle. Failed results retain failure, including tagged tool errors.
+
+Historical observations reconstruct correlation without fresh activity admission
+or foreground prompt acceptance. Ordered source import retains raw child facts
+from discarded display branches; branch selection remains a presentation concern.
+SDK and Unified startup bind the existing ordered source baseline before draining
+captured native Start receipts. Current ordered imports inherit display-history
+budgets; complete historical correlation beyond these budgets and through oversized
+rows is not yet validated. If required SDK or Unified ordered history cannot be
+imported, Activity becomes unknown before the original admission error is reported.
+Unified uses its existing observation-loss owner and publishes the updated inventory
+for hook attachment, known-session resume, and status-line binding failures. Under the existing wall-clock convention, older
+receipts cannot reopen newer saved terminals; equal or unavailable ordering keeps
+the exact invocation unobserved/unknown. A fresh sibling remains observed. Clock
+changes, millisecond ties, and delayed delivery do not establish a total native
+invocation order.
+
+Observer loss retains unresolved task identities for exact task operations while
+clearing their observed activity. Fresh execution evidence reconfirms the exact
+identity; report delivery cannot do so. Startup reconciliation resolves active
+orphan roster entries when their parent is terminal or absent from the retained
+headline, preserving titles and sidechains. No expiry timer or second lifecycle
+inventory is used.
 
 In development source, the Claude terminal provider operations retain the exact host handle immediately after the host service persists and returns its attachment. The existing session-close disposal operation can destroy that owned host while initial readiness is still pending; it does not depend on a provider-ready callback. The host service enforces attachment identity before destruction.
 

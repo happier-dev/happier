@@ -85,7 +85,8 @@ export interface ExecutionRunHostBridgeContract {
     resume?: boolean;
     causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
   }>): Promise<
-    | { ok: true; runId: string; created: boolean }
+    | { ok: true; runId: string; created: false }
+    | (ExecutionRunStartResult & { ok: true; created: true })
     | { ok: false; errorCode?: string; error: string }
   >;
   startTurnStream(

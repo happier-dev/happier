@@ -69,7 +69,8 @@ vi.mock('@/plugins/runtime/runner/loadRetainedAgentRuntimeLeaf', () => ({
             : {}),
     }),
 }));
-vi.mock('./agentRuntimeDaemonServiceAuthorityClient', () => ({
+vi.mock('./agentRuntimeDaemonServiceAuthorityClient', async importOriginal => ({
+    ...await importOriginal<typeof import('./agentRuntimeDaemonServiceAuthorityClient')>(),
     dispatchCurrentAgentRuntimeDaemonServiceRequest: mocks.dispatch,
     dispatchCurrentRunnerDaemonPluginService: mocks.dispatch,
     isCurrentRunnerAgentRuntimeDaemonServiceAuthorityTransition:
@@ -208,6 +209,7 @@ function managedProviderRuntimeBindingBasis(
         },
         deployment: {
             kind: 'managedLocal',
+            gatewayPlacement: { kind: 'sessionMachine' },
             implementationIdentity: {
                 pluginId: 'acme.providers',
                 localId: 'gateway',

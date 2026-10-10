@@ -1,11 +1,14 @@
 import { z } from 'zod';
 
 import { AgentIdV1Schema } from '@happier-dev/protocol/agents/agentIdV1';
+import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
+import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import { BackendTargetRefV2Schema } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
 import { SessionProviderBindingMetadataV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import { PluginSourceCustodyV1Schema } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { SecretReferenceOverlayV1Schema } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
+import { ProfileRowRevisionV1Schema } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import type {
@@ -63,7 +66,11 @@ export const ForegroundAgentRuntimeAdmissionRequestV1Schema = z.object({
   directory: z.string().min(1).max(32_768),
   agentId: AgentIdV1Schema,
   backendTarget: BackendTargetRefV2Schema,
+  /** Launch intent only; executable authority is still the admitted contribution. */
+  agentTarget: AgentExecutionTargetV1Schema.optional(),
+  runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
   profileId: BoundedIdSchema.optional(),
+  profileRecordRevision: ProfileRowRevisionV1Schema.optional(),
   accountSettingsScopeKey: z.string().min(1).max(1_024).optional(),
   accountSettingsVersion: z.number().int().nonnegative().optional(),
   selection: SessionModelSelectionV1Schema.optional(),
@@ -107,6 +114,10 @@ export const ForegroundAgentRuntimeAdmissionRequestV1Schema = z.object({
       message:
         'A Saved Secret reference overlay requires an exact selected profileId',
     });
+  }
+  if (value.profileRecordRevision !== undefined && value.profileId === undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['profileRecordRevision'],
+      message: 'A Profile revision requires an exact selected profileId' });
   }
 });
 

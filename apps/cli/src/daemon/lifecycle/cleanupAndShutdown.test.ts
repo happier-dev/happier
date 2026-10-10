@@ -56,6 +56,7 @@ describe('cleanupAndShutdown', () => {
                     },
                     pause: () => {},
                     resume: () => {},
+                    subscribeAfterTick: () => () => {},
                 },
                 apiMachine: null,
                 machineConnectionStateCleanup: null,

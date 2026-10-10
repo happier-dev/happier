@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { CURRENT_SESSION_PRESENTATION_APPLY_RPC_METHOD, CurrentSessionPresentationActionInputV1Schema, type CurrentSessionPresentationActionResultV1 } from '@happier-dev/protocol/sessions/presentation/currentSessionPresentationV1';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { CURRENT_SESSION_PRESENTATION_ACK_RPC_METHOD, CURRENT_SESSION_PRESENTATION_AGENT_STATE_KEY, CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD, CURRENT_SESSION_PRESENTATION_UNBIND_RPC_METHOD, CurrentSessionPresentationAckV1Schema, CurrentSessionPresentationBindV1Schema, CurrentSessionPresentationUnbindV1Schema, CurrentSessionPresentationIntentResultV1Schema, CurrentSessionPresentationOwnerV1Schema, CurrentSessionPresentationStateV1Schema, sameCurrentSessionPresentationOwnerV1 } from '@happier-dev/protocol/sessions/presentation/currentSessionPresentationV1';
 import type { CurrentSessionPresentationAckV1, CurrentSessionPresentationBindV1, CurrentSessionPresentationIntentResultV1, CurrentSessionPresentationIntentV1, CurrentSessionPresentationOwnerV1, CurrentSessionPresentationStateV1 } from '@happier-dev/protocol/sessions';
@@ -58,6 +60,20 @@ function outcomeUnknown(message: string): HostSessionPresentationOneShotResult {
     status: 'outcomeUnknown',
     diagnostic: diagnostic('current_session_presentation_outcome_unknown', message),
   });
+}
+
+/** Both the Agent Action dependency and authenticated UI transport project the same owner result. */
+export function projectCurrentSessionPresentationActionResult(
+  result: HostSessionPresentationOneShotResult,
+): CurrentSessionPresentationActionResultV1 | ActionExecuteFailure {
+  if (result.status === 'outcomeUnknown') {
+    return { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' };
+  }
+  if ('diagnostic' in result) {
+    const errorCode = result.diagnostic.code;
+    return { ok: false, errorCode, error: errorCode };
+  }
+  return result;
 }
 
 function readPresentationState(state: AgentState): CurrentSessionPresentationStateV1 | null {
@@ -149,7 +165,7 @@ function mapPresentationIntentResult(
     case 'notCurrent':
       return unavailable('The bound client is no longer presenting this Session', 'current_session_presentation_not_current');
     case 'invalidTarget':
-      return unavailable('The requested Board or Companion target is unavailable', 'current_session_presentation_invalid_target');
+      return unavailable('The requested presentation target is unavailable', 'current_session_presentation_invalid_target');
     case 'unavailable':
       return unavailable('The current Session presentation adapter is unavailable');
   }
@@ -644,6 +660,30 @@ export function createCurrentSessionPresentationService(params: Readonly<{
       ? mapPresentationIntentResult(hostNonce, publishedRevision, result.data)
       : unavailable('The client returned a result for a different presentation operation');
   };
+
+  params.session.rpcHandlerManager.registerHandler(
+    CURRENT_SESSION_PRESENTATION_APPLY_RPC_METHOD,
+    async (raw, context) => {
+      const parsed = CurrentSessionPresentationActionInputV1Schema.safeParse(raw);
+      if (!parsed.success) {
+        return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+      }
+      const origin = context?.authorization;
+      if (
+        !isAvailable()
+        || !isSocketRpcCurrentSessionPresentationOriginAuthorizationContext(origin)
+        || origin.sessionId !== params.session.sessionId
+        || !boundClient
+        || !boundClient.binding.focused
+        || !samePresentationOrigin(boundClient.origin, origin)
+      ) {
+        return { ok: false, errorCode: 'current_session_presentation_not_current', error: 'current_session_presentation_not_current' };
+      }
+      return projectCurrentSessionPresentationActionResult(await publishPresentationIntent(
+        randomUUID(), parsed.data.intent, context?.signal ? { signal: context.signal } : undefined,
+      ));
+    },
+  );
 
   const service: HostCurrentSessionPresentationService = {
     notify: async (request, options) => await publishNotification(

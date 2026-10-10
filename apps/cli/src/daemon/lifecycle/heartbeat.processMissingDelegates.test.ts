@@ -23,7 +23,17 @@ vi.mock('../sessionRegistry', async (importOriginal) => {
   };
 });
 
+import { configuration } from '@/configuration';
 import { readDaemonState, writeDaemonState } from '@/persistence';
+import type { TrackedSession } from '../types';
+import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
+import { armSessionWebhookStartupCustody, waitForSessionWebhook } from '../spawn/waitForSessionWebhook';
+import { completeStartupCancellationCleanup } from '../spawn/startupLaunchCancellation';
+import { waitForVisibleConsoleSessionWebhook } from '../sessions/visibleConsoleSpawnWaiter';
+import { createOnChildExited } from '../sessions/onChildExited';
+import { createOnHappySessionWebhook } from '../sessions/onHappySessionWebhook';
+import { serializeWindowsCommandLine } from '../platform/windows/windowsCommandLine';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import {
   hashProcessCommand,
   removeSessionMarkerIfOwned,
@@ -39,6 +49,105 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
     delete process.env.HAPPIER_DAEMON_HEARTBEAT_INTERVAL;
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  it.each([
+    ['heartbeat', 'canonical_report'], ['heartbeat', 'terminal_failure'],
+    ['visible_console', 'canonical_report'], ['visible_console', 'terminal_failure'],
+  ] as const)('retains pending Windows startup after %s observes dispatcher exit until %s owns completion', async (observer, outcome) => {
+    const hostPid = 682001;
+    const runnerPid = 682002;
+    const executablePath = 'C:\\Happier\\happier.exe';
+    const correlation = 'ab'.repeat(16);
+    const argv = ['codex', '--happy-terminal-launch-correlation', correlation];
+    const command = serializeWindowsCommandLine([executablePath, ...argv]);
+    const terminal = { mode: 'windows_terminal' as const, requested: 'windows_terminal' as const, windows: { host: 'windows_terminal' as const, pid: hostPid, windowId: 'happier-test', title: 'Happier test' } };
+    const tracked: TrackedSession = {
+      pid: hostPid, startedBy: 'daemon', happySessionId: 'PID-' + hostPid,
+      windowsTerminalLaunchCustody: { executablePath, argv, correlation }, hostedTerminal: terminal, acceptedSpawnMarkerGate: Promise.resolve(true),
+    };
+    const sessions = new Map([[hostPid, tracked]]);
+    const awaiters = new Map<number, (session: TrackedSession) => void>();
+    let tick: (() => Promise<void>) | undefined;
+    // Clock adapter captures one observation without running a real interval.
+    vi.spyOn(global, 'setInterval').mockImplementation((handler) => {
+      tick = async () => { await handler(); };
+      return 1 as unknown as NodeJS.Timeout;
+    });
+    const completion = observer === 'visible_console'
+      ? waitForVisibleConsoleSessionWebhook({
+        pid: hostPid, pollMs: 1000, pidToTrackedSession: sessions, pidToAwaiter: awaiters,
+        pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
+        onChildExited: (pid, exit) => onChildExited(pid, exit),
+      })
+      : waitForSessionWebhook({
+      pid: hostPid, pidToTrackedSession: sessions, pidToAwaiter: awaiters,
+      pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
+      timeoutMs: 10_000, timeoutErrorMessage: 'test startup timeout',
+    });
+    armSessionWebhookStartupCustody(tracked, completion, Promise.resolve());
+    const originalKill = process.kill.bind(process);
+    vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (pid === hostPid && signal === 0) throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
+      return originalKill(pid, signal);
+    });
+    const spawnResourceCleanupByPid = new Map<number, () => Promise<void>>();
+    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
+    const onChildExited = createOnChildExited({
+      pidToTrackedSession: sessions, spawnResourceCleanupByPid,
+      sessionAttachCleanupByPid, getApiMachineForSessions: () => null,
+    });
+    const { startDaemonHeartbeatLoop } = await import('./heartbeat');
+    if (observer === 'heartbeat') startDaemonHeartbeatLoop({
+      pidToTrackedSession: sessions, spawnResourceCleanupByPid: new Map(),
+      sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null, onChildExited,
+      controlPort: 8765,
+      fileState: { pid: process.pid, httpPort: 8765, startedAt: Date.now(), startedWithCliVersion: '1.0.0', daemonLogPath: '/tmp/daemon.log' },
+      currentCliVersion: '1.0.0', requestShutdown: vi.fn(), writeDaemonStateForCurrentOwner: () => true,
+    });
+    try {
+      if (!tick) throw new Error('Heartbeat timer missing');
+      if (observer === 'heartbeat') await onChildExited(hostPid, { reason: 'process-missing', code: null, signal: null });
+      await tick();
+      for (let turn = 0; turn < 8; turn++) await Promise.resolve();
+      expect(completion.isPending()).toBe(true);
+      expect(sessions.get(hostPid)).toBe(tracked);
+      expect(tracked.reportMarkerCustody?.retiring).not.toBe(true);
+      if (outcome === 'terminal_failure') {
+        const missingObservation = onChildExited(hostPid, { reason: 'process-missing', code: null, signal: null });
+        completion.settleFailure({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK, errorMessage: 'canonical cancellation' });
+        const cleanup = completeStartupCancellationCleanup({ trackedSession: tracked, pidToTrackedSession: sessions, onChildExited });
+        await missingObservation;
+        await completion;
+        await expect(cleanup).resolves.toMatchObject({ status: 'stopped' });
+        expect(sessions.has(hostPid)).toBe(false);
+      } else {
+        const identity = { pid: runnerPid, processStartTimeMs: 2_000, command, executablePath };
+        const report = createOnHappySessionWebhook({
+          pidToTrackedSession: sessions, pidToAwaiter: awaiters,
+          spawnResourceCleanupByPid, sessionAttachCleanupByPid,
+          getParentPidFn: () => null, findHappyProcessByPidFn: async () => null,
+          readProcessIdentityByPidFn: async () => identity,
+          readAllWindowsProcessFactsFn: async () => new Map([[runnerPid, identity]]),
+          writeSessionMarkerFn: async () => {},
+          listSessionMarkersFn: async () => [], // Persistent marker census; this isolated startup has no earlier provider receipt.
+          readCredentialsFn: async () => null, // Persistent credential boundary; no credential required for this startup.
+          // Filesystem boundary returns the exact marker ownership committed by promotion.
+          promoteSessionMarkerFn: async () => ({
+            sourceMarkerOwnership: { happySessionId: 'PID-' + hostPid },
+            targetMarkerOwnership: { happySessionId: 'PID-' + runnerPid, processStartTimeMs: 2_000, processCommandHash: hashProcessCommand(command) },
+            targetProcessCommand: command,
+          }),
+        });
+        await report('sess-after-windows-dispatcher', createTestMetadata({ happyHomeDir: configuration.happyHomeDir, hostPid: runnerPid, startedBy: 'daemon', terminal }));
+        await expect(completion).resolves.toMatchObject({ type: 'success', sessionId: 'sess-after-windows-dispatcher' });
+        expect(sessions.get(runnerPid)).toBe(tracked);
+        expect(sessions.has(hostPid)).toBe(false);
+        expect(awaiters.has(hostPid)).toBe(false);
+      }
+    } finally {
+      completion.settleFailure({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK, errorMessage: 'test cleanup' });
+    }
   });
 
   it('delegates missing pids to onChildExited when provided', async () => {

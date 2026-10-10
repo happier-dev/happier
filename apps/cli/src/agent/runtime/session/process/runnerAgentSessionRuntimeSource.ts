@@ -44,6 +44,7 @@ import {
     attestCurrentRunnerAgentSessionOpen,
     authorizeCurrentAgentRuntimeDaemonModelTransition,
     closeCurrentRunnerTeamCredentialProviderBinding,
+    createCurrentRunnerManagedProviderRunServices,
     dispatchCurrentAgentRuntimeDaemonServiceRequest,
     dispatchCurrentRunnerDaemonPluginService,
     isCurrentRunnerAgentRuntimeDaemonServiceAuthorityTransition,
@@ -81,6 +82,7 @@ import {
 import {
     prepareRunnerDaemonPluginServices,
 } from './runnerDaemonPluginServices';
+import { createRunnerManagedProviderConsumerAccess } from './runnerManagedProviderConsumerAccess';
 import {
     composeProviderBindingMaterialization,
 } from '@/providers/spawn/compose';
@@ -136,6 +138,12 @@ function assertBootstrapIdentityMatchesClaim(
     const identity = source.identity;
     const descriptorAgentDeclaration = descriptor.agentDeclaration;
     const claimedAgent = source.agentContribution;
+    if (descriptorAgentDeclaration
+        && claimedAgent.provenance !== descriptorAgentDeclaration.provenance) {
+        throw createRunnerSourceUnavailableError(
+            'Runner Agent session runtime authority does not match its admitted bootstrap identity (Agent declaration provenance)',
+        );
+    }
     const runnerOwnsPinnedSource =
         runnerPinnedBundledCustodyCanSupersedeBootstrap(
             descriptor.sourceCustody,
@@ -156,8 +164,6 @@ function assertBootstrapIdentityMatchesClaim(
         || claimedAgent.pluginId !== descriptor.pluginId
         || claimedAgent.identity?.localId
             !== descriptorAgentDeclaration.definition.id
-        || claimedAgent.provenance
-            !== descriptorAgentDeclaration.provenance
         || (!runnerOwnsPinnedSource && !isDeepStrictEqual(
             claimedAgent.richDefinition?.definition,
             descriptorAgentDeclaration.definition,
@@ -641,6 +647,28 @@ export async function createRunnerAgentSessionRuntimeBootstrap(input: Readonly<{
             await requireClaimed()
                 .attestSessionOpen?.(params);
         },
+        managedProviderRunServices: {
+            async resolvePurpose(request: Parameters<ReturnType<typeof createCurrentRunnerManagedProviderRunServices>['resolvePurpose']>[0]) {
+                const services = requireClaimed().managedProviderRunServices;
+                if (!services) throw createRunnerSourceUnavailableError('Runner managed Provider authority is unavailable');
+                return await services.resolvePurpose(request);
+            },
+            async openBinding(request: Parameters<ReturnType<typeof createCurrentRunnerManagedProviderRunServices>['openBinding']>[0]) {
+                const services = requireClaimed().managedProviderRunServices;
+                if (!services) throw createRunnerSourceUnavailableError('Runner managed Provider authority is unavailable');
+                return await services.openBinding(request);
+            },
+            async readBinding(request: Parameters<ReturnType<typeof createCurrentRunnerManagedProviderRunServices>['readBinding']>[0]) {
+                const services = requireClaimed().managedProviderRunServices;
+                if (!services) throw createRunnerSourceUnavailableError('Runner managed Provider authority is unavailable');
+                return await services.readBinding(request);
+            },
+            async closeBinding(request: Parameters<ReturnType<typeof createCurrentRunnerManagedProviderRunServices>['closeBinding']>[0]) {
+                const services = requireClaimed().managedProviderRunServices;
+                if (!services) throw createRunnerSourceUnavailableError('Runner managed Provider authority is unavailable');
+                await services.closeBinding(request);
+            },
+        },
         async prepareTeamCredentialProviderBinding(params) {
             const source = requireClaimed();
             if (!source.prepareTeamCredentialProviderBinding) {
@@ -651,7 +679,15 @@ export async function createRunnerAgentSessionRuntimeBootstrap(input: Readonly<{
             return await source.prepareTeamCredentialProviderBinding(params);
         },
         async retire() {
-            await claimed?.retire?.();
+            const retiring = claimed;
+            await retiring?.retire?.();
+            if (claimed === retiring) {
+                // Native runtime recovery disposes this claim's invocation
+                // scope. A later runtime must re-read and verify the exact
+                // daemon authority, not reuse the retired claim promise.
+                claimPromise = null;
+                claimRetirementBound = false;
+            }
         },
         daemonTurnContributionsBridge,
         daemonModelTransitionAuthorizer,
@@ -1376,6 +1412,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                     onManagedProviderStarted: async ({
                         bootstrap,
                         materialize,
+                        readSharedGatewayAccess,
                         registerLaunchEnvironmentTransformer,
                     }) => {
                         const sessionBindingMetadata =
@@ -1385,55 +1422,74 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                                 'Managed Provider binding metadata is unavailable',
                             );
                         }
-                        const hostMaterialization =
-                            await managedServicesCustodyOwner
+                        const hostMaterialization = bootstrap.custody === 'daemonShared'
+                            ? await createRunnerManagedProviderConsumerAccess({
+                                signal: params.signal,
+                                credentialTransport: bootstrap.scope.runtimeBindingBasis.runtimeCredentialTransport,
+                                readAccess: readSharedGatewayAccess,
+                                materialize,
+                            })
+                            : await managedServicesCustodyOwner
                                 .materializeAdoptedProviderAgentBinding({
                                     materialize,
                                 });
-                        registerLaunchEnvironmentTransformer(
-                            hostMaterialization
-                                .transformLaunchEnvironment,
-                        );
-                        runnerManagedServiceOwner
-                            .registerAgentChildLaunchEnvironmentTransformer(
+                        const cleanupHostMaterialization = 'cleanup' in hostMaterialization
+                            && typeof hostMaterialization.cleanup === 'function'
+                            ? hostMaterialization.cleanup : null;
+                        try {
+                            registerLaunchEnvironmentTransformer(
                                 hostMaterialization
                                     .transformLaunchEnvironment,
                             );
-                        for (
-                            const value
-                            of hostMaterialization.redactionValues
-                        ) {
-                            invocationServiceOwners
-                                .registerRawForRedaction(seed, value);
-                        }
-                        const composed =
-                            await composeProviderBindingMaterialization({
-                                materialization:
-                                    hostMaterialization.materialization,
-                                materializationBaseDir: join(
-                                    input.happyHomeDir,
-                                    'providers',
-                                    'materialized',
-                                ),
-                                sessionId: params.sessionId,
+                            runnerManagedServiceOwner
+                                .registerAgentChildLaunchEnvironmentTransformer(
+                                    hostMaterialization
+                                        .transformLaunchEnvironment,
+                                );
+                            for (
+                                const value
+                                of hostMaterialization.redactionValues
+                            ) {
+                                invocationServiceOwners
+                                    .registerRawForRedaction(seed, value);
+                            }
+                            const composed =
+                                await composeProviderBindingMaterialization({
+                                    materialization:
+                                        hostMaterialization.materialization,
+                                    materializationBaseDir: join(
+                                        input.happyHomeDir,
+                                        'providers',
+                                        'materialized',
+                                    ),
+                                    sessionId: params.sessionId,
+                                });
+                            prepared = Object.freeze({
+                                handoff: Object.freeze({
+                                    v: 1 as const,
+                                    materialization:
+                                        composed.launchMaterialization,
+                                    sessionBindingMetadata,
+                                }),
+                                environmentOverlay:
+                                    composed.providerEnvironmentOverlay,
+                                additionalRedactionValues:
+                                    composed.additionalRedactionValues,
+                                transformAgentChildLaunchEnvironment:
+                                    hostMaterialization
+                                        .transformLaunchEnvironment,
+                                cleanup: (() => {
+                                    const disposeComposed = composed.takeCleanupOwnership();
+                                    return async () => {
+                                        try { await disposeComposed?.(); }
+                                        finally { await cleanupHostMaterialization?.(); }
+                                    };
+                                })(),
                             });
-                        prepared = Object.freeze({
-                            handoff: Object.freeze({
-                                v: 1 as const,
-                                materialization:
-                                    composed.launchMaterialization,
-                                sessionBindingMetadata,
-                            }),
-                            environmentOverlay:
-                                composed.providerEnvironmentOverlay,
-                            additionalRedactionValues:
-                                composed.additionalRedactionValues,
-                            transformAgentChildLaunchEnvironment:
-                                hostMaterialization
-                                    .transformLaunchEnvironment,
-                            cleanup:
-                                composed.takeCleanupOwnership(),
-                        });
+                        } catch (error) {
+                            await cleanupHostMaterialization?.();
+                            throw error;
+                        }
                     },
                     local: localServices,
                 });
@@ -1638,6 +1694,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                 signal: params.signal,
             });
         },
+        managedProviderRunServices: createCurrentRunnerManagedProviderRunServices(expectedAuthority),
         async prepareTeamCredentialProviderBinding(params) {
             const result = await openCurrentRunnerTeamCredentialProviderBinding({
                 authority: expectedAuthority,

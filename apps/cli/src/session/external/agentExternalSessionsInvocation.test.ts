@@ -196,6 +196,52 @@ function createWrapper(params?: Readonly<{
 }
 
 describe('bounded Agent External Sessions invocation', () => {
+    it('admits source-wide accounting through the existing services and rejects transcript data', async () => {
+        const observations = [{ nativeSessionId: 'native-1', observedAt: 10,
+            observation: { provider: 'fixture', source: 'native', scope: 'turn_delta' as const,
+                key: null, modelId: null, tokens: { input: 3, output: 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 5 }, cost: null,
+                contextUsedTokens: null, contextWindowTokens: null } }];
+        const contribution = {
+            ...contributionWith((method) => successFor(method)),
+            readAccounting: async (request: Readonly<{ source: AgentExternalSessionSource; cursor?: string; exec: unknown; managedEndpointRead: unknown }>) => {
+                expect(request.source).toEqual(source);
+                expect(request.cursor).toBe('native-frontier');
+                expect(request.exec).toBe(unavailableInvocationExec);
+                expect(request.managedEndpointRead).toEqual(expect.any(Function));
+                return { ok: true as const, value: { outcome: 'advanced' as const, observations, nextCursor: 'next-frontier', coverage: { complete: true } } };
+            },
+        };
+        const wrapped = createWrapper({ contribution });
+        await expect(wrapped.readAccounting!({ source, cursor: 'native-frontier', signal: new AbortController().signal })).resolves.toEqual({
+            ok: true, value: { outcome: 'advanced', observations, nextCursor: 'next-frontier', coverage: { complete: true } },
+        });
+        const malformed = createWrapper({ contribution: {
+            ...contribution,
+            readAccounting: async () => ({ ok: true, value: { outcome: 'advanced', observations: [], nextCursor: 'next', coverage: { complete: true }, transcript: 'private text' } }),
+        } });
+        await expect(malformed.readAccounting!({ source, signal: new AbortController().signal })).resolves.toMatchObject({ ok: false, code: 'agent_error' });
+    });
+
+    it('reports older accounting facets unsupported and fences cancelled or retired accounting', async () => {
+        const older = createWrapper();
+        expect(older.supportsAccounting).toBe(false);
+        await expect(older.readAccounting!({ source, signal: new AbortController().signal })).resolves.toMatchObject({ ok: false, code: 'unsupported' });
+        const pending = deferred<AgentExternalSessionsResult<{ outcome: 'unchanged' }>>();
+        const retirement = new AbortController();
+        const caller = new AbortController();
+        const wrapped = createWrapper({ retirementSignal: retirement.signal, contribution: {
+            ...contributionWith((method) => successFor(method)),
+            readAccounting: async () => pending.promise,
+        } });
+        const cancelled = wrapped.readAccounting!({ source, signal: caller.signal });
+        expect(wrapped.supportsAccounting).toBe(true);
+        caller.abort();
+        await expect(cancelled).resolves.toMatchObject({ ok: false, code: 'cancelled' });
+        const retired = wrapped.readAccounting!({ source, signal: new AbortController().signal });
+        retirement.abort();
+        await expect(retired).resolves.toMatchObject({ ok: false, code: 'unavailable' });
+        pending.resolve({ ok: true, value: { outcome: 'unchanged' } });
+    });
     it('preserves a caller deadline beyond the native timer range and cancels its rearmed timer', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_000);

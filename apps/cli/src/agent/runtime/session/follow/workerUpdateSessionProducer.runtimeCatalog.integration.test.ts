@@ -283,7 +283,8 @@ describe('session WorkerUpdate producer through Follow', () => {
     const f = await fixture('running');
     const deliverables = [{ kind: 'workspace_file', sessionId: workerId, path: 'docs/result.md' }, { kind: 'artifact', artifactId: 'document-1' }];
     f.messages[0] = { seq: 1, createdAt: 1, content: { t: 'plain', v: { role: 'agent',
-      content: { type: 'event', data: { type: 'worker-report', summary: 'Partial finding', deliverables } } } } };
+      content: { type: 'event', data: { type: 'worker-report', summary: 'Partial finding', future: true,
+        deliverables: deliverables.map((item) => ({ ...item, future: true })) } } } } };
     expect((await f.reconcile({ signal: new AbortController().signal, deliveryIntent: 'wake' }))?.workerUpdates).toEqual([
       expect.objectContaining({ ownerState: 'published', wake: 'published', result: 'Partial finding', deliverables }),
     ]);

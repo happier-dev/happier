@@ -80,6 +80,14 @@ export function createSessionHandoffCommitActionHandler(
     });
     const persistedSourceExport = await sourceExportStore.load(parsed.data.handoffId);
     const currentStatus = persistedJob?.status;
+    if (persistedJob?.schemaVersion === 2 && persistedJob.terminal.status === 'aborting') {
+      return { ok: false, errorCode: 'not_ready', error: 'Handoff target is aborting' } as const;
+    }
+    const sameMachine = persistedSourceExport?.sourceMachineId !== undefined
+      && persistedSourceExport.sourceMachineId === persistedSourceExport.targetMachineId;
+    if (mode === 'source_cleanup' && sameMachine && currentStatus?.status !== 'completed') {
+      return { ok: false, errorCode: 'not_ready', error: 'Local target must be committed before source cleanup' } as const;
+    }
     if (
       mode === 'target'
       && currentStatus
@@ -98,7 +106,8 @@ export function createSessionHandoffCommitActionHandler(
     }
 
     if (mode === 'source_cleanup') {
-      if (persistedSourceExport?.sessionId && stopSessionForHandoff) {
+      // Start already stopped the source locally; this id now belongs to the target runner.
+      if (!sameMachine && persistedSourceExport?.sessionId && stopSessionForHandoff) {
         try {
           const stopResult = await stopSessionForHandoff(persistedSourceExport.sessionId);
           if (stopResult === 'failed') {
@@ -140,7 +149,17 @@ export function createSessionHandoffCommitActionHandler(
       });
     }
     if (persistedJob) {
-      await prepareJobStore.write(buildPrepareJobRecord({
+      if (persistedJob.schemaVersion === 2) {
+        await prepareJobStore.transitionPredecessorV2(persistedJob.jobId, current => {
+          if (current.terminal.status === 'completed') return null;
+          if (current.terminal.status !== 'open') throw new Error('Handoff target is not open for commit');
+          const revision = current.transitionRevision + 1;
+          const now = Date.now();
+          return { ...current, transitionRevision: revision, updatedAtMs: now, completedAtMs: now, status,
+            ...(current.prepareTargetResult ? { prepareTargetResult: { ...current.prepareTargetResult, status } } : {}),
+            terminal: { status: 'completed', operationId: current.handoffId, completedRevision: revision } };
+        });
+      } else await prepareJobStore.write(buildPrepareJobRecord({
         jobId: persistedJob.jobId,
         handoffId: parsed.data.handoffId,
         createdAtMs: persistedJob.createdAtMs,
@@ -177,7 +196,7 @@ export function createSessionHandoffCommitActionHandler(
     ]);
     directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffAgentBundleTransferId(parsed.data.handoffId));
     directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffWorkspaceSeedTransferId(parsed.data.handoffId));
-    await sourceExportStore.releaseTransferFiles(parsed.data.handoffId);
+    await sourceExportStore.releaseTransferFiles(parsed.data.handoffId, { preserveRequesterSessionCustody: mode === 'target' });
     return { handoffId: parsed.data.handoffId, status };
   };
 }

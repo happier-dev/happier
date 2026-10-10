@@ -5,6 +5,8 @@ import {
   type AgentSessionRuntimeEventV1,
 } from '@happier-dev/protocol';
 
+import { createKeyedStreamedTranscriptBridge } from '@/api/session/createKeyedStreamedTranscriptBridge';
+import { NormalizedToolTurnChangeTracker } from '@/agent/tools/diff/normalizedToolTurnChangeTracker';
 import { createAcpToolIdentity } from '@/agent/acp/toolCalls';
 import type { EphemeralSendOutcome } from '@/api/session/client/transcript/ephemeralSendOutcome';
 
@@ -67,6 +69,7 @@ function createRuntimeToolProjectionFixture(
     runtimeMessageDeltaBridge: {
       appendAssistantDelta: vi.fn(),
       appendThinkingDelta: vi.fn(),
+      discardStream: vi.fn(),
       flushAll: vi.fn(async () => []),
     },
     session: {
@@ -100,6 +103,92 @@ function mergedToolProgress(overrides: Record<string, unknown> = {}) {
 }
 
 describe('projectRuntimeTranscriptEvent tool lifecycle', () => {
+  it.each([{}, { sidechainId: 'child-1' }, { sidechainId: 'child-1', turnId: 'old-turn', agentTurnId: 'native-child' }])(
+    'retains session-scoped tools without flushing or changing the foreground turn: %j', async (scope) => {
+      const { projectRuntimeTranscriptEvent } = await import('./projectRuntimeTranscriptEvent');
+      const fixture = createRuntimeToolProjectionFixture();
+      const tracker = new NormalizedToolTurnChangeTracker({ provider: 'codex' });
+      tracker.beginTurn({ turnId: 'foreground', agentTurnId: 'native-foreground', sequence: 1 });
+      const project = (event: Record<string, unknown>) => projectRuntimeTranscriptEvent({
+        session: fixture.session, provider: 'codex', runtimeMessageDeltaBridge: fixture.runtimeMessageDeltaBridge,
+        normalizedToolTurnChangeTracker: tracker, event: {
+          sessionId: 'session-1', emittedAtMs: 10, sequence: ++nextRuntimeEventSequence, ...scope, ...event,
+        },
+      });
+      await expect(project({ kind: 'tool-call', toolCallId: 'call-1', toolName: 'Write', input: { file_path: 'child.ts', content: 'child' } })).resolves.toEqual({ projected: true, kind: 'tool-call' });
+      await expect(project({ kind: 'tool-result', toolCallId: 'call-1', output: {} })).resolves.toEqual({ projected: true, kind: 'tool-result' });
+      await expect(project({ kind: 'file-edit', editId: 'edit-1', path: 'child.ts', oldContent: '', newContent: 'child' })).resolves.toEqual({ projected: true, kind: 'file-edit' });
+      const identity = createAcpToolIdentity({ sessionId: 'session-1', turnId: 'turnId' in scope ? scope.turnId ?? null : null,
+        sidechainId: 'sidechainId' in scope ? scope.sidechainId ?? null : null, toolCallId: 'call-1' });
+      expect(fixture.durableRows.get(identity.callLocalId)).toMatchObject({ type: 'tool-call', callId: 'call-1', ...('sidechainId' in scope ? { sidechainId: scope.sidechainId } : {}) });
+      expect(fixture.durableRows.get(identity.resultLocalId)).toMatchObject({ type: 'tool-result', callId: 'call-1' });
+      expect(fixture.runtimeMessageDeltaBridge.flushAll).not.toHaveBeenCalled();
+      expect(tracker.completeTurn({ sessionId: 'session-1', turnId: 'foreground', agentTurnId: 'native-foreground', sequence: 20, status: 'completed' })).toBeNull();
+    },
+  );
+
+  it('keeps foreground change attribution when a child reports its own native turn', async () => {
+    const { projectRuntimeTranscriptEvent } = await import('./projectRuntimeTranscriptEvent');
+    const fixture = createRuntimeToolProjectionFixture();
+    const tracker = new NormalizedToolTurnChangeTracker({ provider: 'codex' });
+    tracker.beginTurn({ turnId: 'foreground', agentTurnId: 'native-foreground', sequence: 1 });
+    await projectRuntimeTranscriptEvent({
+      session: fixture.session, provider: 'codex', normalizedToolTurnChangeTracker: tracker,
+      event: canonicalRuntimeEvent({ sessionId: 'session-1', emittedAtMs: 1, kind: 'tool-call',
+        turnId: 'origin', agentTurnId: 'native-child', sidechainId: 'child-1', toolCallId: 'child-call', toolName: 'Read', input: {} }),
+    });
+    tracker.observeFileEdit({ editId: 'foreground-edit', filePath: 'foreground.ts', oldContent: '', newContent: 'foreground' });
+    expect(tracker.completeTurn({ sessionId: 'session-1', turnId: 'foreground', sequence: 20, status: 'completed' })).toMatchObject({
+      turnId: 'foreground', files: [{ filePath: 'foreground.ts', agentTurnId: 'native-foreground' }],
+    });
+  });
+
+  it('keeps child deltas separate and open across foreground cancellation', async () => {
+    vi.useFakeTimers();
+    try {
+      const { projectRuntimeTranscriptEvent } = await import('./projectRuntimeTranscriptEvent');
+      const fixture = createRuntimeToolProjectionFixture();
+      const bridge = createKeyedStreamedTranscriptBridge({ provider: 'codex', initialCheckpointDelayMs: 60_000,
+        createSessionForStream: () => fixture.session });
+      const project = (event: Record<string, unknown>) => projectRuntimeTranscriptEvent({
+        session: fixture.session, provider: 'codex', runtimeMessageDeltaBridge: bridge,
+        event: { sessionId: 'session-1', emittedAtMs: 1, sequence: ++nextRuntimeEventSequence, ...event },
+      });
+      await project({ kind: 'message-delta', turnId: 'turn-1', channel: 'assistant', text: 'Foreground' });
+      await project({ kind: 'message-delta', turnId: 'turn-1', sidechainId: 'child-1', channel: 'assistant', text: 'Before ' });
+      await project({ kind: 'turn-cancelled', turnId: 'turn-1', cause: 'user' });
+      expect([...fixture.durableRows.values()].filter((body) => body.type === 'message')).toEqual([
+        { type: 'message', message: 'Foreground' },
+      ]);
+      await project({ kind: 'message-delta', turnId: 'turn-1', sidechainId: 'child-1', channel: 'assistant', text: 'after' });
+      await bridge.flushAll({ reason: 'turn-end' });
+      expect([...fixture.durableRows.values()].filter((body) => body.type === 'message')).toEqual([
+        { type: 'message', message: 'Foreground' },
+        { type: 'message', message: 'Before after', sidechainId: 'child-1' },
+      ]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('retires only the matching child stream after authoritative text commits durably', async () => {
+    vi.useFakeTimers();
+    try {
+      const { projectRuntimeTranscriptEvent } = await import('./projectRuntimeTranscriptEvent');
+      const fixture = createRuntimeToolProjectionFixture();
+      const bridge = createKeyedStreamedTranscriptBridge({ provider: 'codex', initialCheckpointDelayMs: 60_000,
+        createSessionForStream: () => fixture.session });
+      const project = (event: Record<string, unknown>) => projectRuntimeTranscriptEvent({
+        session: fixture.session, provider: 'codex', runtimeMessageDeltaBridge: bridge,
+        event: { sessionId: 'session-1', sidechainId: 'child-1', emittedAtMs: 1, sequence: ++nextRuntimeEventSequence, ...event },
+      });
+      await project({ kind: 'message-delta', messageId: 'child-message-1', channel: 'assistant', text: 'Partial' });
+      await project({ kind: 'message-delta', messageId: 'child-message-2', channel: 'assistant', text: 'Sibling' });
+      await project({ kind: 'transcript-message-committed', messageId: 'child-message-1', role: 'assistant', text: 'Authoritative full text' });
+      await bridge.flushAll({ reason: 'turn-end' });
+      expect(fixture.durableRows.get('child-message-1')).toEqual({ type: 'message', message: 'Authoritative full text', sidechainId: 'child-1' });
+      expect(fixture.durableRows.get('child-message-2')).toEqual({ type: 'message', message: 'Sibling', sidechainId: 'child-1' });
+    } finally { vi.useRealTimers(); }
+  });
+
   it('projects a fully merged tool-progress snapshot ephemerally without a durable write', async () => {
     const { projectRuntimeTranscriptEvent } = await import('./projectRuntimeTranscriptEvent');
     const fixture = createRuntimeToolProjectionFixture();

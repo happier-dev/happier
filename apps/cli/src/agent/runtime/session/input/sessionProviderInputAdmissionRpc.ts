@@ -4,6 +4,11 @@ import { z } from 'zod';
 
 import type { SessionProviderInputConsumer } from './_types';
 
+export const SessionInputLiveWorkSchema = z.object({
+  session: z.enum(['active', 'settled', 'unknown']),
+  input: z.enum(['active', 'settled', 'unknown']),
+}).strict();
+
 const groupEnforceSchema = z.object({
   action: z.literal('enforce'),
   serviceId: z.string().trim().min(1),
@@ -44,6 +49,8 @@ export function registerSessionProviderInputAdmissionRpc<Mode, Message>(params: 
   params.rpcHandlerRegistrar.registerHandler(
     SESSION_RPC_METHODS.SESSION_PROVIDER_INPUT_ADMISSION,
     async (raw: unknown) => {
+      const activityRead = z.object({ action: z.literal('activity_read') }).strict().safeParse(raw);
+      if (activityRead.success) return SessionInputLiveWorkSchema.parse(await params.consumer.readLiveWork());
       const request = admissionRequestSchema.parse(raw);
       if (request.action === 'enforce') {
         const disposition = request.reason === 'generation_pending'
@@ -73,6 +80,15 @@ export function registerSessionProviderInputAdmissionRpc<Mode, Message>(params: 
       return result;
     },
   );
+}
+
+/** Read-only projection from the live host; unavailable predecessors remain unknown at the caller. */
+export async function requestSessionInputLiveWork(params: Readonly<{
+  callRpc: (method: string, request: Readonly<{ action: 'activity_read' }>) => Promise<unknown>;
+}>): Promise<z.infer<typeof SessionInputLiveWorkSchema>> {
+  return SessionInputLiveWorkSchema.parse(await params.callRpc(
+    SESSION_RPC_METHODS.SESSION_PROVIDER_INPUT_ADMISSION, { action: 'activity_read' },
+  ));
 }
 
 export async function requestSessionProviderInputAdmission(params: Readonly<{

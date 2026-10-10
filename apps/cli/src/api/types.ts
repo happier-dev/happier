@@ -813,6 +813,7 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & Rea
   happyToolsDir: string,
   startedFromDaemon?: boolean,
   hostPid?: number,
+  hostProcessStartTimeMs?: number,
   sessionLogPath?: string,
   startedBy?: 'daemon' | 'terminal',
   // Lifecycle state management
@@ -946,6 +947,8 @@ export type AgentState = {
         arguments: any,
         createdAt: number,
         completedAt: number,
+        turnId?: string,
+        answeringClientCategory?: import('@happier-dev/protocol/sessions/permissions/respondRpcParamsV1').SessionPermissionAnsweringClientCategoryV1,
         status: 'canceled' | 'denied' | 'approved',
       reason?: string,
       mode?: PermissionMode,

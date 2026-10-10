@@ -7,6 +7,9 @@ import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { ApiMachineClient } from '@/api/apiMachine';
+import { configuration } from '@/configuration';
+import * as persistence from '@/persistence';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
@@ -28,6 +31,7 @@ function accountToken(sub: string): string {
 
 afterEach(async () => {
   resetInMemoryAccountSettingsContextForTests();
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   await Promise.all(homes.splice(0).map(home => new Promise<void>((resolve, reject) => {
     home.close(error => error ? reject(error) : resolve());
@@ -61,6 +65,71 @@ async function home(settingsVersion: number, rawSettings: Readonly<Record<string
 }
 
 describe('Session RPC owner Home Settings custody', () => {
+  it('admits detached Run policy from the authenticated daemon Account without borrowing focused Settings', async () => {
+    vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_MODE', 'auto');
+    vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_TTL_MS', '0');
+    vi.stubEnv('HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED', '1');
+    vi.stubEnv('HAPPIER_BUILD_FEATURES_ALLOW', 'execution.runs');
+    vi.stubEnv('HAPPIER_BUILD_FEATURES_DENY', '');
+    const ownerCredentials = { token: accountToken('daemon-owner-account'), encryption: null } as const;
+    const focusedCredentials = { token: accountToken('unrelated-focused-account'), encryption: null } as const;
+    const owner = await home(11, { schemaVersion: 6,
+      actionsSettingsV1: { v: 1, actions: { 'execution.run.start': { enabled: false } } } });
+    const focused = await home(99, { schemaVersion: 6,
+      actionsSettingsV1: { v: 1, actions: { 'execution.run.start': { enabled: true } } } });
+    const ownerServerId = configuration.activeServerId;
+    let credentialsCurrent = true;
+    // This is the qualified on-disk credential boundary, not an alternate Account owner.
+    vi.spyOn(persistence, 'readStoredCredentialsForServerId').mockImplementation(async serverId =>
+      serverId === ownerServerId && credentialsCurrent ? ownerCredentials : null);
+    await runWithServerHttpBaseUrl(owner.url, async () => {
+      const client = new ApiMachineClient(ownerCredentials.token, { id: 'daemon-owner-machine', encryptionMode: 'plain',
+        metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+      const registration = client.setRPCHandlers({
+        spawnSession: async () => { throw new Error('Unexpected Session spawn'); },
+        stopSession: async () => { throw new Error('Unexpected Session stop'); },
+        requestShutdown: () => { throw new Error('Unexpected daemon shutdown'); },
+      });
+      const rpc: unknown = Reflect.get(client, 'rpcHandlerManager');
+      if (!(rpc instanceof RpcHandlerManager)) throw new Error('Missing machine RPC owner');
+      try {
+        await runWithServerHttpBaseUrl(focused.url, async () => {
+          setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), rawSettings: {},
+            settingsVersion: 99, loadedAtMs: 1, settingsSecretsReadKeys: [],
+            scopeKey: resolveAccountSettingsScopeKey(focusedCredentials),
+            acpCatalog: { status: 'ready', revision: 99, record: { v: 1, definitions: [] } } });
+          const incumbent = getActiveAccountSettingsSnapshot();
+          const incumbentLifetime = getActiveAccountSettingsSnapshotLifetimeToken();
+          const request = ExecutionRunStartRequestSchema.parse({
+            intent: 'plan', backendTarget: { kind: 'backend', backendId: 'not-installed-owner-agent',
+              configuredBackendId: 'not-installed-owner-agent', sourceKind: 'configured' },
+            instructions: 'Read the project and return a plan.', permissionMode: 'read_only',
+            retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
+          });
+          // Trusted daemon-local dispatch enters the same registered Action owner;
+          // a wire Machine call additionally requires Home machine admission.
+          const result = await rpc.invokeLocal(SESSION_RPC_METHODS.EXECUTION_RUN_START, request,
+            { verifiedPeerAuthority: 'account_automation' });
+          expect(result).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+          expect(owner.requests).toEqual(expect.arrayContaining([{ method: 'GET', path: '/v2/account/settings',
+            authorization: `Bearer ${ownerCredentials.token}`, settingsResponse: owner.settingsResponse }]));
+          expect(focused.requests).toEqual([]);
+          expect(getActiveAccountSettingsSnapshot()).toBe(incumbent);
+          expect(getActiveAccountSettingsSnapshotLifetimeToken()).toBe(incumbentLifetime);
+          credentialsCurrent = false;
+          const ownerRequestCount = owner.requests.length;
+          await expect(rpc.invokeLocal(SESSION_RPC_METHODS.EXECUTION_RUN_START, request,
+            { verifiedPeerAuthority: 'account_automation' })).rejects.toMatchObject({ code: 'provider_authorization_changed' });
+          expect(owner.requests).toHaveLength(ownerRequestCount);
+          expect(focused.requests).toEqual([]);
+        });
+      } finally {
+        await registration.dispose();
+        await client.shutdown();
+      }
+    });
+  });
+
   it.each([false, true])('reads the captured owner Home and its policy for a public plan start without publishing into the focused Account (disabled=%s)', async disabled => {
     vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_MODE', 'auto');
     vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_TTL_MS', '0');

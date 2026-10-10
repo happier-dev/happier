@@ -9,6 +9,50 @@ import { projectRuntimeTranscriptEvent } from '@/agent/runtime/session/transcrip
 import { createExternalSessionTerminalFollowProjector } from './terminalFollowProjection';
 
 describe('createExternalSessionTerminalFollowProjector', () => {
+  it('delivers historical source correlation in order while preserving only display projection', async () => {
+    const order: string[] = [];
+    const observed: unknown[] = [];
+    const projected: AgentSessionRuntimeEvent[] = [];
+    const publish = createExternalSessionTerminalFollowProjector({
+      sessionId: 'session-1',
+      agentId: 'claude',
+      observeSourceTranscript: async (input) => {
+        observed.push(input);
+        order.push(input.sourceId);
+      },
+      projectRuntimeEvent: async (event) => {
+        projected.push(event);
+        order.push('display');
+        return { projected: true as const };
+      },
+    });
+    const baselineRow = { type: 'queue-operation', operation: 'enqueue', content: 'old work' };
+    await publish({
+      kind: 'data', phase: 'initial_replay', providerSessionId: 'native-1',
+      fromCursor: null, nextCursor: 'cursor-1',
+      items: [
+        { id: 'old-source', timestampMs: 10, kind: 'source_observation', data: baselineRow },
+        { id: 'old-display', timestampMs: 11, kind: 'agent', data: {
+          role: 'agent', content: { type: 'text', text: 'historical answer' },
+        } },
+        { id: 'old-stop', timestampMs: 12, kind: 'source_observation', data: { type: 'system', subtype: 'turn_duration' } },
+      ],
+    });
+    await publish({
+      kind: 'data', providerSessionId: 'native-1', fromCursor: 'cursor-1', nextCursor: 'cursor-2',
+      items: [{ id: 'live-source', timestampMs: 13, kind: 'source_observation', data: { type: 'user' } }],
+    });
+    expect(order).toEqual(['old-source', 'display', 'old-stop', 'live-source']);
+    expect(observed).toEqual([
+      { providerSessionId: 'native-1', sourceId: 'old-source', row: baselineRow, phase: 'initial_replay' },
+      { providerSessionId: 'native-1', sourceId: 'old-stop', row: { type: 'system', subtype: 'turn_duration' }, phase: 'initial_replay' },
+      { providerSessionId: 'native-1', sourceId: 'live-source', row: { type: 'user' } },
+    ]);
+    expect(projected).toEqual([expect.objectContaining({
+      kind: 'transcript-message-committed', sequence: 1, messageId: 'old-display', text: 'historical answer',
+    })]);
+  });
+
   it('threads terminal admission through the canonical durable projector', async () => {
     const projectRuntimeEvent = vi.fn(async () => ({ projected: true as const }));
     const publish = createExternalSessionTerminalFollowProjector({

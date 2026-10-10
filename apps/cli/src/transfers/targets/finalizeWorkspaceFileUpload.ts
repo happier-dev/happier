@@ -1,5 +1,5 @@
 import { constants } from 'fs';
-import { copyFile, mkdir, rm, stat } from 'fs/promises';
+import { copyFile, mkdir, rm, stat } from 'node:fs/promises';
 import { dirname } from 'path';
 
 import {

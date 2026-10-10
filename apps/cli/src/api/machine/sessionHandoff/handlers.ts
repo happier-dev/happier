@@ -14,7 +14,10 @@ import {
 import {
   exportSessionHandoffState,
 } from '../../../session/handoff/exportSessionHandoffState';
-import { importSessionHandoffAgentBundle } from '../../../session/handoff/agentBundle/import';
+import { importSessionHandoffAgentBundle, resolveExistingSessionHandoffState } from '../../../session/handoff/agentBundle/import';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SessionHandoffExistingStateCheckRequestV3Schema, type SessionHandoffExistingStateCheckRequestV3 } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
+import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import {
   resolveSessionHandoffExportMetadata,
   type SessionHandoffLocalMetadataSource,
@@ -36,6 +39,7 @@ import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient'
 import {
   createSessionLifecycleRpcActionExecutor,
   registerSessionLifecycleRpcHandlers,
+  withSessionHandoffRequesterBootstrap,
   SESSION_HANDOFF_LIFECYCLE_RPC_SCOPES,
 } from '@/rpc/handlers/sessionLifecycle';
 import type { SessionHandoffAgentBundle } from '../../../session/handoff/types';
@@ -81,6 +85,32 @@ import type {
   SpawnSessionResult,
 } from '../../../session/shared/spawnSessionContract';
 import type { RegisterActionSpecRpcHandlersParams } from '@/rpc/handlers/registerActionSpecRpcHandlers';
+import type { RpcHandlerContext } from '@/api/rpc/types';
+import { isRequesterSessionLifecycleCurrent } from '@/session/actions/lifecycle/requesterSessionLifecycle';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+
+/** Default Home read shared by the handoff registrar and its source-admission boundary. */
+export async function loadSessionHandoffRemoteMetadata(sessionId: string, context?: RpcHandlerContext): Promise<Record<string, unknown> | null> {
+  if (!await isRequesterSessionLifecycleCurrent(sessionId, context)) return null;
+  const read = async () => {
+  const [{ readStoredCredentials }, { fetchSessionById }, { tryDecryptSessionOwnerMetadataView },
+    { fetchAccountEncryptionCurrentness }] = await Promise.all([
+      import('../../../persistence'), import('@/session/transport/http/sessionsHttp'),
+      import('@/session/transport/encryption/sessionEncryptionContext'), import('@/api/client/connectedServiceCredentialApi'),
+    ]);
+  const credentials = context?.requesterSessionBootstrap?.credentials ?? await readStoredCredentials().catch(() => null);
+  if (!credentials) return null;
+  const [rawSession, accountEncryptionCurrentness] = await Promise.all([
+    fetchSessionById({ token: credentials.token, sessionId, ...(context?.signal ? { signal: context.signal } : {}) }).catch(() => null),
+    fetchAccountEncryptionCurrentness({ token: credentials.token, ...(context?.signal ? { signal: context.signal } : {}) }).catch(() => null),
+  ]);
+  if (!rawSession || !accountEncryptionCurrentness || !await isRequesterSessionLifecycleCurrent(sessionId, context)) return null;
+  const metadata = tryDecryptSessionOwnerMetadataView({ credentials, rawSession,
+    accountEncryptionMode: accountEncryptionCurrentness.mode });
+  return metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata as Record<string, unknown> : null;
+  };
+  return context?.requesterSessionBootstrap ? await runWithServerHttpBaseUrl(context.requesterSessionBootstrap.serverHttpBaseUrl, read) : await read();
+}
 
 export type { SessionHandoffDirectPeerTransferHandle } from './prepareTransport';
 
@@ -96,10 +126,13 @@ export type SessionHandoffRuntimeDependencies = Readonly<{
 
 export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
+  requesterSessionRuntime?: NonNullable<Parameters<typeof registerSessionLifecycleRpcHandlers>[0]['requesterSessionRuntime']>;
+  requesterBootstrapBoundary?: NonNullable<Parameters<typeof registerSessionLifecycleRpcHandlers>[0]['requesterBootstrapBoundary']>;
   sessionOperationExclusion?: ExternalSessionOperationExclusionOwner;
   loadLocalSessionMetadata?: (sessionId: string) => Promise<SessionHandoffLocalMetadataSource | null>;
-  loadSessionMetadata?: (sessionId: string) => Promise<Record<string, unknown> | null>;
-  stopSessionForHandoff?: (sessionId: string) => Promise<'stopped' | 'already_inactive' | 'failed'>;
+  loadSessionMetadata?: (sessionId: string, context?: RpcHandlerContext) => Promise<Record<string, unknown> | null>;
+  admitExistingSessionState?: (peerMachineId: string, context?: RpcHandlerContext, checkRequest?: SessionHandoffExistingStateCheckRequestV3) => Promise<Readonly<{ ok: false; errorCode: string; error?: string }> | null>;
+  stopSessionForHandoff?: (sessionId: string, options?: Readonly<{ expectedSpawnNonce: string }>) => Promise<'stopped' | 'already_inactive' | 'failed'>;
   spawnSessionForHandoff?: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   exportSessionBundle?: (metadata: Record<string, unknown>) => Promise<Readonly<{
     agentBundle: SessionHandoffAgentBundle;
@@ -123,9 +156,11 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     start: (privateActionInput: unknown) => Promise<import('@happier-dev/protocol/actions').ActionExecuteResult>;
     signal: AbortSignal;
     publishOwnerUpdate: (update: import('@/daemon/actionOperations').ActionOperationOwnerUpdate) => void;
+    context?: import('@/rpc/handlers/_actionDispatchAdapter').RpcActionExecutorContext;
   }>) => Promise<import('@happier-dev/protocol/actions').ActionExecuteResult>;
 }>): void {
   const runtimeConfig = params.runtimeConfig ?? readSessionHandoffRuntimeConfig();
+  const existingStateSupported = Boolean(params.admitExistingSessionState && params.requesterBootstrapBoundary);
   const createUuid = params.runtimeDependencies?.createUuid ?? randomUUID;
   const exportHandoffState = params.runtimeDependencies?.exportSessionHandoffState ?? exportSessionHandoffState;
   const prepareJobStore = createSessionHandoffPrepareTargetJobStore({
@@ -273,42 +308,19 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 
   const loadRemoteSessionMetadata =
     params.loadSessionMetadata ??
-    (async (sessionId: string): Promise<Record<string, unknown> | null> => {
-      const [
-        { readStoredCredentials },
-        { fetchSessionById },
-        { tryDecryptSessionOwnerMetadataView },
-        { fetchAccountEncryptionCurrentness },
-      ] = await Promise.all([
-        import('../../../persistence'),
-        import('@/session/transport/http/sessionsHttp'),
-        import('@/session/transport/encryption/sessionEncryptionContext'),
-        import('@/api/client/connectedServiceCredentialApi'),
-      ]);
-      const credentials = await readStoredCredentials().catch(() => null);
-      if (!credentials) return null;
-      const [rawSession, accountEncryptionCurrentness] = await Promise.all([
-        fetchSessionById({ token: credentials.token, sessionId }).catch(() => null),
-        fetchAccountEncryptionCurrentness({ token: credentials.token }).catch(() => null),
-      ]);
-      if (!rawSession || !accountEncryptionCurrentness) return null;
-      const metadata = tryDecryptSessionOwnerMetadataView({
-        credentials,
-        rawSession,
-        accountEncryptionMode: accountEncryptionCurrentness.mode,
-      });
-      return metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? (metadata as Record<string, unknown>) : null;
-    });
+    loadSessionHandoffRemoteMetadata;
   const loadLocalSessionMetadata =
     params.loadLocalSessionMetadata ??
     (async (): Promise<SessionHandoffLocalMetadataSource | null> => null);
   const loadSessionMetadata = async (
     sessionId: string,
     sourceMachineId?: string,
+    context?: RpcHandlerContext,
   ): Promise<Record<string, unknown> | null> => {
+    if (!await isRequesterSessionLifecycleCurrent(sessionId, context)) return null;
     const [localMetadata, remoteMetadata] = await Promise.all([
       loadLocalSessionMetadata(sessionId),
-      loadRemoteSessionMetadata(sessionId),
+      loadRemoteSessionMetadata(sessionId, context),
     ]);
     return resolveSessionHandoffExportMetadata({
       remoteMetadata,
@@ -345,6 +357,38 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     });
   };
 
+  const resolveExistingSessionState = async (request: SessionHandoffExistingStateCheckRequestV3, targetPath: string, context?: RpcHandlerContext) => {
+    context?.signal.throwIfAborted();
+    if (!existingStateSupported) {
+      throw Object.assign(new Error('handoff_existing_state_update_required'), { code: 'handoff_existing_state_update_required' });
+    }
+    const metadata = await loadSessionMetadata(request.sessionId, request.sourceMachineId, context);
+    if (!metadata) throw Object.assign(new Error('Session metadata is unavailable'), { code: 'session_not_found' });
+    const authority = resolveLinkedExternalSessionAuthorityV1(metadata);
+    if (!authority.ok) throw Object.assign(new Error(authority.reason), { code: authority.error });
+    if (authority.transcriptStorage !== request.sourceSessionStorageMode) throw Object.assign(new Error('Source Session storage mode changed'), { code: 'session_storage_mode_mismatch' });
+    const state = await resolveExistingSessionHandoffState({ metadata, targetPath, sessionStorageMode: request.targetSessionStorageMode ?? request.sourceSessionStorageMode });
+    context?.signal.throwIfAborted();
+    return state;
+  };
+  const checkExistingState = async (raw: unknown, context?: RpcHandlerContext) => {
+    const parsed = SessionHandoffExistingStateCheckRequestV3Schema.safeParse(raw);
+    if (!parsed.success) return invalidRequest();
+    if (!existingStateSupported) return { ok: false, errorCode: 'handoff_existing_state_update_required' } as const;
+    try {
+      await resolveExistingSessionState(parsed.data, parsed.data.targetPath, context);
+      return { ok: true } as const;
+    } catch (error) {
+      context?.signal.throwIfAborted();
+      const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'target_import_failed';
+      return { ok: false, errorCode: code, error: error instanceof Error ? error.message : 'Existing native state could not be verified' } as const;
+    }
+  };
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3, async (raw: unknown, context?: RpcHandlerContext) => await withSessionHandoffRequesterBootstrap({
+    method: RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3, input: raw, context,
+    boundary: params.requesterBootstrapBoundary, handler: checkExistingState,
+  }));
+
 	  if (params.machineTransferChannel) {
 	    registerServerRoutedTransferResponder({
 	      machineTransferChannel: params.machineTransferChannel,
@@ -380,6 +424,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     createUuid,
     loadSessionMetadata,
     machineTransferChannelPresent: params.machineTransferChannel !== undefined,
+    ...(params.admitExistingSessionState ? { admitExistingSessionState: params.admitExistingSessionState } : {}),
     directPeerTransfer: params.directPeerTransfer,
     ...(params.resolveServerFeaturesSnapshot ? { resolveServerFeaturesSnapshot: params.resolveServerFeaturesSnapshot } : {}),
     stopSessionForHandoff: params.stopSessionForHandoff,
@@ -411,6 +456,11 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     machineTransferChannel: params.machineTransferChannel,
     directPeerTransfer: params.directPeerTransfer,
     importSessionBundle,
+    existingStateSupported,
+    resolveExistingSessionState: async (request, targetPath, context) => {
+      if (!request.sessionId) throw Object.assign(new Error('Existing Session identity is missing'), { code: 'invalid_request' });
+      return resolveExistingSessionState({ ...request, sessionId: request.sessionId }, targetPath, context);
+    },
     getTransferRouteCache,
     invalidateDirectPeerRouteCacheForHandoffMachines,
   });
@@ -450,6 +500,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     prepareJobStore,
     sourceExportStore,
     directPeerTransfer: params.directPeerTransfer,
+    stopSessionForHandoff: params.stopSessionForHandoff,
     readPersistedPrepareJob,
     buildPrepareJobRecord,
     buildStartPendingStatus,
@@ -495,6 +546,17 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
   });
   registerSessionLifecycleRpcHandlers({
     rpcHandlerManager,
+    ...(params.requesterSessionRuntime ? { requesterSessionRuntime: params.requesterSessionRuntime } : {}),
+    ...(params.requesterBootstrapBoundary ? { requesterBootstrapBoundary: { ...params.requesterBootstrapBoundary,
+      retainHandoffRequesterCustody: async (request, bootstrap) => {
+        // Called only after exact target admission and same-Session credential binding.
+        if (bootstrap.getBoundSessionId() !== request.sessionId || bootstrap.attribution.machineId !== request.targetMachineId
+          || !await bootstrap.isCurrent()) throw new Error('Requester handoff custody unavailable');
+        await sourceExportStore.save({ handoffId: request.handoffId, sessionId: request.sessionId,
+          sourceMachineId: request.sourceMachineId, targetMachineId: request.targetMachineId, exportedAtMs: Date.now(),
+          requesterSessionCredentialBinding: { sessionId: request.sessionId, attribution: bootstrap.attribution } });
+      },
+    } } : {}),
     actionExecutor: params.coordinateSessionHandoff
       ? {
           execute: async (actionId, input, context) => {
@@ -506,6 +568,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
                 ? context.actionRequestId.trim()
                 : '',
               actionInput: input,
+              ...(context ? { context } : {}),
               start: async (privateActionInput) => await lifecycleExecutor.execute(
                 actionId,
                 privateActionInput,
@@ -540,5 +603,18 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     ...(params.stopSessionForHandoff
       ? { stopSessionForHandoff: params.stopSessionForHandoff }
       : {}),
+  });
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET, async (raw: unknown) => {
+    const empty = raw && typeof raw === 'object' && !Array.isArray(raw) && Object.keys(raw).length === 0;
+    // Governed peer preflight binds the diagnostic to the exact handoff tuple.
+    if (!empty && !SessionHandoffExistingStateCheckRequestV3Schema.safeParse(raw).success) return invalidRequest();
+    return {
+      protocolVersion: 3,
+      // The current handoff runner does not prove atomic launch acceptance or target cleanup.
+      atomicTargetResume: false,
+      targetCleanup: false,
+      sameMachineHandoff: true,
+      existingState: existingStateSupported,
+    };
   });
 }

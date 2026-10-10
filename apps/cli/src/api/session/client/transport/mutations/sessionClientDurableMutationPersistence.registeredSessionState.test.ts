@@ -15,6 +15,8 @@ vi.mock('@/configuration', () => ({
 }));
 
 import { createRegisteredSessionStateFieldMutation } from './sessionClientDurableMutationTypes';
+import { applyRegisteredSessionStateFieldMutationToMetadata } from './applyRegisteredSessionStateFieldMutation';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import {
     loadSessionClientDurableMutationDeadLetters,
     loadSessionClientDurableMutationOutbox,
@@ -104,18 +106,44 @@ describe('registered session-state durable mutation persistence', () => {
     it('loads stored role configuration with additive fields without dead-lettering the edit', async () => {
         const sessionId = 'sess-role-configuration';
         const configuration = { overrides: { builder: { roleId: 'builder', instructionsOverride: 'Keep this' } },
-            sessionRoles: {}, notes: 'Stored notes', memoryDocRef: { kind: 'doc', artifactId: 'memory' } };
+            sessionRoles: {}, notes: 'Stored notes' };
         const mutation = createRegisteredSessionStateFieldMutation({ sessionId, fieldId: 'intent.sessionRoles',
             deliveryClass: 'durable_required', source: 'ui', observedAt: 100, op: { kind: 'set', value: {
                 ...configuration, future: true,
                 overrides: { builder: { ...configuration.overrides.builder, future: true } },
-                memoryDocRef: { ...configuration.memoryDocRef, future: true },
             } } });
         await saveSessionClientDurableMutationOutbox(sessionId, [{ kind: 'registered_session_state_field',
             mutationId: mutation.mutationId, payload: mutation, createdAt: 100, attempts: 0, nextAttemptAt: 0 }]);
         const loaded = await loadSessionClientDurableMutationOutbox(sessionId);
         expect(loaded).toHaveLength(1);
         expect(loaded[0]).toMatchObject({ payload: { fieldId: 'intent.sessionRoles', op: { kind: 'set', value: configuration } } });
+        await expect(loadSessionClientDurableMutationDeadLetters(sessionId)).resolves.toEqual([]);
+    });
+
+    it('preserves a retained queued Role memory reference in the canonical Session stack on replay', async () => {
+        const sessionId = 'sess-retained-role-context';
+        // 68edc1dab944 roleActions.ts persisted this carrier on notes/configuration edits.
+        const mutation = createRegisteredSessionStateFieldMutation({ sessionId, fieldId: 'intent.sessionRoles',
+            deliveryClass: 'durable_required', source: 'ui', observedAt: 100, op: { kind: 'set', value: {
+                overrides: {}, sessionRoles: {}, notes: 'Queued notes', memoryDocRef: { kind: 'doc', artifactId: 'retained-doc' },
+            } } });
+        await saveSessionClientDurableMutationOutbox(sessionId, [{ kind: 'registered_session_state_field',
+            mutationId: mutation.mutationId, payload: mutation, createdAt: 100, attempts: 0, nextAttemptAt: 0 }]);
+        const loaded = await loadSessionClientDurableMutationOutbox(sessionId);
+        await saveSessionClientDurableMutationOutbox(sessionId, loaded);
+        const restored = await loadSessionClientDurableMutationOutbox(sessionId);
+        const queued = restored[0];
+        if (!queued || queued.kind !== 'registered_session_state_field') throw new Error('Retained Role edit was not restored');
+        const neighbor = { id: 'neighbor', ref: { kind: 'doc' as const, artifactId: 'neighbor' },
+            enabled: true, placement: 'system_append' as const };
+        const replayed = applyRegisteredSessionStateFieldMutationToMetadata(
+            createTestMetadata({ work: { promptStack: [neighbor], memoryEnabled: false } }), queued.payload);
+        expect(replayed).toMatchObject({ work: { memoryEnabled: false,
+            sessionRolesV1: { overrides: {}, sessionRoles: {}, notes: 'Queued notes' },
+            promptStack: [neighbor, { id: 'session.legacy-role-memory', ref: { kind: 'doc', artifactId: 'retained-doc' },
+                enabled: true, placement: 'system_append' }],
+        } });
+        expect(replayed.work?.sessionRolesV1).not.toHaveProperty('memoryDocRef');
         await expect(loadSessionClientDurableMutationDeadLetters(sessionId)).resolves.toEqual([]);
     });
 

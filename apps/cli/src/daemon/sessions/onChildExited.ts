@@ -13,6 +13,9 @@ import {
 } from '../sessionRegistry';
 import { cleanupPidSessionResources } from './cleanupPidSessionResources';
 import { promoteTrackedSessionPidCustody } from './promoteTrackedSessionPidCustody';
+import { classifyTrackedSessionProcessPresence } from './isSessionRunnerActive';
+import { readProcessRunState } from '../processRunState';
+import { readProcessIdentityByPid } from '../processIdentity';
 import { resolveTrackedSessionExitSettlementEvidence } from './resolveTrackedSessionExitSettlementEvidence';
 import { stageObservedExit } from './stageObservedExit';
 import { resolveTrackedSessionActiveTurn } from './trackedSessionActiveTurn';
@@ -107,6 +110,10 @@ async function settleNoTurnFinalExit(params: Readonly<{
 
 export function createOnChildExited(params: Readonly<{
   pidToTrackedSession: Map<number, TrackedSession>;
+  processPresenceDependencies?: Readonly<{
+    readProcessRunState?: typeof readProcessRunState;
+    readProcessIdentityByPid?: typeof readProcessIdentityByPid;
+  }>;
   spawnResourceCleanupByPid: Map<number, () => void | Promise<void>>;
   sessionAttachCleanupByPid: Map<number, () => Promise<void>>;
   getApiMachineForSessions: () => ApiMachineClient | null;
@@ -183,15 +190,42 @@ export function createOnChildExited(params: Readonly<{
   };
 
   const observeChildExit = async (pid: number, exit: ChildExit) => {
-    logger.debug(`[DAEMON RUN] Removing exited process PID ${pid} from tracking`);
     const tracked = pidToTrackedSession.get(pid);
+    if (exit.reason === 'process-missing' && tracked?.windowsTerminalLaunchCustody) {
+      const presence = await classifyTrackedSessionProcessPresence({
+        tracked,
+        readProcessRunState: params.processPresenceDependencies?.readProcessRunState ?? readProcessRunState,
+        readProcessIdentityByPid: params.processPresenceDependencies?.readProcessIdentityByPid ?? readProcessIdentityByPid,
+      });
+      if (pidToTrackedSession.get(pid) !== tracked) return;
+      if (tracked.stopRequestedAtMs === undefined && presence !== 'absent'
+        && (presence !== 'present' || !tracked.sessionRunnerPid || tracked.sessionRunnerPid === pid)) {
+        logger.infoFile('[DAEMON RUN] Missing Windows dispatcher does not prove runner exit; retaining startup custody', { pid });
+        return;
+      }
+    }
+    logger.debug(`[DAEMON RUN] Removing exited process PID ${pid} from tracking`);
     const runnerPid = tracked?.sessionRunnerPid;
     const override = tracked && isExitUnexpectedOverride ? isExitUnexpectedOverride(tracked, exit) : null;
     if (tracked && typeof runnerPid === 'number' && runnerPid !== pid && isPidPresent(runnerPid)) {
       if (tracked.acceptedSpawnMarkerGate && !await tracked.acceptedSpawnMarkerGate) return;
       if (pidToTrackedSession.get(pid) !== tracked) return;
       const currentRunnerPid = tracked.sessionRunnerPid;
-      if (typeof currentRunnerPid === 'number' && currentRunnerPid !== pid && isPidPresent(currentRunnerPid)) {
+      let canPromoteRunner = typeof currentRunnerPid === 'number' && currentRunnerPid !== pid && isPidPresent(currentRunnerPid);
+      if (canPromoteRunner && tracked.runnerProcessIdentity) {
+        const presence = await classifyTrackedSessionProcessPresence({
+          tracked,
+          readProcessRunState: params.processPresenceDependencies?.readProcessRunState ?? readProcessRunState,
+          readProcessIdentityByPid: params.processPresenceDependencies?.readProcessIdentityByPid ?? readProcessIdentityByPid,
+        });
+        if (pidToTrackedSession.get(pid) !== tracked || tracked.sessionRunnerPid !== currentRunnerPid || tracked.reportMarkerCustody?.retiring) return;
+        if (presence === 'unknown' || presence === 'recoverable_stopped') {
+          logger.infoFile('[DAEMON RUN] Runner generation unresolved; retaining wrapper custody', { pid, runnerPid: currentRunnerPid, presence });
+          return;
+        }
+        canPromoteRunner = presence === 'present';
+      }
+      if (typeof currentRunnerPid === 'number' && canPromoteRunner) {
         logger.debug(`[DAEMON RUN] Wrapper PID ${pid} exited; promoting tracked session to runner PID ${currentRunnerPid}`);
         await promoteTrackedSessionPidCustody({
           fromPid: pid,
@@ -425,7 +459,7 @@ export function createOnChildExited(params: Readonly<{
   };
 
   const inFlightByTrackedSession = new WeakMap<TrackedSession, Promise<void>>();
-  return async (pid: number, exit: ChildExit) => {
+  return async function handleChildExit(pid: number, exit: ChildExit) {
     const trackedSession = pidToTrackedSession.get(pid);
     if (!trackedSession) {
       await observeChildExit(pid, exit);
@@ -435,6 +469,9 @@ export function createOnChildExited(params: Readonly<{
     const existing = inFlightByTrackedSession.get(trackedSession);
     if (existing) {
       await existing;
+      if (exit.reason !== 'process-missing' && pidToTrackedSession.get(pid) === trackedSession) {
+        await handleChildExit(pid, exit);
+      }
       return;
     }
 

@@ -498,7 +498,10 @@ describe('createSessionClientInteractionApi diagnostics', () => {
     await expect(api.reconcilePendingQueueState({ force: true })).resolves.toBe(true);
   });
 
-  it('keeps server-owned runtime-activity deferral queued without a local Activity state', async () => {
+  it.each([
+    { deferredReason: 'waiting_for_runtime_activity', reason: 'runtime_activity_active' },
+    { deferredReason: 'waiting_for_quota_reset', reason: 'waiting_for_quota_reset' },
+  ])('keeps server-owned $deferredReason deferral queued without claiming input', async ({ deferredReason, reason }) => {
     const socket = createSocketStub();
     socketAckMock.mockResolvedValueOnce({
         ok: true,
@@ -506,7 +509,7 @@ describe('createSessionClientInteractionApi diagnostics', () => {
         pendingCount: 1,
         pendingBlockedCount: 0,
         pendingVersion: 7,
-        deferredReason: 'waiting_for_runtime_activity',
+        deferredReason,
         localId: 'runtime-idle-head',
     });
     const handleSessionScopedUpdate = vi.fn();
@@ -526,7 +529,7 @@ describe('createSessionClientInteractionApi diagnostics', () => {
       deliveryTiming: 'after_runtime_idle',
     } as Parameters<typeof api.materializeNextPendingMessageSafely>[0] & { deliveryTiming: 'after_runtime_idle' })).resolves.toEqual({
       type: 'deferred',
-      reason: 'runtime_activity_active',
+      reason,
     });
 
     expect(socketAckMock).toHaveBeenCalledWith('pending-materialize-next', expect.objectContaining({

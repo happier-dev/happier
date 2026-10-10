@@ -3,6 +3,7 @@ import { AIBackendProfileSchema, sealSavedSecretResourceStoredContentV1 } from '
 
 import {
   ForegroundProfileSecretRecoveryRequiredError,
+  resolveEffectiveLaunchProfileSecretBindings,
   resolveForegroundProfileSavedSecretEnvironment,
 } from './resolveForegroundProfileSavedSecretEnvironment';
 
@@ -13,6 +14,13 @@ const profile = AIBackendProfileSchema.parse({
 });
 
 describe('resolveForegroundProfileSavedSecretEnvironment', () => {
+  it('uses destination binding authority without restoring retained Settings bindings', () => {
+    const admittedProfile = { ...profile, profileRecordRevision: 4,
+      secretBindings: { ANTHROPIC_API_KEY: 'happier:shared-secret:v1:current' } };
+    expect(resolveEffectiveLaunchProfileSecretBindings({ profile: admittedProfile,
+      accountSettings: { secretBindingsByProfileId: { [profile.id]: { ANTHROPIC_API_KEY: 'stale-reference' } } } }))
+      .toEqual({ ANTHROPIC_API_KEY: { ref: 'happier:shared-secret:v1:current' } });
+  });
   it('materializes a ready shared Saved Secret and fails closed after revocation', () => {
     const resourceId = 'shared-profile-resource';
     const secretId = `happier:shared-secret:v1:${resourceId}`;
@@ -44,6 +52,11 @@ describe('resolveForegroundProfileSavedSecretEnvironment', () => {
       foregroundSatisfiedSecretRequirementNames: [],
       savedSecretResources: [resource],
     })).toEqual({ ANTHROPIC_API_KEY: 'shared-profile-key' });
+
+    expect(() => resolveForegroundProfileSavedSecretEnvironment({
+      profile, accountSettings, settingsSecretsReadKeys: [], foregroundSatisfiedSecretRequirementNames: [],
+      savedSecretResources: [resource], isCurrent: () => false,
+    })).toThrow(ForegroundProfileSecretRecoveryRequiredError);
 
     expect(() => resolveForegroundProfileSavedSecretEnvironment({
       profile,

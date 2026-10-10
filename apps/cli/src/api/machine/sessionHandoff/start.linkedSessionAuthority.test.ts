@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createSessionHandoffPrepareTargetJobStore } from '@/session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
+import { createSessionHandoffSourceExportStore } from '@/session/handoff/state/sessionHandoffSourceExportStore';
+import { createExternalSessionOperationExclusion } from '@/session/external/operationExclusion';
+import { prepareStartedState } from './prepareStartedState';
+import { buildPrepareJobRecord, buildStartPendingStatus, buildStartRecoveryStatus, invalidRequest } from './prepareTargetState';
 
 import { createSessionHandoffStartActionHandler } from './start';
 
@@ -73,6 +81,39 @@ const enabledServerFeaturesSnapshot = {
 };
 
 describe('session handoff start — source-derived transcript-storage authority', () => {
+  it.each(['handoff_existing_state_update_required', 'existing_session_state_unavailable'] as const)('refuses existing-state handoff before any source effect (%s)', async (errorCode) => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'existing-handoff-admission-'));
+    const prepareJobStore = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+    const sourceExportStore = createSessionHandoffSourceExportStore({ activeServerDir });
+    await prepareJobStore.findByHandoffId('existing');
+    await sourceExportStore.load('existing');
+    const initialFiles = await readdir(activeServerDir);
+    const stop = vi.fn(async () => 'stopped' as const);
+    const exportSessionBundle = async () => { throw new Error('Unexpected native export'); };
+    try {
+    const handler = createSessionHandoffStartActionHandler({
+      activeServerDir, createUuid: () => 'existing',
+      loadSessionMetadata: async () => ({ path: '/source', machineId: 'machine-source' }),
+      machineTransferChannelPresent: true, directPeerTransfer: undefined,
+      resolveServerFeaturesSnapshot: () => enabledServerFeaturesSnapshot,
+      ...(errorCode === 'existing_session_state_unavailable' ? { admitExistingSessionState: async () => ({ ok: false as const, errorCode }) } : {}),
+      stopSessionForHandoff: stop, prepareJobStore, sourceExportStore,
+      prepareStartedState: async callInput => await prepareStartedState({ activeServerDir, callInput,
+        sourceExportStore, exportSessionBundle, directPeerTransfer: undefined, buildStartPendingStatus }),
+      exportSessionBundle,
+      waitForPersistedSourceExport: async () => null, invalidateDirectPeerRouteCacheForHandoffMachines: () => undefined,
+      buildStartPendingStatus, buildStartRecoveryStatus, buildPrepareJobRecord, invalidRequest,
+      sessionOperationExclusion: createExternalSessionOperationExclusion({ activeServerDir, ownerId: 'existing-admission-test' }),
+      retainSessionOperationClaim: () => undefined, releaseSessionOperationClaim: async () => undefined,
+    });
+    await expect(handler({ sessionId: 'session', sourceMachineId: 'machine-source', targetMachineId: 'machine-target',
+      stateTransfer: 'existing', targetPath: '/target', sessionStorageMode: 'persisted', preferredTransportStrategies: ['server_routed_stream'] })).resolves.toMatchObject({ ok: false, errorCode });
+    expect(stop).not.toHaveBeenCalled();
+    expect(await sourceExportStore.load('existing')).toBeNull();
+    expect(await prepareJobStore.findByHandoffId('existing')).toBeNull();
+    expect(await readdir(activeServerDir)).toEqual(initialFiles);
+    } finally { await rm(activeServerDir, { recursive: true, force: true }); }
+  });
   it('refuses a valid but stale caller storage mode before any source effect', async () => {
     const stopSessionForHandoff = vi.fn(async () => 'already_inactive' as const);
     const prepareStartedState = vi.fn();

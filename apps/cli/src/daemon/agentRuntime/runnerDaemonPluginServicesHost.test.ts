@@ -51,6 +51,8 @@ import {
 } from './runnerDaemonPluginServicesHost';
 import { PluginAgentContributionV2Schema } from '@happier-dev/protocol';
 import { createConfiguredPluginExternalSessionsAdapter } from '@/session/external/configuredSourceMaterializer';
+import { createServer, type Server } from 'node:http';
+import { createRunnerManagedProviderConsumerAccess } from '@/agent/runtime/session/process/runnerManagedProviderConsumerAccess';
 
 const binding = createAgentSessionRunnerFactoryBinding({
     v: 1,
@@ -194,6 +196,102 @@ function isWireRecord(
 }
 
 describe('runner daemon PluginServices host', () => {
+    it('refreshes private shared access after daemon replacement without rematerializing or replaying an Agent request', async () => {
+        const unavailable = createUnavailablePluginServices();
+        const bootstrap = { ...managedProviderBootstrap(), custody: 'daemonShared' as const };
+        const lifetime = new AbortController();
+        let current = true;
+        let generation = 1;
+        let materializations = 0;
+        let effects = 0;
+        let failUpstream = false;
+        const upstreams: Server[] = [];
+        const ports: number[] = [];
+        for (const upstreamGeneration of [1, 2]) {
+            const upstream = createServer((request, response) => {
+                effects += 1;
+                expect(request.headers.authorization).toBe(`Bearer daemon-${upstreamGeneration}`);
+                expect(request.headers['x-api-key']).toBeUndefined();
+                if (failUpstream) { request.socket.destroy(); return; }
+                response.end(`daemon-${upstreamGeneration}:${request.url}`);
+            });
+            await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+            const address = upstream.address();
+            if (!address || typeof address === 'string') throw new Error('Expected loopback upstream');
+            ports.push(address.port);
+            upstreams.push(upstream);
+        }
+        const hosts: ReturnType<typeof createRunnerDaemonPluginServicesHost>[] = [];
+        const makeHost = () => {
+            const host = createRunnerDaemonPluginServicesHost({
+                async createInvocation({ managedProviderRetention }) {
+                    if (generation > 1) expect(managedProviderRetention).toMatchObject({ custody: 'daemonShared', scope: bootstrap.scope });
+                    return {
+                        services: unavailable, resourceDescriptors: {},
+                        subscriptionCapabilities: { settingsWatch: false, eventSubscriptions: [], resourceWatches: [], notificationPreferencesWatch: false },
+                        dispose() {}, authorizeOperation: () => current,
+                        authorizeManagedProviderMaterialization: () => materializations === 0,
+                        executeCurrentGlobalAction: unavailable.actions.execute,
+                        currentGlobalMcp: unavailable.mcp, currentGlobalExternalSessions: unavailable.sessions.external,
+                        managedProvider: {
+                            bootstrap, connectedAccounts: unavailable.connectedAccounts, isCurrent: () => current,
+                            readSupervisionLaunchAuthority: () => null, start() {},
+                            materializeAgentBinding({ endpointUrl, credentialPlaceholder }) { materializations += 1; return { v: 1, kind: 'spawnEnv', env: [
+                                { name: 'PROVIDER_URL', value: endpointUrl, source: 'provider' },
+                                { name: 'PROVIDER_TOKEN', value: credentialPlaceholder, source: 'provider' },
+                            ] }; },
+                            async readSharedGatewayAccess() { return { endpointUrl: `http://127.0.0.1:${ports[generation - 1]}/v1`, headers: { authorization: `Bearer daemon-${generation}` } }; },
+                        },
+                    };
+                },
+            });
+            hosts.push(host);
+            return host;
+        };
+        let host = makeHost();
+        let consumer: Awaited<ReturnType<typeof createRunnerManagedProviderConsumerAccess>> | null = null;
+        await prepareRunnerDaemonPluginServices({
+            invocationId: 'shared-access', signal: lifetime.signal,
+            dispatch: async (operation, options) => decodeRunnerDaemonPluginServiceWireValueV1((await host.dispatch({
+                ...direct, operation: RunnerDaemonPluginServiceOperationV1Schema.parse(operation), ...(options?.signal ? { signal: options.signal } : {}),
+            })).value),
+            bindManagedServices: () => unavailable.managedServices,
+            onManagedProviderStarted: async ({ materialize, readSharedGatewayAccess }) => {
+                consumer = await createRunnerManagedProviderConsumerAccess({
+                    signal: lifetime.signal,
+                    credentialTransport: { id: 'bearer', protocols: ['anthropic'], uses: ['runtime'], destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } },
+                    readAccess: readSharedGatewayAccess, materialize,
+                });
+            },
+            local: unavailable,
+        });
+        if (!consumer) throw new Error('Expected runner consumer access');
+        const retainedConsumer = consumer as Awaited<ReturnType<typeof createRunnerManagedProviderConsumerAccess>>;
+        const publicEnvironment = Object.fromEntries(retainedConsumer.materialization.env.flatMap((entry) => entry.value === null ? [] : [[entry.name, entry.value]]));
+        const environment = retainedConsumer.transformLaunchEnvironment(publicEnvironment);
+        const agentUrl = `${environment.PROVIDER_URL}/messages`;
+        const agentRequest = () => fetch(agentUrl, { method: 'POST', headers: { authorization: `Bearer ${environment.PROVIDER_TOKEN}`, 'x-api-key': 'must-not-forward' }, body: '{}' });
+        try {
+            expect(await (await agentRequest()).text()).toBe('daemon-1:/v1/messages');
+            await host.dispose();
+            generation = 2;
+            host = makeHost();
+            expect(await (await agentRequest()).text()).toBe('daemon-2:/v1/messages');
+            expect(materializations).toBe(1);
+            failUpstream = true;
+            expect((await agentRequest()).status).toBe(403);
+            expect(effects).toBe(3);
+            current = false;
+            expect((await agentRequest()).status).toBe(403);
+            expect(effects).toBe(3);
+        } finally {
+            lifetime.abort();
+            await retainedConsumer.cleanup();
+            await Promise.all(hosts.map((owner) => owner.dispose()));
+            await Promise.all(upstreams.map((upstream) => new Promise<void>((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()))));
+        }
+    });
+
     it('retains and closes serializable list query demand through the real runner and daemon owners', async () => {
         const unavailable = createUnavailablePluginServices();
         let authorityCurrent = true;

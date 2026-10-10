@@ -96,7 +96,7 @@ export type ExecutionRunManagerStartParams = Readonly<{
    */
   modelId?: string;
   /** Exact re-resolvable Agent/Provider/model tuple for this run. */
-  modelSelection?: ProviderBoundModelRef;
+  modelSelection?: ProviderBoundModelRef | null;
   /** Exact recipient-safe Team resource/model tuple for this run. */
   teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
   /**
@@ -145,6 +145,7 @@ export type ExecutionRunStartResult = Readonly<{
   callId: string;
   sidechainId: string;
   requestedConfiguration?: ExecutionRunRequestedConfiguration;
+  resolvedSelection?: import('@happier-dev/protocol/execution/runs/requestedConfiguration').ExecutionRunResolvedSelection;
 }>;
 
 export type ExecutionRunRuntimeSettings = Readonly<{
@@ -193,6 +194,7 @@ export type ExecutionRunState = Readonly<{
    * env values, or closures. Dev materializes the selection daemon-side (fail-closed) at resume.
    */
   launch?: Readonly<{
+    selectionSource?: 'explicit' | 'inherited' | 'independent' | 'retained';
     cwd?: string;
     mcpSelection?: SessionMcpSelectionV1;
     acpSessionModeId?: string;
@@ -232,6 +234,7 @@ export type ExecutionRunState = Readonly<{
     commitModelId: string;
     chatModelSelection?: ProviderBoundModelRef;
     commitModelSelection?: ProviderBoundModelRef;
+    commitConnectedServices?: ConnectedServiceBindingsV2 | null;
     commitIsolation: boolean;
     permissionIntent: PermissionIntent;
     idleTtlSeconds: number;

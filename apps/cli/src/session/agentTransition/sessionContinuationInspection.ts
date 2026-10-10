@@ -1,9 +1,17 @@
+import { readAccountSettingValueForBackendTarget } from '@happier-dev/protocol/account/settings/accountSettings';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
+import { isCustomAcpAgentContributionIdentityV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import type { SessionAgentTransitionSelectionV1, SessionContinuationInspectionBatchRequestV1, SessionContinuationInspectionBatchResultV1, SessionContinuationInspectionRequestV1, SessionContinuationInspectionUnavailableReasonV1, SessionContinuationInspectionV1 } from '@happier-dev/protocol';
 import { resolveAgentIdFromSessionMetadata, type AgentId } from '@happier-dev/agents';
 
+import { logger } from '@/ui/logger';
+import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountConfiguredAcpLaunchForAgent } from '@/agent/runtime/registry/engineRegistry/accountConfiguredAcp';
+import { resolveSessionPersistedRuntimeIdentity } from '@/daemon/sessions/runtimeSnapshot/buildInactiveSessionResumeSpawnOptions';
+import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import type { StoredCredentials } from '@/persistence';
 import { readAgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
@@ -37,6 +45,7 @@ export type InspectSessionContinuationParams = Readonly<{
 export type SessionContinuationTargetAgent = Readonly<{
   agentId: AgentId;
   backendTargetKey: string;
+  configuredBackend?: Readonly<{ backendId: string; title: string }>;
 }>;
 
 /**
@@ -66,12 +75,48 @@ export type SessionContinuationTargetAgent = Readonly<{
  * projected-capability check stays presentation: it decides what to offer, this
  * decides what the daemon will do.
  */
-export function resolveSessionContinuationTargetAgent(params: Readonly<{
+export async function resolveSessionContinuationTargetAgent(params: Readonly<{
   readAgentCatalogSnapshot: typeof readAgentCatalogSnapshot;
   agentId: string;
-}>): SessionContinuationTargetAgent | null {
+}>): Promise<SessionContinuationTargetAgent | null> {
+  const configuredBackendId = readLegacyConfiguredAcpBackendId(params.agentId);
+  if (configuredBackendId) {
+    const accountSnapshot = getActiveAccountSettingsSnapshot();
+    if (accountSnapshot?.acpCatalog?.status !== 'ready') return null;
+    const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
+    const catalog = accountSnapshot.acpCatalog;
+    const settings = accountSnapshot.settings;
+    const contribution = [...params.readAgentCatalogSnapshot().agentDefinitionsById.values()]
+      .find(candidate => candidate.identity && isCustomAcpAgentContributionIdentityV1(candidate.identity));
+    if (!contribution?.identity || !isCustomAcpAgentContributionIdentityV1(contribution.identity)
+      || !readAgentSessionCapabilities(contribution.richDefinition?.definition)) return null;
+    const backendTarget = {
+      kind: 'backend' as const, backendId: configuredBackendId, configuredBackendId, sourceKind: 'configured' as const,
+    };
+    if (readAccountSettingValueForBackendTarget(settings, 'backendEnabledByTargetKey', backendTarget) === false) return null;
+    // Eligibility reads the same contribution-bound row admission as launch;
+    // it never constructs a competing runtime for this selector-only legacy ID.
+    const launch = await resolveAccountConfiguredAcpLaunchForAgent({ identity: contribution.identity,
+      agentTarget: { kind: 'agent', identity: contribution.identity, definitionId: configuredBackendId },
+    }).catch(() => {
+      logger.warn('[SessionContinuation] configured ACP target could not resolve its runtime', { configuredBackendId });
+      return null;
+    });
+    const currentSnapshot = getActiveAccountSettingsSnapshot();
+    if (!launch || !currentSnapshot
+      || currentSnapshot.scopeKey !== accountSnapshot.scopeKey
+      || getActiveAccountSettingsSnapshotLifetimeToken() !== lifetimeToken
+      || currentSnapshot.acpCatalog !== catalog
+      || readAccountSettingValueForBackendTarget(currentSnapshot.settings, 'backendEnabledByTargetKey', backendTarget) === false) return null;
+    return {
+      agentId: params.agentId,
+      backendTargetKey: buildBackendTargetKeyV2(backendTarget),
+      configuredBackend: { backendId: configuredBackendId, title: launch.configuredBackend.title },
+    };
+  }
   const contribution = params.readAgentCatalogSnapshot().agentDefinitionsById.get(params.agentId);
   if (!contribution?.identity) return null;
+  if (isCustomAcpAgentContributionIdentityV1(contribution.identity)) return null;
   if (!readAgentSessionCapabilities(contribution.richDefinition?.definition)) return null;
   try {
     return {
@@ -83,6 +128,22 @@ export function resolveSessionContinuationTargetAgent(params: Readonly<{
   } catch {
     return null;
   }
+}
+
+/** Projects the exact persisted target onto the existing continuation wire ID. */
+export function resolveSessionContinuationCurrentAgentId(metadata: Record<string, unknown>): string | null {
+  const backendTarget = resolveBackendTargetFromSessionMetadata(metadata);
+  if (backendTarget?.sourceKind === 'configured') {
+    const exact = resolveSessionPersistedRuntimeIdentity(metadata);
+    if (exact?.agentTarget && isCustomAcpAgentContributionIdentityV1(exact.agentTarget.identity)) {
+      return `acp:${exact.agentTarget.definitionId}`;
+    }
+    const target = exact?.backendTarget;
+    if (target?.sourceKind !== 'configured') return null;
+    const configuredBackendId = target.configuredBackendId ?? target.backendId;
+    return `acp:${configuredBackendId}`;
+  }
+  return resolveAgentIdFromSessionMetadata(metadata);
 }
 
 function unavailable(
@@ -139,7 +200,7 @@ async function loadSessionContinuationSource(params: Readonly<{
   // The recorded machine is deliberately not a proxy gate. The stop owner,
   // native-return owner, cutover, and activation each validate the facts they
   // actually own, including Sessions legitimately moved to this host.
-  const sourceAgentId = resolveAgentIdFromSessionMetadata(metadata);
+  const sourceAgentId = resolveSessionContinuationCurrentAgentId(metadata);
   if (sourceAgentId === null) return { type: 'unavailable', reason: 'unsupported_session' };
   return { type: 'available', sourceAgentId };
 }
@@ -151,7 +212,7 @@ async function inspectSessionContinuationSelection(params: Readonly<{
 }>): Promise<SessionContinuationInspectionV1> {
   if (params.source.type === 'unavailable') return params.source;
 
-  const target = resolveSessionContinuationTargetAgent({
+  const target = await resolveSessionContinuationTargetAgent({
     readAgentCatalogSnapshot: params.deps.readAgentCatalogSnapshot,
     agentId: params.selection.agentId,
   });

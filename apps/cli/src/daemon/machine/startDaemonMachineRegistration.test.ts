@@ -81,6 +81,7 @@ describe('startDaemonMachineRegistration', () => {
         registerLiveStreamRelayRoutes: vi.fn(),
         onUpdate: vi.fn(() => () => {}),
         onAccountSettingsVersionHint: vi.fn(() => () => {}),
+        onAccountProjectRowsChanged: vi.fn(() => () => {}),
         onPendingSessionActivationHint: vi.fn(() => () => {}),
         onSessionDeletedChange: vi.fn(() => () => {}),
         onSessionAccessRevoked: vi.fn(() => () => {}),

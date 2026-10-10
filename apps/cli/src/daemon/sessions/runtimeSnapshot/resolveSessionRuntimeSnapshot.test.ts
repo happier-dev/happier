@@ -78,6 +78,52 @@ const persistedProviderBinding = {
 } as const;
 
 describe('resolveSessionRuntimeSnapshot', () => {
+  it('retains requester attribution only for the same Session and never retains request admission callbacks', async () => {
+    const { resolveSessionRuntimeSnapshot } = await import('./resolveSessionRuntimeSnapshot');
+    const attribution = { serverId: 'home', accountId: 'owner', machineId: 'machine', installationId: 'installation' };
+    const incomingOptions: SpawnSessionOptions = { directory: '/repo', existingSessionId: 'session',
+      verifyRequesterMachineAdmissionCurrent: async () => true };
+    const trackedSpawnOptions: SpawnSessionOptions = { directory: '/repo', existingSessionId: 'session',
+      requesterWorkAttributionV1: attribution };
+    const recovered = resolveSessionRuntimeSnapshot({ incomingOptions, trackedSpawnOptions,
+      persistedMetadata: { requesterWorkAttributionV1: { ...attribution, accountId: 'forged' } } }).spawnOptions;
+    expect(recovered.requesterWorkAttributionV1).toEqual(attribution);
+    expect(recovered.verifyRequesterMachineAdmissionCurrent).toBeUndefined();
+    expect(resolveSessionRuntimeSnapshot({ incomingOptions,
+      trackedSpawnOptions: { ...trackedSpawnOptions, existingSessionId: 'other-session' },
+      persistedMetadata: { requesterWorkAttributionV1: attribution },
+    }).spawnOptions.requesterWorkAttributionV1).toBeUndefined();
+  });
+  it('preserves a timestamped tracked model clear without placing a null ref in spawn options', async () => {
+    const { resolveSessionRuntimeSnapshot } = await import('./resolveSessionRuntimeSnapshot');
+    const ref = { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'incoming-model' } as const;
+    for (const updatedAt of [100, 200, 300]) {
+      const result = resolveSessionRuntimeSnapshot({
+        incomingOptions: { directory: '/repo', modelSelection: { v: 1, ref, updatedAt } },
+        trackedModelSelection: { value: null, updatedAt: 200 },
+      });
+      expect(result.snapshot.modelSelection).toEqual({ value: updatedAt < 200 ? null : ref,
+        updatedAt: updatedAt < 200 ? 200 : updatedAt });
+      expect(result.spawnOptions.modelSelection).toEqual(updatedAt < 200 ? undefined : { v: 1, ref, updatedAt });
+    }
+  });
+  it('applies authored same-Agent launch selection without replacing native Session identity', async () => {
+    const { resolveSessionRuntimeSnapshot } = await import('./resolveSessionRuntimeSnapshot');
+    const persisted = { v: 1 as const, agentId: 'codex', agent: {
+      backendMode: 'appServer', providerSessionId: 'native-thread', appServerEndpoint: '/native/socket',
+    } };
+    const incoming = { v: 1 as const, agentId: 'codex', agent: { backendMode: 'acp' } };
+    const result = resolveSessionRuntimeSnapshot({ incomingOptions: { directory: '/repo', runtimeDescriptorV1: incoming },
+      persistedMetadata: { runtimeDescriptorV1: persisted },
+    });
+    expect(result.spawnOptions.runtimeDescriptorV1).toEqual({ ...persisted,
+      agent: { ...persisted.agent, backendMode: 'acp' } });
+    // Retained live-process adoption is evidence of an already running driver,
+    // not permission to replace its active descriptor with next-launch intent.
+    expect(resolveSessionRuntimeSnapshot({ incomingOptions: { directory: '/repo', runtimeDescriptorV1: incoming },
+      persistedMetadata: { runtimeDescriptorV1: persisted }, resolutionMode: 'retained_live_process',
+    }).spawnOptions.runtimeDescriptorV1).toEqual(persisted);
+  });
   it('rehydrates managed directory identity without retaining one-shot creation or consent', async () => {
     const runtimeSnapshot = await loadRuntimeSnapshotModule();
     expect(runtimeSnapshot).not.toBeNull();

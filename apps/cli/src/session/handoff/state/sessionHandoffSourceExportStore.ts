@@ -1,15 +1,20 @@
-import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join, posix, relative, resolve, sep, win32 } from 'node:path';
 
 import { z } from 'zod';
 
 import { TransferEndpointCandidateSchema } from '@happier-dev/protocol/machines/transfer/transferStream';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { readPrivateBearerFile, replacePrivateBearerFile } from '@/daemon/privateBearerFile';
+import { RequesterWorkAttributionV1Schema } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { configuration } from '@/configuration';
 
 import type { SessionHandoffAgentBundle } from '../types';
 import { writeSessionHandoffAgentBundleArtifact } from '../agentBundle/file';
 import { buildSessionHandoffAgentBundleTransferId } from '../agentBundle/transferPublication';
-import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { disposeTransferPayloadSource, resolveTransferPayloadManifestHash, resolveTransferPayloadSizeBytes } from '@/machines/transfer/transferPayloadSource';
 import type { createWorkspaceSyncSeedExport } from '@/workspaces/sync/workspaceSyncSeedTransfer';
 
@@ -30,7 +35,11 @@ const SourceExportRecordSchemaV1 = z.object({
   sessionId: z.string().min(1).optional(),
   sourceMachineId: z.string().min(1).optional(),
   targetMachineId: z.string().min(1).optional(),
+  stateTransfer: z.enum(['transfer', 'existing']).optional(),
   exportedAtMs: z.number().int().nonnegative(),
+  acceptedHandoffAuthorization: ExternalActionExecutionAuthorizationV1Schema.optional(),
+  requesterSessionCredentialBinding: z.object({ sessionId: z.string().min(1),
+    attribution: RequesterWorkAttributionV1Schema }).strict().optional(),
   agentBundle: AgentBundleFileSchema.optional(),
   workspaceSeed: z.object({
     transferId: z.string().min(1),
@@ -38,6 +47,7 @@ const SourceExportRecordSchemaV1 = z.object({
     endpointCandidates: z.array(TransferEndpointCandidateSchema).readonly().optional(),
   }).strict().optional(),
 }).strict();
+const SourceExportStoredReadSchemaV1 = createStoredReadSchema(SourceExportRecordSchemaV1);
 
 export type SessionHandoffSourceExportRecord = z.infer<typeof SourceExportRecordSchemaV1>;
 
@@ -94,8 +104,9 @@ function resolvePersistedPathUnderActiveServerDir(activeServerDir: string, persi
 }
 
 async function atomicWriteJson(filePath: string, payload: unknown): Promise<void> {
-  // Prefer the repo's shared atomic writer so daemon restarts never observe a truncated record.
-  await writeJsonAtomic(filePath, payload);
+  // The accepted Home proof is private custody. Use the existing protection
+  // owner for atomic publication and Windows DACLs as well as POSIX permissions.
+  await replacePrivateBearerFile({ path: filePath, contents: JSON.stringify(payload) });
 }
 
 async function readPersistedSourceExportRecord(
@@ -105,12 +116,12 @@ async function readPersistedSourceExportRecord(
   const recordPath = resolveRecordPath(activeServerDir, handoffId);
   let raw: string;
   try {
-    raw = await readFile(recordPath, 'utf8');
+    raw = await readPrivateBearerFile(recordPath);
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
       return null;
     }
-    throw error;
+    throw new Error('Invalid session handoff source export record');
   }
 
   let parsedJson: unknown;
@@ -119,14 +130,30 @@ async function readPersistedSourceExportRecord(
   } catch {
     throw new Error('Invalid session handoff source export record');
   }
-  const parsed = SourceExportRecordSchemaV1.safeParse(parsedJson);
+  const parsed = SourceExportStoredReadSchemaV1.safeParse(parsedJson);
   if (!parsed.success) {
     throw new Error('Invalid session handoff source export record');
+  }
+  const record = parsed.data;
+  const admission = record.acceptedHandoffAuthorization?.binding.handoffAdmission;
+  if (record.acceptedHandoffAuthorization && (record.acceptedHandoffAuthorization.binding.actionId !== 'session.handoff'
+    || record.acceptedHandoffAuthorization.binding.handoffContinuation || !admission
+    || record.sessionId !== admission.sessionId || record.sourceMachineId !== admission.sourceMachineId
+    || record.targetMachineId !== admission.targetMachineId)) throw new Error('Invalid session handoff source export authority');
+  const credentialBinding = record.requesterSessionCredentialBinding;
+  if (credentialBinding && (credentialBinding.sessionId !== record.sessionId
+    || ![record.sourceMachineId, record.targetMachineId].includes(credentialBinding.attribution.machineId)
+    || admission && (credentialBinding.attribution.accountId !== record.acceptedHandoffAuthorization!.binding.accountId
+      || credentialBinding.attribution.machineId === admission.sourceMachineId
+        && credentialBinding.attribution.installationId !== admission.sourceInstallationId
+      || credentialBinding.attribution.machineId === admission.targetMachineId
+        && credentialBinding.attribution.installationId !== admission.targetInstallationId))) {
+    throw new Error('Invalid session handoff requester credential reference');
   }
   return parsed.data;
 }
 
-export function createSessionHandoffSourceExportStore(input: Readonly<{ activeServerDir: string }>) {
+export function createSessionHandoffSourceExportStore(input: Readonly<{ activeServerDir: string; happyHomeDir?: string }>) {
   const activeServerDir = input.activeServerDir;
 
   return {
@@ -167,6 +194,35 @@ export function createSessionHandoffSourceExportStore(input: Readonly<{ activeSe
 
     async save(record: Readonly<Omit<SessionHandoffSourceExportRecord, 't' | 'schemaVersion'>>): Promise<void> {
       const handoffId = assertSafeHandoffId(record.handoffId);
+      const previous = await readPersistedSourceExportRecord(activeServerDir, handoffId);
+      const acceptedHandoffAuthorization = record.acceptedHandoffAuthorization ?? previous?.acceptedHandoffAuthorization;
+      const requesterSessionCredentialBinding = record.requesterSessionCredentialBinding ?? previous?.requesterSessionCredentialBinding;
+      if (requesterSessionCredentialBinding && (requesterSessionCredentialBinding.sessionId !== record.sessionId
+        || ![record.sourceMachineId, record.targetMachineId].includes(requesterSessionCredentialBinding.attribution.machineId)
+        || previous?.requesterSessionCredentialBinding
+          && !sameStrictJsonValue(previous.requesterSessionCredentialBinding, requesterSessionCredentialBinding))) {
+        throw new Error('Invalid session handoff requester credential reference');
+      }
+      if (acceptedHandoffAuthorization) {
+        const root = acceptedHandoffAuthorization.binding;
+        const admission = root.handoffAdmission;
+        if (root.actionId !== 'session.handoff' || root.handoffContinuation || !admission
+          || record.sessionId !== admission.sessionId || record.sourceMachineId !== admission.sourceMachineId
+          || record.targetMachineId !== admission.targetMachineId
+          || previous?.acceptedHandoffAuthorization
+            && (!sameStrictJsonValue(previous.acceptedHandoffAuthorization, acceptedHandoffAuthorization)
+              || previous.sessionId !== record.sessionId || previous.sourceMachineId !== record.sourceMachineId
+              || previous.targetMachineId !== record.targetMachineId)) {
+          throw new Error('Invalid session handoff source export authority');
+        }
+        if (requesterSessionCredentialBinding && (requesterSessionCredentialBinding.attribution.accountId !== root.accountId
+          || requesterSessionCredentialBinding.attribution.machineId === admission.sourceMachineId
+            && requesterSessionCredentialBinding.attribution.installationId !== admission.sourceInstallationId
+          || requesterSessionCredentialBinding.attribution.machineId === admission.targetMachineId
+            && requesterSessionCredentialBinding.attribution.installationId !== admission.targetInstallationId)) {
+          throw new Error('Invalid session handoff requester credential reference');
+        }
+      }
       const payload: SessionHandoffSourceExportRecord = {
         t: 'session_handoff_source_export_v1',
         schemaVersion: SOURCE_EXPORT_SCHEMA_VERSION,
@@ -174,7 +230,10 @@ export function createSessionHandoffSourceExportStore(input: Readonly<{ activeSe
         ...(record.sessionId ? { sessionId: record.sessionId } : {}),
         ...(record.sourceMachineId ? { sourceMachineId: record.sourceMachineId } : {}),
         ...(record.targetMachineId ? { targetMachineId: record.targetMachineId } : {}),
+        ...(record.stateTransfer ? { stateTransfer: record.stateTransfer } : {}),
         exportedAtMs: record.exportedAtMs,
+        ...(acceptedHandoffAuthorization ? { acceptedHandoffAuthorization } : {}),
+        ...(requesterSessionCredentialBinding ? { requesterSessionCredentialBinding } : {}),
         ...(record.workspaceSeed ? { workspaceSeed: { ...record.workspaceSeed,
           files: Object.fromEntries(Object.entries(record.workspaceSeed.files).map(([id, file]) => [id, {
             ...file, filePath: resolvePathRelativeToActiveServerDir(activeServerDir, file.filePath),
@@ -242,11 +301,18 @@ export function createSessionHandoffSourceExportStore(input: Readonly<{ activeSe
       return { transferId: params.transferId, files };
     },
 
-    async releaseTransferFiles(handoffIdRaw: string): Promise<void> {
+    async releaseTransferFiles(handoffIdRaw: string, options?: Readonly<{ preserveRequesterSessionCustody?: boolean }>): Promise<void> {
       const handoffId = assertSafeHandoffId(handoffIdRaw);
       const record = await readPersistedSourceExportRecord(activeServerDir, handoffId);
-      if (record?.agentBundle || record?.workspaceSeed) {
-        const { agentBundle: _releasedAgentBundle, workspaceSeed: _releasedWorkspaceSeed, ...durableRecord } = record;
+      if (record?.requesterSessionCredentialBinding && !options?.preserveRequesterSessionCustody
+        && record.sourceMachineId !== record.targetMachineId) {
+        const { retireRequesterSessionCredentialCustody } = await import('@/daemon/sessionEncryption/requesterSessionCredentials');
+        if (!await retireRequesterSessionCredentialCustody({ happyHomeDir: input.happyHomeDir ?? configuration.happyHomeDir,
+          ...record.requesterSessionCredentialBinding })) throw new Error('Session handoff requester credential release failed');
+      }
+      if (record?.agentBundle || record?.workspaceSeed || record?.requesterSessionCredentialBinding) {
+        const { agentBundle: _releasedAgentBundle, workspaceSeed: _releasedWorkspaceSeed,
+          requesterSessionCredentialBinding: _releasedRequesterCredentialBinding, ...durableRecord } = record;
         await atomicWriteJson(resolveRecordPath(activeServerDir, handoffId), durableRecord);
       }
       await Promise.all([

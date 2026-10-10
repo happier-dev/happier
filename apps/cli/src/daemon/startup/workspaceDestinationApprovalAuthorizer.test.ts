@@ -5,7 +5,8 @@ import {
   type HandoffTargetReplacementApprovalV1,
 } from '@happier-dev/protocol';
 
-import { createWorkspaceDestinationApprovalAuthorizer } from './createProductionDaemonWorkspaceSyncRuntime';
+import { createWorkspaceDestinationApprovalAuthorizer, createWorkspaceCommittedCopyRemovalAuthorizer } from './createProductionDaemonWorkspaceSyncRuntime';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 const contentPolicy = {
   v: 1 as const,
@@ -41,7 +42,7 @@ const linkActionInput = {
 };
 
 function artifactFor(actionId: string, actionArgs: unknown, overrides: Readonly<Record<string, unknown>> = {}) {
-  return {
+  return ApprovalRequestV2Schema.parse({
     v: 2 as const,
     status: 'executing' as const,
     createdAtMs: 1,
@@ -50,7 +51,7 @@ function artifactFor(actionId: string, actionArgs: unknown, overrides: Readonly<
     executionOriginV1: {
       v: 1 as const,
       authority: 'present_user' as const,
-      surface: 'app' as const,
+      surface: 'ui' as const,
       caller: { kind: 'host' as const },
       serverId: 'server-1',
       machineId: 'machine-a',
@@ -61,10 +62,11 @@ function artifactFor(actionId: string, actionArgs: unknown, overrides: Readonly<
     actionId,
     actionArgs,
     summary: 'Approve destination',
-    handoffTargetReplacementApproval: approval,
-    decision: { kind: 'approve' as const, decidedAtMs: 2 },
+    ...(actionId === 'workspace.sync.relationship.create' || actionId === 'session.handoff'
+      ? { handoffTargetReplacementApproval: approval } : {}),
+    ...(overrides.status === 'open' ? {} : { decision: { kind: 'approve' as const, decidedAtMs: 2 } }),
     ...overrides,
-  };
+  });
 }
 
 function createAuthorizer() {
@@ -130,7 +132,7 @@ describe('createWorkspaceDestinationApprovalAuthorizer', () => {
       executionOriginV1: {
         v: 1 as const,
         authority: 'present_user' as const,
-        surface: 'app' as const,
+        surface: 'ui' as const,
         caller: { kind: 'host' as const },
         serverId: 'server-1',
         sessionId: 'session-1',
@@ -148,5 +150,30 @@ describe('createWorkspaceDestinationApprovalAuthorizer', () => {
     });
     await expect(authorize('receipt-1', handoffInput, approval))
       .rejects.toMatchObject({ code: 'approval_stale' });
+  });
+});
+
+describe('createWorkspaceCommittedCopyRemovalAuthorizer', () => {
+  it('requires the exact executing approved retirement receipt rather than a definition-only or changed removal', async () => {
+    const actionInput = {
+      workspace: { serverId: 'server-1', refId: 'workspace-alpha' },
+      machineId: 'machine-a',
+      expectedRelationship: {
+        v: 1 as const, relationshipId: 'rel-1', controllerMachineId: 'machine-a',
+        alphaWorkspaceRefId: 'workspace-alpha', betaWorkspaceRefId: 'workspace-beta',
+        mode: 'mirror_exactly' as const, contentPolicy, enabled: true, createdAtMs: 1, updatedAtMs: 1,
+      },
+      removeTargetCopy: { workspaceRefId: 'workspace-beta', rootFingerprint: 'a'.repeat(64) },
+    };
+    const approvalsGet = vi.fn(async () => artifactFor('projects.worker.copy.retire', actionInput));
+    const authorize = createWorkspaceCommittedCopyRemovalAuthorizer({ approvalsGet: approvalsGet as never, serverId: 'server-1' });
+    await expect(authorize('receipt-1', actionInput)).resolves.toBeUndefined();
+    await expect(authorize('receipt-1', {
+      ...actionInput, removeTargetCopy: { ...actionInput.removeTargetCopy, rootFingerprint: 'b'.repeat(64) },
+    })).rejects.toMatchObject({ code: 'approval_stale' });
+    approvalsGet.mockResolvedValueOnce(artifactFor('projects.worker.copy.retire', actionInput, { status: 'open' }));
+    await expect(authorize('receipt-1', actionInput)).rejects.toMatchObject({ code: 'approval_stale' });
+    const { removeTargetCopy: _removal, ...definitionOnly } = actionInput;
+    await expect(authorize('receipt-1', definitionOnly)).rejects.toMatchObject({ code: 'approval_stale' });
   });
 });

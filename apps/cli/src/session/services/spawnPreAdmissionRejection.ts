@@ -1,6 +1,6 @@
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 
-const DEFINITE_REPLAY_SEEDED_PRE_ADMISSION_ERROR_CODES = new Set<string>([
+const DEFINITE_SPAWN_PRE_ADMISSION_ERROR_CODES = new Set<string>([
   SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
   SPAWN_SESSION_ERROR_CODES.INVALID_ENVIRONMENT_VARIABLES,
   SPAWN_SESSION_ERROR_CODES.AUTH_ENV_UNEXPANDED,
@@ -14,7 +14,7 @@ const DEFINITE_REPLAY_SEEDED_PRE_ADMISSION_ERROR_CODES = new Set<string>([
 ]);
 
 /** Only a definitive rejection proves launch never admitted the runner. */
-export function isDefiniteReplaySeededPreAdmissionRejection(code: unknown): boolean {
+export function isDefiniteSpawnPreAdmissionRejection(code: unknown): boolean {
   return typeof code === 'string'
-    && DEFINITE_REPLAY_SEEDED_PRE_ADMISSION_ERROR_CODES.has(code);
+    && DEFINITE_SPAWN_PRE_ADMISSION_ERROR_CODES.has(code);
 }

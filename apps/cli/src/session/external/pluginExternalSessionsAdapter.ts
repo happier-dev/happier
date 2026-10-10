@@ -245,7 +245,8 @@ function unavailableFollowTarget(code: string): HostExternalSessionFollowTargetR
   return Object.freeze({ status: 'unavailable', code });
 }
 
-export async function resolvePluginExternalSessionFollowTarget(params: Readonly<{
+async function resolvePluginExternalSessionSourceIdentity(params: Readonly<{
+  purpose: 'follow' | 'accounting' | 'takeover';
   agentId: string;
   sourceId?: ExternalSessionSourceId;
   /**
@@ -303,22 +304,46 @@ export async function resolvePluginExternalSessionFollowTarget(params: Readonly<
       ) {
         return unavailableFollowTarget('plugin_external_follow_identity_unavailable');
       }
-      const entries = params.sources.filter(
+      const eligibleEntries = params.sources.filter(
         (entry) => (
           sourceEntryIsCurrent(entry)
           &&
           entry.agentId === parsedAgentId.data
           && (params.sourceId === undefined || entry.sourceId === params.sourceId)
-          && (
-            params.boundSource === undefined
-            || preservesExternalSessionSourceIdentity(
-              entry.source,
-              params.boundSource,
-            )
-          )
-          && entry.supportsFollow === true
+          && (params.purpose !== 'follow' || entry.supportsFollow === true)
         ),
       );
+      if (eligibleEntries.length === 0) {
+        return unavailableFollowTarget('plugin_external_follow_identity_unavailable');
+      }
+      const retainedSource = params.boundSource;
+      const boundOps = retainedSource === undefined
+        ? undefined
+        : await params.resolveProviderOps(parsedAgentId.data);
+      checkCurrent();
+      const boundSource = retainedSource === undefined
+        ? undefined
+        : await (async () => {
+            if (!boundOps) return null;
+            // Persisted sources can predate additive canonical identity fields.
+            // The Agent's existing source admission owns that normalization;
+            // retained fields still cannot be rewritten or silently rebound.
+            const validation = await boundOps.validateSource({
+              source: retainedSource, signal: operationSignal,
+            });
+            checkCurrent();
+            return validation.ok
+              && preservesExternalSessionSourceIdentity(retainedSource, validation.source)
+              ? validation.source
+              : null;
+          })();
+      if (boundSource === null) {
+        return unavailableFollowTarget('plugin_external_follow_identity_unavailable');
+      }
+      const entries = eligibleEntries.filter((entry) => (
+        boundSource === undefined
+        || preservesExternalSessionSourceIdentity(entry.source, boundSource)
+      ));
       if (
         entries.length === 0
         || entries.length > MAX_PLUGIN_TRANSCRIPT_SOURCES_PER_CONTRIBUTION
@@ -332,7 +357,7 @@ export async function resolvePluginExternalSessionFollowTarget(params: Readonly<
           if (!sourceEntryIsCurrent(entry)) {
             return Object.freeze({ kind: 'unavailable' as const });
           }
-          const ops = await params.resolveProviderOps(entry.agentId);
+          const ops = boundOps ?? await params.resolveProviderOps(entry.agentId);
           checkCurrent();
           if (!sourceEntryIsCurrent(entry)) {
             return Object.freeze({ kind: 'unavailable' as const });
@@ -358,7 +383,7 @@ export async function resolvePluginExternalSessionFollowTarget(params: Readonly<
             return Object.freeze({ kind: 'unavailable' as const });
           }
           const identity = await ops.resolveLinkIdentity({
-            source: configuredSource,
+            source: boundSource ?? configuredSource,
             remoteSessionId: params.remoteSessionId,
             signal: operationSignal,
           });
@@ -372,6 +397,8 @@ export async function resolvePluginExternalSessionFollowTarget(params: Readonly<
               configuredSource,
               identity.source,
             )
+            || (boundSource !== undefined
+              && !preservesExternalSessionSourceIdentity(boundSource, identity.source))
           ) {
             return Object.freeze({ kind: 'unavailable' as const });
           }
@@ -382,7 +409,9 @@ export async function resolvePluginExternalSessionFollowTarget(params: Readonly<
               sourceId: entry.sourceId,
               remoteSessionId: params.remoteSessionId,
             }),
-            source: identity.source,
+            // Accounting identity belongs to the admitted source root, not a
+            // Session selector the native lookup adds for transcript following.
+            source: params.purpose === 'accounting' ? configuredSource : identity.source,
           });
         } catch (error) {
           checkCurrent();
@@ -429,6 +458,12 @@ export async function resolvePluginExternalSessionFollowTarget(params: Readonly<
     return unavailableFollowTarget('plugin_operation_deadline_exceeded');
   }
   return unavailableFollowTarget('plugin_external_follow_identity_unavailable');
+}
+
+export async function resolvePluginExternalSessionFollowTarget(
+  params: Omit<Parameters<typeof resolvePluginExternalSessionSourceIdentity>[0], 'purpose'>,
+): Promise<HostExternalSessionFollowTargetResolution> {
+  return await resolvePluginExternalSessionSourceIdentity({ ...params, purpose: 'follow' });
 }
 
 /**
@@ -1249,6 +1284,16 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
           : {}),
       });
     },
+    async resolveSourceIdentity(input): Promise<HostExternalSessionFollowTargetResolution> {
+      return await resolvePluginExternalSessionSourceIdentity({
+        ...input,
+        purpose: input.purpose ?? 'accounting',
+        sources: params.sources,
+        resolveProviderOps: params.resolveProviderOps,
+        isCurrent,
+        ...(params.retirementSignal ? { retirementSignal: params.retirementSignal } : {}),
+      });
+    },
     async readTranscript(ref: HostExternalSessionRef, query: NonNullable<Parameters<PluginExternalSessionsDomainAuthorService['readTranscript']>[1]> = {}) {
       return await runBoundedOperation(query.signal, 'plugin_external_transcript_read_failed', async (operationSignal) => {
         assertAvailable(caps().transcript);
@@ -1526,6 +1571,7 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
     }),
     compositionPort: Object.freeze({
       resolveFollowTarget: service.resolveFollowTarget,
+      resolveSourceIdentity: service.resolveSourceIdentity,
       followTranscript: service.followTranscript,
     }),
   });

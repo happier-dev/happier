@@ -41,7 +41,7 @@ export type MaterializeNextPendingResult =
   | { type: 'retryable_transport'; retryAfterMs?: number }
   | { type: 'unsupported'; code: 'session_input_target_update_required' }
   | { type: 'auth_failure' }
-  | { type: 'deferred'; reason: 'supervisor_offline' | 'supervisor_auth_failed' | 'runtime_activity_active' | 'runtime_activity_unknown' };
+  | { type: 'deferred'; reason: 'supervisor_offline' | 'supervisor_auth_failed' | 'runtime_activity_active' | 'runtime_activity_unknown' | 'waiting_for_quota_reset' };
 
 export type PendingMaterializationDiagnosticPhase =
   | 'materialize.pending_snapshot'

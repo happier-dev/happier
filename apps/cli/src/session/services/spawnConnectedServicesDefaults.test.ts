@@ -1,28 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-import type { StoredCredentials } from '@/persistence';
-
-const mocks = vi.hoisted(() => ({
-  bootstrapAccountSettingsContext: vi.fn(),
-}));
-
-vi.mock('@/settings/accountSettings/bootstrapAccountSettingsContext', () => ({
-  bootstrapAccountSettingsContext: mocks.bootstrapAccountSettingsContext,
-}));
-vi.mock('@/agent/catalog/registry', () => ({
-  resolveCatalogAgentConnectedAccountServiceIds: (agentId: string) => agentId === 'claude'
-    ? ['happier.agent.claude/anthropic', 'happier.agent.claude/claude-subscription']
-    : agentId === 'codex'
-      ? ['happier.agent.codex/openai-codex']
-      : [],
-}));
+import { describe, expect, it, vi } from 'vitest';
+import { ConnectedPurposeCatalogV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { QualifiedConnectedAccountPurposeBindingsV1Schema } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import { resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import {
   createSpawnConnectedServicesTeamResourceCatalogResolver,
   mergeSessionTeamCredentialBindingIntents,
   resolvePurposeTeamCredentialBindingIntents,
-  resolveSessionSpawnConnectedServicesDefaultsPayload,
   resolveSpawnConnectedServicesDefaultDisposition,
   resolveSpawnConnectedServicesDefaults,
 } from './spawnConnectedServicesDefaults';
@@ -36,10 +20,6 @@ const CODEX_CONSUMER = CODEX_SCOPE?.purpose.consumer ?? { pluginId: 'missing', l
 const CODEX_PURPOSE = CODEX_SCOPE?.purpose.purpose ?? 'missing';
 
 describe('resolveSpawnConnectedServicesDefaults', () => {
-  beforeEach(() => {
-    mocks.bootstrapAccountSettingsContext.mockReset();
-  });
-
   it('reads every recipient-catalog continuation before resolving a Team default', async () => {
     const resource = {
       id: 'resource-page-two', teamId: 'team-a', displayName: 'Page two', resourceRevision: 1,
@@ -65,53 +45,6 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
       actionId: 'teams.credentials.entitled.list',
       input: { teamId: 'team-a', cursor: 'recipient-page-2' },
       context: { surface: 'cli', serverId: 'home-a' },
-    });
-  });
-
-  it('resolves connected-service defaults from plain account Settings with token-only credentials', async () => {
-    const credentials = {
-      token: 'token-only',
-      encryption: null,
-    } satisfies StoredCredentials;
-    mocks.bootstrapAccountSettingsContext.mockResolvedValue({
-      settings: {
-        connectedServicesDefaultAuthByAgentIdV1: {
-          v: 1,
-          bindingsByAgentId: {
-            codex: {
-              v: 1,
-              bindingsByServiceId: {
-                'openai-codex': {
-                  source: 'connected',
-                  selection: 'profile',
-                  profileId: 'primary',
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    await expect(resolveSessionSpawnConnectedServicesDefaultsPayload({
-      agentId: 'codex',
-      credentials,
-    })).resolves.toMatchObject({
-      connectedServices: {
-        bindingsByServiceId: {
-          'happier.agent.codex/openai-codex': {
-            source: 'connected',
-            selection: 'profile',
-            profileId: 'primary',
-          },
-        },
-      },
-      connectedServicesUpdatedAt: expect.any(Number),
-    });
-    expect(mocks.bootstrapAccountSettingsContext).toHaveBeenCalledWith({
-      credentials,
-      mode: 'blocking',
-      deps: { applySideEffects: expect.any(Function) },
     });
   });
 
@@ -310,7 +243,9 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
     },
   ])('spawns with the Team default chosen on the Agent page, stored as $label', ({ purposeBindings }) => {
     const selection = agentPageTeamSelection;
-    const agentPageSettings = { connectedAccountPurposeBindingsV1: purposeBindings };
+    const purposeCatalog = { status: 'ready' as const, revision: 4,
+      record: { key: 'purposes' as const,
+        value: ConnectedPurposeCatalogV1Schema.parse(QualifiedConnectedAccountPurposeBindingsV1Schema.parse(purposeBindings)) } };
     const catalog = {
       serverId: 'home-a',
       accountId: 'recipient-account',
@@ -328,7 +263,7 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
     };
 
     expect(resolveSpawnConnectedServicesDefaultDisposition({
-      agentId: 'codex', accountSettings: agentPageSettings, teamCredentialResourceCatalog: catalog,
+      agentId: 'codex', accountSettings: {}, purposeCatalog, teamCredentialResourceCatalog: catalog,
     })).toEqual({
       kind: 'connected',
       bindings: { v: 2, bindingsByServiceId: { 'happier.agent.codex/openai-codex': selection } },

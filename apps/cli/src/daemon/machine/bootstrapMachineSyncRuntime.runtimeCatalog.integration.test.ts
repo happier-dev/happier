@@ -241,6 +241,7 @@ describe('bootstrapMachineSyncRuntime', () => {
                 return () => {};
             }),
             onAccountSettingsVersionHint: vi.fn(() => () => {}),
+            onAccountProjectRowsChanged: vi.fn(() => () => {}),
             onPendingSessionActivationHint: vi.fn(() => () => {}),
             onSessionDeletedChange: vi.fn(() => () => {}),
             onSessionAccessRevoked: vi.fn(() => () => {}),
@@ -781,6 +782,7 @@ describe('bootstrapMachineSyncRuntime', () => {
             onUpdate: vi.fn(() => () => {}),
             onConnectionStateChange: vi.fn(() => () => {}),
             onAccountSettingsVersionHint: vi.fn(() => () => {}),
+            onAccountProjectRowsChanged: vi.fn(() => () => {}),
             onPendingSessionActivationHint: vi.fn(() => () => {}),
             onSessionDeletedChange: vi.fn(() => () => {}),
             onSessionAccessRevoked: vi.fn(() => () => {}),
@@ -912,6 +914,7 @@ describe('bootstrapMachineSyncRuntime', () => {
             registerLiveStreamRelayRoutes: vi.fn(),
             onUpdate: vi.fn(() => () => {}),
             onAccountSettingsVersionHint: vi.fn(() => () => {}),
+            onAccountProjectRowsChanged: vi.fn(() => () => {}),
             onPendingSessionActivationHint: vi.fn(() => () => {}),
             onSessionDeletedChange: vi.fn(() => () => {}),
             onSessionAccessRevoked: vi.fn(() => () => {}),
@@ -1086,6 +1089,7 @@ describe('bootstrapMachineSyncRuntime', () => {
             onUpdate: vi.fn(() => () => {}),
             onConnectionStateChange: vi.fn(() => () => {}),
             onAccountSettingsVersionHint: vi.fn(() => () => {}),
+            onAccountProjectRowsChanged: vi.fn(() => () => {}),
             connect: vi.fn((options: { onConnect?: () => Promise<void> | void }) => {
                 connectOptionsRef.current = options;
             }),
@@ -1266,6 +1270,7 @@ describe('bootstrapMachineSyncRuntime', () => {
                 };
             }),
             onAccountSettingsVersionHint: vi.fn(() => () => {}),
+            onAccountProjectRowsChanged: vi.fn(() => () => {}),
             onPendingSessionActivationHint: vi.fn(() => () => {}),
             onSessionDeletedChange: vi.fn(() => () => {}),
             onSessionAccessRevoked: vi.fn(() => () => {}),
@@ -2342,6 +2347,7 @@ describe('bootstrapMachineSyncRuntime', () => {
             registerLiveStreamRelayRoutes: vi.fn(),
             onUpdate: vi.fn(() => () => {}),
             onAccountSettingsVersionHint: vi.fn(() => () => {}),
+            onAccountProjectRowsChanged: vi.fn(() => () => {}),
             onPendingSessionActivationHint: vi.fn(() => () => {}),
             onSessionDeletedChange: vi.fn(() => () => {}),
             onSessionAccessRevoked: vi.fn(() => () => {}),
@@ -2445,6 +2451,7 @@ describe('bootstrapMachineSyncRuntime', () => {
             registerLiveStreamRelayRoutes: vi.fn(),
             onUpdate: vi.fn(() => () => {}),
             onAccountSettingsVersionHint: vi.fn(() => () => {}),
+            onAccountProjectRowsChanged: vi.fn(() => () => {}),
             onPendingSessionActivationHint: vi.fn(() => () => {}),
             onSessionDeletedChange: vi.fn(() => () => {}),
             onSessionAccessRevoked: vi.fn(() => () => {}),
@@ -2553,6 +2560,7 @@ describe('bootstrapMachineSyncRuntime', () => {
             registerLiveStreamRelayRoutes: vi.fn(),
             onUpdate: vi.fn(() => () => {}),
             onAccountSettingsVersionHint: vi.fn(() => () => {}),
+            onAccountProjectRowsChanged: vi.fn(() => () => {}),
             onPendingSessionActivationHint: vi.fn(() => () => {}),
             onSessionDeletedChange: vi.fn(() => () => {}),
             onSessionAccessRevoked: vi.fn(() => () => {}),

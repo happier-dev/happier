@@ -7,13 +7,52 @@ import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents
 
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { readLeasedAgentProviderRequirements } from '@/plugins/runtime/providerBindings/adapter';
-import { prepareDirectProviderLaunch } from '@/providers/lifecycle/prepareDirectLaunch';
+import { prepareDirectProviderLaunch, type DirectManagedProviderEndpointPreparer } from '@/providers/lifecycle/prepareDirectLaunch';
+import { prepareProviderLaunch } from '@/providers/lifecycle/prepareLaunch';
+import type { ProviderLaunchCleanup } from '@/providers/lifecycle/resourceScope';
 import { createProviderRuntimeStateStore } from '@/providers/runtimeState';
 import { createRuntimeProviderSpawnAuthorizationAttempt } from '@/providers/spawn/authorize';
 import { createProviderRedactionLease } from '@/providers/spawn/redaction';
+import type { ProviderRuntimeModelProjectionReader } from '@/providers/spawn/runtimeCatalog';
+import type { ResolveManagedProviderPurposeBindingIntent } from '@/providers/managed/resolvePurposeBindingSnapshot';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { createExecutionRunCodedError } from '../errors';
 
 type Cleanup = (() => void | Promise<void>) | null;
+
+type ExecutionRunProviderSelectionInput = Readonly<{
+    selection: ProviderBoundModelRef;
+    backendTarget: BackendTargetRefV2Input;
+    machineId?: string;
+    agentId: string;
+    runId: string;
+    connectedServices?: ConnectedServiceBindingsV2 | null;
+    featureEnabled: boolean;
+    happyHomeDir: string;
+    accountSettingsSnapshot?: ActiveAccountSettingsSnapshot | null;
+    resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
+    readModelProjection?: ProviderRuntimeModelProjectionReader;
+}>;
+
+/** Authorizes a rematched child choice without materializing credentials or launching a runtime. */
+export async function admitExecutionRunInheritedProviderSelection(input: ExecutionRunProviderSelectionInput): Promise<void> {
+    if (input.selection.providerConnectionId === null) return;
+    validateExecutionRunProviderSelectionInput(input);
+    const lease = await acquireAuthoritativePluginRuntimeRegistryLease({ happyHomeDir: input.happyHomeDir });
+    try {
+        const prepared = await prepareProviderLaunch(createExecutionRunProviderPreparation(input, lease));
+        if (!prepared.ok) throw inheritedProviderRefusal(prepared.error);
+        if (prepared.kind !== 'provider') {
+            throw inheritedProviderRefusal(createProviderErrorV1('provider_incompatible_with_agent', {
+                connectionId: input.selection.providerConnectionId,
+                ...(input.machineId ? { machineId: input.machineId } : {}),
+            }));
+        }
+        await prepared.attempt.cleanupOnFailure();
+    } finally {
+        await lease.release();
+    }
+}
 
 export type PreparedExecutionRunProviderLaunch = Readonly<{
     environment: Readonly<Record<string, string>>;
@@ -48,6 +87,67 @@ function refusal(error: ProviderErrorV1): Error & { code: string } {
     return Object.assign(new Error(error.code), { code: error.code });
 }
 
+function inheritedProviderRefusal(error: ProviderErrorV1): Error {
+    switch (error.code) {
+        case 'provider_incompatible_with_agent':
+        case 'provider_compatibility_unverified':
+        case 'provider_agent_runtime_unsupported':
+        case 'provider_model_not_found':
+        case 'provider_model_unloaded': {
+            const code = 'execution_run_child_choice_required';
+            return Object.assign(createExecutionRunCodedError(code,
+                'Choose a Provider and exact model supported by the child Agent.'), { code, details: { providerError: error } });
+        }
+        default: return refusal(error);
+    }
+}
+
+function validateExecutionRunProviderSelectionInput(input: ExecutionRunProviderSelectionInput): void {
+    const context = {
+        connectionId: input.selection.providerConnectionId ?? undefined,
+        ...(input.machineId ? { machineId: input.machineId } : {}),
+    };
+    if (!input.runId.trim()) throw refusal(createProviderErrorV1('provider_agent_runtime_unsupported', context));
+    if (!input.accountSettingsSnapshot) throw refusal(createProviderErrorV1('provider_connection_not_found', context));
+}
+
+function createExecutionRunProviderPreparation(
+    input: ExecutionRunProviderSelectionInput,
+    lease: Awaited<ReturnType<typeof acquireAuthoritativePluginRuntimeRegistryLease>>,
+): Parameters<typeof prepareProviderLaunch>[0] {
+    return {
+        selection: { v: 1, ref: input.selection, updatedAt: Date.now() },
+        backendTarget: input.backendTarget,
+        machineId: input.machineId,
+        agentId: input.agentId,
+        previousBinding: null,
+        confirmation: null,
+        connectedServices: input.connectedServices ?? null,
+        featureEnabled: input.featureEnabled,
+        resolvePrerequisites: async () => {
+            const requirements = readLeasedAgentProviderRequirements({ lease, agentId: input.agentId });
+            return requirements
+                ? { ok: true as const }
+                : { ok: false as const, error: createProviderErrorV1('provider_incompatible_with_agent', {
+                    connectionId: input.selection.providerConnectionId ?? undefined,
+                    ...(input.machineId ? { machineId: input.machineId } : {}),
+                }) };
+        },
+        createAuthorizationAttempt: async ({ selection, machineId, agentTargetKey, agentId }) =>
+            createRuntimeProviderSpawnAuthorizationAttempt({
+                selection, machineId, agentTargetKey, agentId, lease,
+                // Each child is authorized against its owning Account, never
+                // the process-global Account of another active Session.
+                getAccountSettingsSnapshot: () => input.accountSettingsSnapshot ?? null,
+                runtimeStateStore: createProviderRuntimeStateStore({ happyHomeDir: input.happyHomeDir, machineId }),
+                materializationBaseDir: join(input.happyHomeDir, 'providers', 'materialized'),
+                scope: { kind: 'execution_run', executionRunId: input.runId },
+                resolveManagedPurposeBindingIntent: input.resolveManagedPurposeBindingIntent,
+                readModelProjection: input.readModelProjection,
+            }),
+    };
+}
+
 const nativeLaunch = Object.freeze({
     environment: Object.freeze({}),
     unsetEnvKeys: Object.freeze([]),
@@ -73,6 +173,10 @@ export async function prepareExecutionRunProviderLaunch(input: Readonly<{
     happyHomeDir: string;
     accountSettingsSnapshot?: ActiveAccountSettingsSnapshot | null;
     prepareTeamCredentialProviderBinding?: ExecutionRunTeamCredentialProviderBindingPreparer;
+    resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
+    readModelProjection?: ProviderRuntimeModelProjectionReader;
+    prepareManagedEndpoint?: DirectManagedProviderEndpointPreparer;
+    retainCleanup?: (cleanup: ProviderLaunchCleanup) => void;
 }>): Promise<PreparedExecutionRunProviderLaunch> {
     if (!input.selection && input.prepareTeamCredentialProviderBinding) {
         const teamBinding = await input.prepareTeamCredentialProviderBinding({
@@ -121,83 +225,25 @@ export async function prepareExecutionRunProviderLaunch(input: Readonly<{
     if (!input.selection || input.selection.providerConnectionId === null) {
         return nativeLaunch;
     }
-    if (!input.runId.trim()) {
-        throw refusal(createProviderErrorV1('provider_agent_runtime_unsupported', {
-            connectionId: input.selection.providerConnectionId,
-            ...(input.machineId ? { machineId: input.machineId } : {}),
-        }));
-    }
-    if (!input.accountSettingsSnapshot) {
-        throw refusal(createProviderErrorV1('provider_connection_not_found', {
-            connectionId: input.selection.providerConnectionId,
-            ...(input.machineId ? { machineId: input.machineId } : {}),
-        }));
-    }
+    const providerInput = { ...input, selection: input.selection };
+    validateExecutionRunProviderSelectionInput(providerInput);
 
     const lease = await acquireAuthoritativePluginRuntimeRegistryLease({
         happyHomeDir: input.happyHomeDir,
     });
-    const selection = Object.freeze({
-        v: 1 as const,
-        ref: input.selection,
-        updatedAt: Date.now(),
-    });
+    const { resolvePrerequisites, createAuthorizationAttempt, ...launchInput } = createExecutionRunProviderPreparation(providerInput, lease);
     const direct = await prepareDirectProviderLaunch({
-        selection,
-        backendTarget: input.backendTarget,
-        machineId: input.machineId,
-        agentId: input.agentId,
+        ...launchInput,
         scope: { kind: 'execution_run', executionRunId: input.runId },
-        previousBinding: null,
-        confirmation: null,
-        connectedServices: input.connectedServices ?? null,
-        featureEnabled: input.featureEnabled,
     }, {
         initialResources: [{
             onFailure: lease.release,
             onExit: lease.release,
         }],
-        resolvePrerequisites: async () => {
-            const requirements = readLeasedAgentProviderRequirements({
-                lease,
-                agentId: input.agentId,
-            });
-            return requirements
-                ? { ok: true as const }
-                : {
-                    ok: false as const,
-                    error: createProviderErrorV1('provider_incompatible_with_agent', {
-                        connectionId: input.selection!.providerConnectionId ?? undefined,
-                        ...(input.machineId ? { machineId: input.machineId } : {}),
-                    }),
-                };
-        },
-        createAuthorizationAttempt: async ({
-            selection: authorizedSelection,
-            machineId,
-            agentTargetKey,
-            agentId,
-        }) => createRuntimeProviderSpawnAuthorizationAttempt({
-            selection: authorizedSelection,
-            machineId,
-            agentTargetKey,
-            agentId,
-            lease,
-            // A Run is authorized against its owning Account snapshot. It must
-            // never borrow the process-global active Account when another
-            // Session becomes active while this runtime is provisioning.
-            getAccountSettingsSnapshot: () => input.accountSettingsSnapshot ?? null,
-            runtimeStateStore: createProviderRuntimeStateStore({
-                happyHomeDir: input.happyHomeDir,
-                machineId,
-            }),
-            materializationBaseDir: join(
-                input.happyHomeDir,
-                'providers',
-                'materialized',
-            ),
-            scope: { kind: 'execution_run', executionRunId: input.runId },
-        }),
+        resolvePrerequisites,
+        createAuthorizationAttempt,
+        prepareManagedEndpoint: input.prepareManagedEndpoint,
+        retainCleanup: input.retainCleanup,
     });
 
     if (!direct.ok) {

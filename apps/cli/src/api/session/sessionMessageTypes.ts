@@ -73,6 +73,7 @@ export type ACPMessageData = AcpSidechainMeta & (
 export type ACPProvider = string;
 
 export type SessionEventMessage =
+  | Extract<TranscriptRawAgentEventV1, { type: 'prompt-composition' }>
   | Extract<TranscriptRawAgentEventV1, { type: 'worker-update' | 'worker-report' }>
   | (TranscriptEventLifecycle & { type: 'switch'; mode: 'local' | 'remote' })
   | (TranscriptEventLifecycle & { type: 'message'; message: string })

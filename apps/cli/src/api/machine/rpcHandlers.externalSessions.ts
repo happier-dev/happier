@@ -9,6 +9,8 @@ import type { ActionExecuteResult, ActionId, ExternalSessionTranscriptInvalidati
 import { createExternalSessionFollowLeaseManager } from '@/api/session/external/leases/createExternalSessionFollowLeaseManager';
 import { writeExternalSessionFollowStatus } from '@/api/session/external/backgroundFollow/externalSessionBackgroundFollowMetadata';
 import { createExternalSessionObservationDaemonProjection } from '@/api/session/external/leases/createExternalSessionObservationDaemonProjection';
+import { createNativeUsageDaemonRuntime, type NativeUsageDaemonRuntimeInput } from '@/usage/collector/nativeUsageDaemonRuntime';
+import { registerMachineUsageSourceRpcHandlers } from './rpcHandlers.usageSources';
 import { applyExternalSessionStatusDemandBatch } from '@/api/session/external/leases/applyExternalSessionStatusDemandBatch';
 import {
   startExternalSessionPassiveObservation,
@@ -134,6 +136,7 @@ import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { logExternalSessionsInternalError } from '@/session/actions/externalSessions/responseErrors';
 import type { DeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
+import type { MemoryWorkerHandle } from '@/daemon/memory/memoryWorker';
 
 export type ExternalSessionArchivedStateChange = Readonly<{
   sessionId: string;
@@ -514,6 +517,8 @@ function createExternalSessionGenericRpcActionExecutor(
 }
 
 export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
+  memoryWorker?: Pick<MemoryWorkerHandle, 'attachExternalObservation'>;
+  nativeUsage?: Omit<NativeUsageDaemonRuntimeInput, 'observation'>;
   actionOperations?: Pick<import('@/daemon/actionOperations/createHostActionOperationRuntime').HostActionOperationRuntime, 'attachOwner'>;
   rpcHandlerManager: RpcHandlerManager;
   operationExclusion?: ExternalSessionOperationExclusionOwner;
@@ -590,6 +595,11 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
     isTranscriptRefreshDemanded: (input) =>
       followLeaseManager.hasTranscriptDemand(input),
   });
+  const nativeUsage = params.nativeUsage
+    ? createNativeUsageDaemonRuntime({ ...params.nativeUsage, observation: observationProjection })
+    : null;
+  const detachMemoryObservation = params.memoryWorker?.attachExternalObservation?.(observationProjection);
+  if (nativeUsage) registerMachineUsageSourceRpcHandlers({ rpcHandlerManager, ...nativeUsage.owner });
   const statusDemand = params.statusDemand;
   const statusDemandBinding = statusDemand
     ? bindExternalSessionStatusDemand({
@@ -1184,11 +1194,17 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
       name: 'externalSessionPassiveFollow',
       pause: () => passiveObservation?.pause(),
       resume: async () => {
+        try {
+          await nativeUsage?.flushPending();
+        } catch (error) {
+          logExternalSessionsInternalError('usage_accounting.reconnect', error);
+        }
         await repairOperationProgressProjections();
         await passiveObservation?.resume();
       },
     },
     async dispose() {
+      detachMemoryObservation?.();
       detachActionOperationOwner?.();
       const cleanupFailures: Error[] = [];
       const recordCleanupFailure = (phase: string, error: unknown): void => {
@@ -1255,6 +1271,10 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
       await runCleanup(
         'follow_lease_manager',
         async () => await followLeaseManager.dispose(),
+      );
+      await runCleanup(
+        'native_usage_accounting',
+        async () => await nativeUsage?.dispose(),
       );
       await runCleanup(
         'observation_projection',

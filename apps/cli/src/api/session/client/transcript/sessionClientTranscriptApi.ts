@@ -17,6 +17,7 @@ import type {
     SessionMessageProvenance,
     SessionTranscriptObservationProvenanceV1,
 } from '@happier-dev/protocol';
+import type { SessionTranscriptSurfaceItemReferenceV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { runSupervisedRequest } from '@/api/connection/requestSupervision/runSupervisedRequest';
 import type { ManagedConnectionSupervisor } from '@happier-dev/connection-supervisor';
 
@@ -109,6 +110,7 @@ type EnqueueCommittedTranscriptMessageParams = Readonly<{
     createdAt: number;
     updatedAt: number;
     provenance: SessionTranscriptObservationProvenanceV1;
+    surfaceItemReference?: SessionTranscriptSurfaceItemReferenceV1;
     admission?: CommittedTranscriptAdmission;
 }>;
 
@@ -226,6 +228,7 @@ async function settleSessionInputAdmissionFailure(
 export type SessionClientTranscriptApiDeps = Readonly<{
     token: string;
     serverUrl?: string;
+    serverId?: string;
     sessionId: string;
     turnAssistantTextSnapshotStore?: TurnAssistantTextSnapshotStore;
     outboundShapeLogger: {
@@ -474,6 +477,7 @@ export function createSessionClientTranscriptApi(
 
     const getTranscriptSendPort = (): SessionClientTranscriptSendPort => ({
         sessionId: deps.sessionId,
+        serverId: deps.serverId,
         turnAssistantTextSnapshotStore: deps.turnAssistantTextSnapshotStore,
         socket: {
             connected: deps.getSocket().connected,
@@ -601,7 +605,7 @@ export function createSessionClientTranscriptApi(
         body: ACPMessageData,
         opts: CommittedTranscriptMessageOptions,
     ): Promise<Readonly<{ persisted: boolean; delivered: boolean }>> => {
-        const { normalizedBody, payload, localId, sidechainId, messageRole } = await prepareCommittedAgentMessageViaPort(
+        const { normalizedBody, payload, localId, sidechainId, messageRole, surfaceItemReference } = await prepareCommittedAgentMessageViaPort(
             getTranscriptSendPort(),
             provider,
             body,
@@ -637,6 +641,7 @@ export function createSessionClientTranscriptApi(
             createdAt,
             updatedAt,
             provenance: opts.provenance,
+            ...(surfaceItemReference === undefined ? {} : { surfaceItemReference }),
             ...(opts.admission === undefined ? {} : { admission: opts.admission }),
         });
         if (result.delivered) {

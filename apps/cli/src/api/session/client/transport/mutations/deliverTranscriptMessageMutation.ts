@@ -38,6 +38,7 @@ type TranscriptSocketDeliveryResult =
 async function trySocketTranscriptMutation(params: Readonly<{
     socket: SessionClientDurableMutationSocket;
     mutation: TranscriptMessageAppendMutationV1;
+    version: 1 | 2;
 }>): Promise<TranscriptSocketDeliveryResult> {
     if (params.socket.connected !== true) return { status: 'unavailable' };
     try {
@@ -47,7 +48,7 @@ async function trySocketTranscriptMutation(params: Readonly<{
             socket,
             event: SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1,
             payload: {
-                v: 1,
+                v: params.version,
                 sessionId: params.mutation.sessionId,
                 localId: params.mutation.localId,
                 sidechainId: params.mutation.sidechainId ?? null,
@@ -56,6 +57,8 @@ async function trySocketTranscriptMutation(params: Readonly<{
                 createdAt: params.mutation.createdAt,
                 updatedAt: params.mutation.updatedAt,
                 provenance: params.mutation.provenance,
+                ...(params.version === 2 && params.mutation.surfaceItemReference !== undefined
+                    ? { surfaceItemReference: params.mutation.surfaceItemReference } : {}),
                 ...(params.mutation.sessionEventType ? { sessionEventType: params.mutation.sessionEventType } : {}),
             },
         });
@@ -161,11 +164,13 @@ export async function deliverTranscriptMessageMutation(params: Readonly<{
             : { status: 'unavailable' as const };
         return toTranscriptMessageMutationDeliveryResult(releasedResult);
     }
-    if (params.connectionContract?.transcriptTransport.mode !== 'session_transcript_observation_v1') {
+    const mode = params.connectionContract?.transcriptTransport.mode;
+    if (mode !== 'session_transcript_observation_v1' && mode !== 'session_transcript_observation_v2') {
         return { delivered: false, reason: 'transcript_message_transport_unavailable' };
     }
     const socketResult = params.socket
-        ? await trySocketTranscriptMutation({ socket: params.socket, mutation })
+        ? await trySocketTranscriptMutation({ socket: params.socket, mutation,
+            version: mode === 'session_transcript_observation_v2' ? 2 : 1 })
         : { status: 'unavailable' as const };
     return toTranscriptMessageMutationDeliveryResult(socketResult);
 }

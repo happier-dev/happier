@@ -1,6 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { createCustomAcpAdmissionRuntimeFixture } from './customAcpAdmission.testkit';
 
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
+import { AcpCatalogRecordV1Schema, type AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 
 vi.mock('@/ui/logger', () => ({
     logger: {
@@ -12,6 +14,10 @@ vi.mock('@/ui/logger', () => ({
 }));
 
 import { prepareExecuteSpawnSessionRequest } from './prepareExecuteSpawnSessionRequest';
+
+let runtime: Awaited<ReturnType<typeof createCustomAcpAdmissionRuntimeFixture>>;
+beforeAll(async () => { runtime = await createCustomAcpAdmissionRuntimeFixture(); });
+afterAll(async () => { await runtime?.dispose(); });
 
 const CONFIGURED_BACKEND_ID = 'review-bot';
 const PROVIDER_SESSION_ID = 'provider-session-42';
@@ -42,9 +48,15 @@ function accountSettingsWithConfiguredBackend(supportsLoadSession: boolean) {
     } as const;
 }
 
+function readyCatalog(supportsLoadSession: boolean): AcpCatalogSnapshotV1 {
+    const { transportProfile: _transportProfile, ...definition } = accountSettingsWithConfiguredBackend(supportsLoadSession).acpCatalogSettingsV1.backends[0];
+    return { status: 'ready', revision: 4, record: AcpCatalogRecordV1Schema.parse({ v: 1, definitions: [definition] }) };
+}
+
 async function prepareConfiguredAcpResume(params: Readonly<{
     accountSettings?: Readonly<Record<string, unknown>>;
     backendId?: string;
+    acpCatalogSnapshot?: AcpCatalogSnapshotV1;
 }>) {
     return await prepareExecuteSpawnSessionRequest({
         request: {
@@ -61,6 +73,7 @@ async function prepareConfiguredAcpResume(params: Readonly<{
                 approvedNewDirectoryCreation: true,
             },
             ...(params.accountSettings ? { accountSettings: params.accountSettings } : {}),
+            acpCatalogSnapshot: params.acpCatalogSnapshot,
             credentials: { token: 'token', encryption: null },
         },
         validateEnvVarRecordStrict: () => ({ ok: true, env: {} }),
@@ -70,22 +83,21 @@ async function prepareConfiguredAcpResume(params: Readonly<{
 describe('prepareExecuteSpawnSessionRequest Account-configured ACP resume admission', () => {
     it('admits native resume when the resolved Account declaration proves load-session support', async () => {
         const result = await prepareConfiguredAcpResume({
-            accountSettings: accountSettingsWithConfiguredBackend(true),
+            accountSettings: {}, acpCatalogSnapshot: readyCatalog(true),
         });
 
         expect(result).toMatchObject({
             effectiveResume: PROVIDER_SESSION_ID,
-            catalogAgentId: null,
+            runtimeDescriptorV1: { agent: { definitionId: CONFIGURED_BACKEND_ID } },
             effectiveBackendTargetV2: expect.objectContaining({
-                sourceKind: 'configured',
-                backendId: CONFIGURED_BACKEND_ID,
+                sourceKind: 'built_in',
             }),
         });
     });
 
     it('refuses native resume when the Account declaration does not prove load-session support', async () => {
         const result = await prepareConfiguredAcpResume({
-            accountSettings: accountSettingsWithConfiguredBackend(false),
+            accountSettings: {}, acpCatalogSnapshot: readyCatalog(false),
         });
 
         expect(result).toEqual({
@@ -96,24 +108,25 @@ describe('prepareExecuteSpawnSessionRequest Account-configured ACP resume admiss
     });
 
     it('fails closed when the configured backend is absent from the admitted Account snapshot', async () => {
-        const result = await prepareConfiguredAcpResume({});
+        const result = await prepareConfiguredAcpResume({ acpCatalogSnapshot: { status: 'ready', revision: 4, record: { v: 1, definitions: [] } } });
 
         expect(result).toEqual({
             type: 'error',
-            errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED,
-            errorMessage: `Resume is not supported for configured ACP backend '${CONFIGURED_BACKEND_ID}'.`,
+            errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+            errorMessage: `Configured ACP backend '${CONFIGURED_BACKEND_ID}' is unavailable.`,
         });
     });
 
-    it('never consults the built-in Agent vendor-resume owner for a configured backend', async () => {
-        const catalogHooks = await import('@/session/runtime/catalogHooks');
-        const getVendorResumeSupport = vi.spyOn(catalogHooks, 'getVendorResumeSupport');
-
-        await prepareConfiguredAcpResume({
-            accountSettings: accountSettingsWithConfiguredBackend(true),
-        });
-
-        expect(getVendorResumeSupport).not.toHaveBeenCalled();
-        getVendorResumeSupport.mockRestore();
+    it('refuses unavailable and partial destination facts without activating a retained Settings root', async () => {
+        const safeRepairRecord = readyCatalog(true);
+        if (safeRepairRecord.status !== 'ready') throw new Error('Expected a ready test record');
+        for (const acpCatalogSnapshot of [
+            { status: 'unavailable', reason: 'unreachable' },
+            { status: 'partial', reason: 'incomplete-inventory', record: safeRepairRecord.record,
+                diagnostics: [{ path: 'backends[1]', reason: 'invalid_definition' }] },
+        ] satisfies AcpCatalogSnapshotV1[]) {
+            expect(await prepareConfiguredAcpResume({ accountSettings: accountSettingsWithConfiguredBackend(true), acpCatalogSnapshot }))
+                .toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST });
+        }
     });
 });

@@ -8,6 +8,7 @@ import type { SimulatorPreviewRoutes } from './devices/simulator/previewRoutes.t
 import type { DaemonLocalServicesMachineRpcRoutes } from '@/rpc/handlers/daemonLocalServices';
 import type { LocalServicePreviewRoutes } from './local/services/preview/routes';
 import type { ConnectedAccountDaemonRuntime } from './connectedServices/ConnectedAccountDaemonRuntime';
+import type { ConnectedServicePoolSelectionRead } from '@/api/machine/rpcHandlers.connectedAccounts';
 
 export type DaemonMachineRpcRouteRegistrar = Pick<
   ApiMachineClient,
@@ -20,6 +21,7 @@ export type DaemonMachineRpcRouteRegistrar = Pick<
   | 'registerSimulatorPreviewRoutes'
   | 'registerConnectedAccountDaemonRuntime'
   | 'registerConnectedAccountPurposeBindingRuntime'
+  | 'registerConnectedServicePoolSelectionRead'
 >;
 
 type DaemonMachineConnectedAccountPurposeBindingRuntime = Parameters<
@@ -35,6 +37,7 @@ export type DaemonMachineRpcRouteAttachmentCache = Readonly<{
   attachBrowserRecordingRoutes(routes: BrowserRecordingRoutes): void;
   attachSimulatorPreviewRoutes(routes: SimulatorPreviewRoutes): void;
   attachConnectedAccountDaemonRuntime(runtime: ConnectedAccountDaemonRuntime): void;
+  attachConnectedServicePoolSelectionRead(read: ConnectedServicePoolSelectionRead): void;
   attachConnectedAccountPurposeBindingRuntime(
     runtime: DaemonMachineConnectedAccountPurposeBindingRuntime,
   ): void;
@@ -53,6 +56,7 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
   let browserRecordingRoutes: BrowserRecordingRoutes | null = null;
   let simulatorPreviewRoutes: SimulatorPreviewRoutes | null = null;
   let connectedAccountDaemonRuntime: ConnectedAccountDaemonRuntime | null = null;
+  let connectedServicePoolSelectionRead: ConnectedServicePoolSelectionRead | null = null;
   let connectedAccountPurposeBindingRuntime:
     DaemonMachineConnectedAccountPurposeBindingRuntime | null = null;
   const connectedAccountRuntimeByRegistrar =
@@ -159,6 +163,11 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
       if (registrar) registerConnectedAccountRuntime(registrar);
     },
 
+    attachConnectedServicePoolSelectionRead(read) {
+      connectedServicePoolSelectionRead = read;
+      input.getApiMachineForSessions()?.registerConnectedServicePoolSelectionRead(read);
+    },
+
     attachConnectedAccountPurposeBindingRuntime(runtime) {
       connectedAccountPurposeBindingRuntime = runtime;
       const registrar = input.getApiMachineForSessions();
@@ -166,12 +175,18 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
     },
 
     prepareApiMachineForSessions(apiMachineForSessions) {
+      if (connectedServicePoolSelectionRead) {
+        apiMachineForSessions.registerConnectedServicePoolSelectionRead(connectedServicePoolSelectionRead);
+      }
       registerConnectedAccountRuntime(apiMachineForSessions);
       registerConnectedAccountPurposeRuntime(apiMachineForSessions);
     },
 
     attachApiMachineForSessions(apiMachineForSessions) {
       if (!apiMachineForSessions) return;
+      if (connectedServicePoolSelectionRead) {
+        apiMachineForSessions.registerConnectedServicePoolSelectionRead(connectedServicePoolSelectionRead);
+      }
       // Authentication commands must be reachable as soon as the replacement
       // machine transport is published; later optional route families must not
       // delay or prevent this canonical command owner from being reattached.

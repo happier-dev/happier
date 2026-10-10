@@ -780,7 +780,10 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
             onHappySessionWebhook: () => {},
             controlToken: 'token',
             handleConnectedServiceRuntimeAuthFailure,
-            resolveConnectedServiceRuntimeAuthResumePromptMode: async () => 'off',
+            resolveConnectedServiceRuntimeAuthResumePromptMode: async ({ sessionId }) => {
+                if (sessionId !== 'sess_claude_group') throw new Error('requester_session_not_current');
+                return 'off';
+            },
             runtimeAuthRecoveryScheduler,
         } as Parameters<typeof createDaemonControlApp>[0] & {
             handleConnectedServiceRuntimeAuthFailure: typeof handleConnectedServiceRuntimeAuthFailure;

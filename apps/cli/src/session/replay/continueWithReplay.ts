@@ -1,7 +1,7 @@
 import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
 import { isPermissionMode } from '@/api/types';
-import { readStoredCredentials } from '@/persistence';
+import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import { buildReplaySeededSpawnRecipe } from '@/session/replay/buildReplaySeededSpawnRecipe';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { createSpawnedSession } from '@/session/services/createSpawnedSession';
@@ -37,6 +37,8 @@ export type ContinueSessionWithReplayParams = Readonly<{
 }>;
 
 export type ContinueSessionWithReplayDeps = Readonly<{
+    credentials?: StoredCredentials;
+    isCurrent?: () => Promise<boolean>;
     spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
     runReplaySummaryForDialog?: RunReplaySummaryForDialogFn;
 }>;
@@ -80,7 +82,9 @@ export async function continueSessionWithReplay(
     const maxTextCharsEnv = parseEnvBoundedInt('HAPPIER_REPLAY_MAX_TEXT_CHARS', { min: 1, max: 50_000 }, null);
     const maxTextChars = maxTextCharsEnv ?? undefined;
 
-    const credentials = await readStoredCredentials().catch(() => null);
+    if (deps.isCurrent && !await deps.isCurrent()) return { type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE, errorMessage: 'Requester Session authority is unavailable' };
+    const credentials = deps.credentials ?? await readStoredCredentials().catch(() => null);
     if (!credentials) {
         return {
             type: 'error',
@@ -118,6 +122,8 @@ export async function continueSessionWithReplay(
         };
     }
     const recipe = recipeResult.recipe;
+    if (deps.isCurrent && !await deps.isCurrent()) return { type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE, errorMessage: 'Requester Session authority is unavailable' };
 
     const replaySpawnNonce = normalizeSpawnNonce(spawnNonce) ?? createStableSpawnNonce('session.continue_with_replay', {
         directory,

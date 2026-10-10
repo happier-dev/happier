@@ -174,6 +174,8 @@ export interface SpawnSessionOptions extends SessionCreateOriginFieldsV1 {
   sessionId?: string;
   /** Resume an existing provider session by its provider-owned id. */
   resume?: string;
+  /** Additional deny-only native-state verification for a no-copy handoff launch. */
+  handoffStateTransfer?: 'transfer' | 'existing';
   /** Secret-free source consumed once by the child native Agent session opener. */
   nativeForkSource?: NativeForkSource;
   /**

@@ -1,4 +1,7 @@
 import { request as requestHttp } from 'node:http';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -14,6 +17,10 @@ import {
 import { logger } from '@/ui/logger';
 import { createDaemonControlApp } from './controlServer';
 import type { ConnectedAccountRequestAuthSubject } from './connectedServices/requestAuth/ConnectedAccountRequestAuthService';
+import { createConnectedAccountRequestAuthService } from './connectedServices/requestAuth/ConnectedAccountRequestAuthService';
+import { createConnectedAccountRequestAuthSubjectRegistry } from './connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
+import { readConnectedAccountRequestAuthCapabilityFile } from '@happier-dev/agents/request-auth';
+import { createDaemonAdmissionDrain } from './lifecycle/admissionDrain';
 
 vi.mock('@/ui/logger', () => ({
   logger: {
@@ -92,6 +99,58 @@ function createApp(overrides: Record<string, unknown> = {}) {
 }
 
 describe('daemon private connected-account request-auth routes', () => {
+  it('keeps an accepted native request-auth capability usable during temporary drain, but not final shutdown', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-drain-request-auth-'));
+    const admissionDrain = createDaemonAdmissionDrain();
+    const registry = createConnectedAccountRequestAuthSubjectRegistry();
+    const binding = { purpose, target: { kind: 'account' as const, account: credentialContext.account } };
+    const use = { purpose, materialization: { kind: 'httpHeaders' as const,
+      origin: 'https://api.example.test', headerNames: ['authorization'] } };
+    const subject: ConnectedAccountRequestAuthSubject = {
+      subjectId: 'session:accepted/run:native',
+      isCurrent: () => true,
+      registerRedaction: () => undefined,
+      resolvePurposeUse: (requested) => requested.consumer.pluginId === purpose.consumer.pluginId
+        && requested.consumer.localId === purpose.consumer.localId && requested.purpose === purpose.purpose
+        ? { binding, use } : null,
+      listPurposeUses: () => [{ binding, use }],
+    };
+    const capability = await registry.activate({ subject, materializedRootDir: root,
+      materializationId: 'accepted-native', httpPort: 43_123 });
+    const secret = (await readConnectedAccountRequestAuthCapabilityFile(capability.path))?.capability;
+    expect(secret).toBeTypeOf('string');
+    const requestAuth = createConnectedAccountRequestAuthService({
+      // The credential persistence/provider boundary supplies the current bearer; the
+      // capability, scoped purpose, cache and request lifetime owners all remain real.
+      resolveCurrentBinding: () => ({ account: credentialContext.account,
+        credentialRevision: credentialContext.credentialRevision }),
+      materializeBearer: async () => ({ accessToken: 'accepted-native-bearer' }),
+      refreshAfterAuthFailure: async () => ({ status: 'current_changed' }),
+      reportQuotaFailure: async () => ({ status: 'current_changed' }),
+    });
+    const { app } = createApp({ admissionDrain, connectedAccountRequestAuth: {
+      authenticate: registry.authenticate, lookupRequestAuth: requestAuth.lookupRequestAuth,
+      refreshAfterAuthFailure: requestAuth.refreshAfterAuthFailure,
+      reportQuotaFailure: requestAuth.reportQuotaFailure,
+    } });
+    const lookup = () => app.inject({ method: 'POST', url: CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH,
+      headers: { [CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER]: secret }, payload: { purpose } });
+    try {
+      expect((await lookup()).json()).toMatchObject({ ok: true, value: { accessToken: 'accepted-native-bearer' } });
+      admissionDrain.beginTemporaryDrain();
+      expect((await lookup()).json()).toMatchObject({ ok: true, value: { accessToken: 'accepted-native-bearer' } });
+      admissionDrain.resume();
+      expect((await lookup()).statusCode).toBe(200);
+      admissionDrain.beginShutdown();
+      admissionDrain.resume();
+      expect((await lookup()).json()).toEqual({ ok: false, error: { code: 'request_auth_unavailable' } });
+    } finally {
+      await app.close();
+      await registry.retire(capability);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('accepts only the scoped capability and a purpose-only lookup body', async () => {
     const { app, lookupRequestAuth } = createApp();
     try {

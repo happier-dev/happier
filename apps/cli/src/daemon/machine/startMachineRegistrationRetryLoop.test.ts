@@ -1,9 +1,12 @@
-import type { ManagedEndpointSupervisorState } from '@happier-dev/connection-supervisor';
+import {
+  createManagedEndpointSupervisor,
+  DEFAULT_MANAGED_CONNECTION_POLICY,
+} from '@happier-dev/connection-supervisor';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Machine, MachineMetadata } from '@/api/types';
 import { MachineContentPublicKeyMismatchError } from '@/api/machine/machineRegistrationErrors';
-import { ensureMachineRegistered } from '@/api/machine/ensureMachineRegistered';
+import type { Settings } from '@/persistence';
 import { createDeferred } from '@/testkit/async/deferred';
 import { createHttpStatusError } from '@/api/client/httpStatusError';
 
@@ -12,60 +15,30 @@ import {
   type StartMachineRegistrationRetryLoopParams,
 } from './startMachineRegistrationRetryLoop';
 
-vi.mock('@/api/machine/ensureMachineRegistered', () => ({
-  ensureMachineRegistered: vi.fn(),
+// Settings persistence is a filesystem boundary; keep registration and retry logic real.
+vi.mock('@/persistence', () => ({
+  updateSettings: async (update: (settings: Settings) => Settings) => update({
+    schemaVersion: 6,
+    onboardingCompleted: true,
+  }),
 }));
 
-type RetryWakeSource = Readonly<{
-  reportFailure: (report: Readonly<{ errorMessage?: string }>) => void;
-  invalidate: () => void;
-  subscribe: (listener: (state: ManagedEndpointSupervisorState) => void) => () => void;
-}>;
-
-function createState(
-  phase: ManagedEndpointSupervisorState['phase'],
-  reason: ManagedEndpointSupervisorState['reason'],
-): ManagedEndpointSupervisorState {
-  return {
-    phase,
-    reason,
-    attempt: 0,
-    nextRetryAt: null,
-    lastConnectedAt: phase === 'online' ? Date.now() : null,
-    lastDisconnectedAt: null,
-    lastErrorMessage: null,
-    lastProbe: phase === 'online' ? { status: 'ready' } : null,
-  };
-}
-
-function createRetryWakeSourceHarness(): Readonly<{
-  source: RetryWakeSource;
-  publish: (state: ManagedEndpointSupervisorState) => void;
-  listenerCount: () => number;
-}> {
-  const listeners = new Set<(state: ManagedEndpointSupervisorState) => void>();
-  let state = createState('offline', 'server_unreachable');
-  const source = {
-    reportFailure: vi.fn(),
-    invalidate: vi.fn(),
-    subscribe: vi.fn((listener: (state: ManagedEndpointSupervisorState) => void) => {
-      listeners.add(listener);
-      listener(state);
-      return () => {
-        listeners.delete(listener);
-      };
-    }),
-  } satisfies RetryWakeSource;
-
+function createRetryWakeSourceHarness() {
+  let ready = false;
+  const probeReadiness = vi.fn(async () => ready
+    ? { status: 'ready' as const }
+    : { status: 'server_unreachable' as const });
+  const source = createManagedEndpointSupervisor({
+    ...DEFAULT_MANAGED_CONNECTION_POLICY,
+    probeReadiness,
+  });
   return {
     source,
-    publish: (nextState) => {
-      state = nextState;
-      for (const listener of [...listeners]) {
-        listener(nextState);
-      }
+    probeReadiness,
+    setReady: () => {
+      ready = true;
+      source.invalidate();
     },
-    listenerCount: () => listeners.size,
   };
 }
 
@@ -91,17 +64,14 @@ function createMachine(id: string): Machine {
 }
 
 function createLoopParams(
-  overrides: Partial<StartMachineRegistrationRetryLoopParams> &
-    Readonly<{ machineRegistrationRetryWakeSource?: RetryWakeSource }> = {},
-): StartMachineRegistrationRetryLoopParams & Readonly<{ machineRegistrationRetryWakeSource?: RetryWakeSource }> {
+  overrides: Partial<StartMachineRegistrationRetryLoopParams> = {},
+): StartMachineRegistrationRetryLoopParams {
   let machineId = 'machine-1';
   let shuttingDown = false;
   const shutdown = createDeferred<void>();
   const params = {
     api: {
-      getOrCreateMachine: async () => {
-        throw new Error('ensureMachineRegistered is mocked in this test');
-      },
+      getOrCreateMachine: vi.fn<StartMachineRegistrationRetryLoopParams['api']['getOrCreateMachine']>(),
     },
     metadataForRegistration,
     initialDaemonState: { status: 'running' },
@@ -119,7 +89,7 @@ function createLoopParams(
     isShuttingDown: () => shuttingDown,
     onMachineRegistered: vi.fn(async () => {}),
     ...overrides,
-  } satisfies StartMachineRegistrationRetryLoopParams & Readonly<{ machineRegistrationRetryWakeSource?: RetryWakeSource }>;
+  } satisfies StartMachineRegistrationRetryLoopParams;
 
   return {
     ...params,
@@ -135,137 +105,149 @@ async function flushTimers(): Promise<void> {
 describe('startMachineRegistrationRetryLoop', () => {
   afterEach(() => {
     vi.useRealTimers();
-    vi.mocked(ensureMachineRegistered).mockReset();
   });
 
   it('wakes a retryable endpoint-outage registration retry when readiness returns online', async () => {
     vi.useFakeTimers();
-    const ensureMachineRegisteredMock = vi.mocked(ensureMachineRegistered);
     const retryWakeSource = createRetryWakeSourceHarness();
-
-    ensureMachineRegisteredMock
-      .mockRejectedValueOnce(Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:443'), { code: 'ECONNREFUSED' }))
-      .mockResolvedValueOnce({
-        machineId: 'machine-1',
-        didRotateMachineId: false,
-        machine: createMachine('machine-1'),
-      });
+    await retryWakeSource.source.start();
 
     const params = createLoopParams({
       machineRegistrationRetryWakeSource: retryWakeSource.source,
     });
+    const registrationRequest = vi.mocked(params.api.getOrCreateMachine);
+    registrationRequest
+      .mockRejectedValueOnce(Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:443'), { code: 'ECONNREFUSED' }))
+      .mockResolvedValueOnce(createMachine('machine-1'));
 
     startMachineRegistrationRetryLoop(params);
 
     await flushTimers();
-    expect(ensureMachineRegisteredMock).toHaveBeenCalledTimes(1);
-    expect(ensureMachineRegisteredMock).toHaveBeenCalledWith(
-      expect.objectContaining({ isShuttingDown: expect.any(Function) }),
-    );
-    expect(ensureMachineRegisteredMock.mock.calls[0]?.[0].isShuttingDown?.()).toBe(false);
+    expect(registrationRequest).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(9_999);
-    expect(ensureMachineRegisteredMock).toHaveBeenCalledTimes(1);
+    expect(registrationRequest).toHaveBeenCalledTimes(1);
 
-    retryWakeSource.publish(createState('online', 'initial_connect'));
+    retryWakeSource.setReady();
     await flushTimers();
 
-    expect(ensureMachineRegisteredMock).toHaveBeenCalledTimes(2);
+    expect(registrationRequest).toHaveBeenCalledTimes(2);
     expect(params.onMachineRegistered).toHaveBeenCalledWith({
       machineId: 'machine-1',
       machine: expect.objectContaining({ id: 'machine-1' }),
     });
   });
 
-  it('wakes a retryable server-error registration retry when readiness returns online', async () => {
+  it.each([500, 503])('preserves registration backoff for HTTP %s despite healthy endpoint probes and concurrent resume calls', async (status) => {
     vi.useFakeTimers();
-    const ensureMachineRegisteredMock = vi.mocked(ensureMachineRegistered);
-    const retryWakeSource = createRetryWakeSourceHarness();
-
-    ensureMachineRegisteredMock
-      .mockRejectedValueOnce(createHttpStatusError(503, 'Server encountered an error'))
-      .mockResolvedValueOnce({
-        machineId: 'machine-1',
-        didRotateMachineId: false,
-        machine: createMachine('machine-1'),
-      });
-
+    const shutdown = createDeferred<void>();
+    const secondAttempt = createDeferred<Machine>();
+    const retryWakeSource = createManagedEndpointSupervisor({
+      ...DEFAULT_MANAGED_CONNECTION_POLICY,
+      // The readiness HTTP boundary succeeds while the machine HTTP boundary fails.
+      probeReadiness: async () => ({ status: 'ready' }),
+    });
+    await retryWakeSource.start();
     const params = createLoopParams({
-      machineRegistrationRetryWakeSource: retryWakeSource.source,
+      machineRegistrationRetryBaseDelayMs: 300_000,
+      machineRegistrationRetryMaxDelayMs: 300_000,
+      resolvesWhenShutdownRequested: shutdown.promise,
+      machineRegistrationRetryWakeSource: retryWakeSource,
     });
+    const registrationRequest = vi.mocked(params.api.getOrCreateMachine);
+    registrationRequest
+      .mockRejectedValueOnce(createHttpStatusError(status, 'Machine lookup failed'))
+      .mockReturnValueOnce(secondAttempt.promise)
+      .mockResolvedValueOnce(createMachine('machine-1'));
+    const handle = startMachineRegistrationRetryLoop(params);
+    try {
+      await flushTimers();
+      retryWakeSource.invalidate();
+      handle.resume();
+      handle.resume();
+      await vi.advanceTimersByTimeAsync(299_999);
+      expect(registrationRequest).toHaveBeenCalledTimes(1);
+      expect(params.onMachineRegistered).not.toHaveBeenCalled();
 
-    startMachineRegistrationRetryLoop(params);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(registrationRequest).toHaveBeenCalledTimes(2);
+      retryWakeSource.invalidate();
+      handle.resume();
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect(registrationRequest).toHaveBeenCalledTimes(2);
 
-    await flushTimers();
-    expect(ensureMachineRegisteredMock).toHaveBeenCalledTimes(1);
-
-    await vi.advanceTimersByTimeAsync(9_999);
-    expect(ensureMachineRegisteredMock).toHaveBeenCalledTimes(1);
-
-    retryWakeSource.publish(createState('online', 'initial_connect'));
-    await flushTimers();
-
-    expect(ensureMachineRegisteredMock).toHaveBeenCalledTimes(2);
-    expect(params.onMachineRegistered).toHaveBeenCalledWith({
-      machineId: 'machine-1',
-      machine: expect.objectContaining({ id: 'machine-1' }),
-    });
+      secondAttempt.reject(createHttpStatusError(status, 'Machine lookup still failed'));
+      await flushTimers();
+      retryWakeSource.invalidate();
+      await vi.advanceTimersByTimeAsync(299_999);
+      expect(registrationRequest).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(params.onMachineRegistered).toHaveBeenCalledWith({
+        machineId: 'machine-1',
+        machine: expect.objectContaining({ id: 'machine-1' }),
+      });
+    } finally {
+      shutdown.resolve();
+      await flushTimers();
+      await retryWakeSource.stop();
+    }
   });
 
   it('does not arm readiness wake after a terminal content-key mismatch', async () => {
     vi.useFakeTimers();
-    const ensureMachineRegisteredMock = vi.mocked(ensureMachineRegistered);
     const retryWakeSource = createRetryWakeSourceHarness();
-    ensureMachineRegisteredMock.mockRejectedValueOnce(
-      new MachineContentPublicKeyMismatchError('machine-1', 'content_public_key_mismatch'),
-    );
 
     const params = createLoopParams({
       machineRegistrationRetryWakeSource: retryWakeSource.source,
     });
+    const registrationRequest = vi.mocked(params.api.getOrCreateMachine);
+    registrationRequest.mockRejectedValueOnce(
+      new MachineContentPublicKeyMismatchError('machine-1', 'content_public_key_mismatch'),
+    );
 
     startMachineRegistrationRetryLoop(params);
     await flushTimers();
 
-    retryWakeSource.publish(createState('online', 'initial_connect'));
+    retryWakeSource.setReady();
     await vi.advanceTimersByTimeAsync(10_000);
 
-    expect(ensureMachineRegisteredMock).toHaveBeenCalledTimes(1);
-    expect(retryWakeSource.source.reportFailure).not.toHaveBeenCalled();
+    expect(registrationRequest).toHaveBeenCalledTimes(1);
+    expect(retryWakeSource.probeReadiness).not.toHaveBeenCalled();
     expect(params.onMachineRegistered).not.toHaveBeenCalled();
   });
 
   it('cleans up a pending readiness wake when shutdown cancels retry sleep', async () => {
     vi.useFakeTimers();
-    const ensureMachineRegisteredMock = vi.mocked(ensureMachineRegistered);
     const retryWakeSource = createRetryWakeSourceHarness();
+    await retryWakeSource.source.start();
     const shutdown = createDeferred<void>();
-    ensureMachineRegisteredMock.mockRejectedValueOnce(
-      Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:443'), { code: 'ECONNREFUSED' }),
-    );
 
     const params = createLoopParams({
       resolvesWhenShutdownRequested: shutdown.promise,
       isShuttingDown: () => false,
       machineRegistrationRetryWakeSource: retryWakeSource.source,
     });
+    const registrationRequest = vi.mocked(params.api.getOrCreateMachine);
+    registrationRequest.mockRejectedValueOnce(
+      Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:443'), { code: 'ECONNREFUSED' }),
+    );
 
     startMachineRegistrationRetryLoop(params);
     await flushTimers();
-    expect(ensureMachineRegisteredMock).toHaveBeenCalledTimes(1);
+    expect(registrationRequest).toHaveBeenCalledTimes(1);
 
     shutdown.resolve();
     await flushTimers();
-    retryWakeSource.publish(createState('online', 'initial_connect'));
+    retryWakeSource.setReady();
     await flushTimers();
 
-    expect(ensureMachineRegisteredMock).toHaveBeenCalledTimes(1);
-    expect(retryWakeSource.listenerCount()).toBe(0);
+    expect(registrationRequest).toHaveBeenCalledTimes(1);
+    expect(retryWakeSource.source.getState().phase).toBe('shutting_down');
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('retains a registration completed during temporary quiescence and resumes bootstrap exactly once', async () => {
-    const ensureMachineRegisteredMock = vi.mocked(ensureMachineRegistered);
-    const registration = createDeferred<Awaited<ReturnType<typeof ensureMachineRegistered>>>();
+    const registration = createDeferred<Machine>();
     let quiescing = false;
     const setMachineId = vi.fn();
     const params = createLoopParams({
@@ -274,18 +256,13 @@ describe('startMachineRegistrationRetryLoop', () => {
       isQuiescing: () => quiescing,
     });
 
-    ensureMachineRegisteredMock.mockReturnValueOnce(registration.promise);
+    const registrationRequest = vi.mocked(params.api.getOrCreateMachine);
+    registrationRequest.mockReturnValueOnce(registration.promise);
     const handle = startMachineRegistrationRetryLoop(params);
-    await vi.waitFor(() => expect(ensureMachineRegisteredMock).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(registrationRequest).toHaveBeenCalledTimes(1));
 
     quiescing = true;
-    const registrationGuard = ensureMachineRegisteredMock.mock.calls[0]?.[0].isShuttingDown;
-    expect(registrationGuard?.()).toBe(true);
-    registration.resolve({
-      machineId: 'machine-1',
-      didRotateMachineId: false,
-      machine: createMachine('machine-1'),
-    });
+    registration.resolve(createMachine('machine-1'));
     await new Promise<void>((resolve) => {
       queueMicrotask(() => {
         expect(setMachineId).not.toHaveBeenCalled();
@@ -297,7 +274,7 @@ describe('startMachineRegistrationRetryLoop', () => {
     });
     await vi.waitFor(() => expect(params.onMachineRegistered).toHaveBeenCalledTimes(1));
 
-    expect(ensureMachineRegisteredMock).toHaveBeenCalledTimes(1);
+    expect(registrationRequest).toHaveBeenCalledTimes(1);
     expect(setMachineId).toHaveBeenCalledTimes(1);
     expect(params.onMachineRegistered).toHaveBeenCalledWith({
       machineId: 'machine-1',

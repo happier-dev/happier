@@ -1,4 +1,7 @@
+import { isForegroundTurnRuntimeTranscriptEvent, isSessionScopedRuntimeTranscriptEvent } from '../events/runtimeTranscriptScope';
+import type { AgentSessionRuntimeEvent } from '@happier-dev/protocol/runtime';
 import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
+import { UsageMcpBindingUsageSchema, type UsageMcpBindingIdentity } from '@happier-dev/protocol/usage/coach/usageMcpBindingUsage';
 import { buildSessionTranscriptMessageProvenanceV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { SessionTranscriptObservationProvenanceV1, ToolNormalizationProtocol, TurnChangeSet } from '@happier-dev/protocol';
 
@@ -18,22 +21,21 @@ import {
   type CommittedTranscriptMessageOptions,
 } from '@/api/session/transcriptPort';
 
+type RuntimeMessageStreamArgs = Readonly<{
+  streamKey: string;
+  sidechainId: string | null;
+  messageId?: string;
+  foregroundTurnId?: string;
+}>;
+
 type RuntimeMessageDeltaBridge = Readonly<{
-  appendAssistantDelta: (args: Readonly<{
-    streamKey: string;
-    sidechainId: string | null;
-    deltaText: string;
-    messageId?: string;
-  }>) => void;
-  appendThinkingDelta: (args: Readonly<{
-    streamKey: string;
-    sidechainId: string | null;
-    deltaText: string;
-    messageId?: string;
-  }>) => void;
+  appendAssistantDelta: (args: RuntimeMessageStreamArgs & Readonly<{ deltaText: string }>) => void;
+  appendThinkingDelta: (args: RuntimeMessageStreamArgs & Readonly<{ deltaText: string }>) => void;
+  discardStream: (args: RuntimeMessageStreamArgs) => void;
   flushAll: (args: Readonly<{
     reason: 'tool-call-boundary' | 'turn-end' | 'abort';
     interruptedReason?: string;
+    selectStream?: (stream: Readonly<{ foregroundTurnId?: string }>) => boolean;
   }>) => Promise<readonly StreamedTranscriptFlushSummary[]>;
 }>;
 
@@ -75,8 +77,7 @@ export type RuntimeTranscriptRequiredAdmissionFailureReason =
   | 'durable_custody_rejected'
   | 'delivery_not_confirmed'
   | 'streamed_finalization_failed'
-  | 'streamed_final_not_durable'
-  | 'projection_drain_timed_out';
+  | 'streamed_final_not_durable';
 
 export class RuntimeTranscriptRequiredAdmissionError extends Error {
   readonly code = 'runtime_transcript_required_admission_failed' as const;
@@ -97,6 +98,7 @@ export type RuntimeTranscriptProjectionResult =
       | 'message-delta'
       | 'tool-progress'
       | 'tool-call'
+      | 'mcp-tool-usage'
       | 'tool-result'
       | 'file-edit'
       | 'turn-complete'
@@ -135,15 +137,30 @@ function resolveCommittedTranscriptObservation(event: Readonly<{
   };
 }
 
+function buildRuntimeMessageStreamArgs(
+  event: Extract<AgentSessionRuntimeEvent, { kind: 'message-delta' | 'transcript-message-committed' }>,
+  channel: 'assistant' | 'reasoning',
+): RuntimeMessageStreamArgs {
+  const foreground = isForegroundTurnRuntimeTranscriptEvent(event);
+  return {
+    streamKey: foreground
+      ? event.messageId ? JSON.stringify([event.turnId, channel, event.messageId]) : event.turnId
+      : JSON.stringify([event.sessionId, event.sidechainId ?? null, event.turnId ?? null, channel, event.messageId ?? null]),
+    sidechainId: event.sidechainId ?? null,
+    ...(event.messageId ? { messageId: event.messageId } : {}),
+    ...(foreground ? { foregroundTurnId: event.turnId } : {}),
+  };
+}
+
 function buildRuntimeToolLocalId(event: Readonly<{
   sessionId: string;
-  turnId: string;
+  turnId?: string;
   sidechainId?: string;
   toolCallId: string;
 }>, kind: 'tool-call' | 'tool-result'): string {
   const identity = createAcpToolIdentity({
     sessionId: event.sessionId,
-    turnId: event.turnId,
+    turnId: event.turnId ?? null,
     sidechainId: event.sidechainId ?? null,
     toolCallId: event.toolCallId,
   });
@@ -152,25 +169,25 @@ function buildRuntimeToolLocalId(event: Readonly<{
 
 function buildRuntimeFileEditLocalId(event: Readonly<{
   sessionId: string;
-  turnId: string;
+  turnId?: string;
   sidechainId?: string;
   editId: string;
 }>): string {
   return createAcpToolIdentity({
     sessionId: event.sessionId,
-    turnId: event.turnId,
+    turnId: event.turnId ?? null,
     sidechainId: event.sidechainId ?? null,
     toolCallId: `file-edit:${event.editId}`,
   }).callLocalId;
 }
 
 function buildRuntimeToolMeta(event: Readonly<{
-  turnId: string;
+  turnId?: string;
 }>, kind: 'tool-progress' | 'tool-call' | 'tool-result', fullSnapshot: boolean): Record<string, unknown> {
   return {
     source: 'runtime',
     runtimeEventKind: kind,
-    runtimeTurnId: event.turnId,
+    ...(event.turnId ? { runtimeTurnId: event.turnId } : {}),
     ...(fullSnapshot ? { runtimeToolSnapshotV1: { v: 1, mode: 'full' } } : {}),
   };
 }
@@ -418,6 +435,7 @@ async function flushRequiredRuntimeTranscriptSegments(params: Readonly<{
   try {
     summaries = await params.bridge.flushAll({
       reason: params.reason,
+      selectStream: (stream) => stream.foregroundTurnId !== undefined,
       ...(params.interruptedReason ? { interruptedReason: params.interruptedReason } : {}),
     });
   } catch (error) {
@@ -438,6 +456,7 @@ export async function projectRuntimeTranscriptEvent(params: Readonly<{
   normalizedToolTurnChangeTracker?: NormalizedToolTurnChangeTracker;
   toolNormalizationProtocol?: ToolNormalizationProtocol;
   event: unknown;
+  mcpBindingIdentities?: Readonly<Record<string, UsageMcpBindingIdentity>>;
 }>): Promise<RuntimeTranscriptProjectionResult> {
   const parsed = AgentSessionRuntimeEventSchema.safeParse(params.event);
   if (!parsed.success) {
@@ -447,13 +466,32 @@ export async function projectRuntimeTranscriptEvent(params: Readonly<{
   if (event.sessionId !== params.session.sessionId) {
     return { projected: false, reason: 'session_mismatch' };
   }
+  if (event.kind === 'mcp-tool-usage') {
+    if (!params.provider) return { projected: false, reason: 'unsupported_event' };
+    const bindings = event.servers.flatMap(server => {
+      const identity = params.mcpBindingIdentities?.[server.serverName];
+      return identity ? [{ ...identity, toolCallCount: server.toolCallCount, schemaBytes: server.schemaBytes }] : [];
+    });
+    if (!bindings.length) return { projected: false, reason: 'unsupported_event' };
+    const evidenceId = JSON.stringify([event.sessionId, event.turnId, event.sequence]);
+    const usage = UsageMcpBindingUsageSchema.safeParse({ v: 1, evidenceId, sessionId: event.sessionId,
+      turnId: event.turnId, observedAtMs: event.window.endMs, window: event.window,
+      coverage: bindings.length === event.servers.length ? event.coverage : 'partial', bindings });
+    if (!usage.success) return { projected: false, reason: 'unsupported_event' };
+    await commitRequiredRuntimeTranscriptMessage({ session: params.session, provider: params.provider,
+      body: { type: 'event', data: { type: 'mcp-binding-usage', usage: usage.data } }, localId: evidenceId,
+      createdAt: event.window.endMs, provenance: { kind: 'non_dependent', source: 'external' },
+      eventKind: event.kind, ...(params.admission ? { admission: params.admission } : {}) });
+    return { projected: true, kind: event.kind };
+  }
+  const sessionScopedTranscript = isSessionScopedRuntimeTranscriptEvent(event);
   if (event.kind === 'turn-start') {
     params.normalizedToolTurnChangeTracker?.beginTurn({
       turnId: event.turnId,
       agentTurnId: event.agentTurnId ?? null,
       sequence: event.sequence,
     });
-  } else if ('agentTurnId' in event && event.agentTurnId) {
+  } else if (!sessionScopedTranscript && 'agentTurnId' in event && event.agentTurnId) {
     params.normalizedToolTurnChangeTracker?.observeAgentTurnId(event.agentTurnId);
   }
   if (event.kind === 'message-delta') {
@@ -465,10 +503,8 @@ export async function projectRuntimeTranscriptEvent(params: Readonly<{
       ? params.runtimeMessageDeltaBridge.appendThinkingDelta
       : params.runtimeMessageDeltaBridge.appendAssistantDelta;
     appendDelta({
-      streamKey: event.messageId ? JSON.stringify([event.turnId, event.channel, event.messageId]) : event.turnId,
-      sidechainId: event.sidechainId ?? null,
+      ...buildRuntimeMessageStreamArgs(event, event.channel),
       deltaText,
-      ...(event.messageId ? { messageId: event.messageId } : {}),
     });
     return { projected: true, kind: event.kind };
   }
@@ -504,7 +540,7 @@ export async function projectRuntimeTranscriptEvent(params: Readonly<{
       : { projected: false, reason: 'ephemeral_not_accepted' };
   }
   if (event.kind === 'tool-call') {
-    if (params.runtimeMessageDeltaBridge) {
+    if (!sessionScopedTranscript && params.runtimeMessageDeltaBridge) {
       await flushRequiredRuntimeTranscriptSegments({
         bridge: params.runtimeMessageDeltaBridge,
         reason: 'tool-call-boundary',
@@ -532,7 +568,7 @@ export async function projectRuntimeTranscriptEvent(params: Readonly<{
       eventKind: event.kind,
       ...(params.admission === undefined ? {} : { admission: params.admission }),
     });
-    if (isRecord(event.input)) {
+    if (!sessionScopedTranscript && isRecord(event.input)) {
       params.normalizedToolTurnChangeTracker?.observeToolCall({
         callId: event.toolCallId,
         toolName: event.toolName,
@@ -564,7 +600,7 @@ export async function projectRuntimeTranscriptEvent(params: Readonly<{
       eventKind: event.kind,
       ...(params.admission === undefined ? {} : { admission: params.admission }),
     });
-    params.normalizedToolTurnChangeTracker?.observeToolResult({
+    if (!sessionScopedTranscript) params.normalizedToolTurnChangeTracker?.observeToolResult({
       callId: event.toolCallId,
       isError: event.isError === true,
       result: readNormalizedToolChangeResult(event.output),
@@ -593,13 +629,13 @@ export async function projectRuntimeTranscriptEvent(params: Readonly<{
       meta: {
         source: 'runtime',
         runtimeEventKind: event.kind,
-        runtimeTurnId: event.turnId,
+        ...(event.turnId ? { runtimeTurnId: event.turnId } : {}),
       },
       provenance: { kind: 'non_dependent', source: event.sidechainId ? 'sidechain' : 'external' },
       eventKind: event.kind,
       ...(params.admission === undefined ? {} : { admission: params.admission }),
     });
-    params.normalizedToolTurnChangeTracker?.observeFileEdit({
+    if (!sessionScopedTranscript) params.normalizedToolTurnChangeTracker?.observeFileEdit({
       editId: event.editId,
       filePath: event.path,
       ...(event.diff === undefined ? {} : { diff: event.diff }),
@@ -785,5 +821,6 @@ export async function projectRuntimeTranscriptEvent(params: Readonly<{
     eventKind: event.kind,
     ...(params.admission === undefined ? {} : { admission: params.admission }),
   });
+  params.runtimeMessageDeltaBridge?.discardStream(buildRuntimeMessageStreamArgs(event, event.role));
   return { projected: true, kind: event.kind };
 }

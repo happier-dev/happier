@@ -18,7 +18,8 @@ import { getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotFor
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { createRequesterSessionControlRuntimeFixture } from '../testkit/requesterSessionControlRuntimeFixture';
 import type { TrackedSession } from '../types';
-
+import { createPendingResetStartRecoveryPorts } from '../connectedServices/usageLimitRecovery/createPendingResetStartRecoveryPorts';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 it.each(['refresh', 'untracked-lifetime', 'profile-unavailable'] as const)('keeps requester %s isolated from active Alice', async (surface) => {
   const directory = await mkdtemp(join(tmpdir(), 'requester-profiles-'));
   let current = true;
@@ -197,7 +198,7 @@ it.each(['generation', 'usage', 'reconnect', 'run_custody'] as const)('keeps req
       const registration = { runKey: 'cold-bob-run', runnerPid: process.pid, agentId: 'codex' as const,
         materializationKey: 'cold-bob-run', connectedServicesBindingsRaw: {}, connectedServiceSelectionsEnv: {}, sessionId: 'cold-bob' };
       const input = { registry, registration, resolveSessionAccountContext: async () => exactRuntime,
-        assertSessionAccountCurrent: async () => { if (!await exactRuntime.bootstrap.isCurrent()) throw new Error('requester_session_not_current'); } };
+        assertSessionAccountCurrent: async () => { if (!await exactRuntime.isCurrent()) throw new Error('requester_session_not_current'); } };
       await registerExecutionRunConnectedServicesTarget(input);
       expect(registry.getRunTargetByRunKey('cold-bob-run')?.requesterWorkAttributionV1).toEqual(exactRuntime.bootstrap.attribution);
       expect(runtime.connectedServiceRuntimeRegistry?.getRunTargetByRunKey('cold-bob-run')?.sessionId).toBe('cold-bob');
@@ -216,7 +217,7 @@ it.each(['generation', 'usage', 'reconnect', 'run_custody'] as const)('keeps req
     if (surface === 'generation') {
       const exactRuntime = runtime;
       const input = { token: 'alice', sessionId: 'bob-session', resolveSessionAccountContext: async () => exactRuntime,
-        assertSessionAccountCurrent: async () => { if (!await exactRuntime.bootstrap.isCurrent()) throw new Error('requester_session_not_current'); } };
+        assertSessionAccountCurrent: async () => { if (!await exactRuntime.isCurrent()) throw new Error('requester_session_not_current'); } };
       const projection = await fetchConnectedServiceProjectionForSession(input);
       expect(projection.snapshot.groups).toEqual([{ serviceId: 'happier.agent.codex/openai-codex', groupId: 'main', activeProfileId: 'work', generation: 2 }]);
       expect(projection.requester).toBe(true);
@@ -289,14 +290,30 @@ it.each(['generation', 'usage', 'reconnect', 'run_custody'] as const)('keeps req
   }
 });
 
-it('retires the existing requester runtime idempotently and forbids retained Account ports after disposal', async () => {
+
+it.each(['retired', 'pending_release'] as const)('keeps requester runtime %s under its canonical authority', async surface => {
   const directory = await mkdtemp(join(tmpdir(), 'requester-runtime-'));
+  let holdCurrentness = false;
+  let enterCurrentness: (() => void) | undefined;
+  let releaseCurrentness: (() => void) | undefined;
+  let delayReleaseProbe = false;
+  const currentnessEntered = new Promise<void>(resolve => { enterCurrentness = resolve; });
   // HTTP admission/profile/settings is the boundary; all Account owners and runtime composition are real.
-  const get = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => ({ status: 200,
-    data: url.endsWith('/profile') ? { id: 'bob' } : url.endsWith('/currentness')
+  const get = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+    if (delayReleaseProbe && url.endsWith('/currentness')) vi.setSystemTime(2_000);
+    if (holdCurrentness && url.endsWith('/currentness')) {
+      enterCurrentness?.();
+      await new Promise<void>(resolve => { releaseCurrentness = resolve; });
+    }
+    return { status: 200,
+    data: url.endsWith('/v2/sessions/bob-session') ? { session: createSessionRecordFixture({
+      id: 'bob-session', encryptionMode: 'plain', metadata: JSON.stringify({ machineId: 'machine', path: '/repo' }),
+      dataEncryptionKey: null, share: null,
+    }) } : url.endsWith('/profile') ? { id: 'bob' } : url.endsWith('/currentness')
       ? { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }
       : { content: { t: 'plain', v: {} }, version: 1 },
-  }));
+    };
+  });
   let runtime: Awaited<ReturnType<typeof createRequesterSessionRuntimeContext>> = null;
   let host: Awaited<ReturnType<typeof createRequesterSessionControlRuntimeFixture>> | null = null;
   try {
@@ -307,6 +324,7 @@ it('retires the existing requester runtime idempotently and forbids retained Acc
       credentials: { token: 'alice', encryption: null }, connectedServicesMaterializationBaseDir: join(directory, 'materialized'),
       registry, trackedSessions, getRequester: () => runtime, resolveQualifiedConnectedAccountV4Support: () => 'indeterminate' });
     const admitted = await admitRequesterSessionBootstrap({ bootstrap: { v: 1, disposition: 'ordinary_requester', credentials: { token: 'bob' } },
+      existingSessionId: 'bob-session',
       boundary: { serverId: 'bob-home', serverHttpBaseUrl: 'https://bob-home.test', happyHomeDir: directory },
       context: { signal: new AbortController().signal, machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'alice',
         machineId: 'machine', installationId: 'installation', role: 'use', encryptionMode: 'plain' },
@@ -322,14 +340,48 @@ it('retires the existing requester runtime idempotently and forbids retained Acc
         pidToTrackedSession: trackedSessions, connectedServiceRuntimeRegistry: registry,
         connectedServiceAuthGroupPreTurnSwitchCoordinator: host.runtime.connectedServiceAuthGroupPreTurnSwitchCoordinator } });
     if (!runtime) throw new Error('Missing real requester runtime');
+    expect(await runtime.bootstrap.isCurrent()).toBe(true);
+    if (surface === 'pending_release') {
+      const captured = runtime;
+      const emittedAt: number[] = [];
+      const ports = createPendingResetStartRecoveryPorts({ credentials: { token: 'alice', encryption: null }, machineId: 'machine',
+        isCurrent: () => true, resolveRequesterSessionRuntimeContext: async () => captured,
+        releaseRequesterSessionRuntimeContext: context => context.dispose(),
+        // Installed Machine transport is the boundary; the scoped requester adapter remains real.
+        release: async () => { emittedAt.push(Date.now()); }, onError: error => { throw error; } });
+      vi.useFakeTimers(); vi.setSystemTime(1_000);
+      await ports.withSession('bob-session', async session => {
+        expect(await session.isCurrent()).toBe(true);
+        // The caller's final authority check and readiness decision just settled.
+        // A further HTTP probe would postpone the Machine effect beyond the window.
+        delayReleaseProbe = true;
+        await session.release({ localId: 'pending', reset: {
+          source: { ref: { service: { pluginId: 'example', localId: 'service' }, accountId: 'account' }, bindingKind: 'account' },
+          recordId: buildProviderAccountUsageRecordId({ providerId: 'test', accountSubjectId: 'account', subjectKind: 'account', quotaScope: 'account' }),
+          meterId: 'window', witness: { id: 'history', observedAtMs: 500 },
+        } });
+      });
+      expect(emittedAt).toEqual([1_000]);
+      expect(await captured.isCurrent()).toBe(false);
+      return;
+    }
+    holdCurrentness = true;
+    const checking = runtime.isCurrent();
+    await currentnessEntered;
     await Promise.all([runtime.dispose(), runtime.dispose()]);
+    releaseCurrentness?.();
+    expect(await checking).toBe(false);
     const before = get.mock.calls.length;
+    await expect(assertRequesterSessionAccountContextCurrent({ expected: runtime,
+      resolveCurrent: async () => runtime, readTrackedContext: () => runtime })).rejects.toThrow('requester_session_not_current');
     await expect(runtime.qualifiedConnectedAccountApi.listAccounts({ service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } }))
       .rejects.toThrow('requester_account_context_unavailable');
     expect(await runtime.refreshAccountSettings()).toBe(false);
     expect(() => runtime.readAccountSettingsSnapshot()).toThrow('requester_account_context_unavailable');
     expect(get.mock.calls.length).toBe(before);
   } finally {
+    releaseCurrentness?.();
+    vi.useRealTimers();
     try {
       await runtime?.dispose();
     } finally {

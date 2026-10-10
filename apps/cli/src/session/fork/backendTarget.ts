@@ -9,6 +9,8 @@ import { isInvalidNestedLegacyCustomAcpPlaceholder, readLegacyConfiguredAcpBacke
 import { resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { resolveConfiguredAcpBackendFromAccountSettings } from '@/agent/acp/catalog/configured/resolveBackend';
+import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { resolveConcreteCompatBackendTargetRefs } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
 import { isConcreteLegacyConfiguredBackendId } from '@/session/backendTargets/compat/legacyConfiguredBackend';
 
@@ -64,14 +66,34 @@ export async function resolveSessionForkBackendTarget(params: Readonly<{
         errorMessage: 'Session metadata missing configured backend flavor',
       };
     }
+    const scopeKey = resolveAccountSettingsScopeKey(params.credentials);
     const accountSettings = await resolveAvailableAccountSettings({ credentials: params.credentials });
+    let accountSnapshot = getActiveAccountSettingsSnapshot();
+    const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
+    if (!accountSettings || accountSnapshot?.scopeKey !== scopeKey) {
+      return { ok: false, errorMessage: 'Configured ACP catalog is unavailable' };
+    }
+    if (accountSnapshot.acpCatalog?.status !== 'ready') {
+      try {
+        const { refreshActiveAcpCatalog } = await import('@/agent/acp/catalog/hydrateAcpCatalog');
+        await refreshActiveAcpCatalog({ credentials: params.credentials });
+      } catch {
+        return { ok: false, errorMessage: 'Configured ACP catalog is unavailable' };
+      }
+      accountSnapshot = getActiveAccountSettingsSnapshot();
+    }
+    if (getActiveAccountSettingsSnapshotLifetimeToken() !== lifetimeToken
+      || accountSnapshot?.scopeKey !== scopeKey || accountSnapshot.acpCatalog?.status !== 'ready') {
+      return { ok: false, errorMessage: 'Configured ACP catalog is unavailable' };
+    }
     const resolvedConfiguredBackend = resolveConfiguredAcpBackendFromAccountSettings(
-      accountSettings ?? {},
+      accountSnapshot.settings,
       candidateConfiguredBackendId,
+      accountSnapshot.acpCatalog,
     );
 
-    if (metadataConfiguredBackend || resolvedConfiguredBackend) {
-      const title = metadataConfiguredBackend?.title ?? resolvedConfiguredBackend?.title ?? candidateConfiguredBackendId;
+    if (resolvedConfiguredBackend) {
+      const title = resolvedConfiguredBackend.title;
       const backendTarget = { kind: 'configuredAcpBackend', backendId: candidateConfiguredBackendId } as const;
       const backendTargetRefs = resolveConcreteCompatBackendTargetRefs(backendTarget);
       if (!backendTargetRefs) {
@@ -93,6 +115,7 @@ export async function resolveSessionForkBackendTarget(params: Readonly<{
         }),
       };
     }
+    return { ok: false, errorMessage: 'Session metadata missing configured backend flavor' };
   }
 
   if (

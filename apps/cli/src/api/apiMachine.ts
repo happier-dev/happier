@@ -15,8 +15,10 @@ import { hasMachineLiveStreamSensitiveContentV1, sealMachineLiveStreamEnvelopeV1
 import type { MachineLiveStreamPayloadErrorCodeV1, MachineLiveStreamWireEnvelopeV1 } from '@happier-dev/protocol';
 import { isDeepStrictEqual } from 'node:util';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import { readStoredCredentials, readStoredCredentialsForServerId, sameStoredCredentials } from '@/persistence';
+import { readStoredCredentials, readStoredCredentialsForServerId, sameStoredCredentials, type StoredCredentials } from '@/persistence';
 import { createExecutionRunRpcApprovalDeps } from '@/rpc/handlers/executionRuns/createExecutionRunRpcApprovalDeps';
+import { createAccountScopedProviderModelProjectionReader } from '@/providers/modelManagement/remoteProjection';
+import { createExecutionRunManagedProviderEndpointPreparer } from '@/agent/runtime/bridges/executionRun/runtime/managedProvider';
 import { registerMachineAccessLossReceiver } from '@/daemon/externalActions/registerMachineAccessLossReceiver';
 import {
     readCurrentMessageActionReferenceRowV1,
@@ -41,6 +43,7 @@ import { createCurrentMachineExecutionOriginContextResolver } from './machine/re
 import { assertResolvedHomeTargetIdentity, HomeTargetResolutionError } from '@happier-dev/cli-common/homeTarget';
 import { resolveCliHomeTarget } from '@/server/homeTarget';
 import { MachineInstallationPublicIdentityV1Schema, type MachineInstallationPublicIdentityV1 } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { USAGE_SOURCES_INVALIDATION_EVENT_V1, type UsageSourcesInvalidationV1 } from '@happier-dev/protocol/usage/usageSources';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { createExternalActionMachineRpcExecution, verifyExternalActionExecutionAuthorizationCurrent } from './externalActionExecutionAuthorization';
 import { externalActionTargetsEqualV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -51,6 +54,7 @@ import { callSocketRpc, isSocketIoAckTimeoutError, type SocketRpcContent } from 
 import type { SessionActionRpcTransport } from '@/session/actions/createCliActionDeps';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema,
+    WorkspaceSyncSeedRoutingV1Schema, type WorkspaceSyncSeedRoutingV1,
     WorkspaceSyncSourceWriterTargetRoutingV1Schema, type WorkspaceSyncSourceWriterTargetRoutingV1,
     type WorkspaceSyncSourceRoutingV1, type WorkspaceSyncTargetRoutingV1 } from '@happier-dev/protocol/socketRpc';
 import { createWorkspaceSyncTargetContent } from './rpc/workspaceSyncTargetContent';
@@ -58,6 +62,7 @@ import { WorkspaceSyncHandoffSourcePhaseRequestV1Schema, WorkspaceSyncHandoffSou
     HandoffTargetReplacementPreflightResultV1Schema, WorkspaceSyncTargetBootstrapPrepareResultV1Schema,
     WorkspaceSyncTargetBootstrapReleaseResultV1Schema,
     type WorkspaceSyncHandoffSourcePhaseRequestV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { WorkspaceSyncSeedExportPrepareV1Schema, type WorkspaceSyncSeedExportPrepareV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { buildActionExecutorContextForRpc, projectWorkspaceSyncPhysicalContextFromActionContext, type RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { ExternalActionRequestEnvelopeSchema } from '@happier-dev/protocol/actions/externalActionApi';
 import { isExternalActionAuthorizationBoundToEnvelope } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -74,7 +79,8 @@ import {
     resolveExternalSessionOperationAccountScope,
     type ExternalSessionOperationAccountScope,
 } from '@/session/actions/externalSessions/operationRecordStore';
-import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
+import { callExactMachineRpc, callMachineRpc } from '@/session/transport/rpc/machineRpc';
+import { createSessionHandoffPreflightMachineRpc } from '@/session/handoff/sessionHandoffPreflightMachineRpc';
 import { createSessionHandoffSourceExportStore } from '@/session/handoff/state/sessionHandoffSourceExportStore';
 import {
     createTrackedSessionHandoffCoordinator,
@@ -153,7 +159,9 @@ import type { PluginReloadController } from '@/plugins/runtime/reload/controller
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
-import { hydrateSavedSecretCatalog } from '@/settings/secrets/hydrateSavedSecretCatalog';
+import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { createInvocationSavedSecretOperationContextV1, hydrateSavedSecretCatalog } from '@/settings/secrets/hydrateSavedSecretCatalog';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { changesRequireSavedSecretCatalogRefresh } from '@/settings/secrets/savedSecretCatalogChangeInvalidation';
 import { isProfileCatalogAccountChangeEntityIdV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { refreshDemandedActiveProfileCatalog } from '@/settings/profiles/hydrateProfileCatalog';
@@ -217,6 +225,7 @@ import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent, verifyMan
     readWorkspaceSyncTargetMethod } from './machine/machineRpcAuthorization';
 import type { MachineTerminalAccountReadRuntime, MachineTerminalOwnSessionReadRuntime } from './machine/rpcHandlers.terminal';
 import { resolveAdmittedRequesterAccountReadRuntime } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { inspectProjectSetupReadinessFromRuntime } from '@/workspaces/projectSetup/projectSetupReadiness';
 import type { ManagedActivityRpcOwner } from './machine/rpcHandlers.managedActivity';
 import type { MachineWorkSummaryRpcOwner } from './machine/rpcHandlers.machineWorkSummary';
 import { createAccountServerActionDeps } from './accountServerActionDeps';
@@ -630,7 +639,7 @@ export class ApiMachineClient {
             if (signal.aborted || !ownerCurrent()) return null;
             const accountId = await runWithServerHttpBaseUrl(this.machineRuntimeServerHttpBaseUrl,
                 () => this.getAccountId(signal));
-            if (!ownerCurrent() || expectedAccountId !== undefined && accountId !== expectedAccountId) return null;
+            if (!accountId || !ownerCurrent() || expectedAccountId !== undefined && accountId !== expectedAccountId) return null;
             const credentials = await readStoredCredentialsForServerId(this.machineRuntimeServerId);
             if (!credentials || credentials.token !== this.token) return null;
             const credentialsCurrent = async () => ownerCurrent() && sameStoredCredentials(credentials,
@@ -975,11 +984,15 @@ export class ApiMachineClient {
                 machineId: this.machine.id,
                 resolveCustodianAccountId: (signal) => runWithServerHttpBaseUrl(machineRuntimeServerHttpBaseUrl, () => this.getAccountId(signal)),
                 resolveInstallationId: () => readInstallationIdentityIfExistsSync()?.installationId ?? null,
-                verifyMachineAdmission: async ({ context, method, signal, custodySubjectAccountId, workspaceSyncSourceRouting, workspaceSyncSourceExecution, workspaceSyncTargetRouting, workspaceSyncSourceWriterTargetRouting, callerInputAuthorization }) => {
+                verifyMachineAdmission: async ({ context, method, signal, custodySubjectAccountId, workspaceSyncSourceRouting, workspaceSyncSourceExecution, workspaceSyncTargetRouting, workspaceSyncSourceWriterTargetRouting, workspaceSyncSeedRouting, callerInputAuthorization }) => {
                     const installation = readInstallationIdentityIfExistsSync();
-                    if (!installation || !workspaceSyncSourceRouting && !workspaceSyncTargetRouting && !workspaceSyncSourceWriterTargetRouting
+                    if (!installation || !workspaceSyncSourceRouting && !workspaceSyncTargetRouting && !workspaceSyncSourceWriterTargetRouting && !workspaceSyncSeedRouting
                         && installation.installationId !== context.installationId) return false;
                     return verifyMachineRpcAdmissionCurrent({ context, method,
+                        ...(workspaceSyncSeedRouting ? { workspaceSyncSeedRouting,
+                            workspaceSyncSeedReceiver: { machineId: this.machine.id, installationId: installation.installationId,
+                                accountId: readAccountIdFromToken(this.token) ?? '' },
+                            ...(callerInputAuthorization ? { callerInputAuthorization } : {}) } : {}),
                         ...(workspaceSyncSourceExecution ? { workspaceSyncSourceExecution } : {}),
                         ...(custodySubjectAccountId !== undefined ? { custodySubjectAccountId } : {}),
                         ...(workspaceSyncSourceRouting ? { workspaceSyncSourceRouting,
@@ -1253,7 +1266,51 @@ export class ApiMachineClient {
         sessionPendingResetStartInstalled?: boolean;
     }>): MachineRpcLifecycleRegistration {
         const executionRunRuntimeAccountId = readAccountIdFromToken(this.token) ?? undefined;
-        const executionRunServerId = configuration.activeServerId;
+        const executionRunServerId = this.machineRuntimeServerId;
+        const executionRunAccountOwnerCurrent = () => !this.projectionSchedulingClosed
+            && configuration.activeServerId === executionRunServerId;
+        const readExecutionRunAccountCredentials = async () => {
+            if (!executionRunAccountOwnerCurrent()) return null;
+            const credentials = await readStoredCredentialsForServerId(executionRunServerId).catch(() => null);
+            return credentials?.token === this.token && executionRunAccountOwnerCurrent() ? credentials : null;
+        };
+        const readHandoffSourceInstallation = () => {
+            const installation = readInstallationIdentityIfExistsSync();
+            return !this.projectionSchedulingClosed && configuration.activeServerId === this.machineRuntimeServerId
+                && installation?.installationId === this.machineRuntimeInstallationId
+                ? { machineId: this.machine.id, installationId: installation.installationId, privateKey: installation.privateKey }
+                : null;
+        };
+        const callHandoffMachine: typeof callMachineRpc = async input => {
+            const preflight = input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET
+                || input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3;
+            // Native preflight bootstrap needs Home-stamped admission even for a local target.
+            if (input.machineId === this.machine.id && !input.externalAction
+                && input.method !== RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3) {
+                return await this.rpcHandlerManager.invokeLocal(input.method, input.request,
+                    input.signal ? { signal: input.signal } : undefined);
+            }
+            return preflight ? await callExactMachineRpc(input) : await callMachineRpc(input);
+        };
+        let executionRunAccountSettings: Awaited<ReturnType<typeof bootstrapAccountSettingsContext>>['settings'] | null = null;
+        const resolveExecutionRunAccountSettingsSnapshot = async () => runWithServerHttpBaseUrl(this.machineRuntimeServerHttpBaseUrl, async () => {
+            const unavailable = () => createProviderErrorV1('provider_authorization_changed', { machineId: this.machine.id });
+            const credentials = await readExecutionRunAccountCredentials();
+            if (!credentials) { executionRunAccountSettings = null; throw unavailable(); }
+            const isCurrent = async () => executionRunAccountOwnerCurrent()
+                && sameStoredCredentials(credentials, await readExecutionRunAccountCredentials())
+                && executionRunAccountOwnerCurrent();
+            const snapshot = await bootstrapAccountSettingsContext({ credentials, mode: 'blocking', publication: 'invocation',
+                honorAccountSettingsModeEnv: false, shouldCommit: executionRunAccountOwnerCurrent });
+            if (!await isCurrent()) { executionRunAccountSettings = null; throw unavailable(); }
+            const operation = createInvocationSavedSecretOperationContextV1({ credentials, snapshot,
+                serverHttpBaseUrl: this.machineRuntimeServerHttpBaseUrl, isCurrent });
+            if (!await operation.isCurrent()) { executionRunAccountSettings = null; throw unavailable(); }
+            const admitted = operation.readSnapshot();
+            if (!admitted) { executionRunAccountSettings = null; throw unavailable(); }
+            executionRunAccountSettings = admitted.settings;
+            return admitted;
+        });
         const workSummaryInstallation = readInstallationIdentityIfExistsSync();
         const workSummaryAccess = createAccountServerActionDeps({ token: this.token,
             serverId: executionRunServerId, serverHttpBaseUrl: this.machineRuntimeServerHttpBaseUrl,
@@ -1298,6 +1355,12 @@ export class ApiMachineClient {
             },
             deps: {
                 ...deps,
+                sessionHandoffPreflight: {
+                    readCredentials: readExecutionRunAccountCredentials,
+                    callMachine: createSessionHandoffPreflightMachineRpc({ callMachine: callHandoffMachine,
+                        authorization: { serverHttpBaseUrl: this.machineRuntimeServerHttpBaseUrl,
+                            readSourceInstallation: readHandoffSourceInstallation } }),
+                },
                 ...(deps?.deviceLocalSecretStorage && workSummaryInstallation && executionRunRuntimeAccountId ? {
                     nativeUsage: {
                         authority: { serverId: executionRunServerId, accountId: executionRunRuntimeAccountId, machineId: this.machine.id },
@@ -1308,6 +1371,7 @@ export class ApiMachineClient {
                         storage: deps.deviceLocalSecretStorage,
                         readCredentials: async () => this.projectionSchedulingClosed
                             ? null : await readStoredCredentialsForServerId(executionRunServerId),
+                        invalidateSources: () => this.emitUsageSourcesInvalidated(),
                     },
                 } : {}),
                 ownSessionRuntime: (ingress) => this.resolveOwnSessionRuntime(ingress),
@@ -1386,6 +1450,33 @@ export class ApiMachineClient {
                 currentServerId: configuration.activeServerId,
                 ...(executionRunRuntimeAccountId ? { executionRunRuntimeAccountId } : {}),
                 executionRunApprovalDeps,
+                executionRunAccountSettings: {
+                    serverUrl: this.machineRuntimeServerHttpBaseUrl,
+                    resolveAccountSettings: async () => (await resolveExecutionRunAccountSettingsSnapshot()).settings,
+                    resolveAccountSettingsSnapshot: resolveExecutionRunAccountSettingsSnapshot,
+                    readModelProjection: createAccountScopedProviderModelProjectionReader({
+                        serverUrl: this.machineRuntimeServerHttpBaseUrl,
+                        readCredentials: readExecutionRunAccountCredentials,
+                        readAccountSettingsSnapshot: resolveExecutionRunAccountSettingsSnapshot,
+                        isCurrent: executionRunAccountOwnerCurrent,
+                    }),
+                    ...(deps?.resolveManagedPurposeBindingIntent ? {
+                        resolveManagedPurposeBindingIntent: deps.resolveManagedPurposeBindingIntent,
+                        ...(deps.openAccountConnectionManagedConsumerSource && executionRunRuntimeAccountId ? {
+                            prepareManagedEndpoint: createExecutionRunManagedProviderEndpointPreparer({
+                                machineId: this.machine.id,
+                                accountId: executionRunRuntimeAccountId,
+                                readAccountSettingsSnapshot: resolveExecutionRunAccountSettingsSnapshot,
+                                resolveManagedPurposeBindingIntent: deps.resolveManagedPurposeBindingIntent,
+                                openSource: deps.openAccountConnectionManagedConsumerSource,
+                            }),
+                        } : {}),
+                    } : {}),
+                    actionsSettingsProvider: createActionSettingsProvider({
+                        scopeKey: resolveAccountSettingsScopeKeyForToken(this.token),
+                        getAccountSettings: () => executionRunAccountSettings,
+                    }),
+                },
                 ...(executionRunRuntimeAccountId ? {
                     projectOpen: {
                         ...deps?.projectOpen,
@@ -1456,30 +1547,18 @@ export class ApiMachineClient {
                             resolveWorkspaceAccountServerId: async (signal, options) => await this.readWorkspaceSyncHomeIdentity({
                                 effectful: true, requireFreshHome: options?.requireFreshHome ?? true, ...(signal ? { signal } : {}),
                             }),
-                            readCredentials: async () => await readStoredCredentials().catch(() => null),
+                            readCredentials: readExecutionRunAccountCredentials,
                             handoffAuthorization: {
                                 sourceExportStore: createSessionHandoffSourceExportStore({ activeServerDir: configuration.activeServerDir }),
                                 serverHttpBaseUrl: this.machineRuntimeServerHttpBaseUrl,
-                                readSourceInstallation: () => {
-                                    const installation = readInstallationIdentityIfExistsSync();
-                                    return !this.projectionSchedulingClosed && configuration.activeServerId === this.machineRuntimeServerId
-                                        && installation?.installationId === this.machineRuntimeInstallationId
-                                        ? { machineId: this.machine.id, installationId: installation.installationId,
-                                            privateKey: installation.privateKey } : null;
-                                },
+                                readSourceInstallation: readHandoffSourceInstallation,
                             },
                             callWorkspaceSourcePhase: async (descriptor, context) => {
                                 const credentials = await readStoredCredentialsForServerId(this.machineRuntimeServerId);
                                 if (!credentials) throw Object.assign(new Error('Workspace source transport is unavailable'), { code: 'peer_unavailable' });
                                 return await this.callWorkspaceSyncHandoffSourcePhase({ ...descriptor, context, credentials });
                             },
-                            callMachine: async (input) => input.machineId === this.machine.id && !input.externalAction
-                                ? await this.rpcHandlerManager.invokeLocal(
-                                    input.method,
-                                    input.request,
-                                    input.signal ? { signal: input.signal } : undefined,
-                                )
-                                : await callMachineRpc(input),
+                            callMachine: callHandoffMachine,
                             workspaceSyncAdapter:
                                 this.lifecycleDependencies.workspaceSyncHandoffAdapter,
                         }),
@@ -1545,11 +1624,16 @@ export class ApiMachineClient {
     }
 
     /** Effect dependency consumed only after the daemon's full Action admission. */
-    createProjectDefinitionAction(serverId: string): ReturnType<typeof createProjectDefinitionAction> {
+    createProjectDefinitionAction(serverId: string, ingress?: RpcHandlerContext): ReturnType<typeof createProjectDefinitionAction> {
         return createProjectDefinitionAction({
             serverId, machineId: this.machine.id, workingDirectory: this.machineRpcWorkingDirectory,
             accessPolicy: this.filesystemAccessPolicy,
             acquirePluginRuntime: acquireAuthoritativePluginRuntimeRegistryLease,
+            ...(ingress ? { inspectSetupReadiness: async ({ workspace, context }) => {
+                const runtime = await this.resolveProjectFiniteRuntime(ingress);
+                return runtime ? inspectProjectSetupReadinessFromRuntime({ runtime, ingress, workspace, context })
+                    : { kind: 'unknown' as const, code: 'project_setup_requester_review_unavailable' };
+            } } : {}),
         });
     }
 
@@ -2089,6 +2173,19 @@ export class ApiMachineClient {
         this.socket.emit('external-session-transcript-invalidated', payload);
     }
 
+    emitUsageSourcesInvalidated(): void {
+        const installationId = this.machineRuntimeInstallationId;
+        if (!this.socket?.connected || this.projectionSchedulingClosed
+            || configuration.activeServerId !== this.machineRuntimeServerId || !installationId
+            || readInstallationIdentityIfExistsSync()?.installationId !== installationId) return;
+        const payload: UsageSourcesInvalidationV1 = {
+            type: USAGE_SOURCES_INVALIDATION_EVENT_V1,
+            machineId: this.machine.id,
+            installationId,
+        };
+        this.socket.emit(USAGE_SOURCES_INVALIDATION_EVENT_V1, payload);
+    }
+
     emitExternalSessionSourceUnavailableOccurrence(
         payload: ExternalSessionSourceUnavailableOccurrenceV1,
     ): void {
@@ -2402,6 +2499,28 @@ export class ApiMachineClient {
         return assertResolvedHomeTargetIdentity(target, observed.serverIdentityId);
     }
 
+    /** The installed physical target requests only the active SOURCE operation's finite seed. */
+    async callWorkspaceSyncSeedExport(input: Readonly<{
+        machineId: string;
+        request: WorkspaceSyncSeedExportPrepareV1;
+        credentials: StoredCredentials;
+        context: RpcActionExecutorContext;
+        signal?: AbortSignal;
+    }>): Promise<unknown> {
+        const request = WorkspaceSyncSeedExportPrepareV1Schema.parse(input.request);
+        const b = input.context.workspaceSyncSourceWriterTargetRouting;
+        const target = input.context.workspaceSyncTargetRouting;
+        if (!b || !target || request.operationId !== b.target.operationId
+            || request.targetMachineId !== this.machine.id || input.machineId !== b.sourceWriter.machineId) {
+            throw Object.assign(new Error('Workspace seed authority is unavailable'), { code: 'peer_unavailable' });
+        }
+        const workspaceSyncSeedRouting = WorkspaceSyncSeedRoutingV1Schema.parse({ v: 1, sourceWriterTarget: b, target });
+        return await this.callWorkspaceSyncPhysicalMachineRpc({ ...input, request,
+            method: RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE,
+            originalMachineId: b.source.sourceMachineId, accountServerId: b.source.accountServerId,
+            requireCurrentAdmission: true, routing: { workspaceSyncSeedRouting } });
+    }
+
     private async callWorkspaceSyncPhysicalMachineRpc(input: Readonly<{
         machineId: string;
         credentials: import('@/persistence').StoredCredentials;
@@ -2415,6 +2534,7 @@ export class ApiMachineClient {
         physicalEndpoint?: MachineInstallationPublicIdentityV1;
         physicalEndpointInstallationId?: string;
         routing: Readonly<{ workspaceSyncSourceRouting: WorkspaceSyncSourceRoutingV1 }>
+            | Readonly<{ workspaceSyncSeedRouting: WorkspaceSyncSeedRoutingV1 }>
             | Readonly<{ workspaceSyncTargetRouting: WorkspaceSyncTargetRoutingV1 }>
             | Readonly<{ workspaceSyncSourceWriterTargetRouting: WorkspaceSyncSourceWriterTargetRoutingV1;
                 workspaceSyncTargetRouting?: WorkspaceSyncTargetRoutingV1 }>;
@@ -2425,10 +2545,11 @@ export class ApiMachineClient {
         const installation = readInstallationIdentityIfExistsSync();
         const custodianAccountId = readAccountIdFromToken(this.token);
         const forwardWork = input.requireCurrentAdmission;
+        const seedRouting = 'workspaceSyncSeedRouting' in input.routing ? input.routing.workspaceSyncSeedRouting : undefined;
         const writerTarget = 'workspaceSyncSourceWriterTargetRouting' in input.routing ? input.routing.workspaceSyncSourceWriterTargetRouting : undefined;
         const targetRouting = 'workspaceSyncTargetRouting' in input.routing ? input.routing.workspaceSyncTargetRouting : undefined;
         const jointTarget = writerTarget && targetRouting;
-        const signedAuthorization = writerTarget ? input.context.callerInputAuthorization : input.context.externalActionExecutionAuthorization;
+        const signedAuthorization = writerTarget || seedRouting ? input.context.callerInputAuthorization : input.context.externalActionExecutionAuthorization;
         const originalSourceRouting = 'workspaceSyncSourceRouting' in input.routing ? input.routing.workspaceSyncSourceRouting : undefined;
         const admittedSourceRoot = forwardWork && !writerTarget && originalSourceRouting !== undefined
             && (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE
@@ -2442,7 +2563,15 @@ export class ApiMachineClient {
         const signedBinding = signedAuthorization?.binding;
         const unavailable = () => Object.assign(new Error('Workspace source authority is unavailable'), { code: 'peer_unavailable' });
         if (!socket?.connected || !admission || !installation || !custodianAccountId
-            || forwardWork && input.context.callerInputAuthorization && !writerTarget && !admittedSourceRoot
+            || forwardWork && input.context.callerInputAuthorization && !writerTarget && !seedRouting && !admittedSourceRoot
+            || seedRouting && (!forwardWork || input.method !== RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE
+                || !signedAuthorization || signedAuthorization.binding.actionId !== 'projects.open'
+                || !doesWorkspaceSyncSourceWriterTargetRootMatchRouting(signedAuthorization, seedRouting.sourceWriterTarget)
+                || !isDeepStrictEqual(admission, seedRouting.target.targetContext.machineAdmission)
+                || !isDeepStrictEqual(input.context.workspaceSyncSourceWriterTargetRouting, seedRouting.sourceWriterTarget)
+                || !isDeepStrictEqual(input.context.workspaceSyncTargetRouting, seedRouting.target)
+                || !input.context.workspaceSyncSourceExecution
+                || !isDeepStrictEqual(input.context.workspaceSyncSourceExecution.externalActionExecution.authorization, signedAuthorization))
             || writerTarget && (retainedWriterRelease
                 ? writerTarget.sourceWriter.machineId !== this.machine.id || writerTarget.sourceWriter.installationId !== installation.installationId
                     || admission.machineId !== this.machine.id || admission.installationId !== installation.installationId
@@ -2458,9 +2587,9 @@ export class ApiMachineClient {
                         || !isDeepStrictEqual(targetRouting.targetContext.machineAdmission, admission)
                     : writerTarget.sourceWriter.machineId !== this.machine.id || writerTarget.sourceWriter.installationId !== installation.installationId
                         || !isDeepStrictEqual(writerTarget.source.sourceContext.machineAdmission, admission)))
-            || !writerTarget && (admission.machineId !== this.machine.id || input.originalMachineId !== this.machine.id
+            || !writerTarget && !seedRouting && (admission.machineId !== this.machine.id || input.originalMachineId !== this.machine.id
                 || admission.installationId !== installation.installationId)
-            || admission.custodianAccountId !== custodianAccountId
+            || !seedRouting && admission.custodianAccountId !== custodianAccountId
             || readAccountIdFromToken(input.credentials.token) !== custodianAccountId
             || configuration.activeServerId !== this.machineRuntimeServerId
             || forwardWork && (!input.context.verifyMachineAdmissionCurrent || !await input.context.verifyMachineAdmissionCurrent())) {
@@ -2474,11 +2603,40 @@ export class ApiMachineClient {
                 || this.socket !== socket || !socket.connected
                 || readInstallationIdentityIfExistsSync()?.installationId !== installation.installationId) throw unavailable();
         } catch { throw unavailable(); }
-        if (forwardWork && signedBinding && !writerTarget && (signedBinding.actionId !== input.signedEffectActionId
+        if (forwardWork && signedBinding && !writerTarget && !seedRouting && (signedBinding.actionId !== input.signedEffectActionId
             || signedBinding.machineId !== admission.machineId || signedBinding.installationId !== installation.installationId
             || signedBinding.accountId !== admission.actorAccountId || signedBinding.custodianAccountId !== custodianAccountId
             || !input.context.externalActionTarget || !externalActionTargetsEqualV1(signedBinding.target, input.context.externalActionTarget))) {
             throw unavailable();
+        }
+        if (seedRouting) {
+            const packet = input.context.workspaceSyncSourceExecution;
+            if (!signedAuthorization || !packet) throw unavailable();
+            const verified = await readMachineRpcAdmissionCurrent({ context: seedRouting.sourceWriterTarget.source.sourceContext.machineAdmission,
+                method: `${input.machineId}:${input.method}`, workspaceSyncSeedRouting: seedRouting,
+                callerInputAuthorization: signedAuthorization, workspaceSyncSourceExecution: packet,
+                workspaceSyncSeedReceiver: { machineId: this.machine.id, installationId: installation.installationId,
+                    accountId: custodianAccountId, destinationMachineId: input.machineId },
+                privateKey: installation.privateKey, daemonToken: this.token, serverHttpBaseUrl: this.machineRuntimeServerHttpBaseUrl,
+                ...(input.signal ? { signal: input.signal } : {}) });
+            const destination = verified?.destinationInstallation;
+            if (!destination || destination.machineId !== seedRouting.sourceWriterTarget.sourceWriter.machineId
+                || destination.machineId !== input.machineId
+                || destination.installationId !== seedRouting.sourceWriterTarget.sourceWriter.installationId
+                || this.socket !== socket || !socket.connected || configuration.activeServerId !== this.machineRuntimeServerId
+                || readInstallationIdentityIfExistsSync()?.installationId !== installation.installationId) throw unavailable();
+            return await callSocketRpc({ socket, target: { kind: 'machine', id: input.machineId }, method: input.method,
+                params: input.request, content: createWorkspaceSyncTargetContent({ destination, method: `${input.machineId}:${input.method}`, routing: seedRouting }),
+                workspaceSyncSeedRouting: seedRouting, workspaceSyncSourceExecution: packet, timeoutMs: null,
+                createExternalActionExecution: wire => {
+                    const execution = createExternalActionMachineRpcExecution({ context: { ...input.context,
+                        externalActionExecutionAuthorization: signedAuthorization, externalActionTarget: signedAuthorization.binding.target },
+                        effectActionId: 'projects.open', installationId: installation.installationId,
+                        method: wire.method, requestId: wire.requestId, params: wire.params,
+                        workspaceSyncSeedRouting: seedRouting, privateKey: installation.privateKey });
+                    if (!execution) throw unavailable();
+                    return execution;
+                }, ...(input.signal ? { signal: input.signal } : {}) });
         }
         if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN) {
             if (!admittedSourceRoot || !originalSourceRouting?.sourceContext || !signedAuthorization) throw unavailable();
@@ -3093,6 +3251,11 @@ export class ApiMachineClient {
             }
             throw new Error('Unexpected machine metadata update acknowledgement');
         });
+    }
+
+    /** The currently published projection fact; invalidation owns its advancement. */
+    getContributionRegistryProjectionRevision(): number {
+        return this.machine.daemonState?.contributionRegistryProjectionRevision ?? 0;
     }
 
     /**

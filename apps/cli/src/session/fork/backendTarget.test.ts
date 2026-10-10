@@ -1,18 +1,13 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import type { Credentials } from '@/persistence';
-import { buildConfiguredAcpBackendSessionMetadata } from '@/agent/acp/catalog/configured/sessionMetadata';
 
 const {
   resolveAgentIdFromSessionMetadataMock,
   readAgentCatalogSnapshotMock,
-  resolveAvailableAccountSettingsMock,
-  resolveConfiguredAcpBackendFromAccountSettingsMock,
 } = vi.hoisted(() => ({
   resolveAgentIdFromSessionMetadataMock: vi.fn(),
   readAgentCatalogSnapshotMock: vi.fn(),
-  resolveAvailableAccountSettingsMock: vi.fn(),
-  resolveConfiguredAcpBackendFromAccountSettingsMock: vi.fn(),
 }));
 
 vi.mock('@happier-dev/agents', () => ({
@@ -21,16 +16,8 @@ vi.mock('@happier-dev/agents', () => ({
   resolveAgentIdFromSessionMetadata: resolveAgentIdFromSessionMetadataMock,
 }));
 
-vi.mock('@/settings/accountSettings/resolveAvailableAccountSettings', () => ({
-  resolveAvailableAccountSettings: resolveAvailableAccountSettingsMock,
-}));
-
 vi.mock('@/agent/catalog/snapshot', () => ({
   readAgentCatalogSnapshot: readAgentCatalogSnapshotMock,
-}));
-
-vi.mock('@/agent/acp/catalog/configured/resolveBackend', () => ({
-  resolveConfiguredAcpBackendFromAccountSettings: resolveConfiguredAcpBackendFromAccountSettingsMock,
 }));
 
 import { resolveSessionForkBackendTarget } from './backendTarget';
@@ -49,80 +36,7 @@ describe('resolveSessionForkBackendTarget', () => {
         claude: { id: 'claude', cliSubcommand: 'claude' },
       },
     });
-    resolveAvailableAccountSettingsMock.mockReturnValue(null);
-    resolveConfiguredAcpBackendFromAccountSettingsMock.mockReturnValue(null);
     resolveAgentIdFromSessionMetadataMock.mockReturnValue('claude');
-  });
-
-  it('resolves configured ACP fork targets from embedded Account-configured metadata', async () => {
-    const result = await resolveSessionForkBackendTarget({
-      credentials,
-      parentMetadata: {
-        ...buildConfiguredAcpBackendSessionMetadata({ backendId: 'review-bot', title: 'Review Bot' }),
-      },
-    });
-
-    expect(resolveAvailableAccountSettingsMock).toHaveBeenCalledWith({ credentials });
-    expect(resolveConfiguredAcpBackendFromAccountSettingsMock).toHaveBeenCalledWith({}, 'review-bot');
-    expect(result).toMatchObject({
-      ok: true,
-      catalogAgentId: null,
-      agentHintAgentId: 'acp:review-bot',
-      backendTargetV2: {
-        kind: 'backend',
-        backendId: 'review-bot',
-        configuredBackendId: 'review-bot',
-        sourceKind: 'configured',
-      },
-      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
-      replayFlavor: 'acp:review-bot',
-      metadataOverlay: expect.objectContaining({
-        acpConfiguredBackendV1: expect.objectContaining({
-          backendId: 'review-bot',
-          title: 'Review Bot',
-        }),
-      }),
-    });
-  });
-
-  it('recovers configured ACP fork targets from flavor-only metadata when account settings resolve the backend', async () => {
-    const accountSettings = { source: 'snapshot' };
-    const resolvedBackend = { backendId: 'review-bot', title: 'Review Bot' };
-
-    resolveAvailableAccountSettingsMock.mockReturnValueOnce(accountSettings);
-    resolveConfiguredAcpBackendFromAccountSettingsMock.mockReturnValueOnce(resolvedBackend);
-
-    const result = await resolveSessionForkBackendTarget({
-      credentials,
-      parentMetadata: {
-        flavor: 'acp:review-bot',
-      },
-    });
-
-    expect(resolveAvailableAccountSettingsMock).toHaveBeenCalledWith({ credentials });
-    expect(resolveConfiguredAcpBackendFromAccountSettingsMock).toHaveBeenCalledWith(
-      accountSettings,
-      'review-bot',
-    );
-    expect(result).toMatchObject({
-      ok: true,
-      catalogAgentId: null,
-      agentHintAgentId: 'acp:review-bot',
-      backendTargetV2: {
-        kind: 'backend',
-        backendId: 'review-bot',
-        configuredBackendId: 'review-bot',
-        sourceKind: 'configured',
-      },
-      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
-      replayFlavor: 'acp:review-bot',
-      metadataOverlay: expect.objectContaining({
-        acpConfiguredBackendV1: expect.objectContaining({
-          backendId: 'review-bot',
-          title: 'Review Bot',
-        }),
-      }),
-    });
   });
 
   it('rejects the nested customAcp placeholder instead of resolving it as a configured backend', async () => {
@@ -138,46 +52,6 @@ describe('resolveSessionForkBackendTarget', () => {
       errorMessage: 'Session metadata missing agent flavor',
     });
     expect(resolveAgentIdFromSessionMetadataMock).not.toHaveBeenCalled();
-    expect(resolveAvailableAccountSettingsMock).not.toHaveBeenCalled();
-    expect(resolveConfiguredAcpBackendFromAccountSettingsMock).not.toHaveBeenCalled();
-  });
-
-  it('recovers configured ACP fork targets from flavor-only metadata when the Account snapshot is unavailable', async () => {
-    const resolvedBackend = { backendId: 'plugin-review-bot', title: 'Plugin Review Bot' };
-
-    resolveAvailableAccountSettingsMock.mockReturnValueOnce(null);
-    resolveConfiguredAcpBackendFromAccountSettingsMock.mockReturnValueOnce(resolvedBackend);
-
-    const result = await resolveSessionForkBackendTarget({
-      credentials,
-      parentMetadata: {
-        flavor: 'acp:plugin-review-bot',
-      },
-    });
-
-    expect(resolveConfiguredAcpBackendFromAccountSettingsMock).toHaveBeenCalledWith(
-      {},
-      'plugin-review-bot',
-    );
-    expect(result).toMatchObject({
-      ok: true,
-      catalogAgentId: null,
-      agentHintAgentId: 'acp:plugin-review-bot',
-      backendTargetV2: {
-        kind: 'backend',
-        backendId: 'plugin-review-bot',
-        configuredBackendId: 'plugin-review-bot',
-        sourceKind: 'configured',
-      },
-      backendTarget: { kind: 'configuredAcpBackend', backendId: 'plugin-review-bot' },
-      replayFlavor: 'acp:plugin-review-bot',
-      metadataOverlay: expect.objectContaining({
-        acpConfiguredBackendV1: expect.objectContaining({
-          backendId: 'plugin-review-bot',
-          title: 'Plugin Review Bot',
-        }),
-      }),
-    });
   });
 
   it('resolves built-in fork targets from session metadata when no configured ACP backend is present', async () => {
@@ -188,8 +62,6 @@ describe('resolveSessionForkBackendTarget', () => {
       parentMetadata: {},
     });
 
-    expect(resolveAvailableAccountSettingsMock).not.toHaveBeenCalled();
-    expect(resolveConfiguredAcpBackendFromAccountSettingsMock).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       ok: true,
       catalogAgentId: 'claude',
@@ -259,8 +131,6 @@ describe('resolveSessionForkBackendTarget', () => {
       ok: false,
       errorMessage: 'linked_session_reconciliation_required',
     });
-    expect(resolveAvailableAccountSettingsMock).not.toHaveBeenCalled();
-    expect(resolveConfiguredAcpBackendFromAccountSettingsMock).not.toHaveBeenCalled();
     expect(resolveAgentIdFromSessionMetadataMock).not.toHaveBeenCalled();
   });
 

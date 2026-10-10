@@ -12,9 +12,10 @@ import type { ApiClient } from '@/api/api';
 import { readSessionCreationTerminalSpawnErrorDetail } from '@/api/session/sessionCreationTerminalSpawnErrorDetail';
 import type { SessionCreationOutcome } from '@/api/types';
 import { parseSessionMetadataConfigOptionOverridesJson } from '@/agent/runtime/compat/sessionMetadataOverrides';
-import { applySessionConfigOptionOverridesToMetadata } from '@/agent/runtime/createSessionMetadata';
+import { applyInitialSessionCreationFactsToMetadata, applySessionConfigOptionOverridesToMetadata } from '@/agent/runtime/createSessionMetadata';
 import type { SessionAttachFilePayload } from '@/agent/runtime/sessionAttachPayload';
 import type { StoredCredentials } from '@/persistence';
+import { resolveAvailableAccountSettings } from '@/settings/accountSettings/resolveAvailableAccountSettings';
 import { archiveSessionOnceInactive } from '@/session/services/archiveSessionOnceInactive';
 import {
   SPAWN_SESSION_ERROR_CODES,
@@ -45,6 +46,8 @@ type SpawnError = Extract<SpawnSessionResult, { type: 'error' }>;
  * runner-side creation.
  */
 export function daemonLaunchRequiresCommittedSession(options: SpawnSessionOptions): boolean {
+  if (options.requesterSessionBootstrap) return true;
+  if ((options.promptStack?.length ?? 0) > 0) return true;
   if (options.creationAuthorization || options.initialSessionRolesV1 || (options.initialTriggers?.length ?? 0) > 0) return true;
   const admitted = ConnectedServicesBindingsIngressSchema.safeParse(options.connectedServices);
   if (!admitted.success || !admitted.data) return false;
@@ -76,6 +79,7 @@ function buildCommittedLaunchMetadata(input: Readonly<{
   agentModeId?: string;
   agentModeUpdatedAt?: number;
   materializationIdentity: ConnectedServiceMaterializationIdentityV1;
+  accountSettings?: Readonly<Record<string, unknown>>;
 }>): SessionMetadata {
   const { options } = input;
   const mcpSelection = options.mcpSelection
@@ -108,7 +112,7 @@ function buildCommittedLaunchMetadata(input: Readonly<{
     });
   }
   return applySessionConfigOptionOverridesToMetadata(
-    metadata,
+    applyInitialSessionCreationFactsToMetadata(metadata, { ...options, accountSettings: input.accountSettings }),
     options.sessionConfigOptionOverrides
       ? parseSessionMetadataConfigOptionOverridesJson(JSON.stringify(options.sessionConfigOptionOverrides))
       : null,
@@ -129,6 +133,7 @@ export async function commitDaemonLaunchSession(input: Readonly<{
   directory: string;
   agentModeId?: string;
   agentModeUpdatedAt?: number;
+  accountSettings?: Readonly<Record<string, unknown>>;
 }>): Promise<
   | Readonly<{ ok: true; session: CommittedDaemonLaunchSession }>
   | Readonly<{ ok: false; result: SpawnError }>
@@ -138,6 +143,7 @@ export async function commitDaemonLaunchSession(input: Readonly<{
     ? SessionCreationTagV1Schema.parse(options.sessionCreationTag)
     : randomUUID();
   const mintedIdentity = resolveConnectedServiceMaterializationIdentityForSpawn({ options });
+  const accountSettings = input.accountSettings ?? await resolveAvailableAccountSettings({ credentials: input.credentials });
   let created: Awaited<ReturnType<ApiClient['getOrCreateSession']>>;
   try {
     created = await input.api.getOrCreateSession({
@@ -152,6 +158,7 @@ export async function commitDaemonLaunchSession(input: Readonly<{
           ? { agentModeUpdatedAt: input.agentModeUpdatedAt }
           : {}),
         materializationIdentity: mintedIdentity,
+        ...(accountSettings ? { accountSettings } : {}),
       }),
       state: { controlledByUser: false },
       ...(options.initialAccess !== undefined ? { initialAccess: options.initialAccess } : {}),
@@ -228,6 +235,9 @@ export function withoutFreshSessionCreationFields(options: SpawnSessionOptions):
     initialAccess: _initialAccess,
     initialTriggers: _initialTriggers,
     initialTitle: _initialTitle,
+    identity: _initialIdentity,
+    memoryEnabled: _initialMemoryEnabled,
+    promptStack: _initialPromptStack,
     reportsTo: _reportsTo,
     initialSessionRolesV1: _initialSessionRolesV1,
     originKind: _originKind,

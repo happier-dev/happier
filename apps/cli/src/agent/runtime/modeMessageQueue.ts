@@ -36,6 +36,16 @@ export class MessageQueue2<Mode, Message = string> {
   private readonly batcher: MessageBatcher<Message>;
   private lastWaitLogAt = 0;
   private lastAbortLogAt = 0;
+  private readonly changeListeners = new Set<(collected?: MessageQueueBatch<Mode, Message>) => void>();
+
+  subscribeChanges(listener: (collected?: MessageQueueBatch<Mode, Message>) => void): () => void {
+    this.changeListeners.add(listener);
+    return () => { this.changeListeners.delete(listener); };
+  }
+
+  private notifyChanged(collected?: MessageQueueBatch<Mode, Message>): void {
+    for (const listener of this.changeListeners) listener(collected);
+  }
 
   constructor(
     modeHasher: (mode: Mode) => string,
@@ -67,6 +77,7 @@ export class MessageQueue2<Mode, Message = string> {
       modeHash,
       isolate: false,
     });
+    this.notifyChanged();
 
     if (this.onMessageHandler) {
       this.onMessageHandler(message, mode);
@@ -101,6 +112,7 @@ export class MessageQueue2<Mode, Message = string> {
       modeHash,
       isolate: true,
     });
+    this.notifyChanged();
 
     if (this.onMessageHandler) {
       this.onMessageHandler(message, mode);
@@ -127,6 +139,7 @@ export class MessageQueue2<Mode, Message = string> {
       modeHash,
       isolate: true,
     });
+    this.notifyChanged();
 
     if (this.onMessageHandler) {
       this.onMessageHandler(message, mode);
@@ -152,6 +165,7 @@ export class MessageQueue2<Mode, Message = string> {
       modeHash,
       isolate: false,
     });
+    this.notifyChanged();
 
     if (this.onMessageHandler) {
       this.onMessageHandler(message, mode);
@@ -167,6 +181,7 @@ export class MessageQueue2<Mode, Message = string> {
   reset(): void {
     this.queue = [];
     this.closed = false;
+    this.notifyChanged();
 
     if (this.waiter) {
       const waiter = this.waiter;
@@ -177,6 +192,7 @@ export class MessageQueue2<Mode, Message = string> {
 
   close(): void {
     this.closed = true;
+    this.notifyChanged();
 
     if (this.waiter) {
       const waiter = this.waiter;
@@ -196,6 +212,7 @@ export class MessageQueue2<Mode, Message = string> {
   discardMatching(predicate: (message: Message, mode: Mode) => boolean): number {
     const before = this.queue.length;
     this.queue = this.queue.filter((item) => !predicate(item.message, item.mode));
+    if (before !== this.queue.length) this.notifyChanged();
     return before - this.queue.length;
   }
 
@@ -323,13 +340,14 @@ export class MessageQueue2<Mode, Message = string> {
     }
 
     const combinedMessage = this.batcher(sameModeMessages);
-
-    return {
+    const batch = {
       message: combinedMessage,
       mode,
       hash: targetModeHash,
       isolate,
     };
+    this.notifyChanged(batch);
+    return batch;
   }
 
   private waitForMessages(abortSignal?: AbortSignal): Promise<boolean> {

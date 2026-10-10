@@ -7,7 +7,7 @@ import type {
     SessionSyncPendingInputServerContractResult,
 } from '@/api/clientCompatibility/sessionSyncPendingInputServerContract';
 import { configuration } from '@/configuration';
-import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { getActiveAccountSettingsSnapshot, type ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import { logger } from '@/ui/logger';
@@ -23,7 +23,7 @@ import {
     buildConnectedServiceMaterializationSpawnErrorResult,
 } from '../connectedServices/diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
 import { buildConnectedServiceUxDiagnostic } from '../connectedServices/diagnostics/connectedServiceUxDiagnostics';
-import { ConnectedServiceMaterializationBlockedError } from '../connectedServices/materialize/materializeConnectedServicesForSpawn';
+import { ConnectedServiceMaterializationBlockedError, materializeConnectedServicesForSpawn } from '../connectedServices/materialize/materializeConnectedServicesForSpawn';
 import {
     readConnectedServiceMaterializationIdentityFromEnvironment,
     readConnectedServiceMaterializationIdentityFromSpawnOptions,
@@ -123,6 +123,11 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
     effectiveResume: string;
     catalogAgentId: CatalogAgentId | null;
     credentials: SpawnCredentials;
+    accountSettingsSnapshot?: ActiveAccountSettingsSnapshot;
+    activeServerDir?: string;
+    qualifiedConnectedAccountApi?: Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['qualifiedConnectedAccountApi'];
+    connectedAccountsOwner?: Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['connectedAccountsOwner'];
+    isAccountRuntimeCurrent?: () => Promise<boolean>;
     api: SpawnApi;
     providerAccountUsageStore?: SpawnAccountUsageStore;
     connectedServiceRefreshCoordinator: ConnectedServiceRefreshCoordinator | null;
@@ -208,7 +213,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
     let auth: ConnectedServiceAuth = null;
 
     if (shouldResolveAuth && input.catalogAgentId) {
-        const activeAccountSettings = getActiveAccountSettingsSnapshot();
+        const activeAccountSettings = input.accountSettingsSnapshot ?? getActiveAccountSettingsSnapshot();
         const spawnSharedStateContinuityRequested = resolveConnectedServicesProviderStateSharingPolicyV1(
             (activeAccountSettings?.settings as { connectedServicesProviderStateSharingSettingsV1?: unknown } | null)
                 ?.connectedServicesProviderStateSharingSettingsV1,
@@ -219,10 +224,14 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
                 agentId: input.catalogAgentId,
                 connectedServicesBindingsRaw: options.connectedServices,
                 materializationKey,
-                activeServerDir: configuration.activeServerDir,
+                activeServerDir: input.activeServerDir ?? configuration.activeServerDir,
                 baseDir: input.connectedServicesMaterializationBaseDir,
                 sessionDirectory: options.directory,
                 credentials: input.credentials,
+                connectedAccountsOwner: input.connectedAccountsOwner,
+                ...(input.options.requesterSessionBootstrap ? { allowNativeAccountState: false } : {}),
+                ...(input.isAccountRuntimeCurrent ? { isAccountRuntimeCurrent: input.isAccountRuntimeCurrent } : {}),
+                ...(input.qualifiedConnectedAccountApi ? { qualifiedConnectedAccountApi: input.qualifiedConnectedAccountApi } : {}),
                 api: input.api,
                 accountUsageStore: input.providerAccountUsageStore ?? null,
                 quotaFreshnessMs: 5 * 60_000,
@@ -375,6 +384,26 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
         logger.warn('[DAEMON RUN] Ignoring connected-services spawn request for configured backend target');
     }
 
+    if (!auth && input.options.requesterSessionBootstrap && input.catalogAgentId) {
+        // Provider and API-key launches still need a real isolated Agent home.
+        // This is the same native-home materializer, with no Connected Account
+        // authority or credential selection manufactured for an empty home.
+        try {
+            const isolated = await materializeConnectedServicesForSpawn({ agentId: input.catalogAgentId,
+                materializationKey, activeServerDir: input.activeServerDir ?? configuration.activeServerDir,
+                baseDir: input.connectedServicesMaterializationBaseDir, sessionDirectory: options.directory,
+                recordsByServiceId: new Map(), allowNativeAccountState: false,
+                ...(input.isAccountRuntimeCurrent ? { isAccountRuntimeCurrent: input.isAccountRuntimeCurrent } : {}),
+                accountSettings: input.accountSettingsSnapshot?.settings ?? null });
+            if (!isolated) throw new Error('agent_native_home_unavailable');
+            auth = { ...isolated, cleanupOnFailure: isolated.cleanupOnFailure ?? null,
+                cleanupOnExit: isolated.cleanupOnExit ?? null,
+                connectedServicesBindings: { v: 2, bindingsByServiceId: {} }, qualifiedPurposeBindingSnapshot: null };
+        } catch {
+            return { ok: false, result: { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+                errorMessage: 'Requester Agent credential isolation unavailable' } };
+        }
+    }
     const effectiveBindings = auth?.connectedServicesBindings ?? options.connectedServices;
     const effectiveBindingsV1 = readConnectedServiceBindingsOrNull(effectiveBindings);
     const qualifiedPurposeBindingSnapshot =

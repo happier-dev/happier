@@ -12,6 +12,8 @@ import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope }
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { ApiMachineClient } from './apiMachine';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 
 function createMachine(): Machine {
   return {
@@ -30,6 +32,66 @@ async function expectPathMissing(path: string): Promise<void> {
 }
 
 describe('ApiMachineClient filesystem handlers', () => {
+  it('refuses missing requester identity instead of substituting the daemon Account and preserves trusted owner-local approval', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'happier-api-machine-fs-approval-'));
+    const previousWorkingDirectory = process.env.HAPPIER_MACHINE_RPC_WORKING_DIRECTORY;
+    let client: ApiMachineClient | undefined;
+    try {
+      process.env.HAPPIER_MACHINE_RPC_WORKING_DIRECTORY = workspace;
+      const token = `header.${Buffer.from(JSON.stringify({ sub: 'daemon-owner' })).toString('base64url')}.signature`;
+      client = new ApiMachineClient(token, createMachine());
+      const rpc = client.getPeerMediationMachineRpcHandlerManager();
+      const input = { rootPath: workspace, path: 'pending' };
+      await expect(rpc.invokeLocal('daemon.filesystem.createDirectory', input)).resolves.toMatchObject({
+        ok: false, errorCode: 'filesystem_action_owner_unavailable',
+      });
+      const approvals: unknown[] = [];
+      const executor = createActionExecutor({
+        ...createCliActionDeps({ token, sessionId: '', mode: 'plain', ctx: null }),
+        filesystemActionExecute: client.createFilesystemActionExecutor('home'),
+        // Approval Artifact storage is the external persistence boundary.
+        approvalsCreate: async ({ request }) => { approvals.push(request); return { artifactId: 'approval' }; },
+      });
+      const handlers = {
+        spawnSession: async () => ({ type: 'error', errorCode: 'unknown', errorMessage: 'not implemented' } as const),
+        stopSession: async () => true, requestShutdown: () => {},
+      } satisfies Parameters<ApiMachineClient['setRPCHandlers']>[0];
+      client.setRPCHandlers(handlers, { externalActionIngressOwner: {
+        currentServerId: 'home', executor, resolveTarget: async () => ({ kind: 'machine', machineId: 'machine-test' }),
+      } });
+      await expect(rpc.invokeLocal('daemon.filesystem.createDirectory', input)).resolves.toMatchObject({
+        ok: false, errorCode: 'filesystem_requester_unavailable',
+      });
+      await expect(rpc.invokeLocal(RPC_METHODS.CREATE_DIRECTORY, input)).resolves.toMatchObject({
+        ok: false, errorCode: 'filesystem_requester_unavailable',
+      });
+      expect(approvals).toEqual([]);
+      await expectPathMissing(join(workspace, 'pending'));
+      // The admitted owner-local path already has the verified Account fact;
+      // it does not acquire an actor by calling a native filesystem handler.
+      await expect(executor.execute('daemon.filesystem.createDirectory', input, {
+        surface: 'rpc', authority: 'account_automation', serverId: 'home', runtimeAccountId: 'verified-requester',
+        externalActionTarget: { kind: 'machine', machineId: 'machine-test' },
+      })).resolves.toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'approval' } });
+      expect(approvals).toEqual([expect.objectContaining({ actionArgs: input,
+        executionOriginV1: expect.objectContaining({ serverId: 'home', machineId: 'machine-test', accountId: 'verified-requester' }),
+      })]);
+      await expectPathMissing(join(workspace, 'pending'));
+      client.setRPCHandlers(handlers);
+      await expect(rpc.invokeLocal('daemon.filesystem.createDirectory', input)).resolves.toMatchObject({
+        ok: false, errorCode: 'filesystem_action_owner_unavailable',
+      });
+      await expect(rpc.invokeLocal(RPC_METHODS.CREATE_DIRECTORY, { path: 'legacy' })).resolves.toEqual({ success: true });
+      await expect(access(join(workspace, 'legacy'))).resolves.toBeUndefined();
+      await expectPathMissing(join(workspace, 'pending'));
+    } finally {
+      await client?.shutdown();
+      if (previousWorkingDirectory == null) delete process.env.HAPPIER_MACHINE_RPC_WORKING_DIRECTORY;
+      else process.env.HAPPIER_MACHINE_RPC_WORKING_DIRECTORY = previousWorkingDirectory;
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it('registers filesystem RPCs as machine-scoped handlers', () => {
     const client = new ApiMachineClient('token', createMachine());
     const rpc = (client as any).rpcHandlerManager as {

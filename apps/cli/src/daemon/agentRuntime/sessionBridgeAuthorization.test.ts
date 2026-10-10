@@ -136,7 +136,7 @@ describe('Agent runtime session bridge authorization', () => {
     const options = {
       flavor: 'claude', machineId: 'selected-machine', directory: happyHomeDir,
       runtimeDescriptorV1: hostOptions.runtimeDescriptorV1,
-      launchControlMetadata: captureSessionLaunchControlMetadata({ processEnvironment: {} }),
+      launchControlMetadata: captureSessionLaunchControlMetadata({ processEnvironment: { NODE_ENV: 'test' } }),
     };
     const { metadata } = createSessionMetadata(options);
     settingsValues.claudeUnifiedTerminalEnabled = true;

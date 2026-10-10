@@ -1,11 +1,13 @@
 import type { Metadata } from '@/api/types';
 import {
   isRuntimeConfigUpdateOutcomeApplied,
-  LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY,
-  readAcpConfigOptionIntentFromMetadata,
   type RuntimeConfigUpdateOutcomeV1,
+} from '@happier-dev/agents/runtime/session/runtimeConfigUpdateOutcome';
+import {
+  LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY,
   SESSION_CONFIG_OPTION_OVERRIDES_KEY,
-} from '@happier-dev/agents';
+} from '@happier-dev/agents/session/state/bindings/metadataKeys';
+import { readAcpConfigOptionIntentFromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
 
 type ConfigOptionValueId = string | number | boolean | null;
 type ConfigOptionOverrideCandidate = { configId: string; valueId: ConfigOptionValueId; updatedAt: number };

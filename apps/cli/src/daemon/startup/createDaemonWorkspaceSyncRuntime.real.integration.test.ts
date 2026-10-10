@@ -1,5 +1,4 @@
 import {
-  AccountSettingsSchema,
   ActionApprovalRequestCreatedResultSchema,
   ApprovalRequestSchema,
   deriveWorkspaceSyncConflictAsidePaths,
@@ -557,17 +556,10 @@ async function startLiveRuntime(input: Readonly<{
   ];
   const snapshot = {
     source: 'network' as const,
-    settings: AccountSettingsSchema.parse(
-      activeRelationships.length > 0
-        ? {
-            workspaceRefsV1: refs,
-            workspaceSyncRelationshipsV1: activeRelationships,
-          }
-        : {},
-    ),
-    settingsVersion: 1,
+    workspaceRefs: refs,
+    relationships: activeRelationships,
+    graphRevision: 1, organizations: [], rows: [],
     loadedAtMs: 1,
-    settingsSecretsReadKeys: [],
     scopeKey: activeRelationships[0]?.relationshipId ?? 'live-copy-once',
   };
   const workspaceRefs = new Map(refs.map(({ id, serverId, machineId, rootPath }) => [id, { serverId, machineId, rootPath }] as const));
@@ -702,8 +694,8 @@ async function startLiveRuntime(input: Readonly<{
       return process;
     },
     launchLocalAgent: launchWorkspaceSyncLocalAgent,
-    getSettingsSnapshot: () => snapshot,
-    subscribeSettingsSnapshot: () => () => undefined,
+    getProjectSnapshot: () => snapshot,
+    subscribeProjectSnapshot: () => () => undefined,
     resolveInstalledComponentPaths: () => ({
       currentPath: input.binaries.manager,
       resolvedCurrentPath: null,
@@ -994,17 +986,16 @@ describe.skipIf(runInstalledArtifactIntegration)(
       await Promise.all([alphaRoot, betaRoot, gammaRoot].map(async (path) => await mkdir(path, { recursive: true })));
       const snapshot = {
         source: 'network' as const,
-        settings: AccountSettingsSchema.parse({
-          workspaceRefsV1: [
-            { id: 'alpha-ref', serverId: 'server-1', machineId: machineIds.alpha, rootPath: alphaRoot, createdAtMs: 1 },
-            { id: 'beta-ref', serverId: 'server-1', machineId: machineIds.beta, rootPath: betaRoot, createdAtMs: 1 },
-            { id: 'gamma-ref', serverId: 'server-1', machineId: machineIds.gamma, rootPath: gammaRoot, createdAtMs: 1 },
-          ],
-          workspaceSyncRelationshipsV1: relationships,
-        }),
-        settingsVersion: 1,
+
+        workspaceRefs: [
+          { id: 'alpha-ref', serverId: 'server-1', machineId: machineIds.alpha, rootPath: alphaRoot, createdAtMs: 1 },
+          { id: 'beta-ref', serverId: 'server-1', machineId: machineIds.beta, rootPath: betaRoot, createdAtMs: 1 },
+          { id: 'gamma-ref', serverId: 'server-1', machineId: machineIds.gamma, rootPath: gammaRoot, createdAtMs: 1 },
+        ],
+        relationships: relationships,
+        graphRevision: 1, organizations: [], rows: [],
         loadedAtMs: 1,
-        settingsSecretsReadKeys: [],
+        scopeKey: 'account-1',
       };
       const createTarget = async (machineId: string) => {
         const home = join(root, machineId);
@@ -1013,7 +1004,7 @@ describe.skipIf(runInstalledArtifactIntegration)(
         return createWorkspaceSyncTargetAuthority({
           localServerId: 'server-1',
           localMachineId: machineId,
-          getSettingsSnapshot: () => snapshot,
+          getProjectSnapshot: () => snapshot,
           callMachineRpc: async () => { throw new Error('Cross-machine bootstrap RPC was not expected at this local authority'); },
           bootstrap: {
             materializationDirectory: join(home, 'bootstrap'),

@@ -665,12 +665,14 @@ export function registerPermissionModeMessageQueueBinding(opts: {
             // is ambiguous and must retain the durable association for restart reconciliation.
             releaseUndispatchedReplaySeed = null;
             providerEffectStarted = true;
-            await steer.steerText(dispatchText, {
+            const steerSend = steer.steerText(dispatchText, {
               localId,
               ...queuedPromptIdentityFields,
               ...(causalPermissionAuthority ? { causalPermissionAuthority } : {}),
               ...(preparedDispatch.structuredInput ? { structuredInput: preparedDispatch.structuredInput } : {}),
             });
+            void preparedDispatch.retainComposition({ deliveryKind: 'steer', observedAtMs: Date.now(), turnId: null });
+            await steerSend;
             if (stopForLostBinding()) return;
             return;
           } catch (error) {

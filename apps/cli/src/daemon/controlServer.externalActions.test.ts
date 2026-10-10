@@ -77,6 +77,11 @@ describe('createDaemonControlApp external Action ingress', () => {
       expect((await invoke()).json()).toMatchObject({ ok: false, errorCode: 'present_user_required' });
       terminalPolicy.value = 'allowed';
       expect((await invoke()).json()).not.toHaveProperty('errorCode', 'present_user_required');
+      const narrowed = await app.inject({ method: 'POST', url: '/actions/root/execute',
+        headers: { 'x-happier-daemon-token': 'private-control-token', 'x-happier-authority-ceiling': 'account_automation' },
+        payload: { actionId: 'approval.request.decide', input: { artifactId: 'missing', decision: 'approve' } },
+      });
+      expect(narrowed.json()).toMatchObject({ ok: false, errorCode: 'present_user_required' });
     } finally { terminalPolicy.value = 'allowed'; await app.close(); }
   });
   it('fails closed when a daemon-owned meta Action produces a non-JSON result', async () => {

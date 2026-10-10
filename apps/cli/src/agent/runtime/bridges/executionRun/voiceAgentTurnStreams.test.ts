@@ -700,7 +700,12 @@ describe('voiceAgentTurnStreams', () => {
         transcriptWriter: { commitVoiceAgentTranscriptTurn: durableCommit },
       });
       if (!started.ok) throw new Error(started.error);
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      // Await the real durable handoff, not one event-loop tick: prompt
+      // preparation may still be admitting the turn on a cold module graph.
+      await vi.waitFor(() => {
+        expect(ctrl.pendingTranscriptTurnByExternalStreamId.get(started.streamId)?.assistant).toMatchObject({ text: expect.any(String) });
+        expect(manager.isTurnInFlight(startedAgent.voiceAgentId)).toBe(false);
+      });
       await expect(cancelVoiceAgentTurnStream({
         runId: 'run_1',
         params: { streamId: started.streamId },
@@ -753,7 +758,10 @@ describe('voiceAgentTurnStreams', () => {
       transcriptWriter: { commitVoiceAgentTranscriptTurn: durableCommit },
     });
     if (!third.ok) throw new Error(third.error);
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() => {
+      expect(ctrl.pendingTranscriptTurnByExternalStreamId.get(third.streamId)?.assistant).toMatchObject({ text: expect.any(String) });
+      expect(manager.isTurnInFlight(startedAgent.voiceAgentId)).toBe(false);
+    });
     const committing = manager.commit({ voiceAgentId: startedAgent.voiceAgentId, maxChars: 10_000 });
     const cancelling = cancelVoiceAgentTurnStream({
       runId: 'run_1',

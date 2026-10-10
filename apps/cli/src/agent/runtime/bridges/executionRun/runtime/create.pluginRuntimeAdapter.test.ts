@@ -164,7 +164,7 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
       provenance: 'first_party',
       // The overlay merge belongs to the shared execution-run shell and must
       // not depend on bundled-plugin isolation/catalog projection.
-      runtimeOwner: { selected: { kind: 'host_configured' } },
+      runtimeOwner: { selected: { kind: 'plugin_engine' } },
       backend: { id: 'codex', agentId: 'codex', provenance: 'first_party' },
       agent: { id: 'codex', provenance: 'first_party' },
       engineAdapter: { runtimeCore: { createExecutionRunBackend: createExecutionRunBackendMock } },
@@ -225,7 +225,7 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
       backendId: 'codex',
       agentId: 'codex',
       provenance: 'first_party',
-      runtimeOwner: { selected: { kind: 'host_configured' } },
+      runtimeOwner: { selected: { kind: 'plugin_engine' } },
       backend: { id: 'codex', agentId: 'codex', provenance: 'first_party' },
       agent: { id: 'codex', provenance: 'first_party' },
       engineAdapter: { runtimeCore: { createExecutionRunBackend: createExecutionRunBackendMock } },

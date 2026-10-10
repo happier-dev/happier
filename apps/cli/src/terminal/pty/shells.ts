@@ -41,3 +41,15 @@ export function resolveTerminalShell(env: NodeJS.ProcessEnv, platform: NodeJS.Pl
   ];
   return { file: shell, args };
 }
+
+export function resolveFiniteTerminalShell(command: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform): ResolvedTerminalShell {
+  const { file } = resolveTerminalShell(env, platform);
+  const shellName = file.replaceAll('\\', '/').split('/').at(-1)?.toLowerCase();
+  if (platform === 'win32' && (shellName === 'cmd' || shellName === 'cmd.exe')) {
+    return { file, args: ['/d', '/s', '/c', command] };
+  }
+  if (shellName === 'powershell' || shellName === 'powershell.exe' || shellName === 'pwsh' || shellName === 'pwsh.exe') {
+    return { file, args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command] };
+  }
+  return { file, args: ['-c', command] };
+}

@@ -1,4 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { getPriority } from 'node:os';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Scheduling priority is an OS boundary; keep real launch policy underneath it.
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return { ...actual, getPriority: vi.fn(() => 0) };
+});
 
 import {
   buildSystemdUserScopedLaunchSpec,
@@ -7,6 +14,10 @@ import {
 } from './systemdUserResourceGovernor';
 
 describe('systemd user resource governor', () => {
+  beforeEach(() => {
+    vi.mocked(getPriority).mockReturnValue(0);
+  });
+
   it.each([
     ['linux background service', 'linux', 'background-service', true],
     ['linux self-restart', 'linux', 'self-restart', true],
@@ -50,6 +61,16 @@ describe('systemd user resource governor', () => {
       env: { HAPPIER_TEST_ADMITTED_CLOSURE: 'immutable' },
     });
     expect(spec.args.join(' ')).not.toMatch(/CPUQuota|MemoryMax|MemoryHigh|TasksMax/u);
+  });
+
+  it('preserves an inherited lower scheduling priority instead of requiring permission to raise it', () => {
+    vi.mocked(getPriority).mockReturnValue(19);
+    const spec = buildSystemdUserScopedLaunchSpec({
+      launchSpec: { filePath: '/opt/happier/runtime/bin/happier-js-runtime', args: ['claude'] },
+    });
+
+    expect(spec.args).toContain('--nice=19');
+    expect(spec.args).not.toContain('--nice=10');
   });
 
   it('only enables the Linux wrapper when the provisioned jobs slice has its expected shares and finite soft memory boundary', async () => {

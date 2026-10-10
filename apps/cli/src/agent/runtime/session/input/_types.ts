@@ -3,6 +3,12 @@ import type {
   MaterializeNextPendingResult,
   RuntimeActivitySnapshotTail,
 } from '@/api/session/sessionClientPort';
+import type { PendingQueueState } from '@/api/session/pendingQueueState';
+
+export type SessionInputLiveWork = Readonly<{
+  session: 'active' | 'settled' | 'unknown';
+  input: 'active' | 'settled' | 'unknown';
+}>;
 
 export type MessageBatch<Mode, Message> = {
   message: Message;
@@ -29,6 +35,9 @@ export type SessionProviderInputConsumerSession = Readonly<{
   hasPendingProviderInput?: () => boolean;
   reconcilePendingProviderInputCustodyBeforeMaterialization?: () => Promise<boolean>;
   reconcilePendingQueueState?: (opts: { force: boolean }) => unknown | Promise<unknown>;
+  readPendingQueueStateForLiveWork?: () => Promise<PendingQueueState>;
+  /** Incumbent synchronous projection, used only to detect change edges. */
+  getPendingQueueState?: () => PendingQueueState;
 }>;
 
 export type DrainPendingStoppedReason =
@@ -67,6 +76,10 @@ export type WaitForNextProviderInputOptions = Readonly<{
 }>;
 
 export type SessionProviderInputConsumer<Mode, Message> = Readonly<{
+  readLiveWork: () => Promise<SessionInputLiveWork>;
+  subscribeLiveWork: (listener: () => void) => () => void;
+  /** The prompt-loop owner releases the batch after preparation/turn custody settles. */
+  releaseInputBatch: () => void;
   waitForNextInput: (opts: WaitForNextProviderInputOptions) => Promise<MessageBatch<Mode, Message> | null>;
   deferContextOnlyInput: (batch: MessageBatch<Mode, Message>) => void;
   finalizeContextOnlyInput: (opts: Readonly<{

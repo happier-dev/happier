@@ -1,5 +1,5 @@
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
-import { PENDING_INPUT_PROTOCOL_VERSION_V1, PENDING_INPUT_PROTOCOL_VERSION_V3, SESSION_SYNC_PROTOCOL_VERSION_RUNTIME_ACTIVITY } from '@happier-dev/protocol/clientCompatibility/primitives';
+import { PENDING_INPUT_PROTOCOL_VERSION_V1, PENDING_INPUT_PROTOCOL_VERSION_V3, PENDING_INPUT_PROTOCOL_VERSION_V4, SESSION_SYNC_PROTOCOL_VERSION_RUNTIME_ACTIVITY } from '@happier-dev/protocol/clientCompatibility/primitives';
 import {
     observeServerFeaturesSnapshot,
     type CliServerFeaturesSnapshot,
@@ -43,6 +43,15 @@ const INDETERMINATE: CapabilitySelection = Object.freeze({
     pendingInput: 'indeterminate',
     publisherAuthority: 'indeterminate',
 });
+
+export function resolveMachinePendingResetStartCapability(
+    snapshot: CliServerFeaturesSnapshot | undefined,
+    installed: boolean,
+): Readonly<{ protocolVersions: readonly [1] }> | undefined {
+    return installed && snapshot?.status === 'ready'
+        && (snapshot.features.capabilities.session?.pendingInput?.protocolVersion ?? 0) >= PENDING_INPUT_PROTOCOL_VERSION_V4
+        ? { protocolVersions: [1] } : undefined;
+}
 
 /** The truthful target-admission leaf from the daemon-wide cached server snapshot. */
 export function resolveMachineSessionInputAdmissionCapability(

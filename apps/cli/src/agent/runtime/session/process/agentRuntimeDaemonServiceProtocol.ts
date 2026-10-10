@@ -7,6 +7,10 @@ import { SessionInputAdmissionResultV1Schema } from '@happier-dev/protocol/sessi
 import { SessionPendingEnqueueByMachineRequestV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
 import { SessionPendingExecutionRunEnqueueByMachineRequestV2Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2';
 import { ProviderBrokerConsumerV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { ProviderRuntimeBindingBasisV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import { QualifiedConnectedAccountPurposeV1Schema } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
+import { QualifiedConnectedAccountPurposeBindingV1Schema, QualifiedConnectedAccountPurposeBindingTargetV1Schema } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { TeamCredentialRouteV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
@@ -60,6 +64,14 @@ const ProjectionTokenSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 const CanonicalOriginSchema = z.string().trim().min(1).max(2_048);
 const DeclaredSecretValueSchema = z.string().max(65_536);
 const EnvironmentKeySchema = z.string().trim().min(1).max(256);
+const ManagedProviderBindingProofShape = {
+  executionRunId: OpaqueIdSchema,
+  executionRunOccurrenceId: OpaqueIdSchema,
+  agentId: OpaqueIdSchema,
+  modelId: OpaqueIdSchema,
+  runtimeBindingBasis: asHostProtocolZod(ProviderRuntimeBindingBasisV1Schema),
+  expectedAccountSettingsScopeKey: z.string().min(1),
+};
 const EnvironmentKeysSchema = z.array(EnvironmentKeySchema)
   .max(256)
   .superRefine((keys, context) => {
@@ -128,7 +140,7 @@ export const AgentRuntimeDaemonServiceRequestV1Schema = z.object({
       kind: z.literal('action.execute'),
       surface: z.enum(['agent', 'mcp']).optional(),
       requestId: OpaqueIdSchema,
-      actionId: ActionIdSchema,
+      actionId: asHostProtocolZod(ActionIdSchema),
       input: z.unknown(),
       witness: AgentRuntimeDaemonServiceTurnWitnessV1Schema,
       toolCallId: OpaqueIdSchema.optional(),
@@ -157,7 +169,7 @@ export const AgentRuntimeDaemonServiceRequestV1Schema = z.object({
     z.object({
       kind: z.literal('session.input.admit'),
       requestId: OpaqueIdSchema,
-      request: z.union([SessionPendingEnqueueByMachineRequestV1Schema, SessionPendingExecutionRunEnqueueByMachineRequestV2Schema]),
+      request: z.union([asHostProtocolZod(SessionPendingEnqueueByMachineRequestV1Schema), asHostProtocolZod(SessionPendingExecutionRunEnqueueByMachineRequestV2Schema)]),
     }).strict(),
     z.object({
       kind: z.literal('model_transition.authorize'),
@@ -166,13 +178,37 @@ export const AgentRuntimeDaemonServiceRequestV1Schema = z.object({
         AgentRuntimeDaemonProviderConnectionModelRefV1Schema,
     }).strict(),
     z.object({
+      kind: z.literal('provider_managed.purpose.resolve'),
+      requestId: OpaqueIdSchema,
+      expectedAccountSettingsScopeKey: z.string().min(1),
+      purpose: asHostProtocolZod(QualifiedConnectedAccountPurposeV1Schema),
+      target: asHostProtocolZod(QualifiedConnectedAccountPurposeBindingTargetV1Schema),
+      serviceRefs: z.array(asHostProtocolZod(PluginContributionIdentityV1Schema)),
+    }).strict(),
+    z.object({
+      kind: z.literal('provider_managed.binding.open'),
+      requestId: OpaqueIdSchema,
+      ...ManagedProviderBindingProofShape,
+    }).strict(),
+    z.object({
+      kind: z.literal('provider_managed.binding.read'),
+      requestId: OpaqueIdSchema,
+      ...ManagedProviderBindingProofShape,
+      bindingId: OpaqueIdSchema.optional(),
+    }).strict(),
+    z.object({
+      kind: z.literal('provider_managed.binding.close'),
+      requestId: OpaqueIdSchema,
+      bindingId: OpaqueIdSchema,
+    }).strict(),
+    z.object({
       kind: z.literal('provider_broker.binding.open'),
       requestId: OpaqueIdSchema,
       resourceId: OpaqueIdSchema,
       expectedResourceRevision: z.number().int().nonnegative(),
       agentTargetKey: OpaqueIdSchema,
       modelId: OpaqueIdSchema,
-      consumer: ProviderBrokerConsumerV1Schema.optional(),
+      consumer: asHostProtocolZod(ProviderBrokerConsumerV1Schema).optional(),
       /**
        * An Execution Run's own accepted selection (`PLAN.md` §2.3): its Team
        * and route travel with it, because a Run selected from the Home-wide
@@ -287,6 +323,20 @@ export const AgentRuntimeDaemonServiceResponseV1Schema =
           status: z.literal('authorized'),
           authorization:
             AgentRuntimeDaemonModelTransitionAuthorizationResultV1Schema,
+        }).strict(),
+        z.object({
+          kind: z.literal('provider_managed.purpose'),
+          binding: asHostProtocolZod(QualifiedConnectedAccountPurposeBindingV1Schema),
+        }).strict(),
+        z.object({
+          kind: z.literal('provider_managed.binding'),
+          bindingId: OpaqueIdSchema,
+          endpointUrl: CanonicalOriginSchema,
+          headers: z.record(EnvironmentKeySchema, DeclaredSecretValueSchema),
+        }).strict(),
+        z.object({
+          kind: z.literal('provider_managed.binding.closed'),
+          status: z.literal('closed'),
         }).strict(),
         z.object({
           kind: z.literal('provider_broker.binding'),

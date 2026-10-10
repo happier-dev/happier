@@ -28,6 +28,7 @@ import type {
 import { resolveStackProcessKindOverrideForSessionSpawn } from './resolveStackProcessKindOverrideForSessionSpawn';
 import { persistAcceptedSpawnMarker } from './persistAcceptedSpawnMarker';
 import type { DeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
+import type { RequesterSessionRuntimeContext } from '../sessionEncryption/requesterSessionCredentials';
 
 type SpawnResourceCleanup = () => void | Promise<void>;
 
@@ -77,7 +78,9 @@ export async function prepareDaemonSpawnLifecycle(input: Readonly<{
     setPendingSessionAttachCleanup: (cleanup: (() => Promise<void>) | null) => void;
     getSpawnResourceCleanupOnExit: () => SpawnResourceCleanup | null;
     onSpawnResourceCleanupArmed: () => void;
+    onTrackedSessionRegistered?: () => void;
     deviceLocalSecretStorage?: DeviceLocalSecretStorage;
+    requesterSessionRuntimeContext?: RequesterSessionRuntimeContext;
 }>): Promise<Readonly<{
     extraEnvForChildWithMessage: Record<string, string>;
     unsetEnvKeys: readonly string[];
@@ -167,10 +170,15 @@ export async function prepareDaemonSpawnLifecycle(input: Readonly<{
                     : {}),
             }),
         registerConnectedServiceRuntimeTarget: (target) => {
-            input.connectedServiceRuntimeRegistry.registerTarget(target);
+            input.connectedServiceRuntimeRegistry.registerTarget({ ...target,
+                ...(input.requesterSessionRuntimeContext ? {
+                    requesterWorkAttributionV1: input.requesterSessionRuntimeContext.bootstrap.attribution,
+                } : {}),
+            });
         },
         getSpawnResourceCleanupOnExit: input.getSpawnResourceCleanupOnExit,
         onSpawnResourceCleanupArmed: input.onSpawnResourceCleanupArmed,
+        onTrackedSessionRegistered: input.onTrackedSessionRegistered,
         spawnResourceCleanupByPid: input.spawnResourceCleanupByPid,
         getSessionAttachCleanup: () => sessionAttachCleanup,
         setSessionAttachCleanup: (cleanup) => {
@@ -182,6 +190,7 @@ export async function prepareDaemonSpawnLifecycle(input: Readonly<{
             trackedSession,
             options,
         ) => {
+            if (input.requesterSessionRuntimeContext) trackedSession.requesterSessionRuntimeContext = input.requesterSessionRuntimeContext;
             if (!input.deviceLocalSecretStorage) {
                 throw new Error('Device-local secret storage is unavailable for accepted spawn custody');
             }

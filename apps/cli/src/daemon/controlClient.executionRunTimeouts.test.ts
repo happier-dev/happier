@@ -10,6 +10,7 @@ vi.mock('@/persistence', async (importOriginal) => ({
 }));
 
 import {
+  admitDaemonExecutionRunStart,
   requestExecutionRunConnectedServicesMaterialization,
   requestExecutionRunConnectedServiceRuntimeAuthRefresh,
   resolveExecutionRunConnectedServiceMaterializeTimeoutMs,
@@ -19,6 +20,24 @@ import { deriveConnectedServiceRunMaterializeToken } from './connectedServices/r
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+describe('execution Run daemon admission transport', () => {
+  it('reads current scoped admission on each start and refuses missing or drained authority', async () => {
+    let decision: unknown = { admitted: true };
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      expect(url).toContain('/execution-run/admission');
+      expect(init?.headers).toMatchObject({ 'x-happier-daemon-token': deriveConnectedServiceRunMaterializeToken('test-control-token') });
+      return new Response(JSON.stringify(decision), { status: 200 });
+    });
+    await expect(admitDaemonExecutionRunStart()).resolves.toBeUndefined();
+    decision = { admitted: false, reason: 'daemon_draining' };
+    await expect(admitDaemonExecutionRunStart()).rejects.toMatchObject({ code: 'daemon_draining' });
+    decision = { admitted: true };
+    await expect(admitDaemonExecutionRunStart()).resolves.toBeUndefined();
+    decision = {};
+    await expect(admitDaemonExecutionRunStart()).rejects.toMatchObject({ code: 'daemon_admission_unavailable' });
+  });
 });
 
 describe('execution Run runtime auth refresh transport', () => {

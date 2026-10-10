@@ -3,6 +3,41 @@ import { describe, expect, it } from 'vitest';
 import { createAgentSessionTurnInvariant } from './agentSessionTurnInvariant';
 
 describe('createAgentSessionTurnInvariant', () => {
+    it.each([
+        { kind: 'tool-call', toolCallId: 'root-call', toolName: 'SubAgent', input: {} },
+        { kind: 'tool-progress', toolCallId: 'root-call', progress: {} },
+        { kind: 'tool-result', toolCallId: 'root-call', output: {} },
+        { kind: 'message-delta', channel: 'assistant', text: 'child output' },
+        { kind: 'file-edit', editId: 'edit-1', path: 'child.ts' },
+        { kind: 'transcript-message-committed', messageId: 'message-1', role: 'assistant', text: 'child output' },
+    ])('admits session-scoped $kind without changing foreground turn authority', (output) => {
+        for (const scope of [{}, { sidechainId: 'child-1' }, { sidechainId: 'child-1', turnId: 'turn-1' }]) {
+            const invariant = createAgentSessionTurnInvariant({ sessionId: 'session-1' });
+            let sequence = 0;
+            const observe = (event: Record<string, unknown>) => invariant.observe({
+                sessionId: 'session-1', emittedAtMs: 1, sequence: ++sequence, ...event,
+            });
+            expect(observe({ kind: 'turn-start', turnId: 'turn-1', startedBy: 'provider' }).status).toBe('accepted');
+            expect(observe({ kind: 'turn-complete', turnId: 'turn-1' }).status).toBe('accepted');
+            expect(observe({ ...output, ...scope }).status).toBe('accepted');
+            expect(invariant.read()).toMatchObject({ activeTurnId: null, knownTurnCount: 0 });
+            expect(observe({ kind: 'turn-start', turnId: 'turn-2', startedBy: 'provider', agentTurnId: 'native-2' }).status).toBe('accepted');
+            expect(observe({ ...output, ...scope }).status).toBe('accepted');
+            expect(invariant.read()).toMatchObject({ activeTurnId: 'turn-2', knownTurnCount: 1 });
+            expect(observe({ ...output, turnId: 'turn-1' })).toMatchObject({
+                status: 'rejected', diagnostic: { code: 'agent_runtime_turn_not_active' },
+            });
+            expect(observe({ ...output, ...scope, sessionId: 'other' })).toMatchObject({
+                status: 'rejected', diagnostic: { code: 'agent_runtime_event_session_mismatch' },
+            });
+            expect(observe({ kind: 'turn-complete', turnId: 'turn-2', agentTurnId: 'native-2' }).status).toBe('accepted');
+            expect(observe({ kind: 'runtime-ended', cause: 'providerEnded', retryable: false }).status).toBe('accepted');
+            expect(observe({ ...output, ...scope })).toMatchObject({
+                status: 'rejected', diagnostic: { code: 'agent_runtime_event_after_runtime_end' },
+            });
+        }
+    });
+
     it('rejects malformed, cross-session, and stale events without mutating accepted state', () => {
         const invariant = createAgentSessionTurnInvariant({ sessionId: 'session-1' });
 

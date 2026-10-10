@@ -105,6 +105,67 @@ function metadataWithLaunchCorrespondence() {
 }
 
 describe('requestInactiveSessionResume', () => {
+  it.each([100, 200, 300])('resumes with predecessor launch intent and timestamp-selected controls (%s)', async (incomingAt) => {
+    callMachineRpc.mockResolvedValue({ type: 'success', sessionId: 'session-1' });
+    const modelRef = (modelId: string) => ({ agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId });
+    const request = {
+      credentials, sessionId: 'session-1', localId: 'workflow-input', rawSession: rawSession(),
+      metadata: { ...metadata, permissionMode: 'read-only', permissionModeUpdatedAt: 200,
+        modelSelectionIntentV1: { v: 1, updatedAt: 200, selection: modelRef('saved-model') } },
+      incomingOptions: { permissionMode: 'default' as const, permissionModeUpdatedAt: incomingAt,
+        modelSelection: { v: 1 as const, updatedAt: incomingAt, ref: modelRef('incoming-model') },
+        environmentVariables: { PREDECESSOR_RUN: 'literal value' }, resume: 'incoming-native-session',
+      },
+    };
+    await expect(requestInactiveSessionResume(request)).resolves.toEqual({ ok: true });
+    expect(callMachineRpc.mock.calls[0]?.[0]?.request).toMatchObject({
+      type: 'resume-session', sessionId: 'session-1', resume: 'incoming-native-session',
+      environmentVariables: { PREDECESSOR_RUN: 'literal value' },
+      permissionMode: incomingAt < 200 ? 'read-only' : 'default',
+      permissionModeUpdatedAt: Math.max(incomingAt, 200),
+      modelSelection: { ref: { modelId: incomingAt < 200 ? 'saved-model' : 'incoming-model' }, updatedAt: Math.max(incomingAt, 200) },
+    });
+  });
+
+  it('resumes with the predecessor explicit offline launch family while retaining canonical Session identity', async () => {
+    callMachineRpc.mockResolvedValue({ type: 'success', sessionId: 'session-1' });
+    const request = { credentials, sessionId: 'session-1', localId: 'workflow-launch', rawSession: rawSession(),
+      metadata: metadataWithLaunchCorrespondence().metadata,
+      incomingOptions: { profileId: 'incoming-profile', terminal: { mode: 'plain' as const },
+        windowsRemoteSessionLaunchMode: 'windows_terminal' as const, windowsTerminalWindowName: 'Incoming window',
+        agentModeId: 'incoming-mode', transcriptStorage: 'persisted' as const,
+        connectedServices: { v: 2 as const, bindingsByServiceId: {} },
+        mcpSelection: { v: 1 as const, managedServersEnabled: false, forceIncludeServerIds: [], forceExcludeServerIds: [] },
+      } };
+    await expect(requestInactiveSessionResume(request)).resolves.toEqual({ ok: true });
+    expect(callMachineRpc.mock.calls[0]?.[0]?.request).toMatchObject({ type: 'resume-session', sessionId: 'session-1', directory: '/repo',
+      profileId: 'incoming-profile', terminal: { mode: 'plain' }, windowsRemoteSessionLaunchMode: 'windows_terminal',
+      windowsTerminalWindowName: 'Incoming window', agentModeId: 'incoming-mode', transcriptStorage: 'persisted',
+      connectedServices: { v: 2, bindingsByServiceId: {} },
+      mcpSelection: { v: 1, managedServersEnabled: false, forceIncludeServerIds: [], forceExcludeServerIds: [] },
+    });
+  });
+
+  it('applies an explicit same-Agent driver choice while retaining the Session native recovery identity', async () => {
+    callMachineRpc.mockResolvedValue({ type: 'success', sessionId: 'session-1' });
+    await expect(requestInactiveSessionResume({ credentials, sessionId: 'session-1', localId: 'workflow-driver', rawSession: rawSession(),
+      metadata: { ...metadata, runtimeDescriptorV1: { v: 1, agentId: 'codex',
+        agent: { backendMode: 'appServer', providerSessionId: 'existing-native', appServerEndpoint: '/native/socket' } },
+        claudeSessionId: undefined, codexSessionId: 'existing-native' },
+      incomingOptions: { runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: { backendMode: 'acp' } } },
+    })).resolves.toEqual({ ok: true });
+    expect(callMachineRpc.mock.calls[0]?.[0]?.request).toMatchObject({ type: 'resume-session', sessionId: 'session-1',
+      runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: { backendMode: 'acp', providerSessionId: 'existing-native', appServerEndpoint: '/native/socket' } },
+    });
+  });
+
+  it('refuses an authored driver descriptor that changes the existing Session Agent', async () => {
+    await expect(requestInactiveSessionResume({ credentials, sessionId: 'session-1', localId: 'workflow-wrong-agent', rawSession: rawSession(), metadata,
+      incomingOptions: { runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: { backendMode: 'acp' } } },
+    })).resolves.toMatchObject({ ok: false, code: 'unsupported' });
+    expect(callMachineRpc).not.toHaveBeenCalled();
+  });
+
   it('sends explicit fresh-folder consent without granting automatic managed-folder recreation', async () => {
     callMachineRpc.mockResolvedValue({ type: 'success' });
     const request = {

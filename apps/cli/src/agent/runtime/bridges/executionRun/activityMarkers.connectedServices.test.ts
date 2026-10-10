@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { reloadConfiguration } from '@/configuration';
-import { listExecutionRunMarkers, listExecutionRunMarkersForRehydration } from '@/daemon/executionRunRegistry';
+import { listExecutionRunMarkers, listExecutionRunMarkersForRehydration, reconcileRetainedExecutionRunRecords } from '@/daemon/executionRunRegistry';
 
 const filesystemBoundary = vi.hoisted(() => ({ rejectMarkerRename: false }));
 // Fail only the marker's OS publication; retain real parsing and lifecycle custody.
@@ -36,6 +36,7 @@ afterEach(() => {
 import { writeExecutionRunActivityMarker } from './activityMarkers';
 import type { ExecutionRunState } from './executionRunTypes';
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
+import { projectExecutionRunPublicState } from './publicState';
 
 describe('writeExecutionRunActivityMarker marker privacy', () => {
   it('does not copy the in-memory connected-services registration into the marker', async () => {
@@ -69,7 +70,9 @@ describe('writeExecutionRunActivityMarker marker privacy', () => {
       retentionPolicy: 'resumable',
       runClass: 'bounded',
       ioMode: 'request_response',
-      launch: { connectedServicesRegistration: registration },
+      launch: { connectedServicesRegistration: registration, selectionSource: 'inherited', modelId: 'applied-model',
+        modelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'parent-provider', modelId: 'applied-model' },
+        connectedServicesSelection: null },
       status: 'running',
       startedAtMs: 10,
       summary: 'raw model output must not enter the marker',
@@ -106,6 +109,12 @@ describe('writeExecutionRunActivityMarker marker privacy', () => {
     expect(JSON.stringify(marker)).not.toContain('profile_1');
     expect((await listExecutionRunMarkers()).find((item) => item.runId === run.runId))
       .not.toHaveProperty('executionRunConnectedServicesCleanupReceiptV1');
+    expect.soft((await listExecutionRunMarkers()).find((item) => item.runId === run.runId))
+      .toHaveProperty('resolvedSelection', projectExecutionRunPublicState(run).resolvedSelection);
+    await reconcileRetainedExecutionRunRecords({ nowMs: 30, isPidAlive: () => false });
+    expect((await listExecutionRunMarkers()).find((item) => item.runId === run.runId))
+      .toMatchObject({ status: 'failed', errorCode: 'execution_run_host_lost',
+        resolvedSelection: projectExecutionRunPublicState(run).resolvedSelection });
   });
 
   it('keeps marker publication best-effort when an in-memory launch fact is registered', async () => {

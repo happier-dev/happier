@@ -1,4 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { accountSettingsParse } from '@happier-dev/protocol';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,6 +9,14 @@ import { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '@happier-d
 import { ProviderEnforcedPermissionHandler } from './handler';
 import { __resetToolTraceForTests } from '@/agent/tools/trace/toolTrace';
 import { ServerBoundPermissionRpcHandlerManager } from '../testkit/serverBoundPermissionRpcHandlerManager';
+
+beforeEach(() => {
+  resetActiveAccountSettingsSnapshotForTests();
+  setActiveAccountSettingsSnapshot({ scopeKey: 'permission-test', source: 'network', settingsVersion: 1, settings: accountSettingsParse({}),
+    rawSettings: {}, settingsSecretsReadKeys: [], loadedAtMs: 1,
+    promptLibraryCatalog: { status: 'ready', rows: [], tombstones: [], diagnostics: [] } });
+});
+afterEach(() => resetActiveAccountSettingsSnapshotForTests());
 
 class FakeSession {
   sessionId = 'test-session-id';

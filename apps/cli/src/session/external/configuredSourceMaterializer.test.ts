@@ -248,18 +248,19 @@ async function loadCodexExternalSessionsContribution(params: Readonly<{
   return createContribution(params);
 }
 
-function providerOpsFromCodexContribution(
+function providerOpsFromRealContribution(
   contribution: AgentExternalSessionsContribution,
+  identity = { pluginId: CODEX_PLUGIN_MANIFEST.id, agentId: 'codex' },
 ): ExternalSessionProviderOps {
   const retirement = new AbortController();
   const surface = createAgentExternalSessionsExecutionSurface(
     createBoundedAgentExternalSessionsContribution({
       contribution,
       identity: {
-        pluginId: CODEX_PLUGIN_MANIFEST.id,
-        agentId: 'codex',
+        pluginId: identity.pluginId,
+        agentId: identity.agentId,
         occurrenceId: 'configured-source-materializer-test',
-        contributionQualifiedId: `${CODEX_PLUGIN_MANIFEST.id}/agents/codex`,
+        contributionQualifiedId: `${identity.pluginId}/agents/${identity.agentId}`,
         sourceCustody: {
           kind: 'development',
           registeredRootId: 'configured-source-materializer-test',
@@ -277,7 +278,7 @@ function providerOpsFromCodexContribution(
     || !surface.pageTranscript
     || !surface.readAfterTranscript
   ) {
-    throw new Error('Expected the real Codex External Sessions source/list/transcript surface');
+    throw new Error('Expected the real External Sessions source/list/transcript surface');
   }
   return {
     validateSource: surface.validateSource,
@@ -457,7 +458,7 @@ describe('configured external-session source materializer', () => {
       const contribution = await loadCodexExternalSessionsContribution({
         env: { CODEX_HOME: join(root, 'empty-user-codex-home') },
       });
-      const ops = providerOpsFromCodexContribution(contribution);
+      const ops = providerOpsFromRealContribution(contribution);
       await expect(ops.listCandidates({
         source: connectedSource.source,
         limit: 10,
@@ -645,6 +646,71 @@ describe('configured external-session source materializer', () => {
         homePath: '/canonical/codex',
       },
     });
+  });
+
+  it('resolves retained Pi Session source inputs through the current pinned root and refuses a foreign retained file', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-pi-retained-source-'));
+    const previousHome = process.env.HOME;
+    const previousUserProfile = process.env.USERPROFILE;
+    try {
+      // The home/environment and vendor filesystem are the system boundaries;
+      // configured admission, native identity lookup, and canonical keys are real.
+      process.env.HOME = root;
+      process.env.USERPROFILE = root;
+      const agentDir = join(root, '.pi', 'agent');
+      const rootA = join(root, 'history-a');
+      const rootB = join(root, 'history-b');
+      const sessionFile = join(rootA, '--project--', 'retained-session.jsonl');
+      await mkdir(agentDir, { recursive: true });
+      await mkdir(join(rootA, '--project--'), { recursive: true });
+      await mkdir(join(rootB, '--project--'), { recursive: true });
+      const header = `${JSON.stringify({ type: 'session', version: 3, id: 'retained-session',
+        cwd: '/native/pi-project', timestamp: '2026-01-01T00:00:00.000Z' })}\n`;
+      await writeFile(sessionFile, header);
+      // A duplicate native id in a different root must not rescue the old binding.
+      await writeFile(join(rootB, '--project--', 'retained-session.jsonl'), header);
+      const contributionPath = '../../../../../packages/plugins/pi/src/agent/externalSessions/contribution.js';
+      const { createPiExternalSessionsContribution } = await import(contributionPath);
+      const contribution: AgentExternalSessionsContribution = createPiExternalSessionsContribution({ env: {} });
+      const ops = providerOpsFromRealContribution(contribution, { pluginId: PI_PLUGIN_MANIFEST.id, agentId: 'pi' });
+      const declaration = readManifestAgentContribution(PI_PLUGIN_MANIFEST, 'pi');
+      const piAgent = { ...agent(declaration), identity: { pluginId: PI_PLUGIN_MANIFEST.id, localId: 'pi' } };
+      const boundSource = { kind: 'piAgentDir', agentDir, sessionFile };
+      const basis = { accountSettingsRevision: 'account:retained-pi' };
+      const resolveAt = async (sessionsRoot: string) => {
+        await writeFile(join(agentDir, 'settings.json'), JSON.stringify({ sessionDir: sessionsRoot }));
+        const composition = await createConfiguredPluginExternalSessionsAdapter({
+          agents: [piAgent], account: { connectedServicesV2: [] }, basis,
+          readCurrentBasis: () => basis, isCurrent: () => true, resolveProviderOps: async () => ops,
+        });
+        try {
+          const retainedTakeoverInput = { agentId: 'pi', remoteSessionId: 'retained-session',
+            source: boundSource };
+          return {
+            follow: await composition.compositionPort.resolveFollowTarget({ agentId: 'pi', remoteSessionId: 'retained-session', boundSource }),
+            accounting: await composition.compositionPort.resolveSourceIdentity({ agentId: 'pi', remoteSessionId: 'retained-session', boundSource }),
+            takeover: await composition.admitPersistedTakeoverSource(retainedTakeoverInput),
+          };
+        } finally { composition.dispose(); }
+      };
+      const expectedSource = { kind: 'piAgentDir', agentDir, sessionsRoot: rootA };
+      const expectedRef = { agentId: 'pi', remoteSessionId: 'retained-session',
+        sourceId: resolveExternalSessionsSourceKeyForDeclaration(declaration.surfaces.externalSession.sources[0], expectedSource) };
+      expect(await resolveAt(rootA)).toMatchObject({
+        // Pi does not declare terminal Follow; normalizing retained inputs must
+        // not grant that separate capability to the accounting consumer.
+        follow: { status: 'unavailable' },
+        accounting: { status: 'resolved', ref: expectedRef, source: expectedSource },
+        takeover: { source: { ...expectedSource, sessionFile }, externalLinkedTakeoverWriterSafety: 'unsupported' },
+      });
+      expect(await resolveAt(rootB)).toMatchObject({
+        follow: { status: 'unavailable' }, accounting: { status: 'unavailable' }, takeover: null,
+      });
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+      if (previousUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = previousUserProfile;
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('follows the Session\'s exact bound source instead of scanning the configured aggregate', async () => {
@@ -1486,6 +1552,7 @@ describe('configured external-session source materializer', () => {
     expect(Reflect.ownKeys(composition.compositionPort).sort()).toEqual([
       'followTranscript',
       'resolveFollowTarget',
+      'resolveSourceIdentity',
     ]);
     expect(Reflect.get(composition.compositionPort, 'list')).toBeUndefined();
     expect(Reflect.get(composition.compositionPort, 'attach')).toBeUndefined();

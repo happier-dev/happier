@@ -28,7 +28,7 @@ import type { AgentStateResponseTargetDispatch } from '@/agent/permissions/agent
 import { resolveExecutionRunIntentProfile, resolveExecutionRunIntentProfileFromCatalog, type ExecutionRunProfileContributionCatalog } from '@/agent/executionRuns/profiles/intentRegistry';
 import type { ExecutionRunTranscriptPublisher } from '../executionRunTranscriptPublisher';
 import { isExecutionRunTranscriptCustodyError } from '../executionRunTranscriptPublisher';
-import { settleExecutionRunController } from '../settleExecutionRunController';
+import { isExecutionRunControllerCurrent, settleExecutionRunController } from '../settleExecutionRunController';
 import { readExecutionRunErrorCode } from '../errors';
 import { buildExecutionRunResultContractPrompt, decodeExecutionRunProfileResult } from '@happier-dev/protocol/execution/runs/resultContract';
 import { projectExecutionRunWorkflowInputAcceptance, type ExecutionRunWorkflowObservationSink } from '../executionRunWorkflowObservation';
@@ -311,6 +311,7 @@ export async function sendBackendLongLivedRun(args: Readonly<{
   if (runAfterTurn) {
     args.runs.set(args.runId, { ...runAfterTurn, turnCount: ctrl2.turnCount });
   }
+  if (!localInputId) args.onPublicStateUpdated?.(args.runId);
   // One effectful provider send only. A thrown error after invocation does not prove the
   // provider rejected the prompt, so replaying it here could execute the same input twice.
   const unsubscribeAcceptance = ctrl2.workflowObservation?.localInputId === localInputId
@@ -556,6 +557,11 @@ export async function sendBackendLongLivedRun(args: Readonly<{
       }
     } finally {
       releaseAcceptanceObservation();
+      if (
+        isExecutionRunControllerCurrent({ runId: args.runId, controller: ctrl2, controllers: args.controllers })
+        && ctrl2.turnEpoch === thisEpoch
+        && !ctrl2.turnInFlight
+      ) args.onPublicStateUpdated?.(args.runId);
       await args.writeActivityMarker(args.runId, args.getNowMs(), { force: true }).catch(() => {});
     }
   };
@@ -579,6 +585,7 @@ export async function sendBackendLongLivedRun(args: Readonly<{
         }
         const currentRun = args.runs.get(args.runId);
         if (currentRun) args.runs.set(args.runId, { ...currentRun, turnCount: ctrl2.turnCount });
+        if (!localInputId) args.onPublicStateUpdated?.(args.runId);
       }
       return { ok: false, errorCode: admission.diagnostic.code, error: admission.diagnostic.message ?? admission.status };
     }

@@ -15,6 +15,7 @@ import {
 function createFakeChildProcess(): ChildProcessWithoutNullStreams {
   const stdout = new EventEmitter();
   const stderr = new EventEmitter();
+  const control = new EventEmitter();
   const processEmitter = new EventEmitter() as EventEmitter & {
     stdin: EventEmitter & {
       destroyed?: boolean;
@@ -25,6 +26,7 @@ function createFakeChildProcess(): ChildProcessWithoutNullStreams {
     stdout: EventEmitter;
     stderr: EventEmitter;
     kill: ReturnType<typeof vi.fn>;
+    stdio: EventEmitter[];
   };
   processEmitter.stdin = Object.assign(new EventEmitter(), {
     write: vi.fn(),
@@ -36,6 +38,7 @@ function createFakeChildProcess(): ChildProcessWithoutNullStreams {
   processEmitter.stdout = stdout;
   processEmitter.stderr = stderr;
   processEmitter.kill = vi.fn();
+  processEmitter.stdio = [processEmitter.stdin, stdout, stderr, control];
   return processEmitter as unknown as ChildProcessWithoutNullStreams;
 }
 
@@ -78,14 +81,14 @@ describe('buildPythonPtyRelaySpawnCommand', () => {
           file: pythonExecutable,
           args: ['-c', 'import time; time.sleep(60)'],
         });
-        const child = spawnChildProcess(invocation.command, [...invocation.args], { stdio: 'pipe' });
+        const child = spawnChildProcess(invocation.command, [...invocation.args], { stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
         const timeout = Symbol('timeout');
         const closePromise = new Promise<unknown>((resolve) => {
           child.once('close', (exitCode, signal) => resolve({ exitCode, signal }));
           child.once('error', resolve);
         });
 
-        child.stdin.end();
+        child.stdin!.end();
 
         try {
           await expect(Promise.race([
@@ -113,9 +116,9 @@ describe('buildPythonPtyRelaySpawnCommand', () => {
           file: pythonExecutable,
           args: ['-c', childScript],
         });
-        const child = spawnChildProcess(invocation.command, [...invocation.args], { stdio: 'pipe' });
+        const child = spawnChildProcess(invocation.command, [...invocation.args], { stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
         const output: Buffer[] = [];
-        child.stdout.on('data', (chunk: string | Buffer) => {
+        child.stdout!.on('data', (chunk: string | Buffer) => {
           output.push(typeof chunk === 'string' ? Buffer.from(chunk) : Buffer.from(chunk));
         });
         const timeout = Symbol('timeout');
@@ -141,6 +144,29 @@ describe('buildPythonPtyRelaySpawnCommand', () => {
 });
 
 describe('createPythonPtyRelayProvider', () => {
+  it('retains only the private relay-owned group witness without publishing it as terminal output', () => {
+    const child = createFakeChildProcess();
+    const provider = createPythonPtyRelayProvider({ platform: 'linux', pythonExecutable: '/usr/bin/python3', spawnProcess: () => child });
+    const pty = provider!.spawn({ file: '/bin/sh', args: [], options: {} });
+    const output: string[] = [];
+    pty.onData(data => output.push(data));
+    expect(Reflect.get(pty, 'ownedProcessGroupId')).toBeNull();
+    child.stdio[3]!.emit('data', Buffer.from('431'));
+    expect(Reflect.get(pty, 'ownedProcessGroupId')).toBeNull();
+    child.stdio[3]!.emit('data', Buffer.from('2\n'));
+    expect(Reflect.get(pty, 'ownedProcessGroupId')).toBe(4312);
+    expect(output).toEqual([]);
+  });
+
+  it.each(['1\n', '0\n', '-2\n', '2147483648\n', 'not-a-group\n'])(
+    'keeps malformed private group evidence unknown (%s)', value => {
+      const child = createFakeChildProcess();
+      const provider = createPythonPtyRelayProvider({ platform: 'linux', pythonExecutable: '/usr/bin/python3', spawnProcess: () => child });
+      const pty = provider!.spawn({ file: '/bin/sh', args: [], options: {} });
+      child.stdio[3]!.emit('data', Buffer.from(value));
+      expect(Reflect.get(pty, 'ownedProcessGroupId')).toBeNull();
+    },
+  );
   it('returns null on Windows', () => {
     expect(createPythonPtyRelayProvider({ platform: 'win32', pythonExecutable: 'python3' })).toBeNull();
   });
@@ -182,7 +208,7 @@ describe('createPythonPtyRelayProvider', () => {
       {
         cwd: '/Users/tester',
         env: { PATH: '/usr/bin' },
-        stdio: 'pipe',
+        stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
       },
     );
     expect(fakeChild.stdin.write).toHaveBeenCalledWith('hello');
@@ -223,7 +249,7 @@ describe('createPythonPtyRelayProvider', () => {
           HAPPIER_PYTHON_PTY_RELAY_COLS: '132',
           HAPPIER_PYTHON_PTY_RELAY_ROWS: '48',
         },
-        stdio: 'pipe',
+        stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
       },
     );
   });

@@ -152,24 +152,6 @@ describe('acquireDaemonLock', () => {
     expect(existsSync(configuration.daemonLockFile)).toBe(true);
   });
 
-  it('keeps an in-flight v1 daemon lock opaque while its PID is live', async () => {
-    vi.doMock('@/daemon/doctor', () => ({
-      classifyDaemonLifecycleProcessByPid: async () => ({ kind: 'unknown' as const }),
-    }));
-    const { configuration } = await import('@/configuration');
-    await mkdir(dirname(configuration.daemonLockFile), { recursive: true });
-    await writeFile(configuration.daemonLockFile, JSON.stringify({
-      t: 'happier_daemon_lock_v1',
-      pid: process.pid,
-      ownerToken: '00000000-0000-4000-8000-000000000001',
-      processStartedAtMs: Date.now() - process.uptime() * 1_000,
-      createdAtMs: Date.now(),
-    }));
-    const { acquireDaemonLock, readDaemonLockOwnerIdentity } = await import('@/persistence');
-    expect(readDaemonLockOwnerIdentity()).toBeNull();
-    await expect(acquireDaemonLock(1, 1)).resolves.toBeNull();
-  });
-
   it('detects PID reuse from a v2 process witness before treating a live PID as owner', async () => {
     vi.doMock('@/daemon/doctor', () => ({
       classifyDaemonLifecycleProcessByPid: async () => ({ kind: 'unknown' as const }),

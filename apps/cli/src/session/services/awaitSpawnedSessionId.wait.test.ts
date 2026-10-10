@@ -36,7 +36,7 @@ describe('awaitSpawnedSessionId terminal observation', () => {
       result: { type: 'success' }, spawnNonce: 'startup-override', resolveSpawnSessionByNonce: resolve,
     });
     await vi.advanceTimersByTimeAsync(0);
-    expect(resolve).toHaveBeenCalledWith('startup-override', 180_000);
+    expect(resolve).toHaveBeenCalledWith('startup-override', 180_000, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     await vi.advanceTimersByTimeAsync(180_000);
     await expect(wait).resolves.toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT });
   });
@@ -53,7 +53,7 @@ describe('awaitSpawnedSessionId terminal observation', () => {
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(599_999);
     await expect(wait).resolves.toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT });
-    expect(resolve).toHaveBeenCalledWith('long-observation', 1_200_000);
+    expect(resolve).toHaveBeenCalledWith('long-observation', 1_200_000, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -156,6 +156,30 @@ describe('awaitSpawnedSessionId terminal observation', () => {
     const timed = awaitSpawnedSessionId({ result: { type: 'success' }, spawnNonce: 'nonce', resolveSpawnSessionByNonce: resolve, timeoutMs: 1_000 });
     await vi.advanceTimersByTimeAsync(1_000);
     expect(await timed).toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(['deadline', 'cancel'] as const)('retires the transport observation when its containing %s ends', async (ending) => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    let transportSignal: AbortSignal | undefined;
+    let readRemainingTimeoutMs: (() => number) | undefined;
+    const wait = awaitSpawnedSessionId({
+      result: { type: 'success' }, spawnNonce: 'original-nonce', timeoutMs: 1_000, signal: controller.signal,
+      resolveSpawnSessionByNonce: (_nonce, _timeoutMs, observation?: Readonly<{
+        signal: AbortSignal; readRemainingTimeoutMs: () => number;
+      }>) => {
+        transportSignal = observation?.signal;
+        readRemainingTimeoutMs = observation?.readRemainingTimeoutMs;
+        return new Promise<never>(() => {});
+      },
+    });
+    await vi.advanceTimersByTimeAsync(250);
+    expect(readRemainingTimeoutMs?.()).toBe(750);
+    if (ending === 'cancel') controller.abort();
+    else await vi.advanceTimersByTimeAsync(750);
+    await expect(wait).resolves.toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT });
+    expect(transportSignal?.aborted).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
   });
 });

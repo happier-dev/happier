@@ -20,10 +20,12 @@ import { SessionStateTitleValueSchema } from '@happier-dev/protocol/sessions/sta
 import { SessionStateUsageLimitRecoveryValueSchema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
 import { SessionWorkStateV1Schema as SessionStateWorkStateValueSchema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
-import { SessionTranscriptObservationProvenanceV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
+import { SessionTranscriptObservationProvenanceV1Schema, SessionTranscriptSurfaceItemReferenceV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { ExactSessionTurnEndMutationV1Schema, SessionTurnMutationV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 import type { SessionTurnMutationV1 } from '@happier-dev/protocol';
 import { SessionRuntimeActivitySnapshotSchema } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
+import { SessionContextIntentV1Schema, SessionPromptStackV1Schema, migrateRetainedSessionWorkContextV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
+import { StoredSessionVoicePreferenceV1Schema } from '@happier-dev/protocol/sessions/instructions/sessionVoicePreferenceV1';
 
 import type {
     QueuedSessionClientDurableMutation,
@@ -435,6 +437,10 @@ function parseTranscriptMessageAppendPayload(value: unknown): PersistedTranscrip
     ) {
         return null;
     }
+    if (value.surfaceItemReference !== undefined
+        && !SessionTranscriptSurfaceItemReferenceV1Schema.safeParse(value.surfaceItemReference).success) {
+        return null;
+    }
     if (typeof value.content !== 'string' && !SessionStoredMessageContentSchema.safeParse(value.content).success) {
         return null;
     }
@@ -568,6 +574,8 @@ function parseRegisteredSessionStateFieldPayload(value: unknown): RegisteredSess
         || value.observedAt < 0
         || dependencies === null
         || !isRecord(value.op)
+        || ((fieldId.success && (fieldId.data === 'intent.context' || fieldId.data === 'intent.memoryEnabled' || fieldId.data === 'intent.voicePreference'))
+            && (!Number.isSafeInteger(value.expectedMetadataRevision) || typeof value.expectedMetadataRevision !== 'number' || value.expectedMetadataRevision < 0))
     ) {
         return null;
     }
@@ -576,6 +584,15 @@ function parseRegisteredSessionStateFieldPayload(value: unknown): RegisteredSess
     }
 
     let op: RegisteredSessionStateFieldMutationV1['op'] | null = null;
+    let retainedSessionContextEntry: RegisteredSessionStateFieldMutationV1['retainedSessionContextEntry'];
+    if (value.retainedSessionContextEntry !== undefined) {
+        if (fieldId.data !== 'intent.sessionRoles' || value.op.kind !== 'set') return null;
+        const parsed = SessionPromptStackV1Schema.safeParse([value.retainedSessionContextEntry]);
+        if (!parsed.success) return null;
+        const entry = parsed.data[0]!;
+        if (entry.id !== 'session.legacy-role-memory' || entry.ref.kind !== 'doc' || entry.placement !== 'system_append') return null;
+        retainedSessionContextEntry = entry;
+    }
     if (value.op.kind === 'clear') {
         if (value.op.previousFingerprint !== undefined && typeof value.op.previousFingerprint !== 'string') {
             return null;
@@ -590,7 +607,19 @@ function parseRegisteredSessionStateFieldPayload(value: unknown): RegisteredSess
         if (value.op.valueFingerprint !== undefined && typeof value.op.valueFingerprint !== 'string') {
             return null;
         }
-        const parsedValue = parseRegisteredSessionStateFieldValue(fieldId.data, value.op.value);
+        let storedValue = value.op.value;
+        if (fieldId.data === 'intent.sessionRoles') {
+            try {
+                // Translate only retained journals. Current Role inputs remain strict and pointer-free.
+                const migrated = migrateRetainedSessionWorkContextV1({ sessionRolesV1: storedValue });
+                const legacyEntry = SessionPromptStackV1Schema.parse(migrated.promptStack ?? [])[0];
+                if (legacyEntry && retainedSessionContextEntry
+                    && JSON.stringify(legacyEntry.ref) !== JSON.stringify(retainedSessionContextEntry.ref)) return null;
+                retainedSessionContextEntry ??= legacyEntry;
+                storedValue = migrated.sessionRolesV1;
+            } catch { return null; }
+        }
+        const parsedValue = parseRegisteredSessionStateFieldValue(fieldId.data, storedValue);
         if (!parsedValue.ok) return null;
         op = {
             kind: 'set',
@@ -611,7 +640,9 @@ function parseRegisteredSessionStateFieldPayload(value: unknown): RegisteredSess
         op,
         source: value.source,
         observedAt: Math.trunc(value.observedAt),
+        ...(typeof value.expectedMetadataRevision === 'number' ? { expectedMetadataRevision: value.expectedMetadataRevision } : {}),
         ...(dependencies.length > 0 ? { dependsOn: dependencies } : {}),
+        ...(retainedSessionContextEntry ? { retainedSessionContextEntry } : {}),
     };
 }
 
@@ -619,6 +650,15 @@ function parseRegisteredSessionStateFieldValue(
     fieldId: RegisteredSessionStateFieldMutationV1['fieldId'],
     value: unknown,
 ): Readonly<{ ok: true; value: unknown }> | Readonly<{ ok: false }> {
+    if (fieldId === 'intent.context') {
+        const parsed = SessionContextIntentV1Schema.safeParse(value);
+        return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
+    }
+    if (fieldId === 'intent.memoryEnabled') return typeof value === 'boolean' ? { ok: true, value } : { ok: false };
+    if (fieldId === 'intent.voicePreference') {
+        const parsed = StoredSessionVoicePreferenceV1Schema.nullable().safeParse(value);
+        return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
+    }
     if (fieldId === 'identity.runtimeDescriptor') {
         const parsed = SessionStateRuntimeDescriptorValueSchema.safeParse(value);
         return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
@@ -760,6 +800,7 @@ function isSessionClientDurableMutationAttemptReason(
 ): value is SessionClientDurableMutationAttemptReason {
     return value === 'delivery_not_confirmed'
         || value === 'delivery_error'
+        || value === 'metadata_tuple_conflict'
         || value === 'transcript_message_provenance_missing_or_invalid'
         || value === 'transcript_message_invalid_observation';
 }
@@ -1456,6 +1497,7 @@ export function createSessionClientDurableMutationDeadLetterEntry(params: Readon
         diagnostic: params.diagnostic,
         payload: params.mutation.payload,
         ...(isAuthoritativeSessionClientDurableMutation(params.mutation)
+            || (params.mutation.kind === 'registered_session_state_field' && params.reason === 'metadata_tuple_conflict')
             ? { queuedMutation: params.mutation }
             : {}),
     });

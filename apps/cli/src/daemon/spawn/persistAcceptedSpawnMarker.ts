@@ -97,6 +97,8 @@ export async function persistAcceptedSpawnMarker(params: Readonly<{
         }
       : {}),
     respawn,
+    ...(trackedSession.spawnOptions.requesterWorkAttributionV1
+      ? { requesterWorkAttributionV1: trackedSession.spawnOptions.requesterWorkAttributionV1 } : {}),
     ...(trackedSession.agentRuntimeDaemonServiceAuthorityFilePath
       ? {
           agentRuntimeDaemonServiceAuthorityFilePath:
@@ -123,6 +125,9 @@ export async function persistAcceptedSpawnMarker(params: Readonly<{
       : {}),
   };
   await writeSessionMarker(marker);
+  if (marker.requesterWorkAttributionV1) {
+    trackedSession.requesterWorkAttributionV1 = marker.requesterWorkAttributionV1;
+  }
   if (startupInstructionsMarker) {
     trackedSession.agentSessionStartupInstructionsMarkerV1 =
       startupInstructionsMarker;

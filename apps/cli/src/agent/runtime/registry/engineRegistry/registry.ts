@@ -1,6 +1,6 @@
 import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 
-import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { createResolvedContributionRegistry, resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import {
@@ -13,12 +13,15 @@ import type { ResolveEngineRegistryParams } from './types';
 import {
     createPluginExecInstallablesRegistry,
     projectEngineRuntimeContributionFromAgent,
+    resolveEngineBackendIdForCatalogAgent,
     resolveEngineRuntimeContribution,
 } from './contributions';
 import {
     resolveEngineAdapterResolutionFromRegistry,
 } from './resolution';
-import { resolveAccountConfiguredAcpBackend } from './accountConfiguredAcp';
+import { AgentExecutionTargetV1Schema, type AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { indexAgentRoutingIdsByContributionIdentity, readAgentRoutingIdForContributionIdentity } from '@/plugins/projection/registry/agentRoutingIdentity';
 import { activateAgentRuntimeContributionOnDemand } from '../activationDemand';
 import {
     buildExecutionRunProfileCatalog,
@@ -67,6 +70,17 @@ async function resolveDefaultContributionRegistry(
             release: null,
         };
     }
+    const runnerSource = params?.runnerAgentSessionRuntimeSource;
+    if (runnerSource && params?.backendId === runnerSource.identity.backendId) {
+        // The daemon already supplied this Session's exact Agent declaration.
+        // Discovery cannot replace it; executable authority is still claimed by
+        // the runner source before its runtime or services can be reached.
+        return {
+            contributions: createResolvedContributionRegistry({ agents: [runnerSource.agentContribution] }),
+            runtimeRegistry: null,
+            release: null,
+        };
+    }
     if (shouldUseAuthoritativeRuntimeLease(params)) {
         const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
         return {
@@ -92,6 +106,7 @@ export async function resolveCliEngineRegistry(
 ): Promise<ResolvedCliEngineRegistry> {
     const defaultRegistry = await resolveDefaultContributionRegistry(params);
     const contributions = defaultRegistry.contributions;
+    const agentRoutingIds = indexAgentRoutingIdsByContributionIdentity([...contributions.agentDefinitionsById.values()]);
     const resolutionPromises = new Map<string, Promise<EngineAdapterResolution | null>>();
 
     async function resolveRuntimeRegistry(pluginId?: string | null): Promise<RuntimeRegistryHandle> {
@@ -138,8 +153,27 @@ export async function resolveCliEngineRegistry(
                 await runtimeRegistryHandle.release();
             }
         },
-        async resolveForBackendId(backendId: string): Promise<EngineAdapterResolution | null> {
-            const existing = resolutionPromises.get(backendId);
+        async resolveForAgentTarget(target: AgentExecutionTargetV1): Promise<EngineAdapterResolution | null> {
+            const agentTarget = AgentExecutionTargetV1Schema.parse(target);
+            const routingId = readAgentRoutingIdForContributionIdentity(agentRoutingIds, agentTarget.identity);
+            if (!routingId) return null;
+            const backendId = resolveEngineBackendIdForCatalogAgent(contributions, routingId);
+            return backendId ? await this.resolveForBackendId(backendId, agentTarget) : null;
+        },
+        async resolveForBackendId(backendId: string, agentTarget = params?.agentTarget): Promise<EngineAdapterResolution | null> {
+            if (agentTarget) {
+                const routingId = readAgentRoutingIdForContributionIdentity(agentRoutingIds, agentTarget.identity);
+                const targetBackendId = routingId
+                    ? resolveEngineBackendIdForCatalogAgent(contributions, routingId)
+                    : null;
+                if (targetBackendId !== backendId) {
+                    throw Object.assign(new Error('Selected Agent target does not match its contributed runtime'), {
+                        code: 'AGENT_TARGET_CONTRIBUTION_MISMATCH',
+                    });
+                }
+            }
+            const cacheKey = agentTarget ? buildBackendTargetKeyV2(agentTarget) : backendId;
+            const existing = resolutionPromises.get(cacheKey);
             if (existing) {
                 return await existing;
             }
@@ -195,7 +229,7 @@ export async function resolveCliEngineRegistry(
                                 backendId,
                             );
                         if (!backend) {
-                            return await resolveAccountConfiguredAcpBackend(backendId);
+                            return null;
                         }
                         if (backend.pluginId) {
                             await activateAgentRuntimeContributionOnDemand(
@@ -216,11 +250,14 @@ export async function resolveCliEngineRegistry(
                     }
 
                     if (!backend) {
-                        return await resolveAccountConfiguredAcpBackend(backendId);
+                        return null;
                     }
 
                     return await resolveEngineAdapterResolutionFromRegistry({
                         backendId,
+                        agentTarget,
+                        startupRuntimeDescriptorV1: params?.startupRuntimeDescriptorV1,
+                        savedSecretOperationContext: params?.savedSecretOperationContext,
                         contributions: resolutionContributions,
                         runtimeRegistry,
                         ...(runtimeRegistryHandle?.resolveCurrentPluginMaterializationRef
@@ -250,12 +287,19 @@ export async function resolveCliEngineRegistry(
                     await runtimeRegistryHandle?.release();
                 }
             })();
-            resolutionPromises.set(backendId, resolutionPromise);
+            resolutionPromises.set(cacheKey, resolutionPromise);
             try {
-                return await resolutionPromise;
+                const resolution = await resolutionPromise;
+                // Account rows can change independently of this plugin registry.
+                // Share in-flight work, but do not retain a configured launch or miss.
+                if ((!resolution || agentTarget?.definitionId !== undefined || params?.startupRuntimeDescriptorV1?.agent !== undefined || params?.runnerAgentSessionRuntimeSource?.startupRuntimeDescriptorV1?.agent !== undefined)
+                    && resolutionPromises.get(cacheKey) === resolutionPromise) {
+                    resolutionPromises.delete(cacheKey);
+                }
+                return resolution;
             } catch (error) {
-                if (resolutionPromises.get(backendId) === resolutionPromise) {
-                    resolutionPromises.delete(backendId);
+                if (resolutionPromises.get(cacheKey) === resolutionPromise) {
+                    resolutionPromises.delete(cacheKey);
                 }
                 throw error;
             }
@@ -276,11 +320,12 @@ export async function resolveBackendEngineAdapterResolution(
     backendId?: string | null,
     params?: ResolveEngineRegistryParams,
 ): Promise<EngineAdapterResolution | null> {
-    if (!backendId) {
+    if (!backendId && !params?.agentTarget) {
         return null;
     }
-    const registry = await resolveCliEngineRegistry(params);
-    return await registry.resolveForBackendId(backendId);
+    const registry = await resolveCliEngineRegistry({ ...params, backendId });
+    if (backendId) return await registry.resolveForBackendId(backendId);
+    return params?.agentTarget ? await registry.resolveForAgentTarget(params.agentTarget) : null;
 }
 
 export async function resolveBackendExecutionSurfaces(
@@ -288,8 +333,8 @@ export async function resolveBackendExecutionSurfaces(
     params?: ResolveEngineRegistryParams,
 ): Promise<BackendExecutionSurfaces> {
     if (typeof target === 'object' && target?.sourceKind === 'configured') {
-        const resolution = await resolveAccountConfiguredAcpBackend(target.configuredBackendId ?? target.backendId);
-        return resolution?.executionSurfaces ?? createEmptyBackendExecutionSurfaces();
+        // Retained backend references carry no executable contribution authority.
+        return createEmptyBackendExecutionSurfaces();
     }
     const backendId = typeof target === 'string' ? target : target?.backendId;
     const resolution = await resolveBackendEngineAdapterResolution(backendId, params);
