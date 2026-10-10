@@ -19,6 +19,8 @@ export function managedCreationSetup(machine: ManagedMachineV1) {
 export type ManagedCreationContext = Readonly<{
     controller?: Readonly<{ name: string; online: boolean }>;
     provider?: string;
+    providerAvailable?: boolean;
+    operation?: ActionOperationProjection | null;
 }>;
 
 /** Allocation/enrollment facts are independent from the install task's observed stages. */
@@ -30,6 +32,17 @@ export function managedCreationState(machine: ManagedMachineV1, context: Managed
     if (machine.observation?.availability === 'unavailable') return { kind: 'observationUnavailable' };
     if (machine.observation?.availability === 'absent') return { kind: 'absent' };
     if (machine.observation?.storage === 'lost') return { kind: 'volumeLost' };
+    if (context.providerAvailable === false) return { kind: 'providerRemoved', provider: context.provider ?? t('common.machine') };
+    const operation = currentManagedCreationOperation(machine, context.operation);
+    if (operation?.observation === 'available' && !operation.isUnavailableProjection && operation.snapshot.state === 'failed'
+        && operation.snapshot.error?.errorCode === 'credential_unavailable') return { kind: 'credentialRefused' };
+    if (operation?.observation === 'available' && !operation.isUnavailableProjection && operation.snapshot.state === 'running') {
+        switch (operation.snapshot.progress?.kind === 'phase' ? operation.snapshot.progress.phase : undefined) {
+            case 'managed.intent.busy': return { kind: 'busy' };
+            case 'managed.intent.activity-unknown': return { kind: 'activityUnknown' };
+            case 'managed.intent.draining': return { kind: 'draining' };
+        }
+    }
     if (machine.submittedNativeEffect?.intent === 'delete') return { kind: 'cleanupPending' };
     if (machine.submittedNativeEffect?.intent === 'stop' && machine.observation?.power !== 'stopped') return { kind: 'stopPending' };
     const pendingIntent = machine.submittedNativeEffect?.intent;
@@ -60,6 +73,8 @@ export function canRetryManagedInstallation(machine: ManagedMachineV1, operation
         && machine.allocation === 'bound' && Boolean(machine.resource) && !machine.cleanup
         && lifecycle.kind !== 'cleanupPending' && lifecycle.kind !== 'absent' && lifecycle.kind !== 'volumeLost'
         && snapshot?.state === 'failed' && snapshot.scope.machineId === machine.controller.machineId
+        && (snapshot.actionId === 'machines.managed.acquire' || snapshot.actionId === 'machines.managed.bootstrap.retry')
+        && snapshot.error?.errorCode !== 'credential_unavailable' && snapshot.error?.errorCode !== 'provider_unavailable'
         && snapshot.domainRef?.kind === 'managedMachine' && snapshot.domainRef.id === machine.id;
 }
 

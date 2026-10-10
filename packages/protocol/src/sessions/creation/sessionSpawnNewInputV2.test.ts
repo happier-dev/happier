@@ -5,6 +5,8 @@ import {
   SessionAuthoringCheckoutCreationDraftV1Schema as canonicalCheckoutCreationDraftSchema,
 } from '../authoring/creationFieldsV1.js';
 import * as sessionSpawnInput from './sessionSpawnNewInputV2.js';
+import { SessionRequesterBootstrapRpcRequestV1Schema } from './sessionRequesterBootstrapV1.js';
+import { SessionPromptStackV1Schema } from '../context/sessionContextV1.js';
 
 const { SessionSpawnNewInputV2Schema } = sessionSpawnInput;
 
@@ -18,6 +20,61 @@ const input = {
 } as const;
 
 describe('SessionSpawnNewInputV2Schema', () => {
+  it('carries exact managed birth provenance without admitting incomplete or caller-selected Session source', () => {
+    const managedCreation = { homeId: 'home', managedId: 'managed',
+      controller: { machineId: 'controller', installationId: 'installation' } };
+    expect(SessionSpawnNewInputV2Schema.parse({ ...input, managedCreation })).toMatchObject({ managedCreation });
+    expect(SessionSpawnNewInputV2Schema.safeParse({ ...input, managedCreation: { ...managedCreation, controller: { machineId: 'controller' } } }).success).toBe(false);
+    expect(SessionSpawnNewInputV2Schema.safeParse({ ...input, managedCreation: { ...managedCreation, sessionId: 'claimed-session' } }).success).toBe(false);
+    expect(SessionSpawnNewInputV2Schema.parse(input)).not.toHaveProperty('managedCreation');
+  });
+  it('carries the complete qualified Session context before initialization in ordinary and browser-safe birth', () => {
+    const promptStack = SessionPromptStackV1Schema.parse([
+      { id: 'session.reference', ref: { kind: 'doc', serverId: 'reference-home', artifactId: 'reference' }, enabled: false, placement: 'system_append' },
+      { id: 'session.instructions', ref: { kind: 'doc', serverId: 'instruction-home', artifactId: 'instructions' }, enabled: true, required: true, placement: 'system_append' },
+    ]);
+    expect(SessionSpawnNewInputV2Schema.parse({ ...input, promptStack })).toMatchObject({ promptStack });
+    expect(sessionSpawnInput.SessionServerStartSpawnDraftV1Schema.parse({ ...input, promptStack })).toMatchObject({ promptStack });
+    expect(SessionSpawnNewInputV2Schema.parse(input)).not.toHaveProperty('promptStack');
+    expect(SessionSpawnNewInputV2Schema.safeParse({ ...input, promptStack: [...promptStack, promptStack[0]] }).success).toBe(false);
+    expect(SessionSpawnNewInputV2Schema.safeParse({ ...input, promptStack: [{ ...promptStack[1], ref: { ...promptStack[1]!.ref, markdown: 'hidden inline instructions' } }] }).success).toBe(false);
+  });
+  it('keeps requester sign-in material in the closed private transport envelope only', () => {
+    const privateSchema = SessionRequesterBootstrapRpcRequestV1Schema;
+    const credentials = { token: 'requester-token' };
+    const requesterBootstrap = { v: 1, disposition: 'ordinary_requester', sessionId: 'prepared-session', sessionCreationDisposition: 'rejoined', credentials };
+    const envelope = { kind: 'requester_session_bootstrap_v1', input, requesterBootstrap };
+    expect(privateSchema.safeParse(envelope).success).toBe(true);
+    expect(privateSchema.safeParse({ ...envelope, requesterBootstrap: { v: 1, disposition: 'ordinary_requester', credentials } }).success).toBe(true);
+    expect(privateSchema.safeParse({ ...envelope, requesterBootstrap: { v: 1, disposition: 'ordinary_requester', sessionId: 'partial-preparation', credentials } }).success).toBe(false);
+    expect(SessionSpawnNewInputV2Schema.safeParse({ ...input, requesterBootstrap }).success).toBe(false);
+    expect(privateSchema.safeParse({ ...envelope, accountId: 'author-selected-account' }).success).toBe(false);
+    expect(privateSchema.safeParse({ ...envelope, requesterBootstrap: { ...requesterBootstrap, machineId: 'other' } }).success).toBe(false);
+    expect(privateSchema.safeParse({ ...envelope, requesterBootstrap: { ...requesterBootstrap,
+      credentials: { token: 'requester-token', secret: 'invalid-key' } } }).success).toBe(false);
+  });
+  it('admits strict Bot creation facts through ordinary and browser-safe spawn', () => {
+    const identity = { bot: { kind: 'bot' }, createdAsBot: true };
+    expect(SessionSpawnNewInputV2Schema.parse({ ...input, identity })).toMatchObject({ identity });
+    expect(sessionSpawnInput.SessionServerStartSpawnDraftV1Schema.parse({ ...input, identity }))
+      .toMatchObject({ identity });
+    expect(SessionSpawnNewInputV2Schema.parse(input)).not.toHaveProperty('identity');
+    for (const invalidIdentity of [
+      { ...identity, avatarId: 'override' },
+      { bot: { kind: 'bot', name: 'private' }, createdAsBot: true },
+      { ...identity, createdAsBot: false },
+    ]) {
+      expect(SessionSpawnNewInputV2Schema.safeParse({ ...input, identity: invalidIdentity }).success).toBe(false);
+    }
+  });
+  it('carries a creation memory choice without accepting nonboolean values', () => {
+    for (const memoryEnabled of [true, false]) {
+      expect(SessionSpawnNewInputV2Schema.parse({ ...input, memoryEnabled }).memoryEnabled).toBe(memoryEnabled);
+      expect(sessionSpawnInput.SessionServerStartSpawnDraftV1Schema.parse({ ...input, memoryEnabled }).memoryEnabled)
+        .toBe(memoryEnabled);
+    }
+    expect(SessionSpawnNewInputV2Schema.safeParse({ ...input, memoryEnabled: 'true' }).success).toBe(false);
+  });
   it('admits creation-scoped triggers without caller-selected Session identities', () => {
     const initialTriggers = [{ target: { kind: 'workflow', ref: 'builtin:review-and-converge' },
       trigger: { kind: 'sessionLifecycle', enabled: true, events: ['sessionStarted'], policy: { kind: 'firstMatch' } } }];

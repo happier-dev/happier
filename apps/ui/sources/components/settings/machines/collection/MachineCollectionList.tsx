@@ -10,6 +10,7 @@ import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
@@ -375,7 +376,10 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
                         {/* Pools have their own section below, with its own add row. */}
                         <MachineAddOptionTiles options={addOptions.filter((option) => option.id !== 'pool' && option.id !== 'preset')} testIdPrefix="settings.machines.add" />
                     </ItemGroup>
-                ) : collection.sections.map((section) => (
+                ) : collection.sections.map((section) => section.archived ? (
+                    <ArchivedMachineSection key={section.key} section={section} rail={false}
+                        selectedKey={selectedKey} query={searchable ? query : ''} renderRow={renderMachineRow} />
+                ) : (
                     <ItemGroup
                         key={section.key}
                         // One Home: the page title already names the list.
@@ -434,7 +438,10 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
                     showChevron={false}
                     mode="info"
                 />
-            ) : collection.sections.map((section) => (
+            ) : collection.sections.map((section) => section.archived ? (
+                <ArchivedMachineSection key={section.key} section={section} rail
+                    selectedKey={selectedKey} query={searchable ? query : ''} renderRow={renderMachineRow} />
+            ) : (
                 <React.Fragment key={section.key}>
                     {section.title ? (
                         <CollectionListGroupLabel
@@ -459,6 +466,26 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
         </CollectionList>
     );
 });
+
+/** Retired resources remain recoverable without rejoining the active Machines list. */
+function ArchivedMachineSection(props: Readonly<{
+    section: MachineCollectionSection;
+    rail: boolean;
+    selectedKey: string | null;
+    query: string;
+    renderRow: (row: MachineCollectionRow) => React.ReactElement;
+}>) {
+    const [expanded, setExpanded] = React.useState(false);
+    const selected = props.section.rows.some(row => isMachineCollectionRowSelected(props.selectedKey, row));
+    const disclosure = <ExpandableItem expanded={expanded || selected || props.query.trim().length > 0}
+        onExpandedChange={setExpanded} header={state => <Item {...state.headerProps}
+            testID={`settings.machines.archived.${props.section.serverId}`}
+            title={t('managedCleanup.archiveTitle')} detail={String(props.section.rows.length)}
+            density={props.rail ? 'compact' : undefined} showChevron={false} /> }>
+        {props.section.rows.map(props.renderRow)}
+    </ExpandableItem>;
+    return props.rail ? disclosure : <ItemGroup title={props.section.title ?? undefined}>{disclosure}</ItemGroup>;
+}
 
 /** Accessible recipes remain separate from resources, with exact-Home read and approval custody. */
 export function MachinePresetCollectionSectionView(props: Readonly<{

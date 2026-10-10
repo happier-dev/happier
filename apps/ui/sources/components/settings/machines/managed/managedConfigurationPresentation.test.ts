@@ -134,4 +134,12 @@ describe('one managed configuration receipt projection', () => {
         // Creation-time headroom no longer describes the host.
         expect(receipt.cost).toEqual({ kind: 'local', computer: t('common.unknown'), meters: [] });
     });
+    it('keeps the captured native duration unless the created detail already presents its live lifetime', () => {
+        const facts = { ...reviewedFacts, nativeFacts: { duration: { id: 'native-duration', title: '2 hours', afterMs: 7_200_000 } } };
+        const input = { launch, providerTitle: 'Compute', reviewedFacts: facts };
+        expect(buildManagedConfigurationReceipt({ ...input, nativeLifetimePresented: true }).facts.find(fact => fact.id === 'duration')?.value).toBe('2 hours');
+        expect(buildManagedConfigurationReceipt({ ...input, created: true }).facts.find(fact => fact.id === 'duration')?.value).toBe('2 hours');
+        expect(buildManagedConfigurationReceipt({ ...input, created: true, nativeLifetimePresented: true }).facts.some(fact => fact.id === 'duration')).toBe(false);
+        expect(facts.nativeFacts.duration.afterMs).toBe(7_200_000);
+    });
 });

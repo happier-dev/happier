@@ -3,16 +3,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { ActionOperationSnapshotV1, ProjectWorkerStatusResultV1 } from '@happier-dev/protocol';
 import { projectActionOperationSnapshotForV1Reader } from '@happier-dev/protocol/actions/operations/v1';
+import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { consumeActionOperationSnapshotPush } from '@/sync/domains/actionOperations/consumeActionOperationSnapshotPush';
 import { installNewSessionComponentsCommonModuleMocks } from '../newSessionComponentsTestHelpers';
 
 const rpc = vi.hoisted(() => ({ machine: vi.fn(), operation: vi.fn() }));
+// Substitute Metro's deferred loader only; selection and the admitted Action remain real.
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
+    const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
+    return { ...original, createFrontDoorActionExecute: createFrontDoorActionExecuteForVitest(original) };
+});
 // The addressed daemon is the network boundary; Action policy and selection remain real.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
     const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
@@ -28,7 +36,9 @@ const { useMachineSelectionListModel } = await import('./useMachineSelectionList
 const { useMachineDestinationWorkerStatus } = await import('@/components/sessions/new/hooks/machines/useMachineDestinationWorkerStatus');
 const { getActionOperation } = await import('@/sync/ops/actionOperations');
 const { resolveServerCredentialAccountScope } = await import('@/sync/domains/scope/serverCredentialAccountScope');
+const { getServerProfileById, setServerProfileIdentityForUrl, resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
 let serverId = '';
+let homeProfileId = '';
 
 beforeEach(async () => {
     actionOperationStore.reset();
@@ -36,15 +46,51 @@ beforeEach(async () => {
     // Credential/network leaves must remain installed for this case's real binding lifetime.
     installHomeGovernanceBoundaries(homes);
     await loadSyncSingletonForTests();
+    // Match the inventory owner harness: complete the actual Action dependency
+    // graph after its boundaries are installed, before waiting on a rendered read.
+    await import('@/sync/ops/actions/defaultActionExecutor');
     rpc.machine.mockReset();
     rpc.operation.mockReset();
-    serverId = await homes.addHome({ name: 'Worker picker', serverUrl: 'https://worker-picker.test', accountId: 'owner',
-        accountEncryptionMode: 'plain' });
-    expect(await resolveServerCredentialAccountScope(serverId)).toMatchObject({ kind: 'bound', scope: { serverId, accountId: 'owner' } });
+    homeProfileId = await homes.addHome({ name: 'Worker picker', serverUrl: 'https://worker-picker.test', accountId: 'owner',
+        accountEncryptionMode: 'plain', serverIdentityId: 'srv_worker_home' });
+    await setServerProfileIdentityForUrl('https://worker-picker.test', 'srv_worker_home');
+    serverId = resolveServerProfileScopeIdForIdentifier(homeProfileId);
+    homes.answer(homeProfileId, '/v1/machines/managed/actions/list', { body: { machines: [] } });
+    expect(await resolveServerCredentialAccountScope(homeProfileId)).toMatchObject({ kind: 'bound',
+        scope: { serverId: resolveServerProfileScopeIdForIdentifier(homeProfileId), accountId: 'owner' } });
 });
 afterEach(async () => { actionOperationStore.reset(); await homes.reset(); });
 
 describe('worker destination list demand', () => {
+    it('labels the stopped retained destination Asleep while keeping actual offline admission unchanged', async () => {
+        const machine = createMachineFixture({ id: 'guest', active: false, activeAt: 0 });
+        const managed = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'srv_worker_home', custodianAccountId: 'owner',
+            launch: { provider: { pluginId: 'custom.native', localId: 'vm' }, schemaVersion: 1, name: 'Build box', choices: {} },
+            resource: { contributionRef: { pluginId: 'custom.native', localId: 'vm' }, schemaVersion: 1, value: {} },
+            controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'guest',
+            allocation: 'bound', creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'unused', afterMs: 3600000, effect: 'stop' }, wakeOnAcceptedMessage: true,
+            observation: { observedAt: 10, availability: 'present', power: 'stopped', storage: 'retained', daemon: 'disconnected' } });
+        homes.answer(homeProfileId, '/v1/machines/managed/actions/list', { body: { machines: [managed] } });
+        expect(getServerProfileById(serverId)).toMatchObject({ serverIdentityId: managed.homeId });
+        const hook = await renderHook(() => useMachineSelectionListModel({
+            groups: [{ serverId, serverName: 'Worker picker', loading: false, signedOut: false,
+                machines: [{ ...machine, serverId, serverName: 'Worker picker' }] }],
+            selectedMachine: null, selectedServerId: null, recentMachines: [], favoriteMachines: [],
+            onSelectMachine: () => {}, onSelectScopedMachine: () => {},
+            showFavorites: false, showRecent: false, showSearch: false, showCliGlyphs: false, autoDetectCliGlyphs: false,
+        }));
+        await waitForHomeGovernance(() => expect({ requests: homes.requests,
+            nativeRequests: homes.requestsFor('/v1/machines/managed/actions/list') }).toMatchObject({
+                nativeRequests: expect.arrayContaining([expect.objectContaining({ input: { homeId: managed.homeId } })]),
+            }));
+        await flushHookEffects({ cycles: 20 });
+        const option = hook.getCurrent().rootStep.sections.flatMap(section => section.kind === 'static' ? section.options : [])
+            .find(option => option.id.endsWith('guest'));
+        expect(option?.subtitle).toContain('managedPower.asleep');
+        expect(option?.disabled).toBe(true);
+        await hook.unmount();
+    });
     it.each(['finite', 'service-start'] as const)('demands exact %s status and keeps a full queue selectable', async (purpose) => {
         const machine = createMachineFixture({ id: 'worker', active: true, activeAt: Date.now() });
         const worker = { eligible: true, candidate: { serverId, machineId: machine.id },

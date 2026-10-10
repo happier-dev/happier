@@ -1,10 +1,12 @@
 import { t } from '@/text';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { formatLastSeen } from '@/utils/sessions/sessionUtils';
+import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 
 export type MachinePresenceLine = Readonly<{
     online: boolean;
-    /** "Online", or "Offline · last seen 4 days ago". */
+    /** Native retained power when known, otherwise ordinary connectivity/last-seen. */
     label: string;
 }>;
 
@@ -14,14 +16,17 @@ export type MachinePresenceLine = Readonly<{
  * same wherever it appears. Callers append their own facts after it ("· Update available").
  */
 export function describeMachinePresenceLine(
-    machine: Readonly<{ active: boolean; activeAt?: number | null; revokedAt?: number | null }>,
+    machine: Readonly<{ id?: string; active: boolean; activeAt?: number | null; revokedAt?: number | null }>,
     nowMs?: number,
+    managedMachine?: ManagedMachineV1 | null,
 ): MachinePresenceLine {
     const online = isMachineOnline(machine, nowMs);
+    const word = online ? t('settingsOverview.machineOnline')
+        : t('settingsOverview.machineOffline', { lastSeen: formatLastSeen(machine.activeAt ?? 0) });
     return {
         online,
-        label: online
-            ? t('settingsOverview.machineOnline')
-            : t('settingsOverview.machineOffline', { lastSeen: formatLastSeen(machine.activeAt ?? 0) }),
+        label: resolveWorkStatusTone({ kind: 'machine', facts: {
+            online, word, machineId: machine.id, revokedAt: machine.revokedAt, managedMachine, needsYouCount: 0, runningSessionCount: 0,
+        } }).word,
     };
 }

@@ -1,6 +1,11 @@
 import * as React from 'react';
+import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
+import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { View } from 'react-native';
 import { useDestinationParams, useDestinationRouter, useDestinationVisibility } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { Stack } from '@/components/appShell/workspace/destinationRoute';
+import { DefaultBackButton } from '@/components/navigation/Header';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { randomUUID } from 'expo-crypto';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -24,7 +29,7 @@ import { createExecutionRunStartContentChip } from '@/components/sessions/runs/l
 import { t } from '@/text';
 import { projectWorkflowFlow } from '../flow/workflowFlowProjection';
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
-import { getStorage, useActiveServerAccountScope, useArtifact, useMachine, useWorkflowRun } from '@/sync/domains/state/storage';
+import { getStorage, useActiveServerAccountScope, useArtifact, useServerScopedMachine, useWorkflowRun } from '@/sync/domains/state/storage';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import {
     isWorkflowInvocationFactOlder,
@@ -35,6 +40,7 @@ import {
     workflowRunRowFromSummary,
 } from '@/sync/store/domains/workflowRuns';
 import { workflowRunDetailActions } from '@/sync/domains/workflows/workflowRunDetailActions';
+import { publishOpenedWorkflowRunDetail, refreshWorkflowRunById } from '@/sync/engine/workflows/refreshWorkflowRun';
 import { subscribeVisibleWorkflowRunListInvalidation } from '@/sync/domains/workflows/workflowRunListInvalidation';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
@@ -54,7 +60,8 @@ import {
     type WorkflowRecoveryContinuation,
 } from '../run/workflowRunDetailPresentation';
 import { isTerminalWorkflowRunState } from '../presentation/workflowLifecyclePresentation';
-import { projectWorkflowInvocationStructure } from '../run/workflowInvocationStructure';
+import { projectUnconfirmedWorkflowWaitReview, projectWorkflowInvocationStructure } from '../run/workflowInvocationStructure';
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { hasWorkflowInvocationRequest } from '../run/workflowPermissionRequests';
 import {
     buildWorkflowReviewedRunSeed,
@@ -112,6 +119,10 @@ const styles = StyleSheet.create((theme) => ({
     root: {
         flex: 1,
         backgroundColor: theme.colors.background.canvas,
+    },
+    // In another page's pane the run sits on that pane's surface, not on a page canvas of its own.
+    embeddedRoot: {
+        flex: 1,
     },
     centered: {
         flex: 1,
@@ -230,7 +241,33 @@ function resolveAnnouncementTerminal(
     }
 }
 
-export function WorkflowRunScreen(): React.ReactElement {
+export function WorkflowRunScreen(props: Readonly<{
+    /**
+     * Hosted inside another page's pane (the Inbox's detail): the run draws on the pane's own
+     * surface and leaves the host route's header alone; the pane owns Back.
+     */
+    embedded?: boolean;
+}> = {}): React.ReactElement {
+    const router = useDestinationRouter();
+    const params = useDestinationParams<{ runId?: string | string[]; invocationId?: string | string[] }>();
+    const runId = readWorkflowRunId(firstParam(params.runId));
+    const invocationId = readWorkflowInvocationId(firstParam(params.invocationId));
+    const title = t('workflows.run.title');
+    const onBack = React.useCallback(() => {
+        if (runId !== null && invocationId !== null) router.replace(createWorkflowRunRoute(runId) as never);
+        else safeRouterBack({ router, fallbackHref: '/workflows' });
+    }, [invocationId, router, runId]);
+    const headerLeft = React.useCallback(({ tintColor }: Readonly<{ tintColor?: string }>) => (
+        <DefaultBackButton testID="workflow-run-back" tintColor={tintColor} onPress={onBack} />
+    ), [onBack]);
+    const options = React.useMemo(() => ({ headerTitle: title, headerLeft }), [headerLeft, title]);
+    return <>
+        {props.embedded ? null : <Stack.Screen options={options} />}
+        <WorkflowRunBody onCloseInvocation={onBack} embedded={props.embedded === true} />
+    </>;
+}
+
+function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedded?: boolean }>): React.ReactElement {
     const { theme } = useUnistyles();
     const contentStyle = React.useMemo(() => ({
         paddingHorizontal: theme.margins.lg,
@@ -304,6 +341,7 @@ export function WorkflowRunScreen(): React.ReactElement {
         return next;
     }, [invocationEvidenceById]);
     const [loadState, setLoadState] = React.useState<'loading' | 'ready' | 'failed'>('loading');
+    const [loadProblem, setLoadProblem] = React.useState<WorkflowProblemPresentation | null>(null);
     /**
      * Asking for the Run again.
      *
@@ -314,7 +352,7 @@ export function WorkflowRunScreen(): React.ReactElement {
      */
     const [loadAttempt, setLoadAttempt] = React.useState(0);
     const [invocationInvalidationToken, setInvocationInvalidationToken] = React.useState(0);
-    const [view, setView] = React.useState<WorkflowRunDetailView>('activity');
+    const [view, setView] = React.useState<WorkflowRunDetailView>('flow');
     const [selectedInvocationId, setSelectedInvocationId] = React.useState<string | null>(requestedInvocationId);
     const [pendingOperation, setPendingOperation] = React.useState<PendingRunOperation | null>(null);
     /**
@@ -358,6 +396,8 @@ export function WorkflowRunScreen(): React.ReactElement {
     /** The latest exact invocation read; older responses belong to nobody on screen. */
     const exactInvocationRequestRef = React.useRef<PendingExactInvocationRead | null>(null);
     const [selectedReadUnavailable, setSelectedContentUnavailable] = React.useState(true);
+    const [selectedReadPending, setSelectedReadPending] = React.useState(true);
+    const [selectedReadProblem, setSelectedReadProblem] = React.useState<WorkflowProblemPresentation | null>(null);
     const [runAgainInputOpen, setRunAgainInputOpen] = React.useState(false);
     const [runAgainAgentOverride, setRunAgainAgentOverride] = React.useState<
         (Omit<WorkflowReplayAgentOverrideV1, 'engine'> & { engine?: WorkflowReplayAgentOverrideV1['engine']; step: string }) | null
@@ -413,6 +453,9 @@ export function WorkflowRunScreen(): React.ReactElement {
         // frame beside the new Run's cached lifecycle row.
         exactInvocationRequestRef.current = null;
         setSelectedContentUnavailable(true);
+        setSelectedReadPending(true);
+        setSelectedReadProblem(null);
+        setLoadProblem(null);
         pendingOperationRef.current = null;
         setPendingOperation(null);
         setControlError(null);
@@ -428,7 +471,7 @@ export function WorkflowRunScreen(): React.ReactElement {
         setRunAgainRawTextValues({});
         setAcknowledgedUncertainInvocation(null);
         setSelectedInvocationId(requestedInvocationId);
-        setView('activity');
+        setView('flow');
         setLoadState('loading');
         pendingRunAgainIdRef.current = null;
         previousLifecyclesRef.current = new Map();
@@ -492,15 +535,15 @@ export function WorkflowRunScreen(): React.ReactElement {
          * and usage, which a Run writes once when it settles. Re-reading all of
          * it on every revision bump made an ordinary progress update scan and
          * decrypt the whole Run, and replaced the loaded index pages with their
-         * first page. The canonical Account-change owner has already refreshed
-         * the shared summary row this screen renders from.
+         * first page. An Account wake can precede its summary read, so the
+         * demanded background load also confirms the shared summary through
+         * its canonical lean refresh owner.
          */
         const isBackgroundRefresh = loadedDetail !== null && loadedDetail.contentIdentity === contentIdentity;
-        const needsExactDetail = !isBackgroundRefresh
-            || (observedTerminal && loadedDetail?.terminal === false);
         let cancelled = false;
         const controller = new AbortController();
         const retirement = lifetime.onRetire(() => controller.abort());
+        setLoadProblem(null);
         setLoadState((current) => (
             contentScopeKeyRef.current === requestScopeKey && current === 'ready'
                 ? current
@@ -510,6 +553,16 @@ export function WorkflowRunScreen(): React.ReactElement {
 
         void (async () => {
             try {
+                if (isBackgroundRefresh) {
+                    await refreshWorkflowRunById(runId, { signal: controller.signal, fence: lifetime });
+                    if (cancelled || !lifetime.isCurrent() || !isContentIdentityCurrent(requestScopeKey)) return;
+                }
+                const refreshedSummary = getStorage().getState().workflowRunsById[runId]?.summary;
+                const summaryTerminal = refreshedSummary === undefined || refreshedSummary === null
+                    ? observedTerminal
+                    : isTerminalWorkflowRunState(refreshedSummary.state);
+                const needsExactDetail = !isBackgroundRefresh
+                    || (summaryTerminal && loadedDetail?.terminal === false);
                 let detail: Awaited<ReturnType<typeof workflowRunDetailActions.getRun>> | null = null;
                 if (needsExactDetail) {
                     detail = await workflowRunDetailActions.getRun(runId, controller.signal);
@@ -530,12 +583,7 @@ export function WorkflowRunScreen(): React.ReactElement {
                     // the snapshot is readable but unnamed, and projecting that
                     // as `unavailable` locked a perfectly readable Run in the
                     // collection and in every Session card that reads the same row.
-                    getStorage().getState().upsertWorkflowRuns([{ ...workflowRunRowFromSummary(
-                        detail.run,
-                        detail.acceptedContext.metadata
-                            ? { kind: 'available', value: detail.acceptedContext.metadata }
-                            : null,
-                    ), detail }]);
+                    publishOpenedWorkflowRunDetail(detail);
                     setContentScopeKey(requestScopeKey);
                     loadedRunAccountScopeRef.current = { runId, accountScopeKey };
                 }
@@ -545,7 +593,7 @@ export function WorkflowRunScreen(): React.ReactElement {
                 // render happened to hold would leave the ref behind the row it
                 // just published and make the next render repeat the whole load.
                 const observedState = detail === null
-                    ? { revision: observedRevision, terminal: observedTerminal }
+                    ? { revision: refreshedSummary?.revision ?? observedRevision, terminal: summaryTerminal }
                     : { revision: detail.run.revision, terminal: isTerminalWorkflowRunState(detail.run.state) };
 
                 const historyPromise = workflowRunDetailActions.listInvocations({ runId }, controller.signal);
@@ -634,8 +682,9 @@ export function WorkflowRunScreen(): React.ReactElement {
                 // they replaced.
                 setPagingFailure(null);
                 setLoadState('ready');
-            } catch {
+            } catch (error) {
                 if (cancelled || !lifetime.isCurrent() || !isContentIdentityCurrent(requestScopeKey)) return;
+                setLoadProblem(resolveWorkflowProblemPresentation(error));
                 setFirstFailedInvocationResolution('error');
                 // Last-known-good detail stays visible, but readiness remains
                 // truthful until both public invocation windows have loaded.
@@ -655,6 +704,7 @@ export function WorkflowRunScreen(): React.ReactElement {
     }, [accountScopeKey, activelyViewed, contentIdentity, invocationInvalidationToken, isContentIdentityCurrent, loadAttempt, pendingRefreshRevision, runId]);
 
     const retryLoad = React.useCallback(() => {
+        setLoadProblem(null);
         setLoadState('loading');
         setLoadAttempt((attempt) => attempt + 1);
     }, []);
@@ -662,7 +712,14 @@ export function WorkflowRunScreen(): React.ReactElement {
     const summary: WorkflowRunSummaryV1 | null = contentBelongsToActiveScope
         ? cachedRow?.summary ?? null
         : null;
-    const runMachine = useMachine(summary?.machineId ?? '', summary !== null);
+    const runMachine = useServerScopedMachine(activeAccountScope?.serverId ?? '', summary?.machineId ?? '');
+    const managedHomes = React.useMemo(() => summary && activelyViewed && activeAccountScope ? [activeAccountScope.serverId] : [],
+        [summary, activelyViewed, activeAccountScope]);
+    const managedInventory = useManagedMachineInventory(managedHomes);
+    const runMachineStatus = runMachine && activeAccountScope ? resolveWorkStatusTone({ kind: 'machine', facts: {
+        machineId: runMachine.id, revokedAt: runMachine.revokedAt, online: isMachineOnline(runMachine), word: '', needsYouCount: 0, runningSessionCount: 0,
+        managedMachine: managedInventory.machinesByEnrolledMachineIdByServerId[activeAccountScope.serverId]?.[runMachine.id],
+    } }) : undefined;
     const visibleDefinition = contentBelongsToActiveScope ? definition : null;
     const visibleAcceptedContext = contentBelongsToActiveScope ? acceptedContext : null;
     const callerAccess = contentBelongsToActiveScope ? detail?.callerAccess : undefined;
@@ -863,6 +920,7 @@ export function WorkflowRunScreen(): React.ReactElement {
             parentRevision: response.invocation.parentRevision,
         });
         setSelectedContentUnavailable(false);
+        setSelectedReadProblem(null);
         return true;
     }, [isContentIdentityCurrent]);
 
@@ -886,6 +944,8 @@ export function WorkflowRunScreen(): React.ReactElement {
         // unconfirmed before this request answers: no permission or recovery
         // callback may act on it until the matching response confirms it.
         setSelectedContentUnavailable(true);
+        setSelectedReadPending(true);
+        setSelectedReadProblem(null);
         void (async () => {
             try {
                 const response = await workflowRunDetailActions.getInvocation(
@@ -894,12 +954,16 @@ export function WorkflowRunScreen(): React.ReactElement {
                 );
                 if (cancelled || !lifetime.isCurrent()) return;
                 settleExactInvocation(token, response);
-            } catch {
+            } catch (error) {
                 // The index remains useful when the exact Action read fails.
                 if (!cancelled && lifetime.isCurrent() && isContentIdentityCurrent(requestIdentity)
                     && exactInvocationRequestRef.current === token) {
                     setSelectedContentUnavailable(true);
+                    setSelectedReadProblem(resolveWorkflowProblemPresentation(error));
                 }
+            } finally {
+                if (!cancelled && lifetime.isCurrent() && isContentIdentityCurrent(requestIdentity)
+                    && exactInvocationRequestRef.current === token) setSelectedReadPending(false);
             }
         })();
         return () => {
@@ -907,7 +971,7 @@ export function WorkflowRunScreen(): React.ReactElement {
             controller.abort();
             retirement.dispose();
         };
-    }, [accountScopeKey, activelyViewed, contentIdentity, invocationInvalidationToken, isContentIdentityCurrent, settleExactInvocation, runId, selectedInvocationId, selectedInvocationContentRevision, summary?.revision]);
+    }, [accountScopeKey, activelyViewed, contentIdentity, invocationInvalidationToken, isContentIdentityCurrent, loadAttempt, settleExactInvocation, runId, selectedInvocationId, selectedInvocationContentRevision, summary?.revision]);
 
     // One owner decides the haptic and its visible twin together, so a device
     // can never buzz for a completion the screen did not show.
@@ -1071,6 +1135,10 @@ export function WorkflowRunScreen(): React.ReactElement {
     const selectedProgress = selectedInvocationId === null
         ? null
         : visibleProgressByInvocationId.get(selectedInvocationId) ?? null;
+    const selectedReviewProgress = React.useMemo(() => selectedProgress ?? projectUnconfirmedWorkflowWaitReview({
+        definition: visibleDefinition, frozenChildren: visibleAcceptedContext?.frozenChildren,
+        invocation: selectedInvocation, structure: selectedInvocationId === null ? undefined : invocationStructure.get(selectedInvocationId),
+    }), [invocationStructure, selectedInvocation, selectedInvocationId, selectedProgress, visibleAcceptedContext?.frozenChildren, visibleDefinition]);
     const settleReview = React.useCallback((run: WorkflowRunSummaryV1) => {
         getStorage().getState().upsertWorkflowRuns([workflowRunRowFromSummary(run)]);
         setInvocationInvalidationToken((token) => token + 1);
@@ -1457,7 +1525,8 @@ export function WorkflowRunScreen(): React.ReactElement {
     }, [contentIdentity, isContentIdentityCurrent]);
 
     const openWorkspace = React.useCallback((workspaceRefId: string, directory: string) => {
-        const opened = openProject(workspaceRefId, { activeRootPath: directory });
+        if (!activeAccountScope || !isContentIdentityCurrent(contentIdentity)) return;
+        const opened = openProject(workspaceRefId, { serverId: activeAccountScope.serverId, activeRootPath: directory });
         if (!opened) {
             setControlError({
                 code: null,
@@ -1468,7 +1537,7 @@ export function WorkflowRunScreen(): React.ReactElement {
                 accessibilitySemantics: 'alert',
             });
         }
-    }, [openProject]);
+    }, [activeAccountScope, contentIdentity, isContentIdentityCurrent, openProject]);
 
     const saveAsWorkflow = React.useCallback(() => {
         if (summary === null || visibleDefinition === null || visibleAcceptedContext === null) return;
@@ -1514,16 +1583,41 @@ export function WorkflowRunScreen(): React.ReactElement {
      * presentation rather than flattening it to a sentence.
      */
     const visibleProblem: WorkflowProblemPresentation | null = controlError
+        ?? (loadState === 'failed' ? loadProblem : null)
         ?? (loadState === 'failed'
             ? {
                 code: null,
-                title: t('workflows.loadFailedTitle'),
-                message: t('workflows.loadFailedBody'),
+                title: t('workflows.destination.history.loadFailedTitle'),
+                message: t('workflows.destination.history.loadFailedBody'),
                 repair: 'retry',
                 repairLabel: t('common.retry'),
                 accessibilitySemantics: 'alert',
             }
             : null);
+    const openEncryptionSettings = React.useCallback(() => {
+        if (!activelyViewed || !isContentIdentityCurrent(contentIdentity) || !activeAccountScope) return;
+        router.push({ pathname: SETTINGS_ROUTES.accountSecurity,
+            params: { serverId: activeAccountScope.serverId, accountId: activeAccountScope.accountId } } as never);
+    }, [activelyViewed, activeAccountScope, contentIdentity, isContentIdentityCurrent, router]);
+    const repairReadProblem = selectedReadProblem?.repair === 'settings' ? openEncryptionSettings
+        : selectedReadProblem?.repair === 'retry' || selectedReadProblem?.repair === 'refresh' ? retryLoad : undefined;
+    const repairVisibleProblem = visibleProblem?.repair === 'settings' ? openEncryptionSettings
+        : visibleProblem?.repair === 'retry' || visibleProblem?.repair === 'refresh' ? retryLoad : undefined;
+    // One selected-read state, placed inside Review when it exists (including
+    // its phone modal), otherwise inside the exact detail. Outer failures are
+    // only Run loading/control failures, never a duplicate of this state.
+    const selectedReadState = !selectedContentUnavailable ? null : selectedReadPending
+        ? <SurfaceStateCard testID="workflow-run-read-pending" size="line" kind="loading"
+            title={t('common.loading')} accessibilitySemantics="status" />
+        : selectedReadProblem ? <SurfaceStateCard testID="workflow-run-read-problem" size="line"
+            kind={selectedReadProblem.accessibilitySemantics === 'status' ? 'unavailable' : 'error'}
+            title={selectedReadProblem.title} reason={selectedReadProblem.message}
+            accessibilitySemantics={selectedReadProblem.accessibilitySemantics}
+            action={repairReadProblem && selectedReadProblem.repairLabel ? {
+                testID: 'workflow-run-read-retry', label: selectedReadProblem.repairLabel, onPress: repairReadProblem,
+            } : undefined} />
+            : <Text accessibilityLiveRegion="polite">{t(selectedProgress === null
+                ? 'workflows.contentUnavailable' : 'workflows.run.evidenceStale')}</Text>;
 
     const runAgainModalProps = React.useMemo<WorkflowRunComposerModalProps | null>(
         () => visibleDefinition === null ? null : ({
@@ -1548,7 +1642,7 @@ export function WorkflowRunScreen(): React.ReactElement {
                         machineName: getMachineDisplayName(runMachine) }) ?? visibleAcceptedContext.machineId,
                     testID: 'workflow-start-where-chip',
                     // No setter: this is the accepted target, not another authored choice.
-                    renderContent: <WorkflowProjectTargetControl target={visibleAcceptedContext.workspaceTarget.project}
+                    renderContent: <WorkflowProjectTargetControl purpose="workflow" target={visibleAcceptedContext.workspaceTarget.project}
                         machineName={getMachineDisplayName(runMachine)} testIDPrefix="workflow-repeat-where" />,
                 }), controlId: 'machine' as const,
             }, ...(runAgainAgentOverride === null ? [] : [{ ...createExecutionRunStartContentChip({
@@ -1577,12 +1671,12 @@ export function WorkflowRunScreen(): React.ReactElement {
 
     if (runId === null) {
         return (
-            <View style={[styles.root, styles.centered]}>
+            <View style={[props.embedded ? styles.embeddedRoot : styles.root, styles.centered]}>
                 <SurfaceStateCard
                     testID="workflow-run-unavailable"
                     kind="unavailable"
-                    title={t('workflows.loadFailedTitle')}
-                    reason={t('workflows.loadFailedBody')}
+                    title={t('workflows.destination.history.loadFailedTitle')}
+                    reason={t('workflows.destination.history.loadFailedBody')}
                 />
             </View>
         );
@@ -1590,15 +1684,16 @@ export function WorkflowRunScreen(): React.ReactElement {
 
     if (summary === null) {
         return (
-            <View testID="workflow-run-screen" style={[styles.root, styles.centered]}>
+            <View testID="workflow-run-screen" style={[props.embedded ? styles.embeddedRoot : styles.root, styles.centered]}>
                 {loadState === 'failed' ? (
                     <SurfaceStateCard
                         testID="workflow-run-load-failed"
                         kind="error"
-                        title={t('workflows.loadFailedTitle')}
-                        reason={t('workflows.loadFailedBody')}
-                        action={{ label: t('common.retry'), onPress: retryLoad }}
-                        accessibilitySemantics="alert"
+                        title={visibleProblem?.title ?? t('workflows.destination.history.loadFailedTitle')}
+                        reason={visibleProblem?.message ?? t('workflows.destination.history.loadFailedBody')}
+                        action={repairVisibleProblem && visibleProblem?.repairLabel
+                            ? { label: visibleProblem.repairLabel, onPress: repairVisibleProblem } : undefined}
+                        accessibilitySemantics={visibleProblem?.accessibilitySemantics ?? 'alert'}
                     />
                 ) : (
                     <SurfaceStateCard testID="workflow-run-loading" kind="loading" title={t('common.loading')} />
@@ -1610,7 +1705,7 @@ export function WorkflowRunScreen(): React.ReactElement {
     return (
         <View
             testID="workflow-run-screen"
-            style={styles.root}
+            style={props.embedded ? styles.embeddedRoot : styles.root}
         >
             <WorkflowRunContent
                 notificationOperation={activeAccountScope !== null && visibleAcceptedContext !== null
@@ -1620,6 +1715,7 @@ export function WorkflowRunScreen(): React.ReactElement {
                         serverId={activeAccountScope.serverId} /> : undefined}
                 run={summary}
                 machineName={getMachineDisplayName(runMachine)}
+                machineStatus={runMachineStatus}
                 {...(runMachine === null || runMachine === undefined
                     ? {}
                     : { machineReachable: isMachineOnline(runMachine) })}
@@ -1647,21 +1743,24 @@ export function WorkflowRunScreen(): React.ReactElement {
                     if (!detailsPaneAvailable && requestedInvocationId === null) router.push(createWorkflowInvocationRoute(runId, invocationId) as never);
                 }}
                 onDeselectInvocation={() => {
-                    if (!detailsPaneAvailable && requestedInvocationId !== null) router.back();
+                    if (requestedInvocationId !== null) props.onCloseInvocation();
                     else setSelectedInvocationId(null);
                 }}
                 active={activelyViewed}
                 serverId={activeAccountScope?.serverId ?? null}
                 invocationPage={requestedInvocationId !== null}
-                renderReviewCard={selectedInvocation && selectedProgress && visibleAcceptedContext && selectedInvocationContentRevision !== null
+                renderReviewCard={selectedInvocation && selectedReviewProgress && visibleAcceptedContext && visibleDefinition && selectedInvocationContentRevision !== null
                     && (selectedInvocation.lifecycle === 'waiting_for_review'
-                        || (selectedInvocation.lifecycle === 'completed' && selectedProgress.blockKind !== 'wait'
-                            && WorkflowResultContractSchema.safeParse(selectedProgress.resultContract).data?.kind === 'json'
-                            && selectedProgress.result !== undefined && readWorkflowPlanResult(selectedProgress.result) !== null))
+                        || (selectedInvocation.lifecycle === 'completed' && selectedReviewProgress.blockKind !== 'wait'
+                            && WorkflowResultContractSchema.safeParse(selectedReviewProgress.resultContract).data?.kind === 'json'
+                            && selectedReviewProgress.result !== undefined && readWorkflowPlanResult(selectedReviewProgress.result) !== null))
                     ? (onDiscuss, placement) => <WorkflowInvocationReview key={`${contentIdentity}:${selectedInvocation.id}`}
                         run={summary} callerAccess={{ canEdit }} acceptedContext={visibleAcceptedContext} invocation={selectedInvocation}
-                        progress={selectedProgress} contentRevision={selectedInvocationContentRevision} buffers={reviewBuffers}
+                        definition={visibleDefinition}
+                        progress={selectedReviewProgress} contentRevision={selectedInvocationContentRevision} buffers={reviewBuffers}
+                        readState={selectedReadState}
                         active={activelyViewed} confirmed={selectedEvidenceConfirmed} compact={placement?.compact === true}
+                        stepTitle={placement?.title} stepSubtitle={placement?.subtitle}
                         viewerAccountId={activeAccountScope?.accountId ?? null}
                         current={reviewCurrent} onSettled={settleReview}
                         onDiscuss={onDiscuss} machineName={getMachineDisplayName(runMachine)}
@@ -1757,8 +1856,10 @@ export function WorkflowRunScreen(): React.ReactElement {
                 cancelRequested={cancelRequested}
                 errorLabel={visibleProblem?.message ?? null}
                 errorSemantics={visibleProblem?.accessibilitySemantics ?? 'alert'}
-                onReload={loadState === 'failed' ? retryLoad : undefined}
+                onReload={repairVisibleProblem}
+                reloadLabel={visibleProblem?.repairLabel ?? undefined}
                 selectedContentUnavailable={selectedContentUnavailable}
+                selectedReadState={selectedReadState}
                 contentContainerStyle={contentStyle}
             />
         </View>

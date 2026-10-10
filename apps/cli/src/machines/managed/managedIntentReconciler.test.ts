@@ -511,7 +511,7 @@ describe('managed native intent through the accepted Action', () => {
             expect(test.waitForChange.mock.calls.length).toBeGreaterThan(0);
             expect(await operations.handlers.getV2({ operationId })).toMatchObject({ kind: 'found', operation: {
                 state: 'running', domainRef: { kind: 'managedMachine', id: machine.id },
-                progress: { kind: 'phase', phase: kind === 'deadline' ? 'managed.intent.waiting-deadline' : 'managed.intent.waiting-idle' },
+                progress: { kind: 'phase', phase: kind === 'deadline' ? 'managed.intent.waiting-deadline' : 'managed.intent.busy' },
             } });
             expect(test.post.mock.calls.some(([url]) => String(url).endsWith('/admit-policy'))).toBe(false);
             expect(test.effects).toEqual([]);
@@ -524,6 +524,57 @@ describe('managed native intent through the accepted Action', () => {
             state: 'cancelled', domainRef: { kind: 'managedMachine', id: machine.id }, cancellation: 'supported',
         } });
         expect(test.effects).toEqual([]);
+    });
+    it.each(['busy', 'unknown'] as const)('publishes the actual %s guest decision and drain before an after-idle native effect', async kind => {
+        const test = setup({ kind, reasons: ['finite'] });
+        test.setMachine({ desiredWhen: 'after-idle' });
+        const machine = test.readMachine();
+        const operations = createHostActionOperationRuntime({ machineId: machine.controller.machineId,
+            resolveAccountId: async () => 'owner', generateOperationId: () => `activity-${kind}` });
+        let work: ReturnType<typeof test.driver.execute> | undefined;
+        let release!: () => void;
+        const changed = new Promise<void>(resolve => { release = resolve; });
+        let releaseDrain!: () => void;
+        const confirming = new Promise<void>(resolve => { releaseDrain = resolve; });
+        test.waitForChange.mockImplementation(async () => await changed);
+        const observed = operations.observeExecution({ actionId: 'machines.managed.delete', input: {}, actionRequestId: 'control',
+            execute: async context => {
+                work = test.driver.execute('machines.managed.delete', { homeId: machine.homeId, managedId: machine.id,
+                    when: 'after-idle', intent: 'delete', reviewedDependencies: true },
+                    { requestId: 'control', context, signal: context.signal });
+                return { ok: true, result: await work };
+            } });
+        try {
+            while (test.waitForChange.mock.calls.length === 0) await new Promise<void>(resolve => setImmediate(resolve));
+            expect(await operations.handlers.getV2({ operationId: `activity-${kind}` })).toMatchObject({ kind: 'found', operation: {
+                state: 'running', domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller: machine.controller },
+                progress: { kind: 'phase', phase: kind === 'busy' ? 'managed.intent.busy' : 'managed.intent.activity-unknown' },
+            } });
+            expect(test.effects).toEqual([]);
+            test.readActivity.mockResolvedValue({ kind: 'idle', since: 0 });
+            test.confirmIdle.mockImplementation(async () => {
+                await confirming;
+                return { kind: 'idle', since: 0, evidence: signedIdle(machine, 0, Date.now()) };
+            });
+            release();
+            while (test.confirmIdle.mock.calls.length === 0) await new Promise<void>(resolve => setImmediate(resolve));
+            expect(await operations.handlers.getV2({ operationId: `activity-${kind}` })).toMatchObject({ kind: 'found', operation: {
+                domainRef: { resource: machine.resource, controller: machine.controller },
+                progress: { kind: 'phase', phase: 'managed.intent.draining' },
+            } });
+            releaseDrain();
+            await observed;
+            await expect(work).resolves.toMatchObject({ kind: 'accepted', managedId: machine.id });
+            expect(await operations.handlers.getV2({ operationId: `activity-${kind}`, waitForTerminal: true }))
+                .toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
+            expect(test.effects).toEqual(['destroy']);
+        } finally {
+            release();
+            releaseDrain();
+            await operations.handlers.cancel({ operationId: `activity-${kind}` });
+            await observed.catch(() => undefined);
+            await work?.catch(() => undefined);
+        }
     });
     it.each(['control', 'policy'] as const)('associates the real %s operation with its admitted row before native effects', async (source) => {
         let domainRef: ActionOperationDomainRefV1 | undefined;
@@ -549,7 +600,8 @@ describe('managed native intent through the accepted Action', () => {
         })).resolves.toMatchObject({ ok: true, result: { managedId: machine.id } });
         await work;
         expect(test.effects).toEqual(['destroy']);
-        expect(observed).toEqual([{ kind: 'managedMachine', id: machine.id }]);
+        expect(observed).toEqual([expect.objectContaining({ kind: 'managedMachine', id: machine.id,
+            ...(source === 'policy' ? { resource: machine.resource, controller: machine.controller } : {}) })]);
         expect(await operations.handlers.getV2({ operationId: `managed-${source}`, waitForTerminal: true })).toMatchObject({ kind: 'found',
             operation: { state: 'succeeded', domainRef: { kind: 'managedMachine', id: machine.id } },
         });
@@ -664,6 +716,33 @@ describe('managed native intent through the accepted Action', () => {
         await work;
         expect(test.effects).toEqual(['destroy']);
         expect(test.reopen).toHaveBeenCalledOnce();
+    });
+    it('returns to waiting while the guest drain is reopened for the selected unused interval', async () => {
+        vi.useFakeTimers({ now: 3_599_999 });
+        const test = setup();
+        test.setMachine({ desiredWhen: 'after-idle', desiredAfterMs: 3_600_000 });
+        const machine = test.readMachine();
+        const operations = createHostActionOperationRuntime({ machineId: machine.controller.machineId,
+            resolveAccountId: async () => 'owner', generateOperationId: () => 'unused-interval' });
+        const observed = operations.observeExecution({ actionId: 'machines.managed.delete', input: {}, actionRequestId: 'control',
+            execute: async context => ({ ok: true, result: await test.driver.execute('machines.managed.delete', {
+                homeId: machine.homeId, managedId: machine.id, when: 'after-idle', intent: 'delete',
+                afterMs: 3_600_000, reviewedDependencies: true,
+            }, { requestId: 'control', context, signal: context.signal }) }) });
+        try {
+            await vi.advanceTimersByTimeAsync(0);
+            expect(test.effects).toEqual([]);
+            expect(test.reopen).toHaveBeenCalledOnce();
+            expect(await operations.handlers.getV2({ operationId: 'unused-interval' })).toMatchObject({ kind: 'found', operation: {
+                state: 'running', progress: { kind: 'phase', phase: 'managed.intent.waiting-idle' },
+            } });
+            await vi.advanceTimersByTimeAsync(1);
+            await observed;
+            expect(test.effects).toEqual(['destroy']);
+        } finally {
+            await operations.handlers.cancel({ operationId: 'unused-interval' });
+            await observed.catch(() => undefined);
+        }
     });
     it('does not shorten the selected guest idle interval when the controller clock is ahead', async () => {
         vi.useFakeTimers({ now: 3_600_000 });
@@ -896,7 +975,7 @@ describe('managed native intent through the accepted Action', () => {
             expect(acceptedWork).toBe(true);
             expect(test.effects).toEqual([]);
             expect(await operations.handlers.getV2({ operationId: 'late-accepted-work' })).toMatchObject({ kind: 'found', operation: {
-                state: 'running', progress: { kind: 'phase', phase: 'managed.intent.waiting-idle' },
+                state: 'running', progress: { kind: 'phase', phase: 'managed.intent.busy' },
             } });
         } finally {
             await operations.handlers.cancel({ operationId: 'late-accepted-work' });

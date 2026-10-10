@@ -70,6 +70,14 @@ describe('resolvePendingActivationBanner', () => {
         expect(resolvePendingActivationBanner({
             authorization: failed, activeAt: 100, active: false, machineReachable: false, canWrite: true, pendingMessages: [],
             ...{ managedWakeProjection: unknown },
-        })).toBeNull();
+        })).toMatchObject({ managedWakeProjection: { kind: 'deliveryUnknown' }, primaryAction: null, secondaryAction: null });
+    });
+    it('keeps managed resuming and loss visible through the managed badge without a generic recovery action', () => {
+        for (const kind of ['resuming', 'storageLost', 'resourceAbsent', 'unknown', 'unavailable'] as const) {
+            expect(resolvePendingActivationBanner({ authorization: waiting, activeAt: 100, active: false, machineReachable: true,
+                canWrite: true, resumingAt: 300, pendingMessages: rows,
+                managedWakeProjection: { kind, inputCustody: 'queued', canWithdraw: true, canRetryAgentStart: false, canResumeRuntime: false },
+            })).toMatchObject({ managedWakeProjection: { kind }, primaryAction: null });
+        }
     });
 });

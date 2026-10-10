@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
+import { isMachineRetainedWakeEligibleV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -68,7 +69,7 @@ export type ManagedScopeRule = Readonly<{
   /** The trigger's last outcome says it is waiting for work to finish. */
   waiting?: boolean;
   /** Opens the trigger in the session's Work tab, its one editor. */
-  onOpen: () => void;
+  onOpen?: () => void;
 }>;
 
 export const ManagedMachinePolicySection = React.memo(
@@ -98,8 +99,7 @@ export const ManagedMachinePolicySection = React.memo(
               subtitle={props.compactSummary.summary}
               onPress={props.compactSummary.onPress}
             />
-            {keep.policy.retention.kind !== 'until-delete' &&
-            keep.policy.retention.effect === 'stop' &&
+            {!keep.finiteOnly && isMachineRetainedWakeEligibleV1(keep.policy.retention) &&
             keep.canWake !== false ? (
               <WakeRow keep={keep} testID={`${props.testID}.wake`} />
             ) : null}
@@ -181,6 +181,8 @@ export const ManagedScopeRuleRow = React.memo(function ManagedScopeRuleRow(
         <Icon name="archive" size={20} color={theme.colors.text.secondary} />
       }
       onPress={rule.onOpen}
+      mode={rule.onOpen ? 'interactive' : 'info'}
+      showChevron={Boolean(rule.onOpen)}
     />
   );
 });

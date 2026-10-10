@@ -19,11 +19,17 @@ import {
 import { WorkflowRunContent } from './WorkflowRunContent';
 import { WorkflowReviewCard, type WorkflowReviewDraft } from './WorkflowReviewCard';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { resolveWorkflowFlowScopedNodeId } from '@/components/workflows/flow/workflowFlowProjection';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { WorkflowMaterializedLeafV1Schema } from '@happier-dev/protocol';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 import { createSessionFixture, createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+
+// These Run fixtures do not stream Markdown; keep its external web adapter at the boundary.
+vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
+    splitStreamingRevealTextParts: () => { throw new Error('Unexpected vendor Markdown reveal in Run rendering test'); },
+}));
 
 const virtualizedListState = vi.hoisted(() => ({
     props: null as Record<string, any> | null,
@@ -162,6 +168,22 @@ describe('WorkflowRunContent', () => {
             }
             await screen.unmount();
         }
+    });
+
+    it('keeps the sourceless Save control visible and announces pending work without another dispatch', async () => {
+        const onSave = vi.fn();
+        const screen = await renderContent({
+            hasSource: false,
+            onSaveAsWorkflow: onSave,
+            saveAsWorkflowPending: true,
+        });
+
+        const save = screen.findAllHostsByTestId('workflow-run-save-as-workflow')[0];
+        expect(save).toBeDefined();
+        expect(save?.props.accessibilityRole).toBe('button');
+        expect(save?.props.accessibilityState).toEqual({ disabled: true, busy: true });
+        expect(save?.props.onPress).toBeUndefined();
+        expect(onSave).not.toHaveBeenCalled();
     });
 
     it('shows current executable work without selecting a completed row or a running frame', async () => {
@@ -693,9 +715,14 @@ describe('WorkflowRunContent', () => {
         const outcome = String(screen.findByTestId('workflow-run-outcome')?.props.children);
         expect(outcome).toContain('workflows.run.outcomeLine');
         expect(outcome).toContain('"word":"workflows.review.waitTitle"');
-        expect(outcome).toContain('workflows.run.attentionWaitSentence');
+        expect(outcome).toContain('workflows.review.waitBody');
+        expect(outcome).not.toContain('workflows.run.attentionWaitSentence');
         // A Wait-for-you step never borrows the review hold's word.
         const text = screen.getTextContent();
+        // The outcome line has said it waits for you; the Needs-you card names the step to act on
+        // rather than saying "… is waiting for you" a second time.
+        expect(screen.findByTestId('workflow-run-needs-you')).toBeTruthy();
+        expect(text).not.toContain('workflows.run.attentionWaitRow');
         expect(text).not.toContain('workflows.runState.waiting_for_review');
         expect(text).not.toContain('workflows.invocationState.waiting_for_review');
         expect(text.indexOf('workflows.tabs.map')).toBeGreaterThan(-1);
@@ -1148,6 +1175,13 @@ describe('WorkflowRunContent', () => {
         expect(skipped.findByTestId('workflow-run-machine-unavailable')).toBeNull();
         await skipped.unmount();
 
+        const sleeping = await renderContent({ machineName: 'Build box', machineReachable: false,
+            machineStatus: { bucket: 'idle', tone: 'neutral', word: 'Asleep' } });
+        expect(sleeping.findByTestId('workflow-run-machine-unavailable')).toBeNull();
+        expect(sleeping.getTextContent()).not.toContain('workflows.run.machineUnavailable');
+        expect(sleeping.getTextContent()).toContain('Asleep');
+        await sleeping.unmount();
+
         const lost = await renderContent({ machineName: 'Mac Studio', machineReachable: false });
         expect(lost.findByTestId('workflow-run-machine-unavailable')).not.toBeNull();
         expect(lost.getTextContent()).toContain('workflows.run.machineUnavailable');
@@ -1255,6 +1289,7 @@ describe('WorkflowRunContent', () => {
     });
 
     it('resolves exactly one primary action when a terminal Run can also be run again', async () => {
+        const onRunAgain = vi.fn();
         const screen = await renderContent({
             run: createWorkflowRunSummaryFixture({
                 id: 'run-1',
@@ -1264,16 +1299,15 @@ describe('WorkflowRunContent', () => {
             invocations: [createWorkflowInvocationIndexFixture({ id: 'inv-failed', lifecycle: 'failed' })],
             firstFailedInvocationId: 'inv-failed',
             firstFailedInvocationResolution: 'resolved',
-            onRunAgain: vi.fn(),
+            onRunAgain,
         });
 
         // The outcome region's dominant action is the one the state calls for.
         // `Run workflow again` stays available, but it stops competing with it.
-        const seeFailures = flattenTestStyle(screen.findByTestId('workflow-run-see-failures')?.props.style);
-        const runAgain = flattenTestStyle(screen.findByTestId('workflow-run-run-again')?.props.style);
-        expect(seeFailures.borderWidth).toBe(0);
-        expect(runAgain.borderWidth).not.toBe(0);
-        expect(runAgain.backgroundColor).not.toBe(seeFailures.backgroundColor);
+        expect(screen.findAllByType(ToolbarButton).filter(button => button.props.tone === 'primary')
+            .map(button => button.props.testID)).toEqual(['workflow-run-see-failures']);
+        await screen.pressByTestIdAsync('workflow-run-run-again');
+        expect(onRunAgain).toHaveBeenCalledOnce();
     });
 
     it('keeps Run again secondary after success without a selected final output', async () => {
@@ -1877,7 +1911,7 @@ describe('WorkflowRunContent', () => {
 
         // Finished work is quiet on the map: its marker carries the state as its spoken name.
         expect(screen.findByTestId('workflow-run-flow-node-analyze-state')?.props.accessibilityLabel).toBe('workflows.invocationState.completed');
-        expect(screen.findByTestId('workflow-run-flow-node-implement-state:variant:warning')).toBeTruthy();
+        expect(screen.findByTestId('workflow-run-flow-node-implement-state:variant:attention')).toBeTruthy();
         // Icon plus label: colour is never the only carrier of the state.
         expect(screen.findByTestId('workflow-run-flow-node-analyze-state-marker')).toBeTruthy();
         expect(screen.findByTestId('workflow-run-flow-node-implement-state-marker')).toBeTruthy();
@@ -2046,7 +2080,7 @@ describe('WorkflowRunContent', () => {
             invocations: [createWorkflowInvocationIndexFixture({ id: 'inv-1', parentRecordId: 'run-root', lifecycle: 'outcome_uncertain' })],
         });
 
-        expect(screen.findByTestId('workflow-run-invocations-state-inv-1:variant:warning')).toBeTruthy();
+        expect(screen.findByTestId('workflow-run-invocations-state-inv-1:variant:attention')).toBeTruthy();
         expect(screen.findByTestId('workflow-run-invocations-state-inv-1-marker')).toBeTruthy();
     });
 

@@ -14,6 +14,7 @@ import {
 } from '@/components/workflows/presentation/workflowRunDisplayName';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { WorkflowRunRow } from '@/sync/store/domains/workflowRuns';
 import { t } from '@/text';
 import { getMachineDisplayName, isMachineOnline } from '@/utils/sessions/machineUtils';
@@ -21,6 +22,7 @@ import { getSessionName, readSessionStatusNextRefreshAtMs } from '@/utils/sessio
 
 import type { BoardMember } from './boardMembership';
 import { formatTriggerSetSummary } from '@/components/workflows/triggers/formatTriggerSummary';
+import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
 
 /**
  * One card anatomy for every kind (INT §5.1): identity, the state word, "Kind · context", then a
@@ -34,7 +36,7 @@ export type BoardCardAvailability = 'ready' | 'not_loaded' | 'home_unavailable' 
 export type MachineSessionCounts = Readonly<{ running: number; needsYou: number }>;
 
 export type BoardCardBody =
-    | Readonly<{ kind: 'session'; serverId: string; sessionId: string }>
+    | Readonly<{ kind: 'session'; serverId: string; sessionId: string; statusDetail?: string }>
     | Readonly<{ kind: 'workflow_run'; runId: string; waitingForYou: boolean; startedAt: string | null;
         progress: WorkflowRunSummaryV1['stepProgress'] }>
     | Readonly<{ kind: 'workflow'; needsYouCount: number | null; lastRunWord: string | null; lastRunAt: string | null;
@@ -75,6 +77,7 @@ export type BoardCardFacts = Readonly<{
     session: (ref: BoardItemRefV1) => SessionListRenderableSession | null;
     workflowRun: (ref: BoardItemRefV1) => WorkflowRunRow | null;
     machine: (ref: BoardItemRefV1) => Machine | null;
+    managedMachine?: (ref: BoardItemRefV1) => ManagedMachineV1 | null;
     /** Counts from the already-loaded Session rows, by the machine's qualified item key (no extra read). */
     machineSessionCounts: ReadonlyMap<string, MachineSessionCounts>;
     workflow: (ref: BoardItemRefV1) => BoardWorkflowFacts | null;
@@ -160,6 +163,7 @@ function readBoardWorkStatus(member: BoardMember, facts: BoardCardFacts): WorkSt
             return resolveWorkStatusTone({ kind: 'machine', facts: {
                 word: online ? t('boards.card.machine.online') : t('boards.card.machine.offline'),
                 online, needsYouCount: counts.needsYou, runningSessionCount: counts.running,
+                machineId: machine.id, revokedAt: machine.revokedAt, managedMachine: facts.managedMachine?.(member.ref),
             } });
         }
         case 'workflow': {
@@ -188,11 +192,16 @@ function buildCard(member: BoardMember, facts: BoardCardFacts): BoardCard {
         case 'session': {
             const row = facts.session(member.ref);
             if (!row) return notLoaded(member, 'not_loaded');
+            const sessionFacts = readSessionWorkStatusFacts(row, facts.nowMs);
+            const readable = sessionFacts.awareness.encryption !== undefined
+                && isSessionAwarenessContentReadableV1(sessionFacts.awareness.encryption);
             return {
                 ...base,
                 title: getSessionName(row, serverId),
-                status: readBoardWorkStatus(member, facts),
-                body: { kind: 'session', serverId, sessionId: id },
+                status: resolveWorkStatusTone({ kind: 'session', facts: { ...sessionFacts,
+                    word: readable ? sessionFacts.word : t('boards.card.unavailable') } }),
+                body: { kind: 'session', serverId, sessionId: id,
+                    ...(!readable && sessionFacts.awareness.encryption !== 'unknown' ? { statusDetail: sessionFacts.word } : {}) },
             };
         }
         case 'workflow_run': {
@@ -282,7 +291,8 @@ function createBoardProjection<T>(project: (member: BoardMember, facts: BoardCar
             }
             const counts = member.ref.kind === 'machine' ? facts.machineSessionCounts.get(member.key) : undefined;
             const inputs = [source, member.available, member.picked, facts.accountScopedHome(member.ref.qualifiedId.serverId),
-                machineOnline, counts?.needsYou ?? 0, counts?.running ?? 0];
+                machineOnline, counts?.needsYou ?? 0, counts?.running ?? 0,
+                member.ref.kind === 'machine' ? facts.managedMachine?.(member.ref) : undefined];
             const prior = entries.get(member.key);
             const entry = prior && inputs.every((input, index) => input === prior.inputs[index])
                 && (prior.refreshAt === null || facts.nowMs < prior.refreshAt)

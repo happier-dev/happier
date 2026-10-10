@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import {
     ScrollView,
@@ -116,7 +117,7 @@ export type WorkflowRunContentProps = Readonly<{
     selectedSessionId?: string | null;
     /** Phone's exact invocation route, pushed by the route owner. */
     invocationPage?: boolean;
-    renderReviewCard?: (onDiscuss?: () => void, placement?: Readonly<{ compact: boolean }>) => React.ReactNode;
+    renderReviewCard?: (onDiscuss?: () => void, placement?: Readonly<{ compact: boolean; title: string; subtitle: string | null }>) => React.ReactNode;
     run: WorkflowRunSummaryV1;
     /** Frozen Account-private title; null means explicitly unavailable. */
     title?: string | null;
@@ -127,6 +128,8 @@ export type WorkflowRunContentProps = Readonly<{
      * means not known here, which states nothing about contact.
      */
     machineReachable?: boolean;
+    /** Qualified power/wake presentation from the canonical Machine status owner. */
+    machineStatus?: WorkStatusPresentation;
     /** A quiet observation request, independent of durable Run controls. */
     notificationOperation?: React.ReactNode;
     /** The frozen definition this Run was admitted with, when it has been read. */
@@ -266,7 +269,10 @@ export type WorkflowRunContentProps = Readonly<{
     errorSemantics?: 'alert' | 'status';
     /** Re-run the screen's one canonical detail/index/attention load. */
     onReload?: () => void;
+    reloadLabel?: string;
     selectedContentUnavailable?: boolean;
+    /** The selected read has one presentation owner; Review takes placement when present. */
+    selectedReadState?: React.ReactNode;
     contentContainerStyle?: StyleProp<ViewStyle>;
     testIDPrefix?: string;
 }>;
@@ -274,13 +280,13 @@ export type WorkflowRunContentProps = Readonly<{
 /**
  * The phone review card, handed to the canonical modal owner over its exact step page.
  */
-function WorkflowReviewCardModal(props: Readonly<{ card: React.ReactNode }> & CustomModalInjectedProps): React.ReactElement {
+function WorkflowReviewCardModal(props: Readonly<{ card: React.ReactNode; contentSized: boolean }> & CustomModalInjectedProps): React.ReactElement {
     const { setChrome } = props;
     React.useEffect(() => {
-        setChrome?.({ kind: 'card', scrollHost: 'body', bodyScroll: 'none' });
+        setChrome?.({ kind: 'card', scrollHost: props.contentSized ? 'overlay' : 'body', bodyScroll: props.contentSized ? 'auto' : 'none' });
         return () => setChrome?.(null);
-    }, [setChrome]);
-    return <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>{props.card}</View>;
+    }, [props.contentSized, setChrome]);
+    return <View style={{ ...(props.contentSized ? {} : { flex: 1 }), minHeight: 0, minWidth: 0 }}>{props.card}</View>;
 }
 
 /** The selected leaf's own Session grants decide Discuss; Run write access never grants chat. */
@@ -308,12 +314,14 @@ function WorkflowSelectedDetail(props: Readonly<{
         setReviewDismissed(true);
         setFocusRequested(true);
     }, []);
-    const card = props.renderReviewCard?.(props.sessionId !== null && interaction.canSendMessages ? discuss : undefined, { compact: props.phone }) ?? null;
+    const card = props.renderReviewCard?.(props.sessionId !== null && interaction.canSendMessages ? discuss : undefined,
+        { compact: props.phone, title: props.title, subtitle: props.subtitle }) ?? null;
     const reviewOpen = props.phone && active && !reviewDismissed && card !== null;
     useWorkflowCardModal({
         open: reviewOpen, component: WorkflowReviewCardModal,
-        props: card === null ? null : { card }, identity: props.identity,
-        title: props.title, testID: `${props.detail.testIDPrefix}-review-modal`,
+        props: card === null ? null : { card, contentSized: props.detail.progress?.blockKind === 'wait' }, identity: props.identity,
+        title: props.title, subtitle: props.subtitle ?? undefined, testID: `${props.detail.testIDPrefix}-review-modal`,
+        phonePresentation: 'sheet',
         focusReturnRef: props.focusReturnRef,
         onRequestClose: () => setReviewDismissed(true),
     });
@@ -668,6 +676,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         state: props.run.state,
         coverage,
         historyComplete: props.invocationHistoryComplete,
+        inAttentionWindow: attentionRows.length > 0,
         waitingOnlyForYou: attentionRows.length > 0 && attentionRows.every(attentionWaitsForYou),
     });
     const outcomeLine = formatWorkflowRunOutcomeLine({
@@ -684,6 +693,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 machine: {
                     name: props.machineName ?? props.run.machineId,
                     reachable: props.machineReachable,
+                    status: props.machineStatus,
                 },
             }),
         }),
@@ -875,7 +885,11 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 {props.completionEmphasis === true ? <View testID={`${testIDPrefix}-outcome-emphasis`} /> : null}
                 {/* The status is said once, as the first words of this line (07 §3). */}
                 <View style={styles.outcomeLine}>
-                    <WorkflowRunStateMark state={props.run.state} testID={`${testIDPrefix}-outcome-mark`} />
+                    <WorkflowRunStateMark
+                        state={props.run.state}
+                        inAttentionWindow={attentionRows.length > 0 && !isTerminalWorkflowRunState(props.run.state)}
+                        testID={`${testIDPrefix}-outcome-mark`}
+                    />
                     <Text testID={`${testIDPrefix}-outcome`} style={styles.outcomeSentence}>
                         {outcomeLine}
                         {terminalOutcome?.kind === 'result_absent' ? ` ${t('workflows.finalOutput.none')}` : ''}
@@ -883,7 +897,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 </View>
                 {/* Contact loss is all that is known; resume choices come from
                     the recovery owner once the current state is. */}
-                {props.machineReachable === false && !isTerminalWorkflowRunState(props.run.state) ? (
+                {props.machineReachable === false && (!props.machineStatus || props.machineStatus.bucket === 'offline') && !isTerminalWorkflowRunState(props.run.state) ? (
                     <Text testID={`${testIDPrefix}-machine-unavailable`} style={styles.provenance}>
                         {t('workflows.run.machineUnavailableBody')}
                     </Text>
@@ -942,7 +956,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 {props.onReload === undefined ? null : (
                     <ToolbarButton
                         testID={`${testIDPrefix}-reload`}
-                        label={t('common.retry')}
+                        label={props.reloadLabel ?? t('common.retry')}
                         onPress={props.onReload}
                         style={styles.actionTarget}
                         size="md"
@@ -983,9 +997,13 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                                     <Icon name="hand" size={ICON_SIZE.sm} color={theme.colors.state.warning.foreground} />
                                     <View style={styles.attentionText}>
                                         <Text style={styles.attentionLabel} numberOfLines={2}>
-                                            {attentionWaitsForYou(invocation)
-                                                ? t('workflows.run.attentionWaitRow', { step })
-                                                : t('workflows.run.attentionReviewRow', { step })}
+                                            {/* The outcome line above already says what the first one
+                                                waits for: its row names the step and nothing more. */}
+                                            {invocation === firstAttention
+                                                ? step
+                                                : attentionWaitsForYou(invocation)
+                                                    ? t('workflows.run.attentionWaitRow', { step })
+                                                    : t('workflows.run.attentionReviewRow', { step })}
                                         </Text>
                                         {where === undefined ? null : (
                                             <Text style={styles.attentionMeta} numberOfLines={1}>{where}</Text>
@@ -1038,12 +1056,12 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                     testID={`${testIDPrefix}-${props.sourceAction.kind}-workflow`}
                     label={props.sourceAction.kind === 'edit' ? t('workflows.run.editWorkflow') : t('workflows.run.openWorkflow')}
                     size="md" style={styles.actionTarget} onPress={props.sourceAction.onPress}
-                /> : props.hasSource !== true && props.onSaveAsWorkflow ? <HappierPressable
-                    testID={`${testIDPrefix}-save-as-workflow`} accessibilityRole="button"
-                    style={({ pressed }) => [styles.actionTarget, pressed ? styles.pressed : null]}
+                /> : props.hasSource !== true && props.onSaveAsWorkflow ? <ToolbarButton
+                    testID={`${testIDPrefix}-save-as-workflow`}
+                    label={t('workflows.run.saveAsWorkflow')} size="md" style={styles.actionTarget}
                     onPress={props.onSaveAsWorkflow} disabled={props.saveAsWorkflowPending === true}
                     busy={props.saveAsWorkflowPending === true}
-                ><Text style={styles.action}>{t('workflows.run.saveAsWorkflow')}</Text></HappierPressable> : null}
+                /> : null}
             </View>
         </View>
     );
@@ -1071,6 +1089,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             ...(props.selectedContentUnavailable === undefined
                 ? {}
                 : { contentUnavailable: props.selectedContentUnavailable }),
+            contentReadState: props.renderReviewCard === undefined ? props.selectedReadState : null,
             ...(props.onOpenSession === undefined ? {} : { onOpenSession: props.onOpenSession }),
             ...(props.onOpenExecutionRun === undefined
                 ? {}
@@ -1126,6 +1145,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         props.onRunWithAnotherAgent,
         props.pendingRequestIds,
         props.selectedContentUnavailable,
+        props.selectedReadState,
+        props.renderReviewCard,
         props.selectedInvocationId,
         props.selectedInvocationProgress,
         props.uncertaintyAcknowledged,
@@ -1161,12 +1182,13 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         const identity = leaf?.role?.name ?? (targetKey === null ? null : presentEngine({ agentTargetKey: targetKey }).label ?? targetKey);
         const attempt = selectedInvocation?.attempt ?? props.selectedInvocationProgress?.attempt;
         const parts = [identity, entry === undefined ? undefined : formatOccurrence(entry.occurrence),
-            attempt === undefined ? undefined : describeWorkflowInvocationAttempt(attempt).label];
+            attempt === undefined ? undefined : describeWorkflowInvocationAttempt(attempt).label,
+            selectedInvocation !== null && attentionWaitsForYou(selectedInvocation) ? t('workflows.review.waitTitle') : undefined];
         // Index timestamps include admission and updates; they are not an
         // authoritative execution duration, so this header does not invent one.
         return parts.filter((part): part is string => Boolean(part)).join(' · ') || null;
-    }, [derivedStructure, formatOccurrence, presentEngine, props.definition, props.frozenChildren,
-        props.materializedLeaves, props.selectedInvocationId, props.selectedInvocationProgress?.attempt, selectedInvocation?.attempt]);
+    }, [attentionWaitsForYou, derivedStructure, formatOccurrence, presentEngine, props.definition, props.frozenChildren,
+        props.materializedLeaves, props.selectedInvocationId, props.selectedInvocationProgress?.attempt, selectedInvocation]);
 
     const selectedExecution = props.selectedInvocationProgress?.execution;
     const selectedKind = props.selectedInvocationProgress?.blockKind;

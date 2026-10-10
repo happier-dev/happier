@@ -12,8 +12,9 @@ export type ResolvedMachineRetentionPolicyV1 = MachineRetentionPolicyV1 & Readon
   wakeSource: MachineRetentionPolicySourceV1;
 }>;
 
-function permitsRetainedWake(policy: MachineRetentionPolicyV1, nativeCapabilities?: Pick<RetentionCapabilitiesV1, 'supportedIntents'>): boolean {
-  return !(policy.retention.kind !== 'until-delete' && policy.retention.effect === 'delete')
+/** Until-delete permits wake after a manual Stop; destruction-ending policies cannot retain the resource. */
+export function isMachineRetainedWakeEligibleV1(retention: RetentionV1, nativeCapabilities?: Pick<RetentionCapabilitiesV1, 'supportedIntents'>): boolean {
+  return !(retention.kind !== 'until-delete' && retention.effect === 'delete')
     && (!nativeCapabilities || nativeCapabilities.supportedIntents.some(intent => intent === 'start' || intent === 'resume'));
 }
 
@@ -22,7 +23,7 @@ export function isMachineRetentionPolicySupportedV1(policy: MachineRetentionPoli
   nativeCapabilities: Pick<RetentionCapabilitiesV1, 'supportedIntents' | 'finiteOnly'>): boolean {
   return !(nativeCapabilities.finiteOnly && policy.retention.kind === 'until-delete')
     && (policy.retention.kind === 'until-delete' || nativeCapabilities.supportedIntents.includes(policy.retention.effect))
-    && (!policy.wakeOnAcceptedMessage || permitsRetainedWake(policy, nativeCapabilities));
+    && (!policy.wakeOnAcceptedMessage || isMachineRetainedWakeEligibleV1(policy.retention, nativeCapabilities));
 }
 
 export function resolveMachineRetentionCategoryV1(
@@ -89,7 +90,7 @@ export function resolveMachineRetentionPolicyV1(input: Readonly<{
     && retention.kind === 'unused' && retention.effect === 'stop') {
     retention = { ...retention, effect: 'delete' };
   }
-  if (!permitsRetainedWake({ retention, wakeOnAcceptedMessage }, input.nativeCapabilities)) {
+  if (!isMachineRetainedWakeEligibleV1(retention, input.nativeCapabilities)) {
     wakeOnAcceptedMessage = false;
   }
   return { category, retention, wakeOnAcceptedMessage, retentionSource, wakeSource,

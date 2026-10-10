@@ -10,8 +10,10 @@ import type {
 } from '@happier-dev/protocol';
 
 import { t } from '@/text';
+import type { WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import {
+    describeWorkflowRunState,
     isTerminalWorkflowRunState,
     type WorkflowRunCoverage,
 } from '@/components/workflows/presentation/workflowLifecyclePresentation';
@@ -263,7 +265,7 @@ export function projectWorkflowInvocationRecovery(params: Readonly<{
 }
 
 export function formatWorkflowRunStateLabel(state: WorkflowRunStateV1): string {
-    return t(`workflows.runState.${state}`);
+    return describeWorkflowRunState(state).label;
 }
 
 /**
@@ -302,10 +304,11 @@ export function formatWorkflowRunOutcomeSentence(params: Readonly<{
      * Run whose Machine is known unreachable says it lost contact — no more:
      * whether its work survived is the recovery owner's fact, not this one's.
      */
-    machine?: Readonly<{ name: string; reachable: boolean }>;
+    machine?: Readonly<{ name: string; reachable: boolean; status?: WorkStatusPresentation }>;
 }>): string {
     const { run, coverage } = params;
     if (params.machine?.reachable === false && !isTerminalWorkflowRunState(run.state)) {
+        if (params.machine.status && params.machine.status.bucket !== 'offline') return `${params.machine.name} · ${params.machine.status.word}`;
         return t('workflows.run.machineUnavailable', { machine: params.machine.name });
     }
     if (run.state === 'succeeded') {
@@ -324,7 +327,10 @@ export function formatWorkflowRunOutcomeSentence(params: Readonly<{
             })
             : t('workflows.run.completedCount', { count: counts.completed });
     }
-    if (params.attention && (run.state === 'running' || run.state === 'waiting_for_review')) {
+    if (params.attention && (run.state === 'queued' || run.state === 'claimed' || run.state === 'running' || run.state === 'waiting_for_review')) {
+        if (params.attention.waitForYou && params.attention.step === t('workflows.page.blocks.waitTitle')) {
+            return t('workflows.review.waitBody');
+        }
         return params.attention.waitForYou
             ? t('workflows.run.attentionWaitSentence', { step: params.attention.step })
             : t('workflows.run.attentionReviewSentence', { step: params.attention.step });
@@ -361,6 +367,8 @@ export function formatWorkflowRunOutcomeLabel(params: Readonly<{
     state: WorkflowRunStateV1;
     coverage: WorkflowRunCoverage;
     historyComplete?: boolean;
+    /** Membership in the canonical attention window, independent of its step kinds. */
+    inAttentionWindow?: boolean;
     /**
      * True when every loaded item the parked Run waits on is a Wait-for-you
      * step: the Run is then waiting for you, not for your review.
@@ -370,8 +378,14 @@ export function formatWorkflowRunOutcomeLabel(params: Readonly<{
     if (params.state === 'succeeded' && params.coverage.knownFailure) {
         return t('workflows.runState.completed_with_failures');
     }
-    if (params.state === 'waiting_for_review' && params.waitingOnlyForYou === true) {
-        return t('workflows.review.waitTitle');
+    if (params.state === 'waiting_for_review'
+        || ((params.state === 'queued' || params.state === 'claimed') && params.inAttentionWindow === true)) {
+        return describeWorkflowRunState(params.state, {
+            word: params.waitingOnlyForYou === true
+                ? t('workflows.review.waitTitle')
+                : t('workflows.runState.waiting_for_review'),
+            inAttentionWindow: params.inAttentionWindow,
+        }).label;
     }
     return formatWorkflowRunStateLabel(params.state);
 }

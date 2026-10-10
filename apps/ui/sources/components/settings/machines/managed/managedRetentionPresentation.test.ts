@@ -5,11 +5,23 @@ import { t } from '@/text';
 import {
   describeRetention,
   describeRetentionConsequence,
+  describeRetentionPolicy,
+  describeDefaultPolicy,
 } from './managedRetentionPresentation';
 
 const HOUR = 3_600_000;
 
 describe('describeRetentionConsequence', () => {
+  it('names explicit Until-delete wake in summaries without promising wake after deletion', () => {
+    const retention = { kind: 'until-delete' } as const;
+    expect(describeRetentionPolicy({ retention, wakeOnAcceptedMessage: true }))
+      .toBe(`${describeRetention(retention)} · ${t('managedRetention.wakes')}`);
+    expect(describeDefaultPolicy({ retention, wakeOnAcceptedMessage: false }))
+      .toBe(`${describeRetention(retention)} · ${t('managedRetention.wakeOff')}`);
+    const destruction = { kind: 'unused', afterMs: HOUR, effect: 'delete' } as const;
+    expect(describeRetentionPolicy({ retention: destruction, wakeOnAcceptedMessage: true }))
+      .toBe(describeRetention(destruction));
+  });
   it('states the billing consequence of the choice instead of repeating the choice', () => {
     const billed = {
       location: 'cloud',

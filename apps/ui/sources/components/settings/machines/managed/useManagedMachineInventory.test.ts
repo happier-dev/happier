@@ -22,6 +22,43 @@ installApprovalCommonModuleMocks();
 afterEach(() => { retireActiveServerAccountScopeLifetime(); resetRuntimeFetch(); invalidateAccountEncryptionModeCache(); vi.restoreAllMocks(); });
 
 describe('managed Machine inventory', () => {
+    it('reads archived recovery alongside current resources only for the Machines collection', async () => {
+        const target = await upsertAndActivateServer({ serverUrl: 'https://archived-inventory.test', scope: 'tab' });
+        await setServerProfileIdentityForUrl(target.serverUrl, 'srv_archived');
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner') });
+        const inputs: unknown[] = [];
+        let archiveReply: 'ready' | 'unavailable' | 'denied' = 'ready';
+        const machine = { id: 'active', homeId: 'srv_archived', custodianAccountId: 'owner',
+            launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Guest', choices: {} },
+            controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'may-exist', creationState: 'active',
+            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+        setRuntimeFetch(async (raw, init) => {
+            const path = new URL(String(raw)).pathname;
+            if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            const input = JSON.parse(String(init?.body));
+            inputs.push(input);
+            if (input.archived && archiveReply === 'unavailable') throw new Error('archive_unavailable');
+            if (input.archived && archiveReply === 'denied') return Response.json({ code: 'permission_denied' }, { status: 403 });
+            return Response.json({ machines: [input.archived ? { ...machine, id: 'retired', archivedAt: 1 } : machine] });
+        });
+        const execute = createDefaultActionExecutor().execute;
+        const hook = await renderHook(() => useManagedMachineInventory([target.id], undefined, execute, true), { flushOptions: { cycles: 20 } });
+        expect(inputs).toEqual([{ homeId: 'srv_archived' }, { homeId: 'srv_archived', archived: true }]);
+        expect(hook.getCurrent().machinesByServerId[target.id]?.map(row => row.id)).toEqual(['active', 'retired']);
+        archiveReply = 'unavailable';
+        machine.launch.name = 'Current guest';
+        await act(async () => publishHomeAccountChange(target.id));
+        await flushHookEffects({ cycles: 20 });
+        expect(hook.getCurrent().entries.srv_archived?.status).toBe('error');
+        expect(hook.getCurrent().machinesByServerId[target.id]?.[0]?.launch.name).toBe('Current guest');
+        expect(hook.getCurrent().machinesByServerId[target.id]?.map(row => row.id)).toEqual(['active', 'retired']);
+        archiveReply = 'denied';
+        await act(async () => publishHomeAccountChange(target.id));
+        await flushHookEffects({ cycles: 20 });
+        expect(hook.getCurrent().machinesByServerId[target.id]).toEqual([]);
+        await hook.unmount();
+    });
     it('keeps Ask-first list and saved-resource reads pending until the real approval settles, and retains rows after rejection', async () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-inventory-approval.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_inventory_approval');

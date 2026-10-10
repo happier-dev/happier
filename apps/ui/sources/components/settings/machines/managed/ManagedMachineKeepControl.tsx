@@ -8,6 +8,7 @@ import {
 } from '@happier-dev/plugin-ui/presentation';
 import type { MachineRetentionPolicyV1 } from '@happier-dev/protocol/account/settings/machineRetentionDefaultsV1';
 import type { RetentionV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { isMachineRetainedWakeEligibleV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -36,7 +37,6 @@ import {
   describeRetention,
   describeFiniteRetention,
   retentionChoiceId,
-  retentionStops,
   type RetentionEffect,
 } from './managedRetentionPresentation';
 
@@ -76,13 +76,17 @@ export type ManagedMachineKeepControlProps = Readonly<{
   /**
    * Offers an explicit time to stop or delete at (plan 52 Explicit deadline). A deadline does not wait
    * for work to finish, so it is authored only here, where its time, effect and interruption are
-   * reviewed before anything is written. Account defaults never pass it.
+   * reviewed before anything is written. Account defaults never pass it; finite-only resources
+   * always use their sole native Ends control (CD12).
    */
   deadline?: boolean;
   /** Shows the "Keep it" label above the choices (the receipt); a section already titled Keep it hides it. */
   showLabel?: boolean;
-  onChange: (policy: MachineRetentionPolicyV1) => void;
-  onReset: () => void;
+  /** Local edits are synchronous; a live save returns false when it needs another review. */
+  onChange: (policy: MachineRetentionPolicyV1) => void | Promise<boolean>;
+  /** Retires the local proposed policy when the person cancels its review. */
+  onCancel?: () => void;
+  onReset: () => void | Promise<boolean>;
   disabled?: boolean;
   testID: string;
 }>;
@@ -96,18 +100,19 @@ export const ManagedMachineKeepControl = React.memo(
   function ManagedMachineKeepControl(props: ManagedMachineKeepControlProps) {
     if (props.finiteOnly) return <KeepFinite {...props} />;
     const wakeShown =
-      props.canWake !== false && retentionStops(props.policy.retention);
-    const setRetention = (retention: RetentionV1) =>
-      props.onChange({
+      props.canWake !== false && isMachineRetainedWakeEligibleV1(props.policy.retention);
+    const setRetention = (retention: RetentionV1) => {
+      const preserveWake = retention.kind === 'until-delete' ||
+        (props.policy.retention.kind !== 'until-delete' && isMachineRetainedWakeEligibleV1(props.policy.retention));
+      return props.onChange({
         retention,
-        // D21 pairs a Stop rule with wake; staying on Stop keeps the person's wake choice, and a
-        // rule that never stops carries no wake.
+        // Keep the authored wake choice for Until-delete or an existing Stop rule. A newly chosen
+        // Stop retains D21's wake default; destruction and unsupported native wake stay off.
         wakeOnAcceptedMessage:
-          retentionStops(retention) &&
-          (retentionStops(props.policy.retention)
-            ? props.policy.wakeOnAcceptedMessage
-            : true),
+          props.canWake !== false && isMachineRetainedWakeEligibleV1(retention) &&
+          (preserveWake ? props.policy.wakeOnAcceptedMessage : true),
       });
+    };
     const setWake = (wake: boolean) =>
       props.onChange({
         retention: props.policy.retention,
@@ -160,7 +165,7 @@ function KeepFinite(props: ManagedMachineKeepControlProps) {
 type InnerProps = ManagedMachineKeepControlProps &
   Readonly<{
     wakeShown: boolean;
-    setRetention: (retention: RetentionV1) => void;
+    setRetention: (retention: RetentionV1) => void | Promise<boolean>;
     setWake: (wake: boolean) => void;
   }>;
 
@@ -331,7 +336,10 @@ function KeepChoices(props: InnerProps) {
         ) : (
           <ResetLink
             testID={`${props.testID}:reset`}
-            onPress={props.onReset}
+            onPress={async () => {
+              const saved = await props.onReset();
+              if (saved !== false) setDraft(currentDraft => currentDraft === draft ? null : currentDraft);
+            }}
             disabled={props.disabled || !props.defaultPolicy}
             underline
           />
@@ -387,10 +395,10 @@ function KeepChoices(props: InnerProps) {
           disabled={props.disabled}
           testID={`${props.testID}:deadline`}
           onChange={setDraft}
-          onCancel={() => setDraft(null)}
-          onConfirm={(retention) => {
-            setDraft(null);
-            props.setRetention(retention);
+          onCancel={() => { setDraft(null); props.onCancel?.(); }}
+          onConfirm={async (retention) => {
+            const saved = await props.setRetention(retention);
+            if (saved !== false) setDraft(currentDraft => currentDraft === draft ? null : currentDraft);
           }}
         />
       ) : props.deadline && current.kind === 'deadline' ? (

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { actionOperationStore } from './actionOperationStore';
-import { readAllActionOperations, useActionOperation, useActionOperationsHaveAttention } from './useActionOperations';
+import { readAllActionOperations, useActionOperation, useActionOperationsHaveAttention, useManagedMachineActionOperation } from './useActionOperations';
 
 describe('useActionOperations', () => {
     let tree: renderer.ReactTestRenderer | null = null;
@@ -14,6 +14,39 @@ describe('useActionOperations', () => {
         tree = null;
         actionOperationStore.reset();
         vi.restoreAllMocks();
+    });
+
+    it('binds managed row observations to the original Home, requester Account and controller without following unrelated operations', async () => {
+        const observed: Array<string | null> = [];
+        function ManagedObserver() {
+            const operation = useManagedMachineActionOperation({ serverId: 'saved-home', accountId: 'requester', machineId: 'controller', managedId: 'managed' });
+            observed.push(operation?.snapshot.operationId ?? null);
+            return React.createElement('View');
+        }
+        tree = (await renderScreen(<ManagedObserver />)).tree;
+        const snapshot = { version: 1 as const, operationId: 'original', revision: 1,
+            actionId: 'machines.managed.acquire', state: 'running' as const,
+            scope: { accountId: 'requester', machineId: 'controller' }, title: 'Installation', createdAt: 1, startedAt: 2,
+            cancellation: 'supported' as const, domainRef: { kind: 'managedMachine' as const, id: 'managed' } };
+        act(() => actionOperationStore.mergeSnapshots({ serverId: 'saved-home', snapshots: [snapshot] }));
+        expect(observed.at(-1)).toBe('original');
+        const beforeUnrelated = observed.length;
+        act(() => {
+            actionOperationStore.mergeSnapshots({ serverId: 'other-home', snapshots: [{ ...snapshot, operationId: 'wrong-home', createdAt: 20 }] });
+            actionOperationStore.mergeSnapshots({ serverId: 'saved-home', snapshots: [
+                { ...snapshot, operationId: 'wrong-account', createdAt: 30, scope: { ...snapshot.scope, accountId: 'other' } },
+                { ...snapshot, operationId: 'wrong-controller', createdAt: 40, scope: { ...snapshot.scope, machineId: 'other' } },
+                { ...snapshot, operationId: 'wrong-resource', createdAt: 50, domainRef: { kind: 'managedMachine', id: 'other' } },
+            ] });
+        });
+        expect(observed.at(-1)).toBe('original');
+        expect(observed.length).toBe(beforeUnrelated);
+        act(() => actionOperationStore.mergeSnapshots({ serverId: 'saved-home', snapshots: [{ ...snapshot,
+            operationId: 'retry', actionId: 'machines.managed.bootstrap.retry', createdAt: 60 }] }));
+        expect(observed.at(-1)).toBe('retry');
+        act(() => actionOperationStore.mergeSnapshots({ serverId: 'saved-home', snapshots: [{ ...snapshot,
+            operationId: 'native-intent', actionId: 'machines.managed.intent.update', createdAt: 70 }] }));
+        expect(observed.at(-1)).toBe('native-intent');
     });
 
     it('imperatively reads the latest canonical operation snapshot at a decision point', () => {

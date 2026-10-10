@@ -35,6 +35,8 @@ export type ManagedConfigurationReceiptInput = Readonly<{
      * contradict it) and creation-time headroom that no longer describes the host.
      */
     created?: boolean;
+    /** The created detail's shared Keep control already presents the current native Ends fact. */
+    nativeLifetimePresented?: boolean;
     /** Current target-Home names, resolved by the canonical privacy-aware Account presenter. */
     credentialPresentations?: Readonly<Record<string, QualifiedConnectedAccountTargetPresentation>>;
 }>;
@@ -51,6 +53,7 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
     // VM (what you will see on this computer) and place first in the cloud (lab m-config receipts).
     const size = facts?.nativeFacts?.size;
     for (const dimension of billingLocation === 'local' ? ['image', 'location', 'duration'] as const : ['location', 'image', 'duration'] as const) {
+        if (dimension === 'duration' && input.created && input.nativeLifetimePresented) continue;
         const fact = facts?.nativeFacts?.[dimension];
         if (!fact) continue;
         const value = localized(fact.title);

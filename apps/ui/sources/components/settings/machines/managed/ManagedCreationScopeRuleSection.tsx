@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -13,7 +14,9 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import {
   useActiveServerAccountScope,
   useSession,
+  getStorage,
 } from '@/sync/domains/state/storage';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import {
   readManagedCreationScopeRule,
   type ManagedCreationScopeRule,
@@ -32,7 +35,7 @@ const ACCOUNT_TRIGGERS = { scope: 'account_all' } as const;
 /**
  * D23: a machine created for one session (or task) shows that scope and the rule chosen when it was
  * created, read from FIN's own trigger through the creation-scope owner. The row is a summary; it
- * opens the trigger where FIN edits it. Keep writes no trigger, so nothing shows.
+ * opens the trigger where FIN edits it. Keep writes no trigger; Session birth provenance still names its source.
  */
 export function ManagedCreationScopeRuleSection(
   props: Readonly<{ machine: ManagedMachineV1; serverId: string }>,
@@ -44,21 +47,38 @@ export function ManagedCreationScopeRuleSection(
     !areServerProfileIdentifiersEquivalent(scope.serverId, props.serverId)
   )
     return null;
-  return <ScopeRuleReader machine={props.machine} serverId={props.serverId} />;
+  return <ScopeRuleReader machine={props.machine} serverId={props.serverId} accountId={scope.accountId} />;
 }
 
 function ScopeRuleReader(
-  props: Readonly<{ machine: ManagedMachineV1; serverId: string }>,
+  props: Readonly<{ machine: ManagedMachineV1; serverId: string; accountId: string }>,
 ) {
-  const { sets } = useWorkflowTriggerSets(ACCOUNT_TRIGGERS);
+  const { sets, status } = useWorkflowTriggerSets(ACCOUNT_TRIGGERS);
+  const sourceSessionId = getStorage()(React.useCallback(state => {
+    if (state.sessionLocalStateScope?.accountId !== props.accountId
+      || !areServerProfileIdentifiersEquivalent(state.sessionLocalStateScope.serverId, props.serverId)) return null;
+    const matches: string[] = [];
+    for (const session of Object.values(state.sessions)) {
+      if (session.serverId && !areServerProfileIdentifiersEquivalent(session.serverId, props.serverId)) continue;
+      const parsed = SessionCreationCorrespondenceV1ReadSchema.safeParse(readSessionOwnerMetadataView(session)?.sessionCreationCorrespondenceV1);
+      const birth = parsed.success ? parsed.data.recipe.managedCreation : undefined;
+      // Birth Controller identity is immutable evidence, not current authority; Move does not rewrite it.
+      if (birth?.homeId === props.machine.homeId && birth.managedId === props.machine.id) matches.push(session.id);
+    }
+    return matches.length === 1 ? matches[0]! : null;
+  }, [props.serverId, props.accountId, props.machine.homeId, props.machine.id]));
   const rule = React.useMemo(
     () => readManagedCreationScopeRule(sets, props.machine),
     [sets, props.machine.homeId, props.machine.id],
   );
-  if (!rule) return null;
+  const source = rule?.binding.source ?? (sourceSessionId ? { kind: 'session' as const, sessionId: sourceSessionId } : null);
+  if (!source) return null;
   return (
     <ScopeRuleSection
-      rule={rule}
+      rule={rule ?? undefined}
+      source={source}
+      canEdit={props.accountId === props.machine.custodianAccountId && (Boolean(rule) || status === 'ready')}
+      readStatus={status}
       machineName={props.machine.launch.name}
       serverId={props.serverId}
     />
@@ -87,19 +107,23 @@ function describeScopeRule(
 
 function ScopeRuleSection(
   props: Readonly<{
-    rule: ManagedCreationScopeRule;
+    rule?: ManagedCreationScopeRule;
+    source: ManagedCreationScopeRule['binding']['source'];
+    canEdit: boolean;
+    readStatus: 'loading' | 'ready' | 'failed';
     machineName: string;
     serverId: string;
   }>,
 ) {
   const router = useRouter();
   const { rule } = props;
-  const source = rule.binding.source;
-  const summary = describeScopeRule(rule, props.machineName);
+  const source = props.source;
+  const summary = rule ? describeScopeRule(rule, props.machineName) : props.readStatus === 'loading' ? t('common.loading')
+    : props.readStatus === 'failed' ? t('managedMachines.options.unavailable') : t('common.keep');
   const openRule = () =>
     router.push(
       resolveTriggerEditorHref({
-        automationId: rule.binding.automationId,
+        automationId: rule?.binding.automationId,
         serverId: props.serverId,
         scopeSessionId: source.kind === 'session' ? source.sessionId : null,
       }),
@@ -128,8 +152,8 @@ function ScopeRuleSection(
         rule={{
           scope: source.kind === 'session' ? 'session' : 'task',
           summary,
-          waiting: rule.waiting,
-          onOpen: openRule,
+          waiting: rule?.waiting,
+          onOpen: props.canEdit ? openRule : undefined,
         }}
       />
     </ItemGroup>

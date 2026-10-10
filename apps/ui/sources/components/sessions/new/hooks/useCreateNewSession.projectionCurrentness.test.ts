@@ -27,6 +27,7 @@ import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/act
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { AuthTokenProvenanceSchema } from '@happier-dev/protocol/auth/authToken';
 import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 
 // Static owner imports can reach Socket.IO before runtime setup; replace only its external transport.
 vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -517,13 +518,14 @@ describe('useCreateNewSession (projection currentness admission)', () => {
                 onAfterCreatedSettled: settlement => { settlements.push(settlement); } }); });
             await vi.waitFor(() => expect(spawnRequests).toHaveLength(1));
             expect(spawnRequests[0]).toMatchObject({ title: 'Scoped helper', identity: initialSessionFacts,
-                memoryEnabled: false, promptStack });
+                memoryEnabled: false, promptStack, managedCreation: { homeId: managedMachine.homeId,
+                    managedId: managedMachine.id, controller: managedMachine.controller } });
             const { storage } = await import('@/sync/domains/state/storageStore');
             storage.getState().applySessions([createSessionFixture({ id: 'created-session', serverId: runtime.serverId,
                 metadata: { machineId: 'm1', path: '/tmp', host: 'test' } })]);
-            spawnResult.resolve({ type: 'success', disposition: 'created', sessionId: 'created-session',
+            spawnResult.resolve(SessionSpawnNewResultV1Schema.parse({ type: 'success', disposition: 'created', sessionId: 'created-session',
                 executionTarget: { serverId: runtime.serverId, machineId: 'm1' },
-                organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' } });
+                organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' } }));
             // The completion callback owns its rerender act; an outer act would
             // defer its draft retirement until after the continuation checked it.
             await send;
@@ -836,6 +838,7 @@ describe('useCreateNewSession (projection currentness admission)', () => {
                 identity: { bot: { kind: 'bot' }, createdAsBot: true } });
             expect(spawnRequests[0]).not.toHaveProperty('initialInput');
             expect(spawnRequests[0]).not.toHaveProperty('memoryEnabled');
+            expect(spawnRequests[0]).not.toHaveProperty('managedCreation');
             expect(scopeRules.size).toBe(0);
             expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({ promptStack, instructionsDraft: null });
             expect(instructionsArtifacts.read(created.id)).not.toBeNull();

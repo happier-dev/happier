@@ -26,6 +26,7 @@ import { useManagedProvisionerPresentation } from './useManagedProvisionerPresen
 import { useManagedProvisionerOptionsInput } from './useManagedProvisionerOptionsInput';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { isAuthoritativeScopedSnapshotRefusal } from '@/sync/domains/scope/scopedSnapshotFacts';
+import { ManagedCreationDisabledBanner } from './ManagedMachineStateRow';
 
 function parameter(value: string | string[] | undefined): string {
     return (Array.isArray(value) ? value[0] : value)?.trim() ?? '';
@@ -125,6 +126,7 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     const conflict = detail.mutationResult?.kind === 'conflict';
     const refusal = detail.mutationResult?.kind === 'refused' ? detail.mutationResult.code : null;
     const notice = <>{approvalNotice}
+        {configuration.creationDisabled ? <ManagedCreationDisabledBanner testID="machine-preset.creation-disabled" /> : null}
         {visiblePreset.archivedAt !== undefined ? <AttentionBanner testID="machine-preset.archived" tone="neutral" title={t('machinePresets.archived')} /> : null}
         {catalog.error ? <SurfaceStateCard testID="machine-preset.provider-error" kind="unavailable" size="line"
             title={t('managedMachines.providers.unavailable')} diagnosticCode={catalog.error}
@@ -152,7 +154,7 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
             mark, onPress: () => navigate(row.href) })),
         receipt: { ...receipt,
             ...(canManage ? { secondary: [{ label: t('machinePresets.editChoices'), testID: 'machine-preset.edit', onPress: () => openConfiguration(true), disabled: busy }] } : {}) },
-        ...(canUse && visiblePreset.archivedAt === undefined ? { onCreateOne: () => openConfiguration(false) } : {}),
+        ...(canUse && visiblePreset.archivedAt === undefined && configuration.creationEnabled ? { onCreateOne: () => openConfiguration(false) } : {}),
         ...(canManage ? visiblePreset.archivedAt === undefined ? { onArchive: () => fireAndForget(archiveOrRestore(), { tag: 'MachinePresetView.archive' }) }
             : { onRestore: () => fireAndForget(archiveOrRestore(), { tag: 'MachinePresetView.restore' }) } : {}),
         archivePending: busy, notice,

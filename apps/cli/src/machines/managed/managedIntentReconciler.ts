@@ -56,17 +56,20 @@ function remainingIdleDuration(activity: Extract<ManagedActivityBridgeResultV1, 
 async function waitForIdle(params: Readonly<{
     machine: ManagedMachineV1; bridge: ManagedGuestActivityTransport; duration: number; signal?: AbortSignal;
     isCurrent(): Promise<boolean>; onDrain(active: boolean): void;
+    onActivity(kind: 'busy' | 'unknown' | 'idle' | 'waiting'): void;
 }>) {
     for (;;) {
         assertLive(params.signal);
         if (!await params.isCurrent()) throw new ManagedMachineControllerError('intent_changed');
         const activity = await params.bridge.read(params.machine, params.signal);
         if (activity.kind === 'refused') throw new ManagedMachineControllerError(activity.code);
+        params.onActivity(activity.kind);
         let remaining: number | undefined;
         if (activity.kind === 'idle') {
             params.onDrain(true);
             const fresh = await params.bridge.confirmIdle(params.machine, params.signal);
             if (fresh.kind === 'refused') throw new ManagedMachineControllerError(fresh.code);
+            params.onActivity(fresh.kind);
             if (fresh.kind === 'idle') {
                 // Both timestamps belong to the actual guest clock. A read
                 // followed by a short committed probe must not mix that clock
@@ -76,9 +79,21 @@ async function waitForIdle(params: Readonly<{
             }
             await params.bridge.reopen(params.machine);
             params.onDrain(false);
+            if (fresh.kind === 'idle') params.onActivity('waiting');
         }
         await waitForActivity(params.bridge, params.signal, remaining);
     }
+}
+
+/** The operation describes the guest decision for this exact retained native resource. */
+function publishActivity(options: ManagedMachineReconciliationInput['options'], machine: ManagedMachineV1,
+    kind: 'busy' | 'unknown' | 'idle' | 'waiting') {
+    options.context?.operationOwnerUpdate?.update({ domainRef: { kind: 'managedMachine', id: machine.id,
+        controller: machine.controller, ...(machine.resource ? { resource: machine.resource } : {}) },
+        progress: { phase: kind === 'idle' ? 'managed.intent.draining' : kind === 'busy' ? 'managed.intent.busy'
+            : kind === 'waiting' ? 'managed.intent.waiting-idle' : 'managed.intent.activity-unknown',
+            label: kind === 'idle' ? 'Preparing idle machine' : kind === 'busy' ? 'Waiting for guest work'
+                : kind === 'waiting' ? 'Waiting for unused machine' : 'Guest activity unavailable' } });
 }
 
 /** Policy preparation shares the same selected timer, actual guest inventory and drain owner. */
@@ -97,7 +112,8 @@ export async function prepareManagedRetentionPolicy(params: Readonly<{
         const verified = Boolean(current && current.homeId === machine.homeId && current.intentRevision === machine.intentRevision
             && isDeepStrictEqual(current.controller, machine.controller) && isDeepStrictEqual(current.resource, machine.resource)
             && isDeepStrictEqual(current.retention, machine.retention) && current.creationState === 'active');
-        if (verified && current) options.context?.operationOwnerUpdate?.update({ domainRef: { kind: 'managedMachine', id: current.id } });
+        if (verified && current) options.context?.operationOwnerUpdate?.update({ domainRef: { kind: 'managedMachine', id: current.id,
+            controller: current.controller, ...(current.resource ? { resource: current.resource } : {}) } });
         return verified;
     };
     try {
@@ -114,7 +130,7 @@ export async function prepareManagedRetentionPolicy(params: Readonly<{
         if (!machine.enrolledMachineId) throw new ManagedMachineControllerError('admission_unavailable');
         options.context?.operationOwnerUpdate?.update({ progress: { phase: 'managed.intent.waiting-idle', label: 'Waiting for unused machine' } });
         const fresh = await waitForIdle({ machine, bridge, duration: machine.retention.afterMs, signal: options.signal,
-            isCurrent, onDrain: active => { draining = active; } });
+            isCurrent, onDrain: active => { draining = active; }, onActivity: kind => publishActivity(options, machine, kind) });
         if (!('evidence' in fresh)) throw new ManagedMachineControllerError('admission_unavailable');
         return { purpose: { kind: 'retention', evidence: fresh.evidence }, bridge, draining };
     } catch (error) {
@@ -227,7 +243,8 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                 } });
                 bridge ??= createManagedGuestActivityTransport(params.input, options, machine);
                 await waitForIdle({ machine, bridge, duration: idleDuration, signal: options.signal,
-                    isCurrent: () => client.isCurrent(machine), onDrain: active => { draining = active; drainMachine = machine; } });
+                    isCurrent: () => client.isCurrent(machine), onDrain: active => { draining = active; drainMachine = machine; },
+                    onActivity: kind => publishActivity(options, machine, kind) });
             }
             let waitingForGuestWork = false;
             const runApproved = async (context?: ActionExecutorContext): Promise<ManagedMachineV1> => {
@@ -306,6 +323,7 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                                 assertLive(options.signal);
                                 const fresh = await bridge!.confirmIdle(machine, options.signal);
                                 if (fresh.kind === 'refused') throw new ManagedMachineControllerError(fresh.code);
+                                publishActivity(options, machine, fresh.kind);
                                 if (fresh.kind !== 'idle' || remainingIdleDuration(fresh, idleDuration) > 0) {
                                     throw new ManagedMachineControllerError('activity_changed');
                                 }

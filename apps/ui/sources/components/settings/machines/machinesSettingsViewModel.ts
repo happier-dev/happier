@@ -49,7 +49,7 @@ export function useMachinesSettingsViewModel() {
 
     const managedServerIds = React.useMemo(() => activeSelectionMachineGroups.visibleMachineGroups.map(group => group.serverId),
         [activeSelectionMachineGroups.visibleMachineGroups]);
-    const managedInventory = useManagedMachineInventory(managedServerIds);
+    const managedInventory = useManagedMachineInventory(managedServerIds, undefined, undefined, true);
     const presetInventory = useMachinePresets(managedServerIds);
 
     const isLoadingMachines = React.useMemo(() => {

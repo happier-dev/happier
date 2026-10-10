@@ -8,8 +8,41 @@ vi.mock('@/text', async () => {
 
 import { describeWorkflowInvocationLifecycle, describeWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 import { resolveWorkStatusTone } from './resolveWorkStatusTone';
+import { t } from '@/text';
+import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
 describe('resolveWorkStatusTone', () => {
+    it('uses retained native power for the exact enrolled Machine instead of equating disconnection with Offline', () => {
+        const managed: ManagedMachineV1 = { id: 'managed-a', homeId: 'home-a', custodianAccountId: 'owner',
+            launch: { provider: { pluginId: 'custom.native', localId: 'vm' }, schemaVersion: 1, name: 'Build box', choices: {} },
+            controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'guest',
+            allocation: 'bound', creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'unused', afterMs: 3600000, effect: 'stop' }, wakeOnAcceptedMessage: true,
+            observation: { observedAt: 10, availability: 'present', power: 'stopped', storage: 'retained', daemon: 'disconnected' } };
+        const facts = { online: false, needsYouCount: 0, runningSessionCount: 0, word: 'Offline', machineId: 'guest', managedMachine: managed };
+        expect(resolveWorkStatusTone({ kind: 'machine', facts })).toEqual({ bucket: 'idle', tone: 'neutral', word: t('managedPower.asleep') });
+        expect(resolveWorkStatusTone({ kind: 'machine', facts: { ...facts, machineId: 'other' } }).bucket).toBe('offline');
+        expect(resolveWorkStatusTone({ kind: 'machine', facts: { ...facts, managedMachine: { ...managed, archivedAt: 20 } } }).bucket).toBe('offline');
+        expect(resolveWorkStatusTone({ kind: 'machine', facts: { ...facts, revokedAt: 20 } }).bucket).toBe('offline');
+        expect(resolveWorkStatusTone({ kind: 'machine', facts: { ...facts, managedMachine: { ...managed, observation: undefined } } }).word).not.toBe(t('managedPower.asleep'));
+        expect(resolveWorkStatusTone({ kind: 'machine', facts: { ...facts, managedMachine: { ...managed, wakeOnAcceptedMessage: false } } }).word).toBe(t('managedMachines.detail.power.stopped'));
+        expect(resolveWorkStatusTone({ kind: 'machine', facts: { ...facts, managedMachine: { ...managed, desired: 'delete' } } }).word).toBe(t('managedMachines.detail.power.stopped'));
+        expect(resolveWorkStatusTone({ kind: 'machine', facts: { ...facts, managedMachine: { ...managed,
+            submittedNativeEffect: { intent: 'start', intentRevision: 2, controller: managed.controller, requestId: 'start-a' } } } })).toMatchObject({ bucket: 'working', word: t('managedWake.starting', { machine: 'Build box' }) });
+    });
+    it('uses operation settlement facts and never presents lost active observation as completed', () => {
+        const status = (state: 'accepted' | 'running' | 'succeeded' | 'failed' | 'cancelled', observation: 'available' | 'unavailable' = 'available') =>
+            resolveWorkStatusTone({ kind: 'action_operation', facts: { state, observation, word: state } });
+        expect(status('accepted')).toEqual({ bucket: 'working', tone: 'neutral', word: 'accepted' });
+        expect(resolveWorkStatusTone({ kind: 'action_operation', facts: {
+            state: 'accepted', observation: 'available', word: 'Needs you',
+            setupReview: { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'reviewed', reviewedEffect: {} },
+        } })).toEqual({ bucket: 'needs_you', tone: 'attention', word: 'Needs you' });
+        expect(status('running', 'unavailable')).toEqual({ bucket: 'working', tone: 'attention', word: 'running' });
+        expect(status('succeeded', 'unavailable')).toEqual({ bucket: 'finished', tone: 'neutral', word: 'succeeded' });
+        expect(status('failed')).toEqual({ bucket: 'finished', tone: 'danger', word: 'failed' });
+        expect(status('cancelled')).toEqual({ bucket: 'finished', tone: 'neutral', word: 'cancelled' });
+    });
     it('derives worker update tone from owner state and explicit wake facts', () => {
         const base = { v: 1, headline: 'Check complete', result: '', canInspect: false } as const;
         expect(resolveWorkStatusTone({ kind: 'worker_update', facts: { word: 'Failed', update: {
@@ -123,22 +156,22 @@ describe('resolveWorkStatusTone', () => {
         } })).toEqual({ bucket: 'working', tone: 'neutral', word: 'Stopping' });
     });
 
-    it('preserves the last word on unknown reachability and maps actionable session failures', () => {
+    it('preserves supplied words while offline Session facts stay neutral', () => {
         expect(resolveWorkStatusTone({ kind: 'workflow_run', facts: {
             state: 'queued', word: 'Waiting to start',
         } })).toEqual({ bucket: 'working', tone: 'neutral', word: 'Waiting to start' });
         expect(resolveWorkStatusTone({ kind: 'session', facts: {
             awareness: { runtime: 'offline', operational: { primary: 'failed', reasons: ['failed', 'runtime_offline'] } }, word: 'Failed',
-        } })).toEqual({ bucket: 'needs_you', tone: 'danger', word: 'Failed' });
+        } })).toEqual({ bucket: 'offline', tone: 'neutral', word: 'Failed' });
     });
 
-    it('keeps an offline session quiet unless its owner reports actionable work', () => {
+    it('keeps offline Session attention facts behind the shared reachability precedence', () => {
         expect(resolveWorkStatusTone({ kind: 'session', facts: {
             awareness: { runtime: 'offline', operational: { primary: 'none', reasons: ['runtime_offline'] } }, word: 'Offline',
         } })).toEqual({ bucket: 'offline', tone: 'neutral', word: 'Offline' });
         expect(resolveWorkStatusTone({ kind: 'session', facts: {
             awareness: { runtime: 'offline', operational: { primary: 'permission_required', reasons: ['permission_required', 'runtime_offline'] } }, word: 'Needs your permission',
-        } })).toEqual({ bucket: 'needs_you', tone: 'attention', word: 'Needs your permission' });
+        } })).toEqual({ bucket: 'offline', tone: 'neutral', word: 'Needs your permission' });
     });
 
     it('reads agent activity (runs, sub-agents, teammates) from its own vocabulary: waiting asks for you, only failure is danger', () => {

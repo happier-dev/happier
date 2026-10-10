@@ -71,6 +71,7 @@ export type MachineCollectionSection = Readonly<{
     /** The Home's name when several Homes are listed; `null` for the single, ungrouped list. */
     title: string | null;
     status: ActiveSelectionMachineGroup['status'];
+    archived?: boolean;
     rows: readonly MachineCollectionRow[];
 }>;
 
@@ -100,18 +101,21 @@ export function buildMachineCollection(input: Readonly<{
     const sections = input.groups.flatMap((group): MachineCollectionSection[] => {
         const names = resolveMachineDisplayNames(group.machines);
         const enrolledIds = new Set(group.machines.map(machine => machine.id));
+        const managedByMachineId = new Map((input.managedByServerId?.[group.serverId] ?? [])
+            .flatMap(machine => machine.archivedAt === undefined && machine.enrolledMachineId ? [[machine.enrolledMachineId, machine] as const] : []));
         const managedMachines = (input.managedByServerId?.[group.serverId] ?? [])
-            .filter(machine => !machine.enrolledMachineId || !enrolledIds.has(machine.enrolledMachineId));
+            .filter(machine => machine.archivedAt !== undefined || !machine.enrolledMachineId || !enrolledIds.has(machine.enrolledMachineId));
         const ownershipGroups = [
             ...buildMachineOwnershipGroups(group.machines).filter(ownershipGroup => managedMachines.length === 0 || ownershipGroup.machines.length > 0),
-            ...(managedMachines.length > 0 ? [{ key: 'managed', custodian: null, machines: [] }] : []),
+            ...(['managed', 'managedArchived'] as const).flatMap(key => managedMachines.some(machine =>
+                (machine.archivedAt !== undefined) === (key === 'managedArchived')) ? [{ key, custodian: null, machines: [] }] : []),
         ];
         return ownershipGroups.map((ownershipGroup) => {
             const rows = ownershipGroup.machines
                 .map((machine): MachineCollectionRow => {
                 const host = machine.metadata?.host?.trim() || null;
                 const name = getMachineDisplayName(machine) ?? machine.id;
-                const presence = describeMachinePresenceLine(machine, nowMs);
+                const presence = describeMachinePresenceLine(machine, nowMs, managedByMachineId.get(machine.id));
                 return {
                     kind: 'machine',
                     machineId: machine.id,
@@ -129,12 +133,13 @@ export function buildMachineCollection(input: Readonly<{
                     || row.title.toLocaleLowerCase().includes(query)
                     || (row.host?.toLocaleLowerCase().includes(query) ?? false))
                 .sort((a, b) => a.title.localeCompare(b.title) || machineCollectionRowKey(a).localeCompare(machineCollectionRowKey(b)));
-            if (ownershipGroup.key === 'managed') {
+            if (ownershipGroup.key === 'managed' || ownershipGroup.key === 'managedArchived') {
                 const managedRows = managedMachines
+                    .filter(machine => (machine.archivedAt !== undefined) === (ownershipGroup.key === 'managedArchived'))
                     .map((machine): MachineCollectionRow => ({ kind: 'managed', managedId: machine.id,
                         serverId: group.serverId, title: machine.launch.name, host: null, platformLabel: '', online: false,
                         presence: describeManagedCreation(machine).line, reason: null, ownership: null,
-                        ...(machine.enrolledMachineId ? { enrolledMachineId: machine.enrolledMachineId } : {}) }))
+                        ...(machine.enrolledMachineId && machine.archivedAt === undefined ? { enrolledMachineId: machine.enrolledMachineId } : {}) }))
                     .filter(row => !query || row.title.toLocaleLowerCase().includes(query));
                 rows.push(...managedRows);
                 rows.sort((a, b) => a.title.localeCompare(b.title) || machineCollectionRowKey(a).localeCompare(machineCollectionRowKey(b)));
@@ -150,6 +155,7 @@ export function buildMachineCollection(input: Readonly<{
                     ? [group.serverName, ownershipTitle].filter(Boolean).join(' · ')
                     : ownershipTitle,
                 status: group.status,
+                ...(ownershipGroup.key === 'managedArchived' ? { archived: true } : {}),
                 rows,
             };
         });
@@ -204,12 +210,15 @@ export function resolveMachineCollectionLandingHref(input: Readonly<{
     lastVisited: MachineCollectionTarget | null;
     isDesktop: boolean;
 }>): string {
-    const rows = [...input.collection.sections.flatMap((section) => section.rows),
+    const lastVisitedKey = input.lastVisited ? machineCollectionRowKey(input.lastVisited) : null;
+    const rows = [...input.collection.sections.flatMap((section) => section.archived
+        ? section.rows.filter(row => machineCollectionRowKey(row) === lastVisitedKey)
+        : section.rows),
         ...input.collection.presetSections.flatMap(section => section.rows)];
     const keyOf = machineCollectionRowKey;
     const landingKey = resolveHappierCollectionInitialKey({
         keys: rows.map(keyOf),
-        lastVisited: input.lastVisited ? keyOf(input.lastVisited) : null,
+        lastVisited: lastVisitedKey,
     });
     const landing = rows.find((row) => keyOf(row) === landingKey);
     if (landing) return machineCollectionHref(landing);

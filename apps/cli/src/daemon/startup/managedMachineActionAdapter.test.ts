@@ -650,7 +650,8 @@ describe('daemon managed Machine Action factory', () => {
         if (terminal.kind === 'found') expect(terminal.operation.error).toBeUndefined();
         expect(terminal).toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
         expect(started).toMatchObject([{ executionTarget: { serverId: configuration.activeServerId, machineId: 'actual-guest' },
-            actionCaller: { kind: 'session', sessionId: 'lead' }, workDepth: 1, initialInput: start.initialInput }]);
+            actionCaller: { kind: 'session', sessionId: 'lead' }, workDepth: 1, initialInput: start.initialInput,
+            managedCreation: { homeId: enrolled.homeId, managedId: enrolled.id, controller: enrolled.controller } }]);
         expect(JSON.stringify(bodies)).not.toContain('Private task');
     });
 

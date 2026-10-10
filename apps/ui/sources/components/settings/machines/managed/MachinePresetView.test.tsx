@@ -21,6 +21,12 @@ import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributio
 
 const route = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
 const boundary = vi.hoisted(() => ({ rpc: vi.fn() }));
+// Vitest substitutes Metro's deferred loader, not the admitted Action or inventory logic.
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
+    const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
+    return { ...original, createFrontDoorActionExecute: createFrontDoorActionExecuteForVitest(original) };
+});
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
     const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
     return createServerScopedMachineRpcBoundaryMock(boundary.rpc);
@@ -131,6 +137,47 @@ async function seedConfiguration(serverId: string) {
 }
 
 describe('reachable preset detail', () => {
+    it('reopens retired resources from the Machines archive without returning them to its active list', async () => {
+        const serverId = await seed();
+        const scopeId = await seedConfiguration(serverId);
+        const { setActiveServer } = await import('@/sync/domains/server/serverRuntime');
+        await setActiveServer({ serverId, scope: 'tab' });
+        await harness.selectHomes([serverId]);
+        harness.answer(serverId, '/v1/machines/managed/actions/list', { select: input => ({ body: { machines:
+            input && typeof input === 'object' && 'archived' in input ? [{ ...resource, archivedAt: 1 }] : [] } }) });
+        const screen = await renderSettingsView(<MachinesSettingsView />);
+        await waitForHomeGovernance(() => {
+            expect(Boolean(screen.findByTestId(`settings.machines.archived.${scopeId}`))).toBe(true);
+        });
+        expect(screen.findByTestId(`settings.machines.managed.${scopeId}.resource`)).toBeNull();
+        await act(async () => screen.pressByTestId(`settings.machines.archived.${scopeId}`));
+        await waitForHomeGovernance(() => expect(screen.findByTestId(`settings.machines.managed.${scopeId}.resource`)).not.toBeNull());
+        await act(async () => screen.pressByTestId(`settings.machines.managed.${scopeId}.resource`));
+        expect(route.push).toHaveBeenLastCalledWith(`/settings/machines/managed/resource?serverId=${encodeURIComponent(scopeId)}`);
+        expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual([]);
+    });
+    it('hides Create one on the addressed Account opt-out while keeping edits and history available', async () => {
+        const serverId = await seed();
+        const scopeId = await seedConfiguration(serverId);
+        harness.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {
+            managedMachineCreationEnabled: false,
+        } }, version: 1 } });
+        const screen = await renderSettingsView(<MachinePresetView serverId={scopeId} presetId="preset" />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.detail.machine.resource')).not.toBeNull());
+        await flushHookEffects();
+        expect(Boolean(screen.findByTestId('machine-preset.detail.createOne'))).toBe(false);
+        expect(screen.findByTestId('machine-preset.creation-disabled')).not.toBeNull();
+        expect(screen.findByTestId('machine-preset.edit')).not.toBeNull();
+        expect(screen.findByTestId('machine-preset.detail.archive')).not.toBeNull();
+        harness.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {
+            managedMachineCreationEnabled: true,
+        } }, version: 2 } });
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        await act(async () => publishHomeAccountChange(scopeId));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.detail.createOne')).not.toBeNull());
+        expect(screen.findByTestId('machine-preset.creation-disabled')).toBeNull();
+        expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual([]);
+    });
     it('withdraws a Team preset editor when its Team read loses access without changing the credential or preset response', async () => {
         const serverId = await seed();
         const scopeId = await seedConfiguration(serverId);

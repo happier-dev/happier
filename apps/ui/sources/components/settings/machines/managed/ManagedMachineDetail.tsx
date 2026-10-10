@@ -48,7 +48,7 @@ function ManagedMachineDetailBody(props: ManagedMachineDetailProps) {
     const homeName = resolveHomeDisplayLabel(profile, serverId);
     const forbidden = entry?.status === 'denied' || actionError === 'permission_denied'
         || actionError === 'not_authenticated' || actionError === 'action_account_scope_changed';
-    const enrolledMachineId = forbidden ? undefined : machine?.enrolledMachineId;
+    const enrolledMachineId = forbidden || machine?.archivedAt !== undefined ? undefined : machine?.enrolledMachineId;
     if (enrolledMachineId) return <Redirect href={{ pathname: '/machine/[id]',
         params: { id: enrolledMachineId, serverId: props.serverId } }} />;
 

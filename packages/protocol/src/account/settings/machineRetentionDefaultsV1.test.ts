@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as owner from './accountSettings.js';
 import { applyAccountSettingMutationV1 } from './accountSettingMutationV1.js';
-import { resolveMachineRetentionPolicyV1 as resolve } from '../../machines/managed/resolveMachineRetentionPolicyV1.js';
+import { isMachineRetentionPolicySupportedV1, resolveMachineRetentionPolicyV1 as resolve } from '../../machines/managed/resolveMachineRetentionPolicyV1.js';
 import { MACHINE_RETENTION_CATEGORIES_V1, MachineRetentionPolicyV1Schema, updateMachineRetentionCategoryPreferenceV1 } from './machineRetentionDefaultsV1.js';
 
 const unused = { kind: 'unused', afterMs: 3_600_000, effect: 'stop' } as const;
@@ -83,6 +83,14 @@ describe('managed machine category preference through Account settings', () => {
 
   it('qualifies finite no-keep capabilities once and never promises wake after destruction', () => {
     const billing = { location: 'cloud', stoppedBilling: 'billed' } as const;
+    const retainedWake = { retention: keep, wakeOnAcceptedMessage: true };
+    expect(resolve({ billing, machineOverride: retainedWake,
+      nativeCapabilities: { supportedIntents: ['start', 'stop', 'delete'] } }))
+      .toMatchObject(retainedWake);
+    expect(isMachineRetentionPolicySupportedV1(retainedWake, { supportedIntents: ['start', 'stop', 'delete'] })).toBe(true);
+    expect(resolve({ billing, machineOverride: retainedWake, nativeCapabilities: { supportedIntents: ['delete'] } }))
+      .toMatchObject({ retention: keep, wakeOnAcceptedMessage: false });
+    expect(isMachineRetentionPolicySupportedV1(retainedWake, { supportedIntents: ['delete'] })).toBe(false);
     expect(resolve({ billing, nativeCapabilities: { supportedIntents: ['delete'], finiteOnly: true } }))
       .toMatchObject({ retention: { ...unused, effect: 'delete' }, wakeOnAcceptedMessage: false });
     expect(resolve({ billing, nativeCapabilities: { supportedIntents: ['delete'], finiteOnly: false } }))
@@ -98,10 +106,12 @@ describe('managed machine category preference through Account settings', () => {
     expect(resolve({ billing: { location: 'local', stoppedBilling: 'unknown' },
       nativeCapabilities: { supportedIntents: [] } }))
       .toMatchObject({ retention: unused, wakeOnAcceptedMessage: false });
+    const destructionWake = { retention: { ...unused, effect: 'delete' as const }, wakeOnAcceptedMessage: true };
     expect(resolve({ billing: { location: 'local', stoppedBilling: 'unknown' },
-      machineOverride: { retention: { ...unused, effect: 'delete' }, wakeOnAcceptedMessage: true },
+      machineOverride: destructionWake,
       nativeCapabilities: { supportedIntents: ['start', 'stop', 'delete'] } }))
       .toMatchObject({ retention: { ...unused, effect: 'delete' }, wakeOnAcceptedMessage: false });
+    expect(isMachineRetentionPolicySupportedV1(destructionWake, { supportedIntents: ['start', 'stop', 'delete'] })).toBe(false);
   });
 
   it('does not silently change an explicitly selected deadline Stop into Delete', () => {

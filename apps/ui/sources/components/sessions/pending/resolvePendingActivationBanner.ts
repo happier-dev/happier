@@ -42,11 +42,20 @@ export function resolvePendingActivationBanner(input: Readonly<{
 }>): PendingActivationBannerPresentation | null {
     if (!input.canWrite) return null;
     const managedWakeProjection = input.managedWakeProjection;
-    // The managed presentation owns these distinct facts. The legacy banner's
-    // safely-queued/resuming sentence cannot describe uncertain delivery or
-    // native absence/loss, and must not offer a competing runtime recovery.
-    if (managedWakeProjection && !['waiting', 'starting', 'connecting', 'resuming', 'agentStartFailed'].includes(managedWakeProjection.kind)) return null;
-    const managedPresentation = managedWakeProjection ? { managedWakeProjection } : {};
+    if (managedWakeProjection) {
+        // The managed badge owns observed native stages, including runtime resume,
+        // absence and uncertain custody; the generic banner must not reinterpret them.
+        const row = input.pendingMessages.filter(isEligiblePendingUserRow)
+            .find(candidate => candidate.localId === input.authorization?.requestId) ?? null;
+        return {
+            kind: managedWakeProjection.kind === 'agentStartFailed' ? 'failed' : input.machineReachable ? 'waiting' : 'waiting_offline',
+            managedWakeProjection, row,
+            primaryAction: row && managedWakeProjection.canRetryAgentStart ? 'retry'
+                : row && managedWakeProjection.canResumeRuntime ? 'resume' : null,
+            secondaryAction: null,
+            settingsAction: 'settings',
+        };
+    }
     if (input.resumingAt != null) return null;
     if (input.active && input.machineReachable) return null;
     const rows = input.pendingMessages.filter(isEligiblePendingUserRow).sort(comparePendingRows);
@@ -57,12 +66,9 @@ export function resolvePendingActivationBanner(input: Readonly<{
         const row = rows.find((candidate) => candidate.localId === authorization.requestId) ?? null;
         if (authorization.status === 'failed') {
             return {
-                ...managedPresentation,
                 kind: 'failed',
                 row,
-                primaryAction: managedWakeProjection
-                    ? (row && managedWakeProjection.canRetryAgentStart ? 'retry' : null)
-                    : row
+                primaryAction: row
                     ? (input.machineReachable ? 'retry' : 'process_when_online')
                     : null,
                 secondaryAction: row ? 'keep_queued' : null,
@@ -70,7 +76,6 @@ export function resolvePendingActivationBanner(input: Readonly<{
             };
         }
         return {
-            ...managedPresentation,
             kind: input.machineReachable ? 'waiting' : 'waiting_offline',
             row,
             primaryAction: null,
@@ -80,12 +85,9 @@ export function resolvePendingActivationBanner(input: Readonly<{
     }
     if (rows.length === 0) return null;
     return {
-        ...managedPresentation,
         kind: input.machineReachable ? 'queued' : 'queued_offline',
         row: rows[0],
-        primaryAction: managedWakeProjection
-            ? (managedWakeProjection.canResumeRuntime ? 'resume' : null)
-            : input.machineReachable ? 'resume' : 'process_when_online',
+        primaryAction: input.machineReachable ? 'resume' : 'process_when_online',
         secondaryAction: null,
         settingsAction: 'settings',
     };

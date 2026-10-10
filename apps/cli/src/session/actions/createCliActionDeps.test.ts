@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createActionExecutor,
   admitAgentStartV1,
@@ -9,14 +10,18 @@ import {
   type ApprovalRequest,
   ProviderConnectionIdSchema,
   FeaturesResponseSchema,
+  AccountSettingsSchema,
   PluginContributionLocalIdSchema,
   PluginIdSchema,
   SessionCreationKeyV1Schema,
   deriveSessionCreationTagV1,
   computeWorkspaceSyncPolicyDigest,
   type ActionExecutorDeps,
+  type WorkspaceRefV1,
+  type WorkspaceSyncRelationshipV1,
 } from '@happier-dev/protocol';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { configuration } from '@/configuration';
 import { createAuthenticationHttpStatusError } from '@/api/client/httpStatusError';
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -126,7 +131,26 @@ vi.mock('@/session/transport/http/sessionsHttp', async () => {
   };
 });
 
+function mockProjectRowReads(workspaceRefs: readonly WorkspaceRefV1[], relationships: readonly WorkspaceSyncRelationshipV1[]) {
+  vi.spyOn(axios, 'get').mockImplementation(async url => {
+    if (!url.endsWith('/v1/account/encryption')) throw new Error(`Unexpected Project row GET ${url}`);
+    return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+  });
+  vi.spyOn(axios, 'post').mockImplementation(async url => {
+    if (!url.endsWith('/v1/account/project-rows/list')) throw new Error(`Unexpected Project row POST ${url}`);
+    const graphKey = { kind: 'relationship-graph' as const };
+    return { status: 200, data: { status: 'listed', coverage: 'complete', rows: [
+      ...workspaceRefs.map(value => {
+        const key = { kind: 'workspace-ref' as const, serverId: value.serverId, id: value.id };
+        return { key, revision: 1, content: { t: 'plain', v: { key, value } } };
+      }),
+      { key: graphKey, revision: 1, content: { t: 'plain', v: { key: graphKey, value: { relationships } } } },
+    ] } };
+  });
+}
+
 describe('workspace sync read Action transport', () => {
+  afterEach(() => vi.restoreAllMocks());
   it('routes a clean spoke to its current hub for all three reads', async () => {
     const credentials = { token: 'token', encryption: null };
     const contentPolicy = {
@@ -142,14 +166,14 @@ describe('workspace sync read Action transport', () => {
       mode: 'keep_both_in_sync' as const, contentPolicy,
       enabled: true, createdAtMs: 1, updatedAtMs: 1,
     });
-    bootstrapAccountSettingsContext.mockResolvedValue({ settings: {
-      workspaceRefsV1: [
+    mockProjectRowReads(
+      [
         { id: 'workspace-a', serverId: 'server-a', machineId: 'machine-a', rootPath: '/a', createdAtMs: 1 },
         { id: 'workspace-b', serverId: 'server-a', machineId: 'machine-b', rootPath: '/b', createdAtMs: 1 },
         { id: 'workspace-c', serverId: 'server-a', machineId: 'machine-c', rootPath: '/c', createdAtMs: 1 },
       ],
-      workspaceSyncRelationshipsV1: [relation('rel-ab', 'workspace-b'), relation('rel-ac', 'workspace-c')],
-    } });
+      [relation('rel-ab', 'workspace-b'), relation('rel-ac', 'workspace-c')],
+    );
     const relationshipsResult = {
       controllerMachineId: 'machine-a',
       sets: [{ hubWorkspaceRefId: 'workspace-a', controllerMachineId: 'machine-a', relationshipIds: ['rel-ab', 'rel-ac'] }],
@@ -219,6 +243,7 @@ describe('workspace sync read Action transport', () => {
 });
 
 describe('workspace sync resolution Action transport', () => {
+  afterEach(() => vi.restoreAllMocks());
   beforeEach(() => {
     callMachineRpc.mockReset();
   });
@@ -329,9 +354,7 @@ describe('workspace sync resolution Action transport', () => {
       if (!handler) throw new Error(`Controller RPC not registered: ${method}`);
       return await handler(request, { signal: signal ?? new AbortController().signal });
     });
-    bootstrapAccountSettingsContext.mockResolvedValue({ settings: {
-      workspaceRefsV1: refs, workspaceSyncRelationshipsV1: definitions,
-    } });
+    mockProjectRowReads(refs, definitions);
     try {
       for (const definition of definitions) await controller.ensure(definition);
       const { executor } = createCliActionExecutorHarness({
@@ -2361,7 +2384,11 @@ describe('createCliActionDeps hook dispatch', () => {
     expect(spawnArgs?.replaySeededCreation?.metadata).not.toHaveProperty('sessionMediaContinuityV1');
   });
 
-  it('creates no child when the source recipe cannot be resolved', async () => {
+  it('retains a prepared checkout when the source recipe cannot be resolved and current exclusive ownership is unproven', async () => {
+    const realApprovals = await vi.importActual<typeof import('@/session/actions/approvals/artifactStore')>('@/session/actions/approvals/artifactStore');
+    createCliApprovalsArtifactStore.mockReturnValue(realApprovals.createCliApprovalsArtifactStore({ credentials: {
+      token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+    } }));
     const v2Input = {
       creationKey: SessionCreationKeyV1Schema.parse('configure-from-unreadable-source'),
       executionTarget: {
@@ -2395,6 +2422,14 @@ describe('createCliActionDeps hook dispatch', () => {
     });
     fetchSessionByIdCompat.mockResolvedValue({ share: null, machineId: 'machine-exact' });
     resolveReplaySeedDraft.mockResolvedValue({ status: 'unavailable' });
+    // Historical direct-daemon adapters may still carry this callback. A
+    // creation receipt no longer authorizes the Action owner to invoke it.
+    const directTransport = {
+      machineId: 'machine-exact',
+      prepare,
+      rollbackCheckout,
+      spawnedSession: { spawn: vi.fn(), resolveSpawnSessionByNonce: vi.fn() },
+    };
     const deps = createCliActionDeps({
       token: 'token',
       credentials: {
@@ -2404,15 +2439,7 @@ describe('createCliActionDeps hook dispatch', () => {
       sessionId: 'cli-global',
       mode: 'plain',
       ctx: null,
-      sessionSpawnDirectTargetTransport: {
-        machineId: 'machine-exact',
-        prepare,
-        rollbackCheckout,
-        spawnedSession: {
-          spawn: vi.fn(),
-          resolveSpawnSessionByNonce: vi.fn(),
-        },
-      },
+      sessionSpawnDirectTargetTransport: directTransport,
     });
 
     await expect(deps.sessionSpawnNew({
@@ -2426,17 +2453,15 @@ describe('createCliActionDeps hook dispatch', () => {
     // Required semantics: an unresolvable source leaves the authoring draft
     // intact and commits nothing.
     expect(createSpawnedSession).not.toHaveBeenCalled();
-    expect(rollbackCheckout).toHaveBeenCalledWith({
-      kind: 'git_worktree',
-      finalDirectory: '/repo/.dev/worktree/replay',
-      baseRef: null,
-      branchMode: 'new',
-      created: true,
-    });
+    expect(rollbackCheckout).not.toHaveBeenCalled();
+    expect(callMachineRpc.mock.calls.some(([call]) => call.method === RPC_METHODS.SCM_WORKTREE_REMOVE)).toBe(false);
   });
 
   it('never rolls back a reused checkout when pre-spawn source resolution fails', async () => {
-    const rollbackCheckout = vi.fn().mockResolvedValue(undefined);
+    const realApprovals = await vi.importActual<typeof import('@/session/actions/approvals/artifactStore')>('@/session/actions/approvals/artifactStore');
+    createCliApprovalsArtifactStore.mockReturnValue(realApprovals.createCliApprovalsArtifactStore({ credentials: {
+      token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+    } }));
     fetchSessionByIdCompat.mockResolvedValue({ share: null, machineId: 'machine-exact' });
     resolveReplaySeedDraft.mockResolvedValue({ status: 'unavailable' });
     const creationKey = SessionCreationKeyV1Schema.parse('reused-unreadable-source');
@@ -2463,7 +2488,6 @@ describe('createCliActionDeps hook dispatch', () => {
             created: false,
           },
         }),
-        rollbackCheckout,
         spawnedSession: {
           spawn: vi.fn(),
           resolveSpawnSessionByNonce: vi.fn(),
@@ -2492,7 +2516,7 @@ describe('createCliActionDeps hook dispatch', () => {
       actionCaller: { kind: 'host' },
     })).resolves.toMatchObject({ type: 'error' });
 
-    expect(rollbackCheckout).not.toHaveBeenCalled();
+    expect(callMachineRpc.mock.calls.some(([call]) => call.method === RPC_METHODS.SCM_WORKTREE_REMOVE)).toBe(false);
     expect(createSpawnedSession).not.toHaveBeenCalled();
   });
 
@@ -5447,6 +5471,10 @@ describe('Session initial-access spawn settlement', () => {
   });
 
   it.each(['initial_access', 'terminal_host'] as const)('carries %s through the real spawn dependency result', async (failure) => {
+    const realApprovals = await vi.importActual<typeof import('@/session/actions/approvals/artifactStore')>('@/session/actions/approvals/artifactStore');
+    createCliApprovalsArtifactStore.mockReturnValue(realApprovals.createCliApprovalsArtifactStore({ credentials: {
+      token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+    } }));
     const realCatalog = await vi.importActual<typeof import('@/agent/catalog/snapshot')>('@/agent/catalog/snapshot');
     readAgentCatalogSnapshot.mockImplementation(realCatalog.readAgentCatalogSnapshot);
     const realCreation = await vi.importActual<typeof import('@/session/services/createSpawnedSession')>(
@@ -5465,6 +5493,7 @@ describe('Session initial-access spawn settlement', () => {
     }));
     const deps = createCliActionDeps({
       token: 'token',
+      actionsSettingsProvider: createActionSettingsProvider({ accountSettings: AccountSettingsSchema.parse({ memoryUpkeepInNewBots: false }) }),
       credentials: {
         token: 'token',
         encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
@@ -5488,8 +5517,22 @@ describe('Session initial-access spawn settlement', () => {
     });
 
     const creationKey = SessionCreationKeyV1Schema.parse('initial-access-repair');
+    const identity = { bot: { kind: 'bot' as const }, createdAsBot: true as const };
+    const managedCreation = { homeId: 'managed-home', managedId: 'managed-resource',
+      controller: { machineId: 'controller', installationId: 'installation' } };
+    const managedProvider = { pluginId: 'custom.compute', localId: 'native' };
+    vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: {
+      id: managedCreation.managedId, homeId: managedCreation.homeId, custodianAccountId: 'owner',
+      controller: managedCreation.controller, enrolledMachineId: 'machine-1', allocation: 'bound', creationState: 'active',
+      launch: { provider: managedProvider, schemaVersion: 1, name: 'Retained resource', choices: {} },
+      resource: { contributionRef: managedProvider, schemaVersion: 1, value: { resourceId: 'native-id' } },
+      desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+    } });
     const result = await deps.sessionSpawnNew({
       creationKey,
+      identity,
+      memoryEnabled: false,
+      managedCreation,
       sessionCreationTag: deriveSessionCreationTagV1({
         callerCreationNamespace: 'user',
         creationKey,
@@ -5526,6 +5569,22 @@ describe('Session initial-access spawn settlement', () => {
       type: 'error', code: 'incompatible_target', retryable: false,
       terminalHostError: { kind: 'terminal_host_unavailable', host: 'herdr', reason: 'installation_unavailable' },
     });
+    expect(spawn).toHaveBeenCalledOnce();
+    expect(spawn.mock.lastCall?.at(0)).toMatchObject({
+      identity,
+      memoryEnabled: false,
+      sessionCreationCorrespondence: expect.objectContaining({
+        recipe: expect.objectContaining({ identity, memoryEnabled: false, managedCreation }),
+      }),
+    });
+    const wrongSource = await deps.sessionSpawnNew({ creationKey: 'wrong-managed-source',
+      sessionCreationTag: deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: 'wrong-managed-source' }),
+      executionTarget: { serverId: configuration.activeServerId, machineId: 'machine-1' },
+      directory: { kind: 'path', path: '/repo' }, agentTarget: { kind: 'agent',
+        identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, actionCaller: { kind: 'host' },
+      managedCreation: { ...managedCreation, controller: { ...managedCreation.controller, installationId: 'claimed-installation' } },
+    });
+    expect(wrongSource).toMatchObject({ type: 'error', code: 'invalid_input', retryable: false });
     expect(spawn).toHaveBeenCalledOnce();
   });
 });

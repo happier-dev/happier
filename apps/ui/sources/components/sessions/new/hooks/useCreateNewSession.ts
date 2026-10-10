@@ -54,6 +54,7 @@ import {
 } from '@happier-dev/protocol';
 import type { AcpConfigOptionOverridesV1, ComposerSnapshotV1, RawIngressStructuredInputV1 } from '@happier-dev/protocol';
 import type { SessionSpawnNewInitialInputV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import type { SessionManagedCreationV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
@@ -554,6 +555,7 @@ export function useCreateNewSession(params: Readonly<{
             return;
         }
         let current = latestParamsRef.current;
+        let managedCreation: SessionManagedCreationV1 | undefined;
         const submittedSessionName = current.getSessionName?.() ?? current.authoringDraft?.sessionName;
         const submittedInstructionsDraft = current.getInstructionsDraft
             ? current.getInstructionsDraft() : current.authoringDraft?.instructionsDraft;
@@ -722,6 +724,8 @@ export function useCreateNewSession(params: Readonly<{
                     reportAfterCreatedSettlement({ status: 'rejected' });
                     return;
                 }
+                managedCreation = { homeId: result.machine.homeId, managedId: result.machine.id,
+                    controller: result.machine.controller };
                 await submitted.onManagedMachineEnrolled(result.machine.enrolledMachineId, cancellation.signal);
                 const enrolled = latestParamsRef.current;
                 if (!isCurrent() || enrolled.selectedMachineId !== result.machine.enrolledMachineId
@@ -1501,7 +1505,7 @@ export function useCreateNewSession(params: Readonly<{
                 }
 
                 current.requireConnectedAccountDefaultsReady?.();
-                const spawnInput = buildSessionSpawnNewInputV2FromAuthoringDraft({
+                const authoredSpawnInput = buildSessionSpawnNewInputV2FromAuthoringDraft({
                         draft: authoringDraft,
                         creationKey: buildManualSessionCreationKey(launchAttempt.attemptId),
                         permissionMode: spawnPermissionMode,
@@ -1512,6 +1516,7 @@ export function useCreateNewSession(params: Readonly<{
                         sourceContext: current.sourceContext ?? null,
                         secretReferenceOverlay,
                     });
+                const spawnInput = { ...authoredSpawnInput, ...(managedCreation ? { managedCreation } : {}) };
                 const releaseUserRequestLease = sync.acquireUserRequestLease();
                 actionOperationPresentationCoordinator.register({
                     serverId: resolvedTargetServerId,

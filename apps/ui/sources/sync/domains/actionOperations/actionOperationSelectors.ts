@@ -238,14 +238,13 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
             if (operation.serverId !== serverId || snapshot.scope.accountId !== query.accountId) continue;
             const attachment = snapshot.domainRef;
             const isCreation = snapshot.actionId === 'machines.managed.acquire' || snapshot.actionId === 'machines.managed.bootstrap.retry';
-            const creation = snapshot.scope.machineId === query.machineId && attachment?.kind === 'managedMachine'
-                && attachment.id === query.managedId
-                && isCreation;
+            const managed = snapshot.scope.machineId === query.machineId && attachment?.kind === 'managedMachine'
+                && attachment.id === query.managedId;
             const setupScope = snapshot.actionId === 'machines.environment.apply' && snapshot.scope.machineId === query.enrolledMachineId
                 || isCreation && snapshot.scope.machineId === query.machineId;
             const setup = Boolean(query.homeId && query.enrolledMachineId) && setupScope && attachment?.kind === 'machineEnvironment'
                 && attachment.serverId === query.homeId && attachment.machineId === query.enrolledMachineId && attachment.managedId === query.managedId;
-            if (!creation && !setup) continue;
+            if (!managed && !setup) continue;
             // An explicit resource detail retains its observed operation after Activity dismissal.
             if (!selected || snapshot.createdAt > selected.snapshot.createdAt
                 || snapshot.createdAt === selected.snapshot.createdAt && snapshot.operationId < selected.snapshot.operationId) {

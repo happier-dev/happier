@@ -22,6 +22,8 @@ import {
 } from './buildMachineSelectionBuckets';
 import { MachinePresenceDot, MachineSelectionRowAccessory } from './MachineSelectionRowAccessory';
 import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLine';
+import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
 import {
     resolveMachinePoolRowUnavailableReason,
     resolveMachineDestinationPurposeEligibility,
@@ -191,8 +193,8 @@ function machineSubtitle(machine: MachineDisplayRenderable): string | undefined 
  * The machine row's second line (K1 picker anatomy): presence first ("Online", "Offline · last seen
  * 4 days ago"), then the row's own fact when it has one (a domain's reason, the Home's detail).
  */
-function machineStatusLine(machine: MachineDisplayRenderable, detail: string | undefined): string {
-    return [describeMachinePresenceLine(machine).label, describeMachineSharedOwnership(machine), detail].filter(Boolean).join(' · ');
+function machineStatusLine(machine: MachineDisplayRenderable, detail: string | undefined, managedMachine?: ManagedMachineV1): string {
+    return [describeMachinePresenceLine(machine, undefined, managedMachine).label, describeMachineSharedOwnership(machine), detail].filter(Boolean).join(' · ');
 }
 
 function buildOptionTestID(testIdPrefix: string | undefined, machine: MachineDisplayRenderable): string | undefined {
@@ -323,6 +325,8 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
     params: BuildMachineSelectionListModelParams<TMachine>,
 ): MachineSelectionListModel {
     const purpose = params.purpose ?? 'session';
+    const managedHomes = React.useMemo(() => params.groups.map(group => group.serverId), [params.groups]);
+    const { machinesByEnrolledMachineIdByServerId } = useManagedMachineInventory(managedHomes);
     const demandedWorkerFacts = useMachineDestinationWorkerStatus({ purpose, workerPlacement: params.workerPlacement, groups: params.groups });
     const resolveMachinePlacementFacts = params.workerPlacement && (purpose === 'finite' || purpose === 'service-start')
         ? demandedWorkerFacts : params.resolveMachinePlacementFacts;
@@ -840,7 +844,8 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                         id: machine.id,
                         testID: buildOptionTestID(params.testIdPrefix, machine),
                         label: presentation?.title ?? machineNames.get(machine.id) ?? machine.id,
-                        subtitle: machineStatusLine(machine, availability.reason ?? presentation?.subtitle),
+                        subtitle: machineStatusLine(machine, availability.reason ?? presentation?.subtitle,
+                            machinesByEnrolledMachineIdByServerId[group.serverId]?.[machine.id]),
                         subtitleLeading: (
                             <MachinePresenceDot
                                 machine={machine}
@@ -931,6 +936,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                         subtitle: machineStatusLine(
                             machine,
                             availability.reason ?? (presentation ? presentation.subtitle : machineSubtitle(machine)),
+                            machinesByEnrolledMachineIdByServerId[group.serverId]?.[machine.id],
                         ),
                         subtitleLeading: (
                             <MachinePresenceDot
@@ -1054,6 +1060,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
         params.sectionTitles,
         params.temporaryComputers,
         params.managedMachines,
+        machinesByEnrolledMachineIdByServerId,
         params.selectedManagedMachine,
         hasSelectManagedMachine,
         hasOpenManagedPresets,

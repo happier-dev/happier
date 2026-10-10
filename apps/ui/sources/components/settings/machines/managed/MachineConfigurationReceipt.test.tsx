@@ -139,7 +139,7 @@ describe('MachineConfigurationReceipt', () => {
     await screen.unmount();
   });
 
-  it('offers one Keep control whose choice carries wake only with a Stop rule, and resets to the default', async () => {
+  it('offers explicit wake for Until-delete while its inherited default stays off and Delete disables wake', async () => {
     const changes: MachineRetentionPolicyV1[] = [];
     const resets: number[] = [];
     const screen = await renderReceipt({
@@ -152,16 +152,20 @@ describe('MachineConfigurationReceipt', () => {
           retention.kind === 'until-delete'
             ? 'It keeps running, and billing, until you delete it.'
             : 'Hetzner still bills stopped servers.',
-        onChange: (policy) => changes.push(policy),
+        onChange: (policy) => { changes.push(policy); },
         onReset: () => resets.push(1),
       },
     });
     for (const id of ['until-delete', 'unused:stop:3600000', 'unused:delete:3600000']) {
       expect(screen.findByTestId(`receipt:keep:choice:${id}`)).not.toBeNull();
     }
-    // Inherited: names the category default, offers no reset and no wake (nothing stops).
+    // Until-delete can be stopped manually; its category default leaves wake off until chosen.
     expect(screen.findByTestId('receipt:keep:reset')).toBeNull();
-    expect(screen.findByTestId('receipt:keep:wake:switch')).toBeNull();
+    const wake = screen.tree.findAll(node => node.props.testID === 'receipt:keep:wake:switch'
+      && typeof node.props.onValueChange === 'function')[0];
+    expect(wake?.props.value).toBe(false);
+    await act(async () => wake?.props.onValueChange(true));
+    expect(changes.at(-1)).toEqual({ ...untilDelete, wakeOnAcceptedMessage: true });
 
     await act(async () => {
       screen.pressByTestId('receipt:keep:choice:unused:stop:3600000');

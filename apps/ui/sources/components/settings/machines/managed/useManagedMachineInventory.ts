@@ -17,6 +17,7 @@ const EMPTY_ROWS: readonly ManagedMachineV1[] = [];
 export type ManagedMachineInventoryEntry = Readonly<{
     accountId: string;
     managedId?: string;
+    includeArchived?: boolean;
     machines: readonly ManagedMachineV1[];
     status: 'loading' | 'ready' | 'error' | 'unsupported' | 'denied' | 'missing';
     errorCode?: string;
@@ -26,7 +27,7 @@ export type ManagedMachineInventoryEntry = Readonly<{
 
 /** A demanded projection of the canonical server inventory, with no persisted UI resource state. */
 export function useManagedMachineInventory(serverIds: readonly string[], managedId?: string,
-    executeAction: ReturnType<typeof createFrontDoorActionExecute> = execute) {
+    executeAction: ReturnType<typeof createFrontDoorActionExecute> = execute, includeArchived = false) {
     const idsKey = JSON.stringify([...new Set(serverIds.map(id => resolveServerProfileScopeIdForIdentifier(id) || id))].sort());
     const requestedIdsKey = JSON.stringify(serverIds);
     const ids = React.useMemo(() => JSON.parse(idsKey) as string[], [idsKey]);
@@ -52,8 +53,9 @@ export function useManagedMachineInventory(serverIds: readonly string[], managed
             retirements.push(binding.onRetire(() => cancellation.abort()));
             setEntries(previous => {
                 const current = previous[serverId];
-                const sameTarget = current?.accountId === binding.accountId && current.managedId === managedId;
-                return { ...previous, [serverId]: { accountId: binding.accountId, managedId,
+                const sameTarget = current?.accountId === binding.accountId && current.managedId === managedId
+                    && (current.includeArchived ?? false) === includeArchived;
+                return { ...previous, [serverId]: { accountId: binding.accountId, managedId, includeArchived,
                     machines: sameTarget ? current.machines : EMPTY_ROWS,
                     ...(sameTarget && current.asOf !== undefined ? { asOf: current.asOf } : {}), status: 'loading' } };
             });
@@ -61,8 +63,7 @@ export function useManagedMachineInventory(serverIds: readonly string[], managed
                 try {
                     type ReadResult = Readonly<{ kind: 'succeeded'; machines: ManagedMachineV1[] }> | Readonly<{ kind: 'failed'; code: string }>;
                     const actionId = managedId ? 'machines.managed.get' : 'machines.managed.list';
-                    const input = managedId ? { homeId, managedId } : { homeId };
-                    const result = await awaitActionApprovalResult<ManagedMachineV1[], ReadResult>({
+                    const read = (input: { homeId: string; managedId?: string; archived?: boolean }) => awaitActionApprovalResult<ManagedMachineV1[], ReadResult>({
                         signal: cancellation.signal,
                         execute: async callbacks => {
                             const outcome = classifyHomeActionOutcome(await executeAction(actionId, input, { surface: 'ui', serverId,
@@ -87,6 +88,19 @@ export function useManagedMachineInventory(serverIds: readonly string[], managed
                         succeeded: machines => ({ kind: 'succeeded', machines }), failed: code => ({ kind: 'failed', code }),
                         aborted: () => ({ kind: 'failed', code: 'aborted' }),
                     });
+                    let result = await read(managedId ? { homeId, managedId } : { homeId });
+                    if (!managedId && includeArchived && result.kind === 'succeeded' && binding.isCurrent() && !cancellation.signal.aborted) {
+                        // Archive availability must not discard a successfully read active list. Keep
+                        // previous recovery rows visibly stale until the second ordinary read settles.
+                        const active = result.machines;
+                        if (active.some(machine => machine.homeId !== homeId)) throw new Error('managed_response_invalid');
+                        setEntries(previous => ({ ...previous, [serverId]: { ...previous[serverId]!, machines:
+                            [...new Map([...active, ...previous[serverId]!.machines.filter(machine => machine.archivedAt !== undefined)]
+                                .map(machine => [machine.id, machine])).values()] } }));
+                        const archived = await read({ homeId, archived: true });
+                        result = archived.kind === 'failed' ? archived : { kind: 'succeeded', machines:
+                            [...new Map([...result.machines, ...archived.machines].map(machine => [machine.id, machine])).values()] };
+                    }
                     if (!binding.isCurrent() || cancellation.signal.aborted) return;
                     if (result.kind === 'failed') {
                         const code = result.code;
@@ -103,7 +117,7 @@ export function useManagedMachineInventory(serverIds: readonly string[], managed
                     if (machines.some(machine => machine.homeId !== homeId || (managedId && machine.id !== managedId))) throw new Error('managed_response_invalid');
                     setEntries(previous => {
                         const current = previous[serverId];
-                        return { ...previous, [serverId]: { accountId: binding.accountId, managedId, status: 'ready', asOf: Date.now(),
+                        return { ...previous, [serverId]: { accountId: binding.accountId, managedId, includeArchived, status: 'ready', asOf: Date.now(),
                             machines: current?.accountId === binding.accountId && sameStrictJsonValue(current.machines, machines) ? current.machines : machines } };
                     });
                 } catch {
@@ -116,24 +130,25 @@ export function useManagedMachineInventory(serverIds: readonly string[], managed
             })();
         }
         return () => { requests.forEach(request => request.abort()); retirements.forEach(retirement => retirement.dispose()); };
-    }, [bindings, ids, managedId, refreshRevision, executeAction]);
+    }, [bindings, ids, managedId, includeArchived, refreshRevision, executeAction]);
 
     const currentEntries = React.useMemo(() => {
         const result: Record<string, ManagedMachineInventoryEntry> = {};
         for (const serverId of ids) {
             const binding = bindings.get(serverId);
             const entry = entries[serverId];
-            if (binding?.isCurrent() && entry?.accountId === binding.accountId && entry.managedId === managedId) result[serverId] = entry;
+            if (binding?.isCurrent() && entry?.accountId === binding.accountId && entry.managedId === managedId
+                && (entry.includeArchived ?? false) === includeArchived) result[serverId] = entry;
         }
         return result;
-    }, [bindings, entries, ids, managedId]);
+    }, [bindings, entries, ids, managedId, includeArchived]);
 
     const machinesByServerId = React.useMemo(() => Object.fromEntries((JSON.parse(requestedIdsKey) as string[]).map(serverId => [serverId,
         currentEntries[resolveServerProfileScopeIdForIdentifier(serverId) || serverId]?.machines ?? EMPTY_ROWS,
     ])), [currentEntries, requestedIdsKey]);
     const machinesByEnrolledMachineIdByServerId = React.useMemo(() => Object.fromEntries<Readonly<Record<string, ManagedMachineV1>>>(
         Object.entries(machinesByServerId).map(([serverId, machines]) => [serverId, Object.fromEntries<ManagedMachineV1>(
-            machines.flatMap(machine => machine.enrolledMachineId ? [[machine.enrolledMachineId, machine]] : []),
+            machines.flatMap(machine => machine.archivedAt === undefined && machine.enrolledMachineId ? [[machine.enrolledMachineId, machine]] : []),
         )]),
     ), [machinesByServerId]);
 

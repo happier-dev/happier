@@ -43,6 +43,30 @@ function group(serverId: string, machines: Machine[], overrides: Partial<ActiveS
 }
 
 describe('buildMachineCollection', () => {
+    it('contracts enrolled managed rows without discarding observed retained sleep or borrowing another Home power', () => {
+        const stopped = managed('retained', { enrolledMachineId: 'guest', wakeOnAcceptedMessage: true,
+            retention: { kind: 'unused', afterMs: 3600000, effect: 'stop' },
+            observation: { observedAt: 10, availability: 'present', power: 'stopped', storage: 'retained', daemon: 'disconnected' } });
+        const collection = buildMachineCollection({ groups: [group('a', [machine('guest')]), group('b', [machine('guest')])], groupedByHome: true,
+            managedByServerId: { a: [stopped] } });
+        const rows = collection.sections.flatMap(section => section.rows);
+        expect(rows).toHaveLength(2);
+        expect(rows[0]).toMatchObject({ kind: 'machine', machineId: 'guest', online: false, presence: t('managedPower.asleep') });
+        expect(rows[1]?.presence).not.toBe(t('managedPower.asleep'));
+    });
+    it('reopens archived recovery from its retained managed id even after enrollment', () => {
+        const collection = buildMachineCollection({ groups: [group('a', [machine('joined')])], groupedByHome: false,
+            managedByServerId: { a: [managed('retired', { archivedAt: 1, enrolledMachineId: 'joined',
+                cleanup: { disposition: 'unavailable', reason: 'plugin_removed' } })] } });
+        const row = collection.sections.flatMap(section => section.rows).find(row => row.kind === 'managed');
+        expect(row).toMatchObject({ kind: 'managed', managedId: 'retired', serverId: 'a' });
+        expect(collection.sections.find(section => section.rows.includes(row!))?.archived).toBe(true);
+        expect(resolveMachineCollectionLandingHref({ collection, lastVisited: null, isDesktop: false }))
+            .toBe('/settings/machines/joined?serverId=a');
+        expect(resolveMachineCollectionLandingHref({ collection, lastVisited: row!, isDesktop: false }))
+            .toBe('/settings/machines/managed/retired?serverId=a');
+        expect(machineCollectionHref(row!)).toBe('/settings/machines/managed/retired?serverId=a');
+    });
     it('names preset audiences from the exact Home and owner rather than the operation label', () => {
         const preset: ManagedMachinePresetV1 = { id: 'recipe', homeId: 'home-a', revision: 1, name: 'Build recipe',
             owner: { kind: 'team', teamId: 'same-id' }, recipe: managed('m').launch, controller: managed('m').controller };

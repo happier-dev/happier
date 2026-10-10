@@ -6,16 +6,17 @@ import type { Href } from '@/components/appShell/workspace/destinationRoute';
  * for every surface that links to a trigger it does not edit itself.
  */
 export function resolveTriggerEditorHref(input: Readonly<{
-    automationId: string;
+    automationId?: string;
     serverId: string;
     scopeSessionId?: string | null;
     workflowDefinitionId?: string | null;
 }>): Href {
     if (input.scopeSessionId) {
-        return { pathname: '/session/[id]/triggers', params: { id: input.scopeSessionId, serverId: input.serverId, trigger: input.automationId } };
+        return { pathname: '/session/[id]/triggers', params: { id: input.scopeSessionId, serverId: input.serverId,
+            ...(input.automationId ? { trigger: input.automationId } : {}) } };
     }
     if (input.workflowDefinitionId) {
         return { pathname: '/workflows/[id]', params: { id: input.workflowDefinitionId, intent: 'schedule' } };
     }
-    return { pathname: '/workflows', params: { trigger: input.automationId } };
+    return { pathname: '/workflows', ...(input.automationId ? { params: { trigger: input.automationId } } : {}) };
 }

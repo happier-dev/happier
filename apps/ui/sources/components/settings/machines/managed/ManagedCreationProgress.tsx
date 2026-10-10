@@ -19,6 +19,7 @@ import { describeActionOperationStatusLabel, resolveActionOperationStatus } from
 /** Only durable allocation/enrollment observations; task stages are supplied by their operation owner. */
 export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachineV1; handlers?: ManagedLifecycleHandlers;
     provider?: string;
+    providerAvailable?: boolean;
     /** The provider's mark, so the resource row reads as what it is. */
     mark?: React.ReactNode;
     /** The controller's name and presence: an offline one is what an unsubmitted creation waits on. */
@@ -27,7 +28,8 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     /** D53: a failed Set up recovers on this same machine, or is skipped; never re-acquired. */
     setupRecovery?: Readonly<{ retry?: () => void; skip?: () => void }> }>) {
     const { machine } = props;
-    const state = managedCreationState(machine, { controller: props.controller, provider: props.provider });
+    const state = managedCreationState(machine, { controller: props.controller, provider: props.provider,
+        providerAvailable: props.providerAvailable, operation: props.operation });
     const lifecycle = describeManagedLifecycleState(state);
     const awaitingConnection = !machine.enrolledMachineId || state.kind !== 'resourceReady';
     const operation = currentManagedCreationOperation(machine, props.operation);

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 
@@ -12,8 +13,19 @@ import { SessionCreationTagV1Schema } from './sessionCreationIdentityV1.js';
 import { SessionOrganizationPlacementV1Schema } from './sessionSpawnNewResultV1.js';
 import { SecretReferenceOverlayV1Schema } from '../../profiles/secretReferenceOverlayV1.js';
 import { SessionDirectoryIntentV1Schema, refineSessionDirectoryIntentCheckoutV1 } from './sessionDirectoryIntentV1.js';
+import { SessionIdentityAdditionsV1Schema } from '../identity/sessionBotV1.js';
+import { SessionPromptStackV1Schema } from '../context/sessionContextV1.js';
+import { ManagedControllerV1Schema } from '../../machines/managed/managedMachineV1.js';
 
-export const SessionCreationImmutableRecipeV1Schema = z.object({
+/** Immutable birth provenance, validated against Home's admitted resource before Session creation. */
+export const SessionManagedCreationV1Schema = lazyZodSchema(() => z.object({
+  homeId: z.string().trim().min(1),
+  managedId: z.string().trim().min(1),
+  controller: ManagedControllerV1Schema,
+}).strict());
+export type SessionManagedCreationV1 = z.infer<typeof SessionManagedCreationV1Schema>;
+
+export const SessionCreationImmutableRecipeV1Schema = lazyZodSchema(() => z.object({
   execution: z.object({
     machineId: z.string().trim().min(1),
     directory: SessionDirectoryIntentV1Schema,
@@ -22,6 +34,10 @@ export const SessionCreationImmutableRecipeV1Schema = z.object({
   agentTarget: AgentExecutionTargetV1Schema,
   modelSelection: SessionModelSelectionV1Schema.nullable(),
   profileId: z.string().trim().min(1).nullable(),
+  identity: SessionIdentityAdditionsV1Schema.optional(),
+  memoryEnabled: z.boolean().optional(),
+  promptStack: SessionPromptStackV1Schema.optional(),
+  managedCreation: SessionManagedCreationV1Schema.optional(),
   secretReferenceOverlay: SecretReferenceOverlayV1Schema.optional(),
   requestedPermissionMode: z.string().trim().min(1).nullable(),
   agentModeId: z.string().trim().min(1).nullable(),
@@ -42,20 +58,21 @@ export const SessionCreationImmutableRecipeV1Schema = z.object({
   { directory: recipe.execution.directory, checkoutCreationDraft: recipe.checkout },
   context,
   ['checkout'],
-));
+)));
 export type SessionCreationImmutableRecipeV1 = z.infer<
   typeof SessionCreationImmutableRecipeV1Schema
 >;
 
-export const SessionCreationCorrespondenceV1Schema = z.object({
+export const SessionCreationCorrespondenceV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   sessionCreationTag: SessionCreationTagV1Schema,
   recipe: SessionCreationImmutableRecipeV1Schema,
-}).strict();
+}).strict());
 export type SessionCreationCorrespondenceV1 = z.infer<
   typeof SessionCreationCorrespondenceV1Schema
 >;
 export const SessionCreationCorrespondenceV1ReadSchema = createStoredReadSchema(SessionCreationCorrespondenceV1Schema);
+
 
 export function normalizeSessionCreationOrganizationPlacementV1(
   input: z.input<typeof SessionOrganizationPlacementV1Schema> | undefined,

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 
@@ -35,13 +36,16 @@ import { SessionTeamCredentialBindingIntentsV1Schema } from '../../teams/credent
 import { SecretReferenceOverlayV1Schema } from '../../profiles/secretReferenceOverlayV1.js';
 import { SessionDirectoryIntentV1Schema, refineSessionDirectoryIntentCheckoutV1 } from './sessionDirectoryIntentV1.js';
 import { SessionInitialTriggerV1Schema } from '../../workflows/triggers/workflowTriggerActionsV1.js';
+import { SessionIdentityAdditionsV1Schema } from '../identity/sessionBotV1.js';
+import { SessionPromptStackV1Schema } from '../context/sessionContextV1.js';
+import { SessionManagedCreationV1Schema } from './sessionCreationCorrespondenceV1.js';
 
 /**
  * One Message-owned input admitted before the new Session runtime may start.
  * The creation key owns retry identity, so this shape carries content only;
  * callers cannot establish a second Message idempotency owner.
  */
-export const SessionSpawnNewInitialInputV1Schema = z.object({
+export const SessionSpawnNewInitialInputV1Schema = lazyZodSchema(() => z.object({
   text: z.string().optional(),
   attachments: PluginSessionInputAttachmentsV1Schema.optional(),
   /** Composer references and semantic attachments before a Session exists. */
@@ -51,7 +55,7 @@ export const SessionSpawnNewInitialInputV1Schema = z.object({
     comments: z.array(ReviewCommentDraftMessageV1Schema),
     displayText: z.string().min(1),
   }).strict().optional(),
-}).strict().superRefine(requireSessionInputContent);
+}).strict().superRefine(requireSessionInputContent));
 export type SessionSpawnNewInitialInputV1 = z.infer<typeof SessionSpawnNewInitialInputV1Schema>;
 
 /**
@@ -59,7 +63,7 @@ export type SessionSpawnNewInitialInputV1 = z.infer<typeof SessionSpawnNewInitia
  * spawn fields are normalized before this boundary and are never accepted as a
  * second canonical creation vocabulary.
  */
-export const SessionSpawnNewInputV2BaseSchema = z.object({
+export const SessionSpawnNewInputV2BaseSchema = lazyZodSchema(() => z.object({
   creationKey: SessionCreationKeyV1Schema.optional(),
   executionTarget: SessionExecutionTargetV1Schema,
   placementOrigin: MachinePoolSelectionOriginV1Schema.optional(),
@@ -80,6 +84,14 @@ export const SessionSpawnNewInputV2BaseSchema = z.object({
   terminal: SessionAuthoringTerminalV1Schema.optional(),
   checkoutCreationDraft: SessionAuthoringCheckoutCreationDraftV1Schema.nullable().optional(),
   title: z.string().trim().min(1).optional(),
+  /** Host-owned identity facts persisted at ordinary Session birth. */
+  identity: SessionIdentityAdditionsV1Schema.optional(),
+  /** Host-verified resource this Session was created with; never current Controller authority. */
+  managedCreation: SessionManagedCreationV1Schema.optional(),
+  /** Admitted kind preference or explicit draft choice; omission uses the birth kind default. */
+  memoryEnabled: z.boolean().optional(),
+  /** Complete selected Session context committed before its first preparation. */
+  promptStack: SessionPromptStackV1Schema.optional(),
   initialInput: SessionSpawnNewInitialInputV1Schema.optional(),
   initialTriggers: z.array(z.lazy(() => SessionInitialTriggerV1Schema)).optional(),
   initialAccess: SessionInitialAccessDraftV1Schema.optional(),
@@ -102,10 +114,10 @@ export const SessionSpawnNewInputV2BaseSchema = z.object({
    * Bounds match the handoff resume plan's environment contract.
    */
   environmentVariables: z.record(z.string().min(1).max(128), z.string().max(16 * 1024)).optional(),
-}).strict();
+}).strict());
 
-export const SessionSpawnNewInputV2Schema = SessionSpawnNewInputV2BaseSchema
-  .superRefine(refineSessionDirectoryIntentCheckoutV1);
+export const SessionSpawnNewInputV2Schema = lazyZodSchema(() => SessionSpawnNewInputV2BaseSchema
+  .superRefine(refineSessionDirectoryIntentCheckoutV1));
 
 export type SessionSpawnNewInputV2 = z.infer<typeof SessionSpawnNewInputV2Schema>;
 
@@ -114,11 +126,11 @@ export type SessionSpawnNewInputV2 = z.infer<typeof SessionSpawnNewInputV2Schema
  * server-start transport consumes this exact projection without owning a
  * second Session input schema.
  */
-export const SessionServerStartSpawnDraftV1Schema = SessionSpawnNewInputV2BaseSchema.omit({
+export const SessionServerStartSpawnDraftV1Schema = lazyZodSchema(() => SessionSpawnNewInputV2BaseSchema.omit({
   creationKey: true,
   initialInput: true,
   environmentVariables: true,
-}).strict().superRefine(refineSessionDirectoryIntentCheckoutV1);
+}).strict().superRefine(refineSessionDirectoryIntentCheckoutV1));
 
 export type SessionServerStartSpawnDraftV1 = Omit<
   SessionSpawnNewInputV2,

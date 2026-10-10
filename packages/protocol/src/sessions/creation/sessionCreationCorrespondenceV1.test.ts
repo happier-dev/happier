@@ -35,6 +35,42 @@ const correspondence = {
 } as const;
 
 describe('SessionCreationCorrespondenceV1', () => {
+  it('retains the exact managed birth resource in immutable retry meaning', () => {
+    const managedCreation = { homeId: 'home', managedId: 'managed',
+      controller: { machineId: 'controller', installationId: 'installation' } };
+    const selected = { ...correspondence, recipe: { ...correspondence.recipe, managedCreation } };
+    expect(SessionCreationCorrespondenceV1Schema.parse(selected)).toEqual(selected);
+    expect(sessionCreationCorrespondenceMatchesV1(selected, correspondence)).toBe(false);
+    expect(sessionCreationCorrespondenceMatchesV1(selected, { ...selected, recipe: { ...selected.recipe,
+      managedCreation: { ...managedCreation, controller: { ...managedCreation.controller, installationId: 'replacement' } },
+    } })).toBe(false);
+    expect(SessionCreationCorrespondenceV1Schema.safeParse({ ...selected, recipe: { ...selected.recipe,
+      managedCreation: { ...managedCreation, sessionId: 'caller-selected-source' },
+    } }).success).toBe(false);
+  });
+  it('binds selected qualified Instructions in the same creation retry meaning', () => {
+    const promptStack = [{ id: 'session.instructions',
+      ref: { kind: 'doc', serverId: 'instructions-home', artifactId: 'instructions' },
+      enabled: true, required: true, placement: 'system_append' }];
+    const selected = { ...correspondence, recipe: { ...correspondence.recipe, promptStack } };
+    expect(SessionCreationCorrespondenceV1Schema.parse(selected)).toEqual(selected);
+    expect(sessionCreationCorrespondenceMatchesV1(selected, selected)).toBe(true);
+    expect(sessionCreationCorrespondenceMatchesV1(selected, correspondence)).toBe(false);
+    expect(sessionCreationCorrespondenceMatchesV1(selected, { ...selected, recipe: {
+      ...selected.recipe, promptStack: [{ ...promptStack[0],
+        ref: { ...promptStack[0]!.ref, serverId: 'different-home' } }],
+    } })).toBe(false);
+  });
+
+  it('keeps admitted Bot birth and explicit memory choices in retry meaning after the live marker changes', () => {
+    const bot = { ...correspondence, recipe: { ...correspondence.recipe,
+      identity: { bot: { kind: 'bot' }, createdAsBot: true }, memoryEnabled: false,
+    } };
+    expect(SessionCreationCorrespondenceV1Schema.parse(bot)).toEqual(bot);
+    expect(sessionCreationCorrespondenceMatchesV1(bot, bot)).toBe(true);
+    expect(sessionCreationCorrespondenceMatchesV1(bot, correspondence)).toBe(false);
+    expect(sessionCreationCorrespondenceMatchesV1(bot, { ...bot, recipe: { ...bot.recipe, memoryEnabled: true } })).toBe(false);
+  });
   it('matches managed retries by intent and rejects a managed versus path correspondence', () => {
     const managed = { ...correspondence, recipe: { ...correspondence.recipe,
       execution: { ...correspondence.recipe.execution, directory: { kind: 'managed' } },

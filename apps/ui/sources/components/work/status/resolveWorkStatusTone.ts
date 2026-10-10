@@ -1,9 +1,10 @@
 import { isInProgressAgentActivityStatus, isTerminalAgentActivityStatus, type AgentActivityStatusV1 } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityStatusV1';
 import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
 import { readSessionAwarenessWorkStatusV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
-import type { SessionAwarenessProjectionV1, SessionOperationalReasonV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
+import type { SessionAwarenessPresentationFactsV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
 import type { WorkflowInvocationLifecycleV1, WorkflowRunStateV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { WorkerUpdateV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
+import type { ActionOperationSnapshotV1, ActionOperationStateV1 } from '@happier-dev/protocol/actions/operations/v1';
 
 import {
     HAPPIER_WORK_STATUS_SEMANTIC_TONE,
@@ -13,6 +14,9 @@ import {
 } from '@happier-dev/plugin-ui/presentation';
 
 import type { StatusPillVariant } from '@/components/ui/status/StatusPill';
+import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { t } from '@/text';
+import { isMachineRetainedWakeEligibleV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 
 /**
  * The shared status presentation is owned by `@happier-dev/plugin-ui/presentation` (plugin authors
@@ -42,23 +46,27 @@ type WorkflowFacts = Readonly<{
 }>;
 
 export type WorkStatusInput =
+    | Readonly<{ kind: 'action_operation'; facts: Readonly<{
+        state: ActionOperationStateV1;
+        observation: 'available' | 'reconnecting' | 'unavailable';
+        setupReview?: ActionOperationSnapshotV1['setupReview'];
+        word: string;
+    }> }>
     | Readonly<{ kind: 'worker_update'; facts: Readonly<{ update: WorkerUpdateV1; word: string }> }>
     | Readonly<{ kind: 'workflow_run'; facts: WorkflowFacts & Readonly<{ state: WorkStatusRunState }> }>
     | Readonly<{ kind: 'workflow_step'; facts: WorkflowFacts & Readonly<{ lifecycle: WorkStatusStepLifecycle }> }>
     | Readonly<{ kind: 'session'; facts: Readonly<{
         word: string;
-        awareness: Readonly<{
-            runtime: SessionAwarenessProjectionV1['runtime'];
-            operational: Readonly<{
-                primary: SessionAwarenessProjectionV1['operational']['primary'];
-                reasons: readonly SessionOperationalReasonV1[];
-            }>;
-        }>;
+        awareness: SessionAwarenessPresentationFactsV1;
         /** Settlement is supplied by the Session owner, not inferred from a word. */
         settled?: boolean;
     }> }>
     | Readonly<{ kind: 'machine'; facts: Readonly<{
         word: string; online: boolean; needsYouCount: number; runningSessionCount: number;
+        machineId?: string;
+        revokedAt?: number | null;
+        /** Protected, Home-qualified inventory row; connectivity alone never establishes sleep. */
+        managedMachine?: ManagedMachineV1 | null;
     }> }>
     | Readonly<{ kind: 'workflow'; facts: Readonly<{
         word: string; needsYouCount: number; hasActiveRun: boolean;
@@ -130,6 +138,14 @@ function presentWorkflow(shape: StatusShape, facts: WorkflowFacts): WorkStatusPr
 /** Maps owner facts into shared presentation. Words and lifecycle decisions stay with their owners. */
 export function resolveWorkStatusTone(input: WorkStatusInput): WorkStatusPresentation {
     switch (input.kind) {
+        case 'action_operation': {
+            const { state, observation, setupReview, word } = input.facts;
+            if (state === 'succeeded' || state === 'failed' || state === 'cancelled') {
+                return { bucket: 'finished', tone: state === 'failed' ? 'danger' : 'neutral', word };
+            }
+            if (setupReview) return { bucket: 'needs_you', tone: 'attention', word };
+            return { bucket: 'working', tone: observation === 'available' ? 'neutral' : 'attention', word };
+        }
         case 'worker_update': {
             const { update, word } = input.facts;
             const failed = update.ownerState === 'failed' || update.ownerState === 'dispatch_failed';
@@ -148,7 +164,31 @@ export function resolveWorkStatusTone(input: WorkStatusInput): WorkStatusPresent
         }
         case 'machine': {
             const { online, needsYouCount, runningSessionCount, word } = input.facts;
-            if (!online) return { bucket: 'offline', tone: 'neutral', word };
+            if (!online) {
+                const managed = input.facts.managedMachine;
+                if (managed?.creationState === 'active' && managed.archivedAt === undefined
+                    && !(typeof input.facts.revokedAt === 'number' && input.facts.revokedAt > 0) && input.facts.machineId
+                    && managed.enrolledMachineId === input.facts.machineId) {
+                    const observation = managed.observation;
+                    if (managed.allocation === 'confirmed-absent' || observation?.availability === 'absent') {
+                        return { bucket: 'needs_you', tone: 'attention', word: t('managedPower.resourceAbsent') };
+                    }
+                    if (observation?.storage === 'lost') return { bucket: 'needs_you', tone: 'attention', word: t('managedPower.volumeLost') };
+                    if (!observation || observation.availability !== 'present') return { bucket: 'idle', tone: 'neutral', word: t('status.unknown') };
+                    if (observation.power !== 'running' && managed.submittedNativeEffect?.intent === 'start') {
+                        return { bucket: 'working', tone: 'neutral', word: t('managedWake.starting', { machine: managed.launch.name }) };
+                    }
+                    if (observation.storage === 'retained' && (observation.power === 'stopped' || observation.power === 'suspended')) {
+                        const retainedWake = managed.wakeOnAcceptedMessage && managed.desired !== 'delete'
+                            && managed.submittedNativeEffect?.intent !== 'delete' && !managed.cleanup
+                            && isMachineRetainedWakeEligibleV1(managed.retention,
+                            managed.reviewedFacts?.retentionCapabilities);
+                        return { bucket: 'idle', tone: 'neutral', word: retainedWake ? t('managedPower.asleep')
+                            : t(`managedMachines.detail.power.${observation.power}`) };
+                    }
+                }
+                return { bucket: 'offline', tone: 'neutral', word };
+            }
             if (needsYouCount > 0) return { bucket: 'needs_you', tone: 'attention', word };
             return { bucket: runningSessionCount > 0 ? 'working' : 'idle', tone: 'neutral', word };
         }

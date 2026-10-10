@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { t } from '@/text';
 import { describeManagedCreation, managedCreationState, managedMachineDestination, managedCreationSetup } from './managedCreationPresentation';
+import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 
 const machine: ManagedMachineV1 = { id: 'managed', homeId: 'home', custodianAccountId: 'owner',
     launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Guest', choices: {} },
@@ -10,6 +11,23 @@ const machine: ManagedMachineV1 = { id: 'managed', homeId: 'home', custodianAcco
     desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
 
 describe('managed creation presentation', () => {
+    it.each([
+        ['managed.intent.busy', 'busy'],
+        ['managed.intent.activity-unknown', 'activityUnknown'],
+        ['managed.intent.draining', 'draining'],
+    ] as const)('projects %s only from the available current resource operation', (phase, kind) => {
+        const operation: ActionOperationProjection = { serverId: machine.homeId, observation: 'available', isUnavailableProjection: false,
+            snapshot: { version: 1, operationId: 'retention-operation', revision: 1, actionId: 'machines.managed.delete', state: 'running',
+                scope: { accountId: 'owner', machineId: machine.controller.machineId }, title: 'Delete', createdAt: 1, startedAt: 2,
+                domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller: machine.controller },
+                cancellation: 'supported', progress: { kind: 'phase', phase, label: 'Observed guest activity' } } };
+        expect(managedCreationState(machine, { operation })).toEqual({ kind });
+        expect(managedCreationState(machine, { operation: { ...operation, observation: 'unavailable' } })).toEqual({ kind: 'resourceReady' });
+        expect(managedCreationState({ ...machine, resource: { ...machine.resource!, value: { nativeId: 'replacement' } } }, { operation }))
+            .toEqual({ kind: 'resourceReady' });
+        expect(managedCreationState(machine, { operation: { ...operation, snapshot: { ...operation.snapshot, state: 'succeeded', settledAt: 3 } } }))
+            .toEqual({ kind: 'resourceReady' });
+    });
     it('projects setup only after Join and offers recovery only for the same live failed setup', () => {
         const setup = { environment: { setupScript: 'echo setup' }, state: 'failed' as const,
             operation: { operationId: 'setup-operation' }, errorCode: 'setup_failed' };

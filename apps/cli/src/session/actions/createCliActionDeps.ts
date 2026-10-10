@@ -3,6 +3,7 @@ import { projectCurrentSessionPresentationActionResult } from '@/session/present
 import { flattenWidgetLayoutWidgetsV1 } from '@happier-dev/protocol/widgets';
 import axios from 'axios';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
+import { readManagedMachine } from '@/machines/managed/readManagedMachine';
 import { readMachineReferenceCensusV1, type MachineReferenceCensusV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import { ManagedGetInputV1Schema, ManagedGetOutputV1Schema, ManagedDeleteInputV1Schema,
   managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -11,6 +12,7 @@ import { machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/
 import { listAutomationDefinitions } from '@/api/automations';
 import { createCliProfileStore, createCliProfileStoreForOperation } from '@/settings/profiles/profileStore';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
+import { AcpCatalogUnavailableError } from '@/agent/acp/catalog/configured/resolveBackend';
 import type { NotificationChannelCatalogSnapshotV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { refreshActiveProfileCatalog } from '@/settings/profiles/hydrateProfileCatalog';
 import type { ProfileRecordV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
@@ -120,6 +122,7 @@ import { BackendTargetRefV2Schema, readBackendTargetRefV2 } from '@happier-dev/p
 import { derivePluginSessionInputLocalIdV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { isMemoryDocumentSearchHitV1, negotiateMemorySearchV1 } from '@happier-dev/protocol/memory/memorySearch';
 import { MemoryStatusV1Schema } from '@happier-dev/protocol/memory/memoryStatus';
+import { MemorySettingsV1Schema } from '@happier-dev/protocol/memory/memorySettings';
 import { MemoryWindowV1Schema } from '@happier-dev/protocol/memory/memoryWindow';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { WorkflowStepExecutionSelectionSchema, WorkflowIngressContextV1Schema } from '@happier-dev/protocol/workflows/workflowV1';
@@ -785,6 +788,7 @@ export function createCliActionDeps(params: Readonly<{
   }> | null;
   getCurrentSessionBackendTarget?: (() => BackendTargetRefV2 | null | undefined) | null;
   getCurrentSessionMetadata?: () => Readonly<Record<string, unknown>> | null;
+  getCurrentAppliedChildSelection?: () => Promise<import('@/agent/runtime/bridges/executionRun/runtime/openInputs').ExecutionRunAppliedParentSelection> | import('@/agent/runtime/bridges/executionRun/runtime/openInputs').ExecutionRunAppliedParentSelection;
   getCurrentSessionWorkDepth?: () => number | undefined;
   getAgentStartRunCaller?: () => import('./resolveCliAgentStartContextV1').AgentStartRunCallerBinding | null;
   getCurrentTurnWorkDepth?: (expectedTurnId?: string) => number | undefined;
@@ -855,9 +859,6 @@ export function createCliActionDeps(params: Readonly<{
     const home = operation?.serverHttpBaseUrl ?? params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
     const scopeKey = runWithServerHttpBaseUrl(home, () => resolveAccountSettingsScopeKeyForToken(credentials.token));
     const readSnapshot = () => operation ? operation.readSnapshot() : getActiveAccountSettingsSnapshot();
-    if (!operation && !readSnapshot()) {
-      await runWithServerHttpBaseUrl(home, () => bootstrapAccountSettingsContext({ credentials, mode: 'blocking' }));
-    }
     const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
     const isCurrent = async () => !signal?.aborted && readSnapshot()?.scopeKey === scopeKey
       && (operation ? operation.credentials.token === credentials.token && await operation.isCurrent()
@@ -1041,6 +1042,8 @@ export function createCliActionDeps(params: Readonly<{
   };
   const roleArtifactStore = params.credentials ? createCredentialedAccountArtifactStore(params.credentials) : undefined;
   const homeAccountId = params.credentials ? readAccountIdFromToken(params.credentials.token) : null;
+  // Widget surfaces are shared Home addresses, not this device's credential profile.
+  const widgetHomeId = params.serverIdentityId ?? params.serverId ?? configuration.activeServerId;
   const accountCallerContext = (context: ActionExecutorContext): ActionExecutorContext => ({ ...context,
     ...(homeAccountId ? { runtimeAccountId: homeAccountId } : {}) });
   const artifactCallerContext = (context: ActionExecutorContext): ActionExecutorContext => ({ ...accountCallerContext(context),
@@ -1150,11 +1153,17 @@ export function createCliActionDeps(params: Readonly<{
     const roleSources = await readRoleSources(context.signal);
     const settings = params.actionsSettingsProvider?.getAccountSettings?.()
       ?? (params.credentials ? (await bootstrapAccountSettingsContext({ credentials: params.credentials, mode: 'blocking' })).settings : null);
+    let appliedChildSelection: import('@/agent/runtime/bridges/executionRun/runtime/openInputs').ExecutionRunAppliedParentSelection | undefined;
+    if (session.sessionId === params.sessionId && params.getCurrentAppliedChildSelection) {
+      try { appliedChildSelection = await params.getCurrentAppliedChildSelection(); }
+      catch { appliedChildSelection = { status: 'unavailable' }; }
+    }
     return resolveCliAgentStartContextV1({
       sessionId: session.sessionId,
       machineId: session.machineId, directory: session.directory,
       backendTarget: session.backendTarget ?? null,
       metadata: session.metadata, starterDepth: typeof starterDepth === 'number' ? starterDepth : undefined, runCaller,
+      appliedChildSelection,
       turnDepth,
       callerPermissionMode: context.callerPermissionMode ?? null, settings,
       accountRoleOverrides: readAccountRoleOverrides(),
@@ -3006,7 +3015,8 @@ export function createCliActionDeps(params: Readonly<{
     ...(params.externalActionMachineInstallationId ? { externalActionMachineInstallationId: params.externalActionMachineInstallationId } : {}),
   }) : null;
   const actionDeps: ActionExecutorDeps = {
-    ...(approvalsStore?.promptLibraryStore.organization ? { artifactFolders: approvalsStore.promptLibraryStore.organization } : {}),
+    ...(approvalsStore?.promptLibraryStore.organization ? { artifactFolders: approvalsStore.promptLibraryStore.organization,
+      promptStacks: approvalsStore.promptLibraryStore.organization } : {}),
     runtimeActionExecute: async (args) => {
       const isStart = args.actionId === 'localServices.launcher.start';
       const controlKind = resolveLocalServiceActionKindForRuntimeActionId(args.actionId);
@@ -3214,7 +3224,7 @@ export function createCliActionDeps(params: Readonly<{
         update: args => runWithServerHttpBaseUrl(todoHomeBaseUrl, () => roleArtifactStore.update(args)),
         list: args => runWithServerHttpBaseUrl(todoHomeBaseUrl, () => roleArtifactStore.list(args)),
         delete: (id, options) => runWithServerHttpBaseUrl(todoHomeBaseUrl, () => roleArtifactStore.delete(id, options)),
-      }), scope: { serverId: params.serverId ?? configuration.activeServerId, accountId: homeAccountId },
+      }), scope: { serverId: widgetHomeId, accountId: homeAccountId },
       // A CLI invocation captures its credentials and explicit Home; only ambient invocations follow active Home changes.
       isCurrent: () => !!params.serverId || configuration.activeServerId === todoHomeServerId,
     }) : {}),
@@ -3223,7 +3233,7 @@ export function createCliActionDeps(params: Readonly<{
       getDeps: () => actionDeps, readCandidates: readWidgetCandidates,
     }) : {}),
     ...createCliWidgetInputActionDepsV1({
-      serverId: params.serverId ?? configuration.activeServerId, accountId: homeAccountId,
+      serverId: widgetHomeId, accountId: homeAccountId,
       getDeps: () => actionDeps, readCandidates: readWidgetCandidates,
       readResources: async (signal, session) => {
         const projection = await readWidgetProjection(signal, session);
@@ -3254,14 +3264,14 @@ export function createCliActionDeps(params: Readonly<{
         return runWithServerHttpBaseUrl(home, read);
       },
       validateSession: async (session, signal) => {
-        if (session.serverId !== (params.serverId ?? configuration.activeServerId)) return false;
+        if (session.serverId !== widgetHomeId) return false;
         const transport = await resolveTransportForSession(session.sessionId, signal);
         return transport.ok && transport.sessionId === session.sessionId;
       },
     }),
     widgetAccountScope: () => {
       const accountId = params.credentials ? readAccountIdFromToken(params.credentials.token) : null;
-      return accountId ? { serverId: params.serverId ?? configuration.activeServerId, accountId } : null;
+      return accountId ? { serverId: widgetHomeId, accountId } : null;
     },
     widgetCatalog: { list: async (surface, _context, signal, boundSession) => {
       const port = readWidgetActionSurfacePortV1(actionDeps, surface);
@@ -3342,6 +3352,7 @@ export function createCliActionDeps(params: Readonly<{
       credentials: params.credentials, serverId: projectHomeId,
       serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
       ...(params.savedSecretOperationContext ? { operationContext: params.savedSecretOperationContext } : {}),
+      ...(params.isCredentialCurrent ? { isCredentialCurrent: params.isCredentialCurrent } : {}),
       callMachineAction,
     }) : undefined,
     remoteHostActionExecute: params.credentials ? createCliRemoteHostActionExecuteV1({
@@ -3998,6 +4009,32 @@ export function createCliActionDeps(params: Readonly<{
       }
       : {}),
 
+    daemonMemorySettingsGet: async ({ machineId, context, serverId, signal }) => {
+      if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== machineId) return notSupported();
+      return MemorySettingsV1Schema.parse(await callMachineAction({ machineId, method: RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET,
+        request: {}, context, effectActionId: 'search.settings.get', authority: context.authority, exactMachine: true,
+        ...(serverId ? { serverId } : {}), ...(signal ? { signal } : {}) }));
+    },
+    daemonMemorySettingsSet: async ({ machineId, settings, context, serverId, signal }) => {
+      if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== machineId) return notSupported();
+      return MemorySettingsV1Schema.parse(await callMachineAction({ machineId, method: RPC_METHODS.DAEMON_MEMORY_SETTINGS_SET,
+        request: settings, context, effectActionId: 'search.settings.set', authority: context.authority, exactMachine: true,
+        ...(serverId ? { serverId } : {}), ...(signal ? { signal } : {}) }));
+    },
+    daemonMemoryStatus: async ({ machineId, context, serverId, signal }) => {
+      if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== machineId) return notSupported();
+      return MemoryStatusV1Schema.parse(await callMachineAction({ machineId, method: RPC_METHODS.DAEMON_MEMORY_STATUS,
+        request: {}, context, effectActionId: 'memory.status', authority: context.authority, exactMachine: true,
+        ...(serverId ? { serverId } : {}), ...(signal ? { signal } : {}) }));
+    },
+    daemonMemoryClearIndex: async ({ machineId, context, serverId, signal }) => {
+      if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== machineId) return notSupported();
+      const result = await callMachineAction({ machineId, method: RPC_METHODS.DAEMON_MEMORY_CLEAR_INDEX,
+        request: {}, context, effectActionId: 'memory.clear_index', authority: context.authority, exactMachine: true,
+        ...(serverId ? { serverId } : {}), ...(signal ? { signal } : {}) });
+      if (!result || typeof result !== 'object' || !('ok' in result) || result.ok !== true) throw new Error('memory_clear_index_failed');
+      return { ok: true };
+    },
     daemonMemorySearch: async ({ machineId, query, serverId, signal }) => {
       const credentials = params.credentials;
       if (!credentials) return notSupported();
@@ -4058,8 +4095,18 @@ export function createCliActionDeps(params: Readonly<{
         }),
       };
     },
-    daemonMemoryGetWindow: async ({ machineId, sessionId, seqFrom, seqTo, signal }) => {
+    daemonMemoryGetWindow: async ({ machineId, serverId, signal, ...request }) => {
       if (!params.credentials) return notSupported();
+      if (request.source !== undefined) {
+        if (!isMachineActionServerScopeCurrent(serverId ?? undefined)) throw Object.assign(
+          new Error('Exact Home scope is unavailable.'), { code: 'not_authenticated' as const });
+        return MemoryWindowV1Schema.parse(await callExactMachineRpc({ credentials: params.credentials,
+          machineId, serverUrl: params.serverHttpBaseUrl ?? configuration.serverUrl,
+          method: RPC_METHODS.DAEMON_MEMORY_GET_WINDOW, request: { ...request, v: 1 },
+          ...(signal ? { signal } : {}),
+        }));
+      }
+      const { sessionId, seqFrom, seqTo } = request;
       const session = await fetchSessionById({
         token: params.credentials.token,
         sessionId,
@@ -4176,11 +4223,24 @@ export function createCliActionDeps(params: Readonly<{
           const result = await createCliAcpCatalogStore({ credentials: params.credentials!, signal,
             operationContext: params.savedSecretOperationContext }).updateCatalog(mutate, { expectedRevision, sourceSettingsVersion });
           // Publication may retire after acknowledgement; the durable row receipt still succeeds.
-          if (result.status === 'updated' || result.status === 'unchanged') return { ok: true as const };
+          if (result.status === 'updated') return { ok: true as const,
+            revision: result.revision,
+            ...('cleanup' in result ? { cleanup: result.cleanup } : {}),
+          };
+          if (result.status === 'unchanged') return { ok: false as const,
+            errorCode: 'acp_catalog_unavailable', error: 'acp_catalog_unavailable',
+          };
           const details = { ...('revision' in result ? { revision: result.revision } : {}), ...('reason' in result ? { reason: result.reason } : {}) };
           const errorCode = result.status === 'conflict' ? 'conflict' : `acp_catalog_${result.status}`;
           return { ok: false as const, errorCode, error: errorCode, ...(Object.keys(details).length > 0 ? { details } : {}) };
         } catch (error) {
+          if (error instanceof AcpCatalogUnavailableError) {
+            return { ok: false as const, errorCode: error.code, error: error.code, details: {
+              reason: error.reason,
+              ...(typeof error.revision === 'number' && Number.isSafeInteger(error.revision) && error.revision >= 0
+                ? { revision: error.revision } : {}),
+            } };
+          }
           const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code
             : signal?.aborted ? 'cancelled' : 'acp_catalog_unavailable';
           return { ok: false as const, errorCode: code, error: code };
@@ -4817,6 +4877,7 @@ export function createCliActionDeps(params: Readonly<{
       identity,
       memoryEnabled,
       promptStack,
+      managedCreation,
       initialInput,
       agentSessionStartupInstructionsV1,
       environmentVariables,
@@ -4886,6 +4947,28 @@ export function createCliActionDeps(params: Readonly<{
 
       if (!isCurrentSessionSpawnExecutionTarget(executionTarget)) {
         return { type: 'error', code: 'target_unavailable', retryable: false };
+      }
+      if (managedCreation) {
+        try {
+          const retained = await readManagedMachine({ credentials: params.credentials,
+            serverHttpBaseUrl: machineReferenceServerUrl, homeId: managedCreation.homeId,
+            managedId: managedCreation.managedId, signal,
+            ...(context?.externalActionExecutionAuthorization
+              ? { authorization: context.externalActionExecutionAuthorization } : {}),
+          });
+          if (retained.homeId !== managedCreation.homeId || retained.id !== managedCreation.managedId
+            || retained.controller.machineId !== managedCreation.controller.machineId
+            || retained.controller.installationId !== managedCreation.controller.installationId
+            || retained.creationState !== 'active' || retained.archivedAt !== undefined
+            || retained.allocation !== 'bound' || !retained.resource
+            || retained.enrolledMachineId !== executionTarget.machineId) {
+            return { type: 'error', code: 'invalid_input', retryable: false };
+          }
+        } catch (error) {
+          return isAuthenticationError(error)
+            ? { type: 'error', code: 'permission_denied', retryable: false }
+            : { type: 'error', code: 'spawn_failed', retryable: true };
+        }
       }
       const normalizedActionRequestId = normalizeStringValue(actionRequestId);
       if (resumeActionRequest === true && !normalizedActionRequestId) {
@@ -5149,6 +5232,7 @@ export function createCliActionDeps(params: Readonly<{
           ...(identity !== undefined ? { identity } : {}),
           ...(memoryEnabled !== undefined ? { memoryEnabled } : {}),
           ...(promptStack !== undefined ? { promptStack } : {}),
+          ...(managedCreation ? { managedCreation } : {}),
           ...(secretReferenceOverlay ? { secretReferenceOverlay } : {}),
           requestedPermissionMode: resolvedPermissionMode ?? null,
           agentModeId: resolvedAgentModeId ?? null,
@@ -5603,6 +5687,7 @@ export function createCliActionDeps(params: Readonly<{
       return await (params.serverHttpBaseUrl ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, read) : read());
     },
     usageSourceAction: createUsageSourceActionPort({
+      serverId: projectHomeId,
       assertCurrent: async context => {
         context.signal?.throwIfAborted();
         if (context.serverId && context.serverId !== projectHomeId) throw Object.assign(new Error('server_target_mismatch'), { code: 'server_target_mismatch' });
@@ -6417,6 +6502,7 @@ export function createCliActionDeps(params: Readonly<{
       const mutate = () => setSessionModel({
         credentials,
         idOrPrefix: sessionId,
+        serverId: projectHomeId,
         ...(captureBefore !== undefined ? { captureBefore } : {}),
         ...(expected ? { expected } : {}),
         ...(normalizedModelId ? { modelId: normalizedModelId } : {}),

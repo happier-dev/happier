@@ -156,7 +156,9 @@ export function useMachinePresetConfiguration(input: Readonly<{
         ? managedConfiguratorFacts({ ...visibleDraft, categoryPreferences: settings.settings.machineRetentionDefaultsV1 }) : null,
         [visibleDraft, settings.settings]);
     return { facts, loading: visibleDraft?.optionStatus === 'loading',
-        error: state.queryKey === queryKey ? state.error ?? settings.error : settings.error, refresh };
+        error: state.queryKey === queryKey ? state.error ?? settings.error : settings.error,
+        creationEnabled: settings.settings?.managedMachineCreationEnabled === true,
+        creationDisabled: settings.settings?.managedMachineCreationEnabled === false, refresh };
 }
 
 /** Exact-Home collection projection; it owns no recipe or resource persistence. */

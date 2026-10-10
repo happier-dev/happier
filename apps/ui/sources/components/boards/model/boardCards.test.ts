@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { BoardItemRefV1 } from '@happier-dev/protocol';
+import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -48,6 +49,34 @@ const workingSession = createSessionListRenderableSessionFixture({
 });
 
 describe('board cards', () => {
+    it('keeps the enrolled Machine asleep and reprojects observed Start through the shared status owner', () => {
+        const ref = { kind: 'machine', qualifiedId: { serverId: 'home-a', id: 'guest' } } as const;
+        const managed: ManagedMachineV1 = { id: 'managed', homeId: 'home-a', custodianAccountId: 'owner',
+            launch: { provider: { pluginId: 'custom.native', localId: 'vm' }, schemaVersion: 1, name: 'Build box', choices: {} },
+            controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'guest',
+            allocation: 'bound', creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'unused', afterMs: 3600000, effect: 'stop' }, wakeOnAcceptedMessage: true,
+            observation: { observedAt: 10, availability: 'present', power: 'stopped', storage: 'retained', daemon: 'disconnected' } };
+        const guest = createMachineFixture({ id: 'guest', active: false, activeAt: 0 });
+        const members = [member(ref)];
+        const facts: BoardCardFacts = { nowMs: NOW, session: () => null, workflowRun: () => null, workflow: () => null,
+            machine: () => guest, managedMachine: () => managed,
+            machineSessionCounts: new Map(), accountScopedHome: () => true };
+        const project = createBoardCardProjection();
+        expect(project(members, facts)[0]?.status).toMatchObject({ bucket: 'idle', word: 'managedPower.asleep' });
+        const starting = { ...managed, submittedNativeEffect: { intent: 'start' as const, intentRevision: 2, requestId: 'start', controller: managed.controller } };
+        expect(project(members, { ...facts, managedMachine: () => starting })[0]?.status).toMatchObject({ bucket: 'working', word: 'managedWake.starting' });
+    });
+    it('keeps unreadable Session explanations in the body with a short neutral state word', () => {
+        const row = createSessionListRenderableSessionFixture({ ...permissionSession, metadata: null,
+            encryptionMode: 'e2ee', encryptedContentAvailability: 'encrypted_content_unavailable' });
+        const [card] = buildBoardCards([member({ kind: 'session', qualifiedId: { serverId: 'home-a', id: row.id } })], {
+            nowMs: NOW, session: () => row, workflowRun: () => null, machine: () => null,
+            workflow: () => null, machineSessionCounts: new Map(), accountScopedHome: () => true,
+        });
+        expect(card?.status).toMatchObject({ bucket: 'idle', tone: 'neutral', word: 'boards.card.unavailable' });
+        expect(card?.body).toMatchObject({ kind: 'session', statusDetail: 'session.access.unavailable' });
+    });
     it('reprojects unchanged Session sources when the canonical status freshness deadline passes', () => {
         const members = [member({ kind: 'session', qualifiedId: { serverId: 'home-a', id: permissionSession.id } })];
         const facts: BoardCardFacts = { nowMs: NOW, session: () => permissionSession, workflowRun: () => null,

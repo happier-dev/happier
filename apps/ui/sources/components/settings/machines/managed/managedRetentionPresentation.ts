@@ -2,7 +2,7 @@ import type {
   MachineRetentionCategoryV1,
   MachineRetentionPolicyV1,
 } from '@happier-dev/protocol/account/settings/machineRetentionDefaultsV1';
-import { DEFAULT_MACHINE_UNUSED_RETENTION_MS_V1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
+import { DEFAULT_MACHINE_UNUSED_RETENTION_MS_V1, isMachineRetainedWakeEligibleV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import type { RetentionV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
 import { t } from '@/text';
@@ -113,17 +113,12 @@ export function describeRetentionConsequence(
   }
 }
 
-/** A Stop rule is the only one a wake can follow: Delete leaves nothing to start, Until I delete it never stops. */
-export function retentionStops(retention: RetentionV1): boolean {
-  return retention.kind !== 'until-delete' && retention.effect === 'stop';
-}
-
 /** The one-line summary a closed row shows: "Stop after 1 h unused · wakes". */
 export function describeRetentionPolicy(
   policy: MachineRetentionPolicyV1,
 ): string {
   const label = describeRetention(policy.retention);
-  return retentionStops(policy.retention) && policy.wakeOnAcceptedMessage
+  return isMachineRetainedWakeEligibleV1(policy.retention) && policy.wakeOnAcceptedMessage
     ? `${label} · ${t('managedRetention.wakes')}`
     : label;
 }
@@ -133,7 +128,7 @@ export function describeDefaultPolicy(
   policy: MachineRetentionPolicyV1,
 ): string {
   const label = describeRetention(policy.retention);
-  if (!retentionStops(policy.retention)) return label;
+  if (!isMachineRetainedWakeEligibleV1(policy.retention)) return label;
   return `${label} · ${policy.wakeOnAcceptedMessage ? t('managedRetention.wakeOn') : t('managedRetention.wakeOff')}`;
 }
 

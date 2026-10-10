@@ -25,6 +25,8 @@ import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountS
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { readMachineStatusNextRefreshAtMs } from '@/utils/sessions/machineUtils';
 import { readSessionStatusNextRefreshAtMs } from '@/utils/sessions/sessionUtils';
+import { resolveMachineDestinationPurposeEligibility } from '@/components/sessions/new/components/machineSelection/buildMachineDestinationModel';
+import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
 
 import {
     createBoardCardProjection,
@@ -146,7 +148,10 @@ function useMachineRefs(enabled: boolean, machineLists: Readonly<Record<string, 
         const next: BoardItemRefV1[] = [];
         for (const [serverId, machines] of Object.entries(machineLists)) {
             const portable = resolveServerProfileScopeIdForIdentifier(serverId) || serverId;
-            for (const machine of machines ?? []) next.push({ kind: 'machine', qualifiedId: { serverId: portable, id: machine.id } });
+            for (const machine of machines ?? []) {
+                if (!resolveMachineDestinationPurposeEligibility('boards', undefined, machine).eligible) continue;
+                next.push({ kind: 'machine', qualifiedId: { serverId: portable, id: machine.id } });
+            }
         }
         return next;
     }, [enabled, machineLists]);
@@ -265,6 +270,8 @@ function useBoardFacts(membership: BoardMembership, homes: BoardHomes, enabled =
     // Machine counts read the already-loaded rows of the mounted Homes, only when a machine is on the board.
     const allRows = useSessionListRowsByServerId(hasMachines ? homes.mountedServerIds : NO_IDS);
     const machineMembers = React.useMemo(() => members.filter(member => member.available && member.ref.kind === 'machine'), [members]);
+    const managedHomes = React.useMemo(() => [...new Set(machineMembers.map(member => member.ref.qualifiedId.serverId))], [machineMembers]);
+    const { machinesByEnrolledMachineIdByServerId } = useManagedMachineInventory(managedHomes);
     const machines = getStorage()(useShallow(state => machineMembers.map(member => {
         for (const [serverId, list] of Object.entries(state.machineListByServerId)) {
             if (areServerProfileIdentifiersEquivalent(serverId, member.ref.qualifiedId.serverId)) {
@@ -318,6 +325,7 @@ function useBoardFacts(membership: BoardMembership, homes: BoardHomes, enabled =
             session: (ref) => sessionByKey.get(buildWorkBoardItemKeyV1(ref)) ?? null,
             workflowRun: (ref) => runById.get(ref.qualifiedId.id) ?? null,
             machine: (ref) => machineByKey.get(buildWorkBoardItemKeyV1(ref)) ?? null,
+            managedMachine: ref => machinesByEnrolledMachineIdByServerId[ref.qualifiedId.serverId]?.[ref.qualifiedId.id] ?? null,
             machineSessionCounts: hasMachines
                 ? countSessionsByMachine(Object.entries(allRows).map(([serverId, rows]) => [
                     resolveServerProfileScopeIdForIdentifier(serverId) || serverId,
@@ -327,7 +335,7 @@ function useBoardFacts(membership: BoardMembership, homes: BoardHomes, enabled =
             workflow: (ref) => workflowById.get(ref.qualifiedId.id) ?? null,
         };
         return facts;
-    }, [allRows, hasMachines, homes.activeServerId, machineMembers, machines, runRows, runtimeNowMs, sessionMembers, sessionRows, workflowById]);
+    }, [allRows, hasMachines, homes.activeServerId, machineMembers, machines, machinesByEnrolledMachineIdByServerId, runRows, runtimeNowMs, sessionMembers, sessionRows, workflowById]);
     const nextRefreshAtMs = React.useMemo(() => {
         let next: number | null = null;
         const take = (at: number | null) => { if (at !== null) next = next === null ? at : Math.min(next, at); };

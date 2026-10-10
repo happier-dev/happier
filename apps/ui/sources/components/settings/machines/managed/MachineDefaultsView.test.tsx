@@ -163,8 +163,14 @@ describe('MachineDefaultsView', () => {
     expect(state.writes.at(-1)).toEqual({ v: 1 });
   });
 
-  it('offers wake only with a Stop rule', async () => {
-    state.defaults = { v: 1 };
+  it('offers explicit Until-delete wake off by default, preserves Stop wake defaults, and excludes destruction', async () => {
+    state.defaults = {
+      v: 1,
+      unknown: {
+        retention: { kind: 'unused', afterMs: 1_800_000, effect: 'delete' },
+        wakeOnAcceptedMessage: false,
+      },
+    };
     const screen = await render();
     await act(async () => {
       screen.pressByTestId('settings.machineDefaults.local.header');
@@ -172,12 +178,34 @@ describe('MachineDefaultsView', () => {
     await act(async () => {
       screen.pressByTestId('settings.machineDefaults.stopped-billed.header');
     });
+    await act(async () => {
+      screen.pressByTestId('settings.machineDefaults.unknown.header');
+    });
     expect(
-      screen.findByTestId('settings.machineDefaults.local.keep:wake'),
-    ).not.toBeNull();
+      Boolean(screen.findByTestId('settings.machineDefaults.local.keep:wake')),
+    ).toBe(true);
     expect(
-      screen.findByTestId('settings.machineDefaults.stopped-billed.keep:wake'),
-    ).toBeNull();
+      screen.findByTestId('settings.machineDefaults.local.keep:wake:switch')?.props.value,
+    ).toBe(true);
+    expect(
+      Boolean(screen.findByTestId('settings.machineDefaults.stopped-billed.keep:wake')),
+    ).toBe(true);
+    const retainedWake = screen.findByTestId('settings.machineDefaults.stopped-billed.keep:wake:switch');
+    expect(retainedWake?.props.value).toBe(false);
+    expect(
+      Boolean(screen.findByTestId('settings.machineDefaults.unknown.keep:wake')),
+    ).toBe(false);
+    expect(state.writes).toEqual([]);
+
+    await act(async () => retainedWake!.props.onValueChange(true));
+    expect(state.writes).toEqual([{
+      v: 1,
+      unknown: state.defaults.unknown,
+      'stopped-billed': {
+        retention: { kind: 'until-delete' },
+        wakeOnAcceptedMessage: true,
+      },
+    }]);
   });
 
   it('pushes one category page on a phone and edits it there', async () => {
