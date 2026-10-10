@@ -5,6 +5,16 @@ description: Add your own ACP-compatible CLIs to Happier by defining selectable 
 
 **Custom ACP** is Happier's generic Agent family for any CLI that speaks the Agent Client Protocol (ACP).
 
+<Callout>
+  In unreleased 0.3 development builds, **Custom ACP Agent** is one Agent
+  integration with a separate selectable choice for each configured definition.
+  A saved session draft keeps the exact definition you chose, including when
+  several choices run the same CLI. Launch resolves that definition's command,
+  arguments, environment and capabilities from your Account's ACP catalog. If
+  the definition was deleted or the catalog is unavailable, Happier refuses
+  launch; restore the definition or choose another available Agent explicitly.
+</Callout>
+
 Use it when Happier does not ship a dedicated built-in Agent for the tool you want to run, or when you want to add your own backend choices on top of an ACP-compatible CLI.
 
 ## What Custom ACP gives you
