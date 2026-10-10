@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { applyMemoryCoveragePolicy } from './coveragePolicy';
+import { applyMemoryCoveragePolicy, memoryIndexPolicyKey, resolveMemoryIndexPolicy } from './coveragePolicy';
 
 const rows = [
   { seq: 1, createdAtMs: 1_000, text: 'one' },
@@ -9,6 +9,17 @@ const rows = [
 ];
 
 describe('applyMemoryCoveragePolicy', () => {
+  it('changes policy identity for enable timestamps only when coverage consumes them', () => {
+    const fullHistory = { coveragePolicy: { type: 'full' as const }, backfillPolicy: 'all_history' as const };
+    const keyAt = (policy: Parameters<typeof resolveMemoryIndexPolicy>[0], enabledAtMs: number) =>
+      memoryIndexPolicyKey(resolveMemoryIndexPolicy({ ...policy, enabledAtMs }));
+    expect(keyAt(fullHistory, 1_000)).toBe(keyAt(fullHistory, 2_000));
+    expect(keyAt({ ...fullHistory, backfillPolicy: 'new_only' }, 1_000))
+      .not.toBe(keyAt({ ...fullHistory, backfillPolicy: 'new_only' }, 2_000));
+    expect(keyAt({ ...fullHistory, coveragePolicy: { type: 'since_enabled' } }, 1_000))
+      .not.toBe(keyAt({ ...fullHistory, coveragePolicy: { type: 'since_enabled' } }, 2_000));
+  });
+
   it('keeps exactly the latest semantic-message count in sequence order', () => {
     expect(applyMemoryCoveragePolicy({
       items: rows,

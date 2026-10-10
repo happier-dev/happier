@@ -18,6 +18,46 @@ function countRows(dbPath: string, table: string): number {
 }
 
 describe('summaryShardIndexDb', () => {
+  it('repairs typos only from postings visible to the complete search scope', async () => {
+    const dir = await mkdtemp(join(os.tmpdir(), 'happier-summary-scoped-typos-'));
+    try {
+      const db = openSummaryShardIndexDb({ dbPath: join(dir, 'memory.sqlite') });
+      const insert = (sessionId: string, seq: number, summary: string, time: number) => db.insertSummaryShard({ sessionId, summary, entities: [], keywords: [], decisions: [], seqFrom: seq, seqTo: seq, createdAtFromMs: time, createdAtToMs: time });
+      insert('target', 1, 'quasar planet', 100);
+      for (let seq = 1; seq <= 5; seq += 1) insert('excluded', seq, 'quasray planes', 200);
+      for (const query of ['quasra', 'planer']) {
+        expect.soft(db.search({ query, scope: { type: 'session', sessionId: 'target' }, maxResults: 10 }).map((hit) => hit.sessionId), query).toEqual(['target']);
+        expect.soft(db.search({ query, scope: { type: 'global' }, eligibleSessionIds: ['target', ...Array.from({ length: 1000 }, (_, i) => `absent-${i}`)], maxResults: 10 }).map((hit) => hit.sessionId), query).toEqual(['target']);
+        expect.soft(db.search({ query, scope: { type: 'global' }, createdBeforeMs: 150, maxResults: 10 }).map((hit) => hit.sessionId), query).toEqual(['target']);
+      }
+      insert('target', 2, 'planes', 100);
+      insert('target', 3, 'planet', 100);
+      insert('target', 4, 'planet', 100);
+      expect(db.search({ query: 'planer', scope: { type: 'session', sessionId: 'target' }, maxResults: 10 }).map((hit) => hit.seqFrom).sort((a, b) => a - b)).toEqual([1, 3, 4]);
+      db.close();
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+  it('uses full query matching with weighted identifiers, prefixes, typo repair and paging', async () => {
+    const dir = await mkdtemp(join(os.tmpdir(), 'happier-summary-retrieval-'));
+    try {
+      const db = openSummaryShardIndexDb({ dbPath: join(dir, 'memory.sqlite') });
+      for (const [sessionId, summary, entities, time] of [
+        ['body', 'the quasar session_handoff', [], 200],
+        ['identifier', 'the quasar', ['session_handoff'], 100],
+        ['common', 'the ordinary conversation', [], 300],
+      ] as const) {
+        db.insertSummaryShard({ sessionId, summary, entities, keywords: [], decisions: [], seqFrom: 1, seqTo: 1, createdAtFromMs: time, createdAtToMs: time });
+      }
+      expect(db.search({ query: 'the quasar', scope: { type: 'global' }, maxResults: 10 })).toHaveLength(2);
+      for (const query of ['session_handoff', 'session handoff', 'session_hand', 'sesion_handoff']) {
+        expect(db.search({ query, scope: { type: 'global' }, maxResults: 10 }).map((hit) => hit.sessionId), query).toEqual(['identifier', 'body']);
+      }
+      expect(db.search({ query: 'quasar', scope: { type: 'global' }, maxResults: 1, offset: 1, createdBeforeMs: 150 })).toEqual([]);
+      db.insertSummaryShard({ sessionId: 'identifier', summary: 'replacement', entities: [], keywords: [], decisions: [], seqFrom: 1, seqTo: 1, createdAtFromMs: 100, createdAtToMs: 100 });
+      expect(db.search({ query: 'handoff', scope: { type: 'session', sessionId: 'identifier' }, maxResults: 10 })).toEqual([]);
+      db.close();
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
   it.runIf(process.platform !== 'win32')('rejects a symbolic-link SQLite sidecar before opening retained plaintext', async () => {
     const dir = await mkdtemp(join(os.tmpdir(), 'happier-memory-db-sidecar-'));
     try {
@@ -609,7 +649,7 @@ describe('summaryShardIndexDb', () => {
 
       db.close();
       const migrated = openSqliteDatabaseSync(dbPath);
-      expect(migrated.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 5 });
+      expect(migrated.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 6 });
       expect(migrated.prepare(`PRAGMA table_info(summary_shards)`).all()).toEqual(
         expect.arrayContaining([expect.objectContaining({ name: 'policyKey', dflt_value: "''" })]),
       );
@@ -641,7 +681,7 @@ describe('summaryShardIndexDb', () => {
       db.markDeepIndexSuccess({ sessionId: 'sess_1', seqTo: 2, nowMs: 1000 });
 
       expect(db.deleteOldestSummaryShards({ limit: 1 })).toBe(1);
-      expect(countRows(dbPath, 'summary_terms')).toBe(0);
+      expect(countRows(dbPath, 'summary_fts_vocab')).toBe(0);
 
       expect(db.getSessionCursors({ sessionId: 'sess_1', nowMs: 2000 })).toMatchObject({
         lastHintedSeq: 2,

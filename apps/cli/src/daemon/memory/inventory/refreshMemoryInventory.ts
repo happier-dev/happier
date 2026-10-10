@@ -1,8 +1,23 @@
 import type { MemorySettingsV1 } from '@happier-dev/protocol';
 
 import type { RawSessionListRow } from '@/session/transport/http/sessionsHttp';
+import type { StoredCredentials } from '@/persistence';
+import { readSessionOwnerLocality, tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 
 import { selectSessionsForBackfill } from './selectSessionsForBackfill';
+
+/** Locality comes from the canonical opened owner metadata, including E2EE. */
+export function isMemorySessionOnMachine(params: Readonly<{
+  session: RawSessionListRow;
+  machineId: string;
+  credentials: StoredCredentials;
+  accountEncryptionMode: 'plain' | 'e2ee';
+}>): boolean {
+  const metadata = tryDecryptSessionOwnerMetadataView({
+    credentials: params.credentials, accountEncryptionMode: params.accountEncryptionMode, rawSession: params.session,
+  });
+  return readSessionOwnerLocality({ metadata, rawSession: params.session })?.machineId === params.machineId;
+}
 
 /**
  * The two Session inventories the daemon memory worker may page. `active` is
@@ -46,6 +61,7 @@ export type MemoryInventoryRefresh = Readonly<{
   sessionIds: readonly string[];
   allowInitialBackfillSessionIds: readonly string[];
   observedSeqBySessionId: ReadonlyMap<string, number>;
+  observedUpdatedAtBySessionId: ReadonlyMap<string, number>;
   state: MemoryInventoryState;
 }>;
 
@@ -144,6 +160,7 @@ export async function refreshMemoryInventoryOnce(params: Readonly<{
   state: MemoryInventoryState;
   seenSessionIds: ReadonlySet<string>;
   fetchSessionsPage: MemoryInventoryPageFetcher;
+  isSessionEligible?: (session: RawSessionListRow) => boolean;
   signal?: AbortSignal;
 }>): Promise<MemoryInventoryRefresh> {
   const scopes = resolveMemoryInventoryScopes(params.includeArchivedSessions);
@@ -154,6 +171,7 @@ export async function refreshMemoryInventoryOnce(params: Readonly<{
   const sessionIds: string[] = [];
   const allowInitialBackfillSessionIds: string[] = [];
   const observedSeqBySessionId = new Map<string, number>();
+  const observedUpdatedAtBySessionId = new Map<string, number>();
   const emitted = new Set<string>();
   const nextState: Record<MemoryInventoryScope, MemoryInventoryScopeCursorV1> = {
     active: params.state.active,
@@ -175,6 +193,7 @@ export async function refreshMemoryInventoryOnce(params: Readonly<{
         });
         params.signal?.throwIfAborted();
         for (const row of page.sessions) {
+          if (params.isSessionEligible && !params.isSessionEligible(row)) continue;
           const eligibility = resolveMemoryInventorySessionEligibility({
             session: row,
             backfillPolicy: params.backfillPolicy,
@@ -185,6 +204,7 @@ export async function refreshMemoryInventoryOnce(params: Readonly<{
           if (!eligibility || emitted.has(eligibility.sessionId)) continue;
           emitted.add(eligibility.sessionId);
           observedSeqBySessionId.set(eligibility.sessionId, eligibility.observedSeq);
+          observedUpdatedAtBySessionId.set(eligibility.sessionId, row.updatedAt);
           if (eligibility.allowInitialBackfill) {
             allowInitialBackfillSessionIds.push(eligibility.sessionId);
           }
@@ -224,9 +244,10 @@ export async function refreshMemoryInventoryOnce(params: Readonly<{
       nowMs: params.nowMs,
     });
     for (const id of selected.sessionIds) {
-      if (!id || emitted.has(id) || params.seenSessionIds.has(id)) continue;
+      if (!id || emitted.has(id)) continue;
       const row = page.sessions.find((candidate) => readSessionId(candidate) === id);
       if (!row) continue;
+      if (params.isSessionEligible && !params.isSessionEligible(row)) continue;
       const eligibility = resolveMemoryInventorySessionEligibility({
         session: row,
         backfillPolicy: params.backfillPolicy,
@@ -237,6 +258,8 @@ export async function refreshMemoryInventoryOnce(params: Readonly<{
       if (!eligibility) continue;
       emitted.add(id);
       observedSeqBySessionId.set(id, eligibility.observedSeq);
+      observedUpdatedAtBySessionId.set(id, row.updatedAt);
+      if (params.seenSessionIds.has(id)) continue;
       sessionIds.push(id);
     }
 
@@ -254,6 +277,7 @@ export async function refreshMemoryInventoryOnce(params: Readonly<{
     sessionIds,
     allowInitialBackfillSessionIds,
     observedSeqBySessionId,
+    observedUpdatedAtBySessionId,
     state: nextState,
   };
 }

@@ -2,7 +2,10 @@ import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 
 import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables/codexAcp';
-import type { SessionSummaryShardV1 } from '@happier-dev/protocol';
+import type { MemoryExternalTranscriptSourceV1 } from '@happier-dev/protocol/memory/memorySearch';
+import type { MemoryIndexSourceStatusV1 } from '@happier-dev/protocol/memory/memoryStatus';
+import type { AgentExternalSessionsTranscriptPage } from '@happier-dev/plugin-sdk/sessions/external';
+import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 
 import type { StoredCredentials } from '@/persistence';
 import { DEFAULT_MEMORY_SETTINGS, readMemorySettingsFromDisk, type MemorySettingsV1 } from '@/settings/memorySettings';
@@ -33,7 +36,6 @@ import {
 import { syncMemoryHintsForSessionsOnce } from './syncMemoryHintsForSessionsOnce';
 import { runMemoryHintsExecutionRun } from './hints/runMemoryHintsExecutionRun';
 import { commitMemorySystemRecords } from '@/session/systemRecords/memory/commitMemorySystemRecords';
-import { fetchMemorySummaryShardSystemRecords } from '@/session/systemRecords/memory/fetchMemorySystemRecords';
 import { logServerEndpointFailure } from '@/api/client/serverEndpointFailureLog';
 import { syncDeepIndexForSessionsOnce } from './deepIndex/syncDeepIndexForSessionsOnce';
 import { createEmbeddingsProviderCache, resolveEmbeddingsProvider } from './deepIndex/embeddings/resolveEmbeddingsProvider';
@@ -47,6 +49,7 @@ import {
   INITIAL_MEMORY_INVENTORY_STATE,
   refreshMemoryInventoryOnce,
   resolveMemoryInventorySessionEligibility,
+  isMemorySessionOnMachine,
   type MemoryInventoryRefresh,
   type MemoryInventoryPage,
   type MemoryInventoryScope,
@@ -54,6 +57,8 @@ import {
 } from './inventory/refreshMemoryInventory';
 import { removeMemorySessionIndexes } from './removeMemorySessionIndexes';
 import { enforceMemoryDiskBudgets } from './enforceMemoryDiskBudgets';
+import { syncMemoryDocuments, type MemoryDocumentSearchScope } from './syncMemoryDocuments';
+import type { MemorySearchQueryV1 } from '@happier-dev/protocol/memory/memorySearch';
 import { deriveSettingsSecretsReadKeysForCredentials } from '@/settings/secrets/settingsSecretsKey';
 import type { EmbeddingsProviderResolution } from './deepIndex/embeddings/embeddingsProviderTypes';
 import { fetchMemorySemanticTranscriptPage } from './transcript/fetchSemanticPage';
@@ -65,11 +70,22 @@ import {
   resolveMemoryCoverageCreatedAtCutoffMs,
   resolveMemoryIndexPolicy,
 } from './transcript/coveragePolicy';
+import { createMemoryExternalTranscriptSources, type MemoryExternalObservation } from './externalTranscriptSources';
+import { syncExternalMemoryTranscriptsBatch } from './externalTranscriptIndex';
+import { runMemoryWorkerSourcesTick } from './runMemoryWorkerSourcesTick';
 
 export type MemoryWorkerHandle = Readonly<{
   stop: () => void | Promise<void>;
   reloadSettings: (signal?: AbortSignal) => Promise<void>;
+  /** Clears derived indexes and progress without changing saved settings or the model-cache policy. */
+  clearIndex: (signal?: AbortSignal) => Promise<void>;
   ensureUpToDate: (sessionId?: string, signal?: AbortSignal) => Promise<void>;
+  /** Transcript revisions arrive through the incumbent durable Account change stream. */
+  noteSessionTranscriptRevised?: (change: Readonly<{ sessionId: string; seq: number; messageId?: string }>) => Promise<void>;
+  attachExternalObservation?: (observation: MemoryExternalObservation) => () => void;
+  readExternalTranscriptPage?: (request: Readonly<{ source: MemoryExternalTranscriptSourceV1; cursor?: string }>, signal?: AbortSignal) => Promise<AgentExternalSessionsTranscriptPage | null>;
+  /** Fresh attachment admission; omitted by legacy/unsupported worker implementations. */
+  resolveDocumentSearchScope?: (scope: MemorySearchQueryV1['scope'], signal?: AbortSignal) => Promise<MemoryDocumentSearchScope>;
   /**
    * The memory-owner removal operation for Sessions that were deleted, whose
    * access was revoked, or that are no longer eligible. It clears the derived
@@ -102,6 +118,7 @@ export type MemoryWorkerHandle = Readonly<{
     currentPhase: string | null;
   }>;
   getTier1DbPath: () => string | null;
+  getIndexSources?: () => readonly MemoryIndexSourceStatusV1[];
   getDeepDbPath: () => string | null;
   getTier1DbPhysicalPath?: () => string;
   getDeepDbPhysicalPath?: () => string;
@@ -136,7 +153,6 @@ export async function startMemoryWorker(params: Readonly<{
   env?: NodeJS.ProcessEnv;
   deps?: Readonly<{
     fetchDecryptedTranscriptPageAfterSeq: (args: Readonly<{ sessionId: string; afterSeq: number; limit: number; signal?: AbortSignal }>) => Promise<DecryptedTranscriptRow[]>;
-    fetchCommittedSummaryShards?: (sessionId: string, signal?: AbortSignal) => Promise<SessionSummaryShardV1[]>;
   }>;
 }>): Promise<MemoryWorkerHandle> {
   let stopped = false;
@@ -145,6 +161,7 @@ export async function startMemoryWorker(params: Readonly<{
   let effectiveSettings: MemorySettingsV1 = DEFAULT_MEMORY_SETTINGS;
   let tier1: SummaryShardIndexDbHandle | null = null;
   let deep: DeepIndexDbHandle | null = null;
+  let indexesQualified = false;
   let inventoryLoop: SingleFlightIntervalLoopHandle | null = null;
   let inventoryLoopIntervalMs: number | null = null;
   let workLoop: SingleFlightIntervalLoopHandle | null = null;
@@ -162,6 +179,12 @@ export async function startMemoryWorker(params: Readonly<{
   let archivedExclusionPending = false;
   const inventorySeenSessionIds = new Set<string>();
   const candidateObservedSeqBySessionId = new Map<string, number>();
+  const observedUpdatedAtBySessionId = new Map<string, number>();
+  const editedSessionIds = new Set<string>();
+  const externalSources = createMemoryExternalTranscriptSources({ credentials: params.credentials,
+    onChange: () => { externalSourcesNeedRefresh = true; workLoop?.trigger(); } });
+  let externalSourcesNeedRefresh = true;
+  let externalSyncPromise: Promise<void> | null = null;
   const sessionCryptoContextCache = new Map<string, SessionStoredContentCryptoContext>();
   const settingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(params.credentials);
   const embeddingsProviderCache = createEmbeddingsProviderCache();
@@ -183,10 +206,37 @@ export async function startMemoryWorker(params: Readonly<{
   const activeIndexOperations = new Set<Readonly<{
     sessionIds: ReadonlySet<string>;
     controller: AbortController;
-    promise: Promise<void>;
+    promise: Promise<unknown>;
   }>>();
   const removingSessionIds = new Set<string>();
   let stopPromise: Promise<void> | null = null;
+  let clearIndexPromise: Promise<void> | null = null;
+  let settingsOperation: Promise<void> = Promise.resolve();
+  const runSettingsOperation = (operation: () => Promise<void>): Promise<void> => {
+    const next = settingsOperation.then(operation);
+    // A failed operation remains observable to its caller but cannot strand
+    // later settings changes or a retry of clearing the index.
+    settingsOperation = next.catch(() => {});
+    return next;
+  };
+
+  const resolveDocumentSearchScope = async (scope: MemorySearchQueryV1['scope'], signal?: AbortSignal): Promise<MemoryDocumentSearchScope> => {
+    signal?.throwIfAborted();
+    const db = deep;
+    const basis = settings;
+    if (stopped || !basis.enabled || !db) return { state: 'unavailable', eligibleDocuments: [] };
+    const controller = new AbortController();
+    const operationSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+    const promise = syncMemoryDocuments({ credentials: params.credentials, machineId: params.machineId, scope,
+      db, includeArchivedSessions: basis.includeArchivedSessions, signal: operationSignal,
+      assertCurrent: () => {
+        if (stopped || settings !== basis || deep !== db) throw new Error('memory_document_scope_changed');
+      } });
+    const operation = { sessionIds: new Set(scope.type === 'session' ? [scope.sessionId] : []), controller, promise };
+    activeIndexOperations.add(operation);
+    try { return await promise; }
+    finally { activeIndexOperations.delete(operation); }
+  };
 
   const resolveSessionCryptoContext = async (
     sessionId: string,
@@ -297,6 +347,10 @@ export async function startMemoryWorker(params: Readonly<{
 
   unsubscribeAccountSettingsSnapshot = subscribeActiveAccountSettingsSnapshot((previous, next) => {
     if (!settings.enabled) return;
+    if (previous?.source !== next?.source || previous?.settings !== next?.settings) {
+      externalSourcesNeedRefresh = true;
+      workLoop?.trigger();
+    }
     if (resolveOperationalMemoryEmbeddingsSettings(settings.embeddings)?.providerKind !== 'local_transformers') return;
     // Saved-secret catalog and Connected Services projection publications reuse
     // the incumbent settings object. Only the actual settings/source cut forms
@@ -386,6 +440,7 @@ export async function startMemoryWorker(params: Readonly<{
     stopPromise = (async () => {
       stopped = true;
       await stopLoop();
+      await externalSources.dispose();
       for (const operation of activeIndexOperations) operation.controller.abort();
       await Promise.allSettled([...activeIndexOperations].map((operation) => operation.promise));
       try {
@@ -437,6 +492,8 @@ export async function startMemoryWorker(params: Readonly<{
    * while paging, so no branch can inventory a scope the settings exclude.
    */
   const refreshInventory = async (options?: Readonly<{ apply?: boolean; signal?: AbortSignal }>): Promise<MemoryInventoryRefresh> => {
+    const accountEncryptionMode = (await fetchAccountEncryptionCurrentness({ token: params.credentials.token, signal: options?.signal })).mode;
+    const excludedScopeSessionIds = new Set<string>();
     const refresh = await refreshMemoryInventoryOnce({
       backfillPolicy: settings.backfillPolicy,
       includeArchivedSessions: settings.includeArchivedSessions,
@@ -446,9 +503,23 @@ export async function startMemoryWorker(params: Readonly<{
       state: inventoryState,
       seenSessionIds: inventorySeenSessionIds,
       fetchSessionsPage: fetchMemoryInventoryPage,
+      isSessionEligible: session => {
+        const eligible = isMemorySessionOnMachine({ session, machineId: params.machineId,
+          credentials: params.credentials, accountEncryptionMode });
+        if (!eligible && typeof session.id === 'string') excludedScopeSessionIds.add(session.id);
+        return eligible;
+      },
       ...(options?.signal ? { signal: options.signal } : {}),
     });
     options?.signal?.throwIfAborted();
+    if (excludedScopeSessionIds.size) await removeSessions([...excludedScopeSessionIds]);
+    for (const [sessionId, updatedAt] of refresh.observedUpdatedAtBySessionId) {
+      const previous = observedUpdatedAtBySessionId.get(sessionId);
+      const cursors = tier1?.getSessionCursors({ sessionId, nowMs: Date.now() });
+      const retained = (cursors?.lastHintedSeq ?? 0) > 0 || (cursors?.lastDeepIndexedSeq ?? 0) > 0;
+      if ((previous !== undefined && previous !== updatedAt) || (previous === undefined && retained)) editedSessionIds.add(sessionId);
+      observedUpdatedAtBySessionId.set(sessionId, updatedAt);
+    }
 
     if (options?.apply === false) return refresh;
 
@@ -491,6 +562,8 @@ export async function startMemoryWorker(params: Readonly<{
       candidateObservedSeqBySessionId.delete(sessionId);
       inventorySeenSessionIds.delete(sessionId);
       sessionCryptoContextCache.delete(sessionId);
+      observedUpdatedAtBySessionId.delete(sessionId);
+      editedSessionIds.delete(sessionId);
     }
   };
 
@@ -547,12 +620,13 @@ export async function startMemoryWorker(params: Readonly<{
     return withRetainedIndexHandles((handles) => {
       const retained = new Set<string>();
       for (const sessionId of handles.tier1?.listIndexedSessionIds() ?? []) retained.add(sessionId);
-      for (const sessionId of handles.deep?.listIndexedSessionIds() ?? []) retained.add(sessionId);
+      const external = new Set(handles.deep?.listExternalSourceStates().map(state => state.sessionId) ?? []);
+      for (const sessionId of handles.deep?.listIndexedSessionIds() ?? []) if (!external.has(sessionId)) retained.add(sessionId);
       return [...retained];
     });
   };
 
-  const reconcileRetainedSessionAccess = async (): Promise<void> => {
+  const reconcileRetainedSessionAccess = async (signal?: AbortSignal): Promise<void> => {
     const retained = new Set(listIndexedSessionIds());
     if (retained.size === 0) return;
     // Archived sessions are only eligible when the setting is enabled.  The
@@ -569,8 +643,14 @@ export async function startMemoryWorker(params: Readonly<{
       fetchInventoryPage: async (args) => await fetchMemoryInventoryPage({
         ...args,
         limit: settings.worker.sessionListPageLimit,
+        ...(signal ? { signal } : {}),
+      }).then(async page => {
+        const accountEncryptionMode = (await fetchAccountEncryptionCurrentness({ token: params.credentials.token, signal })).mode;
+        return { ...page, sessions: page.sessions.filter(session => isMemorySessionOnMachine({ session,
+          machineId: params.machineId, credentials: params.credentials, accountEncryptionMode })) };
       }),
     });
+    signal?.throwIfAborted();
     await removeSessions([...retained].filter((sessionId) => !visible.has(sessionId)));
   };
 
@@ -681,6 +761,10 @@ export async function startMemoryWorker(params: Readonly<{
         ...(typeof beforeSeq === 'number' ? { beforeSeq } : {}),
         contentPolicy: settings.contentPolicy,
         ...(signal ? { signal } : {}),
+      }).catch((error: unknown) => {
+        signal?.throwIfAborted();
+        logMemoryWorkerServerEndpointFailure('selected transcript rows', error);
+        throw error;
       });
       for (const item of page.items) {
         rows.push({
@@ -710,6 +794,7 @@ export async function startMemoryWorker(params: Readonly<{
     options?: Readonly<{
       allowInitialBackfillWhenUninitializedSessionIds?: readonly string[];
       initialCursorSeqBySessionId?: ReadonlyMap<string, number>;
+      forceSnapshotSessionIds?: readonly string[];
       signal?: AbortSignal;
     }>,
   ): Promise<void> => {
@@ -720,6 +805,7 @@ export async function startMemoryWorker(params: Readonly<{
 
     await syncMemoryHintsForSessionsOnce({
       sessionIds,
+      forceSnapshotSessionIds: options?.forceSnapshotSessionIds,
       ...(options?.allowInitialBackfillWhenUninitializedSessionIds
         ? { allowInitialBackfillWhenUninitializedSessionIds: options.allowInitialBackfillWhenUninitializedSessionIds }
         : {}),
@@ -732,6 +818,7 @@ export async function startMemoryWorker(params: Readonly<{
         indexMode: settings.indexMode,
         backfillPolicy: settings.backfillPolicy,
         hints: {
+          enabled: settings.hints.enabled,
           updateMode: settings.hints.updateMode,
           idleDelayMs: settings.hints.idleDelayMs,
           windowSizeMessages: settings.hints.windowSizeMessages,
@@ -750,7 +837,6 @@ export async function startMemoryWorker(params: Readonly<{
       },
       now: () => Date.now(),
       fetchRecentDecryptedRows,
-      fetchCommittedSummaryShards,
       runSummarizer: async (prompt, sessionId, signal) => {
         return await runMemoryHintsExecutionRun({
           cwd: configuration.activeServerDir,
@@ -780,67 +866,13 @@ export async function startMemoryWorker(params: Readonly<{
     });
   };
 
-  const fetchCommittedSummaryShards = async (sessionId: string, signal?: AbortSignal): Promise<SessionSummaryShardV1[]> => {
-    signal?.throwIfAborted();
-    if (deps.fetchCommittedSummaryShards) {
-      return await deps.fetchCommittedSummaryShards(sessionId, signal);
-    }
-    try {
-      const cryptoContext = await resolveSessionCryptoContext(sessionId, signal);
-      if (!cryptoContext) return [];
-      const shards = await fetchMemorySummaryShardSystemRecords({
-        token: params.credentials.token,
-        sessionId,
-        mode: cryptoContext.mode,
-        ...(cryptoContext.ctx ? { ctx: cryptoContext.ctx } : {}),
-        ...(signal ? { signal } : {}),
-      });
-      signal?.throwIfAborted();
-      return shards;
-    } catch (error) {
-      if (!(error instanceof AccountEncryptionMaterialUnavailableError)) {
-        logMemoryWorkerServerEndpointFailure('summary system records', error);
-      }
-      throw error;
-    }
-  };
-
-  const ingestCommittedSummaryShards = async (sessionId: string, signal?: AbortSignal): Promise<void> => {
-    if (!tier1) return;
-    const nowMs = Date.now();
-    const memoryPolicy = resolveDeepIndexPolicy(settings);
-    const policyKey = memoryIndexPolicyKey(memoryPolicy);
-    for (const shard of await fetchCommittedSummaryShards(sessionId, signal)) {
-      signal?.throwIfAborted();
-      if (!shard.memoryPolicy || memoryIndexPolicyKey(shard.memoryPolicy) !== policyKey) continue;
-      tier1.insertSummaryShard({
-        sessionId,
-        seqFrom: shard.seqFrom,
-        seqTo: shard.seqTo,
-        createdAtFromMs: shard.createdAtFromMs,
-        createdAtToMs: shard.createdAtToMs,
-        summary: shard.summary,
-        keywords: shard.keywords ?? [],
-        entities: shard.entities ?? [],
-        decisions: shard.decisions ?? [],
-        policyKey,
-      });
-      tier1.markHintRunSuccess({ sessionId, seqTo: shard.seqTo, nowMs });
-    }
-  };
-
-  const syncDeepForSessions = async (sessionIds: readonly string[], signal?: AbortSignal, forceSnapshot = false): Promise<void> => {
-    if (stopped) return;
-    if (!settings.enabled) return;
-    if (settings.indexMode !== 'deep') return;
-    if (!tier1) return;
-    if (!deep) return;
-    if (sessionIds.length === 0) return;
+  const syncDeepForSessions = async (sessionIds: readonly string[], signal?: AbortSignal, forceSnapshot = false): Promise<ReadonlySet<string>> => {
+    if (stopped || !settings.enabled || settings.indexMode !== 'deep' || !tier1 || !deep || sessionIds.length === 0) return new Set();
 
     const embeddings = resolveOperationalMemoryEmbeddingsSettings(settings.embeddings);
     const embeddingsResolution = await refreshEmbeddingsDiagnostics(signal);
 
-    await syncDeepIndexForSessionsOnce({
+    return await syncDeepIndexForSessionsOnce({
       sessionIds,
       tier1,
       deep,
@@ -882,7 +914,6 @@ export async function startMemoryWorker(params: Readonly<{
     input.signal?.throwIfAborted();
     if (!tier1 || input.sessionIds.length === 0) return;
     const allowInitialBackfill = new Set(input.allowInitialBackfillSessionIds);
-    const historicalContentBlocked = new Set<string>();
     const admittedSessionIds: string[] = [];
 
     const nowMs = Date.now();
@@ -890,13 +921,12 @@ export async function startMemoryWorker(params: Readonly<{
       if (settings.backfillPolicy === 'new_only' && !allowInitialBackfill.has(sessionId)) {
         const observedSeq = input.observedSeqBySessionId.get(sessionId);
         if (typeof observedSeq !== 'number' || !Number.isFinite(observedSeq)) continue;
-        const seeded = tier1.trySeedSessionCursorsIfMissing({
+        tier1.trySeedSessionCursorsIfMissing({
           sessionId,
           nowMs,
           lastHintedSeq: Math.max(0, Math.trunc(observedSeq)),
           lastDeepIndexedSeq: Math.max(0, Math.trunc(observedSeq)),
         });
-        if (seeded) historicalContentBlocked.add(sessionId);
       } else {
         // Establish the tier-1 retained identity before any deep chunk write.
         // Zero keeps historical backfill eligible while closing the deep-only
@@ -912,24 +942,49 @@ export async function startMemoryWorker(params: Readonly<{
     }
 
     if (admittedSessionIds.length === 0) return;
-
-    await syncHintsForSessions(admittedSessionIds, {
-      allowInitialBackfillWhenUninitializedSessionIds: input.allowInitialBackfillSessionIds,
-      initialCursorSeqBySessionId: input.observedSeqBySessionId,
-      ...(input.signal ? { signal: input.signal } : {}),
-    });
-
-    // Hints mode ingests committed summaries itself. Deep mode retains that
-    // useful tier-1 projection, but only after the same eligibility decision
-    // has established whether historical content is allowed.
-    if (settings.indexMode === 'deep') {
-      for (const sessionId of admittedSessionIds) {
-        if (!historicalContentBlocked.has(sessionId)) {
-          await ingestCommittedSummaryShards(sessionId, input.signal);
-        }
-      }
+    for (const sessionId of admittedSessionIds) {
+      const observed = input.observedSeqBySessionId.get(sessionId);
+      if (observed !== undefined) candidateObservedSeqBySessionId.set(sessionId, observed);
     }
-    await syncDeepForSessions(admittedSessionIds, input.signal, input.forcePolicySnapshot === true);
+
+    const edited = admittedSessionIds.filter(sessionId => editedSessionIds.has(sessionId));
+    const unchanged = admittedSessionIds.filter(sessionId => !editedSessionIds.has(sessionId));
+    if (edited.length) {
+      // The same admitted revision invalidates the inactive projection too;
+      // switching modes must not revive bytes from before that revision.
+      withRetainedIndexHandles(handles => {
+        for (const sessionId of edited) {
+          if (settings.indexMode === 'hints') {
+            handles.deep?.deleteSessionIndexData({ sessionId });
+            handles.tier1?.rewindSessionCursor({ sessionId, lane: 'deep', seq: 0 });
+          } else {
+            handles.tier1?.pruneSessionArtifacts({ sessionId,
+              policyKey: `${memoryIndexPolicyKey(resolveTier1IndexPolicy(settings))}:edited` });
+            handles.tier1?.rewindSessionCursor({ sessionId, lane: 'hints', seq: 0 });
+          }
+        }
+      });
+    }
+    // Consume only the revisions this turn owns. A revision arriving during
+    // source IO remains queued in this same set for the following worker turn.
+    for (const sessionId of edited) editedSessionIds.delete(sessionId);
+    try {
+      await syncHintsForSessions(admittedSessionIds, {
+        forceSnapshotSessionIds: edited,
+        allowInitialBackfillWhenUninitializedSessionIds: input.allowInitialBackfillSessionIds,
+        initialCursorSeqBySessionId: input.observedSeqBySessionId,
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
+      await syncDeepForSessions(unchanged, input.signal, input.forcePolicySnapshot === true);
+      const completed = await syncDeepForSessions(edited, input.signal, true);
+      for (const sessionId of edited) {
+        if (settings.indexMode === 'deep' ? !completed.has(sessionId)
+          : tier1.getSessionCursors({ sessionId, nowMs: Date.now() }).lastHintedSeq === 0) editedSessionIds.add(sessionId);
+      }
+    } catch (error) {
+      for (const sessionId of edited) editedSessionIds.add(sessionId);
+      throw error;
+    }
   };
 
   const runTrackedSyncEligibleSessions = (input: Readonly<{
@@ -981,8 +1036,10 @@ export async function startMemoryWorker(params: Readonly<{
       !== memoryIndexPolicyKey(resolveTier1IndexPolicy(next));
     const deepPolicyChanged = memoryIndexPolicyKey(resolveDeepIndexPolicy(previousSettings))
       !== memoryIndexPolicyKey(resolveDeepIndexPolicy(next));
+    const externalPolicyChanged = JSON.stringify(previousSettings.conversationSearch.indexExternal)
+      !== JSON.stringify(next.conversationSearch.indexExternal);
     const policyChanged = tier1PolicyChanged || deepPolicyChanged;
-    if (policyChanged) {
+    if (policyChanged || externalPolicyChanged) {
       for (const operation of activeIndexOperations) operation.controller.abort();
       await Promise.allSettled([...activeIndexOperations].map((operation) => operation.promise));
       signal?.throwIfAborted();
@@ -991,15 +1048,18 @@ export async function startMemoryWorker(params: Readonly<{
       embeddingsProviderCache.clear();
     }
     settings = next;
+    if (externalPolicyChanged) externalSourcesNeedRefresh = true;
     if (stopped) return;
 
     if (!settings.enabled) {
+      indexesQualified = false;
       embeddingsProviderCache.clear();
       embeddingsDiagnostics = buildUnavailableMemoryEmbeddingsDiagnostics(settings.embeddings);
       // Nothing is searchable while memory is disabled, so no exclusion is
       // outstanding.
       archivedExclusionPending = false;
       await stopLoop();
+      await externalSources.refresh(settings, signal ?? new AbortController().signal);
       for (const operation of activeIndexOperations) operation.controller.abort();
       await Promise.allSettled([...activeIndexOperations].map((operation) => operation.promise));
       if (tier1) {
@@ -1062,17 +1122,20 @@ export async function startMemoryWorker(params: Readonly<{
     }
 
     if (!tier1) {
+      indexesQualified = false;
       tier1 = openSummaryShardIndexDb({ dbPath: paths.tier1DbPath });
       tier1.init();
     }
 
     if (deepPolicyChanged && !deep && existsSync(paths.deepDbPath)) {
+      indexesQualified = false;
       deep = openDeepIndexDb({ dbPath: paths.deepDbPath });
       deep.init();
     }
 
-    if (settings.indexMode === 'deep') {
+    if (settings.indexMode === 'deep' || settings.conversationSearch.indexExternal.enabled) {
       if (!deep) {
+        indexesQualified = false;
         deep = openDeepIndexDb({ dbPath: paths.deepDbPath });
         deep.init();
       }
@@ -1083,6 +1146,26 @@ export async function startMemoryWorker(params: Readonly<{
         // best-effort
       }
       deep = null;
+    }
+    if (externalPolicyChanged && deep) {
+      for (const retained of deep.listExternalSourceStates()) deep.deleteSessionIndexData({ sessionId: retained.sessionId });
+      await externalSources.refresh(settings, signal ?? new AbortController().signal);
+      externalSourcesNeedRefresh = false;
+    }
+    if (!indexesQualified) {
+      try {
+        // Existing rows must be requalified before the daemon exposes its
+        // opened index, including after an offline handoff or an older cache.
+        await reconcileRetainedSessionAccess(signal);
+        indexesQualified = true;
+      } catch (error) {
+        deep?.close();
+        deep = null;
+        tier1?.close();
+        tier1 = null;
+        workerStatus = { ...workerStatus, state: 'error' };
+        throw error;
+      }
     }
 
     // Provider resolution shares initialization through the worker-owned cache.
@@ -1096,9 +1179,11 @@ export async function startMemoryWorker(params: Readonly<{
     await applyArchivedEligibility(signal);
 
     if (policyChanged && tier1) {
+      const externalIds = new Set(deep?.listExternalSourceStates().map(state => state.sessionId) ?? []);
+      for (const sessionId of externalIds) deep?.deleteSessionIndexData({ sessionId });
       const retainedSessionIds = [...new Set([
         ...(tier1PolicyChanged || deepPolicyChanged ? tier1.listIndexedSessionIds() : []),
-        ...(deepPolicyChanged ? (deep?.listIndexedSessionIds() ?? []) : []),
+        ...(deepPolicyChanged ? (deep?.listIndexedSessionIds().filter(id => !externalIds.has(id)) ?? []) : []),
       ])];
       if (retainedSessionIds.length > 0) {
         try {
@@ -1129,7 +1214,7 @@ export async function startMemoryWorker(params: Readonly<{
         }
       }
     }
-    if (settings.indexMode !== 'deep' && deep) {
+    if (settings.indexMode !== 'deep' && !settings.conversationSearch.indexExternal.enabled && deep) {
       try {
         deep.close();
       } catch {
@@ -1151,12 +1236,16 @@ export async function startMemoryWorker(params: Readonly<{
             if (stopped) return;
             if (!settings.enabled) return;
             signal.throwIfAborted();
+            externalSourcesNeedRefresh = true;
+            externalSources.invalidate();
+            workLoop?.trigger();
             const reportsInventory = workerStatus.state !== 'indexing';
             if (reportsInventory) {
               workerStatus = { ...workerStatus, state: 'inventorying', lastInventoryAtMs: Date.now(), currentPhase: 'inventory' };
             }
             if (archivedExclusionPending) await applyArchivedEligibility(signal);
             await refreshInventory({ signal });
+            await resolveDocumentSearchScope({ type: 'global' }, signal);
             signal.throwIfAborted();
             if (reportsInventory && workerStatus.currentPhase === 'inventory') {
               workerStatus = { ...workerStatus, state: 'idle', currentPhase: null };
@@ -1185,25 +1274,21 @@ export async function startMemoryWorker(params: Readonly<{
             if (!settings.enabled) return;
             if (!tier1) return;
             signal.throwIfAborted();
-            if (candidateSessionIds.length > 0) {
+            if (candidateSessionIds.length > 0 || settings.conversationSearch.indexExternal.enabled) {
               workerStatus = { ...workerStatus, state: 'indexing', lastTickAtMs: Date.now(), currentPhase: 'tick' };
-
-              const maxSessions = Math.max(1, Math.trunc(settings.worker.maxSessionsPerTick));
-              const sessionIds: string[] = [];
-              const allowInitialBackfillWhenUninitializedSessionIds: string[] = [];
-              for (let i = 0; i < maxSessions; i += 1) {
-                if (candidateSessionIds.length === 0) break;
-                const idx = candidateCursor % candidateSessionIds.length;
-                const id = candidateSessionIds[idx];
-                candidateCursor = (candidateCursor + 1) % candidateSessionIds.length;
-                if (!id) continue;
-                sessionIds.push(id);
-                if (candidateAllowInitialBackfillSessionIds.has(id)) {
-                  allowInitialBackfillWhenUninitializedSessionIds.push(id);
-                }
-              }
-
-              if (sessionIds.length > 0) {
+            }
+            const maxSessions = Math.max(1, Math.trunc(settings.worker.maxSessionsPerTick));
+            candidateCursor = await runMemoryWorkerSourcesTick({ sessionIds: candidateSessionIds,
+              externalSourceCount: externalSources.getReadySourceCount(), cursor: candidateCursor, maxSessions,
+              signal, advanceCursor: next => { candidateCursor = next; },
+              prepareExternalSources: async () => {
+                // Native readiness consumes no transcript allowance and a
+                // failure must not suppress selected Happier source work.
+                await syncExternalSources(signal, 0);
+                return externalSources.getReadySourceCount();
+              },
+              syncExternalSources: maxSources => syncExternalSources(signal, maxSources),
+              syncSessions: async sessionIds => {
                 workerStatus = { ...workerStatus, currentSessionId: sessionIds[0] ?? null };
                 const observedSeqBySessionId = new Map<string, number>();
                 for (const sessionId of sessionIds) {
@@ -1213,27 +1298,27 @@ export async function startMemoryWorker(params: Readonly<{
                 await runTrackedSyncEligibleSessions({
                   sessionIds,
                   observedSeqBySessionId,
-                  allowInitialBackfillSessionIds: allowInitialBackfillWhenUninitializedSessionIds,
+                  allowInitialBackfillSessionIds: sessionIds.filter(id => candidateAllowInitialBackfillSessionIds.has(id)),
                   signal,
                 });
-              }
-            }
-
-            if (tier1) {
-              workerStatus = { ...workerStatus, state: 'indexing', currentSessionId: null, currentPhase: 'budget' };
-              const mbToBytes = (mb: number): number => Math.max(0, Math.trunc(mb)) * 1024 * 1024;
-              await enforceMemoryDiskBudgets({
-                tier1,
-                deep,
-                tier1DbPath: paths.tier1DbPath,
-                deepDbPath: paths.deepDbPath,
-                budgets: {
-                  tier1Bytes: mbToBytes(settings.budgets.maxDiskMbLight),
-                  deepBytes: mbToBytes(settings.budgets.maxDiskMbDeep),
-                },
-              });
-              signal.throwIfAborted();
-            }
+              },
+              finishTick: async () => {
+                if (!tier1) return;
+                workerStatus = { ...workerStatus, state: 'indexing', currentSessionId: null, currentPhase: 'budget' };
+                const mbToBytes = (mb: number): number => Math.max(0, Math.trunc(mb)) * 1024 * 1024;
+                await enforceMemoryDiskBudgets({
+                  tier1,
+                  deep,
+                  tier1DbPath: paths.tier1DbPath,
+                  deepDbPath: paths.deepDbPath,
+                  budgets: {
+                    tier1Bytes: mbToBytes(settings.budgets.maxDiskMbLight),
+                    deepBytes: mbToBytes(settings.budgets.maxDiskMbDeep),
+                  },
+                });
+                signal.throwIfAborted();
+              },
+            });
             workerStatus = { ...workerStatus, state: 'idle', currentSessionId: null, currentPhase: null };
           },
           onError: (error) => {
@@ -1248,13 +1333,80 @@ export async function startMemoryWorker(params: Readonly<{
     }
   };
 
-  const reloadSettings = async (signal?: AbortSignal): Promise<void> => {
+  const syncExternalSourcesOnce = async (signal: AbortSignal, maxSources: number): Promise<void> => {
+    if (externalSourcesNeedRefresh) {
+      await externalSources.refresh(settings, signal);
+      externalSourcesNeedRefresh = false;
+    }
+    if (!settings.enabled || !settings.conversationSearch.indexExternal.enabled || !deep) return;
+    const inventory = await externalSources.inventory(signal);
+    if (inventory) {
+      for (const retained of deep.listExternalSourceStates()) {
+        const key = JSON.stringify([retained.source.agentId, retained.source.sourceKey]);
+        if (!inventory.configuredSourceKeys.has(key)
+          || (inventory.completeSources.has(key) && !inventory.current.has(retained.sessionId))) deep.deleteSessionIndexData({ sessionId: retained.sessionId });
+      }
+    }
+    if (maxSources === 0) return;
+    const embeddings = resolveOperationalMemoryEmbeddingsSettings(settings.embeddings);
+    const resolution = embeddings?.enabled ? await refreshEmbeddingsDiagnostics(signal) : null;
+    await syncExternalMemoryTranscriptsBatch({ candidates: externalSources.take(maxSources), db: deep, settings, nowMs: Date.now(), signal,
+        onSourceResult: externalSources.noteSyncResult,
+        ...(resolution?.provider ? { embedDocuments: resolution.provider.embedDocuments } : {}),
+        ...(embeddings?.enabled && embeddings.providerKind && embeddings.modelId
+          ? { embeddings: { providerKind: embeddings.providerKind, modelId: embeddings.modelId } } : {}) });
+  };
+
+  const syncExternalSources = async (signal: AbortSignal, maxSources = Math.max(1, Math.trunc(settings.worker.maxSessionsPerTick))): Promise<void> => {
+    if (stopped || !settings.enabled || !deep) return;
+    if (externalSyncPromise) return await externalSyncPromise;
+    const controller = new AbortController();
+    const operationSignal = AbortSignal.any([signal, controller.signal]);
+    const promise = Promise.resolve().then(() => {
+      operationSignal.throwIfAborted();
+      return syncExternalSourcesOnce(operationSignal, maxSources);
+    });
+    const operation = { sessionIds: new Set<string>(), controller, promise };
+    activeIndexOperations.add(operation);
+    externalSyncPromise = promise;
+    try { await promise; }
+    finally { activeIndexOperations.delete(operation); externalSyncPromise = null; }
+  };
+
+  const clearIndex = (signal?: AbortSignal): Promise<void> => {
+    signal?.throwIfAborted();
+    if (stopped) return Promise.reject(new Error('memory_worker_stopped'));
+    if (clearIndexPromise) return clearIndexPromise;
+    clearIndexPromise = runSettingsOperation(async () => {
+      const prior = settings;
+      // Reuse the disabled lifecycle to stop loops, abort/drain all index
+      // writers and close SQLite handles before removing their derived files.
+      // Never persist this transient setting or remove the inference cache.
+      await applySettings({ ...prior, enabled: false, deleteOnDisable: false });
+      try {
+        signal?.throwIfAborted();
+        for (const dbPath of [paths.tier1DbPath, paths.deepDbPath]) {
+          for (const suffix of ['', '-wal', '-shm']) await rm(`${dbPath}${suffix}`, { force: true });
+        }
+        sessionCryptoContextCache.clear();
+        observedUpdatedAtBySessionId.clear();
+        editedSessionIds.clear();
+      } finally {
+        externalSourcesNeedRefresh = true;
+        await applySettings(prior);
+      }
+    }).finally(() => { clearIndexPromise = null; });
+    return clearIndexPromise;
+  };
+
+  const reloadSettings = (signal?: AbortSignal): Promise<void> => runSettingsOperation(async () => {
     signal?.throwIfAborted();
     if (stopped) return;
     const next = await readMemorySettingsFromDisk();
+    if (JSON.stringify(next.conversationSearch.indexExternal) !== JSON.stringify(settings.conversationSearch.indexExternal)) externalSourcesNeedRefresh = true;
     signal?.throwIfAborted();
     await applySettings(next, signal);
-  };
+  });
 
   const ensureUpToDate = async (_sessionId?: string, signal?: AbortSignal): Promise<void> => {
     signal?.throwIfAborted();
@@ -1263,6 +1415,8 @@ export async function startMemoryWorker(params: Readonly<{
     signal?.throwIfAborted();
     if (!settings.enabled) return;
     if (!tier1) return;
+    if (!_sessionId) await syncExternalSources(signal ?? new AbortController().signal);
+    await resolveDocumentSearchScope(_sessionId ? { type: 'session', sessionId: _sessionId } : { type: 'global' }, signal);
     if (!_sessionId) {
       // Same eligibility/inventory owner as the background loop, so an
       // explicit refresh can never inventory a scope the settings exclude.
@@ -1282,7 +1436,9 @@ export async function startMemoryWorker(params: Readonly<{
       sessionId: _sessionId,
       ...(signal ? { signal } : {}),
     });
-    const eligibility = session
+    const accountEncryptionMode = (await fetchAccountEncryptionCurrentness({ token: params.credentials.token, signal })).mode;
+    const eligibility = session && isMemorySessionOnMachine({ session, machineId: params.machineId,
+      credentials: params.credentials, accountEncryptionMode })
       ? resolveMemoryInventorySessionEligibility({
           session,
           backfillPolicy: settings.backfillPolicy,
@@ -1295,6 +1451,12 @@ export async function startMemoryWorker(params: Readonly<{
       await removeSessions([_sessionId]);
       return;
     }
+
+    const previousUpdatedAt = observedUpdatedAtBySessionId.get(_sessionId);
+    const cursors = tier1.getSessionCursors({ sessionId: _sessionId, nowMs: Date.now() });
+    const retained = cursors.lastHintedSeq > 0 || cursors.lastDeepIndexedSeq > 0;
+    if ((previousUpdatedAt !== undefined && previousUpdatedAt !== session!.updatedAt) || (previousUpdatedAt === undefined && retained)) editedSessionIds.add(_sessionId);
+    observedUpdatedAtBySessionId.set(_sessionId, session!.updatedAt);
 
     await runTrackedSyncEligibleSessions({
       sessionIds: [eligibility.sessionId],
@@ -1311,11 +1473,23 @@ export async function startMemoryWorker(params: Readonly<{
   return {
     stop,
     reloadSettings,
+    clearIndex,
     ensureUpToDate,
+    noteSessionTranscriptRevised: async ({ sessionId }) => {
+      if (stopped) return;
+      // Inventory/access admission remains the scope authority. Unindexed
+      // Sessions read their current source when first admitted normally.
+      if (!candidateSessionIds.includes(sessionId) && !listIndexedSessionIds().includes(sessionId)) return;
+      editedSessionIds.add(sessionId);
+      workLoop?.trigger();
+    },
+    attachExternalObservation: externalSources.attach,
+    readExternalTranscriptPage: async (request, signal) => await externalSources.readPage(request, settings, signal ?? new AbortController().signal),
+    resolveDocumentSearchScope,
     removeSessions,
     reconcileRetainedSessionAccess,
     applySessionArchivedState,
-    listIndexedSessionIds,
+    listIndexedSessionIds: () => indexesQualified ? listIndexedSessionIds() : [],
     // The archived eligibility this daemon actually applies: an exclusion that
     // has not completed still leaves archived rows searchable here.
     getSettings: () => (
@@ -1326,8 +1500,25 @@ export async function startMemoryWorker(params: Readonly<{
     getEmbeddingsDiagnostics: () => embeddingsDiagnostics,
     resolveEmbeddingsProvider: refreshEmbeddingsDiagnostics,
     getWorkerStatus: () => workerStatus,
-    getTier1DbPath: () => (tier1 ? paths.tier1DbPath : null),
-    getDeepDbPath: () => (deep ? paths.deepDbPath : null),
+    getIndexSources: () => {
+      const sessions: MemoryIndexSourceStatusV1[] = [...new Set([...candidateSessionIds, ...candidateObservedSeqBySessionId.keys(), ...listIndexedSessionIds()])].map(sessionId => {
+        const source = { type: 'happier_session' as const, sessionId };
+        if (!settings.enabled || (settings.indexMode === 'hints' && !settings.hints.enabled)) return { source, state: 'disabled' };
+        if (!indexesQualified || !tier1 || (settings.indexMode === 'deep' && !deep)) return { source, state: 'indexing' };
+        const cursors = tier1.getSessionCursors({ sessionId, nowMs: Date.now() });
+        const observed = candidateObservedSeqBySessionId.get(sessionId);
+        const indexed = settings.indexMode === 'deep' ? cursors.lastDeepIndexedSeq : cursors.lastHintedSeq;
+        const pending = editedSessionIds.has(sessionId) || [...activeIndexOperations].some(operation => operation.sessionIds.has(sessionId));
+        const failed = tier1.getMemorySessionIndexStatus(sessionId) === 'failed'
+          || (settings.indexMode === 'deep' && cursors.consecutiveDeepFailures > 0);
+        return { source, state: pending ? 'indexing' : failed ? 'error'
+          : observed !== undefined && indexed >= Math.max(observed, cursors.lastObservedSeq) ? 'ready' : 'indexing' };
+      });
+      return [...sessions, ...externalSources.getIndexSources(indexesQualified ? deep : null).map(row =>
+        !settings.enabled || !settings.conversationSearch.indexExternal.enabled ? { ...row, state: 'disabled' as const } : row)];
+    },
+    getTier1DbPath: () => (indexesQualified && tier1 ? paths.tier1DbPath : null),
+    getDeepDbPath: () => (indexesQualified && deep ? paths.deepDbPath : null),
     getTier1DbPhysicalPath: () => paths.tier1DbPath,
     getDeepDbPhysicalPath: () => paths.deepDbPath,
   };

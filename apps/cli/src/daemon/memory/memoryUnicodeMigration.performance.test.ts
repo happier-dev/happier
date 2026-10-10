@@ -21,8 +21,30 @@ describe('daemon memory Unicode migration performance', () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-memory-unicode-performance-'));
     try {
       const summaryPath = join(root, 'memory.sqlite');
-      openSummaryShardIndexDb({ dbPath: summaryPath }).close();
       const summaryLegacy = openSqliteDatabaseSync(summaryPath);
+      // Pre-FTS retained-source schema, matching summaryShardIndexDb's migration
+      // fixture; opening the current owner first would already drop postings.
+      summaryLegacy.exec(`
+        CREATE TABLE summary_shards (
+          shardId INTEGER PRIMARY KEY AUTOINCREMENT,
+          sessionId TEXT NOT NULL,
+          seqFrom INTEGER NOT NULL,
+          seqTo INTEGER NOT NULL,
+          createdAtFromMs INTEGER NOT NULL,
+          createdAtToMs INTEGER NOT NULL,
+          summary TEXT NOT NULL,
+          keywordsText TEXT NOT NULL,
+          entitiesText TEXT NOT NULL,
+          decisionsText TEXT NOT NULL,
+          UNIQUE (sessionId, seqFrom, seqTo)
+        );
+        CREATE TABLE summary_terms (
+          term TEXT NOT NULL,
+          shardId INTEGER NOT NULL,
+          PRIMARY KEY (term, shardId),
+          FOREIGN KEY (shardId) REFERENCES summary_shards(shardId) ON DELETE CASCADE
+        );
+      `);
       const insertSummary = summaryLegacy.prepare(`
         INSERT INTO summary_shards (
           sessionId, seqFrom, seqTo, createdAtFromMs, createdAtToMs,
@@ -54,8 +76,26 @@ describe('daemon memory Unicode migration performance', () => {
       summary.close();
 
       const deepPath = join(root, 'deep.sqlite');
-      openDeepIndexDb({ dbPath: deepPath }).close();
       const deepLegacy = openSqliteDatabaseSync(deepPath);
+      // Same predecessor chunk/postings schema as deepIndexDb's upgrade test.
+      deepLegacy.exec(`
+        CREATE TABLE message_chunks (
+          chunkId INTEGER PRIMARY KEY AUTOINCREMENT,
+          sessionId TEXT NOT NULL,
+          seqFrom INTEGER NOT NULL,
+          seqTo INTEGER NOT NULL,
+          createdAtFromMs INTEGER NOT NULL,
+          createdAtToMs INTEGER NOT NULL,
+          text TEXT NOT NULL,
+          UNIQUE (sessionId, seqFrom, seqTo)
+        );
+        CREATE TABLE chunk_terms (
+          term TEXT NOT NULL,
+          chunkId INTEGER NOT NULL,
+          PRIMARY KEY (term, chunkId),
+          FOREIGN KEY (chunkId) REFERENCES message_chunks(chunkId) ON DELETE CASCADE
+        );
+      `);
       const insertChunk = deepLegacy.prepare(`
         INSERT INTO message_chunks (
           sessionId, seqFrom, seqTo, createdAtFromMs, createdAtToMs, text

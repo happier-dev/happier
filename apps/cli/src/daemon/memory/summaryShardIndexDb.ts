@@ -9,13 +9,14 @@ import {
   ensureMemoryIndexQueueSchema,
 } from './queue/memoryIndexQueueDb';
 import type { MemoryIndexQueueDbHandle } from './queue/memoryIndexQueueTypes';
-import { tokenizeMemoryText } from './tokenizeMemoryText';
+import { createMemoryFtsIndex, type MemoryFtsSearchFilter } from './memoryFtsIndex';
 
 export type MemorySearchScope =
   | Readonly<{ type: 'global' }>
   | Readonly<{ type: 'session'; sessionId: string }>;
 
 export type SummaryShardSearchHit = Readonly<{
+  matchedQuery?: string;
   sessionId: string;
   seqFrom: number;
   seqTo: number;
@@ -53,6 +54,9 @@ export type SummaryShardIndexDbHandle = Readonly<{
     scope: MemorySearchScope;
     eligibleSessionIds?: readonly string[];
     maxResults: number;
+    offset?: number;
+    createdAfterMs?: number;
+    createdBeforeMs?: number;
   }>) => SummaryShardSearchHit[];
   getSummaryIndexStats: () => SummaryIndexStats;
   getLatestShardSeqTo: (args: Readonly<{ sessionId: string }>) => number;
@@ -87,7 +91,7 @@ export type SummaryShardIndexDbHandle = Readonly<{
   deleteOldestSummaryShards: (args: Readonly<{ limit: number }>) => number;
   /**
    * Removes every tier-1 derived row for one Session: summary shards (and
-   * their cascaded terms), progress cursors, and queue/index state. Used when
+   * their FTS rows), progress cursors, and queue/index state. Used when
    * a Session is deleted, its access is revoked, or it leaves the configured
    * eligibility; later re-admission must follow the then-current backfill
    * policy, so the cursor is deliberately not retained.
@@ -104,7 +108,6 @@ function normalizeQuery(raw: string): string {
 }
 
 const HINT_RUN_WINDOW_MS = 60 * 60 * 1000;
-const MULTI_TERM_QUERY_MIN_MATCH_RATIO = 0.5;
 function nullableInt(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   const n = typeof value === 'number' ? value : Number(value);
@@ -115,8 +118,8 @@ function intOrZero(value: unknown): number {
   return nullableInt(value) ?? 0;
 }
 
-/** v4 rebuilt Unicode terms; v5 adds canonical memory-policy provenance. */
-const SUMMARY_INDEX_SCHEMA_VERSION = 5;
+/** v6 replaces summary postings with weighted FTS5, preserving cursors and shards. */
+const SUMMARY_INDEX_SCHEMA_VERSION = 6;
 
 function applyConnectionPragmas(db: SqliteDatabaseSync): void {
   db.exec(`PRAGMA journal_mode=WAL;`);
@@ -169,18 +172,6 @@ function ensureSchemaTables(db: SqliteDatabaseSync): void {
     CREATE INDEX IF NOT EXISTS summary_shards_by_session_seqTo ON summary_shards(sessionId, seqTo);
   `);
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS summary_terms (
-      term TEXT NOT NULL,
-      shardId INTEGER NOT NULL,
-      PRIMARY KEY (term, shardId),
-      FOREIGN KEY (shardId) REFERENCES summary_shards(shardId) ON DELETE CASCADE
-    );
-  `);
-
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS summary_terms_term_idx ON summary_terms(term);
-  `);
 }
 
 function migrateV1ToV2(db: SqliteDatabaseSync): void {
@@ -190,11 +181,11 @@ function migrateV1ToV2(db: SqliteDatabaseSync): void {
 }
 
 /**
- * Re-derives every term row from the shard text the index already retains, so
- * an index written by the retired ASCII-only tokenizer becomes searchable
+ * Re-derives FTS rows from shard text the index already retains, so
+ * an index written by the retired postings tokenizer becomes searchable
  * without discarding shards or replaying session cursors from the server.
  */
-function rebuildSummaryTerms(db: SqliteDatabaseSync): void {
+function rebuildSummaryFts(db: SqliteDatabaseSync): void {
   const selectShardsPageStmt = db.prepare(`
     SELECT shardId, summary, keywordsText, entitiesText, decisionsText
     FROM summary_shards
@@ -202,29 +193,25 @@ function rebuildSummaryTerms(db: SqliteDatabaseSync): void {
     ORDER BY shardId ASC
     LIMIT ?;
   `);
-  const insertTermStmt = db.prepare(`INSERT OR IGNORE INTO summary_terms (term, shardId) VALUES (?, ?);`);
+  const fts = createMemoryFtsIndex(db, { table: 'summary_shards', id: 'shardId', fts: 'summary_fts' });
   db.exec('BEGIN IMMEDIATE');
   try {
-    db.exec('DELETE FROM summary_terms;');
+    fts.clear();
     let afterShardId = 0;
     while (true) {
-      const shards = selectShardsPageStmt.all(afterShardId, 250) as any[];
+      const shards = selectShardsPageStmt.all(afterShardId, 250) as Array<{ shardId: number; summary: string; keywordsText: string; entitiesText: string; decisionsText: string }>;
       if (shards.length === 0) break;
       for (const shard of shards) {
         const shardId = Number(shard?.shardId);
         if (!Number.isFinite(shardId)) continue;
-        const source = [shard?.summary, shard?.keywordsText, shard?.entitiesText, shard?.decisionsText]
-          .map((part) => String(part ?? ''))
-          .join(' ');
-        for (const term of tokenizeMemoryText(source)) {
-          insertTermStmt.run(term, shardId);
-        }
+        fts.put(shardId, [shard.summary, shard.decisionsText].join(' '), [shard.keywordsText, shard.entitiesText].join(' '));
       }
       const nextAfterShardId = Number(shards.at(-1)?.shardId);
       if (!Number.isFinite(nextAfterShardId) || nextAfterShardId <= afterShardId) break;
       afterShardId = nextAfterShardId;
       if (shards.length < 250) break;
     }
+    db.exec('DROP TABLE IF EXISTS summary_terms;');
     db.exec('COMMIT');
   } catch (error) {
     db.exec('ROLLBACK');
@@ -249,9 +236,9 @@ function ensureSchema(db: SqliteDatabaseSync): void {
     }
   }
   ensureMemoryIndexQueueSchema(db);
-
+  createMemoryFtsIndex(db, { table: 'summary_shards', id: 'shardId', fts: 'summary_fts' });
   if (userVersion === SUMMARY_INDEX_SCHEMA_VERSION) return;
-  if (userVersion > 0 && userVersion < 4) rebuildSummaryTerms(db);
+  rebuildSummaryFts(db);
   db.exec(`PRAGMA user_version=${SUMMARY_INDEX_SCHEMA_VERSION}`);
 }
 
@@ -261,7 +248,7 @@ export function openSummaryShardIndexDb(args: Readonly<{ dbPath: string }>): Sum
   protectSqliteDatabaseFilesSync(args.dbPath);
 
   const insertStmt = db.prepare(`
-    INSERT OR IGNORE INTO summary_shards (
+    INSERT INTO summary_shards (
       shardId,
       sessionId,
       seqFrom,
@@ -284,9 +271,13 @@ export function openSummaryShardIndexDb(args: Readonly<{ dbPath: string }>): Sum
       ?,
       ?,
       ?, ?
-    );
+    ) ON CONFLICT(sessionId, seqFrom, seqTo) DO UPDATE SET
+      summary=excluded.summary, keywordsText=excluded.keywordsText,
+      entitiesText=excluded.entitiesText, decisionsText=excluded.decisionsText,
+      policyKey=excluded.policyKey, createdAtFromMs=excluded.createdAtFromMs, createdAtToMs=excluded.createdAtToMs;
   `);
-  const insertTermStmt = db.prepare(`INSERT OR IGNORE INTO summary_terms (term, shardId) VALUES (?, ?);`);
+  const summaryFts = createMemoryFtsIndex(db, { table: 'summary_shards', id: 'shardId', fts: 'summary_fts' });
+  const findShardStmt = db.prepare('SELECT shardId FROM summary_shards WHERE sessionId=? AND seqFrom=? AND seqTo=?;');
   const latestSeqToStmt = db.prepare(`SELECT MAX(seqTo) AS maxSeqTo FROM summary_shards WHERE sessionId = ?;`);
   const summaryIndexStatsStmt = db.prepare(`
     SELECT
@@ -295,7 +286,6 @@ export function openSummaryShardIndexDb(args: Readonly<{ dbPath: string }>): Sum
       MAX(createdAtToMs) AS latestIndexedMessageAtMs
     FROM summary_shards;
   `);
-  const summaryTermCountStmt = db.prepare(`SELECT COUNT(*) AS lightTermCount FROM summary_terms;`);
   const summaryLastIndexedAtStmt = db.prepare(`SELECT MAX(updatedAtMs) AS lastIndexedAtMs FROM session_cursors;`);
 
   const ensureCursorStmt = db.prepare(`INSERT OR IGNORE INTO session_cursors (sessionId, updatedAtMs) VALUES (?, ?);`);
@@ -443,112 +433,73 @@ export function openSummaryShardIndexDb(args: Readonly<{ dbPath: string }>): Sum
       const keywordsText = shard.keywords.map((k) => String(k ?? '').trim()).filter(Boolean).join(' ');
       const entitiesText = shard.entities.map((k) => String(k ?? '').trim()).filter(Boolean).join(' ');
       const decisionsText = shard.decisions.map((k) => String(k ?? '').trim()).filter(Boolean).join(' ');
-      const res = insertStmt.run(
-        shard.sessionId,
-        shard.seqFrom,
-        shard.seqTo,
-        shard.createdAtFromMs,
-        shard.createdAtToMs,
-        shard.summary,
-        keywordsText,
-        entitiesText,
-        decisionsText,
-        String(shard.policyKey ?? ''),
-      );
-      if (!res || typeof (res as any).changes !== 'number' || (res as any).changes <= 0) {
-        return;
-      }
-      const shardId = Number((res as any).lastInsertRowid);
-      const terms = tokenizeMemoryText([shard.summary, keywordsText, entitiesText, decisionsText].join(' '));
-      for (const term of terms) {
-        insertTermStmt.run(term, shardId);
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        insertStmt.run(
+          shard.sessionId,
+          shard.seqFrom,
+          shard.seqTo,
+          shard.createdAtFromMs,
+          shard.createdAtToMs,
+          shard.summary,
+          keywordsText,
+          entitiesText,
+          decisionsText,
+          String(shard.policyKey ?? ''),
+        );
+        const row = findShardStmt.get(shard.sessionId, shard.seqFrom, shard.seqTo) as { shardId: number };
+        summaryFts.put(row.shardId, [shard.summary, decisionsText].join(' '), [keywordsText, entitiesText].join(' '));
+        db.exec('COMMIT');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
       }
     },
-    search: ({ query, scope, eligibleSessionIds, maxResults }) => {
-      const normalized = normalizeQuery(query);
-      if (!normalized) return [];
-
-      const limit = Math.max(1, Math.min(100, Math.floor(maxResults)));
-      const terms = tokenizeMemoryText(normalized);
-      if (terms.length === 0) return [];
-
-      const eligibleIds = eligibleSessionIds === undefined
-        ? undefined
-        : [...new Set(eligibleSessionIds.map((id) => String(id).trim()).filter(Boolean))];
+    search: ({ query, scope, eligibleSessionIds, maxResults, offset = 0, createdAfterMs, createdBeforeMs }) => {
+      const limit = Math.max(1, Math.floor(maxResults));
+      const skip = Math.max(0, Math.trunc(offset));
+      const eligibleIds = eligibleSessionIds === undefined ? undefined : [...new Set(eligibleSessionIds.map((id) => id.trim()).filter(Boolean))];
       if (eligibleIds?.length === 0) return [];
-
-      const placeholders = terms.map(() => '?').join(',');
-      const sessionIdBatchSize = resolveSqliteSupportedValueBatchSize({
-        // Every term, the optional exact-session scope, and LIMIT are bound in
-        // addition to the variable eligible-Session collection.
-        fixedParameterCount: terms.length + (scope.type === 'session' ? 1 : 0) + 1,
-        parametersPerValue: 1,
-      });
-      const queryBatch = (sessionIds?: readonly string[]): any[] => {
-        const eligibilityPlaceholders = sessionIds?.map(() => '?').join(',');
-        const sql = `
-          SELECT
-            s.sessionId AS sessionId,
-            s.seqFrom AS seqFrom,
-            s.seqTo AS seqTo,
-            s.createdAtFromMs AS createdAtFromMs,
-            s.createdAtToMs AS createdAtToMs,
-            s.summary AS summary,
-            COUNT(*) AS hitCount
-          FROM summary_terms t
-            JOIN summary_shards s ON s.shardId = t.shardId
-          WHERE t.term IN (${placeholders})
-            ${scope.type === 'session' ? 'AND s.sessionId = ?' : ''}
-            ${eligibilityPlaceholders ? `AND s.sessionId IN (${eligibilityPlaceholders})` : ''}
-          GROUP BY s.shardId
-          ORDER BY hitCount DESC, s.createdAtToMs DESC
-          LIMIT ?;
-        `;
-        const params: any[] = [...terms];
-        if (scope.type === 'session') params.push(scope.sessionId);
-        if (sessionIds) params.push(...sessionIds);
-        params.push(limit);
-        return db.prepare(sql).all(...params) as any[];
+      type HitRow = { sessionId: string; seqFrom: number; seqTo: number; createdAtFromMs: number; createdAtToMs: number; summary: string; rank: number; shardId: number };
+      const buildFilter = (sessionIds?: readonly string[]): MemoryFtsSearchFilter => {
+        const filters: string[] = [];
+        const params: Array<string | number> = [];
+        if (scope.type === 'session') { filters.push('r.sessionId = ?'); params.push(scope.sessionId); }
+        if (sessionIds) { filters.push(`r.sessionId IN (${sessionIds.map(() => '?').join(',')})`); params.push(...sessionIds); }
+        if (createdAfterMs !== undefined) { filters.push('r.createdAtToMs >= ?'); params.push(createdAfterMs); }
+        if (createdBeforeMs !== undefined) { filters.push('r.createdAtFromMs <= ?'); params.push(createdBeforeMs); }
+        return { where: filters.join(' AND ') || '1', params };
       };
-      let rows: any[];
+      const batchSize = resolveSqliteSupportedValueBatchSize({ fixedParameterCount: 5, parametersPerValue: 1 });
+      const filters: MemoryFtsSearchFilter[] = [];
       if (eligibleIds) {
-        rows = [];
-        for (let offset = 0; offset < eligibleIds.length; offset += sessionIdBatchSize) {
-          rows.push(...queryBatch(eligibleIds.slice(offset, offset + sessionIdBatchSize)));
-        }
-        rows.sort((left, right) => Number(right.hitCount) - Number(left.hitCount)
-          || Number(right.createdAtToMs) - Number(left.createdAtToMs));
-        rows = rows.slice(0, limit);
-      } else {
-        rows = queryBatch();
-      }
-
-      return rows.flatMap((row) => {
-        const hitCount = Number(row.hitCount ?? 0);
-        const score = terms.length > 0 ? hitCount / terms.length : 0;
-        if (terms.length > 1 && score <= MULTI_TERM_QUERY_MIN_MATCH_RATIO) {
-          return [];
-        }
-        const rank = hitCount > 0 ? -hitCount : 0;
-        return [{
-          sessionId: String(row.sessionId),
-          seqFrom: Number(row.seqFrom),
-          seqTo: Number(row.seqTo),
-          createdAtFromMs: Number(row.createdAtFromMs),
-          createdAtToMs: Number(row.createdAtToMs),
-          summary: String(row.summary ?? ''),
-          rank,
-          score,
-        } satisfies SummaryShardSearchHit];
-      });
+        for (let index = 0; index < eligibleIds.length; index += batchSize) filters.push(buildFilter(eligibleIds.slice(index, index + batchSize)));
+      } else filters.push(buildFilter());
+      const { match, matchedQuery } = summaryFts.query(normalizeQuery(query), filters);
+      if (!match) return [];
+      const queryBatch = (filter: MemoryFtsSearchFilter): HitRow[] => {
+        return db.prepare(`
+          SELECT r.*, bm25(summary_fts, 1.0, 4.0) AS rank
+          FROM summary_fts JOIN summary_shards r ON r.shardId = summary_fts.rowid
+          WHERE summary_fts MATCH ? AND ${filter.where}
+          ORDER BY rank ASC, r.createdAtToMs DESC, r.shardId ASC LIMIT ?;
+        `).all(match, ...filter.params, limit + skip) as HitRow[];
+      };
+      const rows: HitRow[] = [];
+      for (const filter of filters) rows.push(...queryBatch(filter));
+      return rows.sort((a, b) => a.rank - b.rank || b.createdAtToMs - a.createdAtToMs || a.shardId - b.shardId)
+        .slice(skip, skip + limit).map((row) => ({
+          sessionId: row.sessionId, seqFrom: row.seqFrom, seqTo: row.seqTo,
+          createdAtFromMs: row.createdAtFromMs, createdAtToMs: row.createdAtToMs, summary: row.summary,
+          rank: row.rank, score: 1 / (1 + Math.exp(row.rank)), matchedQuery,
+        }));
     },
     getSummaryIndexStats: () => {
       const stats = summaryIndexStatsStmt.get() as any;
-      const termStats = summaryTermCountStmt.get() as any;
       const cursorStats = summaryLastIndexedAtStmt.get() as any;
       return {
         lightShardCount: intOrZero(stats?.lightShardCount),
-        lightTermCount: intOrZero(termStats?.lightTermCount),
+        lightTermCount: summaryFts.termCount(),
         searchableSessionCount: intOrZero(stats?.searchableSessionCount),
         lastIndexedAtMs: nullableInt(cursorStats?.lastIndexedAtMs),
         latestIndexedMessageAtMs: nullableInt(stats?.latestIndexedMessageAtMs),
@@ -713,6 +664,7 @@ export function openSummaryShardIndexDb(args: Readonly<{ dbPath: string }>): Sum
       deepFailureStmt.run(now, nextEligibleAt, now, id);
     },
     recordMemorySessionIndexState: queueDb.recordMemorySessionIndexState,
+    getMemorySessionIndexStatus: queueDb.getMemorySessionIndexStatus,
     recordMemoryWorkerRun: queueDb.recordMemoryWorkerRun,
     getMemoryIndexQueueTelemetry: queueDb.getMemoryIndexQueueTelemetry,
     deleteOldestSummaryShards: ({ limit }) => {

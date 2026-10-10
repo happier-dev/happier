@@ -98,6 +98,7 @@ export type MemoryIndexQueueTelemetry = Readonly<{
 }>;
 
 export type MemoryIndexQueueDbHandle = Readonly<{
+  getMemorySessionIndexStatus: (sessionId: string) => string | null;
   recordMemorySessionIndexState: (args: MemorySessionIndexStateUpdate) => void;
   recordMemoryWorkerRun: (args: MemoryWorkerRunUpdate) => void;
   getMemoryIndexQueueTelemetry: () => MemoryIndexQueueTelemetry;

@@ -1,5 +1,6 @@
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
-import type { MemoryWindowV1 } from '@happier-dev/protocol';
+import type { MemoryExternalSnippetV1, MemoryExternalTranscriptSourceV1, MemoryWindowV1 } from '@happier-dev/protocol';
+import type { AgentExternalSessionsTranscriptPage } from '@happier-dev/plugin-sdk/sessions/external';
 
 import type { StoredCredentials } from '@/persistence';
 import {
@@ -9,7 +10,8 @@ import {
 import {
   extractMemoryIndexableTranscriptItem,
 } from './transcript/extractIndexableItem';
-import type { MemoryContentPolicy } from './transcript/contentPolicy';
+import { normalizeMemoryContentPolicy, type MemoryContentPolicy } from './transcript/contentPolicy';
+import { extractExternalMemoryTranscriptItems } from './externalTranscriptIndex';
 
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
@@ -17,7 +19,66 @@ import type { FetchEncryptedTranscriptMessagesPageResult } from '@/session/repla
 import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncryptedTranscriptMessages';
 import { configuration } from '@/configuration';
 
-export async function getMemoryWindow(params: Readonly<{
+type ExternalMemoryWindowRequest = Readonly<{
+  source: MemoryExternalTranscriptSourceV1;
+  sourceItemId: string;
+  cursor?: string;
+  paddingMessages: number;
+  contentPolicy?: MemoryContentPolicy | null;
+  signal?: AbortSignal;
+  fetchExternalTranscriptPage: (request: Readonly<{ source: MemoryExternalTranscriptSourceV1; cursor?: string }>,
+    signal?: AbortSignal) => Promise<AgentExternalSessionsTranscriptPage | null>;
+}>;
+
+async function getExternalMemoryWindow(params: ExternalMemoryWindowRequest): Promise<MemoryWindowV1> {
+  const maxMessages = configuration.memoryMaxTranscriptWindowMessages;
+  const padding = Math.min(Math.max(0, Math.trunc(params.paddingMessages)), maxMessages - 1);
+  const contentPolicy = normalizeMemoryContentPolicy(params.contentPolicy);
+  let cursor = params.cursor;
+  const visited = new Set<string>();
+  let newerContext: MemoryExternalSnippetV1[] = [];
+  let before: MemoryExternalSnippetV1[] = [];
+  let target: MemoryExternalSnippetV1 | undefined;
+  let after: MemoryExternalSnippetV1[] = [];
+  while (true) {
+    params.signal?.throwIfAborted();
+    const page = await params.fetchExternalTranscriptPage({ source: params.source, ...(cursor ? { cursor } : {}) }, params.signal);
+    params.signal?.throwIfAborted();
+    if (!page) break;
+    const snippets = extractExternalMemoryTranscriptItems(page.items, contentPolicy).map(item => ({
+      source: params.source, sourceItemId: item.sourceItemId, ...(cursor ? { cursor } : {}),
+      createdAtMs: item.createdAtMs,
+      text: `${item.role === 'user' ? 'User' : 'Assistant'}: ${redactBugReportSensitiveText(item.text).trim()}`,
+    }));
+    if (target) {
+      // Readers page older history but return each page in transcript order.
+      before = [...snippets.slice(-(padding - before.length)), ...before];
+    } else {
+      const index = snippets.findIndex(item => item.sourceItemId === params.sourceItemId);
+      if (index >= 0) {
+        target = snippets[index];
+        before = snippets.slice(Math.max(0, index - padding), index);
+        after = [...snippets.slice(index + 1, index + 1 + padding), ...newerContext].slice(0, padding);
+      } else {
+        newerContext = snippets.slice(0, padding);
+      }
+    }
+    if (target && before.length >= padding) break;
+    if (page.hasMore === false && page.truncated !== true) break;
+    const next = page.nextCursor;
+    if (!next) {
+      if (page.hasMore === true || page.truncated === true) throw new Error('memory_external_transcript_cursor_missing');
+      break;
+    }
+    if (next === cursor || visited.has(next)) throw new Error('memory_external_transcript_cursor_stalled');
+    visited.add(next);
+    cursor = next;
+  }
+  return { v: 1, snippets: [], citations: [], externalSnippets: target
+    ? [...before, target, ...after.slice(0, Math.max(0, maxMessages - before.length - 1))] : [] };
+}
+
+type SessionMemoryWindowRequest = Readonly<{
   credentials: StoredCredentials;
   sessionId: string;
   seqFrom: number;
@@ -36,7 +97,10 @@ export async function getMemoryWindow(params: Readonly<{
       signal?: AbortSignal;
     }>) => Promise<FetchEncryptedTranscriptMessagesPageResult>;
   }>;
-}>): Promise<MemoryWindowV1> {
+}>;
+
+export async function getMemoryWindow(params: SessionMemoryWindowRequest | ExternalMemoryWindowRequest): Promise<MemoryWindowV1> {
+  if ('source' in params) return await getExternalMemoryWindow(params);
   const fetchSession = params.deps?.fetchSessionById ?? fetchSessionById;
   const fetchPage = params.deps?.fetchEncryptedTranscriptMessagesPage ?? fetchEncryptedTranscriptMessagesPage;
 

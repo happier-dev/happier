@@ -56,7 +56,7 @@ local groups are instant while remote ones fill in as they arrive:
 - **Settings** — settings pages, matched on their titles and keywords.
 - **Files** — files in the exact workspace you currently have open.
 - **Text in files** — text matches in that same workspace, grouped by file
-  with line numbers and nearby context. The machine must be online and running
+  with line numbers and matching-line snippets. The machine must be online and running
   a Happier build that supports content search.
 - **Commits** — commits reachable from the current Git branch or the current
   Sapling parent set in that workspace.
@@ -120,22 +120,48 @@ for editor and terminal limits.
 
 ## Search conversations outside Happier
 
-To look through Agent conversations on one machine, type your phrase in
-Search, then choose **Search Claude Code and Codex conversations for “…”**.
-This is an explicit scan: typing alone does not search conversation bodies,
-and Happier does not scan every machine. The selected machine must be online
-and advertise conversation-search support.
+In **0.3 development/preview**, conversation search has two modes. **Memory
+search** reads a machine's local index and can return matches as you type.
+**Search on demand** scans Agent conversation history when you explicitly
+start it. Choose which modes run under **Settings → Search**, after selecting
+the machine. Search on demand is on by default; indexing conversations started
+outside Happier is off by default.
+
+To include those conversations in the index, turn on Memory search, then enable
+**Index these conversations** under **Conversations outside Happier** and select
+the Agents to include.
+Choose **How far back** and whether to **Include tool output**. An empty Agent
+selection indexes none. The history choice also respects the machine's memory
+backfill and coverage settings. The local index contains **plaintext on that
+machine**, including text read from encrypted Happier sessions. Read
+[local memory search](/organize/local-memory-search#privacy-and-cleanup) before
+enabling it on a shared computer.
+
+Typing in Search reads eligible indexes. To scan sources that are unindexed
+or still catching up, activate the conversation-search row. A source whose
+index is ready can answer without a scan; other sources fall back to Search on
+demand when it is enabled. The machine must be online and advertise support.
 
 You can also open **Browse Existing Sessions**, select the machine and
 Agent source, switch from **Titles** to **Conversations**, enter a phrase,
-and choose **Search**. Results show matching text. **Search more conversations**
-continues the scan; **Stop** leaves the results marked incomplete.
+and choose **Search**. Results show matching text. A scan can yield an incomplete
+page before it finds a hit; an empty partial page does not mean no matches.
+Choose **Search more conversations** when offered to continue from that page.
+**Stop** leaves coverage incomplete. A very large conversation may remain
+incomplete on repeated attempts; continuation does not guarantee a full scan.
 
-Claude Code and Codex conversations stored in searchable local transcript
-files are supported. Codex app-server-only threads and unsupported Agent
-sources are **Not searchable**. Older daemons show an update hint. Partial
-coverage or an unsupported source is not a claim that no conversation matched.
-This scan creates no persistent conversation-content index.
+Standard search supports Claude Code, Codex, Pi, OhMyPi, Antigravity and
+OpenCode in this development channel. File-based sources search decoded
+transcript text; OpenCode reads messages through its native client. Codex
+app-server-only threads without a searchable local transcript remain a
+coverage gap. Indexed search uses the selected Agents' existing transcript
+readers, including those six where their configured source can be read; an
+Agent being installed does not guarantee readable history. Older daemons show
+an update hint. Partial coverage or an unsupported source is not a claim that
+no conversation matched. A standard scan creates no persistent content index.
+
+The standalone **Browse Existing Sessions** conversation view currently runs
+its own explicit source-local scan; it does not yet select indexed results.
 
 Choose **Open in Happier** to link and open a result, with Find on the query
 at the mapped message when available. **Show in External sessions** keeps the
@@ -163,10 +189,45 @@ If someone answers while you are opening the request, the settled state lets
 you continue to the next one. Unread messages and failed delivery belong to
 the Inbox, rather than this pending-request order.
 
+Some Action approvals in sessions hosted by a shared editor only surface
+after you open the session; Next cannot discover those approvals from a cold
+session summary yet.
+
+## Let an Agent use Search and Find
+
+In this development channel, an Agent or MCP caller can use
+`workspace.files.search` for workspace text and `sessions.external.candidates.list`
+with `searchTarget: 'content'` for conversations on a selected machine. The
+conversation Action returns coverage and a cursor for continuing incomplete
+scans; it also works through standalone MCP.
+
+`search.conversations` searches one or several machines with indexed, standard
+or best-available mode through a connected app. `search.settings.get` and
+`search.settings.set` read and change the machine's Search choices;
+`memory.status` reports index readiness and source states. `memory.clear_index`
+clears the derived index and **requires approval by default**, according to
+the configured Action policy. It keeps the saved settings; enabled indexing
+can rebuild it. [Local memory search](/organize/local-memory-search) explains
+clearing and fetching the context around an indexed hit.
+
+With an app connected to the addressed machine, `ui.find` controls Find in a
+mounted surface and `session.pending.next` opens the next answerable request.
+Find returns status and counts where available, never the searched text.
+Without a connected app, Find returns **unavailable** with reason `noClient`,
+and Next returns **unavailable**. A connected app with no findable surface
+returns `noMountedSurface`, which is different from zero matches.
+
+The app runs delivered Actions through the same controls you use. If an Action
+requires approval, it waits for the required decision before execution;
+rejecting or canceling it prevents execution. If the connection is lost after
+dispatch, an uncertain outcome is reported rather than a claimed success.
+The [generated Actions catalog](/plugins/api/host-actions) describes each
+Action's inputs, results and supported surfaces.
+
 ## Where message results come from
 
-Happier can search transcripts in two distinct ways, and which one answers a
-given query depends on your context — never both at once:
+Happier chooses the source for Happier-session results and can add indexed
+conversations from the machines in scope:
 
 - **Personal Home search**. If you use a
   [Personal Home](/self-hosting/self-host-runtime), its plaintext transcripts
@@ -178,9 +239,10 @@ given query depends on your context — never both at once:
 - **Local memory search**. Otherwise, machines where you have turned on
   [local memory search](/organize/local-memory-search) answer from their own
   machine-local index. Results can be message chunks or short generated
-  summaries — a faithful excerpt, not always the verbatim text.
+  summaries. Opted-in conversations outside Happier use the machine's index
+  alongside these results. Summaries need not be verbatim transcript text.
 
-Both are opt-out or opt-in per source exactly as described above, and both are
+Each source follows its own controls above, and both are
 **your** data on machines you control. Personal Home search keeps its derived
 index on that Home and serves it through an authenticated, visibility-filtered
 Home endpoint; local memory search keeps its derived index on the selected
@@ -189,11 +251,12 @@ offer a server-side endpoint that aggregates every Search domain.
 
 ## Scope is deliberate
 
-Search stays close to your current context instead of fanning out everywhere:
+Search starts from the context you opened it from:
 
-- message search runs against your **current Personal Home**, or the machine
-  you explicitly selected for local memory search — never every machine you
-  own at once;
+- conversation search can use one machine or **All machines** within the
+  selected Home. This queries online machines in parallel; each keeps its own
+  index, and offline machines cannot answer. E2EE conversation search runs
+  locally on those machines rather than indexing encrypted text on the server;
 - files search **the exact workspace you have open** — no other repository, no
   other machine. Commit search stays within that workspace's current Git branch
   or current Sapling parent set.
@@ -204,10 +267,16 @@ target explicitly. This changes only the open Search surface—not the Home or
 session focused elsewhere in Happier. **Search everything for …** preserves
 the Home selected in the session list.
 
-When the current context cannot answer, the relevant group says so honestly
-rather than quietly searching somewhere else. There is no all-machine or
-all-backend sweep, by design: breadth comes from choosing another context, not
-from Search silently widening it.
+In All machines scope, merged conversation results are newest first.
+Indexed hits use the matching message's time; scanned hits use the
+conversation's update time. Scores from different indexes are not compared.
+Duplicate Happier-session results are collapsed.
+
+The coverage line names machines that are **Offline**, **Needs an update**,
+disabled, or returning **Partial results**. Full coverage has no warning line.
+Partial results may mean more pages remain, a source is still indexing, or
+some history could not be read. Changing the query cancels the previous search.
+All machines stays within the selected Home; it does not merge every Home.
 
 ## When a group can't answer
 
@@ -261,9 +330,10 @@ truncated it says so instead of posing as the complete list.
 
 ## Settings configures, Search searches
 
-Settings pages are a search *result*, not a search *entry*. Configure a
-machine's local index under **Settings → Local memory search**; its experimental
-`memory.search` switch lives under **Settings → Features**. Personal Home
+Settings pages are a search *result*, not a search *entry*. Choose conversation
+modes and native indexing under **Settings → Search**; follow **Memory search**
+there for indexing options under **Settings → Local memory search**. The
+`memory.search` feature switch lives under **Settings → Features**. Personal Home
 search is separate: the Home operator controls its availability, and there is
 no app setting that turns it on for an individual machine. Then search from
 Search, the sidebar, or the session list like everywhere else.

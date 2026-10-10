@@ -31,6 +31,7 @@ export type SyncMemoryHintsSettings = Readonly<{
   coveragePolicy?: MemoryCoveragePolicy;
   contentPolicy?: MemoryContentPolicy;
   hints: Readonly<{
+    enabled: boolean;
     updateMode: 'onIdle' | 'continuous';
     idleDelayMs: number;
     windowSizeMessages: number;
@@ -53,11 +54,11 @@ export async function syncMemoryHintsForSessionsOnce(params: Readonly<{
   sessionIds: readonly string[];
   allowInitialBackfillWhenUninitializedSessionIds?: readonly string[];
   initialCursorSeqBySessionId?: ReadonlyMap<string, number>;
+  forceSnapshotSessionIds?: readonly string[];
   tier1: SummaryShardIndexDbHandle;
   settings: SyncMemoryHintsSettings;
   now: () => number;
   fetchRecentDecryptedRows: (sessionId: string, signal?: AbortSignal) => Promise<DecryptedTranscriptRow[]>;
-  fetchCommittedSummaryShards?: (sessionId: string, signal?: AbortSignal) => Promise<SessionSummaryShardV1[]>;
   runSummarizer: (prompt: string, sessionId: string, signal?: AbortSignal) => Promise<string>;
   commitArtifacts: (args: Readonly<{
     sessionId: string;
@@ -72,6 +73,19 @@ export async function syncMemoryHintsForSessionsOnce(params: Readonly<{
   const nowMs = params.now();
   const memoryPolicy = resolveMemoryIndexPolicy(params.settings);
   const policyKey = memoryIndexPolicyKey(memoryPolicy);
+  const forceSnapshots = new Set(params.forceSnapshotSessionIds ?? []);
+  if (!params.settings.hints.enabled) {
+    // A disabled inference setting cannot authorize stale edited summaries.
+    // Rebuild remains pending without reading source content or running a model.
+    for (const rawSessionId of params.sessionIds) {
+      params.signal?.throwIfAborted();
+      const sessionId = String(rawSessionId ?? '').trim();
+      if (!sessionId || !forceSnapshots.has(sessionId)) continue;
+      params.tier1.pruneSessionArtifacts({ sessionId, policyKey: `${policyKey}:edited` });
+      params.tier1.rewindSessionCursor({ sessionId, lane: 'hints', seq: 0 });
+    }
+    return;
+  }
   const run = {
     sessionsConsidered: 0,
     sessionsProcessed: 0,
@@ -105,32 +119,15 @@ export async function syncMemoryHintsForSessionsOnce(params: Readonly<{
       }
     }
 
-    const committedSummaryShards = params.fetchCommittedSummaryShards
-      ? await params.fetchCommittedSummaryShards(sessionId, params.signal)
-      : [];
-    params.signal?.throwIfAborted();
-    for (const shard of committedSummaryShards) {
-      const shardPolicyKey = shard.memoryPolicy ? memoryIndexPolicyKey(shard.memoryPolicy) : null;
-      // Pre-provenance committed summaries cannot prove which excluded source
-      // classes they contain, so current readers rebuild them from raw rows.
-      if (shardPolicyKey !== policyKey) continue;
-      params.tier1.insertSummaryShard({
-        sessionId,
-        seqFrom: shard.seqFrom,
-        seqTo: shard.seqTo,
-        createdAtFromMs: shard.createdAtFromMs,
-        createdAtToMs: shard.createdAtToMs,
-        summary: shard.summary,
-        keywords: shard.keywords ?? [],
-        entities: shard.entities ?? [],
-        decisions: shard.decisions ?? [],
-        policyKey,
-      });
-      params.tier1.markHintRunSuccess({ sessionId, seqTo: shard.seqTo, nowMs });
-    }
-
+    const forceSnapshot = forceSnapshots.has(sessionId);
     const rows = await params.fetchRecentDecryptedRows(sessionId, params.signal);
     params.signal?.throwIfAborted();
+    if (forceSnapshot) {
+      // Read the current source first; same-sequence edits invalidate committed
+      // source-derived summaries even when their policy provenance still matches.
+      params.tier1.pruneSessionArtifacts({ sessionId, policyKey: `${policyKey}:edited` });
+      params.tier1.rewindSessionCursor({ sessionId, lane: 'hints', seq: 0 });
+    }
     run.rawRowsFetched += rows.length;
     if (rows.length === 0) continue;
     run.sessionsProcessed += 1;
@@ -161,6 +158,9 @@ export async function syncMemoryHintsForSessionsOnce(params: Readonly<{
       enabledAtMs: params.settings.enabledAtMs ?? 0,
       backfillPolicy: params.settings.backfillPolicy,
     });
+    if (forceSnapshot && indexableItems.length === 0) {
+      params.tier1.markHintRunSuccess({ sessionId, seqTo: latestSeq, nowMs });
+    }
     const coverageCutoffMs = resolveMemoryCoverageCreatedAtCutoffMs({
       policy: params.settings.coveragePolicy,
       nowMs,

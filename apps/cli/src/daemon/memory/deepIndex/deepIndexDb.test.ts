@@ -19,6 +19,128 @@ function countRows(dbPath: string, table: string): number {
 }
 
 describe('deepIndexDb', () => {
+  it('repairs typos only from postings visible to the complete search scope', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-deep-scoped-typos-'));
+    try {
+      const db = openDeepIndexDb({ dbPath: join(dir, 'deep.sqlite') });
+      db.insertChunk({ sessionId: 'target', seqFrom: 1, seqTo: 1, createdAtFromMs: 100, createdAtToMs: 100, text: 'quasar planet' });
+      for (let seq = 1; seq <= 5; seq += 1) {
+        db.insertChunk({ sessionId: 'excluded', seqFrom: seq, seqTo: seq, createdAtFromMs: 200, createdAtToMs: 200, text: 'quasray planes nebualy' });
+      }
+      const scoped = { type: 'session' as const, sessionId: 'target' };
+      for (const query of ['quasra', 'planer']) {
+        expect.soft(db.search({ query, scope: scoped, maxResults: 10 }).map((hit) => hit.sessionId), query).toEqual(['target']);
+        expect.soft(db.search({ query, scope: { type: 'global' }, eligibleSessionIds: ['target', ...Array.from({ length: 1000 }, (_, i) => `absent-${i}`)], maxResults: 10 }).map((hit) => hit.sessionId), query).toEqual(['target']);
+        expect.soft(db.search({ query, scope: { type: 'global' }, createdBeforeMs: 150, maxResults: 10 }).map((hit) => hit.sessionId), query).toEqual(['target']);
+      }
+      for (const [agentId, text] of [['pi', 'nebula'], ['claude', 'nebualz']] as const) {
+        db.insertChunk({ sessionId: agentId, seqFrom: 1, seqTo: 1, createdAtFromMs: 100, createdAtToMs: 100, text, source: { type: 'external_transcript', agentId, sourceKey: 'local', nativeSessionId: agentId }, sourceItemId: agentId });
+      }
+      expect.soft(db.search({ query: 'nebual', scope: { type: 'global' }, includeExternal: true, includeSessions: false, externalAgentIds: ['pi'], maxResults: 10 }).map((hit) => hit.sessionId)).toEqual(['pi']);
+      for (const [seq, text] of [[2, 'planes'], [3, 'planet'], [4, 'planet']] as const) {
+        db.insertChunk({ sessionId: 'target', seqFrom: seq, seqTo: seq, createdAtFromMs: 100, createdAtToMs: 100, text });
+      }
+      // Both candidates are now visible, but excluded rows must not make the
+      // locally rarer spelling win the tie between equally close edits.
+      expect(db.search({ query: 'planer', scope: scoped, maxResults: 10 }).map((hit) => hit.seqFrom).sort((a, b) => a - b)).toEqual([1, 3, 4]);
+      db.close();
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+  it('retains newest native semantic messages across backwards pages and appended tails with equal timestamps', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-deep-external-retention-'));
+    try {
+      const dbPath = join(dir, 'deep.sqlite');
+      let db = openDeepIndexDb({ dbPath });
+      const source = { type: 'external_transcript' as const, agentId: 'pi', sourceKey: 'local', nativeSessionId: 'native' };
+      for (const [ordinal, sourceOrder, sourceItemId] of [[0, -2, 'recent'], [1, -1, 'newest'], [2, -4, 'oldest'], [3, -3, 'old'], [4, 1, 'tail']] as const) {
+        db.insertChunk({ sessionId: 'native-storage', seqFrom: ordinal, seqTo: ordinal, createdAtFromMs: 10, createdAtToMs: 10, text: `searchable ${sourceItemId}`, source, sourceItemId, sourceOrder });
+        db.upsertEmbedding({ sessionId: 'native-storage', seqFrom: ordinal, seqTo: ordinal, provider: 'test', modelId: 'test', embedding: new Float32Array([1]), updatedAtMs: 10 });
+      }
+      db.insertChunk({ sessionId: 'happier', seqFrom: 0, seqTo: 0, createdAtFromMs: 1, createdAtToMs: 1, text: 'searchable Happier message' });
+      db.close();
+      db = openDeepIndexDb({ dbPath });
+      const contracts = {
+        deselectedAgentHits: db.search({ query: 'searchable', scope: { type: 'global' }, includeExternal: true, includeSessions: false, externalAgentIds: ['claude'], maxResults: 10 }).length,
+        selectedAgentHits: db.search({ query: 'searchable', scope: { type: 'global' }, includeExternal: true, includeSessions: false, externalAgentIds: ['pi'], maxResults: 10 }).length,
+        emptySelectionHits: db.search({ query: 'searchable', scope: { type: 'global' }, includeExternal: true, includeSessions: false, externalAgentIds: [], maxResults: 10 }).length,
+        nativeSources: db.getDeepIndexStats().externalTranscriptCount,
+      };
+      expect.soft(contracts).toEqual({ deselectedAgentHits: 0, selectedAgentHits: 5, emptySelectionHits: 0, nativeSources: 1 });
+      const removed = db.pruneExternalSourceChunks({ sessionId: 'native-storage', maxSemanticMessages: 2 });
+      const hits = db.search({ query: 'searchable', scope: { type: 'global' }, includeExternal: true, includeSessions: false, maxResults: 10 });
+      expect(hits.map((hit) => hit.sourceItemId).sort()).toEqual(['newest', 'tail']);
+      expect(removed).toBe(3);
+      expect(db.getDeepIndexStats().deepEmbeddingCount).toBe(2);
+      expect(db.pruneExternalSourceChunks({ sessionId: 'happier', maxSemanticMessages: 0 })).toBe(0);
+      expect(db.search({ query: 'Happier', scope: { type: 'global' }, maxResults: 10 })).toHaveLength(1);
+      db.close();
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+  it('retains native source identity and reader frontier without leaking native rows into Session-only searches', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-deep-external-source-'));
+    try {
+      const dbPath = join(dir, 'deep.sqlite');
+      const source = { type: 'external_transcript' as const, agentId: 'claude', sourceKey: 'local', nativeSessionId: 'native' };
+      let db = openDeepIndexDb({ dbPath });
+      db.insertChunk({ sessionId: 'native-storage-id', seqFrom: 0, seqTo: 0, createdAtFromMs: 10, createdAtToMs: 10, text: 'native searchable content', source, sourceItemId: 'message-id', sourceCursor: 'opaque-page' });
+      db.setExternalSourceState({ sessionId: 'native-storage-id', source, cursor: 'opaque-frontier', nextOrdinal: 1 });
+      db.close();
+      db = openDeepIndexDb({ dbPath });
+      expect(db.getExternalSourceState({ sessionId: 'native-storage-id' })).toEqual({ source, cursor: 'opaque-frontier', nextOrdinal: 1, coverageComplete: true });
+      expect(db.getDeepIndexStats()).toMatchObject({ searchableSessionCount: 0, externalTranscriptCount: 1, externalChunkCount: 1 });
+      expect(db.listExternalSourceStates()).toEqual([{ sessionId: 'native-storage-id', source, cursor: 'opaque-frontier', nextOrdinal: 1, coverageComplete: true }]);
+      expect(db.search({ query: 'searchable', scope: { type: 'global' }, maxResults: 10 })).toEqual([]);
+      expect(db.search({ query: 'searchable', scope: { type: 'global' }, eligibleSessionIds: [], includeExternal: true, includeSessions: false, maxResults: 10 })).toEqual([expect.objectContaining({ source, sourceItemId: 'message-id', sourceCursor: 'opaque-page' })]);
+      db.deleteSessionIndexData({ sessionId: 'native-storage-id' });
+      expect(db.getExternalSourceState({ sessionId: 'native-storage-id' })).toBeNull();
+      expect(db.search({ query: 'searchable', scope: { type: 'global' }, includeExternal: true, maxResults: 10 })).toEqual([]);
+      db.close();
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+  it('preserves a development reader frontier without assuming its unrecorded coverage', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-deep-native-coverage-upgrade-'));
+    try {
+      const dbPath = join(dir, 'deep.sqlite');
+      const source = { type: 'external_transcript' as const, agentId: 'claude', sourceKey: 'local', nativeSessionId: 'native' };
+      const legacy = openSqliteDatabaseSync(dbPath);
+      legacy.exec(`CREATE TABLE external_source_state (
+        sessionId TEXT PRIMARY KEY, source TEXT NOT NULL, cursor TEXT, nextOrdinal INTEGER NOT NULL
+      ); PRAGMA user_version=4;`);
+      legacy.prepare('INSERT INTO external_source_state VALUES (?,?,?,?);').run('native-storage-id', JSON.stringify(source), 'opaque-frontier', 2);
+      legacy.close();
+      const db = openDeepIndexDb({ dbPath });
+      try {
+        expect(db.getExternalSourceState({ sessionId: 'native-storage-id' })).toEqual({
+          source, cursor: 'opaque-frontier', nextOrdinal: 2, coverageComplete: false,
+        });
+        db.setExternalSourceState({ sessionId: 'native-storage-id', source, cursor: 'advanced-frontier', nextOrdinal: 3 });
+        expect(db.getExternalSourceState({ sessionId: 'native-storage-id' })).toMatchObject({ cursor: 'advanced-frontier', coverageComplete: false });
+      } finally { db.close(); }
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+  it('requires every query word, ranks concise matches, and repairs identifier prefixes and typos', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-deep-retrieval-'));
+    try {
+      const db = openDeepIndexDb({ dbPath: join(dir, 'deep.sqlite') });
+      const insert = (sessionId: string, text: string, time: number) => db.insertChunk({ sessionId, text, seqFrom: 1, seqTo: 1, createdAtFromMs: time, createdAtToMs: time });
+      insert('common', 'the ordinary conversation', 300);
+      insert('verbose', `the quasar ${'ordinary '.repeat(50)}`, 200);
+      insert('concise', 'the quasar session_handoff resolveAbsolutePath', 100);
+      expect(db.search({ query: 'the quasar', scope: { type: 'global' }, maxResults: 10 }).map((hit) => hit.sessionId)).toEqual(['concise', 'verbose']);
+      for (const query of ['session_handoff', 'session handoff', 'resolve absolute path', 'session_hand', 'quasra']) {
+        expect(db.search({ query, scope: { type: 'global' }, maxResults: 10 })[0]?.sessionId, query).toBe('concise');
+      }
+      expect(db.search({ query: 'quasar', scope: { type: 'global' }, maxResults: 1, offset: 1, createdAfterMs: 150 }).map((hit) => hit.sessionId)).toEqual([]);
+      expect(db.search({ query: 'quasar', scope: { type: 'global' }, maxResults: 1, offset: 1 }).map((hit) => hit.sessionId)).toEqual(['verbose']);
+      expect(db.search({ query: 'quasar', scope: { type: 'global' }, maxResults: 10, createdBeforeMs: 150 }).map((hit) => hit.sessionId)).toEqual(['concise']);
+      db.upsertEmbedding({ sessionId: 'concise', seqFrom: 1, seqTo: 1, provider: 'test', modelId: 'test', embedding: new Float32Array([1]), updatedAtMs: 100 });
+      insert('concise', 'changed searchable content', 100);
+      expect(db.search({ query: 'quasar', scope: { type: 'session', sessionId: 'concise' }, maxResults: 10 })).toEqual([]);
+      expect(db.search({ query: 'changed', scope: { type: 'global' }, maxResults: 10 })).toHaveLength(1);
+      expect(db.getDeepIndexStats().deepEmbeddingCount).toBe(0);
+      db.close();
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
   it('persists facts, archive and instruction text under current qualified document revisions', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-deep-documents-'));
     try {
@@ -463,9 +585,9 @@ describe('deepIndexDb', () => {
         text: 'oldchunkuniq alpha beta',
       });
 
-      expect(countRows(dbPath, 'chunk_terms')).toBeGreaterThan(0);
+      expect(countRows(dbPath, 'chunk_fts_vocab')).toBeGreaterThan(0);
       expect(db.deleteOldestChunks({ limit: 1 })).toBe(1);
-      expect(countRows(dbPath, 'chunk_terms')).toBe(0);
+      expect(countRows(dbPath, 'chunk_fts_vocab')).toBe(0);
 
       db.close();
     } finally {

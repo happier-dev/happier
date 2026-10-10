@@ -6,6 +6,22 @@ import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { getMemoryWindow } from './getMemoryWindow';
 
 describe('getMemoryWindow', () => {
+  it('reads a native hit through transcript pages using opaque cursors and source item identity', async () => {
+    const source = { type: 'external_transcript' as const, agentId: 'pi', sourceKey: 'pi-source', nativeSessionId: 'native' };
+    const calls: (string | undefined)[] = [];
+    const window = await getMemoryWindow({ source, sourceItemId: 'wanted', paddingMessages: 0,
+      fetchExternalTranscriptPage: async request => {
+        calls.push(request.cursor);
+        const id = request.cursor ? 'wanted' : 'other';
+        return { items: [{ id,
+          raw: { role: 'user', content: { type: 'text', text: request.cursor ? 'quartz native message' : 'unrelated' } },
+          createdAtMs: 1 }], nextCursor: request.cursor ? null : 'opaque-next', hasMore: !request.cursor };
+      },
+    });
+    expect(calls).toEqual([undefined, 'opaque-next']);
+    expect(window.snippets).toEqual([]);
+    expect(window.externalSnippets).toEqual([expect.objectContaining({ source, sourceItemId: 'wanted', text: expect.stringContaining('quartz native message') })]);
+  });
   it('passes the caller signal to Session metadata and transcript HTTP boundaries', async () => {
     const controller = new AbortController();
     const fetchSessionById = vi.fn(async () => createSessionRecordFixture({

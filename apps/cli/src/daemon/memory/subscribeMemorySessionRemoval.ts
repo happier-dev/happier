@@ -17,8 +17,9 @@ type Subscribe<T> = (listener: (change: T) => void | Promise<void>) => Unsubscri
 export function subscribeMemorySessionRemoval(params: Readonly<{
   memoryWorker: Pick<
     MemoryWorkerHandle,
-    'removeSessions' | 'reconcileRetainedSessionAccess' | 'applySessionArchivedState'
+    'removeSessions' | 'reconcileRetainedSessionAccess' | 'applySessionArchivedState' | 'noteSessionTranscriptRevised'
   >;
+  onSessionTranscriptRevised?: Subscribe<Readonly<{ sessionId: string; seq: number; messageId?: string }>>;
   onSessionDeletedChange: Subscribe<Readonly<{ sessionId: string }>>;
   onSessionAccessRevoked: Subscribe<Readonly<{ sessionId: string }>>;
   onSessionAccessReset: Subscribe<Readonly<{ cursor: number }>>;
@@ -38,6 +39,10 @@ export function subscribeMemorySessionRemoval(params: Readonly<{
       async (change) => await params.memoryWorker.applySessionArchivedState(change),
     ),
   ];
+  if (params.onSessionTranscriptRevised && params.memoryWorker.noteSessionTranscriptRevised) {
+    const noteRevision = params.memoryWorker.noteSessionTranscriptRevised;
+    unsubscribes.push(params.onSessionTranscriptRevised(async change => await noteRevision(change)));
+  }
 
   return () => {
     for (const unsubscribe of unsubscribes) unsubscribe();

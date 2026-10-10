@@ -61,9 +61,10 @@ export async function syncDeepIndexForSessionsOnce(params: Readonly<{
   fetchRecentDecryptedRows?: (sessionId: string, signal?: AbortSignal) => Promise<DecryptedTranscriptRow[]>;
   embedDocuments?: (texts: readonly string[], signal?: AbortSignal) => Promise<Float32Array[]>;
   signal?: AbortSignal;
-}>): Promise<void> {
-  if (!params.settings.enabled) return;
-  if (params.settings.indexMode !== 'deep') return;
+}>): Promise<ReadonlySet<string>> {
+  const completedSessionIds = new Set<string>();
+  if (!params.settings.enabled) return completedSessionIds;
+  if (params.settings.indexMode !== 'deep') return completedSessionIds;
   const nowMs = Math.max(0, Math.trunc(params.now()));
   const memoryPolicy = resolveMemoryIndexPolicy(params.settings);
   const policyKey = memoryIndexPolicyKey(memoryPolicy);
@@ -89,11 +90,11 @@ export async function syncDeepIndexForSessionsOnce(params: Readonly<{
 
     const afterSeq = Math.max(0, Math.trunc(cursors.lastDeepIndexedSeq));
     let rows: DecryptedTranscriptRow[] = [];
+    const needsBoundedSnapshot = params.settings.coveragePolicy?.type !== 'full'
+      || params.settings.backfillPolicy === 'new_only'
+      || params.settings.forceSnapshot === true
+      || params.deep.hasSessionArtifactsOutsidePolicy({ sessionId, policyKey });
     try {
-      const needsBoundedSnapshot = params.settings.coveragePolicy?.type !== 'full'
-        || params.settings.backfillPolicy === 'new_only'
-        || params.settings.forceSnapshot === true
-        || params.deep.hasSessionArtifactsOutsidePolicy({ sessionId, policyKey });
       rows = needsBoundedSnapshot && params.fetchRecentDecryptedRows
         ? await params.fetchRecentDecryptedRows(sessionId, params.signal)
         : await params.fetchDecryptedTranscriptPageAfterSeq({
@@ -120,6 +121,14 @@ export async function syncDeepIndexForSessionsOnce(params: Readonly<{
     const lastScannedSeq = rows.length > 0 ? rows[rows.length - 1]!.seq : afterSeq;
 
     try {
+      // A successfully read snapshot replaces the derived projection. Edits
+      // can change chunk ranges without advancing the Session sequence.
+      if (needsBoundedSnapshot && params.fetchRecentDecryptedRows) {
+        params.deep.deleteSessionIndexData({ sessionId });
+        if (params.settings.forceSnapshot === true) {
+          params.tier1.pruneSessionArtifacts({ sessionId, policyKey: `${policyKey}:edited` });
+        }
+      }
       const extracted = rows
         .filter((row) => !shouldSkipAssistantAcpPayload(
           row.content,
@@ -255,6 +264,7 @@ export async function syncDeepIndexForSessionsOnce(params: Readonly<{
           updatedAtMs: nowMs,
         });
       }
+      completedSessionIds.add(sessionId);
     } catch (error) {
       params.signal?.throwIfAborted();
       params.tier1.markDeepIndexFailure({
@@ -282,4 +292,5 @@ export async function syncDeepIndexForSessionsOnce(params: Readonly<{
     semanticRowsFound: run.semanticRowsFound,
     deepChunksCreated: run.deepChunksCreated,
   });
+  return completedSessionIds;
 }

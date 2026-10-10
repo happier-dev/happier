@@ -81,6 +81,7 @@ describe('rpcHandlers.memory (window retrieval)', () => {
     const memoryWorker: MemoryWorkerHandle = {
       stop: () => {},
       reloadSettings: async () => {},
+      clearIndex: async () => {},
       ensureUpToDate: async () => {},
       removeSessions: async () => {},
       reconcileRetainedSessionAccess: async () => {},
@@ -110,6 +111,10 @@ describe('rpcHandlers.memory (window retrieval)', () => {
         defaultScope: { type: 'global' as const },
         backfillPolicy: 'new_only' as const,
         includeArchivedSessions: false,
+        conversationSearch: {
+          standardSearch: { enabled: true },
+          indexExternal: { enabled: false, agents: [], historyDays: null, includeToolOutput: false },
+        },
         deleteOnDisable: false,
         coveragePolicy: { type: 'full' as const },
         contentPolicy: {
@@ -120,6 +125,7 @@ describe('rpcHandlers.memory (window retrieval)', () => {
           includeToolOutputs: false,
         },
         hints: {
+          enabled: false,
           summarizerBackendId: 'claude',
           summarizerModelId: 'default',
           summarizerPermissionMode: 'no_tools',

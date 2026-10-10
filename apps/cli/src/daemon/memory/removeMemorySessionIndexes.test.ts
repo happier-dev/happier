@@ -89,10 +89,11 @@ describe('removeMemorySessionIndexes', () => {
       expect(countRows(tier1DbPath, 'SELECT COUNT(*) AS n FROM summary_shards WHERE sessionId = ?;', 'gone')).toBe(0);
       expect(countRows(tier1DbPath, 'SELECT COUNT(*) AS n FROM session_cursors WHERE sessionId = ?;', 'gone')).toBe(0);
       expect(countRows(tier1DbPath, 'SELECT COUNT(*) AS n FROM memory_session_index_state WHERE sessionId = ?;', 'gone')).toBe(0);
-      expect(countRows(tier1DbPath, 'SELECT COUNT(*) AS n FROM summary_terms;')).toBe(
-        countRows(tier1DbPath, `SELECT COUNT(*) AS n FROM summary_terms t JOIN summary_shards s ON s.shardId = t.shardId;`),
-      );
+      expect(countRows(tier1DbPath, "SELECT COUNT(*) AS n FROM summary_fts WHERE summary_fts MATCH 'gone';")).toBe(0);
+      expect(countRows(tier1DbPath, "SELECT COUNT(*) AS n FROM summary_fts WHERE summary_fts MATCH 'kept';")).toBe(1);
       expect(countRows(deepDbPath, 'SELECT COUNT(*) AS n FROM message_chunks WHERE sessionId = ?;', 'gone')).toBe(0);
+      expect(countRows(deepDbPath, "SELECT COUNT(*) AS n FROM chunk_fts WHERE chunk_fts MATCH 'gone';")).toBe(0);
+      expect(countRows(deepDbPath, "SELECT COUNT(*) AS n FROM chunk_fts WHERE chunk_fts MATCH 'kept';")).toBe(1);
       expect(countRows(deepDbPath, 'SELECT COUNT(*) AS n FROM chunk_embeddings WHERE sessionId = ?;', 'gone')).toBe(0);
       expect(countRows(deepDbPath, 'SELECT COUNT(*) AS n FROM chunk_embeddings WHERE sessionId = ?;', 'kept')).toBe(1);
     });

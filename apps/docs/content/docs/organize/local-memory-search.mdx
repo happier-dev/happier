@@ -1,15 +1,45 @@
 ---
 title: Local memory search
-description: Build a device-local memory index on a machine, search past conversation context, and optionally improve deep ranking with local or remote embeddings.
+description: Search a machine-local index of past conversations, with optional memory hints and embeddings.
 ---
 
-Local memory search lets Happier build a **machine-local search index** from your decrypted session transcripts on a specific daemon-connected machine.
+Local memory search lets Happier build a **machine-local search index** from
+sessions owned by a daemon-connected machine and, when you opt in, Agent
+conversations started outside Happier.
 
 Use it when you want Happier to answer questions such as:
 
 - “Do you remember when we discussed this?”
 - “Find the session where we talked about OpenCode quotas.”
 - “Show me the earlier conversation about the daemon memory plan.”
+
+## Availability in 0.3 development
+
+This page describes **0.3 development/preview** behavior, not a released stable
+version. The Search settings and native-conversation indexing described here
+require a matching development build on the machine and client.
+
+The 0.3 development defaults enable keyword search with deep indexing and
+embeddings off. This default keyword path needs no model API credentials and
+makes no summarizer or embedding calls. An explicitly disabled
+machine stays disabled, and existing indexing choices are retained. These are
+development defaults, not a claim about released builds.
+
+In development, deep search can also search attached memory and instruction
+documents through the existing `memory.search` Action. Explicit `corpora` selects
+documents, Sessions, or both; omitting it preserves Session results. Document
+search includes the complete stored memory index, every topic, and archived or
+expired facts—not just the short index loaded into a prompt. Each query checks
+current attachment membership, read access, and document revision before returning
+snippets. Unavailable context reports unavailable document coverage, not a complete
+search with zero matches.
+
+Authenticated CLI/MCP calls negotiate document support with the selected daemon;
+older daemons retain Session matches without claiming document coverage. A
+credentialless Session-bound MCP tool has no document authority and remains
+transcript-only. Light indexing does not provide document search. Combined-search
+presentation and the live cross-client journey remain pending; this is not a claim
+about released builds.
 
 ## What it does
 
@@ -20,14 +50,16 @@ When local memory search is enabled on a machine, Happier can:
 - open the matching session at the relevant conversation point
 - let coding and voice agents use memory tools for recall instead of guessing from model memory
 
-This is intentionally **device-local**. It is not a server-side global search index.
+Each machine owns its index. **All machines** in Search queries those indexes
+without copying them into a shared server-side index.
 
 ## Where to find it
 
-Local memory search is configured per machine under **Settings → Local Memory
-Search**: pick the machine, enable memory search for it, and choose its
-indexing options. The `memory.search` feature must be enabled in **Settings →
-Features** before those settings appear.
+Choose the machine under **Settings → Search**. **Search on demand** controls
+explicit native-history scans; **Memory search** opens that machine's indexing
+options under **Settings → Local memory search**. In 0.3 development,
+the `memory.search` feature is enabled by default; an explicit switch off in
+**Settings → Features** still disables the local search surface.
 
 Searching happens in the same places everything else is searchable —
 [Search](/organize/search) and the session list’s search field. There is no
@@ -37,23 +69,25 @@ session rows.
 
 ## Two transcript search sources
 
-Local memory search is one of two transcript sources Search can consult, and
-for any given query one or the other answers — never both at once. A Personal
+Local memory search is one of two Happier-session sources Search can consult. A Personal
 Home’s plaintext transcripts are searchable directly when that Home's
 operator enables Home search; the app's `memory.search` feature switch does
 not control it. Otherwise, a machine with local memory search answers from its
-own index. [Search](/organize/search) describes how the choice is made and how
-the two result shapes differ.
+own index. Opted-in native conversations can still come from machine-local
+indexes alongside Home session results. [Search](/organize/search) describes
+source selection, All machines scope and coverage.
 
 ## Important model: machine-local, not account-global
 
-Memory search is scoped to the **selected machine**.
+Indexing and its settings belong to the **selected machine**. Search can query
+one machine or all machines in the selected Home.
 
 That means:
 
 - each machine has its own index
 - a laptop and a remote dev box do **not** automatically share one memory index
-- if a machine is offline, Happier cannot query its local memory index
+- if a machine is offline, Happier cannot query its local memory index; other
+  online machines can still answer an All machines query
 - remote embeddings settings are also machine-local, not shared globally
 
 This design is deliberate:
@@ -76,7 +110,9 @@ Use it when you want:
 - faster background maintenance
 - a lighter-weight recall layer
 
-This is the recommended starting point if you mainly want broad recall and do not need the richest transcript search.
+Selecting hints opts into summarization. Hint generation has an independent
+enablement switch and can also be used with deep indexing. Deep keyword indexing
+is the 0.3 development default and does not enable hints.
 
 ### Deep
 
@@ -89,6 +125,37 @@ Use it when you want:
 - optional embeddings-based reranking
 
 Deep mode uses more disk and can take longer to backfill.
+
+Keyword retrieval ranks full-text matches, keeps identifiers such as
+`session_handoff` searchable whole or as separate words, matches prefixes,
+and can repair a mistyped word from the indexed vocabulary. Snippets are
+centered on a match. Actions support paging and date bounds for indexed hits;
+these bounds do not turn an unindexed standard scan into a date-filtered search.
+Edited Happier messages are reindexed, including edits that keep the same
+message position.
+
+## Index conversations outside Happier
+
+Under **Settings → Search**, enable Memory search, then turn on **Index these
+conversations** in **Conversations outside Happier**. Pick the Agents whose history may be indexed,
+choose **How far back**, and enable **Include tool output** only if you want
+that content stored too. Native indexing defaults to off, with no Agents
+selected, all history as its window, and tool output excluded. The history
+window works within the machine's existing backfill and coverage choices.
+
+Standard on-demand search supports Claude Code, Codex, Pi, OhMyPi, Antigravity
+and OpenCode. Indexed search uses existing transcript readers for selected
+Agents, including those six where their source is readable. Unsupported or
+unavailable readers cannot supply an index simply because the Agent appears
+in the selection list. Both modes depend on the machine being online.
+
+The index follows native transcript changes through the existing source
+observation. Confirmed source removal drops its indexed content; an incomplete
+or failed read does not count as proof of deletion. Index status reports
+progress for the machine. Actions also expose source readiness, so Search can
+use a ready native index and fall back to an explicitly started scan for
+sources that are not ready. Browse Existing Sessions currently remains an
+explicit standard scan.
 
 ## Backfill behavior
 
@@ -117,7 +184,9 @@ there instead of applying a setting it cannot honor.
 
 ## Memory hint generation
 
-Light mode relies on **memory hints** (summary shards).
+Light mode relies on **memory hints** (summary shards). The independent
+`hints.enabled` switch defaults to false and is enforced by the worker.
+Selecting hints enables it without requiring a change from deep indexing.
 
 You can configure:
 
@@ -151,7 +220,7 @@ Happier currently exposes these modes:
 - **Quality** — `Alibaba-NLP/gte-modernbert-base`
 - **Custom** — choose your own local model or OpenAI-compatible endpoint
 
-`Balanced` is the default because it has the safest validated first-run profile:
+Embeddings are off by default. When choosing a local model, `Balanced` offers:
 - smaller download
 - lower cold-start cost
 - good overall retrieval quality
@@ -191,7 +260,12 @@ Important details:
 
 ## Privacy and cleanup
 
-Local memory search is designed around derived local data.
+The derived conversation index is **plaintext on the machine that builds it**.
+This includes decrypted Happier transcript text and any native conversations
+you opt into indexing. Account E2EE protects server-stored envelopes, not this
+local SQLite index. Enable native indexing only on machines where you accept
+that local storage. Optional remote embeddings send indexed text/query input
+to your configured endpoint; they are a separate choice from local indexing.
 
 When enabled, Happier stores local indexes such as:
 
@@ -200,6 +274,13 @@ When enabled, Happier stores local indexes such as:
 - optional local model caches
 
 You can enable **Delete on disable** to remove local indexes and caches when memory search is turned off on that machine.
+
+**Clear index** under **Settings → Search** asks for confirmation and removes
+the machine's derived conversation databases and indexing progress, including
+native rows. It preserves saved Search settings and inference-model caches.
+If indexing remains enabled, the index can rebuild immediately. Turn off
+indexing first if you want it to stay empty. Clearing does not delete the
+original conversations and is not secure physical erasure.
 
 ## What agents do with it
 
@@ -212,6 +293,17 @@ In practice, that means:
 - if memory search finds nothing, the agent should say that clearly instead of inventing an answer
 
 This applies to both normal coding sessions and voice flows when memory search is available on the target machine.
+
+In this development channel, Agents and MCP callers can read or change Search
+choices with `search.settings.get` / `search.settings.set`, inspect per-source
+readiness with `memory.status`, and use `search.conversations` through a
+connected app to choose indexed, standard or best-available search across
+machines. `memory.search` queries one machine; `memory.get_window` retrieves
+the context around a Happier or native hit. Native context requires
+authenticated access; a credentialless session-bound MCP tool remains
+session-only. `memory.clear_index` is a danger Action requiring approval by
+default; its configured policy can change that default. See the
+[generated Actions catalog](/plugins/api/host-actions) for inputs and surfaces.
 
 ## Typical use cases
 
@@ -246,16 +338,23 @@ Enable memory search separately on a remote machine if that is where the daemon 
 
 For most users:
 
-1. Enable memory search on your main machine
-2. Start with **Light** or **Deep + Balanced**
+1. Choose your main machine
+2. Start with **Deep** keyword search; enable hints or embeddings deliberately
 3. Use **New only** first
 4. Turn on **Delete on disable** if you want easy cleanup
+
+## Related
+
+- [Search](/organize/search) — indexed and on-demand modes, All machines and
+  coverage when a source cannot answer.
+- [Actions catalog](/plugins/api/host-actions) — machine settings, search,
+  status, windows and clearing contracts.
 
 Switch to **Long context** if your conversations are long and you want stronger recall over larger transcript chunks.
 
 Use **Custom remote** only if you intentionally want to bring your own embeddings endpoint.
 
-## Related guides
+## Related
 
 - [Search](/organize/search) — where searching happens and what else it covers
 - [Daemon](/apps/daemon)

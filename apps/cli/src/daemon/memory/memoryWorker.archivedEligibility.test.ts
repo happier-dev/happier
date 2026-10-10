@@ -13,7 +13,7 @@ const CREDENTIALS: Credentials = {
 };
 
 function sessionRow(id: string, extra: Record<string, unknown> = {}) {
-  return { id, seq: 1, createdAt: 1_000, updatedAt: 9_000, activeAt: 0, ...extra };
+  return { id, machineId: 'machine_1', seq: 1, createdAt: 1_000, updatedAt: 9_000, activeAt: 0, ...extra };
 }
 
 describe('memoryWorker archived eligibility and derived-index removal', () => {
@@ -32,6 +32,13 @@ describe('memoryWorker archived eligibility and derived-index removal', () => {
     argvBackup = process.argv.slice();
     process.argv = ['node', 'happier', 'daemon', 'start-sync'];
     vi.resetModules();
+    const axios = (await import('axios')).default;
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+        mode: 'e2ee', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+      } };
+      throw new Error(`Unexpected memory test HTTP path: ${String(url)}`);
+    });
     vi.doMock('./transcript/fetchSemanticPage', () => ({
       fetchMemorySemanticTranscriptPage: vi.fn(async () => ({
         items: [],
@@ -55,6 +62,7 @@ describe('memoryWorker archived eligibility and derived-index removal', () => {
     restoreEnvValues(envBackup);
     vi.doUnmock('@/configuration');
     vi.doUnmock('@/session/transport/http/sessionsHttp');
+    vi.doUnmock('@/session/replay/fetchEncryptedTranscriptMessages');
     vi.doUnmock('@/session/systemRecords/memory/fetchMemorySystemRecords');
     vi.doUnmock('./removeMemorySessionIndexes');
     vi.doUnmock('./transcript/fetchSemanticPage');
@@ -113,7 +121,6 @@ describe('memoryWorker archived eligibility and derived-index removal', () => {
         content: { type: 'text'; text: string };
         meta?: null;
       }>>;
-      fetchCommittedSummaryShards?: (sessionId: string) => Promise<[]>;
     }> = {},
   ) {
     const { writeMemorySettingsToDisk } = await import('@/settings/memorySettings');
@@ -136,8 +143,6 @@ describe('memoryWorker archived eligibility and derived-index removal', () => {
       deps: {
         fetchDecryptedTranscriptPageAfterSeq:
           deps.fetchDecryptedTranscriptPageAfterSeq ?? (async () => []),
-        fetchCommittedSummaryShards:
-          deps.fetchCommittedSummaryShards ?? (async () => []),
       },
     });
     startedWorkers.add(worker);
@@ -453,6 +458,7 @@ describe('memoryWorker archived eligibility and derived-index removal', () => {
   it('forgets the cached Session crypto context of a removed session', async () => {
     const fetchSessionById = vi.fn(async () => ({
       id: 'crypto_session',
+      machineId: 'machine_1',
       seq: 0,
       createdAt: Number.MAX_SAFE_INTEGER,
       archivedAt: null,
@@ -538,7 +544,8 @@ describe('memoryWorker archived eligibility and derived-index removal', () => {
     await worker.reconcileRetainedSessionAccess();
     expect([...worker.listIndexedSessionIds()].sort()).toEqual(['deep-archived', 'deep-kept']);
     expect(fetchSessionById).not.toHaveBeenCalled();
-    expect(fetchSessionsPage).toHaveBeenCalledTimes(4);
+    expect(fetchSessionsPage).toHaveBeenCalledWith(expect.objectContaining({ cursor: 'active-2' }));
+    expect(fetchSessionsPage).toHaveBeenCalledWith(expect.objectContaining({ cursor: 'archived-2' }));
     worker.stop();
   });
 
@@ -564,7 +571,6 @@ describe('memoryWorker archived eligibility and derived-index removal', () => {
     await worker.reconcileRetainedSessionAccess();
 
     expect(worker.listIndexedSessionIds()).not.toContain('missed-archive');
-    expect(fetchSessionsPage).toHaveBeenCalledTimes(1);
     expect(fetchSessionsPage).toHaveBeenCalledWith(expect.objectContaining({ activeOnly: false }));
     worker.stop();
   });
@@ -656,6 +662,7 @@ describe('memoryWorker archived eligibility and derived-index removal', () => {
   });
 
   it('seeds new_only progress before deep work for pre-enablement Sessions', async () => {
+    vi.doUnmock('./transcript/fetchSemanticPage');
     const rows = [
       {
         seq: 1,
@@ -665,23 +672,30 @@ describe('memoryWorker archived eligibility and derived-index removal', () => {
         meta: null,
       },
     ];
-    const fetchTranscript = vi.fn(async ({ afterSeq }: { afterSeq: number }) =>
-      rows.filter((row) => row.seq > afterSeq));
+    vi.doMock('@/session/replay/fetchEncryptedTranscriptMessages', () => ({
+      fetchEncryptedTranscriptMessagesPage: vi.fn(async () => ({ messages: rows.map(row => ({
+        id: String(row.seq), seq: row.seq, createdAt: row.createdAtMs, messageRole: row.role,
+        content: { t: 'plain', v: { role: row.role, content: row.content } },
+      })), hasMore: false, nextBeforeSeq: null, nextAfterSeq: null })),
+    }));
     vi.doMock('@/session/transport/http/sessionsHttp', () => ({
       fetchSessionsPage: vi.fn(async () => ({ sessions: [], nextCursor: null, hasNext: false })),
       fetchSessionById: vi.fn(async () => sessionRow('old-explicit', {
         seq: 1,
         createdAt: 1,
         archivedAt: null,
+        encryptionMode: 'plain',
       })),
     }));
     const worker = await startWorker(
       { indexMode: 'deep', backfillPolicy: 'new_only', enabledAtMs: 5_000 },
-      { fetchDecryptedTranscriptPageAfterSeq: fetchTranscript },
     );
 
     await worker.ensureUpToDate('old-explicit');
-    expect(fetchTranscript).toHaveBeenCalledWith(expect.objectContaining({ afterSeq: 1 }));
+    const { openSummaryShardIndexDb } = await import('./summaryShardIndexDb');
+    const progress = openSummaryShardIndexDb({ dbPath: worker.getTier1DbPath()! });
+    expect(progress.getSessionCursors({ sessionId: 'old-explicit', nowMs: Date.now() }).lastDeepIndexedSeq).toBe(1);
+    progress.close();
 
     rows.push({
       seq: 2,
@@ -702,7 +716,14 @@ describe('memoryWorker archived eligibility and derived-index removal', () => {
   });
 
   it('preserves new_only allowInitialBackfill semantics in bulk ensureUpToDate', async () => {
-    const afterSeqBySession = new Map<string, number>();
+    vi.doUnmock('./transcript/fetchSemanticPage');
+    vi.doMock('@/session/replay/fetchEncryptedTranscriptMessages', () => ({
+      fetchEncryptedTranscriptMessagesPage: vi.fn(async ({ sessionId }: { sessionId: string }) => ({ messages: [{
+        id: sessionId, seq: sessionId === 'old-bulk' ? 8 : 2, createdAt: sessionId === 'old-bulk' ? 1 : 6_000,
+        messageRole: 'user', content: { t: 'plain', v: { role: 'user', content: { type: 'text',
+          text: sessionId === 'old-bulk' ? 'excluded obsolete bulk history' : 'admitted garnet bulk history' } } },
+      }], hasMore: false, nextBeforeSeq: null, nextAfterSeq: null })),
+    }));
     vi.doMock('@/session/transport/http/sessionsHttp', () => ({
       fetchSessionsPage: vi.fn(async ({ archivedOnly }: SessionsPageArgs) => ({
         sessions: archivedOnly
@@ -716,25 +737,22 @@ describe('memoryWorker archived eligibility and derived-index removal', () => {
       })),
       fetchSessionById: vi.fn(async ({ sessionId }: { sessionId: string }) => ({
         id: sessionId,
+        machineId: 'machine_1',
         archivedAt: null,
+        encryptionMode: 'plain',
       })),
     }));
     const worker = await startWorker(
       { indexMode: 'deep', backfillPolicy: 'new_only', enabledAtMs: 5_000 },
-      {
-        fetchDecryptedTranscriptPageAfterSeq: async ({ sessionId, afterSeq }) => {
-          afterSeqBySession.set(sessionId, afterSeq);
-          return [];
-        },
-      },
     );
 
     await worker.ensureUpToDate();
 
-    expect(afterSeqBySession).toEqual(new Map([
-      ['old-bulk', 8],
-      ['new-bulk', 0],
-    ]));
+    const { openDeepIndexDb } = await import('./deepIndex/deepIndexDb');
+    const db = openDeepIndexDb({ dbPath: worker.getDeepDbPath()! });
+    expect(db.search({ query: 'obsolete', scope: { type: 'global' }, maxResults: 10 })).toEqual([]);
+    expect(db.search({ query: 'garnet', scope: { type: 'global' }, maxResults: 10 }).map(hit => hit.sessionId)).toEqual(['new-bulk']);
+    db.close();
     worker.stop();
   });
 

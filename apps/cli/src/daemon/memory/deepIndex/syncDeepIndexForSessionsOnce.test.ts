@@ -6,8 +6,32 @@ import { describe, expect, it } from 'vitest';
 import { openSummaryShardIndexDb } from '../summaryShardIndexDb';
 import { openDeepIndexDb } from './deepIndexDb';
 import { syncDeepIndexForSessionsOnce } from './syncDeepIndexForSessionsOnce';
+import { memoryIndexPolicyKey, resolveMemoryIndexPolicy } from '../transcript/coveragePolicy';
 
 describe('syncDeepIndexForSessionsOnce', () => {
+  it('replaces indexed text when a snapshot contains an edit at the same sequence', async () => {
+    const dir = await mkdtemp(join(os.tmpdir(), 'happier-memory-deep-edit-'));
+    const tier1 = openSummaryShardIndexDb({ dbPath: join(dir, 'memory.sqlite') });
+    const deep = openDeepIndexDb({ dbPath: join(dir, 'deep.sqlite') });
+    try {
+      tier1.init();
+      deep.init();
+      deep.insertChunk({ sessionId: 'edited', seqFrom: 1, seqTo: 2, createdAtFromMs: 1, createdAtToMs: 2, text: 'obsolete quartz content',
+        policyKey: memoryIndexPolicyKey(resolveMemoryIndexPolicy({ coveragePolicy: { type: 'full' } })) });
+      tier1.markDeepIndexSuccess({ sessionId: 'edited', seqTo: 2, nowMs: 1 });
+      await syncDeepIndexForSessionsOnce({
+        sessionIds: ['edited'], tier1, deep, now: () => 10_000,
+        settings: { enabled: true, indexMode: 'deep', forceSnapshot: true, coveragePolicy: { type: 'full' },
+          deep: { maxChunkChars: 8000, maxChunkMessages: 20, minChunkMessages: 1,
+            includeAssistantAcpMessage: true, failureBackoffBaseMs: 0, failureBackoffMaxMs: 0 } },
+        fetchDecryptedTranscriptPageAfterSeq: async () => [],
+        fetchRecentDecryptedRows: async () => [{ seq: 2, createdAtMs: 2, role: 'user', content: { type: 'text', text: 'replacement garnet content' } }],
+      });
+      expect(deep.search({ query: 'quartz', scope: { type: 'global' }, maxResults: 10 })).toEqual([]);
+      expect(deep.search({ query: 'garnet', scope: { type: 'global' }, maxResults: 10 })).toHaveLength(1);
+    } finally { deep.close(); tier1.close(); await rm(dir, { recursive: true, force: true }); }
+  });
+
   it('applies since_enabled coverage to deep semantic rows', async () => {
     const dir = await mkdtemp(join(os.tmpdir(), 'happier-memory-deep-coverage-'));
     try {

@@ -28,8 +28,10 @@ describe('memorySettings', () => {
     const { readMemorySettingsFromDisk } = await import('./memorySettings');
     const settings = await readMemorySettingsFromDisk();
     expect(settings.v).toBe(1);
-    expect(settings.enabled).toBe(false);
-    expect(settings.indexMode).toBe('hints');
+    expect(settings.enabled).toBe(true);
+    expect(settings.indexMode).toBe('deep');
+    expect(settings.hints.enabled).toBe(false);
+    expect(settings.embeddings.mode).toBe('disabled');
     expect(settings.backfillPolicy).toBe('new_only');
     const rawDefaultScope = (settings as unknown as Record<string, unknown>).defaultScope;
     const defaultScopeType =

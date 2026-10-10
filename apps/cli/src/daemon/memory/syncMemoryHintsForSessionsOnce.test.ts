@@ -6,6 +6,59 @@ import { describe, expect, it } from 'vitest';
 import { openSummaryShardIndexDb } from './summaryShardIndexDb';
 
 describe('syncMemoryHintsForSessionsOnce', () => {
+  it('rebuilds edited same-sequence summaries and keeps empty projections empty across repeated ticks', async () => {
+    const { syncMemoryHintsForSessionsOnce } = await import('./syncMemoryHintsForSessionsOnce');
+    const dir = await mkdtemp(join(os.tmpdir(), 'happier-memory-edited-hints-'));
+    const tier1 = openSummaryShardIndexDb({ dbPath: join(dir, 'memory.sqlite') });
+    try {
+      tier1.init();
+      const settings = { enabled: true, indexMode: 'hints' as const, backfillPolicy: 'all_history' as const,
+        coveragePolicy: { type: 'full' as const }, hints: { enabled: true, updateMode: 'continuous' as const,
+          idleDelayMs: 0, windowSizeMessages: 40, maxShardChars: 12_000, maxSummaryChars: 500,
+          maxKeywords: 5, maxEntities: 5, maxDecisions: 5, maxRunsPerHour: 999,
+          maxShardsPerSession: 250, failureBackoffBaseMs: 0, failureBackoffMaxMs: 0 } };
+      let text = 'obsolete quartz';
+      const sync = (forceSnapshotSessionIds?: readonly string[]) => syncMemoryHintsForSessionsOnce({
+        sessionIds: ['edited'], forceSnapshotSessionIds, tier1, settings, now: () => 10_000,
+        fetchRecentDecryptedRows: async () => {
+          if (!settings.hints.enabled) throw new Error('Disabled hints must not read transcript content');
+          return [{ seq: 1, createdAtMs: 1_000, role: 'user', content: { type: 'text', text } }];
+        },
+        runSummarizer: async () => {
+          if (!settings.hints.enabled) throw new Error('Disabled hints must not run inference');
+          return JSON.stringify({ shard: { v: 1, seqFrom: 1, seqTo: 1,
+            createdAtFromMs: 1_000, createdAtToMs: 1_000, summary: text, keywords: [], entities: [], decisions: [] }, synopsis: null });
+        },
+        commitArtifacts: async () => {},
+      });
+      await sync();
+      expect(tier1.search({ query: 'quartz', scope: { type: 'global' }, maxResults: 10 })).toHaveLength(1);
+      text = 'replacement garnet';
+      await sync(['edited']);
+      expect(tier1.search({ query: 'quartz', scope: { type: 'global' }, maxResults: 10 })).toEqual([]);
+      expect(tier1.search({ query: 'garnet', scope: { type: 'global' }, maxResults: 10 })).toHaveLength(1);
+      await sync();
+      expect(tier1.search({ query: 'quartz', scope: { type: 'global' }, maxResults: 10 })).toEqual([]);
+      text = '';
+      await sync(['edited']);
+      await sync();
+      await sync();
+      expect(tier1.search({ query: 'garnet', scope: { type: 'global' }, maxResults: 10 })).toEqual([]);
+      tier1.deleteSessionIndexData({ sessionId: 'edited' });
+      text = 'fresh cache topaz';
+      await sync();
+      expect(tier1.search({ query: 'quartz', scope: { type: 'global' }, maxResults: 10 })).toEqual([]);
+      expect(tier1.search({ query: 'topaz', scope: { type: 'global' }, maxResults: 10 })).toHaveLength(1);
+      settings.hints.enabled = false;
+      text = 'current disabled-hints zirconium';
+      await sync(['edited']);
+      expect(tier1.search({ query: 'topaz', scope: { type: 'global' }, maxResults: 10 })).toEqual([]);
+      expect(tier1.getSessionCursors({ sessionId: 'edited', nowMs: 10_000 }).lastHintedSeq).toBe(0);
+      settings.hints.enabled = true;
+      await sync();
+      expect(tier1.search({ query: 'zirconium', scope: { type: 'global' }, maxResults: 10 })).toHaveLength(1);
+    } finally { tier1.close(); await rm(dir, { recursive: true, force: true }); }
+  });
   it('applies coverage after content policy so latest_messages counts semantic messages', async () => {
     const { syncMemoryHintsForSessionsOnce } = await import('./syncMemoryHintsForSessionsOnce');
     const dir = await mkdtemp(join(os.tmpdir(), 'happier-memory-sync-coverage-'));
@@ -24,6 +77,7 @@ describe('syncMemoryHintsForSessionsOnce', () => {
           coveragePolicy: { type: 'latest_messages', maxSemanticMessagesPerSession: 2 },
           contentPolicy: { includeUserMessages: true, includeAssistantMessages: false },
           hints: {
+            enabled: true,
             updateMode: 'continuous', idleDelayMs: 0, windowSizeMessages: 40,
             maxShardChars: 12_000, maxSummaryChars: 500, maxKeywords: 5,
             maxEntities: 5, maxDecisions: 5, maxRunsPerHour: 999,
@@ -58,7 +112,7 @@ describe('syncMemoryHintsForSessionsOnce', () => {
     }
   });
 
-  it('indexes semantic provider messages without requiring the legacy text window gate', async () => {
+  it.each([true, false])('indexes semantic provider messages only with hints enabled (%s)', async (enabled) => {
     const { syncMemoryHintsForSessionsOnce } = await import('./syncMemoryHintsForSessionsOnce');
 
     const dir = await mkdtemp(join(os.tmpdir(), 'happier-memory-sync-semantic-'));
@@ -86,6 +140,7 @@ describe('syncMemoryHintsForSessionsOnce', () => {
           indexMode: 'hints',
           backfillPolicy: 'all_history',
           hints: {
+            enabled,
             updateMode: 'continuous',
             idleDelayMs: 0,
             windowSizeMessages: 40,
@@ -124,9 +179,10 @@ describe('syncMemoryHintsForSessionsOnce', () => {
         },
       });
 
-      expect(committed).toBe(1);
-      expect(promptText).toContain('Openclaw semantic provider memory row');
-      expect(tier1.search({ query: 'openclaw', scope: { type: 'global' }, maxResults: 10 })).toHaveLength(1);
+      expect(committed).toBe(enabled ? 1 : 0);
+      if (enabled) expect(promptText).toContain('Openclaw semantic provider memory row');
+      else expect(promptText).toBe('');
+      expect(tier1.search({ query: 'openclaw', scope: { type: 'global' }, maxResults: 10 })).toHaveLength(enabled ? 1 : 0);
 
       tier1.close();
     } finally {
@@ -159,6 +215,7 @@ describe('syncMemoryHintsForSessionsOnce', () => {
           indexMode: 'hints',
           backfillPolicy: 'all_history',
           hints: {
+            enabled: true,
             updateMode: 'continuous',
             idleDelayMs: 0,
             windowSizeMessages: 40,
@@ -234,6 +291,7 @@ describe('syncMemoryHintsForSessionsOnce', () => {
           indexMode: 'hints',
           backfillPolicy: 'new_only',
           hints: {
+            enabled: true,
             updateMode: 'continuous',
             idleDelayMs: 0,
             windowSizeMessages: 40,
@@ -287,6 +345,7 @@ describe('syncMemoryHintsForSessionsOnce', () => {
           indexMode: 'hints',
           backfillPolicy: 'new_only',
           hints: {
+            enabled: true,
             updateMode: 'continuous',
             idleDelayMs: 0,
             windowSizeMessages: 40,
@@ -345,6 +404,7 @@ describe('syncMemoryHintsForSessionsOnce', () => {
           indexMode: 'hints',
           backfillPolicy: 'new_only',
           hints: {
+            enabled: true,
             updateMode: 'continuous',
             idleDelayMs: 0,
             windowSizeMessages: 40,
@@ -422,6 +482,7 @@ describe('syncMemoryHintsForSessionsOnce', () => {
           indexMode: 'hints',
           backfillPolicy: 'all_history',
           hints: {
+            enabled: true,
             updateMode: 'continuous',
             idleDelayMs: 0,
             windowSizeMessages: 40,
@@ -467,6 +528,7 @@ describe('syncMemoryHintsForSessionsOnce', () => {
           indexMode: 'hints',
           backfillPolicy: 'all_history',
           hints: {
+            enabled: true,
             updateMode: 'continuous',
             idleDelayMs: 0,
             windowSizeMessages: 40,
@@ -542,8 +604,9 @@ describe('syncMemoryHintsForSessionsOnce', () => {
             enabled: true,
             indexMode: 'hints',
             backfillPolicy: 'all_history',
-            hints: {
-              updateMode: 'continuous',
+          hints: {
+            enabled: true,
+            updateMode: 'continuous',
               idleDelayMs: 0,
               windowSizeMessages: 40,
               maxShardChars: 12_000,

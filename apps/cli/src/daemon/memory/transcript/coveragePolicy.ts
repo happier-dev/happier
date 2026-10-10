@@ -38,7 +38,11 @@ export function memoryIndexPolicyKey(policy: MemoryIndexPolicyV1): string {
       includeToolOutputs: policy.contentPolicy.includeToolOutputs,
     },
     backfillPolicy: policy.backfillPolicy,
-    enabledAtMs: policy.enabledAtMs,
+    // An enable timestamp changes admitted rows only for these two policies.
+    // Full-history projections survive disable/re-enable without a false purge.
+    enabledAtMs: policy.backfillPolicy === 'new_only' || policy.coveragePolicy.type === 'since_enabled'
+      ? policy.enabledAtMs
+      : 0,
   });
 }
 

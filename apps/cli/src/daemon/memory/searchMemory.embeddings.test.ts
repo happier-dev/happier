@@ -7,6 +7,25 @@ import { openDeepIndexDb } from './deepIndex/deepIndexDb';
 import { searchTier2Memory } from './searchMemory';
 
 describe('searchTier2Memory (embeddings rerank)', () => {
+  it('does not substitute transcript hits when only documents are requested and their scope is unavailable', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-memory-search-corpora-'));
+    try {
+      const dbPath = join(dir, 'deep.sqlite');
+      const db = openDeepIndexDb({ dbPath });
+      db.insertChunk({ sessionId: 's1', seqFrom: 1, seqTo: 1,
+        createdAtFromMs: 1, createdAtToMs: 1, text: 'openclaw' });
+      db.close();
+      const result = await searchTier2Memory({
+        dbPath,
+        query: { v: 1, query: 'openclaw', scope: { type: 'global' }, mode: 'deep', corpora: ['documents'] },
+        previewChars: 200,
+      });
+      expect(result).toMatchObject({ ok: true, hits: [], documents: { state: 'unavailable' } });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('limits text-only results after selecting the larger candidate pool', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-memory-search-limit-'));
     try {
@@ -34,7 +53,7 @@ describe('searchTier2Memory (embeddings rerank)', () => {
 
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      expect(result.hits.map((hit) => hit.seqFrom)).toEqual([3]);
+      expect(result.hits.map((hit) => hit.type === undefined ? hit.seqFrom : null)).toEqual([3]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -52,7 +71,7 @@ describe('searchTier2Memory (embeddings rerank)', () => {
         seqTo: 1,
         createdAtFromMs: 1,
         createdAtToMs: 10,
-        text: 'Older chunk mentions openclaw.',
+        text: 'Older detailed discussion mentions openclaw among several other conversation topics and background notes.',
       });
       db.insertChunk({
         sessionId: 's1',
@@ -107,11 +126,11 @@ describe('searchTier2Memory (embeddings rerank)', () => {
       });
 
       expect(baseline.ok).toBe(true);
-      if (baseline.ok) expect(baseline.hits[0]?.seqFrom).toBe(2);
+      if (baseline.ok) expect(baseline.hits[0]?.type === undefined ? baseline.hits[0].seqFrom : null).toBe(2);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.hits).toHaveLength(1);
-      expect(result.hits[0]?.seqFrom).toBe(0);
+      expect(result.hits[0]?.type === undefined ? result.hits[0].seqFrom : null).toBe(0);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -170,8 +189,8 @@ describe('searchTier2Memory (embeddings rerank)', () => {
       expect(result.ok).toBe(true);
       if (!baseline.ok || !result.ok) return;
       expect(result.hits).toHaveLength(2);
-      expect(result.hits.map((hit: { seqFrom: number }) => hit.seqFrom)).toEqual(
-        baseline.hits.map((hit: { seqFrom: number }) => hit.seqFrom),
+      expect(result.hits.map((hit) => hit.type === undefined ? hit.seqFrom : null)).toEqual(
+        baseline.hits.map((hit) => hit.type === undefined ? hit.seqFrom : null),
       );
     } finally {
       await rm(dir, { recursive: true, force: true });

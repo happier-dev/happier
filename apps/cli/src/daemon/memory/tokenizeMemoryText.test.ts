@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { tokenizeMemoryText } from './tokenizeMemoryText';
+import { tokenizeMemoryText, createMemorySearchSnippet } from './tokenizeMemoryText';
 
 describe('tokenizeMemoryText', () => {
   it('keeps ASCII word and identifier matching', () => {
@@ -8,10 +8,26 @@ describe('tokenizeMemoryText', () => {
       'resolve',
       'resolveabsolutepath',
       'in',
+      'session_handoff',
+      'v2',
+      'absolute',
+      'path',
       'session',
       'handoff',
-      'v2',
     ]);
+  });
+
+  it('centres original Unicode text on a match beyond the opening excerpt', () => {
+    const text = `${'🚀 introduction '.repeat(40)}the ﬃxture resolves session_handoff before closing`;
+    const snippet = createMemorySearchSnippet(text, 'ffixture', 60);
+    expect(snippet).toContain('ﬃxture');
+    expect(snippet.startsWith('…')).toBe(true);
+    expect(snippet).not.toContain('\ufffd');
+    expect(createMemorySearchSnippet(`${'prefix '.repeat(40)}Cafe\u0301 after`, 'café', 30)).toContain('Cafe\u0301');
+    // macOS-normalized names can compose across Hangul letters, not just combining marks.
+    const hangul = '\u1100\u1161\u1102\u1161';
+    expect(createMemorySearchSnippet(`${'prefix '.repeat(40)}${hangul} after`, '가나', 30)).toContain(hangul);
+    expect(createMemorySearchSnippet(`${'prefix '.repeat(40)}ΟΣ after`, 'ος', 30)).toContain('ΟΣ');
   });
 
   it('indexes representative non-Latin scripts instead of returning nothing', () => {
@@ -37,6 +53,8 @@ describe('tokenizeMemoryText', () => {
   it('treats emoji as separators without dropping the adjacent words', () => {
     expect(tokenizeMemoryText('deploy🚀now')).toEqual(['deploy', 'now']);
     expect(tokenizeMemoryText('🚀')).toEqual([]);
+    expect(tokenizeMemoryText('___ -- $$')).toEqual([]);
+    expect(tokenizeMemoryText('$FOO _private')).toEqual(['$foo', '_private', 'foo', 'private']);
   });
 
   it('deduplicates terms while preserving first-occurrence order', () => {

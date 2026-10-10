@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { MemorySearchQueryV1Schema } from '@happier-dev/protocol/memory/memorySearch';
 import type { MemorySearchResultV1, MemoryWindowV1 } from '@happier-dev/protocol';
 import { MemoryStatusV1Schema } from '@happier-dev/protocol/memory/memoryStatus';
-import { MemoryWindowV1Schema } from '@happier-dev/protocol/memory/memoryWindow';
+import { MemorySettingsV1Schema } from '@happier-dev/protocol/memory/memorySettings';
+import { MemoryWindowRequestV1Schema, MemoryWindowV1Schema } from '@happier-dev/protocol/memory/memoryWindow';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import { searchTier1Memory, searchTier2Memory } from '@/daemon/memory/searchMemory';
@@ -21,20 +22,6 @@ const EnsureUpToDateParamsSchema = z
     sessionId: z.string().min(1).optional(),
   })
   .passthrough();
-
-const GetWindowParamsSchema = z
-  .object({
-    v: z.literal(1).optional(),
-    sessionId: z.string().min(1),
-    seqFrom: z.number().int().min(0),
-    seqTo: z.number().int().min(0),
-  })
-  .passthrough()
-  .superRefine((value, ctx) => {
-    if (value.seqFrom > value.seqTo) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'seqFrom must be <= seqTo', path: ['seqFrom'] });
-    }
-  });
 
 function disabledResult(): MemorySearchResultV1 {
   return { v: 1, ok: false, errorCode: 'memory_disabled', error: 'memory_disabled' };
@@ -119,6 +106,8 @@ export function registerMachineMemoryRpcHandlers(params: Readonly<{
       // setting; the value is the eligibility it actually applies. Older
       // daemons omit it and must not be presented as applying the setting.
       includeArchivedSessionsEffective: settings.includeArchivedSessions === true,
+      ...(memoryWorker.resolveDocumentSearchScope ? { documentSearchSupported: true } : {}),
+      ...(memoryWorker.getIndexSources ? { sources: [...memoryWorker.getIndexSources()] } : {}),
       hintsIndexReady,
       hintsIndexHasContent,
       deepIndexReady,
@@ -173,10 +162,20 @@ export function registerMachineMemoryRpcHandlers(params: Readonly<{
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_MEMORY_SETTINGS_SET, async (raw: unknown) => {
+    const parsed = MemorySettingsV1Schema.safeParse(raw);
+    if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
     const { writeMemorySettingsToDisk } = await import('@/settings/memorySettings');
-    const next = await writeMemorySettingsToDisk(raw);
+    const next = await writeMemorySettingsToDisk(parsed.data);
     await memoryWorker.reloadSettings();
     return next;
+  });
+
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_MEMORY_CLEAR_INDEX, async (raw: unknown, context) => {
+    if (!z.object({}).strict().safeParse(raw ?? {}).success) {
+      return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+    }
+    await memoryWorker.clearIndex(context?.signal);
+    return { ok: true };
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_MEMORY_ENSURE_UP_TO_DATE, async (raw: unknown, context) => {
@@ -198,7 +197,13 @@ export function registerMachineMemoryRpcHandlers(params: Readonly<{
     if (!settings.enabled) return disabledResult();
 
     const mode = parsed.data.mode;
-    const preferDeep = mode === 'deep' || (mode === 'auto' && settings.indexMode === 'deep');
+    const externalRequested = parsed.data.corpora?.includes('external_transcripts') === true;
+    const externalEnabled = settings.conversationSearch.indexExternal.enabled;
+    const query = externalRequested && !externalEnabled
+      ? { ...parsed.data, corpora: parsed.data.corpora?.filter(corpus => corpus !== 'external_transcripts') }
+      : parsed.data;
+    const preferDeep = mode === 'deep' || (mode === 'auto' && settings.indexMode === 'deep')
+      || (externalRequested && externalEnabled);
 
     if (preferDeep) {
       const deepPath = memoryWorker.getDeepDbPath();
@@ -211,28 +216,47 @@ export function registerMachineMemoryRpcHandlers(params: Readonly<{
       })();
       return await searchTier2Memory({
         dbPath: deepPath,
-        query: parsed.data,
+        query,
+        externalAgentIds: settings.conversationSearch.indexExternal.agents,
+        ...(externalRequested && mode !== 'deep' && settings.indexMode === 'hints' && memoryWorker.getTier1DbPath()
+          ? { sessionSummaryDbPath: memoryWorker.getTier1DbPath()! } : {}),
         previewChars: settings.deep.previewChars,
         candidateLimit: settings.deep.candidateLimit,
         ...(embeddings ? { embeddings } : {}),
         ...(embedQuery ? { embedQuery } : {}),
         ...(context?.signal ? { signal: context.signal } : {}),
+        ...(memoryWorker.resolveDocumentSearchScope ? { resolveDocuments: memoryWorker.resolveDocumentSearchScope } : {}),
       });
     }
 
     const tier1Path = memoryWorker.getTier1DbPath();
     if (!tier1Path) return { v: 1, ok: false, errorCode: 'memory_index_missing', error: 'memory_index_missing' };
-    return searchTier1Memory({ dbPath: tier1Path, query: parsed.data });
+    return searchTier1Memory({ dbPath: tier1Path, query });
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_MEMORY_GET_WINDOW, async (raw: unknown, context): Promise<MemoryWindowV1> => {
-    const parsed = GetWindowParamsSchema.safeParse(raw);
+    const parsed = MemoryWindowRequestV1Schema.safeParse(raw);
     if (!parsed.success) {
       return MemoryWindowV1Schema.parse({ v: 1, snippets: [], citations: [] });
     }
     const settings = memoryWorker.getSettings();
     if (!settings.enabled) {
       return MemoryWindowV1Schema.parse({ v: 1, snippets: [], citations: [] });
+    }
+
+    if (parsed.data.source !== undefined) {
+      const external = settings.conversationSearch.indexExternal;
+      if (!external.enabled || !external.agents.includes(parsed.data.source.agentId) || !memoryWorker.readExternalTranscriptPage) {
+        return MemoryWindowV1Schema.parse({ v: 1, snippets: [], citations: [], externalSnippets: [] });
+      }
+      return MemoryWindowV1Schema.parse(await getMemoryWindow({
+        source: parsed.data.source, sourceItemId: parsed.data.sourceItemId,
+        ...(parsed.data.cursor ? { cursor: parsed.data.cursor } : {}),
+        paddingMessages: settings.hints.paddingMessagesOnVerify,
+        contentPolicy: { ...settings.contentPolicy, includeToolOutputs: external.includeToolOutput },
+        fetchExternalTranscriptPage: memoryWorker.readExternalTranscriptPage,
+        ...(context?.signal ? { signal: context.signal } : {}),
+      }));
     }
 
     const { readStoredCredentials } = await import('@/persistence');

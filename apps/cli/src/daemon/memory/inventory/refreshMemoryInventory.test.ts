@@ -6,6 +6,7 @@ import {
   INITIAL_MEMORY_INVENTORY_STATE,
   refreshMemoryInventoryOnce,
   resolveMemoryInventoryScopes,
+  isMemorySessionOnMachine,
   type MemoryInventoryScope,
 } from './refreshMemoryInventory';
 
@@ -54,6 +55,31 @@ describe('resolveMemoryInventoryScopes', () => {
 });
 
 describe('refreshMemoryInventoryOnce', () => {
+  it('observes revisions of already-seen sessions without re-admitting them', async () => {
+    const { fetchSessionsPage } = createFetcher({ active: [{ sessions: [row('seen', { seq: 8, updatedAt: 12 })],
+      nextCursor: null, hasNext: false }] });
+    const result = await refreshMemoryInventoryOnce({ ...BASE, seenSessionIds: new Set(['seen']),
+      backfillPolicy: 'all_history', includeArchivedSessions: false, fetchSessionsPage });
+    expect(result.sessionIds).toEqual([]);
+    expect(result.observedUpdatedAtBySessionId.get('seen')).toBe(12);
+    expect(result.observedSeqBySessionId.get('seen')).toBe(8);
+  });
+  it('filters foreign and unknown machines through decoded locality and carries edit observations', async () => {
+    const credentials = { token: 'test', encryption: null };
+    const { fetchSessionsPage } = createFetcher({ active: [{ sessions: [
+      row('local', { encryptionMode: 'plain', metadata: JSON.stringify({ machineId: 'here' }), updatedAt: 12 }),
+      row('foreign', { encryptionMode: 'plain', metadata: JSON.stringify({ machineId: 'elsewhere' }) }),
+      row('unknown', { encryptionMode: 'plain', metadata: '{}' }),
+    ], nextCursor: null, hasNext: false }] });
+    const result = await refreshMemoryInventoryOnce({ ...BASE, backfillPolicy: 'all_history',
+      includeArchivedSessions: false, fetchSessionsPage,
+      isSessionEligible: session => {
+        return isMemorySessionOnMachine({ session, credentials, machineId: 'here', accountEncryptionMode: 'plain' });
+      },
+    });
+    expect(result.sessionIds).toEqual(['local']);
+    expect(result.observedUpdatedAtBySessionId.get('local')).toBe(12);
+  });
   it('never requests the archived endpoint under new_only when archived eligibility is off', async () => {
     const { calls, fetchSessionsPage } = createFetcher({
       active: [{ sessions: [row('s1')], nextCursor: null, hasNext: false }],
