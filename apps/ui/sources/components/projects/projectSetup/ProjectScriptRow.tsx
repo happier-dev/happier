@@ -21,6 +21,8 @@ import { useProjectCommandOutputOpener } from '@/components/inbox/actionOperatio
 import { ProjectCommandOutputPane } from '@/components/inbox/actionOperations/ProjectCommandOutputPane';
 import { WorkerDestinationPicker } from '@/components/projects/workers/WorkerDestinationPicker';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { openWorkspaceSyncWorkerCopySetup } from '@/components/workspaces/sync/openWorkspaceSyncAddMachine';
+import { openWorkspaceSyncRelationshipDetails } from '@/components/workspaces/sync/openWorkspaceSyncRelationshipDetails';
 import { readProjectWorkerNoAcceptanceFailureV1, type ProjectWorkerNoAcceptanceFailureDetailsV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { useServerScopedMachine } from '@/sync/store/hooks';
@@ -257,6 +259,7 @@ export const ProjectScriptRow = React.memo(function ProjectScriptRow(
     <NoWorkerBanner
       testID={`${props.testID}.noWorker`}
       refusal={workerRefusal}
+      workspace={props.workspace}
       pending={props.pending}
       onRun={run}
       onDismiss={() => setRefusalDismissed(true)}
@@ -288,7 +291,7 @@ export const ProjectScriptRow = React.memo(function ProjectScriptRow(
           <SurfaceStateCard
             size="line"
             kind="empty"
-            title={t('projects.scripts.output.empty')}
+            title={presentation.live ? presentation.text : t('projects.scripts.output.empty')}
             testID={`${props.testID}.noOutput`}
           />
         ) : null}
@@ -307,7 +310,7 @@ function describeNoWorkerReason(reason: ProjectWorkerNoAcceptanceFailureDetailsV
     case 'draining': return t('projectWorkers.draining');
     case 'unsupported': return t('projectWorkers.unsupported');
     case 'forbidden': return t('projectWorkers.accessRefused');
-    case 'worker_copy_missing':
+    case 'worker_copy_missing': return t('projectWorkers.copyMissingFact');
     case 'workspace_unavailable': return t('projectWorkers.workspaceUnavailable');
     case 'memory_insufficient': return t('projectWorkers.tooSmallGeneric');
   }
@@ -323,6 +326,7 @@ function NoWorkerBanner(
   props: Readonly<{
     testID: string;
     refusal: ProjectWorkerNoAcceptanceFailureDetailsV1;
+    workspace: WorkspaceAddressV1;
     pending: boolean;
     onRun: (choice?: ProjectExecutionChoiceV1) => void;
     onDismiss: () => void;
@@ -339,6 +343,35 @@ function NoWorkerBanner(
     disabled: props.pending,
     onPress: () => props.onRun({ kind: 'primary' }),
   };
+  // The chosen Machine has no copy of this checkout yet (31): setting one up is Sync's own creator
+  // and approval. It never retries this Run; the next Run is the user's.
+  const missingCopy = props.refusal.reason === 'worker_copy_missing' ? props.refusal.workerCopy ?? null : null;
+  const copyTarget = useServerScopedMachine(
+    props.workspace.serverId,
+    missingCopy?.targetMachineId ?? props.workspace.machineId,
+  );
+  if (missingCopy) {
+    const machine = (copyTarget ? getMachineDisplayName(copyTarget) : null) ?? missingCopy.targetMachineId;
+    return (
+      <View style={styles.refusal}>
+        <AttentionBanner
+          testID={props.testID}
+          tone="neutral"
+          title={t('projectWorkers.copyMissing', { machine })}
+          action={{
+            label: t('projectWorkers.setUpCopy', { machine }),
+            testID: `${props.testID}.setUpCopy`,
+            onPress: () => {
+              openWorkspaceSyncWorkerCopySetup(props.workspace, props.refusal,
+                (summary) => openWorkspaceSyncRelationshipDetails(summary, props.workspace.workspaceId));
+            },
+          }}
+          secondaryAction={runHere ?? dontRun}
+          {...(runHere ? { moreActions: [dontRun] } : {})}
+        />
+      </View>
+    );
+  }
   return (
     <View style={styles.refusal}>
       <AttentionBanner

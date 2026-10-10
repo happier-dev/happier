@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { readProjectManifestDocument } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument';
 
 import {
   createSessionFixture,
@@ -155,17 +156,7 @@ function presentDefinition(
   const bytes = `${JSON.stringify(original, null, 2)}\n`;
   return {
     basis: { kind: 'present', hash },
-    document: {
-      status: 'valid',
-      bytes,
-      original,
-      manifest,
-      diagnostics: Object.keys(extra).map((key) => ({
-        code: 'unrecognized_key',
-        path: [key],
-        message: `Unrecognized key: ${key}`,
-      })),
-    },
+    document: readProjectManifestDocument(bytes),
   };
 }
 
@@ -666,6 +657,29 @@ describe('ProjectScriptsBody runs', () => {
     },
   );
 
+  it('offers to set up the missing worker copy through Sync and never retries the Run by itself', async () => {
+    const { Modal } = await import('@/modal');
+    const show = vi.spyOn(Modal, 'show').mockImplementation(() => 'modal' as never);
+    shared.inspection = {
+      definition: presentDefinition({ version: 1, scripts: { test: { source: nativeRef('test'), execution: 'portable' } } }),
+      detection,
+      importCandidates: [],
+    };
+    shared.failures['projects.script.run'] = {
+      ok: false, errorCode: 'worker_copy_missing', error: 'worker_copy_missing',
+      details: { kind: 'no_worker_can_accept', unavailable: 'fail', reason: 'worker_copy_missing',
+        workerCopy: { serverId: workspace.serverId, sourceWorkspaceRefId: workspace.workspaceId,
+          sourceMachineId: workspace.machineId, targetMachineId: 'm2' } },
+    };
+    const screen = await render('page', 'scripts.script:test');
+    await act(async () => { await screen.pressByTestIdAsync('scripts.script:test.run'); });
+    await vi.waitFor(() => expect(screen.findByTestId('scripts.script:test.noWorker.setUpCopy')).toBeTruthy());
+    await act(async () => { await screen.pressByTestIdAsync('scripts.script:test.noWorker.setUpCopy'); });
+    expect(show).toHaveBeenCalledTimes(1);
+    expect(show.mock.calls[0]?.[0]).toMatchObject({ props: { options: { targetMachineId: 'm2', purpose: 'worker_clean_copy' } } });
+    expect(shared.calls.filter((call) => call.actionId === 'projects.script.run')).toHaveLength(1);
+  });
+
   it('reads what agents are told only once its disclosure is opened', async () => {
     shared.inspection = {
       definition: presentDefinition({ version: 1, scripts: { test: { source: nativeRef('test'), execution: 'portable' } } }),
@@ -767,14 +781,15 @@ describe('ProjectScriptsBody project file editor', () => {
           version: 1,
           workspace: {
             setup: [
-              { kind: 'command', command: 'yarn install' },
-              { kind: 'command', command: 'yarn build' },
+              { kind: 'command', command: 'yarn install', futureStep: { keep: 1 } },
+              { kind: 'command', command: 'yarn build', futureStep: { keep: 2 } },
             ],
           },
           scripts: {
             test: { source: nativeRef('test') },
-            lint: { source: { kind: 'command', command: 'eslint .' } },
+            lint: { source: { kind: 'command', command: 'eslint .', futureSource: { keep: 'script' } } },
           },
+          services: { web: { source: { kind: 'command', command: 'yarn dev', futureSource: { keep: 'service' } } } },
         },
         { sevices: {} },
       ),
@@ -841,6 +856,14 @@ describe('ProjectScriptsBody project file editor', () => {
     });
     await commit('project-manifest-editor.script:lint.name', 'check');
     await act(async () => {
+      await screen.pressByTestIdAsync('project-manifest-editor.script:check');
+    });
+    await commit('project-manifest-editor.script:check.command', 'eslint src');
+    await act(async () => {
+      await screen.pressByTestIdAsync('project-manifest-editor.service:web');
+    });
+    await commit('project-manifest-editor.service:web.command', 'yarn dev:web');
+    await act(async () => {
       await screen.pressByTestIdAsync('project-manifest-editor.script:test');
     });
     await commit('project-manifest-editor.script:test.memory', '8');
@@ -887,13 +910,14 @@ describe('ProjectScriptsBody project file editor', () => {
     expect(update?.input.expectedBasis).toEqual({ kind: 'present', hash });
     const saved = JSON.parse(update?.input.bytes);
     expect(saved.workspace.setup).toEqual([
-      { kind: 'command', command: 'yarn build:protocol' },
-      { kind: 'command', command: 'yarn install' },
+      { kind: 'command', command: 'yarn build:protocol', futureStep: { keep: 2 } },
+      { kind: 'command', command: 'yarn install', futureStep: { keep: 1 } },
     ]);
     expect(Object.keys(saved.scripts)).toEqual(['test', 'check', 'e2e', 'dev']);
     expect(saved.scripts.check).toEqual({
-      source: { kind: 'command', command: 'eslint .' },
+      source: { kind: 'command', command: 'eslint src', futureSource: { keep: 'script' } },
     });
+    expect(saved.services.web.source).toEqual({ kind: 'command', command: 'yarn dev:web', futureSource: { keep: 'service' } });
     expect(saved.scripts.test.memoryDemand).toEqual({
       bytes: 8 * 2 ** 30,
       basis: { kind: 'declared' },
@@ -966,6 +990,28 @@ describe('ProjectScriptsBody project file editor', () => {
       (call) => call.actionId === 'projects.manifest.update',
     );
     expect(JSON.parse(update?.input.bytes).scripts).toEqual({});
+  });
+
+  it('imports a colliding native reference under an explicit name without replacing the existing declaration', async () => {
+    shared.inspection = { definition: presentDefinition({ version: 1, scripts: { test: {
+      source: { kind: 'command', command: 'echo original' }, future: { keep: true },
+    } } }), detection, importCandidates: [{ source: nativeRef('test'), usage: 'script', availability: 'available', preselected: false },
+      { source: nativeRef('missing'), usage: 'script', availability: 'unavailable', preselected: false }] };
+    const screen = await render('page', 'scripts.edit');
+    await act(async () => { await screen.pressByTestIdAsync('scripts.edit'); });
+    await vi.waitFor(() => expect(screen.findByTestId('project-manifest-editor.found:0')).toBeTruthy());
+    expect(screen.findByTestId('project-manifest-editor.found:0')?.props.disabled).not.toBe(true);
+    await act(async () => { await screen.pressByTestIdAsync('project-manifest-editor.found:0'); });
+    await vi.waitFor(() => expect(screen.findByTestId('project-manifest-editor.found:0.name')).toBeTruthy());
+    await act(async () => { screen.changeTextByTestId('project-manifest-editor.found:0.name', 'native-test'); });
+    await act(async () => { await screen.pressByTestIdAsync('project-manifest-editor.found:0.save'); });
+    expect(screen.findAllByTestId('project-manifest-editor.found:1')[0]?.props.disabled).toBe(true);
+    shared.responses['projects.manifest.update'] = { status: 'refused', code: 'write_failed' };
+    await act(async () => { await screen.pressByTestIdAsync('project-manifest-editor.save'); });
+    const saved = JSON.parse(shared.calls.find(call => call.actionId === 'projects.manifest.update')?.input.bytes);
+    expect(saved.scripts.test).toEqual({ source: { kind: 'command', command: 'echo original' }, future: { keep: true } });
+    expect(saved.scripts['native-test']).toEqual({ source: nativeRef('test') });
+    expect(saved.scripts.missing).toBeUndefined();
   });
 
   it('opens an invalid project file in JSON, keeps its bytes and turns Form and Save off', async () => {
@@ -1127,6 +1173,10 @@ describe('ProjectScriptsBody on a phone', () => {
     const screen = await render('page', 'scripts.edit');
     await act(async () => { await screen.pressByTestIdAsync('scripts.edit'); });
     await vi.waitFor(() => expect(screen.findByTestId('project-manifest-editor.section:scripts:test')).toBeTruthy());
+    const footer = screen.findByTestId('project-manifest-editor.phoneActions');
+    expect(footer).not.toBeNull();
+    expect(footer?.findAllByProps({ testID: 'project-manifest-editor.save' }).length).toBeGreaterThan(0);
+    expect(footer?.findAllByProps({ testID: 'project-manifest-editor.discard' }).length).toBeGreaterThan(0);
     expect(screen.findByTestId('project-manifest-editor.script:test')).toBeNull();
     await act(async () => { await screen.pressByTestIdAsync('project-manifest-editor.section:scripts:test'); });
     await vi.waitFor(() => expect(screen.findByTestId('project-manifest-editor.script:test')).toBeTruthy());
@@ -1137,6 +1187,9 @@ describe('ProjectScriptsBody on a phone', () => {
     await act(async () => { await screen.pressByTestIdAsync('project-manifest-editor.save'); });
     const update = shared.calls.find((call) => call.actionId === 'projects.manifest.update');
     expect(JSON.parse(update?.input.bytes).scripts.test.execution).toBe('portable');
+    await act(async () => { await screen.pressByTestIdAsync('project-manifest-editor.discard'); });
+    expect(screen.findByTestId('project-manifest-editor.save')?.props.disabled).toBe(true);
+    expect(shared.calls.filter(call => call.actionId === 'projects.manifest.update')).toHaveLength(1);
   });
 
   it('opens a run’s output in the operation detail, never a desktop terminal tab', async () => {

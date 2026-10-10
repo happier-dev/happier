@@ -22,7 +22,11 @@ import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
 import { useActiveActionOperations } from '@/sync/domains/actionOperations/useActionOperations';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { useAllMachines } from '@/sync/domains/state/storage';
-import { useMachineFreshCopies } from './useMachineFreshCopies';
+import { useMachineFreshCopies, type MachineFreshCopy, type MachineFreshCopyNotice } from './useMachineFreshCopies';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
+import { useServerScopedMachine } from '@/sync/store/hooks';
+import { formatByteSize } from '@/utils/files/formatByteSize';
 import { executeProjectWorkerActionV1 } from '@/sync/ops/actions/projectWorkerActions';
 import { t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
@@ -154,6 +158,164 @@ function RunningHereRow(
 }
 
 /**
+ * One kept worker copy (lab `s-workers MACHINE` / `MACHINEp`): where it came from, when it was last
+ * cleanly synced and its measured size (unknown facts are left out, never guessed). Remove… names the
+ * two outcomes; consent belongs to the Action, so a pending approval is shown, not asked again here.
+ */
+function FreshCopyRow(
+  props: Readonly<{
+    testID: string;
+    serverId: string;
+    machineName: string;
+    copy: MachineFreshCopy;
+    compact: boolean;
+    busy: boolean;
+    approvalId: string | null;
+    notice: MachineFreshCopyNotice | null;
+    onRemove: (choice?: Readonly<{ removeFiles?: boolean }>) => void;
+  }>,
+) {
+  const { theme } = useUnistyles();
+  const router = useRouter();
+  const [open, setOpen] = React.useState(false);
+  const source = useServerScopedMachine(props.serverId, props.copy.sourceMachineId);
+  const from = source ? t('projectWorkers.copyFrom', { machine: getMachineDisplayName(source) ?? '' }) : null;
+  const time =
+    props.copy.lastCleanSyncAtMs === null
+      ? null
+      : formatRelativeTimeShort(props.copy.lastCleanSyncAtMs, Date.now());
+  const synced =
+    time === null
+      ? null
+      : props.compact
+        ? t('projectWorkers.copySynced', { time })
+        : t('projectWorkers.copyLastSynced', { time });
+  const size = props.copy.sizeBytes === null ? null : formatByteSize(props.copy.sizeBytes);
+  // Phone keeps the row to "Synced … · size"; where it came from moves into the opened sheet.
+  const facts = [props.compact ? null : from, synced, size].filter(Boolean).join(' · ');
+  const icon = <Icon name="folder" size={18} color={theme.colors.text.secondary} />;
+  const anchor = React.useRef<View>(null);
+  const choices = [
+    {
+      id: 'keep',
+      testID: `${props.testID}.remove:keep`,
+      title: t('projectWorkers.removeKeepFiles'),
+      subtitle: t('projectWorkers.removeDetail'),
+    },
+    {
+      id: 'files',
+      testID: `${props.testID}.remove:files`,
+      title: t('projectWorkers.removeWithFiles'),
+      subtitle: t('projectWorkers.removeWithFilesDetail', { machine: props.machineName }),
+      destructive: true,
+    },
+  ];
+  const choose = (id: string) => props.onRemove(id === 'files' ? { removeFiles: true } : undefined);
+  const menu = (trigger: (control: Readonly<{ toggle: () => void }>) => React.ReactNode) => (
+    <DropdownMenu
+      open={open}
+      onOpenChange={setOpen}
+      rowKind="item"
+      showCategoryTitles={false}
+      placement="bottom"
+      popoverAnchorAlign="end"
+      matchTriggerWidth={false}
+      maxWidthCap={340}
+      items={choices}
+      onSelect={choose}
+      trigger={trigger}
+    />
+  );
+  const approvalId = props.notice?.kind === 'approval' ? props.approvalId : null;
+  return (
+    <>
+      {props.compact ? (
+        <View ref={anchor} collapsable={false}>
+          <Item
+            testID={props.testID}
+            title={props.copy.name}
+            subtitle={facts || undefined}
+            icon={icon}
+            disabled={props.busy}
+            onPress={() => setOpen(true)}
+          />
+          <Popover
+            open={open}
+            anchorRef={anchor}
+            phonePresentation="sheet"
+            accessibilityLabel={props.copy.name}
+            onRequestClose={() => setOpen(false)}
+          >
+            {({ maxHeight }) => (
+              <FloatingOverlay maxHeight={maxHeight} surfaceChrome="theme">
+                <Item
+                  title={props.copy.name}
+                  subtitle={[from, synced, size].filter(Boolean).join(' · ') || undefined}
+                  icon={icon}
+                  mode="info"
+                  showChevron={false}
+                />
+                {choices.map((choice) => (
+                  <Item
+                    key={choice.id}
+                    testID={choice.testID}
+                    title={choice.title}
+                    subtitle={choice.subtitle}
+                    destructive={choice.destructive === true}
+                    showChevron={false}
+                    onPress={() => {
+                      setOpen(false);
+                      choose(choice.id);
+                    }}
+                  />
+                ))}
+              </FloatingOverlay>
+            )}
+          </Popover>
+        </View>
+      ) : (
+        <Item
+          testID={props.testID}
+          title={props.copy.name}
+          subtitle={facts || undefined}
+          icon={icon}
+          showChevron={false}
+          rightElement={menu(({ toggle }) => (
+            <RoundButton
+              size="small"
+              display="inverted"
+              title={t('projectWorkers.remove')}
+              testID={`${props.testID}.remove`}
+              disabled={props.busy}
+              onPress={toggle}
+            />
+          ))}
+        />
+      )}
+      {props.notice ? (
+        <AttentionBanner
+          testID={`${props.testID}.notice`}
+          tone={props.notice.kind === 'saving' || props.notice.kind === 'approval' ? 'neutral' : 'warning'}
+          title={props.notice.text}
+          action={
+            approvalId
+              ? {
+                  label: t('approvals.title'),
+                  testID: `${props.testID}.approval`,
+                  onPress: () =>
+                    router.push(
+                      `/inbox/approvals/${encodeURIComponent(approvalId)}?serverId=${encodeURIComponent(props.serverId)}`,
+                    ),
+                }
+              : null
+          }
+        />
+      ) : null}
+    </>
+  );
+}
+
+/**
  * Machine › Work from your projects (30s3/31s3, lab `s-workers MACHINE`): whether this Machine takes
  * new Project work and how much at once, your runs on it now, and the fresh copies it keeps. Policy
  * changes only affect future admissions; accepted work is never cancelled or moved here.
@@ -168,7 +330,6 @@ export function MachineProjectWorkSection(
   }>,
 ) {
   const testID = props.testID ?? 'machine-project-work';
-  const { theme } = useUnistyles();
   const router = useRouter();
   const policy = useMachineWorkerPolicy(props.serverId, props.machineId);
   const active = useActiveActionOperations();
@@ -188,8 +349,7 @@ export function MachineProjectWorkSection(
   const compact = useViewportClass() === 'compact';
   const capacityAnchor = React.useRef<View>(null);
   const [capacityOpen, setCapacityOpen] = React.useState(false);
-  const { copies: visibleCopies, remove, notice: copyNotice } = useMachineFreshCopies(props.serverId, props.machineId);
-  const machines = useAllMachines();
+  const freshCopies = useMachineFreshCopies(props.serverId, props.machineId);
   const state = policy.state;
   const value = state.kind === 'ready' ? state.value.policy : null;
   const disabled = !value || policy.busy;
@@ -401,7 +561,22 @@ export function MachineProjectWorkSection(
           />
         }
       >
-        {visibleCopies === null ? null : visibleCopies.length === 0 ? (
+        {freshCopies.loading ? (
+          <Item
+            testID={`${testID}.copies.loading`}
+            title={t('common.loading')}
+            mode="info"
+            showChevron={false}
+          />
+        ) : freshCopies.copies === null ? (
+          // A settled unknown census is not evidence that there are no copies.
+          <Item
+            testID={`${testID}.copies.unavailable`}
+            title={t('projectWorkers.freshCopiesUnavailable')}
+            mode="info"
+            showChevron={false}
+          />
+        ) : freshCopies.copies.length === 0 ? (
           <Item
             testID={`${testID}.copies.empty`}
             title={t('projectWorkers.freshCopiesEmpty')}
@@ -409,44 +584,24 @@ export function MachineProjectWorkSection(
             showChevron={false}
           />
         ) : (
-          visibleCopies.map((copy) => {
-            const sourceMachine = machines.find((machine) => machine.id === copy.sourceMachineId);
-            const sourceName = sourceMachine ? getMachineDisplayName(sourceMachine) : null;
-            const failure =
-              copyNotice?.relationshipId === copy.relationship.relationshipId
-                ? copyNotice.text
-                : null;
-            return (
-              <Item
-                key={copy.relationship.relationshipId}
-                testID={`${testID}.copy:${copy.relationship.relationshipId}`}
-                title={copy.name}
-                subtitle={
-                  failure ??
-                  (sourceName
-                    ? t('projectWorkers.copyFrom', { machine: sourceName })
-                    : undefined)
-                }
-                icon={
-                  <Icon
-                    name="folder"
-                    size={18}
-                    color={theme.colors.text.secondary}
-                  />
-                }
-                showChevron={false}
-                rightElement={
-                  <RoundButton
-                    size="small"
-                    display="inverted"
-                    title={t('projectWorkers.remove')}
-                    testID={`${testID}.copy:${copy.relationship.relationshipId}.remove`}
-                    onPress={() => void remove(copy)}
-                  />
-                }
-              />
-            );
-          })
+          freshCopies.copies.map((copy) => (
+            <FreshCopyRow
+              key={copy.relationship.relationshipId}
+              testID={`${testID}.copy:${copy.relationship.relationshipId}`}
+              serverId={props.serverId}
+              machineName={props.machineName}
+              copy={copy}
+              compact={compact}
+              busy={freshCopies.busy}
+              approvalId={freshCopies.approvalId}
+              notice={
+                freshCopies.notice?.relationshipId === copy.relationship.relationshipId
+                  ? freshCopies.notice
+                  : null
+              }
+              onRemove={(choice) => void freshCopies.remove(copy, choice)}
+            />
+          ))
         )}
       </ItemGroup>
     </>

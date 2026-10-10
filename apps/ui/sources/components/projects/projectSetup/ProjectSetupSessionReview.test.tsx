@@ -14,6 +14,7 @@ import {
 } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
 vi.mock('expo-router', async () => {
   const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -36,6 +37,8 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
   machineRpcWithServerScope: (...args: unknown[]) => machineTransport.read(...args),
 }));
 const { storage } = await import('@/sync/domains/state/storage');
+const { Text } = await import('react-native');
+const { useServerCredentialAccountScopeBindings } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
 const { resolveServerProfileScopeIdForIdentifier } =
   await import('@/sync/domains/server/serverProfiles');
 const { ProjectSetupSessionReviews } =
@@ -48,6 +51,11 @@ afterEach(() => {
 });
 
 const DIGEST = 'effect-digest-1';
+
+function AccountProbe({ serverId }: { serverId: string }) {
+  const binding = useServerCredentialAccountScopeBindings([serverId]).get(serverId);
+  return <Text testID="review-account">{binding?.isCurrent() ? binding.accountId : 'resolving'}</Text>;
+}
 
 function heldScript(
   serverId: string,
@@ -122,7 +130,8 @@ describe('Project setup review inside a Session', () => {
             createPlainAccountEncryptionCurrentnessFixture(),
           );
         if (path === '/v2/account/settings')
-          return Response.json({ content: null, version: 0 });
+          return Response.json({ content: { t: 'plain', v: { actionsSettingsV1: { v: 1,
+            approvalWaivedSurfaces: { 'action.operations.cancel': ['ui'] } } } }, version: 1 });
         if (path === '/v1/account/project-trust/read')
           return Response.json({ status: 'absent' });
         if (path === '/v1/account/project-trust/mutate') {
@@ -143,7 +152,9 @@ describe('Project setup review inside a Session', () => {
         rootPath: '/src/happier',
       };
       const scope = { serverId, accountId: 'account' };
+      const machine = createMachineFixture({ id: 'devbox', isShared: true });
       storage.setState({
+        machineListByServerId: { [serverId]: [{ ...machine, metadata: { ...machine.metadata!, username: 'shared-user' } }] },
         profileScope: scope,
         projectAccountRows: {
           scope,
@@ -166,7 +177,7 @@ describe('Project setup review inside a Session', () => {
       } as never);
       const held = heldScript(serverId, 'session-1', workspace);
       machineTransport.read.mockResolvedValueOnce({ kind: 'found', operation: held })
-        .mockResolvedValueOnce({ kind: 'found', operation: { ...held, setupReview: undefined } });
+        .mockResolvedValueOnce({ kind: 'found', operation: { ...held, revision: 2, setupReview: undefined } });
       actionOperationStore.mergeSnapshots({
         serverId,
         snapshots: [
@@ -184,10 +195,10 @@ describe('Project setup review inside a Session', () => {
         interaction: { canApprovePermissions: true } as never,
       });
       const screen = await renderWithSessionTranscriptSource(
-        <ProjectSetupSessionReviews
-          sessionId="session-1"
-          serverId={serverId}
-        />,
+        <>
+          <ProjectSetupSessionReviews sessionId="session-1" serverId={serverId} />
+          <AccountProbe serverId={serverId} />
+        </>,
         source,
       );
       await vi.waitFor(() =>
@@ -198,9 +209,8 @@ describe('Project setup review inside a Session', () => {
       expect(
         screen.findByTestId('project-setup-session-review:other-session'),
       ).toBeNull();
-      expect(screen.getTextContent()).toContain(
-        'mise install · yarn install --immutable',
-      );
+      expect(screen.getTextContent()).toContain('mise install');
+      expect(screen.getTextContent()).toContain('yarn install --immutable');
 
       await act(async () => {
         screen.pressByTestId('project-setup-session-review:held-test-approve');
@@ -224,6 +234,44 @@ describe('Project setup review inside a Session', () => {
           },
         },
       ]);
+      // Later filesystem changes can rehold the very same reservation after Remember returned.
+      const later = { ...held, revision: 3, setupReview: {
+        ...held.setupReview!, code: 'project_setup_effect_changed' as const,
+        reviewedEffectDigest: 'effect-B', reviewedEffect: { commands: [{ executable: 'make', args: ['bootstrap'] }],
+          presentation: { bindings: [{ name: 'TOKEN', ref: 'saved-secret:deploy', revision: 7,
+            source: 'shared_resource', displayName: 'Deployment', value: 'NEVER-DISCLOSE' }],
+            provenance: { file: '.happier/project.json', kind: 'repository', headCommit: 'abcdef123456',
+              branch: 'feature', fileState: 'modified', bytes: 'NEVER-DISCLOSE' } } },
+      } };
+      await act(async () => { actionOperationStore.mergeSnapshots({ serverId, snapshots: [later] }); });
+      expect(screen.findByTestId('project-setup-session-review:held-test.settled')).toBeNull();
+      expect(screen.getTextContent()).toContain('make bootstrap');
+      expect(screen.findByTestId('project-setup-session-review:held-test-reject')).not.toBeNull();
+      machineTransport.read.mockResolvedValue({ kind: 'requested' });
+      await act(async () => { screen.pressByTestId('project-setup-session-review:held-test-reject'); });
+      await vi.waitFor(() => expect(machineTransport.read).toHaveBeenCalledWith(expect.objectContaining({
+        serverId, machineId: 'devbox', method: 'actionOperation.cancel.v1', payload: { operationId: 'held-test' },
+      })));
+      expect(screen.getTextContent()).toContain('saved-secret:deploy');
+      expect(screen.getTextContent()).toContain('r7');
+      expect(screen.getTextContent()).toContain('secretsSettings.keepShared');
+      expect(screen.getTextContent()).toContain('projects.scripts.setup.provenanceModified');
+      expect(screen.getTextContent()).toContain('machines.terminals.sharedOsDetail');
+      expect(screen.getTextContent()).not.toContain('NEVER-DISCLOSE');
+
+      // Retire the Account binding, then return to the same Account: old settled lines stay gone.
+      await act(async () => { actionOperationStore.mergeSnapshots({ serverId, snapshots: [{ ...held, revision: 4, setupReview: undefined }] }); });
+      const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+      const credentialRead = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl');
+      const bob = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'bob' })).toString('base64url')}.signature` };
+      credentialRead.mockResolvedValue(bob);
+      await act(async () => { await TokenStorage.setCredentialsForServerUrl(connection.home.serverUrl, { serverId }, bob); });
+      await vi.waitFor(() => expect(screen.findByTestId('review-account')?.children).toEqual(['bob']));
+      await vi.waitFor(() => expect(screen.findByTestId('project-setup-session-review:held-test')).toBeNull());
+      credentialRead.mockResolvedValue(connection.credentials);
+      await act(async () => { await TokenStorage.setCredentialsForServerUrl(connection.home.serverUrl, { serverId }, connection.credentials); });
+      await vi.waitFor(() => expect(screen.findByTestId('review-account')?.children).toEqual(['account']));
+      expect(screen.findByTestId('project-setup-session-review:held-test.settled')).toBeNull();
       await screen.unmount();
     } finally {
       await connection.dispose();

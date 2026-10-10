@@ -6,6 +6,7 @@ import {
   encodePlainMachineStoredContent,
   MACHINE_PLAIN_DATA_KEY_MARKER,
 } from '@happier-dev/protocol/machines/machineStoredContent';
+import { computeWorkspaceSyncPolicyDigest, type WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -129,6 +130,74 @@ async function setup() {
 }
 
 describe('Machine › Work from your projects through the Machine policy Actions', () => {
+  it('offers Fresh-copy removal only for a proven worker target, never ordinary Sync or the worker SOURCE', async () => {
+    const { screen } = await setup();
+    const scope = storage.getState().profileScope;
+    if (!scope || scope.serverId !== fixture?.home.id) throw new Error('expected_current_project_account_scope');
+    const source = { id: 'fresh-source', serverId: scope.serverId, machineId: 'source-machine',
+      rootPath: '/source/project', label: 'Original source checkout', createdAtMs: 1, projectKey: 'fresh-project' };
+    const target = { id: 'fresh-target', serverId: scope.serverId, machineId: 'm1',
+      rootPath: '/worker/project', label: 'Worker target checkout', createdAtMs: 1, projectKey: 'fresh-project' };
+    const policy = { v: 1 as const, selection: 'git_worktree' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const ordinary: WorkspaceSyncRelationshipV1 = { v: 1, relationshipId: 'ordinary-sync', controllerMachineId: 'source-machine',
+      alphaWorkspaceRefId: source.id, betaWorkspaceRefId: target.id, mode: 'keep_synced', enabled: true,
+      contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) }, createdAtMs: 1, updatedAtMs: 1 };
+    const workerTarget: WorkspaceSyncRelationshipV1 = { ...ordinary, relationshipId: 'proven-worker-target',
+      alphaWorkspaceRefId: target.id, betaWorkspaceRefId: source.id,
+      provenance: { kind: 'worker_clean_copy', sourceWorkspaceRefId: source.id, targetWorkspaceRefId: target.id } };
+    const workerSource: WorkspaceSyncRelationshipV1 = { ...ordinary, relationshipId: 'machine-is-worker-source',
+      provenance: { kind: 'worker_clean_copy', sourceWorkspaceRefId: target.id, targetWorkspaceRefId: source.id } };
+    await act(async () => {
+      storage.getState().activateProjectAccountRowsScope(scope);
+      storage.getState().setProjectAccountRowsStatusForScope(scope, 'idle');
+    });
+    expect(screen.findAllByTestId('work.copies.loading').length).toBeGreaterThan(0);
+    expect(screen.findAllByTestId('work.copies.unavailable').length).toBe(0);
+    expect(screen.findAllByTestId('work.copies.empty').length).toBe(0);
+    await act(async () => {
+      storage.getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete',
+        workspaceRefs: [source, target], relationships: [ordinary, workerTarget, workerSource], organizations: [], revisionsByPhysicalKey: {} });
+    });
+    // Prove the real row subscription consumed the scoped fixture before testing exclusions.
+    // The row component forwards its testID; the rendered list row is the one carrying a title.
+    const row = () => screen.findAllByTestId('work.copy:proven-worker-target').find((node) => typeof node.props.title === 'string');
+    await vi.waitFor(() => expect(row()?.props.title).toBe(source.label));
+    expect(screen.findAllByTestId('work.copy:proven-worker-target.remove').length).toBeGreaterThan(0);
+    expect(screen.findAllByTestId('work.copy:ordinary-sync').length).toBe(0);
+    expect(screen.findAllByTestId('work.copy:machine-is-worker-source').length).toBe(0);
+    // Unknown clean-sync time and size are omitted, never shown as a guessed value.
+    const subtitle = String(row()?.props.subtitle);
+    expect(subtitle).not.toContain('projectWorkers.copyLastSynced');
+    expect(subtitle).not.toMatch(/\d/);
+    // Remove… offers the explicit choices; Ask first is rendered as a pending approval, never a local confirm.
+    const menu = () => screen.findAll((node) => typeof node.props.onSelect === 'function'
+      && Array.isArray(node.props.items) && node.props.items.some((item: { id: string }) => item.id === 'files'))[0]!;
+    expect(menu().props.items.map((item: { id: string }) => item.id)).toEqual(['keep', 'files']);
+    await act(async () => { menu().props.onSelect('keep'); });
+    await vi.waitFor(() => expect(screen.findAllByTestId('work.copy:proven-worker-target.notice')[0]?.props).toMatchObject({
+      title: 'projectWorkers.approvalPending', action: { testID: 'work.copy:proven-worker-target.approval' } }));
+    // No duplicate Remove while the first one is pending.
+    expect(screen.findAllByTestId('work.copy:proven-worker-target.remove')[0]?.props.disabled).toBe(true);
+    expect(screen.findAllByTestId('work.copy:proven-worker-target').length).toBeGreaterThan(0);
+  });
+
+  it('does not claim Fresh-copy emptiness when the current Account/Home row observation is unavailable', async () => {
+    const { screen } = await setup();
+    const scope = storage.getState().profileScope;
+    if (!scope || scope.serverId !== fixture?.home.id) throw new Error('expected_current_project_account_scope');
+    await act(async () => {
+      storage.getState().activateProjectAccountRowsScope(scope);
+      storage.getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete',
+        workspaceRefs: [], relationships: [], organizations: [], revisionsByPhysicalKey: {} });
+    });
+    expect(screen.findAllByTestId('work.copies.empty').length).toBeGreaterThan(0);
+    expect(screen.findAllByTestId('work.copies.loading').length).toBe(0);
+    await act(async () => { storage.getState().setProjectAccountRowsStatusForScope(scope, 'locked'); });
+    expect(screen.findAllByTestId('work.copies.empty').length).toBe(0);
+    expect(screen.findAllByTestId('work.copies.unavailable').length).toBeGreaterThan(0);
+    expect(screen.findAllByTestId('work.accepting').length).toBeGreaterThan(0);
+  });
+
   it('refuses a non-positive Run at most without writing, and No limit clears the ceiling', async () => {
     const { screen, sent } = await setup();
     const capacity = () => screen.findAllByTestId('work.capacity')[0]!;

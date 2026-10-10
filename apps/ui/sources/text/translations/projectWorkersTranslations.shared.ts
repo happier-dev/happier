@@ -120,14 +120,20 @@ export const projectWorkersEn = {
     manageInSync: 'Manage links in Sync',
     copyFrom: ({ machine }: { machine: string }) => `From ${machine}`,
     remove: 'Remove…',
-    removeAction: 'Remove',
-    removeConfirm: ({ name, machine }: { name: string; machine: string }) =>
-      `Stop keeping a fresh copy of ${name} on ${machine}?`,
     removeDetail:
       'Work that depends on this copy is checked first. Its files stay on the machine.',
     removeInUse: 'This copy is in use. Finish or cancel its work first.',
     removeUnknown: 'The result is unknown. Check the copy before trying again.',
     removeFailed: 'Couldn’t remove this copy.',
+    copyLastSynced: ({ time }: { time: string }) => `last synced ${time}`,
+    copySynced: ({ time }: { time: string }) => `Synced ${time}`,
+    freshCopiesUnavailable: 'Fresh copies can’t be shown right now.',
+    removeKeepFiles: 'Stop keeping this copy',
+    removeWithFiles: 'Also remove its files',
+    removeWithFilesDetail: ({ machine }: { machine: string }) => `Deletes the folder on ${machine}.`,
+    copyMissing: ({ machine }: { machine: string }) => `${machine} has no copy of this project yet.`,
+    copyMissingFact: 'Needs a copy first',
+    setUpCopy: ({ machine }: { machine: string }) => `Set up a copy on ${machine}`,
     // Writes
     saving: 'Saving…',
     approvalPending: 'Waiting for your approval…',
