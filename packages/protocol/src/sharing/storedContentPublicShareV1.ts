@@ -3,6 +3,10 @@ import { z } from 'zod';
 import { encodeBase64 } from '../crypto/base64.js';
 import { SessionStoredMessageContentSchema } from '../sessions/messages/sessionStoredMessageContent.js';
 import { ArtifactBlobReadResponseV1Schema } from '../artifacts/artifactBinaryV1.js';
+import { SessionSystemRecordSchema } from '../sessions/system/records/sessionSystemRecord.js';
+import { SessionSystemRecordContentSchema } from '../sessions/system/records/sessionSystemRecordContent.js';
+import { SessionTranscriptSurfaceItemReferenceV1Schema } from '../sessions/messages/transcriptObservationV1.js';
+import { SessionMessageRoleSchema } from '../sessions/messages/sessionMessageRole.js';
 
 /** Closed authority-bearing HTTP objects; no fragment secret is a transport field. */
 export const StoredContentPublicShareSubjectV1Schema = lazyZodSchema(() => z.object({
@@ -19,13 +23,14 @@ export const StoredContentPublicShareCreateRequestV1Schema = lazyZodSchema(() =>
   expiresAt: z.number().int().nonnegative().optional(),
   maxUses: z.number().int().positive().optional(),
   isConsentRequired: z.boolean().optional(),
+  networkOff: z.boolean().optional(),
 }).strict());
 export type StoredContentPublicShareCreateRequestV1 = z.infer<typeof StoredContentPublicShareCreateRequestV1Schema>;
 
 export const StoredContentPublicShareV1Schema = lazyZodSchema(() => z.object({
   id: z.string().min(1), subject: StoredContentPublicShareSubjectV1Schema,
   expiresAt: z.number().int().nonnegative().nullable(), maxUses: z.number().int().positive().nullable(),
-  useCount: z.number().int().nonnegative(), isConsentRequired: z.boolean(),
+  useCount: z.number().int().nonnegative(), isConsentRequired: z.boolean(), networkOff: z.boolean().default(false),
   createdAt: z.number().int().nonnegative(), updatedAt: z.number().int().nonnegative(),
   keyDerivation: StoredContentPublicShareKeyDerivationV1Schema,
 }).strict());
@@ -57,6 +62,7 @@ export const StoredContentPublicShareReadResponseV1Schema = lazyZodSchema(() => 
   encryptedDataKey: z.string().min(1).nullable(),
   keyDerivation: StoredContentPublicShareKeyDerivationV1Schema,
   isConsentRequired: z.boolean(),
+  networkOff: z.boolean().default(false),
   messagesAccessToken: z.string().min(1).nullable().optional(),
   content: z.discriminatedUnion('kind', [
     z.object({
@@ -70,6 +76,8 @@ export const StoredContentPublicShareReadResponseV1Schema = lazyZodSchema(() => 
       agentStateVersion: z.number().int().nonnegative(), messages: z.array(z.object({
         id: z.string().min(1), seq: z.number().int().nonnegative(), localId: z.string().nullable().optional(),
         createdAt: z.number().finite(), content: SessionStoredMessageContentSchema,
+        surfaceItemReference: z.lazy(() => SessionTranscriptSurfaceItemReferenceV1Schema).nullable().optional(),
+        messageRole: SessionMessageRoleSchema.optional(),
       })),
       hasMore: z.boolean(), nextBeforeSeq: z.number().int().nonnegative().nullable(),
     }).strict(),
@@ -81,6 +89,22 @@ export const StoredContentPublicShareReadResponseV1Schema = lazyZodSchema(() => 
   }
 }));
 export type StoredContentPublicShareReadResponseV1 = z.infer<typeof StoredContentPublicShareReadResponseV1Schema>;
+
+/** A message capability is the only public visual selector; item ids are not request authority. */
+export const StoredContentPublicShareVisualReadResponseV1Schema = lazyZodSchema(() => z.object({
+  messageId: z.string().min(1),
+  encryptionMode: z.enum(['plain', 'e2ee']),
+  networkOff: z.boolean(),
+  reference: z.lazy(() => SessionTranscriptSurfaceItemReferenceV1Schema),
+  record: SessionSystemRecordSchema.extend({ content: SessionSystemRecordContentSchema }),
+}).strict().superRefine((value, context) => {
+  if ((value.encryptionMode === 'plain') !== (value.record.content.t === 'plain')
+    || value.record.address.owner !== 'host' || value.record.address.namespace !== 'surface'
+    || value.record.address.kind !== 'item.v1' || value.record.address.localId !== value.reference.itemId) {
+    context.addIssue({ code: 'custom', message: 'Public visual mode or addressed identity mismatch' });
+  }
+}));
+export type StoredContentPublicShareVisualReadResponseV1 = z.infer<typeof StoredContentPublicShareVisualReadResponseV1Schema>;
 
 /** Independent cryptographic capabilities: the lookup is HTTP-visible, the secret is local. */
 export function generateStoredContentPublicShareMaterialV1(randomBytes: (length: number) => Uint8Array): Readonly<{ lookupId: string; secret: string }> {

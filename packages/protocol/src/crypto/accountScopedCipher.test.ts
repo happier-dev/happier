@@ -46,6 +46,51 @@ function deterministicRandomBytesFactory(): (length: number) => Uint8Array {
   };
 }
 
+it('keeps remote hosts, notification channels, connected presentation and acknowledgements in distinct ciphertext domains', () => {
+  const kinds = [
+    'account_remote_host_catalog', 'account_notification_channels',
+    'account_connected_presentation_catalog', 'account_connected_acknowledgement_catalog',
+  ] as const;
+  const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(9) };
+  const payload = { v: 1, privateConfiguration: 'catalog-sentinel' };
+  for (const kind of kinds) {
+    const ciphertext = sealAccountScopedBlobCiphertext({ kind, material, payload,
+      randomBytes: deterministicRandomBytesFactory() });
+    expect(openAccountScopedBlobCiphertext({ kind, material, ciphertext })?.value).toEqual(payload);
+    for (const other of [...kinds.filter(candidate => candidate !== kind), 'account_settings'] as const) {
+      expect(isAccountScopedBlobCiphertextForKind({ kind: other, ciphertext })).toBe(false);
+      expect(openAccountScopedBlobCiphertext({ kind: other, material, ciphertext })).toBeNull();
+    }
+  }
+});
+
+it('refuses Profile ciphertext at the Project trust boundary', () => {
+  const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(9) };
+  const ciphertext = sealAccountScopedBlobCiphertext({ kind: 'account_profile_record', material,
+    payload: { v: 1, id: 'profile' }, randomBytes: deterministicRandomBytesFactory() });
+  expect(isAccountScopedBlobCiphertextForKind({ kind: 'project_setup_trust', ciphertext })).toBe(false);
+  expect(openAccountScopedBlobCiphertext({ kind: 'project_setup_trust', material, ciphertext })).toBeNull();
+});
+
+it('opens private Agent, Provider and connected catalogs only in their own Account ciphertext domain', () => {
+  const kinds = ['account_mcp_catalog', 'account_acp_catalog', 'account_provider_connections',
+    'account_connected_configuration', 'account_connected_purposes'] as const;
+  const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(13) };
+  for (const kind of kinds) {
+    const payload = { v: 1, retainedConfiguration: `${kind}-private-sentinel` };
+    const ciphertext = sealAccountScopedBlobCiphertext({ kind, material, payload,
+      randomBytes: deterministicRandomBytesFactory() });
+    expect(openAccountScopedBlobCiphertext({ kind, material, ciphertext })?.value).toEqual(payload);
+    for (const other of [...kinds.filter(candidate => candidate !== kind), 'account_settings'] as const) {
+      expect(isAccountScopedBlobCiphertextForKind({ kind: other, ciphertext })).toBe(false);
+      expect(openAccountScopedBlobCiphertext({ kind: other, material, ciphertext })).toBeNull();
+    }
+    expect(openAccountScopedBlobCiphertext({ kind, material: {
+      type: 'dataKey', machineKey: new Uint8Array(32).fill(14),
+    }, ciphertext })).toBeNull();
+  }
+});
+
 it('seals external Action transport in its own authenticated Account domain', () => {
   const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(9) };
   const payload = { direction: 'request', input: { message: 'private Action sentinel' } };
@@ -83,6 +128,11 @@ const REMOTE_DEV_9B097966_SESSION_DRAFT_PRIVATE_PAYLOAD_VECTOR = {
 } as const;
 
 const FROZEN_CANONICAL_ACCOUNT_SCOPED_VECTORS = [
+  {
+    kind: 'account_prompt_catalog', kindByte: 38,
+    ciphertext: 'oSYhIiMkJSYnKCkqKywtLi8wMTIzNDU2NzhmtqWH5RJrP3OkS2t1TtnjJX6e33KW/L97Og6M2iC2TjiiW7rvjuBX+OPvNJUQ5Rp3ZKK6H2jpMJP/veDBBuvB',
+    payload: { slot: 38, source: 'account-prompt-catalog-v1' },
+  },
   {
     kind: 'authoring_memory',
     kindByte: 33,
@@ -437,6 +487,10 @@ type AccountScopedKindRollbackDisposition = Readonly<{
  * kind must have one frozen vector and an explicit rollback disposition.
  */
 const CURRENT_ACCOUNT_SCOPED_KIND_ROLLBACK_DISPOSITIONS = {
+  account_prompt_catalog: {
+    productionOwner: 'Account prompt-library reserved catalog row',
+    remoteDev165A: 'rollback_blocking',
+  },
   account_settings: {
     productionOwner: 'Account Settings stored-content envelope',
     remoteDev165A: 'readable',

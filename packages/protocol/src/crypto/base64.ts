@@ -25,6 +25,13 @@ export function readCanonicalPaddedBase64DecodedLength(input: string): number | 
   }
   const paddingLength = input.length - paddingStart;
   if (paddingLength > 2) return null;
+  // Padded encodings have unused low bits in their last alphabet character.
+  // Reject alternate spellings of the same bytes at the canonical boundary.
+  if (paddingLength > 0) {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const last = alphabet.indexOf(input[paddingStart - 1]);
+    if (last < 0 || (last & (paddingLength === 2 ? 15 : 3)) !== 0) return null;
+  }
   return (input.length / 4) * 3 - paddingLength;
 }
 
@@ -59,7 +66,10 @@ function normalizeBase64ForDecoding(input: string, variant: Base64Variant): stri
 }
 
 export function encodeBase64(bytes: Uint8Array, variant: Base64Variant = 'base64'): string {
-  const base64 = fromByteArray(bytes);
+  // Preserve the view's offset/length without copying its backing storage.
+  const base64 = typeof Buffer !== 'undefined'
+    ? Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('base64')
+    : fromByteArray(bytes);
   if (variant === 'base64url') {
     return base64
       .replace(/\+/g, '-')

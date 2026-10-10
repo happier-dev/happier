@@ -14,9 +14,10 @@ import {
 import { BrowserEvidenceSessionMediaReferenceV1Schema } from '../recording/v1.js';
 import { rejectUnsafeBrowserEgressKeys } from '../diagnostics/egress/keyRejection.js';
 import { SessionImageMediaReferenceV1Schema } from '../../sessions/media/imageReferenceV1.js';
+import { BrowserAutomationSecretFillRequestV1Schema } from '../automation/v1.js';
 
-const IdSchema = z.string().trim().min(1).max(256);
-const NonNegativeIntSchema = z.number().int().nonnegative();
+const IdSchema = lazyZodSchema(() => z.string().trim().min(1).max(256));
+const NonNegativeIntSchema = lazyZodSchema(() => z.number().int().nonnegative());
 
 const CONTEXT_KEY_REJECTION_MESSAGE =
   'Browser context payloads must not contain inline bytes, secrets, storage values, or bodies.';
@@ -62,7 +63,7 @@ export type BrowserContextRedactionLevelV1 = z.infer<typeof BrowserContextRedact
 export const BrowserScreenshotMediaReferenceV1Schema = SessionImageMediaReferenceV1Schema;
 export type BrowserScreenshotMediaReferenceV1 = z.infer<typeof BrowserScreenshotMediaReferenceV1Schema>;
 
-const BrowserContextItemBaseV1Schema = z
+const BrowserContextItemBaseV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     contextId: IdSchema,
@@ -75,7 +76,7 @@ const BrowserContextItemBaseV1Schema = z
     redactionLevel: BrowserContextRedactionLevelV1Schema,
     disabledReason: z.string().trim().min(1).max(256).optional(),
   })
-  .strict();
+  .strict());
 
 const PageReferenceSchema = lazyZodSchema(() => BrowserContextItemBaseV1Schema.extend({
   kind: z.literal('browserPageReference'),
@@ -125,14 +126,14 @@ const SelectedElementSchema = lazyZodSchema(() => BrowserContextItemBaseV1Schema
     .optional(),
 }).strict());
 
-const BrowserAnnotationRectV1Schema = z
+const BrowserAnnotationRectV1Schema = lazyZodSchema(() => z
   .object({
     x: z.number(),
     y: z.number(),
     width: z.number().nonnegative(),
     height: z.number().nonnegative(),
   })
-  .strict();
+  .strict());
 export type BrowserAnnotationRectV1 = z.infer<typeof BrowserAnnotationRectV1Schema>;
 
 export const BrowserAnnotationTargetV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
@@ -181,14 +182,14 @@ const BrowserAnnotationStrokePointV1Schema = lazyZodSchema(() => z
   })
   .strict());
 
-export const BrowserAnnotationStrokeV1Schema = z
+export const BrowserAnnotationStrokeV1Schema = lazyZodSchema(() => z
   .object({
     shape: z.enum(['freehand', 'line', 'arrow', 'rectangle', 'ellipse']),
     points: z.array(BrowserAnnotationStrokePointV1Schema).min(1).max(512),
     colorToken: z.string().trim().min(1).max(64).optional(),
     widthPx: z.number().positive().max(64).optional(),
   })
-  .strict();
+  .strict());
 export type BrowserAnnotationStrokeV1 = z.infer<typeof BrowserAnnotationStrokeV1Schema>;
 
 const AnnotationSchema = lazyZodSchema(() => BrowserContextItemBaseV1Schema.extend({
@@ -249,7 +250,7 @@ export type BrowserContextAnnotationStructuredBlockV1 = z.infer<
   typeof BrowserContextAnnotationStructuredBlockV1Schema
 >;
 
-const RecordingEvidenceSchema = BrowserContextItemBaseV1Schema.extend({
+const RecordingEvidenceSchema = lazyZodSchema(() => BrowserContextItemBaseV1Schema.extend({
   kind: z.literal('browserRecordingEvidence'),
   recordingId: IdSchema,
   artifactId: IdSchema,
@@ -272,7 +273,7 @@ const RecordingEvidenceSchema = BrowserContextItemBaseV1Schema.extend({
       message: 'Recording evidence navigation range end must not be before start.',
     });
   }
-});
+}));
 
 // ── BA-2 combined rich agent snapshot ───────────────────────────────────────────────────────────
 // A single context op that bundles the pieces an agent needs to act on a page in ONE round-trip:
@@ -315,6 +316,13 @@ export type BrowserContextSnapshotInteractiveElementV1 = z.infer<
 const SNAPSHOT_AX_NODE_CAP = 512;
 const SNAPSHOT_INTERACTIVE_CAP = 512;
 
+/** Value-free browser proof; scope and human choice still belong to confidential admission. */
+export const BrowserFocusedCredentialTargetV1Schema = lazyZodSchema(() => BrowserAutomationSecretFillRequestV1Schema.pick({
+  browserSessionId: true, viewId: true, tabId: true, frameId: true, documentId: true,
+  navigationGeneration: true, origin: true, field: true,
+}));
+export type BrowserFocusedCredentialTargetV1 = z.infer<typeof BrowserFocusedCredentialTargetV1Schema>;
+
 export const BrowserContextSnapshotV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
@@ -338,6 +346,7 @@ export const BrowserContextSnapshotV1Schema = lazyZodSchema(() => z
     interactiveElementsTruncated: z.boolean().optional().default(false),
     consoleSummary: z.string().max(8192).optional(),
     consoleTruncated: z.boolean().optional().default(false),
+    focusedCredentialTarget: BrowserFocusedCredentialTargetV1Schema.optional(),
   })
   .strict()
   .superRefine((snapshot, context) => {
@@ -345,7 +354,7 @@ export const BrowserContextSnapshotV1Schema = lazyZodSchema(() => z
   }));
 export type BrowserContextSnapshotV1 = z.infer<typeof BrowserContextSnapshotV1Schema>;
 
-export const BrowserContextItemV1Schema = z
+export const BrowserContextItemV1Schema = lazyZodSchema(() => z
   .discriminatedUnion('kind', [
     PageReferenceSchema,
     ScreenshotSchema,
@@ -378,7 +387,7 @@ export const BrowserContextItemV1Schema = z
         message: 'Blocked media-backed browser context must not include captured media.',
       });
     }
-  });
+  }));
 export type BrowserContextItemV1 = z.infer<typeof BrowserContextItemV1Schema>;
 
 export const BrowserContextCommandV1Schema = lazyZodSchema(() => z.enum([
@@ -432,7 +441,7 @@ export type BrowserContextAnnotationActionResultV1 = z.infer<
   typeof BrowserContextAnnotationActionResultV1Schema
 >;
 
-export const BrowserContextAttachmentV1Schema = z
+export const BrowserContextAttachmentV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     attachmentId: IdSchema,
@@ -455,7 +464,7 @@ export const BrowserContextAttachmentV1Schema = z
         });
       }
     }
-  });
+  }));
 export type BrowserContextAttachmentV1 = z.infer<typeof BrowserContextAttachmentV1Schema>;
 
 /** The selected, agent-bound projection; capture/grouping/redaction remain producer-owned. */

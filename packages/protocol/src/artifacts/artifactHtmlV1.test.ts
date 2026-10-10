@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { encodeBase64 } from '../crypto/base64.js';
 import { ARTIFACT_HTML_BUNDLE_MIME_V1, ArtifactHtmlBundleV1Schema, artifactHtmlBundleFromBodyV1,
-  buildArtifactHtmlPreviewUrlV1, readArtifactHtmlPreviewBundleV1, isArtifactHtmlHeaderV1, ArtifactHtmlPreviewResponseV1Schema } from './artifactHtmlV1.js';
+  isArtifactHtmlHeaderV1, ArtifactHtmlPreviewResponseV1Schema } from './artifactHtmlV1.js';
 
 const bundle = { v: 1 as const, entrypoint: 'index.html', files: { 'index.html': {
   mime: 'text/html', contentBase64: encodeBase64(new TextEncoder().encode('<h1>Hello</h1>')),
@@ -26,20 +26,21 @@ describe('Artifact HTML bundle V1', () => {
       'café image.svg': { mime: 'image/svg+xml', contentBase64: '' },
     } }).success).toBe(true);
   });
-  it('keeps private bytes in a fragment and refuses substituted/malformed fragment payloads', () => {
-    const url = buildArtifactHtmlPreviewUrlV1({ url: 'https://artifact.preview.test/a/artifact', bundle });
-    expect(new URL(url).pathname).toBe('/a/artifact');
-    expect(new URL(url).search).toBe('');
-    expect(readArtifactHtmlPreviewBundleV1(new URL(url).hash)).toEqual(bundle);
-    expect(() => readArtifactHtmlPreviewBundleV1('#d=bad')).toThrow();
-    expect(() => readArtifactHtmlPreviewBundleV1(new URL(url).hash + '&d=x')).toThrow();
-    expect(() => buildArtifactHtmlPreviewUrlV1({ url: 'http://artifact.preview.test/a/artifact', bundle })).toThrow();
+  it('refuses noncanonical base64 pad bits and missing asset MIME before execution', () => {
+    for (const contentBase64 of ['Zh==', 'Zm9=', 'not base64']) {
+      expect(ArtifactHtmlBundleV1Schema.safeParse({ ...bundle, files: {
+        'index.html': { mime: 'text/html', contentBase64 },
+      } }).success).toBe(false);
+    }
+    expect(ArtifactHtmlBundleV1Schema.safeParse({ ...bundle, files: {
+      'index.html': { contentBase64: '' },
+    } }).success).toBe(false);
   });
-  it('refuses the captured application origin before adding document bytes', () => {
-    expect(() => buildArtifactHtmlPreviewUrlV1({ url: 'https://app.example.test/a/artifact', bundle,
-      forbiddenOrigins: ['https://APP.example.test:443/api'] })).toThrow();
-    expect(new URL(buildArtifactHtmlPreviewUrlV1({ url: 'https://artifact.preview.test/a/artifact', bundle,
-      forbiddenOrigins: ['https://app.example.test'] })).origin).toBe('https://artifact.preview.test');
-    expect(ArtifactHtmlPreviewResponseV1Schema.safeParse({ url: 'not a URL' }).success).toBe(false);
+  it('admits only an isolated shell location without document bytes', () => {
+    expect(ArtifactHtmlPreviewResponseV1Schema.safeParse({ url: 'https://artifact.preview.test/a/artifact' }).success).toBe(true);
+    for (const url of ['not a URL', 'http://artifact.preview.test/a/artifact', 'https://user:secret@artifact.preview.test/a/artifact',
+      'https://artifact.preview.test/a/artifact#d=private', 'https://artifact.preview.test/a/artifact?d=private']) {
+      expect(ArtifactHtmlPreviewResponseV1Schema.safeParse({ url }).success).toBe(false);
+    }
   });
 });

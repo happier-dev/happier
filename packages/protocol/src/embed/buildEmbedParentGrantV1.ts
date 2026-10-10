@@ -27,6 +27,7 @@ export function buildEmbedParentGrantV1(options: EmbedAccessV1, embedConfig: Emb
   };
   if (options.send) {
     actions.families.push('messaging');
+    actions.ids.push('session.turn.cancel');
   }
   if (options.create !== null) actions.ids.push('session.spawn_new');
   if (options.changeModel) actions.ids.push('session.model.set');

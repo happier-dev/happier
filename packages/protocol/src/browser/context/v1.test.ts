@@ -3,6 +3,23 @@ import { SessionRunStreamReadEnvelopeSchema } from '../../sessions/control/contr
 import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
 
 describe('browser context protocol contracts', () => {
+  it('exposes a requestable focused credential target without admitting a value carrier', async () => {
+    const { BrowserContextSnapshotV1Schema } = await import('./v1.js');
+    const snapshot = {
+      v: 1, contextId: 'ctx', sourceViewId: 'view', sourceAdapterKind: 'chromiumSidecar',
+      fidelity: 'cdp', capturedAtMs: 1, navigationGeneration: 2, redactionLevel: 'metadataOnly',
+      visibleText: '', axNodes: [], interactiveElements: [],
+      focusedCredentialTarget: {
+        browserSessionId: 'browser', viewId: 'view', tabId: 'tab', frameId: 'frame',
+        documentId: 'document', navigationGeneration: 2, origin: 'https://example.test',
+        field: { fieldId: '4', focusId: '4', locator: '#password' },
+      },
+    };
+    expect(BrowserContextSnapshotV1Schema.safeParse(snapshot).success).toBe(true);
+    expect(BrowserContextSnapshotV1Schema.safeParse({ ...snapshot,
+      focusedCredentialTarget: { ...snapshot.focusedCredentialTarget, field: { ...snapshot.focusedCredentialTarget.field, value: 'fixture' } },
+    }).success).toBe(false);
+  });
   it('preserves Browser bounds in composed control JSON in both dialects', () => {
     const object = (value: unknown): Record<string, unknown> => {
       if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected JSON Schema object');

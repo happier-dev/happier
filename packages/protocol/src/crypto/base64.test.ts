@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { fromByteArray } from 'base64-js';
 
 import { decodeBase64, encodeBase64, readCanonicalPaddedBase64DecodedLength } from './base64.js';
 
@@ -11,6 +12,62 @@ function createDeterministicBytes(length: number): Uint8Array {
 }
 
 describe('protocol base64 helpers', () => {
+  it('preserves RFC 4648 vectors and binary views with and without a native encoder', () => {
+    // RFC 4648 section 10; the same encoding is used by the 0.2 Protocol owner.
+    const vectors = [
+      ['', ''], ['f', 'Zg=='], ['fo', 'Zm8='], ['foo', 'Zm9v'],
+      ['foob', 'Zm9vYg=='], ['fooba', 'Zm9vYmE='], ['foobar', 'Zm9vYmFy'],
+    ];
+    const backing = createDeterministicBytes(260);
+    const views = [backing.subarray(1, 257), backing.subarray(2, 258), backing.subarray(3, 259)];
+    const expectedViews = views.map((bytes) => fromByteArray(bytes));
+    const verify = () => {
+      for (const [plain, expected] of vectors) {
+        expect(encodeBase64(new TextEncoder().encode(plain))).toBe(expected);
+      }
+      for (const [index, bytes] of views.entries()) {
+        expect(encodeBase64(bytes)).toBe(expectedViews[index]);
+        expect(encodeBase64(bytes, 'base64url'))
+          .toBe(expectedViews[index].replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, ''));
+      }
+    };
+    verify();
+    vi.stubGlobal('Buffer', undefined);
+    try {
+      verify();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('encodes daemon-sized replies with less CPU than the portable comparator', () => {
+    const bytes = createDeterministicBytes(1_048_577).subarray(1);
+    const portable = () => fromByteArray(bytes);
+    const canonical = () => encodeBase64(bytes);
+    expect(canonical()).toBe(portable());
+    const measure = (encode: () => string) => {
+      encode();
+      const started = process.cpuUsage();
+      let length = 0;
+      for (let iteration = 0; iteration < 4; iteration += 1) length += encode().length;
+      const cpu = process.cpuUsage(started);
+      return { cpuUs: cpu.user + cpu.system, length };
+    };
+    const canonicalRuns = [];
+    const portableRuns = [];
+    for (let sample = 0; sample < 3; sample += 1) {
+      canonicalRuns.push(measure(canonical));
+      portableRuns.push(measure(portable));
+    }
+    const median = (runs: { cpuUs: number }[]) => runs.map((run) => run.cpuUs).sort((a, b) => a - b)[1];
+    const canonicalCpuUs = median(canonicalRuns);
+    const portableCpuUs = median(portableRuns);
+    console.info(JSON.stringify({ canonicalCpuUs, portableCpuUs, bytes: bytes.length }));
+    expect(canonicalRuns.map((run) => run.length)).toEqual(portableRuns.map((run) => run.length));
+    // Relative cost on the same host/workload, not a production budget or deadline.
+    expect(canonicalCpuUs).toBeLessThan(portableCpuUs / 2);
+  });
+
   it('round-trips base64', () => {
     const bytes = createDeterministicBytes(1024);
     const encoded = encodeBase64(bytes, 'base64');

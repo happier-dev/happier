@@ -8,6 +8,21 @@ import { decodeBase64 } from './base64.js';
 export type AccountScopedBlobKind =
   | 'account_settings'
   | 'authoring_memory'
+  | 'account_profile_record'
+  | 'account_profile_transfer'
+  | 'account_provider_connections'
+  | 'account_connected_configuration'
+  | 'account_connected_purposes'
+  | 'account_prompt_catalog'
+  | 'account_mcp_catalog'
+  | 'account_acp_catalog'
+  | 'account_remote_host_catalog'
+  | 'account_notification_channels'
+  | 'account_connected_presentation_catalog'
+  | 'account_connected_acknowledgement_catalog'
+  | 'project_setup_trust'
+  | 'project_account_row'
+  | 'workspace_execution_config'
   | 'account_session_draft_private_payload'
   | 'action_operation_snapshot'
   | 'external_action_transport'
@@ -75,6 +90,21 @@ const ACCOUNT_SCOPED_KIND_BYTE = Object.freeze({
   workflow_final_result: 31,
   runner_machine_content_key_verifier: 32,
   authoring_memory: 33,
+  project_setup_trust: 36,
+  project_account_row: 34,
+  workspace_execution_config: 35,
+  account_profile_record: 37,
+  account_prompt_catalog: 38,
+  account_profile_transfer: 39,
+  account_provider_connections: 40,
+  account_connected_configuration: 41,
+  account_connected_purposes: 42,
+  account_mcp_catalog: 43,
+  account_acp_catalog: 44,
+  account_remote_host_catalog: 45,
+  account_notification_channels: 46,
+  account_connected_presentation_catalog: 47,
+  account_connected_acknowledgement_catalog: 48,
 } satisfies Record<AccountScopedBlobKind, number>);
 
 /**

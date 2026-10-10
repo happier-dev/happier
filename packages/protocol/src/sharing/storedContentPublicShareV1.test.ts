@@ -4,6 +4,18 @@ import { buildStoredContentPublicShareUrlV1, generateStoredContentPublicShareMat
   StoredContentPublicShareReadResponseV1Schema } from './storedContentPublicShareV1.js';
 
 describe('stored-content fragment capabilities', () => {
+  it('preserves the explicitly confirmed network-off publication policy and opens predecessor reads with the original policy', () => {
+    const request = { subject: { kind: 'session', id: 's' }, lookupId: 'lookup', keyDerivation: 'fragment_v1', networkOff: true };
+    expect(StoredContentPublicShareCreateRequestV1Schema.parse(request)).toMatchObject({ networkOff: true });
+    const value = { subject: { kind: 'session', id: 's' }, encryptionMode: 'plain', encryptedDataKey: null,
+      keyDerivation: 'fragment_v1', isConsentRequired: false, networkOff: true,
+      content: { kind: 'session', metadata: null, metadataVersion: 0, agentState: null, agentStateVersion: 0,
+        messages: [], hasMore: false, nextBeforeSeq: null } };
+    expect(StoredContentPublicShareReadResponseV1Schema.parse(value).networkOff).toBe(true);
+    const { networkOff: _networkOff, ...predecessor } = value;
+    expect(StoredContentPublicShareReadResponseV1Schema.parse(predecessor).networkOff).toBe(false);
+    expect(StoredContentPublicShareReadResponseV1Schema.safeParse({ ...value, networkOff: 'off' }).success).toBe(false);
+  });
   it('keeps independent capabilities in the path and fragment and rejects fragment corruption', () => {
     let value = 1;
     const material = generateStoredContentPublicShareMaterialV1(length => new Uint8Array(length).fill(value++));

@@ -9,6 +9,56 @@ import {
 } from './v1.js';
 
 describe('LocalServiceLauncherSnapshotV1Schema', () => {
+  const acceptedCwd = `/repo/${'nested/'.repeat(320)}checkout `;
+  it.each(['managed_service', 'package_script'] as const)(
+    'preserves the accepted exact cwd in a qualified %s feed target', (source) => {
+      const target = { id: 'actual-target', source, machineId: 'machine-a',
+        workspaceId: 'accepted-workspace',
+        // The canonical lookup address normalizes input; the executable cwd remains exact.
+        workspace: { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'accepted-workspace', rootPath: acceptedCwd.trim() },
+        cwd: acceptedCwd, title: 'Worker', confidence: 'high', state: 'available', actions: [],
+        declaration: { workspaceRefId: 'accepted-workspace', selection: { kind: 'manifest', name: 'worker' } },
+        sourceClass: source === 'package_script'
+          ? { kind: 'package_script', runTargetId: 'actual-target', packageName: 'package-a', scriptName: 'dev', cwd: acceptedCwd }
+          : { kind: 'managed_service', managedServiceId: 'actual-instance' } };
+      expect(LocalServiceLaunchTargetV1Schema.parse(target)).toEqual(target);
+    },
+  );
+
+  it('reads the same accepted root without introducing a narrower launcher scope path', () => {
+    const request = { machineId: 'machine-a', scope: 'workspace', workspaceRoot: acceptedCwd };
+    expect(DaemonLocalServiceLauncherSnapshotRequestV1Schema.parse(request)).toEqual(request);
+  });
+
+  it('accepts only the explicit complete native binding projection while retaining default launcher reads', () => {
+    const request = { machineId: 'machine-a', workspaceRoot: '/repo', projection: 'managed_bindings' };
+    expect(DaemonLocalServiceLauncherSnapshotRequestV1Schema.parse(request)).toEqual(request);
+    expect(DaemonLocalServiceLauncherSnapshotRequestV1Schema.parse({ machineId: 'machine-a' })).toEqual({ machineId: 'machine-a' });
+    expect(DaemonLocalServiceLauncherSnapshotRequestV1Schema.safeParse({ ...request, projection: 'anything' }).success).toBe(false);
+  });
+
+  it('preserves observed endpoint-free Running separately from readiness and launcher availability', () => {
+    const target = { id: 'managed:worker', source: 'managed_service', machineId: 'machine-a',
+      sourceClass: { kind: 'managed_service', managedServiceId: 'actual-instance' },
+      workspaceId: ` ${'accepted-workspace'.repeat(20)} `, cwd: '/repo', title: 'Worker', confidence: 'high',
+      state: 'available', serviceState: 'running', readiness: 'not_reported', actions: ['manage'],
+      startedAtMs: 10, startedByAccountId: 'actual-requester', endpointKind: 'none',
+      declaration: { workspaceRefId: ` ${'accepted-workspace'.repeat(20)} `,
+        selection: { kind: 'manifest', name: 'worker' } } };
+    expect(LocalServiceLaunchTargetV1Schema.parse(target)).toEqual(target);
+  });
+
+  it('retains the source-qualified declaration on a sessionless native service target', () => {
+    const target = {
+      id: 'declaration:workspace-a:web', source: 'managed_service', machineId: 'machine-a',
+      cwd: '/repo/app', title: 'Web', confidence: 'high', state: 'available', actions: [],
+      declaration: { workspaceRefId: 'workspace-a', selection: {
+        kind: 'native', source: { kind: 'native', tool: 'compose', file: 'compose.yaml', target: 'web' },
+      } },
+    };
+    expect(LocalServiceLaunchTargetV1Schema.parse(target)).toEqual(target);
+  });
+
   it('parses launch targets that reuse browser view targets for previews', () => {
     const parsed = LocalServiceLauncherSnapshotV1Schema.parse({
       v: 1,
@@ -196,6 +246,15 @@ describe('LocalServiceLauncherSnapshotV1Schema', () => {
 });
 
 describe('DaemonLocalServiceLauncherStartV1 schemas', () => {
+  it('accepts a reviewed exact execution choice, but not an unenrolled creation selection', () => {
+    const request = { machineId: 'primary', targetId: 'project:web',
+      choice: { kind: 'workers', destination: { kind: 'machine', machineId: 'enrolled-worker' } } };
+    expect(DaemonLocalServiceLauncherStartRequestV1Schema.safeParse(request).success).toBe(true);
+    expect(DaemonLocalServiceLauncherStartRequestV1Schema.safeParse({ ...request,
+      choice: { kind: 'managed_creation', presetId: 'preset' },
+    }).success).toBe(false);
+  });
+
   it('requires a machine-bound launcher target start request', () => {
     expect(DaemonLocalServiceLauncherStartRequestV1Schema.parse({
       machineId: 'machine-a',

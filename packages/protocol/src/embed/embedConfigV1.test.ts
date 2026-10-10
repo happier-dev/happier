@@ -36,6 +36,8 @@ describe('EmbedConfigV1', () => {
         expect(grant.targets).toBeNull();
         expect(evaluateApiTokenGrantV1({ grant, actionId: 'session.message.send' }).ok).toBe(send);
         expect(evaluateApiTokenGrantV1({ grant, actionId: 'session.user_action.answer' }).ok).toBe(send);
+        expect(evaluateApiTokenGrantV1({ grant, actionId: 'session.turn.cancel' }).ok).toBe(send);
+        expect(evaluateApiTokenGrantV1({ grant, actionId: 'session.stop' }).ok).toBe(false);
         expect(evaluateApiTokenGrantV1({ grant, actionId: 'session.model.set' }).ok).toBe(changeModel);
         expect(evaluateApiTokenGrantV1({ grant, actionId: 'session.permission_mode.set' }).ok).toBe((permissionModes?.length ?? 0) > 1);
         expect(evaluateApiTokenGrantV1({ grant, actionId: 'session.archive' }).ok).toBe(false);

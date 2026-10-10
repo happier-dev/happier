@@ -1,7 +1,15 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { isUnsafeTelemetryDataKey } from '../../../common/sensitiveKeys.js';
 import { LocalServicePreviewDiagnosticV1Schema } from '../preview/diagnostics/v1.js';
+import { LocalServicePreviewServiceTargetV1Schema, refineLocalServicePreviewServiceBindingV1,
+  type LocalServicePreviewServiceTargetV1 } from '../preview/v1.js';
+
+function refinePublicServiceBinding(value: Readonly<{ machineId: string; sessionId?: string; serviceTarget?: LocalServicePreviewServiceTargetV1 }>, context: z.RefinementCtx): void {
+  refineLocalServicePreviewServiceBindingV1(value, context);
+  if (!value.sessionId && !value.serviceTarget) context.addIssue({ code: z.ZodIssueCode.custom, path: ['sessionId'], message: 'Public exposure requires a Session or current service binding.' });
+}
 
 function hasHttpProtocol(value: string): boolean {
   try {
@@ -40,13 +48,13 @@ function rejectUnsafeLocalServicePublicPolicyDiagnosticKeys(
   }
 }
 
-export const LocalServicePublicExposureModeV1Schema = z.enum(['authenticated', 'secret_link', 'public']);
+export const LocalServicePublicExposureModeV1Schema = lazyZodSchema(() => z.enum(['authenticated', 'secret_link', 'public']));
 export type LocalServicePublicExposureModeV1 = z.infer<typeof LocalServicePublicExposureModeV1Schema>;
 
-export const LocalServicePublicExposureStateV1Schema = z.enum(['pending', 'active', 'revoked', 'expired', 'rate_limited']);
+export const LocalServicePublicExposureStateV1Schema = lazyZodSchema(() => z.enum(['pending', 'active', 'revoked', 'expired', 'rate_limited']));
 export type LocalServicePublicExposureStateV1 = z.infer<typeof LocalServicePublicExposureStateV1Schema>;
 
-export const LocalServicePublicPolicyV1Schema = z
+export const LocalServicePublicPolicyV1Schema = lazyZodSchema(() => z
   .object({
     enabled: z.boolean().optional().default(false),
     allowedModes: z.array(LocalServicePublicExposureModeV1Schema).optional().default([]),
@@ -56,24 +64,25 @@ export const LocalServicePublicPolicyV1Schema = z
     auditRequired: z.boolean().optional().default(true),
     rateLimitProfileIds: z.array(z.string().trim().min(1).max(128)).optional().default([]),
   })
-  .strict();
+  .strict());
 export type LocalServicePublicPolicyV1 = z.infer<typeof LocalServicePublicPolicyV1Schema>;
 
-const LocalServicePublicUrlV1Schema = z.string().trim().url().refine(hasHttpProtocol, {
+const LocalServicePublicUrlV1Schema = lazyZodSchema(() => z.string().trim().url().refine(hasHttpProtocol, {
   message: 'Public local service exposure URLs must use http or https.',
-});
+}));
 
 export const REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL = 'https://redacted.local-services.invalid/';
 
-const LocalServicePublicPolicyDiagnosticsV1Schema = z
+const LocalServicePublicPolicyDiagnosticsV1Schema = lazyZodSchema(() => z
   .record(z.string(), z.unknown())
-  .superRefine(rejectUnsafeLocalServicePublicPolicyDiagnosticKeys);
+  .superRefine(rejectUnsafeLocalServicePublicPolicyDiagnosticKeys));
 
-export const LocalServicePublicExposureV1Schema = z
+export const LocalServicePublicExposureV1Schema = lazyZodSchema(() => z
   .object({
     exposureId: z.string().trim().min(1).max(256),
     previewId: z.string().trim().min(1).max(256),
-    sessionId: z.string().trim().min(1).max(256),
+    sessionId: z.string().trim().min(1).max(256).optional(),
+    serviceTarget: LocalServicePreviewServiceTargetV1Schema.optional(),
     machineId: z.string().trim().min(1).max(256),
     mode: LocalServicePublicExposureModeV1Schema,
     state: LocalServicePublicExposureStateV1Schema,
@@ -87,6 +96,7 @@ export const LocalServicePublicExposureV1Schema = z
   })
   .strict()
   .superRefine((exposure, context) => {
+    refinePublicServiceBinding(exposure, context);
     if (exposure.expiresAt <= exposure.issuedAt) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -94,7 +104,7 @@ export const LocalServicePublicExposureV1Schema = z
         message: 'Public local service exposures must expire after issuance.',
       });
     }
-  });
+  }));
 export type LocalServicePublicExposureV1 = z.infer<typeof LocalServicePublicExposureV1Schema>;
 
 export function redactLocalServicePublicExposureForAgentEgress(
@@ -106,7 +116,7 @@ export function redactLocalServicePublicExposureForAgentEgress(
   };
 }
 
-export const LocalServicePublicAuditEventV1Schema = z
+export const LocalServicePublicAuditEventV1Schema = lazyZodSchema(() => z
   .object({
     eventId: z.string().trim().min(1).max(256),
     exposureId: z.string().trim().min(1).max(256),
@@ -124,10 +134,10 @@ export const LocalServicePublicAuditEventV1Schema = z
         message: 'Denied public local service access audit events require a reason code.',
       });
     }
-  });
+  }));
 export type LocalServicePublicAuditEventV1 = z.infer<typeof LocalServicePublicAuditEventV1Schema>;
 
-export const LocalServicePublicPreviewSnapshotV1Schema = z
+export const LocalServicePublicPreviewSnapshotV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     machineId: z.string().trim().min(1).max(256),
@@ -164,7 +174,7 @@ export const LocalServicePublicPreviewSnapshotV1Schema = z
         });
       }
     }
-  });
+  }));
 export type LocalServicePublicPreviewSnapshotV1 = z.infer<
   typeof LocalServicePublicPreviewSnapshotV1Schema
 >;
@@ -181,24 +191,30 @@ export function redactLocalServicePublicPreviewSnapshotForAgentEgress(
   };
 }
 
-export const DaemonLocalServicePublicPreviewStatusRequestV1Schema = z
+export const DaemonLocalServicePublicPreviewStatusRequestV1Schema = lazyZodSchema(() => z
   .object({
     machineId: z.string().trim().min(1).max(256),
     sessionId: z.string().trim().min(1).max(256).optional(),
+    serviceTarget: LocalServicePreviewServiceTargetV1Schema.optional(),
     previewId: z.string().trim().min(1).max(256).optional(),
     exposureId: z.string().trim().min(1).max(256).optional(),
   })
-  .strict();
+  .strict().superRefine((request, context) => {
+    refineLocalServicePreviewServiceBindingV1(request, context);
+    if (request.serviceTarget && !request.previewId) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ['previewId'], message: 'A current service status requires its registered preview.' });
+    }
+  }));
 export type DaemonLocalServicePublicPreviewStatusRequestV1 = z.infer<
   typeof DaemonLocalServicePublicPreviewStatusRequestV1Schema
 >;
 
-export const DaemonLocalServicePublicPreviewStatusResponseV1Schema = z
+export const DaemonLocalServicePublicPreviewStatusResponseV1Schema = lazyZodSchema(() => z
   .object({
     protocolVersion: z.literal(1),
     snapshot: LocalServicePublicPreviewSnapshotV1Schema,
   })
-  .strict();
+  .strict());
 export type DaemonLocalServicePublicPreviewStatusResponseV1 = z.infer<
   typeof DaemonLocalServicePublicPreviewStatusResponseV1Schema
 >;
@@ -210,19 +226,20 @@ export type DaemonLocalServicePublicPreviewStatusResponseV1 = z.infer<
  * `publicPreview.create` chokepoint rejects any create request that lacks this acknowledgement
  * (composing with the agent approval floor on `localServices.publicPreview.create`).
  */
-export const LocalServicePublicPreviewCreateConfirmationV1Schema = z
+export const LocalServicePublicPreviewCreateConfirmationV1Schema = lazyZodSchema(() => z
   .object({
     acknowledged: z.literal(true),
   })
-  .strict();
+  .strict());
 export type LocalServicePublicPreviewCreateConfirmationV1 = z.infer<
   typeof LocalServicePublicPreviewCreateConfirmationV1Schema
 >;
 
-export const DaemonLocalServicePublicPreviewCreateRequestV1Schema = z
+export const DaemonLocalServicePublicPreviewCreateRequestV1Schema = lazyZodSchema(() => z
   .object({
     machineId: z.string().trim().min(1).max(256),
-    sessionId: z.string().trim().min(1).max(256),
+    sessionId: z.string().trim().min(1).max(256).optional(),
+    serviceTarget: LocalServicePreviewServiceTargetV1Schema.optional(),
     previewId: z.string().trim().min(1).max(256),
     mode: LocalServicePublicExposureModeV1Schema,
     ttlMs: z.number().int().positive(),
@@ -231,7 +248,7 @@ export const DaemonLocalServicePublicPreviewCreateRequestV1Schema = z
     // chokepoint — see `isLocalServicePublicPreviewCreateConfirmed`.
     confirmation: LocalServicePublicPreviewCreateConfirmationV1Schema.optional(),
   })
-  .strict();
+  .strict().superRefine(refinePublicServiceBinding));
 export type DaemonLocalServicePublicPreviewCreateRequestV1 = z.infer<
   typeof DaemonLocalServicePublicPreviewCreateRequestV1Schema
 >;
@@ -247,7 +264,7 @@ export function isLocalServicePublicPreviewCreateConfirmed(
   return request.confirmation?.acknowledged === true;
 }
 
-export const DaemonLocalServicePublicPreviewCreateResponseV1Schema = z
+export const DaemonLocalServicePublicPreviewCreateResponseV1Schema = lazyZodSchema(() => z
   .object({
     protocolVersion: z.literal(1),
     exposure: LocalServicePublicExposureV1Schema,
@@ -278,7 +295,7 @@ export const DaemonLocalServicePublicPreviewCreateResponseV1Schema = z
         message: 'Created public exposure previewId must match the returned snapshot.',
       });
     }
-  });
+  }));
 export type DaemonLocalServicePublicPreviewCreateResponseV1 = z.infer<
   typeof DaemonLocalServicePublicPreviewCreateResponseV1Schema
 >;
@@ -294,26 +311,27 @@ export function redactLocalServicePublicPreviewCreateResponseForAgentEgress(
   };
 }
 
-export const DaemonLocalServicePublicPreviewRevokeRequestV1Schema = z
+export const DaemonLocalServicePublicPreviewRevokeRequestV1Schema = lazyZodSchema(() => z
   .object({
     machineId: z.string().trim().min(1).max(256),
-    sessionId: z.string().trim().min(1).max(256),
+    sessionId: z.string().trim().min(1).max(256).optional(),
+    serviceTarget: LocalServicePreviewServiceTargetV1Schema.optional(),
     previewId: z.string().trim().min(1).max(256),
     exposureId: z.string().trim().min(1).max(256),
   })
-  .strict();
+  .strict().superRefine(refinePublicServiceBinding));
 export type DaemonLocalServicePublicPreviewRevokeRequestV1 = z.infer<
   typeof DaemonLocalServicePublicPreviewRevokeRequestV1Schema
 >;
 
-export const DaemonLocalServicePublicPreviewRevokeResponseV1Schema = z
+export const DaemonLocalServicePublicPreviewRevokeResponseV1Schema = lazyZodSchema(() => z
   .object({
     protocolVersion: z.literal(1),
     exposureId: z.string().trim().min(1).max(256),
     revokedAt: z.number().int().nonnegative(),
     snapshot: LocalServicePublicPreviewSnapshotV1Schema,
   })
-  .strict();
+  .strict());
 export type DaemonLocalServicePublicPreviewRevokeResponseV1 = z.infer<
   typeof DaemonLocalServicePublicPreviewRevokeResponseV1Schema
 >;
@@ -327,49 +345,51 @@ export function redactLocalServicePublicPreviewRevokeResponseForAgentEgress(
   };
 }
 
-export const DaemonLocalServicePublicPreviewCopyUrlRequestV1Schema = z
+export const DaemonLocalServicePublicPreviewCopyUrlRequestV1Schema = lazyZodSchema(() => z
   .object({
     machineId: z.string().trim().min(1).max(256),
-    sessionId: z.string().trim().min(1).max(256),
+    sessionId: z.string().trim().min(1).max(256).optional(),
+    serviceTarget: LocalServicePreviewServiceTargetV1Schema.optional(),
     previewId: z.string().trim().min(1).max(256),
     exposureId: z.string().trim().min(1).max(256),
   })
-  .strict();
+  .strict().superRefine(refinePublicServiceBinding));
 export type DaemonLocalServicePublicPreviewCopyUrlRequestV1 = z.infer<
   typeof DaemonLocalServicePublicPreviewCopyUrlRequestV1Schema
 >;
 
-export const DaemonLocalServicePublicPreviewCopyUrlResponseV1Schema = z
+export const DaemonLocalServicePublicPreviewCopyUrlResponseV1Schema = lazyZodSchema(() => z
   .object({
     protocolVersion: z.literal(1),
     machineId: z.string().trim().min(1).max(256),
-    sessionId: z.string().trim().min(1).max(256),
+    sessionId: z.string().trim().min(1).max(256).optional(),
+    serviceTarget: LocalServicePreviewServiceTargetV1Schema.optional(),
     previewId: z.string().trim().min(1).max(256),
     exposureId: z.string().trim().min(1).max(256),
     publicUrl: LocalServicePublicUrlV1Schema,
   })
-  .strict();
+  .strict().superRefine(refinePublicServiceBinding));
 export type DaemonLocalServicePublicPreviewCopyUrlResponseV1 = z.infer<
   typeof DaemonLocalServicePublicPreviewCopyUrlResponseV1Schema
 >;
 
-export const LocalServicePublicPreviewExchangeRequestV1Schema = z
+export const LocalServicePublicPreviewExchangeRequestV1Schema = lazyZodSchema(() => z
   .object({
     publicToken: z.string().trim().min(1).max(4096),
   })
-  .strict();
+  .strict());
 export type LocalServicePublicPreviewExchangeRequestV1 = z.infer<
   typeof LocalServicePublicPreviewExchangeRequestV1Schema
 >;
 
-export const LocalServicePublicPreviewExchangeResponseV1Schema = z
+export const LocalServicePublicPreviewExchangeResponseV1Schema = lazyZodSchema(() => z
   .object({
     protocolVersion: z.literal(1),
     exposureId: z.string().trim().min(1).max(256),
     publicToken: z.string().trim().min(1).max(4096),
     expiresAt: z.number().int().nonnegative(),
   })
-  .strict();
+  .strict());
 export type LocalServicePublicPreviewExchangeResponseV1 = z.infer<
   typeof LocalServicePublicPreviewExchangeResponseV1Schema
 >;

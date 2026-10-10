@@ -7,6 +7,23 @@ async function loadPublicModule(): Promise<PublicModule | null> {
 }
 
 describe('local service public exposure v1 protocol', () => {
+  it('binds sessionless public create, revoke and exposure to the same source-qualified managed service', async () => {
+    const mod = await loadPublicModule();
+    const serviceTarget = { kind: 'managed_service', managedServiceId: 'instance_123', machineId: 'machine_123', cwd: '/workspace/app',
+      declaration: { workspaceRefId: 'workspace_123', selection: { kind: 'manifest', name: 'web' } } };
+    const create = { machineId: 'machine_123', previewId: 'preview_123', serviceTarget, mode: 'secret_link', ttlMs: 60_000,
+      confirmation: { acknowledged: true } };
+    const exposure = { exposureId: 'exposure_123', machineId: 'machine_123', previewId: 'preview_123', serviceTarget,
+      mode: 'secret_link', state: 'active', publicUrl: 'https://preview.example.test/?publicToken=admission',
+      issuedAt: 1_000, expiresAt: 61_000, rateLimitProfileId: 'default' };
+    expect(mod?.DaemonLocalServicePublicPreviewCreateRequestV1Schema.safeParse(create).success).toBe(true);
+    expect(mod?.DaemonLocalServicePublicPreviewRevokeRequestV1Schema.safeParse({ machineId: create.machineId,
+      previewId: create.previewId, serviceTarget, exposureId: exposure.exposureId }).success).toBe(true);
+    expect(mod?.LocalServicePublicExposureV1Schema.safeParse(exposure).success).toBe(true);
+    expect(mod?.LocalServicePublicExposureV1Schema.safeParse({ ...exposure, sessionId: 'session_123' }).success).toBe(false);
+    expect(mod?.DaemonLocalServicePublicPreviewCreateRequestV1Schema.safeParse({ ...create, serviceTarget: undefined }).success).toBe(false);
+    expect(mod?.DaemonLocalServicePublicPreviewCreateRequestV1Schema.safeParse({ ...create, serviceTarget: { ...serviceTarget, machineId: 'other' } }).success).toBe(false);
+  });
   it('defaults public exposure policy to fail closed', async () => {
     const mod = await loadPublicModule();
 
