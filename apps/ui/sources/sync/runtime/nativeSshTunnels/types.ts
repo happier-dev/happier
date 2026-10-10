@@ -87,4 +87,5 @@ export type NativeSshTunnelSupervisor = Readonly<{
     releaseTunnel: (leaseId: string) => Promise<void>;
     markSuspended: () => void;
     markForeground: () => Promise<void>;
+    dispose: () => Promise<void>;
 }>;

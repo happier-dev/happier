@@ -4,6 +4,9 @@ import {
     type NativeSshTunnelHostKeyPromptResolver,
     type NativeSshTunnelCredentialResolution,
 } from './adapter';
+import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { fireAndForget } from '@/utils/system/fireAndForget';
+import { isRuntimeActive } from '@/utils/runtime/isRuntimeActive';
 import { createNativeSshTunnelSupervisor } from './supervisor';
 import type {
     NativeSshCredentialsRef,
@@ -25,6 +28,21 @@ const credentialResolutionsByRefKey = new Map<string, NativeSshTunnelCredentialR
 let singletonRuntime: NativeSshTunnelRuntime | null = null;
 let hostKeyPromptResolver: NativeSshTunnelHostKeyPromptResolver | null = null;
 let authPromptResolver: NativeSshTunnelAuthPromptResolver | null = null;
+let accountLifetimeBinding: Readonly<{ lifetime: ActiveServerAccountScopeLifetime; dispose(): void }> | null = null;
+
+function bindNativeSshAccountLifetime(): void {
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime || accountLifetimeBinding?.lifetime === lifetime) return;
+    accountLifetimeBinding?.dispose();
+    const retirement = lifetime.onRetire(() => {
+        accountLifetimeBinding = null;
+        // Withdraw material before asynchronous OS disposal. The incumbent
+        // wrapper keeps its listeners and resets only its resource supervisor.
+        credentialResolutionsByRefKey.clear();
+        fireAndForget(singletonRuntime?.dispose(), { tag: 'NativeSshTunnelRuntime.retireAccount' });
+    });
+    accountLifetimeBinding = { lifetime, dispose: () => retirement.dispose() };
+}
 
 function buildCredentialRefKey(credentialsRef: NativeSshCredentialsRef): string {
     return JSON.stringify({
@@ -70,6 +88,7 @@ export function setNativeSshTunnelCredentialResolution(
     credentialsRef: NativeSshCredentialsRef,
     credentials: NativeSshTunnelCredentialResolution,
 ): void {
+    bindNativeSshAccountLifetime();
     credentialResolutionsByRefKey.set(buildCredentialRefKey(credentialsRef), credentials);
 }
 
@@ -97,10 +116,14 @@ function clearNativeSshTunnelCredentialResolution(credentialsRef: NativeSshCrede
 
 export function createNativeSshTunnelRuntime(params: Readonly<{
     supervisor: NativeSshTunnelSupervisor;
+    createSupervisor?: () => NativeSshTunnelSupervisor;
 }>): NativeSshTunnelRuntime {
     const listeners = new Set<() => void>();
     const credentialRefsByLeaseId = new Map<string, Map<string, NativeSshCredentialsRef>>();
     let suspended = false;
+    let supervisor = params.supervisor;
+    let withdrawn = false;
+    let disposal: Promise<void> | null = null;
 
     function notify(): void {
         for (const listener of [...listeners]) {
@@ -108,32 +131,70 @@ export function createNativeSshTunnelRuntime(params: Readonly<{
         }
     }
 
+    function ownsCredentialCleanup(owningSupervisor: NativeSshTunnelSupervisor,
+        owningLifetime: ActiveServerAccountScopeLifetime | undefined): boolean {
+        return !withdrawn && owningSupervisor === supervisor && (!owningLifetime || owningLifetime.isCurrent());
+    }
+
+    function dispose(): Promise<void> {
+        if (disposal) return disposal;
+        withdrawn = true;
+        for (const refs of credentialRefsByLeaseId.values()) {
+            for (const credentialsRef of refs.values()) clearNativeSshTunnelCredentialResolution(credentialsRef);
+        }
+        credentialRefsByLeaseId.clear();
+        const retiredSupervisor = supervisor;
+        disposal = (async () => {
+            // This existing owner closes start admission synchronously, waits
+            // for its accepted starts, and stops their exact native handles.
+            await retiredSupervisor.dispose();
+            if (params.createSupervisor) {
+                supervisor = params.createSupervisor();
+                if (suspended) supervisor.markSuspended();
+                withdrawn = false;
+            }
+            notify();
+        })().finally(() => { disposal = null; });
+        notify();
+        return disposal;
+    }
+
     return {
         async ensureTunnel(request: NativeSshTunnelRequest): Promise<NativeSshTunnelLease> {
+            if (withdrawn) throw new Error('native_ssh_tunnel_account_retired');
             if (suspended) {
                 throw new Error('native_ssh_tunnel_suspended');
             }
+            const admittedSupervisor = supervisor;
+            const admittedLifetime = accountLifetimeBinding?.lifetime;
             try {
-                const lease = await params.supervisor.ensureTunnel(request);
+                const lease = await admittedSupervisor.ensureTunnel(request);
+                if (withdrawn || admittedSupervisor !== supervisor) throw new Error('native_ssh_tunnel_account_retired');
                 const refs = credentialRefsByLeaseId.get(lease.leaseId) ?? new Map<string, NativeSshCredentialsRef>();
                 refs.set(buildCredentialRefKey(request.credentialsRef), request.credentialsRef);
                 credentialRefsByLeaseId.set(lease.leaseId, refs);
                 return lease;
             } catch (error) {
-                clearNativeSshTunnelCredentialResolution(request.credentialsRef);
+                if (ownsCredentialCleanup(admittedSupervisor, admittedLifetime)) {
+                    clearNativeSshTunnelCredentialResolution(request.credentialsRef);
+                }
                 throw error;
             } finally {
                 notify();
             }
         },
         listTunnels(): NativeSshTunnelSnapshot {
-            return params.supervisor.listTunnels();
+            const snapshot = supervisor.listTunnels();
+            return withdrawn ? { ...snapshot, leases: [] } : snapshot;
         },
         async releaseTunnel(leaseId: string): Promise<void> {
             const credentialsRefs = credentialRefsByLeaseId.get(leaseId);
+            const releasingSupervisor = supervisor;
+            const releasingLifetime = accountLifetimeBinding?.lifetime;
             try {
-                await params.supervisor.releaseTunnel(leaseId);
-                const leaseStillRetained = params.supervisor.listTunnels().leases
+                await releasingSupervisor.releaseTunnel(leaseId);
+                if (!ownsCredentialCleanup(releasingSupervisor, releasingLifetime)) return;
+                const leaseStillRetained = releasingSupervisor.listTunnels().leases
                     .some((lease) => lease.leaseId === leaseId);
                 if (credentialsRefs && !leaseStillRetained) {
                     for (const credentialsRef of credentialsRefs.values()) {
@@ -142,7 +203,7 @@ export function createNativeSshTunnelRuntime(params: Readonly<{
                     credentialRefsByLeaseId.delete(leaseId);
                 }
             } catch (error) {
-                if (credentialsRefs) {
+                if (credentialsRefs && ownsCredentialCleanup(releasingSupervisor, releasingLifetime)) {
                     for (const credentialsRef of credentialsRefs.values()) {
                         clearNativeSshTunnelCredentialResolution(credentialsRef);
                     }
@@ -155,13 +216,13 @@ export function createNativeSshTunnelRuntime(params: Readonly<{
         },
         markSuspended(): void {
             suspended = true;
-            params.supervisor.markSuspended();
+            supervisor.markSuspended();
             notify();
         },
         async markForeground(): Promise<void> {
             try {
                 suspended = false;
-                await params.supervisor.markForeground();
+                if (!withdrawn) await supervisor.markForeground();
             } finally {
                 notify();
             }
@@ -172,21 +233,30 @@ export function createNativeSshTunnelRuntime(params: Readonly<{
                 listeners.delete(listener);
             };
         },
+        dispose,
     };
 }
 
 export function getNativeSshTunnelRuntime(params: RuntimeFactoryParams = {}): NativeSshTunnelRuntime {
+    bindNativeSshAccountLifetime();
     if (!singletonRuntime) {
+        const factory = params.createSupervisor ?? createDefaultSupervisor;
         singletonRuntime = createNativeSshTunnelRuntime({
-            supervisor: (params.createSupervisor ?? createDefaultSupervisor)(),
+            supervisor: factory(),
+            createSupervisor: factory,
         });
+        if (!isRuntimeActive()) singletonRuntime.markSuspended();
     }
     return singletonRuntime;
 }
 
 export async function disposeNativeSshTunnelRuntime(): Promise<void> {
-    singletonRuntime = null;
+    accountLifetimeBinding?.dispose();
+    accountLifetimeBinding = null;
     hostKeyPromptResolver = null;
     authPromptResolver = null;
     credentialResolutionsByRefKey.clear();
+    const runtime = singletonRuntime;
+    await runtime?.dispose();
+    if (singletonRuntime === runtime) singletonRuntime = null;
 }
