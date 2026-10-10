@@ -178,17 +178,35 @@ async function materializeOpenCodeProviderBindingV1(
     ...(credential.apiKey ? { apiKey: credential.apiKey } : {}),
     ...(Object.keys(headers).length > 0 ? { headers } : {}),
   };
+  const modelSettings = input.binding.modelSettings;
+  const temperature = modelSettings?.temperature;
+  const maxTokens = modelSettings?.maxTokens;
+  // Native maxOutputTokens uses zero as "use the default" and negative values
+  // are not a valid generation budget. Retain them in the catalog but refuse
+  // launch rather than silently substituting a different predecessor setting.
+  if (maxTokens != null && maxTokens <= 0) {
+    throw new Error('OpenCode cannot preserve non-positive maxTokens in its native output-token limit');
+  }
   const config = {
     $schema: 'https://opencode.ai/config.json',
     enabled_providers: [adapterBindingKey],
     model: `${adapterBindingKey}/${input.binding.selection.model.id}`,
+    ...(temperature != null ? {
+      agent: { build: { temperature }, plan: { temperature } },
+    } : {}),
     provider: {
       [adapterBindingKey]: {
         npm: DRIVER_BY_PROTOCOL[protocol],
         name: 'Happier provider',
         options,
         models: {
-          [input.binding.selection.model.id]: { name: input.binding.selection.model.name },
+          [input.binding.selection.model.id]: {
+            name: input.binding.selection.model.name,
+            ...(temperature != null ? { temperature: true } : {}),
+            // OpenCode requires context alongside output. Zero is its existing
+            // unknown-context default for these custom, uncatalogued models.
+            ...(maxTokens != null ? { limit: { context: 0, output: maxTokens } } : {}),
+          },
         },
       },
     },
@@ -211,6 +229,7 @@ async function materializeOpenCodeProviderBindingV1(
 export const OPENCODE_PROVIDER_BINDING_ADAPTER_V1 = Object.freeze({
   v: 1,
   adapterVersion: OPENCODE_PROVIDER_BINDING_ADAPTER_VERSION_V1,
+  supportsModelSettings: true,
   prepare: prepareOpenCodeProviderBindingV1,
   materialize: materializeOpenCodeProviderBindingV1,
 } satisfies AgentProviderBindingAdapter);

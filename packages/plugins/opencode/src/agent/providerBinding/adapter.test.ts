@@ -63,6 +63,35 @@ function fileConfig(output: Awaited<ReturnType<typeof OPENCODE_PROVIDER_BINDING_
 }
 
 describe('OpenCode provider-binding adapter V1', () => {
+  it('materializes selected-model generation settings at the native consumed fields', async () => {
+    const input = materializeInput();
+    const output = await OPENCODE_PROVIDER_BINDING_ADAPTER_V1.materialize({
+      ...input,
+      binding: { ...input.binding, modelSettings: { temperature: 0, maxTokens: 2048 } },
+    });
+    const key = input.prepared.adapterBindingKey!;
+    expect(fileConfig(output)).toMatchObject({
+      agent: { build: { temperature: 0 }, plan: { temperature: 0 } },
+      provider: { [key]: { models: { 'vendor/model': {
+        name: 'Vendor model', temperature: true, limit: { context: 0, output: 2048 },
+      } } } },
+    });
+  });
+
+  it.each([0, -1])('refuses a retained maxTokens=%s that native generation cannot preserve', async maxTokens => {
+    const input = materializeInput();
+    await expect(OPENCODE_PROVIDER_BINDING_ADAPTER_V1.materialize({
+      ...input, binding: { ...input.binding, modelSettings: { maxTokens } },
+    })).rejects.toThrow('non-positive maxTokens');
+  });
+
+  it('leaves native generation defaults intact for unset settings', async () => {
+    const input = materializeInput();
+    expect(fileConfig(await OPENCODE_PROVIDER_BINDING_ADAPTER_V1.materialize({
+      ...input, binding: { ...input.binding, modelSettings: { temperature: null, maxTokens: null } },
+    }))).toEqual(fileConfig(await OPENCODE_PROVIDER_BINDING_ADAPTER_V1.materialize(input)));
+  });
+
   it('declares exact Chat/Responses support that agrees with the executable adapter', () => {
     const support = PLUGIN_MANIFEST.contributes.agents[0]?.providerRequirements;
 
