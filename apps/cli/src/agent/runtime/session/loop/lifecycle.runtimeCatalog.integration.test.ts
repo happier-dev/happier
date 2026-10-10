@@ -693,7 +693,8 @@ describe('runSessionLoopLifecycle daemon exact-turn custody', () => {
     );
     try {
       await vi.waitFor(() => expect(baseParams.runtime.resetOrDisposeRuntime).toHaveBeenCalledWith('host_shutdown'));
-      expect(baseParams.session.endSessionAndClose).not.toHaveBeenCalled();
+      await vi.waitFor(() => expect(baseParams.session.endSessionAndClose).toHaveBeenCalled());
+      await stopping;
     } finally {
       releaseNativeCancellation();
       await stopping;
