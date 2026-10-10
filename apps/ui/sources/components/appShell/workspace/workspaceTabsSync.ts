@@ -1,5 +1,7 @@
 import { WorkspaceTabsV1StoredSchema } from '@happier-dev/protocol/workspace/workspaceTabsV1';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { applyWorkspaceTabIntents, emptyWorkspaceTabs, type SharedWorkspaceTabs, type WorkspaceTabIntent } from './workspaceSyncedTabs';
+import { workspaceDestinationAdmissionIdentity } from './workspaceDestinationPolicy';
 
 export type WorkspaceTabsTransport = Readonly<{
     read: () => Promise<Readonly<{ value: unknown | null; version: number; tombstone?: true }>>;
@@ -33,7 +35,7 @@ export function createWorkspaceTabsSync(input: Readonly<{
     let record: SharedWorkspaceTabs | null = null;
     let version = -1;
     let pending: WorkspaceTabIntent[] = [];
-    const pendingAliases = new Map<string, Readonly<{ id: string; kind: string }>>();
+    const pendingAliases = new Map<string, Readonly<{ id: string; destinationKey: string }>>();
     let enrollmentCount = 0;
     let status: WorkspaceTabsSyncSnapshot['status'] = 'pending';
     let queue: Promise<void> = Promise.resolve();
@@ -44,8 +46,9 @@ export function createWorkspaceTabsSync(input: Readonly<{
         for (const id of after.order) pendingAliases.delete(id);
         for (const id of before.order) {
             if (after.tabsById[id]) continue;
-            const incumbent = after.order.find(kept => after.tabsById[kept].target.kind === before.tabsById[id].target.kind);
-            if (incumbent) pendingAliases.set(id, { id: incumbent, kind: before.tabsById[id].target.kind });
+            const destinationKey = workspaceDestinationAdmissionIdentity(before.tabsById[id].target);
+            const incumbent = after.order.find(kept => workspaceDestinationAdmissionIdentity(after.tabsById[kept].target) === destinationKey);
+            if (incumbent) pendingAliases.set(id, { id: incumbent, destinationKey });
         }
     };
     const normalizeWithAliases = (value: SharedWorkspaceTabs) => {
@@ -55,15 +58,15 @@ export function createWorkspaceTabsSync(input: Readonly<{
     };
     const resolvePendingId = (id: string): string => {
         const original = id;
-        const kind = pendingAliases.get(id)?.kind;
+        const destinationKey = pendingAliases.get(id)?.destinationKey;
         while (pendingAliases.has(id)) {
             const alias = pendingAliases.get(id)!;
-            if (alias.kind !== kind) return original;
+            if (alias.destinationKey !== destinationKey) return original;
             id = alias.id;
         }
         // A peer can close or retarget the winner; neither retires the original operation.
         const winner = record?.tabsById[id];
-        return winner && (kind === undefined || winner.target.kind === kind) ? id : original;
+        return winner && (destinationKey === undefined || workspaceDestinationAdmissionIdentity(winner.target) === destinationKey) ? id : original;
     };
     const rebasePendingIntent = (intent: WorkspaceTabIntent): WorkspaceTabIntent => {
         if (intent.type === 'open') {
@@ -76,13 +79,32 @@ export function createWorkspaceTabsSync(input: Readonly<{
     };
     const projected = () => record ? normalize(applyWorkspaceTabIntents(record,
         version === -1 && !pending.length ? input.enroll?.() ?? [] : pending.map(rebasePendingIntent))) : null;
-    const snapshot = (): WorkspaceTabsSyncSnapshot => ({ status, record: projected() });
-    const notify = () => { if (current()) input.onStatus?.(snapshot()); };
+    let cachedSnapshot: WorkspaceTabsSyncSnapshot = { status, record: null };
+    let publishedSnapshot: WorkspaceTabsSyncSnapshot | null = null;
+    let publishedRecord: SharedWorkspaceTabs | null = null;
+    const snapshot = (): WorkspaceTabsSyncSnapshot => {
+        const value = projected();
+        const stableRecord = sameStrictJsonValue(value, cachedSnapshot.record) ? cachedSnapshot.record : value;
+        if (status !== cachedSnapshot.status || stableRecord !== cachedSnapshot.record) {
+            cachedSnapshot = { status, record: stableRecord };
+        }
+        return cachedSnapshot;
+    };
+    const notify = () => {
+        if (!current()) return;
+        const value = snapshot();
+        if (value === publishedSnapshot) return;
+        publishedSnapshot = value;
+        input.onStatus?.(value);
+    };
     const project = () => {
         if (!current()) return;
         if (record) record = normalizeWithAliases(record);
-        const value = projected();
-        if (value) input.onRecord(value);
+        const value = snapshot().record;
+        if (value && value !== publishedRecord) {
+            publishedRecord = value;
+            input.onRecord(value);
+        }
         notify();
     };
     const serialized = (run: () => Promise<void>) => {

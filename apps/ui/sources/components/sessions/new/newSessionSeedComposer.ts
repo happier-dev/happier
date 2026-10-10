@@ -1,12 +1,15 @@
 import {
     PluginUiNewSessionSeedV1Schema,
     type PluginUiNewSessionSeedV1,
+    type SessionNewSessionSeedOutcome,
 } from '@happier-dev/protocol/plugins/ui';
 
 import { randomUUID } from '@/platform/randomUUID';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { seedNewSessionDraftV1 } from './newSessionDraftSeed';
-import type { NewSessionComposerAttachmentSeedV1 } from '@/sync/domains/state/persistence';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { seedNewSessionDraftV1, type NewSessionDraftSeedV1 } from './newSessionDraftSeed';
+import type { NewSessionComposerAttachmentSeedV1, NewSessionDraft } from '@/sync/domains/state/persistence';
+import { storeTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
 
 /**
  * The Session-owned settlement behind the semantic `openNewSession` method.
@@ -19,17 +22,7 @@ import type { NewSessionComposerAttachmentSeedV1 } from '@/sync/domains/state/pe
  *
  * It creates no Session, dispatches nothing, and holds no Action handle.
  */
-export type SessionNewSessionSeedOutcome =
-    | Readonly<{ kind: 'opened'; dataId: string | null }>
-    | Readonly<{
-        kind: 'invalid';
-        reason: 'seed_invalid' | 'seed_empty' | 'seed_attachments_uncredited';
-    }>
-    | Readonly<{
-        kind: 'unavailable';
-        reason: 'aborted' | 'navigation_unavailable' | 'prepared_review_workspace_unavailable';
-    }>
-    | Readonly<{ kind: 'stale'; reason: 'host_retired' }>;
+export type { SessionNewSessionSeedOutcome } from '@happier-dev/protocol/plugins/ui';
 
 /** Parses the plugin-authored seed at its one boundary. */
 export function readPluginNewSessionSeedV1(value: unknown): PluginUiNewSessionSeedV1 | null {
@@ -96,6 +89,13 @@ export function seedAndOpenNewSession(params: Readonly<{
      * so a seed with attachments and no caller identity places nothing.
      */
     pluginId?: string;
+    /** Incumbent host-owned provenance is not plugin-authored execution authority. */
+    zenTaskSource?: NewSessionDraftSeedV1['zenTaskSource'];
+    /** Internal same-setup projection, never part of plugin-authored wire input. */
+    configurationDraft?: NewSessionDraft;
+    /** Replay remains a one-shot continuation intent, not remembered configuration. */
+    sourceContextHandoff?: Pick<NewSessionData, 'sourceContext' | 'sourceContextServerId'>;
+    admitOrigin?: (origin: NonNullable<PluginUiNewSessionSeedV1['origin']>) => boolean;
     scope: ServerAccountScope;
     signal?: AbortSignal;
     isCurrent: () => boolean;
@@ -116,11 +116,15 @@ export function seedAndOpenNewSession(params: Readonly<{
     // onto the New Session screen having asked for nothing at all.
     if (
         seed.prompt === undefined
+        && seed.sessionName === undefined
+        && seed.initialSessionFacts === undefined
+        && seed.promptStack === undefined
         && seed.profileId === undefined
         && seed.checkoutIntent === undefined
         && seed.placement === undefined
         && seed.candidates === undefined
         && seed.attachments === undefined
+        && params.zenTaskSource === undefined
     ) return { kind: 'invalid', reason: 'seed_empty' };
     // A seed that asks for attachments and names no caller cannot place any of
     // them, and opening the screen anyway would show the reader a New Session
@@ -132,6 +136,11 @@ export function seedAndOpenNewSession(params: Readonly<{
     }
     if (params.signal?.aborted === true) return { kind: 'unavailable', reason: 'aborted' };
     if (!readIsCurrent(params.isCurrent)) return { kind: 'stale', reason: 'host_retired' };
+    if (seed.origin && (seed.origin.accountId !== params.scope.accountId
+        || !areServerProfileIdentifiersEquivalent(seed.origin.workspace.serverId, params.scope.serverId)
+        || !params.admitOrigin?.(seed.origin))) {
+        return { kind: 'unavailable', reason: 'origin_unavailable' };
+    }
     const checkoutSettlement = settleNewSessionCheckoutIntent(seed.checkoutIntent);
     if (checkoutSettlement.kind === 'unavailable') return checkoutSettlement;
 
@@ -150,25 +159,32 @@ export function seedAndOpenNewSession(params: Readonly<{
         }));
     const seededDraftId = (params.seedDraft ?? seedNewSessionDraftV1)({
         seed: {
+            ...(seed.sessionName === undefined ? {} : { sessionName: seed.sessionName }),
+            ...(seed.initialSessionFacts === undefined ? {} : { initialSessionFacts: seed.initialSessionFacts }),
+            ...(seed.promptStack === undefined ? {} : { promptStack: seed.promptStack }),
             ...(seed.prompt === undefined ? {} : { prompt: { text: seed.prompt, mode: 'replace' as const } }),
             ...(seed.profileId === undefined ? {} : { profileId: seed.profileId }),
             ...(seed.checkoutIntent === undefined ? {} : { checkoutIntent: seed.checkoutIntent }),
             ...(seed.placement === undefined ? {} : { placement: seed.placement }),
             ...(seed.candidates === undefined ? {} : { candidates: seed.candidates }),
+            ...(seed.origin === undefined ? {} : { origin: seed.origin }),
+            ...(params.zenTaskSource === undefined ? {} : { zenTaskSource: params.zenTaskSource }),
             // The public seed retains author-shaped attachment requests in the
             // draft's local supplement. The Composer owner admits them later;
             // they must not be projected as canonical records here.
         },
         scope: params.scope,
+        ...(params.configurationDraft ? { configurationDraft: params.configurationDraft } : {}),
         createDraftId: () => draftId,
         attachmentSeeds,
     });
     if (seededDraftId === null) {
         return { kind: 'invalid', reason: 'seed_empty' };
     }
+    const dataId = params.sourceContextHandoff ? storeTempData(params.sourceContextHandoff) : null;
     try {
         params.navigateToNewSession({
-            dataId: null,
+            dataId,
             draftId,
             ...(checkoutSettlement.worktree === undefined ? {} : { worktree: checkoutSettlement.worktree }),
         });
@@ -178,5 +194,5 @@ export function seedAndOpenNewSession(params: Readonly<{
         // render-time handoff.
         return { kind: 'unavailable', reason: 'navigation_unavailable' };
     }
-    return { kind: 'opened', dataId: null };
+    return { kind: 'opened', dataId, draftId };
 }

@@ -270,6 +270,9 @@ function stripBackendTargetSourceKind(target: BackendTargetRefV2): BackendTarget
 
 export function resolveDraftBackendTarget(draft: Pick<SessionAuthoringDraft, 'agentTarget'>): BackendTargetRefV2 | null {
     if (!draft.agentTarget) return null;
+    if (draft.agentTarget.definitionId) {
+        return stripBackendTargetSourceKind(readBackendTargetRefV2(draft.agentTarget));
+    }
     const bundledAgentId = resolveBundledAgentIdFromContributionIdentity(draft.agentTarget.identity);
     if (bundledAgentId) {
         return { kind: 'backend', backendId: bundledAgentId, sourceKind: 'built_in' };
@@ -878,7 +881,8 @@ function agentExecutionTargetsMatch(
 ): boolean {
     return left.kind === right.kind
         && left.identity.pluginId === right.identity.pluginId
-        && left.identity.localId === right.identity.localId;
+        && left.identity.localId === right.identity.localId
+        && left.definitionId === right.definitionId;
 }
 
 function resolveSessionAuthoringAgentTargetCatalogEntry(params: Readonly<{
@@ -916,10 +920,7 @@ function resolveSessionAuthoringAgentTargetCatalogEntry(params: Readonly<{
         } catch {
             continue;
         }
-        // Configured backend instances cannot be recovered from an Agent
-        // contribution identity: the strict target intentionally contains no
-        // instance identity, and the forward mapper fails closed for them too.
-        if (backendTarget.configuredBackendId) continue;
+        if (backendTarget.configuredBackendId !== candidateAgentTarget.data.definitionId) continue;
 
         matches.push({ agentTarget: candidateAgentTarget.data, agentId, backendTarget });
     }

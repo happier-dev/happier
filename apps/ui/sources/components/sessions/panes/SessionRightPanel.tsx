@@ -55,6 +55,7 @@ import { getPreferredLanguage, t } from '@/text';
 import { resolveOptionalSessionScreenTestId, useSessionScreenTestIdsEnabled } from '../shell/sessionScreenTestIds';
 import { SessionRightPanelBrowserView } from './browser/SessionRightPanelBrowserView';
 import { SessionRightPanelServicesView } from './services/SessionRightPanelServicesView';
+import { SessionRightPanelScriptsView, useSessionProjectCheckout } from './scripts/SessionRightPanelScriptsView';
 import { SessionBrowseFilesSurface } from './surfaces/SessionBrowseFilesSurface';
 import { SessionGitSurface } from './surfaces/SessionGitSurface';
 import { SessionTerminalSurface } from './surfaces/SessionTerminalSurface';
@@ -71,6 +72,7 @@ import {
     useSessionAddressForSessionId,
     useSessionPluginRuntime,
     type SessionPaneSurfaceScope,
+    type SessionPluginRuntimeState,
 } from '@/components/sessions/plugins/useSessionPluginRuntime';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
@@ -159,13 +161,32 @@ const SessionRightSidebarContext = React.createContext<ReturnType<typeof useSess
 
 export function SessionRightSidebarProvider(props: SessionRightPanelProps & Readonly<{ children: React.ReactNode }>) {
     const inherited = React.useContext(SessionRightSidebarContext);
-    const launchScope = usePluginSurfacePaneLaunchScope();
     if (inherited?.scopeId === props.scopeId) return <>{props.children}</>;
-    const content = <SessionRightSidebarModelProvider {...props} />;
-    return launchScope ? content : <PluginSurfacePaneLaunchScope>{content}</PluginSurfacePaneLaunchScope>;
+    return <SessionRightSidebarScopeProvider {...props} />;
 }
 
-function SessionRightSidebarModelProvider(props: SessionRightPanelProps & Readonly<{ children: React.ReactNode }>) {
+function SessionRightSidebarScopeProvider(props: SessionRightPanelProps & Readonly<{ children: React.ReactNode }>) {
+    const sessionAddress = useSessionAddressForSessionId(
+        props.sessionId,
+        props.paneSurfaceScope?.serverId ?? parseSessionPaneScopeId(props.scopeId)?.address?.serverId,
+    );
+    const pluginRuntime = useSessionPluginRuntime({
+        address: sessionAddress,
+        paneSurfaceScope: props.paneSurfaceScope,
+    });
+    const launchScope = usePluginSurfacePaneLaunchScope();
+    const content = <SessionRightSidebarModelProvider {...props} sessionAddress={sessionAddress} pluginRuntime={pluginRuntime} />;
+    return launchScope?.accountLifetime === pluginRuntime.accountLifetime
+        ? content
+        : <PluginSurfacePaneLaunchScope accountLifetime={pluginRuntime.accountLifetime}>{content}</PluginSurfacePaneLaunchScope>;
+}
+
+type SessionRightSidebarRuntimeProps = Readonly<{
+    sessionAddress: ReturnType<typeof useSessionAddressForSessionId>;
+    pluginRuntime: SessionPluginRuntimeState;
+}>;
+
+function SessionRightSidebarModelProvider(props: SessionRightPanelProps & SessionRightSidebarRuntimeProps & Readonly<{ children: React.ReactNode }>) {
     const model = useSessionRightSidebarModel(props);
     return <SessionRightSidebarContext.Provider value={model}>{props.children}</SessionRightSidebarContext.Provider>;
 }
@@ -176,7 +197,7 @@ function useSessionRightSidebar() {
     return model;
 }
 
-function useSessionRightSidebarModel(props: SessionRightPanelProps) {
+function useSessionRightSidebarModel(props: SessionRightPanelProps & SessionRightSidebarRuntimeProps) {
     const deviceType = useDeviceType();
     const pane = useAppPaneScope(props.scopeId);
     const scopeState = pane.scopeState;
@@ -187,10 +208,7 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps) {
         ?? parseSessionPaneScopeId(props.scopeId)?.address?.serverId
         ?? null;
     const boardFeatureEnabled = useSessionBoardFeatureEnabled(boardFeatureServerId);
-    const sessionAddress = useSessionAddressForSessionId(
-        props.sessionId,
-        props.paneSurfaceScope?.serverId ?? parseSessionPaneScopeId(props.scopeId)?.address?.serverId,
-    );
+    const { sessionAddress, pluginRuntime } = props;
     const collaborationAddress = props.paneSurfaceScope
         ? props.paneSurfaceScope.sessionId === props.sessionId
             ? normalizeSessionAddress(props.paneSurfaceScope.serverId, props.sessionId)
@@ -199,10 +217,6 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps) {
     const mountedBoard = useMountedSessionBoardController(collaborationAddress);
     const collaborationAdmitted = useSessionCollaborationDestinationAdmitted(collaborationAddress?.serverId ?? '');
     const sessionSharingAvailable = collaborationAddress !== null && collaborationAdmitted;
-    const pluginRuntime = useSessionPluginRuntime({
-        address: sessionAddress,
-        paneSurfaceScope: props.paneSurfaceScope,
-    });
     const session = useSessionViewShellSession(props.sessionId, pluginRuntime.serverId);
     const runtimeAdmission = React.useMemo(() => Object.freeze({
         platform: pluginRuntime.platform,
@@ -226,10 +240,13 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps) {
     const withoutFolder = readSessionDirectoryKind(session ? readSessionOwnerMetadataView(session) : null) === 'managed';
     const folderIsRepo = useSessionProjectScmIsRepo(withoutFolder ? props.sessionId : null, pluginRuntime.serverId);
     const sourceControlTabAvailable = !withoutFolder || folderIsRepo === true;
+    // The Session's accepted Project checkout, when it works in one: Scripts beside the transcript (lab `s-agent` PANE).
+    const projectCheckout = useSessionProjectCheckout(session, pluginRuntime.serverId);
     const rightPanelTabs = React.useMemo(() => resolveSessionRightSidebarTabs({
         ...appTabInputs,
         sessionSharingAvailable,
         sourceControlTabAvailable,
+        sessionProjectCheckoutAvailable: projectCheckout !== null,
         terminalTabAvailable,
         boardFeatureEnabled,
         presentation: props.presentation === 'screen' ? 'mobile' : 'desktop',
@@ -247,6 +264,7 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps) {
         props.presentation,
         runtimeAdmission,
         sourceControlTabAvailable,
+        projectCheckout,
         terminalTabAvailable,
     ]);
     const rightTabSelection = React.useMemo(() => resolveRightSidebarTabSelection<RightTabId>({
@@ -331,7 +349,10 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps) {
         });
         return { ok: true as const };
     }, [pane, paneLaunchStore]);
-    const targetNavigationBinding = usePluginSurfaceDestinationNavigationBinding();
+    const inheritedNavigationBinding = usePluginSurfaceDestinationNavigationBinding();
+    const targetNavigationBinding = inheritedNavigationBinding?.targetKind === 'session'
+        ? inheritedNavigationBinding
+        : null;
     const fallbackNavigationBinding = usePluginSurfaceDestinationNavigationBindingForScope({
         placements: pluginRuntime.pluginUiProjection
             ? selectPluginDestinationSurfacePlacements(pluginRuntime.pluginUiProjection)
@@ -340,6 +361,7 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps) {
         accountLifetime,
         scopedLaunchFacts,
         runtimeAdmission,
+        enclosingOpenSurface: inheritedNavigationBinding?.openSurface,
     });
     const navigationBinding = targetNavigationBinding ?? fallbackNavigationBinding;
     const sidebarOwner = React.useMemo(() => ({
@@ -392,6 +414,7 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps) {
         resolveBoardPrimaryHost,
         callerHostedHtmlRuntime,
         session,
+        projectCheckout,
         openBoardItemInDetails,
         openBoardInDetails,
         openServiceInBrowser,
@@ -418,7 +441,7 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps) => {
     const headerSafeAreaTop = closeButtonAtStart ? 0 : insets.top;
     const deviceType = useDeviceType();
     const stateSize = props.presentation === 'screen' && deviceType === 'phone' ? 'phone' : 'pane';
-    const { pane, scopeState, rightPanelTabs, rightTabSelection, activeTab, collaborationAddress, pluginRuntime, activePaneLaunch, activeInstanceKey, pluginBinding, availableTabIds, resolveBoardPrimaryHost, callerHostedHtmlRuntime, session, openBoardItemInDetails, openBoardInDetails, openServiceInBrowser, openFileInDetails, openFileInDetailsPinned, setActiveTab } = useSessionRightSidebar();
+    const { pane, scopeState, rightPanelTabs, rightTabSelection, activeTab, collaborationAddress, pluginRuntime, activePaneLaunch, activeInstanceKey, pluginBinding, availableTabIds, resolveBoardPrimaryHost, callerHostedHtmlRuntime, session, projectCheckout, openBoardItemInDetails, openBoardInDetails, openServiceInBrowser, openFileInDetails, openFileInDetailsPinned, setActiveTab } = useSessionRightSidebar();
     const closeNavigationPane = props.onRequestClose ?? pane.closeRight;
     // A pane can be kept in the Companion as one link row (lab WC3); the header's ⋯ offers it.
     const paneCompanionActions = usePaneCompanionActions({
@@ -596,6 +619,18 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps) => {
                                 </React.Suspense>
                             </SessionRetainedPane>
                         )}
+                        {availableTabIds.has('scripts') && projectCheckout ? (
+                            <SessionRetainedPane
+                                tabId="scripts"
+                                isActive={activeTab === 'scripts'}
+                                mode="absolute-overlay"
+                                testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-rightpanel-surface-scripts')}
+                            >
+                                <React.Suspense fallback={<PaneLoadingFallback />}>
+                                    <SessionRightPanelScriptsView checkout={projectCheckout} outputScopeId={props.scopeId} />
+                                </React.Suspense>
+                            </SessionRetainedPane>
+                        ) : null}
                         {availableTabIds.has('services') && (
                             <SessionRetainedPane
                                 tabId="services"
@@ -664,7 +699,10 @@ export const SessionActionRail = React.memo(() => {
     const terminal = useSessionTerminalAction({ sessionId: model.sessionId, scopeId: model.scopeId, serverId: model.pluginRuntime.serverId });
     // The Work tab's badge is the Work projection's outstanding count (D-S4): the same number the
     // header strip shows, read from the one owner the Session host mounted — never a second count.
-    const runningCount = useSessionWorkSources()?.projection.summary.outstanding ?? 0;
+    const workProjection = useSessionWorkSources()?.projection;
+    const runningCount = workProjection?.summary.outstanding ?? 0;
+    // Scripts counts this Session's own finite runs that are still working (the same Work operations).
+    const runningScripts = workProjection?.projectCommands.filter((item) => item.status.bucket === 'working').length ?? 0;
     const rightPaneHiddenByDetails = usePaneActionRailRightPaneHiddenByDetails();
     // The rail reads only the one summary bit; the dot itself subscribes in its own leaf.
     const collaborationMentioned = useSessionConversationMentioned(model.collaborationAddress);
@@ -672,11 +710,13 @@ export const SessionActionRail = React.memo(() => {
     for (const tab of model.rightPanelTabs) {
         // One terminal action owns all dock locations; the catalog retains its sidebar admission.
         if (tab.id === 'terminal') continue;
-        const badgeCount = tab.id === 'agents' ? runningCount : undefined;
+        const badgeCount = tab.id === 'agents' ? runningCount : tab.id === 'scripts' ? runningScripts : undefined;
         actions.push({
             id: tab.id,
             label: badgeCount && badgeCount > 0
-                ? t('session.subagents.panel.tabWithRunningCount', { count: badgeCount })
+                ? tab.id === 'scripts'
+                    ? t('projects.scripts.tabRunning', { count: String(badgeCount) })
+                    : t('session.subagents.panel.tabWithRunningCount', { count: badgeCount })
                 : tab.id === 'collaboration' && collaborationMentioned
                     ? `${getRightSidebarTabLabel(tab)}. ${t('session.collaboration.discussion.mentioned')}`
                     : getRightSidebarTabLabel(tab),

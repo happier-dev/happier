@@ -2,6 +2,9 @@ import * as React from 'react';
 import { View } from 'react-native';
 import type { WorkspaceSyncPersistentModeV1, WorkspaceSyncDestinationIntentV1 } from '@happier-dev/protocol';
 import { evaluateSessionHandoffWorkspaceTransferSourcePathSafety } from '@happier-dev/protocol/sessions/control/handoff/workspaceTransferSourcePathSafety';
+import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
+import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { ProjectWorkerNoAcceptanceFailureDetailsV1Schema } from '@happier-dev/protocol/actions/projectActionFamily';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
@@ -24,13 +27,11 @@ import {
     buildWorkspaceContentPolicy,
     parseSessionHandoffIgnoredIncludeGlobs,
 } from '@/sync/domains/sessionHandoff/sessionHandoffDefaults';
-import { useMachineListByServerId, useMachineRecordValues } from '@/sync/domains/state/storage';
+import { useMachineListByServerId, useMachineListStatusByServerId, useMachineRecordValues } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { createWorkspaceSyncRelationship, approveWorkspaceSyncRelationshipCreate } from '@/sync/ops/workspaceSyncRelationshipCreate';
-import { addWorkspaceRefToAccount } from '@/sync/ops/workspaceRefs';
-import { workspaceListDirectory } from '@/sync/ops/workspaceFileSystem';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { machineMetadataPlatformToTarget } from '@/utils/path/machinePlatform';
@@ -43,10 +44,12 @@ import { WorkspaceActivationContentPolicyFields, WorkspaceActivationDestinationF
 
 type SourceWorkspace = Readonly<{ id?: string; serverId: string; machineId: string; rootPath: string }>;
 type AddMachineOperation = { inFlight: boolean; abortController: AbortController | null };
+type AddMachineOptions = Readonly<{ targetMachineId?: string; purpose?: 'worker_clean_copy' }>;
 type AddMachineProps = CustomModalInjectedProps & Readonly<{
     source: SourceWorkspace;
     onOpenExisting: (summary: WorkspaceSyncRelationshipSummary) => void;
     operation: AddMachineOperation;
+    options: AddMachineOptions;
 }>;
 
 const modes: readonly WorkspaceSyncPersistentModeV1[] = ['keep_synced', 'mirror_exactly', 'keep_both_in_sync'];
@@ -61,8 +64,9 @@ const ignoreClose = () => {};
 function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
     const activeServer = useActiveServerSnapshot();
     const machineListByServerId = useMachineListByServerId();
+    const machineListStatusByServerId = useMachineListStatusByServerId();
     const activeMachines = useMachineRecordValues() ?? [];
-    const summaries = useWorkspaceSyncRelationshipSummaries();
+    const summaries = useWorkspaceSyncRelationshipSummaries(undefined, props.source.serverId);
     const linkedSource = summaries.some((summary) => props.source.id
         && (summary.alpha.workspaceRefId === props.source.id || summary.beta.workspaceRefId === props.source.id));
     const hub = linkedSource
@@ -75,7 +79,8 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
         activeServerId: activeServer.serverId ?? '',
         activeMachines,
         machineListByServerId,
-    }) ?? [], [activeMachines, activeServer.serverId, machineListByServerId, props.source.serverId]);
+        machineListStatusByServerId,
+    }) ?? [], [activeMachines, activeServer.serverId, machineListByServerId, machineListStatusByServerId, props.source.serverId]);
     const machines = React.useMemo(
         () => allMachines.filter((machine: Machine) => machine.id !== hub?.machineId && !machine.revokedAt),
         [allMachines, hub?.machineId],
@@ -86,10 +91,11 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
         if (sync.getCredentials()) void sync.refreshMachinesThrottled({ force: true });
     }, [props.source.serverId]);
 
-    const [machineId, setMachineId] = React.useState<string | null>(null);
+    const [machineId, setMachineId] = React.useState<string | null>(props.options.targetMachineId ?? null);
     const [targetPath, setTargetPath] = React.useState('');
     const [mode, setMode] = React.useState<WorkspaceSyncPersistentModeV1>('keep_synced');
-    const [destinationIntent, setDestinationIntent] = React.useState<WorkspaceSyncDestinationIntentV1>('use_existing');
+    const [destinationIntent, setDestinationIntent] = React.useState<WorkspaceSyncDestinationIntentV1>(
+        props.options.purpose === 'worker_clean_copy' ? 'materialize_from_source_workspace' : 'use_existing');
     const [contentSelection, setContentSelection] = React.useState<'git_worktree' | 'all_files'>('git_worktree');
     const [includeIgnoredMode, setIncludeIgnoredMode] = React.useState<'exclude' | 'include_selected'>('exclude');
     const [patternsDraft, setPatternsDraft] = React.useState('');
@@ -206,27 +212,17 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
         let sourceWorkspaceRefId = hub.id ?? materializedSourceRefId;
         if (!sourceWorkspaceRefId) {
             try {
-                const preflight = await workspaceListDirectory({
-                    serverId: props.source.serverId,
-                    machineId: props.source.machineId,
-                    rootPath: props.source.rootPath,
-                }, '');
-                if (!preflight.success) throw new Error(preflight.error);
-                const nowMs = Date.now();
-                const added = await addWorkspaceRefToAccount({
-                    scope: {
-                        serverId: props.source.serverId,
-                        machineId: props.source.machineId,
-                        rootPath: props.source.rootPath,
-                    },
-                    nowMs,
-                    patch: { lastOpenedAtMs: nowMs },
-                });
-                if (!added.ok || !('workspaceRefId' in added) || typeof added.workspaceRefId !== 'string') {
-                    if (!added.ok && added.code === 'workspace_settings_outcome_unknown') setInspectRequired(true);
-                    throw new Error(t('common.saveError'));
-                }
-                sourceWorkspaceRefId = added.workspaceRefId;
+                const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+                const opened = await createDefaultActionExecutor().execute('projects.open', {
+                    serverId: props.source.serverId, machineId: props.source.machineId,
+                    source: { kind: 'folder', path: props.source.rootPath }, materialization: { kind: 'attach' },
+                }, { surface: 'ui', serverId: props.source.serverId, signal: controller.signal });
+                if (!opened.ok) throw new Error(t('common.saveError'));
+                const accepted = OpenProjectResultV1Schema.parse(opened.result);
+                if (accepted.kind === 'outcomeUnknown') setInspectRequired(true);
+                if (accepted.kind !== 'opened' || accepted.workspace.serverId !== props.source.serverId
+                    || accepted.workspace.machineId !== props.source.machineId) throw new Error(t('common.saveError'));
+                sourceWorkspaceRefId = accepted.workspace.workspaceId;
                 setMaterializedSourceRefId(sourceWorkspaceRefId);
             } catch (caught) {
                 setError(caught instanceof Error ? caught.message : t('errors.operationFailed'));
@@ -245,6 +241,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
             targetPath: resolvedPath,
             mode,
             destinationIntent,
+            ...(props.options.purpose ? { purpose: props.options.purpose } : {}),
             contentPolicy: buildWorkspaceContentPolicy({
                 contentSelection,
                 includeIgnoredMode,
@@ -388,11 +385,12 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
     );
 }
 
-export function openWorkspaceSyncAddMachine(source: SourceWorkspace, onOpenExisting: (summary: WorkspaceSyncRelationshipSummary) => void): void {
+export function openWorkspaceSyncAddMachine(source: SourceWorkspace, onOpenExisting: (summary: WorkspaceSyncRelationshipSummary) => void,
+    options: AddMachineOptions = {}): void {
     const operation: AddMachineOperation = { inFlight: false, abortController: null };
     Modal.show({
         component: WorkspaceSyncAddMachineModal,
-        props: { source, onOpenExisting, operation },
+        props: { source, onOpenExisting, operation, options },
         accessibilityLabel: t('settings.addMachine'),
         closeOnBackdrop: true,
         onDismissRequest: () => {
@@ -402,4 +400,18 @@ export function openWorkspaceSyncAddMachine(source: SourceWorkspace, onOpenExist
         },
         onHostUnmount: () => operation.abortController?.abort(),
     });
+}
+
+/** U3's explicit recovery action opens Sync's incumbent creator; it never retries Run. */
+export function openWorkspaceSyncWorkerCopySetup(workspace: WorkspaceAddressV1, refusal: unknown,
+    onOpenExisting: (summary: WorkspaceSyncRelationshipSummary) => void): boolean {
+    const parsed = ProjectWorkerNoAcceptanceFailureDetailsV1Schema.safeParse(refusal);
+    if (!parsed.success || parsed.data.reason !== 'worker_copy_missing' || !parsed.data.workerCopy) return false;
+    const facts = parsed.data.workerCopy;
+    if (facts.serverId !== workspace.serverId || facts.sourceWorkspaceRefId !== workspace.workspaceId
+        || facts.sourceMachineId !== workspace.machineId) return false;
+    openWorkspaceSyncAddMachine({ id: workspace.workspaceId, serverId: workspace.serverId,
+        machineId: workspace.machineId, rootPath: workspace.rootPath }, onOpenExisting,
+        { targetMachineId: facts.targetMachineId, purpose: 'worker_clean_copy' });
+    return true;
 }

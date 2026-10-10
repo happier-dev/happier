@@ -70,6 +70,7 @@ export function useActiveSelectionMachineGroups(params: Readonly<{
                 activeServerId: params.activeServerSnapshot.serverId,
                 activeMachines: params.allMachines,
                 machineListByServerId: params.machineListByServerId,
+                machineListStatusByServerId: params.machineListStatusByServerId,
             }) ?? [];
             const status = params.machineListStatusByServerId[serverId] ?? 'idle';
             const visibleMachines = filterVisibleMachines(machines);

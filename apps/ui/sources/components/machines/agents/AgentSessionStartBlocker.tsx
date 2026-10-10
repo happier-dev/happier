@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
-import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { AttentionBanner, type AttentionBannerAction } from '@/components/ui/lists/AttentionBanner';
 import { t } from '@/text';
 
 import { resolveAgentSessionStartBlock } from './machineAgentPresentation';
@@ -12,6 +12,7 @@ export const AgentSessionStartBlocker = React.memo(function AgentSessionStartBlo
     machineName: string;
     /** Omitted while the consumer's setup destination is unresolved; keep the blocker visible. */
     onSetUp?: (agent: MachineAgent) => void;
+    connectedServicesRecoveryAction?: AttentionBannerAction | null;
 }>) {
     const block = resolveAgentSessionStartBlock(props.agent);
     if (!block || !props.agent) return null;
@@ -30,6 +31,7 @@ export const AgentSessionStartBlocker = React.memo(function AgentSessionStartBlo
                 disabled: !props.onSetUp,
                 testID: 'new-session-agent-blocker.action',
             }}
+            secondaryAction={block === 'signedOut' ? props.connectedServicesRecoveryAction : null}
         />
     );
 });

@@ -20,6 +20,7 @@ import {
     isMachineAdministrationCandidateSelectable,
     machineAdministrationTargetsEqual,
     readMachineAdministrationCandidateName,
+    resolveMachineAdministrationTargetState,
     type MachineAdministrationCandidateV1,
     type MachineAdministrationTargetStateV1,
 } from '@/sync/domains/machines/administration/targetSelection';
@@ -146,15 +147,11 @@ function presentCurrentTarget(
 
     const candidate = targetCandidate(state);
     if (!candidate && state.kind === 'missing' && state.inventoryKnown === false) {
-        // Its Home has not answered with its machines yet: say that, not that the machine left it.
-        const homeName = resolveHomeDisplayNameForServerIdentity(state.target.serverIdentityId);
+        const inventoryStatus = state.inventoryStatus ?? 'loading';
         return {
-            // The chip stays the recovery control; the page state beside it says what is wrong.
-            title: compact
-                ? t('settingsPlugins.targetSelection.chooseAnother')
-                : homeName
-                    ? t('settingsPlugins.targetSelection.unreachableHome', { home: homeName })
-                    : t('settingsPlugins.targetSelection.unreachableThisHome'),
+            title: inventoryStatus === 'loading'
+                ? t('common.loading')
+                : inventoryStatus === 'signedOut' ? t('server.signedOut') : t('common.unavailable'),
             subtitle: missingTargetSubtitle ?? undefined,
             selected: true,
             gone: false,
@@ -186,6 +183,11 @@ function presentCurrentTarget(
         selected: true,
         gone: false,
     };
+}
+
+/** The same scope explanation used by the selector, for a page blocked on its chosen machine. */
+export function presentMachineAdministrationTargetState(state: MachineAdministrationTargetStateV1): Readonly<{ title: string; detail?: string }> {
+    return presentCurrentTarget(state, undefined, undefined, undefined, undefined, undefined, false);
 }
 
 function buildPickerGroups(
@@ -220,13 +222,13 @@ function resolvePickerAvailability(machine: MachineAdministrationPickerMachine):
     detail: string;
     selectable: boolean;
 }> {
-    if (isMachineAdministrationCandidateSelectable(machine.candidate)) {
-        return { detail: t('settingsProviders.detail.machineOnline'), selectable: true };
-    }
-    if (machine.candidate.availability === 'offline' || machine.candidate.observation === 'stale') {
-        return { detail: t('settingsProviders.detail.machineOffline'), selectable: false };
-    }
-    return { detail: targetStatusDetail(machine.candidate.availability), selectable: false };
+    const presentation = presentMachineAdministrationTargetState(resolveMachineAdministrationTargetState({
+        storedTarget: machine.target, candidates: [machine.candidate],
+    }));
+    return {
+        detail: presentation.detail ?? presentation.title,
+        selectable: isMachineAdministrationCandidateSelectable(machine.candidate),
+    };
 }
 
 /**
@@ -360,7 +362,9 @@ export function useMachineAdministrationTargetFilter(
         ))
         : undefined;
     const hasTarget = props.selection.selectedTarget !== null && !current.gone;
-    const selectable = selectedRow ? isMachineAdministrationCandidateSelectable(selectedRow.candidate) : false;
+    const presence = props.selection.state.kind === 'online' || props.selection.state.kind === 'offline'
+        ? props.selection.state.kind
+        : undefined;
     const changeTarget = React.useCallback((change: () => void) => {
         const result = runGuardedNavigation(change);
         if (result !== true) {
@@ -390,7 +394,7 @@ export function useMachineAdministrationTargetFilter(
         label: groupTitle,
         valueLabel: current.title,
         icon: <Icon name="desktop" size={14} color={theme.colors.text.secondary} />,
-        ...(hasTarget ? { presence: selectable ? 'online' as const : 'offline' as const } : {}),
+        ...(hasTarget && presence ? { presence } : {}),
         muted: !hasTarget,
         ...(canOpen ? { renderPopoverContent } : {}),
         ...(props.chipOpen !== undefined ? { open: props.chipOpen } : {}),
@@ -465,4 +469,3 @@ function MachineTargetChipList(props: Readonly<{
         />
     );
 }
-

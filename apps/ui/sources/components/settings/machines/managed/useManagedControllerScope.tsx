@@ -14,6 +14,7 @@ import {
   type MachineAdministrationTargetSelectionV1,
 } from '@/sync/domains/machines/administration/useTargetSelection';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { useMachineListForServer } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
@@ -63,7 +64,7 @@ export function useManagedControllerScope(
     () =>
       rows.filter(
         (row) =>
-          row.serverId === input.serverId &&
+          areServerProfileIdentifiersEquivalent(row.serverId, input.serverId) &&
           eligible.some(
             (machine) => machine.id === row.candidate.target.machineId,
           ),

@@ -4,6 +4,7 @@ import {
     SESSION_LIST_ROW_HEIGHT_MINIMAL,
     SESSION_LIST_ROW_HEIGHT_MINIMAL_NATIVE_PHONE,
 } from './sessionListRowHeights';
+import { VIEWPORT_CLASS_MIN_EDGE_BREAKPOINTS_PX } from '@/utils/platform/viewportClass';
 
 export type SessionListRowPlatform = 'ios' | 'android' | 'web' | 'windows' | 'macos';
 export type SessionListRowDensity = 'default' | 'compact' | 'minimal';
@@ -19,7 +20,7 @@ export const SESSION_LIST_ROW_TITLE_TEXT_METRICS = {
     default: { fontSize: 14, lineHeight: 18 },
     compact: { fontSize: 14, lineHeight: 18 },
     minimal: { fontSize: 12, lineHeight: 16 },
-    minimalNativePhone: { fontSize: 14, lineHeight: 18 },
+    minimalNativePhone: { fontSize: 17, lineHeight: 22 },
 } as const;
 
 export const SESSION_LIST_ROW_STATUS_TEXT_METRICS = {
@@ -65,6 +66,8 @@ export type ResolveSessionListDensityViewStateOptions = Readonly<{
     isTablet: boolean;
     platform: SessionListRowPlatform | string;
     uiFontScale?: number;
+    /** Web's narrow window, not a short desktop window, uses phone row anatomy. */
+    windowWidth?: number;
 }>;
 
 function scaleRowHeight(height: number, uiFontScale: number | undefined): number {
@@ -98,13 +101,15 @@ const SESSION_LIST_DENSITY_VIEW_STATE_MINIMAL_NATIVE_PHONE: SessionListDensityVi
     rowHeight: SESSION_LIST_ROW_HEIGHT_MINIMAL_NATIVE_PHONE,
 });
 
-function shouldUseReadableNativePhoneMinimalSessionRow(
+export function shouldUseReadablePhoneMinimalSessionRow(
     options: ResolveSessionListDensityViewStateOptions | null | undefined,
 ): boolean {
     return Boolean(
         options
         && !options.isTablet
-        && (options.platform === 'ios' || options.platform === 'android'),
+        && (options.platform === 'ios' || options.platform === 'android'
+            || (options.platform === 'web' && options.windowWidth !== undefined
+                && options.windowWidth < VIEWPORT_CLASS_MIN_EDGE_BREAKPOINTS_PX.tabletMin)),
     );
 }
 
@@ -117,7 +122,7 @@ export function resolveSessionListDensityViewState(
         return rowHeight === state.rowHeight ? state : { ...state, rowHeight };
     };
     if (sessionListDensity === 'narrow') {
-        if (shouldUseReadableNativePhoneMinimalSessionRow(options)) {
+        if (shouldUseReadablePhoneMinimalSessionRow(options)) {
             return scale(SESSION_LIST_DENSITY_VIEW_STATE_MINIMAL_NATIVE_PHONE);
         }
         return scale(SESSION_LIST_DENSITY_VIEW_STATE_MINIMAL);

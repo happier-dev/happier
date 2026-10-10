@@ -9,7 +9,7 @@ import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { ExecutionRunAgentMark } from '@/components/sessions/runs/ExecutionRunAgentMark';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { workflowBlockOrdinalV1 } from '@happier-dev/protocol/workflows';
+import { WORKFLOW_BLOCK_KIND_GLYPH } from '@/components/workflows/presentation/workflowBlockKindGlyph';
 import { formatWorkflowAgentStatusLabel } from '@/components/workflows/presentation/workflowStatusLabel';
 import { WorkflowLifecycleStatus } from '@/components/workflows/presentation/WorkflowLifecycleStatus';
 import {
@@ -18,7 +18,7 @@ import {
 } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { resolveHappierWorkMapNodePosition, type HappierWorkMapDensity, type HappierWorkMapNodePresentation } from '@happier-dev/plugin-ui/presentation';
+import { formatHappierWorkMapNodeName, resolveHappierWorkMapNodePosition, type HappierWorkMapDensity, type HappierWorkMapNodePresentation } from '@happier-dev/plugin-ui/presentation';
 import { WorkMapView } from '@/components/work/map/WorkMapView';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 
@@ -125,11 +125,11 @@ const styles = StyleSheet.create((theme) => ({
 /** Leaf kinds that are numbered steps and carry a mark (lab `.wm-g`); containers are headers. */
 const FLOW_MARKED_KINDS: ReadonlySet<WorkflowFlowNode['kind']> = new Set(['step', 'action', 'wait', 'workflow', 'evaluator']);
 
-/** A non-agent leaf's kind glyph: the same glyphs the editor's block headings use. */
+/** A non-agent leaf's kind glyph: the one owner the editor's block headings and Add menu read. */
 const FLOW_KIND_GLYPH: Readonly<Partial<Record<WorkflowFlowNode['kind'], IconName>>> = {
-    action: 'lightning',
-    wait: 'person',
-    workflow: 'tree-structure',
+    action: WORKFLOW_BLOCK_KIND_GLYPH.action,
+    wait: WORKFLOW_BLOCK_KIND_GLYPH.wait,
+    workflow: WORKFLOW_BLOCK_KIND_GLYPH.workflow,
 };
 
 /**
@@ -167,10 +167,10 @@ function describeNodeStructure(
     node: WorkflowFlowNode,
 ): string {
     const { position, total, parent } = resolveHappierWorkMapNodePosition(projection, node);
-    const positioned = t('workflows.a11y.stepContext', { block: node.label, position, total });
+    const positioned = t('workflows.a11y.stepContext', { block: formatHappierWorkMapNodeName(node), position, total });
     return parent === null
         ? positioned
-        : t('workflows.a11y.groupContext', { group: parent.label, block: positioned });
+        : t('workflows.a11y.groupContext', { group: formatHappierWorkMapNodeName(parent), block: positioned });
 }
 
 export function WorkflowFlowView(props: Readonly<{
@@ -190,12 +190,18 @@ export function WorkflowFlowView(props: Readonly<{
     testIDPrefix?: string;
     /** `compact`: the live mini-map under a Work row — structure and state only. */
     density?: HappierWorkMapDensity;
+    /**
+     * A workflow's shape with nothing to run (an example tile, lab `nav-N3`): the map's own type and
+     * lane captions, without ordinals, result lines or run facts. Its size is the caller's `density`.
+     */
+    preview?: boolean;
     /** The Agent mark of a step's accepted selection, when the caller knows it; else a neutral mark. */
     agentMarkForNode?: (node: WorkflowFlowNode) => React.ReactNode | null;
 }>): React.ReactElement {
     const testIDPrefix = props.testIDPrefix ?? 'workflow-flow';
     const { theme } = useUnistyles();
     const compact = props.density === 'compact';
+    const quiet = compact || props.preview === true;
     const editTarget = props.onEditStep === undefined || props.selectedNodeId === null
         ? null
         : resolveWorkflowFlowEditTarget(props.projection, props.selectedNodeId);
@@ -248,15 +254,16 @@ export function WorkflowFlowView(props: Readonly<{
                         {glyph !== undefined
                             ? <Icon name={glyph} size={compact ? ICON_SIZE.xs : ICON_SIZE.sm} color={theme.colors.text.secondary} />
                             : props.agentMarkForNode?.(node) ?? <ExecutionRunAgentMark agentId={null} size={compact ? 22 : 28} />}
-                        {compact || node.observed ? null : (
+                        {quiet || node.observed || node.stepOrdinal === undefined ? null : (
                             <View testID={`${testIDPrefix}-node-${node.nodeId}-ordinal`} style={styles.ordinal}>
-                                <Text style={styles.ordinalText}>{workflowBlockOrdinalV1(node.ordinal - 1)}</Text>
+                                <Text style={styles.ordinalText}>{node.stepOrdinal}</Text>
                             </View>
                         )}
                     </>
                 );
             }}
             renderSubtitle={(node) => {
+                if (props.preview === true) return null;
                 const line = node.finalOutput === true
                     ? t('workflows.finalOutput.title')
                     : node.returns === undefined ? null : t('workflows.page.blocks.returnsFields', { fields: node.returns.join(' · ') });
@@ -290,7 +297,7 @@ export function WorkflowFlowView(props: Readonly<{
                 const stateLabel = stateLabelOf(node);
                 return (
                     <>
-                        {!compact && node.maxConcurrent === undefined && (node.kind === 'parallel' || node.repetition?.kind === 'items') ? (
+                        {!quiet && node.maxConcurrent === undefined && (node.kind === 'parallel' || node.repetition?.kind === 'items') ? (
                             <Text testID={`${testIDPrefix}-node-${node.nodeId}-no-limit`} style={styles.meta}>
                                 {t('workflows.loop.noWorkflowLimit')}
                             </Text>

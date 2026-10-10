@@ -1,8 +1,11 @@
 import { useAuthoringMemoryField, useSession } from '@/sync/domains/state/storage';
+// Load the canonical read projection before a cold editor publishes a delete acknowledgement.
+import '../library/workflowLibraryReads';
 import * as React from 'react';
 import { showDocumentShareSheet } from '@/components/sharing/documents/showDocumentShareSheet';
 import { createWorkflowDefinitionRoute } from '@/sync/domains/workflows/workflowRunRoute';
-import { View } from 'react-native';
+import { Platform, ScrollView, View } from 'react-native';
+import { useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { randomUUID } from 'expo-crypto';
 import { StyleSheet } from 'react-native-unistyles';
@@ -27,6 +30,7 @@ import type { ArtifactCallerAccessV1 } from '@happier-dev/protocol/artifacts/art
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 import { isWorkflowProjectTarget } from '@/sync/domains/workflows/workflowProjectTarget';
+import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
 import type { WorkflowArtifactRevisionV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 
 import {
@@ -48,8 +52,11 @@ import {
     EMPTY_WORKFLOW_EDITOR_VIEW_STATE,
     type WorkflowEditorDraft,
     type WorkflowEditorViewState,
+    type WorkflowStarterSessionTarget,
 } from '@/sync/domains/workflows/workflowEditorDraft';
-import { countWorkflowStepsV1, setWorkflowDefaultField, setWorkflowStepExecutionField } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
+import { countWorkflowStepsV1, setWorkflowDefaultField, setWorkflowStepExecutionField, walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
+import { EMPTY_WORKFLOW_ANNOUNCEMENT_STATE, selectWorkflowAnnouncement } from '../accessibility/workflowAnnouncementSelection';
+import { formatWorkflowAnnouncement } from '../accessibility/useWorkflowAnnouncements';
 import { useWorkflowRunNowController } from '../run/useWorkflowRunNowController';
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 import {
@@ -76,14 +83,14 @@ import { useWorkflowAuthoringHost } from './useWorkflowAuthoringHost';
 import type { WorkflowSaveConflict, WorkflowSaveStatusState } from '../editor/WorkflowSaveStatus';
 import type { PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { WorkflowMissingDefinitionState } from './WorkflowMissingDefinitionState';
+import { WorkflowExamplesSection } from '../library/WorkflowExamplesSection';
 import { WorkflowTriggerSection } from '../triggers/WorkflowTriggerSection';
 import { useWorkflowTriggerEditing } from '../triggers/useWorkflowTriggerEditing';
-import { WorkflowTriggerSnapshotRestoreError, type WorkflowTriggerSnapshot } from '../triggers/workflowTriggerDraft';
+import { editWorkflowTriggerDraft, EMPTY_WORKFLOW_TRIGGER_DRAFT, WorkflowTriggerSnapshotRestoreError, type WorkflowTriggerSnapshot } from '../triggers/workflowTriggerDraft';
 import { useWorkflowEditorHistory } from '../editor/useWorkflowEditorHistory';
 import { formatWorkflowWhereSummary, WorkflowProjectTargetControl } from '../editor/WorkflowProjectTargetControl';
 import { createExecutionRunStartContentChip } from '@/components/sessions/runs/launcher/executionRunStartChips';
 import { useActionFieldOptionsForMachine } from '@/components/sessions/actions/useSessionActionFieldOptions';
-import { walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { findWorkflowActionSpec } from '@/components/workflows/presentation/workflowActionCatalog';
 import { formatWorkflowProblemMessage, resolveWorkflowProblemPresentation } from '@/components/workflows/presentation/workflowProblemPresentation';
@@ -98,6 +105,7 @@ import { readWorkflowAgentRevision, type WorkflowAgentRevision } from '@/sync/do
 import { seedWorkflowAgentDraft, useWorkflowAgentAuthoring } from '../authoring/useWorkflowAgentAuthoring';
 import { useDetailsPaneAvailable } from '@/components/appShell/panes/details/detailsPaneAvailability';
 import { useWorkflowAgentRevision } from '../authoring/useWorkflowAgentRevision';
+import { useWorkflowTestRunPresentation } from '../editor/useWorkflowTestRunPresentation';
 import { buildWorkflowAgentAuthoringSeed } from '@/sync/domains/workflows/workflowAgentAuthoringSeed';
 
 const styles = StyleSheet.create((theme) => ({
@@ -227,6 +235,8 @@ export function WorkflowEditorHostScreen(props: Readonly<{
 }>): React.ReactElement {
     const mountedRef = useMountedRef();
     const router = useRouter();
+    const destinationInstanceKey = useDestinationInstanceKey();
+    const nativeEditorRoute = Platform.OS !== 'web' && destinationInstanceKey === null;
     const navigation = useNavigation();
     const machines = useAllMachines();
     const activeAccountScope = useActiveServerAccountScope();
@@ -237,9 +247,11 @@ export function WorkflowEditorHostScreen(props: Readonly<{
     const agentSeedId = props.source.kind === 'saved' ? props.source.agentRevisionSeedId ?? null : null;
     const [agentSeedState, setAgentSeedState] = React.useState(() => ({
         id: agentSeedId, seed: agentSeedId === null ? null : readWorkflowAgentRevision(agentSeedId),
+        lifetime: captureActiveServerAccountScopeLifetime(),
     }));
     if (agentSeedState.id !== agentSeedId) {
-        setAgentSeedState({ id: agentSeedId, seed: agentSeedId === null ? null : readWorkflowAgentRevision(agentSeedId) });
+        setAgentSeedState({ id: agentSeedId, seed: agentSeedId === null ? null : readWorkflowAgentRevision(agentSeedId),
+            lifetime: captureActiveServerAccountScopeLifetime() });
     }
     const agentSeed = agentSeedState.id === agentSeedId && agentSeedState.seed?.lifetime?.isCurrent()
         ? agentSeedState.seed : null;
@@ -357,6 +369,12 @@ export function WorkflowEditorHostScreen(props: Readonly<{
         props.source.kind === 'saved' ? null : accountScopeKey,
     );
     const [saved, setSaved] = React.useState<SavedRevision | null>(null);
+    const [savedRouteId, setSavedRouteId] = React.useState<string | null>(null);
+    /** Bumped whenever a different logical source takes over this editor. */
+    const sourceGenerationRef = React.useRef(0);
+    const [testSource, setTestSource] = React.useState<Awaited<ReturnType<typeof getWorkflowDefinition>> | null>(null);
+    const [testSourcePending, setTestSourcePending] = React.useState(false);
+    const [testRun, setTestRun] = React.useState<Readonly<{ runId: string; definition: Awaited<ReturnType<typeof getWorkflowDefinition>>['definition'] }> | null>(null);
     const [definitionAccess, setDefinitionAccess] = React.useState<ArtifactCallerAccessV1 | null>(null);
     const accessResolved = (props.source.kind === 'new' && saved === null) || definitionAccess !== null;
     const canEditDefinition = accessResolved && definitionAccess !== 'view';
@@ -364,7 +382,25 @@ export function WorkflowEditorHostScreen(props: Readonly<{
     // Every admitted reader manages only the active Account's personal set.
     const canManagePersonalTriggers = accessResolved;
     const editableDefinitionId = props.source.kind === 'saved' ? props.source.definitionId : saved?.definitionId ?? null;
-    const authoringSourceKey = workflowEditorSourceKey(props.source);
+    const sourceKind = props.source.kind;
+    const sourceDefinitionId = props.source.kind === 'saved' ? props.source.definitionId : null;
+    const privateSeedWithdrawn = (carriesPrivateSeed && reviewedRunSeedState.id === reviewedRunSeedId
+        && (reviewedRunSeedState.retired || (reviewedRunSeedState.lifetime !== null && !reviewedRunSeedState.lifetime.isCurrent())))
+        || (definitionDraftSeedId !== null && definitionDraftSeedState.lifetime !== null
+            && !definitionDraftSeedState.lifetime.isCurrent());
+    const requestedInitializationKey = `${workflowEditorSourceKey(props.source)}\u0000${accountScopeKey ?? ''}\u0000${privateSeedWithdrawn ? 'withdrawn' : ''}`;
+    const [initializedKey, setInitializedKey] = React.useState(requestedInitializationKey);
+    // The first Save assigns an Artifact identity to this exact accepted draft.
+    // Its URL promotion is not a new document or Account initialization boundary.
+    const firstSavePromotion = sourceKind === 'saved'
+        && initializedKey.startsWith('new\u0000')
+        && saved !== null && sourceDefinitionId === saved.definitionId
+        && savedRouteId === sourceDefinitionId
+        && contentScopeKey === accountScopeKey
+        && agentSeedId === null
+        && props.source.kind === 'saved' && props.source.agentRevision === undefined;
+    const initializationKey = requestedInitializationKey;
+    const authoringSourceKey = String(sourceGenerationRef.current);
     const [agentSession, setAgentSession] = React.useState<Readonly<{ sessionId: string; serverId: string; scopeKey: string | null; definitionId: string; sourceKey: string }> | null>(null);
     const authoringSessionId = agentSession?.scopeKey === accountScopeKey && agentSession.sourceKey === authoringSourceKey && agentSession.definitionId === editableDefinitionId
         ? agentSession.sessionId : props.source.kind === 'saved' ? agentSeed?.sessionId ?? props.source.authoringSessionId ?? null : null;
@@ -420,6 +456,8 @@ export function WorkflowEditorHostScreen(props: Readonly<{
     const [planPending, setPlanPending] = React.useState(false);
     const planPendingRef = React.useRef(false);
     const [savePending, setSavePending] = React.useState(false);
+    const [deletePending, setDeletePending] = React.useState(false);
+    const deletePendingRef = React.useRef(false);
     const [saveConflict, setSaveConflict] = React.useState<WorkflowSaveConflict | null>(null);
     /**
      * The description is Artifact metadata beside the name, outside the portable
@@ -437,6 +475,7 @@ export function WorkflowEditorHostScreen(props: Readonly<{
     // it can never bypass the reason the page shows beside the visible action.
     const editorCommandsRef = React.useRef<WorkflowEditorCommands | null>(null);
     const runNowAnchorRef = React.useRef<View | null>(null);
+    const testRunAnchorRef = React.useRef<View | null>(null);
     // The contextual default comes from the canonical New Session resolver, and
     // only when it produces a genuinely valid choice (UX §2.3). A reviewed copy
     // keeps its predecessor's accepted target instead.
@@ -444,10 +483,19 @@ export function WorkflowEditorHostScreen(props: Readonly<{
         | ReadonlyArray<Readonly<{ machineId?: string | null; path?: string | null }>>
         | undefined;
     const newSessionProject = newSessionSeed?.project && isWorkflowProjectTarget(newSessionSeed.project) ? newSessionSeed.project : null;
+    const resolveStarterProject = (target: WorkflowStarterSessionTarget): WorkflowProjectTargetV1 | null => {
+        if (activeAccountScope === null) return null;
+        const workspace = resolveWorkspaceTargetForSession({ sessionId: target.sessionId, serverId: activeAccountScope.serverId });
+        if (workspace === null || workspace.machineId !== target.machineId) return null;
+        const project = { machineId: workspace.machineId, directory: workspace.rootPath };
+        return isWorkflowProjectTarget(project) ? project : null;
+    };
+    const starterProject = definitionDraftSeed?.sessionTarget === undefined ? null : resolveStarterProject(definitionDraftSeed.sessionTarget);
     const [projectTarget, setProjectTarget] = React.useState<WorkflowProjectTargetV1 | null>(
-        reviewedRunSeed?.project ?? newSessionProject,
+        reviewedRunSeed?.project ?? newSessionProject ?? starterProject,
     );
-    const seededContextualTargetRef = React.useRef(reviewedRunSeed?.project !== undefined || newSessionProject !== null);
+    const seededContextualTargetRef = React.useRef(reviewedRunSeed?.project !== undefined || newSessionProject !== null
+        || definitionDraftSeed?.sessionTarget !== undefined);
     /** Whether this logical source has already been offered the contextual Agent. */
     const seededContextualAgentRef = React.useRef(false);
     React.useEffect(() => {
@@ -484,15 +532,10 @@ export function WorkflowEditorHostScreen(props: Readonly<{
     const pendingRunIdRef = React.useRef<string | null>(null);
     /** The draft exactly as loaded at `saved.revision`, for edited-since-save detection. */
     const savedDraftRef = React.useRef<WorkflowEditorDraft | null>(null);
-    /** Bumped whenever a different logical source takes over this editor. */
-    const sourceGenerationRef = React.useRef(0);
     /** Whether this source already consumed its one-shot "open in import" request. */
     const importRequestedRef = React.useRef(false);
     /** Which saved-row entry intent this source already pressed. */
     const consumedEntryIntentKeyRef = React.useRef<string | null>(null);
-
-    const sourceKind = props.source.kind;
-    const sourceDefinitionId = props.source.kind === 'saved' ? props.source.definitionId : null;
 
     /**
      * One logical source initializes exactly once.
@@ -505,12 +548,11 @@ export function WorkflowEditorHostScreen(props: Readonly<{
      * next paint already shows the new source — Account-private Artifact content
      * is retired before another Account's same opaque id can resolve.
      */
-    const privateSeedWithdrawn = (carriesPrivateSeed && reviewedRunSeedState.id === reviewedRunSeedId
-        && (reviewedRunSeedState.retired || (reviewedRunSeedState.lifetime !== null && !reviewedRunSeedState.lifetime.isCurrent())))
-        || (definitionDraftSeedId !== null && definitionDraftSeed === null);
-    const initializationKey = `${workflowEditorSourceKey(props.source)}\u0000${accountScopeKey ?? ''}\u0000${privateSeedWithdrawn ? 'withdrawn' : ''}`;
-    const [initializedKey, setInitializedKey] = React.useState(initializationKey);
-    if (initializedKey !== initializationKey) {
+    if (firstSavePromotion && initializedKey !== initializationKey) {
+        setInitializedKey(initializationKey);
+        setSavedRouteId(null);
+    }
+    if (initializedKey !== initializationKey && !firstSavePromotion) {
         // A withdrawn private seed has no bytes to re-adopt; it must not fall
         // back to an empty draft that looks like the reviewed copy opened fine.
         const withdrawn = privateSeedWithdrawn;
@@ -535,6 +577,9 @@ export function WorkflowEditorHostScreen(props: Readonly<{
         initialDraftBaselineRef.current = next;
         savedDraftRef.current = null;
         setSaved(null);
+        setTestSource(null);
+        setTestSourcePending(false);
+        setTestRun(null);
         setDefinitionAccess(null);
         setSaveConflict(null);
         setSavedAtMs(null);
@@ -547,6 +592,9 @@ export function WorkflowEditorHostScreen(props: Readonly<{
         setDescription(nextDescription);
         savedDescriptionRef.current = nextDescription;
         setSavePending(false);
+        setDeletePending(false);
+        deletePendingRef.current = false;
+        setSavedRouteId(null);
         setHydrationFailure(null);
         setSelection(EMPTY_WORKFLOW_EDITOR_VIEW_STATE);
         setView('steps');
@@ -566,9 +614,9 @@ export function WorkflowEditorHostScreen(props: Readonly<{
         // contextual Agent is offered to it again rather than being consumed
         // for the whole mount.
         seededContextualAgentRef.current = false;
-        const nextProjectTarget = withdrawn ? null : nextReviewedRunSeed?.project ?? null;
+        const nextProjectTarget = withdrawn ? null : nextReviewedRunSeed?.project ?? newSessionProject ?? starterProject;
         setProjectTarget(nextProjectTarget);
-        seededContextualTargetRef.current = nextProjectTarget !== null;
+        seededContextualTargetRef.current = nextProjectTarget !== null || (!withdrawn && definitionDraftSeed?.sessionTarget !== undefined);
     }
 
     /**
@@ -585,6 +633,10 @@ export function WorkflowEditorHostScreen(props: Readonly<{
 
     React.useEffect(() => {
         if (sourceKind !== 'saved' || sourceDefinitionId === null) return;
+        // Save already returned this Account's accepted revision and access.
+        // Refetching that same content would replace its draft id and history.
+        if (saved?.definitionId === sourceDefinitionId && contentScopeKey === accountScopeKey
+            && agentRevision === null && agentSeedId === null) return;
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (lifetime === null) return;
         const requestScopeKey = accountScopeKey;
@@ -615,7 +667,7 @@ export function WorkflowEditorHostScreen(props: Readonly<{
             }
         })();
         return () => { cancelled = true; };
-    }, [accountScopeKey, agentRevision, agentSeedId, hydrationAttempt, sourceDefinitionId, sourceKind]);
+    }, [accountScopeKey, agentRevision, agentSeedId, contentScopeKey, hydrationAttempt, saved?.definitionId, sourceDefinitionId, sourceKind]);
 
     const retryHydration = React.useCallback(() => {
         setHydrationFailure(null);
@@ -631,12 +683,17 @@ export function WorkflowEditorHostScreen(props: Readonly<{
     // Folders read home-relative wherever this editor says where it runs (07 copy rules).
     const machineHomeDir = machines.find((candidate) => candidate.id === projectTarget?.machineId)?.metadata?.homeDir ?? null;
     // Trigger edits are part of the draft (04 §5.4): written after the definition on Save.
-    const triggers = useWorkflowTriggerEditing({ definitionId: saved?.definitionId ?? null, sourceKey: workflowEditorSourceKey(props.source), projectTarget });
+    const triggers = useWorkflowTriggerEditing({ definitionId: saved?.definitionId ?? null, sourceKey: authoringSourceKey, projectTarget });
+    React.useEffect(() => {
+        const trigger = definitionDraftSeed?.trigger;
+        if (trigger === undefined || privateSeedWithdrawn) return;
+        triggers.setDraft(editWorkflowTriggerDraft(EMPTY_WORKFLOW_TRIGGER_DRAFT, { kind: 'add', clientId: randomUUID(), trigger }));
+    }, [initializationKey, definitionDraftSeed?.trigger, privateSeedWithdrawn, triggers.setDraft]);
     const snapshotRef = React.useRef<WorkflowEditorSnapshot | null>(null);
     snapshotRef.current = draft === null ? null : { draft, description, projectTarget, executionTarget, triggers: triggers.captureSnapshot() };
     // Import opens a fresh review document with a new draft id; it is an
     // initialization boundary, not a change to the prior document's history.
-    const history = useWorkflowEditorHistory<WorkflowEditorSnapshot>(`${initializationKey}\u0000${draft?.draftId ?? ''}`, (snapshot) => {
+    const history = useWorkflowEditorHistory<WorkflowEditorSnapshot>(`${sourceGenerationRef.current}\u0000${draft?.draftId ?? ''}`, (snapshot) => {
         // Restore the semantic trigger intent before changing any other field:
         // inaccessible private trigger configuration cannot be fabricated.
         triggers.restoreSnapshot(snapshot.triggers);
@@ -725,7 +782,9 @@ export function WorkflowEditorHostScreen(props: Readonly<{
         visibleTeamId?: string,
     ): Promise<void> => {
         if (planPendingRef.current || draft === null || projectTarget === null || projectTarget.directory.trim().length === 0) return;
-        const validation = validateWorkflowEditorDraft(draft);
+        const validation = validateWorkflowEditorDraft(testSource === null ? draft : buildWorkflowEditorDraftFromDefinition({
+            draftId: draft.draftId, name: testSource.metadata.title, definition: testSource.definition,
+        }));
         const normalizedDefinition = validation.normalizedDefinition;
         if (!validation.valid || normalizedDefinition === undefined) return;
         // An unavailable runtime is refused rather than downgraded: quietly
@@ -736,7 +795,7 @@ export function WorkflowEditorHostScreen(props: Readonly<{
             targets: runAsTargets,
         });
         if (admittedTarget === null) return;
-        const runId = pendingRunIdRef.current ?? (planReview && reviewedRunSeed
+        const runId = pendingRunIdRef.current ?? (testSource === null && planReview && reviewedRunSeed
             ? planReview.runId ?? deriveWorkflowPlanRunId(reviewedRunSeed.sourceRunId, planReview.invocationId) : randomUUID());
         pendingRunIdRef.current = runId;
         const sourceGenerationIsCurrent = captureSourceGeneration();
@@ -746,12 +805,12 @@ export function WorkflowEditorHostScreen(props: Readonly<{
         // One prompt is a workflow and Run now needs no name (UX §2.2 J1). The
         // admitted title is `min(1)` at its Protocol owner, so an unnamed draft
         // admits with no metadata rather than an empty title the schema refuses.
-        const title = draft.name.trim();
+        const title = (testSource?.metadata.title ?? draft.name).trim();
         const start = () => runNow.runNow({
             runId,
             ...(title.length === 0 ? {} : { metadata: { title } }),
             executionTarget: admittedTarget,
-            source: {
+            source: testSource === null ? {
                 kind: 'inline',
                 // Grant lineage does not substitute saved contents for this reviewed draft.
                 ...(saved?.definitionId ? { sourceArtifactId: saved.definitionId } : {}),
@@ -764,7 +823,8 @@ export function WorkflowEditorHostScreen(props: Readonly<{
                     inputs: [...normalizedDefinition.inputs],
                     blocks: [...normalizedDefinition.blocks],
                 },
-            },
+            } : { kind: 'saved', definitionId: testSource.definitionId, revision: testSource.revision,
+                ...(visibleTeamId === undefined ? {} : { visibleTeamId }) },
             ...(inputs === undefined ? {} : { inputs }),
             ...(roleOverrides === undefined ? {} : { roleOverrides: [...roleOverrides] }),
             project: projectTarget,
@@ -776,7 +836,7 @@ export function WorkflowEditorHostScreen(props: Readonly<{
         });
         let admitted: Awaited<ReturnType<typeof runNow.runNow>>;
         try {
-            if (planReview && reviewedRunSeed) {
+            if (testSource === null && planReview && reviewedRunSeed) {
                 planPendingRef.current = true;
                 setPlanPending(true);
                 // The draft may stay open after Cancel. Re-read the canonical live
@@ -830,14 +890,38 @@ export function WorkflowEditorHostScreen(props: Readonly<{
         if (!sourceIsCurrent()) return;
         pendingRunIdRef.current = null;
         setInputSheetOpen(false);
+        if (testSource !== null) {
+            setTestRun({ runId: admitted.run.id, definition: testSource.definition });
+            return;
+        }
         router.pushRetainingCurrent({ pathname: '/workflows/runs/[runId]', params: { runId: admitted.run.id } } as never);
-    }, [captureSourceGeneration, draft, executionTarget, projectTarget, router, runAsTargets, runNow, planReview, reviewedRunSeed, ownedPlanOriginId, reportBack, saved?.definitionId]);
+    }, [captureSourceGeneration, draft, executionTarget, projectTarget, router, runAsTargets, runNow, planReview, reviewedRunSeed, ownedPlanOriginId, reportBack, saved?.definitionId, testSource]);
 
     const handleRunNow = React.useCallback(() => {
-        if (draft === null) return;
+        if (draft === null || testSourcePending || runNow.isPending(pendingRunIdRef.current ?? '')) return;
         // Every Run is reviewed in the composer, including a no-input recipe.
+        setTestSource(null);
         setInputSheetOpen(true);
-    }, [draft]);
+    }, [draft, runNow, testSourcePending]);
+
+    const handleTestRun = React.useCallback(() => {
+        if (saved === null || testSourcePending || runNow.isPending(pendingRunIdRef.current ?? '')) return;
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (lifetime === null) return;
+        const sourceIsCurrent = captureSourceGeneration();
+        setTestSourcePending(true);
+        void getWorkflowDefinition({ definitionId: saved.definitionId }).then((result) => {
+            if (!lifetime.isCurrent() || !sourceIsCurrent()) return;
+            setTestSource(result);
+            setInputValues({});
+            setInputRawTextValues({});
+            setInputSheetOpen(true);
+        }).catch((error: unknown) => {
+            if (lifetime.isCurrent() && sourceIsCurrent()) void Modal.alert(t('common.error'), formatWorkflowProblemMessage(error));
+        }).finally(() => {
+            if (lifetime.isCurrent() && sourceIsCurrent()) setTestSourcePending(false);
+        });
+    }, [captureSourceGeneration, runNow, saved, testSourcePending]);
 
     const { clearRefusal } = runNow;
     const dismissInputSheet = React.useCallback(() => {
@@ -846,20 +930,27 @@ export function WorkflowEditorHostScreen(props: Readonly<{
         setInputSheetOpen(false);
     }, [clearRefusal]);
 
+    // Draft updates are immutable. The exact accepted snapshot is clean even
+    // when an optional editor field is explicitly undefined (not strict JSON).
+    const definitionDraftBaseline = savedDraftRef.current ?? initialDraftBaselineRef.current;
+    const definitionDraftDirty = draft !== null && draft !== definitionDraftBaseline
+        && !pluginJsonValuesEqual(draft, definitionDraftBaseline);
+    const descriptionDraftDirty = description !== savedDescriptionRef.current;
+
     const inputModalProps = React.useMemo<WorkflowRunComposerModalProps | null>(() => draft === null ? null : ({
-        definition: validateWorkflowEditorDraft(draft).normalizedDefinition,
+        definition: testSource?.definition ?? validateWorkflowEditorDraft(draft).normalizedDefinition,
         sourceArtifactId: saved?.definitionId ?? null,
         ...(saved?.definitionId ? { optionsConsumer: { kind: 'workflow' as const, workflow: saved.definitionId } } : {}),
-        inputs: draft.inputs,
+        inputs: testSource?.definition.inputs ?? draft.inputs,
         values: inputValues,
         onChangeValues: setInputValues,
         rawTextValues: inputRawTextValues,
         onChangeRawTextValues: setInputRawTextValues,
-        workflowName: draft.name,
-        preview: description || draft.blocks.map((block) => workflowBlockReferenceLabel(block)).join('\n'),
+        workflowName: testSource?.metadata.title ?? draft.name,
+        preview: (testSource?.metadata.description ?? (testSource === null ? description : '')) || (testSource?.definition.blocks ?? draft.blocks).map((block) => workflowBlockReferenceLabel(block)).join('\n'),
         ...(planReview ? { preview: readWorkflowPlanResult(planReview.value)?.document, notice: t('workflows.review.planRunNotice') } : {}),
-        includesUnsavedEdits: !pluginJsonValuesEqual(draft, savedDraftRef.current ?? initialDraftBaselineRef.current)
-            || description !== savedDescriptionRef.current,
+        ...(testSource === null ? {} : { notice: t('workflows.testRun.savedNotice') }),
+        includesUnsavedEdits: testSource === null && (definitionDraftDirty || descriptionDraftDirty),
         machineId: projectTarget?.machineId ?? null,
         serverId: activeAccountScope?.serverId ?? null,
         extraActionChips: [{
@@ -867,7 +958,7 @@ export function WorkflowEditorHostScreen(props: Readonly<{
                 key: 'workflow-start-where', icon: 'folder', title: t('workflows.page.where.label'),
                 label: formatWorkflowWhereSummary({ target: projectTarget, machineName, machineHomeDir }) ?? t('workflows.page.where.choose'),
                 testID: 'workflow-start-where-chip',
-                renderContent: <WorkflowProjectTargetControl target={projectTarget} machineName={machineName}
+                renderContent: <WorkflowProjectTargetControl purpose="workflow" target={projectTarget} machineName={machineName}
                     machines={machines} onChange={(target) => { if (isWorkflowProjectTarget(target)) setProjectTarget(target); }}
                     testIDPrefix="workflow-start-where" />,
             }), controlId: 'machine',
@@ -883,16 +974,17 @@ export function WorkflowEditorHostScreen(props: Readonly<{
         pending: planPending || runNow.isPending(pendingRunIdRef.current ?? ''),
         reconciling: runNow.stateFor(pendingRunIdRef.current ?? '') === 'reconciling',
         startProblem: runNow.refusal?.message ?? null,
-    }), [activeAccountScope?.serverId, description, dismissInputSheet, draft, inputRawTextValues, inputValues, machineName, machines, projectTarget, runNow, saved?.definitionId, startRun, planReview, ownedPlanOriginId, planOriginName, reportBack, planPending]);
+    }), [activeAccountScope?.serverId, definitionDraftDirty, descriptionDraftDirty, description, dismissInputSheet, draft, inputRawTextValues, inputValues, machineName, machines, projectTarget, runNow, saved?.definitionId, startRun, planReview, ownedPlanOriginId, planOriginName, reportBack, planPending, testSource]);
 
-    const runComposer = useWorkflowRunComposerModal({ open: inputSheetOpen, props: inputModalProps, anchorRef: runNowAnchorRef });
+    const runComposer = useWorkflowRunComposerModal({ open: inputSheetOpen, props: inputModalProps,
+        anchorRef: testSource === null ? runNowAnchorRef : testRunAnchorRef });
+    const testRunPresentation = useWorkflowTestRunPresentation({ runId: testRun?.runId ?? null, definition: testRun?.definition ?? null, editable: canEditDefinition });
 
     const handleSave = React.useCallback(() => {
         if (!canManagePersonalTriggers || draft === null || savePending) return;
         history.commit();
         const definitionChanged = canEditDefinition && (saved === null
-            || !pluginJsonValuesEqual(draft, savedDraftRef.current)
-            || description !== savedDescriptionRef.current);
+            || definitionDraftDirty || descriptionDraftDirty);
         const validation = validateWorkflowEditorDraft(draft);
         if (definitionChanged && (!validation.valid || validation.normalizedDefinition === undefined)) return;
         const lifetime = captureActiveServerAccountScopeLifetime();
@@ -953,7 +1045,11 @@ export function WorkflowEditorHostScreen(props: Readonly<{
                         if (!isCurrent()) return;
                         setRetargetFailed(true);
                         setSaveFailure(t('workflows.triggers.editor.retargetFailed'));
+                        return;
                     }
+                }
+                if (sourceKind === 'new' && triggerOutcome !== 'failed') {
+                    setSavedRouteId(persisted.definitionId);
                 }
             } catch (error) {
                 if (!isCurrent()) return;
@@ -986,7 +1082,7 @@ export function WorkflowEditorHostScreen(props: Readonly<{
                 if (isCurrent()) setSavePending(false);
             }
         })();
-    }, [canEditDefinition, canManagePersonalTriggers, captureSourceGeneration, description, draft, saved, savePending, triggers]);
+    }, [canEditDefinition, canManagePersonalTriggers, captureSourceGeneration, definitionDraftDirty, descriptionDraftDirty, description, draft, saved, savePending, sourceKind, triggers]);
 
     const handleSaveAsCopy = React.useCallback(() => {
         if (!canEditDefinition || draft === null || savePending) return;
@@ -1174,10 +1270,8 @@ export function WorkflowEditorHostScreen(props: Readonly<{
         }),
     });
 
-    const routeDraftDirty = draft !== null && ((canEditDefinition && (!pluginJsonValuesEqual(
-        draft,
-        savedDraftRef.current ?? initialDraftBaselineRef.current,
-    ) || description !== savedDescriptionRef.current || retargetFailed)) || (canManagePersonalTriggers && triggers.dirty));
+    const routeDraftDirty = draft !== null && ((canEditDefinition && (definitionDraftDirty
+        || descriptionDraftDirty || retargetFailed)) || (canManagePersonalTriggers && triggers.dirty));
     React.useEffect(() => {
         if (!agentRevision || !activeAccountScope || agentRevision.definitionId !== editableDefinitionId) return;
         const key = `${accountScopeKey}:${agentRevision.definitionId}:${agentRevision.revision.headerVersion}:${agentRevision.revision.bodyVersion}`;
@@ -1229,8 +1323,45 @@ export function WorkflowEditorHostScreen(props: Readonly<{
         return { kind: 'saved', savedAtMs, ...(savedByAgent ? { byAgent: true } : {}) };
     }, [routeDraftDirty, saveFailure, savePending, saved, savedAtMs, savedByAgent]);
 
+    const requestPageSave = React.useCallback(async (): Promise<boolean> => {
+        editorCommandsRef.current?.save();
+        return false;
+    }, []);
+    const leaveEditor = React.useCallback(() => {
+        if (router.canGoBack()) router.back();
+        else router.replace('/workflows' as never);
+    }, [router]);
+    const { reset: resetHistory } = history;
+    const { captureSnapshot: captureTriggerSnapshot, setDraft: setTriggerDraft } = triggers;
+    const discardDepartingDraft = React.useCallback(() => {
+        const baseline = savedDraftRef.current ?? initialDraftBaselineRef.current;
+        const before = snapshotRef.current;
+        if (baseline === null || before === null) return;
+        // A retained workspace tab outlives its departure. Discard must retire
+        // the host's edits and recovery history, not only the guard's dirty ref.
+        snapshotRef.current = { ...before, draft: baseline, description: savedDescriptionRef.current,
+            triggers: captureTriggerSnapshot(EMPTY_WORKFLOW_TRIGGER_DRAFT) };
+        setDraft(baseline);
+        setDescription(savedDescriptionRef.current);
+        setTriggerDraft(EMPTY_WORKFLOW_TRIGGER_DRAFT);
+        resetHistory();
+        setSelection(EMPTY_WORKFLOW_EDITOR_VIEW_STATE);
+        setHighlightedBlockIds([]);
+        setSaveConflict(null);
+        setSaveFailure(undefined);
+        setRetargetFailed(false);
+    }, [captureTriggerSnapshot, resetHistory, setTriggerDraft]);
+    // Discard and ordinary Back share the host's unsaved-draft decision.
+    const draftNavigation = useUnsavedDraftNavigationGuard({
+        navigation,
+        isDirty: routeDraftDirty,
+        onSave: requestPageSave,
+        onDiscard: discardDepartingDraft,
+        onLeave: leaveEditor,
+        tag: 'WorkflowEditorHostScreen.beforeRemove',
+    });
     const handleDelete = React.useCallback(async () => {
-        if (!canEditDefinition || saved === null) return;
+        if (!canEditDefinition || saved === null || deletePendingRef.current) return;
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (lifetime === null) return;
         const sourceIsCurrent = captureSourceGeneration();
@@ -1240,21 +1371,67 @@ export function WorkflowEditorHostScreen(props: Readonly<{
             { cancelText: t('common.cancel'), confirmText: t('common.delete'), destructive: true },
         );
         if (!confirmed || !lifetime.isCurrent() || !sourceIsCurrent()) return;
+        if (deletePendingRef.current) return;
+        deletePendingRef.current = true;
+        setDeletePending(true);
+        const retirement = lifetime.onRetire(() => {
+            if (!sourceIsCurrent()) return;
+            deletePendingRef.current = false;
+            setDeletePending(false);
+        });
         try {
             // The delete Action owns the order (this workflow's triggers first, 03 §5.5).
             await deleteWorkflowDefinition({ definitionId: saved.definitionId });
             if (!lifetime.isCurrent() || !sourceIsCurrent()) return;
             // Nothing is left to keep: leave without the unsaved-draft prompt.
+            draftNavigation.allowSavedNavigation();
             savedDraftRef.current = null;
             initialDraftBaselineRef.current = null;
             setDraft(null);
             router.replace('/workflows' as never);
         } catch (error) {
-            if (lifetime.isCurrent()) {
+            if (lifetime.isCurrent() && sourceIsCurrent()) {
                 await Modal.alert(t('workflows.page.deleteFailedTitle'), formatWorkflowProblemMessage(error));
             }
+        } finally {
+            retirement.dispose();
+            if (lifetime.isCurrent() && sourceIsCurrent()) {
+                deletePendingRef.current = false;
+                setDeletePending(false);
+            }
         }
-    }, [canEditDefinition, captureSourceGeneration, router, saved]);
+    }, [canEditDefinition, captureSourceGeneration, draftNavigation.allowSavedNavigation, router, saved]);
+
+    /**
+     * Discard changes on a saved workflow (DESIGN-9 N44): the edits go, the saved version comes back
+     * and the page stays. It is one labelled history entry, so Undo brings the edits back.
+     */
+    const { record: recordHistory } = history;
+    const handleDiscardChanges = React.useCallback(async () => {
+        const savedDraft = savedDraftRef.current;
+        if (!canEditDefinition || saved === null || savedDraft === null) return;
+        const sourceIsCurrent = captureSourceGeneration();
+        const confirmed = await Modal.confirm(
+            t('common.discardChanges'),
+            t('workflows.page.discardChangesBody'),
+            { cancelText: t('common.keepEditing'), confirmText: t('common.discard'), destructive: true },
+        );
+        const before = snapshotRef.current;
+        if (!confirmed || !sourceIsCurrent() || before === null) return;
+        const after = {
+            ...before,
+            draft: savedDraft,
+            description: savedDescriptionRef.current,
+            triggers: captureTriggerSnapshot(EMPTY_WORKFLOW_TRIGGER_DRAFT),
+        };
+        recordHistory(before, after, t('common.discardChanges'));
+        snapshotRef.current = after;
+        setTriggerDraft(EMPTY_WORKFLOW_TRIGGER_DRAFT);
+        setDraft(savedDraft);
+        setDescription(savedDescriptionRef.current);
+        setHighlightedBlockIds([]);
+        setSaveFailure(undefined);
+    }, [canEditDefinition, captureSourceGeneration, captureTriggerSnapshot, recordHistory, saved, setTriggerDraft]);
 
     const shareName = draft?.name.trim() ?? '';
     const editWithAgent = React.useCallback(() => {
@@ -1266,19 +1443,21 @@ export function WorkflowEditorHostScreen(props: Readonly<{
             revision: saved.revision,
         }));
     }, [canEditDefinition, openAgentEdit, saved, shareName]);
-    const requestPageSave = React.useCallback(async (): Promise<boolean> => {
-        editorCommandsRef.current?.save();
-        return false;
-    }, []);
-    const leaveEditor = React.useCallback(() => { router.back(); }, [router]);
-    // Discard and ordinary Back share the host's unsaved-draft decision.
-    const draftNavigation = useUnsavedDraftNavigationGuard({
-        navigation,
-        isDirty: routeDraftDirty,
-        onSave: requestPageSave,
-        onLeave: leaveEditor,
-        tag: 'WorkflowEditorHostScreen.beforeRemove',
-    });
+    React.useEffect(() => {
+        // The guard must receive the accepted draft and trigger snapshot before
+        // replacement. Edits made during Save stay here until they are saved.
+        if (savedRouteId === null || sourceKind !== 'new' || savePending) return;
+        if (routeDraftDirty) {
+            // Later edits did not join this accepted Save. Only a subsequent
+            // clean Save may authorize its in-place route promotion.
+            setSavedRouteId(null);
+            return;
+        }
+        // Create and saved URLs share one dynamic native screen. Change its
+        // parameter, not its screen key, so the accepted editor stays mounted.
+        if (nativeEditorRoute) router.setParams({ id: savedRouteId });
+        else router.replace(createWorkflowDefinitionRoute(savedRouteId) as never);
+    }, [nativeEditorRoute, routeDraftDirty, router, savePending, savedRouteId, sourceKind]);
     const handleDuplicate = React.useCallback(() => {
         if (!accessResolved || draft === null || savePending) return;
         const definition = validateWorkflowEditorDraft(draft).normalizedDefinition;
@@ -1292,9 +1471,6 @@ export function WorkflowEditorHostScreen(props: Readonly<{
     }, [accessResolved, description, draft, router, savePending]);
     const menuActions = React.useMemo((): readonly PageHeaderMenuAction[] => {
         const actions: PageHeaderMenuAction[] = [];
-        if (saved === null && canEditDefinition) actions.push({ id: 'discard', title: t('common.discard'),
-            testID: 'workflow-editor-menu-discard', disabled: savePending, destructive: true,
-            onSelect: draftNavigation.requestLeave });
         if (saved !== null && accessResolved) actions.push({ id: 'duplicate', title: t('common.duplicate'),
             testID: 'workflow-editor-menu-duplicate', disabled: savePending || draft === null || validateWorkflowEditorDraft(draft).normalizedDefinition === undefined,
             onSelect: handleDuplicate });
@@ -1311,9 +1487,8 @@ export function WorkflowEditorHostScreen(props: Readonly<{
                     kind: 'workflow-definition.v1',
                     artifactId: saved.definitionId,
                     name: shareName || t('workflows.page.untitled'),
-                    subtitle: [t('workflows.page.chromeTitle'), ...(savedDraftRef.current ? [
-                        t('workflows.examples.stepCount', { count: countWorkflowStepsV1(savedDraftRef.current.blocks) }),
-                    ] : [])].join(' · '),
+                    subtitle: savedDraftRef.current
+                        ? t('workflows.examples.stepCount', { count: countWorkflowStepsV1(savedDraftRef.current.blocks) }) : undefined,
                     linkPath: createWorkflowDefinitionRoute(saved.definitionId),
                     // "Send a copy instead" is the existing JSON export (INT I2).
                     onSendCopy: () => editorCommandsRef.current?.exportJson(),
@@ -1326,18 +1501,26 @@ export function WorkflowEditorHostScreen(props: Readonly<{
             testID: 'workflow-editor-menu-export',
             onSelect: () => editorCommandsRef.current?.exportJson(),
         });
+        // Destructive operations close the menu, never open it (DESIGN-9 N46).
+        if (saved === null && canEditDefinition) actions.push({ id: 'discard', title: t('common.discard'),
+            testID: 'workflow-editor-menu-discard', disabled: savePending, destructive: true,
+            onSelect: draftNavigation.requestLeave });
+        if (canEditDefinition && saved !== null && routeDraftDirty) actions.push({ id: 'discardChanges',
+            title: t('common.discardChanges'), testID: 'workflow-editor-menu-discard-changes', disabled: savePending,
+            destructive: true, onSelect: handleDiscardChanges });
         if (canEditDefinition && saved !== null) {
             actions.push({
                 id: 'delete',
                 title: t('workflows.page.deleteWorkflow'),
                 testID: 'workflow-editor-menu-delete',
                 destructive: true,
+                disabled: deletePending,
                 onSelect: () => handleDelete(),
             });
         }
         return actions;
     }, [accessResolved, canEditDefinition, detailsPaneAvailable, draft, draftNavigation.requestLeave, editWithAgent,
-        handleDelete, handleDuplicate, savePending, saved, shareName]);
+        handleDelete, handleDiscardChanges, handleDuplicate, routeDraftDirty, savePending, deletePending, saved, shareName]);
 
     React.useEffect(() => {
         if (props.source.kind !== 'new' || props.source.requestImport !== true || importRequestedRef.current) return;
@@ -1349,7 +1532,8 @@ export function WorkflowEditorHostScreen(props: Readonly<{
     // is no id to re-open it under this one and no honest way to keep showing
     // it, so the editor states that rather than presenting the previous
     // Account's prompts with this Account's Save.
-    if (privateSeedWithdrawn || (agentSeedId !== null && agentSeed === null)) {
+    if (privateSeedWithdrawn || (agentSeedId !== null && agentSeedState.lifetime !== null
+        && !agentSeedState.lifetime.isCurrent())) {
         return (
             <SurfaceStateCard
                 testID="workflow-editor-account-changed"
@@ -1359,6 +1543,23 @@ export function WorkflowEditorHostScreen(props: Readonly<{
                 accessibilitySemantics="status"
             />
         );
+    }
+    // Reload loses a temporary handle without changing the Account. Keep that
+    // missing source unavailable rather than substituting a blank editable draft.
+    if ((definitionDraftSeedId !== null && definitionDraftSeed === null)
+        || (agentSeedId !== null && agentSeed === null)) {
+        return <WorkflowMissingDefinitionState testID="workflow-editor-draft-unavailable"
+            source={definitionDraftSeedId === null ? 'definition' : 'unsaved-copy'}
+            onOpenCollection={() => router.replace('/workflows')} />;
+    }
+    if (props.source.kind === 'new' && definitionDraftSeed === null && catalogSeed !== undefined
+        && 'triggerSeed' in catalogSeed && catalogSeed.triggerSeed !== undefined) {
+        return <ScrollView style={styles.root}>
+            <SurfaceStateCard testID="workflow-editor-starter-context" kind="empty"
+                title={t('workflows.examples.chooseSession')} reason={tLoose(catalogSeed.descriptionKey)}
+                accessibilitySemantics="status" />
+            <WorkflowExamplesSection />
+        </ScrollView>;
     }
     // Preserve the owner's typed reason; a transport failure alone is not
     // proof the definition is unavailable or deleted.
@@ -1399,13 +1600,16 @@ export function WorkflowEditorHostScreen(props: Readonly<{
 
     return (
         <View style={styles.root}>
+            {deletePending ? <SurfaceStateCard testID="workflow-editor-deleting" size="line" kind="loading"
+                title={t('status.working')} reason={t('workflows.page.deleteWorkflow')} accessibilitySemantics="status" /> : null}
             {/* The editor body owns this page's one scroll, because it also owns
                 the pinned command surface that must stay on screen while the
                 authored document scrolls beneath it. */}
             <WorkflowEditorBody
                 draft={draft}
+                onBack={draftNavigation.requestBack}
                 focusNameOnMount={catalogSeed !== undefined && props.source.kind === 'new'}
-                {...(canEditDefinition ? {} : { documentPresentation: { editable: false } })}
+                documentPresentation={testRunPresentation}
                 authoringSessionId={canEditDefinition ? authoringSessionId : null}
                 authoringServerId={authoringServerId}
                 {...(!canEditDefinition || authoringDraft === null ? {} : { authoringDraft: {
@@ -1440,8 +1644,33 @@ export function WorkflowEditorHostScreen(props: Readonly<{
                 commandsRef={editorCommandsRef}
                 onChange={(next, label, committed) => {
                     if (!canEditDefinition) return;
-                    changeSnapshot({ draft: next }, label ?? t('workflows.editor.history.edited'), committed);
+                    let editLabel = label;
+                    if (editLabel === undefined) {
+                        const previousBlocks = walkWorkflowBlocks(draft.blocks);
+                        const nextBlocks = walkWorkflowBlocks(next.blocks);
+                        const edit = selectWorkflowAnnouncement(
+                            { ...EMPTY_WORKFLOW_ANNOUNCEMENT_STATE, blockIds: previousBlocks.map((block) => block.id) },
+                            { ...EMPTY_WORKFLOW_ANNOUNCEMENT_STATE, blockIds: nextBlocks.map((block) => block.id) },
+                        );
+                        editLabel = edit === null ? t('workflows.editor.history.edited') : formatWorkflowAnnouncement(edit, (id) => {
+                            const block = nextBlocks.find((entry) => entry.id === id) ?? previousBlocks.find((entry) => entry.id === id);
+                            return block === undefined ? id : workflowBlockReferenceLabel(block);
+                        });
+                    }
+                    changeSnapshot({ draft: next }, editLabel, committed);
                     setDraft(next);
+                }}
+                onUseExample={(insertion) => {
+                    if (!canEditDefinition) return;
+                    const nextTriggerDraft = insertion.trigger === undefined ? triggers.draft
+                        : editWorkflowTriggerDraft(triggers.draft, { kind: 'add', clientId: randomUUID(), trigger: insertion.trigger });
+                    const nextProject = insertion.sessionTarget === undefined ? projectTarget : resolveStarterProject(insertion.sessionTarget);
+                    changeSnapshot({ draft: insertion.draft, projectTarget: nextProject,
+                        triggers: triggers.captureSnapshot(nextTriggerDraft) }, t('workflows.editor.history.example'));
+                    setDraft(insertion.draft);
+                    setProjectTarget(nextProject);
+                    triggers.setDraft(nextTriggerDraft);
+                    if (insertion.sessionTarget !== undefined) seededContextualTargetRef.current = true;
                 }}
                 {...(canEditDefinition ? { history: historyControls, onCommitChange: history.commit } : {})}
                 highlightedBlockIds={highlightedBlockIds}
@@ -1470,8 +1699,10 @@ export function WorkflowEditorHostScreen(props: Readonly<{
                     setExecutionTarget(next);
                 }}
                 onRunNow={handleRunNow}
+                {...(saved === null ? {} : { onTestRun: handleTestRun, testRunPending: testSourcePending })}
                 runNowAnchorRef={runNowAnchorRef}
-                runPending={runNow.isPending(pendingRunIdRef.current ?? '')}
+                testRunAnchorRef={testRunAnchorRef}
+                runPending={testSourcePending || runNow.isPending(pendingRunIdRef.current ?? '')}
                 {...(canManagePersonalTriggers ? { onSave: handleSave, triggersSummary: triggers.summary,
                 triggersSection: (
                     <WorkflowTriggerSection
@@ -1488,7 +1719,7 @@ export function WorkflowEditorHostScreen(props: Readonly<{
                         whereTarget={projectTarget}
                         whereSummary={formatWorkflowWhereSummary({ target: projectTarget, machineName, machineHomeDir })}
                         inputs={draft?.inputs ?? []}
-                        stepsUnsaved={draft !== null && !pluginJsonValuesEqual(draft, savedDraftRef.current ?? initialDraftBaselineRef.current)}
+                        stepsUnsaved={definitionDraftDirty}
                     />
                 ) } : {})}
                 savePending={savePending}

@@ -1,4 +1,5 @@
 import type { VoiceAdapterId } from '@/voice/session/types';
+import type { VoiceConversationInUseVoice } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 
 export type VoiceMachineErrorKind =
     | 'mic_permission_denied'
@@ -86,5 +87,7 @@ export type VoiceConversationRuntimeSnapshot = Readonly<{
     /** True only while that controller has a scheduled reconnect slot to advance. */
     reconnectRetryAvailable?: boolean;
     micMuted: boolean;
+    /** Speech application accepted by this attempt; pending preferences never write it. */
+    inUseVoice?: VoiceConversationInUseVoice;
     error: VoiceMachineError | null;
 }>;

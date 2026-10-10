@@ -1,5 +1,6 @@
 import { ComposerAttachmentDraftV1Schema } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { nullable } from 'zod/mini';
 import type { StrictJsonValue } from '@happier-dev/protocol/drafts/sessionDrafts';
 import { isPermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import {
@@ -26,6 +27,11 @@ import { buildNewSessionDraftLocalState } from '@/sync/ops/sessionDrafts/newSess
 import { sanitizeNewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { ZenTaskSourceSchema } from '@/sync/domains/todos/todoStoredContent';
+import { StoredPluginUiNewSessionSeedOriginV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { SessionIdentityAdditionsV1StoredSchema } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
+import { SessionPromptStackV1StoredSchema } from '@happier-dev/protocol/sessions/context/sessionContextV1';
+import { readSessionInstructionsAuthoringDraft } from '@/sync/ops/promptLibrary/sessionInstructions';
+import { ManagedMachineAcquisitionDraftReadSchema, ManagedMachineSelectionDraftReadSchema } from '@/sync/domains/state/newSessionManagedMachineDraft';
 
 function strictJson(value: unknown): StrictJsonValue {
     return StrictJsonValueSchema.parse(value);
@@ -89,12 +95,30 @@ export function readNewSessionDraftProjectionFromRepository(input: Readonly<{
             : predecessorAuthoring.modelSelection;
     const backendTarget = resolveDraftBackendTarget({ agentTarget }) ?? undefined;
     const localState = snapshot.localSupplement.newSessionLocalState;
+    const initialSessionFacts = SessionIdentityAdditionsV1StoredSchema.safeParse(localState?.initialSessionFacts);
+    const promptStack = SessionPromptStackV1StoredSchema.safeParse(localState?.promptStack);
+    const instructionsDraft = readSessionInstructionsAuthoringDraft(localState?.instructionsDraft);
     const zenTaskSource = ZenTaskSourceSchema.safeParse(localState?.zenTaskSource);
+    const authoringOrigin = StoredPluginUiNewSessionSeedOriginV1Schema.safeParse(localState?.authoringOrigin);
+    const managedMachineSelection = nullable(ManagedMachineSelectionDraftReadSchema).safeParse(localState?.managedMachineSelection);
+    const managedMachineAcquisition = nullable(ManagedMachineAcquisitionDraftReadSchema).safeParse(localState?.managedMachineAcquisition);
+    const hasManagedTarget = (managedMachineSelection.success && managedMachineSelection.data !== null)
+        || (managedMachineAcquisition.success && managedMachineAcquisition.data !== null);
+    const managedTargetServerId = hasManagedTarget
+        && typeof localState?.targetServerId === 'string'
+        ? localState.targetServerId
+        : null;
     const draft: NewSessionDraft = {
+        ...(typeof localState?.sessionName === 'string' ? { sessionName: localState.sessionName } : {}),
+        ...(initialSessionFacts.success ? { initialSessionFacts: initialSessionFacts.data } : {}),
+        ...(typeof localState?.memoryEnabled === 'boolean' ? { memoryEnabled: localState.memoryEnabled } : {}),
+        ...(promptStack.success ? { promptStack: promptStack.data } : {}),
+        ...(instructionsDraft === undefined ? {} : { instructionsDraft }),
         input: typeof snapshot.document.composer.text.value === 'string'
             ? snapshot.document.composer.text.value
             : '',
         ...(zenTaskSource.success ? { zenTaskSource: zenTaskSource.data } : {}),
+        ...(authoringOrigin.success ? { authoringOrigin: authoringOrigin.data } : {}),
         ...(attachments.length > 0 ? { composerAttachments: attachments } : {}),
         ...(Array.isArray(localState?.composerAttachmentSeeds) && localState.composerAttachmentSeeds.length > 0
             ? { composerAttachmentSeeds: localState.composerAttachmentSeeds }
@@ -105,8 +129,10 @@ export function readNewSessionDraftProjectionFromRepository(input: Readonly<{
         selectedMachineId: executionTarget?.kind === 'machine' ? executionTarget.target.machineId : null,
         selectedPath: authoring.directory ?? null,
         ...(authoring.directoryKind === 'managed' ? { directoryKind: 'managed' as const } : {}),
-        targetServerId: executionTarget?.kind === 'machine' ? executionTarget.target.serverId : executionTarget?.serverId ?? null,
+        targetServerId: executionTarget?.kind === 'machine' ? executionTarget.target.serverId : executionTarget?.serverId ?? managedTargetServerId,
         executionTarget,
+        ...(managedMachineSelection.success ? { managedMachineSelection: managedMachineSelection.data } : {}),
+        ...(managedMachineAcquisition.success ? { managedMachineAcquisition: managedMachineAcquisition.data } : {}),
         ...(authoring.temporaryComputerActivationRef !== undefined
             ? { temporaryComputerActivationRef: authoring.temporaryComputerActivationRef }
             : {}),
@@ -202,16 +228,26 @@ export function writeNewSessionDraftToRepository(input: Readonly<{
 }
 
 /**
- * Delayed New Session autosave owns authoring/routing fields only. Live composer text,
+ * New Session authoring writes own authoring/routing fields only. Live composer text,
  * mentions, and attachments commit immediately through the repository Composer owner;
  * including them here would let a stale debounced snapshot overwrite newer input.
+ * Delayed callers also preserve the immediately committed title; explicit authored
+ * writes retain their supplied title.
  */
 export function writeNewSessionAuthoringDraftToRepository(input: Readonly<{
     scope: ServerAccountScope;
     draftId: string;
     draft: NewSessionDraft;
+    /** A delayed render snapshot must not replace an immediately committed title edit. */
+    preserveLiveSessionName?: boolean;
 }>): void {
-    const draft = input.draft;
+    const live = input.preserveLiveSessionName ? getSessionDraftSnapshot(input.scope, { kind: 'newSession', draftId: input.draftId })
+        ?.localSupplement.newSessionLocalState : undefined;
+    const draft = live ? { ...input.draft,
+        ...(typeof live.sessionName === 'string' ? { sessionName: live.sessionName } : {}),
+        ...(live.instructionsDraft !== undefined ? { instructionsDraft: live.instructionsDraft } : {}),
+        ...(live.promptStack !== undefined ? { promptStack: live.promptStack } : {}),
+    } : input.draft;
     writeNewSessionDraft({
         scope: input.scope,
         draftId: input.draftId,
@@ -227,6 +263,45 @@ export function writeNewSessionAuthoringDraftToRepository(input: Readonly<{
         flushSessionDraft({ scope: input.scope, address: { kind: 'newSession', draftId: input.draftId } }),
         { tag: 'newSessionDraftRepository.flush' },
     );
+}
+
+/** Title edits share the draft's local custody without rewriting stale authoring or Composer input. */
+export function writeNewSessionNameToRepository(input: Readonly<{
+    scope: ServerAccountScope;
+    draftId: string;
+    sessionName: string;
+}>): void {
+    const address = { kind: 'newSession' as const, draftId: input.draftId };
+    const snapshot = getSessionDraftSnapshot(input.scope, address);
+    if (!snapshot) return;
+    writeSessionDraftLocalSupplement({
+        scope: input.scope,
+        address,
+        patch: { newSessionLocalState: { ...snapshot.localSupplement.newSessionLocalState, sessionName: input.sessionName } },
+    });
+}
+
+/** Lazy authoring shares the existing local draft; no Artifact write happens here. */
+export function writeNewSessionInstructionsToRepository(input: Readonly<{
+    scope: ServerAccountScope;
+    draftId: string;
+    instructionsDraft: NewSessionDraft['instructionsDraft'];
+    promptStack?: NewSessionDraft['promptStack'];
+}>): void {
+    const address = { kind: 'newSession' as const, draftId: input.draftId };
+    if (!getSessionDraftSnapshot(input.scope, address)) {
+        // Explicit Instructions authoring materializes the ordinary draft;
+        // passive configuration autosaves retain their existing userEdit rule.
+        writeNewSessionDraft({ scope: input.scope, draftId: input.draftId,
+            patch: {}, materializationIntent: 'seeded' });
+    }
+    const snapshot = getSessionDraftSnapshot(input.scope, address);
+    if (!snapshot) return;
+    writeSessionDraftLocalSupplement({ scope: input.scope, address,
+        patch: { newSessionLocalState: { ...snapshot.localSupplement.newSessionLocalState,
+            instructionsDraft: input.instructionsDraft,
+            ...(input.promptStack !== undefined ? { promptStack: input.promptStack } : {}),
+        } } });
 }
 
 /**

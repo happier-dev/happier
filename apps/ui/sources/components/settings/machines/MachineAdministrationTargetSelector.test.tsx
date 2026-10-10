@@ -285,7 +285,7 @@ describe('MachineAdministrationTargetSelector', () => {
         expect(presentation).not.toContain(target.serverIdentityId);
     });
 
-    it('says the Home cannot be reached, not that the machine left it, while that Home\'s list is unread', async () => {
+    it('shows loading while a saved target\'s Home inventory is unread', async () => {
         const { MachineAdministrationTargetSelector } = await import('./MachineAdministrationTargetSelector');
         const fixture = createSelection();
         const target = fixture.selection.selectedTarget!;
@@ -299,9 +299,29 @@ describe('MachineAdministrationTargetSelector', () => {
 
         const current = screen.findHostByTestId('section.target.current');
         const presentation = `${String(current?.props.title)} ${String(current?.props.subtitle)} ${String(current?.props.accessibilityLabel)}`;
-        expect(presentation).toContain('settingsPlugins.targetSelection.unreachableThisHome');
+        expect(presentation).toContain('common.loading');
+        expect(presentation).not.toContain('settingsPlugins.targetSelection.unreachableThisHome');
         expect(presentation).not.toContain('settingsPlugins.targetSelection.missingInThisHome');
         expect(presentation).not.toContain(target.machineId);
+    });
+
+    it.each(['error', 'signedOut'] as const)('preserves an inventory %s without declaring its Home unreachable', async (inventoryStatus) => {
+        const { MachineAdministrationTargetSelector } = await import('./MachineAdministrationTargetSelector');
+        const fixture = createSelection();
+        const target = fixture.selection.selectedTarget!;
+        const selection: MachineAdministrationTargetSelectionV1 = {
+            ...fixture.selection,
+            state: resolveMachineAdministrationTargetState({
+                storedTarget: target, candidates: [],
+                readInventoryStatus: () => inventoryStatus,
+            }),
+        };
+        const screen = await renderScreen(<MachineAdministrationTargetSelector selection={selection} testIDPrefix="section.target" />);
+        const current = screen.findHostByTestId('section.target.current');
+        const label = String(current?.props.accessibilityLabel);
+        expect(label).toContain(inventoryStatus === 'signedOut' ? 'server.signedOut' : 'common.unavailable');
+        expect(label).not.toContain('common.loading');
+        expect(label).not.toContain('unreachable');
     });
 
     it('never shows a live target machine id beside its Home', async () => {

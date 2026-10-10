@@ -3,7 +3,6 @@ import { useShallow } from 'zustand/react/shallow';
 
 import type { LocalSettings } from '../domains/settings/localSettings';
 import type {
-  AccountSettingsWriteDelta,
   Settings,
   SettingsWriteDelta,
 } from '../domains/settings/settings';
@@ -12,11 +11,9 @@ import type { VoiceSettings } from '../domains/settings/voiceSettings';
 import { normalizeVoiceSettingsLocalDelta } from '../domains/settings/voiceSettingsPersistence';
 import { rebaseVoiceSettingsEdit, voiceSettingsEditRegistry } from '@/voice/settings/voiceSettingsEdit';
 import { captureConversationLanguagePreferenceOwner } from '@/voice/settings/language/conversationLanguage';
-import {
-  mergeCurrentSecretBindingsIntoRawBindings,
-  readRetainedSecretBindingsByProfileId,
-  type RetainedSecretBindingsByProfileId,
-} from '../domains/settings/secretBindings';
+import type { AiLaunchProfile } from '@happier-dev/protocol/profiles/read';
+import type { ProfileLegacyCloneSourceV1, ProfileRecordV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
+import type { ProfileBuiltinEnabledResultV1, ProfileOperationResult, ProfileRemovalResult } from '@happier-dev/protocol/profiles/profileOperations';
 import type {
   CurrentSessionAuthoringSelectionsRuntimeProjection,
 } from '../domains/settings/sessionAuthoringSelectionPersistence';
@@ -25,7 +22,8 @@ import {
 } from '../domains/settings/sessionAuthoringSelectionPersistence';
 import type { AuthoringMemory } from './domains/authoringMemory';
 import type { AuthoringMemoryDelta } from '@/sync/engine/authoringMemory/authoringMemorySync';
-import { removeAiLaunchProfileFromAccountSettings } from '../domains/profiles/aiLaunchProfileCollection';
+import { createUiProfileOperations } from '@/sync/ops/profiles/createUiProfileOperations';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import {
   applySessionReminderPresetIntentToAccountSettings,
   type SessionReminderPresetIntent,
@@ -35,9 +33,6 @@ import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { requireOneShotAccountSettingsMutationApplied } from '@/sync/engine/settings/syncSettings';
 import { areAccountSettingsScopesEqual, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
-import { writeConnectedAccountPurposeDefault } from '@happier-dev/protocol/account/settings/connected-services';
-import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
-import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 
 function requireSettingsVersion(settingsVersion: number | null): number {
   if (settingsVersion === null) throw new Error('Account settings version is unavailable');
@@ -81,36 +76,27 @@ function useAccountSettingsMutationSnapshot(): Readonly<{
   })));
 }
 
-export function useApplySettings(): (delta: SettingsWriteDelta) => void {
+export type SettingsWrite = SettingsWriteDelta | ((current: Settings) => SettingsWriteDelta | null);
+
+export function useApplySettings(): (change: SettingsWrite) => void {
   const expectedSettingsScope = useAccountSettingsScope();
-  return React.useCallback((delta: SettingsWriteDelta) => {
+  return React.useCallback((change: SettingsWrite) => {
+    let delta: SettingsWriteDelta;
+    if (typeof change === 'function') {
+      const current = getStorage().getState();
+      if (!(current.settingsScope === null && expectedSettingsScope === null)
+        && !areAccountSettingsScopesEqual(expectedSettingsScope, current.settingsScope)) return;
+      const next = change(current.settings);
+      if (!next) return;
+      delta = next;
+    } else {
+      delta = change;
+    }
     getSyncSingleton().applySettings(delta, {
       expectedSettingsScope,
       source: 'ui' satisfies SettingsAnalyticsSource,
     });
   }, [expectedSettingsScope]);
-}
-
-/** Personal-purpose edits rebase on current Account settings, never replace a modal's stale collection. */
-export function useApplyConnectedAccountPurposeTarget(): (input: Readonly<{
-  purpose: QualifiedConnectedAccountPurposeV1;
-  target: QualifiedConnectedAccountPurposeBindingTargetV1 | null;
-  isCurrent(): boolean;
-}>) => Promise<void> {
-  const expectedScope = useAccountSettingsScope();
-  return React.useCallback(async (input) => {
-    const current = getStorage().getState();
-    const assertCurrent = () => {
-      if (!expectedScope || !areAccountSettingsScopesEqual(expectedScope, getStorage().getState().settingsScope)
-        || !input.isCurrent()) throw new Error('Connected Account purpose is no longer current');
-    };
-    assertCurrent();
-    await persistAccountSettingsOnce(expectedScope, requireSettingsVersion(current.settingsVersion), (raw) => {
-      assertCurrent();
-      return { ...raw, ...writeConnectedAccountPurposeDefault({ settings: settingsParse(raw),
-        purpose: input.purpose, target: input.target }) };
-    });
-  }, [expectedScope]);
 }
 
 /** Voice editors submit their change, not a stale replacement of the Account-owned profile. */
@@ -170,81 +156,61 @@ export function useApplySessionReminderPresetIntent(): (intent: SessionReminderP
 }
 
 export function useApplyProfileSave(): (input: Readonly<{
-  profiles: Settings['profiles'];
-  profileId: string;
-  secretBindings?: Readonly<Record<string, string>>;
-}>) => void {
-  const applySettings = useApplySettings();
-  return React.useCallback((input) => {
-    const settings = getStorage().getState().settings ?? settingsDefaults;
-    const delta: AccountSettingsWriteDelta = input.secretBindings === undefined
-      ? { profiles: input.profiles }
-      : {
-        profiles: input.profiles,
-        secretBindingsByProfileId: mergeProfileSecretBindings({
-          settings,
-          profileId: input.profileId,
-          secretBindings: input.secretBindings,
-        }),
-      };
-    applySettings(delta);
-  }, [applySettings]);
+  profile: AiLaunchProfile;
+  secretBindings?: Readonly<ProfileRecordV1['secretBindings']>;
+  expectedRevision?: number | 'absent';
+  legacyCloneSource?: ProfileLegacyCloneSourceV1;
+  builtinNames?: readonly string[];
+}>) => Promise<ProfileOperationResult> {
+  const options = useProfileOperationOptions();
+  return React.useCallback(async input => options
+    ? createUiProfileOperations({ ...options, builtinNames: input.builtinNames }).save(input)
+    : { status: 'unavailable', reason: 'profile_account_unavailable' }, [options]);
 }
 
-export function useDeleteAiLaunchProfile(): (profileId: string) => Promise<void> {
-  const settingsSnapshot = useAccountSettingsMutationSnapshot();
-  return React.useCallback(async (profileId: string) => {
-    await persistAccountSettingsOnce(settingsSnapshot.scope, requireSettingsVersion(settingsSnapshot.version), (raw) => (
-      removeAiLaunchProfileFromAccountSettings(raw, profileId)
-    ));
-    const current = getStorage().getState();
-    if (areAccountSettingsScopesEqual(current.settingsScope, settingsSnapshot.scope)
-      && current.authoringMemory.lastUsedProfile === profileId) {
-      await getSyncSingleton().applyAuthoringMemoryDelta({
-        lastUsedProfileReplacement: { base: profileId, proposed: null },
-      }, { expectedSettingsScope: settingsSnapshot.scope });
-    }
-  }, [settingsSnapshot]);
+export function useDeleteAiLaunchProfile(): (profileId: string, expectedRevision?: number) => Promise<ProfileRemovalResult> {
+  const options = useProfileOperationOptions();
+  return React.useCallback(async (profileId: string, expectedRevision?: number) => {
+    if (!options) throw new Error('Profile Account is unavailable');
+    const result = await createUiProfileOperations(options).remove({ id: profileId, expectedRevision });
+    requireUpdatedProfileOperation(result);
+    return result;
+  }, [options]);
 }
 
-/**
- * Merge one profile's edited current bindings back into the retained Protocol
- * carrier. Clearing every entry removes the profile from the current map so
- * the merge drops it, while opaque entries this UI never rendered survive.
- */
-function mergeProfileSecretBindings(input: Readonly<{
-  settings: Settings;
+function useProfileOperationOptions() {
+  const scope = useAccountSettingsScope();
+  const lifetime = React.useMemo(() => captureActiveServerAccountScopeLifetime(), [scope]);
+  return React.useMemo(() => scope ? { scope, isCurrent: () => Boolean(lifetime?.isCurrent()
+    && areAccountSettingsScopesEqual(lifetime.scope, scope)
+    && areAccountSettingsScopesEqual(getStorage().getState().settingsScope, scope)) } : null, [scope, lifetime]);
+}
+
+export function useProfileOperations() {
+  const options = useProfileOperationOptions();
+  return React.useMemo(() => options ? createUiProfileOperations(options) : null, [options]);
+}
+
+export function requireUpdatedProfileOperation(result: ProfileOperationResult | ProfileBuiltinEnabledResultV1): void {
+  if (result.status !== 'updated' && result.status !== 'preference-updated') {
+    throw new Error(result.status === 'conflict' ? 'profile_revision_conflict' : result.reason);
+  }
+}
+
+/** Current bindings belong to one private Profile row, never an Account Settings map. */
+export function useApplyProfileSecretBindings(): (input: Readonly<{
   profileId: string;
   secretBindings: Readonly<Record<string, string>>;
-}>): RetainedSecretBindingsByProfileId {
-  const currentBindings = input.settings.currentSecretBindingsByProfileId;
-  const nextBindings = { ...currentBindings };
-  if (Object.keys(input.secretBindings).length === 0) {
-    delete nextBindings[input.profileId];
-  } else {
-    nextBindings[input.profileId] = { ...input.secretBindings };
-  }
-  return mergeCurrentSecretBindingsIntoRawBindings({
-    rawBindings: readRetainedSecretBindingsByProfileId(input.settings),
-    currentBindings,
-    nextBindings,
-  });
+  expectedRevision?: number;
+}>) => Promise<void> {
+  const operations = useProfileOperations();
+  return React.useCallback(async input => {
+    if (!operations) throw new Error('Profile Account is unavailable');
+    requireUpdatedProfileOperation(await operations.setSecretBindings({ id: input.profileId,
+      secretBindings: input.secretBindings, expectedRevision: input.expectedRevision }));
+  }, [operations]);
 }
 
-/**
- * The public Settings facade deliberately omits the raw Protocol carrier.
- * This is the single persistence-facing writer that can submit it after the
- * current-map editor merged its update with retained opaque entries.
- */
-export function useApplyRetainedSecretBindingsByProfileId(): (
-  bindings: RetainedSecretBindingsByProfileId,
-) => void {
-  const applySettings = useApplySettings();
-  return React.useCallback((secretBindingsByProfileId: RetainedSecretBindingsByProfileId) => {
-    const delta: AccountSettingsWriteDelta = { secretBindingsByProfileId };
-    applySettings(delta);
-  }, [applySettings]);
-}
 
 /**
  * Apply a typed Favorite replacement against the explicitly observed Account

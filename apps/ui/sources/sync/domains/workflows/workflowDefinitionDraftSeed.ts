@@ -1,13 +1,17 @@
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
+import type { AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
+import type { WorkflowStarterSessionTarget } from './workflowEditorDraft';
 
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getTempData, storeTempData } from '@/utils/sessions/tempDataStore';
 
-/** Portable authoring copy only: no Artifact identity, placement, grants or triggers. */
+/** Unsaved authoring copy only: no Artifact identity or grants. Source selection is not placement. */
 export type WorkflowDefinitionDraftSeed = Readonly<{
     name: string;
     description?: string;
     definition: WorkflowDefinitionV1;
+    trigger?: AutomationTriggerDefinitionInput;
+    sessionTarget?: WorkflowStarterSessionTarget;
 }>;
 
 type StoredDefinitionDraftSeed = Readonly<{

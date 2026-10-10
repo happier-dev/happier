@@ -19,6 +19,10 @@ import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 import type { BackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
+import type { SessionIdentityAdditions } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
+import type { SessionPromptStackV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
+import type { SessionInstructionsAuthoringDraft } from '@/sync/ops/promptLibrary/sessionInstructions';
+import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 
 export interface TempDataEntry {
     data: any;
@@ -30,6 +34,11 @@ export type NewSessionPluginSeedHandoffV1 = Readonly<{
 }>;
 
 export interface NewSessionData {
+    sessionName?: string;
+    initialSessionFacts?: SessionIdentityAdditions;
+    memoryEnabled?: boolean;
+    promptStack?: SessionPromptStackV1;
+    instructionsDraft?: SessionInstructionsAuthoringDraft | null;
     prompt?: string;
     machineId?: string;
     directory?: string;
@@ -37,6 +46,8 @@ export interface NewSessionData {
     /** `managed`: start without a folder (the machine keeps a private one for the session). */
     directoryKind?: 'managed';
     executionTarget?: SessionAuthoringExecutionTargetV2 | null;
+    /** Reviewed local intent returned by the ordinary Machine picker; never an allocation. */
+    managedMachineSelection?: ManagedMachineSelectionDraft | null;
     temporaryComputerActivationRef?: TemporaryComputerActivationRefV1 | null;
     organizationPlacement?: SessionOrganizationPlacementV1;
     access?: SessionInitialAccessDraftV1 | null;

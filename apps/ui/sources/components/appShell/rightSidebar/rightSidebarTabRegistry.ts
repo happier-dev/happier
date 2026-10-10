@@ -20,6 +20,7 @@ import {
     type RightSidebarPluginTabRuntimeAdmission,
 } from './rightSidebarPluginTabs';
 import { resolveRightSidebarMobileSurface as resolveProjectedRightSidebarMobileSurface } from './rightSidebarMobileProjection';
+import type { ProjectPageV1 } from '@/components/projects/detail/projectRouteState';
 
 export type {
     RightSidebarAvailabilityInput,
@@ -33,12 +34,16 @@ export type {
 
 export type ResolveRightSidebarTabsInput = Readonly<{
     scope: RightSidebarScope;
+    /** Suppresses only the matching Project launcher; the selection catalog is retained. */
+    activePage?: ProjectPageV1;
     terminalTabAvailable?: boolean;
     /** The exact Home's `sessions.board` decision; omitted means disabled. */
     boardFeatureEnabled?: boolean;
     sessionSharingAvailable?: boolean;
     /** Omitted means available; see `RightSidebarAvailabilityInput.sourceControlTabAvailable`. */
     sourceControlTabAvailable?: boolean;
+    /** Omitted means unavailable; see `RightSidebarAvailabilityInput.sessionProjectCheckoutAvailable`. */
+    sessionProjectCheckoutAvailable?: boolean;
     presentation?: RightSidebarPresentation;
     pluginPlacements?: readonly PluginUiSurfacePlacementProjection[];
     projectionGeneration?: number | null;
@@ -55,11 +60,11 @@ export type ResolveRightSidebarTabsInput = Readonly<{
 }>;
 
 export type SessionRightSidebarTabId =
-    | Extract<RightSidebarBuiltInTabId, 'git' | 'files' | 'navigation' | 'agents' | 'collaboration' | 'board' | 'terminal' | 'browser' | 'services'>
+    | Extract<RightSidebarBuiltInTabId, 'git' | 'files' | 'scripts' | 'navigation' | 'agents' | 'collaboration' | 'board' | 'terminal' | 'browser' | 'services'>
     | `plugin:${string}`;
 
 export type ProjectRightSidebarTabId =
-    | Extract<RightSidebarBuiltInTabId, 'git' | 'files' | 'browser' | 'services'>
+    | Extract<RightSidebarBuiltInTabId, 'git' | 'files' | 'scripts' | 'terminal' | 'browser' | 'services'>
     | `plugin:${string}`;
 
 export type { RightSidebarTabDefinitionFor };
@@ -92,10 +97,16 @@ export function resolveRightSidebarTabs(
         boardFeatureEnabled: input.boardFeatureEnabled === true,
         sessionSharingAvailable: input.sessionSharingAvailable === true,
         sourceControlTabAvailable: input.sourceControlTabAvailable !== false,
+        sessionProjectCheckoutAvailable: input.sessionProjectCheckoutAvailable === true,
     };
     const builtInTabs = RIGHT_SIDEBAR_BUILTIN_TABS
         .filter((tab) => isTabAvailable(tab, availabilityInput))
-        .slice();
+        .map((tab) => input.scope === 'project' && (
+            input.activePage !== undefined && tab.projectPage === input.activePage
+            || tab.id === 'terminal' && !availabilityInput.terminalTabAvailable
+        )
+            ? Object.freeze({ ...tab, hiddenInLauncher: true })
+            : tab);
     const pluginTabs = resolveRightSidebarPluginTabs({
         scope: input.scope,
         placements: input.pluginPlacements,
@@ -154,6 +165,7 @@ export function resolveRightSidebarTabSelection<TTab extends string>(input: Read
     selectedDestination?: SelectedPaneDestinationV1 | null;
     tabs: readonly RightSidebarTabDefinition[];
     projectionPhase: PluginUiProjectionPhase;
+    hasEstablishingMembers?: boolean;
     scope?: RightSidebarScope;
 }>): RightSidebarTabSelection<TTab> {
     const activeTabId = input.activeTabId ?? null;
@@ -181,7 +193,8 @@ export function resolveRightSidebarTabSelection<TTab extends string>(input: Read
         ? readPluginUiContributionOrigin(selected.placement)?.phase ?? input.projectionPhase
         : input.projectionPhase;
 
-    if (selectedIsPlugin && selectedProjectionPhase === 'establishing') {
+    if (selectedIsPlugin && (selectedProjectionPhase === 'establishing'
+        || (!selected && input.hasEstablishingMembers))) {
         return {
             kind: 'unresolved',
             tabId: activeTabId

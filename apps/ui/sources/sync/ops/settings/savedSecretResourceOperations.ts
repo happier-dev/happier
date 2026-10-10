@@ -1,30 +1,38 @@
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { formatSavedSecretCatalogReferenceV1, formatSavedSecretCatalogFingerprintV1, SavedSecretResourceEnvelopeCensusRequestV1Schema, SavedSecretResourceEnvelopeCensusResponseV1Schema, type SavedSecretResourceEnvelopeCensusRecipientV1, type SavedSecretResourceMaterialV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
-import { listAccountSettingsSavedSecretReferences, listSavedSecretReferenceCatalogRefsV1, type AccountSettingsSavedSecretReference, promotePersonalSavedSecretReference,
-    promoteLegacyInferenceSavedSecretReferenceV1, type SavedSecretLegacyInferenceCredentialV1,
+import { listAccountSettingsSavedSecretReferences, listSavedSecretPersonalImportSourceReferencesV1, listSavedSecretReferenceCatalogRefsV1, type AccountSettingsSavedSecretReference, promotePersonalSavedSecretReference,
+    promoteLegacyInferenceSavedSecretReferenceV1, promoteLegacyVoiceSavedSecretReferenceV1,
+    type SavedSecretLegacyInferenceCredentialV1, type SavedSecretLegacyChatCredentialV1, type SavedSecretLegacyVoiceCredentialV1,
     deriveSavedSecretImportResourceIdV1, readSavedSecretTransferSourceV1, type SavedSecretReferenceCatalogsV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import type { AccountSettingsHistorySavedSecretTransferV1 } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { openSavedSecretResourceStoredContentV1, sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { SharedSavedSecretCreateInputV1Schema, SharedSavedSecretPromoteInputV1Schema, SharedSavedSecretDeleteOutputV1Schema, SharedSavedSecretMutationOutputV1Schema, SavedSecretResourceEnvelopeRepairOutputV1Schema, SharedSavedSecretPromoteOutputV1Schema, SavedSecretResourceActionErrorV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import type { ManagedResourceDependencyV1, ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 import type { SavedSecret } from '@happier-dev/protocol/profiles/backendProfileSchema';
-import type { SavedSecretLegacyImportResult } from '@/sync/domains/settings/savedSecretTypes';
+import type { SavedSecretLegacyImportResult, SavedSecretVerifiedImportReference } from '@/sync/domains/settings/savedSecretTypes';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 
-import { readSavedSecretCatalog, readSavedSecretCatalogInContext } from '@/sync/api/account/apiSavedSecretCatalog';
-import { readRemoteHostCatalogInContext } from '@/sync/api/account/apiRemoteHostCatalog';
+import { readSavedSecretCatalog, readSavedSecretCatalogInContext, readSavedSecretReferenceInContext,
+    type SavedSecretReferenceRevisionProof } from '@/sync/api/account/apiSavedSecretCatalog';
+import { prepareRemoteHostCatalogMutationInContext, readRemoteHostCatalogRowInContext } from '@/sync/api/account/apiRemoteHostCatalog';
+import { openRemoteHostCatalogContentV1, RemoteHostCatalogRecordV1Schema,
+    type RemoteHostCatalogRowMutationV1 } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
+import { prepareNotificationChannelCatalogMutationInContext, readNotificationChannelCatalogRowInContext } from '@/sync/api/account/apiNotificationChannelCatalog';
+import { NotificationChannelCatalogRecordV1Schema, type NotificationChannelCatalogMutationV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { withProfileAccount, admitProfileAccount, readProfileCatalogInContext, readProfileTransferSourceInContext, prepareProfileRecordMutationsInContext, type ProfileAccountContext } from '@/sync/api/account/apiProfileCatalog';
 import { loadAiLaunchProfileArtifacts, resolveProfileCatalogAuthorityV1, removeTransferredProfileSourcesV1, listTransferredProfileIdsV1 } from '@happier-dev/protocol/profiles/read';
 import type { ArtifactSharingResourceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { syncSettings } from '@/sync/engine/settings/syncSettings';
+import { openAccountSettingsStoredContent } from '@/sync/domains/settings/accountSettingsNormalization';
 import { normalizeAccountSettingsHistoryAfterTransfer } from '@/sync/engine/settings/accountSettingsHistoryRestore';
 import type { AccountSettingsHistorySavedSecretRecoveryV1 } from '@happier-dev/protocol/account/settings/accountSettingsHistoryClientV1';
 import { materializeSavedSecretResources } from '@/sync/engine/settings/materializeSavedSecretResources';
+import { applySavedSecretCatalogDeletion } from '@/sync/engine/settings/savedSecretCatalogEngine';
 import { decryptSecretValueWithKeys, deriveSettingsSecretsKeySet } from '@/sync/encryption/secretSettings';
 import { resolveSettingsSecretsKeySet } from '@/sync/encryption/resolveSettingsSecretsKeySet';
 import { resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
-import type { ProfileRecordV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
+import type { ProfileRecordV1, ProfileRowV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
 import { requestHomeDomain } from '@/sync/api/home/homeServerActionTransport';
 import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
@@ -39,6 +47,9 @@ import { captureSavedSecretReferenceCatalogsInContext, captureSavedSecretNotific
 import type { SavedSecretCatalogRevisionsV1, SavedSecretReferenceCensusV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { awaitActionApprovalResult } from '@/components/approvals/actionApprovalContinuation';
+import type { SavedSecretPrivateCreationApprovalOptions } from '@/components/secrets/useSavedSecretCatalog';
 
 export type { SavedSecretLegacyImportResult } from '@/sync/domains/settings/savedSecretTypes';
 
@@ -105,12 +116,22 @@ function operationFailureReason(kind: 'conflict' | 'outcome_unknown' | string): 
 }
 
 type RemoteHostReferenceCapture = Readonly<{ revision: number | 'absent'; resourceRefs: readonly string[] }>;
-async function captureRemoteHostReferences(context: ProfileAccountContext) {
-    const catalog = await readRemoteHostCatalogInContext(context);
-    if (catalog.status !== 'ready') return null;
-    return { catalog, capture: { revision: catalog.revision,
-        resourceRefs: [...new Set(catalog.hosts.flatMap(host => [host.ssh.passwordSecretRef, host.ssh.identityPrivateKeySecretRef])
-            .filter((ref): ref is string => typeof ref === 'string'))] } satisfies RemoteHostReferenceCapture };
+async function captureRemoteHostReferences(context: ProfileAccountContext, accountMode: 'plain' | 'e2ee'): Promise<Readonly<{
+    hosts: SavedSecretReferenceCatalogsV1['remoteHostRecords']; capture: RemoteHostReferenceCapture;
+}> | null> {
+    return admitProfileAccount(context, async (_context, mode, material) => {
+        if (mode !== accountMode) return null;
+        const row = await readRemoteHostCatalogRowInContext(context);
+        if (row.status === 'absent') return { hosts: undefined, capture: { revision: 'absent', resourceRefs: [] } };
+        if (row.status === 'deleted') return { hosts: null, capture: { revision: row.revision, resourceRefs: [] } };
+        if (row.status !== 'present') return null;
+        const opened = openRemoteHostCatalogContentV1({ content: row.content, mode, material });
+        if (opened.status !== 'ready') return null;
+        context.assertCurrent();
+        return { hosts: opened.hosts, capture: { revision: row.revision,
+            resourceRefs: [...new Set(opened.hosts.flatMap(host => [host.ssh.passwordSecretRef, host.ssh.identityPrivateKeySecretRef])
+                .filter((ref): ref is string => typeof ref === 'string'))] } };
+    });
 }
 function profileReferenceCensus(catalog: Extract<ProfileCatalogSnapshotV1, { status: 'ready' }>, accountMode: 'plain' | 'e2ee',
     artifactsById: ReadonlyMap<string, ArtifactSharingResourceV1> | undefined, remoteHosts: RemoteHostReferenceCapture,
@@ -140,12 +161,13 @@ export type SavedSecretReferenceStateCaptureResult =
 
 /** One complete captured source/reference inventory for composite credential mutations. */
 export async function captureSavedSecretReferenceStateInContext(context: ProfileAccountContext, accountMode: 'plain' | 'e2ee',
-    expected: Readonly<{ expectedSettingsVersion?: number; expectedProfileTransferRevision?: number | 'absent' }> = {},
+    expected: Readonly<{ expectedSettingsVersion?: number; expectedProfileTransferRevision?: number | 'absent';
+        onProfilePage?: NonNullable<Parameters<typeof readProfileCatalogInContext>[2]>['onPage'] }> = {},
 ): Promise<SavedSecretReferenceStateCaptureResult> {
     try {
         const [profiles, remoteHosts, referenceCatalogs, notificationChannels, baseline] = await Promise.all([
-            readProfileCatalogInContext(context, undefined, { readSourceBaseline: true }),
-            captureRemoteHostReferences(context),
+            readProfileCatalogInContext(context, undefined, { readSourceBaseline: true, onPage: expected.onProfilePage }),
+            captureRemoteHostReferences(context, accountMode),
             captureSavedSecretReferenceCatalogsInContext(context, accountMode),
             captureSavedSecretNotificationChannelsInContext(context, accountMode),
             readProfileTransferSourceInContext(context),
@@ -169,7 +191,7 @@ export async function captureSavedSecretReferenceStateInContext(context: Profile
         if (storage.mode !== accountMode) return { ok: false, reason: 'changed' };
         const catalogs: SavedSecretReferenceCatalogsV1 = { ...referenceCatalogs.catalogs, notificationChannels: notificationChannels.catalog,
             profileRecords: profiles.records.map(({ record }) => record), artifactsById, profileControl: control,
-            remoteHostRecords: remoteHosts.catalog.hosts };
+            remoteHostRecords: remoteHosts.hosts };
         listSavedSecretReferenceCatalogRefsV1(catalogs);
         return { ok: true, baseline, profiles, catalogs,
             referenceCensus: profileReferenceCensus(profiles, accountMode, artifactsById, remoteHosts.capture, referenceCatalogs.revisions, notificationChannels.census) };
@@ -390,25 +412,30 @@ export async function prepareSavedSecretResourceCreateInContext(
     } catch (error) { resourceDataKey?.fill(0); throw error; }
 }
 
-export type SavedSecretCatalogResourceCreationResult =
-    | Readonly<{ ok: true; resourceRefs: ReadonlyMap<string, string>; resourceFingerprints: ReadonlyMap<string, string> }>
+type SavedSecretResourceCreationResult<TSuccess> =
+    | TSuccess
     | Readonly<{ ok: false; reason: 'changed' | 'unavailable' | 'failed' }>
-    | Readonly<{ ok: false; reason: 'outcome_unknown'; verifyOutcome?: () => Promise<SavedSecretCatalogResourceCreationResult> }>;
+    | Readonly<{ ok: false; reason: 'outcome_unknown'; verifyOutcome?: () => Promise<SavedSecretResourceCreationResult<TSuccess>> }>;
+
+export type SavedSecretCatalogResourceCreationResult = SavedSecretResourceCreationResult<Readonly<{
+    ok: true; resourceRefs: ReadonlyMap<string, string>; resourceFingerprints: ReadonlyMap<string, string>;
+}>>;
 
 /** Read back the immutable sent operation; an uncertain receipt never authorizes another write. */
-function catalogCreationOutcomeVerifier(params: Readonly<{
+function catalogCreationOutcomeVerifier<TSuccess extends Extract<SavedSecretCatalogResourceCreationResult, { ok: true }>>(params: Readonly<{
     scope: ServerAccountScope;
     originalContext: ProfileAccountContext;
     input: ReturnType<typeof SharedSavedSecretPromoteInputV1Schema.parse>;
-    success: Extract<SavedSecretCatalogResourceCreationResult, { ok: true }>;
-}>): () => Promise<SavedSecretCatalogResourceCreationResult> {
+    success: TSuccess;
+    verifyIntent?: (context: ProfileAccountContext) => Promise<TSuccess | null>;
+}>): () => Promise<SavedSecretResourceCreationResult<TSuccess>> {
     const credentialScopeKey = resolveAuthCredentialsScopeKey(params.originalContext.credentials);
     const mode = params.input.referenceCensus.accountMode;
     const creations = [params.input, ...(params.input.additionalSavedSecretResources ?? [])];
     const mutations = params.input.catalogMutations ?? {};
     const keys = Object.keys(mutations) as SavedSecretReferenceCatalogKey[];
-    const unknown = (): SavedSecretCatalogResourceCreationResult => ({ ok: false, reason: 'outcome_unknown', verifyOutcome: verify });
-    const verify = async (): Promise<SavedSecretCatalogResourceCreationResult> => {
+    const unknown = (): SavedSecretResourceCreationResult<TSuccess> => ({ ok: false, reason: 'outcome_unknown', verifyOutcome: verify });
+    const verify = async (): Promise<SavedSecretResourceCreationResult<TSuccess>> => {
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
         let context: ProfileAccountContext | undefined;
         try {
@@ -420,8 +447,7 @@ function catalogCreationOutcomeVerifier(params: Readonly<{
             const catalogs = await captureSavedSecretReferenceCatalogsInContext(context, mode, keys);
             if (!catalogs || keys.some(key => {
                 const mutation = mutations[key];
-                return !mutation || typeof mutation.expectedRevision !== 'number'
-                    || catalogs.revisions[key] !== mutation.expectedRevision + 1
+                return !mutation || catalogs.revisions[key] !== (mutation.expectedRevision === 'absent' ? 0 : mutation.expectedRevision + 1)
                     || !sameStrictJsonValue(catalogs.storedContents[key], mutation.content);
             })) return unknown();
             const material = await readSavedSecretCatalogInContext(context);
@@ -462,6 +488,8 @@ function catalogCreationOutcomeVerifier(params: Readonly<{
                     : Promise.resolve(null) });
             if (resources.some(resource => !opened.entries.some(entry => entry.ref === resource.entry.ref
                 && entry.materialStatus === 'ready' && entry.capabilities.use))) return unknown();
+            const success = params.verifyIntent ? await params.verifyIntent(context) : params.success;
+            if (!success) return unknown();
             const currentMode = (await fetchAccountEncryptionMode(context.credentials, { request: context.request })).mode;
             if (encryption) {
                 const currentStorage = await resolveAccountStorageContext(context.credentials, { encryption, request: context.request });
@@ -469,11 +497,76 @@ function catalogCreationOutcomeVerifier(params: Readonly<{
             }
             context.assertCurrent();
             if (!params.originalContext.accountLifetime.isCurrent() || currentMode !== mode) return unknown();
-            return params.success;
+            return success;
         } catch { return unknown(); }
         finally { context?.dispose(); }
     };
     return verify;
+}
+
+/** Prove the sourceful part of the same sent transaction, never a reconstructed save. */
+async function verifyFullCreationIntentInContext(context: ProfileAccountContext,
+    input: ReturnType<typeof SharedSavedSecretPromoteInputV1Schema.parse>,
+    settings: Readonly<Record<string, unknown>>,
+): Promise<number | null> {
+    const census = input.referenceCensus;
+    if ('scope' in census || input.expectedSettingsVersion === undefined) return null;
+    const mutations = input.catalogMutations ?? {};
+    const profileRows = new Map<string, ProfileRowV1>();
+    const captured = await captureSavedSecretReferenceStateInContext(context, census.accountMode, {
+        onProfilePage: page => { if (page.status === 'listed') for (const row of page.rows) profileRows.set(row.id, row); },
+    });
+    if (!captured.ok) return null;
+    const expectedSettingsVersion = input.expectedSettingsVersion + (input.nextSettings === null ? 0 : 1);
+    if (captured.baseline.source.version !== expectedSettingsVersion
+        || !sameStrictJsonValue(captured.baseline.source.raw, settings)) return null;
+    const nextRevision = (revision: number | 'absent') => revision === 'absent' ? 0 : revision + 1;
+    // The current top-only/null-Settings transaction keeps the Profile guard;
+    // the sourceful general transaction advances it exactly once, even with no Profile edits.
+    const topOnly = input.nextSettings === null && input.profileMutations.length === 0
+        && (input.remoteHostMutation !== undefined || input.notificationChannelMutation !== undefined)
+        && Object.keys(mutations).length === 0;
+    const changedProfiles = new Map(input.profileMutations.map(row => [row.id, row]));
+    const postCatalogs = census.catalogs ? { ...census.catalogs } : undefined;
+    for (const key of Object.keys(mutations) as SavedSecretReferenceCatalogKey[]) {
+        if (!postCatalogs) return null;
+        postCatalogs[key] = nextRevision(mutations[key]!.expectedRevision);
+    }
+    const expectedCensus = { ...census,
+        ...(postCatalogs ? { catalogs: postCatalogs } : {}),
+        profiles: { referenceGuardRevision: topOnly ? census.profiles.referenceGuardRevision : nextRevision(census.profiles.referenceGuardRevision),
+            rows: census.profiles.rows.map(row => ({ ...row, revision: row.revision + (changedProfiles.has(row.id) ? 1 : 0) })) },
+        ...(input.notificationChannelMutation ? { notificationChannels: {
+            revision: nextRevision(input.notificationChannelMutation.expectedRevision),
+            resourceRefs: input.notificationChannelMutation.savedSecretRevisions.map(row => row.resourceRef),
+        } } : {}),
+        ...(input.remoteHostMutation ? { remoteHosts: {
+            revision: nextRevision(input.remoteHostMutation.expectedRevision),
+            resourceRefs: input.remoteHostMutation.referencedSavedSecretRevisions.map(row =>
+                formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: row.resourceId })),
+        } } : {}),
+    };
+    if (!sameStrictJsonValue(captured.referenceCensus, expectedCensus)) return null;
+    for (const mutation of input.profileMutations) {
+        const row = profileRows.get(mutation.id);
+        if (!row || row.revision !== nextRevision(mutation.expectedRevision)
+            || !sameStrictJsonValue(row.content, mutation.content)) return null;
+    }
+    if (input.notificationChannelMutation) {
+        const row = await readNotificationChannelCatalogRowInContext({
+            request: (path, init) => context.request(path, init, { retry: 'none' }),
+            isCurrent: context.accountLifetime.isCurrent,
+        });
+        if (row.status !== 'present' || row.revision !== nextRevision(input.notificationChannelMutation.expectedRevision)
+            || !sameStrictJsonValue(row.content, input.notificationChannelMutation.content)) return null;
+    }
+    if (input.remoteHostMutation) {
+        const row = await readRemoteHostCatalogRowInContext(context);
+        if (row.status !== 'present' || row.revision !== nextRevision(input.remoteHostMutation.expectedRevision)
+            || !sameStrictJsonValue(row.content, input.remoteHostMutation.content)) return null;
+    }
+    context.assertCurrent();
+    return expectedSettingsVersion;
 }
 
 export type SavedSecretFullReferenceResourceMutationCapture = Readonly<{
@@ -491,9 +584,9 @@ export type SavedSecretFullReferenceResourceMutationCandidate = Readonly<{
     catalogs: SavedSecretReferenceCatalogsV1;
 }>;
 
-export type SavedSecretFullReferenceResourceCreationResult =
-    | Readonly<{ ok: true; settingsVersion: number; resourceRefs: ReadonlyMap<string, string>; resourceFingerprints: ReadonlyMap<string, string> }>
-    | Exclude<SavedSecretCatalogResourceCreationResult, Readonly<{ ok: true }>>;
+export type SavedSecretFullReferenceResourceCreationResult = SavedSecretResourceCreationResult<Readonly<{
+    ok: true; settingsVersion: number; resourceRefs: ReadonlyMap<string, string>; resourceFingerprints: ReadonlyMap<string, string>;
+}>>;
 
 type SavedSecretCatalogResourceCreationParams = Readonly<{
     scope: ServerAccountScope;
@@ -517,6 +610,8 @@ export type SavedSecretFullReferenceResourceCreationParams = Readonly<{
     resources: readonly SavedSecret[];
     referenceScope: 'full';
     originalSource?: Readonly<{ rawSettings: Readonly<Record<string, unknown>>; settingsVersion: number }>;
+    /** Preserve exact material proofs already admitted by the notification source owner. */
+    notificationSavedSecretRevisions?: readonly SavedSecretReferenceRevisionProof[];
     mutateCatalogs: (capture: SavedSecretFullReferenceResourceMutationCapture) => SavedSecretFullReferenceResourceMutationCandidate
         | Readonly<{ ok: false; reason: 'changed' | 'unavailable' }>
         | Promise<SavedSecretFullReferenceResourceMutationCandidate | Readonly<{ ok: false; reason: 'changed' | 'unavailable' }>>;
@@ -581,14 +676,24 @@ export async function createSavedSecretResourcesWithCatalogMutationInContext(
                 // These admitted facets are source proof, not callback-owned mutation destinations.
                 if (candidate.catalogs.artifactsById !== artifactsById
                     || !sameStrictJsonValue(candidate.catalogs.profileControl, catalogs.profileControl)
-                    || !sameStrictJsonValue(candidate.catalogs.remoteHostRecords, catalogs.remoteHostRecords)
                     || candidate.catalogs.profileRecords.length !== profiles.records.length
                     || candidate.catalogs.profileRecords.some(record => !profiles.records.some(row => row.record.id === record.id))) {
+                    return { ok: false, reason: 'unavailable' };
+                }
+                if (!sameStrictJsonValue(candidate.catalogs.notificationChannels, catalogs.notificationChannels)
+                    && !NotificationChannelCatalogRecordV1Schema.safeParse(candidate.catalogs.notificationChannels).success) {
+                    return { ok: false, reason: 'unavailable' };
+                }
+                if (!sameStrictJsonValue(candidate.catalogs.remoteHostRecords, catalogs.remoteHostRecords)
+                    && !RemoteHostCatalogRecordV1Schema.safeParse({ v: 1, hosts: candidate.catalogs.remoteHostRecords }).success) {
                     return { ok: false, reason: 'unavailable' };
                 }
                 let nextSettings = { ...candidate.settings };
                 let nextCatalogs = candidate.catalogs;
                 for (const resource of params.resources) {
+                    // Fresh destination bindings already use the supplied resource ref.
+                    // Only a real candidate personal record needs canonical promotion/removal.
+                    if (!readSavedSecretTransferSourceV1(nextSettings).secrets.some(secret => secret.id === resource.id)) continue;
                     const promoted = promotePersonalSavedSecretReference(nextSettings, { secretId: resource.id,
                         expectedUpdatedAt: resource.updatedAt, sharedSecretRef: resourceRefs.get(resource.id)! }, nextCatalogs);
                     const { settings, ...rewrittenCatalogs } = promoted;
@@ -611,6 +716,30 @@ export async function createSavedSecretResourcesWithCatalogMutationInContext(
                     catalogs: nextCatalogs, previousCatalogs: catalogs, revisions: catalogRevisions, accountMode,
                     sourceSettingsVersion: baseline.source.version, pendingResourceIds,
                 });
+                let notificationChannelMutation: NotificationChannelCatalogMutationV1 | undefined;
+                if (!sameStrictJsonValue(nextCatalogs.notificationChannels, catalogs.notificationChannels)) {
+                    const record = nextCatalogs.notificationChannels;
+                    const census = referenceCensus.notificationChannels;
+                    if (!record || !census) return { ok: false, reason: 'unavailable' };
+                    notificationChannelMutation = await prepareNotificationChannelCatalogMutationInContext(context, {
+                        record, expectedRevision: census.revision, expectedMode: accountMode, pendingResourceIds,
+                        ...(params.notificationSavedSecretRevisions === undefined ? {} : {
+                            savedSecretRevisions: [...params.notificationSavedSecretRevisions, ...pendingRevisions],
+                        }),
+                        ...(census.revision === 'absent' ? { sourceSettingsVersion: baseline.source.version } : {}),
+                    });
+                }
+                let remoteHostMutation: RemoteHostCatalogRowMutationV1 | undefined;
+                if (!sameStrictJsonValue(nextCatalogs.remoteHostRecords, catalogs.remoteHostRecords)) {
+                    const hosts = nextCatalogs.remoteHostRecords;
+                    const census = referenceCensus.remoteHosts;
+                    if (!hosts || !census) return { ok: false, reason: 'unavailable' };
+                    remoteHostMutation = await prepareRemoteHostCatalogMutationInContext(context, {
+                        record: { v: 1, hosts: [...hosts] }, expectedRevision: census.revision,
+                        expectedMode: accountMode, pendingResourceIds,
+                        ...(census.revision === 'absent' ? { sourceSettingsVersion: baseline.source.version } : {}),
+                    });
+                }
                 for (const resource of params.resources) {
                     const value = resource.encryptedValue.value;
                     if (typeof value !== 'string') return { ok: false, reason: 'unavailable' };
@@ -623,6 +752,7 @@ export async function createSavedSecretResourcesWithCatalogMutationInContext(
                 const settingsKeys = await resolveSettingsSecretsKeySet({ credentials: context.credentials, scope: params.scope });
                 context.assertCurrent();
                 const success = { ok: true as const, resourceRefs, resourceFingerprints };
+                let verifyOutcome: (() => Promise<SavedSecretFullReferenceResourceCreationResult>) | undefined;
                 const mutation = await syncSettings({ credentials: context.credentials, encryption,
                     settingsSecretsKey: settingsKeys?.writeKey ?? null, settingsSecretsReadKeys: settingsKeys?.readKeys ?? [],
                     settingsScope: params.scope, requestContext: { scope: params.scope, endpointUrl: context.endpointUrl, request: context.request },
@@ -632,11 +762,24 @@ export async function createSavedSecretResourcesWithCatalogMutationInContext(
                         commitPrepared: async sealed => {
                             context.assertCurrent();
                             if (sealed.accountMode !== accountMode) return { status: 'rejected', error: new Error('saved_secret_account_mode_changed') };
+                            const preparedSettings = openAccountSettingsStoredContent({ content: sealed.content,
+                                encryption, expectedMode: accountMode }).raw ?? {};
                             const first = prepared[0]!;
                             const input = SharedSavedSecretPromoteInputV1Schema.parse({ ...first.input,
                                 additionalSavedSecretResources: prepared.slice(1).map(resource => resource.input),
-                                expectedSettingsVersion: sealed.expectedSettingsVersion, nextSettings: sealed.content,
+                                expectedSettingsVersion: sealed.expectedSettingsVersion,
+                                nextSettings: sameStrictJsonValue(preparedSettings, baseline.source.raw) ? null : sealed.content,
                                 referenceCensus, profileMutations, ...(Object.keys(catalogMutations).length ? { catalogMutations } : {}),
+                                ...(notificationChannelMutation ? { notificationChannelMutation } : {}),
+                                ...(remoteHostMutation ? { remoteHostMutation } : {}),
+                            });
+                            const sentSettings = input.nextSettings === null ? baseline.source.raw : preparedSettings;
+                            verifyOutcome = catalogCreationOutcomeVerifier({ scope: params.scope, originalContext: context, input,
+                                success: { ...success, settingsVersion: baseline.source.version },
+                                verifyIntent: async current => {
+                                    const settingsVersion = await verifyFullCreationIntentInContext(current, input, sentSettings);
+                                    return settingsVersion === null ? null : { ...success, settingsVersion };
+                                },
                             });
                             const outcome = await runTeamAction({ scope: params.scope, actionId: 'secrets.shared.promote', input,
                                 parse: value => SharedSavedSecretPromoteOutputV1Schema.parse(value),
@@ -658,7 +801,8 @@ export async function createSavedSecretResourcesWithCatalogMutationInContext(
                         },
                     } });
                 if (mutation?.status === 'applied') return { ...success, settingsVersion: mutation.settingsVersion };
-                return { ok: false, reason: mutation?.status === 'conflict' ? 'changed' : 'outcome_unknown' };
+                return mutation?.status === 'conflict' ? { ok: false, reason: 'changed' }
+                    : { ok: false, reason: 'outcome_unknown', ...(verifyOutcome ? { verifyOutcome } : {}) };
             });
         }
         if (!params.resources.length || !params.catalogKeys.length
@@ -838,6 +982,16 @@ type SavedSecretPersonalPromotionParams = Readonly<{
 type SavedSecretInferencePromotionParams = Omit<SavedSecretPersonalPromotionParams, 'secret'> & Readonly<{
     credential: SavedSecretLegacyInferenceCredentialV1;
 }>;
+type SavedSecretChatPromotionParams = Omit<SavedSecretPersonalPromotionParams, 'secret'> & Readonly<{
+    credential: SavedSecretLegacyChatCredentialV1 & Readonly<{
+        source: Extract<SavedSecretLegacyChatCredentialV1['source'], { kind: 'personal-saved-secret' }>;
+    }>;
+}>;
+type SavedSecretVoicePromotionParams = Omit<SavedSecretPersonalPromotionParams, 'secret'> & Readonly<{
+    credential: SavedSecretLegacyVoiceCredentialV1 & Readonly<{
+        source: Extract<SavedSecretLegacyVoiceCredentialV1['source'], { kind: 'personal-saved-secret' }>;
+    }>;
+}>;
 
 export async function promotePersonalSavedSecretResource(params: SavedSecretPersonalPromotionParams): Promise<SavedSecretPromotionResult> {
     try {
@@ -858,10 +1012,13 @@ export async function promotePersonalSavedSecretResource(params: SavedSecretPers
 
 /** The demand loader borrows this same sealed composite, without invalidating itself. */
 async function promoteSavedSecretSourceResourceInContext(context: ProfileAccountContext, accountMode: 'plain' | 'e2ee',
-    params: SavedSecretPersonalPromotionParams | SavedSecretInferencePromotionParams,
+    params: SavedSecretPersonalPromotionParams | SavedSecretInferencePromotionParams | SavedSecretChatPromotionParams | SavedSecretVoicePromotionParams,
     expectedProfileTransferRevision?: number | 'absent',
+    approval?: SavedSecretPrivateCreationApprovalOptions,
 ): Promise<Exclude<SavedSecretPromotionResult, Readonly<{ ok: true }>> | Readonly<{
     ok: true; resourceRef: string; settingsVersion: number; profileTransferRevision: number | 'absent';
+    previousSource: Awaited<ReturnType<typeof readProfileTransferSourceInContext>>;
+    acknowledgedSource: Awaited<ReturnType<typeof readProfileTransferSourceInContext>>;
 }>> {
     const resourceId = deriveSavedSecretImportResourceIdV1({ accountId: params.scope.accountId,
         source: 'secret' in params ? { kind: 'personal-saved-secret', secretId: params.secret.id } : params.credential.source });
@@ -869,6 +1026,7 @@ async function promoteSavedSecretSourceResourceInContext(context: ProfileAccount
     // Written by the commit callback below; held in a box so the compiler
     // cannot narrow it back to its initial null at the zeroizing `finally`.
     const promotionDataKey: { value: Uint8Array | null } = { value: null };
+    const sentSettings: { raw: Readonly<Record<string, unknown>> | null } = { raw: null };
 
     try {
         const captured = await captureSavedSecretReferenceStateInContext(context, accountMode, {
@@ -876,6 +1034,18 @@ async function promoteSavedSecretSourceResourceInContext(context: ProfileAccount
         });
         if (!captured.ok) return captured;
         const { profiles, baseline, catalogs, referenceCensus } = captured;
+        const voiceCredential = 'credential' in params && 'candidate' in params.credential ? params.credential : undefined;
+        const retainedVoiceSource = voiceCredential
+            ? readSavedSecretTransferSourceV1(baseline.source.raw).secrets.find(secret => secret.id === voiceCredential.source.secretId)
+            : undefined;
+        const personalSourceId = 'secret' in params ? params.secret.id : retainedVoiceSource?.id;
+        if ('credential' in params && params.credential.source.kind === 'personal-saved-secret'
+            && ('candidate' in params.credential
+                ? !readSavedSecretTransferSourceV1(baseline.source.raw).legacyVoiceCredentials?.some(credential =>
+                    sameStrictJsonValue(credential, params.credential))
+                : !sameStrictJsonValue(readSavedSecretTransferSourceV1(baseline.source.raw).legacyChatCredential, params.credential))) {
+            return { ok: false, reason: 'changed' };
+        }
         const { artifactsById } = catalogs;
         const before = await readSavedSecretCatalogInContext(context);
         if (!before.ok) return { ok: false, reason: 'unavailable' };
@@ -884,10 +1054,33 @@ async function promoteSavedSecretSourceResourceInContext(context: ProfileAccount
         }
         context.assertCurrent();
         const value = 'secret' in params ? decryptSecretValueWithKeys(params.secret.encryptedValue,
-            baseline.material ? deriveSettingsSecretsKeySet(baseline.material).readKeys : []) : params.credential.value;
+            baseline.material ? deriveSettingsSecretsKeySet(baseline.material).readKeys : [])
+            : 'value' in params.credential ? params.credential.value
+                : decryptSecretValueWithKeys(params.credential.encryptedValue,
+                    baseline.material ? deriveSettingsSecretsKeySet(baseline.material).readKeys : []);
         if (value === null) return { ok: false, reason: 'unavailable' };
         let promotedRecords: readonly ProfileRecordV1[] = profiles.records.map(({ record }) => record);
         let promotedCatalogs: SavedSecretReferenceCatalogFacets = catalogs;
+        const verifyAppliedSource = async (settingsVersion: number) => {
+            const opened = await readSavedSecretReferenceInContext(context, resourceRef);
+            const after = await readProfileTransferSourceInContext(context);
+            context.assertCurrent();
+            if (!opened.ok || opened.revision !== 1 || opened.value !== value
+                || after.mode !== accountMode || after.source.version !== settingsVersion
+                || sentSettings.raw === null || !sameStrictJsonValue(after.source.raw, sentSettings.raw)
+                || ('secret' in params ? readSavedSecretTransferSourceV1(after.source.raw).secrets.some(secret => secret.id === params.secret.id)
+                    || listSavedSecretPersonalImportSourceReferencesV1(after.source.raw, params.secret.id,
+                        { ...catalogs, ...promotedCatalogs, profileRecords: promotedRecords }).length > 0
+                    : params.credential.source.kind === 'legacy-inference-openai-key'
+                        ? readSavedSecretTransferSourceV1(after.source.raw).inferenceCredential !== undefined
+                        : 'candidate' in params.credential
+                            ? readSavedSecretTransferSourceV1(after.source.raw).legacyVoiceCredentials?.some(credential =>
+                                sameStrictJsonValue(credential.source, params.credential.source))
+                            : !sameStrictJsonValue(readSavedSecretTransferSourceV1(after.source.raw).legacyChatCredential, params.credential))) {
+                return null;
+            }
+            return after;
+        };
         const { encryption: capturedEncryption } = await context.resolveAccountEncryption();
         const settingsSecretsKeys = await resolveSettingsSecretsKeySet({ credentials: context.credentials, scope: params.scope });
         context.assertCurrent();
@@ -905,8 +1098,12 @@ async function promoteSavedSecretSourceResourceInContext(context: ProfileAccount
                     expectedUpdatedAt: params.secret.updatedAt,
                     sharedSecretRef: resourceRef,
                 }, catalogs)
-                    : promoteLegacyInferenceSavedSecretReferenceV1(raw, { source: params.credential.source, sharedSecretRef: resourceRef });
-                promotedRecords = promoted.profileRecords ?? promotedRecords;
+                    : params.credential.source.kind === 'legacy-inference-openai-key'
+                        ? promoteLegacyInferenceSavedSecretReferenceV1(raw, { source: params.credential.source, sharedSecretRef: resourceRef })
+                        : 'candidate' in params.credential
+                            ? promoteLegacyVoiceSavedSecretReferenceV1(raw, { credential: params.credential, sharedSecretRef: resourceRef }, catalogs)
+                        : { settings: raw };
+                promotedRecords = ('profileRecords' in promoted ? promoted.profileRecords : undefined) ?? promotedRecords;
                 promotedCatalogs = { ...catalogs, ...promoted };
                 return { settings: { ...promoted.settings }, value: { resourceId, resourceRef } };
             },
@@ -931,6 +1128,8 @@ async function promoteSavedSecretSourceResourceInContext(context: ProfileAccount
                 if (prepared.accountMode === 'e2ee' && !encryption) {
                     return { status: 'rejected', error: new Error('saved_secret_encryption_unavailable') };
                 }
+                sentSettings.raw = openAccountSettingsStoredContent({ content: prepared.content,
+                    encryption, expectedMode: accountMode }).raw ?? {};
                 const preparedResourceDataKey = prepared.accountMode === 'e2ee'
                     ? getRandomBytes(32)
                     : null;
@@ -941,8 +1140,8 @@ async function promoteSavedSecretSourceResourceInContext(context: ProfileAccount
                         mode: 'plain',
                         content: {
                             v: 1,
-                            name: 'secret' in params ? params.secret.name : params.credential.displayName,
-                            kind: 'secret' in params ? params.secret.kind : params.credential.kind,
+                            name: 'secret' in params ? params.secret.name : retainedVoiceSource?.name ?? params.credential.displayName,
+                            kind: 'secret' in params ? params.secret.kind : retainedVoiceSource?.kind ?? params.credential.kind,
                             value,
                         },
                     })
@@ -953,8 +1152,8 @@ async function promoteSavedSecretSourceResourceInContext(context: ProfileAccount
                             resourceDataKey: preparedResourceDataKey,
                             content: {
                                 v: 1,
-                                name: 'secret' in params ? params.secret.name : params.credential.displayName,
-                                kind: 'secret' in params ? params.secret.kind : params.credential.kind,
+                                name: 'secret' in params ? params.secret.name : retainedVoiceSource?.name ?? params.credential.displayName,
+                                kind: 'secret' in params ? params.secret.kind : retainedVoiceSource?.kind ?? params.credential.kind,
                                 value,
                             },
                             randomBytes: getRandomBytes,
@@ -970,13 +1169,15 @@ async function promoteSavedSecretSourceResourceInContext(context: ProfileAccount
                         encryption.contentDataKey,
                     )]
                     : [];
-                const outcome = await runTeamAction({
+                const execute = (callbacks?: Required<SavedSecretApprovalHandlers<
+                    ReturnType<typeof SharedSavedSecretPromoteOutputV1Schema.parse>
+                >>) => runTeamAction({
                     scope: params.scope,
                     actionId: 'secrets.shared.promote',
                     input: {
                         resourceId,
-                        displayName: 'secret' in params ? params.secret.name : params.credential.displayName,
-                        kind: 'secret' in params ? params.secret.kind : params.credential.kind,
+                        displayName: 'secret' in params ? params.secret.name : retainedVoiceSource?.name ?? params.credential.displayName,
+                        kind: 'secret' in params ? params.secret.kind : retainedVoiceSource?.kind ?? params.credential.kind,
                         encryptionMode: prepared.accountMode,
                         storedContent,
                         accountGrants: [...params.accountGrants],
@@ -987,20 +1188,52 @@ async function promoteSavedSecretSourceResourceInContext(context: ProfileAccount
                         nextSettings: prepared.content,
                         referenceCensus,
                         profileMutations,
-                        ...('secret' in params ? { personalSecretPromotions: [{ personalSecretId: params.secret.id, resourceId }] } : {}),
+                        ...(personalSourceId !== undefined ? { personalSecretPromotions: [{
+                            personalSecretId: personalSourceId, resourceId,
+                        }] } : {}),
                         ...(Object.keys(catalogMutations).length ? { catalogMutations } : {}),
                     },
                     parse: (value) => SharedSavedSecretPromoteOutputV1Schema.parse(value),
-                    onApprovalSucceeded: async () => {
+                    ...(approval?.signal ? { signal: approval.signal } : {}),
+                    onApprovalSucceeded: async (receipt) => {
+                        context.assertCurrent();
+                        approval?.signal?.throwIfAborted();
+                        if (receipt.resourceId !== resourceId) {
+                            (callbacks?.onApprovalFailed ?? params.onApprovalFailed)?.('saved_secret_promotion_unverified');
+                            return;
+                        }
                         await repairApprovedSavedSecretResourceEnvelopesBestEffort({
                             scope: params.scope,
                             resourceId,
                             expectedRevision: 1,
                         }).catch(() => undefined);
-                        await params.onApprovalSucceeded?.({ ok: true, resourceRef });
+                        if (callbacks) callbacks.onApprovalSucceeded(receipt);
+                        else if (receipt.resourceId === resourceId && await verifyAppliedSource(receipt.settingsVersion)) {
+                            await params.onApprovalSucceeded?.({ ok: true, resourceRef });
+                        } else params.onApprovalFailed?.('saved_secret_promotion_unverified');
                     },
-                    ...(params.onApprovalFailed ? { onApprovalFailed: params.onApprovalFailed } : {}),
+                    ...(callbacks ? { onApprovalFailed: callbacks.onApprovalFailed }
+                        : params.onApprovalFailed ? { onApprovalFailed: params.onApprovalFailed } : {}),
                 });
+                // A foreground importer suspends this exact sealed operation.
+                // The joined receipt continues through the same post-commit
+                // source/material proof below, never through another dispatch.
+                const outcome = approval ? await awaitActionApprovalResult<
+                    ReturnType<typeof SharedSavedSecretPromoteOutputV1Schema.parse>, Awaited<ReturnType<typeof execute>>
+                >({
+                    ...(approval.signal ? { signal: approval.signal } : {}),
+                    execute: async callbacks => {
+                        try { return await execute(callbacks); }
+                        catch (error) {
+                            if (!isTeamActionApprovalPendingError(error)) throw error;
+                            approval.onApprovalPending(error.registration);
+                            return { approvalPending: true };
+                        }
+                    },
+                    succeeded: receipt => ({ kind: 'succeeded', value: receipt }),
+                    failed: () => ({ kind: 'failed', failure: { kind: 'forbidden', retryable: false, code: null } }),
+                    aborted: () => ({ kind: 'failed', failure: { kind: 'conflict', retryable: false, code: null } }),
+                }) : await execute();
                 context.assertResultCurrent('write');
                 if (outcome.kind === 'succeeded') {
                     if (outcome.value.resourceId !== resourceId) return { status: 'outcomeUnknown' };
@@ -1020,16 +1253,12 @@ async function promoteSavedSecretSourceResourceInContext(context: ProfileAccount
                     resourceDataKey: promotionDataKey.value,
                 }).catch(() => undefined);
             }
-            const after = await readProfileTransferSourceInContext(context);
-            context.assertCurrent();
-            if (after.mode !== accountMode || after.source.version !== mutation.settingsVersion
-                || ('secret' in params ? readSavedSecretTransferSourceV1(after.source.raw).secrets.some(secret => secret.id === params.secret.id)
-                    || listAccountSettingsSavedSecretReferences(after.source.raw, params.secret.id,
-                        { ...catalogs, ...promotedCatalogs, profileRecords: promotedRecords }).length > 0
-                    : readSavedSecretTransferSourceV1(after.source.raw).inferenceCredential !== undefined)) {
+            const after = await verifyAppliedSource(mutation.settingsVersion);
+            if (!after) {
                 return { ok: false, reason: 'outcome_unknown' };
             }
-            return { ok: true, resourceRef, settingsVersion: mutation.settingsVersion, profileTransferRevision: profiles.controlRevision };
+            return { ok: true, resourceRef, settingsVersion: mutation.settingsVersion, profileTransferRevision: profiles.controlRevision,
+                previousSource: baseline, acknowledgedSource: after };
         }
         if (mutation?.status === 'conflict') return { ok: false, reason: 'changed' };
 
@@ -1060,54 +1289,269 @@ async function normalizeTransferredSavedSecretHistoryInContext(context: ProfileA
         } } });
 }
 
+function retainedLegacyCredentialMatches(raw: Readonly<Record<string, unknown>>,
+    credential: SavedSecretLegacyChatCredentialV1 | SavedSecretLegacyVoiceCredentialV1): boolean {
+    const source = readSavedSecretTransferSourceV1(raw);
+    return 'candidate' in credential
+        ? source.legacyVoiceCredentials?.some(candidate => sameStrictJsonValue(candidate, credential)) === true
+        : sameStrictJsonValue(source.legacyChatCredential, credential);
+}
+
+async function verifyRetainedLegacyCredentialReferenceInContext(context: ProfileAccountContext, scope: ServerAccountScope,
+    baseline: Awaited<ReturnType<typeof readProfileTransferSourceInContext>>,
+    credential: SavedSecretLegacyChatCredentialV1 | SavedSecretLegacyVoiceCredentialV1,
+    resource: HealthySavedSecretResourceMaterialV1,
+): Promise<Readonly<{ ok: true; reference: SavedSecretVerifiedImportReference }>
+    | Readonly<{ ok: false; reason: 'changed' | 'source-unavailable' }>> {
+    context.assertCurrent();
+    if (resource.entry.relationship !== 'owner' || resource.entry.ownerAccountId !== scope.accountId
+        || resource.entry.materialStatus !== 'ready' || !resource.entry.capabilities.use || resource.entry.revision === null) {
+        return { ok: false, reason: 'source-unavailable' };
+    }
+    const originalValue = decryptSecretValueWithKeys(credential.encryptedValue,
+        baseline.material ? deriveSettingsSecretsKeySet(baseline.material).readKeys : []);
+    const opened = await readSavedSecretReferenceInContext(context, resource.entry.ref);
+    const after = await readProfileTransferSourceInContext(context);
+    context.assertCurrent();
+    if (after.mode !== baseline.mode || after.source.version !== baseline.source.version
+        || !retainedLegacyCredentialMatches(after.source.raw, credential)) {
+        return { ok: false, reason: 'changed' };
+    }
+    if (originalValue === null || !opened.ok || opened.revision !== resource.entry.revision || opened.value !== originalValue) {
+        return { ok: false, reason: 'source-unavailable' };
+    }
+    return { ok: true, reference: { source: credential.source, resourceRef: resource.entry.ref, revision: opened.revision } };
+}
+
+/** A selected existing Chat resource needs its own source/material proof, not unrelated imports. */
+export async function verifyRetainedLegacySavedSecretReferenceInContext(context: ProfileAccountContext, scope: ServerAccountScope,
+    credential: SavedSecretLegacyChatCredentialV1,
+): Promise<Readonly<{ ok: true; reference: SavedSecretVerifiedImportReference }>
+    | Readonly<{ ok: false; reason: 'changed' | 'source-unavailable' }>> {
+    try {
+        if (context.serverId !== scope.serverId || context.accountId !== scope.accountId) return { ok: false, reason: 'changed' };
+        context.assertCurrent();
+        if (credential.source.kind !== 'existing-resource-reference') return { ok: false, reason: 'source-unavailable' };
+        const resourceRef = credential.source.resourceRef;
+        const baseline = await readProfileTransferSourceInContext(context);
+        if (!retainedLegacyCredentialMatches(baseline.source.raw, credential)) return { ok: false, reason: 'changed' };
+        const material = await readSavedSecretCatalogInContext(context);
+        context.assertCurrent();
+        if (!material.ok) return { ok: false, reason: 'source-unavailable' };
+        const matching = material.resources.filter((row): row is HealthySavedSecretResourceMaterialV1 =>
+            isHealthySavedSecretResourceMaterialV1(row) && row.entry.ref === resourceRef);
+        if (matching.length !== 1) return { ok: false, reason: 'source-unavailable' };
+        return await verifyRetainedLegacyCredentialReferenceInContext(context, scope, baseline, credential, matching[0]!);
+    } catch {
+        return { ok: false, reason: context.accountLifetime.isCurrent() ? 'source-unavailable' : 'changed' };
+    }
+}
+
 /** The incumbent material-demand loader owns the one final catalog publication. */
 export async function importLegacySavedSecretsInContext(context: ProfileAccountContext, mode: 'plain' | 'e2ee',
     scope: ServerAccountScope,
+    approval?: SavedSecretPrivateCreationApprovalOptions,
+    sourceExpectation?: Readonly<{ mode: 'plain' | 'e2ee'; raw: Readonly<Record<string, unknown>>; version: number }>,
 ): Promise<SavedSecretLegacyImportResult> {
     const transfers: AccountSettingsHistorySavedSecretTransferV1[] = [];
+    const verifiedReferences: SavedSecretVerifiedImportReference[] = [];
+    const retainedReceiptProofs: Array<Readonly<{
+        baseline: Awaited<ReturnType<typeof readProfileTransferSourceInContext>>;
+        credential: SavedSecretLegacyChatCredentialV1 | SavedSecretLegacyVoiceCredentialV1;
+        resource: HealthySavedSecretResourceMaterialV1;
+    }>> = [];
+    let retainedProofsNeedRevalidation = false;
+    let sourceFrontier = sourceExpectation;
+    const matchesSourceFrontier = (current: Awaited<ReturnType<typeof readProfileTransferSourceInContext>>) =>
+        !sourceFrontier || current.mode === sourceFrontier.mode && current.source.version === sourceFrontier.version
+            && sameStrictJsonValue(current.source.raw, sourceFrontier.raw);
+    const promotedReferences: SavedSecretVerifiedImportReference[] = [];
+    function advanceRetainedReceiptBaselines(previous: Awaited<ReturnType<typeof readProfileTransferSourceInContext>>,
+        acknowledged: Awaited<ReturnType<typeof readProfileTransferSourceInContext>>) {
+        if (!matchesSourceFrontier(previous)) return false;
+        if (sourceFrontier) sourceFrontier = { mode: acknowledged.mode, raw: acknowledged.source.raw, version: acknowledged.source.version };
+        if (retainedReceiptProofs.length === 0) return true;
+        retainedProofsNeedRevalidation = true;
+        for (const [index, proof] of retainedReceiptProofs.entries()) {
+            if (proof.baseline.mode === previous.mode && proof.baseline.source.version === previous.source.version
+                && sameStrictJsonValue(proof.baseline.source.raw, previous.source.raw)
+                && retainedLegacyCredentialMatches(acknowledged.source.raw, proof.credential)) {
+                // Only this invocation's exact sealed candidate was acknowledged.
+                // The original envelope, resource and decryption material remain immutable.
+                retainedReceiptProofs[index] = { ...proof, baseline: { ...acknowledged, material: proof.baseline.material } };
+            }
+        }
+        return true;
+    }
+    async function verifyRetainedReceipts(): Promise<SavedSecretLegacyImportResult> {
+        const finalReferences: SavedSecretVerifiedImportReference[] = [];
+        if (retainedReceiptProofs.length > 0) {
+            const currentCatalog = await readSavedSecretCatalogInContext(context);
+            context.assertCurrent();
+            if (!currentCatalog.ok) return { status: 'pending', reason: 'source-unavailable' };
+            for (const proof of retainedReceiptProofs) {
+                const currentResource = currentCatalog.resources.find((candidate): candidate is HealthySavedSecretResourceMaterialV1 =>
+                    isHealthySavedSecretResourceMaterialV1(candidate) && candidate.entry.ref === proof.resource.entry.ref);
+                if (!currentResource || currentResource.entry.revision !== proof.resource.entry.revision
+                    || currentResource.encryptionMode !== proof.resource.encryptionMode) {
+                    return { status: 'pending', reason: 'source-unavailable' };
+                }
+                const verified = await verifyRetainedLegacyCredentialReferenceInContext(context, scope, proof.baseline,
+                    proof.credential, currentResource);
+                if (!verified.ok) return { status: 'pending', reason: verified.reason };
+                finalReferences.push(verified.reference);
+            }
+        }
+        if (sourceFrontier) {
+            for (const reference of promotedReferences) {
+                const opened = await readSavedSecretReferenceInContext(context, reference.resourceRef);
+                if (!opened.ok || opened.revision !== reference.revision) return { status: 'pending', reason: 'source-unavailable' };
+            }
+            if (!matchesSourceFrontier(await readProfileTransferSourceInContext(context))) return { status: 'pending', reason: 'changed' };
+            return { status: 'complete', sourceSettingsVersion: sourceFrontier.version,
+                ...([...promotedReferences, ...finalReferences].length ? { verifiedReferences: [...promotedReferences, ...finalReferences] } : {}) };
+        }
+        return { status: 'complete', ...(finalReferences.length > 0 ? { verifiedReferences: finalReferences } : {}) };
+    }
     let pending: SavedSecretLegacyImportResult | null = null;
     let capturedControlRevision: number | 'absent' | undefined;
     let historyStarted = false;
     try {
         const initial = await readProfileTransferSourceInContext(context);
         if (initial.mode !== mode) return { status: 'pending', reason: 'source-unavailable' };
+        if (!matchesSourceFrontier(initial)) return { status: 'pending', reason: 'changed' };
         const source = readSavedSecretTransferSourceV1(initial.source.raw);
         if (!source.complete) pending = { status: 'pending', reason: 'source-uncharacterized' };
         for (const secret of source.secrets) {
+            if (source.legacyVoiceCredentials?.some(credential => credential.source.kind === 'personal-saved-secret'
+                && credential.source.secretId === secret.id)) continue;
             context.assertCurrent();
             const before = await readProfileTransferSourceInContext(context);
             if (before.mode !== mode) return { status: 'pending', reason: 'source-unavailable' };
+            if (!matchesSourceFrontier(before)) return { status: 'pending', reason: 'changed' };
             const current = readSavedSecretTransferSourceV1(before.source.raw).secrets.find(candidate => candidate.id === secret.id);
             if (!current) continue;
             const result = await promoteSavedSecretSourceResourceInContext(context, mode, { scope,
-                expectedSettingsVersion: before.source.version, secret: current, accountGrants: [], teamGrants: [], groupGrants: [] }, capturedControlRevision);
+                expectedSettingsVersion: before.source.version, secret: current, accountGrants: [], teamGrants: [], groupGrants: [] }, capturedControlRevision, approval);
             if (!result.ok) {
                 pending = { status: 'pending', reason: result.reason === 'changed' || result.reason === 'outcome_unknown'
                     ? result.reason : 'source-unavailable' };
                 break;
             }
             capturedControlRevision ??= result.profileTransferRevision;
+            if (!advanceRetainedReceiptBaselines(result.previousSource, result.acknowledgedSource)) return { status: 'pending', reason: 'changed' };
+            promotedReferences.push({ source: { kind: 'personal-saved-secret', secretId: current.id }, resourceRef: result.resourceRef, revision: 1 });
             transfers.push({ savedSecretId: current.id, resourceId: deriveSavedSecretImportResourceIdV1({ accountId: scope.accountId,
                 source: { kind: 'personal-saved-secret', secretId: current.id } }), expectedRevision: 1 });
         }
         if (!pending || pending.reason === 'source-uncharacterized') {
             const before = await readProfileTransferSourceInContext(context);
             if (before.mode !== mode) return { status: 'pending', reason: 'source-unavailable' };
+            if (!matchesSourceFrontier(before)) return { status: 'pending', reason: 'changed' };
             const credential = readSavedSecretTransferSourceV1(before.source.raw).inferenceCredential;
             if (credential) {
                 const result = await promoteSavedSecretSourceResourceInContext(context, mode, { scope,
-                    expectedSettingsVersion: before.source.version, credential, accountGrants: [], teamGrants: [], groupGrants: [] }, capturedControlRevision);
+                    expectedSettingsVersion: before.source.version, credential, accountGrants: [], teamGrants: [], groupGrants: [] }, capturedControlRevision, approval);
                 if (!result.ok) pending = { status: 'pending', reason: result.reason === 'changed' || result.reason === 'outcome_unknown'
                     ? result.reason : 'source-unavailable' };
                 else {
                     capturedControlRevision ??= result.profileTransferRevision;
+                    if (!advanceRetainedReceiptBaselines(result.previousSource, result.acknowledgedSource)) return { status: 'pending', reason: 'changed' };
+                    promotedReferences.push({ source: credential.source, resourceRef: result.resourceRef, revision: 1 });
                     transfers.push({ source: credential.source, resourceId: deriveSavedSecretImportResourceIdV1({ accountId: scope.accountId,
                         source: credential.source }), expectedRevision: 1 });
                 }
             }
         }
+        const voiceSource = await readProfileTransferSourceInContext(context);
+        if (voiceSource.mode !== mode) return { status: 'pending', reason: 'source-unavailable' };
+        if (!matchesSourceFrontier(voiceSource)) return { status: 'pending', reason: 'changed' };
+        for (const receipt of readSavedSecretTransferSourceV1(voiceSource.source.raw).legacyVoiceCredentials ?? []) {
+            const before = await readProfileTransferSourceInContext(context);
+            if (before.mode !== mode) return { status: 'pending', reason: 'source-unavailable' };
+            if (!matchesSourceFrontier(before)) return { status: 'pending', reason: 'changed' };
+            const credential = readSavedSecretTransferSourceV1(before.source.raw).legacyVoiceCredentials?.find(candidate =>
+                sameStrictJsonValue(candidate, receipt));
+            if (!credential) return { status: 'pending', reason: 'changed' };
+            if (credential.source.kind === 'existing-resource-reference') {
+                const resourceRef = credential.source.resourceRef;
+                const catalog = await readSavedSecretCatalogInContext(context);
+                context.assertCurrent();
+                if (!catalog.ok) return { status: 'pending', reason: 'source-unavailable' };
+                const resource = catalog.resources.find((candidate): candidate is HealthySavedSecretResourceMaterialV1 =>
+                    isHealthySavedSecretResourceMaterialV1(candidate) && candidate.entry.ref === resourceRef);
+                if (!resource) return { status: 'pending', reason: 'source-unavailable' };
+                const verified = await verifyRetainedLegacyCredentialReferenceInContext(context, scope, before, credential, resource);
+                if (!verified.ok) return { status: 'pending', reason: verified.reason };
+                verifiedReferences.push(verified.reference);
+                retainedReceiptProofs.push({ baseline: before, credential, resource });
+                continue;
+            }
+            const result = await promoteSavedSecretSourceResourceInContext(context, mode, { scope,
+                expectedSettingsVersion: before.source.version, credential: { ...credential, source: credential.source },
+                accountGrants: [], teamGrants: [], groupGrants: [] }, capturedControlRevision, approval);
+            if (!result.ok) {
+                pending = { status: 'pending', reason: result.reason === 'changed' || result.reason === 'outcome_unknown'
+                    ? result.reason : 'source-unavailable' };
+                break;
+            }
+            capturedControlRevision ??= result.profileTransferRevision;
+            if (!advanceRetainedReceiptBaselines(result.previousSource, result.acknowledgedSource)) return { status: 'pending', reason: 'changed' };
+            promotedReferences.push({ source: credential.source, resourceRef: result.resourceRef, revision: 1 });
+            transfers.push({ source: credential.source, resourceId: deriveSavedSecretImportResourceIdV1({
+                accountId: scope.accountId, source: credential.source }), expectedRevision: 1 });
+        }
         const beforeHistory = await readProfileTransferSourceInContext(context);
         if (beforeHistory.mode !== mode) return { status: 'pending', reason: 'source-unavailable' };
+        if (!matchesSourceFrontier(beforeHistory)) return { status: 'pending', reason: 'changed' };
+        const chatCredential = readSavedSecretTransferSourceV1(beforeHistory.source.raw).legacyChatCredential;
+        if (chatCredential) {
+            let chatBaseline = beforeHistory;
+            const chatSource = chatCredential.source;
+            const resourceId = chatSource.kind === 'personal-saved-secret'
+                ? deriveSavedSecretImportResourceIdV1({ accountId: scope.accountId, source: chatSource })
+                : (() => {
+                    const reference = parseSavedSecretRefV1(chatSource.resourceRef);
+                    return reference.kind === 'shared_resource' ? reference.resourceId : null;
+                })();
+            if (!resourceId) return { status: 'pending', reason: 'source-unavailable' };
+            const resourceRef = formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: resourceId });
+            let catalog = await readSavedSecretCatalogInContext(context);
+            context.assertCurrent();
+            if (!catalog.ok) return { status: 'pending', reason: 'source-unavailable' };
+            let resource = catalog.resources.find((candidate): candidate is HealthySavedSecretResourceMaterialV1 =>
+                isHealthySavedSecretResourceMaterialV1(candidate) && candidate.entry.ref === resourceRef);
+            if (!resource && chatSource.kind === 'personal-saved-secret') {
+                const result = await promoteSavedSecretSourceResourceInContext(context, mode, {
+                    scope, expectedSettingsVersion: chatBaseline.source.version,
+                    credential: { ...chatCredential, source: chatSource }, accountGrants: [], teamGrants: [], groupGrants: [],
+                }, capturedControlRevision, approval);
+                if (!result.ok) return { status: 'pending', reason: result.reason === 'changed' || result.reason === 'outcome_unknown'
+                    ? result.reason : 'source-unavailable' };
+                if (!advanceRetainedReceiptBaselines(result.previousSource, result.acknowledgedSource)) return { status: 'pending', reason: 'changed' };
+                promotedReferences.push({ source: chatSource, resourceRef: result.resourceRef, revision: 1 });
+                chatBaseline = result.acknowledgedSource;
+                if (chatBaseline.mode !== mode || chatBaseline.source.version !== result.settingsVersion
+                    || !sameStrictJsonValue(readSavedSecretTransferSourceV1(chatBaseline.source.raw).legacyChatCredential, chatCredential)) {
+                    return { status: 'pending', reason: 'changed' };
+                }
+                catalog = await readSavedSecretCatalogInContext(context);
+                if (!catalog.ok) return { status: 'pending', reason: 'source-unavailable' };
+                resource = catalog.resources.find((candidate): candidate is HealthySavedSecretResourceMaterialV1 =>
+                    isHealthySavedSecretResourceMaterialV1(candidate) && candidate.entry.ref === resourceRef);
+            }
+            if (!resource) return { status: 'pending', reason: 'source-unavailable' };
+            const verified = await verifyRetainedLegacyCredentialReferenceInContext(context, scope, chatBaseline, chatCredential, resource);
+            if (!verified.ok) return { status: 'pending', reason: verified.reason };
+            verifiedReferences.push(verified.reference);
+            retainedReceiptProofs.push({ baseline: chatBaseline, credential: chatCredential, resource });
+            // This retained source still belongs to Provider import. A verified
+            // existing resource is not permission to normalize or remove it.
+            if (transfers.length === 0) return pending ?? (retainedProofsNeedRevalidation || sourceFrontier
+                ? await verifyRetainedReceipts() : { status: 'complete', verifiedReferences });
+        }
+        if (transfers.length === 0 && verifiedReferences.length > 0) return pending ?? (retainedProofsNeedRevalidation || sourceFrontier
+            ? await verifyRetainedReceipts() : { status: 'complete', verifiedReferences });
         const catalog = await readSavedSecretCatalogInContext(context);
         if (!catalog.ok) return pending ?? { status: 'pending', reason: 'history-pending' };
         const { encryption } = await context.resolveAccountEncryption();
@@ -1123,8 +1567,13 @@ export async function importLegacySavedSecretsInContext(context: ProfileAccountC
         const cleanup = await normalizeTransferredSavedSecretHistoryInContext(context, scope, transfers, capturedControlRevision,
             { accountId: scope.accountId, source: beforeHistory.source, resources });
         if (cleanup.status !== 'complete') pending ??= { status: 'pending', reason: 'history-pending' };
-        return pending ?? { status: 'complete' };
-    } catch {
+        if (pending) return pending;
+        // History is an asynchronous boundary, not authority to keep using an
+        // earlier resource/source observation. Only retained receipt flows need
+        // this final read-only proof; ordinary source transfers stay unchanged.
+        return await verifyRetainedReceipts();
+    } catch (error) {
+        if (isTeamActionApprovalPendingError(error)) throw error;
         // Previously acknowledged imports remain committed. Partial source or
         // history cleanup is independent of other valid resource material.
         return pending ?? { status: 'pending', reason: transfers.length || historyStarted ? 'history-pending' : 'source-unavailable' };
@@ -1326,12 +1775,18 @@ export async function deleteSavedSecretResource(params: Readonly<{
                 },
                 parse: value => SharedSavedSecretDeleteOutputV1Schema.parse(value),
                 ...(params.confirmedByPresentUser ? { approval: 'surface_confirmed' } : {}),
-                ...(params.onApprovalSucceeded ? { onApprovalSucceeded: params.onApprovalSucceeded } : {}),
+                onApprovalSucceeded: async receipt => {
+                    await applySavedSecretCatalogDeletion(params.scope, receipt.resourceId);
+                    await params.onApprovalSucceeded?.(receipt);
+                },
                 ...(params.onApprovalFailed ? { onApprovalFailed: (code, failure) => params.onApprovalFailed?.(
                     code, savedSecretDeleteFailure(homeDomainFailureFromActionFailure(failure ?? { errorCode: code })),
                 ) } : {}),
             });
-            if (outcome.kind === 'succeeded') return { ok: true };
+            if (outcome.kind === 'succeeded') {
+                await applySavedSecretCatalogDeletion(params.scope, outcome.value.resourceId);
+                return { ok: true };
+            }
             const failure = savedSecretDeleteFailure(outcome.failure);
             if (failure.reason === 'managed_resources_review_required') context.assertCurrent();
             return failure;

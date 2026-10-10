@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { HAPPIER_WORK_PANE_METRICS, HappierWorkRowShell } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_PAGE_METRICS, HAPPIER_WORK_PANE_METRICS, HappierWorkRowShell, useHappierPageSection, type HappierWorkRowShellProps } from '@happier-dev/plugin-ui/presentation';
 import type { SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
 
 import { SessionAgentActivitySummary } from '@/components/sessions/agents/presentation/SessionAgentActivitySummary';
@@ -11,10 +11,14 @@ import { useWorkTheme } from '@/components/work/map/WorkMapView';
 import { WorkflowFlowView } from '@/components/workflows/flow/WorkflowFlowView';
 import { projectObservedWorkflowFlow } from '@/components/workflows/flow/workflowFlowProjection';
 import { t } from '@/text';
+import { ContextMenu, type ContextMenuItem } from '@/components/ui/forms/dropdown/ContextMenu';
+import { useActionOperationStopControl } from '@/components/inbox/actionOperations/useActionOperationStopControl';
+import { useServerScopedMachine } from '@/sync/store/hooks';
+import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 
 import { useSessionWorkSources } from './sessionWorkSources';
-import type { WorkItem } from './workProjection';
-import { SessionWorkNotifications } from './SessionWorkNotifications';
+import { resolveWorkItemContextActions, type WorkItem } from './workProjection';
+import { describeWorkKind, WORKER_KIND_GLYPHS } from './workerKindGlyphs';
 
 /**
  * One Work row: the item's mark, its title, one quiet line of facts and its state word at the trailing
@@ -26,7 +30,7 @@ import { SessionWorkNotifications } from './SessionWorkNotifications';
  */
 
 /** A row's mark column (`HappierWorkSummary`: 30pt mark + 10pt gap): its text starts here. */
-const ROW_TEXT_INSET = HAPPIER_WORK_PANE_METRICS.rowInsetPx + 30 + 10;
+export const WORK_ROW_TEXT_INSET = HAPPIER_WORK_PANE_METRICS.rowInsetPx + 30 + 10;
 
 const stylesheet = StyleSheet.create((theme) => ({
     // The live mini-map (lab `.uws-mini`): an inset panel under the row, on the row's text edge — the
@@ -34,7 +38,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     miniMap: {
         marginTop: 2,
         marginBottom: 8,
-        marginLeft: ROW_TEXT_INSET,
+        marginLeft: WORK_ROW_TEXT_INSET,
         marginRight: HAPPIER_WORK_PANE_METRICS.rowInsetPx,
         padding: 10,
         borderRadius: theme.borderRadius.lg,
@@ -116,7 +120,7 @@ export function useWorkScrollViewport(scrollRef: React.RefObject<Readonly<{ getN
 }
 
 /** Whether the row `target` wraps is on screen in its Work pane; always true without a scroll owner. */
-function useWorkRowOnScreen(target: React.RefObject<View | null>): boolean {
+export function useWorkRowOnScreen(target: React.RefObject<View | null>): boolean {
     const viewport = React.useContext(WorkViewportContext);
     const [visible, setVisible] = React.useState(viewport === null);
     React.useEffect(() => {
@@ -145,9 +149,10 @@ function phaseFor(item: WorkItem): SessionAgentActivityPresentation['phase'] {
 function iconFor(item: WorkItem): SessionAgentActivityPresentation['iconName'] {
     switch (item.kind) {
         case 'workflow_run':
-            return 'stack-simple';
+            return WORKER_KIND_GLYPHS.workflow_run;
         case 'background_run':
-            return 'play-circle';
+        case 'project_command':
+            return WORKER_KIND_GLYPHS.execution_run;
         case 'session':
         case 'agent':
             return 'stack-simple';
@@ -159,16 +164,9 @@ function iconFor(item: WorkItem): SessionAgentActivityPresentation['iconName'] {
  * groups by state, so the kind is no longer a section title. Background runs and in-session agents
  * draw through their roster row, whose presenter already leads with their kind.
  */
-const KIND_LABEL_KEYS = {
-    session: 'sessionWork.kinds.session',
-    workflow_run: 'sessionWork.kinds.workflowRun',
-    background_run: null,
-    agent: null,
-} as const satisfies Record<WorkItem['kind'], string | null>;
-
 function readFacts(item: WorkItem): readonly string[] {
-    const kindKey = KIND_LABEL_KEYS[item.kind];
-    return kindKey ? [t(kindKey), ...item.facts] : item.facts;
+    return item.kind === 'session' || item.kind === 'workflow_run'
+        ? [describeWorkKind(item.kind), ...item.facts] : item.facts;
 }
 
 export function presentWorkItem(item: WorkItem): SessionAgentActivityPresentation {
@@ -204,6 +202,8 @@ export const WorkRowShell = React.memo((props: Readonly<{
     selected?: boolean;
     level?: number;
     onPress: () => void;
+    onLongPress?: HappierWorkRowShellProps['onLongPress'];
+    onContextMenu?: HappierWorkRowShellProps['onContextMenu'];
     children: React.ReactNode;
 }>) => {
     const theme = useWorkTheme();
@@ -214,6 +214,8 @@ export const WorkRowShell = React.memo((props: Readonly<{
             selected={props.selected}
             level={props.level}
             onPress={props.onPress}
+            onLongPress={props.onLongPress}
+            onContextMenu={props.onContextMenu}
             theme={theme}
         >
             {props.children}
@@ -221,17 +223,114 @@ export const WorkRowShell = React.memo((props: Readonly<{
     );
 });
 
-export const WorkItemRow = React.memo((props: Readonly<{
+type WorkItemRowProps = Readonly<{
     item: WorkItem;
+    /**
+     * Where the title's distinguishing end starts when sibling rows share its first words
+     * (`resolveWorkTitleTailStarts`): that end stays whole and the shared start truncates.
+     */
+    titleTailStart?: number;
     selected?: boolean;
     onOpen: (item: WorkItem) => void;
+    onShowInTranscript?: (item: WorkItem) => void;
+}>;
+
+export const WorkItemRow = React.memo((props: WorkItemRowProps) => (
+    props.item.open.kind === 'action_operation' && props.item.operation
+        ? <OperationWorkItemRow {...props} />
+        : <WorkItemRowBody {...props} />
+));
+
+// The mounted controller retains deferred Stop custody while its row remains present. The menu is a
+// sibling of the press owner: portal events must never also open the operation's detail.
+const OperationWorkItemRow = React.memo((props: WorkItemRowProps) => {
+    const { item } = props;
+    const actions = resolveWorkItemContextActions(item);
+    const stop = useActionOperationStopControl(item.operation);
+    const anchorRef = React.useRef<View>(null);
+    const [menuOpen, setMenuOpen] = React.useState(false);
+    const openMenu = React.useCallback(() => setMenuOpen(true), []);
+    const onContextMenu = React.useCallback((event: unknown) => {
+        if (event && typeof event === 'object') {
+            if ('preventDefault' in event && typeof event.preventDefault === 'function') event.preventDefault();
+            if ('stopPropagation' in event && typeof event.stopPropagation === 'function') event.stopPropagation();
+        }
+        openMenu();
+    }, [openMenu]);
+    const canShowTranscript = actions.transcript !== null && Boolean(props.onShowInTranscript);
+    const canStop = actions.stop !== null;
+    const items = React.useMemo(() => {
+        const result: ContextMenuItem[] = [
+            { id: 'open', testID: `session-work-open:${item.key}`, title: t('common.open') },
+        ];
+        if (canShowTranscript) {
+            result.push({ id: 'transcript', testID: `session-work-transcript:${item.key}`, title: t('sessionWork.actions.showInTranscript') });
+        }
+        if (canStop) {
+            result.push({
+                id: 'stop', testID: `session-work-stop:${item.key}`, title: t('inbox.actionOperations.cancel.stop'),
+                disabled: stop.pending || stop.stopRequested,
+                subtitle: stop.feedback === 'requested' ? t('inbox.actionOperations.cancel.requested')
+                    : stop.feedback === 'failed' ? t('inbox.actionOperations.cancel.failed') : undefined,
+            });
+        }
+        return result;
+    }, [canShowTranscript, canStop, item.key, stop.feedback, stop.pending, stop.stopRequested]);
+    const select = React.useCallback((id: string) => {
+        setMenuOpen(false);
+        if (id === 'open') props.onOpen(item);
+        else if (id === 'transcript' && canShowTranscript) props.onShowInTranscript?.(item);
+        else if (id === 'stop' && canStop && !stop.pending && !stop.stopRequested) stop.requestStop();
+    }, [canShowTranscript, canStop, item, props.onOpen, props.onShowInTranscript, stop.pending, stop.stopRequested, stop.requestStop]);
+    const facts = useProjectCommandWorkFacts(item);
+    return (
+        <>
+            <WorkItemRowBody {...props} facts={facts} anchorRef={anchorRef} onLongPress={openMenu} onContextMenu={onContextMenu} />
+            <ContextMenu
+                testID={`session-work-actions:${item.key}`}
+                anchorRef={anchorRef}
+                open={menuOpen}
+                onOpenChange={setMenuOpen}
+                items={items}
+                onSelect={select}
+            />
+        </>
+    );
+});
+
+/**
+ * A finite Project command reads as what it is and where it actually runs ("Script · hz-build-1",
+ * lab `s-agent` CARD): the admitted target Machine's name, never the checkout path or custody Machine.
+ */
+function useProjectCommandWorkFacts(item: WorkItem): readonly string[] | undefined {
+    const attachment = item.kind === 'project_command' && item.operation?.snapshot.domainRef?.kind === 'projectCommand'
+        ? item.operation.snapshot.domainRef : null;
+    const machine = useServerScopedMachine(attachment?.serverId ?? null, attachment?.machineId ?? '');
+    return React.useMemo(() => {
+        if (!attachment) return undefined;
+        const kind = attachment.purpose === 'script' ? t('projects.scripts.kindScript')
+            : attachment.purpose === 'exec' ? t('projects.scripts.kindCommand')
+                : attachment.purpose === 'setup' ? t('projects.scripts.setup.title') : t('projects.scripts.kindTeardown');
+        return [kind, machine ? getMachineDisplayName(machine) : attachment.machineId];
+    }, [attachment, machine]);
+}
+
+const WorkItemRowBody = React.memo((props: WorkItemRowProps & Readonly<{
+    facts?: readonly string[];
+    anchorRef?: React.RefObject<View | null>;
+    onLongPress?: HappierWorkRowShellProps['onLongPress'];
+    onContextMenu?: HappierWorkRowShellProps['onContextMenu'];
 }>) => {
     const { item, onOpen } = props;
-    const presentation = React.useMemo(() => presentWorkItem(item), [item]);
+    const facts = props.facts;
+    const presentation = React.useMemo(
+        () => (facts ? { ...presentWorkItem(item), facts } : presentWorkItem(item)),
+        [facts, item],
+    );
     const onPress = React.useCallback(() => onOpen(item), [item, onOpen]);
-    const rowRef = React.useRef<View>(null);
+    const localRowRef = React.useRef<View>(null);
+    const rowRef = props.anchorRef ?? localRowRef;
     const liveMapRunId = readLiveMapRunId(item);
-    const sources = useSessionWorkSources();
 
     // One topology for every row, so a run that starts or stops working keeps its row mounted.
     return (
@@ -242,15 +341,16 @@ export const WorkItemRow = React.memo((props: Readonly<{
                 selected={props.selected}
                 level={item.level}
                 onPress={onPress}
+                onLongPress={props.onLongPress}
+                onContextMenu={props.onContextMenu}
             >
                 <SessionAgentActivitySummary
                     testID={`session-work-summary:${item.key}`}
                     presentation={presentation}
+                    titleTailStart={props.titleTailStart}
                     trailingState={{ word: item.status.word, tone: item.status.tone }}
                 />
             </WorkRowShell>
-            {item.open.kind === 'session' && item.status.bucket !== 'finished'
-                ? <SessionWorkNotifications sessionId={item.open.sessionId} serverId={sources?.serverId} /> : null}
             {liveMapRunId === null ? null : (
                 <WorkRunMiniMapSlot rowRef={rowRef} runId={liveMapRunId} itemKey={item.key} onOpen={onPress} />
             )}
@@ -328,16 +428,20 @@ const ObservedRunMiniMap = React.memo(function ObservedRunMiniMap(props: Readonl
     );
 });
 
-const ManagedRunMiniMap = React.memo(function ManagedRunMiniMap(props: Readonly<{
+export const ManagedRunMiniMap = React.memo(function ManagedRunMiniMap(props: Readonly<{
     runId: string;
     serverId: string | null;
     testIDPrefix: string;
     onOpen: () => void;
 }>) {
+    const pageSheet = useHappierPageSection();
     const flow = useSessionManagedWorkflowRunFlow(props.runId, props.serverId);
     if (flow === null) return null;
     return (
-        <View style={stylesheet.miniMap}>
+        <View style={[stylesheet.miniMap, pageSheet ? {
+            marginLeft: pageSheet.rowInsetPx + HAPPIER_PAGE_METRICS.rowLeadingColumnPx + HAPPIER_PAGE_METRICS.rowLeadingGapPx,
+            marginRight: pageSheet.rowInsetPx,
+        } : null]}>
             <WorkflowFlowView
                 projection={flow.projection}
                 runStates={flow.runStates}

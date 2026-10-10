@@ -19,10 +19,6 @@ import { useServicesOpenInBrowser } from '@/components/sessions/localServices/us
 import { useProjectSurfaceActions } from '@/components/projects/detail/useProjectSurfaceActions';
 import { useProjectSurfaceController } from '@/components/projects/detail/useProjectSurfaceController';
 import { useProjectRouteSurfaceSync } from '@/components/projects/detail/useProjectRouteSurfaceSync';
-import { ProjectAsideWidgets } from '@/components/widgets/area/ProjectWidgetArea';
-import { useWorkspaceRefs } from '@/sync/domains/state/storage';
-import { resolveProjectCheckoutWorkspaceRef } from '@/sync/domains/workspaces/workspaceRefs';
-import { resolveWorkspaceRefDisplayName } from '@/components/projects/resolveWorkspaceRefDisplayName';
 import type { ProjectMobileSurface } from './projectCockpitState';
 
 type ProjectCockpitShellProps = Readonly<{
@@ -30,16 +26,13 @@ type ProjectCockpitShellProps = Readonly<{
     scopeId: string;
     activeRootPath: string;
     activeWorktreeId?: string | null;
-    dashboardId?: string;
+    layoutId?: string;
     surface: ProjectMobileSurface;
     isFocused: boolean;
     onSelectRootPath: (path: string) => void;
 }>;
 
 export const ProjectCockpitShell = React.memo((props: ProjectCockpitShellProps) => {
-    const refs = useWorkspaceRefs();
-    const activeCheckout = React.useMemo(() => resolveProjectCheckoutWorkspaceRef(refs, props.workspaceRef, props.activeRootPath) ?? undefined,
-        [props.activeRootPath, props.workspaceRef, refs]);
     const { navigateToSurface, selectDashboard, checkoutWorkspace } = useProjectSurfaceController({
         scopeId: props.scopeId,
         workspaceRef: props.workspaceRef,
@@ -94,10 +87,7 @@ export const ProjectCockpitShell = React.memo((props: ProjectCockpitShellProps) 
     });
 
     if (props.surface === 'code' || props.surface === 'browse') {
-        // A Files companion remains a focused browser. Only the canonical Code page hosts its widgets.
-        const aside = props.surface === 'code' ? <ProjectAsideWidgets serverId={props.workspaceRef.serverId}
-            projectName={resolveWorkspaceRefDisplayName(props.workspaceRef)} projectRef={props.workspaceRef}
-            activeCheckout={activeCheckout} dashboardId={props.dashboardId} testID="project-code-aside" /> : null;
+        // Code is one wide column (plan 13, lab p-code BROWSE): widgets live on Overview only.
         const browser = <React.Suspense fallback={<PaneLoadingFallback />}>
             <ProjectBrowseFilesSurface
                 workspaceRef={props.workspaceRef}
@@ -106,7 +96,6 @@ export const ProjectCockpitShell = React.memo((props: ProjectCockpitShellProps) 
                 scope={workspaceScope}
                 onOpenFile={openFileInDetails}
                 onOpenFilePinned={openFileInDetailsPinned}
-                aside={aside}
             />
         </React.Suspense>;
         return (
@@ -185,13 +174,13 @@ export const ProjectCockpitShell = React.memo((props: ProjectCockpitShellProps) 
     }
 
     if (props.surface === 'overview') {
-        return <ProjectOverviewWidgets workspaceRef={props.workspaceRef} activeRootPath={props.activeRootPath} dashboardId={props.dashboardId}
+        return <ProjectOverviewWidgets workspaceRef={props.workspaceRef} activeRootPath={props.activeRootPath} layoutId={props.layoutId}
             onSelectDashboard={selectDashboard} />;
     }
 
     const openServices = () => navigateToSurface('services');
     if (props.surface === 'scripts') {
-        return checkoutWorkspace ? <ProjectScriptsBody workspace={checkoutWorkspace} testID="project-scripts-screen" onOpenServices={openServices} />
+        return checkoutWorkspace ? <ProjectScriptsBody workspace={checkoutWorkspace} testID="project-scripts-screen" onOpenServices={openServices} outputScopeId={props.scopeId} />
             : <SurfaceStateCard testID="project-scripts-unavailable" kind="unavailable" title={t('common.unavailable')} />;
     }
 

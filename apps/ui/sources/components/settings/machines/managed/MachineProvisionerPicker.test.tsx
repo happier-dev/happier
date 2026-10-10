@@ -7,7 +7,7 @@ import {
   installHomeGovernanceBoundaries,
   waitForHomeGovernance,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
@@ -33,6 +33,19 @@ function renderPicker(element: React.ReactElement) {
 }
 
 describe('provisioner picker demand', () => {
+  it('identifies New preset before a Home is selected, without demanding a provisioner catalog', async () => {
+    const homeId = await harness.addHome({ name: 'Build', serverUrl: 'https://preset-build.example', serverIdentityId: 'srv_preset_build', accountId: 'owner', currentAccount: true });
+    const { NewMachinePresetRoute } = await import('@/app/(app)/settings/machines/presets/new');
+    const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+    const { t } = await import('@/text');
+    const screen = await renderScreen(<DestinationInstanceHost tabId="preset-new" ref={{ kind: 'settings', params: { pageId: 'machines/presets/new' } }}
+      pathname="/settings/machines/presets/new" focused visible navigation={{ push: () => {}, replace: () => {}, back: () => {} }}>
+      <NewMachinePresetRoute />
+    </DestinationInstanceHost>);
+    expect(screen.root.findAll(node => node.props.accessibilityRole === 'header')
+      .some(node => node.props.children === t('machinePresets.newPreset'))).toBe(true);
+    expect(screen.findByTestId(`managed-picker.home:${homeId}`)).not.toBeNull();
+  });
   it.each(['cloud', 'unknown'] as const)(
     'retains native presentation and check vocabulary without acquiring (%s billing)',
     async (location) => {
@@ -274,7 +287,7 @@ describe('provisioner picker demand', () => {
     ).toBe(false);
     await screen.unmount();
   });
-  it('names an offline controller under its chip instead of blaming the provisioner, and offers setup when nothing can manage', async () => {
+  it.each(['profile', 'portable'] as const)('names an offline controller under its chip for a %s Home identifier, and offers setup when nothing can manage', async (identifierKind) => {
     const serverId = await harness.addHome({
       name: 'Build',
       serverUrl: 'https://build.example',
@@ -282,10 +295,11 @@ describe('provisioner picker demand', () => {
       accountId: 'owner',
       currentAccount: true,
     });
+    const scopeId = identifierKind === 'portable' ? 'srv_build' : serverId;
     const { storage } = await import('@/sync/domains/state/storage');
     storage.setState({
       machineListByServerId: {
-        [serverId]: [
+        srv_build: [
           createMachineFixture({
             id: 'asleep',
             installationId: 'installation',
@@ -295,25 +309,36 @@ describe('provisioner picker demand', () => {
           }),
         ],
       },
-      machineListStatusByServerId: { [serverId]: 'idle' },
+      machineListStatusByServerId: { srv_build: 'loading' },
     });
     const { MachineProvisionerPicker } =
       await import('./MachineProvisionerPicker');
+    const { useManagedControllerScope } = await import('./useManagedControllerScope');
+    const { useMachineListStatusForServer } = await import('@/sync/domains/state/storage');
+    const controllerScope = await renderHook(() => ({
+      scope: useManagedControllerScope({ serverId: scopeId, testIDPrefix: 'scope-probe' }),
+      status: useMachineListStatusForServer(scopeId),
+    }));
+    expect(controllerScope.getCurrent().status).toBe('loading');
+    expect(controllerScope.getCurrent().scope.controller).toEqual({ machineId: 'asleep', installationId: 'installation' });
+    await act(async () => { storage.setState({ machineListStatusByServerId: { srv_build: 'idle' } }); });
+    expect(controllerScope.getCurrent().status).toBe('idle');
+    await controllerScope.unmount();
     const screen = await renderPicker(
-      <MachineProvisionerPicker serverId={serverId} />,
-    );
-    await waitForHomeGovernance(() =>
-      expect(screen.findByTestId('managed-picker.offline')).not.toBeNull(),
+      <MachineProvisionerPicker serverId={scopeId} />,
     );
     expect(
       screen.findByTestId('managed-picker.controller.chip'),
     ).not.toBeNull();
+    await waitForHomeGovernance(() =>
+      expect(screen.findByTestId('managed-picker.offline')).not.toBeNull(),
+    );
     expect(screen.findByTestId('managed-picker.unavailable')).toBeNull();
     await screen.unmount();
 
     storage.setState({
       machineListByServerId: {
-        [serverId]: [
+        srv_build: [
           createMachineFixture({ id: 'plain', installationId: null }),
         ],
       },
@@ -321,7 +346,7 @@ describe('provisioner picker demand', () => {
     const onSetUpThisComputer = vi.fn();
     const empty = await renderPicker(
       <MachineProvisionerPicker
-        serverId={serverId}
+        serverId={scopeId}
         onSetUpThisComputer={onSetUpThisComputer}
       />,
     );

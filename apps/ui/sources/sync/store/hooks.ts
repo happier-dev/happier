@@ -128,6 +128,7 @@ import {
   areServerProfileIdentifiersEquivalent,
   resolveServerProfileScopeIdForIdentifier,
 } from '../domains/server/serverProfiles';
+import { resolveServerScopedMachineInventoryKeys } from '../domains/machines/resolveServerScopedMachines';
 import {
   readSessionListRowForServerId,
   readSessionListRowsForServerId,
@@ -2378,7 +2379,14 @@ export function useMachineListByServerId(): Record<string, Machine[] | null> {
  * filtering and source-array identity for unchanged inventory.
  */
 export function useMachineListForServer(serverId: string): Machine[] | null {
-  const machines = getStorage()((state) => state.machineListByServerId?.[serverId] ?? null);
+  const machines = getStorage()((state) => {
+    const inventory = state.machineListByServerId ?? EMPTY_MACHINE_LIST_BY_SERVER_ID;
+    for (const key of resolveServerScopedMachineInventoryKeys({ serverId, machineListByServerId: inventory })) {
+      const list = inventory[key];
+      if (list) return list;
+    }
+    return null;
+  });
   return React.useMemo(() => selectVisibleMachines(machines), [machines]);
 }
 
@@ -2411,7 +2419,14 @@ export function useIsActiveMachineListSettled(): boolean {
 }
 
 export function useMachineListStatusForServer(serverId: string): 'idle' | 'loading' | 'signedOut' | 'error' {
-  return getStorage()((state) => state.machineListStatusByServerId?.[serverId] ?? 'idle');
+  return getStorage()((state) => {
+    const inventory = state.machineListStatusByServerId ?? EMPTY_MACHINE_LIST_STATUS_BY_SERVER_ID;
+    for (const key of resolveServerScopedMachineInventoryKeys({ serverId, machineListByServerId: inventory })) {
+      const status = inventory[key];
+      if (status) return status;
+    }
+    return 'idle';
+  });
 }
 
 const EMPTY_MACHINE_POOL_LIST_BY_SERVER_ID: Record<string, MachinePoolViewV1[] | null> = {};

@@ -86,21 +86,49 @@ export function providerConnectionSourceLabel(source: Omit<ProviderRouteSource, 
  * names what still applies ("Now via …") and flags the change; without applied evidence there is no
  * route to name, so it returns `null` and the caller keeps its incumbent label.
  */
+/**
+ * The model picker's heading for the Agent's own models: the account or pool it signs in with.
+ * Null while it uses only its own sign-in (or that is unknown), where the picker keeps "Built-in".
+ */
+export function presentNativeRouteSourceLabel(
+    native: Readonly<{ label: string; authSource: 'native' | 'connected' | 'mixed' | 'unknown' }>,
+): string | null {
+    return native.authSource === 'connected' || native.authSource === 'mixed' ? native.label : null;
+}
+
+function routeSourceLabel(route: SessionRoute, nativeLabel: string): string | null {
+    switch (route.kind) {
+        case 'unknown': return null;
+        case 'native': return nativeLabel;
+        case 'provider':
+        case 'team': return route.sourceLabel;
+    }
+}
+
+/**
+ * The popover's Now / Next lines while a requested route waits on a restart (RT3): each names its
+ * source and model. Null unless both ends are known, so the block never states a guessed route.
+ */
+export function presentSessionRouteChange(
+    presentation: Readonly<{ applied: SessionRoute; pending: SessionRoute | null }>,
+    native: Readonly<{ label: string }>,
+): Readonly<{ now: string; next: string; nowSource: string }> | null {
+    const pending = presentation.pending;
+    if (!pending) return null;
+    const nowSource = routeSourceLabel(presentation.applied, native.label);
+    const nextSource = routeSourceLabel(pending, native.label);
+    if (!nowSource || !nextSource || pending.kind === 'unknown' || presentation.applied.kind === 'unknown') return null;
+    const line = (source: string, modelId: string | null) => modelId ? `${source} · ${modelId}` : source;
+    return { now: line(nowSource, presentation.applied.modelId), next: line(nextSource, pending.modelId), nowSource };
+}
+
 export function presentSessionRouteChip(
     presentation: Readonly<{ applied: SessionRoute; pending: SessionRoute | null }>,
     native: Readonly<{ label: string; authSource: 'native' | 'connected' | 'mixed' | 'unknown' }>,
 ): Readonly<{ label: string; changePending: boolean }> | null {
-    const sourceOf = (route: SessionRoute): string | null => {
-        switch (route.kind) {
-            case 'unknown': return null;
-            case 'native': return native.label;
-            case 'provider':
-            case 'team': return route.sourceLabel;
-        }
-    };
     const applied = presentation.applied;
     if (applied.kind === 'native' && native.authSource === 'unknown') return null;
-    const source = sourceOf(applied);
+    const source = routeSourceLabel(applied, native.label);
     if (!source) return null;
     if (presentation.pending) return { label: t('connectedServices.authChip.nowVia', { source }), changePending: true };
     return {

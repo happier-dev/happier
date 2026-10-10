@@ -1,20 +1,26 @@
 import * as React from 'react';
+import { useUnistyles } from 'react-native-unistyles';
 
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
+import { arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionOriginRef } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 
 import type {
     ServerScopedMachineGroup,
     ServerScopedMachinePresentation,
 } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import { ServerScopedMachineSelector } from '@/components/sessions/new/components/ServerScopedMachineSelector';
+import { NewSessionMachineSelectionContent } from '@/components/sessions/new/components/NewSessionMachineSelectionContent';
+import { SelectionListFilterChip } from '@/components/ui/selectionList';
+import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
 import { resolveMachineAdministrationTargetLabel, type MachineAdministrationCandidateV1 } from '@/sync/domains/machines/administration/targetSelection';
 import {
-    composePluginMachineExecutionOriginV1,
+    getPluginExecutionOriginCandidateOrigin,
+    getPluginExecutionOriginCandidateVersion,
     isPluginMachineExecutionOriginCandidateSelectable,
-    type PluginMachineExecutionOriginCandidateV1,
+    type PluginExecutionOriginCandidateV1,
     type PluginMachineOriginRejectionReasonV1,
 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import {
@@ -23,28 +29,23 @@ import {
 } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
 
 type PresentedPluginOrigin = ServerScopedMachinePresentation & Readonly<{
-    candidate: PluginMachineExecutionOriginCandidateV1;
+    candidate: PluginExecutionOriginCandidateV1;
     origin: PluginMachineExecutionOriginV1;
 }>;
 
 function exactOriginKey(origin: PluginMachineExecutionOriginV1): string {
-    return [
-        origin.serverIdentityId,
-        origin.materializationRef.machineId,
-        origin.materializationRef.materializationId,
-        origin.materializationRef.pluginId,
-    ].map((part) => `${part.length}:${part}`).join('|');
+    return JSON.stringify(origin);
 }
 
 function exactOriginsEqual(
     left: PluginMachineExecutionOriginV1 | null,
     right: PluginMachineExecutionOriginV1,
 ): boolean {
-    return left !== null && exactOriginKey(left) === exactOriginKey(right);
+    return left !== null && arePluginMachineExecutionOriginsEqual(left, right);
 }
 
-function resolveCandidatePresentationDetail(candidate: PluginMachineExecutionOriginCandidateV1): string {
-    const version = `${t('common.version')} ${candidate.materialization.version}`;
+function resolveCandidatePresentationDetail(candidate: PluginExecutionOriginCandidateV1): string {
+    const version = `${t('common.version')} ${getPluginExecutionOriginCandidateVersion(candidate)}`;
     if (candidate.releaseContent === 'conflict') {
         return `${t('settingsPlugins.executionOriginReleaseContentConflict')} · ${version}`;
     }
@@ -53,7 +54,7 @@ function resolveCandidatePresentationDetail(candidate: PluginMachineExecutionOri
         : `${originReasonDetail(candidate.validation.kind === 'rejected' ? candidate.validation.reason : 'unknown')} · ${version}`;
 }
 
-function originReasonDetail(reason: PluginMachineOriginRejectionReasonV1 | 'no_materialization' | 'included_with_happier' | 'different_versions'): string {
+function originReasonDetail(reason: PluginMachineOriginRejectionReasonV1 | 'no_materialization' | 'different_versions'): string {
     switch (reason) {
         case 'content_conflict': return t('settingsPlugins.executionOriginReleaseContentConflict');
         case 'disabled': return t('settingsPlugins.machineMatrix.state.disabled');
@@ -67,38 +68,38 @@ function originReasonDetail(reason: PluginMachineOriginRejectionReasonV1 | 'no_m
         case 'revoked': return t('settingsPlugins.targetSelection.revoked');
         case 'plugin_mismatch': return t('settingsPlugins.targetSelection.pluginMismatch');
         case 'no_materialization': return t('settingsPlugins.targetSelection.noMaterialization');
-        case 'included_with_happier': return t('settingsPlugins.surfaces.runsEverywhere');
         case 'different_versions': return t('settingsPlugins.targetSelection.differentVersions');
         case 'unknown': return t('settingsPlugins.targetSelection.unknown');
     }
 }
 
 function buildOriginGroups(
-    candidates: readonly PluginMachineExecutionOriginCandidateV1[],
+    candidates: readonly PluginExecutionOriginCandidateV1[],
     machineCandidates: readonly MachineAdministrationCandidateV1[],
 ): readonly ServerScopedMachineGroup<PresentedPluginOrigin>[] {
     const groups = new Map<string, PresentedPluginOrigin[]>();
     for (const candidate of candidates) {
-        const materialization = candidate.materialization;
-        const origin = composePluginMachineExecutionOriginV1(materialization);
-        const labels = resolveMachineAdministrationTargetLabel({ target: materialization, candidates: machineCandidates })!;
-        const rows = groups.get(materialization.serverIdentityId) ?? [];
+        const origin = getPluginExecutionOriginCandidateOrigin(candidate);
+        const ref = getPluginMachineExecutionOriginRef(origin);
+        const labels = resolveMachineAdministrationTargetLabel({ target: { serverIdentityId: origin.serverIdentityId, machineId: ref.machineId }, candidates: machineCandidates })!;
+        const observedAt = 'materialization' in candidate ? candidate.materialization.observedAt : 0;
+        const rows = groups.get(origin.serverIdentityId) ?? [];
         rows.push(Object.freeze({
-            id: materialization.machineId,
-            serverId: materialization.serverIdentityId,
+            id: ref.machineId,
+            serverId: origin.serverIdentityId,
             serverName: labels.server,
-            updatedAt: materialization.observedAt,
+            updatedAt: observedAt,
             active: isPluginMachineExecutionOriginCandidateSelectable(candidate),
-            activeAt: materialization.observedAt,
+            activeAt: observedAt,
             metadataVersion: 1,
             metadata: Object.freeze({
                 displayName: labels.machine,
-                host: materialization.machineId,
+                host: ref.machineId,
             }),
             candidate,
             origin,
         }));
-        groups.set(materialization.serverIdentityId, rows);
+        groups.set(origin.serverIdentityId, rows);
     }
     return Object.freeze([...groups.entries()].map(([serverIdentityId, machines]) => Object.freeze({
         serverId: serverIdentityId,
@@ -124,16 +125,17 @@ export function resolvePluginMachineExecutionOriginPresentation(
     const selectedOrigin = selection.selectedOrigin
         ?? (selection.state.kind === 'selected' ? selection.state.origin : null);
     if (selectedOrigin) {
-        const labels = resolveMachineAdministrationTargetLabel({ target: { serverIdentityId: selectedOrigin.serverIdentityId, machineId: selectedOrigin.materializationRef.machineId }, candidates: machineCandidates })!;
+        const selectedRef = getPluginMachineExecutionOriginRef(selectedOrigin);
+        const labels = resolveMachineAdministrationTargetLabel({ target: { serverIdentityId: selectedOrigin.serverIdentityId, machineId: selectedRef.machineId }, candidates: machineCandidates })!;
         const selectedCandidate = selection.candidates.find((candidate) => exactOriginsEqual(
             selectedOrigin,
-            composePluginMachineExecutionOriginV1(candidate.materialization),
+            getPluginExecutionOriginCandidateOrigin(candidate),
         ));
         return {
             title: labels.machine,
-            subtitle: labels.machine === selectedOrigin.materializationRef.machineId
+            subtitle: labels.machine === selectedRef.machineId
                 ? labels.server
-                : [labels.server, selectedOrigin.materializationRef.machineId].join(' · '),
+                : [labels.server, selectedRef.machineId].join(' · '),
             detail: selection.state.kind === 'unavailable'
                 ? selection.state.reasons.map(originReasonDetail).join(' · ')
                 : selectedCandidate
@@ -152,9 +154,7 @@ export function resolvePluginMachineExecutionOriginPresentation(
     // Nothing chosen: say so, and whether there is anything to choose from (never the New Session copy).
     return {
         title: selection.state.kind === 'unavailable'
-            ? selection.state.reasons.includes('included_with_happier')
-                ? t('settingsPlugins.rowSource.bundled')
-                : t('settingsPlugins.surfaces.runOnNoneAvailable')
+            ? t('settingsPlugins.surfaces.runOnNoneAvailable')
             : t('settingsPlugins.surfaces.runOnNoneChosen'),
         detail: selection.state.kind === 'unavailable'
             ? selection.state.reasons.map(originReasonDetail).join(' · ')
@@ -168,8 +168,10 @@ export function PluginMachineExecutionOriginSelectorView(props: Readonly<{
     testIDPrefix?: string;
     /** Contextual label for the machine scope this selector presents. */
     groupTitle?: string;
+    presentation?: 'section' | 'chip';
     machineCandidates?: readonly MachineAdministrationCandidateV1[];
 }>) {
+    const { theme } = useUnistyles();
     const [pickerOpen, setPickerOpen] = React.useState(false);
     const [settlementError, setSettlementError] = React.useState<string | null>(null);
     const settleSelection = React.useCallback(async (
@@ -180,7 +182,7 @@ export function PluginMachineExecutionOriginSelectorView(props: Readonly<{
             if (result.status === 'applied') {
                 setSettlementError(null);
                 setPickerOpen(false);
-                return;
+                return true;
             }
             setSettlementError(result.status === 'outcomeUnknown'
                 ? t('settingsProviders.errors.mutationOutcomeUnknownDescription')
@@ -188,11 +190,13 @@ export function PluginMachineExecutionOriginSelectorView(props: Readonly<{
         } catch {
             setSettlementError(t('settingsPlugins.genericSettingsSaveError'));
         }
+        return false;
     }, []);
-    const current = resolvePluginMachineExecutionOriginPresentation(props.selection, props.machineCandidates);
+    const machineCandidates = props.machineCandidates ?? props.selection.machineCandidates;
+    const current = resolvePluginMachineExecutionOriginPresentation(props.selection, machineCandidates);
     const groups = React.useMemo(
-        () => buildOriginGroups(props.selection.candidates, props.machineCandidates ?? []),
-        [props.selection.candidates, props.machineCandidates],
+        () => buildOriginGroups(props.selection.candidates, machineCandidates ?? []),
+        [props.selection.candidates, machineCandidates],
     );
     const selectedOrigin = props.selection.selectedOrigin
         ?? (props.selection.state.kind === 'selected' ? props.selection.state.origin : null);
@@ -200,6 +204,52 @@ export function PluginMachineExecutionOriginSelectorView(props: Readonly<{
     const clearTestID = props.testIDPrefix ? `${props.testIDPrefix}.clear` : undefined;
     const groupTitle = props.groupTitle ?? t('settingsProviders.detail.targetMachine');
     const clearAccessibilityScope = props.groupTitle ?? t('settingsPlugins.executionOriginTitle');
+
+    if (props.presentation === 'chip') {
+        return <SelectionListFilterChip filter={{
+            id: 'plugin-execution',
+            label: groupTitle,
+            valueLabel: current.title,
+            icon: <Icon name="desktop" size={14} color={theme.colors.text.secondary} />,
+            muted: !current.selected,
+            testID: props.testIDPrefix ? `${props.testIDPrefix}.chip` : undefined,
+            ...(groups.length > 0 ? {
+                renderPopoverContent: ({ close, maxHeight }) => (
+                    <>
+                    <NewSessionMachineSelectionContent<PresentedPluginOrigin>
+                        groups={groups}
+                        selectedMachine={groups.flatMap((group) => group.machines).find((machine) => exactOriginsEqual(selectedOrigin, machine.origin)) ?? null}
+                        selectedServerId={selectedOrigin?.serverIdentityId ?? null}
+                        recentMachines={[]}
+                        favoriteMachines={[]}
+                        onSelectMachine={(machine) => { void settleSelection(props.selection.selectOrigin(machine.origin)).then((applied) => { if (applied) close(); }); }}
+                        onSelectScopedMachine={(machine) => { void settleSelection(props.selection.selectOrigin(machine.origin)).then((applied) => { if (applied) close(); }); }}
+                        resolveMachineAvailability={(machine) => ({
+                            detail: resolveCandidatePresentationDetail(machine.candidate),
+                            selectable: isPluginMachineExecutionOriginCandidateSelectable(machine.candidate),
+                        })}
+                        showFavorites={false}
+                        showRecent={false}
+                        showSearch={false}
+                        showCliGlyphs={false}
+                        autoDetectCliGlyphs={false}
+                        testIdPrefix={props.testIDPrefix ? `${props.testIDPrefix}.picker` : undefined}
+                        testID={props.testIDPrefix ? `${props.testIDPrefix}.picker-list` : undefined}
+                        maxHeight={maxHeight}
+                    />
+                    {props.selection.selectedOrigin ? <Item
+                        testID={clearTestID}
+                        title={t('settingsPlugins.targetSelection.clear')}
+                        accessibilityLabel={`${t('settingsPlugins.targetSelection.clear')}: ${clearAccessibilityScope}`}
+                        onPress={() => { void settleSelection(props.selection.clearOrigin()).then((applied) => { if (applied) close(); }); }}
+                        showChevron={false}
+                    /> : null}
+                    {settlementError ? <Item title={settlementError} mode="info" showChevron={false} /> : null}
+                    </>
+                ),
+            } : {}),
+        }} />;
+    }
 
     return (
         <>
@@ -238,7 +288,7 @@ export function PluginMachineExecutionOriginSelectorView(props: Readonly<{
             {pickerOpen && groups.length > 0 ? (
                 <ServerScopedMachineSelector
                     groups={groups}
-                    selectedMachineId={selectedOrigin?.materializationRef.machineId ?? null}
+                    selectedMachineId={selectedOrigin ? getPluginMachineExecutionOriginRef(selectedOrigin).machineId : null}
                     selectedServerId={selectedOrigin?.serverIdentityId ?? null}
                     onSelect={(machine) => { void settleSelection(props.selection.selectOrigin(machine.origin)); }}
                     resolveMachineAvailability={(machine) => ({

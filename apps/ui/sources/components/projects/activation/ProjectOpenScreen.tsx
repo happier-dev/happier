@@ -69,6 +69,7 @@ import {
 import { readProjectOpenRouteDraft } from './projectOpenRoute';
 import { ProjectOpenSourceChooser, ProjectOpenSourceSheet, useProjectSourceTeamName } from './ProjectOpenSourceChooser';
 import { useProjectOpen } from './useProjectOpen';
+import { projectOpenRefusalPresentation } from './projectOpenRefusalPresentation';
 
 /** The source list's width beside the choices (lab `p-open` OPEN), and the narrowest choices column. */
 const SOURCE_LIST_WIDTH_PX = 300;
@@ -593,6 +594,7 @@ function ProjectOpenSubjectSection(
           ? t('projects.open.defaultRef', { ref: defaultRef })
           : t('projects.sources.repositoryDefault')}
         {...(defaultRef ? { placeholder: defaultRef } : {})}
+        compact={props.compact}
         onChange={props.onChangeRef}
       />
       {source ? (
@@ -694,19 +696,8 @@ function ProjectOpenOutcome(props: Readonly<{ open: ReturnType<typeof useProject
                     : t('projects.open.githubRateLimited')}
                 description={result.remediation?.action === 'connect_github' ? t('projects.open.githubConnectHint') : undefined}
                 details={[result.code]} />;
-            return <AttentionBanner testID="projects.open.refused" tone="danger" title={refusalTitle(result.code, props.gitRef)} details={[result.code]} />;
+            return <AttentionBanner testID="projects.open.refused" tone="danger" {...projectOpenRefusalPresentation(result.code, props.gitRef)} details={[result.code]} />;
     }
-}
-
-/** The refusal in the person's terms; the exact code stays behind Details. */
-function refusalTitle(code: string, gitRef: string | null): string {
-    if (code.includes('offline') || code.includes('unreachable')) return t('projects.open.accessLost');
-    if (gitRef && code.includes('ref')) return t('projects.open.refMissing', { ref: gitRef });
-    if (code.includes('folder') || code.includes('path')) return t('projects.open.invalidFolder');
-    // Source admission (A5b): a changed Source asks for review; revoked or missing says it is gone. The draft stays.
-    if (code.includes('source') && code.includes('changed')) return t('projects.open.sourceChanged');
-    if (code.includes('source')) return t('projects.open.sourceUnavailable');
-    return t('projects.open.unsupported');
 }
 
 const styles = StyleSheet.create(() => ({

@@ -1,11 +1,12 @@
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
-import { HAPPIER_META_COLUMN_STYLE } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_META_COLUMN_STYLE, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
 import React from 'react';
 import {
     Animated,
     Platform,
     Pressable,
+    useWindowDimensions,
     View,
     type GestureResponderEvent,
     type LayoutChangeEvent,
@@ -66,7 +67,8 @@ import {
     resolveSessionRowTitleColorRole,
 } from './row/sessionRowTitleColorRole';
 import { SessionRowAttentionIndicator } from './row/SessionRowAttentionIndicator';
-import { SessionRowReportsChip, hasSessionRowReportsChip } from './row/SessionRowReportsChip';
+import { SessionRowReportsChip, SessionRowReportsDisclosure, hasSessionRowReportsChip } from './row/SessionRowReportsChip';
+import { buildSessionListIndexNodeId } from '@/sync/domains/sessionList/sessionListIndex';
 import { SessionListRowPresentation, SessionListRowSubtitle, SessionListRowTitle } from './row/SessionListRowPresentation';
 import { WorkflowRunItemBody, type WorkflowRunItemProps } from './row/WorkflowRunItemBody';
 import {
@@ -74,6 +76,7 @@ import {
     resolveSessionListRowIdentityMetrics,
     SESSION_LIST_ROW_IDENTITY_METRICS,
     SESSION_LIST_ROW_STATUS_TEXT_METRICS,
+    shouldUseReadablePhoneMinimalSessionRow,
 } from './resolveSessionListDensityViewState';
 import { resolveSessionRowInteractionPolicy } from './row/resolveSessionRowInteractionPolicy';
 import { SESSION_LIST_SHEET_INSET_PX } from './sessionListStyles';
@@ -85,7 +88,6 @@ import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
 import { useSessionListOrganizeMode } from './organize/SessionListOrganizeMode';
 import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
 import { resolveSessionSplitCanvasScope } from '@/sync/domains/session/sessionSplitCanvasScope';
-import type { SessionFolderMoveTarget } from '@/sync/domains/session/folders';
 import { useIsTablet } from '@/utils/platform/responsive';
 import type { SessionListRowViewModel } from './sessionListRowViewModels';
 import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
@@ -94,8 +96,10 @@ import { executeSessionAction } from '@/components/sessions/actions/sessionActio
 import {
     SESSION_ACTION_ARCHIVE_ID,
     SESSION_ACTION_PIN_ID,
+    SESSION_ACTION_TALK_ID,
     SESSION_ACTION_UNPIN_ID,
 } from '@/components/sessions/actions/sessionActionIds';
+import { listVisibleSessionActionIds } from '@/components/sessions/actions/sessionActionAvailability';
 import { resolveKeyboardPlatform } from '@/keyboard/runtime';
 import { SessionListSelectionCheckbox } from './selection/SessionListSelectionCheckbox';
 import { useOptionalSessionListSelectionRow } from './selection/SessionListSelectionContext';
@@ -122,6 +126,7 @@ import {
     useLocalSetting,
 } from '@/sync/domains/state/storage';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import type { ExternalSessionIdentityPresentation } from '../presentation/externalSessionIdentityPresentation';
@@ -132,6 +137,7 @@ import {
 } from './SessionListIdentity';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Modal } from '@/modal';
+import { HappyError } from '@/utils/errors/errors';
 import { canForkConversation } from '@/sync/domains/sessionFork/forkUiSupport';
 import { resolveMachineTargetForSessionFromState } from '@/sync/ops/sessionMachineTarget';
 import { selectSessionViewShellSessionForRouteState } from './sessionViewStableSession';
@@ -146,8 +152,6 @@ const SESSION_IDENTITY_SKELETON_ANIMATION_MS = 900;
 const SESSION_FOLDER_ROW_CHROME_INDENT_BASE = 38;
 const SESSION_FOLDER_ROW_CHROME_INDENT_STEP = 12;
 const SESSION_REPORTS_ROW_INDENT_STEP = 22;
-const SESSION_FOLDER_MOVE_MENU_INDENT_BASE = 16;
-const SESSION_FOLDER_MOVE_MENU_INDENT_STEP = 12;
 const SESSION_DELETE_DRAFT_MENU_ITEM_ID = 'session-draft.delete';
 
 let sessionForkStrategyFlowModulePromise:
@@ -211,8 +215,10 @@ export type SessionItemBaseProps = Readonly<{
     folderDepth?: number;
     /** Level under a lead in the `reportsTo` tree (ORC §3.8); 0 or absent draws the row at its own level. */
     reportsDepth?: number;
-    folderMoveTargets?: readonly SessionFolderMoveTarget[];
-    onMoveToSessionFolder?: (folderId: string | null) => void | Promise<void>;
+    /** A lead whose reports are nested under it in this list: their fold state (lab `b-launch N`). */
+    reportsDisclosure?: 'collapsed' | 'expanded';
+    /** Writes the explicit local fold choice for the lead's list node. */
+    onSetReportsCollapsed?: (nodeId: string, collapsed: boolean) => void;
     onMoveToFolder?: () => void;
     onMoveToWorkspaceRoot?: () => void;
     onMoveUp?: () => void;
@@ -229,6 +235,15 @@ export type SessionItemBaseProps = Readonly<{
     onNativeContextMenuOpenChange?: (next: boolean) => void;
     rowAttentionAnimationEnabled?: boolean;
     agentSwitchingEnabled?: boolean;
+    /**
+     * The Bots roster's rows: Talk sits beside More on hover/focus (the shared `ui.session.talk`
+     * action), in place of the list's tag and pin affordances.
+     */
+    showTalkAction?: boolean;
+    /** The Bots roster's compact More menu (lab `b-rail M`) instead of the list's. */
+    actionMenuSurface?: 'rowMenu' | 'botsRoster';
+    /** Runs after the row opened its Session (a popover that hosts the row closes). */
+    onOpened?: () => void;
     forkActionContext?: Readonly<{
         settings: SessionForkReplaySettingsSource | null;
         replayEnabled: boolean;
@@ -326,16 +341,6 @@ function resolveSessionItemEffectiveSession(input: Readonly<{
         return mergePendingBlockedCount(input.providedSession, pendingBlockedCount);
     }
     return mergePendingBlockedCount(input.rowSession, pendingBlockedCount);
-}
-
-function resolveSessionFolderMoveTargetRowContainerStyle(depth: number) {
-    const normalizedDepth = Math.max(0, Math.floor(Number.isFinite(depth) ? depth : 0));
-    if (normalizedDepth === 0) return undefined;
-    return { paddingLeft: SESSION_FOLDER_MOVE_MENU_INDENT_BASE + normalizedDepth * SESSION_FOLDER_MOVE_MENU_INDENT_STEP };
-}
-
-function resolveSessionFolderMoveTargetTestId(target: SessionFolderMoveTarget): string {
-    return `dropdown-option-move-to-folder_${target.folderId ?? 'null'}`;
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -687,8 +692,8 @@ const SessionItemContent = React.memo(
         compactMinimal,
         folderDepth,
         reportsDepth,
-        folderMoveTargets,
-        onMoveToSessionFolder,
+        reportsDisclosure,
+        onSetReportsCollapsed,
         onMoveToFolder,
         onMoveToWorkspaceRoot,
         onMoveUp,
@@ -701,6 +706,9 @@ const SessionItemContent = React.memo(
         nativeContextMenuOpen,
         onNativeContextMenuOpenChange,
         agentSwitchingEnabled = false,
+        showTalkAction = false,
+        actionMenuSurface = 'rowMenu',
+        onOpened,
         forkActionContext,
         sessionStatus,
         externalSessionIdentity,
@@ -721,8 +729,32 @@ const SessionItemContent = React.memo(
         reminder,
     }: SessionItemContentProps) => {
         const router = useDestinationRouter();
-        const styles = stylesheet;
         const { theme } = useUnistyles();
+        const materialColor = useHappierMaterialColorResolver();
+        const mutedPaint = { backgroundColor: materialColor(theme.colors.surface.elevated) };
+        const insetPaint = { backgroundColor: materialColor(theme.colors.surface.inset) };
+        const chipPaint = { backgroundColor: materialColor(theme.colors.background.canvas) };
+        // Keep Unistyles' original layout objects; only the containing material changes paint.
+        const styles = {
+            ...stylesheet,
+            sessionItemContainer: [stylesheet.sessionItemContainer, { backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }],
+            avatarLoading: [stylesheet.avatarLoading, mutedPaint],
+            avatarLoadingCompact: [stylesheet.avatarLoadingCompact, mutedPaint],
+            avatarLoadingMinimal: [stylesheet.avatarLoadingMinimal, mutedPaint],
+            avatarLoadingMinimalNativePhone: [stylesheet.avatarLoadingMinimalNativePhone, mutedPaint],
+            sessionTitleLoading: [stylesheet.sessionTitleLoading, mutedPaint],
+            sessionTitleLoadingCompact: [stylesheet.sessionTitleLoadingCompact, mutedPaint],
+            sessionTitleLoadingMinimal: [stylesheet.sessionTitleLoadingMinimal, mutedPaint],
+            sessionSubtitleLoading: [stylesheet.sessionSubtitleLoading, insetPaint],
+            sessionSubtitleLoadingCompact: [stylesheet.sessionSubtitleLoadingCompact, insetPaint],
+            pendingCountContainer: [stylesheet.pendingCountContainer, {
+                backgroundColor: materialColor(theme.colors.input.background),
+                borderColor: materialColor(theme.colors.background?.canvas ?? 'transparent', theme.colors.border.default),
+            }],
+            serverBadgeContainer: [stylesheet.serverBadgeContainer, chipPaint],
+            tagChip: [stylesheet.tagChip, chipPaint],
+            tagChipInlineText: [stylesheet.tagChipInlineText, chipPaint],
+        };
         const localDevModeEnabled = useLocalSetting('devModeEnabled');
         const uiFontScale = useLocalSetting('uiFontScale');
         const devModeEnabled = isSessionDebugInformationEnabled(localDevModeEnabled);
@@ -794,12 +826,16 @@ const SessionItemContent = React.memo(
             sessionId: resolvedSession.id,
             anchorRef: contextMenuAnchorRef,
         });
+        const isRailPinned = storage(state => serverId
+            ? state.sessionOrganizationPinsBySessionKey[buildSessionOrganizationSessionKey(serverId, resolvedSession.id)]?.railPinned === true
+            : false);
         const sessionActionTarget = React.useMemo(() => createSessionActionTarget({
             session: resolvedSession,
             serverId: serverId ?? null,
             currentUserId: currentUserId ?? null,
             isConnected: sessionStatus.isConnected,
             isPinned: Boolean(pinned),
+            isRailPinned,
             attentionStandingEnabled: attentionStandingEnabled === true,
             followEnabled: followEditor.enabled,
             attentionStanding: isAttentionStanding === true,
@@ -808,6 +844,7 @@ const SessionItemContent = React.memo(
             followEditor.enabled,
             currentUserId,
             isAttentionStanding,
+            isRailPinned,
             pinned,
             resolvedSession,
             serverId,
@@ -827,7 +864,10 @@ const SessionItemContent = React.memo(
         const isWeb = Platform.OS === 'web';
         const isNativeMobile = Platform.OS === 'ios' || Platform.OS === 'android';
         const isTablet = useIsTablet();
-        const useReadableNativePhoneMinimalRow = isMinimal && isNativeMobile && !isTablet;
+        const { width: windowWidth } = useWindowDimensions();
+        const useReadableNativePhoneMinimalRow = isMinimal && shouldUseReadablePhoneMinimalSessionRow({
+            isTablet, platform: Platform.OS, windowWidth,
+        });
         const showRowActions = isWeb && (isRowHovered || isActionsHovered || tagMenuOpen || moreMenuOpen || isBeingDragged === true);
         const rowActionIconColor = theme.colors.text.secondary;
         const resolveSessionDebugInformation = React.useCallback(() => {
@@ -869,6 +909,14 @@ const SessionItemContent = React.memo(
             });
         }, [onTogglePinned, pinned, sessionActionTarget]);
         const showTagAction = supportsTag && showRowActions;
+        const talkActionVisible = showTalkAction && listVisibleSessionActionIds({ target: sessionActionTarget, surface: actionMenuSurface })
+            .includes(SESSION_ACTION_TALK_ID);
+        const handleTalkAction = React.useCallback(() => {
+            fireAndForget(executeSessionAction({ actionId: SESSION_ACTION_TALK_ID, target: sessionActionTarget })
+                .catch((error: unknown) => {
+                    Modal.alert(t('common.error'), error instanceof HappyError ? error.message : t('errors.unknownError'));
+                }), { tag: 'SessionItem.talk' });
+        }, [sessionActionTarget]);
         const { activeTags, knownTags } = React.useMemo(() => resolveSessionItemTagCollections({
             tags,
             allKnownTags,
@@ -952,19 +1000,6 @@ const SessionItemContent = React.memo(
             if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
             if (e && typeof e.preventDefault === 'function') e.preventDefault();
         }, []);
-
-        const folderMoveMenuItems = React.useMemo((): DropdownMenuItem[] => (
-            (folderMoveTargets ?? []).map((target): DropdownMenuItem => ({
-                id: target.id,
-                testID: resolveSessionFolderMoveTargetTestId(target),
-                title: target.title,
-                icon: target.folderId
-                    ? <Icon name="folder" size={16} color={rowActionIconColor} />
-                    : <Icon name="tray" size={16} color={rowActionIconColor} />,
-                rowContainerStyle: resolveSessionFolderMoveTargetRowContainerStyle(target.depth),
-                disabled: target.disabled,
-            }))
-        ), [folderMoveTargets, rowActionIconColor]);
 
         const splitCanvasMenuItems = React.useMemo((): DropdownMenuItem[] => {
             if (splitCanvasRowActions.mode === 'open') {
@@ -1124,17 +1159,6 @@ const SessionItemContent = React.memo(
             return handleSelectSplitCanvasMenuItem(itemId);
         }, [confirmDeleteDraft, copyFeedback, handleSelectSplitCanvasMenuItem, openForkFlow, organize, resolvedSession.id, resolveSessionDebugInformation, workspaceOpen]);
 
-        const handleSelectFolderMoveMenuItem = React.useCallback(async (itemId: string) => {
-            if (itemId === 'session-folder-move-root') {
-                await onMoveToSessionFolder?.(null);
-                return;
-            }
-            const target = folderMoveTargets?.find((candidate) => candidate.id === itemId);
-            if (target) {
-                await onMoveToSessionFolder?.(target.folderId);
-            }
-        }, [folderMoveTargets, onMoveToSessionFolder]);
-
         const handleEnterSelectionMode = React.useCallback(() => {
             if (!resolvedSelectionKey) return;
             rowSelection.replace();
@@ -1184,9 +1208,11 @@ const SessionItemContent = React.memo(
                 setContextMenuOpen(false);
             }
             navigateToSession(resolvedSession.id, serverId ? { serverId } : undefined);
+            onOpened?.();
         }, [
             contextMenuOpen,
             navigateToSession,
+            onOpened,
             resolvedSelectionKey,
             resolvedSession.id,
             rowSelection,
@@ -1194,6 +1220,11 @@ const SessionItemContent = React.memo(
             setContextMenuOpen,
             stopRowPressPropagation,
         ]);
+
+        const handleOpenFromMenu = React.useCallback(() => {
+            navigateToSession(resolvedSession.id, serverId ? { serverId } : undefined);
+            onOpened?.();
+        }, [navigateToSession, onOpened, resolvedSession.id, serverId]);
 
         const {
             tagMenuItems,
@@ -1217,9 +1248,9 @@ const SessionItemContent = React.memo(
             onTogglePinned,
             leadingMenuItems,
             onSelectLeadingMenuItem: handleSelectLeadingMenuItem,
-            folderMoveMenuItems,
+            surface: actionMenuSurface,
+            onOpen: handleOpenFromMenu,
             onMoveToFolder,
-            onSelectFolderMoveMenuItem: handleSelectFolderMoveMenuItem,
             selectionModeAvailable: Boolean(resolvedSelectionKey),
             selectionModeActive: rowSelection.isSelectionMode,
             onEnterSelectionMode: handleEnterSelectionMode,
@@ -1421,9 +1452,20 @@ const SessionItemContent = React.memo(
                             ? t(rowPresentation.accessibilityStatusTextKey)
                             : undefined;
         const normalizedReportsDepth = Math.min(Math.max(Math.trunc(reportsDepth ?? 0), 0), 3);
-        const reportsChip = hasSessionRowReportsChip(resolvedSession.reports) && resolvedSession.reports
-            ? <SessionRowReportsChip sessionId={resolvedSession.id} reports={resolvedSession.reports} />
+        const reportsCollapsed = reportsDisclosure === 'collapsed';
+        const reportsChip = resolvedSession.reports && (reportsCollapsed || hasSessionRowReportsChip(resolvedSession.reports))
+            ? <SessionRowReportsChip sessionId={resolvedSession.id} reports={resolvedSession.reports} collapsed={reportsCollapsed} />
             : null;
+        const reportsDisclosureControl = reportsDisclosure && onSetReportsCollapsed ? (
+            <SessionRowReportsDisclosure
+                sessionId={resolvedSession.id}
+                nodeId={buildSessionListIndexNodeId({ type: 'session', serverId, sessionId: resolvedSession.id })}
+                name={sessionNameResolved}
+                count={resolvedSession.reports?.total ?? 0}
+                collapsed={reportsCollapsed}
+                onSetCollapsed={onSetReportsCollapsed}
+            />
+        ) : null;
         const reportsAccessibilityLabel = [
             normalizedReportsDepth > 0 ? t('sessionWork.list.level', { level: normalizedReportsDepth + 1 }) : null,
             (resolvedSession.reports?.total ?? 0) > 0
@@ -1585,6 +1627,7 @@ const SessionItemContent = React.memo(
                                 <View style={styles.reportsConnector} />
                             </View>
                         ) : null}
+                        {reportsDisclosureControl}
                         {content}
                     </Pressable>
                     </WorkspaceDestinationRow>
@@ -1839,6 +1882,21 @@ const SessionItemContent = React.memo(
                                     </Pressable>
                                 )
                             ) : null}
+                            {talkActionVisible ? (
+                                <Pressable
+                                    testID="session-item-talk-action"
+                                    style={styles.rowActionButton}
+                                    onPress={(e) => {
+                                        stopRowPressPropagation(e);
+                                        handleTalkAction();
+                                    }}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={t('bots.talk', { name: sessionNameResolved })}
+                                    hitSlop={8}
+                                >
+                                    <Icon name="microphone" size={14} color={rowActionIconColor} />
+                                </Pressable>
+                            ) : null}
                             {supportsPin ? (
                                 <Pressable
                                     style={styles.rowActionButton}
@@ -1867,7 +1925,7 @@ const SessionItemContent = React.memo(
                                     popoverAnchorAlign="end"
                                     variant="slim"
                                     matchTriggerWidth={false}
-                                    maxWidthCap={220}
+                                    maxWidthCap={260}
                                     showCategoryTitles={false}
                                     popoverPortalWebTarget="body"
                                     trigger={({ toggle }) => (

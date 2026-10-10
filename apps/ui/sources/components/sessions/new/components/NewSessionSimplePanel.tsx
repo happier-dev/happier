@@ -147,6 +147,10 @@ export type NewSessionSimplePanelProps = Readonly<{
     connectionStatus: React.ComponentProps<typeof AgentInput>['connectionStatus'];
     statusBadges?: React.ComponentProps<typeof AgentInput>['statusBadges'];
     composerTopContent?: React.ReactNode;
+    /** What the empty composer asks for; defaults to the ordinary session prompt. */
+    inputPlaceholder?: string;
+    /** Below the composer card (a seeded draft's provenance footnote). */
+    composerBottomContent?: React.ReactNode;
     statusTrailingActions?: React.ComponentProps<typeof AgentInput>['statusTrailingActions'];
     machineName: string | undefined;
     machinePopover?: React.ComponentProps<typeof AgentInput>['machinePopover'];

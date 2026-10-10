@@ -1,11 +1,21 @@
-import { AccountSettingsV2HistoryDetailResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
-import { applyAccountSettingsHistoryRestoreV1, type AccountSettingsHistoryRestoreInvalidReasonV1 } from '@happier-dev/protocol/account/settings/accountSettingsHistoryRestoreV1';
+import { AccountSettingsV2HistoryDetailResponseSchema, AccountSettingsV2HistoryMutationRequestSchema, AccountSettingsV2HistoryMutationResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { applyAccountSettingsHistoryRestoreV1, type AccountSettingsHistoryDestinationAuthorityV1, type AccountSettingsHistoryRestoreInvalidReasonV1 } from '@happier-dev/protocol/account/settings/accountSettingsHistoryRestoreV1';
+import { captureAccountSettingsHistoryDestinationAuthorityV1, normalizeAccountSettingsHistoryClientV1,
+    type AccountSettingsHistoryClientPortsV1, type AccountSettingsHistoryCleanupResultV1,
+    type AccountSettingsHistorySavedSecretRecoveryV1 } from '@happier-dev/protocol/account/settings/accountSettingsHistoryClientV1';
+import { PROFILE_TRANSFER_ROUTE_V1, ProfileTransferRowReadResponseV1Schema } from '@happier-dev/protocol/profiles/profileTransferV1';
+import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
+import { SettingsDeclarationOperationInputV1Schema } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { captureAccountSettingsRequest } from '@/sync/api/account/accountSettingsRequest';
 import type { ServerFetch } from '@/sync/http/client';
+import { fetchAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
+import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
+import { getRandomBytes } from '@/platform/cryptoRandom';
 import {
     openAccountSettingsStoredContent,
     type OpenedAccountSettingsStoredContent,
@@ -98,6 +108,96 @@ async function fetchHistorySnapshot(
     return parsed.data;
 }
 
+function createHistoryCapturePorts(params: Readonly<{
+    request: ServerFetch; isCurrent: () => boolean; credentials: AuthCredentials;
+}>): Pick<AccountSettingsHistoryClientPortsV1, 'request' | 'readCurrentness' | 'isCurrent' | 'resolveTransferMaterial' | 'unavailable'> {
+    return {
+        request: async (path, input) => {
+            const response = await params.request(path, { method: input.method, headers: { 'Content-Type': 'application/json' },
+                ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }) }, input.method === 'POST' ? { retry: 'none' } : undefined);
+            return { status: response.status, data: await response.json().catch(() => null) };
+        },
+        readCurrentness: () => fetchAccountEncryptionCurrentness(params.credentials, { request: params.request }),
+        isCurrent: params.isCurrent,
+        resolveTransferMaterial: mode => mode === 'plain' ? null : resolveAccountScopedCryptoMaterialFromCredentials(params.credentials),
+        unavailable: (status, message) => { throw new AccountSettingsHistoryRestoreUnavailableError(status, message); },
+    };
+}
+
+function captureDestinationAuthority(params: Readonly<{
+    request: ServerFetch; isCurrent: () => boolean; credentials: AuthCredentials;
+    currentness?: AccountEncryptionCurrentnessResponse;
+    destinationAuthority?: AccountSettingsHistoryDestinationAuthorityV1;
+}>) {
+    return captureAccountSettingsHistoryDestinationAuthorityV1({ ports: createHistoryCapturePorts(params),
+        currentness: params.currentness, destinationAuthority: params.destinationAuthority });
+}
+
+export type AccountSettingsHistoryCleanupResult = AccountSettingsHistoryCleanupResultV1;
+
+/** Private transport for the incumbent approved, exact-version purge intent. */
+export async function purgeAccountSettingsHistoryVersions(params: Readonly<{
+    credentials: AuthCredentials; settingsScope: AccountSettingsScope; versions: readonly number[]; signal?: AbortSignal;
+    requestContext?: Readonly<{ request: ServerFetch; isCurrent(): boolean }>;
+}>): Promise<AccountSettingsHistoryCleanupResult> {
+    const admitted = SettingsDeclarationOperationInputV1Schema.parse({ kind: 'account_settings_history_purge', versions: params.versions });
+    if (admitted.kind !== 'account_settings_history_purge') throw new Error('Invalid history purge intent');
+    const captured = params.requestContext ?? await captureAccountSettingsRequest(params);
+    if (!captured) throwStaleRestoreScope();
+    const pending = new Set<number>();
+    try {
+        const currentness = await fetchAccountEncryptionCurrentness(params.credentials, { request: captured.request, signal: params.signal });
+        if (currentness.settingsVersion === undefined) throw new AccountSettingsHistoryRestoreUnavailableError(0, 'Settings currentness unavailable');
+        const controlResponse = await captured.request(PROFILE_TRANSFER_ROUTE_V1, { method: 'GET', signal: params.signal });
+        if (!captured.isCurrent()) throwStaleRestoreScope();
+        if (!controlResponse.ok) throw new AccountSettingsHistoryRestoreUnavailableError(controlResponse.status, 'Profile transfer currentness unavailable');
+        const control = ProfileTransferRowReadResponseV1Schema.parse(await controlResponse.json());
+        if (control.status !== 'absent' && control.status !== 'deleted' && control.status !== 'present') {
+            throw new AccountSettingsHistoryRestoreUnavailableError(0, 'Profile transfer currentness unavailable');
+        }
+        const mutation = AccountSettingsV2HistoryMutationRequestSchema.parse({ expectedSettingsVersion: currentness.settingsVersion,
+            expectedProfileTransferRevision: control.status === 'absent' ? 'absent' : control.revision,
+            expectedEncryptionCurrentness: { mode: currentness.mode, signingKeyFingerprint: currentness.signingKeyFingerprint,
+                contentKeyFingerprint: currentness.contentKeyFingerprint }, operation: { kind: 'purge' } });
+        for (const version of new Set(admitted.versions)) {
+            try {
+                if (!captured.isCurrent() || params.signal?.aborted) { pending.add(version); continue; }
+                const response = await captured.request(`/v2/account/settings/history/${version}/mutate`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(mutation), signal: params.signal,
+                }, { retry: 'none' });
+                const result = AccountSettingsV2HistoryMutationResponseSchema.safeParse(await response.json());
+                if (!response.ok || !result.success || (result.data.status !== 'applied' && result.data.status !== 'not_found')) pending.add(version);
+            } catch { pending.add(version); }
+        }
+        return pending.size ? { status: 'cleanup-pending', versions: [...pending] } : { status: 'complete' };
+    } finally { if ('dispose' in captured) captured.dispose(); }
+}
+
+/** One pass after source cleanup, including the previous document it just retained. */
+export async function normalizeAccountSettingsHistoryAfterTransfer(params: Readonly<{
+    credentials: AuthCredentials; encryption: Encryption | null; settingsScope: AccountSettingsScope;
+    destinationAuthority: AccountSettingsHistoryDestinationAuthorityV1;
+    expectedProfileTransferRevision?: number | 'absent';
+    savedSecretRecovery?: AccountSettingsHistorySavedSecretRecoveryV1;
+    /** An incumbent transfer/Action lifetime; never recapture a different Home. */
+    requestContext?: Readonly<{ request: ServerFetch; isCurrent(): boolean }>;
+}>): Promise<AccountSettingsHistoryCleanupResult> {
+    const captured = params.requestContext ?? await captureAccountSettingsRequest(params);
+    if (!captured) throwStaleRestoreScope();
+    try {
+        return await normalizeAccountSettingsHistoryClientV1({ destinationAuthority: params.destinationAuthority,
+            ...(params.savedSecretRecovery ? { savedSecretRecovery: params.savedSecretRecovery } : {}),
+            ...(params.expectedProfileTransferRevision === undefined ? {} : { expectedProfileTransferRevision: params.expectedProfileTransferRevision }), ports: {
+            ...createHistoryCapturePorts({ ...params, ...captured }),
+            openSnapshot: content => openAccountSettingsStoredContent({ content, encryption: params.encryption }).raw,
+            resealSnapshot: (raw, recorded) => recorded.t === 'plain' ? { t: 'plain', v: raw }
+                : { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'account_settings',
+                    material: { type: 'dataKey', machineKey: params.encryption!.getContentPrivateKey() },
+                    payload: raw, randomBytes: getRandomBytes }) },
+        } });
+    } finally { if ('dispose' in captured) captured.dispose(); }
+}
+
 export type RestoreAccountSettingsFromHistorySnapshotParams = Readonly<{
     credentials: AuthCredentials;
     encryption: Encryption | null;
@@ -108,6 +208,8 @@ export type RestoreAccountSettingsFromHistorySnapshotParams = Readonly<{
      * a moved version returns `conflict` with the current version.
      */
     expectedSettingsVersion: number;
+    /** Captured destination evidence; source presence is never authority. */
+    destinationAuthority?: AccountSettingsHistoryDestinationAuthorityV1;
     /** The rendered Account Settings scope that owns this restore gesture. */
     settingsScope: AccountSettingsScope;
     settingsSecretsKey?: Uint8Array | null;
@@ -123,21 +225,16 @@ export async function restoreAccountSettingsFromHistorySnapshot(
 
     try {
         const detail = await fetchHistorySnapshot(request, params.historyVersion, isCurrent);
-
+        const destination = await captureDestinationAuthority({ ...params, request, isCurrent });
         // Open in the RECORDED mode — no expected mode is asserted — so a snapshot
         // recorded before an Account encryption-mode transition still opens. The
         // ordinary writer below reseals the merged document to the CURRENT mode.
         let opened: OpenedAccountSettingsStoredContent;
         try {
-            opened = openAccountSettingsStoredContent({
-                content: detail.content,
-                encryption: params.encryption,
-            });
+            opened = openAccountSettingsStoredContent({ content: detail.content, encryption: params.encryption });
         } catch (error) {
-            throw new AccountSettingsHistoryRestoreUnavailableError(
-                0,
-                error instanceof Error ? error.message : 'Historical snapshot cannot be opened',
-            );
+            throw new AccountSettingsHistoryRestoreUnavailableError(0,
+                error instanceof Error ? error.message : 'Historical snapshot cannot be opened');
         }
         const historicalRaw = opened.raw ?? {};
         if (!isCurrent()) throwStaleRestoreScope();
@@ -155,9 +252,10 @@ export async function restoreAccountSettingsFromHistorySnapshot(
             clearPendingSettings: () => {},
             oneShotServerSettingsMutation: {
                 expectedSettingsVersion: params.expectedSettingsVersion,
+                expectedProfileTransferRevision: destination.expectedProfileTransferRevision,
                 mutate: (latestRaw) => {
                     if (!isCurrent()) throwStaleRestoreScope();
-                    const application = applyAccountSettingsHistoryRestoreV1(latestRaw, historicalRaw);
+                    const application = applyAccountSettingsHistoryRestoreV1(latestRaw, historicalRaw, destination.authority);
                     if (application.status === 'invalid') {
                         throw new AccountSettingsHistoryRestoreInvalidError(application.reason);
                     }

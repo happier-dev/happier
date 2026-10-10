@@ -80,6 +80,7 @@ export function createMachineShareAdapter(input: Readonly<{
                 rightAccessory: () => <ShareLevelControl row={own} adapter={adapter} actions={controller.actions}
                     onExpand={() => context.onExpand('machine-viewer-access')} editable={false}
                     testID={`${context.idPrefix}machine-share-own-level`} />,
+                expandedContentInset: 'row',
                 expandedContent: () => <ShareGrantRow row={own} adapter={adapter} actions={controller.actions}
                     context={{ ...context, editable: controller.canLeave }} />,
             }] });

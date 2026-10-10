@@ -1,4 +1,6 @@
 import React from 'react';
+import { StoredPluginUiNewSessionSeedOriginV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { ProjectSetupDraftFootnote, ProjectSetupDraftHeader } from '@/components/projects/projectSetup/ProjectSetupReturn';
 import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol';
 
 import { SessionGettingStartedGuidance } from '@/components/sessions/guidance/SessionGettingStartedGuidance';
@@ -6,6 +8,8 @@ import { useShouldBlockNewSessionWithGettingStartedGuidance } from '@/components
 import { NewSessionSimplePanel } from '@/components/sessions/new/components/NewSessionSimplePanel';
 import { NewSessionComposerCard } from '@/components/sessions/new/components/NewSessionComposerCard';
 import { NewSessionWizard } from '@/components/sessions/new/components/NewSessionWizard';
+import { NewBotDraftHeader } from '@/components/sessions/bots/NewBotDraftHeader';
+import type { NewSessionBotCreationModel } from '@/components/sessions/new/hooks/newSessionScreenModelTypes';
 import { NewSessionLaunchSurface } from '@/components/sessions/new/components/NewSessionLaunchSurface';
 import { useNewSessionScreenModel } from '@/components/sessions/new/hooks/useNewSessionScreenModel';
 import type { ExactTurnAutomationPrefill } from '@/components/automations/sessionLifecycle/exactTurnAutomationPrefill';
@@ -71,6 +75,7 @@ function hasSeededCheckoutIntent(value: unknown): boolean {
 function NewSessionScreenInner(props: Readonly<{
     presentation: NewSessionScreenPresentation;
     composerTopContent?: React.ReactNode;
+    composerBottomContent?: React.ReactNode;
     draftId: string;
     statusBadges?: ReadonlyArray<AgentInputStatusBadge>;
     statusTrailingActions?: React.ReactNode;
@@ -94,7 +99,7 @@ function NewSessionScreenInner(props: Readonly<{
             >
                 {props.presentation === 'embedded'
                     ? <NewSessionEmbeddedComposerCard panelProps={model.simpleProps} creationProfile={creationProfile} />
-                    : <NewSessionSimplePanel {...model.simpleProps} />}
+                    : <NewSessionSimplePanel {...withBotDraftPresentation(model.simpleProps, model.botCreation)} />}
             </NewSessionLaunchSurface>
         );
     }
@@ -123,6 +128,27 @@ function NewSessionScreenInner(props: Readonly<{
     );
 }
 
+/**
+ * A Bot draft (lab `b-new`) is the ordinary composer under its own identity: the name-as-title header
+ * above the card and a placeholder that asks what it should look after. Everything else is unchanged.
+ */
+function withBotDraftPresentation(
+    panelProps: React.ComponentProps<typeof NewSessionSimplePanel>,
+    botCreation: NewSessionBotCreationModel | undefined,
+): React.ComponentProps<typeof NewSessionSimplePanel> {
+    if (!botCreation) return panelProps;
+    return {
+        ...panelProps,
+        inputPlaceholder: t('bots.create.placeholder'),
+        composerTopContent: (
+            <>
+                <NewBotDraftHeader botCreation={botCreation} />
+                {panelProps.composerTopContent}
+            </>
+        ),
+    };
+}
+
 function NewSessionEmbeddedComposerCard(props: Readonly<{
     panelProps: React.ComponentProps<typeof NewSessionSimplePanel>;
     creationProfile: NewSessionCreationProfile | undefined;
@@ -144,6 +170,7 @@ function NewSessionContent(props: Readonly<{
     presentation: NewSessionScreenPresentation;
     allowBlockingGuidance: boolean;
     composerTopContent?: React.ReactNode;
+    composerBottomContent?: React.ReactNode;
     draftId: string;
     statusBadges?: ReadonlyArray<AgentInputStatusBadge>;
     statusTrailingActions?: React.ReactNode;
@@ -357,6 +384,13 @@ export function NewSessionScreen(props: Readonly<{
         () => buildSessionDraftSyncStatusBadge(exactDraft?.status ?? 'clean'),
         [exactDraft?.status],
     );
+    const authoringOriginValue = exactDraft?.localSupplement.newSessionLocalState?.authoringOrigin;
+    const authoringOriginKey = authoringOriginValue === undefined ? null : JSON.stringify(authoringOriginValue);
+    // The draft's Project origin keeps its identity until its stored value changes.
+    const authoringOrigin = React.useMemo(() => {
+        const parsed = StoredPluginUiNewSessionSeedOriginV1Schema.safeParse(authoringOriginValue);
+        return parsed.success ? parsed.data : null;
+    }, [authoringOriginKey]); // eslint-disable-line react-hooks/exhaustive-deps
     const composerTopContent = React.useMemo(() => (
         draftScope && exactDraft?.materialized === true && exactDraft.conflict && !draftConflictBanner.collapsed ? (
             <ComposerAuxiliaryFrame>
@@ -366,8 +400,15 @@ export function NewSessionScreen(props: Readonly<{
                     conflict={exactDraft.conflict}
                 />
             </ComposerAuxiliaryFrame>
+        ) : authoringOrigin ? (
+            <ProjectSetupDraftHeader origin={authoringOrigin} />
         ) : null
-    ), [draftAddress, draftConflictBanner.collapsed, draftScope, exactDraft?.conflict, exactDraft?.materialized]);
+    ), [authoringOrigin, draftAddress, draftConflictBanner.collapsed, draftScope, exactDraft?.conflict, exactDraft?.materialized]);
+    // A seeded Project draft says where it will author and that nothing starts before Send (lab `s-setup` ENTRY).
+    const composerBottomContent = React.useMemo(
+        () => (authoringOrigin ? <ProjectSetupDraftFootnote origin={authoringOrigin} /> : null),
+        [authoringOrigin],
+    );
     const statusBadges = React.useMemo(() => [
         ...(draftSyncStatusBadge ? [draftSyncStatusBadge] : []),
         ...(draftConflictBanner.statusBadge ? [draftConflictBanner.statusBadge] : []),
@@ -389,6 +430,7 @@ export function NewSessionScreen(props: Readonly<{
             // guidance itself while no machine can run a session).
             allowBlockingGuidance={props.presentation === 'screen' && !hasSeededDraftIntent && !hasSeededRouteIntent}
             composerTopContent={composerTopContent}
+            composerBottomContent={composerBottomContent}
             draftId={draftIdentity.draftId}
             statusBadges={statusBadges}
             statusTrailingActions={statusTrailingActions}

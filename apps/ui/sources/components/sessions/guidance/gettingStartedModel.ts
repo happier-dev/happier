@@ -26,11 +26,12 @@ export function computeSessionGettingStartedDecision(params: Readonly<{
     machines: MachinesSummary;
 }>): SessionGettingStartedDecisionKind {
     if (!params.sessionsReady) return 'loading';
-    if (params.sessionCount > 0) return 'select_session';
     if (params.machines.machineCount === 0 && params.machines.hasUnknownServers) {
+        if (params.sessionCount > 0) return 'select_session';
         return 'loading';
     }
     if (params.machines.machineCount === 0) return 'connect_machine';
+    if (params.sessionCount > 0) return 'select_session';
     if (params.machines.onlineCount === 0) return 'start_daemon';
     if (params.sessionCount === 0) return 'create_session';
     return 'select_session';
@@ -160,6 +161,7 @@ export function resolveSessionGettingStartedMachinesSummary(input: SessionGettin
         serverIdAliases: resolveActiveProfileServerIdAliases(input.activeServerProfile, serverId),
         activeMachines: input.activeMachines,
         machineListByServerId: input.machineListByServerId,
+        machineListStatusByServerId: input.machineListStatusByServerId,
     });
     // A Home that is not answering never holds the decision: it is reported, and the Homes that
     // answer (or the active Home) decide.
@@ -173,6 +175,7 @@ export function resolveSessionGettingStartedMachinesSummary(input: SessionGettin
         serverIdAliases: resolveActiveProfileServerIdAliases(input.activeServerProfile, input.selection.activeServerId),
         activeMachines: input.activeMachines,
         machineListByServerId: input.machineListByServerId,
+        machineListStatusByServerId: input.machineListStatusByServerId,
     });
     const perServer = selectedServerIds.map((serverId) => {
         const machines = resolveServerScopedMachines({
@@ -181,6 +184,7 @@ export function resolveSessionGettingStartedMachinesSummary(input: SessionGettin
             serverIdAliases: resolveActiveProfileServerIdAliases(input.activeServerProfile, serverId),
             activeMachines: input.activeMachines,
             machineListByServerId: input.machineListByServerId,
+            machineListStatusByServerId: input.machineListStatusByServerId,
         });
         if (!machines) {
             return { machineCount: null, onlineCount: null };

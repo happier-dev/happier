@@ -159,7 +159,7 @@ export function NewSessionComposerCard(input: Readonly<{
                         isSendDisabled={!props.canCreate || props.composerDocument?.composerInputLock !== null}
                         disabled={props.composerDocument?.composerInputLock?.mode === 'editAndSubmit'}
                         isSending={props.isCreating}
-                        placeholder={t('session.inputPlaceholder')}
+                        placeholder={props.inputPlaceholder ?? t('session.inputPlaceholder')}
                         autocompleteKinds={props.emptyAutocompleteKinds}
                         autocompleteSuggestions={props.emptyAutocompleteSuggestions}
                         extraActionChips={[workflowStart.chip, ...actionChips]}
@@ -232,6 +232,7 @@ export function NewSessionComposerCard(input: Readonly<{
                             }
                             : {})}
                         />}
+                        {props.composerBottomContent}
                         {props.composerDocument?.afterComposer}
                     </PluginContextualResourceStoreProvider>
                     {attachmentsUploadsEnabled ? (

@@ -56,6 +56,37 @@ const provisioner = { contribution: { pluginId: 'custom.compute', localId: 'vm' 
 } };
 
 describe('mounted managed configurator', () => {
+    it('offers retained wake for a resume-only provisioner and preserves the choice in composer intent', async () => {
+        const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1280, height: 844, scale: 1, fontScale: 1 });
+        restoreViewport = () => viewport.mockRestore();
+        const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://resume-wake.example',
+            serverIdentityId: 'srv_resume_wake', accountId: 'owner', currentAccount: true });
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: 'host', installationId: 'installation' })] } });
+        const resumable = { ...provisioner, descriptor: { ...provisioner.descriptor,
+            retention: { supportedIntents: ['resume', 'stop', 'delete'] } } };
+        for (const [actionId, result] of [['machines.provisioners.list', { controller: defaultController, provisioners: [resumable] }],
+            ['machines.provisioners.check', { available: true }],
+            ['machines.provisioners.options', { choices: [{ id: 'resumable', title: 'Resumable compute', launch: { cpu: 2 } }] }]] as const)
+            harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
+                const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+                return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
+            } });
+        const onUse = vi.fn();
+        const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+        const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
+            provisioner={buildQualifiedPluginContributionKey(provisioner.contribution)} initialController={defaultController} onUse={onUse} />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.choice:resumable')).not.toBeNull());
+        await screen.pressByTestIdAsync('managed-config.choice:resumable');
+        const wakeSwitch = 'managed-config.receipt:keep:wake:switch';
+        expect(screen.findByTestId(wakeSwitch)).not.toBeNull();
+        await act(async () => screen.findByTestId(wakeSwitch)?.props.onValueChange(true));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.use')?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync('managed-config.use');
+        expect(onUse).toHaveBeenCalledWith(expect.objectContaining({ selection: expect.objectContaining({ wakeOnAcceptedMessage: true }),
+            receipt: expect.objectContaining({ wakeOnAcceptedMessage: true }) }));
+        await screen.unmount();
+    });
     it('discloses conditional cloud quotes and lets coupled native dimensions be staged without acquiring', async () => {
         const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://conditional-quotes.example',
             serverIdentityId: 'srv_conditional_quotes', accountId: 'owner', currentAccount: true });
@@ -436,7 +467,7 @@ describe('mounted managed configurator', () => {
         expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
         expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(0);
         await screen.pressByTestIdAsync(`${keep}:deadline:confirm`);
-        expect(screen.findByTestId('managed-config.receipt:save-deadline-note')).not.toBeNull();
+        expect(screen.findByTestId('managed-config.receipt:secondary-note')).not.toBeNull();
         const saved = { id: 'saved', homeId: 'srv_compute', revision: 1, name: 'Virtual machine', owner: { kind: 'account', accountId: 'owner' },
             recipe: { provider: provisioner.contribution, schemaVersion: 1, name: 'Virtual machine', choices: { cpu: 2 } }, controller: { machineId: 'host', installationId: 'installation' } };
         harness.answer(serverId, '/v1/machines/presets/create', { body: { kind: 'saved', preset: saved } });

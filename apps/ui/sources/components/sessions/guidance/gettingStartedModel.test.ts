@@ -40,8 +40,13 @@ describe('computeSessionGettingStartedDecision', () => {
         expect(computeSessionGettingStartedDecision({ sessionsReady: true, sessionCount: 3, machines })).toBe('select_session');
     });
 
-    it('returns select_session when sessions exist even if no machines are currently known', () => {
+    it('returns connect_machine when sessions exist but no machine is available for a new session', () => {
         const machines = computeMachinesSummary([{ machineCount: 0, onlineCount: 0 }]);
+        expect(computeSessionGettingStartedDecision({ sessionsReady: true, sessionCount: 3, machines })).toBe('connect_machine');
+    });
+
+    it('keeps existing sessions selectable while machine availability is still unknown', () => {
+        const machines = computeMachinesSummary([{ machineCount: null, onlineCount: null }]);
         expect(computeSessionGettingStartedDecision({ sessionsReady: true, sessionCount: 3, machines })).toBe('select_session');
     });
 });
@@ -385,4 +390,3 @@ describe('buildSessionGettingStartedViewModel', () => {
         expect(model.unavailableServerIds).toEqual(['srv-b']);
     });
 });
-

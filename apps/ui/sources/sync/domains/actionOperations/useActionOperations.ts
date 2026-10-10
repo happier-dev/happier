@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { actionOperationSelectors } from './actionOperationSelectors';
 import { actionOperationStore } from './actionOperationStore';
-import type { ActionOperationAddress, ActionOperationSessionAddress } from './qualifiedActionOperation';
+import type { ActionOperationAddress, ActionOperationSessionAddress, ActionOperationProjectScriptQuery, ActionOperationProjectWorkspaceQuery, ActionOperationManagedMachineQuery } from './qualifiedActionOperation';
 
 function useActionOperationSelector<T>(selector: () => T): T {
     return React.useSyncExternalStore(
@@ -60,6 +60,18 @@ export function useSessionActionOperations(address: ActionOperationSessionAddres
     return useActionOperationSelector(() => (
         actionOperationSelectors.selectForSession(actionOperationStore.getSnapshot(), address)
     ));
+}
+
+export function useProjectScriptActionOperation(query: ActionOperationProjectScriptQuery) {
+    return useActionOperationSelector(() => actionOperationSelectors.selectForProjectScript(actionOperationStore.getSnapshot(), query));
+}
+
+export function useProjectSetupActionOperation(query: ActionOperationProjectWorkspaceQuery) {
+    return useActionOperationSelector(() => actionOperationSelectors.selectForProjectSetup(actionOperationStore.getSnapshot(), query));
+}
+
+export function useManagedMachineActionOperation(query: ActionOperationManagedMachineQuery) {
+    return useActionOperationSelector(() => actionOperationSelectors.selectForManagedMachine(actionOperationStore.getSnapshot(), query));
 }
 
 export function useActionOperationsHaveAttention(): boolean {

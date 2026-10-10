@@ -50,10 +50,68 @@ async function seedOpenDraft(draftId: string) {
         defaultRef: 'main',
         selector: { provider: { id: 'forge', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
             repository: { nameWithOwner: 'octocat/Hello-World', cloneUrl: 'https://github.com/octocat/Hello-World' }, protocol: 'https' } } } } });
-    return { machine, read: () => getSessionDraftSnapshot(scope, { kind: 'projectOpen', draftId })?.document };
+    return { machine, read: () => {
+        const document = getSessionDraftSnapshot(scope, { kind: 'projectOpen', draftId })?.document;
+        if (!document || !('selection' in document)) throw new Error('Expected the Project Open draft');
+        return document;
+    } };
 }
 
 describe('Project Open rendered choices', () => {
+    it('edits Source subdirectory and Sync policy without replacing a retained link or saved Source defaults', async () => {
+        const draftId = '00000000-0000-4000-8000-000000000081';
+        const seeded = await seedOpenDraft(draftId);
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { writeProjectOpenDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        const { buildWorkspaceContentPolicy } = await import('@/sync/domains/sessionHandoff/sessionHandoffDefaults');
+        const scope = { serverId: 'home', accountId: 'account' };
+        const source = seeded.read().selection.value!.source!;
+        if (source.kind !== 'source') throw new Error('Expected Source');
+        const checkout = { serverId: 'home', machineId: 'source-machine', workspaceId: 'source-checkout', rootPath: '/source' };
+        storage.getState().activateProjectAccountRowsScope(scope);
+        storage.getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete',
+            workspaceRefs: [{ id: checkout.workspaceId, serverId: checkout.serverId, machineId: checkout.machineId,
+                rootPath: checkout.rootPath, createdAtMs: 1, source: { sourceId: source.id, revision: source.revision } }],
+            relationships: [], organizations: [], revisionsByPhysicalKey: {} });
+        const workspaceAction = { kind: 'create_relationship' as const, mode: 'keep_synced' as const, flushBeforeCommit: true as const,
+            contentPolicy: buildWorkspaceContentPolicy({ contentSelection: 'all_files', includeIgnoredMode: 'include_selected', ignoredIncludeGlobs: ['.env.local'] }) };
+        writeProjectOpenDraft({ scope, draftId, patch: { selection: { serverId: 'home', machineId: seeded.machine.id,
+            source: { ...source, subdir: 'saved/default', checkout }, materialization: { kind: 'sync', targetPath: '/target', workspaceAction } } } });
+        const screen = await renderScreen(<ProjectOpenScreen />);
+        const branch = () => screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'projects.open.subject.ref');
+        await vi.waitFor(() => expect(branch()).toBeDefined());
+        await act(async () => { branch()!.props.onSelect('ref:@default'); });
+        expect(seeded.read().selection.value?.materialization).toMatchObject({ workspaceAction });
+        const { FieldValueItem } = await import('@/components/ui/forms/FieldValueItem');
+        const subdir = screen.findAllByType(FieldValueItem).find(node => node.props.testID === 'projects.open.subject.folder');
+        expect(subdir).toBeDefined();
+        await act(async () => { subdir!.props.onCommit('packages/app'); });
+        expect(seeded.read().selection.value).toMatchObject({ subdir: 'packages/app', source: { subdir: 'saved/default' },
+            materialization: { workspaceAction } });
+        const mode = () => screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'projects.open.sync-mode');
+        expect(mode()).toBeDefined();
+        await act(async () => { mode()!.props.onSelect('copy_once'); });
+        expect(seeded.read().selection.value?.materialization).toMatchObject({ workspaceAction: { kind: 'copy_once', contentPolicy: workspaceAction.contentPolicy } });
+        const content = screen.findAllByType(DropdownMenu).find(node => node.props.itemTrigger?.itemProps?.testID === 'projects.open-content-selection-trigger');
+        expect(content).toBeDefined();
+        await act(async () => { content!.props.onSelect('git_worktree'); });
+        expect(seeded.read().selection.value?.materialization).toMatchObject({ workspaceAction: { contentPolicy: { selection: 'git_worktree', extraIncludePatterns: ['.env.local'] } } });
+    });
+    it('explains an unverified Home or Machine target and retains the Open draft', async () => {
+        const draftId = '00000000-0000-4000-8000-000000000081';
+        const seeded = await seedOpenDraft(draftId);
+        const selection = seeded.read()?.selection.value;
+        const { writeProjectOpenDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
+        const screen = await renderScreen(<ProjectOpenScreen />);
+        await act(async () => { writeProjectOpenDraft({ scope: { serverId: 'home', accountId: 'account' }, draftId,
+            patch: { result: { kind: 'refused', code: 'target_mismatch' } } }); });
+        const banner = screen.findAllByType(AttentionBanner).find(node => node.props.testID === 'projects.open.refused');
+        expect(banner?.props.title).toBe(t('projects.open.targetMismatch'));
+        expect(banner?.props.description).toBe(t('projects.open.targetMismatchHint'));
+        expect(banner?.props.details).toContain('target_mismatch');
+        expect(seeded.read()?.selection.value).toEqual(selection);
+    });
     it('exposes a page header exit that returns to the origin and keeps the draft', async () => {
         const draftId = '00000000-0000-4000-8000-000000000081';
         const seeded = await seedOpenDraft(draftId);

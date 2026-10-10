@@ -1,13 +1,13 @@
 import {
+    ACTION_OPERATION_RPC_METHODS_V2,
     ACTION_OPERATION_RPC_METHODS_V1,
-    ActionOperationCancelV1ResponseSchema,
     ActionOperationGetV1ResponseSchema,
     ActionOperationListV1ResponseSchema,
-    type ActionOperationCancelV1Response,
     type ActionOperationGetV1Response,
     type ActionOperationListV1Request,
     type ActionOperationListV1Response,
 } from '@happier-dev/protocol/actions/operations/v1';
+import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { createRpcCallError } from '@/sync/runtime/rpcErrors';
@@ -17,6 +17,7 @@ export type ActionOperationRpc = <Response, Request>(params: Readonly<{
     method: string;
     payload: Request;
     serverId?: string | null;
+    accountId?: string | null;
     timeoutMs?: number;
     onIssued?: () => void;
 }>) => Promise<Response>;
@@ -24,6 +25,7 @@ export type ActionOperationRpc = <Response, Request>(params: Readonly<{
 type ActionOperationTransportParams = Readonly<{
     machineId: string;
     serverId?: string | null;
+    accountId?: string | null;
     rpc?: ActionOperationRpc;
 }>;
 
@@ -52,39 +54,57 @@ function resolveRpc(params: ActionOperationTransportParams): ActionOperationRpc 
     return params.rpc ?? machineRpcWithServerScope;
 }
 
-/** Connection/reconnection reconciliation only; live revisions arrive by encrypted push. */
-export async function listActionOperations(
-    params: ActionOperationTransportParams & Readonly<{ request?: ActionOperationListV1Request }>,
-): Promise<ActionOperationListV1Response> {
-    const raw = await resolveRpc(params)<unknown, ActionOperationListV1Request>({
+async function readActionOperationObservation<Response, Request>(
+    params: ActionOperationTransportParams,
+    payload: Request,
+    schema: ResponseSchema<Response>,
+    methods: Readonly<{ current: string; predecessor: string }>,
+    requireCurrentDomainFacts: boolean | (() => boolean) = false,
+): Promise<Response> {
+    const read = async (method: string) => parseResponse(schema, await resolveRpc(params)<unknown, Request>({
         machineId: params.machineId,
-        method: ACTION_OPERATION_RPC_METHODS_V1.list,
-        payload: params.request ?? {},
+        method,
+        payload,
         serverId: params.serverId,
-    });
-    return parseResponse(ActionOperationListV1ResponseSchema, raw, ACTION_OPERATION_RPC_METHODS_V1.list);
+        accountId: params.accountId,
+    }), method);
+    try {
+        return await read(methods.current);
+    } catch (error) {
+        // ../0.2 at 37a6541578749067b49d4579be8c752c9591b8c8 registers V1 only.
+        // Auth refusals, malformed data and current-domain inspection never downgrade.
+        const requiresCurrent = () => typeof requireCurrentDomainFacts === 'function'
+            ? requireCurrentDomainFacts() : requireCurrentDomainFacts;
+        if (requiresCurrent() || !(isRpcMethodNotAvailableError(error) || isRpcMethodNotFoundError(error))) throw error;
+        const response = await read(methods.predecessor);
+        // A rich push can arrive while the old read is pending. Retained current
+        // owner facts must not be replaced by that predecessor projection.
+        if (requiresCurrent()) throw error;
+        return response;
+    }
+}
+
+/** Connection/reconnection reconciliation; live notifications inspect the same owner with get. */
+export async function listActionOperations(
+    params: ActionOperationTransportParams & Readonly<{
+        request?: ActionOperationListV1Request;
+        requireCurrentDomainFacts?: true | (() => boolean);
+    }>,
+): Promise<ActionOperationListV1Response> {
+    return await readActionOperationObservation(params, params.request ?? {}, ActionOperationListV1ResponseSchema, {
+        current: ACTION_OPERATION_RPC_METHODS_V2.list, predecessor: ACTION_OPERATION_RPC_METHODS_V1.list,
+    }, params.requireCurrentDomainFacts);
 }
 
 export async function getActionOperation(
-    params: ActionOperationTransportParams & Readonly<{ operationId: string }>,
+    params: ActionOperationTransportParams & Readonly<{
+        operationId: string;
+        /** Notification reconciliation needs current owner facts, not the released projection. */
+        requireCurrentDomainFacts?: true;
+    }>,
 ): Promise<ActionOperationGetV1Response> {
-    const raw = await resolveRpc(params)<unknown, Readonly<{ operationId: string }>>({
-        machineId: params.machineId,
-        method: ACTION_OPERATION_RPC_METHODS_V1.get,
-        payload: { operationId: params.operationId },
-        serverId: params.serverId,
-    });
-    return parseResponse(ActionOperationGetV1ResponseSchema, raw, ACTION_OPERATION_RPC_METHODS_V1.get);
-}
-
-export async function cancelActionOperation(
-    params: ActionOperationTransportParams & Readonly<{ operationId: string }>,
-): Promise<ActionOperationCancelV1Response> {
-    const raw = await resolveRpc(params)<unknown, Readonly<{ operationId: string }>>({
-        machineId: params.machineId,
-        method: ACTION_OPERATION_RPC_METHODS_V1.cancel,
-        payload: { operationId: params.operationId },
-        serverId: params.serverId,
-    });
-    return parseResponse(ActionOperationCancelV1ResponseSchema, raw, ACTION_OPERATION_RPC_METHODS_V1.cancel);
+    // This reader has only the predecessor-compatible plain get payload, never richer wait flags.
+    return await readActionOperationObservation(params, { operationId: params.operationId }, ActionOperationGetV1ResponseSchema, {
+        current: ACTION_OPERATION_RPC_METHODS_V2.get, predecessor: ACTION_OPERATION_RPC_METHODS_V1.get,
+    }, params.requireCurrentDomainFacts === true);
 }

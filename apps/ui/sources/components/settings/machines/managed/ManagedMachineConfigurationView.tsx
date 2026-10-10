@@ -10,7 +10,7 @@ import { isMachineProvisionerCredentialPurposeRequiredV1 } from '@happier-dev/pr
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { resolveMachineRetentionPolicyV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
+import { isMachineRetainedWakeEligibleV1, resolveMachineRetentionPolicyV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { useMachineListForServer } from '@/sync/domains/state/storage';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -296,8 +296,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const keepPolicy = facts ?? (finiteOnly ? defaultPolicy : null);
     const nativeExpiry = retentionCapabilities?.nativeExpiry;
     const receiptController = receiptFacts?.controller ?? controller;
-    const controllerName = getMachineDisplayName(machines.find(machine => machine.id === receiptController?.machineId
-        && machine.installationId === receiptController?.installationId)) ?? t('common.unknown');
+    const knownControllerName = getMachineDisplayName(machines.find(machine => machine.id === receiptController?.machineId
+        && machine.installationId === receiptController?.installationId));
+    const controllerName = knownControllerName ?? t('common.unknown');
     const activeBinding = catalog.binding;
     const mayCreate = !!catalogProvisioner && !!catalogController && !!facts && facts.optionStatus === 'current' && draft?.check?.available === true
         && credentialsReady
@@ -389,9 +390,14 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         const name = await Modal.prompt(t('managedMachines.receipt.rename'), undefined, { defaultValue: draft.name });
         if (name?.trim() && activeBinding.isCurrent()) setDraft(current => current ? { ...current, name: name.trim() } : current);
     };
+    const billedAccount = credentialAccounts.presentationsByKey['credential:0']?.primaryLabel;
+    const billingFootnote = provisioner?.descriptor.billing.location === 'local'
+        ? knownControllerName ? t('managedMachines.receipt.localFootnote', { provider: title, computer: knownControllerName }) : null
+        : provisioner?.descriptor.billing.location === 'cloud' && billedAccount
+            ? t('managedMachines.receipt.cloudFootnote', { provider: title, account: billedAccount }) : null;
     const receipt: ManagedReceiptModel = {
         ...(receiptFacts ? buildManagedConfigurationReceipt({ launch: receiptFacts.launch, reviewedFacts: receiptFacts, providerTitle: title, controllerName, homeName, mark, localized,
-            credentialPresentations: credentialAccounts.presentationsByKey })
+            credentialPresentations: credentialAccounts.presentationsByKey, keepEditedBelow: Boolean(keepPolicy && defaultPolicy) })
             : { caption: t('managedMachines.receipt.yourNewMachine'), mark, name: draft?.name ?? title, spec: title, facts: [], cost: { kind: 'unpriced' as const, provider: title } }),
         onRename: !preset || props.presetOnly ? () => { void rename(); } : undefined,
         keep: keepPolicy && defaultPolicy ? { policy: keepPolicy, defaultPolicy, inherited: !draft?.override && (!props.presetOnly || !draft?.preset?.retention && draft?.preset?.wakeOnAcceptedMessage === undefined), categoryLabel: retentionCategoryTitle(defaultPolicy.category),
@@ -413,7 +419,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             ...(nativeExpiry ? { nativeExpiry: t('managedRetention.nativeExpiry', { provider: title,
                 time: nativeExpiry.kind === 'deadline' ? formatAsOfTime(nativeExpiry.at) : formatRetentionDuration(nativeExpiry.afterMs) }) } : {}),
             effects: retentionCapabilities?.supportedIntents.filter((intent): intent is 'stop' | 'delete' => intent === 'stop' || intent === 'delete'),
-            canWake: retentionCapabilities?.supportedIntents.includes('start'),
+            canWake: retentionCapabilities !== undefined && isMachineRetainedWakeEligibleV1(keepPolicy.retention, retentionCapabilities),
             consequence: retention => describeRetentionConsequence(retention, { ...(provisioner?.descriptor.billing ?? { location: 'unknown', stoppedBilling: 'unknown' }), provider: title }),
             onChange: policy => setDraft(current => current ? { ...current, override: policy } : current),
             onReset: () => setDraft(current => current ? { ...current, override: undefined,
@@ -421,9 +427,11 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         primary: { label: props.presetOnly ? t('common.save') : props.onUse ? t('common.use') : provisioner?.descriptor.kindTitle
             ? t('managedMachines.receipt.createKind', { kind: localized(provisioner.contribution.pluginId, provisioner.descriptor.kindTitle) }) : t('managedMachines.add.create'),
             onPress: () => { if (props.presetOnly) void save(); else if (props.onUse) commitUse(); else void create(); },
-            disabled: props.presetOnly ? !maySave : !mayCreate, loading: busy, testID: props.onUse && !props.presetOnly ? 'managed-config.use' : 'managed-config.create' },
+            disabled: props.presetOnly ? !maySave : !mayCreate, loading: busy, testID: props.onUse && !props.presetOnly ? 'managed-config.use' : 'managed-config.create',
+            // Who bills, under the action that starts the billing; only where the provisioner declares it.
+            ...(!props.presetOnly && billingFootnote ? { footnote: billingFootnote } : {}) },
         secondary: !props.presetOnly ? [{ label: t('managedMachines.receipt.saveAsPreset'), onPress: () => { void save(); }, disabled: !maySave, testID: 'managed-config.save-preset', tone: 'text' }] : undefined,
-        presetSaveNote: !props.presetOnly && presetRetention?.kind === 'deadline' ? t('machinePresets.deadlineOmitted') : undefined,
+        secondaryNote: !props.presetOnly && presetRetention?.kind === 'deadline' ? t('machinePresets.deadlineOmitted') : undefined,
     };
 
     const creationDisabledNotice = accountSettings.settings?.managedMachineCreationEnabled === false && !props.presetOnly
@@ -469,7 +477,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         {approval.approvalId ? <AttentionBanner title={t('approvals.title')} description={t('approvals.status.open')}
             action={{ label: t('approvals.details'), onPress: () => router.push(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(props.serverId)}` as never) }} /> : null}
         {creationDisabledNotice}
-        {draft && credentialFields.length ? <ItemGroup title={t('connectedServices.title')}>
+        {draft && credentialFields.length ? <ItemGroup title={t('managedMachines.receipt.account')}>
             <ActionInputFields fields={credentialFields} input={credentialInput}
                 editable={!!catalogProvisioner && !!catalogController && !busy && (!preset || props.presetOnly === true)} busy={busy}
                 resolveFieldOptions={credentialFieldOptions} resolveFieldTestID={field => `managed-config.credential:${credentialPurposes?.[Number(field.path)]?.purpose.purpose}`}

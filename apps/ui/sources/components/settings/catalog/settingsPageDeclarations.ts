@@ -29,6 +29,7 @@ import { PLUGINS_SETTINGS } from '@/components/settings/plugins/pluginsSettings'
 import { PROMPTS_SETTINGS } from '@/components/settings/prompts/promptsSettings';
 import { PROMPTS_CONTEXT_SETTINGS } from '@/components/settings/prompts/context/promptsContextSettings';
 import { MEMORY_SETTINGS } from '@/components/settings/memory/memorySettings';
+import { SEARCH_SETTINGS } from '@/components/settings/search/searchSettings';
 import { ACTIONS_CREATE_SESSION_SETTINGS } from '@/components/settings/actions/actionsSettings';
 import { EXTERNAL_SESSIONS_SETTINGS } from '@/components/settings/externalSessions/externalSessionsSettings';
 import { TRANSCRIPT_SETTINGS } from '@/components/settings/session/transcriptSettings';
@@ -43,6 +44,7 @@ import { NOTIFICATIONS_PUSH_SETTINGS } from '@/components/settings/notifications
 import { DIAGNOSIS_SETTINGS } from '@/components/settings/diagnosis/diagnosisSettings';
 import { ATTACHMENTS_SETTINGS } from '@/components/settings/attachments/attachmentsSettings';
 import { OVERVIEW_SETTINGS } from '@/components/settings/overview/overviewSettings';
+import { USAGE_SETTINGS } from '@/components/settings/usage/usageSettings';
 import { WORKFLOW_RUN_SETTINGS } from '@/components/automations/settings/workflowRunSettings';
 import {
     HOME_GITHUB_APP_EDITOR_SETTINGS,
@@ -61,6 +63,7 @@ import { HOME_DATA_SETTINGS } from '@/components/settings/home/governance/homeDa
 import { HOME_EMAIL_SETTINGS } from '@/components/settings/home/governance/homeEmailSettings';
 import { HOME_REACH_SETTINGS } from '@/components/settings/home/governance/homeReachSettings';
 import { HOME_FEATURE_SETTINGS } from '@/components/settings/home/governance/homeFeatureSettings';
+import { HOME_OVERVIEW_SETTINGS } from '@/components/settings/home/governance/homeOverviewSettings';
 import { HOME_SERVER_SETTINGS } from '@/components/settings/home/governance/homeServerSettings';
 import { HOME_SIGN_IN_PROVIDERS_SETTINGS } from '@/components/settings/home/signInProviders/homeSignInProvidersSettings';
 import { HOME_TEAMS_POLICY_SETTINGS } from '@/components/settings/home/governance/homeTeamsPolicySettings';
@@ -83,6 +86,7 @@ import type { Settings } from '@/sync/domains/settings/settings';
  */
 export const SETTINGS_PAGE_DECLARATIONS: readonly SettingsPageDeclaration[] = [
     OVERVIEW_SETTINGS,
+    USAGE_SETTINGS,
     WORKFLOW_RUN_SETTINGS,
     HOME_MANAGED_OIDC_SETTINGS,
     HOME_AUTHENTICATION_SETTINGS,
@@ -92,6 +96,7 @@ export const SETTINGS_PAGE_DECLARATIONS: readonly SettingsPageDeclaration[] = [
     HOME_FEATURE_SETTINGS,
     HOME_DATA_SETTINGS,
     HOME_SERVER_SETTINGS,
+    HOME_OVERVIEW_SETTINGS,
     HOME_SIGN_IN_PROVIDERS_SETTINGS,
     HOME_IDENTITY_PROVIDER_SETTINGS,
     TEAM_MANAGED_OIDC_SETTINGS,
@@ -133,6 +138,7 @@ export const SETTINGS_PAGE_DECLARATIONS: readonly SettingsPageDeclaration[] = [
     MCP_PREVIEW_SETTINGS,
     PLUGINS_SETTINGS,
     MEMORY_SETTINGS,
+    SEARCH_SETTINGS,
     ACTIONS_CREATE_SESSION_SETTINGS,
     EXTERNAL_SESSIONS_SETTINGS,
     PROMPTS_SETTINGS,

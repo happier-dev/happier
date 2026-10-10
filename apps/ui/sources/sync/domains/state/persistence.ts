@@ -1,5 +1,6 @@
 import type { SessionInitialAccessDraftV1, SessionAuthoringExecutionTargetV2, TemporaryComputerActivationRefV1 } from '@happier-dev/protocol';
 import { z } from 'zod';
+import { nullable } from 'zod/mini';
 import type { ZenTaskSource } from '@/sync/domains/todos/todoStoredContent';
 import type { Settings } from '../settings/settings';
 import { voiceSettingsParse } from '../settings/voiceSettings';
@@ -25,6 +26,14 @@ import {
     type NewSessionCheckoutCreationDraft,
 } from './newSessionCheckoutDraft';
 import {
+    ManagedMachineSelectionDraftSchema,
+    ManagedMachineSelectionDraftReadSchema,
+    type ManagedMachineSelectionDraft,
+    ManagedMachineAcquisitionDraftSchema,
+    ManagedMachineAcquisitionDraftReadSchema,
+    type ManagedMachineAcquisitionDraft,
+} from './newSessionManagedMachineDraft';
+import {
     sanitizeNewSessionAutomationDraft,
     type NewSessionAutomationDraft,
 } from '@/sync/domains/automations/automationDraft';
@@ -39,6 +48,9 @@ import {
 } from '@/sync/domains/scope/serverAccountScope';
 import { AcpConfigOptionOverridesV1Schema, normalizeCodexBackendMode, type AcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import { SessionInitialTriggerV1Schema, type SessionInitialTriggerV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { SessionIdentityAdditionsV1StoredSchema, type SessionIdentityAdditions } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
+import { SessionPromptStackV1StoredSchema, type SessionPromptStackV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
+import { readSessionInstructionsAuthoringDraft, type SessionInstructionsAuthoringDraft } from '@/sync/ops/promptLibrary/sessionInstructions';
 import { AgentExecutionTargetV1Schema, type AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { ComposerAttachmentDraftV1Schema, type ComposerAttachmentAuthorValueV1, MAX_COMPOSER_ATTACHMENT_INSTANCES_V1, type ComposerAttachmentDraftV1 } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
 import { ExternalSessionRefreshCursorV1Schema } from '@happier-dev/protocol/sessions/external/secureRefreshV1';
@@ -53,7 +65,7 @@ import { WindowsRemoteSessionLaunchModeSchema, type WindowsRemoteSessionLaunchMo
 import { readBackendTargetRefV2, writePersistedBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { readPersistedAgentContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readRuntimeDescriptorV1, type RuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
-import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
+import { PluginUiNewSessionSeedOriginV1Schema, StoredPluginUiNewSessionSeedOriginV1Schema, type PluginUiNewSessionSeedOriginV1, type PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams';
 import { getPersistenceStorage } from './persistenceStorage';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
@@ -159,6 +171,13 @@ const NewSessionDraftExecutionTargetSchema = SessionExecutionTargetV1Schema.exte
 
 export interface NewSessionDraft {
     input: string;
+    sessionName?: string;
+    initialSessionFacts?: SessionIdentityAdditions;
+    memoryEnabled?: boolean;
+    promptStack?: SessionPromptStackV1;
+    instructionsDraft?: SessionInstructionsAuthoringDraft | null;
+    /** Original admitted return destination, independent of editable execution placement. */
+    authoringOrigin?: PluginUiNewSessionSeedOriginV1;
     zenTaskSource?: ZenTaskSource;
     /**
      * Host-created attachment requests waiting for the mounted Composer to
@@ -182,6 +201,10 @@ export interface NewSessionDraft {
     placementCandidates?: readonly PluginUiSessionPlacementCandidateV1[];
     executionTarget?: SessionAuthoringExecutionTargetV2 | null;
     temporaryComputerActivationRef?: TemporaryComputerActivationRefV1 | null;
+    /** Device-local reviewed creation choice; resource admission remains with the managed owner. */
+    managedMachineSelection?: ManagedMachineSelectionDraft | null;
+    /** Local replay identity and admitted resource reference, never another allocation owner. */
+    managedMachineAcquisition?: ManagedMachineAcquisitionDraft | null;
     organizationPlacement?: SessionOrganizationPlacementV1;
     access?: SessionInitialAccessDraftV1 | null;
     primaryTeamId?: string | null;
@@ -567,6 +590,8 @@ export function loadThemePreference(): 'light' | 'dark' | 'adaptive' {
 export type ThemeRuntimeLocalState = Readonly<{
     themePreference: LocalSettings['themePreference'];
     themeProfiles: ThemeProfilesLocalStateV1;
+    uiSurfaceFinish: LocalSettings['uiSurfaceFinish'];
+    uiSurfaceFinishOverrides: LocalSettings['uiSurfaceFinishOverrides'];
 }>;
 
 function readLocalSettingsJsonForThemeRuntime(raw: string): unknown | null {
@@ -589,6 +614,8 @@ export function loadThemeRuntimeLocalState(): ThemeRuntimeLocalState {
         return {
             themePreference: localSettingsDefaults.themePreference,
             themeProfiles: localSettingsDefaults.themeProfiles,
+            uiSurfaceFinish: localSettingsDefaults.uiSurfaceFinish,
+            uiSurfaceFinishOverrides: localSettingsDefaults.uiSurfaceFinishOverrides,
         };
     }
 
@@ -597,6 +624,8 @@ export function loadThemeRuntimeLocalState(): ThemeRuntimeLocalState {
         return {
             themePreference: localSettingsDefaults.themePreference,
             themeProfiles: localSettingsDefaults.themeProfiles,
+            uiSurfaceFinish: localSettingsDefaults.uiSurfaceFinish,
+            uiSurfaceFinishOverrides: localSettingsDefaults.uiSurfaceFinishOverrides,
         };
     }
 
@@ -616,6 +645,8 @@ export function loadThemeRuntimeLocalState(): ThemeRuntimeLocalState {
     return {
         themePreference: settings.themePreference,
         themeProfiles,
+        uiSurfaceFinish: settings.uiSurfaceFinish,
+        uiSurfaceFinishOverrides: settings.uiSurfaceFinishOverrides,
     };
 }
 
@@ -662,6 +693,8 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
             }
             : null;
         const parsedActivationRef = TemporaryComputerActivationRefV1Schema.nullable().safeParse(parsed.temporaryComputerActivationRef);
+        const managedMachineSelection = nullable(ManagedMachineSelectionDraftReadSchema).safeParse(parsed.managedMachineSelection);
+        const managedMachineAcquisition = nullable(ManagedMachineAcquisitionDraftReadSchema).safeParse(parsed.managedMachineAcquisition);
         const parsedOrganizationPlacement = SessionOrganizationPlacementV1Schema.safeParse((parsed as any).organizationPlacement);
         const organizationPlacement = parsedOrganizationPlacement.success
             ? parsedOrganizationPlacement.data
@@ -794,6 +827,10 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
             : undefined;
         const automationDraft = sanitizeNewSessionAutomationDraft((parsed as any).automationDraft);
         const initialTriggers = SessionInitialTriggerV1Schema.array().safeParse(parsed.initialTriggers);
+        const initialSessionFacts = SessionIdentityAdditionsV1StoredSchema.safeParse(parsed.initialSessionFacts);
+        const promptStack = SessionPromptStackV1StoredSchema.safeParse(parsed.promptStack);
+        const instructionsDraft = readSessionInstructionsAuthoringDraft(parsed.instructionsDraft);
+        const authoringOrigin = StoredPluginUiNewSessionSeedOriginV1Schema.safeParse(parsed.authoringOrigin);
         // Released remote-dev local `new-session-draft-v1` records stored Codex
         // selection at top level. Normalize it once at this named persistence
         // ingress; current writers carry only the Agent-owned descriptor. Remove
@@ -816,6 +853,12 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
 
         return {
             input,
+            ...(typeof parsed.sessionName === 'string' ? { sessionName: parsed.sessionName } : {}),
+            ...(initialSessionFacts.success ? { initialSessionFacts: initialSessionFacts.data } : {}),
+            ...(typeof parsed.memoryEnabled === 'boolean' ? { memoryEnabled: parsed.memoryEnabled } : {}),
+            ...(promptStack.success ? { promptStack: promptStack.data } : {}),
+            ...(instructionsDraft === undefined ? {} : { instructionsDraft }),
+            ...(authoringOrigin.success ? { authoringOrigin: authoringOrigin.data } : {}),
             ...(composerAttachments !== undefined ? { composerAttachments } : {}),
             ...(launchUserAttemptId ? { launchUserAttemptId } : {}),
             selectedMachineId,
@@ -824,6 +867,8 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
             ...(targetServerId ? { targetServerId } : {}),
             executionTarget,
             ...(parsedActivationRef.success ? { temporaryComputerActivationRef: parsedActivationRef.data } : {}),
+            ...(managedMachineSelection.success ? { managedMachineSelection: managedMachineSelection.data } : {}),
+            ...(managedMachineAcquisition.success ? { managedMachineAcquisition: managedMachineAcquisition.data } : {}),
             organizationPlacement,
             ...(windowsRemoteSessionLaunchModeOverride ? { windowsRemoteSessionLaunchModeOverride } : {}),
             ...(entryIntent ? { entryIntent } : {}),
@@ -873,6 +918,15 @@ export function saveNewSessionDraft(draft: NewSessionDraft, scope?: ServerAccoun
         : canonicalDraft.modelSelection ?? null;
     mmkv.set(newSessionDraftKey(scope), JSON.stringify({
         ...persistedDraft,
+        ...(canonicalDraft.managedMachineSelection === undefined ? {} : {
+            managedMachineSelection: nullable(ManagedMachineSelectionDraftSchema).parse(canonicalDraft.managedMachineSelection),
+        }),
+        ...(canonicalDraft.managedMachineAcquisition === undefined ? {} : {
+            managedMachineAcquisition: nullable(ManagedMachineAcquisitionDraftSchema).parse(canonicalDraft.managedMachineAcquisition),
+        }),
+        ...(canonicalDraft.authoringOrigin === undefined ? {} : {
+            authoringOrigin: PluginUiNewSessionSeedOriginV1Schema.parse(canonicalDraft.authoringOrigin),
+        }),
         ...(canonicalDraft.agentTarget ? { agentTarget: canonicalDraft.agentTarget } : {}),
         ...(!canonicalDraft.agentTarget ? { agentType: canonicalDraft.agentType } : {}),
         modelSelection,

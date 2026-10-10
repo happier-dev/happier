@@ -400,6 +400,7 @@ function resolvePersistedWindowsLaunchOverrideForMachine(
 
 /** One frozen empty projection record, so an absent projection keeps a stable identity. */
 const EMPTY_PLUGIN_PROJECTION_RECORD = Object.freeze({}) as Readonly<Record<string, never>>;
+const EMPTY_ROUTE_SOURCES: readonly never[] = [];
 
 export type TemporaryComputerCreatorDependencies = Readonly<{
     /**
@@ -1678,6 +1679,14 @@ export function useNewSessionScreenModel(input?: Readonly<{
         favoriteSelections: favoriteModelSelections.map(favorite => favorite.selection.ref).filter(ref => ref.agentTargetKey === selectedBackendTargetKey),
         ...(modelSelection ? { currentSelection: modelSelection.ref } : {}),
     });
+    // The "Runs through" popover names the selected Agent's Gateways and Providers from this projection.
+    const newSessionRouteSources = React.useMemo(() => providersFeatureEnabled && selectedMachineId !== null ? {
+        machineId: selectedMachineId,
+        serverId: capabilityServerId,
+        agentTargetKey: selectedBackendTargetKey,
+        shownSources: providerModelProjection.data?.groups ?? EMPTY_ROUTE_SOURCES,
+        hiddenSources: providerModelProjection.data?.hiddenSources ?? EMPTY_ROUTE_SOURCES,
+    } : undefined, [capabilityServerId, providerModelProjection.data, providersFeatureEnabled, selectedBackendTargetKey, selectedMachineId]);
     const confirmExperimentalProviderModel = useConfirmExperimentalProviderModel({
         enabled: providersFeatureEnabled,
         machineId: selectedMachineId,
@@ -1808,8 +1817,10 @@ export function useNewSessionScreenModel(input?: Readonly<{
         selectedCredentialMachineAgent,
         connectedServicesRecoveryAction,
         routePresentation: connectedServicesRoutePresentation,
+        nativeSourceLabel: connectedServicesNativeSourceLabel,
         requesterSignInPurposes,
     } = useNewSessionConnectedServicesAgentOptions({
+        routeSources: newSessionRouteSources,
         modelSelection: selectedTeamCredentialModel ? { ...selectedTeamCredentialModel, source: 'team_resource' } : modelSelection?.ref ?? null,
         providerSources: providerModelProjection.data?.groups,
         providerSettings: providerSettingsForProfileIntent,
@@ -2590,6 +2601,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         onExplicitBackendTargetSelection: clearBackendTargetRouteParamsAfterExplicitSelection,
         refreshProbe: cliAvailabilityProbe ?? null,
         providerProjection: providerModelProjection,
+        selectedNativeSourceLabel: connectedServicesNativeSourceLabel,
         experimentalConfirmation: confirmExperimentalProviderModel,
     });
 

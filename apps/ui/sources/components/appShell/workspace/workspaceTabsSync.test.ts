@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createWorkspaceTabsSync, parseWorkspaceTabs } from './workspaceTabsSync';
+import { createWorkspaceTabsSync, parseWorkspaceTabs, type WorkspaceTabsSyncSnapshot } from './workspaceTabsSync';
 import { emptyWorkspaceTabs, type SharedWorkspaceTabs } from './workspaceSyncedTabs';
 import { normalizeWorkspaceSingletonTabs } from './workspaceDestinationPolicy';
 import type { CompactAppDestination } from '../destinations/compactAppDestinationCatalog';
@@ -13,6 +13,71 @@ const singletonCatalog = [{ id: singletonKind, kind: 'plugin', container: 'appPa
 }] satisfies readonly CompactAppDestination[];
 
 describe('workspace KV synchronization', () => {
+    it('rebases a retired workflow detail onto its matching definition rather than the first workflow tab', async () => {
+        const other = { ...tab('other'), target: { kind: 'workflow', params: { id: 'workflow-2' } } };
+        const remote = { ...tab('remote'), target: { kind: 'workflow', params: { id: 'workflow-1' } } };
+        const duplicate = { ...remote, id: 'duplicate' };
+        let stored: SharedWorkspaceTabs = { v: 1, order: ['other', 'remote', 'duplicate'], pairs: [], tabsById: { other, remote, duplicate } };
+        const controller = createWorkspaceTabsSync({ transport: {
+            read: async () => ({ value: stored, version: 0 }),
+            compareAndSet: async value => { stored = value; return { success: true as const, version: 1 }; },
+        }, onRecord: () => {}, normalizeRecord: value => normalizeWorkspaceSingletonTabs(value, []) });
+        await controller.refresh();
+        controller.enqueue([{ type: 'close', tabId: 'duplicate' }]);
+        await controller.flush();
+        expect(stored.order).toEqual(['other']);
+        expect(stored.tabsById.other).toEqual(other);
+        controller.stop();
+    });
+    it('preserves the original workflow operation when a peer retargets its proposed winner to another definition', async () => {
+        const remote = { ...tab('remote'), target: { kind: 'workflow', params: { id: 'workflow-1' } } };
+        const duplicate = { ...remote, id: 'duplicate' };
+        const retargeted = { ...remote, target: { kind: 'workflow', params: { id: 'workflow-2' } } };
+        let stored: SharedWorkspaceTabs = { v: 1, order: ['remote'], pairs: [], tabsById: { remote } };
+        let conflict = true;
+        const controller = createWorkspaceTabsSync({ transport: {
+            read: async () => ({ value: stored, version: 0 }),
+            compareAndSet: async value => {
+                if (conflict) {
+                    conflict = false;
+                    stored = { ...stored, tabsById: { remote: retargeted } };
+                    return { success: false as const, value: stored, version: 1 };
+                }
+                stored = value;
+                return { success: true as const, version: 2 };
+            },
+        }, onRecord: () => {}, normalizeRecord: value => normalizeWorkspaceSingletonTabs(value, []) });
+        await controller.refresh();
+        controller.enqueue([{ type: 'open', tab: duplicate }]);
+        await controller.flush();
+        expect(stored.order).toEqual(['remote', 'duplicate']);
+        expect(stored.tabsById.remote.target).toEqual(retargeted.target);
+        expect(stored.tabsById.duplicate.target).toEqual(duplicate.target);
+        controller.stop();
+    });
+    it('retains the published snapshot across identical rereads while publishing real changes', async () => {
+        let stored = record('a');
+        const snapshots: WorkspaceTabsSyncSnapshot[] = [];
+        const records: SharedWorkspaceTabs[] = [];
+        const controller = createWorkspaceTabsSync({ transport: {
+            read: async () => ({ value: structuredClone(stored), version: 0 }),
+            compareAndSet: async () => ({ success: true as const, version: 1 }),
+        }, onRecord: value => records.push(value), onStatus: value => snapshots.push(value) });
+        await controller.refresh();
+        const acknowledged = controller.getSnapshot();
+        snapshots.length = 0; records.length = 0;
+        await controller.refresh();
+        await controller.flush();
+        expect(controller.getSnapshot()).toBe(acknowledged);
+        expect(snapshots).toEqual([]);
+        expect(records).toEqual([]);
+        stored = record('b');
+        await controller.refresh();
+        expect(snapshots).toHaveLength(1);
+        expect(records).toHaveLength(1);
+        expect(controller.getSnapshot().record?.order).toEqual(['b']);
+        controller.stop();
+    });
     it('restores and canonically republishes known tab fields when persisted envelopes contain extras', async () => {
         const canonical = record('a');
         const stored = { ...canonical, savedBy: 'other-client', tabsById: { a: { ...canonical.tabsById.a, savedBy: 'other-client', target: { ...canonical.tabsById.a.target, savedBy: 'other-client' } } } };

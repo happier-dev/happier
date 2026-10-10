@@ -14,6 +14,9 @@ export const ApprovalDecisionFooter = React.memo(function ApprovalDecisionFooter
     disabled?: boolean;
     decisionDisabled?: boolean;
     approveDisabled?: boolean;
+    approveLabel?: string;
+    /** The refusal's own word ("Deny"); defaults to Reject. */
+    rejectLabel?: string;
     approveAccessibilityHint?: string;
     disabledReason?: TranscriptPermissionDisabledReason;
     isDeciding: boolean;
@@ -47,7 +50,7 @@ export const ApprovalDecisionFooter = React.memo(function ApprovalDecisionFooter
                 testID={`${testIDPrefix}-approve`}
                 ref={primaryAnswerRef}
                 accessibilityRole="button"
-                accessibilityLabel={t('approvals.approve')}
+                accessibilityLabel={props.approveLabel ?? t('approvals.approve')}
                 accessibilityHint={props.approveAccessibilityHint}
                 disabled={approveDisabled}
                 onPress={props.onApprove}
@@ -61,13 +64,13 @@ export const ApprovalDecisionFooter = React.memo(function ApprovalDecisionFooter
                 {props.isDeciding ? (
                     <ActivitySpinner size="small" color={theme.colors.button.primary.tint} />
                 ) : (
-                    <Text style={styles.approveText}>{t('approvals.approve')}</Text>
+                    <Text style={styles.approveText}>{props.approveLabel ?? t('approvals.approve')}</Text>
                 )}
             </Pressable>
             <Pressable
                 testID={`${testIDPrefix}-reject`}
                 accessibilityRole="button"
-                accessibilityLabel={t('approvals.reject')}
+                accessibilityLabel={props.rejectLabel ?? t('approvals.reject')}
                 disabled={disabled}
                 onPress={props.onReject}
                 style={({ pressed }) => [
@@ -77,7 +80,7 @@ export const ApprovalDecisionFooter = React.memo(function ApprovalDecisionFooter
                     disabled ? styles.buttonDisabled : null,
                 ]}
             >
-                <Text style={styles.rejectText}>{t('approvals.reject')}</Text>
+                <Text style={styles.rejectText}>{props.rejectLabel ?? t('approvals.reject')}</Text>
             </Pressable>
         </View>
     );

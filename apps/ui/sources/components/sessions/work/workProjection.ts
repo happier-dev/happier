@@ -9,10 +9,14 @@ import {
 } from '@/components/work/status/resolveWorkStatusTone';
 import { withOutstandingReports, type SessionWorkStatusFacts } from '@/components/work/status/sessionWorkStatusFacts';
 import type { AgentActivityEntry } from '@/sync/domains/session/agentActivity';
+import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import { actionOperationAddressKey } from '@/sync/domains/actionOperations/qualifiedActionOperation';
+import { resolveActionOperationObservation } from '@/sync/domains/actionOperations/actionOperationStore';
+import { canRequestActionOperationStop } from '@/components/inbox/actionOperations/actionOperationPresentation';
 
 /**
  * The one Work projection of a Session (ORC R-09, §3.8): every unit of work the Session leads, read from
- * its four sources and counted once.
+ * its sources and counted once.
  *
  * - **Sessions** — the `reportsTo` subtree, from the Session rows the store already holds.
  * - **Agent activity** (`useSessionAgentActivity`) — background runs, in-session agents and the
@@ -20,6 +24,8 @@ import type { AgentActivityEntry } from '@/sync/domains/session/agentActivity';
  * - **Workflow activity** (`useSessionWorkflowActivity`) — the live progress of in-session workflow runs.
  * - **Managed workflow runs** (`useSessionManagedWorkflowRuns`) — FIN runs this Session started, with the
  *   server's attention predicate.
+ * - **Action operations** — admitted Project commands for this exact Home, Account and Session,
+ *   whether or not their output terminal exists yet. A represented workflow keeps its command leaves.
  *
  * The same workflow run reaches this projection through up to three sources; it is one item, keyed by
  * its run id, and the managed run (server truth) wins its state. The Session's own trigger runs are not
@@ -34,7 +40,14 @@ import type { AgentActivityEntry } from '@/sync/domains/session/agentActivity';
 export type WorkBucket = WorkStatusBucket;
 export type WorkStatus = WorkStatusPresentation;
 
-/** Unknown or stale source content is never evidence that this Session started nothing. */
+/**
+ * Unknown or stale source content is never evidence that this Session started nothing.
+ *
+ * While the first managed-run read is in flight, Working holds its place only when the list has
+ * nothing else to show: that is the one case where an absent section would read as "nothing is going".
+ * Beside rows the pane already knows (the Sessions under the lead), a placeholder for a section that
+ * may not exist would only collapse later and pull those rows up under the person's eye.
+ */
 export function resolveWorkReadPresentation(input: Readonly<{
     projection: WorkProjection | null;
     managedRuns: Readonly<{ phase: 'idle' | 'loading' | 'loaded' | 'failed'; refreshFailed: boolean }> | null;
@@ -43,25 +56,55 @@ export function resolveWorkReadPresentation(input: Readonly<{
     const managedLoading = input.managedRuns?.phase === 'loading';
     const managedUnavailable = input.managedRuns?.phase === 'failed';
     const itemCount = input.projection ? input.projection.sessions.length + input.projection.workflows.length
-        + input.projection.backgroundRuns.length + input.projection.agents.length : 0;
+        + input.projection.backgroundRuns.length + input.projection.agents.length + input.projection.projectCommands.length : 0;
     return {
         nothingYet: input.projection !== null && input.transcriptLoaded && itemCount === 0
             && !managedLoading && !managedUnavailable && !input.managedRuns?.refreshFailed,
-        managedLoading,
+        holdWorkingPlace: managedLoading && itemCount === 0,
         managedUnavailable,
     };
 }
 
-export type WorkItemKind = 'session' | 'workflow_run' | 'background_run' | 'agent';
+/**
+ * Where each title's distinguishing end starts, for a list whose rows may truncate (DESIGN.md: never
+ * truncate what tells Sessions apart). Sibling work is often named from one stem ("… child A",
+ * "… child B"), and an end ellipsis would cut exactly the part that differs. For a title that shares
+ * its first words with another in the list, the result is the index of the last shared word before the
+ * first difference, so the row can keep "child A" whole and let the shared start give way. A title
+ * whose difference already sits in its first two words, or that has none, is `null`: it truncates at
+ * the end as usual.
+ */
+export function resolveWorkTitleTailStarts(titles: readonly string[]): readonly (number | null)[] {
+    return titles.map((title, index) => {
+        let shared = 0;
+        for (let other = 0; other < titles.length; other += 1) {
+            if (other === index) continue;
+            const candidate = titles[other]!;
+            const limit = Math.min(title.length, candidate.length);
+            let length = 0;
+            while (length < limit && title[length] === candidate[length]) length += 1;
+            if (length > shared) shared = length;
+        }
+        if (shared === 0 || shared >= title.length) return null;
+        // The word that differs, then one shared word before it for context.
+        const differingWordStart = title.lastIndexOf(' ', shared) + 1;
+        if (differingWordStart < 2) return null;
+        const tailStart = title.lastIndexOf(' ', differingWordStart - 2) + 1;
+        return tailStart > 0 ? tailStart : null;
+    });
+}
+
+export type WorkItemKind = 'session' | 'workflow_run' | 'background_run' | 'agent' | 'project_command';
 
 /** Where a row leads. The peek (details pane) or the phone push resolves each target. */
 export type WorkOpenTarget =
     | Readonly<{ kind: 'session'; sessionId: string }>
     | Readonly<{ kind: 'workflow_run'; runId: string }>
+    | Readonly<{ kind: 'action_operation'; serverId: string; operationId: string }>
     | Readonly<{ kind: 'agent_activity'; entryId: string; subagentId: string | null; runId: string | null }>;
 
 export type WorkItem = Readonly<{
-    /** Stable across refreshes: `session:<id>`, `run:<runId>` or `agent:<entryId>`. */
+    /** Stable across refreshes; an operation key includes its exact Home as well as operation id. */
     key: string;
     kind: WorkItemKind;
     title: string;
@@ -69,7 +112,7 @@ export type WorkItem = Readonly<{
     agentId: string | null;
     /** Quiet secondary facts in reading order (engine · machine, "Reports to …", "7 of 12"). */
     facts: readonly string[];
-    /** The item this one reports to inside the projection (session nesting only). */
+    /** The item this one belongs under inside the projection (report Sessions or workflow commands). */
     parentKey: string | null;
     /** 0 for a direct report, 1 for a report of a report, … */
     level: number;
@@ -77,6 +120,10 @@ export type WorkItem = Readonly<{
     /** Workflow progress, when a source reported one. */
     progress: Readonly<{ completed: number; total: number }> | null;
     open: WorkOpenTarget;
+    /** Actual admitted operation, including output association before and after settlement. */
+    operation?: ActionOperationProjection;
+    /** A represented Workflow owns its command leaves; they add no top-level Work count. */
+    projectCommands?: readonly WorkItem[];
 }>;
 
 /**
@@ -98,6 +145,7 @@ export type WorkProjection = Readonly<{
     backgroundRuns: readonly WorkItem[];
     /** In-session agents (Task subagents, teammates): work the Session runs inside itself. */
     agents: readonly WorkItem[];
+    projectCommands: readonly WorkItem[];
     summary: WorkSummary;
 }>;
 
@@ -127,6 +175,11 @@ export type WorkManagedRunSource = Readonly<{
 
 export type WorkProjectionInput = Readonly<{
     sessionId: string;
+    /** Exact captured Home and its authenticated Account; absent evidence admits no operation rows. */
+    serverId?: string | null;
+    accountId?: string | null;
+    actionOperations?: readonly ActionOperationProjection[];
+    describeOperationStatus?: (operation: ActionOperationProjection) => string;
     reportSessions: readonly WorkReportSessionSource[];
     agentEntries: readonly AgentActivityEntry[];
     workflowHeadlineRuns: readonly SessionWorkflowRunHeadlineV1[];
@@ -325,10 +378,42 @@ export function projectWork(input: WorkProjectionInput): WorkProjection {
         else agents.push(item);
     }
 
+    const projectCommands: WorkItem[] = [];
+    const seenOperations = new Set<string>();
+    for (const operation of input.actionOperations ?? []) {
+        const { snapshot, serverId } = operation;
+        const attachment = snapshot.domainRef;
+        if (attachment?.kind !== 'projectCommand' || !input.serverId || !input.accountId
+            || serverId !== input.serverId
+            || snapshot.scope.accountId !== input.accountId || snapshot.scope.sessionId !== input.sessionId) continue;
+        const key = `operation:${actionOperationAddressKey({ serverId, operationId: snapshot.operationId })}`;
+        if (seenOperations.has(key)) continue;
+        seenOperations.add(key);
+        const origin = attachment.originRun;
+        const originRunId = origin?.serverId === serverId ? origin.runId : null;
+        if (originRunId && input.ownTriggerRunIds.has(originRunId)) continue;
+        const workflowIndex = originRunId ? workflows.findIndex((item) => item.open.kind === 'workflow_run' && item.open.runId === originRunId) : -1;
+        const parentKey = workflowIndex >= 0 ? workflows[workflowIndex].key : null;
+        const item: WorkItem = {
+            key, kind: 'project_command', title: snapshot.title, agentId: null,
+            facts: [attachment.cwd], parentKey, level: parentKey ? 1 : 0,
+            status: resolveWorkStatusTone({ kind: 'action_operation', facts: {
+                state: snapshot.state, observation: resolveActionOperationObservation(snapshot, operation.observation),
+                setupReview: snapshot.setupReview,
+                word: input.describeOperationStatus?.(operation) ?? snapshot.state,
+            } }),
+            progress: null, open: { kind: 'action_operation', serverId, operationId: snapshot.operationId }, operation,
+        };
+        if (workflowIndex >= 0) {
+            const workflow = workflows[workflowIndex];
+            workflows[workflowIndex] = { ...workflow, projectCommands: [...(workflow.projectCommands ?? []), item] };
+        } else projectCommands.push(item);
+    }
+
     let outstanding = 0;
     let needsYou = 0;
     let stalled = 0;
-    for (const item of [...sessions, ...workflows, ...backgroundRuns, ...agents]) {
+    for (const item of [...sessions, ...workflows, ...backgroundRuns, ...agents, ...projectCommands]) {
         const itemStalled = item.kind === 'session' ? stalledKeys.has(item.key) : item.status.bucket === 'offline';
         if (item.kind === 'session' ? !isOutstandingSession(item.status.bucket, itemStalled) : !isOutstanding(item.status.bucket)) continue;
         outstanding += 1;
@@ -341,12 +426,13 @@ export function projectWork(input: WorkProjectionInput): WorkProjection {
         workflows: workflows.length === 0 ? EMPTY_ITEMS : workflows,
         backgroundRuns: backgroundRuns.length === 0 ? EMPTY_ITEMS : backgroundRuns,
         agents: agents.length === 0 ? EMPTY_ITEMS : agents,
+        projectCommands: projectCommands.length === 0 ? EMPTY_ITEMS : projectCommands,
         summary: {
             outstanding,
             needsYou,
             stalled,
             sessions: sessions.length,
-            runs: workflows.length + backgroundRuns.length,
+            runs: workflows.length + backgroundRuns.length + projectCommands.length,
         },
     };
 }
@@ -375,6 +461,22 @@ export function resolveWorkItemOpenTarget(
     return item.open;
 }
 
+/**
+ * Context-menu intents retain admitted provenance and never infer a Session from tool text.
+ * Stop is a target, not settlement; its mounted consumer uses useActionOperationStopControl.
+ */
+export function resolveWorkItemContextActions(item: WorkItem) {
+    const operation = item.operation;
+    const snapshot = operation?.snapshot;
+    return {
+        open: item.open,
+        transcript: operation && snapshot?.scope.sessionId
+            ? { serverId: operation.serverId, sessionId: snapshot.scope.sessionId } : null,
+        stop: operation && snapshot && canRequestActionOperationStop(snapshot, operation.observation)
+            ? { serverId: operation.serverId, machineId: snapshot.scope.machineId, operationId: snapshot.operationId } : null,
+    };
+}
+
 export type WorkStateGroups = Readonly<{
     needsYou: readonly WorkItem[];
     working: readonly WorkItem[];
@@ -396,7 +498,7 @@ type WorkStateGroupKey = keyof WorkStateGroups;
 export function groupWorkByState(projection: WorkProjection): WorkStateGroups {
     const groups: Record<WorkStateGroupKey, WorkItem[]> = { needsYou: [], working: [], recent: [] };
     const placed = new Map<string, Readonly<{ group: WorkStateGroupKey; level: number }>>();
-    for (const item of [...projection.sessions, ...projection.backgroundRuns, ...projection.workflows, ...projection.agents]) {
+    for (const item of [...projection.sessions, ...projection.backgroundRuns, ...projection.workflows, ...projection.agents, ...projection.projectCommands]) {
         const group = readSessionWorkStateGroupV1(item.status.bucket);
         const parent = item.parentKey ? placed.get(item.parentKey) : undefined;
         const level = parent && parent.group === group ? parent.level + 1 : 0;

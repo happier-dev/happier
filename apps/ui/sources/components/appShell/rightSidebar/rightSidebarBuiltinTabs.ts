@@ -4,6 +4,7 @@ import type { PluginSurfaceDestinationBadge } from '@/components/plugins/surface
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
 import type { IconName } from '@/components/ui/icons/Icon';
 import { SESSION_BOARD_DESTINATION } from '@/components/sessions/board/sessionBoardDestination';
+import type { ProjectPageV1 } from '@/components/projects/detail/projectRouteState';
 
 export type RightSidebarScope = 'session' | 'project' | 'app';
 export type RightSidebarPresentation = 'desktop' | 'mobile';
@@ -11,6 +12,7 @@ export type RightSidebarPresentation = 'desktop' | 'mobile';
 export type RightSidebarBuiltInTabId =
     | 'git'
     | 'files'
+    | 'scripts'
     | 'navigation'
     | 'agents'
     | 'collaboration'
@@ -19,7 +21,7 @@ export type RightSidebarBuiltInTabId =
     | 'browser'
     | 'services';
 
-export type RightSidebarMobileSurface = 'agents' | 'collaboration' | 'browse' | 'git' | 'navigation' | 'board' | 'terminal' | 'browser' | 'services' | 'plugin';
+export type RightSidebarMobileSurface = 'agents' | 'collaboration' | 'browse' | 'git' | 'scripts' | 'navigation' | 'board' | 'terminal' | 'browser' | 'services' | 'plugin';
 
 export type RightSidebarTabOwner = 'builtin' | 'plugin';
 
@@ -34,6 +36,8 @@ export type RightSidebarTabBase = Readonly<{
     scopes: readonly RightSidebarScope[];
     mobileSurfaces?: Partial<Record<RightSidebarScope, RightSidebarMobileSurface>>;
     disabledReason?: string;
+    /** Presentation only: selected companions remain available while their full page is active. */
+    hiddenInLauncher?: boolean;
 }>;
 
 export type RightSidebarBuiltinTabDefinition = RightSidebarTabBase & Readonly<{
@@ -41,6 +45,8 @@ export type RightSidebarBuiltinTabDefinition = RightSidebarTabBase & Readonly<{
     owner: 'builtin';
     labelKey: TranslationKey;
     railGroup: RightSidebarRailGroup;
+    /** The full Project page showing this same domain, if the domain has a page. */
+    projectPage?: ProjectPageV1;
     available?: (input: RightSidebarAvailabilityInput) => boolean;
 }>;
 
@@ -88,11 +94,14 @@ export type RightSidebarAvailabilityInput = Readonly<{
      * once the folder becomes one, and never offers to initialize it.
      */
     sourceControlTabAvailable: boolean;
+    /** A Session working in an accepted Project checkout offers that checkout's Scripts beside it. */
+    sessionProjectCheckoutAvailable?: boolean;
 }>;
 
 export const RIGHT_SIDEBAR_BUILTIN_TABS: readonly RightSidebarBuiltinTabDefinition[] = [
     {
         id: 'git',
+        projectPage: 'changes',
         owner: 'builtin',
         railGroup: 'code',
         labelKey: 'session.rightPanel.tabs.git',
@@ -107,6 +116,7 @@ export const RIGHT_SIDEBAR_BUILTIN_TABS: readonly RightSidebarBuiltinTabDefiniti
     },
     {
         id: 'files',
+        projectPage: 'code',
         owner: 'builtin',
         railGroup: 'code',
         labelKey: 'common.files',
@@ -117,6 +127,18 @@ export const RIGHT_SIDEBAR_BUILTIN_TABS: readonly RightSidebarBuiltinTabDefiniti
             session: 'browse',
             project: 'browse',
         },
+    },
+    {
+        id: 'scripts',
+        projectPage: 'scripts',
+        owner: 'builtin',
+        railGroup: 'code',
+        labelKey: 'projects.pages.scripts',
+        icon: 'terminal',
+        order: 25,
+        scopes: ['project', 'session'],
+        mobileSurfaces: { project: 'scripts' },
+        available: (input) => input.scope === 'project' || input.sessionProjectCheckoutAvailable === true,
     },
     {
         id: 'agents',
@@ -178,11 +200,13 @@ export const RIGHT_SIDEBAR_BUILTIN_TABS: readonly RightSidebarBuiltinTabDefiniti
         labelKey: 'settings.terminal',
         icon: 'terminal',
         order: 40,
-        scopes: ['session'],
+        scopes: ['session', 'project'],
         mobileSurfaces: {
             session: 'terminal',
+            project: 'terminal',
         },
-        available: (input) => input.terminalTabAvailable,
+        // A Project keeps the retained destination while its exact checkout is unavailable.
+        available: (input) => input.scope === 'project' || input.terminalTabAvailable,
     },
     {
         id: 'browser',
@@ -196,13 +220,12 @@ export const RIGHT_SIDEBAR_BUILTIN_TABS: readonly RightSidebarBuiltinTabDefiniti
             session: 'browser',
             project: 'browser',
         },
-        // D1: the Browser surface is mobile-only. On desktop, Services is the single
-        // services/launch surface; the redundant desktop Browser sidebar tab is removed while the
-        // mobile full-screen browser surface (mobileSurfaces above) is kept.
-        available: (input) => input.presentation === 'mobile',
+        // Project Browser has a workspace-scoped producer on both presentations.
+        available: (input) => input.scope === 'project' || input.presentation === 'mobile',
     },
     {
         id: 'services',
+        projectPage: 'services',
         owner: 'builtin',
         railGroup: 'machine',
         labelKey: 'localServices.inventory.title',

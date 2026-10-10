@@ -66,6 +66,37 @@ export function buildSessionRuntimeActivityProjectionPatch(
     return {};
 }
 
+/**
+ * Merge two complete stored projections at their publication boundary.
+ * Socket decrypt work can finish out of order after it captured an older
+ * session object; applying that whole object must not regress a projection
+ * that was published while the decrypt was in flight.
+ */
+export function resolveMergedSessionRuntimeActivityProjectionFields(
+    base: SessionRuntimeActivityProjectionBase,
+    incomingValue: unknown,
+    onResyncRequired?: SessionRuntimeActivityResyncHandler,
+): SessionRuntimeActivityProjectionFields | null {
+    const current = parseSessionRuntimeActivityProjectionFields(base);
+    const incoming = parseSessionRuntimeActivityProjectionFields(incomingValue);
+    if (current.kind !== 'valid') {
+        return incoming.kind === 'valid' ? toStoredFields(incoming.projection) : null;
+    }
+    if (incoming.kind !== 'valid') {
+        return toStoredFields(current.projection);
+    }
+
+    const result = mergeSessionRuntimeActivityProjection(current.projection, incoming.projection);
+    if (result.decision === 'resync_conflict') {
+        onResyncRequired?.({
+            reason: 'equal_revision_conflict',
+            current: current.projection,
+            incoming: incoming.projection,
+        });
+    }
+    return toStoredFields(result.projection);
+}
+
 function toStoredFields(
     projection: SessionRuntimeActivityProjection,
 ): SessionRuntimeActivityProjectionFields {

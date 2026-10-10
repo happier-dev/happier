@@ -1,8 +1,57 @@
 import { storage } from '@/sync/domains/state/storage';
-import { getWorkflowRunSummary } from '@/sync/domains/workflows/workflowRunListActions';
+import { getWorkflowRunSummary, listWorkflowRuns } from '@/sync/domains/workflows/workflowRunListActions';
+import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { workflowRunRowFromSummary } from '@/sync/store/domains/workflowRuns';
+import type { WorkflowRunGetResultV1, WorkflowRunListResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 
 import { materializeWorkflowRunAccountChange } from './materializeWorkflowRunAccountChange';
+
+/** Opened detail uses the same Account body owner as the exact Run screen. Callers fence the read before publication. */
+export function publishOpenedWorkflowRunDetail(detail: WorkflowRunGetResultV1): void {
+    storage.getState().upsertWorkflowRuns([{ ...workflowRunRowFromSummary(detail.run,
+        detail.acceptedContext.metadata ? { kind: 'available', value: detail.acceptedContext.metadata } : null), detail }]);
+}
+
+// Only pending reads are shared; the Account's existing Run/fact maps own all resolved content.
+const pendingProvenance = new WeakMap<ActiveServerAccountScopeLifetime, Map<string, Promise<void>>>();
+
+function publishInvocationProvenance(run: WorkflowRunListResultV1['runs'][number], facts: WorkflowRunListResultV1['invocationProvenance']): void {
+    for (const fact of facts ?? []) {
+        if (fact.index.runId !== run.id) continue;
+        storage.getState().upsertWorkflowRunInvocation({ runId: run.id, parentRevision: run.revision,
+            invocation: { ...fact.index, ...(fact.stepOrdinal ? { stepOrdinal: fact.stepOrdinal } : {}),
+                ...(fact.notificationCondition ? { notificationCondition: fact.notificationCondition } : {}), provenanceLoaded: true } });
+    }
+}
+
+export function refreshWorkflowTranscriptProvenance(
+    references: readonly Readonly<{ runId: string; invocationRecordIds: readonly string[] }>[],
+): Promise<void> {
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime || references.length === 0) return Promise.resolve();
+    const key = JSON.stringify(references);
+    let pending = pendingProvenance.get(lifetime);
+    if (!pending) { pending = new Map(); pendingProvenance.set(lifetime, pending); }
+    const known = pending.get(key);
+    if (known) return known;
+    const abort = new AbortController();
+    const retirement = lifetime.onRetire(() => abort.abort());
+    const read = (async () => {
+        let cursor: string | undefined;
+        do {
+            const page = await listWorkflowRuns({ filter: { runIds: references.map(ref => ref.runId),
+                invocationProvenance: references.filter(ref => ref.invocationRecordIds.length > 0) },
+                ...(cursor ? { cursor } : {}), signal: abort.signal });
+            if (!lifetime.isCurrent()) return;
+            const state = storage.getState();
+            state.upsertWorkflowRuns(page.runs.map(run => workflowRunRowFromSummary(run, page.metadataByRunId[run.id] ?? null)));
+            for (const run of page.runs) publishInvocationProvenance(run, page.invocationProvenance);
+            cursor = page.nextCursor;
+        } while (cursor);
+    })().finally(() => { retirement.dispose(); pending.delete(key); });
+    pending.set(key, read);
+    return read;
+}
 
 /**
  * Refresh one exact Run into the Account-scoped `workflowRunsById` owner.
@@ -33,7 +82,11 @@ export async function refreshWorkflowRunById(
     const isCurrent = (): boolean => options.fence?.isCurrent() ?? true;
     await materializeWorkflowRunAccountChange({
         runId,
-        getRun: () => getWorkflowRunSummary(runId, options.signal),
+        getRun: () => {
+            const ids = Object.values(storage.getState().workflowRunInvocationsByRunId?.[runId]?.factsById ?? {})
+                .filter(fact => fact.provenanceLoaded).map(fact => fact.id).sort();
+            return ids.length ? getWorkflowRunSummary(runId, options.signal, ids) : getWorkflowRunSummary(runId, options.signal);
+        },
         upsertRun: (detail) => {
             if (!isCurrent()) return;
             // The sparse sidecar semantics survive verbatim: `null` is a
@@ -43,6 +96,7 @@ export async function refreshWorkflowRunById(
             // readable unnamed Run behind "Content unavailable" in the
             // collection and in every Session card that reads the same row.
             storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(detail.run, detail.metadata)]);
+            publishInvocationProvenance(detail.run, detail.invocationProvenance);
         },
         removeRun: (missingRunId) => {
             if (!isCurrent()) return;
