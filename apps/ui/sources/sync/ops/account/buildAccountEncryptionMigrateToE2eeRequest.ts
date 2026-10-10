@@ -31,6 +31,19 @@ import {
   type AccountEncryptionSessionDraftMigrationCandidate,
 } from './buildAccountEncryptionSessionDraftsDirective';
 import { buildAccountEncryptionAuthoringMemoryDirective, type AccountEncryptionAuthoringMemoryMigrationCandidate } from './buildAccountEncryptionAuthoringMemoryDirective';
+import { buildAccountEncryptionProjectRowsDirective, type AccountEncryptionProjectRowMigrationCandidate } from './buildAccountEncryptionProjectRowsDirective';
+import { buildAccountEncryptionWorkspaceExecutionConfigDirective, type AccountEncryptionWorkspaceExecutionConfigMigrationCandidate } from './buildAccountEncryptionWorkspaceExecutionConfigDirective';
+import { buildAccountEncryptionProjectTrustDirective, type AccountEncryptionProjectTrustMigrationCandidate } from './buildAccountEncryptionProjectTrustDirective';
+import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
+import { buildAccountEncryptionProfileRowsDirective } from './buildAccountEncryptionProfileRowsDirective';
+import { buildAccountEncryptionPromptLibraryDirective, restoreAccountEncryptionPromptLibrarySettingsSources, type AccountEncryptionPromptLibraryMigrationCandidate } from './buildAccountEncryptionPromptLibraryDirective';
+import { buildAccountEncryptionAcpCatalogDirective, restoreAccountEncryptionAcpCatalogSettingsSource, type AccountEncryptionAcpCatalogMigrationCandidate } from './buildAccountEncryptionAcpCatalogDirective';
+import { buildAccountEncryptionProviderConnectionsDirective, type AccountEncryptionProviderConnectionsMigrationCandidate } from './buildAccountEncryptionProviderConnectionsDirective';
+import { buildAccountEncryptionMcpServerCatalogDirective, restoreAccountEncryptionMcpServerCatalogSettingsSource,
+  type AccountEncryptionMcpServerCatalogMigrationCandidate } from './buildAccountEncryptionMcpServerCatalogDirective';
+import { buildAccountEncryptionEntityCatalogDirectives, type AccountEncryptionEntityCatalogMigrationCandidates } from './buildAccountEncryptionEntityCatalogDirectives';
+import { buildAccountEncryptionConnectedAccountCatalogDirectives,
+  type AccountEncryptionConnectedAccountCatalogMigrationCandidates } from './buildAccountEncryptionConnectedAccountCatalogDirectives';
 
 type ConnectedServiceCredentialMetadataInput = Readonly<{
   kind: 'oauth' | 'token';
@@ -54,11 +67,20 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
   }>;
   expectedSettingsVersion: number;
   settings: Settings;
+  rawSettings: Readonly<Record<string, unknown>>;
   connectedServiceProfiles: ReadonlyArray<Readonly<{ serviceId: ConnectedServiceId; profileId: string }>>;
   qualifiedConnectedAccounts?: readonly QualifiedConnectedAccountProfileV4[];
   automations: ReadonlyArray<Readonly<{ id: string; templateVersion: number; templateCiphertext: string }>>;
   sessionDrafts?: readonly AccountEncryptionSessionDraftMigrationCandidate[];
   authoringMemory?: readonly AccountEncryptionAuthoringMemoryMigrationCandidate[];
+  projectRows?: readonly AccountEncryptionProjectRowMigrationCandidate[];
+  workspaceExecutionConfig?: readonly AccountEncryptionWorkspaceExecutionConfigMigrationCandidate[];
+  projectTrust?: readonly AccountEncryptionProjectTrustMigrationCandidate[];
+  profileRows?: ProfileCatalogSnapshotV1;
+  promptLibrary?: readonly AccountEncryptionPromptLibraryMigrationCandidate[];
+  acpCatalog?: AccountEncryptionAcpCatalogMigrationCandidate;
+  providerConnections?: AccountEncryptionProviderConnectionsMigrationCandidate;
+  mcpServerCatalog?: AccountEncryptionMcpServerCatalogMigrationCandidate;
   storageDirectives: AccountEncryptionMigrationStorageDirectives;
   passwordCredential?: AccountEncryptionMigrateTransitionPasswordCredential;
   fetchConnectedServiceCredentialPlain: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>) => Promise<Readonly<{
@@ -71,7 +93,7 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
   fetchQualifiedConnectedAccountConfiguration?: (
     ref: QualifiedConnectedAccountRef,
   ) => Promise<QualifiedConnectedAccountConfigurationSnapshotV4>;
-}>): Promise<AccountEncryptionMigrateRequest> {
+}> & AccountEncryptionEntityCatalogMigrationCandidates & AccountEncryptionConnectedAccountCatalogMigrationCandidates): Promise<AccountEncryptionMigrateRequest> {
   if (!isLegacyAuthCredentials(params.credentials)) {
     throw new Error('Legacy credentials are required to migrate to e2ee');
   }
@@ -81,9 +103,10 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
     throw new Error('Legacy crypto material is required to migrate to e2ee');
   }
 
-  const settingsForServer = normalizeVoiceSettingsServerDelta(
-    stripLocalOnlyAccountSettings(params.settings),
-  );
+  const settingsForServer = restoreAccountEncryptionAcpCatalogSettingsSource({ settings: restoreAccountEncryptionMcpServerCatalogSettingsSource({ settings: restoreAccountEncryptionPromptLibrarySettingsSources({
+    settings: normalizeVoiceSettingsServerDelta(stripLocalOnlyAccountSettings(params.settings), params.rawSettings),
+    rawSettings: params.rawSettings,
+  }), rawSettings: params.rawSettings }), rawSettings: params.rawSettings });
   const settingsCiphertext = sealAccountScopedBlobCiphertext({
     kind: 'account_settings',
     material,
@@ -215,6 +238,23 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
   const authoringMemory = buildAccountEncryptionAuthoringMemoryDirective({
     candidates: params.authoringMemory ?? [], target: { mode: 'e2ee', material, randomBytes: getRandomBytes },
   });
+  const projectRows = buildAccountEncryptionProjectRowsDirective({
+    candidates: params.projectRows ?? [], target: { mode: 'e2ee', material, randomBytes: getRandomBytes },
+  });
+  const workspaceExecutionConfig = buildAccountEncryptionWorkspaceExecutionConfigDirective({
+    candidates: params.workspaceExecutionConfig ?? [], target: { mode: 'e2ee', material, randomBytes: getRandomBytes },
+  });
+  const projectTrust = buildAccountEncryptionProjectTrustDirective({ candidates: params.projectTrust ?? [], target: { mode: 'e2ee', material, randomBytes: getRandomBytes } });
+  const profileRows = buildAccountEncryptionProfileRowsDirective({
+    snapshot: params.profileRows, target: { mode: 'e2ee', material, randomBytes: getRandomBytes },
+  });
+  const promptLibrary = buildAccountEncryptionPromptLibraryDirective({ candidates: params.promptLibrary ?? [], target: { mode: 'e2ee', material, randomBytes: getRandomBytes } });
+  const acpCatalog = buildAccountEncryptionAcpCatalogDirective({ candidate: params.acpCatalog, target: { mode: 'e2ee', material, randomBytes: getRandomBytes } });
+  const providerConnections = buildAccountEncryptionProviderConnectionsDirective({ candidate: params.providerConnections, target: { mode: 'e2ee', material, randomBytes: getRandomBytes } });
+  const mcpServerCatalog = buildAccountEncryptionMcpServerCatalogDirective({ candidate: params.mcpServerCatalog,
+    target: { mode: 'e2ee', material, randomBytes: getRandomBytes } });
+  const entityCatalogs = buildAccountEncryptionEntityCatalogDirectives(params, { mode: 'e2ee', material, randomBytes: getRandomBytes });
+  const connectedCatalogs = buildAccountEncryptionConnectedAccountCatalogDirectives(params, { mode: 'e2ee', material, randomBytes: getRandomBytes });
   const unsignedRequest =
     AccountEncryptionMigrateUnsignedRequestSchema.parse({
       toMode: 'e2ee',
@@ -234,9 +274,19 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
         contentPublicKeySig: params.keyProof.contentPublicKeySig,
       },
       ...params.storageDirectives,
+    ...entityCatalogs,
+    ...connectedCatalogs,
       ...(params.passwordCredential ? { passwordCredential: params.passwordCredential } : {}),
       ...(sessionDrafts ? { sessionDrafts } : {}),
       ...(authoringMemory ? { authoringMemory } : {}),
+      ...(projectRows ? { projectRows } : {}),
+      ...(workspaceExecutionConfig ? { workspaceExecutionConfig } : {}),
+      ...(projectTrust ? { projectTrust } : {}),
+      ...(profileRows ? { profileRows } : {}),
+    ...(promptLibrary ? { promptLibrary } : {}),
+    ...(acpCatalog ? { acpCatalog } : {}),
+      ...(providerConnections ? { providerConnections } : {}),
+      ...(mcpServerCatalog ? { mcpServerCatalog } : {}),
     });
   const signature = params.keyProof.sign(
     createAccountEncryptionMigrateProofSigningInputV1({

@@ -3,20 +3,19 @@ import { Linking, Platform } from 'react-native';
 
 import {
     AccountEncryptionMigrateRequestSchema,
-    CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
-    computeAccountEncryptionMigrateKeyFingerprintV1,
     createAccountEncryptionMigrateRequestBindingDigestV1,
-    createPasswordCredentialMutationDigestV1,
-    createPasswordCredentialTargetDigestV1,
-    encodePasswordCredentialFieldV1,
-    type FeaturesResponse,
-    type PlainAccountPasswordCredentialV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/encryptionMigrate';
+import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { createPasswordCredentialMutationDigestV1, createPasswordCredentialTargetDigestV1 } from '@happier-dev/protocol/auth/passwordMutationChallenge';
+import { encodePasswordCredentialFieldV1, type PlainAccountPasswordCredentialV1 } from '@happier-dev/protocol/auth/accountPasswordCredential';
+import type { FeaturesResponse } from '@happier-dev/protocol';
 import { deriveAccountSigningPublicKey } from '@/auth/flows/challenge';
 import { buildContentKeyBinding } from '@/auth/oauth/contentKeyBinding';
 import { encodeBase64 } from '@/encryption/base64';
 import { HappyError } from '@/utils/errors/errors';
 import { createAuthoringMemoryCipher } from '@/sync/encryption/authoringMemoryEncryption';
+import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 
 const mocks = vi.hoisted(() => ({
@@ -1640,8 +1639,9 @@ describe('first Account key external auth', () => {
         expect(mocks.clearPending).toHaveBeenCalledTimes(1);
     });
 
-    it.each([false, true])('strictly resumes the exact OAuth request and removes the continuation after success (authoring memory: %s)', async (withMemory) => {
+    it.each(['empty', 'authoring-memory', 'project-rows', 'profile-rows', 'profile-reference-conflict'] as const)('validates the exact OAuth migration before adopting it (%s)', async (family) => {
         const fixture = await createFixture();
+        const withMemory = family === 'authoring-memory';
         if (withMemory) {
             const content = createAuthoringMemoryCipher({ mode: 'e2ee',
                 material: resolveAccountScopedCryptoMaterialFromCredentials(fixture.proposedCredentials),
@@ -1652,6 +1652,26 @@ describe('first Account key external auth', () => {
             });
             mocks.migrate.mockResolvedValue({ success: true, mode: 'e2ee', accountVersion: 9, settingsVersion: 4,
                 authoringMemory: { rows: [{ key: 'lastUsedProfile', revision: 4, content }] },
+            });
+        }
+        if (family === 'project-rows') {
+            const key = { kind: 'project-organization' as const, serverId: 'server-a', projectKey: 'project' };
+            const content = createProjectAccountRowCipherV1({ mode: 'e2ee',
+                material: resolveAccountScopedCryptoMaterialFromCredentials(fixture.proposedCredentials), randomBytes: length => new Uint8Array(length),
+            }).seal({ key, value: { hidden: true } });
+            fixture.request = AccountEncryptionMigrateRequestSchema.parse({ ...fixture.request, projectRows: { items: [{ key, expectedRevision: 3, content }] } });
+            mocks.migrate.mockResolvedValue({ success: true, mode: 'e2ee', accountVersion: 9, settingsVersion: 4,
+                projectRows: { rows: [{ key, revision: 4, content }] },
+            });
+        }
+        if (family === 'profile-rows' || family === 'profile-reference-conflict') {
+            fixture.request = AccountEncryptionMigrateRequestSchema.parse({ ...fixture.request,
+                profileRows: { items: [], expectedReferenceGuardRevision: 11,
+                  transferControl: { expectedRevision: 'absent', content: null } },
+            });
+            mocks.migrate.mockResolvedValue({ success: true, mode: 'e2ee', accountVersion: 9, settingsVersion: 4,
+                profileRows: { rows: [], referenceGuardRevision: family === 'profile-rows' ? 11 : 12,
+                  transferControl: { status: 'absent' } },
             });
         }
         const requestDigest =
@@ -1680,8 +1700,7 @@ describe('first Account key external auth', () => {
         });
         const persistCredentials = vi.fn(async () => ({ kind: 'completed' as const }));
 
-        const result =
-            await resumeAccountEncryptionFirstKeyExternalAuth({
+        const resume = resumeAccountEncryptionFirstKeyExternalAuth({
                 provider: 'github',
                 pending: 'oauth-pending',
                 target: {
@@ -1691,8 +1710,24 @@ describe('first Account key external auth', () => {
                 currentCredentials: fixture.currentCredentials,
                 persistCredentials,
             });
+        if (family === 'profile-reference-conflict') {
+            await expect(resume).rejects.toThrow('Invalid Profile row migration response');
+            expect(persistCredentials).not.toHaveBeenCalled();
+            expect(mocks.clearPending).not.toHaveBeenCalled();
+            return;
+        }
+        const result = await resume;
 
         expect(result.returnTo).toBe('/settings/account');
+        if (family === 'profile-rows') {
+            expect(result.migration.profileRows).toEqual({ rows: [], referenceGuardRevision: 11,
+              transferControl: { status: 'absent' } });
+        }
+        if (family === 'project-rows') {
+            expect(result.migration.projectRows).toMatchObject({ rows: [{ revision: 4, content: fixture.request.projectRows!.items[0]!.content }] });
+            expect(mocks.reconfigureAuthoringMemory).toHaveBeenCalledWith(fixture.proposedCredentials, 'e2ee');
+            expect(mocks.reconfigureSessionDraftRepository).not.toHaveBeenCalled();
+        }
         if (withMemory) {
             expect(result.migration.authoringMemory).toEqual({ rows: [{ key: 'lastUsedProfile', revision: 4,
                 content: fixture.request.authoringMemory!.items[0]!.content,
@@ -1857,8 +1892,19 @@ describe('first Account key external auth', () => {
         );
     });
 
-    it('does not persist replacement credentials after the settings scope retires', async () => {
+    it.each(['before-admission', 'after-commit'] as const)('does not adopt a first-key migration after the settings scope retires (%s)', async (retirement) => {
         const fixture = await createFixture();
+        fixture.request = AccountEncryptionMigrateRequestSchema.parse({ ...fixture.request,
+            profileRows: { items: [], expectedReferenceGuardRevision: 11,
+                transferControl: { expectedRevision: 'absent', content: null } },
+        });
+        let isCurrent = retirement !== 'before-admission';
+        mocks.migrate.mockImplementationOnce(async () => {
+            isCurrent = false;
+            return { success: true, mode: 'e2ee', accountVersion: 9, settingsVersion: 4,
+                profileRows: { rows: [], referenceGuardRevision: 12, transferControl: { status: 'absent' } },
+            };
+        });
         const requestDigest =
             createAccountEncryptionMigrateRequestBindingDigestV1({
                 request: fixture.request,
@@ -1895,10 +1941,11 @@ describe('first Account key external auth', () => {
                 },
                 currentCredentials: fixture.currentCredentials,
                 persistCredentials,
-                scopeGuard: { isCurrent: () => false },
+                scopeGuard: { isCurrent: () => isCurrent },
             }),
         ).rejects.toThrow('account_encryption_scope_changed');
         expect(persistCredentials).not.toHaveBeenCalled();
+        if (retirement === 'before-admission') expect(mocks.migrate).not.toHaveBeenCalled();
     });
 
     it('fails closed and clears pending state on a wrong provider without posting or persisting', async () => {

@@ -1,6 +1,7 @@
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, decodePlainMachineStoredContent, encodePlainMachineStoredContent, isPlainMachineDataKeyMarker } from '@happier-dev/protocol/machines/machineStoredContent';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { StoredMachinePublishedDaemonStateV1Schema, parseMachinePublishedMetadataV1, parseMachinePublishedDaemonStateV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { createPlainSessionOwnerMetadataEnvelopeV1, encodeSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { prepareArtifactRecipientKeyEnvelopesV1 } from '@happier-dev/protocol/artifacts/artifactRecipientKeyPreparationV1';
 import { retargetWorkflowDefinitionArtifactHeaderV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
@@ -154,6 +155,10 @@ async function openMachineRows(params: Readonly<{
             'encrypted Machine storage',
         );
         const keys = new Map<string, Uint8Array | null>();
+        const contexts = new Map(encryptedRows.map((row) => [row.id, encryption.captureMachineEncryptionContext(row.id, {
+            dataEncryptionKey: row.dataEncryptionKey ?? null,
+            expectedDataEncryptionKey: row.dataEncryptionKey ?? null,
+        })] as const));
         for (const row of encryptedRows) {
             const key = row.dataEncryptionKey
                 ? await encryption.decryptEncryptionKey(row.dataEncryptionKey)
@@ -165,7 +170,7 @@ async function openMachineRows(params: Readonly<{
             }
             keys.set(row.id, key);
         }
-        await encryption.initializeMachines(keys);
+        await encryption.initializeMachines(keys, undefined, { isMachineCurrent: (machineId) => contexts.get(machineId)?.isCurrent() === true });
     }
 
     const opened = [];
@@ -178,7 +183,7 @@ async function openMachineRows(params: Readonly<{
                     row.id,
                 ),
                 daemonState: row.daemonState
-                    ? decodePlainMachineStoredContent(row.daemonState)
+                    ? StoredMachinePublishedDaemonStateV1Schema.parse(decodePlainMachineStoredContent(row.daemonState))
                     : null,
             });
             continue;
@@ -203,6 +208,9 @@ async function openMachineRows(params: Readonly<{
                 row.daemonState,
             )
             : null;
+        if (row.daemonState && daemonState === null) {
+            throw new Error(`Failed to open Machine daemon state (${row.id})`);
+        }
         opened.push({ row, metadata, daemonState });
     }
     return opened;
@@ -226,10 +234,10 @@ async function buildMachineDirective(params: Readonly<{
                 machineId: row.id,
                 expectedMetadataVersion: row.metadataVersion,
                 expectedDaemonStateVersion: row.daemonStateVersion ?? 0,
-                metadata: encodePlainMachineStoredContent(metadata),
+                metadata: encodePlainMachineStoredContent(parseMachinePublishedMetadataV1(metadata)),
                 daemonState: daemonState === null
                     ? null
-                    : encodePlainMachineStoredContent(daemonState),
+                    : encodePlainMachineStoredContent(parseMachinePublishedDaemonStateV1(daemonState)),
                 dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
                 contentPublicKeyFingerprint: null,
             })),

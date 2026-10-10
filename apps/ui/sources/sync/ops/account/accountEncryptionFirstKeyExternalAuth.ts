@@ -1642,6 +1642,7 @@ async function submitAccountEncryptionFirstKeyMigration(
         externalAuthProof: AccountEncryptionMigrateExternalAuthProof;
         target: FirstKeyHomeTarget;
         requestAtTarget: ServerFetch;
+        scopeGuard?: AccountEncryptionScopeGuard;
     }>,
 ) {
     const request = assertFirstKeyMigrationInput(params);
@@ -1658,17 +1659,6 @@ async function submitAccountEncryptionFirstKeyMigration(
             ...params.request,
             externalAuthProof,
         });
-    if (!requestWithExternalAuth.sessionDrafts?.items.length && !requestWithExternalAuth.authoringMemory?.items.length) {
-        return await migrateAccountEncryptionMode(
-            params.currentCredentials,
-            requestWithExternalAuth,
-            {
-                retry: 'none',
-                request: params.requestAtTarget,
-                target: params.target,
-            },
-        );
-    }
     const [
         { runAccountEncryptionModeMigration },
         {
@@ -1686,8 +1676,10 @@ async function submitAccountEncryptionFirstKeyMigration(
     };
     return await runAccountEncryptionModeMigration({
         request: requestWithExternalAuth,
-        migrate: async (migrationRequest) =>
-            await migrateAccountEncryptionMode(
+        isCurrent: () => params.scopeGuard?.isCurrent() ?? true,
+        migrate: async (migrationRequest) => {
+            assertAccountEncryptionScopeCurrent(params.scopeGuard);
+            return await migrateAccountEncryptionMode(
                 params.currentCredentials,
                 migrationRequest,
                 {
@@ -1695,7 +1687,8 @@ async function submitAccountEncryptionFirstKeyMigration(
                     request: params.requestAtTarget,
                     target: params.target,
                 },
-            ),
+            );
+        },
         activateTargetMode: () => {
             sync.reconfigureAuthoringMemoryForAccountMode(params.proposedCredentials, 'e2ee');
             if (requestWithExternalAuth.sessionDrafts?.items.length) {
@@ -1886,6 +1879,7 @@ export async function resumeAccountEncryptionFirstKeyExternalAuth(
                     },
                     target,
                     requestAtTarget,
+                    ...(params.scopeGuard ? { scopeGuard: params.scopeGuard } : {}),
                 });
         } catch (error) {
             if (

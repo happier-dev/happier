@@ -1,10 +1,9 @@
 import { sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
-import { createSessionDraftPrivatePayloadV2, isSessionDraftContentV1, type SessionDraftDocumentV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
+import { createSessionDraftPrivatePayloadV2, isSessionDraftContentV1, type AccountOwnedDraftAddressV2, type SessionDraftDocumentV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import { AccountEncryptionMigrateSessionDraftsDirectiveSchema, type AccountEncryptionMigrateSessionDraftsDirective } from '@happier-dev/protocol/account/encryptionMigrate';
-import type { SessionDraftAddressV1 } from '@happier-dev/protocol/drafts/sessionDrafts';
 
 export type AccountEncryptionSessionDraftMigrationCandidate = Readonly<{
-  address: Extract<SessionDraftAddressV1, { kind: 'newSession' }>;
+  address: AccountOwnedDraftAddressV2;
   baseRevision: number;
   document: SessionDraftDocumentV2;
 }>;
@@ -24,7 +23,7 @@ export function buildAccountEncryptionSessionDraftsDirective(
   params: BuildParams,
 ): AccountEncryptionMigrateSessionDraftsDirective | undefined {
   // Omission preserves the released request accepted by predecessor servers
-  // when no Account-owned new-session draft needs resealing.
+  // when no Account-owned draft needs resealing.
   if (params.candidates.length === 0) return undefined;
 
   const items = params.candidates.map((candidate) => {

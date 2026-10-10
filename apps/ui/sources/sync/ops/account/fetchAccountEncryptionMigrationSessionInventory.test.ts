@@ -59,6 +59,20 @@ function jsonResponse(body: unknown): Response {
 }
 
 describe('fetchAccountEncryptionMigrationSessionInventory', () => {
+    it('normalizes stored Bot owner extensions while preserving the canonical migration precondition', async () => {
+        const row = { ...buildSessionRow({ id: 'bot' }), ownerMetadata: {
+            t: 'plain', future: true, v: { v: 1, future: true,
+                work: { bot: { kind: 'bot', future: true }, createdAsBot: true,
+                    viewPreferences: { showToolCalls: false, future: true }, future: true } },
+        } };
+        const rows = await fetchAccountEncryptionMigrationSessionInventory({ token: 'token', scope,
+            request: async (path) => jsonResponse({ sessions: path.startsWith('/v2/sessions/archived') ? [] : [row],
+                hasNext: false, nextCursor: null }),
+        });
+        expect(rows[0]?.ownerMetadata).toEqual({ t: 'plain', v: { v: 1, work: {
+            bot: { kind: 'bot' }, createdAsBot: true, viewPreferences: { showToolCalls: false },
+        } } });
+    });
     it('observes retained Session modes before layout and ownership filtering, including archived Sessions', async () => {
         const modes: Array<Readonly<{ sessionId: string; encryptionMode: 'plain' | 'e2ee' }>> = [];
         const request = async (path: string) => jsonResponse({

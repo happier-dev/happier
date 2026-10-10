@@ -7,6 +7,7 @@ import {
 
 import { createSessionDraftCipher } from '@/sync/encryption/sessionDraftEncryption';
 import { buildAccountEncryptionSessionDraftsDirective } from './buildAccountEncryptionSessionDraftsDirective';
+import { ProjectOpenDraftDocumentV2Schema } from '@happier-dev/protocol/projects/openProjectDraftV1';
 
 const address = { kind: 'newSession' as const, draftId: '00000000-0000-4000-8000-000000000001' };
 const mutationId = '00000000-0000-4000-8000-000000000002';
@@ -28,6 +29,19 @@ const document = NewSessionDraftDocumentV2Schema.parse({
 });
 
 describe('buildAccountEncryptionSessionDraftsDirective', () => {
+  it.each(['plain', 'e2ee'] as const)('reseals the exact agent-free Open draft in the Account transition (%s)', async mode => {
+    const address = { kind: 'projectOpen' as const, draftId: '00000000-0000-4000-8000-000000000001' };
+    const input = { serverId: 'home-a', machineId: 'machine', source: { kind: 'folder', path: '/repo' }, materialization: { kind: 'attach' } };
+    const field = (value: unknown) => ({ mutationId, value });
+    const document = ProjectOpenDraftDocumentV2Schema.parse({ v: 2, target: { kind: 'projectOpen' }, selection: field(input),
+      uncertainInputs: field([input]), result: field({ kind: 'outcomeUnknown' }), retiredAttempt: field(null) });
+    const directive = buildAccountEncryptionSessionDraftsDirective({ candidates: [{ address, baseRevision: 5, document }],
+      target: mode === 'plain' ? { mode } : { mode, material, randomBytes } });
+    expect(directive).toMatchObject({ v: 2, items: [{ address }] });
+    const cipher = createSessionDraftCipher({ accountMode: mode, accountCryptoMaterial: mode === 'plain' ? null : material,
+      randomBytes, getSessionContext: () => { throw new Error('Open cannot use Session keys'); } });
+    await expect(cipher.open(address, directive!.items[0]!.content)).resolves.toEqual(document);
+  });
   it.each(['plain', 'e2ee'] as const)('preserves successor intent through the migration wire and real Account cipher (%s)', async (mode) => {
     const directive = buildAccountEncryptionSessionDraftsDirective({
       candidates: [{ address, baseRevision: 5, document }],

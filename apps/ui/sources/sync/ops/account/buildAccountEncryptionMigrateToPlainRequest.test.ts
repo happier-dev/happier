@@ -1,15 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import {
-  buildConnectedServiceCredentialRecord,
-  deriveAccountMachineKeyFromRecoverySecret,
-  deriveSettingsSecretsKeyV1,
-  encryptSecretStringV1,
-  openConnectedServiceCredentialCiphertext,
-  sealConnectedServiceCredentialCiphertext,
-  SessionDraftDocumentV2Schema,
-} from '@happier-dev/protocol';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol/connect/build-connected-service-credential-record';
+import { deriveAccountMachineKeyFromRecoverySecret, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { openRemoteHostCatalogContentV1 } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
+import { openNotificationChannelCatalogContentV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import { openConnectedPresentationContentV1, openConnectedAcknowledgementsContentV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
+import { deriveSettingsSecretsKeyV1, encryptSecretStringV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
+import { openConnectedServiceCredentialCiphertext, sealConnectedServiceCredentialCiphertext } from '@happier-dev/protocol/connect/connectedServiceCipher';
+import { SessionDraftDocumentV2Schema } from '@happier-dev/protocol/drafts/sessionDraftsV2';
+import { sealProfileRecordContentV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { loadProfileCatalogV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
+import { sealProfileTransferContentV1 } from '@happier-dev/protocol/profiles/profileTransferV1';
+import { openAcpCatalogContentV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { connectedAccountCatalogCipherKindV1, openConnectedAccountCatalogContentV1,
+  type ConnectedAccountCatalogRecordV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 
@@ -31,6 +36,26 @@ const CURRENTNESS = {
   expectedSigningKeyFingerprint: 'aemk1_signing',
   expectedContentKeyFingerprint: 'aemk1_content',
 } as const;
+const D10_CATALOGS = [
+  { field: 'remoteHosts', kind: 'account_remote_host_catalog', record: { v: 1, hosts: [{
+    id: 'host-a', name: 'Work', ssh: { target: 'user@work.test', authMode: 'agent' },
+    createdAt: 1, updatedAt: 2, lastUsedAt: null,
+  }] }, open: openRemoteHostCatalogContentV1, collection: 'hosts' },
+  { field: 'notificationChannels', kind: 'account_notification_channels', record: { v: 1, channels: [{
+    v: 1, id: 'channel-a', kind: 'webhook', enabled: true, url: 'https://hooks.example.test', signingSecretRef: null,
+    topics: { ready: true, permissionRequest: false, userActionRequest: true, connectedServiceAccountSwitch: false,
+      connectedServiceQuotaBlocked: false, connectedServiceQuotaRecovered: true, connectedServiceUsage: false },
+    readyIncludeMessageText: false, requestIncludeMessageText: false,
+  }] }, open: openNotificationChannelCatalogContentV1, collection: 'channels' },
+  { field: 'connectedPresentation', kind: 'account_connected_presentation_catalog', record: { v: 1, entries: [{
+    v: 1, subject: { kind: 'account', account: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+      accountId: 'default' } }, label: 'Work',
+  }] }, open: openConnectedPresentationContentV1, collection: 'entries' },
+  { field: 'connectedAcknowledgements', kind: 'account_connected_acknowledgement_catalog', record: { v: 1, entries: [{
+    v: 1, subject: { kind: 'warning', warningId: 'installation', scope: { kind: 'machine', machineId: 'exact-machine' } },
+    acknowledged: false,
+  }] }, open: openConnectedAcknowledgementsContentV1, collection: 'entries' },
+] as const;
 import { encodeAutomationTemplateForTransport } from '@/sync/domains/automations/automationTemplateTransport';
 import { settingsParse } from '@/sync/domains/settings/settings';
 
@@ -68,6 +93,7 @@ async function buildPlainRequestWithSettings(
     credentials,
     expectedSettingsVersion: 9,
     settings,
+    rawSettings: settings,
     connectedServiceProfiles: [],
     automations: [],
     fetchConnectedServiceCredentialSealed: async () => {
@@ -92,8 +118,179 @@ function assertString(value: unknown, name: string): asserts value is string {
 }
 
 describe('buildAccountEncryptionMigrateToPlainRequest', () => {
+  it('converts both populated Connected catalogs without losing retained JSON or inventing Account keys', async () => {
+    const material = resolveAccountScopedCryptoMaterialFromCredentials(createLegacyCredentials());
+    const service = { pluginId: 'happier.connected-account.example', localId: 'cloud' };
+    const records = [
+      { key: 'configurations', value: { v: 1, entries: [{ service, modeId: 'native-api', revision: 'config-1',
+        values: { region: 'west' }, secretRefs: {} }] } },
+      { key: 'purposes', value: { v: 1, bindings: [{ purpose: {
+        consumer: { pluginId: 'happier.agent.example', localId: 'coding' }, purpose: 'model' },
+        target: { kind: 'group', service, groupId: 'pool' } }] } },
+    ] satisfies readonly ConnectedAccountCatalogRecordV1[];
+    const retainedEnvelope = { color: 'orange' };
+    const candidates = Object.fromEntries(records.map(record => {
+      const payload = { ...record, retainedWrapper: { color: 'blue' }, value: { ...record.value, retainedCatalog: { color: 'green' } } };
+      const content = { t: 'encrypted' as const, retainedEnvelope,
+        c: sealAccountScopedBlobCiphertext({ kind: connectedAccountCatalogCipherKindV1(record.key), material,
+          payload, randomBytes: length => new Uint8Array(length).fill(36) }) };
+      const input = { key: record.key, mode: 'e2ee' as const, material, content, admission: 'migration' as const };
+      const opened = openConnectedAccountCatalogContentV1(input);
+      if (opened.status !== 'opened') throw new Error('Expected complete Connected source');
+      return [record.key === 'configurations' ? 'connectedConfigurations' : 'connectedPurposes',
+        { revision: 7, migrationSource: opened.migrationSource }];
+    }));
+    const result = await buildAccountEncryptionMigrateToPlainRequest({
+      credentials: { token: 'plain-target-token' }, storageDirectives: EMPTY_STORAGE_DIRECTIVES, ...CURRENTNESS,
+      expectedSettingsVersion: 7, settings: settingsParse({}), rawSettings: {}, connectedServiceProfiles: [], automations: [],
+      ...candidates,
+      fetchConnectedServiceCredentialSealed: async () => { throw new Error('unexpected credential read'); },
+      decryptAutomationTemplateRaw: async () => { throw new Error('unexpected automation read'); },
+    });
+    for (const record of records) {
+      expect(result[record.key === 'configurations' ? 'connectedConfigurations' : 'connectedPurposes']).toEqual({
+        expectedRevision: 7, content: { t: 'plain', retainedEnvelope, v: { ...record,
+          retainedWrapper: { color: 'blue' }, value: { ...record.value, retainedCatalog: { color: 'green' } } } },
+      });
+    }
+  });
+  it.each([
+    { name: 'retired', rawSettings: {} },
+    { name: 'retained', rawSettings: {
+      executionRunsGuidanceEnabled: 'unreadable',
+      executionRunsGuidanceEntries: [{ id: 'retained-role', description: null }],
+      promptStacksV1: { v: 1, surfaces: { profilesById: { 'retained-profile': [] } } },
+      providerSettingsV1: { v: 2, retainedCatalog: { connectionId: 'retained-provider' } },
+      remoteHostsV1: [], notificationChannelsV1: [], connectedServicesProfileLabelByKey: { 'service/default': 'Work' },
+      connectedServicesCollapsedItemKeysV1: { 'service:account:default': false },
+      connectedServicesDefaultAuthPoolAdoptionDismissedByKey: { 'agent:service:group': true }, dismissedCLIWarnings: { global: { installation: false }, perMachine: {} },
+    } },
+  ])('preserves exact $name prompt sources instead of materializing parsed defaults during Plain conversion', async ({ rawSettings }) => {
+    const source: Readonly<Record<string, unknown>> = rawSettings;
+    const parsedSettings = settingsParse(rawSettings);
+    const request = await buildAccountEncryptionMigrateToPlainRequest({
+      credentials: createLegacyCredentials(), storageDirectives: EMPTY_STORAGE_DIRECTIVES, ...CURRENTNESS,
+      expectedSettingsVersion: 11, settings: parsedSettings, rawSettings,
+      connectedServiceProfiles: [], automations: [],
+      fetchConnectedServiceCredentialSealed: async () => { throw new Error('unexpected credential read'); },
+      decryptAutomationTemplateRaw: async () => { throw new Error('unexpected automation read'); },
+    });
+    if (request.settingsContent?.t !== 'plain') throw new Error('expected plain settings');
+    assertObject(request.settingsContent.v, 'plain settings');
+    const sourceRoots = ['promptStacksV1', 'promptFoldersV1', 'promptInvocationsV1', 'promptExternalLinksV1',
+      'promptRegistrySourcesV1', 'contextSelectionsV1', 'rolesV1', 'executionRunsGuidanceEntries', 'executionRunsGuidanceEnabled', 'providerSettingsV1',
+      'remoteHostsV1', 'notificationChannelsV1', 'connectedServicesProfileLabelByKey', 'connectedServicesCollapsedItemKeysV1',
+      'connectedServicesDefaultAuthPoolAdoptionDismissedByKey', 'dismissedCLIWarnings'];
+    for (const root of sourceRoots) {
+      expect(Object.hasOwn(request.settingsContent.v, root), root).toBe(Object.hasOwn(rawSettings, root));
+      if (Object.hasOwn(source, root)) expect(request.settingsContent.v[root]).toEqual(source[root]);
+    }
+    expect(request.settingsContent.v.preferredLanguage).toEqual(parsedSettings.preferredLanguage);
+    expect(request.expectedSettingsVersion).toBe(11);
+  });
+
+  it.each(['live', 'deleted'] as const)('converts D10 singleton catalogs to Plain without requiring Account keys (%s)', async state => {
+    const material = resolveAccountScopedCryptoMaterialFromCredentials(createLegacyCredentials());
+    const candidates = Object.fromEntries(D10_CATALOGS.map(({ field, kind, record, open }) => [field,
+      { revision: 7, opened: state === 'deleted' ? null : open({ mode: 'e2ee', material,
+        content: { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind, material, payload: record,
+          randomBytes: length => new Uint8Array(length).fill(36) }) } }) }]));
+    const request = await buildAccountEncryptionMigrateToPlainRequest({
+      credentials: { token: 'plain-target-token' }, storageDirectives: EMPTY_STORAGE_DIRECTIVES, ...CURRENTNESS,
+      expectedSettingsVersion: 7, settings: settingsParse({}), rawSettings: {}, connectedServiceProfiles: [], automations: [],
+      ...candidates,
+      fetchConnectedServiceCredentialSealed: async () => { throw new Error('unexpected credential read'); },
+      decryptAutomationTemplateRaw: async () => { throw new Error('unexpected automation read'); },
+    });
+    expect(request).toMatchObject(Object.fromEntries(D10_CATALOGS.map(({ field, record }) => [field,
+      { expectedRevision: 7, content: state === 'live' ? { t: 'plain', v: record } : null }])));
+  });
+
+  it.each(D10_CATALOGS)('refuses partial encrypted $field census before creating a Plain migration', async ({ field, kind, record, open, collection }) => {
+    const material = resolveAccountScopedCryptoMaterialFromCredentials(createLegacyCredentials());
+    const opened = open({ mode: 'e2ee', material, content: { t: 'encrypted', c: sealAccountScopedBlobCiphertext({
+      kind, material, payload: { ...record, [collection]: [{ malformed: true }] }, randomBytes: length => new Uint8Array(length).fill(36),
+    }) } });
+    expect(opened.status).toBe('partial');
+    await expect(buildAccountEncryptionMigrateToPlainRequest({
+      credentials: { token: 'plain-target-token' }, storageDirectives: EMPTY_STORAGE_DIRECTIVES, ...CURRENTNESS,
+      expectedSettingsVersion: 7, settings: settingsParse({}), rawSettings: {}, connectedServiceProfiles: [], automations: [],
+      ...{ [field]: { revision: 7, opened } },
+      fetchConnectedServiceCredentialSealed: async () => { throw new Error('unexpected credential read'); },
+      decryptAutomationTemplateRaw: async () => { throw new Error('unexpected automation read'); },
+    })).rejects.toThrow();
+  });
+
+  it('converts all 257 opened Profiles to Plain with captured revisions and no Account key requirement', async () => {
+    const records = Array.from({ length: 257 }, (_, index) => ({ revision: index + 1, record: {
+      v: 1 as const, id: `profile-${index}`, definition: { kind: 'artifact' as const, artifactId: `artifact-${index}` },
+      enabled: index % 2 === 0, promptStack: [], secretBindings: {},
+    } }));
+    const material = resolveAccountScopedCryptoMaterialFromCredentials(createLegacyCredentials());
+    const control = { v: 1 as const, phase: 'prepared' as const, sourceSettingsVersion: 7, migratedLogicalRevision: 519,
+      inventory: records.map(({ record, revision }) => ({ kind: 'account_row' as const, id: record.id, revision })),
+    };
+    const transferControl = { status: 'present' as const, revision: 6,
+      content: sealProfileTransferContentV1({ mode: 'e2ee', material, record: control,
+        randomBytes: length => new Uint8Array(length).fill(8) }),
+    };
+    const profileRows = await loadProfileCatalogV1({ mode: 'e2ee', material,
+      readPage: async () => ({ status: 'listed', rows: records.map(({ revision, record }) => ({
+        id: record.id, revision, content: sealProfileRecordContentV1({ mode: 'e2ee', material, record,
+          randomBytes: length => new Uint8Array(length).fill(7) }),
+      })), nextCursor: null, complete: true, diagnostics: [], referenceGuardRevision: 519,
+        transferControl }),
+      readReferenceGuard: async () => ({ status: 'ready', revision: 519 }),
+      readTransfer: async () => transferControl,
+    });
+    const request = await buildAccountEncryptionMigrateToPlainRequest({
+      credentials: { token: 'plain-target-token' }, storageDirectives: EMPTY_STORAGE_DIRECTIVES, ...CURRENTNESS,
+      expectedSettingsVersion: 7, settings: settingsParse({}), rawSettings: {}, connectedServiceProfiles: [], automations: [],
+      profileRows,
+      fetchConnectedServiceCredentialSealed: async () => { throw new Error('unexpected credential read'); },
+      decryptAutomationTemplateRaw: async () => { throw new Error('unexpected automation read'); },
+    });
+    expect(request.profileRows?.items).toHaveLength(257);
+    expect(request.profileRows).toEqual({ expectedReferenceGuardRevision: 519,
+      transferControl: { expectedRevision: 6, content: { t: 'plain', v: control } },
+      items: records.map(({ revision, record }) => ({
+      id: record.id, expectedRevision: revision, content: { t: 'plain', v: record },
+    })) });
+  });
+
+  it('refuses a partial Profile census rather than producing an incomplete Plain migration', async () => {
+    await expect(buildAccountEncryptionMigrateToPlainRequest({
+      credentials: createLegacyCredentials(), storageDirectives: EMPTY_STORAGE_DIRECTIVES, ...CURRENTNESS,
+      expectedSettingsVersion: 7, settings: settingsParse({}), rawSettings: {}, connectedServiceProfiles: [], automations: [],
+      profileRows: { status: 'partial', authority: 'inactive', control: null, controlRevision: 'absent', records: [], referenceGuardRevision: 'absent',
+        diagnostics: [{ id: 'profile-locked', revision: 0, reason: 'invalid-stored-content' }] },
+      fetchConnectedServiceCredentialSealed: async () => { throw new Error('unexpected credential read'); },
+      decryptAutomationTemplateRaw: async () => { throw new Error('unexpected automation read'); },
+    })).rejects.toThrow('Profile catalog is not complete');
+  });
+
+  it('preserves Profile and transfer tombstone revisions without resealing deleted payloads', async () => {
+    const request = await buildAccountEncryptionMigrateToPlainRequest({
+      credentials: { token: 'plain-target-token' }, storageDirectives: EMPTY_STORAGE_DIRECTIVES, ...CURRENTNESS,
+      expectedSettingsVersion: 7, settings: settingsParse({}), rawSettings: {}, connectedServiceProfiles: [], automations: [],
+      profileRows: { status: 'ready', authority: 'inactive', control: null, controlRevision: 9, records: [], tombstones: [{ id: 'deleted-profile', revision: 8 }],
+        diagnostics: [], referenceGuardRevision: 11 },
+      fetchConnectedServiceCredentialSealed: async () => { throw new Error('unexpected credential read'); },
+      decryptAutomationTemplateRaw: async () => { throw new Error('unexpected automation read'); },
+    });
+    expect(request.profileRows).toEqual({ items: [], expectedReferenceGuardRevision: 11,
+      transferControl: { expectedRevision: 9, content: null } });
+  });
+
   it.each([1, 2] as const)('includes Account-owned new-session drafts in the atomic plain migration request (epoch %s)', async (epoch) => {
     const credentials = createLegacyCredentials();
+    const acpPayload = { v: 1 as const, definitions: [], catalogMetadata: { label: 'Retained catalog' } };
+    const envelopeMetadata = { note: 'Retained envelope' };
+    const openedAcp = openAcpCatalogContentV1({ mode: 'e2ee', admission: 'migration',
+      material: resolveAccountScopedCryptoMaterialFromCredentials(credentials), content: { t: 'encrypted', envelopeMetadata,
+        c: sealAccountScopedBlobCiphertext({ kind: 'account_acp_catalog', material: resolveAccountScopedCryptoMaterialFromCredentials(credentials),
+          payload: acpPayload, randomBytes: length => new Uint8Array(length).fill(7) }) } });
+    if (openedAcp.status !== 'opened') throw new Error('expected complete ACP migration source');
     const address = {
       kind: 'newSession' as const,
       draftId: '00000000-0000-4000-8000-000000000111',
@@ -119,10 +316,17 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
       credentials,
       expectedSettingsVersion: 7,
       settings: { schemaVersion: 2, backendEnabledById: {} } as any,
+      rawSettings: {},
       connectedServiceProfiles: [],
       automations: [],
       sessionDrafts: [{ address, baseRevision: 8, document }],
       authoringMemory: [{ key: 'lastUsedProfile', revision: 3, value: 'profile-a' }],
+      acpCatalog: { revision: 4, record: openedAcp.record, migrationSource: openedAcp.migrationSource },
+      promptLibrary: [{ revision: 5, record: { key: 'role-overrides', value: { v: 1, overrides: {
+        reviewer: { roleId: 'reviewer', workspaceWrites: 'deny', instructionsOverride: 'Review only' },
+      } } } }],
+      projectTrust: [{ project: { serverId: 'home', projectId: 'project' }, revision: 4,
+        value: { project: { serverId: 'home', projectId: 'project' }, reviewedEffectDigest: 'effect', approvedAtMs: 1 } }],
       fetchConnectedServiceCredentialSealed: async () => {
         throw new Error('unexpected fetchConnectedServiceCredentialSealed');
       },
@@ -142,6 +346,15 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
     expect(request.authoringMemory).toEqual({ items: [{
       key: 'lastUsedProfile', expectedRevision: 3, content: { t: 'plain', v: 'profile-a' },
     }] });
+    expect(request.acpCatalog).toEqual({ expectedRevision: 4, content: { t: 'plain', v: acpPayload, envelopeMetadata } });
+    expect(request.promptLibrary).toEqual({ items: [{ key: 'role-overrides', expectedRevision: 5,
+      content: { t: 'plain', v: { key: 'role-overrides', value: { v: 1, overrides: {
+        reviewer: { roleId: 'reviewer', workspaceWrites: 'deny', instructionsOverride: 'Review only' },
+      } } } },
+    }] });
+    expect(request.projectTrust).toEqual({ items: [{ project: { serverId: 'home', projectId: 'project' }, expectedRevision: 4,
+      content: { t: 'plain', v: { project: { serverId: 'home', projectId: 'project' }, reviewedEffectDigest: 'effect', approvedAtMs: 1 } },
+    }] });
   });
 
   it('builds assert_empty directives when no connected services or automations exist', async () => {
@@ -153,6 +366,7 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
       credentials,
       expectedSettingsVersion: 7,
       settings: { schemaVersion: 2, backendEnabledById: {} } as any,
+      rawSettings: {},
       connectedServiceProfiles: [],
       automations: [],
       fetchConnectedServiceCredentialSealed: async () => {
@@ -223,6 +437,7 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
           },
         },
       }),
+      rawSettings: {},
       connectedServiceProfiles: [],
       automations: [],
       fetchConnectedServiceCredentialSealed: async () => {
@@ -322,6 +537,7 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
       expectedSettingsVersion: 7,
       settings: { schemaVersion: 2, backendEnabledById: {} } as any,
       connectedServiceProfiles: [{ serviceId: 'openai-codex', profileId: 'work' }],
+      rawSettings: {},
       automations: [
         { id: 'auto_sensitive', templateVersion: 3, templateCiphertext: sensitiveTemplateCiphertext },
         { id: 'auto_safe', templateVersion: 5, templateCiphertext: safeTemplateCiphertext },
@@ -395,6 +611,7 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
       expectedSettingsVersion: 7,
       settings: { schemaVersion: 2, backendEnabledById: {} } as any,
       connectedServiceProfiles: [{ serviceId: 'openai-codex', profileId: 'work' }],
+      rawSettings: {},
       automations: [],
       fetchConnectedServiceCredentialSealed: async () => ({
         revisionSemantics: 'revisioned',
@@ -417,6 +634,7 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
       ...CURRENTNESS,
       credentials,
       expectedSettingsVersion: 9,
+      rawSettings: {},
       settings: {
         schemaVersion: 2,
         backendEnabledById: {},

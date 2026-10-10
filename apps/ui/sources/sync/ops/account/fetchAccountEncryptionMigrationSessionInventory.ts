@@ -1,4 +1,4 @@
-import { SessionOwnerMetadataEnvelopeV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { StoredSessionOwnerMetadataEnvelopeV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 import {
     fetchSessionListPageCompat,
@@ -77,7 +77,7 @@ export async function fetchAccountEncryptionMigrationSessionInventory(
                 }
                 if (access.role !== 'owner') continue;
                 const ownerMetadata =
-                    SessionOwnerMetadataEnvelopeV1Schema.safeParse(
+                    StoredSessionOwnerMetadataEnvelopeV1Schema.safeParse(
                         row.ownerMetadata,
                     );
                 if (
