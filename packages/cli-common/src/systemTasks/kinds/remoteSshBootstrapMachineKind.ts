@@ -1,4 +1,5 @@
 import type { SystemTaskJsonObject, SystemTaskJsonValue } from '@happier-dev/protocol';
+import { ManagedEnrollmentCorrelationV1Schema, type ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { isLoopbackHostname, normalizeHostnameForLoopbackCheck } from '@happier-dev/protocol/server/urls/loopbackHostname';
 import { normalizePublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
 import {
@@ -8,6 +9,7 @@ import {
   type ResolvedHomeTarget,
 } from '../../homeTarget/homeTarget.js';
 import type { HappierJsonExecutor } from '../executors/happierJsonExecutor.js';
+import { createSetupMachineRecipeExecutorFromHappierJsonExecutor } from '../executors/setupMachineRecipeExecutor.js';
 import { resolveDaemonServiceInstallConflictPlan } from '../../happierRuntime/daemonInstallConflict.js';
 import type { HappierService, HappierServicePlatform } from '../../happierRuntime/types.js';
 import { resolveDaemonServiceBackend } from '../setupServiceGuidance/buildBackgroundServiceSetupGuidance.js';
@@ -26,6 +28,7 @@ import { runRemoteHomeEnrollmentRecipe } from '../recipes/remoteHomeEnrollmentRe
 import {
   createRemoteSetupMachineRecipeHappierExecutor,
   createSetupMachineRecipeExecutorFromRemoteCommandRunner,
+  normalizeRemoteBootstrapCliJsonResult,
 } from '../executors/remoteSetupMachineRecipeExecutor.js';
 import {
   parseSystemTaskSshConfig,
@@ -261,6 +264,7 @@ export interface RemoteBootstrapMachineParams {
     publicRelayUrl?: string;
   }>;
   homeTarget?: ResolvedHomeTarget;
+  managedEnrollment?: ManagedEnrollmentCorrelationV1;
   requireLocalApproval?: boolean;
   channel?: 'stable' | 'preview' | 'dev';
   serviceMode?: 'user' | 'none';
@@ -296,6 +300,7 @@ export type RemoteHostTrustResolution =
     }>;
 
 export type RemoteSshBootstrapMachineDeps = Readonly<{
+  assertManagedEnrollmentCurrent?: (correlation: ManagedEnrollmentCorrelationV1) => Promise<void>;
   resolveHostTrust: (params: Readonly<{
     ssh: SystemTaskSshConnectionConfig;
     knownHostsMode: 'app' | 'system';
@@ -363,9 +368,19 @@ export function createRemoteSshBootstrapMachineTaskKind(
   return {
     async run(ctx) {
       const runRemoteCommand: RemoteSshBootstrapMachineDeps['runRemoteCommand'] = async (params) => (
-        await deps.runRemoteCommand({ ...params, signal: ctx.signal })
+        await (async () => {
+          if (params.parsed.managedEnrollment) {
+            if (!deps.assertManagedEnrollmentCurrent) throw new SystemTaskExecutionError('managed_enrollment_unavailable', 'Managed enrollment requires current host admission.');
+            await deps.assertManagedEnrollmentCurrent(params.parsed.managedEnrollment);
+          }
+          return await deps.runRemoteCommand({ ...params, signal: ctx.signal });
+        })()
       );
       const installRemoteCli: RemoteSshBootstrapMachineDeps['installRemoteCli'] = async (params) => {
+        if (params.parsed.managedEnrollment) {
+          if (!deps.assertManagedEnrollmentCurrent) throw new SystemTaskExecutionError('managed_enrollment_unavailable', 'Managed enrollment requires current host admission.');
+          await deps.assertManagedEnrollmentCurrent(params.parsed.managedEnrollment);
+        }
         await deps.installRemoteCli({ ...params, signal: ctx.signal });
       };
       let cleanupTempIdentityFile: (() => Promise<void>) | null = null;
@@ -541,206 +556,20 @@ export function createRemoteSshBootstrapMachineTaskKind(
         signal: ctx.signal,
         ...(deps.createHappierJsonExecutor ? { createHappierJsonExecutor: deps.createHappierJsonExecutor } : {}),
       });
-      let enrolledRemoteProfileId: string | null = null;
-      const recipeExecutor: SetupMachineRecipeExecutor = {
-        ...serviceRecipeExecutor,
-        configureRelay: async (profile) => {
-          const configuredProfileId = await serviceRecipeExecutor.configureRelay(profile);
-          if (typeof configuredProfileId === 'string' && configuredProfileId.trim()) {
-            enrolledRemoteProfileId = configuredProfileId.trim();
-          }
-          return configuredProfileId;
-        },
-        enrollAuthPairing: async ({ approvePairingRequest }) => {
-          const enrollmentExecutor = deps.createRemoteEnrollmentExecutor?.({
-            parsed: parsedRemote,
-            auth,
-            knownHostsMode,
-            signal: ctx.signal,
-          });
-          if (!enrollmentExecutor) {
-            throw new SystemTaskExecutionError(
-              'remote_cli_update_required',
-              'Remote Home enrollment requires the canonical streaming SSH executor.',
-            );
-          }
-          let publicKey: string | null = null;
-          const result = await runRemoteHomeEnrollmentRecipe({
-            executor: enrollmentExecutor,
-            homeTargetInput: parsedRemote.homeTarget
-              ? createTransferableHomeTargetInput(parsedRemote.homeTarget)
-              : { kind: 'https_url', url: parsedRemote.relay.relayUrl },
-            signal: ctx.signal,
-            timeoutMs: 10 * 60_000,
-            approvePairingRequest: async (request) => {
-              publicKey = request.publicKey;
-              if (!approvePairingRequest) {
-                throw new SystemTaskExecutionError('approval_required', 'Pairing approval is required.');
-              }
-              await approvePairingRequest({
-                publicKey: request.publicKey,
-                requestPayload: request,
-              });
-            },
-          });
-          enrolledRemoteProfileId = result.remoteProfileId;
-          return { publicKey, machineId: result.machineId };
-        },
-      };
-
-      const shouldManageService = (parsedRemote.serviceMode ?? 'user') !== 'none';
-      if (shouldManageService && await preflightRemoteBackgroundServiceReplacement({
-        ctx,
-        listServices: async () => requireOk(
-          await remoteHappierExecutor.runHappierJson({ args: ['service', 'list', '--json'] }),
-          'daemon.service.list',
-        ),
-        targetReleaseChannel: parsedRemote.channel ?? 'stable',
-        targetServerUrl: relayProfile.serverUrl,
-        mode: 'user',
-        stepId: 'daemon.service.preflight',
-      })) {
-        // The remote CLI has no per-service uninstall; replacement removes every
-        // remote daemon service, exactly as the canonical setup owner does.
-        requireOk(
-          await remoteHappierExecutor.runHappierJson({ args: ['service', 'uninstall', '--all', '--yes', '--json'] }),
-          'daemon.service.uninstallAll',
-        );
-      }
-
-      const recipeResult = await runSetupMachineRecipe({
-        relayProfile,
-        executor: recipeExecutor,
-        ...(parsedRemote.homeTarget?.descriptor
-          ? {
-              initialAuthStatus: {
-                authenticated: false,
-                credentialState: 'missing' as const,
-                machineRegistrationState: 'no-local-id' as const,
-                machineId: null,
-              },
+      return await runRemoteMachineBootstrapRecipe({
+        ctx, parsedRemote, parsedLocalForApproval, relayRuntime, relayRuntimeLocalServerUrl,
+        remoteHappierExecutor, serviceRecipeExecutor,
+        createRemoteEnrollmentExecutor: () => deps.createRemoteEnrollmentExecutor?.({
+          parsed: parsedRemote, auth, knownHostsMode, signal: ctx.signal,
+        }),
+        approveLocalAuthRequest: (request) => deps.approveLocalAuthRequest({ ...request, parsed: parsedLocalForApproval }),
+        assertCurrent: parsedRemote.managedEnrollment
+          ? async () => {
+              if (!deps.assertManagedEnrollmentCurrent) throw new SystemTaskExecutionError('managed_enrollment_unavailable', 'Managed enrollment requires current host admission.');
+              await deps.assertManagedEnrollmentCurrent(parsedRemote.managedEnrollment!);
             }
-          : {}),
-        steps: {
-          configureRelay: !parsedRemote.homeTarget?.descriptor,
-          installService: shouldManageService,
-          startService: shouldManageService,
-          verifyService: shouldManageService,
-        },
-        stepIds: {
-          authRequest: 'ssh.auth.request',
-          authWait: 'ssh.auth.wait',
-        },
-        signal: ctx.signal,
-        emit: (event) => {
-          ctx.emit({
-            type: 'progress',
-            stepId: event.stepId,
-            ...(event.message ? { message: event.message } : {}),
-          });
-        },
-        approvePairingRequest: async ({ publicKey, requestPayload }) => {
-          const homeServerIdentityId = typeof requestPayload.homeServerIdentityId === 'string'
-            ? requestPayload.homeServerIdentityId.trim()
-            : '';
-          if (!homeServerIdentityId) {
-            throw new SystemTaskExecutionError(
-              'remote_cli_update_required',
-              'The remote Happier CLI does not provide authenticated v3 Home identity context.',
-            );
-          }
-          if (parsedRemote.homeTarget) {
-            try {
-              assertResolvedHomeTargetIdentity(parsedRemote.homeTarget, homeServerIdentityId);
-            } catch {
-              throw new SystemTaskExecutionError(
-                'home_identity_mismatch',
-                'Remote Home identity does not match the selected Home.',
-              );
-            }
-          }
-          const approvalPayload = redactRemoteBootstrapPayload(requestPayload);
-          if (!shouldAutoApproveAuthRequest(parsedRemote, approvalPayload)) {
-            const approval = await ctx.prompt({
-              kind: 'auth.approveRemoteProvisioning',
-              stepId: 'ssh.auth.approval',
-              message: 'Approve remote machine pairing',
-              data: approvalPayload,
-            }) as { approved?: boolean };
-            if (approval?.approved !== true) {
-              throw new SystemTaskExecutionError('approval_declined', 'Remote machine pairing was not approved');
-            }
-          }
-
-          try {
-            await deps.approveLocalAuthRequest({
-              publicKey,
-              homeServerIdentityId,
-              parsed: parsedLocalForApproval,
-              ...(requestPayload.pairing !== undefined && requestPayload.pairing !== null
-                ? { pairing: requestPayload.pairing }
-                : {}),
-              ...(requestPayload.supportsTokenOnly === true ? { supportsTokenOnly: true } : {}),
-              signal: ctx.signal,
-            });
-          } catch (error) {
-            if (
-              (parsedRemote.requireLocalApproval === true || Boolean(parsedRemote.homeTarget))
-              && shouldIgnoreLocalApprovalError(error)
-            ) {
-              throw new SystemTaskExecutionError(
-                'local_approval_required',
-                'Remote setup requires local approval, but this CLI is not authenticated.',
-              );
-            }
-            if (!shouldIgnoreLocalApprovalError(error)) {
-              throw error;
-            }
-          }
-        },
+          : undefined,
       });
-
-      if (parsedRemote.homeTarget) {
-        const confirmed = resolveSetupMachineReadiness(await recipeExecutor.readAuthStatus());
-        if (
-          confirmed.credentialState !== 'valid'
-          || confirmed.machineRegistrationState !== 'server-confirmed'
-          || !confirmed.machineId
-        ) {
-          throw new SystemTaskExecutionError(
-            'machine_registration_unconfirmed',
-            'The selected Home did not confirm the remote machine registration.',
-          );
-        }
-        if (recipeResult.machineId && recipeResult.machineId !== confirmed.machineId) {
-          throw new SystemTaskExecutionError(
-            'machine_identity_mismatch',
-            'The selected Home confirmed a different remote machine identity.',
-          );
-        }
-        if (
-          shouldManageService
-          && enrolledRemoteProfileId
-          && recipeResult.daemonStatus?.activeServerId !== enrolledRemoteProfileId
-        ) {
-          throw new SystemTaskExecutionError(
-            'daemon_home_mismatch',
-            'The background service is not connected through the enrolled Home profile.',
-          );
-        }
-      }
-
-      ctx.emit({
-        type: 'progress',
-        stepId: 'ssh.complete',
-        message: 'Remote bootstrap finished',
-      });
-
-        return {
-          ...(recipeResult.publicKey ? { publicKey: recipeResult.publicKey } : {}),
-          machineId: recipeResult.machineId,
-          ...(relayRuntime ? { relayRuntime } : {}),
-        };
       } finally {
         await cleanupTempIdentityFile?.().catch(() => {});
       }
@@ -786,6 +615,7 @@ export function parseRemoteBootstrapMachineParams(params: unknown): RemoteBootst
       ...(typeof relayRecord.publicRelayUrl === 'string' ? { publicRelayUrl: relayRecord.publicRelayUrl } : {}),
     },
     ...(value.homeTarget !== undefined ? { homeTarget: parseResolvedHomeTarget(value.homeTarget) } : {}),
+    ...(value.managedEnrollment !== undefined ? { managedEnrollment: ManagedEnrollmentCorrelationV1Schema.parse(value.managedEnrollment) } : {}),
     requireLocalApproval: value.requireLocalApproval === true,
     channel: normalizePublicReleaseRingLabel(value.channel) || 'stable',
     serviceMode: value.serviceMode === 'none' ? 'none' : 'user',
@@ -988,7 +818,7 @@ function parseRemoteHostTrustPromptKind(value: unknown): 'ssh.trustHost' | 'ssh.
 }
 
 function shouldAutoApproveAuthRequest(
-  parsed: RemoteBootstrapMachineParams,
+  parsed: RemoteBootstrapMachineConfiguration,
   authRequest: Record<string, unknown>,
 ): boolean {
   const resolvedPublicKey = parsed.promptResolution?.authApproval?.publicKey?.trim();
@@ -1009,4 +839,298 @@ function ensureNonEmptyString(value: unknown, field: string): string {
     throw new SystemTaskExecutionError('invalid_params', `Missing ${field}.`);
   }
   return text;
+}
+
+
+type RemoteBootstrapMachineConfiguration = Omit<RemoteBootstrapMachineParams, 'ssh' | 'identityPrivateKey'>;
+type RemoteMachineBootstrapRecipeParams = Readonly<{
+  ctx: InteractiveSystemTaskContext;
+  parsedRemote: RemoteBootstrapMachineConfiguration;
+  parsedLocalForApproval: RemoteBootstrapMachineConfiguration;
+  relayRuntime?: Readonly<{ relayUrl: string; mode: 'user' | 'system' }>;
+  relayRuntimeLocalServerUrl?: string;
+  remoteHappierExecutor: RemoteSshBootstrapHappierJsonExecutor;
+  serviceRecipeExecutor: SetupMachineRecipeExecutor;
+  createRemoteEnrollmentExecutor(): HappierJsonExecutor | undefined;
+  approveLocalAuthRequest(request: Omit<Parameters<RemoteSshBootstrapMachineDeps['approveLocalAuthRequest']>[0], 'parsed'> & { parsed: RemoteBootstrapMachineConfiguration }): Promise<void>;
+  assertCurrent?: () => Promise<void>;
+  enrollmentProcessIO?: 'streaming' | 'buffered';
+}>;
+
+async function runRemoteMachineBootstrapRecipe({
+  ctx, parsedRemote, parsedLocalForApproval, relayRuntime, relayRuntimeLocalServerUrl,
+  remoteHappierExecutor, serviceRecipeExecutor, createRemoteEnrollmentExecutor, approveLocalAuthRequest, assertCurrent, enrollmentProcessIO,
+}: RemoteMachineBootstrapRecipeParams) {
+  const webappUrl = deriveWebappUrl(parsedRemote.relay.relayUrl, parsedRemote.relay.webappUrl);
+  const relayProfile = {
+    serverUrl: parsedRemote.relay.relayUrl, webappUrl,
+    localServerUrl: relayRuntimeLocalServerUrl ?? null,
+  };
+      let enrolledRemoteProfileId: string | null = null;
+      const recipeExecutor: SetupMachineRecipeExecutor = {
+        ...serviceRecipeExecutor,
+        readAuthStatus: async () => {
+          await assertCurrent?.();
+          return await serviceRecipeExecutor.readAuthStatus();
+        },
+        ...(serviceRecipeExecutor.installDaemonService ? { installDaemonService: async (options) => {
+          await assertCurrent?.();
+          await serviceRecipeExecutor.installDaemonService!(options);
+        } } : {}),
+        ...(serviceRecipeExecutor.startDaemonService ? { startDaemonService: async (options) => {
+          await assertCurrent?.();
+          await serviceRecipeExecutor.startDaemonService!(options);
+        } } : {}),
+        ...(serviceRecipeExecutor.restartDaemonService ? { restartDaemonService: async () => {
+          await assertCurrent?.();
+          await serviceRecipeExecutor.restartDaemonService!();
+        } } : {}),
+        configureRelay: async (profile) => {
+          await assertCurrent?.();
+          const configuredProfileId = await serviceRecipeExecutor.configureRelay(profile);
+          if (typeof configuredProfileId === 'string' && configuredProfileId.trim()) {
+            enrolledRemoteProfileId = configuredProfileId.trim();
+          }
+          return configuredProfileId;
+        },
+        enrollAuthPairing: async ({ approvePairingRequest }) => {
+          await assertCurrent?.();
+          const enrollmentExecutor = createRemoteEnrollmentExecutor();
+          if (!enrollmentExecutor) {
+            throw new SystemTaskExecutionError(
+              'remote_cli_update_required',
+              'Remote Home enrollment requires the canonical CLI executor.',
+            );
+          }
+          let publicKey: string | null = null;
+          const result = await runRemoteHomeEnrollmentRecipe({
+            executor: enrollmentExecutor,
+            processIO: enrollmentProcessIO,
+            homeTargetInput: parsedRemote.homeTarget
+              ? createTransferableHomeTargetInput(parsedRemote.homeTarget)
+              : { kind: 'https_url', url: parsedRemote.relay.relayUrl },
+            signal: ctx.signal,
+            timeoutMs: 10 * 60_000,
+            ...(parsedRemote.managedEnrollment ? { managedEnrollment: parsedRemote.managedEnrollment } : {}),
+            approvePairingRequest: async (request) => {
+              publicKey = request.publicKey;
+              if (!approvePairingRequest) {
+                throw new SystemTaskExecutionError('approval_required', 'Pairing approval is required.');
+              }
+              await approvePairingRequest({
+                publicKey: request.publicKey,
+                requestPayload: request,
+              });
+            },
+          });
+          enrolledRemoteProfileId = result.remoteProfileId;
+          return { publicKey, machineId: result.machineId };
+        },
+      };
+
+      const shouldManageService = (parsedRemote.serviceMode ?? 'user') !== 'none';
+      if (shouldManageService && await preflightRemoteBackgroundServiceReplacement({
+        ctx,
+        listServices: async () => requireOk(
+          await (async () => {
+            await assertCurrent?.();
+            return await remoteHappierExecutor.runHappierJson({ args: ['service', 'list', '--json'] });
+          })(),
+          'daemon.service.list',
+        ),
+        targetReleaseChannel: parsedRemote.channel ?? 'stable',
+        targetServerUrl: relayProfile.serverUrl,
+        mode: 'user',
+        stepId: 'daemon.service.preflight',
+      })) {
+        // The remote CLI has no per-service uninstall; replacement removes every
+        // remote daemon service, exactly as the canonical setup owner does.
+        await assertCurrent?.();
+        requireOk(
+          await remoteHappierExecutor.runHappierJson({ args: ['service', 'uninstall', '--all', '--yes', '--json'] }),
+          'daemon.service.uninstallAll',
+        );
+      }
+
+      await assertCurrent?.();
+      const recipeResult = await runSetupMachineRecipe({
+        relayProfile,
+        executor: recipeExecutor,
+        ...(parsedRemote.homeTarget?.descriptor
+          ? {
+              initialAuthStatus: {
+                authenticated: false,
+                credentialState: 'missing' as const,
+                machineRegistrationState: 'no-local-id' as const,
+                machineId: null,
+              },
+            }
+          : {}),
+        steps: {
+          configureRelay: !parsedRemote.homeTarget?.descriptor,
+          installService: shouldManageService,
+          startService: shouldManageService,
+          verifyService: shouldManageService,
+        },
+        stepIds: {
+          authRequest: 'ssh.auth.request',
+          authWait: 'ssh.auth.wait',
+        },
+        signal: ctx.signal,
+        emit: (event) => {
+          ctx.emit({
+            type: 'progress',
+            stepId: event.stepId,
+            ...(event.message ? { message: event.message } : {}),
+          });
+        },
+        approvePairingRequest: async ({ publicKey, requestPayload }) => {
+          const homeServerIdentityId = typeof requestPayload.homeServerIdentityId === 'string'
+            ? requestPayload.homeServerIdentityId.trim()
+            : '';
+          if (!homeServerIdentityId) {
+            throw new SystemTaskExecutionError(
+              'remote_cli_update_required',
+              'The remote Happier CLI does not provide authenticated v3 Home identity context.',
+            );
+          }
+          if (parsedRemote.homeTarget) {
+            try {
+              assertResolvedHomeTargetIdentity(parsedRemote.homeTarget, homeServerIdentityId);
+            } catch {
+              throw new SystemTaskExecutionError(
+                'home_identity_mismatch',
+                'Remote Home identity does not match the selected Home.',
+              );
+            }
+          }
+          const approvalPayload = redactRemoteBootstrapPayload(requestPayload);
+          if (!shouldAutoApproveAuthRequest(parsedRemote, approvalPayload)) {
+            const approval = await ctx.prompt({
+              kind: 'auth.approveRemoteProvisioning',
+              stepId: 'ssh.auth.approval',
+              message: parsedRemote.managedEnrollment
+                ? 'Sign this managed machine into your Account for Account-wide automation?'
+                : 'Approve remote machine pairing',
+              data: parsedRemote.managedEnrollment ? { ...approvalPayload, credentialScope: 'account', credentialAuthority: 'account_automation' } : approvalPayload,
+            }) as { approved?: boolean };
+            if (approval?.approved !== true) {
+              throw new SystemTaskExecutionError('approval_declined', 'Remote machine pairing was not approved');
+            }
+          }
+
+          await assertCurrent?.();
+          try {
+            await approveLocalAuthRequest({
+              publicKey,
+              homeServerIdentityId,
+              parsed: parsedLocalForApproval,
+              ...(requestPayload.pairing !== undefined && requestPayload.pairing !== null
+                ? { pairing: requestPayload.pairing }
+                : {}),
+              ...(requestPayload.supportsTokenOnly === true ? { supportsTokenOnly: true } : {}),
+              signal: ctx.signal,
+            });
+          } catch (error) {
+            if (
+              (parsedRemote.requireLocalApproval === true || Boolean(parsedRemote.homeTarget))
+              && shouldIgnoreLocalApprovalError(error)
+            ) {
+              throw new SystemTaskExecutionError(
+                'local_approval_required',
+                'Remote setup requires local approval, but this CLI is not authenticated.',
+              );
+            }
+            if (!shouldIgnoreLocalApprovalError(error)) {
+              throw error;
+            }
+          }
+        },
+      });
+
+      if (parsedRemote.homeTarget) {
+        const confirmed = resolveSetupMachineReadiness(await recipeExecutor.readAuthStatus());
+        if (
+          confirmed.credentialState !== 'valid'
+          || confirmed.machineRegistrationState !== 'server-confirmed'
+          || !confirmed.machineId
+        ) {
+          throw new SystemTaskExecutionError(
+            'machine_registration_unconfirmed',
+            'The selected Home did not confirm the remote machine registration.',
+          );
+        }
+        if (recipeResult.machineId && recipeResult.machineId !== confirmed.machineId) {
+          throw new SystemTaskExecutionError(
+            'machine_identity_mismatch',
+            'The selected Home confirmed a different remote machine identity.',
+          );
+        }
+        if (
+          shouldManageService
+          && enrolledRemoteProfileId
+          && recipeResult.daemonStatus?.activeServerId !== enrolledRemoteProfileId
+        ) {
+          throw new SystemTaskExecutionError(
+            'daemon_home_mismatch',
+            'The background service is not connected through the enrolled Home profile.',
+          );
+        }
+      }
+
+      await assertCurrent?.();
+      ctx.emit({
+        type: 'progress',
+        stepId: 'ssh.complete',
+        message: 'Remote bootstrap finished',
+      });
+
+        return {
+          ...(recipeResult.publicKey ? { publicKey: recipeResult.publicKey } : {}),
+          machineId: recipeResult.machineId,
+          ...(relayRuntime ? { relayRuntime } : {}),
+        };
+}
+
+/** Native IO joins the same installer/enrollment/service recipe as SSH. */
+export function createRemoteNativeBootstrapMachineTaskKind(input: Readonly<{
+  configuration: RemoteBootstrapMachineConfiguration;
+  installRemoteCli(signal?: AbortSignal): Promise<void>;
+  executor: HappierJsonExecutor;
+  approveLocalAuthRequest: RemoteMachineBootstrapRecipeParams['approveLocalAuthRequest'];
+  assertCurrent(): Promise<void>;
+}>): InteractiveSystemTaskKind<Readonly<{ publicKey?: string; machineId: string | null }>> {
+  return {
+    async run(ctx) {
+      await input.assertCurrent();
+      ctx.signal?.throwIfAborted();
+      ctx.emit({ type: 'progress', stepId: 'ssh.installCli', message: 'Ensuring Happier is installed on the remote machine' });
+      await input.installRemoteCli(ctx.signal);
+      await input.assertCurrent();
+      const executor: HappierJsonExecutor = {
+        runHappierText: async (args, options) => {
+          await input.assertCurrent();
+          ctx.signal?.throwIfAborted();
+          return await input.executor.runHappierText(args, { ...options, signal: options?.signal ?? ctx.signal });
+        },
+        runHappierJson: async (args, options) => {
+          await input.assertCurrent();
+          ctx.signal?.throwIfAborted();
+          return await input.executor.runHappierJson(args, { ...options, signal: options?.signal ?? ctx.signal });
+        },
+      };
+      return await runRemoteMachineBootstrapRecipe({
+        ctx, parsedRemote: input.configuration, parsedLocalForApproval: input.configuration,
+        remoteHappierExecutor: { runHappierJson: async ({ args }) => {
+          const result = await executor.runHappierJson(args);
+          return normalizeRemoteBootstrapCliJsonResult(result, args[0] === 'auth' && args[1] === 'status');
+        } },
+        serviceRecipeExecutor: createSetupMachineRecipeExecutorFromHappierJsonExecutor({ executor }),
+        createRemoteEnrollmentExecutor: () => executor,
+        approveLocalAuthRequest: input.approveLocalAuthRequest,
+        assertCurrent: input.assertCurrent,
+        enrollmentProcessIO: 'buffered',
+      });
+    },
+  };
 }

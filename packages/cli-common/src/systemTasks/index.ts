@@ -29,8 +29,10 @@ export {
 } from './ssh/sshTarget.js';
 export {
   buildRemoteBootstrapCommand,
+  buildRemoteHappierInvocationCommand,
   type RemoteBootstrapCommandLabel,
 } from './ssh/remoteBootstrapCommandBuilder.js';
+export { isRemoteBootstrapUnauthenticatedCliResult, normalizeRemoteBootstrapCliJsonResult } from './executors/remoteSetupMachineRecipeExecutor.js';
 export {
   buildRemoteSelfDownloadFirstPartyInstallCommand,
   resolveRemoteSelfDownloadFirstPartyInstallPlan,
@@ -44,6 +46,7 @@ export {
   resolveExplicitOrInstalledLocalFirstPartyCommand,
   resolveRepoLocalFirstPartyCommandPath,
   createLocalHappierJsonExecutor,
+  createHappierJsonExecutorFromTextRunner,
   resolveLocalHappierCommandTimeoutMs,
   type HappierJsonExecutor,
   type LocalFirstPartyCommandProvenance,

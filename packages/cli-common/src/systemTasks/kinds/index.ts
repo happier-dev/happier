@@ -76,6 +76,7 @@ export {
 } from './daemonServiceRelayDisconnectKind.js';
 export {
   createRemoteSshBootstrapMachineTaskKind,
+  createRemoteNativeBootstrapMachineTaskKind,
   parseRemoteBootstrapMachineParams,
   redactRemoteBootstrapPayload,
   SERVICE_RECONCILIATION_DECLINED_MESSAGE,

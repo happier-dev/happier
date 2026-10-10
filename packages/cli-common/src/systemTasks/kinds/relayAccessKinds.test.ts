@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { RelayAccessProvider } from '../../relayAccess/types.js';
+import { RelayAccessConfigV1Schema } from '@happier-dev/protocol/system/tasks/relayAccessConfigV1';
 
 import {
   createRelayAccessConfigureTaskKind,
@@ -11,6 +12,20 @@ import {
 } from './relayAccessKinds.js';
 
 describe('relay access shared system task kinds', () => {
+  it('preserves task config normalization across the portable Action config variants', () => {
+    for (const config of [
+      { providerId: 'localOnly' },
+      { providerId: 'lan', url: ' http://localhost:3000 ' },
+      { providerId: 'lan', url: ' relay-host:3000 ' },
+      { providerId: 'tailscaleServe' },
+      { providerId: 'tailscaleFunnel' },
+      { providerId: 'cloudflareNamed', hostname: ' relay.example.test ', token: ' tunnel-token ' },
+    ]) {
+      const parsed = parseRelayAccessConfigureParams({ target: { kind: 'local' }, providerId: config.providerId, config });
+      expect(RelayAccessConfigV1Schema.parse(config)).toEqual(parsed.config);
+    }
+  });
+
   it('parses cloudflare named-tunnel config and redacts the token field', () => {
     const parsed = parseRelayAccessConfigureParams({
       target: { kind: 'local' },

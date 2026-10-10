@@ -1,9 +1,6 @@
-export type RelayAccessProviderId =
-    | 'localOnly'
-    | 'lan'
-    | 'tailscaleServe'
-    | 'tailscaleFunnel'
-    | 'cloudflareNamed';
+import type { RelayAccessConfigV1, RelayAccessProviderIdV1 } from '@happier-dev/protocol/system/tasks/relayAccessConfigV1';
+
+export type RelayAccessProviderId = RelayAccessProviderIdV1;
 
 export type RelayAccessProviderExposure = 'private' | 'public';
 
@@ -109,12 +106,7 @@ export type RelayAccessProviderStatusOptions = Readonly<{
     signal?: AbortSignal;
 }>;
 
-export type RelayAccessConfig =
-    | Readonly<{ providerId: 'localOnly' }>
-    | Readonly<{ providerId: 'lan'; url: string }>
-    | Readonly<{ providerId: 'tailscaleServe' }>
-    | Readonly<{ providerId: 'tailscaleFunnel' }>
-    | Readonly<{ providerId: 'cloudflareNamed'; hostname: string; token: string }>;
+export type RelayAccessConfig = RelayAccessConfigV1;
 
 export type RelayAccessProvider = Readonly<{
     descriptor: RelayAccessProviderDescriptor;

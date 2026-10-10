@@ -1,6 +1,16 @@
 import { DEFAULT_HAPPIER_CLOUD_SERVER_URL } from '../../happierCloud.js';
 import { quoteRemotePathWithHomeExpansion, safeBashSingleQuote } from '../../ssh/shellQuote.js';
 import { resolveRemoteInstalledFirstPartyBinaryPath } from './remoteFirstPartyInstallPath.js';
+import { normalizePublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
+
+/** Binary path, literal argv and ring scope are independent of guest transport. */
+export function buildRemoteHappierInvocationCommand(params: Readonly<{ binaryPath: string; args: readonly string[]; channel?: string }>): string {
+  const argvCommand = [quoteRemotePathWithHomeExpansion(params.binaryPath), ...params.args.map(safeBashSingleQuote)].join(' ');
+  const ring = normalizePublicReleaseRingLabel(params.channel);
+  return ring && ring !== 'stable'
+    ? `HAPPIER_PUBLIC_RELEASE_CHANNEL=${safeBashSingleQuote(ring)} HAPPIER_RELEASE_RING=${safeBashSingleQuote(ring)} ${argvCommand}`
+    : argvCommand;
+}
 
 type JsonRecord = Record<string, unknown>;
 

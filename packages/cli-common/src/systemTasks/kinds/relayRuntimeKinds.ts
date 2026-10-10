@@ -1,4 +1,5 @@
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+import { ManagedSshHostKeyEvidenceV1Schema, type ManagedSshHostKeyEvidenceV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { HomeOwnerClaimAccountIdV1Schema } from '@happier-dev/protocol/home/governance/claim';
 import { SystemTaskJsonValueSchema } from '@happier-dev/protocol/system/tasks/spec';
 import type { HomeConnectionDescriptorV1, SystemTaskJsonValue } from '@happier-dev/protocol';
@@ -32,6 +33,8 @@ export interface SystemTaskSshConnectionConfig {
   sshConfigFile?: string;
   knownHostsPath?: string;
   trustedHostKey?: string;
+  /** Provider-observed evidence is not permission to change the user's saved trust. */
+  hostKeyEvidence?: ManagedSshHostKeyEvidenceV1;
 }
 
 export interface RelayRuntimeTaskParams {
@@ -907,6 +910,7 @@ export function parseSystemTaskSshConfig(value: unknown): SystemTaskSshConnectio
     ...(typeof record.sshConfigFile === 'string' ? { sshConfigFile: record.sshConfigFile } : {}),
     ...(typeof record.knownHostsPath === 'string' ? { knownHostsPath: record.knownHostsPath } : {}),
     ...(typeof record.trustedHostKey === 'string' ? { trustedHostKey: record.trustedHostKey } : {}),
+    ...(record.hostKeyEvidence !== undefined ? { hostKeyEvidence: ManagedSshHostKeyEvidenceV1Schema.parse(record.hostKeyEvidence) } : {}),
   };
 }
 

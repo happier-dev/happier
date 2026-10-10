@@ -40,6 +40,22 @@ function createFakeChild() {
 }
 
 describe('runOpenSshRemoteCommand', () => {
+  it('rejects signal termination even when a caller inspects nonzero JSON results', async () => {
+    const child = createFakeChild();
+    spawn.mockReturnValue(child);
+    const pending = runOpenSshRemoteCommand({
+      target: 'dev@example.test',
+      remoteCommand: ['happier', 'auth', 'status', '--json'],
+      knownHostsMode: 'system',
+      auth: { mode: 'agent' },
+      rejectOnNonZero: false,
+    });
+    child.stdout.end('{"v":1,"ok":false,"kind":"auth_status","error":{"code":"not_authenticated"}}\n');
+    child.stderr.end('');
+    child.emit('close', null, 'SIGTERM');
+    await expect(pending).rejects.toMatchObject({ code: 'command_failed' });
+  });
+
   it('writes ephemeral approval input to stdin without placing it in SSH argv', async () => {
     const child = createFakeChild();
     spawn.mockReturnValue(child);

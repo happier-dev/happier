@@ -170,11 +170,18 @@ async function runCommand(params: Readonly<{
         `${params.errorPrefix}: ${redactSshText(error.message || params.redactedLabel || params.command)}`,
       ));
     });
-    child.once('close', (code) => {
+    child.once('close', (code, signal) => {
       if (settled) return;
       settled = true;
       cleanup();
-      const status = typeof code === 'number' ? code : 1;
+      if (typeof code !== 'number') {
+        rejectPromise(new OpenSshExecutionError(
+          'command_failed',
+          `${params.errorPrefix}: process terminated${signal ? ` (${signal})` : ' without an exit status'}.`,
+        ));
+        return;
+      }
+      const status = code;
       const stdout = Buffer.concat(stdoutChunks).toString('utf8');
       const stderr = Buffer.concat(stderrChunks).toString('utf8');
       if (status !== 0 && params.rejectOnNonZero !== false) {

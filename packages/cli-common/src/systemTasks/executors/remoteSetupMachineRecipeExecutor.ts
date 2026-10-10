@@ -13,6 +13,39 @@ import type { HappierJsonExecutor } from './happierJsonExecutor.js';
 
 type RemoteCommandResult = Awaited<ReturnType<RemoteSshBootstrapHappierJsonExecutor['runHappierJson']>>;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** When inspecting a failed process, only the CLI's expected signed-out exit is admissible. */
+export function isRemoteBootstrapUnauthenticatedCliResult(value: unknown, exitStatus?: number): boolean {
+  return (exitStatus === undefined || exitStatus === 1)
+    && isRecord(value)
+    && value.v === 1
+    && value.ok === false
+    && value.kind === 'auth_status'
+    && isRecord(value.error)
+    && value.error.code === 'not_authenticated';
+}
+
+/** The ordinary CLI envelope has the same meaning on every bootstrap transport. */
+export function normalizeRemoteBootstrapCliJsonResult(value: unknown, authStatus = false): RemoteCommandResult {
+  if (!isRecord(value)) {
+    throw new SystemTaskExecutionError('invalid_cli_response', 'Remote bootstrap command returned invalid JSON.');
+  }
+  if (authStatus) {
+    if (value.v !== 1 || typeof value.ok !== 'boolean' || value.kind !== 'auth_status'
+      || (value.ok
+        ? !isRecord(value.data) || typeof value.data.authenticated !== 'boolean'
+        : !isRecord(value.error) || typeof value.error.code !== 'string' || !value.error.code.trim())) {
+      throw new SystemTaskExecutionError('invalid_cli_response', 'Remote bootstrap command returned an invalid auth status envelope.');
+    }
+    if (isRemoteBootstrapUnauthenticatedCliResult(value)) return { ok: true, data: { authenticated: false } };
+  }
+  // Daemon and service commands also produce plain JSON objects, not CLI envelopes.
+  return { ok: value.ok !== false, data: isRecord(value.data) ? value.data : value };
+}
+
 function requireOk(result: RemoteCommandResult, label: string): Record<string, unknown> {
   if (!result.ok) {
     throw new SystemTaskExecutionError('remote_command_failed', `Remote bootstrap step failed: ${label}`);
