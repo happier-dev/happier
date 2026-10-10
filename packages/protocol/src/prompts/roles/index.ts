@@ -7,5 +7,5 @@ export * from './renderSessionRoleBlockV1.js';
 export * from './roleActionsV1.js';
 export * from './roleArtifactSharingV1.js';
 export * from './roleActionIdsV1.js';
-export { createAccountRoleActionExecutorV1, createRoleSourceReaderV1 } from './accountRoleActions.js';
-export type { RoleArtifactStoreV1, RoleSourceReaderV1, RoleSourceReaderParamsV1 } from './accountRoleActions.js';
+export { createAccountRoleActionExecutorV1, createRoleSourceReaderV1, assertAccountRoleArtifactDeletionV1 } from './accountRoleActions.js';
+export type { RoleArtifactStoreV1, RoleSourceReaderV1, RoleSourceReaderParamsV1, RoleSourceInventoryV1, RoleArtifactRetentionReceiptV1 } from './accountRoleActions.js';

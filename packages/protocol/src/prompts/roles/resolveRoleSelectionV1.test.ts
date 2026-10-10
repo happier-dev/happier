@@ -6,6 +6,13 @@ import { resolveRoleSelectionV1, readSessionWorkspaceWritesV1 } from './resolveR
 const role: RoleArtifactV1 = { name: 'UI work', instructions: 'Settings instructions', engine: { agentTargetKey: 'agent:claude', modelId: 'settings-model' }, runsAs: { kind: 'session' }, workspaceWrites: 'allow', secondOpinion: 'off', enabled: true };
 
 describe('resolveRoleSelectionV1', () => {
+  it('admits known selected sources but refuses unknown origins from a partial inventory', () => {
+    const roleSourceInventory = { status: 'partial' as const, entries: [], diagnostics: [{ source: 'legacy-guidance' as const, reason: 'unavailable' as const }] };
+    expect(resolveRoleSelectionV1({ roleId: 'builder', roleSourceInventory, defaultEngine: { agentTargetKey: 'agent:codex' } })).toMatchObject({ ok: true });
+    expect(resolveRoleSelectionV1({ roleId: 'unknown', roleSourceInventory, settingsRoles: { unknown: role }, defaultEngine: { agentTargetKey: 'agent:codex' } })).toEqual({ ok: false, refusal: { code: 'role_source_incomplete', roleId: 'unknown' } });
+    expect(resolveRoleSelectionV1({ roleId: 'ui', roleSourceInventory, sessionRoles: { sessionRoles: { ui: { ...role, roleId: 'ui' } }, overrides: {}, notes: '' } })).toMatchObject({ ok: true, selection: { instructions: role.instructions } });
+    expect(resolveRoleSelectionV1({ roleId: 'ui', roleSourceInventory: { ...roleSourceInventory, entries: [{ roleId: 'ui', role: { ...role, enabled: false }, shared: false, viewOnly: false, migratedFromV0_2: false }] } })).toEqual({ ok: false, refusal: { code: 'role_target_unavailable', roleId: 'ui' } });
+  });
   it('reads the current workspace policy through the role owner and fails closed for unavailable or malformed roles', () => {
     const metadata = (roleId: string) => ({ work: { sessionRolesV1: { roleId, overrides: {}, sessionRoles: {}, notes: '' } } });
     expect(readSessionWorkspaceWritesV1(metadata('orchestrator'))).toBe('deny');
@@ -34,7 +41,8 @@ describe('resolveRoleSelectionV1', () => {
 
   it('applies local overrides to shared Artifact and read-only plugin sources', () => {
     expect(resolveRoleSelectionV1({ roleId: 'shared', settingsRoles: { shared: role }, settingsOverrides: { shared: { roleId: 'shared', instructionsOverride: 'Local' } } })).toMatchObject({ ok: true, selection: { instructions: 'Local', changedAt: 'settings' } });
-    expect(resolveRoleSelectionV1({ roleId: 'plugin:acme/reviewer', pluginRoles: [{ pluginId: 'acme', localId: 'reviewer', role }], settingsOverrides: { 'plugin:acme/reviewer': { roleId: 'plugin:acme/reviewer', engine: { agentTargetKey: 'agent:codex' } } } })).toMatchObject({ ok: true, selection: { name: role.name, engine: { agentTargetKey: 'agent:codex' }, changedAt: 'settings' } });
+    expect(resolveRoleSelectionV1({ roleId: 'plugin:acme/reviewer', pluginRoles: [{ pluginId: 'acme', localId: 'reviewer', role }], settingsOverrides: { 'plugin:acme/reviewer': { roleId: 'plugin:acme/reviewer', instructionsOverride: 'Reader guidance', engine: { agentTargetKey: 'agent:codex' } } } })).toMatchObject({ ok: true, selection: { name: role.name, instructions: 'Reader guidance', engine: { agentTargetKey: 'agent:codex' }, changedAt: 'settings' } });
+    expect(role.instructions).toBe('Settings instructions');
   });
 
   it('distinguishes unknown/disabled roles from unavailable engines', () => {

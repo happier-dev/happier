@@ -7,6 +7,12 @@ const repository = {
   protocol: 'https',
 };
 describe('Source metadata admission', () => {
+  it('admits enabled intent as one qualified context attachment change with a reviewed Source revision', () => {
+    const input = { serverId: 'home', sourceId: 'source', expectedRevision: 3,
+      patch: { attachment: { kind: 'set_enabled', attachmentId: 'context-entry', enabled: false } } };
+    expect(ProjectSourcesUpdateInputV1Schema.parse(input)).toEqual(input);
+    expect(ProjectSourcesUpdateInputV1Schema.safeParse({ ...input, patch: { attachment: { ...input.patch.attachment, enabled: 'false' } } }).success).toBe(false);
+  });
   it.each(['.', './', '.\\', '', '   '])('reads and writes whole-repository selection canonically (%j)', subdir => {
     const input = { serverId: 'home', requestKey: 'save-intent', name: 'Repo', repository, subdir };
     expect(ProjectSourcesCreateInputV1Schema.parse(input).subdir).toBeUndefined();

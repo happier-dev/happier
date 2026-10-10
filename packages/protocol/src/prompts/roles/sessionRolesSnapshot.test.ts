@@ -7,6 +7,34 @@ import { renderSessionRoleBlockV1 } from './renderSessionRoleBlockV1.js';
 import { BUILT_IN_ROLES_V1 } from './builtInRolesV1.js';
 
 describe('session role instruction blocks', () => {
+  it('projects role and Notes for Voice without coding delegation or private references', () => {
+    const rendered = renderSessionRoleBlockV1({
+      modality: 'voice',
+      role: { ...BUILT_IN_ROLES_V1.orchestrator, roleId: 'orchestrator',
+        instructions: 'Help the user choose the next task.', workspaceWrites: 'deny',
+        profileId: 'private-profile', profileUnavailable: true },
+      availableRoles: [{ ...BUILT_IN_ROLES_V1.builder, roleId: 'builder' }],
+      notes: 'Keep the conversation focused on the launch.',
+      worker: { leadSessionId: 'private-lead', taskBoundary: 'Discuss the launch only' },
+    });
+    expect(rendered).toContain('Help the user choose the next task.');
+    expect(rendered).toContain('Keep the conversation focused on the launch.');
+    expect(rendered).toContain('Discuss the launch only');
+    expect(rendered).toContain('do not change the workspace');
+    for (const operational of ['action.spec', 'session.spawn_new', 'execution.run.start',
+      'session.worker.publish', 'prompt_doc', 'private-profile', 'private-memory',
+      'private-lead', 'role_id=', 'native subagent']) {
+      expect(rendered).not.toContain(operational);
+    }
+  });
+
+  it('keeps Notes-only Voice guidance and frozen-step suppression at the same formatter', () => {
+    expect(renderSessionRoleBlockV1({ modality: 'voice', notes: 'Ask about today’s goal.' }))
+      .toContain('Ask about today’s goal.');
+    expect(renderSessionRoleBlockV1({ modality: 'voice', notes: 'Frozen notes', originKind: 'run_step' }))
+      .toBe('');
+  });
+
   it('renders current instructions and second-opinion policy, with FIN owning frozen workflow-step delivery', () => {
     const context = { role: { ...BUILT_IN_ROLES_V1.builder, roleId: 'builder',
       instructions: 'IMPLEMENT_CURRENT_BRIEF', secondOpinion: 'encouraged' as const }, source: 'dispatch' as const };
@@ -32,15 +60,14 @@ describe('session role instruction blocks', () => {
     expect(rendered).not.toContain('disabled-builder');
   });
 
-  it('renders the worker boundary with its lead and admitted memory reference without a selected role', () => {
+  it('renders the worker boundary without a selected role or legacy memory write guidance', () => {
     const rendered = renderSessionRoleBlockV1({ worker: {
       leadSessionId: 'lead-1', taskBoundary: 'Only implement the assigned parser',
-      memoryDocRef: { kind: 'doc', artifactId: 'memory-1' },
     } });
     expect(rendered).toContain('lead-1');
     expect(rendered).toContain('session.worker.publish');
     expect(rendered).toContain('Only implement the assigned parser');
-    expect(rendered).toContain('memory-1');
+    expect(rendered).not.toContain('prompt_doc.update');
     expect(rendered).toContain('cannot approve');
   });
 });
@@ -55,26 +82,25 @@ describe('session role spawn snapshot', () => {
   });
 
   it('copies complete roles to a cross-owner child that has no source settings or grants', () => {
-    const snapshot = snapshotSessionRolesAtSpawnV1({ leadSessionId: 'lead', roles, notes: 'Agreed boundary', memoryDocRef: { kind: 'doc', artifactId: 'private-memory' }, sameAccount: false });
+    const snapshot = snapshotSessionRolesAtSpawnV1({ leadSessionId: 'lead', roles, notes: 'Agreed boundary' });
     expect(snapshot).toEqual({ inheritedFrom: 'lead', overrides: {}, sessionRoles: roles, notes: 'Agreed boundary' });
     expect(snapshot.sessionRoles).not.toBe(roles);
     expect(snapshot.sessionRoles.builder).not.toBe(roles.builder);
     expect(resolveRoleSelectionV1({ roleId: 'builder', sessionRoles: snapshot })).toEqual({ ok: true, selection: { ...roles.builder, changedAt: 'session' } });
   });
 
-  it('retains memory only for same-Account workers and validates metadata', () => {
-    const snapshot = snapshotSessionRolesAtSpawnV1({ leadSessionId: 'lead', roles, memoryDocRef: { kind: 'doc', artifactId: 'memory' }, sameAccount: true });
-    expect(snapshot.memoryDocRef).toEqual({ kind: 'doc', artifactId: 'memory' });
+  it('never copies lead Session context to same-Account workers and validates metadata', () => {
+    const lead = { leadSessionId: 'lead', roles, memoryDocRef: { kind: 'doc', artifactId: 'memory' }, sameAccount: true };
+    const snapshot = snapshotSessionRolesAtSpawnV1(lead);
+    expect(snapshot).not.toHaveProperty('memoryDocRef');
     expect(readSessionRolesV1({ work: { sessionRolesV1: snapshot } })).toEqual(snapshot);
     expect(readSessionRolesV1({ work: { sessionRolesV1: { ...snapshot, projectOverrides: {} } } })).toEqual(snapshot);
   });
 
   it('keeps stored role context while dropping additive fields recursively', () => {
-    const snapshot = { ...snapshotSessionRolesAtSpawnV1({ leadSessionId: 'lead', roles, notes: 'Keep notes',
-      memoryDocRef: { kind: 'doc', artifactId: 'memory' }, sameAccount: true }), roleId: 'builder',
+    const snapshot = { ...snapshotSessionRolesAtSpawnV1({ leadSessionId: 'lead', roles, notes: 'Keep notes' }), roleId: 'builder',
       overrides: { builder: { roleId: 'builder', instructionsOverride: 'Session instructions' } } };
     const stored = { ...snapshot, future: true,
-      memoryDocRef: { ...snapshot.memoryDocRef, future: true },
       overrides: { builder: { ...snapshot.overrides.builder, future: true } },
       sessionRoles: { builder: { ...roles.builder, future: true,
         engine: { ...roles.builder.engine, future: true }, runsAs: { kind: 'session', future: true } } },
@@ -92,27 +118,20 @@ describe('session role spawn snapshot', () => {
   });
 
   it('still refuses missing or invalid known fields in stored snapshots', () => {
-    const snapshot = snapshotSessionRolesAtSpawnV1({ leadSessionId: 'lead', roles, sameAccount: true });
+    const snapshot = snapshotSessionRolesAtSpawnV1({ leadSessionId: 'lead', roles });
     for (const stored of [
       { ...snapshot, notes: undefined, future: true },
-      { ...snapshot, memoryDocRef: { kind: 'doc', future: true } },
       { ...snapshot, sessionRoles: { builder: { ...roles.builder, enabled: 'yes', future: true } } },
     ]) expect(readSessionRolesV1({ work: { sessionRolesV1: stored } })).toBeNull();
   });
 
-  it('renders only the memory reference admitted into the worker snapshot', () => {
-    const render = (sameAccount: boolean) => {
-      const snapshot = snapshotSessionRolesAtSpawnV1({ leadSessionId: 'lead', roles,
-        memoryDocRef: { kind: 'doc', artifactId: 'account-private-memory' }, sameAccount });
-      return renderSessionRoleBlockV1({ worker: { leadSessionId: 'lead', taskBoundary: 'Implement the brief',
-        ...(snapshot.memoryDocRef ? { memoryDocRef: snapshot.memoryDocRef } : {}) } });
-    };
-    expect(render(true)).toContain('account-private-memory');
-    expect(render(false)).not.toContain('account-private-memory');
+  it('rejects legacy role memory pointers on new configuration writes', () => {
+    const snapshot = snapshotSessionRolesAtSpawnV1({ leadSessionId: 'lead', roles });
+    expect(SessionRolesV1Schema.safeParse({ ...snapshot, memoryDocRef: { kind: 'doc', artifactId: 'private-memory' } }).success).toBe(false);
   });
 
   it('retains the current role inside the session roles owner without requiring it on old snapshots', () => {
-    const snapshot = snapshotSessionRolesAtSpawnV1({ leadSessionId: 'lead', roles, sameAccount: true });
+    const snapshot = snapshotSessionRolesAtSpawnV1({ leadSessionId: 'lead', roles });
     expect(readSessionRolesV1({ work: { sessionRolesV1: { ...snapshot, roleId: 'builder' } } })?.roleId).toBe('builder');
     expect(readSessionRolesV1({ work: { sessionRolesV1: snapshot } })).toEqual(snapshot);
     expect(readSessionRoleIdV1({ work: { sessionRolesV1: { ...snapshot, roleId: 'builder' } } })).toBe('builder');
@@ -120,7 +139,7 @@ describe('session role spawn snapshot', () => {
   });
 
   it('clears only the current role and never silently replaces malformed role-owner content', () => {
-    const snapshot = { ...snapshotSessionRolesAtSpawnV1({ leadSessionId: 'lead', roles, notes: 'Keep notes', sameAccount: true }), roleId: 'builder' };
+    const snapshot = { ...snapshotSessionRolesAtSpawnV1({ leadSessionId: 'lead', roles, notes: 'Keep notes' }), roleId: 'builder' };
     expect(writeSessionRoleIdV1ToMetadata({ work: { other: 'keep', sessionRolesV1: snapshot } }, null)).toEqual({ work: { other: 'keep', sessionRolesV1: { inheritedFrom: 'lead', overrides: {}, sessionRoles: roles, notes: 'Keep notes' } } });
     expect(() => writeSessionRoleIdV1ToMetadata({ work: { sessionRolesV1: { notes: 'Do not lose' } } }, 'builder')).toThrow();
   });
@@ -128,7 +147,7 @@ describe('session role spawn snapshot', () => {
   it('publishes grouping provenance for shared, view-only and migrated roles', () => {
     const role = { ...roles.builder };
     const { roleId: _roleId, ...artifact } = role;
-    const result = { items: [{ roleId: 'shared-builder', role: artifact, shared: true, viewOnly: true, migratedFromV0_2: false }] };
+    const result = { items: [{ roleId: 'shared-builder', role: artifact, shared: true, viewOnly: true, migratedFromV0_2: false }], diagnostics: [] };
     expect(RoleActionOutputSchemasV1['roles.list'].safeParse(result).success).toBe(true);
   });
 });

@@ -4,9 +4,11 @@ import { readSessionRolesV1, type SessionRolesV1 } from './sessionRolesSnapshot.
 import { BUILT_IN_ROLES_V1 } from './builtInRolesV1.js';
 import { ResolvedRoleV1Schema, type RoleResolutionLayerV1 } from './rolesV1.js';
 import { buildBackendTargetKeyV2, parseBackendTargetKeyV2 } from '../../backends/targets/backendTargetRefV2.js';
+import type { RoleSourceInventoryV1 } from './accountRoleActions.js';
 
 export type ResolveRoleSelectionV1Input = Readonly<{
   roleId: string;
+  roleSourceInventory?: RoleSourceInventoryV1;
   settingsRoles?: Readonly<Record<string, RoleArtifactV1>>;
   settingsOverrides?: Readonly<Record<string, RoleInstructionsOverrideV1>>;
   pluginRoles?: readonly PluginRoleContributionV1[];
@@ -17,7 +19,7 @@ export type ResolveRoleSelectionV1Input = Readonly<{
   availableAgentTargetKeys?: readonly string[];
   availableProfileIds?: readonly string[];
 }>;
-export type RoleSelectionRefusalV1 = Readonly<{ code: 'role_target_unavailable' | 'target_unavailable'; roleId: string; agentTargetKey?: string }>;
+export type RoleSelectionRefusalV1 = Readonly<{ code: 'role_target_unavailable' | 'role_source_incomplete' | 'target_unavailable'; roleId: string; agentTargetKey?: string }>;
 export type ResolveRoleSelectionV1Result = Readonly<{ ok: true; selection: ResolvedRoleV1 }> | Readonly<{ ok: false; refusal: RoleSelectionRefusalV1 }>;
 
 /** A role adds a workspace ceiling; it never changes permission mode or grants coordination authority. */
@@ -41,7 +43,15 @@ export function resolveRoleSelectionV1(input: ResolveRoleSelectionV1Input): Reso
     ? BUILT_IN_ROLES_V1[input.roleId as keyof typeof BUILT_IN_ROLES_V1]
     : undefined;
   const plugin = input.pluginRoles?.find((entry) => `plugin:${entry.pluginId}/${entry.localId}` === input.roleId)?.role;
-  const source = builtIn ?? input.settingsRoles?.[input.roleId] ?? plugin;
+  const source = builtIn ?? (input.roleSourceInventory
+    ? input.roleSourceInventory.entries.find(entry => entry.roleId === input.roleId)?.role
+    : input.settingsRoles?.[input.roleId] ?? plugin);
+  const inherited = input.sessionRoles?.sessionRoles[input.roleId];
+  const pin = input.workflowRoles?.find((entry) => entry.roleId === input.roleId);
+  if (!source && input.roleSourceInventory?.status === 'partial'
+    && inherited?.roleId !== input.roleId && !(pin && 'name' in pin && 'instructions' in pin)) {
+    return { ok: false, refusal: { code: 'role_source_incomplete', roleId: input.roleId } };
+  }
   let selection: Partial<ResolvedRoleV1> = source ? { ...source } : {};
   let changedAt: RoleResolutionLayerV1 | undefined;
   const apply = (value: Partial<RoleArtifactV1> & { instructionsOverride?: string }, layer: RoleResolutionLayerV1) => {
@@ -60,11 +70,9 @@ export function resolveRoleSelectionV1(input: ResolveRoleSelectionV1Input): Reso
   };
   const settingsOverride = input.settingsOverrides?.[input.roleId];
   if (settingsOverride?.roleId === input.roleId) apply(settingsOverride, 'settings');
-  const inherited = input.sessionRoles?.sessionRoles[input.roleId];
   if (inherited?.roleId === input.roleId) apply(inherited, 'session');
   const sessionOverride = input.sessionRoles?.overrides[input.roleId];
   if (sessionOverride?.roleId === input.roleId) apply(sessionOverride, 'session');
-  const pin = input.workflowRoles?.find((entry) => entry.roleId === input.roleId);
   if (pin) apply(pin, 'workflow');
   const run = input.runOverrides?.find((entry) => entry.roleId === input.roleId);
   if (run) apply(run, 'run');

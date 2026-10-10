@@ -19,7 +19,7 @@ export async function resolveInputOptionsConsumerField(params: Readonly<{
   if (consumer.kind === 'widget') {
     const native = readBuiltinWidgetDescriptorV1(consumer.definition);
     if (native) {
-      const refused = admitWidgetActionSurfaceV1(deps, consumer.surface, context);
+      const refused = await admitWidgetActionSurfaceV1(deps, consumer.surface, context);
       if (refused) return refused;
       if (consumer.selectedSession && consumer.selectedSession.serverId !== consumer.surface.serverId)
         return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };

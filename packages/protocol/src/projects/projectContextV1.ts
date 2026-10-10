@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { PromptStackEntryV1Schema, applyPromptStackIntentV1, type PromptStackEntryV1, type PromptStackMutationV1 } from '../prompts/library/promptStacksV1.js';
+import { PromptStackEntryV1Schema, PromptStackSetEnabledIntentV1Schema, applyPromptStackIntentV1, type PromptStackEntryV1, type PromptStackMutationV1 } from '../prompts/library/promptStacksV1.js';
 import { ProjectAccountOrganizationKeyV1Schema, ProjectAccountOrganizationV1Schema, ProjectAccountRowExpectedRevisionV1Schema, type ProjectAccountOrganizationV1 } from './projectAccountRowsV1.js';
 import type { PromptLibraryStoredArtifact } from '../prompts/library/promptLibraryActionOperations.js';
 import { PromptArtifactRefV1Schema, type PromptArtifactRefV1 } from '../prompts/library/promptArtifactRefsV1.js';
@@ -27,6 +27,7 @@ export const ProjectContextIntentV1Schema = lazyZodSchema(() => z.discriminatedU
   z.object({ kind: z.literal('detach'), entryId: z.string().min(1) }).strict(),
   z.object({ kind: z.literal('reorder'), entryId: z.string().min(1), siblingId: z.string().min(1), position: z.enum(['before', 'after']) }).strict(),
   z.object({ kind: z.literal('set_budget'), entryId: z.string().min(1), maxChars: z.number().int().positive().nullable() }).strict(),
+  PromptStackSetEnabledIntentV1Schema,
 ]));
 export type ProjectContextIntentV1 = z.infer<typeof ProjectContextIntentV1Schema>;
 

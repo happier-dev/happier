@@ -18,6 +18,7 @@ export const RoleActionEntryV1Schema = lazyZodSchema(() => z.object({
   shared: z.boolean(),
   viewOnly: z.boolean(),
   migratedFromV0_2: z.boolean(),
+  pluginDisplayName: z.string().min(1).optional(),
 }).strict());
 export type RoleActionEntryV1 = z.infer<typeof RoleActionEntryV1Schema>;
 export const RoleSourceDiagnosticV1Schema = lazyZodSchema(() => z.union([

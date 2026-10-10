@@ -1,10 +1,12 @@
 import type { ActionExecutorDeps, ActionExecutorContext } from '../actions/executor/types.js';
+import { resolveReviewEngineInventoryTarget } from '../actions/executor/reviewEngineInventoryTarget.js';
 import type { ActionExecuteResult } from '../actions/actionExecutionResult.js';
 import type { ActionId } from '../actions/actionIds.js';
 import type { PublicActionResultById } from '../actions/actionSpecs.js';
 import { parseWorkflowDefinitionRefV1, formatWorkflowDefinitionRefV1 } from '../workflows/workflowDefinitionRefV1.js';
 import { DaemonProviderModelProjectionResponseV1Schema } from '../rpc/providers.js';
 import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1.js';
+import { BackendTargetKeyV2InputSchema } from '../backends/targets/backendTargetRefV2.js';
 import { SessionDirectoryIntentV1Schema } from '../sessions/creation/sessionDirectoryIntentV1.js';
 import { resolveReviewNarratorPolicy, ReviewEngineCapabilitiesSchema } from '../reviews/reviewEngines.js';
 import { resolveActionBackendTargetSelection, resolveExecutionBackendTargetSelectionForValue, type ActionBackendTargetSelection } from '../actions/resolveActionBackendTargetSelection.js';
@@ -62,6 +64,9 @@ export function normalizeResolvedOptions(value: unknown, options: Readonly<{ all
 }
 
 export function tryNormalizeExecutionBackendOptionValue(value: string): string | null {
+  // Options carry durable identity, not a host-catalog routing decision.
+  const canonicalKey = BackendTargetKeyV2InputSchema.safeParse(value.trim());
+  if (canonicalKey.success) return canonicalKey.data;
   return resolveExecutionBackendTargetSelectionForValue(value)?.backendTargetKey ?? null;
 }
 
@@ -310,10 +315,10 @@ export async function resolveInputOptions(params: Readonly<{
   }
 
   if (optionsSourceId === 'review.engines.available') {
-    const sessionId = params.resolveSessionId(input, ctx);
-    if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+    const target = resolveReviewEngineInventoryTarget(input, ctx, params.resolveSessionId);
+    if (!target.ok) return target;
     const result = await deps.reviewEnginesList({
-      sessionId,
+      ...target.target,
       ...(typeof input.includeDisabled === 'boolean' ? { includeDisabled: input.includeDisabled } : {}),
       ...(params.reviewScope(input) ? { scope: 'paths' as const } : {}),
     });
@@ -463,7 +468,7 @@ export async function resolveInputOptions(params: Readonly<{
       ...(machineId ? { machineId } : {}),
       ...(serverId ? { serverId } : {}),
       ...(typeof input.includeUnavailable === 'boolean' ? { includeUnavailable: input.includeUnavailable } : {}),
-    });
+    }, ctx);
     const failure = params.readFailure(result);
     if (failure) return failure;
     return { ok: true, result: normalizeResolvedOptions(result) };

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_CODING_PROMPT_BEHAVIOR_V1 } from './codingPromptBehaviorV1.js';
 import { resolveEffectiveCodingPromptBehaviorV1 } from './effectiveCodingPromptBehaviorV1.js';
 import type { ArtifactSharingResourceV1 } from '../artifacts/artifactSharingV1.js';
+import type { LaunchProfileV2 } from '../profiles/v2/schema.js';
 
 function launchProfile(overrides: unknown): unknown {
   return {
@@ -20,6 +21,17 @@ function launchProfile(overrides: unknown): unknown {
 }
 
 describe('resolveEffectiveCodingPromptBehaviorV1', () => {
+  it('uses the admitted Profile instead of stale Settings and honors authoritative absence', () => {
+    const profile = { v: 2, id: 'focused', name: 'Focused', extraEnvironmentVariables: [],
+      defaultPermissionModeByTargetKey: {}, defaultPersistenceModeByTargetKey: {}, compatibilityByTargetKey: {},
+      codingPromptBehaviorOverrides: { responseOptions: 'disabled' }, createdAt: 1, updatedAt: 1 } satisfies LaunchProfileV2;
+    const settings = { codingPromptBehaviorV1: { v: 1, sessionTitleUpdates: 'initial', responseOptions: 'agent' },
+      profiles: [launchProfile({ sessionTitleUpdates: 'disabled' })] };
+    expect(resolveEffectiveCodingPromptBehaviorV1({ settings, profileId: profile.id, selectedProfile: profile }))
+      .toEqual({ v: 1, sessionTitleUpdates: 'initial', responseOptions: 'disabled' });
+    expect(resolveEffectiveCodingPromptBehaviorV1({ settings, profileId: profile.id, selectedProfile: null }))
+      .toEqual({ v: 1, sessionTitleUpdates: 'initial', responseOptions: 'agent' });
+  });
   it('returns the Account default when no profile is selected', () => {
     expect(resolveEffectiveCodingPromptBehaviorV1({
       settings: { codingPromptBehaviorV1: { v: 1, sessionTitleUpdates: 'initial', responseOptions: 'disabled' } },

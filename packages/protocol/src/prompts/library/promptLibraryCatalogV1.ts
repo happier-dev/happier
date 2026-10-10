@@ -3,7 +3,8 @@ import type { AccountScopedCryptoMaterial } from '../../crypto/accountScopedCiph
 import type { AccountSettingsHistoryLegacyRoleArtifactTransferV1 } from '../../account/settings/accountSettingsApiV2.js';
 import { LEGACY_ROLE_GUIDANCE_SETTINGS_ROOTS_V1 } from '../../account/settings/rolesV1Migration.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
-import { PromptStackEntryV1StoredSchema, type PromptStackEntryV1 } from './promptStacksV1.js';
+import { PromptStackEntryV1StoredSchema, PromptLibraryStackUpdateInputV1Schema, PromptLibraryStackUpdateResultV1Schema, applyPromptStackIntentV1, type PromptStackEntryV1 } from './promptStacksV1.js';
+import type { ArtifactFolderActionPortV1 } from './promptFolderActionsV1.js';
 import { PromptLibraryCatalogKeyV1Schema, StoredPromptLibraryRecordV1Schema, openPromptLibraryContentV1,
   type PromptLibraryCatalogKeyV1, type PromptLibraryRecordV1, type PromptLibraryRowsListResponseV1Schema,
   type PromptLibraryRowMutationResponseV1Schema } from './promptLibraryRowsV1.js';
@@ -79,6 +80,13 @@ export async function loadPromptLibraryCatalogV1(input: PromptLibraryLoadInputV1
   const occupied = new Set([...catalog.rows.map(row => row.record.key), ...catalog.tombstones.map(row => row.key),
     ...catalog.diagnostics.map(row => row.key)]);
   const missing = PromptLibraryCatalogKeyV1Schema.options.filter(key => !occupied.has(key));
+  // Complete destination authority needs no retained source to be readable.
+  // Publish it before optional Settings/history maintenance can block a demand.
+  const publishedBeforeSource = missing.length === 0 && input.onReadyBeforeCleanup !== undefined;
+  if (publishedBeforeSource) {
+    await input.onReadyBeforeCleanup!(catalog);
+    if (input.hasPendingCleanup?.()) return catalog;
+  }
   let source: Awaited<ReturnType<PromptLibrarySourceTransferV1['readSourceSnapshot']>>;
   try { source = await transfer.readSourceSnapshot(); }
   catch {
@@ -117,7 +125,7 @@ export async function loadPromptLibraryCatalogV1(input: PromptLibraryLoadInputV1
   }
   if (malformed.length) catalog = { ...catalog, status: 'partial', diagnostics: [...catalog.diagnostics, ...malformed] };
   if (!transfer.replaceSource) return catalog;
-  await input.onReadyBeforeCleanup?.(catalog);
+  if (!publishedBeforeSource) await input.onReadyBeforeCleanup?.(catalog);
   if (input.hasPendingCleanup?.()) return catalog;
   return { ...catalog, cleanup: await cleanupSource(input, catalog, source) };
 }
@@ -266,4 +274,35 @@ export function readPromptLibraryCatalogRecordV1(input: Readonly<{
   if (!input.rawSettings) return { status: 'unavailable', reason: 'invalid-stored-content' };
   const retained = readRetainedPromptLibraryRecordV1(input.rawSettings, key);
   return retained.status === 'ready' ? { ...retained, revision: 'absent', authority: 'inactive' } : retained;
+}
+
+export type PromptLibraryStackActionPortV1 = Pick<ArtifactFolderActionPortV1,
+  'serverId' | 'matchesServerId' | 'assertCurrent' | 'readCatalog' | 'writeRecord'>;
+
+/** The existing catalog authority supplies source admission and sole-row CAS, not a new stack store. */
+export async function updatePromptLibraryStackV1(port: PromptLibraryStackActionPortV1,
+  input: z.infer<typeof PromptLibraryStackUpdateInputV1Schema>, signal?: AbortSignal,
+): Promise<z.infer<typeof PromptLibraryStackUpdateResultV1Schema>> {
+  const assertCurrent = () => { signal?.throwIfAborted(); port.assertCurrent(); };
+  assertCurrent();
+  const projection = await port.readCatalog(signal);
+  assertCurrent();
+  const read = readPromptLibraryCatalogRecordV1({ ...projection, key: input.surface });
+  if (read.status !== 'ready') return read;
+  if (read.record.key !== 'coding' && read.record.key !== 'voice') return { status: 'unavailable', reason: 'invalid-stored-content' };
+  if (read.revision !== input.expectedRevision) return { status: 'conflict', revision: read.revision === 'absent' ? -1 : read.revision };
+  if (read.authority === 'inactive' && projection.sourceSettingsVersion === undefined) {
+    return { status: 'unavailable', reason: 'source-currentness-unavailable' };
+  }
+  const applied = applyPromptStackIntentV1({ promptStack: read.record.value.entries }, input.intent);
+  if (!applied.ok) return { status: 'invalid', reason: applied.errorCode };
+  assertCurrent();
+  const result = await port.writeRecord({ record: { key: input.surface, value: { ...read.record.value, entries: [...applied.row.promptStack] } },
+    expectedRevision: read.revision,
+    ...(read.authority === 'inactive' ? { sourceSettingsVersion: projection.sourceSettingsVersion } : {}),
+  }, signal);
+  // An acknowledged write stays true after the original lifetime retires; never rebase or replay it.
+  if (result.status === 'updated') return { status: 'updated', revision: result.revision };
+  if (result.status === 'conflict') return result;
+  return { status: 'unavailable', reason: result.status };
 }

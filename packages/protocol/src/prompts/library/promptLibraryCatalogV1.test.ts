@@ -4,6 +4,27 @@ import { PromptLibraryCatalogKeyV1Schema, sealPromptLibraryContentV1, type Promp
 import { retainLegacyRoleArtifactsV1, type RoleArtifactStoreV1 } from '../roles/accountRoleActions.js';
 
 describe('Prompt library destination authority', () => {
+  it('publishes complete destination authority before a pending retained-source maintenance read', async () => {
+    let releaseSource!: () => void;
+    const source = new Promise<void>(resolve => { releaseSource = resolve; });
+    let reachedSource!: () => void;
+    const sourceIssued = new Promise<void>(resolve => { reachedSource = resolve; });
+    let readable = false;
+    const load = loadPromptLibraryCatalogV1({ mode: 'plain', material: null,
+      readRows: async () => ({ status: 'listed', rows: PromptLibraryCatalogKeyV1Schema.options.map(key => ({ key,
+        revision: 4, content: { t: 'plain', v: emptyPromptLibraryRecordV1(key) } })) }),
+      onReadyBeforeCleanup: async catalog => {
+        readable = readPromptLibraryCatalogRecordV1({ catalog, key: 'role-overrides' }).status === 'ready';
+      }, transfer: {
+        readSourceSnapshot: async () => { reachedSource(); await source; return { raw: {}, version: 7 }; },
+        initializeRecord: async () => { throw new Error('Existing authority cannot reseed'); },
+        replaceSource: async () => ({ status: 'applied', settingsVersion: 8 }),
+      } });
+    try {
+      await sourceIssued;
+      expect(readable).toBe(true);
+    } finally { releaseSource(); await load; }
+  });
   it('activates predecessor folders with retained dangling topology without repairing or losing them', async () => {
     const retained = { v: 1 as const, folders: [{ id: 'retained', name: 'Retained', parentId: 'missing' }] };
     const response: Extract<ReturnType<typeof PromptLibraryRowsListResponseV1Schema.parse>, { status: 'listed' }> = { status: 'listed', rows: [] };

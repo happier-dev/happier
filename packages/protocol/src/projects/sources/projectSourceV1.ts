@@ -4,7 +4,7 @@ import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { ScmCredentialFreeRepositorySelectorV1Schema, ScmRepositoryContainedSubdirV1Schema } from '../../scm/repositoryClone.js';
 import { PrincipalRefV1Schema } from '../../teams/principal.js';
 import { PromptArtifactRefV1Schema } from '../../prompts/library/promptArtifactRefsV1.js';
-import { PromptStackEntryV1Schema } from '../../prompts/library/promptStacksV1.js';
+import { PromptStackEntryV1Schema, PromptStackSetEnabledIntentV1Schema } from '../../prompts/library/promptStacksV1.js';
 import { readScmHostingRepositoryIdentity } from '../../scm/hostingRepositoryIdentity.js';
 
 export const PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'projects:sources' as const;
@@ -45,6 +45,7 @@ export const ProjectSourceAttachmentIntentV1Schema = lazyZodSchema(() => z.union
   z.object({ kind: z.literal('detach'), purpose: z.literal('dashboard'), ref: PromptArtifactRefV1Schema.strict() }).strict(),
   z.object({ kind: z.literal('reorder'), attachmentId: id, beforeId: id.nullable() }).strict(),
   z.object({ kind: z.literal('budget'), attachmentId: id, maxChars: z.number().int().positive().nullable() }).strict(),
+  PromptStackSetEnabledIntentV1Schema.omit({ entryId: true }).extend({ attachmentId: id }).strict(),
 ]));
 export type ProjectSourceAttachmentIntentV1 = z.infer<typeof ProjectSourceAttachmentIntentV1Schema>;
 export const ProjectSourcePatchV1Schema = lazyZodSchema(() => z.object({

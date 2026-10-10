@@ -94,6 +94,7 @@ export function createRoleSourceReaderV1(params: RoleSourceReaderParamsV1): Role
     const diagnostics: RoleSourceDiagnosticV1[] = [];
     for (const entry of await params.readPluginRoles?.(signal) ?? []) entries.push({
       roleId: `plugin:${entry.pluginId}/${entry.localId}`, role: entry.role,
+      ...(entry.pluginDisplayName ? { pluginDisplayName: entry.pluginDisplayName } : {}),
       shared: false, viewOnly: true, migratedFromV0_2: false,
     });
     if (params.artifactStore) {

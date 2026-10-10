@@ -9,15 +9,20 @@ import {
   ARTIFACT_FOLDER_ACTION_INPUT_SCHEMAS_V1,
   ArtifactOrganizationMutationFailureDetailsV1Schema,
   type ArtifactFolderMutationResultV1,
+  type ArtifactFolderListResultV1,
+  type ArtifactFolderReadResultV1,
   type ArtifactOrganizationMutationFailureDetailsV1,
 } from './promptFolderActionSchemasV1.js';
 export {
   ARTIFACT_FOLDER_ACTION_INPUT_SCHEMAS_V1,
   ARTIFACT_FOLDER_ACTION_OUTPUT_SCHEMAS_V1,
   ArtifactFolderMutationResultV1Schema,
+  ArtifactFolderListResultV1Schema,
+  ArtifactFolderReadResultV1Schema,
   ArtifactOrganizationMutationFailureDetailsV1Schema,
 } from './promptFolderActionSchemasV1.js';
-export type { ArtifactFolderMutationResultV1, ArtifactOrganizationMutationFailureDetailsV1 } from './promptFolderActionSchemasV1.js';
+export type { ArtifactFolderMutationResultV1, ArtifactFolderListResultV1, ArtifactFolderReadResultV1,
+  ArtifactOrganizationMutationFailureDetailsV1 } from './promptFolderActionSchemasV1.js';
 
 /** A content receipt survives failure of its independent personal organization mutation. */
 export class ArtifactOrganizationMutationFailureV1 extends Error {
@@ -101,7 +106,19 @@ export async function mutateArtifactOrganizationV1(input: Readonly<{ port: Artif
   return writeFolders(input.port, read, next, input.signal);
 }
 export async function executeArtifactFolderActionV1(input: Readonly<{ port: ArtifactFolderActionPortV1; actionId: ArtifactFolderActionIdV1;
-  input: unknown; signal?: AbortSignal }>): Promise<ArtifactFolderMutationResultV1> {
+  input: unknown; signal?: AbortSignal }>): Promise<ArtifactFolderMutationResultV1 | ArtifactFolderListResultV1 | ArtifactFolderReadResultV1> {
+  if (input.actionId === 'artifact.folders.list' || input.actionId === 'artifact.folders.read') {
+    const request = ARTIFACT_FOLDER_ACTION_INPUT_SCHEMAS_V1[input.actionId].parse(input.input);
+    const read = await readArtifactFolderCatalogV1(input);
+    if (read.status !== 'ready') return read;
+    const row = (folder: PromptFoldersV1['folders'][number]) => ({ id: folder.id, name: folder.name, parentId: folder.parentId ?? null });
+    if (input.actionId === 'artifact.folders.list') return { status: 'ready', items: read.value.folders.map(row),
+      revision: read.revision, coverage: 'complete', nextCursor: null };
+    const { folderId } = ARTIFACT_FOLDER_ACTION_INPUT_SCHEMAS_V1['artifact.folders.read'].parse(request);
+    const folder = read.value.folders.find(folder => folder.id === folderId);
+    return folder ? { status: 'ready', item: row(folder), revision: read.revision, coverage: 'complete' }
+      : { status: 'not_found', revision: read.revision, coverage: 'complete' };
+  }
   if (input.actionId === 'artifact.folder.set') {
     const request = ARTIFACT_FOLDER_ACTION_INPUT_SCHEMAS_V1[input.actionId].parse(input.input);
     return mutateArtifactOrganizationV1({ ...input, artifactId: request.artifactId, expectedRevision: request.expectedRevision,

@@ -1,8 +1,7 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
-import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
-import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
-import { inputTypeOptionsSourceId } from './inputTypes.js';
+import { InputTypeReferenceV1Schema, inputTypeOptionsSourceId, type InputTypeReferenceV1 } from './inputTypes.js';
+import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { StrictJsonValueSchema, type JsonValue } from '../json/strictJsonValue.js';
 import { pluginJsonValuesEqual } from '../plugins/contributions/jsonSchemaValues.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
@@ -79,7 +78,10 @@ export function inputOptionValueSearchText(value: InputOptionValue): string {
 const InputHintCoreFieldSchema = lazyZodSchema(() => z.object({
   path: InputPathSchema,
   widget: InputWidgetSchema,
-  inputType: asProtocolZod(PluginContributionIdentityV1Schema).optional(),
+  /** Host semantic refs describe values and never confer read authority. */
+  inputType: InputTypeReferenceV1Schema.optional(),
+  /** Missing preserves following compatible surface/group context. */
+  contextMode: z.enum(['follow', 'own']).optional(),
   required: z.boolean().optional(),
   requireExplicitSelection: z.boolean().optional(),
   listSeparator: z.enum(['comma', 'newline']).optional(),
@@ -119,7 +121,9 @@ export type InputFieldHintDescriptor<TText, TValue = InputOptionValue> = Readonl
   description?: TText;
   placeholder?: TText;
   widget: InputWidget;
-  inputType?: PluginContributionIdentityV1;
+  inputType?: InputTypeReferenceV1;
+  /** Own values never follow surface/group context; omitted means follow-able. */
+  contextMode?: 'follow' | 'own';
   required?: boolean;
   requireExplicitSelection?: boolean;
   listSeparator?: 'comma' | 'newline';
@@ -172,6 +176,7 @@ function validateInputHintField(
     || value.inputType !== undefined;
   const hasConnectedAccountOptions = value.connectedAccountOptions === true;
   const hasResolvedEmptyConnectedAccountOptions = value.resolvedEmptyConnectedAccountOptions === true;
+
   if (value.inputType !== undefined && hasDeclaredOptions) {
     context.addIssue({ code: 'custom', path: ['options'], message: 'An input type owns its choices; field-level static options would compete with it.' });
   }
@@ -466,6 +471,7 @@ export function normalizeInputHintsText<TText>(
       ...(field.placeholder === undefined ? {} : { placeholder: resolveText(field.placeholder) }),
       widget: field.widget,
       ...(field.inputType === undefined ? {} : { inputType: field.inputType }),
+      ...(field.contextMode === undefined ? {} : { contextMode: field.contextMode }),
       ...(field.required === undefined ? {} : { required: field.required }),
       ...(field.requireExplicitSelection === undefined ? {} : { requireExplicitSelection: field.requireExplicitSelection }),
       ...(field.listSeparator === undefined ? {} : { listSeparator: field.listSeparator }),

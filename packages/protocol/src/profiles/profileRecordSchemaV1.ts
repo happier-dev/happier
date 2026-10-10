@@ -5,10 +5,10 @@ import { AIBackendProfileSchema } from './backendProfileSchema.js';
 import { getBuiltInBackendProfile } from './builtInBackendProfiles.js';
 import { isHistoricalBuiltInAiLaunchProfileIdV1 } from './historicalCompatibilityV1.js';
 import { LaunchProfileV2Schema, StoredLaunchProfileV2Schema } from './v2/schema.js';
-import { ProfileRecordIdV1Schema } from './v2/profileId.js';
+import { ProfileRecordIdV1Schema, LaunchProfileIdV2Schema } from './v2/profileId.js';
 export { ProfileRecordIdV1Schema } from './v2/profileId.js';
 import { PromptStackEntryV1Schema } from '../prompts/library/promptStacksV1.js';
-import { AccountSettingsStoredContentEnvelopeSchema } from '../account/settings/accountSettingsStoredContentEnvelope.js';
+import { AccountSettingsCleanupV1Schema, AccountSettingsStoredContentEnvelopeSchema } from '../account/settings/accountSettingsStoredContentEnvelope.js';
 import { listSavedSecretReferenceCarrierPathsV1, parseSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
 import { EnvVarRequirementSchema } from './environmentVariables.js';
 import { isCanonicalProviderSavedSecretIdV1 } from '../providers/settings/v1.js';
@@ -18,6 +18,7 @@ import { ArtifactRevisionV1Schema } from '../artifacts/artifactActionsV1.js';
 import type { ArtifactSharingResourceV1 } from '../artifacts/artifactSharingV1.js';
 import { readLaunchProfileArtifactV1 } from '../launchProfiles/launchProfileArtifactV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
+import { ProviderConnectionsRowMutationV1Schema } from '../providers/connections/catalogSchemasV1.js';
 
 function isCanonicalProfileSavedSecretReference(value: string): boolean {
   if (!isCanonicalProviderSavedSecretIdV1(value)) return false;
@@ -142,7 +143,7 @@ export function isProfileCatalogAccountChangeEntityIdV1(entityId: string): boole
     || parseProfilePhysicalKey(entityId) !== null;
 }
 export const ProfileRowRevisionV1Schema = lazyZodSchema(() => z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER));
-export const ProfileRowOperationV1Schema = lazyZodSchema(() => z.enum(['create', 'attach-builtin', 'update', 'remove', 'import']));
+export const ProfileRowOperationV1Schema = lazyZodSchema(() => z.enum(['create', 'clone-legacy', 'attach-builtin', 'update', 'remove', 'import']));
 type ProfileRowOperationV1 = z.infer<typeof ProfileRowOperationV1Schema>;
 
 function validateProfileRecordMutationV1(input: Readonly<{ id: string; operation: ProfileRowOperationV1; record?: ProfileRecordV1 }>,
@@ -172,6 +173,11 @@ function validateProfileRecordMutationV1(input: Readonly<{ id: string; operation
     } else if (input.record && hasChangedCurrentBuiltinProfileDefinitionV1(input.record)) {
       context.addIssue({ code: 'custom', path: [...recordPath], message: 'Builtin attachment cannot change the readonly definition' });
     }
+  }
+  if (input.operation === 'clone-legacy' && (isHistoricalBuiltInAiLaunchProfileIdV1(input.id)
+    || !LaunchProfileIdV2Schema.safeParse(input.id).success
+    || (input.record && (input.record.definition.kind !== 'legacy' || input.record.definition.profile.isBuiltIn)))) {
+    context.addIssue({ code: 'custom', path: [...recordPath], message: 'Legacy cloning requires a fresh detached legacy identity' });
   }
 }
 
@@ -219,6 +225,11 @@ export const ProfileRowsListResponseV1Schema = lazyZodSchema(() => z.union([
   ProfileRowStorageFailureV1Schema,
 ]));
 export type ProfileRowsListResponseV1 = z.infer<typeof ProfileRowsListResponseV1Schema>;
+export const ProfileLegacyCloneSourceV1Schema = lazyZodSchema(() => z.object({
+  id: ProfileRecordIdV1Schema, revision: ProfileRowRevisionV1Schema,
+  artifactRevision: ArtifactRevisionV1Schema.extend({ artifactId: z.string().min(1) }).strict().optional(),
+}).strict());
+export type ProfileLegacyCloneSourceV1 = z.infer<typeof ProfileLegacyCloneSourceV1Schema>;
 export const ProfileRowMutationV1Schema = lazyZodSchema(() => z.object({
   id: ProfileRecordIdV1Schema, operation: ProfileRowOperationV1Schema,
   expectedRevision: ProfileReferenceGuardRevisionV1Schema,
@@ -227,11 +238,13 @@ export const ProfileRowMutationV1Schema = lazyZodSchema(() => z.object({
   savedSecretRevisions: z.array(z.object({ resourceId: z.string().min(1), expectedRevision: ProfileRowRevisionV1Schema }).strict()).optional(),
   /** Explicit null proves that the opened opaque row selects no Artifact. */
   artifactRevision: ArtifactRevisionV1Schema.extend({ artifactId: z.string().min(1) }).strict().nullable().optional(),
-  settingsCleanup: z.object({
-    expectedSettingsVersion: ProfileRowRevisionV1Schema,
-    nextSettings: AccountSettingsStoredContentEnvelopeSchema.nullable(),
-  }).strict().optional(),
+  legacyCloneSource: ProfileLegacyCloneSourceV1Schema.optional(),
+  settingsCleanup: AccountSettingsCleanupV1Schema.optional(),
 }).strict().superRefine((value, context) => {
+  if ((value.operation === 'clone-legacy') !== (value.legacyCloneSource !== undefined)
+    || value.legacyCloneSource?.id === value.id) {
+    context.addIssue({ code: 'custom', path: ['legacyCloneSource'], message: 'Only a detached legacy clone captures its distinct source' });
+  }
   if (value.artifactRevision !== undefined) {
     if (value.operation === 'remove') {
       context.addIssue({ code: 'custom', path: ['artifactRevision'], message: 'Removal selects no Artifact' });
@@ -248,7 +261,7 @@ export const ProfileRowMutationV1Schema = lazyZodSchema(() => z.object({
   if (value.operation === 'remove' ? value.content !== null : value.content === null) {
     context.addIssue({ code: 'custom', path: ['content'], message: 'Only removal writes a tombstone' });
   }
-  if ((value.operation === 'create' || value.operation === 'attach-builtin') && value.expectedRevision !== 'absent') {
+  if ((value.operation === 'create' || value.operation === 'clone-legacy' || value.operation === 'attach-builtin') && value.expectedRevision !== 'absent') {
     context.addIssue({ code: 'custom', path: ['expectedRevision'], message: 'Creation requires expected absence' });
   }
   if (value.content?.t === 'plain' && value.content.v.id !== value.id) {
@@ -274,6 +287,7 @@ export const ProfileProviderConversionMutationV1Schema = lazyZodSchema(() => z.o
   expectedSettingsVersion: ProfileRowRevisionV1Schema, expectedProfileTransferRevision: ProfileReferenceGuardRevisionV1Schema,
   expectedReferenceGuardRevision: ProfileReferenceGuardRevisionV1Schema,
   profileCensus: z.array(z.object({ id: ProfileRecordIdV1Schema, revision: ProfileRowRevisionV1Schema }).strict()),
+  providerMutation: ProviderConnectionsRowMutationV1Schema,
   mutations: z.array(ProfileRowMutationV1Schema), nextSettings: AccountSettingsStoredContentEnvelopeSchema.nullable(),
 }).strict().superRefine((value, context) => {
   const captured = new Map(value.profileCensus.map(row => [row.id, row.revision]));
@@ -288,14 +302,23 @@ export const ProfileProviderConversionMutationV1Schema = lazyZodSchema(() => z.o
   if (value.nextSettings !== null && value.nextSettings.t !== (value.expectedAccountMode === 'plain' ? 'plain' : 'encrypted')) {
     context.addIssue({ code: 'custom', path: ['nextSettings'], message: 'Provider Settings must match the captured Account mode' });
   }
+  if (value.providerMutation.content === null
+    || value.providerMutation.content.t !== (value.expectedAccountMode === 'plain' ? 'plain' : 'encrypted')) {
+    context.addIssue({ code: 'custom', path: ['providerMutation', 'content'], message: 'Provider conversion requires a catalog in the captured Account mode' });
+  }
+  if (value.providerMutation.sourceSettingsVersion !== undefined
+    && value.providerMutation.sourceSettingsVersion !== value.expectedSettingsVersion) {
+    context.addIssue({ code: 'custom', path: ['providerMutation', 'sourceSettingsVersion'], message: 'Provider initialization must capture the same Settings source version' });
+  }
 }));
 export type ProfileProviderConversionMutationV1 = z.infer<typeof ProfileProviderConversionMutationV1Schema>;
 export const ProfileProviderConversionResponseV1Schema = lazyZodSchema(() => z.union([
-  z.object({ status: z.literal('updated'), settingsVersion: ProfileRowRevisionV1Schema,
+  z.object({ status: z.literal('updated'), settingsVersion: ProfileRowRevisionV1Schema, providerRevision: ProfileRowRevisionV1Schema,
     rows: z.array(ProfileRowV1Schema), referenceGuardRevision: ProfileReferenceGuardRevisionV1Schema }).strict(),
   z.object({ status: z.literal('reference-conflict') }).strict(),
   z.object({ status: z.literal('conflict'), revision: z.number().int().min(-1) }).strict(),
   z.object({ status: z.literal('settings-conflict'), revision: ProfileRowRevisionV1Schema }).strict(),
+  z.object({ status: z.literal('provider-conflict'), revision: z.number().int().min(-1) }).strict(),
   ProfileRowStorageFailureV1Schema,
 ]));
 export type ProfileProviderConversionResponseV1 = z.infer<typeof ProfileProviderConversionResponseV1Schema>;

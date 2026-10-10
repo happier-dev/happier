@@ -87,6 +87,20 @@ function createHarness(readError?: Error, guidanceSource?: Readonly<Record<strin
 const context = { surface: 'ui', authority: 'present_user' } as const;
 
 describe('Account Role Action refusal projection', () => {
+  it('lists plugin role documents as read-only and refuses replacing their instructions', async () => {
+    const roleId = 'plugin:example/review';
+    const read = createRoleSourceReaderV1({ readPluginRoles: () => [{ pluginId: 'example', pluginDisplayName: 'Example tools', localId: 'review', role: BUILT_IN_ROLES_V1.reviewer }] });
+    expect((await read()).entries.find(entry => entry.roleId === roleId)).toMatchObject({
+      role: BUILT_IN_ROLES_V1.reviewer, viewOnly: true, pluginDisplayName: 'Example tools',
+    });
+    const h = createHarness(undefined, {}, roleId);
+    const before = h.state();
+    expect(await h.execute('roles.update', {
+      roleId, expectedRevision: before.revision, role: { ...BUILT_IN_ROLES_V1.reviewer, instructions: 'Replace plugin guidance' },
+    }, context)).toMatchObject({ ok: false, errorCode: 'role_read_only' });
+    expect(h.state()).toEqual(before);
+  });
+
   it.each(['known-target-amid-unknown', 'unclassified-target'] as const)('preserves generic deletion refusal for %s', async (scenario) => {
     const [retained] = readLegacyRoleInventoryV1({ executionRunsGuidanceEntries: [{ id: 'retained', description: 'Keep guidance' }] }, 'account').entries;
     if (!retained) throw new Error('Expected current source target');

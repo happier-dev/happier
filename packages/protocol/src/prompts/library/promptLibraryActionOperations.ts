@@ -24,12 +24,15 @@ import type {
   PromptRegistryInstallRequestV1,
   PromptRegistryInstallResponseV1,
 } from './promptRegistriesV1.js';
-import type { PromptExternalLinkEntryV1, PromptExternalLinksV1 } from './promptExternalLinksV1.js';
+import { isPromptExternalLinkForMachine, type PromptExternalLinkEntryV1, type PromptExternalLinksV1 } from './promptExternalLinksV1.js';
+import { MachineAdministrationTargetV1Schema, type MachineAdministrationTargetV1 } from '../../account/settings/machineAdministrationSelectionsV1.js';
 import { MemoryDocArtifactHeaderV1Schema, MemoryDocArtifactHeaderV1StoredSchema, MemoryDocBodyV1Schema, MemoryDocBodyV1StoredSchema,
   MEMORY_ARCHIVE_TOPIC_TITLE_V1, MEMORY_ARCHIVE_TOPIC_SUMMARY_V1, projectMemoryDocIndexV1, readMemoryDocTopicV1,
   type MemoryDocBodyV1, type MemoryDocIndexV1, type MemoryFactV1, type MemoryTopicV1 } from './memoryDocV1.js';
 import type { PromptDocArtifactRefV1 } from './promptArtifactRefsV1.js';
+import type { MemoryUpdateInputV1 } from './memoryActionsV1.js';
 import { redactBugReportSensitiveText } from '../../bugs/reports/redaction.js';
+import type { ArtifactCallerAccessV1 } from '../../artifacts/artifactAccessV1.js';
 
 export type PromptLibraryStoredArtifact = Readonly<{
   id: string;
@@ -38,6 +41,7 @@ export type PromptLibraryStoredArtifact = Readonly<{
   body: string | null;
   /** Observed access on the qualified Artifact read, never inferred from headers. */
   owned?: boolean;
+  access?: ArtifactCallerAccessV1;
 }>;
 
 export type PromptLibraryArtifactStore = Readonly<{
@@ -109,7 +113,7 @@ function memoryFailure(code: string, details?: Readonly<{ current: MemoryDocVers
   return new MemoryDocFailureV1(code, details);
 }
 
-async function readMemoryArtifact(params: Readonly<{ store: PromptLibraryArtifactStore; artifactId: string; signal?: AbortSignal }>) {
+async function readMemoryArtifact(params: Readonly<{ store: Pick<PromptLibraryArtifactStore, 'read'>; artifactId: string; signal?: AbortSignal }>) {
   throwIfAborted(params.signal);
   const artifact = await params.store.read(params.artifactId, params.signal ? { signal: params.signal } : undefined);
   throwIfAborted(params.signal);
@@ -124,7 +128,7 @@ async function readMemoryArtifact(params: Readonly<{ store: PromptLibraryArtifac
 }
 
 export async function readMemoryDocInLibrary(params: Readonly<{
-  store: PromptLibraryArtifactStore; artifactId: string; topic?: string; nowMs?: () => number; signal?: AbortSignal;
+  store: Pick<PromptLibraryArtifactStore, 'read'>; artifactId: string; topic?: string; nowMs?: () => number; signal?: AbortSignal;
 }>): Promise<MemoryDocReadResultV1> {
   const { artifact, header, body } = await readMemoryArtifact(params);
   const version = { ok: true as const, artifactId: artifact.id, revision: artifact.revision, header };
@@ -215,9 +219,22 @@ export async function rememberMemoryFactInLibrary(params: MemoryMutationParams &
 }
 
 export async function updateMemoryFactInLibrary(params: MemoryMutationParams & MemoryFactAuthorParams & Readonly<{
-  request: MemoryDocMutationTargetV1 & Readonly<{ factId: string; text: string; expiresAtMs?: number | null }>;
+  request: MemoryUpdateInputV1;
 }>): Promise<Readonly<{ ok: true; artifactId: string; factId: string }>> {
   const read = await readReviewedMemory(params);
+  if ('restore' in params.request) {
+    const request = params.request;
+    if (request.restoreTopic === MEMORY_ARCHIVE_TOPIC_TITLE_V1) throw memoryFailure('memory_restore_destination_invalid');
+    const archived = read.body.topics.find(topic => topic.title === MEMORY_ARCHIVE_TOPIC_TITLE_V1);
+    const original = archived?.facts.find(fact => fact.id === request.factId);
+    if (!original) throw memoryFailure('memory_fact_not_found');
+    const facts = [...read.body.index, ...read.body.topics.flatMap(topic => topic.facts)];
+    if (facts.some(fact => fact.supersedes === original.id)) throw memoryFailure('memory_fact_superseded');
+    const body = { ...read.body, topics: read.body.topics.map(topic => topic.title === MEMORY_ARCHIVE_TOPIC_TITLE_V1
+      ? { ...topic, facts: topic.facts.filter(fact => fact.id !== original.id) } : topic) };
+    const result = await writeMemory(params, read, appendMemoryFact(body, original, request.restoreTopic));
+    return { ...result, factId: original.id };
+  }
   const previous = read.body.index.find(fact => fact.id === params.request.factId)
     ?? read.body.topics.filter(topic => topic.title !== MEMORY_ARCHIVE_TOPIC_TITLE_V1).flatMap(topic => topic.facts).find(fact => fact.id === params.request.factId);
   if (!previous) throw memoryFailure('memory_fact_not_found');
@@ -626,7 +643,8 @@ export function findPromptExternalLink(
   params: Readonly<{
     artifactId: string;
     assetTypeId: string;
-    machineId: string;
+    target: MachineAdministrationTargetV1;
+    libraryServerIdentityId: string;
     scope: PromptAssetScopeV1;
     workspacePath?: string | null;
   }>,
@@ -635,7 +653,7 @@ export function findPromptExternalLink(
   return (links?.links ?? []).filter((entry) => (
     entry.artifactId === params.artifactId
     && entry.assetTypeId === params.assetTypeId
-    && entry.machineId === params.machineId
+    && isPromptExternalLinkForMachine(entry, params)
     && entry.scope === params.scope
     && (entry.workspacePath ?? null) === workspacePath
   )).at(-1) ?? null;
@@ -644,22 +662,28 @@ export function findPromptExternalLink(
 export function upsertPromptExternalLink(
   links: PromptExternalLinksV1 | null | undefined,
   nextLink: PromptExternalLinkEntryV1,
+  context: Readonly<{ target: MachineAdministrationTargetV1; libraryServerIdentityId: string }>,
 ): PromptExternalLinksV1 {
+  const target = MachineAdministrationTargetV1Schema.parse(context.target);
+  const libraryServerIdentityId = MachineAdministrationTargetV1Schema.shape.serverIdentityId.parse(context.libraryServerIdentityId);
+  if (nextLink.machineId !== target.machineId) throw new Error('prompt_external_link_machine_mismatch');
   const next = (links?.links ?? []).filter((entry) => !(
     entry.id === nextLink.id
     || (
       entry.artifactId === nextLink.artifactId
       && entry.assetTypeId === nextLink.assetTypeId
-      && entry.machineId === nextLink.machineId
+      && isPromptExternalLinkForMachine(entry, { target, libraryServerIdentityId })
       && entry.scope === nextLink.scope
       && (entry.workspacePath ?? null) === (nextLink.workspacePath ?? null)
     )
   ));
-  return { v: 1, links: [...next, nextLink] };
+  return { v: 1, links: [...next, { ...nextLink, serverIdentityId: target.serverIdentityId }] };
 }
 
 export async function exportPromptLibraryArtifact(params: Readonly<{
   store: PromptLibraryArtifactStore;
+  machineTarget: MachineAdministrationTargetV1;
+  libraryServerIdentityId: string;
   write(input: Readonly<{
     machineId: string;
     serverId?: string | null;
@@ -689,6 +713,12 @@ export async function exportPromptLibraryArtifact(params: Readonly<{
   response: Extract<PromptAssetMutationResponseV1, { ok: true }>;
   nextPromptExternalLinks?: PromptExternalLinksV1;
 }>> {
+  const target = MachineAdministrationTargetV1Schema.safeParse(params.machineTarget);
+  const libraryHome = MachineAdministrationTargetV1Schema.shape.serverIdentityId.safeParse(params.libraryServerIdentityId);
+  if (!target.success || target.data.machineId !== params.request.machineId
+    || !libraryHome.success) {
+    return { ok: false, error: 'promptLibrary.saveError', errorCode: 'invalid_parameters' };
+  }
   const artifactState = await readPromptLibraryArtifactForExport({
     store: params.store,
     artifactId: params.request.artifactId,
@@ -704,7 +734,8 @@ export async function exportPromptLibraryArtifact(params: Readonly<{
   const currentLink = findPromptExternalLink(params.request.promptExternalLinks, {
     artifactId: params.request.artifactId,
     assetTypeId: params.request.assetTypeId,
-    machineId: params.request.machineId,
+    target: target.data,
+    libraryServerIdentityId: libraryHome.data,
     scope: params.request.scope,
     workspacePath: directory,
   });
@@ -763,7 +794,7 @@ export async function exportPromptLibraryArtifact(params: Readonly<{
       : computePromptBundleDigestV1(artifactState.bundleBody),
     lastExternalDigest: response.digest ?? null,
     lastSyncAtMs: (params.nowMs ?? Date.now)(),
-  });
+  }, { target: target.data, libraryServerIdentityId: libraryHome.data });
   return {
     ok: true,
     artifactId: params.request.artifactId,
@@ -776,6 +807,8 @@ export async function exportPromptLibraryArtifact(params: Readonly<{
 
 export async function installPromptRegistryItemInLibrary(params: Readonly<{
   store: PromptLibraryArtifactStore;
+  machineTarget: MachineAdministrationTargetV1;
+  libraryServerIdentityId: string;
   fetchItem(input: Readonly<{
     machineId: string;
     serverId?: string | null;
@@ -803,7 +836,10 @@ export async function installPromptRegistryItemInLibrary(params: Readonly<{
   randomId: () => string;
   nowMs?: () => number;
   signal?: AbortSignal;
-}>): Promise<PromptLibraryMutationFailure | Readonly<{
+}>): Promise<(PromptLibraryMutationFailure & Readonly<{
+  exported?: true;
+  response?: Extract<PromptRegistryInstallResponseV1, { ok: true }>;
+}>) | Readonly<{
   ok: true;
   artifactId?: string;
   routeKind: 'bundle';
@@ -812,6 +848,12 @@ export async function installPromptRegistryItemInLibrary(params: Readonly<{
   nextPromptExternalLinks?: PromptExternalLinksV1;
 }>> {
   throwIfAborted(params.signal);
+  const target = MachineAdministrationTargetV1Schema.safeParse(params.machineTarget);
+  const libraryHome = MachineAdministrationTargetV1Schema.shape.serverIdentityId.safeParse(params.libraryServerIdentityId);
+  if (!target.success || target.data.machineId !== params.request.machineId
+    || !libraryHome.success) {
+    return { ok: false, error: 'promptLibrary.saveError', errorCode: 'invalid_parameters' };
+  }
   const fetched = await params.fetchItem({
     machineId: params.request.machineId,
     ...(params.request.serverId ? { serverId: params.request.serverId } : {}),
@@ -840,66 +882,76 @@ export async function installPromptRegistryItemInLibrary(params: Readonly<{
       },
       ...(params.signal ? { signal: params.signal } : {}),
     });
-    throwIfAborted(params.signal);
-    if (!installed.ok || !installed.externalRef) {
+    if (!installed.ok) {
+      throwIfAborted(params.signal);
       return {
         ok: false,
-        error: installed.ok ? 'promptLibrary.saveError' : installed.error,
-        ...(!installed.ok
-          ? {
-              errorCode: installed.errorCode,
-              ...(Object.prototype.hasOwnProperty.call(installed, 'currentDigest')
-                ? { currentDigest: installed.currentDigest ?? null }
-                : {}),
-            }
-          : {}),
+        error: installed.error,
+        errorCode: installed.errorCode,
+        ...(Object.prototype.hasOwnProperty.call(installed, 'currentDigest')
+          ? { currentDigest: installed.currentDigest ?? null } : {}),
       };
     }
     response = installed;
     if (params.request.previewOnly === true) {
+      throwIfAborted(params.signal);
+      if (!installed.externalRef) return { ok: false, error: 'promptLibrary.saveError' };
       return { ok: true, routeKind: 'bundle', exported: false, response };
     }
   }
 
-  if (!params.store.create) throw new Error('prompt_library_artifact_create_unavailable');
-  const artifactId = await params.store.create({
-    header: {
-      v: 1,
-      kind: 'prompt_bundle.v2',
-      title: fetched.item.title,
-      bundleSchemaId: fetched.item.bundleSchemaId,
-      origin: 'imported',
-      locked: false,
-    },
-    body: JSON.stringify(fetched.item.bundleBody),
-    ...(params.signal ? { signal: params.signal } : {}),
-  });
-  throwIfAborted(params.signal);
-  if (!params.request.installTarget || !response?.externalRef) {
-    return { ok: true, artifactId, routeKind: 'bundle', exported: false };
+  let artifactId: string | undefined;
+  try {
+    throwIfAborted(params.signal);
+    if (response && !response.externalRef) return { ok: false, error: 'promptLibrary.saveError', errorCode: 'invalid_parameters', exported: true, response };
+    if (!params.store.create) throw new Error('prompt_library_artifact_create_unavailable');
+    artifactId = await params.store.create({
+      header: {
+        v: 1,
+        kind: 'prompt_bundle.v2',
+        title: fetched.item.title,
+        bundleSchemaId: fetched.item.bundleSchemaId,
+        origin: 'imported',
+        locked: false,
+      },
+      body: JSON.stringify(fetched.item.bundleBody),
+      ...(params.signal ? { signal: params.signal } : {}),
+    });
+    throwIfAborted(params.signal);
+    if (!params.request.installTarget || !response?.externalRef) {
+      return { ok: true, artifactId, routeKind: 'bundle', exported: false };
+    }
+    const nextPromptExternalLinks = upsertPromptExternalLink(params.request.promptExternalLinks, {
+      id: params.randomId(),
+      artifactId,
+      assetTypeId: params.request.installTarget.assetTypeId,
+      scope: params.request.installTarget.scope,
+      machineId: params.request.machineId,
+      workspacePath: params.request.installTarget.scope === 'project'
+        ? (params.request.installTarget.directory ?? null)
+        : null,
+      externalRef: response.externalRef,
+      syncMode: 'manual',
+      baseDigest: response.digest ?? null,
+      lastLibraryDigest: computePromptBundleDigestV1(fetched.item.bundleBody),
+      lastExternalDigest: response.digest ?? null,
+      lastSyncAtMs: (params.nowMs ?? Date.now)(),
+    }, { target: target.data, libraryServerIdentityId: libraryHome.data });
+    return {
+      ok: true,
+      artifactId,
+      routeKind: 'bundle',
+      exported: true,
+      response,
+      nextPromptExternalLinks,
+    };
+  } catch (error) {
+    // Only a consumed successful commit ACK authorizes an effect receipt.
+    // Cancellation before that ACK remains the transport's unknown outcome.
+    if (!response) throw error;
+    const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+      ? error.code : error instanceof Error && error.name === 'AbortError' ? 'cancelled' : 'invalid_parameters';
+    return { ok: false, error: 'promptLibrary.saveError', errorCode: code, exported: true, response,
+      ...(artifactId ? { artifactId } : {}) };
   }
-  const nextPromptExternalLinks = upsertPromptExternalLink(params.request.promptExternalLinks, {
-    id: params.randomId(),
-    artifactId,
-    assetTypeId: params.request.installTarget.assetTypeId,
-    scope: params.request.installTarget.scope,
-    machineId: params.request.machineId,
-    workspacePath: params.request.installTarget.scope === 'project'
-      ? (params.request.installTarget.directory ?? null)
-      : null,
-    externalRef: response.externalRef,
-    syncMode: 'manual',
-    baseDigest: response.digest ?? null,
-    lastLibraryDigest: computePromptBundleDigestV1(fetched.item.bundleBody),
-    lastExternalDigest: response.digest ?? null,
-    lastSyncAtMs: (params.nowMs ?? Date.now)(),
-  });
-  return {
-    ok: true,
-    artifactId,
-    routeKind: 'bundle',
-    exported: true,
-    response,
-    nextPromptExternalLinks,
-  };
 }

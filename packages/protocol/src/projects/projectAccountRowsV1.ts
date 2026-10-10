@@ -23,6 +23,7 @@ export const ProjectAccountRelationshipGraphV1Schema = lazyDefinition(() => z.st
 export type ProjectAccountRelationshipGraphV1 = z.infer<typeof ProjectAccountRelationshipGraphV1Schema>;
 export const ProjectAccountOrganizationV1Schema = lazyDefinition(() => z.strictObject({
     hidden: z.optional(z.boolean()), pinned: z.optional(z.boolean()),
+    label: z.optional(z.string().check(z.minLength(1), z.refine(value => value === value.trim()))),
     promptStack: z.optional(z.array(z.strictObject({ ...PromptStackEntryV1Schema.shape,
         ref: z.strictObject({ ...PromptStackEntryV1Schema.shape.ref.shape }),
     }))),

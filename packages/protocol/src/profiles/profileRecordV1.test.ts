@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ProfileRecordV1Schema, ProfileRowMutationV1Schema, ProfileProviderConversionMutationV1Schema, StoredProfileRecordV1Schema, openProfileRecordContentV1, sealProfileRecordContentV1, buildProfilePhysicalKey, parseProfilePhysicalKey, hasChangedReadonlyProfileDefinitionV1, type ProfileRecordV1 } from './profileRecordV1.js';
+import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 } from '../providers/connections/connectionRowsV1.js';
 import { getHistoricalBuiltInAiLaunchProfileV1 } from './historicalCompatibilityV1.js';
 import type { ArtifactSharingResourceV1 } from '../artifacts/artifactSharingV1.js';
 import { buildLaunchProfileArtifactHeaderV1, LaunchProfileArtifactV1Schema } from '../launchProfiles/launchProfileArtifactV1.js';
@@ -76,10 +77,13 @@ describe('private Profile record', () => {
   it('admits only the complete captured Provider conversion transaction, not an arbitrary Settings write', () => {
     const mutation = { operation: 'provider-conversion', expectedAccountMode: 'plain', expectedSettingsVersion: 2,
       expectedProfileTransferRevision: 3, expectedReferenceGuardRevision: 4,
-      profileCensus: [{ id: record.id, revision: 1 }], nextSettings: { t: 'plain', v: { providerSettingsV1: {} } },
+      profileCensus: [{ id: record.id, revision: 1 }], nextSettings: { t: 'plain', v: { themePreference: 'light' } },
+      providerMutation: { expectedRevision: 7, content: { t: 'plain', v: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 },
+        referencedSavedSecretIds: [], savedSecretRevisions: [] },
       mutations: [{ id: record.id, operation: 'update', expectedRevision: 1, content: { t: 'plain', v: record } }],
     };
     expect(ProfileProviderConversionMutationV1Schema.safeParse(mutation).success).toBe(true);
+    expect(ProfileProviderConversionMutationV1Schema.safeParse({ ...mutation, providerMutation: undefined }).success).toBe(false);
     expect(ProfileProviderConversionMutationV1Schema.safeParse({ ...mutation, profileCensus: undefined }).success).toBe(false);
     expect(ProfileProviderConversionMutationV1Schema.safeParse({ ...mutation, mutations: [{ ...mutation.mutations[0], operation: 'create', expectedRevision: 'absent' }] }).success).toBe(false);
   });

@@ -1,19 +1,40 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createLaunchProfilePublisherV1 } from '../index.js';
-import { LaunchProfileArtifactV1Schema, launchProfileArtifactSharingAdapterV1, listSharedLaunchProfileArtifactsV1 } from './launchProfileArtifactV1.js';
+import { LaunchProfileArtifactV1Schema, launchProfileArtifactSharingAdapterV1, listSharedLaunchProfileArtifactsV1, readLaunchProfileArtifactV1 } from './launchProfileArtifactV1.js';
 import { createActionExecutor, type ActionExecutorDeps } from '../actions/actionExecutor.js';
 import { getActionSpec } from '../actions/actionSpecs.js';
-import { resolveActionApprovalRouting } from '../actions/actionApprovalPolicy.js';
+import { isApprovalRequiredByActionsSettings, resolveActionApprovalRouting } from '../actions/actionApprovalPolicy.js';
 import type { ActionExecutorContext } from '../actions/executor/types.js';
+import { ActionsSettingsV1Schema } from '../actions/actionSettings.js';
+import { StoredProfileRecordV1Schema, type ProfileRecordV1 } from '../profiles/profileRecordSchemaV1.js';
 
 const profile = {
   v: 2 as const, id: 'work', name: 'Work', createdAt: 1, updatedAt: 1,
   extraEnvironmentVariables: [], envVarRequirements: [{ name: 'DEPLOY_TOKEN', kind: 'secret' as const, required: true }],
 };
+const publishWaiver = ActionsSettingsV1Schema.parse({ v: 1, actions: {},
+  approvalWaivedSurfaces: { 'launch_profiles.publish': ['ui', 'cli', 'agent'] } });
+const defaultActionSettings = ActionsSettingsV1Schema.parse({ v: 1 });
+
+function publisherExecutor(publish: ReturnType<typeof createLaunchProfilePublisherV1>['publish']) {
+  // The host policy port consumes the real canonical policy, not a mocked
+  // allow/deny result. Unused host boundaries remain omitted in this harness.
+  const deps = {
+    launchProfilePublish: publish,
+    isActionApprovalRequired: (actionId, context, input) => isApprovalRequiredByActionsSettings(actionId,
+      context.actionsSettings ?? defaultActionSettings, context, getActionSpec(actionId).safety, undefined, input),
+  } satisfies Pick<ActionExecutorDeps, 'launchProfilePublish' | 'isActionApprovalRequired'>;
+  return createActionExecutor(deps as unknown as ActionExecutorDeps);
+}
 
 function harness(candidate: unknown = profile) {
-  // Settings CAS and Artifact reads/creates are persistence boundaries. The publisher is real.
-  let settings: Record<string, unknown> = { profiles: [candidate], secretBindingsByProfileId: { work: { DEPLOY_TOKEN: 'happier:shared-secret:v1:deploy' } }, other: 'keep' };
+  // Profile row CAS and Artifact reads/creates are persistence boundaries. The publisher is real.
+  const isVersioned = candidate !== null && typeof candidate === 'object' && 'v' in candidate;
+  const id = candidate !== null && typeof candidate === 'object' && 'id' in candidate ? candidate.id : 'work';
+  let record = StoredProfileRecordV1Schema.parse({ v: 1, id, definition: {
+    kind: isVersioned ? 'inline' : 'legacy', profile: candidate,
+  }, enabled: false, promptStack: [], secretBindings: { DEPLOY_TOKEN: 'happier:shared-secret:v1:deploy' } });
+  let revision = 3;
   const artifacts = new Map<string, { artifactId: string; header: Record<string, unknown>; body: string; revision: { headerVersion: number; bodyVersion: number } }>();
   const create = vi.fn(async (input: { header: Readonly<Record<string, unknown>>; body: string }) => {
     const artifactId = `artifact-${artifacts.size + 1}`;
@@ -21,22 +42,55 @@ function harness(candidate: unknown = profile) {
     return { artifactId };
   });
   const publisher = createLaunchProfilePublisherV1({
-    readSettings: async () => settings,
-    mutateSettings: async (mutate) => { settings = mutate(settings); },
+    profileStore: {
+      read: async requestedId => record.id === requestedId ? { record, revision } : null,
+      updateDefinition: async input => {
+        if (input.profileId !== record.id || input.expectedRevision !== revision) {
+          throw Object.assign(new Error('profile_revision_conflict'), { code: 'profile_revision_conflict' });
+        }
+        record = { ...record, definition: { kind: 'artifact', artifactId: input.artifactId } };
+        revision += 1;
+      },
+    },
     artifactStore: { read: async (id) => artifacts.get(id) ?? null, create },
   });
-  return { publisher, create, artifacts, readSettings: () => settings, changeSettings: (next: Record<string, unknown>) => { settings = next; } };
+  return { publisher, create, artifacts, readRecord: () => record,
+    changeRecord: (next: ProfileRecordV1) => { record = next; revision += 1; } };
 }
 
 describe('launch_profiles.publish', () => {
+  it('drops additive saved profile and Artifact fields while keeping publication admission strict', async () => {
+    const extended = { ...profile, future: true, envVarRequirements: [{ ...profile.envVarRequirements[0], future: true }] };
+    const state = harness(extended);
+    const result = await state.publisher.publish({ profileId: 'work' });
+    const artifact = state.artifacts.get(result.artifactId)!;
+    expect(artifact.body).not.toContain('future');
+    const content = JSON.parse(artifact.body) as Record<string, unknown>;
+    const stored = { ...content, future: true, profile: extended };
+    expect(() => LaunchProfileArtifactV1Schema.parse(stored)).toThrow();
+    expect(launchProfileArtifactSharingAdapterV1.canShare({ ...artifact, body: JSON.stringify(stored) })).toBe(false);
+    expect(readLaunchProfileArtifactV1({ ...artifact, body: JSON.stringify(stored) })).toEqual(content);
+    expect(readLaunchProfileArtifactV1({ ...artifact, body: JSON.stringify({ ...stored, profile: { ...extended, createdAt: 'invalid' } }) })).toBeNull();
+    expect(await state.publisher.publish({ profileId: 'work' })).toEqual(result);
+  });
+  it('does not reinterpret a corrupt versioned profile as a published reference on retry', async () => {
+    const state = harness();
+    const result = await state.publisher.publish({ profileId: 'work' });
+    const artifact = state.artifacts.get(result.artifactId)!;
+    artifact.body = JSON.stringify({ kind: 'launch-profile.v1', profile: { ...profile, createdAt: 'invalid' }, secretBindings: {} });
+    await expect(state.publisher.publish({ profileId: 'work' })).rejects.toMatchObject({ code: 'profile_artifact_unavailable' });
+    expect(state.artifacts.size).toBe(1);
+  });
   it.each([
     { context: { surface: 'ui', runtimeAccountId: 'account', actionCaller: { kind: 'host' } }, savedBy: { kind: 'person', accountId: 'account' } },
     { context: { surface: 'cli', runtimeAccountId: 'account', defaultSessionId: 'other-session', actionCaller: { kind: 'session', sessionId: 'admitted-session' } },
       savedBy: { kind: 'agent', accountId: 'account', sessionId: 'admitted-session' } },
   ] satisfies readonly { context: ActionExecutorContext; savedBy: unknown }[])('retains the admitted actor when publishing through Actions ($savedBy.kind)', async ({ context, savedBy }) => {
     const state = harness();
-    const executor = createActionExecutor({ launchProfilePublish: state.publisher.publish } as unknown as ActionExecutorDeps);
-    expect(await executor.execute('launch_profiles.publish', { profileId: 'work' }, { ...context, authority: 'present_user' })).toMatchObject({ ok: true });
+    const executor = publisherExecutor(state.publisher.publish);
+    const published = await executor.execute('launch_profiles.publish', { profileId: 'work' },
+      { ...context, authority: 'present_user', actionsSettings: publishWaiver });
+    expect(published, JSON.stringify(published)).toMatchObject({ ok: true });
     expect(state.create.mock.calls[0]?.[0]).toMatchObject({ savedBy });
     const artifact = [...state.artifacts.values()][0]!;
     expect(artifact.header).not.toHaveProperty('savedBy');
@@ -45,24 +99,28 @@ describe('launch_profiles.publish', () => {
   it('retains its Artifact result through the canonical approval lifecycle', () => {
     const spec = getActionSpec('launch_profiles.publish');
     expect(spec.executionPlacement).toBe('account');
-    expect(resolveActionApprovalRouting({ actionId: spec.id, spec, requiredByPolicy: true,
-      context: { surface: 'cli', authority: 'present_user' } }))
-      .toMatchObject({ required: true, result: 'required', flow: 'blocking' });
+    const cliRouting = resolveActionApprovalRouting({ actionId: spec.id, spec, requiredByPolicy: true,
+      context: { surface: 'cli', authority: 'present_user' } });
+    expect(cliRouting, JSON.stringify(cliRouting))
+      .toMatchObject({ required: true, result: 'required', flow: 'deferred' });
     // The mounted UI presenter follows approval custody; it must retain the typed result.
     expect(resolveActionApprovalRouting({ actionId: spec.id, spec, requiredByPolicy: true,
       context: { surface: 'ui', authority: 'present_user' } }))
       .toMatchObject({ required: true, result: 'required', flow: 'deferred' });
   });
 
-  it('executes through the human Action front door and refuses an autonomous caller', async () => {
+  it('executes through the Action front door only after its configurable default approval is waived', async () => {
     const state = harness();
-    // Unused host ports are omitted in this boundary harness; the publish owner is real.
-    const executor = createActionExecutor({ launchProfilePublish: state.publisher.publish } as unknown as ActionExecutorDeps);
+    const executor = publisherExecutor(state.publisher.publish);
     const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
-    await expect(executor.execute('launch_profiles.publish', { profileId: 'work' }, { ...context, authority: 'account_automation' }))
-      .resolves.toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    expect(resolveActionApprovalRouting({ actionId: 'launch_profiles.publish', spec: getActionSpec('launch_profiles.publish'),
+      context: { ...context, authority: 'account_automation' }, defaultSafety: 'danger' }))
+      .toMatchObject({ required: true, flow: 'blocking' });
+    const autonomous = await executor.execute('launch_profiles.publish', { profileId: 'work' }, { ...context, authority: 'account_automation' });
+    expect(autonomous, JSON.stringify(autonomous)).toMatchObject({ ok: false });
     expect(state.artifacts.size).toBe(0);
-    await expect(executor.execute('launch_profiles.publish', { profileId: 'work' }, context))
+    await expect(executor.execute('launch_profiles.publish', { profileId: 'work' },
+      { ...context, authority: 'account_automation', actionsSettings: publishWaiver }))
       .resolves.toMatchObject({ ok: true, result: { artifactId: expect.any(String) } });
   });
 
@@ -70,17 +128,20 @@ describe('launch_profiles.publish', () => {
     const state = harness({ ...profile, extraEnvironmentVariables: [{ name: 'DEPLOY_TOKEN', value: 'private', isSecret: false }] });
     await expect(state.publisher.publish({ profileId: 'work' })).rejects.toMatchObject({ code: 'profile_contains_secret_values' });
     expect(state.create).not.toHaveBeenCalled();
-    expect(state.readSettings().profiles).toEqual([{ ...profile, extraEnvironmentVariables: [{ name: 'DEPLOY_TOKEN', value: 'private', isSecret: false }] }]);
+    expect(state.readRecord().definition).toMatchObject({ profile: { extraEnvironmentVariables: [{ name: 'DEPLOY_TOKEN', value: 'private', isSecret: false }] } });
   });
 
-  it('moves content and Saved Secret references into one Artifact and replaces the inline row', async () => {
+  it('publishes the definition while preserving private row attachments and binding masks', async () => {
     const state = harness();
+    state.changeRecord({ ...state.readRecord(), promptStack: [{ id: 'private', ref: { kind: 'doc', artifactId: 'private-doc' },
+      enabled: false, placement: 'system_append' }], secretBindings: { DEPLOY_TOKEN: 'happier:shared-secret:v1:deploy', MASKED: null } });
+    const original = state.readRecord();
     const result = await state.publisher.publish({ profileId: 'work' });
-    expect(state.readSettings()).toEqual({ profiles: [{ artifactId: result.artifactId }], secretBindingsByProfileId: {}, other: 'keep' });
+    expect(state.readRecord()).toEqual({ ...original, definition: { kind: 'artifact', artifactId: result.artifactId } });
     const artifact = state.artifacts.get(result.artifactId)!;
     const content = LaunchProfileArtifactV1Schema.parse(JSON.parse(artifact.body));
     expect(content.profile.id).toBe('work');
-    expect(content.secretBindings).toEqual({ DEPLOY_TOKEN: 'happier:shared-secret:v1:deploy' });
+    expect(content.secretBindings).toEqual({});
     expect(launchProfileArtifactSharingAdapterV1.canShare(artifact)).toBe(true);
     expect(await state.publisher.publish({ profileId: 'work' })).toEqual(result);
     expect(state.artifacts.size).toBe(1);
@@ -91,61 +152,35 @@ describe('launch_profiles.publish', () => {
     state.create.mockImplementationOnce(async (input) => {
       const artifactId = 'concurrent-publish';
       state.artifacts.set(artifactId, { ...input, artifactId, revision: { headerVersion: 1, bodyVersion: 1 } });
-      state.changeSettings({ ...state.readSettings(), profiles: [{ ...profile, name: 'Edited elsewhere' }] });
+      const record = state.readRecord();
+      if (record.definition.kind !== 'inline') throw new Error('expected inline definition');
+      state.changeRecord({ ...record, definition: { ...record.definition, profile: { ...record.definition.profile, name: 'Edited elsewhere' } } });
       return { artifactId };
     });
-    await expect(state.publisher.publish({ profileId: 'work' })).rejects.toMatchObject({ code: 'profile_publish_conflict' });
-    expect(state.readSettings().profiles).toEqual([{ ...profile, name: 'Edited elsewhere' }]);
+    await expect(state.publisher.publish({ profileId: 'work' })).rejects.toMatchObject({ code: 'profile_revision_conflict' });
+    expect(state.readRecord().definition).toMatchObject({ profile: { name: 'Edited elsewhere' } });
   });
 
-  it('preserves sibling writes but refuses changing Saved Secret references during publication', async () => {
+  it('refuses changing private Saved Secret references during publication', async () => {
     const state = harness();
     state.create.mockImplementationOnce(async (input) => {
       const artifactId = 'changed-binding';
       state.artifacts.set(artifactId, { ...input, artifactId, revision: { headerVersion: 1, bodyVersion: 1 } });
-      state.changeSettings({ ...state.readSettings(), other: 'updated', secretBindingsByProfileId: { work: { DEPLOY_TOKEN: 'new-secret' } } });
+      state.changeRecord({ ...state.readRecord(), secretBindings: { DEPLOY_TOKEN: 'new-secret' } });
       return { artifactId };
     });
-    await expect(state.publisher.publish({ profileId: 'work' })).rejects.toMatchObject({ code: 'profile_publish_conflict' });
-    expect(state.readSettings()).toMatchObject({ other: 'updated', secretBindingsByProfileId: { work: { DEPLOY_TOKEN: 'new-secret' } } });
+    await expect(state.publisher.publish({ profileId: 'work' })).rejects.toMatchObject({ code: 'profile_revision_conflict' });
+    expect(state.readRecord().secretBindings).toEqual({ DEPLOY_TOKEN: 'new-secret' });
   });
 
-  it('replaces only the published row in the current CAS winner, preserving unrelated concurrent Settings', async () => {
-    const state = harness();
-    state.create.mockImplementationOnce(async (input) => {
-      const artifactId = 'sibling-write';
-      state.artifacts.set(artifactId, { ...input, artifactId, revision: { headerVersion: 1, bodyVersion: 1 } });
-      state.changeSettings({ ...state.readSettings(), other: 'updated' });
-      return { artifactId };
-    });
-    expect(await state.publisher.publish({ profileId: 'work' })).toEqual({ artifactId: 'sibling-write' });
-    expect(state.readSettings()).toEqual({ profiles: [{ artifactId: 'sibling-write' }], secretBindingsByProfileId: {}, other: 'updated' });
-  });
-
-  it('refuses ambiguous duplicate profile ids instead of deleting either inline document', async () => {
-    const state = harness();
-    state.changeSettings({ ...state.readSettings(), profiles: [profile, { ...profile, name: 'Other document' }] });
-    await expect(state.publisher.publish({ profileId: 'work' })).rejects.toMatchObject({ code: 'profile_id_ambiguous' });
-    expect(state.create).not.toHaveBeenCalled();
-    expect(state.readSettings().profiles).toHaveLength(2);
-  });
-
-  it('does not sanitize an unreadable Account binding map while publishing one profile', async () => {
-    const state = harness();
-    state.changeSettings({ ...state.readSettings(), secretBindingsByProfileId: 'retained-unreadable-data' });
-    await expect(state.publisher.publish({ profileId: 'work' })).rejects.toMatchObject({ code: 'profile_secret_bindings_invalid' });
-    expect(state.create).not.toHaveBeenCalled();
-    expect(state.readSettings().secretBindingsByProfileId).toBe('retained-unreadable-data');
-  });
-
-  it('does not replace Settings with an invalid Artifact reference returned by persistence', async () => {
+  it('does not replace the Profile definition with an invalid Artifact reference returned by persistence', async () => {
     const state = harness();
     state.create.mockResolvedValueOnce({ artifactId: '' });
     await expect(state.publisher.publish({ profileId: 'work' })).rejects.toMatchObject({ code: 'profile_publish_failed' });
-    expect(state.readSettings().profiles).toEqual([profile]);
+    expect(state.readRecord().definition.kind).toBe('inline');
   });
 
-  it('honors cancellation before Settings replacement without pretending an Artifact write was undone', async () => {
+  it('honors cancellation before Profile replacement without pretending an Artifact write was undone', async () => {
     const state = harness();
     const controller = new AbortController();
     state.create.mockImplementationOnce(async (input) => {
@@ -156,7 +191,7 @@ describe('launch_profiles.publish', () => {
     });
     await expect(state.publisher.publish({ profileId: 'work' }, { signal: controller.signal }))
       .rejects.toMatchObject({ name: 'AbortError' });
-    expect(state.readSettings().profiles).toEqual([profile]);
+    expect(state.readRecord().definition.kind).toBe('inline');
     expect(state.artifacts.size).toBe(1);
   });
 
@@ -171,11 +206,13 @@ describe('launch_profiles.publish', () => {
     expect(Object.keys(content.profile.defaultPermissionModeByTargetKey)).toHaveLength(1);
   });
 
-  it('uses the canonical reader’s normalized profile identity when locating and replacing an inline row', async () => {
+  it('preserves an exact stored profile identity while keeping bindings private', async () => {
     const state = harness({ ...profile, id: ' work ' });
-    const result = await state.publisher.publish({ profileId: 'work' });
-    expect(state.readSettings().profiles).toEqual([{ artifactId: result.artifactId }]);
-    expect(LaunchProfileArtifactV1Schema.parse(JSON.parse(state.artifacts.get(result.artifactId)!.body)).profile.id).toBe('work');
+    const result = await state.publisher.publish({ profileId: ' work ' });
+    expect(state.readRecord()).toMatchObject({ id: ' work ', definition: { kind: 'artifact', artifactId: result.artifactId },
+      secretBindings: { DEPLOY_TOKEN: 'happier:shared-secret:v1:deploy' } });
+    expect(LaunchProfileArtifactV1Schema.parse(JSON.parse(state.artifacts.get(result.artifactId)!.body)))
+      .toMatchObject({ profile: { id: ' work ' }, secretBindings: {} });
   });
 
   it('rejects a secret-bearing opened Artifact before it can enter the grant path', () => {

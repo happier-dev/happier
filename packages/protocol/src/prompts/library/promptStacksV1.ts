@@ -20,13 +20,16 @@ export const PromptStackEntryV1Schema = lazyZodSchema(() => z.object({
 export type PromptStackEntryV1 = z.infer<typeof PromptStackEntryV1Schema>;
 export const PromptStackEntryV1StoredSchema = createStoredReadSchema(PromptStackEntryV1Schema);
 
-/** Semantic list edits shared by Account, Profile and personal Project Context owners. */
+/** Semantic list edits shared by Account, Profile, Project, Source and Session Context owners. */
+export const PromptStackSetEnabledIntentV1Schema = lazyZodSchema(() => z.object({
+  kind: z.literal('set_enabled'), entryId: z.string().min(1), enabled: z.boolean(),
+}).strict());
 export const PromptStackIntentV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('attach'), entry: PromptStackEntryV1Schema }).strict(),
   z.object({ kind: z.literal('detach'), entryId: z.string().min(1) }).strict(),
   z.object({ kind: z.literal('reorder'), entryId: z.string().min(1), siblingId: z.string().min(1), position: z.enum(['before', 'after']) }).strict(),
   z.object({ kind: z.literal('set_budget'), entryId: z.string().min(1), maxChars: z.number().int().positive().nullable() }).strict(),
-  z.object({ kind: z.literal('set_enabled'), entryId: z.string().min(1), enabled: z.boolean() }).strict(),
+  PromptStackSetEnabledIntentV1Schema,
 ]));
 export type PromptStackIntentV1 = z.infer<typeof PromptStackIntentV1Schema>;
 export const PromptLibraryStackUpdateInputV1Schema = lazyZodSchema(() => z.object({

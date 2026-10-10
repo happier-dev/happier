@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PromptLibraryCatalogSnapshotV1 } from './promptLibraryCatalogV1.js';
 import type { PromptLibraryRecordV1 } from './promptLibraryRowsV1.js';
+import { sealPromptLibraryContentV1 } from './promptLibraryRowsV1.js';
 import type { ArtifactFolderActionPortV1 } from './promptFolderActionsV1.js';
 
 import {
@@ -222,6 +223,50 @@ describe('prompt library action operations', () => {
     expect(attempts).toBe(1);
   });
 
+  it.each([undefined, 'Build'])('restores a forgotten fact unchanged to its original section (%s)', async (topic) => {
+    const original = { id: 'original', text: 'Use the checked-in build script.', createdAtMs: 10, expiresAtMs: 500,
+      sourceSessionRef: { serverId: 'source-home', sessionId: 'source-session' }, supersedes: 'older' };
+    const older = { id: 'older', text: 'Use make.', createdAtMs: 1, sourceSessionRef: null };
+    let stored: PromptLibraryStoredArtifact = { id: 'memory', revision: { headerVersion: 1, bodyVersion: 1 },
+      header: { v: 1, kind: 'memory_doc.v1', title: 'Memory' }, body: JSON.stringify({ v: 1,
+        index: topic === undefined ? [original] : [], topics: [
+          ...(topic === undefined ? [] : [{ title: topic, summary: 'Build details', facts: [original] }]),
+          { title: 'archive', summary: 'Earlier facts', facts: [older] },
+        ] }) };
+    const store: PromptLibraryArtifactStore = { read: async () => stored, update: async input => {
+      stored = { ...stored, body: input.body, header: input.header,
+        revision: { headerVersion: stored.revision.headerVersion + 1, bodyVersion: stored.revision.bodyVersion + 1 } };
+    } };
+    const ref = { kind: 'doc' as const, artifactId: 'memory' };
+    const beforeForget = stored.revision;
+    await forgetMemoryFactInLibrary({ store, request: { ref, expectedRevision: beforeForget, factId: original.id, topic } });
+    const archived = stored;
+    const restore = { ref, expectedRevision: beforeForget, topic: 'archive' as const, factId: original.id,
+      restore: true as const, ...(topic === undefined ? {} : { restoreTopic: topic }) };
+    await expect(updateMemoryFactInLibrary({ store, request: restore, randomId: () => 'wrong-new-id',
+      nowMs: () => 100, sourceSessionRef: null })).rejects.toMatchObject({ code: 'version_mismatch' });
+    expect(stored).toBe(archived);
+    const restored = await updateMemoryFactInLibrary({ store, request: { ...restore, expectedRevision: stored.revision },
+      randomId: () => 'wrong-new-id', nowMs: () => 100, sourceSessionRef: null });
+    expect(restored).toEqual({ ok: true, artifactId: 'memory', factId: original.id });
+    const reopened = await readMemoryDocInLibrary({ store, artifactId: 'memory', topic, nowMs: () => 100 });
+    expect('body' in reopened ? reopened.body.index : reopened.topic.facts).toEqual([original]);
+    expect(await readMemoryDocInLibrary({ store, artifactId: 'memory', topic: 'archive', nowMs: () => 100 }))
+      .toMatchObject({ topic: { facts: [older] } });
+  });
+
+  it('refuses archive restore while a replacement retains its supersedes link', async () => {
+    const original = { id: 'original', text: 'Old fact', createdAtMs: 1, sourceSessionRef: null };
+    const stored: PromptLibraryStoredArtifact = { id: 'memory', revision: { headerVersion: 1, bodyVersion: 1 },
+      header: { v: 1, kind: 'memory_doc.v1', title: 'Memory' }, body: JSON.stringify({ v: 1,
+        index: [{ ...original, id: 'replacement', text: 'Current fact', supersedes: original.id }],
+        topics: [{ title: 'archive', summary: 'History', facts: [original] }] }) };
+    const store: PromptLibraryArtifactStore = { read: async () => stored, update: async () => { throw new Error('Must not write'); } };
+    await expect(updateMemoryFactInLibrary({ store, request: { ref: { kind: 'doc', artifactId: 'memory' },
+      expectedRevision: stored.revision, factId: original.id, topic: 'archive', restore: true },
+      randomId: () => 'wrong-new-id', sourceSessionRef: null })).rejects.toMatchObject({ code: 'memory_fact_superseded' });
+  });
+
   it('does not disclose a raced memory version when the current store read loses access', async () => {
     let readable = true;
     const stored: PromptLibraryStoredArtifact = { id: 'memory', revision: { headerVersion: 1, bodyVersion: 1 },
@@ -438,6 +483,7 @@ describe('prompt library action operations', () => {
     }));
 
     const result = await exportPromptLibraryArtifact({
+      machineTarget: { serverIdentityId: 'srv_home', machineId: 'machine-1' }, libraryServerIdentityId: 'srv_home',
       store: {
         read: async () => ({
           id: 'doc-1',
@@ -483,6 +529,49 @@ describe('prompt library action operations', () => {
     }));
   });
 
+  it.each([
+    { name: 'keeps same-id Machines on two Homes independent', existingHome: 'srv_machine_b', targetHome: 'srv_machine_c', reuse: false },
+    { name: 'preserves a legacy library-Home link id and external reference', existingHome: undefined, targetHome: 'srv_library_a', reuse: true },
+    { name: 'does not reuse a legacy link on an independent Machine Home', existingHome: undefined, targetHome: 'srv_machine_b', reuse: false },
+  ])('qualifies external links: $name', async ({ existingHome, targetHome, reuse }) => {
+    const existing = { id: 'retained-link', artifactId: 'doc-1', assetTypeId: 'markdown',
+      scope: 'user' as const, machineId: 'shared-machine',
+      ...(existingHome ? { serverIdentityId: existingHome } : {}),
+      externalRef: { path: '/same/prompt.md' }, lastExternalDigest: 'same-content-digest' };
+    // External filesystem/network and Artifact persistence are the boundaries;
+    // canonical link selection, export and catalog mutation remain real.
+    const write = vi.fn(async (_input: Parameters<Parameters<typeof exportPromptLibraryArtifact>[0]['write']>[0]) => ({
+      ok: true as const, externalRef: { path: '/same/prompt.md' }, digest: 'same-content-digest',
+    }));
+    const result = await exportPromptLibraryArtifact({
+      store: { read: async () => ({ id: 'doc-1', revision: { headerVersion: 1, bodyVersion: 1 },
+        header: { v: 1, kind: 'prompt_doc.v2', title: 'Prompt' },
+        body: JSON.stringify({ v: 1, markdown: '# Prompt', createdAtMs: 1, updatedAtMs: 1 }) }),
+        update: async () => undefined },
+      write,
+      ...{ machineTarget: { serverIdentityId: targetHome, machineId: 'shared-machine' }, libraryServerIdentityId: 'srv_library_a' },
+      request: { artifactId: 'doc-1', machineId: 'shared-machine', serverId: 'device-local-routing-alias',
+        assetTypeId: 'markdown', scope: 'user', targetInput: 'prompt.md', promptExternalLinks: { v: 1, links: [existing] } },
+      randomId: () => 'new-link', nowMs: () => 3,
+    });
+    expect(write.mock.calls[0]?.[0].request).toMatchObject({
+      externalRef: reuse ? existing.externalRef : null,
+      expectedDigest: reuse ? existing.lastExternalDigest : null,
+    });
+    expect(result).toMatchObject({ ok: true, exported: true });
+    if (!result.ok) throw new Error('Expected acknowledged external export');
+    expect(result.nextPromptExternalLinks?.links).toHaveLength(reuse ? 1 : 2);
+    if (!reuse) expect(result.nextPromptExternalLinks?.links[0]).toEqual(existing);
+    expect(result.nextPromptExternalLinks?.links.at(-1)).toMatchObject({
+      id: reuse ? existing.id : 'new-link', artifactId: 'doc-1', machineId: 'shared-machine',
+      serverIdentityId: targetHome, externalRef: existing.externalRef,
+    });
+    expect(result.nextPromptExternalLinks?.links.at(-1)).not.toHaveProperty('serverId');
+    if (!result.nextPromptExternalLinks) throw new Error('Expected acknowledged link catalog');
+    expect(sealPromptLibraryContentV1({ record: { key: 'external-links', value: result.nextPromptExternalLinks },
+      mode: 'plain', material: null })).toEqual({ t: 'plain', v: { key: 'external-links', value: result.nextPromptExternalLinks } });
+  });
+
   it('installs one fetched registry bundle into the artifact store and optional asset route', async () => {
     const create = vi.fn(async () => 'bundle-1');
     const install = vi.fn(async () => ({
@@ -504,6 +593,7 @@ describe('prompt library action operations', () => {
     };
 
     const result = await installPromptRegistryItemInLibrary({
+      machineTarget: { serverIdentityId: 'srv_home', machineId: 'machine-1' }, libraryServerIdentityId: 'srv_home',
       store: { read: async () => null, update: async () => undefined, create },
       fetchItem: async () => ({ ok: true, item }),
       install,
@@ -532,6 +622,25 @@ describe('prompt library action operations', () => {
       artifactId: 'bundle-1',
       exported: true,
     }));
+  });
+
+  it('classifies a successful registry commit without a link reference as an acknowledged typed failure', async () => {
+    const create = vi.fn(async () => 'must-not-be-created');
+    const response = { ok: true as const, digest: 'committed-digest' };
+    const result = await installPromptRegistryItemInLibrary({
+      machineTarget: { serverIdentityId: 'srv_home', machineId: 'machine-1' }, libraryServerIdentityId: 'srv_home',
+      store: { read: async () => null, update: async () => undefined, create },
+      fetchItem: async () => ({ ok: true, item: { sourceId: 'source-1', itemId: 'item-1', title: 'Private title',
+        bundleSchemaId: 'skills.skill_md_v1', bundleBody: { v: 1, entries: [{ path: 'SKILL.md', contentBase64: 'IyBTa2lsbA==', contentKind: 'utf8' }],
+          createdAtMs: 1, updatedAtMs: 1 } } }),
+      install: async () => response,
+      request: { machineId: 'machine-1', sourceId: 'source-1', itemId: 'item-1', configuredSources: [],
+        installTarget: { assetTypeId: 'agents.skill', scope: 'user', targetName: 'skill' }, promptExternalLinks: { v: 1, links: [] } },
+      randomId: () => 'link-1',
+    });
+    expect(result).toMatchObject({ ok: false, errorCode: expect.any(String), exported: true, response });
+    expect(create).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain('Private title');
   });
 
   it('does not begin a store mutation when the caller is already retired', async () => {

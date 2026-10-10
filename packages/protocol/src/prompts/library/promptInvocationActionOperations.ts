@@ -1,4 +1,7 @@
-import { isPromptInvocationAvailable, PromptInvocationsV1Schema, type PromptInvocationEntryV1 } from './promptInvocationsV1.js';
+import { isPromptInvocationAvailable, PromptInvocationEntryV1Schema, PromptInvocationsV1Schema, validatePromptInvocationTokenV1, type PromptInvocationEntryV1 } from './promptInvocationsV1.js';
+import { readPromptLibraryCatalogRecordV1, type PromptLibraryStackActionPortV1 } from './promptLibraryCatalogV1.js';
+import type { z } from 'zod';
+import type { PromptInvocationCreateInputSchema, PromptInvocationCreateOutputSchema } from '../../actions/promptInvocationCreateActionSpecs.js';
 import { readPromptDocInLibrary, type PromptLibraryArtifactStore, type PromptLibraryStoredArtifact } from './promptLibraryActionOperations.js';
 import type { PromptDocArtifactRefV1 } from './promptArtifactRefsV1.js';
 import { renderPromptTemplateTextV1 } from './renderPromptTemplateTextV1.js';
@@ -9,6 +12,40 @@ export type PromptInvocationResolveResult =
   | Readonly<{ status: 'resolved'; invocationId: string; token: string; title: string; behavior: PromptInvocationEntryV1['behavior']; text: string }>
   | Readonly<{ status: 'unknownInvocation' | 'unavailable'; invocationId: string }>;
 export type PromptInvocationArtifactReader = (ref: PromptDocArtifactRefV1, options?: Readonly<{ signal?: AbortSignal }>) => Promise<PromptLibraryStoredArtifact | null>;
+
+/** Append through the catalog's existing captured-Account row CAS; never author the retired settings carrier. */
+export async function createPromptInvocationInLibrary(params: Readonly<{
+  port: PromptLibraryStackActionPortV1;
+  request: z.infer<typeof PromptInvocationCreateInputSchema>;
+  invocationId: string;
+  actionTokens: readonly string[];
+  signal?: AbortSignal;
+}>): Promise<z.infer<typeof PromptInvocationCreateOutputSchema>> {
+  const assertCurrent = () => { params.signal?.throwIfAborted(); params.port.assertCurrent(); };
+  assertCurrent();
+  const projection = await params.port.readCatalog(params.signal);
+  assertCurrent();
+  const read = readPromptLibraryCatalogRecordV1({ ...projection, key: 'invocations' });
+  if (read.status !== 'ready') return read;
+  if (read.record.key !== 'invocations') return { status: 'unavailable', reason: 'invalid-stored-content' };
+  if (read.authority === 'inactive' && projection.sourceSettingsVersion === undefined) {
+    return { status: 'unavailable', reason: 'source-currentness-unavailable' };
+  }
+  const validation = validatePromptInvocationTokenV1({ token: params.request.token,
+    entries: read.record.value.entries, actionTokens: params.actionTokens });
+  if (!validation.ok) return { status: 'invalid', reason: validation.reason };
+  const entry = PromptInvocationEntryV1Schema.parse({ ...params.request, id: params.invocationId,
+    token: validation.token, title: params.request.title.trim() });
+  assertCurrent();
+  const receipt = await params.port.writeRecord({ record: { key: 'invocations',
+    value: { ...read.record.value, entries: [...read.record.value.entries, entry] } }, expectedRevision: read.revision,
+    ...(read.authority === 'inactive' ? { sourceSettingsVersion: projection.sourceSettingsVersion } : {}),
+  }, params.signal);
+  // An acknowledged receipt is not erased by post-write retirement or replayed after a conflict.
+  if (receipt.status === 'updated') return { status: 'updated', invocationId: entry.id, token: entry.token, revision: receipt.revision };
+  if (receipt.status === 'conflict') return { status: 'conflict', revision: receipt.revision };
+  return { status: 'unavailable', reason: receipt.status };
+}
 
 export function listPromptInvocationsInLibrary(params: Readonly<{ invocations: unknown; request: Readonly<{ limit?: number }> }>): PromptInvocationsListResult {
   const parsed = PromptInvocationsV1Schema.removeCatch().safeParse(params.invocations ?? {});
