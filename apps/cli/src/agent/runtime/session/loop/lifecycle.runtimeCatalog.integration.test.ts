@@ -693,7 +693,8 @@ describe('runSessionLoopLifecycle daemon exact-turn custody', () => {
     );
     try {
       await vi.waitFor(() => expect(baseParams.runtime.resetOrDisposeRuntime).toHaveBeenCalledWith('host_shutdown'));
-      expect(baseParams.session.endSessionAndClose).not.toHaveBeenCalled();
+      await vi.waitFor(() => expect(baseParams.session.endSessionAndClose).toHaveBeenCalled());
+      await stopping;
     } finally {
       releaseNativeCancellation();
       await stopping;
@@ -833,7 +834,7 @@ describe('runSessionLoopLifecycle daemon exact-turn custody', () => {
     await runPromise;
   });
 
-  it('routes a confirmed terminal UI exit through the runner termination owner', async () => {
+  it('routes a confirmed terminal UI exit through the runner termination owner without awaiting native cancellation', async () => {
     const baseParams = createLifecycleParams({ policyAgentId: 'codex' });
     const runtime = baseParams.runtime as unknown as {
       cancelTurn: ReturnType<typeof vi.fn>;
@@ -952,10 +953,6 @@ describe('runSessionLoopLifecycle daemon exact-turn custody', () => {
       await vi.waitFor(() => {
         expect(runtime.cancelTurn).toHaveBeenCalledOnce();
       });
-      await new Promise((resolve) => setImmediate(resolve));
-      const cleanupStartedBeforeAbortSettled =
-        cleanupBackendRunResourcesFn.mock.calls.length > 0;
-      releaseCancel();
       await vi.waitFor(() => {
         expect(baseParams.session.endSessionAndClose).toHaveBeenCalledOnce();
         expect(cleanupBackendRunResourcesFn).toHaveBeenCalledOnce();
@@ -965,8 +962,8 @@ describe('runSessionLoopLifecycle daemon exact-turn custody', () => {
       releaseCleanup();
       await exitPromise;
       await runPromise;
+      releaseCancel();
 
-      expect(cleanupStartedBeforeAbortSettled).toBe(false);
       expect(order).toEqual([
         'end',
         'cleanup:start',
@@ -980,6 +977,8 @@ describe('runSessionLoopLifecycle daemon exact-turn custody', () => {
       // A terminal-started session that terminates stays unarchived and resumable.
       expect(baseParams.session.endSessionAndClose).toHaveBeenCalledOnce();
     } finally {
+      releaseCancel();
+      releaseCleanup();
       if (stdoutDescriptor) Object.defineProperty(process.stdout, 'isTTY', stdoutDescriptor);
       if (stdinDescriptor) Object.defineProperty(process.stdin, 'isTTY', stdinDescriptor);
     }
