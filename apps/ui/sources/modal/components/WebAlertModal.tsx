@@ -67,7 +67,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     buttonText: {
         fontSize: 17,
-        color: theme.colors.text.link,
+        color: theme.colors.text.primary,
         textAlign: 'center',
         lineHeight: 20,
         flexShrink: 1,
@@ -109,7 +109,8 @@ export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true,
             ? config.buttons
             : [{ text: t('common.ok'), style: 'default' as const }];
 
-    const buttonLayout = buttons.length === 3 ? 'twoPlusOne' : buttons.length > 3 ? 'column' : 'row';
+    // Two choices sit side by side; three or more stack, each a full-width row in the caller's order (DESIGN-9 N33).
+    const buttonLayout = buttons.length > 2 ? 'column' : 'row';
 
     const resolveButtonTestId = (index: number): string => {
         if (isConfirm) {
@@ -140,112 +141,41 @@ export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true,
                         </Text>
                     )}
                 </View>
-                
-                {buttonLayout === 'twoPlusOne' ? (
-                    <View style={styles.buttonContainer}>
-                        <View style={styles.buttonRow}>
+
+                <View
+                    style={[
+                        styles.buttonContainer,
+                        buttonLayout === 'row' ? styles.buttonRow : styles.buttonColumn,
+                    ]}
+                >
+                    {buttons.map((button, index) => (
+                        <React.Fragment key={index}>
+                            {index > 0 && (
+                                <View style={buttonLayout === 'row' ? styles.separatorVertical : styles.separatorHorizontal} />
+                            )}
                             <Pressable
                                 style={({ pressed }) => [
                                     styles.button,
                                     pressed && styles.buttonPressed
                                 ]}
-                                testID={resolveButtonTestId(0)}
+                                testID={resolveButtonTestId(index)}
                                 accessibilityRole="button"
-                                accessibilityLabel={buttons[0]?.text}
-                                onPress={() => handleButtonPress(0)}
+                                accessibilityLabel={button.text}
+                                onPress={() => handleButtonPress(index)}
                             >
                                 <Text style={[
                                     styles.buttonText,
-                                    buttons[0]?.style === 'cancel' && styles.cancelText,
-                                    buttons[0]?.style === 'destructive' && styles.destructiveText,
-                                    Typography.default(buttons[0]?.style === 'cancel' ? undefined : 'semiBold')
+                                    buttonLayout === 'column' && (button.style === 'default' || !button.style) && styles.primaryText,
+                                    button.style === 'cancel' && styles.cancelText,
+                                    button.style === 'destructive' && styles.destructiveText,
+                                    Typography.default(button.style === 'cancel' ? undefined : 'semiBold')
                                 ]}>
-                                    {buttons[0]?.text}
+                                    {button.text}
                                 </Text>
                             </Pressable>
-
-                            <View style={styles.separatorVertical} />
-
-                            <Pressable
-                                style={({ pressed }) => [
-                                    styles.button,
-                                    pressed && styles.buttonPressed
-                                ]}
-                                testID={resolveButtonTestId(2)}
-                                accessibilityRole="button"
-                                accessibilityLabel={buttons[2]?.text}
-                                onPress={() => handleButtonPress(2)}
-                            >
-                                <Text style={[
-                                    styles.buttonText,
-                                    buttons[2]?.style === 'cancel' && styles.cancelText,
-                                    buttons[2]?.style === 'destructive' && styles.destructiveText,
-                                    Typography.default(buttons[2]?.style === 'cancel' ? undefined : 'semiBold')
-                                ]}>
-                                    {buttons[2]?.text}
-                                </Text>
-                            </Pressable>
-                        </View>
-
-                        <View style={styles.separatorHorizontal} />
-
-                        <Pressable
-                            style={({ pressed }) => [
-                                styles.button,
-                                pressed && styles.buttonPressed
-                            ]}
-                            testID={resolveButtonTestId(1)}
-                            accessibilityRole="button"
-                            accessibilityLabel={buttons[1]?.text}
-                            onPress={() => handleButtonPress(1)}
-                        >
-                            <Text style={[
-                                styles.buttonText,
-                                (buttons[1]?.style === 'default' || !buttons[1]?.style) && styles.primaryText,
-                                buttons[1]?.style === 'cancel' && styles.cancelText,
-                                buttons[1]?.style === 'destructive' && styles.destructiveText,
-                                Typography.default(buttons[1]?.style === 'cancel' ? undefined : 'semiBold')
-                            ]}>
-                                {buttons[1]?.text}
-                            </Text>
-                        </Pressable>
-                    </View>
-                ) : (
-                    <View
-                        style={[
-                            styles.buttonContainer,
-                            buttonLayout === 'row' ? styles.buttonRow : styles.buttonColumn,
-                        ]}
-                    >
-                        {buttons.map((button, index) => (
-                            <React.Fragment key={index}>
-                                {index > 0 && (
-                                    <View style={buttonLayout === 'row' ? styles.separatorVertical : styles.separatorHorizontal} />
-                                )}
-                                <Pressable
-                                    style={({ pressed }) => [
-                                        styles.button,
-                                        pressed && styles.buttonPressed
-                                    ]}
-                                    testID={resolveButtonTestId(index)}
-                                    accessibilityRole="button"
-                                    accessibilityLabel={button.text}
-                                    onPress={() => handleButtonPress(index)}
-                                >
-                                    <Text style={[
-                                        styles.buttonText,
-                                        buttonLayout === 'column' && (button.style === 'default' || !button.style) && styles.primaryText,
-                                        button.style === 'cancel' && styles.cancelText,
-                                        button.style === 'destructive' && styles.destructiveText,
-                                        Typography.default(button.style === 'cancel' ? undefined : 'semiBold')
-                                    ]}>
-                                        {button.text}
-                                    </Text>
-                                </Pressable>
-                            </React.Fragment>
-                        ))}
-                    </View>
-                )}
+                        </React.Fragment>
+                    ))}
+                </View>
             </ModalCardFrame>
         </BaseModal>
     );

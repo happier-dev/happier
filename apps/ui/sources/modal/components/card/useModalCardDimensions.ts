@@ -9,6 +9,7 @@ export type ModalCardDimensions = Readonly<{
 }>;
 
 export type ModalCardDimensionOptions = Readonly<{
+    fullscreen?: boolean;
     size?: ModalCardSizePreset;
     width?: number;
     maxHeightRatio?: number;
@@ -80,6 +81,10 @@ export function resolveModalCardDimensions(
     })();
     const hasWindowWidth = Number.isFinite(windowDimensions.width) && windowDimensions.width > 0;
     const hasWindowHeight = Number.isFinite(windowDimensions.height) && windowDimensions.height > 0;
+
+    if (options.fullscreen && hasWindowWidth && hasWindowHeight) {
+        return { width: windowDimensions.width, maxHeight: windowDimensions.height };
+    }
 
     const availableWidth = hasWindowWidth
         ? Math.max(0, Math.floor(windowDimensions.width - viewportMargin.horizontal * 2))

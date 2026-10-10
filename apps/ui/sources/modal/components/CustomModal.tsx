@@ -60,6 +60,7 @@ function areChromeConfigsEqual(
 
     if (a.kind === 'card' && b.kind === 'card') {
         return a.header === b.header
+            && a.material === b.material
             && a.title === b.title
             && a.subtitle === b.subtitle
             && a.leading === b.leading
@@ -101,6 +102,7 @@ function mergeChromeConfig(
 
         return {
             kind: 'card',
+            material: override.material !== undefined ? override.material : base.material,
             header: override.header !== undefined ? override.header : base.header,
             leading: override.leading !== undefined ? override.leading : base.leading,
             title: override.title !== undefined ? override.title : base.title,
@@ -216,6 +218,7 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
     ), [Component, config.props, handleComponentClose, setChrome]);
 
     const phoneSheet = chrome?.phonePresentation === 'sheet' && deviceType === 'phone';
+    const phoneFullscreen = chrome?.phonePresentation === 'fullscreen' && deviceType === 'phone';
     return (
         <BaseModal
             visible={visible}
@@ -227,11 +230,12 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
             zIndexBase={zIndexBase}
             webPortalTarget={config.webPortalTarget ?? null}
             webPlacement={config.webPlacement}
-            placement={phoneSheet ? 'bottom' : 'center'}
+            placement={phoneFullscreen ? 'fullscreen' : phoneSheet ? 'bottom' : 'center'}
             scrollHost={chrome?.scrollHost ?? 'overlay'}
         >
             {chrome ? (
                 <ModalCardFrame
+                    material={chrome.material}
                     header={chrome.header}
                     leading={chrome.leading}
                     title={chrome.title}
@@ -245,7 +249,8 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
                     scrollHost={chrome.scrollHost}
                     bodyScroll={chrome.bodyScroll ?? 'none'}
                     dimensions={chrome.dimensions}
-                    presentation={phoneSheet ? 'sheet' : 'card'}
+                    presentation={phoneFullscreen ? 'fullscreen' : phoneSheet ? 'sheet' : 'card'}
+                    safeAreaInsets={phoneFullscreen ? insets : undefined}
                     sheetBottomInset={phoneSheet ? insets.bottom : undefined}
                     onClose={dismissible ? handleSharedDismiss : undefined}
                 >

@@ -75,6 +75,8 @@ export type CustomModalShowConfig<C extends CustomModalComponentType<any>> = Omi
 
 export type CustomModalChromeCardConfig = Readonly<{
     kind: 'card';
+    /** Forms can request opaque paper while ordinary modal chrome retains the chosen glass material. */
+    material?: 'glass' | 'solid';
     /**
      * `none` renders no title band: the content is the top of the card (search, command palette).
      * `title` stays the dialog's accessible name. Esc and the backdrop still close it.
@@ -101,8 +103,9 @@ export type CustomModalChromeCardConfig = Readonly<{
     /**
      * `sheet` presents the card as a bottom sheet on a phone (full width, anchored to the bottom edge,
      * thumb reach); wider screens keep the centred card. Default: the centred card everywhere.
+     * `fullscreen` fills the phone viewport with opaque page chrome and safe-area-inset content.
      */
-    phonePresentation?: 'card' | 'sheet';
+    phonePresentation?: 'card' | 'sheet' | 'fullscreen';
 }>;
 
 export type CustomModalChromeConfig = CustomModalChromeCardConfig;

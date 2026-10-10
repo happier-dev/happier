@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { renderScreen } from '@/dev/testkit';
-import { OverlayMotionFrame } from '@/components/ui/overlays/motion/overlayMotion';
 import { installModalComponentCommonModuleMocks } from './modalComponentTestHelpers';
 
 const reactActEnvironment = globalThis as typeof globalThis & {
@@ -76,9 +75,9 @@ describe('BaseModal (web)', () => {
         expect(style.paddingBottom).toBe(24 * 2);
         expect(style.boxSizing).toBe('border-box');
 
-        const child = screen.findByType('Child' as any);
-        const contentWrapper = (child as any)?.parent?.parent;
-        const contentStyle = flattenStyleProp(contentWrapper?.props?.style);
+        // The content frame is the modal's motion frame (its children sit inside the card boundary).
+        const { OverlayMotionFrame } = await import('@/components/ui/overlays/motion/overlayMotion');
+        const contentStyle = flattenStyleProp(screen.root.findByType(OverlayMotionFrame).props.style);
         expect(contentStyle.flex).toBe(1);
         expect(contentStyle.alignItems).toBe('stretch');
     });
@@ -166,8 +165,11 @@ describe('BaseModal (web)', () => {
         expect(String(style.transition)).not.toContain('opacity');
     });
 
-    it('keeps web glass backdrop roots transform-free while fading the content frame', async () => {
+    it('keeps the web motion frame still so material content can animate independently', async () => {
         const { BaseModal } = await import('./BaseModal');
+        // The frame type must come from the module graph BaseModal loaded under this file's web mocks; a
+        // static import binds the overlay motion module before `installModalComponentCommonModuleMocks` runs.
+        const { OverlayMotionFrame } = await import('@/components/ui/overlays/motion/overlayMotion');
         const screen = await renderBaseModalScreen(BaseModal, { showBackdrop: false });
 
         const dialogShell = screen.findAll((node) => (node.props as any)?.role === 'dialog')?.[0];
@@ -178,7 +180,7 @@ describe('BaseModal (web)', () => {
         const animatedFrame = contentFrame.findByType(Animated.View);
         const style = flattenStyleProp(animatedFrame.props.style);
         expect(style.transform).toBeUndefined();
-        expect(style.opacity).toBeDefined();
+        expect(style.opacity).toBeUndefined();
     });
 
     it('prevents outside dismissal when closeOnBackdrop is false', async () => {

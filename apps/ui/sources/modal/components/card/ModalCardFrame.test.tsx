@@ -54,6 +54,56 @@ installModalComponentCommonModuleMocks({
 afterEach(() => standardCleanup());
 
 describe('ModalCardFrame', () => {
+    it('fills the viewport for full-page chrome and keeps content mounted across presentation changes', async () => {
+        windowState.width = 390;
+        windowState.height = 844;
+        let mounts = 0;
+        function RetainedContent() {
+            React.useEffect(() => { mounts++; }, []);
+            return React.createElement('Child');
+        }
+        try {
+            const { renderScreen } = await import('@/dev/testkit');
+            const { ModalCardFrame } = await import('./ModalCardFrame');
+            const content = <RetainedContent />;
+            const screen = await renderScreen(<ModalCardFrame testID="full-page" presentation="fullscreen" scrollHost="body"
+                title="History" dimensions={{ size: 'lg', width: 860, maxHeightRatio: 0.86 }}>{content}</ModalCardFrame>);
+            expect(flattenStyle(screen.findHostByTestId('full-page')?.props.style)).toMatchObject({ width: 390, height: 844 });
+            windowState.width = 1440;
+            windowState.height = 1000;
+            await screen.update(<ModalCardFrame testID="full-page" presentation="card" scrollHost="body"
+                title="History" dimensions={{ size: 'lg', width: 860, maxHeightRatio: 0.86 }}>{content}</ModalCardFrame>);
+            expect(flattenStyle(screen.findHostByTestId('full-page')?.props.style)).toMatchObject({ width: 860, height: 860 });
+            expect(mounts).toBe(1);
+        } finally {
+            windowState.width = 1024;
+            windowState.height = 768;
+        }
+    });
+
+    it.each(['card', 'sheet'] as const)('keeps an explicitly solid form opaque in its %s with transparent floating settings', async (presentation) => {
+        const { Platform } = await import('react-native');
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { glassPresetMaterials } = await import('@/components/ui/glass/glassMaterial');
+        const previousOS = Platform.OS;
+        const previousState = storage.getState();
+        Platform.OS = 'android';
+        act(() => storage.setState({ settings: { ...previousState.settings, glassBlurEnabled: true,
+            glassSurfaceMaterials: { ...glassPresetMaterials('auto'), floating: { blur: 'strong', opacity: 0 } } } }));
+        try {
+            const { renderScreen } = await import('@/dev/testkit');
+            const { ModalCardFrame } = await import('./ModalCardFrame');
+            const screen = await renderScreen(<ModalCardFrame material="solid" presentation={presentation} testID="solid-form">
+                {React.createElement('Child')}
+            </ModalCardFrame>);
+            const surface = screen.findHostByTestId('solid-form')?.findAllByType('View').find(node => flattenStyle(node.props.style).overflow === 'hidden');
+            expect(Color(String(flattenStyle(surface?.props.style).backgroundColor)).alpha()).toBe(1);
+        } finally {
+            standardCleanup();
+            Platform.OS = previousOS;
+            act(() => storage.setState(previousState, true));
+        }
+    });
     it.each(['card', 'sheet'] as const)('honors fully transparent floating material in its %s without an opaque shadow underlay', async (presentation) => {
         const { Platform } = await import('react-native');
         const { storage } = await import('@/sync/domains/state/storage');

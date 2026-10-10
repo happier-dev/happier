@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, ScrollView, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Animated, Platform, ScrollView, View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { shadowLevelStyle } from '@/shadowElevation';
@@ -11,10 +11,12 @@ import { RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import { ModalCardBody } from './ModalCardBody';
 import { ModalCardHeader } from './ModalCardHeader';
+import { SheetGrabber, useSheetDismiss, useSheetDrag } from './sheetDragDismiss';
 import { useModalCardDimensions, type ModalCardDimensionOptions, type ModalCardSizePreset } from './useModalCardDimensions';
 
 type ModalCardFrameProps = Readonly<{
     children: React.ReactNode;
+    material?: 'glass' | 'solid';
     /** `none`: no title band; the content is the top of the card. The title remains the accessible name. */
     header?: 'band' | 'none';
     leading?: React.ReactNode;
@@ -36,7 +38,9 @@ type ModalCardFrameProps = Readonly<{
     footerStyle?: StyleProp<ViewStyle>;
     dimensions?: ModalCardDimensionOptions;
     /** `sheet`: a phone bottom sheet — full width, top corners only, the safe area inside its body. */
-    presentation?: 'card' | 'sheet';
+    presentation?: 'card' | 'sheet' | 'fullscreen';
+    /** Full-page chrome paints to the edge and keeps its controls inside the safe area. */
+    safeAreaInsets?: Readonly<{ top: number; right: number; bottom: number; left: number }>;
     /** The bottom safe area a sheet pads inside itself (its host reached the edge). */
     sheetBottomInset?: number;
 }>;
@@ -67,6 +71,15 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderBottomLeftRadius: 0,
         borderBottomRightRadius: 0,
     },
+    fullscreenFrame: {
+        alignSelf: 'stretch',
+        minHeight: 0,
+    },
+    fullscreenSurface: {
+        overflow: 'hidden',
+        flexDirection: 'column',
+        minHeight: 0,
+    },
     // Card chrome owns the edge inset; consumers arrange actions, not the card's padding.
     footer: {
         paddingHorizontal: 16,
@@ -88,11 +101,18 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
     const styles = stylesheet;
     const scrollHost = props.scrollHost ?? 'overlay';
     const sheet = props.presentation === 'sheet';
+    const fullscreen = props.presentation === 'fullscreen';
     const bodyScroll = props.bodyScroll ?? 'none';
     const dimensions = useModalCardDimensions({
         ...props.dimensions,
         size: props.size ?? props.dimensions?.size,
+        fullscreen,
     });
+
+    // A sheet its modal can dismiss draws the grabber and follows a downward drag (lab A2p).
+    const sheetDismiss = useSheetDismiss();
+    const dismiss = sheet ? sheetDismiss : null;
+    const drag = useSheetDrag(dismiss);
 
     const hasHeader = props.header !== 'none' && (props.leading != null
         || props.title != null
@@ -101,20 +121,22 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
         || typeof props.onClose === 'function');
 
     return (
-        <View
+        <Animated.View
             testID={props.testID}
             {...(Platform.OS === 'web'
                 ? ({ dataSet: { happyModalCardBoundary: 'true' } } as unknown as Record<string, unknown>)
                 : null)}
+            {...(dismiss ? { onLayout: drag.onLayout } : {})}
             style={[
-                styles.shadowFrame,
+                dismiss ? { transform: [{ translateY: drag.offset }] } : null,
+                fullscreen ? styles.fullscreenFrame : styles.shadowFrame,
                 sheet
                     ? [styles.sheetFrame, { width: '100%', maxWidth: '100%' }]
                     : {
                         width: dimensions.width,
                         maxWidth: dimensions.width,
                     },
-                scrollHost === 'body'
+                scrollHost === 'body' || fullscreen
                     ? {
                         height: dimensions.maxHeight,
                     }
@@ -122,11 +144,19 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
                 props.style,
             ]}
         >
-            <GlassSurface surfaceGroup="floating" style={[
-                styles.clipSurface,
-                scrollHost === 'body' ? { flex: 1 } : null,
+            <GlassSurface surfaceGroup="floating" enabled={!fullscreen && props.material !== 'solid'}
+                solidColor={fullscreen ? theme.colors.surface.base : undefined} style={[
+                fullscreen ? styles.fullscreenSurface : styles.clipSurface,
+                scrollHost === 'body' || fullscreen ? { flex: 1 } : null,
+                fullscreen ? {
+                    paddingTop: props.safeAreaInsets?.top ?? 0,
+                    paddingRight: props.safeAreaInsets?.right ?? 0,
+                    paddingBottom: props.safeAreaInsets?.bottom ?? 0,
+                    paddingLeft: props.safeAreaInsets?.left ?? 0,
+                } : null,
                 sheet ? [styles.sheetFrame, { paddingBottom: props.sheetBottomInset ?? 0 }] : null,
             ]}>
+                {dismiss ? <SheetGrabber onDismiss={dismiss} panHandlers={drag.panHandlers} {...(props.testID ? { testID: `${props.testID}.grabber` } : {})} /> : null}
                 {hasHeader ? (
                     <ModalCardHeader
                         leading={props.leading}
@@ -164,8 +194,8 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
                         <RoundButtonSizeScope size="small">{props.footer}</RoundButtonSizeScope>
                     </View>
                 ) : null}
-                <SurfaceRim role="floating" radius={theme.borderRadius.modalCard} border="modal" />
+                {!fullscreen ? <SurfaceRim role="floating" radius={theme.borderRadius.modalCard} border="modal" /> : null}
             </GlassSurface>
-        </View>
+        </Animated.View>
     );
 }

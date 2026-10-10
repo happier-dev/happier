@@ -21,8 +21,10 @@ import {
 } from '@/components/ui/overlays/motion/overlayMotion';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useWebOverlayFocusContainment } from '@/keyboard/webOverlayFocusContainment';
+import { ESCAPE_LAYER_PRIORITIES, EscapeLayerProvider, useEscapeLayer } from '@/keyboard/escape';
 import { type FocusReturnRef, useRestoreFocusToTrigger } from '@/keyboard/focusReturn';
 import { visuallyHiddenDomStyle } from '@/components/ui/accessibility/visuallyHiddenStyle';
+import { SheetDismissProvider } from './card/sheetDragDismiss';
 
 const BASE_MODAL_FOCUS_RETURN = { kind: 'activation-time' } as const;
 
@@ -144,7 +146,7 @@ interface BaseModalProps {
     zIndexBase?: number;
     webPlacement?: 'auto' | 'top';
     /** `bottom` anchors the content to the bottom edge (a phone sheet) on every platform. */
-    placement?: 'center' | 'bottom';
+    placement?: 'center' | 'bottom' | 'fullscreen';
     /** The overlay scrolls by default; bounded modal bodies may own their one scroll region. */
     scrollHost?: 'overlay' | 'body';
     webPortalTarget?: ModalPortalTarget;
@@ -166,6 +168,9 @@ export function BaseModal({
     focusReturnRef,
 }: BaseModalProps) {
     const { theme } = useUnistyles();
+    // A bottom sheet that closes on its scrim also closes by dragging it down (its frame draws the grabber).
+    const sheetDismiss = placement === 'bottom' && closeOnBackdrop && onClose ? onClose : null;
+    const sheetChildren = <SheetDismissProvider onDismiss={sheetDismiss}>{children}</SheetDismissProvider>;
     const { blurEnabled: materialBlurEnabled } = useGlassBlurSetting();
     const insets = useChromeSafeAreaInsets();
     const baseZ = zIndexBase ?? 100000;
@@ -225,30 +230,12 @@ export function BaseModal({
         return installWebModalBodyPointerEventsBypass();
     }, [visible]);
 
-    useEffect(() => {
-        if (!isWeb) return;
-        if (!visible) return;
-        if (typeof document === 'undefined') return;
-
-        const handleKeyDown = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') {
-                // Escape participates in IME candidate/composition control.
-                // Do not let the modal dismissal layer consume that keystroke.
-                if (event.isComposing || event.keyCode === 229) return;
-                if (!onClose) return;
-                event.preventDefault();
-                event.stopPropagation();
-                onClose();
-                return;
-            }
-
-        };
-
-        document.addEventListener('keydown', handleKeyDown, true);
-        return () => {
-            document.removeEventListener('keydown', handleKeyDown, true);
-        };
-    }, [onClose, visible]);
+    const escapeLayer = useEscapeLayer({
+        enabled: isWeb && visible && Boolean(onClose),
+        priority: ESCAPE_LAYER_PRIORITIES.modal,
+        allowEditableTarget: true,
+        onEscape: () => { onClose?.(); },
+    });
 
     useEffect(() => {
         if (isWeb) return;
@@ -348,13 +335,13 @@ export function BaseModal({
             minHeight: '100%',
             display: 'flex',
             flexDirection: 'column',
-            justifyContent: placement === 'bottom' ? 'flex-end' : webPlacement === 'top' ? 'flex-start' : 'center',
-            alignItems: placement === 'bottom' ? 'stretch' : 'center',
-            paddingTop: webPlacement === 'top' ? Math.max(insets.top, topPlacementGap) : insets.top,
+            justifyContent: placement === 'fullscreen' ? 'flex-start' : placement === 'bottom' ? 'flex-end' : webPlacement === 'top' ? 'flex-start' : 'center',
+            alignItems: placement !== 'center' ? 'stretch' : 'center',
+            paddingTop: placement === 'fullscreen' ? 0 : webPlacement === 'top' ? Math.max(insets.top, topPlacementGap) : insets.top,
             // A bottom sheet reaches the edge; it pads the safe area inside itself.
-            paddingBottom: placement === 'bottom' ? 0 : webPlacement === 'top' ? Math.max(insets.bottom, topPlacementGap) : insets.bottom,
-            paddingLeft: insets.left,
-            paddingRight: insets.right,
+            paddingBottom: placement !== 'center' ? 0 : webPlacement === 'top' ? Math.max(insets.bottom, topPlacementGap) : insets.bottom,
+            paddingLeft: placement === 'fullscreen' ? 0 : insets.left,
+            paddingRight: placement === 'fullscreen' ? 0 : insets.right,
             boxSizing: 'border-box',
         } as unknown as ViewStyle;
 
@@ -372,7 +359,7 @@ export function BaseModal({
             : null;
 
         const webModalNode = (
-            <>
+            <EscapeLayerProvider layer={escapeLayer}>
                 {showBackdrop ? (
                     <Animated.View
                         pointerEvents={modalPointerEvents.nativePointerEvents}
@@ -433,7 +420,6 @@ export function BaseModal({
                                     <OverlayMotionFrame
                                         visible={visible}
                                         kind="modal"
-                                        disableTransformOnWeb
                                         pointerEvents={visible ? 'auto' : 'none'}
                                         style={[
                                             styles.content,
@@ -448,7 +434,7 @@ export function BaseModal({
                                                 interactivePointerEvents.webStyle,
                                             ]}
                                         >
-                                            {children}
+                                            {sheetChildren}
                                         </View>
                                     </OverlayMotionFrame>
                                 </KeyboardAwareModalFrame>
@@ -458,7 +444,7 @@ export function BaseModal({
                     </FocusScope>
                     </DismissableLayer>
                 </DismissableLayerBranch>
-            </>
+            </EscapeLayerProvider>
         );
 
         if (resolvedWebPortalTarget) {
@@ -499,10 +485,10 @@ export function BaseModal({
                         styles.container,
                         placement === 'bottom' ? styles.containerBottom : null,
                         {
-                            paddingTop: insets.top,
-                            paddingRight: insets.right,
-                            paddingBottom: placement === 'bottom' ? 0 : insets.bottom,
-                            paddingLeft: insets.left,
+                            paddingTop: placement === 'fullscreen' ? 0 : insets.top,
+                            paddingRight: placement === 'fullscreen' ? 0 : insets.right,
+                            paddingBottom: placement !== 'center' ? 0 : insets.bottom,
+                            paddingLeft: placement === 'fullscreen' ? 0 : insets.left,
                         },
                     ]}
                     {...webEventHandlers}
@@ -544,7 +530,7 @@ export function BaseModal({
                                         pointerEvents={interactivePointerEvents.nativePointerEvents}
                                         style={[styles.scrollContentInner, interactivePointerEvents.webStyle]}
                                     >
-                                        {children}
+                                        {sheetChildren}
                                     </View>
                                 </ScrollView>
                             ) : (
@@ -553,7 +539,7 @@ export function BaseModal({
                                         pointerEvents={interactivePointerEvents.nativePointerEvents}
                                         style={[styles.scrollContentInner, interactivePointerEvents.webStyle]}
                                     >
-                                        {children}
+                                        {sheetChildren}
                                     </View>
                                 </View>
                             )}

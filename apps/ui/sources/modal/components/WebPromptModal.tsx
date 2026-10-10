@@ -69,7 +69,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     buttonText: {
         fontSize: 17,
-        color: theme.colors.text.link
+        color: theme.colors.text.primary
     },
     cancelText: {
         fontWeight: '400'
@@ -125,6 +125,7 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
             visible={true}
             onClose={handleCancel}
             accessibilityLabel={config.accessibilityLabel ?? config.title}
+            focusReturnRef={config.focusReturnRef}
             closeOnBackdrop={false}
             showBackdrop={showBackdrop}
             zIndexBase={zIndexBase}

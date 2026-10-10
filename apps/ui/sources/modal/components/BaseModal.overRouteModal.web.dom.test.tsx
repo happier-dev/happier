@@ -13,12 +13,23 @@ import { installModalComponentCommonModuleMocks } from './modalComponentTestHelp
 installModalComponentCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        // Keep the actual RNW DOM/ref/autofocus contract at the native host boundary.
+        // The Node test shim replaces package-name RNW requests; its absolute entry stays real.
+        const { getVitestNodeBuiltin } = await import('@/dev/vitestNodeBuiltins');
+        const { createRequire } = getVitestNodeBuiltin<Pick<typeof import('node:module'), 'createRequire'>>('node:module');
+        const nativeWebPath = createRequire(import.meta.url).resolve('react-native-web');
+        const { View, Text, TextInput, Pressable } = await vi.importActual<Pick<
+            typeof import('react-native'), 'View' | 'Text' | 'TextInput' | 'Pressable'
+        >>(nativeWebPath);
         return createReactNativeWebMock({
             Platform: {
                 OS: 'web',
                 select: <T,>(values: { web?: T; default?: T }) => values.web ?? values.default,
             },
-            View: (props: React.HTMLAttributes<HTMLDivElement>) => React.createElement('div', props, props.children),
+            View,
+            Text,
+            TextInput,
+            Pressable,
         });
     },
 });
@@ -43,6 +54,15 @@ vi.mock('react-native-keyboard-controller', () => ({
     ),
 }));
 
+// These owners import react-native: load them after configuring the shared platform boundary.
+const { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } = await import('@/keyboard/escape');
+const { FocusReturnProvider, useFocusReturnFallbackRef } = await import('@/keyboard/focusReturn');
+const { motionTokens } = await import('@/components/ui/motion/motionTokens');
+// Build the real modal graph during collection, outside the default behavioral test budget.
+const { ModalProvider } = await import('../ModalProvider');
+const { Modal } = await import('../ModalManager');
+const { BaseModal } = await import('./BaseModal');
+
 function pressEscape(): void {
     document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', {
         key: 'Escape',
@@ -51,9 +71,176 @@ function pressEscape(): void {
     }));
 }
 
+function UnderlyingOverlay({ onEscape }: { onEscape: () => void }) {
+    useEscapeLayer({
+        priority: ESCAPE_LAYER_PRIORITIES.overlay,
+        allowEditableTarget: true,
+        onEscape,
+    });
+    return null;
+}
+
+function ReturnFallback() {
+    const ref = useFocusReturnFallbackRef<HTMLButtonElement | null>();
+    return <button ref={ref} data-testid="fallback-return">Fallback</button>;
+}
+
 describe('BaseModal over a route modal (web)', () => {
+    it('cancels a provider-hosted autofocus prompt and returns focus to its opener', async () => {
+        const container = document.createElement('div');
+        document.body.append(container);
+        const root = createRoot(container);
+        let result: Promise<string | null> | undefined;
+        try {
+            await act(async () => {
+                root.render(<ModalProvider><button data-testid="prompt-opener">Rename</button></ModalProvider>);
+            });
+            const opener = container.querySelector<HTMLButtonElement>('[data-testid="prompt-opener"]')!;
+            opener.focus();
+            expect(document.activeElement).toBe(opener);
+            await act(async () => {
+                result = Modal.prompt('Rename session', 'Enter a name', { defaultValue: 'Session' });
+            });
+            const input = document.querySelector<HTMLInputElement>('[data-testid="web-prompt-input"]')!;
+            expect(input.value).toBe('Session');
+            expect(document.activeElement).toBe(input);
+
+            await act(async () => { pressEscape(); });
+            await expect(result).resolves.toBeNull();
+            await act(async () => { await Promise.resolve(); });
+            expect(document.querySelector('[aria-modal="true"]')).toBeNull();
+            expect(document.activeElement).toBe(opener);
+        } finally {
+            await act(async () => { root.unmount(); });
+            container.remove();
+        }
+    });
+
+    it.each(['captured', 'explicit', 'empty-ref'] as const)('returns a provider-hosted autofocus modal using its %s target', async (target) => {
+        const container = document.createElement('div');
+        document.body.append(container);
+        const root = createRoot(container);
+        function AutofocusModal() {
+            return <input autoFocus aria-label="Modal entry" />;
+        }
+
+        try {
+            await act(async () => {
+                root.render(<FocusReturnProvider><ModalProvider>
+                    <button data-testid="modal-opener">Open</button>
+                    <button data-testid="explicit-return">Return here</button>
+                    <ReturnFallback />
+                </ModalProvider></FocusReturnProvider>);
+            });
+            const opener = container.querySelector<HTMLButtonElement>('[data-testid="modal-opener"]')!;
+            const explicitTarget = container.querySelector<HTMLButtonElement>('[data-testid="explicit-return"]')!;
+            const fallback = container.querySelector<HTMLButtonElement>('[data-testid="fallback-return"]')!;
+            opener.focus();
+            expect(document.activeElement).toBe(opener);
+
+            await act(async () => {
+                Modal.show({
+                    component: AutofocusModal,
+                    ...(target === 'captured' ? {} : {
+                        focusReturnRef: { current: target === 'explicit' ? explicitTarget : null },
+                    }),
+                });
+            });
+            const entry = document.querySelector<HTMLInputElement>('input[aria-label="Modal entry"]')!;
+            expect(entry.closest('[aria-modal="true"]')!.contains(document.activeElement)).toBe(true);
+
+            await act(async () => { pressEscape(); });
+            await act(async () => { await Promise.resolve(); });
+            expect(document.activeElement).toBe(target === 'captured' ? opener : target === 'explicit' ? explicitTarget : fallback);
+        } finally {
+            await act(async () => { root.unmount(); });
+            container.remove();
+        }
+    });
+
+    it('returns from a nested autofocus modal to its outer opener before returning to the page', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        const container = document.createElement('div');
+        document.body.append(container);
+        const root = createRoot(container);
+        function InnerModal() {
+            return <input autoFocus aria-label="Inner entry" />;
+        }
+        function OuterModal() {
+            return <button data-testid="inner-opener">Open inner</button>;
+        }
+        const onOuterClose = vi.fn();
+
+        try {
+            await act(async () => {
+                root.render(<ModalProvider><button data-testid="page-opener">Open outer</button></ModalProvider>);
+            });
+            const opener = container.querySelector<HTMLButtonElement>('[data-testid="page-opener"]')!;
+            opener.focus();
+            await act(async () => { Modal.show({ component: OuterModal, onRequestClose: onOuterClose }); });
+            const innerOpener = document.querySelector<HTMLButtonElement>('[data-testid="inner-opener"]')!;
+            await act(async () => {
+                innerOpener.focus();
+                Modal.show({ component: InnerModal });
+            });
+            expect(document.querySelector('input[aria-label="Inner entry"]')).not.toBeNull();
+            expect(document.querySelector('[data-testid="inner-opener"]')).toBe(innerOpener);
+            expect(onOuterClose).not.toHaveBeenCalled();
+
+            await act(async () => { pressEscape(); });
+            await act(async () => { await Promise.resolve(); });
+            expect(document.activeElement).toBe(innerOpener);
+            await act(async () => { vi.advanceTimersByTime(motionTokens.overlay.modal.exitMs); });
+            // Radix removes the retired focus scope in its own deferred unmount callback.
+            await act(async () => { vi.runOnlyPendingTimers(); });
+            expect(document.querySelector('input[aria-label="Inner entry"]')).toBeNull();
+            expect(document.querySelector('[data-testid="inner-opener"]')).toBe(innerOpener);
+            expect(onOuterClose).not.toHaveBeenCalled();
+            await act(async () => { pressEscape(); });
+            await act(async () => { await Promise.resolve(); });
+            await act(async () => { vi.advanceTimersByTime(motionTokens.overlay.modal.exitMs); });
+            await act(async () => { vi.runOnlyPendingTimers(); });
+            await act(async () => { await Promise.resolve(); });
+            expect(document.querySelector('[aria-modal="true"]')).toBeNull();
+            expect(document.activeElement).toBe(opener);
+        } finally {
+            await act(async () => { root.unmount(); });
+            container.remove();
+            vi.useRealTimers();
+        }
+    });
+
+    it('dismisses the modal before an underlying shared Escape layer, including from its input', async () => {
+        const onUnderlyingEscape = vi.fn();
+        const onDialogClose = vi.fn();
+        const container = document.createElement('div');
+        document.body.append(container);
+        const root = createRoot(container);
+        const render = (visible: boolean) => <>
+            <UnderlyingOverlay onEscape={onUnderlyingEscape} />
+            <BaseModal visible={visible} onClose={onDialogClose}>
+                <input aria-label="Search" />
+            </BaseModal>
+        </>;
+        try {
+            await act(async () => {
+                root.render(render(true));
+            });
+            document.querySelector<HTMLInputElement>('input[aria-label="Search"]')!.focus();
+            await act(async () => { pressEscape(); });
+            expect(onDialogClose).toHaveBeenCalledTimes(1);
+            expect(onUnderlyingEscape).not.toHaveBeenCalled();
+            await act(async () => { root.render(render(false)); });
+            await act(async () => { pressEscape(); });
+            expect(onUnderlyingEscape).toHaveBeenCalledTimes(1);
+            expect(onDialogClose).toHaveBeenCalledTimes(1);
+        } finally {
+            await act(async () => { root.unmount(); });
+            container.remove();
+        }
+    });
+
     it('owns focus and Escape while it is on top, then hands focus back to the route modal', async () => {
-        const { BaseModal } = await import('./BaseModal');
         const onSettingsOpenChange = vi.fn();
         const onDialogClose = vi.fn();
         const settingsContainer = document.createElement('div');
