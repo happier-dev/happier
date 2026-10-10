@@ -234,13 +234,15 @@ RPC's deadline on the whole composition. Actual loader failures retain Retry,
 and retired mounts or Artifact identities cannot adopt late results. A pending
 load is not evidence of a plugin crash or of an unknown Action outcome.
 
-In 0.3 development source, the selected Artifact lease owner shares both
-in-flight acquisition and completed verified bytes by digest within the captured
-Account lifetime. Inventory refresh, occurrence replacement and surface remount
-recheck admission while reusing those bytes, including when persistent storage
-is unavailable. A changed digest acquires new bytes; failures remain retryable,
-and Account retirement releases the retained file sets. Cached bytes do not
-grant execution or let a contradictory declared file graph pass integrity.
+In 0.3 development source, the selected Artifact lease owner shares in-flight
+acquisition by digest within the captured Account lifetime and removes each
+flight when it settles. Inventory refresh, occurrence replacement and surface
+remount recheck admission and read retained bytes through the existing byte
+custody owner. Evicted bytes, or bytes without persistent custody, are acquired
+again through the canonical source order. Retiring one reader cancels only its
+work; a surviving reader can supply the same digest through its own current
+source. Cached bytes do not grant execution or let a contradictory declared
+file graph pass integrity.
 Surface-only Artifacts are acquired by mounted surfaces; client Action and Voice
 bundles also serve AppShell executable activation. This is source behavior,
 not a claim that an already-loaded client has received the change.
@@ -337,6 +339,7 @@ resource-specific private token.
 
 - Plugin leaves import public SDK entry points and their owning public feature protocol. They do not import host internals or private Protocol validators. SDK `*.public.ts` files and package `exports` maps own the exact public surface; generated reports are never hand-edited.
 - Host services bind the invocation's admitted plugin, generation, scope and authority. Caller identity, selected credentials, Session ownership and machine routing cannot be supplied as renderer or Action input.
+- In 0.3 development, daemon Action handlers receive `PluginInvocationContext.invocationId`, the existing host correlation identity. An approved operation uses its durable approval-request Artifact ID across replay; fresh independent Actions receive distinct identities. Other callback kinds may omit it. Plugins can forward it as an external idempotency key, but it grants no authority and does not change approval replay eligibility or ambiguous-effect recovery.
 - A feature Action may accept an admitted source address for selection while deriving caller provenance from the host invocation. Triage's configured-source Actions allow authenticated host agent/MCP/CLI discovery and administration through that owner; a nested plugin call remains scoped to its own admitted source even if it claims a host origin surface.
 - Actions own request/response and effects; Resources own reads and invalidation; Events carry facts. Keep their different cancellation and lifecycle semantics. [Actions](actions.md) owns invocation surfaces, placement and confirmation rules.
 - The [runtime core](runtime-core.md) owns Session/turn admission and transcript/lifecycle state. [Providers](providers.md) owns model sources, connections and materialization. SDK projections do not transfer those domains to plugins.
