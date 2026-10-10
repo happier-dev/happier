@@ -48,7 +48,8 @@ export function applyRemoteHostCatalogSnapshot(scope: ServerAccountScope, catalo
         catalog = { ...catalog, hosts: data };
     }
     if (previous && JSON.stringify(previous.catalog) === JSON.stringify(catalog)) catalog = previous.catalog;
-    publish({ scope, catalog, data, stale: catalog.status !== 'ready' || catalog.cleanup === 'pending' });
+    // Historical cleanup has its own status; it does not retire an admitted destination.
+    publish({ scope, catalog, data, stale: catalog.status !== 'ready' });
 }
 export function invalidateRemoteHostCatalog(scope: ServerAccountScope): void { beginRemoteHostCatalogLoad(scope); }
 export function invalidateRemoteHostCatalogsForServer(serverId: string): void {

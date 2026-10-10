@@ -20,7 +20,7 @@ describe('scoped Remote host publication', () => {
         owner.applyRemoteHostCatalogSnapshot({ serverId: 'other', accountId: 'account' }, ready, true);
         expect(owner.getRemoteHostCatalogSnapshot(scope)).toBe(restored);
         owner.applyRemoteHostCatalogSnapshot(scope, { ...ready, cleanup: 'pending' }, true);
-        expect(owner.getRemoteHostCatalogSnapshot(scope)?.stale).toBe(true);
+        expect(owner.getRemoteHostCatalogSnapshot(scope)).toMatchObject({ stale: false, catalog: { cleanup: 'pending' } });
         owner.applyRemoteHostCatalogSnapshot(scope, { status: 'unavailable', reason: 'unreachable' }, true);
         expect(owner.getRemoteHostCatalogSnapshot(scope)?.data).toBe(initial.data);
         owner.applyRemoteHostCatalogSnapshot(scope, { status: 'unavailable', reason: 'unsupported' }, true);
