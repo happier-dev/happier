@@ -32,6 +32,7 @@ function manifest() {
             }],
         },
         contributes: {
+            projectNativeAdapters: [{ id: 'pixi', files: ['pixi.toml'], roles: ['resolveCommand', 'produceEnvironment'] }],
             backgroundServices: [{ id: 'account-supervisor' }],
             notificationChannels: [{
                 id: 'account-notifier',
@@ -112,6 +113,10 @@ describe('resolveManifestHostAccessRequests', () => {
         const pluginManifest = manifest();
 
         for (const contribution of [
+            {
+                id: 'pixi',
+                qualifiedId: 'acme.accounts/projectNativeAdapters/pixi',
+            },
             {
                 id: 'account-supervisor',
                 qualifiedId: 'acme.accounts/backgroundServices/account-supervisor',

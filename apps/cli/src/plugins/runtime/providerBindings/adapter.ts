@@ -6,6 +6,7 @@ import { ProviderCredentialTransportV1Schema } from '@happier-dev/protocol/provi
 import { ProviderWireProtocolSchema } from '@happier-dev/protocol/providers/capabilities/v1';
 import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderContributionKeySchema, ProviderLocalIdSchema } from '@happier-dev/protocol/providers/ids';
 import { ProviderEndpointUrlSyntaxSchema } from '@happier-dev/protocol/providers/endpoint-url';
+import { ProviderClaudeHelperModelsV1Schema } from '@happier-dev/protocol/providers/connections/v1';
 import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
 import type { AgentProviderBindingMaterializationV1, AgentProviderRequirementsV1 } from '@happier-dev/protocol';
 import type {
@@ -25,6 +26,8 @@ const ProviderBindingKeySchema = z.string().trim().min(1).max(512);
 const PrepareInputBaseSchema = z.object({
     v: z.literal(1),
     agentTargetKey: ProviderAgentTargetKeySchema,
+    model: ProviderModelDescriptorV1Schema.optional(),
+    claudeHelperModels: ProviderClaudeHelperModelsV1Schema.optional(),
     reservedBindingCandidate: z.object({
         contributionKey: ProviderContributionKeySchema,
         endpointTemplateId: ProviderLocalIdSchema,
@@ -65,6 +68,7 @@ const ResolvedFactsSchema = z.object({
         publicHeaders: z.record(z.string(), z.string()),
     }).strict(),
     runtimeCredentialTransport: ProviderCredentialTransportV1Schema.nullable(),
+    claudeHelperModels: ProviderClaudeHelperModelsV1Schema.optional(),
     compatibilityFingerprint: z.string().min(1).max(512),
 }).strict();
 
@@ -87,12 +91,18 @@ function normalizedEnvName(value: string): string {
 
 function assertExactOwnedEnvKeys(
     materialization: AgentProviderBindingMaterializationV1,
-    ownedEnvKeys: readonly string[],
+    authIsolation: AgentProviderRequirementsV1['authIsolation'],
 ): void {
-    const expected = [...ownedEnvKeys].map(normalizedEnvName).sort();
-    const actual = materialization.env.map((entry) => normalizedEnvName(entry.name)).sort();
-    if (new Set(expected).size !== expected.length || JSON.stringify(actual) !== JSON.stringify(expected)) {
-        throw new Error('Agent provider binding materialization must cover the exact static owned environment key set');
+    const required = authIsolation.ownedEnvKeys.map(normalizedEnvName);
+    const optional = (authIsolation.optionalOwnedEnvKeys ?? []).map(normalizedEnvName);
+    const declared = new Set([...required, ...optional]);
+    const actual = materialization.env.map((entry) => normalizedEnvName(entry.name));
+    const emitted = new Set(actual);
+    if (declared.size !== required.length + optional.length
+        || emitted.size !== actual.length
+        || required.some((key) => !emitted.has(key))
+        || actual.some((key) => !declared.has(key))) {
+        throw new Error('Agent provider binding materialization must cover required owned environment keys and only declared optional keys');
     }
 }
 
@@ -288,7 +298,7 @@ export async function materializeCapturedAgentProviderBinding(params: Readonly<{
         || materialization.kind !== resolved.support.materialization) {
         throw new Error('Agent provider binding adapter returned the wrong materialization kind');
     }
-    assertExactOwnedEnvKeys(materialization, resolved.support.authIsolation.ownedEnvKeys);
+    assertExactOwnedEnvKeys(materialization, resolved.support.authIsolation);
     assertSecretFreeConfigAndFiles(materialization, credential);
     return materialization;
 }

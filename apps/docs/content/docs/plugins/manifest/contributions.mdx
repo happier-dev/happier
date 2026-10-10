@@ -82,8 +82,25 @@ reusable primitive or semantic inputs for Action forms, Workflow inputs and
 widgets. Each plugin-local descriptor has a `title`, `semantic` identity and
 self-contained `valueSchema`; it can reference a declared options Resource and
 an existing picker in `ui.renderers`. Fields refer to the type through its
-qualified `{ pluginId, localId }` identity. The type owns its choices, so do not
-also declare field-level static options or a competing options source.
+qualified `{ pluginId, localId }` identity. Typed fields currently reject
+field-level static choices, and contributed typed fields cannot declare a
+different `optionsSourceId` from their type source. Broader authored constraints
+are not yet supported across executable consumers. Workflow inputs retain their
+existing exclusion between a type and an explicit source or enum, and public
+plugin Action hints retain their narrower source grammar. Choice discovery
+still requires the admitted consuming descriptor and its existing grants.
+
+For personal usage in **0.3 development authoring**, a field can instead declare
+`inputType: { hostType: 'usageQuery' }`. This is a host semantic reference, not a
+plugin contribution or a read grant. The generic picker validates the same query
+that headless callers send to `usage.query` in `{ queries: [query] }`. Each query
+retains its own resolved period, filters, cost basis and presentation; identical
+resolved queries share a keyed snapshot slice. Available accounting remains
+readable while other sources are pending. `usage.export` returns only explicitly
+selected accounting sections as JSON, CSV or text file bytes. Its `asOfMs` is the
+source timestamp, or `null` when freshness is unknown; saving or sharing
+those bytes is a separate explicit client operation. See the generated
+[host Actions](/plugins/api/host-actions) for the exact Action projection.
 
 `connectedAccountOptions: true` is a separate marker for a `select` field, not
 an `inputType`. Do not combine it with static options, `optionsSourceId` or

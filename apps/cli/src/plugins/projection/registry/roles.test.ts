@@ -27,7 +27,7 @@ function loaded(pluginId: string): LoadedPlugin {
         daemonEntryPath: null, devDaemonEntryPath: null,
         sourceSpec: { kind: 'path', locator: root, trustPolicy: 'local_trusted', installPolicy: 'link' },
         manifest: normalizePluginManifestV2({
-            schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Roles',
+            schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: { key: 'plugin.name', fallback: 'Roles' },
             runtime: { apiVersion: 1 }, contributes: { roles: [role, { ...role, id: 'disabled', enabled: false }] },
         }),
     };
@@ -68,6 +68,7 @@ describe('plugin roles through the canonical projection', () => {
         });
         const projection = buildPluginProjectionV2({ registry, generation: 1 });
         expect(PluginProjectionV2Schema.safeParse(projection).success).toBe(true);
+        expect(projection.installedPackagesById['com.acme.security']?.displayName).toBe('Roles');
         expect(projection.familiesById.roles?.entriesById['com.acme.security/reviewer']).toMatchObject({
             pluginId: 'com.acme.security', definition: role,
         });
@@ -78,6 +79,7 @@ describe('plugin roles through the canonical projection', () => {
             'plugin:com.acme.security/disabled', 'plugin:com.acme.security/reviewer',
         ]);
         expect(pluginEntries.every((entry) => entry.viewOnly)).toBe(true);
+        expect(pluginEntries.every((entry) => entry.pluginDisplayName === 'Roles')).toBe(true);
         const roleId = 'plugin:com.acme.security/reviewer';
         expect(resolveRoleSelectionV1({ roleId, pluginRoles: readPluginRoleSources(registry), settingsOverrides: {
             [roleId]: { roleId, instructionsOverride: 'Account review instructions.', engine: { agentTargetKey: 'agent:claude' } },

@@ -18,6 +18,7 @@ import {
     measurePluginCollectionCandidatePreparationStageRequestEncodedBytesV1,
     resolvePluginCollectionMigrationChainV1,
     PluginUiArtifactDigestV1Schema,
+    normalizePluginAccountCollectionContractsV1,
     type NormalizedPluginAccountCollectionContractV1,
     type PluginCollectionCandidatePreparationBindingV1,
     type PluginCollectionCandidatePreparationRetireResultV1,
@@ -28,6 +29,8 @@ import {
     type PluginCollectionQuotaDimensionV1,
 } from "@happier-dev/protocol";
 import { z } from "zod";
+import semver from "semver";
+import { createReleaseLessDeclarationV1, readCurrentReleaseLessDeclarationV1, type ReleaseLessDeclarationV1 } from "@/app/plugins/availability/currentDeclaration";
 
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
@@ -452,6 +455,7 @@ async function resolveCandidatePreparationBindingInTx(input: Readonly<{
             offlineUiHosting: true,
             writableCollections: true,
             revision: true,
+            releaseLessDeclaration: true,
         },
     });
     if (!intent) {
@@ -469,7 +473,6 @@ async function resolveCandidatePreparationBindingInTx(input: Readonly<{
     });
     if (
         !currentIntent.success
-        || currentIntent.data.desiredVersion === null
         || !currentIntent.data.writableCollections.some((ref) => refsMatch(ref, input.binding.source))
     ) {
         throw new PluginCollectionCandidatePreparationOperationError(
@@ -477,47 +480,62 @@ async function resolveCandidatePreparationBindingInTx(input: Readonly<{
         );
     }
 
-    const [sourceRelease, targetRelease] = await Promise.all([
-        input.tx.accountPluginRelease.findUnique({
-            where: {
-                accountId_pluginId_version: {
-                    accountId: input.accountId,
-                    pluginId: input.binding.source.pluginId,
-                    version: currentIntent.data.desiredVersion,
+    const releaseLessManifest = input.binding.candidate.releaseLessManifest;
+    if (releaseLessManifest) {
+        const declaration = createReleaseLessDeclarationV1(releaseLessManifest);
+        const incumbent = readCurrentReleaseLessDeclarationV1(intent, intent.pluginId);
+        const targets = normalizePluginAccountCollectionContractsV1({
+            pluginId: releaseLessManifest.id,
+            contributions: releaseLessManifest.contributes.accountCollections,
+        });
+        if (
+            currentIntent.data.desiredVersion !== null
+            || releaseLessManifest.id !== input.binding.target.pluginId
+            || releaseLessManifest.version !== input.binding.candidate.releaseVersion
+            || declaration.manifestDigestSha256 !== input.binding.candidate.artifactDigest
+            || (incumbent !== null && semver.lt(releaseLessManifest.version, incumbent.manifest.version))
+            || input.binding.target.schemaVersion <= input.binding.source.schemaVersion
+            || !targets.some((ref) => refsMatch(ref, input.binding.target))
+        ) {
+            throw new PluginCollectionCandidatePreparationOperationError("collection_candidate_preparation_contract_mismatch");
+        }
+    } else {
+        const [sourceRelease, targetRelease] = await Promise.all([
+            currentIntent.data.desiredVersion === null ? null : input.tx.accountPluginRelease.findUnique({
+                where: {
+                    accountId_pluginId_version: {
+                        accountId: input.accountId,
+                        pluginId: input.binding.source.pluginId,
+                        version: currentIntent.data.desiredVersion,
+                    },
                 },
-            },
-            select: { pluginId: true, version: true, collectionContracts: true },
-        }),
-        input.tx.accountPluginRelease.findUnique({
-            where: {
-                accountId_pluginId_version: {
-                    accountId: input.accountId,
-                    pluginId: input.binding.target.pluginId,
-                    version: input.binding.candidate.releaseVersion,
+                select: { pluginId: true, version: true, collectionContracts: true },
+            }),
+            input.tx.accountPluginRelease.findUnique({
+                where: {
+                    accountId_pluginId_version: {
+                        accountId: input.accountId,
+                        pluginId: input.binding.target.pluginId,
+                        version: input.binding.candidate.releaseVersion,
+                    },
                 },
-            },
-            select: { pluginId: true, version: true, collectionContracts: true },
-        }),
-    ]);
-    if (
-        !sourceRelease
-        || sourceRelease.pluginId !== input.binding.source.pluginId
-        || sourceRelease.version !== currentIntent.data.desiredVersion
-        || !parseReleaseContracts(sourceRelease.collectionContracts).some((ref) => refsMatch(ref, input.binding.source))
-    ) {
-        throw new PluginCollectionCandidatePreparationOperationError(
-            "collection_candidate_preparation_contract_mismatch",
-        );
-    }
-    if (
-        !targetRelease
-        || targetRelease.pluginId !== input.binding.target.pluginId
-        || targetRelease.version !== input.binding.candidate.releaseVersion
-        || !parseReleaseContracts(targetRelease.collectionContracts).some((ref) => refsMatch(ref, input.binding.target))
-    ) {
-        throw new PluginCollectionCandidatePreparationOperationError(
-            "collection_candidate_preparation_contract_mismatch",
-        );
+                select: { pluginId: true, version: true, collectionContracts: true },
+            }),
+        ]);
+        if (
+            (currentIntent.data.desiredVersion !== null && (
+                !sourceRelease
+                || sourceRelease.pluginId !== input.binding.source.pluginId
+                || sourceRelease.version !== currentIntent.data.desiredVersion
+                || !parseReleaseContracts(sourceRelease.collectionContracts).some((ref) => refsMatch(ref, input.binding.source))
+            ))
+            || !targetRelease
+            || targetRelease.pluginId !== input.binding.target.pluginId
+            || targetRelease.version !== input.binding.candidate.releaseVersion
+            || !parseReleaseContracts(targetRelease.collectionContracts).some((ref) => refsMatch(ref, input.binding.target))
+        ) {
+            throw new PluginCollectionCandidatePreparationOperationError("collection_candidate_preparation_contract_mismatch");
+        }
     }
 
     const [source, target] = await Promise.all([
@@ -1108,10 +1126,11 @@ export async function promotePluginCollectionCandidatePreparationInTx(input: Rea
     pluginId: string;
     currentIntent: CandidatePromotionCurrentIntent | null;
     targetReleaseVersion: string | null;
+    targetReleaseLessDeclaration?: ReleaseLessDeclarationV1 | null;
     targetContracts: readonly PluginCollectionContractRefV1[];
 }>): Promise<void> {
-    if (!input.currentIntent || input.targetReleaseVersion === null) return;
-    const targetReleaseVersion = input.targetReleaseVersion;
+    const targetReleaseVersion = input.targetReleaseVersion ?? input.targetReleaseLessDeclaration?.manifest.version;
+    if (!input.currentIntent || targetReleaseVersion === undefined) return;
     const currentIntent = promotionIntent(input.currentIntent);
     if (currentIntent.pluginId !== input.pluginId) promotionNotReady();
     const targetCollectionIdentities = new Set(input.targetContracts.map((ref) => (
@@ -1125,10 +1144,6 @@ export async function promotePluginCollectionCandidatePreparationInTx(input: Rea
         // Collection, even when it currently has no live rows to promote.
         promotionNotReady();
     }
-    // A release-less (daemon-claimed) source has no candidate stages: staging
-    // binds release versions. The writable-contract readiness gate that
-    // follows admits the release only when live rows already match it.
-    if (currentIntent.desiredVersion === null) return;
     const fence = await acquireAccountEncryptionTransitionFenceInTx(input.tx, input.accountId);
     if (fence.status !== "ready") promotionNotReady();
 
@@ -1257,6 +1272,9 @@ export async function promotePluginCollectionCandidatePreparationInTx(input: Rea
                     targetContractId: target.id,
                     candidateReleaseVersion: targetReleaseVersion,
                 }),
+                ...(input.targetReleaseLessDeclaration ? {
+                    candidateArtifactDigest: input.targetReleaseLessDeclaration.manifestDigestSha256,
+                } : {}),
             },
             _count: { _all: true },
             having: { candidateIdentity: { _count: { equals: liveRowCount } } },

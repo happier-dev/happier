@@ -5,9 +5,6 @@ import type { PluginSourceSpecV1, PluginUpdatePolicyV1 } from '@happier-dev/prot
 import { pluginCompatibilityProjectionEqualV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import { readMarketplaceRegistryProfileRequirementV1 } from '@happier-dev/protocol/marketplace/marketplaceIndexV1';
 
-import {
-  DEFAULT_PORTABLE_ARCHIVE_LIMITS,
-} from '@/plugins/distribution/archive';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import { resolveAndDownloadNpmArtifact } from '@/plugins/distribution/npm/adapter';
 import {
@@ -429,7 +426,6 @@ export function createDaemonNpmPluginChangePreparer(params: Readonly<{
             selector: access.request.selector.value,
           },
           destinationPath: join(operationRootPath, 'candidate.tgz'),
-          artifactMaxBytes: DEFAULT_PORTABLE_ARCHIVE_LIMITS.maxExpandedBytes,
           ...(authorityNeutralUpdateCandidate ? { requireCompatibleProjection: true } : {}),
           client,
         });

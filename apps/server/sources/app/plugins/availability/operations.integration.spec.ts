@@ -1,11 +1,17 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { join } from "node:path";
+import axios from "axios";
 
 import {
     ARTIFACT_PLAIN_DATA_KEY_MARKER,
     encodePlainArtifactStoredContent,
     PluginAvailabilityActionHttpPathsV1,
+    PluginAvailabilityIntentsListActionOutputV1Schema,
     PluginAccountCollectionContributionV1Schema,
     PluginAvailabilityReleaseReadActionOutputV1Schema,
+    PluginAvailabilityMaterializationsReportActionInputV1Schema,
+    type PluginAvailabilityMaterializationsReportActionOutputV1,
+    type FeaturesResponse,
     normalizePluginAccountCollectionContractsV1,
 } from "@happier-dev/protocol";
 import {
@@ -405,6 +411,67 @@ describe("plugin Availability operations", () => {
             },
         });
     }
+
+    it('lists canonical intent projections including hosted archives, machine-only plugins and deleted known intents', async () => {
+        await seedAccountAndMachine();
+        const service = operations();
+        const fixture = createHostedReleaseFixture({ version: RELEASE.version, ordinal: 1 });
+        await publishHostedRelease(service, fixture);
+        await selectHostedRelease(service, fixture, null);
+        await hostReleaseArchives(service, fixture);
+        const machineOnlyPluginId = 'com.acme.machine-only';
+        const removedPluginId = 'com.acme.removed';
+        const invalidPluginId = 'com.acme.invalid';
+        // A malformed stored intent must not prevent healthy declarations from hydrating.
+        await db.accountPluginIntent.create({ data: { accountId: ACCOUNT_ID, pluginId: invalidPluginId,
+            desiredVersion: null, enabled: false, offlineUiHosting: 'disabled', writableCollections: {} } });
+        await service.reportMaterializations({ accountId: ACCOUNT_ID, publisherMachineId: MACHINE_ID,
+            input: { expectedRevision: null, snapshot: {
+                serverIdentityId: SERVER_IDENTITY_ID, machineId: MACHINE_ID,
+                materializations: [{
+                    serverIdentityId: SERVER_IDENTITY_ID, machineId: MACHINE_ID,
+                    materializationId: 'machine-only-install', pluginId: machineOnlyPluginId,
+                    version: RELEASE.version, sourceClass: 'localPath', portableRelease: false,
+                    uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: 1,
+                }],
+            } } });
+
+        const listed = await service.listIntentIds({ accountId: ACCOUNT_ID,
+            input: { knownPluginIds: [machineOnlyPluginId, removedPluginId, removedPluginId] } });
+        expect(listed.pluginIds).toEqual([PLUGIN_ID, invalidPluginId].sort());
+        expect(listed.failedPluginIds).toEqual([invalidPluginId]);
+        expect(listed.intentReads).toEqual(await Promise.all([PLUGIN_ID, machineOnlyPluginId, removedPluginId]
+            .sort().map(async pluginId => ({ pluginId,
+                response: await service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId } }),
+            }))));
+        expect(listed.intentReads.find(entry => entry.pluginId === PLUGIN_ID)?.response).toMatchObject({
+            release: fixture.facts,
+            uiArtifacts: [expect.objectContaining({ accountArtifactId: fixture.uiArtifactId })],
+            packageAssets: [expect.objectContaining({ artifactId: fixture.packageArtifactId })],
+        });
+        expect(listed.intentReads.find(entry => entry.pluginId === removedPluginId)?.response.intent).toBeNull();
+        // Exercise Fastify's real route and its default operations owner, not
+        // the operation stub used by the separate route admission unit tests.
+        await withAuthenticatedTestApp(registerPluginAvailabilityRoutes, async app => {
+            const response = await app.inject({
+                method: 'POST',
+                url: PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'],
+                headers: { 'x-test-user-id': ACCOUNT_ID },
+                payload: { knownPluginIds: [machineOnlyPluginId, removedPluginId] },
+            });
+            expect(response.statusCode, response.body).toBe(200);
+            const overHttp = PluginAvailabilityIntentsListActionOutputV1Schema.parse(response.json());
+            expect(overHttp.pluginIds).toEqual(listed.pluginIds);
+            expect(overHttp.failedPluginIds).toEqual(listed.failedPluginIds);
+            expect(overHttp.intentReads.map(entry => entry.pluginId)).toEqual(listed.intentReads.map(entry => entry.pluginId));
+            expect(overHttp.intentReads.find(entry => entry.pluginId === PLUGIN_ID)?.response).toMatchObject({
+                release: fixture.facts,
+                uiArtifacts: [expect.objectContaining({ accountArtifactId: fixture.uiArtifactId })],
+                packageAssets: [expect.objectContaining({ artifactId: fixture.packageArtifactId })],
+            });
+            expect(overHttp.intentReads.find(entry => entry.pluginId === removedPluginId)?.response.intent).toBeNull();
+        });
+    });
 
     it('reads the complete Account transition inventory without exposing retained plugin archives to ordinary APIs', async () => {
         await seedAccountAndMachine();
@@ -1218,6 +1285,11 @@ describe("plugin Availability operations", () => {
             expect(discovery).toEqual({
                 availabilityCursor: account.seq,
                 pluginIds: [DISABLED_PLUGIN_ID, PLUGIN_ID, "com.acme.unselected"],
+                intentReads: await Promise.all([DISABLED_PLUGIN_ID, PLUGIN_ID, "com.acme.unselected"].map(async (pluginId) => ({
+                    pluginId,
+                    response: await service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId } }),
+                }))),
+                failedPluginIds: [],
             });
             expect(materializations.snapshots).toEqual([]);
         },
@@ -1854,25 +1926,33 @@ describe("plugin Availability operations", () => {
         });
     });
 
-    it("fails closed instead of paginating when selected Account intent discovery exceeds its bounded response", async () => {
+    it("pages every Account intent and caller-known deletion beyond the former total and byte limits", async () => {
         await seedAccountAndMachine();
+        const ids = Array.from({ length: 401 }, (_, index) =>
+            `com.acme.${'x'.repeat(170)}-${String(index).padStart(3, '0')}`);
         await db.accountPluginIntent.createMany({
-            data: Array.from({ length: 201 }, (_, index) => ({
+            data: ids.map(pluginId => ({
                 accountId: ACCOUNT_ID,
-                pluginId: `com.acme.intent-limit-${String(index).padStart(3, "0")}`,
-                desiredVersion: "1.2.3",
+                pluginId,
+                desiredVersion: null,
                 enabled: false,
                 offlineUiHosting: "disabled",
                 writableCollections: [],
             })),
         });
 
-        await expect(operations().listIntentIds({
-            accountId: ACCOUNT_ID,
-            input: {},
-        })).rejects.toMatchObject({
-            code: "plugin_availability_intent_discovery_limit_exceeded",
-        });
+        const service = operations();
+        const deletedIds = ['com.acme.aa-deleted', `${ids[200]}-deleted`, 'com.acme.zz-deleted'];
+        const reads: string[] = [];
+        let cursor: string | null = null;
+        do {
+            const page = await service.listIntentIds({ accountId: ACCOUNT_ID,
+                input: { knownPluginIds: [...deletedIds, ids[200]!], ...(cursor ? { cursor } : {}) } });
+            expect(page.failedPluginIds).toEqual([]);
+            reads.push(...page.intentReads.map(entry => entry.pluginId));
+            cursor = page.nextCursor ?? null;
+        } while (cursor);
+        expect(reads).toEqual([...ids, ...deletedIds].sort());
     });
 
     it("replaces only a newer complete machine inventory and retains the high-watermark for an accepted empty snapshot", async () => {
@@ -1936,6 +2016,97 @@ describe("plugin Availability operations", () => {
             select: { pluginMaterializationRevision: true },
         })).resolves.toEqual({ pluginMaterializationRevision: BigInt(2) });
         await expect(db.pluginMachineMaterialization.count({ where: { accountId: ACCOUNT_ID } })).resolves.toBe(0);
+    });
+
+    it("rejoins descriptor-bearing reports from fresh reporter lifetimes without revising installation facts", async () => {
+        await seedAccountAndMachine();
+        const cliHome = join(harness.baseDir, "reporter-home");
+        process.env.HAPPIER_HOME_DIR = cliHome;
+        process.env.HAPPIER_SERVER_URL = "http://127.0.0.1:1";
+        const { configuration } = await vi.importActual<{ configuration: { happyHomeDir: string } }>("../../../../../cli/src/configuration");
+        expect(configuration.happyHomeDir).toBe(cliHome);
+        // Each lifetime starts without an acknowledged CAS token. Descriptors
+        // remain live daemon facts and never round-trip through server storage.
+        const freshReport = (enabled = true) => ({
+            serverIdentityId: SERVER_IDENTITY_ID,
+            machineId: MACHINE_ID,
+            materializations: [{
+                serverIdentityId: SERVER_IDENTITY_ID,
+                machineId: MACHINE_ID,
+                materializationId: "daemon-selected:fixture",
+                pluginId: PLUGIN_ID,
+                version: RELEASE.version,
+                sourceClass: "localPath" as const,
+                portableRelease: false,
+                declaredManifest: releaseFacts().normalizedManifest,
+                declaredUiEntries: {},
+                uiArtifacts: [],
+                enabled,
+                trustState: "trusted" as const,
+                observedAt: 1_700_000_000_000,
+            }],
+        });
+        const report = (expectedRevision: number | null, enabled = true) => operations().reportMaterializations({
+            accountId: ACCOUNT_ID,
+            publisherMachineId: MACHINE_ID,
+            input: { expectedRevision, snapshot: freshReport(enabled) },
+        });
+        const outcomes: PluginAvailabilityMaterializationsReportActionOutputV1[] = [];
+        const originalAdapter = axios.defaults.adapter;
+        const inventory = (enabled = true) => ({ revision: 1, releasePublications: [], materializations: freshReport(enabled).materializations });
+        // Nearest-project Vitest resolution loads the real CLI source. This
+        // test-only exercised boundary avoids applying Server TS aliases to CLI.
+        const { createDaemonPluginAvailabilityReporter } = await vi.importActual<{
+            createDaemonPluginAvailabilityReporter: (params: Readonly<{
+                credentials: { token: string; encryption: null };
+                serverFeaturesSnapshotStore: { getSnapshot: () => { status: "ready"; features: FeaturesResponse } };
+                getMachineId: () => string;
+            }>) => Readonly<{ report: (input: ReturnType<typeof inventory>) => Promise<void> }>;
+        }>("../../../../../cli/src/plugins/availability/daemonReporter");
+        const freshReporter = () => createDaemonPluginAvailabilityReporter({
+            credentials: { token: "disposable-test-account", encryption: null },
+            serverFeaturesSnapshotStore: { getSnapshot: () => ({
+                status: "ready",
+                // This transport fixture supplies only the identity the real
+                // reporter reads; it is not a feature/domain implementation.
+                features: { capabilities: { serverIdentity: { serverIdentityId: SERVER_IDENTITY_ID } } } as unknown as FeaturesResponse,
+            }) },
+            getMachineId: () => MACHINE_ID,
+        });
+        // Only HTTP is substituted: real CLI reporter/publisher, Protocol
+        // admission, server reconciliation and disposable SQLite remain live.
+        axios.defaults.adapter = async (config) => {
+            expect(config.url).toContain(PluginAvailabilityActionHttpPathsV1["account.plugins.availability.materializations.report"]);
+            const input = PluginAvailabilityMaterializationsReportActionInputV1Schema.parse(JSON.parse(config.data));
+            const result = await operations().reportMaterializations({ accountId: ACCOUNT_ID, publisherMachineId: MACHINE_ID, input });
+            outcomes.push(result);
+            return { data: result, status: 200, statusText: "OK", headers: {}, config };
+        };
+        try {
+            await freshReporter().report(inventory());
+            expect(outcomes).toEqual([{ outcome: "replaced", revision: 1 }]);
+            const before = await db.accountChange.findMany({ where: { accountId: ACCOUNT_ID } });
+            await freshReporter().report(inventory());
+            expect(outcomes).toEqual([{ outcome: "replaced", revision: 1 }, { outcome: "rejoined", revision: 1 }]);
+            await expect(db.accountChange.findMany({ where: { accountId: ACCOUNT_ID } })).resolves.toEqual(before);
+            await freshReporter().report(inventory(false));
+            expect(outcomes.slice(2)).toEqual([{ outcome: "conflict", revision: 1 }, { outcome: "replaced", revision: 2 }]);
+        } finally {
+            axios.defaults.adapter = originalAdapter;
+        }
+        // Descriptor-bearing input from an earlier reporter remains accepted,
+        // and is compared only against facts the server actually persists.
+        await expect(report(null, false)).resolves.toEqual({ outcome: "rejoined", revision: 2 });
+        await expect(db.machine.findUnique({ where: { id: MACHINE_ID }, select: { pluginMaterializationRevision: true } }))
+            .resolves.toEqual({ pluginMaterializationRevision: BigInt(2) });
+        const read = await operations().readMaterializations({ accountId: ACCOUNT_ID, input: {} });
+        expect(read.snapshots[0]?.materializations[0]).not.toHaveProperty("declaredManifest");
+        expect(read.snapshots[0]?.materializations[0]).not.toHaveProperty("declaredUiEntries");
+        await expect(db.pluginMachineMaterialization.findFirst({
+            where: { accountId: ACCOUNT_ID, machineId: MACHINE_ID }, select: { enabled: true },
+        })).resolves.toEqual({ enabled: false });
+        await expect(db.accountChange.findMany({ where: { accountId: ACCOUNT_ID }, select: { cursor: true } }))
+            .resolves.toEqual([{ cursor: 2 }]);
     });
 
     it("lets a current full-body report replace an unreadable refreshable projection without weakening CAS", async () => {
@@ -2093,6 +2264,7 @@ describe("plugin Availability operations", () => {
             accountId: ACCOUNT_ID,
             input: {},
         });
+        expect(result).toHaveProperty("inventoryComplete", false);
         expect(result.snapshots.map((snapshot) => ({
             machineId: snapshot.machineId,
             pluginIds: snapshot.materializations.map((row) => row.pluginId),
@@ -2769,6 +2941,7 @@ describe("plugin Availability operations", () => {
         });
         const read = await service.readMaterializations({ accountId: ACCOUNT_ID, input: {} });
         expect(read).toMatchObject({
+            releases: [expect.objectContaining({ ref: RELEASE, archiveDigestSha256: facts.archiveDigestSha256 })],
             snapshots: [expect.objectContaining({
                 materializations: [expect.objectContaining({
                     materializationId: materialization.materializationId,

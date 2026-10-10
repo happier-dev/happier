@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdir, open, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import type { Readable } from 'node:stream';
+import { addAbortSignal, type Readable } from 'node:stream';
 import { finished } from 'node:stream/promises';
 import { once } from 'node:events';
 
@@ -10,7 +10,7 @@ import { verifyNpmRegistrySignatures } from './signatures';
 import type { DownloadedNpmArtifactCandidate, NpmRegistrySigningKey, ResolvedNpmArtifact } from './types';
 
 export type NpmArtifactBodyClient = Readonly<{
-  getBody(input: Readonly<{ url: string; maxBytes: number; headers: Readonly<Record<string, string>>; deadlineAtMonotonicMs?: number }>): Promise<Readonly<{
+  getBody(input: Readonly<{ url: string; maxBytes?: number | null; headers: Readonly<Record<string, string>>; deadlineAtMonotonicMs?: number; signal?: AbortSignal }>): Promise<Readonly<{
     body: Readable;
     contentLength?: number;
   }>>;
@@ -19,19 +19,23 @@ export type NpmArtifactBodyClient = Readonly<{
 export async function downloadResolvedNpmArtifact(params: Readonly<{
   resolved: ResolvedNpmArtifact;
   destinationPath: string;
-  maxBytes: number;
+  maxBytes?: number | null;
   client: NpmArtifactBodyClient;
   registryKeys?: readonly NpmRegistrySigningKey[];
   deadlineAtMonotonicMs?: number;
+  signal?: AbortSignal;
 }>): Promise<DownloadedNpmArtifactCandidate> {
-  if (!Number.isSafeInteger(params.maxBytes) || params.maxBytes < 1) throw new Error('Invalid npm artifact size limit');
+  if (params.maxBytes != null && (!Number.isSafeInteger(params.maxBytes) || params.maxBytes < 1)) throw new Error('Invalid npm artifact size limit');
+  params.signal?.throwIfAborted();
   const response = await params.client.getBody({
     url: params.resolved.tarballUrl,
     maxBytes: params.maxBytes,
     headers: { accept: 'application/octet-stream' },
     deadlineAtMonotonicMs: params.deadlineAtMonotonicMs,
+    signal: params.signal,
   });
-  if (response.contentLength !== undefined && response.contentLength > params.maxBytes) {
+  if (params.signal) addAbortSignal(params.signal, response.body);
+  if (params.maxBytes != null && response.contentLength !== undefined && response.contentLength > params.maxBytes) {
     response.body.destroy();
     throw new Error(`Npm artifact exceeds the configured size limit (${params.maxBytes} bytes)`);
   }
@@ -49,13 +53,14 @@ export async function downloadResolvedNpmArtifact(params: Readonly<{
     for await (const value of response.body) {
       const chunk = typeof value === 'string' ? Buffer.from(value) : Buffer.from(value);
       byteLength += chunk.byteLength;
-      if (byteLength > params.maxBytes) throw new Error(`Npm artifact exceeds the configured size limit (${params.maxBytes} bytes)`);
+      if (params.maxBytes != null && byteLength > params.maxBytes) throw new Error(`Npm artifact exceeds the configured size limit (${params.maxBytes} bytes)`);
       integrity.update(chunk);
       archiveSha256.update(chunk);
       if (!output.write(chunk)) await once(output, 'drain');
     }
     output.end();
     await finished(output);
+    params.signal?.throwIfAborted();
     if (!integrity.verify()) throw new Error('Npm artifact integrity verification failed');
     const archiveDigestSha256 = `sha256:${archiveSha256.digest('hex')}` as const;
     const registrySignature = verifyNpmRegistrySignatures({
@@ -81,9 +86,11 @@ export async function downloadResolvedNpmArtifact(params: Readonly<{
           : { status: 'absent' },
     };
   } catch (error) {
+    response.body.destroy();
     output.destroy();
     await finished(output).catch(() => undefined);
     await rm(params.destinationPath, { force: true }).catch(() => undefined);
+    params.signal?.throwIfAborted();
     throw error;
   }
 }

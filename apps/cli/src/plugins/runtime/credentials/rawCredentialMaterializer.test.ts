@@ -9,7 +9,6 @@ import {
   type PluginPermissionGrantListActionInputV1,
   type PluginPermissionGrantListActionOutputV1,
   type PluginPermissionSubjectV1,
-  type QualifiedConnectedAccountPurposeBindingsV1,
 } from '@happier-dev/protocol';
 
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
@@ -156,6 +155,11 @@ function snapshot(params: Readonly<{
     settingsVersion: params.settingsVersion ?? (accountId === 'account-a' ? 1 : 2),
     loadedAtMs: 1,
     settingsSecretsReadKeys: [],
+    connectedPurposeCatalog: { status: 'ready', revision: 1, record: { key: 'purposes', value: {
+      v: 1, bindings: source === 'connectedAccount' ? [{ purpose: { consumer: contribution, purpose: 'voice.speech' },
+        target: params.groupId ? { kind: 'group', service, groupId: params.groupId }
+          : { kind: 'account', account: { service, accountId } } }] : [],
+    } } },
     ...(sharedSecret ? {
       savedSecretResources: [{
         resourceId: 'resource_plugin_voice',
@@ -204,15 +208,6 @@ function snapshot(params: Readonly<{
             }
           : {}),
       },
-      connectedAccountPurposeBindingsV1: source === 'connectedAccount' ? {
-        v: 1,
-        bindings: [{
-          purpose: { consumer: contribution, purpose: 'voice.speech' },
-          target: params.groupId
-            ? { kind: 'group', service, groupId: params.groupId }
-            : { kind: 'account', account: { service, accountId } },
-        }],
-      } : { v: 1, bindings: [] },
     } as never,
   };
 }
@@ -263,8 +258,9 @@ function createHarness(input: Readonly<{
 
   const store: ConnectedAccountPurposeBindingStore = {
     async read() {
-      return (currentSnapshot?.settings.connectedAccountPurposeBindingsV1
-        ?? { v: 1, bindings: [] }) as QualifiedConnectedAccountPurposeBindingsV1;
+      const catalog = currentSnapshot?.connectedPurposeCatalog;
+      if (catalog?.status !== 'ready' || catalog.record.key !== 'purposes') throw new Error('Purpose catalog unavailable');
+      return catalog.record.value;
     },
     async update() {
       throw new Error('test store is read-only');

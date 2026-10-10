@@ -60,6 +60,31 @@ function admitPluginRuntime(
 }
 
 describe('buildPluginProjectionV2', () => {
+    it('carries an admitted installation default hint into the supplying source package row', () => {
+        const pluginId = 'acme.execution-default';
+        const loaded: LoadedPlugin = {
+            pluginId,
+            pluginRootPath: `/plugins/${pluginId}`,
+            manifestPath: `/plugins/${pluginId}/.happier-plugin/plugin.json`,
+            daemonEntryPath: null,
+            devDaemonEntryPath: null,
+            sourceSpec: { kind: 'path', locator: `/plugins/${pluginId}`, trustPolicy: 'local_trusted', installPolicy: 'link' },
+            manifest: normalizePluginManifestV2({
+                schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Default target', runtime: { apiVersion: 1 },
+                executionTarget: { default: 'installation' },
+                contributes: { resources: [{ id: 'config', kind: 'config', path: 'config.json', contentType: 'application/json' }] },
+            }),
+        };
+        const registry = createResolvedContributionRegistry(projectLoadedPluginContributes({
+            loadResult: { loadedPlugins: [loaded], diagnosticsByPluginId: {} },
+            provenance: 'external',
+        }));
+        const projection = buildPluginProjectionV2({ registry, generation: 1 });
+        expect(projection.installedPackagesById[pluginId]?.executionTarget).toEqual({ default: 'installation' });
+        const admitted = PluginProjectionV2Schema.parse(projection);
+        expect(admitted.installedPackagesById[pluginId]?.executionTarget).toEqual({ default: 'installation' });
+    });
+
     it('projects installed Agent output capabilities without inferring them for undeclared Agents', () => {
         const project = (usageReporting: true | undefined) => {
             const contributes = PluginContributesV2Schema.parse({ agents: [{

@@ -1,4 +1,4 @@
-import type { ManagedExecutableRef } from '@happier-dev/protocol';
+import type { ManagedExecutableRef, PluginSourceCustodyV1 } from '@happier-dev/protocol';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 
 import type { ResolvedSystemToolContribution } from '@/plugins/projection/registry/types';
@@ -28,6 +28,8 @@ export type ManagedProviderRuntimeExecutableResolutionContext = Readonly<{
     providerLocalId: string;
     contributionQualifiedId: string;
     occurrenceId: string;
+    /** Host-only exact retained physical source, never an author context. */
+    physicalSourceCustody?: PluginSourceCustodyV1;
     isCurrent(): boolean;
 }>;
 

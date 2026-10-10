@@ -678,7 +678,7 @@ export async function readCurrentPluginCollectionContract(input: Readonly<{
     const snapshot = await inTx(async (tx) => await resolveCurrentContract({
         accountId: input.accountId,
         request: { pluginId: ref.pluginId, collectionId: ref.collectionId, readerContext: ref },
-    }, tx));
+    }, tx), { readOnly: true });
     await readCurrentAccountChangeCursor({
         accountId: input.accountId,
         expectedMode: snapshot.account.encryptionMode,
@@ -951,7 +951,7 @@ export async function getPluginCollection(input: Readonly<{
             }),
             expectedMode: current.account.encryptionMode,
         };
-    });
+    }, { readOnly: true });
     await readCurrentAccountChangeCursor({
         accountId: input.accountId,
         expectedMode: snapshot.expectedMode,
@@ -1004,7 +1004,7 @@ export async function queryPluginCollection(input: Readonly<{
             }),
             expectedMode: current.account.encryptionMode,
         };
-    });
+    }, { readOnly: true });
     // Recheck the Account mode after materializing row content so a mode
     // transition cannot disclose data under the no-longer-current policy.
     // Deliberately discard this later cursor: the response rows and cursor
@@ -1127,7 +1127,7 @@ export async function queryPluginCollectionUiQuery(input: Readonly<{
         } catch {
             throw new PluginCollectionUiQueryOperationError("collection_contract_inconsistent");
         }
-    });
+    }, { readOnly: true });
     // Match the direct reader's post-materialization mode validation without
     // advancing the cursor returned from its transaction snapshot.
     await readCurrentAccountChangeCursor({

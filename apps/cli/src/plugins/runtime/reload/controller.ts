@@ -20,7 +20,7 @@ import type {
     PluginRuntimeSlot,
     PluginRuntimeSlotOccurrence,
 } from '../runtimeSlots';
-import type { PluginSourceCustody } from '../sourceAuthority';
+import { pluginSourceCustodyEqual, type PluginSourceCustody } from '../sourceAuthority';
 import type { PluginRuntimeActivationRegistryLease } from '../composition/activationAssembly';
 
 export type PluginRuntimeRegistryLease = Readonly<{
@@ -269,6 +269,18 @@ export function createPluginReloadController(params?: Readonly<{
 }>): PluginReloadController {
     let controller!: PluginReloadController;
     let targetedContributionsOwner: StableTargetedContributionsOwner | null = null;
+    let projectManagedServicesOwner: ReturnType<NonNullable<
+        ResolvedExecutablePluginRuntimeRegistry['retainProjectManagedServicesOwner']
+    >> | null = null;
+    const retainProjectCustody = (registry: ResolvedExecutablePluginRuntimeRegistry): void => {
+        const owner = registry.retainProjectManagedServicesOwner?.(projectManagedServicesOwner ?? undefined,
+            (pluginId, occurrenceId, sourceCustody) => {
+                const current = readServingSlotOccurrence(pluginId);
+                return current?.occurrenceId === occurrenceId && current.sourceCustody !== null
+                    && pluginSourceCustodyEqual(current.sourceCustody, sourceCustody);
+            });
+        if (owner) projectManagedServicesOwner = owner;
+    };
     // Publication (`activeRegistry = registry`) is already the one atomic swap,
     // so the router reads it rather than owning a second retargeting step.
     const currentGlobalExternalSessions = createCurrentGlobalExternalSessionsRouter(
@@ -494,9 +506,10 @@ export function createPluginReloadController(params?: Readonly<{
     async function disposeRegistryForShutdown(
         registry: ResolvedExecutablePluginRuntimeRegistry,
         timeoutMs: number | null,
+        projectRetirement?: Promise<void>,
     ): Promise<void> {
         let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-        const disposePromise = registry.dispose({
+        const disposePromise = Promise.all([registry.dispose({
             ...(timeoutMs === null ? {} : { timeoutMs }),
             onError: (event) => {
                 logger.warn('[PLUGIN RUNTIME] Plugin cleanup failed during daemon shutdown', {
@@ -505,7 +518,7 @@ export function createPluginReloadController(params?: Readonly<{
                     error: projectPluginFailureText(event.error),
                 });
             },
-        }).then(
+        }), ...(projectRetirement ? [projectRetirement] : [])]).then(
             () => 'disposed' as const,
             (error: unknown) => {
                 logger.warn('[PLUGIN RUNTIME] Plugin runtime registry disposal failed during daemon shutdown', {
@@ -625,6 +638,7 @@ export function createPluginReloadController(params?: Readonly<{
             if (published) throw new Error('Plugin runtime registry publication callback was invoked more than once');
             if (shutdownStarted) throw createShutdownError();
             if (activeRegistry) throw new ColdInitializationSupersededError();
+            retainProjectCustody(registry);
             published = true;
             generation = attemptedGeneration;
             applyCurrentResourceSessionAccessWitness(registry);
@@ -762,6 +776,7 @@ export function createPluginReloadController(params?: Readonly<{
                         + `was superseded by newer durable revision ${highestObservedDurableRevision}`,
                     );
                 }
+                retainProjectCustody(adoption.registry);
                 previousRegistry?.fencePluginConsumers?.(changedPluginIds);
                 published = true;
                 generation += 1;
@@ -969,6 +984,12 @@ export function createPluginReloadController(params?: Readonly<{
             shutdownPromise = (async () => {
                 shutdownStarted = true;
                 shutdownTimeoutMs = normalizeShutdownTimeoutMs(shutdownParams?.timeoutMs);
+                const projectRetirement = projectManagedServicesOwner
+                    ? Promise.all([projectManagedServicesOwner.retireProjectServices(), projectManagedServicesOwner.retireSharedProviderServices()]).then(() => undefined)
+                    : undefined;
+                // The same shutdown join below reports failures. Attach its
+                // handler now while admitted registry leases are draining.
+                void projectRetirement?.catch(() => undefined);
                 activeRegistry?.retireLiveSubscriptionConsumers?.();
                 const registriesToDispose = new Set<ResolvedExecutablePluginRuntimeRegistry>();
                 if (activeRegistry) registriesToDispose.add(activeRegistry);
@@ -985,7 +1006,7 @@ export function createPluginReloadController(params?: Readonly<{
                 outstandingLeaseCounts.clear();
                 for (const registry of registriesToDispose) {
                     // eslint-disable-next-line no-await-in-loop
-                    await disposeRegistryForShutdown(registry, shutdownTimeoutMs);
+                    await disposeRegistryForShutdown(registry, shutdownTimeoutMs, projectRetirement);
                 }
             })();
             return await shutdownPromise;

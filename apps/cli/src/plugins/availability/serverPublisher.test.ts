@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   PluginAvailabilityActionHttpPathsV1,
@@ -54,11 +54,69 @@ const materializationsInput = PluginAvailabilityMaterializationsReportActionInpu
 });
 
 describe('server plugin Availability publisher', () => {
+  afterEach(() => vi.useRealTimers());
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.mocked(axios.post).mockReset();
     vi.mocked(axios.isAxiosError).mockReset();
     vi.mocked(createDefaultPluginInstallationPublisherHeader).mockReset();
+  });
+
+  it('keeps release publication, reporting and removal preflight live beyond the session-control cutoff', async () => {
+    vi.useFakeTimers();
+    vi.mocked(createDefaultPluginInstallationPublisherHeader).mockResolvedValue(null);
+    const completions: Array<() => void> = [];
+    // Axios is the network boundary; emulate its actual timeout behavior.
+    vi.mocked(axios.post).mockImplementation(async (url, _input, options) => await new Promise((resolve, reject) => {
+      const timer = options?.timeout ? setTimeout(() => reject(new Error('network deadline')), options.timeout) : null;
+      completions.push(() => {
+        if (timer) clearTimeout(timer);
+        resolve({ data: String(url).endsWith('/releases/publish')
+          ? { facts: releaseInput.facts, outcome: 'created' }
+          : String(url).endsWith('/materializations/report') ? { revision: 1, outcome: 'replaced' }
+          : { availabilityCursor: 0, hostingCapability: { enabled: false }, intent: null,
+            release: null, uiArtifacts: [], packageAssets: [], managedResources: [], managedResourcesReviewed: true } });
+      });
+    }));
+    const credentials = { token: 'account-token', encryption: null } satisfies persistence.StoredCredentials;
+    const publisher = createServerPluginAvailabilityPublisher({ credentials });
+    const settled: unknown[] = [];
+    const operations = [publisher.publishRelease(releaseInput), publisher.reportMaterializations(materializationsInput),
+      readServerPluginManagedResources({ credentials, serverUrl: 'https://home.example', homeId: 'home-a',
+        controller: { machineId: 'machine-a', installationId: 'installation-a' } }, 'com.acme.fixture')];
+    const observed = operations.map(operation => operation.then(value => { settled.push(value); return value; }, error => {
+      settled.push(error); throw error;
+    }));
+    const all = Promise.allSettled(observed);
+    await vi.advanceTimersByTimeAsync(60_001);
+    expect(settled).toEqual([]);
+    completions.forEach(complete => complete());
+    expect((await all).map(result => result.status)).toEqual(['fulfilled', 'fulfilled', 'fulfilled']);
+  });
+
+  it('cancels publication and removal preflight with their containing operation and preserves real transport errors', async () => {
+    vi.mocked(createDefaultPluginInstallationPublisherHeader).mockResolvedValue(null);
+    vi.mocked(axios.post).mockImplementation(async (_url, _input, options) => await new Promise((_resolve, reject) => {
+      const signal = options?.signal;
+      if (signal instanceof AbortSignal) signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    }));
+    const credentials = { token: 'account-token', encryption: null } satisfies persistence.StoredCredentials;
+    const abort = new AbortController();
+    const reason = new Error('owner retired');
+    const publisher = createServerPluginAvailabilityPublisher({ credentials });
+    const publication = publisher.reportMaterializations(materializationsInput, { signal: abort.signal });
+    const preflight = readServerPluginManagedResources({ credentials, serverUrl: 'https://home.example', homeId: 'home-a',
+      controller: { machineId: 'machine-a', installationId: 'installation-a' }, signal: abort.signal }, 'com.acme.fixture');
+    const results = Promise.allSettled([publication, preflight]);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(axios.post).toHaveBeenCalledWith(expect.stringContaining('/intents/read'), expect.anything(),
+      expect.objectContaining({ signal: abort.signal }));
+    abort.abort(reason);
+    expect(await results).toEqual([{ status: 'rejected', reason }, { status: 'rejected', reason }]);
+    const failure = new Error('connection reset');
+    vi.mocked(axios.post).mockRejectedValueOnce(failure);
+    await expect(publisher.reportMaterializations(materializationsInput)).rejects.toBe(failure);
   });
 
   it('reads removal dependencies through captured Account authority and refuses missing or mismatched census responses', async () => {

@@ -120,7 +120,7 @@ type RequestRow = {
     updated_at: number | bigint;
 };
 
-const GRANT_COLUMNS = Prisma.raw([
+const GRANT_COLUMNS = [
     "id",
     "account_id",
     "plugin_id",
@@ -140,9 +140,9 @@ const GRANT_COLUMNS = Prisma.raw([
     "revoked_at",
     "created_at",
     "updated_at",
-].join(", "));
+].join(", ");
 
-const REQUEST_COLUMNS = Prisma.raw([
+const REQUEST_COLUMNS = [
     "id",
     "account_id",
     "plugin_id",
@@ -163,7 +163,7 @@ const REQUEST_COLUMNS = Prisma.raw([
     "decided_at",
     "created_at",
     "updated_at",
-].join(", "));
+].join(", ");
 
 function stringifyJson(value: unknown): string {
     return JSON.stringify(value);
@@ -399,14 +399,14 @@ export function createSqlPluginPermissionGrantStore(): PluginPermissionGrantStor
             const grantWhere = buildGrantWhere(params);
             const requestWhere = buildRequestWhere(params);
             const grants = await db.$queryRaw<GrantRow[]>(Prisma.sql`
-                SELECT ${GRANT_COLUMNS}
+                SELECT ${Prisma.raw(GRANT_COLUMNS)}
                 FROM plugin_permission_grants
                 WHERE ${Prisma.join(grantWhere, " AND ")}
                 ORDER BY updated_at DESC, id DESC
                 LIMIT ${params.limit}
             `);
             const pendingRequests = await db.$queryRaw<RequestRow[]>(Prisma.sql`
-                SELECT ${REQUEST_COLUMNS}
+                SELECT ${Prisma.raw(REQUEST_COLUMNS)}
                 FROM plugin_permission_grant_requests
                 WHERE ${Prisma.join(requestWhere, " AND ")}
                 ORDER BY updated_at DESC, id DESC
@@ -419,7 +419,7 @@ export function createSqlPluginPermissionGrantStore(): PluginPermissionGrantStor
         },
         async getRequest(params) {
             const rows = await db.$queryRaw<RequestRow[]>(Prisma.sql`
-                SELECT ${REQUEST_COLUMNS}
+                SELECT ${Prisma.raw(REQUEST_COLUMNS)}
                 FROM plugin_permission_grant_requests
                 WHERE account_id = ${params.accountId} AND id = ${params.requestId}
                 LIMIT 1
@@ -429,7 +429,7 @@ export function createSqlPluginPermissionGrantStore(): PluginPermissionGrantStor
         },
         async getGrant(params) {
             const rows = await db.$queryRaw<GrantRow[]>(Prisma.sql`
-                SELECT ${GRANT_COLUMNS}
+                SELECT ${Prisma.raw(GRANT_COLUMNS)}
                 FROM plugin_permission_grants
                 WHERE account_id = ${params.accountId} AND id = ${params.grantId}
                 LIMIT 1

@@ -167,8 +167,8 @@ function createAccountKvWireStore(initialRow?: unknown) {
 function bindHost(params: Readonly<{
     contracts?: readonly NormalizedPluginAccountCollectionContractV1[];
     credentials?: StoredCredentials;
-    get?: (url: string) => Promise<Readonly<{ status: number; data: unknown }>>;
-    post: (url: string, body: string) => Promise<Readonly<{ status: number; data: unknown }>>;
+    get?: (url: string, config: Readonly<Record<string, unknown>>) => Promise<Readonly<{ status: number; data: unknown }>>;
+    post: (url: string, body: string, config: Readonly<Record<string, unknown>>) => Promise<Readonly<{ status: number; data: unknown }>>;
     currentness?: (credentials: StoredCredentials) => AccountEncryptionCurrentnessResponse;
     isCurrentAccount?: () => boolean;
     subscribeChanges?: (
@@ -202,16 +202,16 @@ function bindHost(params: Readonly<{
             params.currentness?.(credentials) ?? currentnessFor(credentials)
         ),
         http: {
-            get: async (url) => params.get
-                ? await params.get(url)
+            get: async (url, config) => params.get
+                ? await params.get(url, config)
                 : url.endsWith('/v1/plugins/data/get')
                     ? { status: 200, data: { row: null, absenceEpoch: 0 } }
                     : { status: 200, data: { mode: params.credentials?.encryption ? 'e2ee' : 'plain', updatedAt: 1 } },
-            post: async (url, body) => url.endsWith('/v1/plugins/data/get')
+            post: async (url, body, config) => url.endsWith('/v1/plugins/data/get')
                 ? params.get
-                    ? await params.get(url)
+                    ? await params.get(url, config)
                     : { status: 200, data: { row: null, absenceEpoch: 0 } }
-                : await params.post(url, body),
+                : await params.post(url, body, config),
         },
         ...featureSnapshotDependency,
         ...(params.subscribeChanges ? { subscribeChanges: params.subscribeChanges } : {}),
@@ -229,6 +229,99 @@ function bindHost(params: Readonly<{
 }
 
 describe('Account plugin Data storage host', () => {
+    it('accepts successful Account KV reads and writes after fifteen seconds', async () => {
+        vi.useFakeTimers();
+        try {
+            const wire = createAccountKvWireStore();
+            const delayed = (effect: () => Promise<Readonly<{ status: number; data: unknown }>>, config: Readonly<Record<string, unknown>>) => new Promise<Readonly<{ status: number; data: unknown }>>((resolve, reject) => {
+                const timeout = typeof config.timeout === 'number' && config.timeout > 0
+                    ? setTimeout(() => reject(new Error('HTTP deadline elapsed')), config.timeout) : undefined;
+                setTimeout(() => { clearTimeout(timeout); void effect().then(resolve, reject); }, 16_000);
+            });
+            const account = bindHost({
+                get: (_url, config) => delayed(() => wire.get(), config),
+                post: (url, body, config) => delayed(() => wire.post(url, body), config),
+            });
+            const read = account.kv.get('cursor').catch((error: unknown) => error);
+            await vi.advanceTimersByTimeAsync(16_000);
+            expect(await read).toBeNull();
+            const write = account.kv.set('cursor', 'late-value', { expectedVersion: 'absent' }).catch((error: unknown) => error);
+            await vi.advanceTimersByTimeAsync(32_000);
+            expect(await write).toEqual({ version: 0 });
+        } finally { vi.useRealTimers(); }
+    });
+    it('prepares a readonly Collection declaration once across fresh invocation bindings while keeping authority local', async () => {
+        let declarationReads = 0;
+        let compilerSchemaReads = 0;
+        const definition = Object.freeze({
+            ...collectionDefinition,
+            get schema() {
+                declarationReads += 1;
+                return collectionDefinition.schema;
+            },
+        });
+        const contract = Object.freeze({
+            ...admitted,
+            get schema() {
+                compilerSchemaReads += 1;
+                return admitted.schema;
+            },
+        });
+        const host = createAccountPluginDataStorageHost({
+            contracts: [contract],
+            readCredentials: async () => plainCredentials,
+            isCurrentAccount: () => true,
+            resolveAccountScopeKey: () => ACCOUNT_SCOPE_KEY,
+            resolveBaseUrl: () => 'https://data.example.test',
+            resolveAccountEncryptionCurrentness: async () => currentnessFor(plainCredentials),
+            http: {
+                get: async () => ({ status: 200, data: {} }),
+                post: async () => ({ status: 200, data: { row: null, absenceEpoch: 0 } }),
+            },
+        });
+        const firstController = new AbortController();
+        const bind = (pluginId: string, controller: AbortController) => {
+            const account = host.bind({
+                pluginId,
+                occurrenceId: '1',
+                signal: controller.signal,
+                isOccurrenceCurrent: () => true,
+            });
+            if (!account) throw new Error('Expected Account Data binding');
+            return account;
+        };
+        const first = bind(PLUGIN_ID, firstController).collection(definition);
+        // These reads measure schema admission/compilation work, not transport
+        // calls: repeating it for each Action was the profiled daemon hotspot.
+        const preparedReads = { declarationReads, compilerSchemaReads };
+        expect(declarationReads).toBeGreaterThan(0);
+        expect(compilerSchemaReads).toBeGreaterThan(0);
+        firstController.abort();
+        if (process.env.HAPPIER_RUN_DAEMON_STALL_BENCH === '1') {
+            const started = performance.now();
+            for (let invocation = 0; invocation < 100; invocation++) {
+                bind(PLUGIN_ID, new AbortController()).collection(definition);
+            }
+            process.stdout.write(`DAEMON_STALL_COLLECTION_BIND ${JSON.stringify({
+                invocations: 100,
+                warmBindingsMs: performance.now() - started,
+                additionalDeclarationReads: declarationReads - preparedReads.declarationReads,
+                additionalCompilerSchemaReads: compilerSchemaReads - preparedReads.compilerSchemaReads,
+            })}\n`);
+        }
+        const next = bind(PLUGIN_ID, new AbortController()).collection(definition);
+        expect(next).not.toBe(first);
+        expect({ declarationReads, compilerSchemaReads }).toEqual(preparedReads);
+        await expect(first.get('task-1')).rejects.toMatchObject({ code: 'plugin_collection_cancelled' });
+        await expect(next.get('task-1')).resolves.toBeNull();
+        await expect(bind('example.other', new AbortController()).collection(definition).get('task-1'))
+            .rejects.toMatchObject({ code: 'plugin_collection_undeclared' });
+        await expect(bind(PLUGIN_ID, new AbortController()).collection({ ...collectionDefinition, schemaVersion: 2 }).get('task-1'))
+            .rejects.toMatchObject({ code: 'plugin_collection_undeclared' });
+        await expect(next.put({ id: 'task-1', status: 'invalid', privateNote: 'note' }, { expectedRevision: 'absent' }))
+            .rejects.toMatchObject({ code: 'plugin_collection_invalid_value' });
+    });
+
     it('retains a static Collection binding without losing declaration or occurrence admission', async () => {
         const controller = new AbortController();
         const post = vi.fn(async () => ({ status: 200, data: { row: null, absenceEpoch: 0 } }));
@@ -717,6 +810,7 @@ describe('Account plugin Data storage host', () => {
         function claimingHost(params: Readonly<{
             contracts?: readonly NormalizedPluginAccountCollectionContractV1[];
             resolveReleaseLessDeclaration?: (pluginId: string) => ParsedPluginManifestV2 | null;
+            resolveReleaseLessCollectionMigrations?: () => Promise<import('@happier-dev/plugin-sdk').PluginAccountCollectionMigrationRuntimeProjection>;
             scopeKey: () => string;
             post: (url: string, body: string) => Promise<Readonly<{ status: number; data: unknown }>>;
         }>) {
@@ -729,6 +823,9 @@ describe('Account plugin Data storage host', () => {
                 resolveAccountEncryptionCurrentness: async (credentials) => currentnessFor(credentials),
                 ...(params.resolveReleaseLessDeclaration
                     ? { resolveReleaseLessDeclaration: params.resolveReleaseLessDeclaration }
+                    : {}),
+                ...(params.resolveReleaseLessCollectionMigrations
+                    ? { resolveReleaseLessCollectionMigrations: params.resolveReleaseLessCollectionMigrations }
                     : {}),
                 http: {
                     get: async () => ({ status: 200, data: { mode: 'plain', updatedAt: 1 } }),
@@ -843,6 +940,63 @@ describe('Account plugin Data storage host', () => {
 
             await bind().collection(collectionDefinition).get('task-1');
             expect(calls).not.toContain(CLAIM_URL);
+        });
+
+        it('prepares a populated release-less upgrade with the declaring callback before claiming its writer', async () => {
+            const targetDeclaration = {
+                ...contribution,
+                schemaVersion: 2,
+                readableSchemaVersions: [1, 2],
+                migrations: [{ id: 'tasks-v1-to-v2', fromSchemaVersion: 1, toSchemaVersion: 2 }],
+            };
+            const target = normalizePluginAccountCollectionContractV1({ pluginId: PLUGIN_ID, contribution: targetDeclaration });
+            const manifest = PluginManifestV2Schema.parse({ ...declaredManifest, contributes: { accountCollections: [targetDeclaration] } });
+            const ref = (contract: NormalizedPluginAccountCollectionContractV1) => ({
+                pluginId: contract.pluginId, collectionId: contract.collectionId,
+                schemaVersion: contract.schemaVersion, contractDigest: contract.contractDigest,
+            });
+            const binding = {
+                source: ref(admitted), target: ref(target),
+                candidate: { releaseVersion: manifest.version, artifactDigest: `sha256:${'a'.repeat(64)}`, releaseLessManifest: manifest },
+            };
+            const intent = { pluginId: PLUGIN_ID, desiredVersion: null, enabled: true, offlineUiHosting: 'disabled', writableCollections: [ref(admitted)], revision: '0' };
+            let staged = false;
+            let promoted = false;
+            const requests: string[] = [];
+            const bind = claimingHost({
+                contracts: [target],
+                resolveReleaseLessDeclaration: () => manifest,
+                resolveReleaseLessCollectionMigrations: async () => ({ tasks: [{
+                    ...targetDeclaration.migrations[0]!,
+                    migrate: (value) => ({ ...value as Record<string, import('@happier-dev/plugin-sdk').JsonValue>, privateNote: 'migrated' }),
+                }] }),
+                scopeKey: () => 'account-a',
+                post: async (url, body) => {
+                    requests.push(url);
+                    const request = JSON.parse(body);
+                    if (url === CLAIM_URL) {
+                        if (request.prepare === true) return { status: 200, data: { intent, preparation: [{ source: contribution, binding }] } };
+                        if (!staged) return { status: 409, data: { error: 'plugin_intent_writable_collections_not_ready' } };
+                        promoted = true;
+                        return { status: 200, data: { intent: { ...intent, writableCollections: [ref(target)], revision: '1' } } };
+                    }
+                    if (url.endsWith('/candidate-preparation/source-page')) return { status: 200, data: { rows: [{
+                        rowId: 'task-1', revision: 1,
+                        content: { t: 'plain', v: { privateNote: 'retained' } },
+                        projection: { status: 'open' }, alreadyStaged: false,
+                    }] } };
+                    if (url.endsWith('/candidate-preparation/stage')) {
+                        expect(request.items[0].target.content).toEqual({ t: 'plain', v: { privateNote: 'migrated' } });
+                        expect(promoted).toBe(false);
+                        staged = true;
+                        return { status: 200, data: { results: [{ status: 'staged' }] } };
+                    }
+                    return { status: 200, data: { row: null, absenceEpoch: 0 } };
+                },
+            });
+            await bind().collection({ ...collectionDefinition, schemaVersion: 2, readableSchemaVersions: [1, 2], migrations: [{ ...targetDeclaration.migrations[0]!, migrate: (value) => value }] }).get('task-1');
+            expect(staged, JSON.stringify(requests)).toBe(true);
+            expect(promoted).toBe(true);
         });
     });
 

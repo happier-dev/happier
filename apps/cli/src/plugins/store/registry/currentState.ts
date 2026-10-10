@@ -637,7 +637,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
         sourceClass: availability.sourceClass,
         portableRelease: availability.portableRelease,
         ...(release
-          ? { archiveDigestSha256: release.archiveDigestSha256 }
+          ? { archiveDigestSha256: release.archiveDigestSha256, declaredManifest: release.normalizedManifest }
           : {}),
         uiArtifacts,
         enabled: installation.enabled,

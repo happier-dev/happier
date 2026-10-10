@@ -159,7 +159,7 @@ describe('createMarketplaceIndex', () => {
     expect(result.items[0]?.distribution.version).toBe('10.0.0');
   });
 
-  it('bounds merge diagnostics even when a source contains many rejected rebinding entries', () => {
+  it('preserves every merge diagnostic for rejected rebinding entries', () => {
     const canonical = entry('acme.agent', '@acme/agent');
     const conflicts = Array.from({ length: 200 }, (_, index) => ({
       ...entry('acme.agent', `@attacker/rebound-${index}`),
@@ -171,6 +171,7 @@ describe('createMarketplaceIndex', () => {
       sources: [source('curated', 'curated', [canonical]), source('user', 'user', conflicts)],
       query: { filters: {} },
     });
-    expect(result.diagnostics.length).toBeLessThanOrEqual(128);
+    expect(result.diagnostics).toHaveLength(199);
+    expect(result.diagnostics.every((diagnostic) => diagnostic.code === 'marketplace_distribution_rebinding')).toBe(true);
   });
 });

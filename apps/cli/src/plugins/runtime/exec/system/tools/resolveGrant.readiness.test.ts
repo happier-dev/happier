@@ -20,7 +20,7 @@ afterEach(async () => {
 });
 
 type FixtureAcpMode = 'current' | 'legacy' | 'malformed' | 'exit' | 'hang';
-type FixtureSurfaceMode = 'supported' | 'unsupported';
+type FixtureSurfaceMode = 'supported' | 'unsupported' | 'hang';
 
 const CURRENT_CAPABILITIES = {
     loadSession: true,
@@ -110,6 +110,9 @@ async function writeKimiFixture(params: Readonly<{
     version: string;
     capabilities?: unknown;
     invocationLog: string;
+    acpDelayMs?: number;
+    surfaceDelayMs?: number;
+    processLog?: string;
 }>): Promise<string> {
     const filePath = join(params.dir, params.name ?? 'kimi');
     const caps = JSON.stringify(params.capabilities ?? CURRENT_CAPABILITIES);
@@ -119,9 +122,13 @@ const logFile = ${JSON.stringify(params.invocationLog)};
 const argv = process.argv.slice(2);
 try { fs.appendFileSync(logFile, JSON.stringify(argv) + '\\n'); } catch {}
 const MODE = ${JSON.stringify(params.acpMode)};
+const processLog = ${JSON.stringify(params.processLog ?? null)};
+if (processLog) fs.appendFileSync(processLog, JSON.stringify({ pid: process.pid, command: argv[0] }) + String.fromCharCode(10));
 const SURFACE = ${JSON.stringify(params.surface)};
 async function main() {
   if (argv[0] === 'migrate') {
+    if (SURFACE === 'hang') { process.stdin.resume(); await new Promise(() => {}); return; }
+    await new Promise((resolve) => setTimeout(resolve, ${params.surfaceDelayMs ?? 0}));
     if (SURFACE === 'supported') { process.stdout.write('Migrate Kimi CLI state.\\n'); return; }
     process.stderr.write("Usage: kimi [OPTIONS] COMMAND [ARGS]...\\nNo such command 'migrate'.\\n");
     process.exit(2);
@@ -149,6 +156,7 @@ async function main() {
     protocolVersion: acp.PROTOCOL_VERSION,
     agentCapabilities: caps,
   }));
+  await new Promise((resolve) => setTimeout(resolve, ${params.acpDelayMs ?? 0}));
   const connection = app.connect(stream);
   await connection.closed;
 }
@@ -209,6 +217,85 @@ function invocationsIncludeVersionProbe(lines: readonly (readonly string[])[]): 
 }
 
 describe('system tool readiness (capability fingerprint, never semver)', () => {
+    it('waits for current ACP readiness beyond the diagnostic probe budget', async () => {
+        if (process.platform === 'win32') return;
+        const root = await makeRoot();
+        const current = await writeKimiFixture({
+            dir: root, acpMode: 'current', surface: 'supported', version: '0.1.1',
+            invocationLog: join(root, 'invocations.log'), acpDelayMs: 2_800,
+        });
+
+        const grant = await resolverForPath(root).resolve({ toolId: 'kimi-cli', purpose: 'test' });
+
+        expect(grant.executablePath).toBe(current);
+    }, 20_000);
+
+    it('selects known-current ACP beyond the diagnostic surface policy without invoking its hanging command', async () => {
+        if (process.platform === 'win32') return;
+        const root = await makeRoot();
+        const processLog = join(root, 'processes.log');
+        const current = await writeKimiFixture({
+            dir: root, acpMode: 'current', surface: 'hang', version: '0.1.1',
+            invocationLog: join(root, 'invocations.log'), processLog,
+        });
+
+        const grant = await resolverForPath(root).resolve({ toolId: 'kimi-cli', purpose: 'test' });
+
+        expect(grant.executablePath).toBe(current);
+        const { readFile } = await import('node:fs/promises');
+        const processes = (await readFile(processLog, 'utf8')).trim().split('\n')
+            .map((line) => JSON.parse(line) as { command: string });
+        expect(processes.some((child) => child.command === 'migrate')).toBe(false);
+    }, 20_000);
+
+    it('waits for a responsive command surface instead of inheriting legacy-name guidance', async () => {
+        if (process.platform === 'win32') return;
+        const root = await makeRoot();
+        const log = join(root, 'invocations.log');
+        await writeKimiFixture({
+            dir: root, acpMode: 'exit', surface: 'supported', version: '0.1.1',
+            invocationLog: log, surfaceDelayMs: 1_300,
+        });
+        await writeLegacyNameFixture({ dir: root, invocationLog: log, markerFile: join(root, 'legacy-launched') });
+
+        const failure = await resolverForPath(root).resolve({ toolId: 'kimi-cli', purpose: 'test' })
+            .then(() => undefined, (error: unknown) => error);
+
+        expect(failure).toMatchObject({ code: 'plugin_exec_system_tool_unidentified' });
+    }, 20_000);
+
+    it.each(['acp', 'migrate'] as const)('cancels both pending readiness phases (%s) and observes process exit before returning', async (phase) => {
+        if (process.platform === 'win32') return;
+        const root = await makeRoot();
+        const processLog = join(root, 'processes.log');
+        await writeKimiFixture({
+            dir: root, acpMode: phase === 'acp' ? 'hang' : 'exit', surface: 'hang', version: '0.1.1',
+            invocationLog: join(root, 'invocations.log'), processLog,
+        });
+        const controller = new AbortController();
+        const pending = resolverForPath(root).resolve({
+            toolId: 'kimi-cli', purpose: 'test', signal: controller.signal,
+        }).then(() => undefined, (error: unknown) => error);
+        const { readFile } = await import('node:fs/promises');
+        let processes: Array<{ pid: number; command: string }> = [];
+        try {
+            await expect.poll(async () => {
+                const text = await readFile(processLog, 'utf8').catch(() => '');
+                processes = text.trim().split('\n').filter(Boolean).map((line) => JSON.parse(line) as { pid: number; command: string });
+                return processes.some((child) => child.command === phase);
+            }, { timeout: 10_000 }).toBe(true);
+            controller.abort();
+            const failure = await pending;
+            expect(failure).toMatchObject({ code: 'plugin_exec_system_tool_aborted' });
+            for (const { pid } of processes) {
+                expect(() => process.kill(pid, 0)).toThrow();
+            }
+        } finally {
+            controller.abort();
+            await pending;
+        }
+    }, 20_000);
+
     it('resolves a current-only install to its kimi executable', async () => {
         if (process.platform === 'win32') return;
         const root = await makeRoot();
@@ -294,12 +381,12 @@ describe('system tool readiness (capability fingerprint, never semver)', () => {
         await expect(readFile(marker, 'utf8').then(() => true, () => false)).resolves.toBe(false);
     }, 30_000);
 
-    it.each(['exit', 'hang'] as const)('fails truthfully on an explicit nonresponsive candidate without legacy guidance', async (mode) => {
+    it('fails truthfully on an explicit exited candidate without legacy guidance', async () => {
         if (process.platform === 'win32') return;
         const root = await makeRoot();
         const log = join(root, 'invocations.log');
         const broken = await writeKimiFixture({
-            dir: root, name: 'broken-kimi', acpMode: mode, surface: 'unsupported', version: '0.1.1',
+            dir: root, name: 'broken-kimi', acpMode: 'exit', surface: 'unsupported', version: '0.1.1',
             invocationLog: log,
         });
 
@@ -346,7 +433,7 @@ describe('system tool readiness (capability fingerprint, never semver)', () => {
         const root = await makeRoot();
         const log = join(root, 'invocations.log');
         await writeKimiFixture({
-            dir: root, acpMode: 'hang', surface: 'unsupported', version: '1.49.0', invocationLog: log,
+            dir: root, acpMode: 'exit', surface: 'unsupported', version: '1.49.0', invocationLog: log,
         });
 
         const failure = await resolverForPath(root).resolve({ toolId: 'kimi-cli', purpose: 'test' })
@@ -362,7 +449,7 @@ describe('system tool readiness (capability fingerprint, never semver)', () => {
         const root = await makeRoot();
         const log = join(root, 'invocations.log');
         await writeKimiFixture({
-            dir: root, acpMode: 'hang', surface: 'supported', version: '0.1.1', invocationLog: log,
+            dir: root, acpMode: 'exit', surface: 'supported', version: '0.1.1', invocationLog: log,
         });
 
         const failure = await resolverForPath(root).resolve({ toolId: 'kimi-cli', purpose: 'test' })

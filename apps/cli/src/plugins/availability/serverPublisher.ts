@@ -6,7 +6,6 @@ import type { ManagedControllerV1, ManagedResourceDependencyV1, ManagedResourceD
 
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { readAxiosResponseErrorCode } from '@/api/client/readAxiosResponseErrorCode';
-import { configuration } from '@/configuration';
 import { createDefaultPluginInstallationPublisherHeader } from '@/plugins/installations/publisherProof';
 import type { StoredCredentials } from '@/persistence';
 import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBaseUrl';
@@ -23,6 +22,7 @@ export type PluginManagedResourcePreflightBinding = Readonly<{
   serverUrl: string;
   homeId: string;
   controller: ManagedControllerV1;
+  signal?: AbortSignal;
 }>;
 
 /** The running daemon's captured Account/Home, never global focus, owns this removal read. */
@@ -31,12 +31,15 @@ export async function readServerPluginManagedResources(
   pluginId: string,
   managedResourceDispositions?: readonly ManagedResourceDispositionV1[],
 ): Promise<Readonly<{ resources: readonly ManagedResourceDependencyV1[]; reviewed: boolean }>> {
+  const signal = binding.signal;
+  signal?.throwIfAborted();
   const input = PluginAvailabilityIntentReadActionInputV1Schema.parse({ pluginId, includeManagedResources: true,
     controller: binding.controller, homeId: binding.homeId,
     ...(managedResourceDispositions !== undefined ? { managedResourceDispositions } : {}) });
   const response = await axios.post(`${binding.serverUrl.replace(/\/+$/, '')}${PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read']}`, input, {
     headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${binding.credentials.token}` },
-    timeout: configuration.sessionControlHttpTimeoutMs,
+    timeout: 0,
+    ...(signal ? { signal } : {}),
   });
   const result = PluginAvailabilityIntentReadActionOutputV1Schema.parse(response.data);
   if (result.managedResources === undefined || result.managedResourcesReviewed === undefined
@@ -98,7 +101,7 @@ async function postPublisherAction(params: Readonly<{
           ? { [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: publisherHeader }
           : {}),
       },
-      timeout: configuration.sessionControlHttpTimeoutMs,
+      timeout: 0,
       validateStatus: (status) => status >= 200 && status < 300,
       ...(params.signal ? { signal: params.signal } : {}),
     },

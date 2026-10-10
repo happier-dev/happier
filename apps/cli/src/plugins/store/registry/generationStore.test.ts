@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { access, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -738,7 +738,7 @@ describe('immutable plugin generation store', () => {
     }
   });
 
-  it('admits the conservative 16,384-file ceiling above the measured 6,356-file official SDK closure and rejects +1', () => {
+  it('reads complete generation inventories beyond the former file-count cutoff', () => {
     const createRecord = (fileCount: number) => {
       const files = Array.from({ length: fileCount }, (_, index) => {
         const relativePath = `files/${String(index).padStart(5, '0')}.js`;
@@ -758,7 +758,25 @@ describe('immutable plugin generation store', () => {
 
     const exact = ImmutablePluginGenerationRecordSchema.safeParse(createRecord(16_384));
     expect(exact.success).toBe(true);
-    expect(ImmutablePluginGenerationRecordSchema.safeParse(createRecord(16_385)).success).toBe(false);
+    expect(ImmutablePluginGenerationRecordSchema.safeParse(createRecord(16_385)).success).toBe(true);
+  });
+
+  it('inventories disk-backed source bytes beyond the former generation byte cutoff', async () => {
+    const sourceRootPath = await mkdtemp(join(tmpdir(), 'happier-generation-large-disk-source-'));
+    try {
+      await writeFile(join(sourceRootPath, 'package.json'), '{}');
+      await writeFile(join(sourceRootPath, 'large.bin'), '');
+      const byteLength = 512 * 1024 * 1024 + 1;
+      await truncate(join(sourceRootPath, 'large.bin'), byteLength);
+      const record = await createImmutablePluginGenerationRecordFromSource({
+        pluginId: 'acme.large-disk-source', sourceRootPath, manifestRelativePath: 'package.json',
+        distribution: { kind: 'localPath', canonicalPath: sourceRootPath },
+        updatePolicy: 'allowed', createdAtMs: 1,
+      });
+      expect(record.files).toContainEqual({ relativePath: 'large.bin', byteLength });
+    } finally {
+      await rm(sourceRootPath, { recursive: true, force: true });
+    }
   });
 
   it('orders mixed-case dependency paths by the generation schema canonical ordering', async () => {

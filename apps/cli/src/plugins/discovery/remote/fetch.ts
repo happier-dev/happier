@@ -4,6 +4,8 @@ import { dirname } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
+import { awaitPluginAcquisition } from '@/plugins/distribution/acquisitionLifetime';
+
 import {
   openRemoteAcquisition,
   type OpenedRemoteAcquisition,
@@ -15,50 +17,24 @@ const REMOTE_FETCH_TIMEOUT_MS_ENV = 'HAPPIER_PLUGIN_REMOTE_FETCH_TIMEOUT_MS';
 const REMOTE_CATALOG_MAX_BYTES_ENV = 'HAPPIER_PLUGIN_REMOTE_CATALOG_MAX_BYTES';
 const REMOTE_ARCHIVE_MAX_BYTES_ENV = 'HAPPIER_PLUGIN_REMOTE_ARCHIVE_MAX_BYTES';
 
-const DEFAULT_REMOTE_FETCH_TIMEOUT_MS = 30_000;
-const DEFAULT_REMOTE_CATALOG_MAX_BYTES = 2 * 1024 * 1024;
-const DEFAULT_REMOTE_ARCHIVE_MAX_BYTES = 256 * 1024 * 1024;
-
-function resolvePositiveEnvInt(params: Readonly<{
-  envName: string;
-  defaultValue: number;
-  maxValue: number;
-}>): number {
-  const raw = process.env[params.envName]?.trim();
-  if (!raw) {
-    return params.defaultValue;
-  }
-
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 1) {
-    throw new Error(`Invalid ${params.envName} value: ${raw}`);
-  }
-
-  return Math.min(Math.floor(parsed), params.maxValue);
+function resolvePositiveEnvInt(envName: string): number | null {
+  const raw = process.env[envName]?.trim();
+  if (!raw) return null;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1) throw new Error(`Invalid ${envName} value: ${raw}`);
+  return value;
 }
 
-export function resolvePluginRemoteFetchTimeoutMs(): number {
-  return resolvePositiveEnvInt({
-    envName: REMOTE_FETCH_TIMEOUT_MS_ENV,
-    defaultValue: DEFAULT_REMOTE_FETCH_TIMEOUT_MS,
-    maxValue: 120_000,
-  });
+export function resolvePluginRemoteFetchTimeoutMs(): number | null {
+  return resolvePositiveEnvInt(REMOTE_FETCH_TIMEOUT_MS_ENV);
 }
 
-export function resolvePluginRemoteCatalogMaxBytes(): number {
-  return resolvePositiveEnvInt({
-    envName: REMOTE_CATALOG_MAX_BYTES_ENV,
-    defaultValue: DEFAULT_REMOTE_CATALOG_MAX_BYTES,
-    maxValue: 32 * 1024 * 1024,
-  });
+export function resolvePluginRemoteCatalogMaxBytes(): number | null {
+  return resolvePositiveEnvInt(REMOTE_CATALOG_MAX_BYTES_ENV);
 }
 
-export function resolvePluginRemoteArchiveMaxBytes(): number {
-  return resolvePositiveEnvInt({
-    envName: REMOTE_ARCHIVE_MAX_BYTES_ENV,
-    defaultValue: DEFAULT_REMOTE_ARCHIVE_MAX_BYTES,
-    maxValue: 1024 * 1024 * 1024,
-  });
+export function resolvePluginRemoteArchiveMaxBytes(): number | null {
+  return resolvePositiveEnvInt(REMOTE_ARCHIVE_MAX_BYTES_ENV);
 }
 
 /**
@@ -79,24 +55,14 @@ export type RemoteFetchNetworkBoundary = Readonly<{
   resolveAddresses?: RemoteAcquisitionAddressResolver;
 }>;
 
-function describeTimeoutError(error: unknown, errorLabel: string, timeoutMs: number): Error {
-  if (
-    error instanceof Error
-    && (error.name === 'AbortError' || error.name === 'TimeoutError' || (error as NodeJS.ErrnoException).code === 'ABORT_ERR')
-  ) {
-    return new Error(`${errorLabel} timed out after ${timeoutMs}ms`);
-  }
-  return error instanceof Error ? error : new Error(`${errorLabel} fetch failed`);
-}
-
 function assertResponseContentLengthWithinLimit(params: Readonly<{
   response: Response;
-  maxBytes: number;
+  maxBytes: number | null;
   errorLabel: string;
 }>): void {
   const contentLengthRaw = params.response.headers.get('content-length');
   const contentLength = contentLengthRaw ? Number(contentLengthRaw) : Number.NaN;
-  if (Number.isFinite(contentLength) && contentLength > params.maxBytes) {
+  if (params.maxBytes !== null && Number.isFinite(contentLength) && contentLength > params.maxBytes) {
     throw new Error(`${params.errorLabel} exceeds the configured size limit (${params.maxBytes} bytes)`);
   }
 }
@@ -104,25 +70,22 @@ function assertResponseContentLengthWithinLimit(params: Readonly<{
 async function openRemoteResponse(params: Readonly<{
   url: string;
   accept: string;
-  timeoutMs: number;
-  maxBytes: number;
+  timeoutMs: number | null;
+  signal?: AbortSignal;
+  maxBytes: number | null;
   errorLabel: string;
   network: RemoteFetchNetworkBoundary;
 }>): Promise<OpenedRemoteAcquisition> {
-  let opened: OpenedRemoteAcquisition;
-  try {
-    opened = await openRemoteAcquisition({
-      url: params.url,
-      headers: { accept: params.accept },
-      policy: REMOTE_PLUGIN_ACQUISITION_POLICY,
-      timeoutMs: params.timeoutMs,
-      errorLabel: params.errorLabel,
-      ...(params.network.fetchImpl ? { fetchImpl: params.network.fetchImpl } : {}),
-      ...(params.network.resolveAddresses ? { resolveAddresses: params.network.resolveAddresses } : {}),
-    });
-  } catch (error) {
-    throw describeTimeoutError(error, params.errorLabel, params.timeoutMs);
-  }
+  const opened = await openRemoteAcquisition({
+    url: params.url,
+    headers: { accept: params.accept },
+    policy: REMOTE_PLUGIN_ACQUISITION_POLICY,
+    timeoutMs: params.timeoutMs,
+    signal: params.signal,
+    errorLabel: params.errorLabel,
+    ...(params.network.fetchImpl ? { fetchImpl: params.network.fetchImpl } : {}),
+    ...(params.network.resolveAddresses ? { resolveAddresses: params.network.resolveAddresses } : {}),
+  });
 
   try {
     if (opened.response.status < 200 || opened.response.status >= 300) {
@@ -145,14 +108,14 @@ async function openRemoteResponse(params: Readonly<{
 }
 
 /**
- * The single byte-budget owner for a remote plugin body. Both the catalog
- * reader and the archive writer consume it, so a declared and an undeclared
- * length are bounded by exactly the same rule.
+ * Acquisition enforces an explicit caller/operator budget, if configured,
+ * for declared and chunked bodies alike.
  */
 async function* readLimitedChunks(params: Readonly<{
   response: Response;
-  maxBytes: number;
+  maxBytes: number | null;
   errorLabel: string;
+  signal?: AbortSignal;
 }>): AsyncGenerator<Uint8Array> {
   const reader = params.response.body?.getReader();
   if (!reader) {
@@ -161,11 +124,11 @@ async function* readLimitedChunks(params: Readonly<{
   let totalBytes = 0;
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = await awaitPluginAcquisition(reader.read(), params.signal);
       if (done) break;
       if (!value) continue;
       totalBytes += value.byteLength;
-      if (totalBytes > params.maxBytes) {
+      if (params.maxBytes !== null && totalBytes > params.maxBytes) {
         throw new Error(`${params.errorLabel} exceeds the configured size limit (${params.maxBytes} bytes)`);
       }
       yield value;
@@ -175,40 +138,22 @@ async function* readLimitedChunks(params: Readonly<{
   }
 }
 
-export async function fetchRemoteJsonWithLimits<T>(params: Readonly<{
-  url: string;
-  accept?: string;
-  timeoutMs?: number;
-  maxBytes?: number;
+export async function readRemoteJsonResponseWithLimits<T>(params: Readonly<{
+  response: Response;
+  signal?: AbortSignal;
+  maxBytes?: number | null;
   errorLabel: string;
-  network?: RemoteFetchNetworkBoundary;
 }>): Promise<T> {
-  const timeoutMs = params.timeoutMs ?? resolvePluginRemoteFetchTimeoutMs();
-  const maxBytes = params.maxBytes ?? resolvePluginRemoteCatalogMaxBytes();
-  const opened = await openRemoteResponse({
-    url: params.url,
-    accept: params.accept ?? 'application/json',
-    timeoutMs,
-    maxBytes,
-    errorLabel: params.errorLabel,
-    network: params.network ?? {},
-  });
-
+  const maxBytes = params.maxBytes === undefined ? resolvePluginRemoteCatalogMaxBytes() : params.maxBytes;
+  if (maxBytes !== null && (!Number.isSafeInteger(maxBytes) || maxBytes < 1)) throw new Error('Invalid remote JSON acquisition budget');
+  assertResponseContentLengthWithinLimit({ ...params, maxBytes });
   const chunks: Uint8Array[] = [];
   let totalBytes = 0;
-  try {
-    for await (const chunk of readLimitedChunks({
-      response: opened.response,
-      maxBytes,
-      errorLabel: params.errorLabel,
-    })) {
-      chunks.push(chunk);
-      totalBytes += chunk.byteLength;
-    }
-  } finally {
-    await opened.dispose().catch(() => undefined);
+  for await (const chunk of readLimitedChunks({ ...params, maxBytes })) {
+    chunks.push(chunk);
+    totalBytes += chunk.byteLength;
   }
-
+  params.signal?.throwIfAborted();
   const body = new Uint8Array(totalBytes);
   let offset = 0;
   for (const chunk of chunks) {
@@ -223,21 +168,49 @@ export async function fetchRemoteJsonWithLimits<T>(params: Readonly<{
   }
 }
 
+export async function fetchRemoteJsonWithLimits<T>(params: Readonly<{
+  url: string;
+  accept?: string;
+  timeoutMs?: number | null;
+  signal?: AbortSignal;
+  maxBytes?: number | null;
+  errorLabel: string;
+  network?: RemoteFetchNetworkBoundary;
+}>): Promise<T> {
+  const timeoutMs = params.timeoutMs === undefined ? resolvePluginRemoteFetchTimeoutMs() : params.timeoutMs;
+  const maxBytes = params.maxBytes === undefined ? resolvePluginRemoteCatalogMaxBytes() : params.maxBytes;
+  if (maxBytes !== null && (!Number.isSafeInteger(maxBytes) || maxBytes < 1)) throw new Error('Invalid remote JSON acquisition budget');
+  const opened = await openRemoteResponse({
+    url: params.url, accept: params.accept ?? 'application/json', timeoutMs,
+    signal: params.signal, maxBytes, errorLabel: params.errorLabel, network: params.network ?? {},
+  });
+  try {
+    return await readRemoteJsonResponseWithLimits<T>({
+      response: opened.response, signal: opened.signal, maxBytes, errorLabel: params.errorLabel,
+    });
+  } finally {
+    await opened.dispose().catch(() => undefined);
+  }
+}
+
 export async function downloadRemoteFileWithLimits(params: Readonly<{
   url: string;
   destinationPath: string;
   accept?: string;
-  timeoutMs?: number;
-  maxBytes?: number;
+  timeoutMs?: number | null;
+  signal?: AbortSignal;
+  maxBytes?: number | null;
   errorLabel: string;
   network?: RemoteFetchNetworkBoundary;
 }>): Promise<void> {
-  const timeoutMs = params.timeoutMs ?? resolvePluginRemoteFetchTimeoutMs();
-  const maxBytes = params.maxBytes ?? resolvePluginRemoteArchiveMaxBytes();
+  const timeoutMs = params.timeoutMs === undefined ? resolvePluginRemoteFetchTimeoutMs() : params.timeoutMs;
+  const maxBytes = params.maxBytes === undefined ? resolvePluginRemoteArchiveMaxBytes() : params.maxBytes;
+  if (maxBytes !== null && (!Number.isSafeInteger(maxBytes) || maxBytes < 1)) throw new Error('Invalid remote archive storage budget');
   const opened = await openRemoteResponse({
     url: params.url,
     accept: params.accept ?? 'application/octet-stream',
     timeoutMs,
+    signal: params.signal,
     maxBytes,
     errorLabel: params.errorLabel,
     network: params.network ?? {},
@@ -250,10 +223,12 @@ export async function downloadRemoteFileWithLimits(params: Readonly<{
         response: opened.response,
         maxBytes,
         errorLabel: params.errorLabel,
+        signal: opened.signal,
       })),
       createWriteStream(params.destinationPath),
     );
   } finally {
     await opened.dispose().catch(() => undefined);
   }
+  opened.signal?.throwIfAborted();
 }

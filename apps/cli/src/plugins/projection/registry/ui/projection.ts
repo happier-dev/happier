@@ -1,6 +1,6 @@
-import { PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
-import { PluginUiResourceBindingCapabilityV1Schema, DaemonHostedWebFrameCapabilityV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import type { DaemonHostedWebFrameCapabilityV1, DaemonPluginHostedWebArtifactCacheIdentityV1, DaemonPluginUiArtifactByteIdentityV1 as ReactNativeBundleCacheIdentity, PluginMachineExecutionOriginV1, PluginUiResourceBindingCapabilityV1 } from '@happier-dev/protocol';
+import { PluginMachineMaterializationExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { PluginUiResourceBindingCapabilityV1Schema, DaemonHostedWebFrameCapabilityV1Schema, PluginDeclaredUiEntriesV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { DaemonHostedWebFrameCapabilityV1, DaemonPluginHostedWebArtifactCacheIdentityV1, DaemonPluginUiArtifactByteIdentityV1 as ReactNativeBundleCacheIdentity, PluginMachineMaterializationExecutionOriginV1, PluginUiResourceBindingCapabilityV1 } from '@happier-dev/protocol';
 import { normalizePluginUiDestinationBindingV1, normalizePluginUiInlineSurfaceBindingV1, isPluginUiAuthoredViewInlineSurfaceRoleV1, normalizePluginUiSettingsPageBindingV1, PluginUiDestinationBindingV1Schema, selectPluginUiDestinationBindingRendererV1, selectPluginUiInlineSurfaceBindingRendererV1 } from '@happier-dev/protocol/plugins/contributions/ui/surfaceRegistry';
 import { normalizePluginSessionHeaderActionDescriptorV1 } from '@happier-dev/protocol/plugins/contributions/ui/sessionHeaderActions';
 import { normalizePluginUiSemanticCommandV1 } from '@happier-dev/protocol/plugins/ui/semanticCommands';
@@ -29,6 +29,7 @@ import {
 } from './generatedUiArtifactOwners';
 import type { StablePluginDeclarativeModel } from '@/plugins/runtime/invocation/services/declarativeModel';
 import { generatedUiArtifactCompatibilityFailure } from './artifactCompatibility';
+import { resolveDeclarativeProjectionModels } from './declarativeModels';
 
 type PluginUiProjectedEntryCandidate = Readonly<Record<string, unknown> & {
     id: string;
@@ -133,7 +134,7 @@ function addEntry(
  */
 function stampEntriesWithExecutionOrigins(
     entriesById: Record<string, PluginUiProjectedEntryCandidate>,
-    originsByPluginId: Readonly<Record<string, PluginMachineExecutionOriginV1>> | undefined,
+    originsByPluginId: Readonly<Record<string, PluginMachineMaterializationExecutionOriginV1>> | undefined,
 ): void {
     if (!originsByPluginId) return;
     for (const [entryId, entry] of Object.entries(entriesById)) {
@@ -143,7 +144,7 @@ function stampEntriesWithExecutionOrigins(
         // Action carries its own execution origin, and the closed Protocol arm
         // admits no second copy.
         if (entry.contributionKind === 'searchProvider') continue;
-        const parsedOrigin = PluginMachineExecutionOriginV1Schema.safeParse(originsByPluginId[pluginId]);
+        const parsedOrigin = PluginMachineMaterializationExecutionOriginV1Schema.safeParse(originsByPluginId[pluginId]);
         if (!parsedOrigin.success || parsedOrigin.data.materializationRef.pluginId !== pluginId) continue;
         entriesById[entryId] = Object.freeze({
             ...entry,
@@ -1257,10 +1258,13 @@ function projectOpenableContentViewers(
         });
     }
 }
-export const pluginUiProjectionFamily = definePluginProjectionFamilyV2({
-    family: 'pluginUi',
-    project({ registry, generation, pluginExecutionOriginsByPluginId, pluginUiHostRuntime, requestedLocale }) {
-        const hostRuntime = pluginUiHostRuntime as PluginUiProjectionHostRuntimeContext | undefined;
+function projectPluginUiEntries(input: Readonly<{
+    registry: ResolvedContributionRegistry;
+    generation: number;
+    hostRuntime?: PluginUiProjectionHostRuntimeContext;
+    requestedLocale?: string;
+}>) {
+        const { registry, generation, hostRuntime, requestedLocale } = input;
         const entriesById: Record<string, PluginUiProjectedEntryCandidate> = {};
         projectTranslations(registry, entriesById, requestedLocale);
         projectSessionHeaderActions(registry, entriesById);
@@ -1292,6 +1296,34 @@ export const pluginUiProjectionFamily = definePluginProjectionFamilyV2({
             entriesById,
             hostRuntime?.declarative,
         );
+        return entriesById;
+}
+
+/** The same normalized presentation declarations, without a process occurrence or live origin. */
+export function projectPluginUiDeclarationEntries(registry: ResolvedContributionRegistry) {
+    const modelsByRendererKey = resolveDeclarativeProjectionModels({
+        registry, readPluginOccurrenceId: () => null,
+    });
+    const entries = projectPluginUiEntries({ registry, generation: 0, hostRuntime: {
+        declarative: { modelsByRendererKey },
+    } });
+    // Search, Transcript and Session header/info execution remain Session/runtime-owned.
+    const descriptive = Object.fromEntries(Object.entries(entries).filter(([, entry]) => (
+        entry.contributionKind !== 'searchProvider'
+        && entry.contributionKind !== 'transcriptActivity'
+        && entry.contributionKind !== 'sessionHeaderAction'
+        && entry.contributionKind !== 'sessionInfoSection'
+    )));
+    return PluginDeclaredUiEntriesV1Schema.parse(descriptive);
+}
+
+export const pluginUiProjectionFamily = definePluginProjectionFamilyV2({
+    family: 'pluginUi',
+    project({ registry, generation, pluginExecutionOriginsByPluginId, pluginUiHostRuntime, requestedLocale }) {
+        const entriesById = projectPluginUiEntries({
+            registry, generation, requestedLocale,
+            hostRuntime: pluginUiHostRuntime as PluginUiProjectionHostRuntimeContext | undefined,
+        });
         stampEntriesWithExecutionOrigins(entriesById, pluginExecutionOriginsByPluginId);
 
         return {

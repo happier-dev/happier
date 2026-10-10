@@ -2,7 +2,7 @@ import {
     COMPOSER_MEDIA_CONTENT_CAPABILITY_V1,
     PluginError,
 } from '@happier-dev/plugin-sdk';
-import type { PluginHostAccessRequestV2 } from '@happier-dev/protocol';
+import type { ManagedExecutableRef, PluginHostAccessRequestV2 } from '@happier-dev/protocol';
 import type {
     ActionsService } from '@happier-dev/plugin-sdk/actions';
 import type {
@@ -569,6 +569,9 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
                                 }),
                             isCurrent:
                                 managedProviderRuntime.isCurrent,
+                            ...(managedProviderRuntime.sharedGateway ? { sharedGateway: managedProviderRuntime.sharedGateway } : {}),
+                            ...(managedProviderRuntime.isPhysicalOccurrenceCurrent
+                                ? { isPhysicalOccurrenceCurrent: managedProviderRuntime.isPhysicalOccurrenceCurrent } : {}),
                         })
                         : null,
                     requestAuth:
@@ -821,12 +824,14 @@ export function withPluginInvocationServiceBindingAvailability(
     }>[]
 ): PluginInvocationServiceBinding {
     if (changes.length === 0) return binding;
-    const availability: Record<PluginServiceId, PluginServiceBindingAvailability> = {
-        ...binding.availability,
-    };
+    let availability: Record<PluginServiceId, PluginServiceBindingAvailability> | undefined;
     for (const change of changes) {
-        availability[PLUGIN_SERVICE_DESCRIPTORS[change.serviceId].id] = change.availability;
+        const id = PLUGIN_SERVICE_DESCRIPTORS[change.serviceId].id;
+        if ((availability ?? binding.availability)[id] === change.availability) continue;
+        availability ??= { ...binding.availability };
+        availability[id] = change.availability;
     }
+    if (!availability) return binding;
     return Object.freeze({
         ...binding,
         availability: Object.freeze(availability),
@@ -911,6 +916,9 @@ export function createPluginInvocationServicesFromDescriptors(
         ? Object.freeze({
             realm: 'managedProviderStart' as const,
             providerLocalId: configuredManagedProvider.providerLocalId,
+            ...(configuredManagedProvider.sharedGateway ? { sharedGateway: configuredManagedProvider.sharedGateway } : {}),
+            ...(configuredManagedProvider.isPhysicalOccurrenceCurrent
+                ? { isPhysicalOccurrenceCurrent: configuredManagedProvider.isPhysicalOccurrenceCurrent } : {}),
             ...(configuredManagedProvider.operationClaimId === undefined
                 ? {}
                 : {
@@ -959,6 +967,18 @@ export function createPluginInvocationServicesFromDescriptors(
                     })
                     : undefined,
             ),
+            ...(managedProviderRuntime?.isPhysicalOccurrenceCurrent ? {
+                resolveManagedExecutable: (executable: ManagedExecutableRef, isCurrent: () => boolean) => params.exec!.resolveExecutable(
+                    executable, seed.plugin.id, Object.freeze({
+                        kind: 'managedProviderRuntime' as const,
+                        pluginId: seed.plugin.id,
+                        providerLocalId: managedProviderRuntime.providerLocalId,
+                        contributionQualifiedId: seed.contribution.qualifiedId,
+                        occurrenceId: seed.occurrenceId,
+                        isCurrent,
+                    }),
+                ),
+            } : {}),
             resolvePath: params.exec!.resolvePath,
             recordDisclosureMismatch: createHostAccessDisclosureMismatchRecorder(seed, params),
             ...(params.exec!.agentCli ? { agentCli: params.exec!.agentCli } : {}),

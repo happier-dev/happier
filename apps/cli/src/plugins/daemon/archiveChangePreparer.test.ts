@@ -58,7 +58,7 @@ async function createArchiveFixture(params?: Readonly<{
   const packageName = params?.packageName ?? '@acme/archive-candidate';
   const packageVersion = params?.packageVersion ?? '1.2.3';
   const archivePath = join(root, 'candidate.tgz');
-  const hostedWebEntryPath = 'hosted-web/panel/index.html';
+  const hostedWebEntryPath = 'hosted-web/panel-web/index.html';
   const hostedWebBytes = Buffer.from('<!doctype html><title>Archive panel</title>\n');
   const hostedWebArtifactDigest = computePluginUiArtifactFileSetSha256DigestV1([{
     relativePath: hostedWebEntryPath,
@@ -220,9 +220,9 @@ async function createArchiveFixture(params?: Readonly<{
     ...(params?.hostedWeb ? [{
       name: 'package/dist/happier-plugin-ui/ui-artifacts.json',
       body: JSON.stringify({
-        version: 1,
+        version: 2,
         entries: [{
-          contributionId: 'panel-web',
+          artifactId: 'panel-web',
           tier: 'hostedWeb',
           entry: hostedWebEntryPath,
           files: [{
@@ -231,9 +231,8 @@ async function createArchiveFixture(params?: Readonly<{
             byteSize: hostedWebBytes.byteLength,
           }],
           digest: hostedWebArtifactDigest,
-          builtWith: { bundler: 'vite', version: '7.0.0' },
-          hostUiApiVersion: '1.0.0',
-          compat: {},
+          builtWith: { staging: 'staticDirectory' },
+          hostUiApiRange: '^1.0.0',
         }],
       }),
     }, {
@@ -773,7 +772,7 @@ describe('createDaemonArchivePluginChangePreparer', () => {
             ref: { pluginId: 'acme.archive-candidate', version: '1.2.3' },
             archiveDigestSha256: fixture.archiveDigestSha256,
             uiSlots: [{
-              contributionId: 'panel-web',
+              contributionId: 'panel',
               tier: 'hostedWeb',
               platform: 'web',
               artifactDigest: fixture.hostedWebArtifactDigest,
@@ -787,7 +786,7 @@ describe('createDaemonArchivePluginChangePreparer', () => {
           portableRelease: true,
           archiveDigestSha256: fixture.archiveDigestSha256,
           uiArtifacts: [{
-            contributionId: 'panel-web',
+            contributionId: 'panel',
             tier: 'hostedWeb',
             platform: 'web',
             artifactDigest: fixture.hostedWebArtifactDigest,

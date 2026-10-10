@@ -3,8 +3,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
+import { transform } from 'esbuild';
 import { ConversationProvidersContributionProtocolV1 } from '@happier-dev/channels-protocol/v1';
 import { PluginCollectionMutationRequestV1Schema } from '@happier-dev/protocol';
+import { UsageCoachFindingSchema } from '@happier-dev/protocol/usage/coach/coachFinding';
+
+import {
+    inspectAction,
+    manifest as usageCoachManifest,
+} from '../../../../../packages/plugin-sdk/examples/public-authoring/usageCoach';
 
 import * as persistence from '@/persistence';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
@@ -93,13 +100,14 @@ async function seedFixture(options: Readonly<{
     registerDynamicProducer?: boolean;
     sessionScoped?: boolean;
     inputType?: boolean;
+    usageCoach?: boolean;
 }> = {}): Promise<Readonly<{ happyHomeDir: string; pluginRoot: string }>> {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-live-resources-home-'));
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-live-resources-plugin-'));
     await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
     await mkdir(join(pluginRoot, 'resources'), { recursive: true });
     await writeFile(join(pluginRoot, 'resources', 'style.md'), '# Style guide\n', 'utf8');
-    await writeFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), JSON.stringify({
+    await writeFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), JSON.stringify(options.usageCoach ? usageCoachManifest : {
         schemaVersion: 2,
         id: PLUGIN_ID,
         version: '1.0.0',
@@ -149,7 +157,12 @@ async function seedFixture(options: Readonly<{
     }), 'utf8');
     // The producer publishes through a process-global control so the test can
     // change the bytes the way the real world does — from outside the host.
-    await writeFile(join(pluginRoot, 'daemon.mjs'), `export function activate(api) {
+    const daemonSource = options.usageCoach
+        ? (await transform(await readFile(new URL('../../../../../packages/plugin-sdk/examples/public-authoring/usageCoach.ts', import.meta.url), 'utf8'), {
+            loader: 'ts',
+            format: 'esm',
+        })).code
+        : `export function activate(api) {
         const usesAccountStorage = ${options.accountStorage === true ? 'true' : 'false'};
         const registersDynamicResource = ${options.registerDynamicProducer !== false ? 'true' : 'false'};
         const sessionScoped = ${options.sessionScoped === true ? 'true' : 'false'};
@@ -189,7 +202,8 @@ async function seedFixture(options: Readonly<{
                 },
             });
         }
-    }`, 'utf8');
+    }`;
+    await writeFile(join(pluginRoot, 'daemon.mjs'), daemonSource, 'utf8');
     await seedCurrentLocalPathPluginFixture({
         happyHomeDir,
         pluginRoot,
@@ -268,6 +282,41 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 }
 
 describe('executable plugin dynamic resource observation (EU-4b)', () => {
+    it('admits a public-author Coach finding Resource and Action and retires their occurrence', async () => {
+        const { happyHomeDir, pluginRoot } = await seedFixture({ usageCoach: true });
+        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        try {
+            runtime = await resolveExecutablePluginRuntimeRegistry({
+                happyHomeDir,
+                contributes: await resolveScopedDynamicResourceFixtureContributes(happyHomeDir),
+            });
+            const expectedCallerOccurrenceId = requirePluginOccurrenceId(runtime, PLUGIN_ID);
+            const request = { expectedCallerOccurrenceId, callerPluginId: PLUGIN_ID, resourceId: 'findings' };
+            const resource = await runtime.readUiResource?.(request);
+            const finding = UsageCoachFindingSchema.parse(JSON.parse(new TextDecoder().decode(resource?.bytes)));
+            expect(finding).toMatchObject({ detectorId: 'repeated_file_reads', currentness: 'current',
+                evidence: [{ kind: 'file_read', id: 'read-one' }, { kind: 'file_read', id: 'read-two' }],
+                measurements: [{ metric: 'unchanged_reads', value: 1, unit: 'count' }] });
+            const invoke = (surface: 'cli' | 'ui') => runtime!.targetActionInvocations!.invoke({
+                ...inspectAction, surface, input: {},
+            });
+            const action = await invoke('cli');
+            expect(action.status).toBe('executed');
+            if (action.status !== 'executed') throw new Error(JSON.stringify(action));
+            expect(UsageCoachFindingSchema.parse(action.value)).toEqual(finding);
+            await expect(invoke('ui')).resolves.toMatchObject({ status: 'unavailable' });
+            await expect(runtime.readUiResource?.({ ...request, expectedCallerOccurrenceId: 'retired-occurrence' }))
+                .rejects.toMatchObject({ code: 'plugin_generation_stale' });
+            await runtime.dispose();
+            await expect(runtime.readUiResource?.(request)).rejects.toMatchObject({ code: 'plugin_generation_stale' });
+            await expect(invoke('cli')).resolves.toMatchObject({ status: 'unavailable' });
+        } finally {
+            await runtime?.dispose();
+            delete globalThis.__HAPPIER_LIVE_RESOURCE_FIXTURE__;
+            await rm(happyHomeDir, { recursive: true, force: true });
+            await rm(pluginRoot, { recursive: true, force: true });
+        }
+    }, 60_000);
     it('reads an input type through its declared real Resource and refuses malformed or substituted reads', async () => {
         const { happyHomeDir, pluginRoot } = await seedFixture({ inputType: true });
         const controller = createPluginReloadController({ resolveRuntimeRegistry: async () =>

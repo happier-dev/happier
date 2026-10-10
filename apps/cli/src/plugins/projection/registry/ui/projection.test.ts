@@ -1,8 +1,10 @@
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { readFileSync } from 'node:fs';
 
 import {
     PluginOpenableContentViewerContributionV1Schema,
     PluginProjectionV2Schema,
+    PluginManifestV2Schema,
     PluginUiViewV2Schema,
     createPluginContributionIdentity,
 } from '@happier-dev/protocol';
@@ -10,7 +12,10 @@ import { PLUGIN_UI_HOST_API_VERSION_V1, type PluginUiDestinationBindingV1 } from
 import { describe, expect, it } from 'vitest';
 
 import { buildPluginProjectionV2 } from '../projection/v2';
-import { projectPluginUiRendererAvailability, projectPluginUiRendererRef } from './projection';
+import { projectPluginUiDeclarationEntries, projectPluginUiRendererAvailability, projectPluginUiRendererRef } from './projection';
+import { projectLoadedPluginContributes } from '../resolvePluginContributions';
+import { createResolvedContributionRegistry } from '../createResolvedContributionRegistry';
+import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import type {
     ResolvedContributionRegistry,
     ResolvedOpenableContentViewerContribution,
@@ -49,6 +54,38 @@ const { readPluginSurfaceMountBinding }: Readonly<{
         renderer: Readonly<Record<string, unknown>>;
     }>): unknown;
 }> = await import(new URL('../../../../../../ui/sources/components/plugins/surfaces/pluginSurfaceMountBinding.ts', import.meta.url).href);
+const { normalizePluginInstalledUiDeclarations }: Readonly<{
+    normalizePluginInstalledUiDeclarations(entries: ReturnType<typeof projectPluginUiDeclarationEntries>, platform: 'web'): unknown;
+}> = await import(new URL('../../../../../../ui/sources/sync/domains/plugins/ui/projection.ts', import.meta.url).href);
+const { admitDeclarativeStaticModel }: Readonly<{
+    admitDeclarativeStaticModel(input: Readonly<{ model: unknown; expectedPluginId: string }>): Readonly<{ root: unknown; occurrenceId?: string }> | null;
+}> = await import(new URL('../../../../../../ui/sources/components/plugins/surfaces/declarativeStaticModel.ts', import.meta.url).href);
+
+it('mounts an installed manifest-root page through the physical static decoder without a process occurrence', () => {
+    const plugin: LoadedPlugin = {
+        pluginId: 'acme.cold-page', pluginRootPath: '/plugins/acme.cold-page',
+        manifestPath: '/plugins/acme.cold-page/.happier-plugin/plugin.json', daemonEntryPath: null, devDaemonEntryPath: null,
+        sourceSpec: { kind: 'path', locator: '/plugins/acme.cold-page', trustPolicy: 'local_trusted', installPolicy: 'link' },
+        manifest: PluginManifestV2Schema.parse({
+            schemaVersion: 2, id: 'acme.cold-page', version: '1.0.0', displayName: 'Cold page',
+            runtime: { apiVersion: 1 }, contributes: { ui: {
+                renderers: [{ id: 'page', kind: 'declarative', root: { kind: 'text', text: 'Installed page' } }],
+                views: [{ id: 'page', container: 'appPage', target: { kind: 'app' }, renderer: 'page', title: 'Page' }],
+            } },
+        }),
+    };
+    const registry = createResolvedContributionRegistry(projectLoadedPluginContributes({
+        loadResult: { loadedPlugins: [plugin], diagnosticsByPluginId: {} }, provenance: 'external',
+    }));
+    const model = normalizePluginInstalledUiDeclarations(projectPluginUiDeclarationEntries(registry), 'web');
+    const placement = selectPluginAppPagePlacements(model)[0];
+    expect(placement).toBeDefined();
+    if (!placement) throw new Error('Expected installed page placement');
+    expect(readPluginSurfaceMountBinding({ descriptor: placement, renderer: placement.renderer })).toMatchObject({ kind: 'destination' });
+    const admitted = admitDeclarativeStaticModel({ model: placement.renderer.model, expectedPluginId: plugin.pluginId });
+    expect(admitted?.root).toMatchObject({ kind: 'text', text: 'Installed page' });
+    expect(admitted?.occurrenceId).toBeUndefined();
+});
 
 const admittedOccurrencesByPluginId = new Map<string, PluginRuntimeOccurrenceId>();
 
@@ -66,9 +103,9 @@ it('projects inline HTML source through the canonical renderer reference without
         pluginVersion: '1.0.0',
         provenance: 'external', source: { kind: 'path' },
         identity: { pluginId: 'com.acme.inline', localId: 'inline' }, manifestPath: '/plugin/happier.plugin.json',
-        definition: { id: 'inline', kind: 'hostedHtml', source: { kind: 'html', html: '<p>Hello</p>' }, requiredHostMethods: ['context'] },
+        definition: { id: 'inline', kind: 'hostedHtml', source: artifactHtmlBundleFromBodyV1('<p>Hello</p>'), requiredHostMethods: ['context'] },
     }, undefined)).toEqual({
-        rendererRef: { kind: 'hostedHtml', contributionId: 'inline', source: { kind: 'html', html: '<p>Hello</p>' }, requiredHostMethods: ['context'] },
+        rendererRef: { kind: 'hostedHtml', contributionId: 'inline', source: artifactHtmlBundleFromBodyV1('<p>Hello</p>'), requiredHostMethods: ['context'] },
         registryRendererRef: { kind: 'hostedHtml', contributionId: 'inline' },
     });
 });
@@ -84,7 +121,7 @@ it('projects bundled and external inline HTML with identical public renderer sem
         definition: {
             id: 'status',
             kind: 'hostedHtml',
-            source: { kind: 'html', html: '<p>Status</p>' },
+            source: artifactHtmlBundleFromBodyV1('<p>Status</p>'),
         },
     }, undefined);
 
@@ -104,7 +141,7 @@ it('carries the declared hosted-HTML capability request to the mount that must e
         definition: {
             id: 'inline',
             kind: 'hostedHtml',
-            source: { kind: 'html', html: '<p>Hello</p>' },
+            source: artifactHtmlBundleFromBodyV1('<p>Hello</p>'),
             requiredHostMethods: ['context'],
             requestedCapabilities,
         },
@@ -112,7 +149,7 @@ it('carries the declared hosted-HTML capability request to the mount that must e
     expect(projected.rendererRef).toEqual({
         kind: 'hostedHtml',
         contributionId: 'inline',
-        source: { kind: 'html', html: '<p>Hello</p>' },
+        source: artifactHtmlBundleFromBodyV1('<p>Hello</p>'),
         requiredHostMethods: ['context'],
         requestedCapabilities,
     });
@@ -135,7 +172,7 @@ it('reports admitted inline source availability without looking for an Artifact'
         renderer: {
             pluginId: 'com.acme.inline', provenance: 'external', source: { kind: 'path' },
             identity: { pluginId: 'com.acme.inline', localId: 'inline' }, manifestPath: '/plugin/happier.plugin.json',
-            definition: { id: 'inline', kind: 'hostedHtml', source: { kind: 'html', html: '<p>Hello</p>' } },
+            definition: { id: 'inline', kind: 'hostedHtml', source: artifactHtmlBundleFromBodyV1('<p>Hello</p>') },
         },
         declarativeModel: undefined,
         registryRendererRef: { kind: 'hostedHtml', contributionId: 'inline' },
@@ -754,7 +791,7 @@ describe('plugin UI projection family', () => {
                 definition: {
                     id: 'column-renderer',
                     kind: 'hostedHtml',
-                    source: { kind: 'html', html: '<p>Navigation</p>' },
+                    source: artifactHtmlBundleFromBodyV1('<p>Navigation</p>'),
                 },
             }],
             uiViewsV2: [{
@@ -809,7 +846,7 @@ describe('plugin UI projection family', () => {
                 renderer: {
                     kind: 'hostedHtml',
                     contributionId: 'column-renderer',
-                    source: { kind: 'html', html: '<p>Navigation</p>' },
+                    source: artifactHtmlBundleFromBodyV1('<p>Navigation</p>'),
                     requiredHostMethods: [],
                 },
                 availability: { state: 'available', reason: 'available', diagnostics: [] },

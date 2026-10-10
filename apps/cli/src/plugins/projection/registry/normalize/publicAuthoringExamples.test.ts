@@ -119,7 +119,7 @@ describe('plugin SDK public installable examples', () => {
         renderer: {
           kind: 'hostedHtml',
           contributionId: `${surfaceId}-renderer`,
-          source: { kind: 'html' },
+          source: { v: 1, entrypoint: 'index.html', files: { 'index.html': { mime: 'text/html' } } },
         },
         availability: { state: 'available', reason: 'available' },
       });

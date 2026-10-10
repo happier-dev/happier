@@ -1,10 +1,6 @@
 import type { ResolvedExecutablePluginRuntimeRegistry } from '../resolveExecutablePluginRuntimeRegistry';
 
 import { hasBlockingPluginReloadDiagnostic } from './controller';
-import {
-  remainingPluginInitializationTimeoutMs,
-  runWithOptionalTimeout,
-} from '../lifecycle/utils';
 
 function normalizePluginIds(pluginIds: readonly string[]): readonly string[] {
   return Object.freeze([...new Set(pluginIds.map((pluginId) => pluginId.trim()).filter(Boolean))].sort());
@@ -53,25 +49,13 @@ export function assertPluginRuntimeReadiness(params: Readonly<{
 export async function bootstrapPrimaryAgentRuntimesForReadiness(params: Readonly<{
   registry: ResolvedExecutablePluginRuntimeRegistry;
   pluginIds: readonly string[];
-  startupDeadlineAtMs?: number;
 }>): Promise<void> {
   const pluginIds = new Set(normalizePluginIds(params.pluginIds));
   if (pluginIds.size === 0) return;
   const registrations = [...params.registry.agentRuntimesByAgentId.values()]
     .sort((left, right) => left.agentId.localeCompare(right.agentId));
-  const timeoutError = (pluginId: string) => new Error(
-    `Plugin '${pluginId}' primary Agent runtime readiness timed out within the daemon startup budget`,
-  );
   for (const registration of registrations) {
     if (!pluginIds.has(registration.pluginId) || !registration.hasPrimaryRuntime) continue;
-    const remainingMs = remainingPluginInitializationTimeoutMs(params.startupDeadlineAtMs);
-    if (remainingMs === 0) {
-      throw timeoutError(registration.pluginId);
-    }
-    await runWithOptionalTimeout(
-      remainingMs,
-      () => registration.createRuntime({ signal: registration.retirementSignal }),
-      () => timeoutError(registration.pluginId),
-    );
+    await registration.createRuntime({ signal: registration.retirementSignal });
   }
 }

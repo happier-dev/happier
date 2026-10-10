@@ -19,7 +19,6 @@ function deferred<T>() {
 function fixture(
   overrides: Partial<ComposerReferenceRuntime> = {},
   options: Readonly<{
-    callbackTimeoutMs?: number;
     triggers?: readonly ('@' | '$' | '/')[];
     registrationGeneration?: string;
   }> = {},
@@ -67,7 +66,6 @@ function fixture(
       }) as unknown as PluginInvocationContext,
       complete: completeInvocation,
     }),
-    callbackTimeoutMs: options.callbackTimeoutMs,
     // The public declaration is deliberately supplied through the canonical
     // target registry rather than trusted from a picker request.
     composerReferences: [{
@@ -201,16 +199,17 @@ describe('target composer reference registry', () => {
     })).rejects.toMatchObject({ code: 'composer_reference_candidate_mismatch' });
   });
 
-  it('enforces the host callback deadline even when a reference ignores cancellation', async () => {
+  it('accepts a current reference result after the former callback cutoff', async () => {
     vi.useFakeTimers();
     try {
       let observedSignal: AbortSignal | undefined;
+      const pending = deferred<Array<{ id: string; label: string }>>();
       const subject = fixture({
         search: vi.fn<ComposerReferenceRuntime['search']>(async (_query, context) => {
           observedSignal = context.signal;
-          return await new Promise<Array<{ id: string; label: string }>>(() => {});
+          return await pending.promise;
         }),
-      }, { callbackTimeoutMs: 25 });
+      });
 
       const search = subject.registry.search({
         reference: REFERENCE,
@@ -219,13 +218,37 @@ describe('target composer reference registry', () => {
         signal: new AbortController().signal,
       });
       expect(subject.runtime.search).toHaveBeenCalledTimes(1);
+      const outcome = search.then((value) => ({ value }), (error: unknown) => ({ error }));
 
-      vi.advanceTimersByTime(25);
+      await vi.advanceTimersByTimeAsync(5_001);
+      pending.resolve([{ id: 'issue:42', label: 'Issue 42' }]);
 
-      await expect(search).rejects.toMatchObject({ code: 'composer_reference_timed_out' });
-      expect(observedSignal?.aborted).toBe(true);
+      await expect(outcome).resolves.toEqual({ value: [{ id: 'issue:42', label: 'Issue 42' }] });
+      expect(observedSignal?.aborted).toBe(false);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('preserves a real reference callback error', async () => {
+    const failure = new Error('reference lookup failed');
+    const subject = fixture({ search: async () => { throw failure; } });
+    await expect(subject.registry.search({ reference: REFERENCE, query: 'issue', trigger: '@', signal: new AbortController().signal }))
+      .rejects.toBe(failure);
+  });
+
+  it('retires only a cancelled query while another query on the same occurrence completes', async () => {
+    const previous = deferred<Array<{ id: string; label: string }>>();
+    const current = deferred<Array<{ id: string; label: string }>>();
+    const subject = fixture({ search: async (query) => await (query === 'previous' ? previous : current).promise });
+    const cancellation = new AbortController();
+    const first = subject.registry.search({ reference: REFERENCE, query: 'previous', trigger: '@', signal: cancellation.signal });
+    const rejected = expect(first).rejects.toMatchObject({ code: 'composer_reference_not_current' });
+    const next = subject.registry.search({ reference: REFERENCE, query: 'current', trigger: '@', signal: new AbortController().signal });
+    cancellation.abort();
+    previous.resolve([{ id: 'old', label: 'Old' }]);
+    current.resolve([{ id: 'new', label: 'New' }]);
+    await rejected;
+    await expect(next).resolves.toEqual([{ id: 'new', label: 'New' }]);
   });
 });

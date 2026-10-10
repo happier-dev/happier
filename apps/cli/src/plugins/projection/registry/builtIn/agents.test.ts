@@ -11,6 +11,9 @@ import { describe, expect, it } from 'vitest';
 import * as builtInAgentProjection from './agents';
 import { projectBuiltInAgents } from './agents';
 import type { ResolvedAgentContribution } from '../types';
+import { projectManifestAgentContribution } from '../projectManifestAgentContribution';
+import { PLUGIN_MANIFEST as CUSTOM_ACP_MANIFEST } from '../../../../../../../packages/plugins/custom-acp/src/manifest';
+import { PLUGIN_MANIFEST as QWEN_MANIFEST } from '../../../../../../../packages/plugins/qwen/src/manifest';
 
 function manifestAgents(): readonly ResolvedAgentContribution[] {
     return getAllAgentDefinitionContracts().map((definition) => {
@@ -58,6 +61,21 @@ function manifestAgents(): readonly ResolvedAgentContribution[] {
 }
 
 describe('built-in Agent projection overlays', () => {
+    it('keeps a declared bundled Agent without native CLI metadata alongside native CLI Agents', () => {
+        const manifestAgents = [CUSTOM_ACP_MANIFEST, QWEN_MANIFEST].map((manifest) => projectManifestAgentContribution({
+            definition: manifest.contributes.agents![0]!,
+            pluginId: manifest.id,
+            provenance: 'first_party',
+            source: { kind: 'bundled' },
+        }));
+        const projected = projectBuiltInAgents({ manifestAgents, registrationBindings: [] });
+        expect(projected.find(agent => agent.identity?.pluginId === CUSTOM_ACP_MANIFEST.id)).toMatchObject({
+            runtimeSpec: null,
+            cliMetadata: null,
+            catalogEntry: { cliSubcommand: 'custom-acp' },
+        });
+        expect(projected.find(agent => agent.identity?.pluginId === QWEN_MANIFEST.id)?.runtimeSpec?.binaryName).toBe('qwen');
+    });
     it('does not publish a parallel built-in Agent runtime projection', () => {
         expect(builtInAgentProjection).not.toHaveProperty('projectBuiltInAgentRuntimes');
     });
@@ -212,13 +230,15 @@ describe('built-in Agent projection overlays', () => {
     });
 
     it('fails closed when a bundled manifest owner lacks projected CLI metadata', () => {
-        const manifests = manifestAgents();
-        const first = manifests[0]!;
+        const first = projectManifestAgentContribution({
+            definition: QWEN_MANIFEST.contributes.agents![0]!, pluginId: QWEN_MANIFEST.id,
+            provenance: 'first_party', source: { kind: 'bundled' },
+        });
         expect(() => projectBuiltInAgents({
             manifestAgents: [{
                 ...first,
                 runtimeSpec: null,
-            }, ...manifests.slice(1)],
+            }],
             registrationBindings: [],
         })).toThrow(/Missing bundled manifest CLI metadata/);
     });

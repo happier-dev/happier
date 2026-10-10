@@ -1,12 +1,28 @@
 /** Pure projection rendering; filesystem, preparation and publication stay in the generator. */
 import {
+  readManifestContributionArray,
+  readRequiredContributionId,
   renderJsonLiteral,
   renderTsStringLiteral,
 } from './literals.ts';
 import type {
+  BundledPluginPackage,
   JsonValue,
   ReleasedFlatSessionMetadataRuntimeDescriptorReaderContributionDescriptor,
 } from './projectionFacts.ts';
+
+export function collectBundledAgentContributionIdentities(
+  pluginPackages: readonly BundledPluginPackage[],
+): Readonly<Record<string, Readonly<{ pluginId: string; localId: string }>>> {
+  return Object.freeze(Object.fromEntries([
+    ...pluginPackages.flatMap((pluginPackage) => {
+      if (!pluginPackage.agentId) return [];
+      const manifestAgent = readManifestContributionArray(pluginPackage.manifest, 'agents')[0];
+      const localId = readRequiredContributionId(manifestAgent, 'agents', pluginPackage.pluginPackageId);
+      return [[pluginPackage.agentId, Object.freeze({ pluginId: pluginPackage.pluginId, localId })] as const];
+    }),
+  ]));
+}
 
 export function renderBundledAgentDefinitionsTs(params: Readonly<{
   agentIds: readonly string[];

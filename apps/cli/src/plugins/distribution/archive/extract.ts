@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
-import { x as extractTar, type ReadEntry } from 'tar';
+import { t as listTar, type ReadEntry } from 'tar';
 
 import { createStreamingIntegrityVerifier } from '../integrity';
 import { createPortablePathRegistry, readPortableArchiveEntryPath } from './path';
@@ -39,7 +39,7 @@ function error(code: PortableArchiveErrorCode, message: string, cause?: unknown)
 function mergeLimits(overrides: Partial<PortableArchiveLimits> | undefined): PortableArchiveLimits {
   const limits = { ...DEFAULT_PORTABLE_ARCHIVE_LIMITS, ...overrides };
   for (const [name, value] of Object.entries(limits)) {
-    if (!Number.isFinite(value) || value < 0) {
+    if (value !== null && (!Number.isFinite(value) || value < 0)) {
       throw error('archive_source_invalid', `Archive limit ${name} must be a non-negative finite number`);
     }
   }
@@ -57,7 +57,6 @@ export async function extractPortableTarGzipArchive(
   params: ExtractPortableTarGzipArchiveParams,
 ): Promise<ExtractedPortableArchive> {
   const limits = mergeLimits(params.limits);
-  if (limits.timeoutMs === 0) throw error('archive_timeout', 'Archive extraction timed out');
   if (params.signal?.aborted) throw error('archive_aborted', 'Archive extraction was aborted');
   if (!Number.isSafeInteger(params.expectedArchiveBytes) || params.expectedArchiveBytes <= 0) {
     throw error('archive_source_invalid', 'Expected archive byte length must be a positive safe integer');
@@ -97,36 +96,41 @@ export async function extractPortableTarGzipArchive(
   const onExternalAbort = () => abortController.abort(params.signal?.reason);
   params.signal?.addEventListener('abort', onExternalAbort, { once: true });
   if (params.signal?.aborted) onExternalAbort();
-  const timeout = setTimeout(() => abortController.abort(error('archive_timeout', 'Archive extraction timed out')), limits.timeoutMs);
-  timeout.unref?.();
 
   const pathRegistry = createPortablePathRegistry();
-  const inventoryPromises: Promise<PortableArchiveFile>[] = [];
+  const inventory: PortableArchiveFile[] = [];
+  let entryOperation = Promise.resolve();
+  const activeEntries = new Set<ReadEntry>();
   let entryCount = 0;
   let fileCount = 0;
   let expandedBytes = 0;
-  const fileMetadata = new WeakMap<ReadEntry, Readonly<{ path: string; size: number }>>();
+  const fileMetadata = new WeakMap<ReadEntry, Readonly<{ path: string; size: number; kind: 'file' | 'directory' }>>();
 
   const abortWith = (failure: PortableArchiveError): void => {
     if (!abortController.signal.aborted) abortController.abort(failure);
   };
+  const stopEntries = (): void => {
+    const reason = abortController.signal.reason;
+    for (const entry of activeEntries) entry.destroy(reason instanceof Error ? reason : error('archive_aborted', 'Archive extraction was aborted'));
+  };
+  abortController.signal.addEventListener('abort', stopEntries);
 
   const accountMetadataEntry = (byteLength: number): void => {
     entryCount += 1;
-    if (entryCount > limits.maxEntries) {
+    if (limits.maxEntries !== null && entryCount > limits.maxEntries) {
       abortWith(error('archive_limit_entries', 'Archive contains too many entries'));
       return;
     }
-    if (!Number.isSafeInteger(byteLength) || byteLength < 0 || byteLength > limits.maxFileBytes) {
+    if (!Number.isSafeInteger(byteLength) || byteLength < 0 || (limits.maxFileBytes !== null && byteLength > limits.maxFileBytes)) {
       abortWith(error('archive_limit_file_bytes', 'Archive metadata entry exceeds its byte limit'));
       return;
     }
     expandedBytes += byteLength;
-    if (expandedBytes > limits.maxExpandedBytes) {
+    if (limits.maxExpandedBytes !== null && expandedBytes > limits.maxExpandedBytes) {
       abortWith(error('archive_limit_expanded_bytes', 'Archive exceeds expanded-byte limit'));
       return;
     }
-    if (expandedBytes / params.expectedArchiveBytes > limits.maxCompressionRatio) {
+    if (limits.maxCompressionRatio !== null && expandedBytes / params.expectedArchiveBytes > limits.maxCompressionRatio) {
       abortWith(error('archive_limit_compression_ratio', 'Archive exceeds compression-ratio limit'));
     }
   };
@@ -137,7 +141,7 @@ export async function extractPortableTarGzipArchive(
       if (!('type' in candidateEntry)) throw error('archive_format_invalid', 'Extraction received a non-archive entry');
       const entry = candidateEntry as ReadEntry;
       entryCount += 1;
-      if (entryCount > limits.maxEntries) throw error('archive_limit_entries', 'Archive contains too many entries');
+      if (limits.maxEntries !== null && entryCount > limits.maxEntries) throw error('archive_limit_entries', 'Archive contains too many entries');
       if (entry.type !== 'File' && entry.type !== 'OldFile' && entry.type !== 'Directory') {
         throw error('archive_entry_type_unsupported', `Archive entry type is unsupported: ${entry.type}`);
       }
@@ -150,20 +154,23 @@ export async function extractPortableTarGzipArchive(
       });
       if (portable.isRootDirectory) return false;
       pathRegistry.add(portable.relativePath, portable.kind);
-      if (portable.kind === 'directory') return true;
+      if (portable.kind === 'directory') {
+        fileMetadata.set(entry, { path: portable.relativePath, size: 0, kind: 'directory' });
+        return true;
+      }
 
       fileCount += 1;
-      if (fileCount > limits.maxFiles) throw error('archive_limit_files', 'Archive contains too many files');
-      if (!Number.isSafeInteger(entry.size) || entry.size < 0 || entry.size > limits.maxFileBytes) {
+      if (limits.maxFiles !== null && fileCount > limits.maxFiles) throw error('archive_limit_files', 'Archive contains too many files');
+      if (!Number.isSafeInteger(entry.size) || entry.size < 0 || (limits.maxFileBytes !== null && entry.size > limits.maxFileBytes)) {
         throw error('archive_limit_file_bytes', `Archive file exceeds its byte limit: ${portable.relativePath}`);
       }
       expandedBytes += entry.size;
-      if (expandedBytes > limits.maxExpandedBytes) throw error('archive_limit_expanded_bytes', 'Archive exceeds expanded-byte limit');
-      if (expandedBytes / params.expectedArchiveBytes > limits.maxCompressionRatio) {
+      if (limits.maxExpandedBytes !== null && expandedBytes > limits.maxExpandedBytes) throw error('archive_limit_expanded_bytes', 'Archive exceeds expanded-byte limit');
+      if (limits.maxCompressionRatio !== null && expandedBytes / params.expectedArchiveBytes > limits.maxCompressionRatio) {
         throw error('archive_limit_compression_ratio', 'Archive exceeds compression-ratio limit');
       }
 
-      fileMetadata.set(entry, { path: portable.relativePath, size: entry.size });
+      fileMetadata.set(entry, { path: portable.relativePath, size: entry.size, kind: 'file' });
       return true;
     } catch (cause) {
       const failure = cause instanceof PortableArchiveError
@@ -174,17 +181,19 @@ export async function extractPortableTarGzipArchive(
     }
   };
 
-  const transformEntry = (entry: ReadEntry): Transform | undefined => {
+  const extractEntry = async (entry: ReadEntry): Promise<void> => {
     const metadata = fileMetadata.get(entry);
-    if (!metadata) return undefined;
+    if (!metadata) { entry.resume(); return; }
+    const destinationPath = join(extractedRoot, metadata.path);
+    if (metadata.kind === 'directory') {
+      await mkdir(destinationPath, { recursive: true, mode: typeof entry.mode === 'number' ? (entry.mode | 0o700) & 0o7777 : 0o777 });
+    } else {
+      await mkdir(dirname(destinationPath), { recursive: true });
+    }
+    abortController.signal.throwIfAborted();
+    if (metadata.kind === 'directory') { entry.resume(); return; }
     const digest = createHash('sha256');
     let seenBytes = 0;
-    let resolveInventory!: (value: PortableArchiveFile) => void;
-    let rejectInventory!: (cause: unknown) => void;
-    inventoryPromises.push(new Promise<PortableArchiveFile>((resolve, reject) => {
-      resolveInventory = resolve;
-      rejectInventory = reject;
-    }));
     const stream = new Transform({
       transform(chunk: Buffer, _encoding, callback) {
         seenBytes += chunk.byteLength;
@@ -194,11 +203,10 @@ export async function extractPortableTarGzipArchive(
       flush(callback) {
         if (seenBytes !== metadata.size) {
           const failure = error('archive_format_invalid', `Archive file size did not match header: ${metadata.path}`);
-          rejectInventory(failure);
           callback(failure);
           return;
         }
-        resolveInventory({
+        inventory.push({
           path: metadata.path,
           byteLength: seenBytes,
           digest: `sha256:${digest.digest('hex')}`,
@@ -206,14 +214,13 @@ export async function extractPortableTarGzipArchive(
         callback();
       },
     });
-    stream.once('error', rejectInventory);
-    return stream;
+    const file = await open(destinationPath, 'wx', typeof entry.mode === 'number' ? entry.mode & 0o7777 : 0o666);
+    try {
+      await pipeline(entry, stream, file.createWriteStream(), { signal: abortController.signal });
+    } finally {
+      await file.close();
+    }
   };
-  // tar 7.5.19's runtime and documented contract accept a transform stream,
-  // but its declaration currently narrows this callback to ReadEntry.
-  const tarTransformEntry = transformEntry as unknown as (
-    entry: ReadEntry,
-  ) => ReadEntry | undefined;
 
   const integrityTransform = new Transform({
     transform(chunk: Buffer, _encoding, callback) {
@@ -223,35 +230,63 @@ export async function extractPortableTarGzipArchive(
   });
 
   try {
-    const unpack = extractTar({
-      cwd: extractedRoot,
+    // tar's parser does no filesystem work. Own and join every write here:
+    // Unpack's parser abort does not join its private pending filesystem work.
+    const unpack = listTar({
       gzip: true,
       strict: true,
       maxMetaEntrySize: MAX_METADATA_ENTRY_BYTES,
-      preservePaths: false,
-      strip: 1,
-      noMtime: true,
+      // Payloads stream to disk; only an explicit caller quota may reject them.
+      // tar otherwise adds its own implicit 1000:1 decompression cutoff.
+      maxDecompressionRatio: Number.POSITIVE_INFINITY,
+      noResume: true,
       filter,
-      transform: tarTransformEntry,
+      onentry(entry) {
+        activeEntries.add(entry);
+        entry.on('error', (cause: unknown) => abortWith(classifyUnexpectedFailure(cause)));
+        // An empty entry can finish parsing before its file has closed. Join
+        // that file lifetime before opening the next entry, rather than impose
+        // an archive-count ceiling based on available process descriptors.
+        entryOperation = entryOperation.then(() => {
+          abortController.signal.throwIfAborted();
+          return extractEntry(entry);
+        })
+          .catch((cause: unknown) => { abortWith(classifyUnexpectedFailure(cause)); })
+          .finally(() => { activeEntries.delete(entry); });
+      },
     });
     unpack.on('meta', (metadata: string) => accountMetadataEntry(Buffer.byteLength(metadata, 'utf8')));
     unpack.on('ignoredEntry', (entry: ReadEntry) => {
       if (entry.meta) accountMetadataEntry(entry.size);
     });
+    const abortParser = () => unpack.abort(abortController.signal.reason instanceof Error
+      ? abortController.signal.reason : error('archive_aborted', 'Archive extraction was aborted'));
+    // Parser.abort closes its decompressor; the entry pipelines above own and
+    // join the filesystem work independently of the parser's error/close event.
+    unpack.on('error', (cause: unknown) => abortWith(classifyUnexpectedFailure(cause)));
+    abortController.signal.addEventListener('abort', abortParser, { once: true });
     const noFollow = typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOFOLLOW : 0;
-    const sourceHandle = await open(params.archivePath, constants.O_RDONLY | noFollow);
+    let sourceHandle: Awaited<ReturnType<typeof open>> | undefined;
     try {
+      sourceHandle = await open(params.archivePath, constants.O_RDONLY | noFollow);
+      abortController.signal.throwIfAborted();
       await pipeline(
         sourceHandle.createReadStream({ autoClose: false }),
         integrityTransform,
         unpack,
         { signal: abortController.signal },
       );
+    } catch (cause) {
+      abortWith(classifyUnexpectedFailure(cause));
+      throw cause;
     } finally {
-      await sourceHandle.close();
+      abortController.signal.removeEventListener('abort', abortParser);
+      await sourceHandle?.close();
+      await entryOperation;
     }
+    abortController.signal.throwIfAborted();
     if (!verifier.verify()) throw error('archive_integrity_mismatch', 'Archive integrity did not match downloaded candidate');
-    const inventory = (await Promise.all(inventoryPromises)).sort((left, right) => left.path.localeCompare(right.path));
+    inventory.sort((left, right) => left.path.localeCompare(right.path));
     const result: ExtractedPortableArchive = Object.freeze({
       rootPath: extractedRoot,
       inventory: Object.freeze(inventory),
@@ -268,7 +303,7 @@ export async function extractPortableTarGzipArchive(
     await rm(operationRoot, { recursive: true, force: true });
     throw failure;
   } finally {
-    clearTimeout(timeout);
+    abortController.signal.removeEventListener('abort', stopEntries);
     params.signal?.removeEventListener('abort', onExternalAbort);
   }
 }

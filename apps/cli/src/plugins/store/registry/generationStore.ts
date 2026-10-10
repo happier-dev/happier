@@ -142,11 +142,6 @@ function validatedAgentSessionRunnerFactoriesRecordPath(
   );
 }
 
-// The official packed plugin SDK currently brings a measured 6,356-file
-// runtime closure. Keep conservative power-of-two headroom while preserving a
-// hard inventory bound and the independent 512 MiB byte ceiling.
-export const MAXIMUM_IMMUTABLE_GENERATION_FILES = 16_384;
-
 // This is an exact storage-identity fact, not a health, revocation, or
 // currentness registry. Its only purpose is to prevent a completed retirement
 // from being undone by the old directory reappearing after cleanup/restart.
@@ -163,7 +158,7 @@ export const ImmutablePluginGenerationRecordSchema = z.object({
   pluginId: asHostProtocolZod(PluginIdSchema),
   immutableGenerationId: PortableStorageIdSchema,
   createdAtMs: z.number().int().nonnegative(),
-  files: z.array(GenerationFileSchema).max(MAXIMUM_IMMUTABLE_GENERATION_FILES),
+  files: z.array(GenerationFileSchema),
   manifestRelativePath: PortableRelativePathSchema,
   /**
    * Derived once, at mint time, from the distribution identity the generation
@@ -698,10 +693,6 @@ function createImmutablePluginGenerationRecord(input: Readonly<{
   const files = [...input.files].sort((left, right) => (
     left.relativePath < right.relativePath ? -1 : left.relativePath > right.relativePath ? 1 : 0
   ));
-  const totalBytes = files.reduce((total, file) => total + file.byteLength, 0);
-  if (files.length > MAXIMUM_IMMUTABLE_GENERATION_FILES || totalBytes > 512 * 1024 * 1024) {
-    throw new Error('Immutable plugin generation source exceeds its bounded inventory');
-  }
   const manifestRelativePath = PortableRelativePathSchema.parse(
     input.manifestRelativePath.replaceAll('\\', '/'),
   );
@@ -747,7 +738,6 @@ export async function createImmutablePluginGenerationRecordFromSource(input: Rea
   }
   const selectedSourcePaths = selectedSourcePath === null ? null : [selectedSourcePath];
   const pending = selectedSourcePaths ? [] : [''];
-  let totalBytes = 0;
   if (selectedSourcePaths) {
     for (const relativePath of [...new Set(selectedSourcePaths)].sort()) {
       const absolutePath = join(rootPath, ...relativePath.split('/'));
@@ -755,7 +745,6 @@ export async function createImmutablePluginGenerationRecordFromSource(input: Rea
       if (metadata.isSymbolicLink() || !metadata.isFile()) {
         throw new Error(`Selected immutable plugin generation source must be a regular file: ${relativePath}`);
       }
-      totalBytes += metadata.size;
       files.push({ relativePath, byteLength: metadata.size });
     }
   }
@@ -780,10 +769,6 @@ export async function createImmutablePluginGenerationRecordFromSource(input: Rea
       }
       if (!metadata.isFile()) {
         throw new Error(`Immutable plugin generation source contains a non-file entry: ${relativePath}`);
-      }
-      totalBytes += metadata.size;
-      if (files.length >= MAXIMUM_IMMUTABLE_GENERATION_FILES || totalBytes > 512 * 1024 * 1024) {
-        throw new Error('Immutable plugin generation source exceeds its bounded inventory');
       }
       files.push({ relativePath, byteLength: metadata.size });
     }

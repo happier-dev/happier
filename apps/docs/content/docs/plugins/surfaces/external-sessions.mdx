@@ -130,13 +130,57 @@ index is building, a changed anchored row is treated as a move-ahead and
 validation starts after the first identity-and-content watermark. A missing
 watermark or validation drift restarts the bounded crawl.
 
+## Standard content search and indexing
+
+In **0.3 development/preview**, add `contentSearch: true` to the matching
+`surfaces.externalSession.sources` declaration when `listCandidates` implements
+`searchTarget: 'content'`. Consumers require that positive capability; they
+must not mistake an older daemon's metadata results for transcript matches.
+An omitted selector keeps metadata search.
+
+Reuse the daemon-realm shared helper from
+`@happier-dev/plugin-sdk/sessions/file-stores`:
+
+- `createExternalSessionContentSearchControl(invocation)` inherits the caller's
+  signal and deadline and provides cooperative work checks and filesystem reads.
+- `searchExternalSessionContent({ query, paths, ripgrep, control, decode })`
+  prefilters source-scoped files through the host's packaged ripgrep, then
+  checks decoded text with the supplied `matchText` callback. Unicode and
+  escaped/process-unsafe text retain decoded fallback. For a client-backed
+  source, omit `paths` and `ripgrep` and decode the client's messages instead.
+- `decode` returns visible records with their native `id`, optional matched
+  `snippet`, and a `partial` flag. Keep branch/rollback filtering and item
+  identities in your existing decoder. The helper returns the first match's
+  `{ snippet, sourceItemId, messageIndex }`; its ordinal is never a Happier
+  sequence number.
+
+Catch `ExternalSessionContentSearchYield` at your candidate paging boundary,
+retain completed hits and the unfinished candidate in your continuation, and
+return partial content coverage. Cancellation still aborts the invocation.
+Use the callback's real budgets rather than adding another timeout. Claude,
+Codex, Pi, OhMyPi and Antigravity consume the file helper; OpenCode uses its
+decoded client path. See the [generated SDK surface](/plugins/api/surface) for
+the exact exports.
+
+Indexing uses the contribution's existing normalized `pageTranscript` and
+`readAfterTranscript` methods. There is no indexing registration or second
+plugin-owned index. The host Memory worker ingests selected, readable native
+sources only after the user enables Memory and opts in per machine and Agent.
+Existing `resolveSource.accountingSource` change observation, including optional
+`watchFileChanges`, shares the host's incumbent observation resources; it does
+not require another watcher. Source removal and native windows follow those
+same readers. The `contentSearch` declaration advertises standard scanning;
+it does not itself enable indexing or grant consent. Explain local plaintext
+storage to users via [local memory search](/organize/local-memory-search).
+
 ## Callback invocation services
 
 Each of the six callbacks receives caller-owned invocation controls: required
 `signal`, optional `deadlineAtMs`, and `maxSerializedBytes` (required for paged
-candidate/transcript reads, optional for source and identity resolution), plus two host-provided
-services: `managedEndpointRead` and the required existing `exec`
-(`ExecService`). `exec` remains governed by the Agent manifest's declared
+candidate/transcript reads, optional for source and identity resolution), plus host-provided
+services: `managedEndpointRead`, the required existing `exec`
+(`ExecService`), and `ripgrep` for packaged file-content prefiltering.
+`exec` remains governed by the Agent manifest's declared
 process/tool host access and the current plugin occurrence. Reuse its existing
 process and protocol-client facilities; this surface does not add a process
 subsystem, HTTP bridge, callback, registry, or Agent-id host branch. For

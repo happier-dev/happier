@@ -29,24 +29,9 @@ export type GeneratorOptions = Readonly<{
   /** Publish source Agent definition facts without compiling/staging executable runtimes. */
   agentDefinitionsOnly: boolean;
   inheritedFailuresStdin: boolean;
+  /** Npm publication explicitly prepares installed runtime/package bytes. */
+  packageArtifacts?: boolean;
 }>;
-
-export function resolveGeneratorAuthoringPreparationPolicy({
-  mode,
-  targetsCanonicalRoot,
-  targetOwnedOnly = false,
-}: Readonly<{
-  mode: GeneratorMode;
-  targetsCanonicalRoot: boolean;
-  targetOwnedOnly?: boolean;
-}>): Readonly<{
-  generatedCompilerInputMode: GeneratorMode;
-}> {
-  const publishesCanonicalSource = mode === 'write' && targetsCanonicalRoot && !targetOwnedOnly;
-  return Object.freeze({
-    generatedCompilerInputMode: publishesCanonicalSource ? 'write' : 'check',
-  });
-}
 
 export function shouldEvaluateBundledRuntimeSource(scope: GeneratorScope): boolean {
   return scope === 'all';
@@ -69,7 +54,7 @@ export function resolvePluginAuthorRuntimeLoadScope({
 
 export function printGeneratorUsage(): void {
   console.log([
-    'Usage: node --experimental-strip-types apps/cli/scripts/build-owned/generateBundledPluginEntries.ts [--root DIR] [--mode write|check] [--scope projections] [--workspace plugins-<id>] [--target-owned-only] [--aggregate] [--compiler-inputs] [--agent-definitions]',
+    'Usage: node --conditions=happier-source --experimental-strip-types apps/cli/scripts/build-owned/generateBundledPluginEntries.ts [--root DIR] [--mode write|check] [--scope projections] [--workspace plugins-<id>] [--target-owned-only] [--aggregate] [--compiler-inputs] [--agent-definitions] [--package-artifacts]',
     '',
     'Generates/patches bundled plugin entry maps from packages/plugins/*.',
     '',
@@ -86,6 +71,9 @@ export function printGeneratorUsage(): void {
     'whole-runtime determinism scope is not a public generator mode; writes always publish',
     'the current complete source-owned output set unless --compiler-inputs or',
     '--agent-definitions selects its bounded source preparation phase.',
+    '',
+    '--package-artifacts additionally prepares the installed plugin manifests and runtime',
+    'bytes for npm publication. Ordinary projection writes and checks consume authored source.',
   ].join('\n'));
 }
 
@@ -97,6 +85,7 @@ export function parseGeneratorCliArgs(argv: readonly string[]): GeneratorOptions
   let compilerInputsOnly = false;
   let agentDefinitionsOnly = false;
   let targetOwnedOnly = false;
+  let packageArtifacts = false;
   let inheritedFailuresStdin = false;
   const workspaceNames: string[] = [];
 
@@ -160,6 +149,10 @@ export function parseGeneratorCliArgs(argv: readonly string[]): GeneratorOptions
       targetOwnedOnly = true;
       continue;
     }
+    if (arg === '--package-artifacts') {
+      packageArtifacts = true;
+      continue;
+    }
     if (arg === '--inherited-failures-stdin') {
       inheritedFailuresStdin = true;
       continue;
@@ -185,10 +178,13 @@ export function parseGeneratorCliArgs(argv: readonly string[]): GeneratorOptions
   if (targetOwnedOnly && (aggregateOnly || compilerInputsOnly)) {
     throw new Error('--target-owned-only cannot be combined with --aggregate or --compiler-inputs');
   }
+  if (packageArtifacts && requestedScope === 'projections') {
+    throw new Error('--package-artifacts cannot be combined with --scope projections');
+  }
   if (mode === 'write' && requestedScope === 'projections') {
     throw new Error('--scope projections is a check-only scope; write mode always publishes the complete output set');
   }
-  const scope: GeneratorScope = mode === 'check' ? 'projections' : 'all';
+  const scope: GeneratorScope = mode === 'check' && !packageArtifacts ? 'projections' : 'all';
   return {
     rootDir,
     mode,
@@ -199,6 +195,7 @@ export function parseGeneratorCliArgs(argv: readonly string[]): GeneratorOptions
     agentDefinitionsOnly,
     inheritedFailuresStdin,
     targetOwnedOnly,
+    ...(packageArtifacts ? { packageArtifacts: true } : {}),
   };
 }
 

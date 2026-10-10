@@ -2,7 +2,6 @@ import type { PluginCleanup } from '@happier-dev/plugin-sdk';
 
 import type { CanonicalPluginManifest } from '../../../manifest/types';
 import type { PluginCompatibilityDiagnostic } from '../../../validation/diagnostics/types';
-import { logger } from '@/ui/logger';
 import {
     createContributionRegistrationHost,
     deriveContributionRegistrationRightsForManifest,
@@ -12,10 +11,8 @@ import {
 } from '../../api/registrationRightsHost';
 import type { PluginDaemonModuleNamespace } from '../../types';
 import {
-    remainingPluginInitializationTimeoutMs,
     normalizePositiveTimeoutMs,
     projectPluginFailureDiagnostic,
-    projectPluginFailureText,
     runWithOptionalTimeout,
 } from '../utils';
 import { resolveActivationExport } from './source';
@@ -32,9 +29,7 @@ type ContributionModuleActivationResult = Readonly<{
 
 /**
  * The publication atom of one activation transaction. It becomes observable
- * only after the whole transaction settles inside the absolute deadline; a
- * transaction that loses the deadline can never publish through the returned
- * result.
+ * only after the whole transaction settles under current occurrence authority.
  */
 type ContributionActivationPublication = Readonly<{
     registrations: readonly ContributionRuntimeRegistration[];
@@ -46,16 +41,6 @@ type ContributionActivationPublication = Readonly<{
 const EMPTY_REGISTRATIONS: readonly ContributionRuntimeRegistration[] = Object.freeze([]);
 const EMPTY_VALIDATED_AGENT_FACTORIES = Object.freeze([]);
 const NOOP_DISPOSE = async (): Promise<void> => undefined;
-
-class ActivationDeadlineExceededError extends Error {
-    constructor(pluginId: string) {
-        super(
-            `Plugin '${pluginId}' activation timed out within the daemon startup deadline; `
-            + 'synchronous plugin work cannot be preempted by this asynchronous deadline',
-        );
-        this.name = 'ActivationDeadlineExceededError';
-    }
-}
 
 class ActivationTransactionSupersededError extends Error {
     constructor(pluginId: string, reason: string) {
@@ -213,7 +198,6 @@ export async function activateContributionModule(params: Readonly<{
     isOccurrenceCurrent(): boolean;
     forceActivation?: boolean;
     cleanupTimeoutMs?: number;
-    startupDeadlineAtMs?: number;
     /**
      * The author's authenticated project root, supplied by the activation
      * owner ONLY for a locally trusted development plugin. Its presence is
@@ -254,13 +238,6 @@ export async function activateContributionModule(params: Readonly<{
             diagnostics: Object.freeze([]), dispose: NOOP_DISPOSE,
         });
     }
-    if (
-        params.startupDeadlineAtMs !== undefined
-        && remainingPluginInitializationTimeoutMs(params.startupDeadlineAtMs) === 0
-    ) {
-        return unavailable(`Plugin '${params.pluginId}' activation was not attempted after the daemon startup deadline`);
-    }
-
     const registeredExternalSessionsByAgent = new Map<string, unknown>();
     const cleanupTimeoutMs = normalizePositiveTimeoutMs(params.cleanupTimeoutMs);
     const host = createContributionRegistrationHost({
@@ -326,33 +303,9 @@ export async function activateContributionModule(params: Readonly<{
     } catch (error) {
         activationPromise = Promise.reject(error);
     }
-    // The containing startup deadline, when present, spans author
-    // settlement, commit/capture, asynchronous locator resolution and
-    // External Sessions companion validation, and retained-fact persistence.
-    // Synchronous work cannot be preempted by an asynchronous deadline; this
-    // bounds every asynchronous await of the transaction. On-demand activation
-    // without a containing deadline waits for the trusted author's settlement.
-    const remainingActivationBudgetMs = (): number | null =>
-        remainingPluginInitializationTimeoutMs(params.startupDeadlineAtMs);
-    let activationDeadlineExceeded = false;
-    const activationTimeoutError = (): ActivationDeadlineExceededError => {
-        activationDeadlineExceeded = true;
-        return new ActivationDeadlineExceededError(params.pluginId);
-    };
-    // Currentness guard for the transaction's retained-fact choke point.
-    // Checked atomically with each side-effecting call (no await in between):
-    // a transaction that lost the absolute deadline — or whose generation the
-    // activation owner retired — aborts before it can commission persistence
-    // or record validated facts against the already-closed candidate. The
-    // late transaction's settlement stays observed by the catch-path
-    // observer; this error only decides what that settlement may still do.
+    // Retained facts publish only while this occurrence is current. The
+    // starter's reporting wait does not retire trusted activation work.
     const assertActivationTransactionCurrent = (): void => {
-        if (activationDeadlineExceeded) {
-            throw new ActivationTransactionSupersededError(
-                params.pluginId,
-                'its activation deadline fired',
-            );
-        }
         if (!params.isOccurrenceCurrent()) {
             throw new ActivationTransactionSupersededError(
                 params.pluginId,
@@ -360,20 +313,13 @@ export async function activateContributionModule(params: Readonly<{
             );
         }
     };
-    let authorSettled = false;
-    let transaction: Promise<ContributionActivationPublication> | null = null;
     try {
-        const result: unknown = await runWithOptionalTimeout(
-            remainingActivationBudgetMs(),
-            () => activationPromise,
-            activationTimeoutError,
-        );
-        authorSettled = true;
+        const result: unknown = await activationPromise;
         if (result !== undefined && typeof result !== 'function') {
             throw new Error(`Plugin '${params.pluginId}' activate export must return void or one cleanup function`);
         }
         pluginCleanup = typeof result === 'function' ? result as PluginCleanup : null;
-        transaction = (async (): Promise<ContributionActivationPublication> => {
+        const transaction = (async (): Promise<ContributionActivationPublication> => {
             const registrations = host.commit();
             const sourceValidatedAgentSessionRunnerFactories =
                 await validateSessionRunnerFactoryRegistrations({
@@ -435,11 +381,7 @@ export async function activateContributionModule(params: Readonly<{
                 validatedAgentSessionRunnerFactories,
             });
         })();
-        const published = await runWithOptionalTimeout(
-            remainingActivationBudgetMs(),
-            () => transaction!,
-            activationTimeoutError,
-        );
+        const published = await transaction;
         return Object.freeze({
             status: 'active',
             registrations: published.registrations,
@@ -448,38 +390,6 @@ export async function activateContributionModule(params: Readonly<{
             dispose: disposeActivation,
         });
     } catch (error) {
-        if (error instanceof ActivationDeadlineExceededError) {
-            if (!authorSettled) {
-                // The activation promise cannot be preempted, so retain one observer
-                // solely to dispose a cleanup function returned after its scope retired.
-                // Its rejection is deliberately observed: the timeout result is final.
-                void activationPromise.then(
-                    (lateResult) => {
-                        if (typeof lateResult !== 'function') return;
-                        pluginCleanup = lateResult as PluginCleanup;
-                        void runWithOptionalTimeout(
-                            cleanupTimeoutMs,
-                            disposePluginCleanup,
-                            () => new Error(
-                                `Plugin '${params.pluginId}' late activation cleanup timed out after ${cleanupTimeoutMs}ms`,
-                            ),
-                        ).catch((cleanupError: unknown) => {
-                            logger.warn('[PLUGIN RUNTIME] Late activation cleanup failed', {
-                                pluginId: params.pluginId,
-                                error: projectPluginFailureText(cleanupError),
-                            });
-                        });
-                    },
-                    () => undefined,
-                );
-            } else if (transaction) {
-                // The post-author transaction lost the same absolute deadline.
-                // Observe its late settlement so a rejection cannot surface as
-                // unhandled and a late result cannot publish registrations or
-                // validated facts through the closed candidate below.
-                void transaction.then(() => undefined, () => undefined);
-            }
-        }
         const realm = params.localDevelopmentSourceRoot
             ? { localDevelopmentSourceRoot: params.localDevelopmentSourceRoot }
             : {};

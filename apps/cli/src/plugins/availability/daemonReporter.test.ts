@@ -156,6 +156,28 @@ describe('daemon plugin Availability reporter', () => {
     vi.mocked(logger.warn).mockReset();
   });
 
+  it('retires reporting with the daemon lifetime without publishing a queued successor', async () => {
+    const abort = new AbortController();
+    const reason = new Error('daemon retired');
+    let entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    publisher.publishRelease.mockImplementationOnce(async (_input, options) => {
+      entered();
+      await new Promise<void>((_resolve, reject) => options?.signal?.addEventListener('abort', () => reject(reason), { once: true }));
+      return { facts: release.facts, outcome: 'created' };
+    });
+    const reporter = createDaemonPluginAvailabilityReporter({ credentials,
+      serverFeaturesSnapshotStore: { getSnapshot: readyServerFeatures }, getMachineId: () => 'machine-current', signal: abort.signal });
+    const first = reporter.report(inventory);
+    await started;
+    const successor = reporter.report({ ...inventory, revision: 13, materializations: [] });
+    const results = Promise.allSettled([first, successor]);
+    expect(publisher.publishRelease).toHaveBeenCalledWith(release, { signal: abort.signal });
+    abort.abort(reason);
+    expect(await results).toEqual([{ status: 'rejected', reason }, { status: 'rejected', reason }]);
+    expect(publisher.reportMaterializations).not.toHaveBeenCalled();
+  });
+
   it('publishes verified releases before reporting the exact persisted machine snapshot with live identity facts', async () => {
     const releaseCompletion = createDeferred();
     const callOrder: string[] = [];
@@ -198,6 +220,27 @@ describe('daemon plugin Availability reporter', () => {
         }],
       },
     });
+  });
+
+  it('reports persisted installation facts without live declarations and suppresses declaration-only changes', async () => {
+    const reporter = createDaemonPluginAvailabilityReporter({
+      credentials,
+      serverFeaturesSnapshotStore: { getSnapshot: readyServerFeatures },
+      getMachineId: () => 'machine-current',
+    });
+    await reporter.report({ ...inventory, materializations: [{
+      ...materialization,
+      declaredManifest: release.facts.normalizedManifest,
+      declaredUiEntries: {},
+    }] });
+    const reported = publisher.reportMaterializations.mock.calls[0]?.[0].snapshot.materializations[0];
+    expect(reported).toEqual({ ...materialization, serverIdentityId: 'srv_availability_daemon', machineId: 'machine-current' });
+    await reporter.report({ ...inventory, materializations: [{
+      ...materialization,
+      declaredManifest: { ...release.facts.normalizedManifest, displayName: 'Fresh live description' },
+      declaredUiEntries: {},
+    }] });
+    expect(publisher.reportMaterializations).toHaveBeenCalledTimes(1);
   });
 
   it('does not open the transport when the daemon lacks a ready server identity', async () => {

@@ -120,10 +120,12 @@ import {
   renderCliPromptAssetPluginDescriptorsTs,
 } from './bundledPlugins/registry.ts';
 import {
+  collectBundledAgentContributionIdentities,
   renderAgentIdsTs,
   renderAgentRuntimeDescriptorReadersTs,
   renderBundledAgentDefinitionsTs,
 } from './bundledPlugins/agentFacts.ts';
+export { collectBundledAgentContributionIdentities } from './bundledPlugins/agentFacts.ts';
 import {
   renderGeneratedExternalSessionSourcesTs,
   renderProtocolAgentProviderIdsV1Ts,
@@ -144,6 +146,7 @@ import {
 } from './bundledPlugins/agentUi.ts';
 import {
   renderBundledVoiceEntriesTs,
+  renderBundledVoiceSelectionOptionsTs,
   renderBundledVoiceRuntimeEntriesTs,
 } from './bundledPlugins/voice.ts';
 import {
@@ -968,6 +971,7 @@ function normalizeAgentUiDescriptor(value: unknown, descriptorPath: string): Age
       );
     }
   }
+  const identityColor = readOptionalJsonObjectDescriptor(root, 'identityColor', descriptorPath);
   const message = readOptionalJsonObjectDescriptor(root, 'message', descriptorPath);
   const components = readOptionalJsonObjectDescriptor(root, 'components', descriptorPath);
   const assets = readOptionalJsonObjectDescriptor(root, 'assets', descriptorPath);
@@ -994,6 +998,10 @@ function normalizeAgentUiDescriptor(value: unknown, descriptorPath: string): Age
     pluginId: readRequiredString(root, 'pluginId', descriptorPath),
     agentId: readRequiredString(root, 'agentId', descriptorPath),
     version: readRequiredNumber(root, 'version', descriptorPath),
+    ...(identityColor ? { identityColor: {
+      light: readRequiredString(identityColor, 'light', `${descriptorPath}.identityColor`),
+      dark: readRequiredString(identityColor, 'dark', `${descriptorPath}.identityColor`),
+    } } : {}),
     display: {
       nameKey,
       subtitleKey: readRequiredString(display, 'subtitleKey', `${descriptorPath}.display`),
@@ -1314,13 +1322,14 @@ function projectNativeAgentCliDefinitionFacts(
 ): JsonValue {
   if (!isJsonObject(definition) || typeof definition.id !== 'string') return definition;
   const cli = readNativeAgentCliMetadata(manifest, definition.id);
+  // The manifest owns native executable/auth metadata. Catalog-driven Agents
+  // legitimately omit it; shared facts must not retain an authored CLI fallback.
+  const { cli: _authoredCli, ...sharedDefinition } = definition;
   if (!cli) {
-    throw new Error(
-      `Invalid ${pluginPackageId}.${definition.id}: strict native Agent CLI/auth metadata is required`,
-    );
+    return sharedDefinition;
   }
   return {
-    ...definition,
+    ...sharedDefinition,
     cli: {
       ...cli,
       displayName: typeof cli.displayName === 'string'
@@ -3543,6 +3552,7 @@ function resolveGeneratorHostProjectionOutPaths(rootDir: string) {
     uiOutPath: resolve(rootDir, 'apps/ui/sources/agents/registry/generatedBundledPluginEntries.ts'),
     uiTranslationsOutPath: resolve(rootDir, 'apps/ui/sources/text/bundledPluginTranslations.generated.ts'),
     uiVoiceEntriesOutPath: resolve(rootDir, 'apps/ui/sources/voice/registry/generatedBundledVoiceEntries.ts'),
+    protocolVoiceSelectionOptionsOutPath: resolve(rootDir, 'packages/protocol/src/voice/settings/generatedBundledVoiceSelectionOptions.ts'),
     uiBehaviorOverridesOutPath: resolve(rootDir, 'apps/ui/sources/agents/registry/generatedBundledPluginEntries.uiBehaviorOverrides.ts'),
     sessionAgentBehaviorsOutPath: resolve(rootDir, 'apps/ui/sources/agents/registry/generatedBundledPluginEntries.sessionAgentBehaviors.ts'),
     visibleMessageResolversOutPath: resolve(rootDir, 'apps/ui/sources/agents/registry/generatedBundledPluginEntries.visibleMessageResolvers.ts'),
@@ -3677,26 +3687,6 @@ export async function publishBundledPluginSemanticProjection(
     writeBundledPluginPublicationFailures(options.rootDir, failures, failures.map((failure) => failure.packageName));
   }
   return failures;
-}
-
-export function collectBundledAgentContributionIdentities(
-  pluginPackages: readonly BundledPluginPackage[],
-): Readonly<Record<string, Readonly<{ pluginId: string; localId: string }>>> {
-  return Object.freeze(Object.fromEntries([
-    ...pluginPackages.flatMap((pluginPackage) => {
-      if (!pluginPackage.agentId) return [];
-      const manifestAgent = readManifestContributionArray(pluginPackage.manifest, 'agents')[0];
-      const localId = readRequiredContributionId(
-        manifestAgent,
-        'agents',
-        pluginPackage.pluginPackageId,
-      );
-      return [[pluginPackage.agentId, Object.freeze({
-        pluginId: pluginPackage.pluginId,
-        localId,
-      })] as const];
-    }),
-  ]));
 }
 
 function collectGeneratedAgentIds(
@@ -4446,7 +4436,7 @@ async function generateBundledPluginEntries(
   const generatedAgentIds = collectGeneratedAgentIds(bundledAgentDefinitionIds);
   const agentDefinitionsById = bundledAgentDefinitionProjection.agentDefinitionsById;
 
-  const { cliOutPath, cliManifestOutPath, uiOutPath, uiTranslationsOutPath, uiVoiceEntriesOutPath,
+  const { cliOutPath, cliManifestOutPath, uiOutPath, uiTranslationsOutPath, uiVoiceEntriesOutPath, protocolVoiceSelectionOptionsOutPath,
     uiBehaviorOverridesOutPath, sessionAgentBehaviorsOutPath, visibleMessageResolversOutPath,
     promptAssetPluginDescriptorsOutPath } = resolveGeneratorHostProjectionOutPaths(options.rootDir);
   const retiredAgentSettingsOutPath = resolve(
@@ -4551,6 +4541,7 @@ async function generateBundledPluginEntries(
   const visibleMessageResolversOut = renderBundledVisibleMessageResolversTs(visibleMessageResolverSources);
   const promptAssetPluginDescriptorsOut = renderCliPromptAssetPluginDescriptorsTs(promptAssetContributionSources);
   const uiVoiceEntriesOut = renderBundledVoiceEntriesTs(bundledVoiceProjectionSources);
+  const protocolVoiceSelectionOptionsOut = renderBundledVoiceSelectionOptionsTs(bundledVoiceProjectionSources);
   const voiceRuntimeOutputs = renderBundledVoiceRuntimeProjectionOutputs(
     options.rootDir, bundledVoiceProjectionSources, failures, options.mode,
   );
@@ -4600,6 +4591,7 @@ async function generateBundledPluginEntries(
     assertGeneratedOutputMatches(visibleMessageResolversOutPath, visibleMessageResolversOut);
     assertGeneratedOutputMatches(promptAssetPluginDescriptorsOutPath, promptAssetPluginDescriptorsOut);
     assertGeneratedOutputMatches(uiVoiceEntriesOutPath, uiVoiceEntriesOut);
+    assertGeneratedOutputMatches(protocolVoiceSelectionOptionsOutPath, protocolVoiceSelectionOptionsOut);
     for (const output of voiceRuntimeOutputs) {
       assertGeneratedOutputMatches(output.outPath, output.out);
     }
@@ -4634,6 +4626,7 @@ async function generateBundledPluginEntries(
     { outPath: visibleMessageResolversOutPath, out: visibleMessageResolversOut },
     { outPath: promptAssetPluginDescriptorsOutPath, out: promptAssetPluginDescriptorsOut },
     { outPath: uiVoiceEntriesOutPath, out: uiVoiceEntriesOut },
+    { outPath: protocolVoiceSelectionOptionsOutPath, out: protocolVoiceSelectionOptionsOut },
     ...voiceRuntimeOutputs,
   ], publicationLease);
   return failures;

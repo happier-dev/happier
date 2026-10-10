@@ -1255,6 +1255,7 @@ process.stdin.on('data', (chunk) => {
         await chmod(systemToolPath, 0o755);
         const agentCli = createPluginAgentCliReadinessService({
             processEnv: {
+                NODE_ENV: 'test',
                 HAPPIER_CLAUDE_PATH: systemToolPath,
                 HAPPIER_HOME_DIR: workspace,
                 PATH: '',

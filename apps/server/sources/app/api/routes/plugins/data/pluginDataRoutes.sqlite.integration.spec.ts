@@ -38,6 +38,8 @@ import {
 } from "@/testkit/lightSqliteHarness";
 import { withAuthenticatedTestApp } from "../../../testkit/sqliteFastify";
 import { pluginDataRoutes } from "./pluginDataRoutes";
+import { holdSqliteWriteLock } from "@/testkit/sqliteWriteLock";
+import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
 
 const PLUGIN_ID = "example.tasks";
 const COLLECTION_ID = "tasks";
@@ -1306,24 +1308,14 @@ function flipAccountModeBeforePostQueryCurrentnessRead(input: Readonly<{
 }>) {
     const accountDelegate = db.account;
     const originalFindUnique = accountDelegate.findUnique.bind(accountDelegate);
-    const originalTransaction = db.$transaction.bind(db);
-    let querySnapshotCommitted = false;
     let flipped = false;
     let restored = false;
 
-    // `db` is a proxy over the live Prisma client. `defineProperty` only
-    // mutates the proxy target, which its getter intentionally ignores; set
-    // through the proxy so this boundary hook reaches the real client.
-    Reflect.set(db, "$transaction", async (...args: Parameters<typeof db.$transaction>) => {
-        const result = await originalTransaction(...args);
-        querySnapshotCommitted = true;
-        return result;
-    });
     Object.defineProperty(accountDelegate, "findUnique", {
         configurable: true,
         writable: true,
         value: async (...args: Parameters<typeof accountDelegate.findUnique>) => {
-            if (!flipped && querySnapshotCommitted) {
+            if (!flipped) {
                 flipped = true;
                 await commitValidE2eeAccountModeForTest(input);
             }
@@ -1336,7 +1328,6 @@ function flipAccountModeBeforePostQueryCurrentnessRead(input: Readonly<{
         restore: () => {
             if (restored) return;
             restored = true;
-            Reflect.set(db, "$transaction", originalTransaction);
             Object.defineProperty(accountDelegate, "findUnique", {
                 configurable: true,
                 writable: true,
@@ -1347,12 +1338,8 @@ function flipAccountModeBeforePostQueryCurrentnessRead(input: Readonly<{
 }
 
 /**
- * Models a database snapshot at the genuine persistence boundary. The
- * mutation advances the global database after that snapshot is captured.
- * A query that takes every read from the transaction returns the pre-mutation
- * row/cursor pair; a query that lets any row read escape to `db` produces the
- * forbidden mixed pair. The snapshot fixture keeps that proof deterministic
- * without coupling it to interactive-read scheduling in SQLite.
+ * Commit a real mutation after the query has established its read snapshot.
+ * Every subsequent row/index read must still observe that same snapshot.
  */
 function racePluginCollectionQuerySnapshot(input: Readonly<{
     snapshot: Readonly<{
@@ -1365,82 +1352,19 @@ function racePluginCollectionQuerySnapshot(input: Readonly<{
     }>;
     mutate: () => Promise<void>;
 }>) {
-    const indexStateDelegate = db.pluginCollectionIndexState;
-    const originalIndexStateFindFirst = indexStateDelegate.findFirst.bind(indexStateDelegate);
-    const originalTransaction = db.$transaction.bind(db);
     let mutationPromise: Promise<void> | null = null;
-    let restored = false;
-
-    const mutateOnce = async (): Promise<void> => {
-        if (!mutationPromise) mutationPromise = input.mutate();
-        await mutationPromise;
-    };
-
-    // This is a narrow test-only database-boundary fixture: all reads used by
-    // this query receive the captured transaction snapshot, while unrelated
-    // Prisma delegates retain their real behavior through the prototype.
-    const snapshotTx: Tx = Object.create(db);
-    const snapshotAccount = Object.create(db.account);
-    const snapshotIntent = Object.create(db.accountPluginIntent);
-    const snapshotContract = Object.create(db.pluginCollectionContract);
-    const snapshotIndexState = Object.create(db.pluginCollectionIndexState);
-    const snapshotIndexEntry = Object.create(db.pluginCollectionIndexEntry);
-    const snapshotRow = Object.create(db.pluginCollectionRow);
-    Object.defineProperty(snapshotAccount, "findUnique", { value: async () => input.snapshot.account });
-    Object.defineProperty(snapshotIntent, "findUnique", { value: async () => input.snapshot.intent });
-    Object.defineProperty(snapshotContract, "findFirst", { value: async () => input.snapshot.contract });
-    Object.defineProperty(snapshotIndexState, "findFirst", { value: async () => input.snapshot.indexState });
-    Object.defineProperty(snapshotIndexEntry, "findMany", { value: async () => input.snapshot.entries });
-    Object.defineProperty(snapshotRow, "findMany", { value: async () => input.snapshot.rows });
-    Object.defineProperties(snapshotTx, {
-        $queryRaw: { value: async () => input.snapshot.entries },
-        account: { value: snapshotAccount },
-        accountPluginIntent: { value: snapshotIntent },
-        pluginCollectionContract: { value: snapshotContract },
-        pluginCollectionIndexState: { value: snapshotIndexState },
-        pluginCollectionIndexEntry: { value: snapshotIndexEntry },
-        pluginCollectionRow: { value: snapshotRow },
-    });
-
-    Object.defineProperty(indexStateDelegate, "findFirst", {
-        configurable: true,
-        writable: true,
-        value: async (...args: Parameters<typeof indexStateDelegate.findFirst>) => {
-            // The pre-fix reader reaches this global delegate after it has
-            // already read cursor 77, so this creates the observable race.
-            await mutateOnce();
-            return await originalIndexStateFindFirst(...args);
-        },
-    });
-    Object.defineProperty(db, "$transaction", {
-        configurable: true,
-        writable: true,
-        value: async (...args: Parameters<typeof db.$transaction>) => {
-            const [callback] = args;
-            // A mutation itself starts a transaction. It must retain the real
-            // writer path instead of recursively receiving this read snapshot.
-            if (typeof callback !== "function" || mutationPromise) {
-                return await originalTransaction(...args);
+    const restore = observeSqliteRequests({
+        after: async (request) => {
+            if (!mutationPromise && request.model === "Account" && request.action === "findUnique") {
+                mutationPromise = input.mutate();
+                await mutationPromise;
             }
-            await mutateOnce();
-            return await callback(snapshotTx);
         },
     });
-
     return {
         restore: () => {
-            if (restored) return;
-            restored = true;
-            Object.defineProperty(indexStateDelegate, "findFirst", {
-                configurable: true,
-                writable: true,
-                value: originalIndexStateFindFirst,
-            });
-            Object.defineProperty(db, "$transaction", {
-                configurable: true,
-                writable: true,
-                value: originalTransaction,
-            });
+            restore();
+            expect(mutationPromise).not.toBeNull();
         },
     };
 }
@@ -1600,6 +1524,39 @@ describe("plugin collection UI query route", () => {
             () => db.machine.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+    });
+
+    it("serves concurrent collection reads while another process holds the SQLite writer lock", async () => {
+        harness.resetEnv({ HAPPIER_DB_TX_MAX_RETRIES: "0", HAPPIER_DB_TX_MAX_WAIT_MS: "1000" });
+        const accountId = "account-cross-process-read";
+        const { ref } = await seedCurrentCollectionAccount({
+            accountId,
+            seq: 77,
+            rows: [{ rowId: "task-a", status: "open", title: "Before", revision: 1 }],
+        });
+        const writer = await holdSqliteWriteLock();
+        try {
+            await withPluginDataApp(async (app) => {
+                const responses = await Promise.all(Array.from({ length: 3 }, () => app.inject({
+                    method: "POST",
+                    url: "/v1/plugins/data/query",
+                    headers: { "x-test-user-id": accountId, ...V3_HEADERS },
+                    payload: {
+                        pluginId: PLUGIN_ID, collectionId: COLLECTION_ID, readerContext: ref,
+                        indexId: "by-status", prefix: ["open"], order: "asc", limit: 1,
+                    },
+                })));
+                expect(responses.map((response) => response.statusCode)).toEqual([200, 200, 200]);
+                for (const response of responses) {
+                    expect(PluginCollectionQueryResultV1Schema.parse(response.json())).toMatchObject({
+                        rows: [{ rowId: "task-a", revision: 1, projection: { title: "Before" } }],
+                        changeCursor: 77,
+                    });
+                }
+            });
+        } finally {
+            await writer.release();
+        }
     });
 
     it("does not commit an old-mode Collection writer across the Account transition fence", async () => {

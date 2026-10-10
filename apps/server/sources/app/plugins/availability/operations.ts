@@ -5,8 +5,9 @@ import {
     PluginAccountPluginIntentV1Schema,
     PluginAccountPluginPackageAssetLinkV1Schema,
     PluginAccountPluginUiArtifactLinkV1Schema,
-    MAX_PLUGIN_ACCOUNT_AVAILABILITY_INTENT_IDS,
+    PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE,
     PluginAvailabilityIntentReadActionInputV1Schema,
+    PluginAvailabilityIntentReadActionOutputV1Schema,
     PluginAvailabilityIntentsListActionInputV1Schema,
     PluginAvailabilityIntentsListActionOutputV1Schema,
     PluginAvailabilityIntentSetActionInputV1Schema,
@@ -34,6 +35,7 @@ import {
     createCanonicalJsonSigningInput,
     decodePlainArtifactStoredContent,
     normalizePluginMachineMaterializationSnapshotV1,
+    projectPluginMachineMaterializationReportFactsV1,
     normalizePluginReleaseFactsV1,
     pluginReleaseFactsEqualV1,
     supportsMachineOperationProtocolCapabilityV1,
@@ -132,7 +134,6 @@ export type PluginAvailabilityOperationErrorCode =
     | "managed_resources_review_required"
     | "plugin_availability_authentication_required"
     | "plugin_availability_invalid_request"
-    | "plugin_availability_intent_discovery_limit_exceeded"
     | "plugin_availability_publisher_proof_required"
     | "plugin_account_not_found"
     | "plugin_release_content_conflict"
@@ -255,7 +256,6 @@ type StoredIntentRow = Readonly<{
 }>;
 
 const AVAILABILITY_CHANGE_ACTION = "availability" as const;
-const MAX_PLUGIN_ACCOUNT_AVAILABILITY_INTENT_LIST_BYTES = 64 * 1024;
 
 function availabilityChangeHint(pluginId: string) {
     return {
@@ -1212,15 +1212,16 @@ function safeMaterializationFromRow(row: StoredMaterializationRow) {
 function materializationSemanticSigningInput(
     materialization: PluginMachineMaterializationV1,
 ): string {
-    const { observedAt: _observedAt, ...semanticMaterialization } = materialization;
+    const { observedAt: _observedAt, ...semanticMaterialization } = projectPluginMachineMaterializationReportFactsV1(materialization);
     return createCanonicalJsonSigningInput(semanticMaterialization);
 }
 
 /**
  * Reconciles one complete replacement through the same semantic comparison
- * used for both snapshot equality and per-plugin hints. `observedAt` records
- * when the current semantic row was first observed; a fresh reporter timestamp
- * alone neither changes availability nor replaces that provenance.
+ * used for both snapshot equality and per-plugin hints. Only persisted facts
+ * participate; live daemon declarations do not round-trip through these rows.
+ * `observedAt` records when the current semantic row was first observed; a
+ * fresh reporter timestamp alone does not replace that provenance.
  */
 function reconcileMaterializationReplacement(input: Readonly<{
     current: readonly PluginMachineMaterializationV1[];
@@ -1931,7 +1932,7 @@ export function createPluginAvailabilityOperations(options: Readonly<{
         const serverIdentityId = await resolveServerIdentityId();
         // The cursor fences the whole UI projection, so it and its inventory
         // must come from one committed snapshot.
-        const { availabilityCursor, machines } = await inTx(async (tx) => {
+        const { availabilityCursor, machines, releaseRows } = await inTx(async (tx) => {
             const [account, machines] = await Promise.all([
                 tx.account.findUnique({
                     where: { id: params.accountId },
@@ -1973,7 +1974,20 @@ export function createPluginAvailabilityOperations(options: Readonly<{
             if (!account) {
                 throw new PluginAvailabilityOperationError("plugin_account_not_found");
             }
-            return { availabilityCursor: account.seq, machines };
+            const portableRows = machines.flatMap(machine => machine.pluginMaterializations)
+                .filter(row => row.portableRelease);
+            const coordinates = new Map(portableRows.map(row => [`${row.pluginId}\0${row.version}`, {
+                pluginId: row.pluginId, version: row.version,
+            }]));
+            const releaseRows = coordinates.size === 0 ? [] : await tx.accountPluginRelease.findMany({
+                where: { accountId: params.accountId, OR: [...coordinates.values()] },
+                select: {
+                    id: true, accountId: true, pluginId: true, version: true,
+                    archiveDigestSha256: true, normalizedManifest: true, collectionContracts: true,
+                    uiSlots: true, packageAssetArchive: true,
+                },
+            });
+            return { availabilityCursor: account.seq, machines, releaseRows };
         });
         const unreadableMachines: Array<Readonly<{
             machineId: string;
@@ -1993,6 +2007,9 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                     pluginIds: [...new Set(unreadableRows.map((entry) => entry.row.pluginId))]
                         .sort(comparePluginIds),
                 });
+                // A partial machine body is not an exact removal observation.
+                // Retain that machine's prior accepted body on clients instead.
+                return [];
             }
             const materializations = parsedRows.flatMap((entry) => (
                 entry.parsed.success ? [entry.parsed.data] : []
@@ -2010,15 +2027,19 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                 unreadableMachines,
             }, "Unreadable refreshable plugin materializations were omitted from Account availability");
         }
-        return { availabilityCursor, snapshots };
+        const materializations = snapshots.flatMap(snapshot => snapshot.materializations);
+        const releases = releaseRows.map(releaseFactsFromRow).filter(release => materializations.some(
+            materialization => isExactPluginMachineMaterializationReleaseCorrespondenceV1(materialization, release),
+        ));
+        return { availabilityCursor, snapshots, releases, inventoryComplete: unreadableMachines.length === 0 };
     }
 
     async function listIntentIds(params: Readonly<{
         accountId: string;
         input: unknown;
     }>): Promise<PluginAvailabilityIntentsListActionOutputV1> {
-        PluginAvailabilityIntentsListActionInputV1Schema.parse(params.input);
-        return await inTx(async (tx) => {
+        const input = PluginAvailabilityIntentsListActionInputV1Schema.parse(params.input);
+        const discovery = await inTx(async (tx) => {
             const [account, rows] = await Promise.all([
                 tx.account.findUnique({
                     where: { id: params.accountId },
@@ -2027,34 +2048,45 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                 // Release-less claims are intents too: their Collection writer
                 // pointers must be discoverable without a machine hint.
                 tx.accountPluginIntent.findMany({
-                    where: { accountId: params.accountId },
+                    where: { accountId: params.accountId,
+                        ...(input.cursor ? { pluginId: { gt: input.cursor } } : {}),
+                    },
                     select: { pluginId: true },
                     orderBy: { pluginId: "asc" },
-                    take: MAX_PLUGIN_ACCOUNT_AVAILABILITY_INTENT_IDS + 1,
+                    take: PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE + 1,
                 }),
             ]);
             if (!account) {
                 throw new PluginAvailabilityOperationError("plugin_account_not_found");
             }
-            if (rows.length > MAX_PLUGIN_ACCOUNT_AVAILABILITY_INTENT_IDS) {
-                throw new PluginAvailabilityOperationError(
-                    "plugin_availability_intent_discovery_limit_exceeded",
-                );
-            }
-            const pluginIds = rows.map((row) => row.pluginId).sort(comparePluginIds);
-            const output = {
+            const candidates = [...new Set([
+                ...rows.map((row) => row.pluginId),
+                ...(input.knownPluginIds ?? []).filter(pluginId => !input.cursor || pluginId > input.cursor),
+            ])].sort(comparePluginIds);
+            const readPluginIds = candidates.slice(0, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE);
+            const pageIds = new Set(readPluginIds);
+            return {
                 availabilityCursor: account.seq,
-                pluginIds,
+                pluginIds: rows.map(row => row.pluginId).filter(pluginId => pageIds.has(pluginId)),
+                readPluginIds,
+                ...(candidates.length > readPluginIds.length
+                    ? { nextCursor: readPluginIds.at(-1)! } : {}),
             };
-            if (
-                Buffer.byteLength(JSON.stringify(output), "utf8")
-                > MAX_PLUGIN_ACCOUNT_AVAILABILITY_INTENT_LIST_BYTES
-            ) {
-                throw new PluginAvailabilityOperationError(
-                    "plugin_availability_intent_discovery_limit_exceeded",
-                );
-            }
-            return PluginAvailabilityIntentsListActionOutputV1Schema.parse(output);
+        }, { readOnly: true });
+        // The caller supplies materialized and previously observed identities.
+        // Keep release/link/hosting decisions at the exact read owner rather
+        // than building a second projection for Account bootstrap.
+        const { readPluginIds: pluginIds, ...page } = discovery;
+        const results = await Promise.allSettled(pluginIds.map(async (pluginId) => ({
+            pluginId,
+            response: PluginAvailabilityIntentReadActionOutputV1Schema.parse(
+                await readIntent({ accountId: params.accountId, input: { pluginId } }),
+            ),
+        })));
+        return PluginAvailabilityIntentsListActionOutputV1Schema.parse({
+            ...page,
+            intentReads: results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []),
+            failedPluginIds: results.flatMap((result, index) => result.status === "rejected" ? [pluginIds[index]!] : []),
         });
     }
 
@@ -2152,7 +2184,7 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                 return { availabilityCursor: account.seq, intentRow, release, packageAsset,
                     ...(managedResources !== undefined ? { managedResources,
                         managedResourcesReviewed: acceptsManagedResourceDispositions(managedResources, input.managedResourceDispositions) } : {}) };
-            }),
+            }, { readOnly: true }),
         ]);
         const intent = current.intentRow ? intentFromRow(current.intentRow) : null;
         // Releases written before package assets have no immutable descriptor.

@@ -22,6 +22,20 @@ describe('marketplace source registry store', () => {
     envScope = null;
   });
 
+  it('preserves every configured source and large valid source settings across restart', async () => {
+    const happyHomeDir = mkdtempSync(join(tmpdir(), 'happier-marketplace-many-sources-'));
+    tempDirs.push(happyHomeDir);
+    const store = createMarketplaceSourceRegistryStore({ happyHomeDir });
+    const current = await store.read();
+    const sources = Array.from({ length: 70 }, (_, index) => createMarketplaceSourceV1({
+      sourceUrl: `https://source-${index}.example/index.json?catalog=${'x'.repeat(3_000)}`,
+      title: `Source ${index} ${'title'.repeat(200)}`, description: 'description'.repeat(300), enabled: true, origin: 'user',
+    }));
+    await store.write({ ...current, sources: [...current.sources, ...sources] });
+    expect((await createMarketplaceSourceRegistryStore({ happyHomeDir }).read()).sources)
+      .toEqual([...current.sources, ...sources]);
+  });
+
   it('boots the canonical curated source and ignores an ambient legacy URL when the file does not exist', async () => {
     const happyHomeDir = mkdtempSync(join(tmpdir(), 'happier-marketplace-registry-'));
     tempDirs.push(happyHomeDir);

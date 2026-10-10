@@ -26,10 +26,12 @@ export function createDaemonPluginAvailabilityReporter(params: Readonly<{
   credentials: StoredCredentials;
   serverFeaturesSnapshotStore: Pick<ServerFeaturesSnapshotStore, 'getSnapshot'>;
   getMachineId: () => string;
+  signal?: AbortSignal;
 }>): DaemonPluginAvailabilityReporter {
   const publisher = createServerPluginAvailabilityPublisher({
     credentials: params.credentials,
   });
+  const publicationOptions: [options?: Readonly<{ signal: AbortSignal }>] = params.signal ? [{ signal: params.signal }] : [];
 
   let pendingLatest: PendingAvailabilityReport | null = null;
   let inFlight: Promise<void> | null = null;
@@ -39,6 +41,7 @@ export function createDaemonPluginAvailabilityReporter(params: Readonly<{
   const reportOne = async (initial: PendingAvailabilityReport): Promise<void> => {
     let current = initial;
     while (true) {
+      params.signal?.throwIfAborted();
       const features = params.serverFeaturesSnapshotStore.getSnapshot();
       const serverIdentityId = features?.status === 'ready'
         ? features.features.capabilities.serverIdentity.serverIdentityId
@@ -47,7 +50,7 @@ export function createDaemonPluginAvailabilityReporter(params: Readonly<{
 
       for (const release of current.inventory.releasePublications) {
         try {
-          await publisher.publishRelease(release);
+          await publisher.publishRelease(release, ...publicationOptions);
         } catch (error) {
           if (!isPluginAvailabilityReleaseContentConflictError(error)) throw error;
           const { pluginId, version } = release.facts.ref;
@@ -74,7 +77,7 @@ export function createDaemonPluginAvailabilityReporter(params: Readonly<{
       const result = await publisher.reportMaterializations({
         expectedRevision: lastAcknowledgedServerRevision,
         snapshot,
-      });
+      }, ...publicationOptions);
       lastAcknowledgedServerRevision = result.revision;
       if (result.outcome !== 'conflict') {
         lastAcknowledgedBody = body;
@@ -93,6 +96,7 @@ export function createDaemonPluginAvailabilityReporter(params: Readonly<{
 
   const drain = async (): Promise<void> => {
     while (pendingLatest) {
+      params.signal?.throwIfAborted();
       const current = pendingLatest;
       pendingLatest = null;
       try {
@@ -105,6 +109,10 @@ export function createDaemonPluginAvailabilityReporter(params: Readonly<{
 
   const settleDrain = async (result: DrainResult): Promise<void> => {
     inFlight = null;
+    if (params.signal?.aborted) {
+      pendingLatest = null;
+      params.signal.throwIfAborted();
+    }
     if (pendingLatest) {
       await startDrain();
       return;

@@ -1,9 +1,10 @@
 import { createInterface } from 'node:readline';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const OUTPUT_MARKER = '__HAPPIER_GENERATOR_MODULE_JSON__';
 
 const { tsImport } = await import('tsx/esm/api');
+const runtimeTsconfigPath = fileURLToPath(new URL('../tsconfig.generator-runtime.json', import.meta.url));
 
 function serializeModule(imported) {
   const selected = imported && typeof imported === 'object'
@@ -34,7 +35,10 @@ for await (const line of lines) {
     if (!Number.isSafeInteger(request?.id) || typeof request?.path !== 'string') {
       throw new Error('invalid inspection request');
     }
-    const imported = await tsImport(pathToFileURL(request.path).href, import.meta.url);
+    const imported = await tsImport(pathToFileURL(request.path).href, {
+      parentURL: import.meta.url,
+      tsconfig: runtimeTsconfigPath,
+    });
     process.stdout.write(`${OUTPUT_MARKER}${JSON.stringify({
       id: request.id,
       ok: true,
@@ -48,3 +52,10 @@ for await (const line of lines) {
     })}\n`);
   }
 }
+
+// EOF is the inspection owner's terminal signal. Authored imports can retain
+// runtime handles; drain the response pipe before ending this isolated worker.
+await new Promise((resolve, reject) => {
+  process.stdout.write('', error => error ? reject(error) : resolve());
+});
+process.exit(0);

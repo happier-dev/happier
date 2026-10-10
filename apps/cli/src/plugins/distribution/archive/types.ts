@@ -1,23 +1,21 @@
 export type PortableArchiveLimits = Readonly<{
-  maxEntries: number;
-  maxFiles: number;
-  maxFileBytes: number;
-  maxExpandedBytes: number;
-  maxPathBytes: number;
-  maxPathDepth: number;
-  maxCompressionRatio: number;
-  timeoutMs: number;
+  maxEntries: number | null;
+  maxFiles: number | null;
+  maxFileBytes: number | null;
+  maxExpandedBytes: number | null;
+  maxPathBytes: number | null;
+  maxPathDepth: number | null;
+  maxCompressionRatio: number | null;
 }>;
 
 export const DEFAULT_PORTABLE_ARCHIVE_LIMITS: PortableArchiveLimits = Object.freeze({
-  maxEntries: 4_096,
-  maxFiles: 2_048,
-  maxFileBytes: 64 * 1024 * 1024,
-  maxExpandedBytes: 256 * 1024 * 1024,
-  maxPathBytes: 1_024,
-  maxPathDepth: 32,
-  maxCompressionRatio: 100,
-  timeoutMs: 30_000,
+  maxEntries: null,
+  maxFiles: null,
+  maxFileBytes: null,
+  maxExpandedBytes: null,
+  maxPathBytes: null,
+  maxPathDepth: null,
+  maxCompressionRatio: null,
 });
 
 export type PortableArchiveFile = Readonly<{
@@ -47,7 +45,6 @@ export type PortableArchiveErrorCode =
   | 'archive_limit_path_bytes'
   | 'archive_limit_path_depth'
   | 'archive_limit_compression_ratio'
-  | 'archive_timeout'
   | 'archive_aborted';
 
 export class PortableArchiveError extends Error {

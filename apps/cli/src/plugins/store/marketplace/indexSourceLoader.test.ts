@@ -2,12 +2,17 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { EventEmitter } from 'node:events';
+import type { ClientRequest, IncomingMessage } from 'node:http';
+import type { RequestOptions } from 'node:https';
+import { Readable } from 'node:stream';
 
 import type { MarketplaceIndexSourceSnapshotV1 } from '@happier-dev/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { buildCommunityNpmSearchUrl, loadMarketplaceIndexSource, parseCommunityNpmDiscovery } from './indexSourceLoader';
 import type { NpmRegistryJsonClient } from '@/plugins/distribution/npm/resolver';
+import { createNpmRegistryHttpsClient } from '@/plugins/distribution/npm/httpsClient';
 import { createPluginStateStore } from '@/plugins/store/state.testkit';
 
 const homes: string[] = [];
@@ -114,6 +119,50 @@ describe('loadMarketplaceIndexSource', () => {
     await Promise.all(homes.splice(0).map(async (home) => await rm(home, { recursive: true, force: true })));
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it('loads a valid configured catalog beyond the former implicit JSON ceiling', async () => {
+    vi.stubEnv('HAPPIER_PLUGIN_REMOTE_CATALOG_MAX_BYTES', '');
+    const home = await mkdtemp(join(tmpdir(), 'happier-marketplace-index-'));
+    homes.push(home);
+    const body = `${' '.repeat(2 * 1024 * 1024)}${JSON.stringify(snapshot())}`;
+    await expect(loadMarketplaceIndexSource({
+      resolveAddresses: testResolveAddresses, source, happyHomeDir: home,
+      fetchImpl: async () => new Response(body), now: () => 100,
+    })).resolves.toMatchObject({ freshness: { state: 'fresh', fetchedAtMs: 100 }, entries: [], diagnostics: [] });
+  });
+
+  it('acquires community metadata without converting an absent timeout into an immediate deadline', async () => {
+    vi.stubEnv('HAPPIER_PLUGIN_REMOTE_FETCH_TIMEOUT_MS', '');
+    vi.stubEnv('HAPPIER_PLUGIN_REMOTE_CATALOG_MAX_BYTES', '');
+    const home = await mkdtemp(join(tmpdir(), 'happier-marketplace-index-'));
+    homes.push(home);
+    const metadata = {
+      name: '@acme/community',
+      padding: 'x'.repeat(2 * 1024 * 1024),
+      versions: { '1.0.0': {
+        name: '@acme/community', version: '1.0.0', happier: communityHappierMetadata(),
+        dist: { integrity: COMMUNITY_INTEGRITY, tarball: 'https://registry.npmjs.org/community.tgz' },
+      } },
+    };
+    // HTTPS is a system boundary; the real client, resolver and projection remain in the path.
+    const request = ((_: RequestOptions, callback: (message: IncomingMessage) => void) => {
+      const emitter = new EventEmitter() as EventEmitter & { end(): void; destroy(error?: Error): void };
+      emitter.end = () => queueMicrotask(() => {
+        const message = Object.assign(Readable.from([JSON.stringify(metadata)]), { statusCode: 200, headers: { 'content-type': 'application/json' } });
+        callback(message as unknown as IncomingMessage);
+      });
+      emitter.destroy = (error?: Error) => { if (error) emitter.emit('error', error); };
+      return emitter as unknown as ClientRequest;
+    }) as typeof import('node:https').request;
+    const client = createNpmRegistryHttpsClient({ registryOrigin: 'https://registry.npmjs.org', request, lookup: testResolveAddresses });
+    const loaded = await loadMarketplaceIndexSource({
+      source: communitySource, happyHomeDir: home, resolveAddresses: testResolveAddresses,
+      fetchImpl: async () => new Response(JSON.stringify(communityNpmSearchPayload())), communityNpmClient: client,
+    });
+    expect(loaded.entries.map((entry) => entry.pluginId)).toEqual(['acme.community']);
+    expect(loaded.diagnostics).toEqual([]);
   });
 
   it('joins concurrent refresh and performs conditional refresh against an atomic cache', async () => {
@@ -144,8 +193,9 @@ describe('loadMarketplaceIndexSource', () => {
     homes.push(home);
     await loadMarketplaceIndexSource({ resolveAddresses: testResolveAddresses, source, happyHomeDir: home, fetchImpl: async () => new Response(JSON.stringify(snapshot()), { status: 200 }), now: () => 100 });
 
-    const offline = await loadMarketplaceIndexSource({ resolveAddresses: testResolveAddresses, source, happyHomeDir: home, fetchImpl: async () => { throw new Error('offline'); }, now: () => 200 });
-    expect(offline).toMatchObject({ freshness: { state: 'stale-offline', fetchedAtMs: 100, staleSinceMs: 200 } });
+    const afterFormerStaleCutoff = 100 + 8 * 24 * 60 * 60 * 1000;
+    const offline = await loadMarketplaceIndexSource({ resolveAddresses: testResolveAddresses, source, happyHomeDir: home, fetchImpl: async () => { throw new Error('offline'); }, now: () => afterFormerStaleCutoff });
+    expect(offline).toMatchObject({ freshness: { state: 'stale-offline', fetchedAtMs: 100, staleSinceMs: afterFormerStaleCutoff } });
     expect(offline.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'marketplace_source_refresh_failed' })]));
   });
 
@@ -430,6 +480,34 @@ describe('loadMarketplaceIndexSource', () => {
     expect(new URL(buildCommunityNpmSearchUrl(communitySource.sourceUrl, { text: '' })).searchParams.get('size')).toBe('100');
   });
 
+  it('preserves full community npm search text beyond the former projection cutoff', () => {
+    const text = 'terminal theme '.repeat(100).trim();
+    const url = new URL(buildCommunityNpmSearchUrl(communitySource.sourceUrl, { text }));
+    expect(url.searchParams.get('text')).toBe(`keywords:happier-plugin ${text}`);
+  });
+
+  it('starts the complete admitted metadata page without a competing four-request budget', async () => {
+    const names = Array.from({ length: 5 }, (_, index) => `@acme/community-${index}`);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let startedFour!: () => void;
+    const fourStarted = new Promise<void>((resolve) => { startedFour = resolve; });
+    const started: string[] = [];
+    const client: NpmRegistryJsonClient = { getJson: async (request) => {
+      const name = decodeURIComponent(new URL(request.url).pathname.slice(1));
+      started.push(name);
+      if (started.length === 4) startedFour();
+      await held;
+      return communityNpmMetadataClient(communityHappierMetadata(), name).getJson(request);
+    } };
+    const pending = parseCommunityNpmDiscovery(communityNpmSearchPayload(names), communitySource, { client });
+    try {
+      await fourStarted;
+      expect(started).toEqual(names);
+    } finally { release(); await pending; }
+    expect((await pending).entries).toHaveLength(5);
+  });
+
   it('projects npm total and returned search-hit count for honest service paging', async () => {
     const parsed = await parseCommunityNpmDiscovery(
       communityNpmSearchPayload(['@acme/community'], 240),
@@ -456,7 +534,7 @@ describe('loadMarketplaceIndexSource', () => {
 
     const requestedUrl = new URL(String((fetchImpl.mock.calls as readonly (readonly unknown[])[])[0]?.[0]));
     expect(requestedUrl.searchParams.get('text')).toBe('keywords:happier-plugin @acme/community');
-    expect(requestedUrl.searchParams.get('size')).toBe('20');
+    expect(requestedUrl.searchParams.get('size')).toBe('100');
     expect(result.entries).toMatchObject([{ pluginId: 'acme.community' }]);
     // Neighbouring search hits are never acquired: targeting happens before
     // any package metadata request, not after a full-page scan.
@@ -613,7 +691,25 @@ describe('loadMarketplaceIndexSource', () => {
     expect(result.freshness.state).toBe('corrupt');
   });
 
-  it('rejects cache timestamps from the future and keeps fallback diagnostics bounded', async () => {
+  it('retains every cached diagnostic and the current refresh failure', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-marketplace-index-'));
+    homes.push(home);
+    const diagnostics = Array.from({ length: 128 }, (_, index) => ({ code: `diagnostic_${index}`, message: `Diagnostic ${index}` }));
+    await loadMarketplaceIndexSource({
+      resolveAddresses: testResolveAddresses, source, happyHomeDir: home,
+      fetchImpl: async () => new Response(JSON.stringify({ ...snapshot(), diagnostics }), { status: 200 }),
+      now: () => 100,
+    });
+    const result = await loadMarketplaceIndexSource({
+      resolveAddresses: testResolveAddresses, source, happyHomeDir: home,
+      fetchImpl: async () => { throw new Error('offline'); }, now: () => 200,
+    });
+    expect(result.diagnostics.slice(0, 128)).toEqual(diagnostics);
+    expect(result.diagnostics).toHaveLength(129);
+    expect(result.diagnostics.at(-1)).toMatchObject({ code: 'marketplace_source_refresh_failed' });
+  });
+
+  it('rejects cache timestamps from the future', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-marketplace-index-'));
     homes.push(home);
     const diagnostics = Array.from({ length: 128 }, (_, index) => ({ code: `diagnostic_${index}`, message: `Diagnostic ${index}` }));
@@ -633,7 +729,6 @@ describe('loadMarketplaceIndexSource', () => {
       now: () => 100,
     });
     expect(result.freshness.state).toBe('corrupt');
-    expect(result.diagnostics.length).toBeLessThanOrEqual(128);
   });
 
   it.each([

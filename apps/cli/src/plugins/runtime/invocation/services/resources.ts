@@ -17,25 +17,19 @@ import {
     resolveContainedPluginResourcePath,
     resolvePluginResourcePath,
 } from '@/plugins/projection/resources/package/resolve';
-import { remainingPluginInitializationTimeoutMs, runWithOptionalTimeout } from '@/plugins/runtime/lifecycle/utils';
+import { runWithOptionalTimeout } from '@/plugins/runtime/lifecycle/utils';
 import { logger } from '@/ui/logger';
 import type { ResolvedManifestHostAccessRequest } from '@/plugins/runtime/hostAccess/manifestRequests';
 import {
     getActiveAccountSettingsSnapshotLifetimeToken,
     subscribeActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import {
-    MAXIMUM_IMMUTABLE_GENERATION_FILES,
-    type ImmutablePluginGenerationRecord,
-} from '@/plugins/store/registry/generationStore';
+import type { ImmutablePluginGenerationRecord } from '@/plugins/store/registry/generationStore';
 
 export const MAX_PLUGIN_RESOURCE_BYTES = 16 * 1024 * 1024;
-export const MAX_PLUGIN_RESOURCE_AGGREGATE_BYTES = 64 * 1024 * 1024;
-export const MAX_PLUGIN_RESOURCES_PER_GENERATION = 512;
-// Exact dynamic Resource contexts are transient occurrenceId-owned state,
-// so they use the incumbent occurrenceId Resource bound rather than a second
-// externally configurable quota.
-const MAX_PLUGIN_RESOURCE_ACTIVE_CONTEXTS = MAX_PLUGIN_RESOURCES_PER_GENERATION;
+// Preserve the incumbent in-flight admission memory policy. Descriptor sizes
+// are not retained payloads and therefore do not consume this read budget.
+const MAX_PLUGIN_RESOURCE_ADMISSION_BYTES = 64 * 1024 * 1024;
 export const MAX_PLUGIN_BRAND_ICON_BYTES = 256 * 1024;
 const MIN_PLUGIN_BRAND_ICON_DIMENSION = 64;
 const MAX_PLUGIN_BRAND_ICON_DIMENSION = 512;
@@ -110,7 +104,7 @@ type AdmittedPackagedResource = Readonly<{
 /**
  * A dynamic resource has no package file. Its observed digest/size are the
  * last bytes its producer returned through this owner — a *read* fact that
- * keeps `describe` honest and keeps the aggregate byte bound accurate.
+ * keeps `describe` honest. The context retains metadata, never payload bytes.
  *
  * It is deliberately **not** the delivery fact: what each watcher has been
  * told lives on that watcher (`deliveredDigest`), because an ordinary read by
@@ -554,7 +548,7 @@ function normalizeGeneration(raw: ResourceGeneration): Readonly<{
         }
         const brandMonochrome = brandMonochromeDescriptor?.value === true;
         const files = ownData(raw, 'files');
-        if (!Array.isArray(files) || files.length > MAXIMUM_IMMUTABLE_GENERATION_FILES) {
+        if (!Array.isArray(files)) {
             return fail('plugin_resource_generation_invalid', 'Resource occurrenceId is invalid');
         }
         const filesByPath = new Map<string, ImmutablePluginGenerationRecord['files'][number]>();
@@ -900,20 +894,11 @@ export async function createStablePluginResourcesOwner(params: Readonly<{
     bindDynamicResourceAccountStorage?: BindDynamicResourceAccountStorage;
     resolveSessionResourceAccess?: ResolveSessionResourceAccess;
     isCommittedGenerationCurrent?: () => boolean | Promise<boolean>;
-    startupDeadlineAtMs?: number;
 }>): Promise<StablePluginResourcesOwner> {
     if (!Array.isArray(params.registry.resources)) {
         return fail('plugin_resource_capacity_exceeded', 'Resource occurrenceId exceeds its declaration bound');
     }
     const contributions = params.registry.resources.map(normalizeContribution);
-    const resourceCountByPluginId = new Map<string, number>();
-    for (const contribution of contributions) {
-        const nextCount = (resourceCountByPluginId.get(contribution.pluginId) ?? 0) + 1;
-        if (nextCount > MAX_PLUGIN_RESOURCES_PER_GENERATION) {
-            return fail('plugin_resource_capacity_exceeded', 'Resource occurrenceId exceeds its declaration bound');
-        }
-        resourceCountByPluginId.set(contribution.pluginId, nextCount);
-    }
 
     return await createStablePluginResourcesOwnerFromNormalized({
         contributions,
@@ -925,8 +910,6 @@ export async function createStablePluginResourcesOwner(params: Readonly<{
             ? { isDynamicOccurrenceCurrent: params.isDynamicOccurrenceCurrent }
             : {}),
         dynamicProducers: params.dynamicProducers ?? [],
-        ...(params.startupDeadlineAtMs === undefined
-            ? {} : { startupDeadlineAtMs: params.startupDeadlineAtMs }),
         ...(params.bindDynamicResourceAccountStorage
             ? { bindDynamicResourceAccountStorage: params.bindDynamicResourceAccountStorage }
             : {}),
@@ -957,11 +940,7 @@ export async function createStableImmutablePluginResourcesOwner(
         isOccurrenceCurrent?: () => boolean | Promise<boolean>;
     }>,
 ): Promise<StablePluginResourcesOwner> {
-    if (
-        !Array.isArray(params.declarations)
-        || params.declarations.length
-            > MAX_PLUGIN_RESOURCES_PER_GENERATION
-    ) {
+    if (!Array.isArray(params.declarations)) {
         return fail(
             'plugin_resource_capacity_exceeded',
             'Resource occurrenceId exceeds its declaration bound',
@@ -1024,10 +1003,7 @@ export async function createStableRetainedPluginResourcesOwner(
         isSourceCurrent?: () => boolean | Promise<boolean>;
     }>,
 ): Promise<StablePluginResourcesOwner> {
-    if (
-        !Array.isArray(params.declarations)
-        || params.declarations.length > MAX_PLUGIN_RESOURCES_PER_GENERATION
-    ) {
+    if (!Array.isArray(params.declarations)) {
         return fail(
             'plugin_resource_capacity_exceeded',
             'Resource source exceeds its declaration bound',
@@ -1085,7 +1061,6 @@ async function createStablePluginResourcesOwnerFromNormalized(
         dynamicOccurrenceIdsByPluginId?: ReadonlyMap<string, string>;
         isDynamicOccurrenceCurrent?: (pluginId: string, occurrenceId: string) => boolean | Promise<boolean>;
         dynamicProducers: readonly StableDynamicPluginResourceProducer[];
-        startupDeadlineAtMs?: number;
         bindDynamicResourceAccountStorage?: BindDynamicResourceAccountStorage;
         resolveSessionResourceAccess?: ResolveSessionResourceAccess;
         isCommittedGenerationCurrent?:
@@ -1123,8 +1098,6 @@ async function createStablePluginResourcesOwnerFromNormalized(
     for (const producer of params.dynamicProducers) {
         producersByKey.set(`${producer.pluginId}\u0000${producer.localId}`, producer);
     }
-    let aggregateBytes = 0;
-    let activeDynamicResourceContexts = 0;
     for (const contribution of params.contributions) {
         if (
             contribution.source === 'dynamic'
@@ -1214,9 +1187,6 @@ async function createStablePluginResourcesOwnerFromNormalized(
             if (file.byteLength > MAX_PLUGIN_RESOURCE_BYTES) {
                 return fail('plugin_resource_capacity_exceeded', 'Resource exceeds its admitted byte bound');
             }
-            if (aggregateBytes + file.byteLength > MAX_PLUGIN_RESOURCE_AGGREGATE_BYTES) {
-                return fail('plugin_resource_capacity_exceeded', 'Resource generation exceeds its aggregate byte bound');
-            }
             const admittedBytes = await withStableResourceErrors(() => readPackagedResourceBytes(
                 generation.rootPath,
                 lexical.relativePath,
@@ -1255,7 +1225,6 @@ async function createStablePluginResourcesOwnerFromNormalized(
             }
             byId.set(contribution.id, admitted);
             admittedByPlugin.set(contribution.pluginId, byId);
-            aggregateBytes += file.byteLength;
             if (dimensions) {
                 brandAssetsByPluginId.set(contribution.pluginId, Object.freeze({
                     state: 'available',
@@ -1280,13 +1249,6 @@ async function createStablePluginResourcesOwnerFromNormalized(
             throw error;
         }
     }
-    /**
-     * The aggregate byte bound is a live fact, not an admission-time snapshot:
-     * a dynamic producer can grow after admission. Every observation of dynamic
-     * bytes is admitted here by size delta, and a breach retains the last known
-     * good observation rather than publishing a descriptor this occurrenceId is
-     * not allowed to hold.
-     */
     function captureDynamicResourceAccountLifetime(
         resource: AdmittedDynamicResource,
     ): number | null {
@@ -1316,7 +1278,6 @@ async function createStablePluginResourcesOwnerFromNormalized(
         ) {
             return;
         }
-        aggregateBytes -= context.observedSize;
         context.observedAccountLifetimeToken = null;
         context.observedSize = 0;
         context.observedDigest = '';
@@ -1329,36 +1290,17 @@ async function createStablePluginResourcesOwnerFromNormalized(
         accountLifetimeToken: number | null,
     ): boolean {
         if (!isDynamicResourceAccountLifetimeCurrent(resource, accountLifetimeToken)) return false;
-        const delta = observed.bytes.byteLength - context.observedSize;
-        if (delta > 0 && aggregateBytes + delta > MAX_PLUGIN_RESOURCE_AGGREGATE_BYTES) {
-            return false;
-        }
-        aggregateBytes += delta;
         context.observedAccountLifetimeToken = accountLifetimeToken;
         context.observedDigest = observed.digest;
         context.observedSize = observed.bytes.byteLength;
         return true;
     }
 
-    // Global admissions share the containing startup deadline when supplied.
-    // Parallel replies remain bounded by the aggregate byte cap.
-    const admissionTimeoutMs = remainingPluginInitializationTimeoutMs(params.startupDeadlineAtMs);
-    const admissionDeadlineMs = admissionTimeoutMs === null
-        ? null
-        : performance.now() + admissionTimeoutMs;
+    // Initial admission follows producer and occurrence lifetime, not the
+    // starter's readiness observation timeout.
     async function admitGlobalDynamicResource(dynamic: AdmittedDynamicResource): Promise<void> {
         const context = dynamic.globalContext;
         if (!context) return;
-        if (admissionDeadlineMs !== null && performance.now() >= admissionDeadlineMs) {
-            // The queue never invoked this producer. Leave it readable on
-            // demand instead of publishing a permanent producer failure.
-            logger.warn('[PLUGIN RUNTIME] Dynamic Resource admission deferred', {
-                pluginId: dynamic.pluginId,
-                localId: dynamic.id,
-                abortReason: 'admission_not_attempted',
-            });
-            return;
-        }
         const accountLifetimeToken = captureDynamicResourceAccountLifetime(dynamic);
         const isAdmissionCurrent = async (): Promise<boolean> => {
             if (!isDynamicResourceAccountLifetimeCurrent(dynamic, accountLifetimeToken)) return false;
@@ -1374,7 +1316,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
             observed = await readAdmissionBytes(
                 dynamic,
                 context,
-                admissionDeadlineMs,
+                null,
                 params.bindDynamicResourceAccountStorage,
                 isAdmissionCurrent,
             );
@@ -1410,7 +1352,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
         }
         if (!isDynamicResourceAccountLifetimeCurrent(dynamic, accountLifetimeToken)) return;
         if (!admitDynamicObservation(dynamic, context, observed, accountLifetimeToken)) {
-            return fail('plugin_resource_capacity_exceeded', 'Resource occurrenceId exceeds its aggregate byte bound');
+            return fail('plugin_resource_context_unavailable', 'Resource Account context is unavailable');
         }
     }
     // Session and surface declarations remain structural until an exact host
@@ -1418,7 +1360,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
     const globalDynamicResources = admittedDynamicResources.filter((dynamic) => dynamic.globalContext);
     const admissionConcurrency = Math.min(
         globalDynamicResources.length,
-        Math.max(1, Math.floor(MAX_PLUGIN_RESOURCE_AGGREGATE_BYTES / MAX_PLUGIN_RESOURCE_BYTES)),
+        Math.max(1, Math.floor(MAX_PLUGIN_RESOURCE_ADMISSION_BYTES / MAX_PLUGIN_RESOURCE_BYTES)),
     );
     let nextAdmissionIndex = 0;
     const admissions = await Promise.allSettled(Array.from({ length: admissionConcurrency }, async () => {
@@ -1685,12 +1627,8 @@ async function createStablePluginResourcesOwnerFromNormalized(
         if (!createSessionState) {
             return fail('plugin_resource_context_unavailable', 'Resource context has no observed snapshot');
         }
-        if (activeDynamicResourceContexts >= MAX_PLUGIN_RESOURCE_ACTIVE_CONTEXTS) {
-            return fail('plugin_resource_capacity_exceeded', 'Resource occurrenceId exceeds its active context bound');
-        }
         const created = createDynamicContextState(boundContext, admission);
         resource.sessionContexts.set(boundContext.sessionId, created);
-        activeDynamicResourceContexts += 1;
         return created;
     }
 
@@ -1734,8 +1672,6 @@ async function createStablePluginResourcesOwnerFromNormalized(
             return false;
         }
         resource.surfaceContexts.delete(context.context.mountInstanceKey);
-        activeDynamicResourceContexts -= 1;
-        aggregateBytes -= context.observedSize;
         context.observedAccountLifetimeToken = null;
         context.observedSize = 0;
         context.observedDigest = '';
@@ -1755,8 +1691,6 @@ async function createStablePluginResourcesOwnerFromNormalized(
         }
         resource.sessionContexts.delete(context.context.sessionId);
         if (context.sessionAccessAdmission) context.sessionAccessAdmission.revoked = true;
-        activeDynamicResourceContexts -= 1;
-        aggregateBytes -= context.observedSize;
         context.observedAccountLifetimeToken = null;
         context.observedSize = 0;
         context.observedDigest = '';
@@ -1901,7 +1835,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
                     // before this continuation resumes. A Session witness can
                     // retire this exact context in that gap, so the local
                     // context/watch owner is the last synchronous authority
-                    // before mutating its LKG and aggregate accounting.
+                    // before mutating its observed descriptor.
                     if (!isDynamicWatchCurrent(watch, callbackController)) return;
                     if (!isDynamicResourceAccountLifetimeCurrent(resource, accountLifetimeToken)) return;
                     if (!admitDynamicObservation(resource, context, observed, accountLifetimeToken)) {
@@ -2201,7 +2135,6 @@ async function createStablePluginResourcesOwnerFromNormalized(
         // Account-backed Resource watch. Account B must never inherit A's
         // descriptor or delivery baseline, even if its first B read is typed
         // unavailable. Same-Account retries never enter this path.
-        aggregateBytes -= context.observedSize;
         context.observedAccountLifetimeToken = null;
         context.observedSize = 0;
         context.observedDigest = '';
@@ -2309,7 +2242,6 @@ async function createStablePluginResourcesOwnerFromNormalized(
             if (resource.source !== 'dynamic') continue;
             const global = resource.globalContext;
             if (global) {
-                aggregateBytes -= global.observedSize;
                 global.observedAccountLifetimeToken = null;
                 global.observedSize = 0;
                 global.observedDigest = '';
@@ -2423,11 +2355,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
             return fail('plugin_resource_context_unavailable', 'Resource context is unavailable');
         }
         if (existing) retireDynamicSurfaceContext(resource, existing);
-        if (activeDynamicResourceContexts >= MAX_PLUGIN_RESOURCE_ACTIVE_CONTEXTS) {
-            return fail('plugin_resource_capacity_exceeded', 'Resource occurrenceId exceeds its active context bound');
-        }
         resource.surfaceContexts.set(context.mountInstanceKey, candidate);
-        activeDynamicResourceContexts += 1;
         return Object.freeze({
             [surfaceResourceAccessAdmissionBrand]: true as const,
             resource,
@@ -2625,7 +2553,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
                             });
                             // The inner producer guard is deliberately not
                             // the final authority: this outer `await` yields
-                            // before we mutate the context's LKG/aggregate
+                            // before we mutate the context's observed descriptor
                             // state or disclose bytes to the caller.
                             guardDynamicRead();
                             if (!admitDynamicObservation(
@@ -2634,7 +2562,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
                                 observed,
                                 accountLifetimeToken,
                             )) {
-                                return fail('plugin_resource_capacity_exceeded', 'Resource occurrenceId exceeds its aggregate byte bound');
+                                return fail('plugin_resource_context_unavailable', 'Resource Account context is unavailable');
                             }
                             guardDynamicRead();
                             return Object.freeze({

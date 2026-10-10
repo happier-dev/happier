@@ -2,7 +2,7 @@ import axios from 'axios';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
 
-import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability/actions';
+import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityCollectionWritersClaimActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { PluginAccountKvRowError, assertPluginAccountKvExpectedVersionV1, clonePluginAccountKvRowV1, commitPluginAccountKvMutationV1, createEmptyPluginAccountKvRowV1, deletePluginAccountKvEntryV1, listPluginAccountKvEntriesV1, normalizePluginAccountKvLogicalKeyV1, projectPluginAccountKvEntryV1, readPluginAccountKvEntryV1, setPluginAccountKvEntryV1, PluginAccountStorageMutationRequestV1Schema, PluginAccountStorageMutationResponseV1Schema, PluginAccountStorageReadResponseV1Schema, PluginAccountStorageRowV1Schema, PluginAccountStorageUnavailableV1Schema, assertPluginAccountStorageEnvelopeForModeV1, openPluginAccountStoragePrivatePayloadV1, sealPluginAccountStoragePrivatePayloadV1 } from '@happier-dev/protocol/plugins/data/accountKvV1';
@@ -113,6 +113,8 @@ export type AccountPluginDataStorageHostDependencies = Readonly<{
      * install is selected by the present user through its release.
      */
     resolveReleaseLessDeclaration?: (pluginId: string) => CanonicalPluginManifest | null;
+    /** The exact declaring module, loaded by the existing activation/source owner. */
+    resolveReleaseLessCollectionMigrations?: (pluginId: string) => Promise<PluginAccountCollectionMigrationRuntimeProjection | null>;
 }>;
 
 type BoundAccountDataLifecycle = Readonly<{
@@ -563,9 +565,16 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
         listener: (hint: PluginAccountCollectionWatchInvalidation) => void,
     ) => () => void;
 } & AccountPluginDataStorageHostDependencies>): AccountPluginDataStorageHost {
-    const contractsByPluginAndCollection = new Map<string, NormalizedPluginAccountCollectionContractV1>();
+    const contractsByPluginAndCollection = new Map<string, {
+        contract: NormalizedPluginAccountCollectionContractV1;
+        validate?: BoundCollection['validate'];
+        definitions: WeakMap<PluginAccountCollectionDefinition, BoundCollection>;
+    }>();
     for (const contract of params.contracts) {
-        contractsByPluginAndCollection.set(`${contract.pluginId}\u0000${contract.collectionId}`, contract);
+        contractsByPluginAndCollection.set(`${contract.pluginId}\u0000${contract.collectionId}`, {
+            contract,
+            definitions: new WeakMap(),
+        });
     }
     const readCredentials = params.readCredentials ?? readStoredCredentials;
     const http: AccountPluginDataHttpClient = params.http ?? axios;
@@ -754,9 +763,9 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
             const key = `${scopeKey}\u0000${lifecycle.pluginId}`;
             let claim = writerClaimsByScope.get(key);
             if (!claim) {
-                claim = post({
+                const claimOnce = (prepare?: true) => post({
                     path: COLLECTION_WRITERS_CLAIM_HTTP_PATH,
-                    body: { manifest },
+                    body: { manifest, ...(prepare ? { prepare } : {}) },
                     credentials,
                     ...(operationSignal ? { operationSignal } : {}),
                     parseError: (value) => {
@@ -766,7 +775,44 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                             : null;
                     },
                     unavailableMessage: 'Account Collection writer claim',
-                }).then(() => undefined, (error: unknown) => {
+                });
+                claim = (async () => {
+                    try {
+                        await claimOnce();
+                        return;
+                    } catch (error) {
+                        if (!isPluginError(error) || error.code !== 'plugin_intent_writable_collections_not_ready') throw error;
+                    }
+                    const preparation = PluginAvailabilityCollectionWritersClaimActionOutputV1Schema.parse(await claimOnce(true));
+                    if (!preparation.preparation?.length) throw dataError('plugin_intent_writable_collections_not_ready', 'Collection writer preparation is unavailable');
+                    const runtime = await params.resolveReleaseLessCollectionMigrations?.(lifecycle.pluginId);
+                    await assertBoundCurrent(lifecycle, operationSignal);
+                    if (!runtime) throw dataError('collection_candidate_preparation_invalid', 'Declaring module migration callbacks are unavailable');
+                    const stages: CollectionMigrationCandidateHandle[] = [];
+                    try {
+                        for (const item of preparation.preparation) {
+                            const targetContract = contractsByPluginAndCollection.get(`${lifecycle.pluginId}\u0000${item.binding.target.collectionId}`)?.contract;
+                            if (!targetContract) throw dataError('collection_candidate_preparation_contract_mismatch', 'Target Collection is not admitted');
+                            const stage = host.createCollectionMigrationCandidate({
+                                binding: item.binding,
+                                sourceContract: normalizePluginAccountCollectionContractV1({ pluginId: lifecycle.pluginId, contribution: item.source }),
+                                targetContract,
+                                declarations: manifest.contributes.accountCollections ?? [],
+                                runtime,
+                                signal: signalFor(operationSignal),
+                                isOccurrenceCurrent: lifecycle.isOccurrenceCurrent,
+                            });
+                            stages.push(stage);
+                            await stage.prepare();
+                        }
+                        await claimOnce();
+                    } catch (error) {
+                        await Promise.all(stages.map(async (stage) => {
+                            try { await stage.retire(); } catch { /* Exact-stage cleanup remains retryable by Data lifecycle retirement. */ }
+                        }));
+                        throw error;
+                    }
+                })().then(() => undefined, (error: unknown) => {
                     if (isPluginError(error) && error.code === COLLECTION_WRITERS_CLAIM_SETTLED_REFUSAL) return;
                     writerClaimsByScope.delete(key);
                 });
@@ -803,7 +849,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
         });
     };
 
-    return Object.freeze({
+    const host: AccountPluginDataStorageHost = Object.freeze({
         async retireCollectionMigrationCandidate(input): Promise<void> {
             let binding: PluginCollectionCandidatePreparationBindingV1;
             try {
@@ -860,7 +906,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
 
             const admittedTargetContract = contractsByPluginAndCollection.get(
                 `${binding.target.pluginId}\u0000${binding.target.collectionId}`,
-            );
+            )?.contract;
             if (
                 !collectionContractMatchesRef(input.sourceContract, binding.source)
                 || !collectionContractMatchesRef(input.targetContract, binding.target)
@@ -1221,10 +1267,9 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                 accountLifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
             };
             const kvScopeIdentity = Object.freeze({});
-            // Declarations are readonly author data. Keep their admitted schema
-            // and validator with this occurrence rather than rebuilding them on
-            // every polling wake. The handle still rechecks live authority and
-            // Account state on every operation; no row or credential is cached.
+            // Handles retain this invocation's cancellation and authority. Only
+            // readonly declaration admission and schema preparation belong to
+            // the registry-owned contract lifetime shared by fresh invocations.
             const boundCollections = new WeakMap<PluginAccountCollectionDefinition,
                 PluginAccountCollectionForDefinition<PluginAccountCollectionDefinition>>();
             const latestQueryCursorByCollectionKey = new Map<string, Readonly<{
@@ -1579,33 +1624,37 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
             ): PluginAccountCollectionForDefinition<TDefinition> => {
                 const existing = boundCollections.get(definition);
                 if (existing) return existing as PluginAccountCollectionForDefinition<TDefinition>;
-                let requested: NormalizedPluginAccountCollectionContractV1 | null = null;
+                let collection: BoundCollection;
                 try {
-                    const parsed = PluginAccountCollectionContributionV1Schema.safeParse(
-                        projectPluginAccountCollectionDeclaration(definition.id, definition),
+                    const admitted = contractsByPluginAndCollection.get(
+                        `${lifecycle.pluginId}\u0000${definition.id}`,
                     );
-                    requested = parsed.success
-                        ? normalizePluginAccountCollectionContractV1({
+                    if (!admitted) return createUnavailableAccountCollection<TDefinition>(COLLECTION_UNDECLARED_CODE);
+                    const prepared = admitted.definitions.get(definition);
+                    if (prepared) {
+                        collection = prepared;
+                    } else {
+                        const parsed = PluginAccountCollectionContributionV1Schema.safeParse(
+                            projectPluginAccountCollectionDeclaration(definition.id, definition),
+                        );
+                        if (!parsed.success) return createUnavailableAccountCollection<TDefinition>(COLLECTION_UNDECLARED_CODE);
+                        const requested = normalizePluginAccountCollectionContractV1({
                             pluginId: lifecycle.pluginId,
                             contribution: parsed.data,
-                        })
-                        : null;
-                } catch {
-                    requested = null;
-                }
-                const admitted = requested
-                    ? contractsByPluginAndCollection.get(`${lifecycle.pluginId}\u0000${requested.collectionId}`)
-                    : null;
-                if (!admitted || admitted.contractDigest !== requested?.contractDigest) {
-                    return createUnavailableAccountCollection<TDefinition>(COLLECTION_UNDECLARED_CODE);
-                }
-                let validate: ReturnType<typeof compilePluginJsonSchema>;
-                try {
-                    validate = compilePluginJsonSchema(admitted.schema);
+                        });
+                        if (admitted.contract.contractDigest !== requested.contractDigest) {
+                            return createUnavailableAccountCollection<TDefinition>(COLLECTION_UNDECLARED_CODE);
+                        }
+                        // Channels reconciliation enters with a fresh Action
+                        // binding on each pass. Preparing at the binding lifetime
+                        // recompiles its large static schema on the event loop.
+                        admitted.validate ??= compilePluginJsonSchema(admitted.contract.schema);
+                        collection = Object.freeze({ contract: admitted.contract, validate: admitted.validate });
+                        admitted.definitions.set(definition, collection);
+                    }
                 } catch {
                     return createUnavailableAccountCollection<TDefinition>(COLLECTION_UNDECLARED_CODE);
                 }
-                const collection: BoundCollection = Object.freeze({ contract: admitted, validate });
 
                 /**
                  * The one place a plugin's logical mutations become wire
@@ -2114,4 +2163,5 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
             });
         },
     });
+    return host;
 }

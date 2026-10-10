@@ -12,8 +12,6 @@ import type { ImmutablePluginGenerationRecord } from '@/plugins/store/registry/g
 
 import {
     MAX_PLUGIN_RESOURCE_BYTES,
-    MAX_PLUGIN_RESOURCE_AGGREGATE_BYTES,
-    MAX_PLUGIN_RESOURCES_PER_GENERATION,
     createStablePluginResourcesOwner,
 } from './resources';
 
@@ -228,7 +226,7 @@ describe('stable plugin resources owner', () => {
         expect(owner.hasPlugin('acme.sdk-closure')).toBe(true);
     });
 
-    it('enforces exact and plus-one per-call bounds and the global admission bound', async () => {
+    it('enforces per-read byte bounds without treating sequential resource sizes as retained memory', async () => {
         const exact = await fixture('acme.alpha');
         const owner = await createStablePluginResourcesOwner({
             registry: registry([exact.contribution]),
@@ -274,7 +272,7 @@ describe('stable plugin resources owner', () => {
 
         const aggregateContributions: ResolvedResourceContribution[] = [];
         const aggregateGenerations = new Map<string, { pluginId: string; immutableGenerationId: string; rootPath: string; files: ImmutablePluginGenerationRecord['files'] }>();
-        for (let index = 0; index <= MAX_PLUGIN_RESOURCE_AGGREGATE_BYTES / MAX_PLUGIN_RESOURCE_BYTES; index += 1) {
+        for (let index = 0; index < 5; index += 1) {
             const item = await fixture(`acme.aggregate-${index}`, `item-${index}`, Buffer.from('x'));
             await truncate(join(item.rootPath, item.relativePath), MAX_PLUGIN_RESOURCE_BYTES);
             aggregateContributions.push({
@@ -286,10 +284,16 @@ describe('stable plugin resources owner', () => {
                 files: [{ ...item.file, byteLength: MAX_PLUGIN_RESOURCE_BYTES }],
             });
         }
-        await expect(createStablePluginResourcesOwner({
+        const aggregateOwner = await createStablePluginResourcesOwner({
             registry: registry(aggregateContributions),
             generations: aggregateGenerations,
-        })).rejects.toMatchObject({ code: 'plugin_resource_capacity_exceeded' });
+        });
+        const lastService = aggregateOwner.bind({
+            pluginId: 'acme.aggregate-4', signal: new AbortController().signal,
+            isOccurrenceCurrent: () => true,
+        });
+        expect(lastService.describe('item-4').size).toBe(MAX_PLUGIN_RESOURCE_BYTES);
+        expect((await lastService.read('item-4')).bytes.byteLength).toBe(MAX_PLUGIN_RESOURCE_BYTES);
     });
 
     it('rechecks containment, declared file identity, size, and digest on every read', async () => {
@@ -465,24 +469,21 @@ describe('dynamic plugin resources (EU-4b §3.6.1)', () => {
         };
     }
 
-    it('applies the declaration-count bound per plugin occurrenceId rather than across the registry', async () => {
-        const pluginCount = MAX_PLUGIN_RESOURCES_PER_GENERATION + 1;
+    it('admits more than the former declaration count within one plugin occurrence', async () => {
+        const pluginCount = 513;
         const contributions = Array.from({ length: pluginCount }, (_, index) => (
-            dynamicContribution(`acme.many-${index}`, 'shared')
+            dynamicContribution('acme.many', `resource-${index}`)
         ));
         const dynamicProducers = Array.from({ length: pluginCount }, (_, index) => ({
-            pluginId: `acme.many-${index}`,
-            localId: 'shared',
+            pluginId: 'acme.many',
+            localId: `resource-${index}`,
             runtime: {
                 read: () => new Uint8Array(),
                 observe: () => ({ dispose: () => undefined }),
             },
         }));
         const dynamicOccurrenceIdsByPluginId = new Map(
-            Array.from({ length: pluginCount }, (_, index) => [
-                `acme.many-${index}`,
-                `occurrenceId-${index}`,
-            ] as const),
+            [['acme.many', 'occurrenceId-many']],
         );
 
         const owner = await createStablePluginResourcesOwner({
@@ -492,7 +493,8 @@ describe('dynamic plugin resources (EU-4b §3.6.1)', () => {
             dynamicProducers,
         });
 
-        expect(owner).toBeDefined();
+        const service = owner.bind({ pluginId: 'acme.many', signal: new AbortController().signal, isOccurrenceCurrent: () => true });
+        expect(service.describe(`resource-${pluginCount - 1}`).size).toBe(0);
     });
 
     it('derives only readable/dynamic capability facts from the admitted registry', async () => {

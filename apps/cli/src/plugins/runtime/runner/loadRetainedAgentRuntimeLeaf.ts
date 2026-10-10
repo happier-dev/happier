@@ -45,6 +45,32 @@ import {
     resolveRetainedBundledPluginRoot,
 } from '../retainedPluginSourceAttestation';
 import { readRetainedBundledAgentFactory } from '../retainedBundledAgentFactory';
+import { createBundledActivationSourceResolver } from '../bundledActivationSource';
+import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '../../projection/registry/sources/generatedBundledPluginManifests';
+
+async function readDevelopmentManifestAuthority(
+    pluginId: string,
+    registeredRoot: string,
+): Promise<'external' | 'bundled_first_party'> {
+    const locator = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find(
+        (candidate) => candidate.pluginId === pluginId,
+    );
+    if (!locator?.daemonEntryPath || locator.sourceSpec.kind !== 'bundled') return 'external';
+    let selectedRoot: string | null = null;
+    const resolveSource = createBundledActivationSourceResolver({
+        bundledPackageNames: [locator.daemonEntryPath],
+        resolveDevelopmentSourceAuthority: ({ rootPath }) => {
+            selectedRoot = rootPath;
+            return null;
+        },
+    });
+    // Reuse the daemon's root selection without loading or activating its code.
+    // A reserved plugin id alone does not establish first-party authority.
+    resolveSource(locator);
+    return selectedRoot && await realpath(selectedRoot) === registeredRoot
+        ? 'bundled_first_party'
+        : 'external';
+}
 export type RetainedAgentRuntimeLeaf = Readonly<{
     factory: AgentRuntimeFactory;
     externalSessions?: AgentExternalSessionsContribution;
@@ -237,7 +263,9 @@ export async function verifyRunnerAgentBindingAgainstGeneration(
     const hostDeclarativeAcpBinding = 'kind' in binding;
     const manifestAuthority = retainedSource?.manifestAuthority
         ?? validated?.manifestAuthority
-        ?? 'external' as const;
+        ?? (developmentRoot
+            ? await readDevelopmentManifestAuthority(binding.pluginId, developmentRoot)
+            : 'external' as const);
     if (!manifestAuthority) {
         throw new Error(
             'Runner Agent binding names an unvalidated Agent factory',

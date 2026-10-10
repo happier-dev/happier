@@ -7,6 +7,21 @@ import {
 } from './producerResultSnapshot';
 
 describe('connected-account producer result snapshots', () => {
+    it('preserves rich quota facts while detaching mutable producer details', () => {
+        const limit = {
+            id: 'spark:primary', providerLimitId: 'spark', label: 'Spark · Primary',
+            used: 81, remaining: 19, unit: 'tokens', status: 'ok', confidence: 'exact',
+            windowDurationMs: 18_000_000, modelId: 'spark-model', scope: 'primary', limitScope: 'account',
+            details: { rawScope: 'spark' },
+        };
+        const quota = { observedAtMs: 100, limits: [limit] };
+        const result = snapshotConnectedAccountEstablishedResult({ kind: 'quota' }, quota, { quotaLeafUnavailable: false });
+        expect(result).toEqual(quota);
+        limit.label = 'changed';
+        limit.details.rawScope = 'changed';
+        expect(result?.limits[0]).toMatchObject({ label: 'Spark · Primary', details: { rawScope: 'spark' } });
+    });
+
     it('detaches subscription observations from mutable producer state', () => {
         const operation = { kind: 'quota' } as const;
         const options = { quotaLeafUnavailable: false } as const;

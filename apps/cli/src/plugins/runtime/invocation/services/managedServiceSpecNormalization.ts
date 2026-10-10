@@ -9,9 +9,7 @@ import type {
 
 export const MANAGED_SERVICE_NUMERIC_CONTRACT = Object.freeze({
     startupTimeoutMs: Object.freeze({
-        defaultValue: 30_000,
         minimum: 1,
-        maximum: 300_000,
     }),
     healthTimeoutMs: Object.freeze({
         defaultValue: 5_000,
@@ -51,7 +49,7 @@ type NormalizedManagedServiceHealthCheck =
     >;
 
 type NormalizedManagedServiceCommon = Readonly<{
-    startupTimeoutMs: number;
+    startupTimeoutMs?: number;
     healthPolicy: Readonly<{
         intervalMs: number;
         consecutiveFailures: number;
@@ -208,14 +206,20 @@ function normalizedHttpHealthAlternatives(
     }));
 }
 
+function validatedOptionalDeadline(value: number | undefined, label: string): number | undefined {
+    if (value !== undefined && (!Number.isSafeInteger(value)
+        || value < MANAGED_SERVICE_NUMERIC_CONTRACT.startupTimeoutMs.minimum)) {
+        return specInvalid(`${label} must be a positive safe integer`);
+    }
+    return value;
+}
+
 export function normalizeManagedServiceHealthyWaitTimeout(
     timeoutMs: number | undefined,
-    startupTimeoutMs: number,
-): number {
-    return validatedBoundedInteger(
-        timeoutMs,
-        startupTimeoutMs,
-        MANAGED_SERVICE_NUMERIC_CONTRACT.startupTimeoutMs,
+    startupTimeoutMs: number | undefined,
+): number | undefined {
+    return validatedOptionalDeadline(
+        timeoutMs ?? startupTimeoutMs,
         'Managed-service healthy-wait timeout',
     );
 }
@@ -244,10 +248,8 @@ export function normalizeManagedServiceSpec(
             'Managed-service attach mode cannot configure durable logging',
         );
     }
-    const startupTimeoutMs = validatedBoundedInteger(
+    const startupTimeoutMs = validatedOptionalDeadline(
         spec.startupTimeoutMs,
-        MANAGED_SERVICE_NUMERIC_CONTRACT.startupTimeoutMs.defaultValue,
-        MANAGED_SERVICE_NUMERIC_CONTRACT.startupTimeoutMs,
         'Managed-service startup timeout',
     );
     const healthPolicy = Object.freeze({

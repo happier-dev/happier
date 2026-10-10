@@ -28,6 +28,8 @@ import {
     type LoadInstalledPluginsResult,
 } from '@/plugins/discovery/load/installed';
 import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { buildPluginProjectionV2 } from '@/plugins/projection/registry/projection/v2';
 import {
     createPluginRuntimeOccurrenceId,
     type PluginRuntimeOccurrenceId,
@@ -647,6 +649,35 @@ describe('executable targeted contribution admission', () => {
             ]).toBeUndefined();
         } finally {
             await runtime.dispose();
+        }
+    });
+
+    it('publishes admitted bundled source custody without a managed generation', async () => {
+        const fixture = await createAdmittedPluginRuntimeFixture({
+            runtimeOptions: { generationAuthority: fixtureGenerationAuthority([]) },
+        });
+        const pluginId = 'happier.scm.forge.github';
+        try {
+            const runtime = fixture.registry;
+            const occurrenceId = runtime.readPluginOccurrenceId?.(pluginId);
+            const sourceCustody = runtime.readPluginSourceCustody?.(pluginId);
+            expect(occurrenceId).toBeTruthy();
+            expect(sourceCustody).toMatchObject({ kind: 'development' });
+            expect(runtime.activatedPluginIds.has(pluginId)).toBe(true);
+            expect(runtime.pluginFinalPolicyCurrentRuntimesById?.get(pluginId)).toEqual(
+                expect.objectContaining({ occurrenceId, sourceCustody, applied: true }),
+            );
+            const projection = buildPluginProjectionV2({
+                registry: runtime.contributes,
+                generation: fixture.controller.getState().generation,
+                pluginFinalPolicyCurrentRuntimesById: runtime.pluginFinalPolicyCurrentRuntimesById,
+            });
+            expect(projection.installedPackagesById[pluginId]).toMatchObject({
+                occurrenceId,
+                sourceCustody,
+            });
+        } finally {
+            await fixture.dispose();
         }
     });
 

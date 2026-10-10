@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { realpathSync, statSync } from 'node:fs';
+import { lstatSync, realpathSync, statSync } from 'node:fs';
 import { access, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 
@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { startFileWatcher } from '@/integrations/watcher/startFileWatcher';
 import { BUNDLED_FIRST_PARTY_PLUGIN_METADATA } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
 import { resolveBundledActivationSourceRepoRoot } from '@/plugins/runtime/bundledActivationSource';
+import { defaultCanImportFirstPartyPluginSource, isExecutingFirstPartySourceRuntime } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
 import { isSupportedPluginAuthorSourceExtension } from '@/plugins/runtime/loadPluginModule';
 import {
   startPluginDevelopmentSourceObserver,
@@ -258,6 +259,8 @@ export function createDaemonPluginDevelopmentRootsOwner(params: Readonly<{
   // Product-build membership admits only these exact first-party checkout roots
   // when the bundled loader selects source mode; packaged custody stays separate.
   const bundledRepoRoot = resolveBundledActivationSourceRepoRoot(import.meta.url);
+  const frozenSourceRuntime = isExecutingFirstPartySourceRuntime(import.meta.url)
+    && !defaultCanImportFirstPartyPluginSource();
   const firstPartySourcePluginIds = new Map<string, string>(BUNDLED_FIRST_PARTY_PLUGIN_METADATA.map((metadata) => [
     resolve(bundledRepoRoot, 'packages', 'plugins', metadata.pluginPackageId),
     metadata.pluginId,
@@ -858,11 +861,15 @@ export function createDaemonPluginDevelopmentRootsOwner(params: Readonly<{
       if (firstPartyPluginId && !sources.has(registeredRootId)) {
         try {
           const canonicalRoot = realpathSync(registeredRootId);
-          const canonicalEntry = realpathSync(join(registeredRootId, 'src', 'index.ts'));
+          const entryPath = frozenSourceRuntime
+            ? join(registeredRootId, 'dist', 'index.js')
+            : join(registeredRootId, 'src', 'index.ts');
+          const canonicalEntry = realpathSync(entryPath);
           if (
             canonicalRoot !== registeredRootId
             || !isCanonicalAbsolutePathInsideRoot(canonicalRoot, canonicalEntry)
             || !statSync(canonicalEntry).isFile()
+            || (frozenSourceRuntime && lstatSync(entryPath).isSymbolicLink())
           ) return null;
           sources.set(registeredRootId, {
             handle: null,

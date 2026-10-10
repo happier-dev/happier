@@ -270,9 +270,9 @@ async function prepareIndexStateTx(input: Readonly<{
  * columns. A malformed/corrupt persisted contract is never interpreted as a
  * looser query descriptor.
  */
-export function readMaterializedPluginCollectionContract(
+function reconstructMaterializedPluginCollectionContract(
     row: StoredPluginCollectionContractRow,
-): NormalizedPluginAccountCollectionContractV1 {
+) {
     try {
         const privacy = PersistedPrivacyProjectionV1Schema.parse(row.privacyProjection);
         const contribution = PluginAccountCollectionContributionV1Schema.parse({
@@ -296,11 +296,23 @@ export function readMaterializedPluginCollectionContract(
         if (normalized.contractDigest !== row.contractDigest) {
             throw new PluginCollectionContractMaterializationError("collection_contract_inconsistent");
         }
-        return normalized;
+        return { contribution, normalized };
     } catch (error) {
         if (error instanceof PluginCollectionContractMaterializationError) throw error;
         throw new PluginCollectionContractMaterializationError("collection_contract_inconsistent");
     }
+}
+
+export function readMaterializedPluginCollectionContract(
+    row: StoredPluginCollectionContractRow,
+): NormalizedPluginAccountCollectionContractV1 {
+    return reconstructMaterializedPluginCollectionContract(row).normalized;
+}
+
+export function readMaterializedPluginCollectionDeclaration(
+    row: StoredPluginCollectionContractRow,
+): PluginAccountCollectionContributionV1 {
+    return reconstructMaterializedPluginCollectionContract(row).contribution;
 }
 
 /**

@@ -68,6 +68,7 @@ import type {
   RehydratedPluginContributionPointSurfaceV1,
 } from '@happier-dev/protocol';
 import type { PluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
+import type { MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { HostStructuredMessageDescriptorV1 } from '@/plugins/runtime/invocation/services/structuredMessageDescriptor';
 import type { PluginUiArtifactsManifestV2 } from '@happier-dev/protocol/plugins/ui';
 import type { PluginRuntimeRegistration } from '@happier-dev/plugin-sdk/host/registration';
@@ -119,9 +120,10 @@ export type ResolvedComposerAttachmentContribution = ResolvedTargetUiContributio
 export type ResolvedComposerReferenceContribution = ResolvedTargetUiContribution<
     PluginComposerReferenceProviderContributionV1
 >;
-export type ResolvedRoleContribution = ResolvedTargetUiContribution<PluginRoleDeclarationV1>;
+export type ResolvedRoleContribution = ResolvedTargetUiContribution<PluginRoleDeclarationV1> & Readonly<{ displayName?: string }>;
 export type ResolvedWorkflowContribution = ResolvedTargetUiContribution<PluginWorkflowContributionV1>;
 export type ResolvedInputTypeContribution = ResolvedTargetUiContribution<PluginInputTypeContributionV1>;
+export type ResolvedMachineProvisionerContribution = ResolvedTargetUiContribution<MachineProvisionerContributionV1>;
 export type ResolvedClientExecutableContribution<T> = ResolvedTargetUiContribution<T> & Readonly<{
     pluginRootPath: string;
     generatedUiArtifactsManifest?: PluginUiArtifactsManifestV2;
@@ -816,6 +818,8 @@ export type ResolvedActivationTarget = Readonly<{
 }>;
 
 export type ResolvedContributionInputs = Readonly<{
+    /** Complete admitted source declarations, including sources with no executable entry. */
+    pluginDeclarations?: readonly import('@/plugins/discovery/load/installed').LoadedPlugin[];
     introspectionContributions?: readonly PluginContributionIntrospectionCandidate[];
     uiViewsV2?: readonly ResolvedUiViewV2Contribution[];
     openableContentViewers?: readonly ResolvedOpenableContentViewerContribution[];
@@ -850,6 +854,7 @@ export type ResolvedContributionInputs = Readonly<{
     roles?: readonly ResolvedRoleContribution[];
     workflows?: readonly ResolvedWorkflowContribution[];
     inputTypes?: readonly ResolvedInputTypeContribution[];
+    machineProvisioners?: readonly ResolvedMachineProvisionerContribution[];
     dragSources?: readonly ResolvedDragSourceContribution[];
     dropTargets?: readonly ResolvedDropTargetContribution[];
     mcpServers?: readonly ResolvedMcpServerContribution[];
@@ -911,6 +916,7 @@ export type ResolvedContributionRegistry = Readonly<{
     roles?: readonly ResolvedRoleContribution[];
     workflows?: readonly ResolvedWorkflowContribution[];
     inputTypes?: readonly ResolvedInputTypeContribution[];
+    machineProvisioners?: readonly ResolvedMachineProvisionerContribution[];
     dragSources?: readonly ResolvedDragSourceContribution[];
     dropTargets?: readonly ResolvedDropTargetContribution[];
     mcpServers?: readonly ResolvedMcpServerContribution[];
@@ -935,6 +941,7 @@ export type ResolvedContributionRegistry = Readonly<{
         }>;
     }>): AdmittedTargetedContributionSnapshot | null;
     activationTargets: readonly ResolvedActivationTarget[];
+    pluginDeclarations?: readonly import('@/plugins/discovery/load/installed').LoadedPlugin[];
     /** Exact current materialization IDs captured with this registry lease. */
     materializationIdsByPluginId?: Readonly<Record<string, string>>;
     immutableGenerationIdsByPluginId?: Readonly<Record<string, string>>;
@@ -963,5 +970,6 @@ export type ResolvedContributionRegistry = Readonly<{
     catalogEntriesById: Readonly<Record<string, ResolvedCatalogEntry>>;
     agentDefinitionsById: ReadonlyMap<string, ResolvedAgentContribution>;
     providersByContributionKey?: ReadonlyMap<string, ResolvedProviderContribution>;
+    machineProvisionersByContributionKey?: ReadonlyMap<string, ResolvedMachineProvisionerContribution>;
     pluginDiagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
 }>;

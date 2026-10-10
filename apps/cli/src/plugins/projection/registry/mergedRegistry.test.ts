@@ -11,6 +11,7 @@ import {
     getResolvedContributionRegistry,
     resolveMergedContributionRegistry,
 } from './createResolvedContributionRegistry';
+import { resolveBuiltInContributions } from './resolveBuiltInContributions';
 
 function createTestAgentContribution(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
@@ -96,6 +97,33 @@ async function writePluginManifest(rootDir: string, manifestOverrides?: Record<s
 }
 
 describe('resolveMergedContributionRegistry', () => {
+    it('reuses admitted bundled entries instead of rebuilding their projection on each merged read', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-merged-registry-reuse-'));
+        const builtIn = getResolvedContributionRegistry();
+        await resolveMergedContributionRegistry({ happyHomeDir });
+
+        const repeatedReadStarted = process.cpuUsage();
+        const reads = [];
+        for (let read = 0; read < 3; read += 1) {
+            reads.push(await resolveMergedContributionRegistry({ happyHomeDir }));
+        }
+        const repeatedReadCpu = process.cpuUsage(repeatedReadStarted);
+        const rebuildStarted = process.cpuUsage();
+        for (let read = 0; read < 3; read += 1) resolveBuiltInContributions();
+        const rebuildCpu = process.cpuUsage(rebuildStarted);
+        const repeatedReadUs = repeatedReadCpu.user + repeatedReadCpu.system;
+        const rebuildUs = rebuildCpu.user + rebuildCpu.system;
+
+        // Same-workload CPU comparison, not a production deadline or host-speed bound.
+        console.info(JSON.stringify({ repeatedReadUs, rebuildUs }));
+        expect(repeatedReadUs).toBeLessThan(rebuildUs);
+        for (const registry of reads) {
+            expect(registry.agents[0]).toBe(builtIn.agents[0]);
+            expect(registry.providers[0]).toBe(builtIn.providers[0]);
+            expect(registry.accountCollections[0]).toBe(builtIn.accountCollections[0]);
+        }
+    }, 60_000);
+
     it('merges enabled plugin provider/backend/hook contributes without widening the built-in AGENTS facade', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-merged-registry-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-merged-'));

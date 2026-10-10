@@ -7,6 +7,7 @@ import { createDaemonNpmPluginChangePreparer } from '@/plugins/daemon/npmChangeP
 import { createDaemonPathPluginChangePreparer } from '@/plugins/daemon/pathChangePreparer';
 import { readServerPluginManagedResources, type PluginManagedResourcePreflightBinding } from '@/plugins/availability/serverPublisher';
 import { readCurrentDaemonPluginCatalog } from '@/plugins/daemon/currentCatalog';
+import { projectPluginInstalledAvailabilityInventory } from '@/plugins/availability/releaseLessDeclarations';
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
 import { shouldActivateTargetAtStartup } from '@/plugins/runtime/lifecycle/activation/targets';
@@ -102,7 +103,6 @@ export type DaemonPluginAvailabilityReporter = Readonly<{
 export function createDaemonPluginRuntimeOwner(params: Readonly<{
   happyHomeDir: string;
   managedResourcePreflight?: PluginManagedResourcePreflightBinding;
-  startupDeadlineAtMs?: number;
   /** Daemon-owned live machine identity for host-stamped nested Action callers. */
   resolveCurrentMachineId?: () => string | null;
   executeClientAction?: ClientContributedActionExecutor;
@@ -563,17 +563,13 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
     inventory: PluginRegistryAvailabilityInventory,
   ): PluginRegistryAvailabilityInventory => {
     const lease = params.reloadController.tryAcquireRuntimeRegistry();
-    if (!lease) return inventory;
+    if (!lease) return projectPluginInstalledAvailabilityInventory({ inventory, registry: null, registryRevision: null, runtimeMaterializations: [] });
     try {
-      const recorded = new Set(inventory.materializations.map((materialization) => materialization.pluginId));
-      const runtime = (lease.registry.readReleaseLessMaterializations?.() ?? [])
-        .filter((materialization) => !recorded.has(materialization.pluginId));
-      if (runtime.length === 0) return inventory;
-      return Object.freeze({
-        ...inventory,
-        materializations: Object.freeze([...inventory.materializations, ...runtime].sort((left, right) => (
-          left.materializationId.localeCompare(right.materializationId)
-        ))),
+      return projectPluginInstalledAvailabilityInventory({
+        inventory,
+        registry: lease.registry.contributes,
+        registryRevision: lease.durableRevision,
+        runtimeMaterializations: lease.registry.readReleaseLessMaterializations?.() ?? [],
       });
     } finally {
       void lease.release().catch(() => undefined);
@@ -608,8 +604,6 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
           const registry = await resolveExecutablePluginRuntimeRegistry({
             happyHomeDir: params.happyHomeDir,
             ...(params.executeClientAction ? { executeClientAction: params.executeClientAction } : {}),
-            ...(params.startupDeadlineAtMs === undefined
-              ? {} : { startupDeadlineAtMs: params.startupDeadlineAtMs }),
             generation: params.reloadController.getState().generation + 1,
             ...(params.resolveCurrentMachineId
               ? { resolveCurrentMachineId: params.resolveCurrentMachineId }
@@ -793,8 +787,6 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
                 await bootstrapPrimaryAgentRuntimesForReadiness({
                   registry,
                   pluginIds: [pluginId],
-                  ...(params.startupDeadlineAtMs === undefined
-                    ? {} : { startupDeadlineAtMs: params.startupDeadlineAtMs }),
                 });
               });
             }));

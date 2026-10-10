@@ -55,6 +55,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import { isDynamicPluginResourceContributionV2 } from '@happier-dev/protocol/plugins/contributions/v2';
 import { PLUGIN_CONTRIBUTION_CATALOG_V2 } from '@happier-dev/protocol/plugins/contributions/catalog';
+import type { MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { pluginActionRequiresConfirmationPresentation, normalizePluginActionInputHintsV2, normalizePluginActionSlashV2 } from '@happier-dev/protocol/plugins/actions/v2';
 import { normalizePluginAccountCollectionContractsV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
 import { qualifyPluginEventIdV1 } from '@happier-dev/protocol/plugins/events/v1';
@@ -168,6 +169,7 @@ export type PluginContributionRegistry = Readonly<{
   roles: readonly PluginOwnedContribution<PluginRoleDeclarationV1>[];
   workflows: readonly PluginOwnedContribution<PluginWorkflowContributionV1>[];
   inputTypes: readonly PluginOwnedContribution<PluginInputTypeContributionV1>[];
+  machineProvisioners: readonly PluginOwnedContribution<MachineProvisionerContributionV1>[];
   dragSources: readonly PluginOwnedClientExecutableContribution<PluginDragSourceContributionV1>[];
   dropTargets: readonly PluginOwnedClientExecutableContribution<PluginDropTargetContributionV1>[];
   mcpServers: readonly PluginOwnedContribution<PluginMcpServerContributionV1>[];
@@ -413,6 +415,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
   const roles: PluginOwnedContribution<PluginRoleDeclarationV1>[] = [];
   const workflows: PluginOwnedContribution<PluginWorkflowContributionV1>[] = [];
   const inputTypes: PluginOwnedContribution<PluginInputTypeContributionV1>[] = [];
+  const machineProvisioners: PluginOwnedContribution<MachineProvisionerContributionV1>[] = [];
   const dragSources: PluginOwnedClientExecutableContribution<PluginDragSourceContributionV1>[] = [];
   const dropTargets: PluginOwnedClientExecutableContribution<PluginDropTargetContributionV1>[] = [];
   const mcpServers: PluginOwnedContribution<PluginMcpServerContributionV1>[] = [];
@@ -1031,6 +1034,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
     for (const definition of readSemanticDefinitions<PluginRoleDeclarationV1>('roles')) {
       roles.push({
         pluginId: plugin.pluginId,
+        displayName: displayText(plugin.manifest.displayName),
         pluginVersion: plugin.manifest.version,
         identity: createPluginContributionIdentity({ pluginId: plugin.pluginId, localId: definition.id }),
         pluginRootPath: plugin.pluginRootPath,
@@ -1058,6 +1062,16 @@ export function buildPluginContributionRegistry(params: Readonly<{
 
     for (const definition of readSemanticDefinitions<PluginInputTypeContributionV1>('inputTypes')) {
       inputTypes.push({
+        pluginId: plugin.pluginId, pluginVersion: plugin.manifest.version,
+        identity: createPluginContributionIdentity({ pluginId: plugin.pluginId, localId: definition.id }),
+        pluginRootPath: plugin.pluginRootPath, manifestPath: plugin.manifestPath,
+        daemonEntryPath: plugin.daemonEntryPath, devDaemonEntryPath: plugin.devDaemonEntryPath,
+        sourceSpec: plugin.sourceSpec, definition,
+      });
+    }
+
+    for (const definition of readSemanticDefinitions<MachineProvisionerContributionV1>('machineProvisioners')) {
+      machineProvisioners.push({
         pluginId: plugin.pluginId, pluginVersion: plugin.manifest.version,
         identity: createPluginContributionIdentity({ pluginId: plugin.pluginId, localId: definition.id }),
         pluginRootPath: plugin.pluginRootPath, manifestPath: plugin.manifestPath,
@@ -1155,6 +1169,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
     roles: Object.freeze(roles),
     workflows: Object.freeze(workflows),
     inputTypes: Object.freeze(inputTypes),
+    machineProvisioners: Object.freeze(machineProvisioners),
     dragSources: Object.freeze(dragSources),
     dropTargets: Object.freeze(dropTargets),
     mcpServers: Object.freeze(mcpServers),

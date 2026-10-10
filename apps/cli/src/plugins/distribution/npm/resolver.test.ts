@@ -153,7 +153,7 @@ describe('resolveNpmArtifactMetadata', () => {
     });
   });
 
-  it('retains only the newest 32 incompatible versions before the compatible selection', async () => {
+  it('retains every incompatible newer version before the compatible selection', async () => {
     const incompatibleVersions = Object.fromEntries(
       Array.from({ length: 33 }, (_, minor) => {
         const version = `2.${minor}.0`;
@@ -185,7 +185,7 @@ describe('resolveNpmArtifactMetadata', () => {
     });
 
     expect(resolved.version).toBe('1.4.0');
-    expect(resolved.compatibility?.blockedNewerVersions).toHaveLength(32);
+    expect(resolved.compatibility?.blockedNewerVersions).toHaveLength(33);
     expect(resolved.compatibility?.blockedNewerVersions.map((blocked) => blocked.version)).toEqual([
       '2.32.0',
       '2.31.0',
@@ -219,6 +219,7 @@ describe('resolveNpmArtifactMetadata', () => {
       '2.3.0',
       '2.2.0',
       '2.1.0',
+      '2.0.0',
     ]);
   });
 

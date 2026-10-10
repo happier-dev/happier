@@ -389,18 +389,26 @@ describe('A.13p spawned protocol client runtime', () => {
         expect(onFailure).toHaveBeenCalledTimes(1);
     });
 
-    it('bounds unresolved outgoing JSON-RPC request correlation', async () => {
-        const { protocol } = createInMemoryJsonRpcProcess();
-        const pending = Array.from({ length: 256 }, (_, index) => (
-            protocol.client.request(`child/pending-${index}`, {}, { timeoutMs: 10_000 }).catch((error: unknown) => error)
+    it('retains more than 256 outgoing requests until their replies and remains usable', async () => {
+        const { stdout, writes, protocol } = createInMemoryJsonRpcProcess();
+        const pending = Array.from({ length: 300 }, (_, index) => (
+            protocol.client.request('child/work', { index }, { timeoutMs: null })
+                .catch((error: unknown) => error)
         ));
+        try {
+            await expect.poll(() => writes.length).toBe(300);
+            for (let id = 1; id <= 300; id += 1) {
+                stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id, result: id - 1 })}\n`);
+            }
+            expect(await Promise.all(pending)).toEqual(Array.from({ length: 300 }, (_, index) => index));
 
-        await expect(protocol.client.request('child/overflow', {}, { timeoutMs: 10_000 })).rejects.toMatchObject({
-            code: 'PLUGIN_EXEC_CLIENT_BACKPRESSURE_EXCEEDED',
-        });
-
-        protocol.dispose();
-        await Promise.all(pending);
+            const after = protocol.client.request('child/after', {}, { timeoutMs: null });
+            stdout.write('{"jsonrpc":"2.0","id":301,"result":{"alive":true}}\n');
+            await expect(after).resolves.toEqual({ alive: true });
+        } finally {
+            protocol.dispose();
+            await Promise.all(pending);
+        }
     });
 
     it('lets request timeout settle while the stdin write remains blocked', async () => {
@@ -424,20 +432,95 @@ describe('A.13p spawned protocol client runtime', () => {
         protocol.dispose();
     });
 
-    it('bounds concurrent child-to-host JSON-RPC request handlers', async () => {
+    it('retains more than 256 concurrent child requests through handler settlement and recovery', async () => {
         const onFailure = vi.fn();
-        const { stdout, protocol } = createInMemoryJsonRpcProcess({ onFailure });
-        const neverSettles = new Promise<never>(() => undefined);
-        protocol.client.registerRequestHandler('host/hang', () => neverSettles);
-
-        for (let id = 1; id <= 257; id += 1) {
-            stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: `child-${id}`, method: 'host/hang' })}\n`);
+        const { stdout, writes, protocol } = createInMemoryJsonRpcProcess({ onFailure });
+        let release!: () => void;
+        const blocked = new Promise<void>((resolve) => { release = resolve; });
+        const admitted: string[] = [];
+        protocol.client.registerRequestHandler('host/work', async (_params, context) => {
+            admitted.push(context.requestId);
+            await blocked;
+            return { requestId: context.requestId };
+        });
+        try {
+            for (let id = 1; id <= 300; id += 1) {
+                stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: `child-${id}`, method: 'host/work' })}\n`);
+            }
+            await expect.poll(() => admitted.length).toBe(300);
+            expect(writes).toEqual([]);
+            expect(onFailure).not.toHaveBeenCalled();
+            release();
+            await expect.poll(() => writes.length).toBe(300);
+            expect(writes.map((frame) => JSON.parse(frame))).toEqual(admitted.map((id) => ({
+                jsonrpc: '2.0', id, result: { requestId: id },
+            })));
+            await protocol.client.notify('host/after', { alive: true });
+            expect(JSON.parse(writes.at(-1) ?? '')).toMatchObject({ method: 'host/after' });
+        } finally {
+            release();
+            protocol.dispose();
         }
+    });
 
-        await vi.waitFor(() => expect(onFailure).toHaveBeenCalledWith(expect.objectContaining({
-            code: 'PLUGIN_EXEC_CLIENT_BACKPRESSURE_EXCEEDED',
-        })));
-        protocol.dispose();
+    it('retains more than 256 blocked JSON-RPC writes until the transport drains', async () => {
+        const stdout = new PassThrough();
+        let release!: () => void;
+        const blocked = new Promise<void>((resolve) => { release = resolve; });
+        const writes: string[] = [];
+        const process: ExecProcessHandleV1 = {
+            pid: 1,
+            exit: new Promise(() => undefined),
+            async writeStdin(input) {
+                writes.push(typeof input === 'string' ? input : Buffer.from(input).toString('utf8'));
+                await blocked;
+            },
+            kill: () => undefined,
+            dispose: async () => undefined,
+        };
+        const protocol = createJsonRpcProcessClient({ process, stdout, write: process.writeStdin });
+        const pending = Array.from({ length: 300 }, (_, index) => (
+            protocol.client.notify('child/status', { index }).catch((error: unknown) => error)
+        ));
+        try {
+            await expect.poll(() => writes.length).toBe(300);
+            release();
+            expect(await Promise.all(pending)).toEqual(Array(300).fill(undefined));
+            await protocol.client.notify('child/after', { alive: true });
+            expect(JSON.parse(writes.at(-1) ?? '')).toMatchObject({ method: 'child/after' });
+        } finally {
+            release();
+            protocol.dispose();
+            await Promise.all(pending);
+        }
+    });
+
+    it('drains more than 256 ordered notifications after a slow callback without retiring the client', async () => {
+        const onFailure = vi.fn();
+        const { stdout, writes, protocol } = createInMemoryJsonRpcProcess({ onFailure });
+        let release!: () => void;
+        const blocked = new Promise<void>((resolve) => { release = resolve; });
+        const received: unknown[] = [];
+        protocol.client.registerNotificationHandler('host/status', async (params) => {
+            await blocked;
+            received.push(params);
+        });
+        try {
+            for (let index = 0; index < 300; index += 1) {
+                stdout.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'host/status', params: index })}\n`);
+            }
+            await protocol.client.notify('host/while-pending');
+            expect(writes).toHaveLength(1);
+            expect(received).toEqual([]);
+            expect(onFailure).not.toHaveBeenCalled();
+            release();
+            await expect.poll(() => received).toEqual(Array.from({ length: 300 }, (_, index) => index));
+            stdout.write('{"jsonrpc":"2.0","method":"host/status","params":"after"}\n');
+            await expect.poll(() => received.at(-1)).toBe('after');
+        } finally {
+            release();
+            protocol.dispose();
+        }
     });
 
     it('rejects outgoing JSON-RPC frames above maxFrameBytes before writing stdin', async () => {

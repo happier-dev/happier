@@ -3,7 +3,7 @@ import type {
     ResolvedContributionRegistry,
     ResolvedContributionSource,
 } from '../../../projection/registry/types';
-import { derivePluginDaemonContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { derivePluginDaemonContributionRegistrationRights, PLUGIN_CONTRIBUTION_CATALOG_V2 } from '@happier-dev/protocol/plugins/contributions/catalog';
 
 export type PluginContributionActivationDemand = Readonly<{
     pluginId: string;
@@ -39,6 +39,12 @@ const PRODUCT_DEMAND_READY_REGISTRATION_FAMILIES = new Set([
     // Reached only when a composer stages that exact attachment, through
     // `createTargetComposerAttachmentRegistry`'s own demand boundary.
     'composerAttachments',
+    // Project inspection and native launch resolve the selected identity via
+    // resolveProjectNativeAdapter before reading its registration.
+    'projectNativeAdapters',
+    // Managed operations demand the selected descriptor; its existing Action
+    // registrations supply all native roles without a provisioner runtime API.
+    'machineProvisioners',
 ]);
 
 /**
@@ -122,7 +128,18 @@ export function activationTargetMatchesContributionDemand(
     demand: PluginContributionActivationDemand,
 ): boolean {
     if (demand.pluginId !== target.pluginId) return false;
-    return derivePluginDaemonContributionRegistrationRights(
+    const rights = derivePluginDaemonContributionRegistrationRights(
         target.manifest.contributes as unknown as Readonly<Record<string, unknown>>,
-    ).some((right) => right.family === demand.family && right.localId === demand.localId);
+    );
+    if (demand.family === 'machineProvisioners') {
+        const descriptor = target.manifest.contributes.machineProvisioners?.find((entry) => entry.id === demand.localId);
+        if (!descriptor) return false;
+        const family = PLUGIN_CONTRIBUTION_CATALOG_V2.find((entry) => entry.manifestKey === demand.family);
+        const references = family?.extractReferences(descriptor).filter((reference) => reference.targetFamily === 'actions') ?? [];
+        return references.length > 0 && references.every(({ reference }) => (
+            typeof reference === 'string'
+            && rights.some((right) => right.family === 'actions' && right.localId === reference)
+        ));
+    }
+    return rights.some((right) => right.family === demand.family && right.localId === demand.localId);
 }

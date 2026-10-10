@@ -1,15 +1,25 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, truncate, writeFile } from 'node:fs/promises';
+import * as filesystem from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { c as createTar } from 'tar';
 
 import { createTestNpmTarball, sriSha512, type TestTarEntry } from '../testkit/npmTarball';
 import { cleanupExtractedPortableArchive, extractPortableTarGzipArchive } from './extract';
 
+// Filesystem boundary only: extraction and tar validation remain real.
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, open: vi.fn(actual.open) };
+});
+
 const tempDirs: string[] = [];
 
 afterEach(async () => {
+  vi.useRealTimers();
+  vi.mocked(filesystem.open).mockRestore();
   await Promise.all(tempDirs.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
@@ -23,6 +33,183 @@ async function writeArchive(entries: readonly TestTarEntry[]): Promise<Readonly<
 }
 
 describe('extractPortableTarGzipArchive', () => {
+  it('backpressures empty-file writes through their filesystem settlement instead of exhausting descriptors', async () => {
+    const input = await writeArchive(Array.from({ length: 3 }, (_, index) => ({ name: `package/${index}.txt`, body: '' })));
+    const { open: realOpen } = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    let activeDestinationFiles = 0;
+    vi.mocked(filesystem.open).mockImplementation(async (...args) => {
+      if (!String(args[0]).endsWith('.txt')) return await realOpen(...args);
+      // OS descriptor availability is a real boundary. Empty tar entries may
+      // finish parsing before the filesystem has completed opening their file.
+      if (activeDestinationFiles !== 0) throw Object.assign(new Error('Too many open files'), { code: 'EMFILE' });
+      activeDestinationFiles += 1;
+      const file = await realOpen(...args);
+      const close = file.close.bind(file);
+      let closing: Promise<void> | undefined;
+      file.close = () => closing ??= (async () => {
+        // A slow filesystem close still owns the descriptor after tar has
+        // emitted the empty entry's end. Keep that real boundary in scope.
+        await new Promise<void>((resolve) => setTimeout(resolve, 50));
+        await close();
+        activeDestinationFiles -= 1;
+      })();
+      return file;
+    });
+    const archive = await extractPortableTarGzipArchive({
+      archivePath: input.archivePath, expectedArchiveBytes: input.bytes.byteLength,
+      expectedIntegrity: sriSha512(input.bytes), stagingParentPath: join(input.root, 'staging'), stripRootDirectory: 'package',
+    });
+    expect(archive.inventory.map((file) => file.path)).toEqual(['0.txt', '1.txt', '2.txt']);
+    expect(activeDestinationFiles).toBe(0);
+    await cleanupExtractedPortableArchive(archive);
+  });
+
+  it.skipIf(process.platform === 'win32')('preserves executable file and directory permissions at the filesystem boundary', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-portable-mode-'));
+    tempDirs.push(root);
+    await mkdir(join(root, 'package/bin'), { recursive: true });
+    await writeFile(join(root, 'package/bin/run'), '#!/bin/sh\nexit 0\n');
+    await chmod(join(root, 'package/bin'), 0o700);
+    await chmod(join(root, 'package/bin/run'), 0o750);
+    const archivePath = join(root, 'candidate.tgz');
+    await createTar({ gzip: true, cwd: root, file: archivePath }, ['package/bin']);
+    const bytes = await readFile(archivePath);
+    const archive = await extractPortableTarGzipArchive({
+      archivePath, expectedArchiveBytes: bytes.byteLength, expectedIntegrity: sriSha512(bytes),
+      stagingParentPath: join(root, 'staging'), stripRootDirectory: 'package',
+    });
+    expect((await stat(join(archive.rootPath, 'bin'))).mode & 0o777).toBe(0o700);
+    expect((await stat(join(archive.rootPath, 'bin/run'))).mode & 0o777).toBe(0o750 & ~process.umask());
+    await cleanupExtractedPortableArchive(archive);
+  });
+
+  it('joins started writes before reporting an explicit inventory limit and removes only its stage', async () => {
+    const input = await writeArchive(Array.from({ length: 4_097 }, (_, index) => ({ name: `package/${index}.txt`, body: '' })));
+    const stagingParentPath = join(input.root, 'staging');
+    await mkdir(stagingParentPath);
+    await writeFile(join(stagingParentPath, 'sibling.txt'), 'preserve');
+    await expect(extractPortableTarGzipArchive({
+      archivePath: input.archivePath, expectedArchiveBytes: input.bytes.byteLength,
+      expectedIntegrity: sriSha512(input.bytes), stagingParentPath, stripRootDirectory: 'package',
+      limits: { maxFiles: 2_048, maxEntries: 4_097 },
+    })).rejects.toMatchObject({ code: 'archive_limit_files' });
+    expect(await readdir(stagingParentPath)).toEqual(['sibling.txt']);
+    expect(await readFile(input.archivePath)).toEqual(input.bytes);
+  });
+  it.each([
+    ['file bytes', {}],
+    ['expanded bytes', { maxFileBytes: 257 * 1024 * 1024 }],
+    ['compression ratio', { maxFileBytes: 257 * 1024 * 1024, maxExpandedBytes: 257 * 1024 * 1024 }],
+  ])('streams a valid sparse archive beyond the former implicit %s ceiling', async (_label, limits) => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-portable-streaming-'));
+    tempDirs.push(root);
+    await mkdir(join(root, 'package'));
+    await writeFile(join(root, 'package/large.bin'), '');
+    const expandedBytes = 257 * 1024 * 1024;
+    await truncate(join(root, 'package/large.bin'), expandedBytes);
+    const archivePath = join(root, 'candidate.tgz');
+    await createTar({ gzip: true, cwd: root, file: archivePath }, ['package/large.bin']);
+    const bytes = await readFile(archivePath);
+    const archive = await extractPortableTarGzipArchive({
+      archivePath, expectedArchiveBytes: bytes.byteLength, expectedIntegrity: sriSha512(bytes),
+      stagingParentPath: join(root, 'staging'), stripRootDirectory: 'package', limits,
+    });
+    expect(archive.inventory).toEqual([{ path: 'large.bin', byteLength: expandedBytes, digest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u) }]);
+    expect((await stat(join(archive.rootPath, 'large.bin'))).size).toBe(expandedBytes);
+    await cleanupExtractedPortableArchive(archive);
+  });
+
+  it.each([
+    ['files', { maxEntries: 4_097 }],
+    ['entries', { maxFiles: 4_097 }],
+  ])('extracts a valid inventory beyond the former implicit %s ceiling', async (_label, limits) => {
+    const input = await writeArchive(Array.from({ length: 4_097 }, (_, index) => ({ name: `package/${index}.txt`, body: '' })));
+    const archive = await extractPortableTarGzipArchive({
+      archivePath: input.archivePath, expectedArchiveBytes: input.bytes.byteLength,
+      expectedIntegrity: sriSha512(input.bytes), stagingParentPath: join(input.root, 'staging'), stripRootDirectory: 'package', limits,
+    });
+    expect(archive.inventory).toHaveLength(4_097);
+    expect(await readFile(join(archive.rootPath, '4096.txt'), 'utf8')).toBe('');
+    await cleanupExtractedPortableArchive(archive);
+  });
+
+  it('extracts a portable path beyond the former implicit total-byte and depth ceilings', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-portable-deep-'));
+    tempDirs.push(root);
+    const relativeDirectory = Array.from({ length: 34 }, () => 'x'.repeat(31)).join('/');
+    await mkdir(join(root, 'package', relativeDirectory), { recursive: true });
+    await writeFile(join(root, 'package', relativeDirectory, 'a.txt'), 'alpha');
+    const archivePath = join(root, 'candidate.tgz');
+    await createTar({ gzip: true, cwd: root, file: archivePath }, [`package/${relativeDirectory}/a.txt`]);
+    const bytes = await readFile(archivePath);
+    const archive = await extractPortableTarGzipArchive({
+      archivePath, expectedArchiveBytes: bytes.byteLength, expectedIntegrity: sriSha512(bytes),
+      stagingParentPath: join(root, 'staging'), stripRootDirectory: 'package',
+    });
+    expect(await readFile(join(archive.rootPath, relativeDirectory, 'a.txt'), 'utf8')).toBe('alpha');
+    await cleanupExtractedPortableArchive(archive);
+  });
+
+  it('finishes extraction when the filesystem settles after the former deadline', async () => {
+    const input = await writeArchive([{ name: 'package/a.txt', body: 'alpha' }]);
+    const { open: realOpen } = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    let release!: () => void;
+    let opened!: () => void;
+    const opening = new Promise<void>((resolve) => { opened = resolve; });
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    vi.mocked(filesystem.open).mockImplementation(async (...args) => {
+      if (String(args[0]).endsWith('a.txt')) {
+        opened();
+        await pending;
+      }
+      return await realOpen(...args);
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const operation = extractPortableTarGzipArchive({
+      archivePath: input.archivePath, expectedArchiveBytes: input.bytes.byteLength,
+      expectedIntegrity: sriSha512(input.bytes), stagingParentPath: join(input.root, 'staging'), stripRootDirectory: 'package',
+    });
+    await opening;
+    await vi.advanceTimersByTimeAsync(30_001);
+    release();
+    const archive = await operation;
+    await expect(readFile(join(archive.rootPath, 'a.txt'), 'utf8')).resolves.toBe('alpha');
+    await cleanupExtractedPortableArchive(archive);
+  });
+
+  it('retires a cancelled extraction after pending filesystem work settles and preserves siblings', async () => {
+    const input = await writeArchive([{ name: 'package/a.txt', body: 'alpha' }]);
+    const stagingParentPath = join(input.root, 'staging');
+    await mkdir(stagingParentPath);
+    await writeFile(join(stagingParentPath, 'sibling.txt'), 'preserve');
+    const { open: realOpen } = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    let release!: () => void;
+    let opened!: () => void;
+    const opening = new Promise<void>((resolve) => { opened = resolve; });
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    vi.mocked(filesystem.open).mockImplementation(async (...args) => {
+      if (String(args[0]).endsWith('a.txt')) {
+        opened();
+        await pending;
+      }
+      return await realOpen(...args);
+    });
+    const controller = new AbortController();
+    const operation = extractPortableTarGzipArchive({
+      archivePath: input.archivePath, expectedArchiveBytes: input.bytes.byteLength,
+      expectedIntegrity: sriSha512(input.bytes), stagingParentPath, stripRootDirectory: 'package',
+      signal: controller.signal,
+    });
+    const rejected = expect(operation).rejects.toMatchObject({ code: 'archive_aborted' });
+    await opening;
+    controller.abort(new Error('install cancelled'));
+    release();
+    await rejected;
+    expect(await readdir(stagingParentPath)).toEqual(['sibling.txt']);
+    expect(await readFile(input.archivePath)).toEqual(input.bytes);
+    expect(await readFile(join(stagingParentPath, 'sibling.txt'), 'utf8')).toBe('preserve');
+  });
+
   it('streams one verified archive into an operation-owned stage with a deterministic per-file inventory but no aggregate root digest', async () => {
     const input = await writeArchive([
       { name: 'package/', type: 'directory' },
@@ -160,7 +347,7 @@ describe('extractPortableTarGzipArchive', () => {
     }
   });
 
-  it('enforces entry, file, expanded-byte, path-depth, compression-ratio, and timeout limits', async () => {
+  it('enforces explicit entry, file, expanded-byte, path-depth, and compression-ratio limits', async () => {
     const input = await writeArchive([
       { name: 'package/a.txt', body: 'aaaaaaaaaa' },
       { name: 'package/deep/b.txt', body: 'bbbbbbbbbb' },
@@ -173,7 +360,6 @@ describe('extractPortableTarGzipArchive', () => {
       { maxPathBytes: 9 },
       { maxPathDepth: 1 },
       { maxCompressionRatio: 0.01 },
-      { timeoutMs: 0 },
     ];
 
     for (const limits of cases) {
@@ -184,7 +370,7 @@ describe('extractPortableTarGzipArchive', () => {
         stagingParentPath: join(input.root, 'staging'),
         stripRootDirectory: 'package',
         limits,
-      })).rejects.toMatchObject({ code: expect.stringMatching(/^archive_(limit|timeout)/) });
+      })).rejects.toMatchObject({ code: expect.stringMatching(/^archive_limit/) });
     }
   });
 
@@ -237,6 +423,20 @@ describe('extractPortableTarGzipArchive', () => {
       stripRootDirectory: 'package',
       limits: { maxFileBytes: 16 },
     })).rejects.toMatchObject({ code: 'archive_limit_file_bytes' });
+  });
+
+  it('retains the tar parser buffered PAX metadata limit', async () => {
+    const input = await writeArchive([
+      { name: 'PaxHeader/a.txt', type: 'extended-header', body: 'x'.repeat(1024 * 1024 + 1) },
+      { name: 'package/a.txt', body: 'a' },
+    ]);
+    await expect(extractPortableTarGzipArchive({
+      archivePath: input.archivePath,
+      expectedArchiveBytes: input.bytes.byteLength,
+      expectedIntegrity: sriSha512(input.bytes),
+      stagingParentPath: join(input.root, 'pax-buffer-limit'),
+      stripRootDirectory: 'package',
+    })).rejects.toMatchObject({ code: 'archive_format_invalid' });
   });
 
   it('rejects a truncated gzip stream without hanging or publishing a partial stage', async () => {

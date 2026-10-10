@@ -73,6 +73,32 @@ describe('createPluginPermissionGrantActionExecutor', () => {
     vi.mocked(createDefaultPluginInstallationPublisherHeader).mockReset();
   });
 
+  it.each(['request', 'revoke'] as const)('accepts a late authoritative %s result beyond session-control timing', async (operation) => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(createDefaultPluginInstallationPublisherHeader).mockResolvedValue('publisher-proof');
+      const output = operation === 'request'
+        ? { pendingRequest: pendingRequest('late-request') } : { grant: grant('late-grant') };
+      vi.mocked(axios.post).mockImplementation(async (_url, _body, config) => new Promise((resolve, reject) => {
+        const timeout = config?.timeout && config.timeout > 0
+          ? setTimeout(() => reject(new Error('HTTP deadline elapsed')), config.timeout) : undefined;
+        setTimeout(() => { clearTimeout(timeout); resolve({ data: output }); }, 61_000);
+      }));
+      const execute = createPluginPermissionGrantActionExecutor({
+        credentials, revalidateCallerMaterialization: async () => true,
+      });
+      const caller = { kind: 'plugin' as const, pluginId: 'acme.voice', materialization: callerMaterialization };
+      const pending = (operation === 'request' ? execute({
+        actionId: 'plugins.permissions.grants.request', caller,
+        input: { pluginId: 'acme.voice', capability: 'reviews.comments.write.direct', targetScope: { kind: 'account' },
+          subject: { kind: 'general' }, requester: { kind: 'plugin', pluginId: 'acme.voice' }, reason: 'Review access' },
+      }) : execute({ actionId: 'plugins.permissions.grants.revoke', caller, input: { grantId: 'late-grant' } }))
+        .catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(61_000);
+      expect(await pending).toEqual(output);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('signs the exact stamped caller body for plugin list and self-revocation transport', async () => {
     vi.mocked(createDefaultPluginInstallationPublisherHeader)
       .mockResolvedValueOnce('list-publisher-proof')

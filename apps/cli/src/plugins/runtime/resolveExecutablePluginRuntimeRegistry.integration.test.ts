@@ -9,6 +9,7 @@ import {
     deriveBoxPublicKeyFromSeed,
     ProviderConnectionIdSchema,
     ProviderRuntimeBindingBasisV1Schema,
+    SessionProviderBindingMetadataV1Schema,
     resolveProviderManagedRuntimeDeclarationV1,
     type PluginSourceCustodyV1,
     type ProviderRuntimeBindingBasisV1,
@@ -79,9 +80,12 @@ import type { HostSessionRuntimeFactoryParams } from '@/agent/runtime/session/lo
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { logger } from '@/ui/logger';
+import * as persistence from '@/persistence';
 import { createHostPluginNotificationChannels } from '@/notifications/activity/pluginNotificationChannels';
 import { pluginReloadController } from './reload/singleton';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
+import { createRemoteManagedProviderSessionProjection } from '@/daemon/startup/remoteManagedProviderSession';
+import { openAccountConnectionProviderBrokerAccess } from '@/providers/broker/accountConnectionClient';
 import {
     resetActiveAccountSettingsSnapshotForTests,
     setActiveAccountSettingsSnapshot,
@@ -206,6 +210,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                         endpointTemplateIds: ['api', 'api-chat'],
                         ...(id === 'external-gateway'
                             ? {
+                                sharing: 'connectionMachine',
                                 connectedAccounts: [{
                                     purpose: 'upstream',
                                     service: 'accounts',
@@ -404,25 +409,33 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
         }) satisfies StablePluginConnectedAccountsOwner;
         const cleanupOperationAuthority = vi.fn(async () => undefined);
         const activateOperationAuthority = vi.fn(async (
-            _input: Parameters<ManagedProviderOperationAuthority['activate']>[0],
+            input: Parameters<ManagedProviderOperationAuthority['activate']>[0],
         ) => Object.freeze({
             exactPurposeBindingSubjectId: 'managed-provider-operation:exact-fixture',
             requestAuth: Object.freeze({
                 realm: 'managedProviderStart' as const,
                 capabilityPath: join(happyHomeDir, 'request-auth-capability.json'),
-                requestAuthUses: Object.freeze([Object.freeze({
-                    purpose: 'upstream',
-                    materialization: Object.freeze({
-                        kind: 'httpHeaders' as const,
-                        origin: 'https://api.example.test',
-                        headerNames: Object.freeze(['authorization']),
-                    }),
-                })]),
+                qualifiedRequestAuthUses: Object.freeze(input.requestAuthUses.filter(use =>
+                    input.purposeBindings.bindings.some(binding =>
+                        binding.purpose.purpose === use.purpose.purpose
+                        && binding.purpose.consumer.pluginId === use.purpose.consumer.pluginId
+                        && binding.purpose.consumer.localId === use.purpose.consumer.localId))),
+                requestAuthUses: Object.freeze(input.requestAuthUses.map(use => Object.freeze({
+                    purpose: use.purpose.purpose, materialization: use.materialization,
+                }))),
                 isCurrent: () => true,
             }),
             cleanup: cleanupOperationAuthority,
         }));
         let currentExecutionOriginMachineId = 'machine-1';
+        let currentCredentials: persistence.StoredCredentials | null = {
+            token: `fixture.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.fixture`,
+            encryption: null,
+        };
+        // Persisted credentials are the actual Account boundary; a registry
+        // constructor's arbitrary extra property cannot prove its subject.
+        const readCredentials = vi.spyOn(persistence, 'readStoredCredentials')
+            .mockImplementation(async () => currentCredentials);
         const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({
             happyHomeDir,
             contributes,
@@ -533,8 +546,14 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 runtimeRegistry.createManagedProviderRuntimeInvocationServices;
             expect(createManagedProviderRuntimeInvocationServices).toBeTypeOf('function');
             if (!createManagedProviderRuntimeInvocationServices) return;
+            const exactSharedGateway = {
+                homeId: 'srv_runtime_origin_fixture', accountId: 'account-1',
+                connectionId: 'pc_fixture_explicit', machineId: 'machine-1',
+                consumerId: 'explicitStart:pc_fixture_explicit',
+            };
             const exactInvocation =
                 await createManagedProviderRuntimeInvocationServices({
+                    sharedGateway: exactSharedGateway,
                     identity: {
                         pluginId,
                         localId: 'external-gateway',
@@ -579,6 +598,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                     'machine-1',
                     pluginId,
                     'external-gateway',
+                    exactSharedGateway,
                 ]),
                 purposes: [{
                     consumer: {
@@ -619,6 +639,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                     'machine-1',
                     pluginId,
                     'external-gateway',
+                    exactSharedGateway,
                 ]),
                 requestAuth: {
                     capabilityPath: join(
@@ -683,6 +704,40 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             await secondBounded?.cleanup();
             expect(cleanupOperationAuthority).toHaveBeenCalledTimes(4);
 
+            const createPlacedInvocation = (connectionId: string) =>
+                createManagedProviderRuntimeInvocationServices({
+                    identity: { pluginId, localId: 'external-gateway' },
+                    purposeBindings: { v: 1, bindings: [] },
+                    operationClaim: { kind: 'explicitStart', machineId: 'machine-1' },
+                    sharedGateway: {
+                        homeId: 'srv_runtime_origin_fixture',
+                        accountId: 'account-1',
+                        connectionId,
+                        machineId: 'machine-1',
+                        consumerId: `explicitStart:${connectionId}`,
+                    },
+                    signal: new AbortController().signal,
+                    isCurrent: () => true,
+                });
+            const placedA = await createPlacedInvocation('pc_fixture_a');
+            const placedB = await createPlacedInvocation('pc_fixture_b');
+            expect(placedA).not.toBeNull();
+            expect(placedB).not.toBeNull();
+            expect(placedA?.bootstrap.operationClaimId).not.toBe(
+                placedB?.bootstrap.operationClaimId,
+            );
+            await placedA?.cleanup();
+            await placedB?.cleanup();
+            const admittedCredentials = currentCredentials;
+            currentCredentials = null;
+            await expect(createPlacedInvocation('pc_fixture_a')).resolves.toBeNull();
+            currentCredentials = {
+                token: `fixture.${Buffer.from(JSON.stringify({ sub: 'account-other' })).toString('base64url')}.fixture`,
+                encryption: null,
+            };
+            await expect(createPlacedInvocation('pc_fixture_a')).resolves.toBeNull();
+            currentCredentials = admittedCredentials;
+
             // The canonical binding basis is a Protocol-normalized value: the
             // daemon reads it back through `ProviderRuntimeBindingBasisV1Schema`
             // and invokes with exactly `deployment.implementationIdentity`
@@ -730,6 +785,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                     },
                     managedRuntime: {
                         kind: 'managed' as const,
+                        sharing: 'connectionMachine',
                         dependencies: [],
                         endpointTemplateIds: ['api', 'api-chat'],
                         connectedAccounts: [{
@@ -766,6 +822,146 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 throw new Error('Expected a managed-local Session binding basis');
             }
             const sessionDeployment = sessionRuntimeBindingBasis.deployment;
+            // G1 remote workers need exact source bootstrap, not a local
+            // request-auth operation or a worker-local Provider process.
+            const prepareRemoteBootstrap = runtimeRegistry.prepareManagedProviderSessionBootstrap;
+            expect(prepareRemoteBootstrap).toBeTypeOf('function');
+            if (!prepareRemoteBootstrap) throw new Error('Managed Provider bootstrap owner is unavailable');
+            const remoteBootstrap = await prepareRemoteBootstrap({
+                sessionId: 'remote-bootstrap-session',
+                runtimeBindingBasis: sessionRuntimeBindingBasis,
+                signal: new AbortController().signal,
+                isCurrent: () => true,
+            });
+            expect(remoteBootstrap).toMatchObject({
+                identity: sessionDeployment.implementationIdentity,
+                sourceCustody: acquired.find(entry => entry.localId === 'external-gateway')?.runtime?.sourceCustody,
+                occurrenceId: runtimeRegistry.readPluginOccurrenceId?.(pluginId),
+                manifestAuthority: 'external',
+                requestAuth: null,
+            });
+            expect(await prepareRemoteBootstrap({
+                sessionId: 'remote-bootstrap-session',
+                runtimeBindingBasis: sessionRuntimeBindingBasis,
+                retainedScope: {
+                    sessionId: 'remote-bootstrap-session',
+                    runtimeBindingBasis: sessionRuntimeBindingBasis,
+                    ...remoteBootstrap!,
+                },
+                signal: new AbortController().signal,
+                isCurrent: () => true,
+            })).toEqual(remoteBootstrap);
+            expect(await prepareRemoteBootstrap({
+                sessionId: 'remote-bootstrap-session',
+                runtimeBindingBasis: sessionRuntimeBindingBasis,
+                retainedScope: {
+                    sessionId: 'remote-bootstrap-session',
+                    runtimeBindingBasis: sessionRuntimeBindingBasis,
+                    ...remoteBootstrap!,
+                    occurrenceId: 'foreign-source-occurrence',
+                },
+                signal: new AbortController().signal,
+                isCurrent: () => true,
+            })).toBeNull();
+            // Production startup's one remote projection consumes this real
+            // registry/bootstrap and never invokes the fixture's local start
+            // (which throws). Only Home/carrier network boundaries are supplied.
+            const hubBasis = ProviderRuntimeBindingBasisV1Schema.parse({
+                ...sessionRuntimeBindingBasis,
+                deployment: { ...sessionDeployment, gatewayPlacement: { kind: 'machine', machineId: 'hub-exact' } },
+                credentialAuthorization: { ...sessionRuntimeBindingBasis.credentialAuthorization,
+                    connectionSecurityFingerprint: 'connection-security:v1:fixture' },
+            });
+            const hubMetadata = SessionProviderBindingMetadataV1Schema.parse({
+                v: 1, connectionId: hubBasis.connectionId, contributionKey: hubBasis.contributionKey,
+                connectionRevision: 1, protocol: hubBasis.endpoint.protocol, materialization: hubBasis.prepared.materialization,
+                compatibilityFingerprint: 'compatibility:v1:fixture', bindingSecurityFingerprint: 'binding-security:v1:fixture',
+                runtimeBindingBasis: hubBasis, displaySnapshot: { providerName: 'Gateway', connectionName: 'Hub',
+                    connectionRole: 'named', connectionDisplayNameMode: 'custom' },
+            });
+            let hubPolicyCurrent = true;
+            let closeConsumer: (() => Promise<void>) | null = null;
+            let carrierClosed = false;
+            const selectedHubMachines: string[] = [];
+            const hubProjectionInput = {
+                sessionId: 'startup-remote-session', machineId: 'machine-1', basis: hubBasis,
+                metadata: hubMetadata, hardRevocationRevision: 0, registry: runtimeRegistry,
+                signal: new AbortController().signal, isBootstrapCurrent: () => true,
+                isCurrent: async () => hubPolicyCurrent && acquired.find(entry => entry.localId === 'external-gateway')?.runtime?.isCurrent() === true,
+                installConsumerCleanup: cleanup => { closeConsumer = cleanup; },
+                cleanup: async () => { const cleanup = closeConsumer; closeConsumer = null; await cleanup?.(); },
+                readSupervisionLaunchAuthority: () => null, capturedAgentProviderBinding: null,
+                isCapturedAgentRegistrationCurrent: () => true,
+                openBroker: async request => {
+                    selectedHubMachines.push(request.targetMachineId);
+                    return await openAccountConnectionProviderBrokerAccess({
+                        ...request, homeId: 'home-fixture', accountId: 'account-1', initiatorMachineId: 'machine-1',
+                        openBroker: async openedRequest => ({ ok: true, authority: { payload: {
+                            v: 2, grantId: 'startup-grant', aud: 'happier-provider-broker-route-v2', issuedAt: 1, expiresAt: 2,
+                            homeId: 'home-fixture', accountId: 'account-1', source: openedRequest.source, initiatorTokenEpoch: 0,
+                            initiator: { accountId: 'account-1', machineId: 'machine-1', endpointId: 'a'.repeat(64) },
+                            target: { custodianAccountId: 'account-1', machineId: openedRequest.targetMachineId, endpointId: 'b'.repeat(64) },
+                            consumer: openedRequest.consumer, application: openedRequest.application,
+                        }, signature: { alg: 'Ed25519', keyId: 'home-key', valueBase64Url: Buffer.alloc(64).toString('base64url') } },
+                        target: { custodianAccountId: 'account-1', brokerMachineId: openedRequest.targetMachineId,
+                            endpointId: 'b'.repeat(64), endpointRevision: 1, endpoint: { endpointId: 'b'.repeat(64) } } }),
+                        admitConsumer: async () => true,
+                        openTunnel: async () => ({ localPort: 43123, localCapability: 'c'.repeat(64), observedPath: 'relay',
+                            retire: async () => undefined, close: async () => { carrierClosed = true; } }),
+                    });
+                },
+            } satisfies Parameters<typeof createRemoteManagedProviderSessionProjection>[0];
+            const hubProjection = await createRemoteManagedProviderSessionProjection(hubProjectionInput);
+            expect(hubProjection.bootstrap).toMatchObject({ custody: 'daemonShared', requestAuth: null,
+                scope: { runtimeBindingBasis: { deployment: { gatewayPlacement: { kind: 'machine', machineId: 'hub-exact' } } } } });
+            expect(await hubProjection.readSharedGatewayAccess()).toMatchObject({ endpointUrl: 'http://127.0.0.1:43123/v1' });
+            expect(selectedHubMachines).toEqual(['hub-exact']);
+            const { sharing: _sharing, ...unsharedRuntime } = sessionDeployment.managedRuntime;
+            await expect(createRemoteManagedProviderSessionProjection({ ...hubProjectionInput,
+                basis: ProviderRuntimeBindingBasisV1Schema.parse({ ...hubBasis,
+                    deployment: { ...hubBasis.deployment, managedRuntime: unsharedRuntime } }),
+            })).rejects.toMatchObject({ code: 'plugin_services_managed_provider_authority_unavailable' });
+            expect(selectedHubMachines).toEqual(['hub-exact']);
+            hubPolicyCurrent = false;
+            await expect(hubProjection.readSharedGatewayAccess()).rejects.toMatchObject({ code: 'plugin_services_managed_provider_authority_unavailable' });
+            expect(carrierClosed).toBe(true);
+            expect(selectedHubMachines).toEqual(['hub-exact']);
+
+            // Shared custody cannot borrow the authorization basis of another
+            // connection or Session. The normal registry/admission path is real;
+            // bindSessionCustody is the external persistent-runner transport.
+            for (const mismatch of [
+                { connectionId: 'pc_other' },
+                { consumerId: 'session-other' },
+                { machineId: 'machine-other' },
+            ]) {
+                await expect(createManagedProviderRuntimeInvocationServices({
+                    identity: sessionDeployment.implementationIdentity,
+                    purposeBindings: { v: 1, bindings: [] },
+                    sharedGateway: {
+                        homeId: 'srv_runtime_origin_fixture',
+                        accountId: 'account-1',
+                        connectionId: sessionRuntimeBindingBasis.connectionId,
+                        machineId: 'machine-1',
+                        consumerId: 'session-shared',
+                        ...mismatch,
+                    },
+                    operationClaim: {
+                        kind: 'sessionDemand',
+                        sessionId: 'session-shared',
+                        runtimeBindingBasis: sessionRuntimeBindingBasis,
+                        async bindSessionCustody() {
+                            return {
+                                managedServices: exactInvocation!.managedServices,
+                                projectEndpointAccess: async () => null,
+                                adoptService: async () => undefined,
+                            };
+                        },
+                    },
+                    signal: new AbortController().signal,
+                    isCurrent: () => true,
+                })).resolves.toBeNull();
+            }
             const bindSessionCustody = vi.fn(async (
                 _scope: unknown,
                 _dependencies: unknown,
@@ -774,6 +970,30 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 projectEndpointAccess: async () => null,
                 adoptService: vi.fn(async () => undefined),
             }));
+            const unsharedWithPlacement = await createManagedProviderRuntimeInvocationServices({
+                identity: sessionDeployment.implementationIdentity,
+                purposeBindings: { v: 1, bindings: [] },
+                sharedGateway: {
+                    homeId: 'srv_runtime_origin_fixture',
+                    accountId: 'account-1',
+                    connectionId: sessionRuntimeBindingBasis.connectionId,
+                    machineId: 'machine-1',
+                    consumerId: 'session-unshared-with-placement',
+                },
+                operationClaim: {
+                    kind: 'sessionDemand',
+                    sessionId: 'session-unshared-with-placement',
+                    runtimeBindingBasis: sessionRuntimeBindingBasis,
+                    bindSessionCustody,
+                },
+                signal: new AbortController().signal,
+                isCurrent: () => true,
+            });
+            expect(unsharedWithPlacement).not.toBeNull();
+            expect(unsharedWithPlacement?.lifetime).toBeUndefined();
+            expect(unsharedWithPlacement?.adoptService).toBeTypeOf('function');
+            await unsharedWithPlacement?.cleanup();
+            bindSessionCustody.mockClear();
             const createSessionDemandInvocation = async (sessionId: string) => (
                 await createManagedProviderRuntimeInvocationServices({
                     identity: sessionDeployment.implementationIdentity,
@@ -1097,6 +1317,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 revalidatePolicy: async () => true,
             })).resolves.toBeNull();
         } finally {
+            readCredentials.mockRestore();
             await runtimeRegistry.dispose();
             await rm(happyHomeDir, { recursive: true, force: true });
             await rm(pluginRoot, { recursive: true, force: true });

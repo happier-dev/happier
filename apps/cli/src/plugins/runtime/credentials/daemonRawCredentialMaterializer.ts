@@ -2,7 +2,7 @@ import { resolveCurrentPluginPermissionGrantAuthoritySource } from '@/daemon/ide
 import type { StablePluginConnectedAccountsOwner } from '@/plugins/runtime/invocation/services/connectedAccounts';
 import type { StoredCredentials } from '@/persistence';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { warmActiveAccountSettingsSnapshotBestEffort } from '@/settings/accountSettings/warmActiveAccountSettingsSnapshot';
+import { createVoiceCredentialResolver } from '@/daemon/voice/credentials/resolver';
 import {
   createPluginRawCredentialAuthorizationInspector,
   createPluginRawCredentialMaterializer,
@@ -53,22 +53,15 @@ function resolveAccountSettingsWarmer(input: Readonly<{
   credentials?: StoredCredentials;
   readStoredCredentials?: () => Promise<StoredCredentials | null>;
   ensureAccountSettingsSnapshot?: () => Promise<void>;
-  warmFromCredentials: boolean;
+  getAccountSettingsSnapshot?: () => ActiveAccountSettingsSnapshot | null;
+  machineId: string | null;
 }>): (() => Promise<void>) | undefined {
-  if (input.ensureAccountSettingsSnapshot) return input.ensureAccountSettingsSnapshot;
-  const credentials = input.credentials;
-  if (credentials && input.warmFromCredentials) {
-    return async () => {
-      await warmActiveAccountSettingsSnapshotBestEffort({ credentials });
-    };
-  }
-  const readStoredCredentials = input.readStoredCredentials;
-  if (!readStoredCredentials) return undefined;
-  return async () => {
-    const storedCredentials = await readStoredCredentials();
-    if (!storedCredentials) return;
-    await warmActiveAccountSettingsSnapshotBestEffort({ credentials: storedCredentials });
-  };
+  const resolver = createVoiceCredentialResolver({ machineId: input.machineId,
+    ...(input.credentials ? { credentials: input.credentials } : {}),
+    ...(input.readStoredCredentials ? { readCredentials: input.readStoredCredentials } : {}),
+    ...(input.getAccountSettingsSnapshot ? { getSnapshot: input.getAccountSettingsSnapshot } : {}),
+    ...(input.ensureAccountSettingsSnapshot ? { ensureSnapshot: input.ensureAccountSettingsSnapshot } : {}) });
+  return () => resolver.prepareForOperation();
 }
 
 /**
@@ -93,7 +86,8 @@ export function createDaemonPluginRawCredentialMaterializer(
     const ensureAccountSettingsSnapshot = resolveAccountSettingsWarmer({
       readStoredCredentials: input.readStoredCredentials,
       ensureAccountSettingsSnapshot: input.ensureAccountSettingsSnapshot,
-      warmFromCredentials: true,
+      machineId: input.binding.machineId,
+      getAccountSettingsSnapshot: input.getAccountSettingsSnapshot,
     });
     return Object.freeze({
       ...createPluginRawCredentialAuthorizationInspector({
@@ -119,7 +113,8 @@ export function createDaemonPluginRawCredentialMaterializer(
   const ensureAccountSettingsSnapshot = resolveAccountSettingsWarmer({
     ...(input.credentials ? { credentials: input.credentials } : {}),
     ensureAccountSettingsSnapshot: input.ensureAccountSettingsSnapshot,
-    warmFromCredentials: !input.getAccountSettingsSnapshot,
+    machineId: input.binding.machineId,
+    getAccountSettingsSnapshot: input.getAccountSettingsSnapshot,
   });
   return Object.freeze({
     ...createPluginRawCredentialMaterializer({

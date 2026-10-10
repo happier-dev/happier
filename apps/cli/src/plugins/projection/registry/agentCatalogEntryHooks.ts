@@ -148,6 +148,7 @@ export function projectAgentConnectedAccountLaunchCatalogEntry(params: Readonly<
     isCurrent(): boolean;
 }>): Pick<
     ResolvedCatalogEntry,
+    | 'connectedAccountGenerationApplicationScope'
     | 'connectedAccountRequestAuthUses'
     | 'connectedAccountFileEnvironmentUses'
     | 'connectedAccountEnvironmentUses'
@@ -368,6 +369,9 @@ export function projectAgentConnectedAccountLaunchCatalogEntry(params: Readonly<
         })
         : null;
     return Object.freeze({
+        ...(continuity?.generationApplicationScope === undefined
+            ? {}
+            : { connectedAccountGenerationApplicationScope: continuity.generationApplicationScope }),
         ...(requestAuthUses === undefined
             ? {}
             : { connectedAccountRequestAuthUses: requestAuthUses }),
@@ -624,12 +628,15 @@ export function projectAgentCliAuthCatalogEntry(params: Readonly<{
                 ...(params.cli.executable.alternativeBinaryNames ?? []),
             ],
             isSafeForBackgroundChecks: isPluginAgentCliAuthBackgroundCheckSafe(params.cli),
-            detectAuthStatus: async ({ processEnv = process.env }): Promise<CliAuthStatusDraft> => {
+            detectAuthStatus: async ({ processEnv = process.env, timeoutMs: probeTimeoutMs }): Promise<CliAuthStatusDraft> => {
                 if (!params.isCurrent()) {
                     return { state: 'unknown', reason: 'probe_failed' };
                 }
                 const staticCredential = staticProbe?.readPresentCredential(processEnv);
-                if (staticCredential) return staticCredential;
+                // A native status command owns file/keychain readiness, including
+                // Agent-specific home overrides. Default-home file presence cannot
+                // override its result for the final launch environment.
+                if (staticCredential?.source === 'env') return staticCredential;
                 const executableEnvironment = Object.freeze(Object.fromEntries(
                     Object.entries(processEnv).filter(
                         (entry): entry is [string, string] => typeof entry[1] === 'string',
@@ -660,7 +667,7 @@ export function projectAgentCliAuthCatalogEntry(params: Readonly<{
                                 const result = await runCliCommandBestEffort({
                                     resolvedPath: resolved.executablePath,
                                     args: [...args],
-                                    timeoutMs,
+                                    timeoutMs: timeoutMs ?? probeTimeoutMs,
                                     processEnv: executableEnvironment,
                                 });
                                 return params.isCurrent() ? result : unavailable();

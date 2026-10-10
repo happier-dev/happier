@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import { defaultCanImportFirstPartyPluginSource } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
+import { projectPathFromModuleUrl } from '@/projectPath';
 import { readCanonicalPluginManifest } from '@/plugins/manifest/normalize';
 
 import {
@@ -218,8 +219,7 @@ export function resolveBundledActivationSourceRepoRoot(
     } catch {
         // Packaged virtual filesystems do not necessarily expose a realpath.
     }
-    const here = dirname(modulePath);
-    return resolve(here, '..', '..', '..', '..', '..');
+    return resolve(projectPathFromModuleUrl(pathToFileURL(modulePath).href), '..', '..');
 }
 
 function defaultRepoRoot(): string {

@@ -355,6 +355,8 @@ export type StablePluginNotificationsOwner = Readonly<{
         title: string;
         body?: string;
         data?: unknown;
+        /** Host Account custody is rechecked after plugin activation, before delivery. */
+        beforeSend?: () => void | Promise<void>;
     }>): Promise<boolean>;
     bind(
         seed: PluginInvocationServicesSeed,
@@ -370,6 +372,10 @@ export type NotificationCategoryDeclaration = Readonly<Pick<
 >>;
 
 export function createStablePluginNotificationsOwner(host: StablePluginNotificationsHost): StablePluginNotificationsOwner {
+    // Replay lives for this daemon process: notification operations are low-rate,
+    // and memory resets on daemon restart. Measurable daemon RSS growth attributable
+    // to this map would invalidate that assumption. Retain only identity (the key),
+    // fingerprint and the replay result, including unknown outward outcomes.
     const operations = new Map<string, OperationRecord>();
     const hostPolicyFacts = resolveInvocationContributionPolicyFacts();
 
@@ -430,6 +436,7 @@ export function createStablePluginNotificationsOwner(host: StablePluginNotificat
             const clientRequestId = randomUUID();
             const deliveryId = `notification_${clientRequestId}`;
             const signal = available.binding.retirementSignal ?? new AbortController().signal;
+            if (request.beforeSend) await request.beforeSend();
             try {
                 const result = await waitForNotificationSender(available.binding, Object.freeze({
                     clientRequestId, deliveryId, channelId: request.channelId, title: request.title,

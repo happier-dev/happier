@@ -251,6 +251,11 @@ export async function attachTicketEvidence(composer: ComposerHandle, ticketId: s
   an Action, a `composerApply` operation set, a surface, or a destination.
 - Renderers named by an attachment picker or a region are your own declared UI
   renderers; see [React Native UI](/plugins/ui/react-native).
+- Opening the OS file picker inside a standalone third-party embed is an explicit
+  Action-parity exclusion. Local file selection remains a human UI interaction;
+  agents attach files through the existing attachment Actions instead. The
+  connected-app channel does not target that frame's picker. See
+  [embedded attachments](/extending/embed#appearance-and-controls).
 - Read availability from `capability-matrix.json` and the mounted snapshot's
   `capabilities`, never from a plugin-local feature flag.
 

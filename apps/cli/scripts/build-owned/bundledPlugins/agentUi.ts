@@ -1,4 +1,5 @@
 /** Pure projection rendering; filesystem, preparation and publication stay in the generator. */
+import { collectBundledAgentContributionIdentities } from './agentFacts.ts';
 import {
   readJsonArrayProperty,
   readJsonObjectProperty,
@@ -327,6 +328,9 @@ function renderDescriptorGeneratedUiProjectionLines(source: DescriptorAgentUiPro
   lines.push(`const ${source.uiConst}: AgentUiConfig = {`);
   lines.push(`    id: ${agentId},`);
   lines.push('    icon: null,');
+  if (descriptor.identityColor) {
+    lines.push(`    identityColor: ${JSON.stringify(descriptor.identityColor)},`);
+  }
   lines.push(`    svgIconXml: ${svgIconXmlExpression},`);
   if (typeof descriptor.display.picker.iconScale === 'number') {
     lines.push(`    pickerIconScale: ${String(descriptor.display.picker.iconScale)},`);
@@ -372,7 +376,7 @@ function renderQwenGeneratedUiProjectionLines(): readonly string[] {
     '    tools: buildAgentToolsUiConfig({ agentId: \'qwen\' }),',
     '    sessionStorage: buildAgentSessionStorageUiConfig({ agentId: \'qwen\' }),',
     '    ui: {',
-    '        agentPickerIconName: \'code-slash-outline\',',
+    '        agentPickerIconName: \'code\',',
     '        cliGlyphScale: 1.0,',
     '        profileCompatibilityGlyphScale: 1.0,',
     '    },',
@@ -418,6 +422,7 @@ export function renderUiBundledPluginEntriesTs(params: Readonly<{
     params.pluginPackages.flatMap((entry) => entry.agentId ? [[entry.agentId, entry] as const] : []),
   );
   const selectedProjectionSources = AGENT_UI_PROJECTION_ORDER.flatMap((agentId) => {
+    if (!bundledAgentIds.has(agentId)) return [];
     const descriptorSource = descriptorSourcesByAgentId.get(agentId);
     const generatedSource = generatedSourcesByAgentId.get(agentId);
     if (!descriptorSource && !generatedSource) return [];
@@ -478,6 +483,10 @@ export function renderUiBundledPluginEntriesTs(params: Readonly<{
   lines.push(' */');
   lines.push('');
   lines.push('import type { AgentCoreConfig, CanonicalAgentId } from \'./registryCore\';');
+  lines.push('import type { PluginAgentCliMetadata, PluginAgentContributionV2, PluginContributionIdentityV1 } from \'@happier-dev/protocol\';');
+  lines.push('import type { PluginSettingsContributionV2 } from \'@happier-dev/protocol/plugins/contributions/settings\';');
+  lines.push('import type { ProviderContributionV1 } from \'@happier-dev/protocol/providers/contributions\';');
+  lines.push('import type { PluginConnectedAccountDescriptorContributionV2 } from \'@happier-dev/protocol\';');
   lines.push(usesGeneratedSvgIcons
     ? 'import type { AgentIconSvgXmlResolver, AgentUiConfig } from \'./registryUi\';'
     : 'import type { AgentUiConfig } from \'./registryUi\';');
@@ -532,6 +541,53 @@ export function renderUiBundledPluginEntriesTs(params: Readonly<{
     lines.push(`    ${agentId}: ${valueName},`);
   }
   lines.push('} satisfies Readonly<Record<CanonicalAgentId, AgentUiConfig>>);');
+  lines.push('');
+  lines.push('/** Admitted bundled declarations only; no installed version, runtime generation or activation authority. */');
+  lines.push('export type BundledAgentDeclaration = Readonly<{');
+  lines.push('    identity: PluginContributionIdentityV1;');
+  lines.push('    cli: PluginAgentCliMetadata | null;');
+  lines.push('    connectedAccounts: NonNullable<PluginAgentContributionV2[\'connectedAccounts\']>;');
+  lines.push('    accountSettings: readonly PluginSettingsContributionV2[];');
+  lines.push('    providerRequirements: PluginAgentContributionV2[\'providerRequirements\'] | null;');
+  lines.push('}>;');
+  lines.push('export const BUNDLED_CANONICAL_AGENT_DECLARATIONS: Readonly<Partial<Record<CanonicalAgentId, BundledAgentDeclaration>>> = Object.freeze({');
+  const contributionIdentities = collectBundledAgentContributionIdentities(params.pluginPackages);
+  for (const entry of params.pluginPackages) {
+    if (!entry.agentId) continue;
+    const identity = contributionIdentities[entry.agentId];
+    const agent = entry.manifest.contributes.agents?.find((definition) => definition.id === identity?.localId);
+    if (!agent) throw new Error(`Missing admitted Agent declaration for ${entry.packageName}`);
+    const accountSettings = (entry.manifest.contributes.settings ?? [])
+      .filter((definition) => definition.scope === 'account');
+    const declaration = {
+      identity,
+      cli: agent.cli ?? null,
+      connectedAccounts: agent.connectedAccounts ?? [],
+      accountSettings,
+      providerRequirements: agent.providerRequirements ?? null,
+    };
+    lines.push(`    ${renderTsStringLiteral(entry.agentId)}: ${JSON.stringify(declaration)},`);
+  }
+  lines.push('});');
+  lines.push('');
+  lines.push('/** Provider declarations from the same admitted bundled manifests; no activation or Machine facts. */');
+  lines.push('export const BUNDLED_ACCOUNT_PROVIDER_DECLARATIONS: Readonly<Record<string, Readonly<{ contributionKey: string; definition: ProviderContributionV1; provenance: \'first_party\' }>>> = Object.freeze({');
+  for (const entry of params.pluginPackages) {
+    for (const definition of entry.manifest.contributes.providers ?? []) {
+      const contributionKey = `${entry.pluginId}/${definition.id}`;
+      lines.push(`    ${renderTsStringLiteral(contributionKey)}: ${JSON.stringify({ contributionKey, definition, provenance: 'first_party' })},`);
+    }
+  }
+  lines.push('});');
+  lines.push('');
+  lines.push('export const BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS: Readonly<Record<string, Readonly<{ service: PluginContributionIdentityV1; descriptor: PluginConnectedAccountDescriptorContributionV2 }>>> = Object.freeze({');
+  for (const entry of params.pluginPackages) {
+    for (const descriptor of entry.manifest.contributes.connectedAccountDescriptors ?? []) {
+      const service = { pluginId: entry.pluginId, localId: descriptor.id };
+      lines.push(`    ${renderTsStringLiteral(`${service.pluginId}/${service.localId}`)}: ${JSON.stringify({ service, descriptor })},`);
+    }
+  }
+  lines.push('});');
   lines.push('');
   return lines.join('\n');
 }

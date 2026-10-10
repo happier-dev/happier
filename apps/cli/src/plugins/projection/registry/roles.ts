@@ -8,7 +8,7 @@ export function readPluginRoleSources(registry: ResolvedContributionRegistry): r
     return (registry.roles ?? []).flatMap((entry) => {
         if (!registry.occurrenceIdsByPluginId?.[entry.pluginId]) return [];
         const { id: localId, ...role } = entry.definition;
-        return [{ pluginId: entry.pluginId, localId, role }];
+        return [{ pluginId: entry.pluginId, ...(entry.displayName ? { pluginDisplayName: entry.displayName } : {}), localId, role }];
     });
 }
 

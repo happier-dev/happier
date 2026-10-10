@@ -15,9 +15,7 @@ import {
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 import {
-    MAX_PLUGIN_RESOURCE_AGGREGATE_BYTES,
     MAX_PLUGIN_RESOURCE_BYTES,
-    MAX_PLUGIN_RESOURCES_PER_GENERATION,
     createStablePluginResourcesOwner,
     type StableDynamicPluginResourceProducer,
     type StablePluginResourcesOwner,
@@ -77,9 +75,7 @@ const resolvePlainAccountEncryptionCurrentness = async () => Object.freeze({
     updatedAt: 1,
     recipientEnvelopeReadiness: { status: 'unavailable' as const, reason: 'plain_account' as const },
 });
-// r0.22 extends the incumbent per-occurrenceId Resource bound into the one
-// owner-local aggregate cap for active exact Resource/Session contexts.
-const ACTIVE_CONTEXT_LIMIT = MAX_PLUGIN_RESOURCES_PER_GENERATION;
+const FORMER_ACTIVE_CONTEXT_LIMIT = 512;
 
 function dynamicGenerationIds(): ReadonlyMap<string, string> {
     return new Map([['acme.alpha', DYNAMIC_GENERATION]]);
@@ -1808,9 +1804,8 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
             expect.objectContaining({ code: 'plugin_resource_session_access_unavailable' }),
         );
 
-        // Filling the entire aggregate through a still-live Session proves the
-        // removed Resource left neither a descriptor-bearing context nor late
-        // aggregate accounting behind.
+        // Reads through a still-live Session prove retirement did not disturb
+        // the surviving contexts or admit the late retired observation.
         scheduleRetirement = false;
         for (const resourceId of survivorIds) {
             const survivor = await bindSessionResource(owner, { resourceId, sessionId: 'session-b' });
@@ -1819,7 +1814,7 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
         }
     });
 
-    it('fences a retired Session watch settlement before it admits late aggregate bytes', async () => {
+    it('fences a retired Session watch settlement before it admits a late observation', async () => {
         const lateBytes = new Uint8Array(MAX_PLUGIN_RESOURCE_BYTES);
         const survivorIds = ['survivor-1', 'survivor-2', 'survivor-3', 'survivor-4'] as const;
         let targetSettlement = false;
@@ -2156,7 +2151,7 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
         firstB.dispose();
     });
 
-    it('bounds aggregate active exact Resource/Session contexts without treating UI unmount as Session removal', async () => {
+    it('admits live Session contexts beyond the former count without treating UI unmount as Session removal', async () => {
         const disposalsBySession = new Map<string, number>();
         const owner = await createStablePluginResourcesOwner({
             registry: registry([dynamicContribution('acme.alpha', 'live', 'session')]),
@@ -2188,25 +2183,22 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
             sessionId,
         });
         const subscriptions = (await Promise.all(Array.from(
-            { length: ACTIVE_CONTEXT_LIMIT },
+            { length: FORMER_ACTIVE_CONTEXT_LIMIT },
             async (_unused, index) => (await bind(`session-${index}`)).watch('live', () => undefined),
         )));
-        // A second observer of one exact Resource/Session pair consumes no
-        // additional active-context slot.
+        // A second observer joins the exact Resource/Session context.
         const shared = (await bind('session-0')).watch('live', () => undefined);
 
         const overflow = await bind('session-overflow');
-        expect(() => overflow.watch('live', () => undefined)).toThrowError(
-            expect.objectContaining({ code: 'plugin_resource_capacity_exceeded' }),
-        );
+        const overflowSubscription = overflow.watch('live', () => undefined);
 
         subscriptions[0]!.dispose();
         shared.dispose();
         expect(disposalsBySession.get('session-0')).toBe(1);
         const overflowAfterUnmount = await bind('session-overflow');
-        expect(() => overflowAfterUnmount.watch('live', () => undefined)).toThrowError(
-            expect.objectContaining({ code: 'plugin_resource_capacity_exceeded' }),
-        );
+        const remountedOverflow = overflowAfterUnmount.watch('live', () => undefined);
+        overflowSubscription.dispose();
+        remountedOverflow.dispose();
 
         for (const subscription of subscriptions.slice(1)) subscription.dispose();
     });
@@ -2343,7 +2335,7 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
         globalWatch.dispose();
     });
 
-    it('reclaims active contextual capacity only when a Session is permanently retired', async () => {
+    it('retires only a removed Session among contexts beyond the former count', async () => {
         const owner = await createStablePluginResourcesOwner({
             registry: registry([dynamicContribution('acme.alpha', 'live', 'session')]),
             generations: new Map(),
@@ -2364,27 +2356,31 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
             sessionId,
         });
 
-        for (let index = 0; index < ACTIVE_CONTEXT_LIMIT; index += 1) {
+        const removed = await bind('session-0');
+        await removed.read('live');
+        for (let index = 1; index < FORMER_ACTIVE_CONTEXT_LIMIT; index += 1) {
             await (await bind(`session-${index}`)).read('live');
         }
-        await expect((await bind('session-overflow')).read('live')).rejects.toMatchObject({
-            code: 'plugin_resource_capacity_exceeded',
+        const survivor = await bind('session-overflow');
+        await expect(survivor.read('live')).resolves.toMatchObject({
+            bytes: new Uint8Array(),
         });
 
         establishSessionAccessWitness(owner, {
             throughCursor: 2,
             entries: [{ sessionId: 'session-0', cursor: 2, status: 'unavailable' }],
         });
-        establishSessionAccessWitness(owner, {
-            throughCursor: 2,
-            entries: [{ sessionId: 'session-0', cursor: 2, status: 'unavailable' }],
+        // Retirement revokes the held admission. A new bind would ask the
+        // fixture's always-available server for a fresh authorization proof.
+        await expect(removed.read('live')).rejects.toMatchObject({
+            code: 'plugin_resource_session_access_unavailable',
         });
-        await expect((await bind('session-overflow')).read('live')).resolves.toMatchObject({
+        await expect(survivor.read('live')).resolves.toMatchObject({
             bytes: new Uint8Array(),
         });
     });
 
-    it('reclaims aggregate active contextual capacity when a plugin occurrenceId retires', async () => {
+    it('retires all exact contexts of one plugin while peers beyond the former count remain live', async () => {
         const retiredDisposals = new Map<string, number>();
         const owner = await createStablePluginResourcesOwner({
             registry: registry([
@@ -2431,20 +2427,19 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
             sessionId,
         });
         const alphaSubscriptions = await Promise.all(Array.from(
-            { length: ACTIVE_CONTEXT_LIMIT },
+            { length: FORMER_ACTIVE_CONTEXT_LIMIT },
             async (_unused, index) => (await bind('acme.alpha', `session-${index}`)).watch('live', () => undefined),
         ));
 
         const betaBeforeRetire = await bind('acme.beta', 'beta-before-retire');
-        expect(() => betaBeforeRetire.watch('live', () => undefined)).toThrowError(
-            expect.objectContaining({ code: 'plugin_resource_capacity_exceeded' }),
-        );
+        const betaSubscription = betaBeforeRetire.watch('live', () => undefined);
 
         owner.retirePlugin('acme.alpha');
-        expect([...retiredDisposals.values()]).toHaveLength(ACTIVE_CONTEXT_LIMIT);
+        expect([...retiredDisposals.values()]).toHaveLength(FORMER_ACTIVE_CONTEXT_LIMIT);
         expect([...retiredDisposals.values()].every((count) => count === 1)).toBe(true);
         const betaAfterRetire = await bind('acme.beta', 'beta-after-retire');
         expect(() => betaAfterRetire.watch('live', () => undefined)).not.toThrow();
+        betaSubscription.dispose();
 
         for (const subscription of alphaSubscriptions) subscription.dispose();
     });
@@ -2795,98 +2790,8 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
     });
 });
 
-describe('dynamic resource producer callbacks are bounded at the boundary (EU-4b)', () => {
-    it('bounds several stalled global admissions to one supplied startup window and keeps a healthy resource', async () => {
-        vi.useFakeTimers();
-        const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
-        try {
-            const pending = createStablePluginResourcesOwner({
-                startupDeadlineAtMs: Date.now() + 30_000,
-                registry: registry([
-                    dynamicContribution('acme.alpha', 'healthy'),
-                    ...['stalled-a', 'stalled-b', 'stalled-c', 'stalled-d', 'stalled-e']
-                        .map((localId) => dynamicContribution('acme.alpha', localId)),
-                ]),
-                generations: new Map(),
-                dynamicOccurrenceIdsByPluginId: dynamicGenerationIds(),
-                dynamicProducers: ['healthy', 'stalled-a', 'stalled-b', 'stalled-c', 'stalled-d', 'stalled-e'].map((localId) => ({
-                    pluginId: 'acme.alpha',
-                    localId,
-                    runtime: {
-                        read: () => localId === 'healthy'
-                            ? new Uint8Array(Buffer.from('ready'))
-                            : new Promise<Uint8Array>(() => undefined),
-                        observe: () => ({ dispose: () => undefined }),
-                    },
-                })),
-            });
-            let settled: StablePluginResourcesOwner | null = null;
-            void pending.then((owner) => { settled = owner; });
-            await vi.advanceTimersByTimeAsync(30_000);
-            for (let flush = 0; flush < 10; flush += 1) await Promise.resolve();
-
-            expect(settled).not.toBeNull();
-            const service = settled!.bind({ pluginId: 'acme.alpha', signal: new AbortController().signal, isOccurrenceCurrent: () => true });
-            expect(service.describe('healthy')).toMatchObject({ digest: digest(Buffer.from('ready')) });
-            await expect(service.read('stalled-a')).rejects.toMatchObject({ code: 'plugin_resource_admission_unavailable' });
-            await expect(service.read('stalled-b')).rejects.toMatchObject({ code: 'plugin_resource_admission_unavailable' });
-            expect(() => service.describe('stalled-e')).toThrowError();
-            expect(warn).toHaveBeenCalledTimes(5);
-        } finally {
-            warn.mockRestore();
-            vi.useRealTimers();
-        }
-    });
-
-    it('keeps daemon resource ownership available after a bounded producer timeout', async () => {
-        vi.useFakeTimers();
-        const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
-        try {
-            let admissionSignal: AbortSignal | undefined;
-            const pending = createStablePluginResourcesOwner({
-                startupDeadlineAtMs: Date.now() + 30_000,
-                registry: registry([dynamicContribution('acme.alpha', 'live')]),
-                generations: new Map(),
-                dynamicOccurrenceIdsByPluginId: dynamicGenerationIds(),
-                dynamicProducers: [{
-                    pluginId: 'acme.alpha',
-                    localId: 'live',
-                    runtime: {
-                        read: (options?: { signal?: AbortSignal }) => {
-                            admissionSignal = options?.signal;
-                            return new Promise<Uint8Array>(() => undefined);
-                        },
-                        observe: () => ({ dispose: () => undefined }),
-                    },
-                }],
-            });
-            let settled: StablePluginResourcesOwner | null = null;
-            void pending.then(
-                (owner) => { settled = owner; },
-            );
-            await vi.advanceTimersByTimeAsync(60_000);
-            for (let flush = 0; flush < 10; flush += 1) await Promise.resolve();
-
-            expect(settled).not.toBeNull();
-            const service = settled!.bind({ pluginId: 'acme.alpha', signal: new AbortController().signal, isOccurrenceCurrent: () => true });
-            await expect(service.read('live')).rejects.toMatchObject({ code: 'plugin_resource_admission_unavailable' });
-            expect(admissionSignal?.aborted).toBe(true);
-            expect(warn).toHaveBeenCalledWith(
-                '[PLUGIN RUNTIME] Dynamic Resource admission failed',
-                {
-                    pluginId: 'acme.alpha',
-                    localId: 'live',
-                    elapsedMs: 30_000,
-                    abortReason: 'admission_timeout',
-                },
-            );
-        } finally {
-            warn.mockRestore();
-            vi.useRealTimers();
-        }
-    });
-
-    it('ends a slow global admission at the supplied daemon startup deadline and refuses its late bytes', async () => {
+describe('dynamic resource producer lifetime and failures (EU-4b)', () => {
+    it('admits slow global resource bytes after the starter readiness wait expires', async () => {
         vi.useFakeTimers();
         const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
         try {
@@ -2897,7 +2802,6 @@ describe('dynamic resource producer callbacks are bounded at the boundary (EU-4b
                 registry: registry([dynamicContribution('acme.alpha', 'live')]),
                 generations: new Map(),
                 dynamicOccurrenceIdsByPluginId: dynamicGenerationIds(),
-                startupDeadlineAtMs: Date.now() + 1_000,
                 dynamicProducers: [{
                     pluginId: 'acme.alpha', localId: 'live',
                     runtime: {
@@ -2911,93 +2815,19 @@ describe('dynamic resource producer callbacks are bounded at the boundary (EU-4b
             });
             let settled = false;
             void pending.then(() => { settled = true; });
-            await vi.advanceTimersByTimeAsync(999);
+            await vi.advanceTimersByTimeAsync(60_000);
             expect(settled).toBe(false);
             await vi.advanceTimersByTimeAsync(1);
-            expect(settled).toBe(true);
-            expect(admissionSignal?.aborted).toBe(true);
-            const owner = await pending;
-            const service = owner.bind({ pluginId: 'acme.alpha', signal: new AbortController().signal, isOccurrenceCurrent: () => true });
-            releaseRead(new Uint8Array(Buffer.from('late')));
-            await vi.advanceTimersByTimeAsync(0);
-            expect(() => service.describe('live')).toThrowError(expect.objectContaining({ code: 'plugin_resource_admission_unavailable' }));
-            await expect(service.read('live')).rejects.toMatchObject({ code: 'plugin_resource_admission_unavailable' });
-        } finally {
-            warn.mockRestore();
-            vi.useRealTimers();
-        }
-    });
-
-    it('leaves a queued producer available for a later read when startup expires before its first call', async () => {
-        vi.useFakeTimers();
-        const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
-        try {
-            const healthyRead = vi.fn(() => new Uint8Array(Buffer.from('ready')));
-            const ids = ['stalled-a', 'stalled-b', 'stalled-c', 'stalled-d', 'healthy'];
-            const pending = createStablePluginResourcesOwner({
-                startupDeadlineAtMs: Date.now() + 30_000,
-                registry: registry(ids.map((id) => dynamicContribution('acme.alpha', id))),
-                generations: new Map(),
-                dynamicOccurrenceIdsByPluginId: dynamicGenerationIds(),
-                dynamicProducers: ids.map((localId) => ({
-                    pluginId: 'acme.alpha', localId,
-                    runtime: {
-                        read: localId === 'healthy'
-                            ? healthyRead
-                            : () => new Promise<Uint8Array>(() => undefined),
-                        observe: () => ({ dispose: () => undefined }),
-                    },
-                })),
-            });
-            await vi.advanceTimersByTimeAsync(30_000);
-            const owner = await pending;
-            expect(healthyRead).not.toHaveBeenCalled();
-            const service = owner.bind({
-                pluginId: 'acme.alpha', signal: new AbortController().signal,
-                isOccurrenceCurrent: () => true,
-            });
-            await expect(service.read('healthy')).resolves.toMatchObject({
-                bytes: new Uint8Array(Buffer.from('ready')),
-            });
-            expect(healthyRead).toHaveBeenCalledOnce();
-        } finally {
-            warn.mockRestore();
-            vi.useRealTimers();
-        }
-    });
-
-    it.each([undefined, 45_000])('admits a slow global producer beyond thirty seconds using only a supplied startup deadline (%s)', async (startupBudgetMs) => {
-        vi.useFakeTimers();
-        try {
-            let admissionSignal: AbortSignal | undefined;
-            const pending = createStablePluginResourcesOwner({
-                ...(startupBudgetMs === undefined ? {} : { startupDeadlineAtMs: Date.now() + startupBudgetMs }),
-                registry: registry([dynamicContribution('acme.alpha', 'live')]),
-                generations: new Map(),
-                dynamicOccurrenceIdsByPluginId: dynamicGenerationIds(),
-                dynamicProducers: [{
-                    pluginId: 'acme.alpha',
-                    localId: 'live',
-                    runtime: {
-                        read: async (options) => {
-                            admissionSignal = options?.signal;
-                            await new Promise((resolve) => setTimeout(resolve, 31_000));
-                            return new Uint8Array(Buffer.from('ready'));
-                        },
-                        observe: () => ({ dispose: () => undefined }),
-                    },
-                }],
-            });
-            let settled = false;
-            void pending.then(() => { settled = true; });
-            await vi.advanceTimersByTimeAsync(30_001);
             expect(settled).toBe(false);
             expect(admissionSignal?.aborted).toBe(false);
-            await vi.advanceTimersByTimeAsync(999);
+            releaseRead(new Uint8Array(Buffer.from('late')));
+            await vi.advanceTimersByTimeAsync(0);
             const owner = await pending;
             const service = owner.bind({ pluginId: 'acme.alpha', signal: new AbortController().signal, isOccurrenceCurrent: () => true });
-            expect(service.describe('live')).toMatchObject({ digest: digest(Buffer.from('ready')) });
+            expect(service.describe('live')).toMatchObject({ digest: digest(Buffer.from('late')) });
+            await expect(service.read('live')).resolves.toMatchObject({ bytes: new Uint8Array(Buffer.from('late')) });
         } finally {
+            warn.mockRestore();
             vi.useRealTimers();
         }
     });
@@ -3096,17 +2926,13 @@ describe('dynamic resource producer callbacks are bounded at the boundary (EU-4b
     });
 });
 
-describe('dynamic resource reads stay inside the aggregate byte bound (EU-4b)', () => {
-    it('bounds later dynamic reads by size delta and retains the last known good descriptor', async () => {
-        // The aggregate was only ever checked against the admission snapshot,
-        // so producers could grow past 64 MiB afterwards while `describe` kept
-        // reporting the new sizes.
+describe('dynamic resource descriptor observations', () => {
+    it('admits valid growth beyond the former summed-byte cutoff without retaining payloads', async () => {
         const admittedBytes = 12 * 1024 * 1024;
         const grownBytes = MAX_PLUGIN_RESOURCE_BYTES;
         const admitted = Buffer.alloc(admittedBytes, 1);
         const grown = Buffer.alloc(grownBytes, 2);
         const localIds = ['r0', 'r1', 'r2', 'r3', 'r4'];
-        expect(localIds.length * admittedBytes).toBeLessThanOrEqual(MAX_PLUGIN_RESOURCE_AGGREGATE_BYTES);
         const currentById = new Map(localIds.map((localId) => [localId, admitted]));
         const producers: StableDynamicPluginResourceProducer[] = localIds.map((localId) => ({
             pluginId: 'acme.alpha',
@@ -3129,30 +2955,20 @@ describe('dynamic resource reads stay inside the aggregate byte bound (EU-4b)', 
             isOccurrenceCurrent: () => true,
         });
 
-        // 60 MiB admitted; growing one resource to 16 MiB lands exactly on the
-        // 64 MiB bound and must be admitted.
         currentById.set('r0', grown);
         const grownRead = await service.read('r0');
         expect(grownRead.bytes.byteLength).toBe(grownBytes);
         expect(service.describe('r0').size).toBe(grownBytes);
 
-        // The next 4 MiB of growth breaches the aggregate bound.
         currentById.set('r1', grown);
-        // Captured rather than asserted through `rejects`: on the RED run the
-        // read resolves with 16 MiB of bytes and a matcher diff of that payload
-        // exhausts the worker heap.
-        const outcome = await service.read('r1').then(
-            () => 'resolved' as const,
-            (error: unknown) => error,
-        );
-        expect(outcome).toMatchObject({ code: 'plugin_resource_capacity_exceeded' });
+        expect((await service.read('r1')).bytes.byteLength).toBe(grownBytes);
         expect(service.describe('r1')).toMatchObject({
-            size: admittedBytes,
-            digest: digest(new Uint8Array(admitted)),
+            size: grownBytes,
+            digest: digest(new Uint8Array(grown)),
         });
     });
 
-    it('wakes stale observers and retries when aggregate capacity rejects a watch settlement', async () => {
+    it('delivers changed bytes beyond the former summed-byte cutoff without a false retry', async () => {
         vi.useFakeTimers();
         try {
             const admittedBytes = 12 * 1024 * 1024;
@@ -3192,13 +3008,12 @@ describe('dynamic resource reads stay inside the aggregate byte bound (EU-4b)', 
             currentById.set('r1', grown);
             invalidators.get('r1')!();
             await vi.advanceTimersByTimeAsync(1);
-            expect(changes).toEqual([{ digest: digest(new Uint8Array(admitted)) }]);
+            expect(changes).toEqual([{ digest: digest(new Uint8Array(grown)) }]);
 
             currentById.set('r0', admitted);
             await service.read('r0');
             await vi.advanceTimersByTimeAsync(300);
             expect(changes).toEqual([
-                { digest: digest(new Uint8Array(admitted)) },
                 { digest: digest(new Uint8Array(grown)) },
             ]);
         } finally {

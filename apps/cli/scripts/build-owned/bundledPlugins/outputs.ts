@@ -73,7 +73,8 @@ export function publishCoherentProjectionOutputs(
     });
   } finally {
     rmSync(stagingRoot, { recursive: true, force: true });
-    rmSync(rollbackRoot, { recursive: true, force: true });
+    // The mounted-tree publisher owns rollback cleanup and retains recovery
+    // bytes when rollback fails. Do not erase that recovery copy here.
   }
 }
 

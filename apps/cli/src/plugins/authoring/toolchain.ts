@@ -56,7 +56,7 @@ import {
 import {
   assertPluginAuthorPrepublicationRuntimeDeclarations,
   PLUGIN_SDK_PACKAGE_NAME,
-  isSourceRuntimeAuthority,
+  isSourceWorkspaceAuthoringAuthority,
   readRuntimePackageJson,
   resolvePackagedCliBundledWorkspacePackageRoot,
   resolvePhysicalBundledWorkspacePackageRoot,
@@ -347,7 +347,7 @@ async function materializeBundledPrepublicationPackages(
   const runtimeRoot = realpathSync(runtimeAuthority.root);
   assertPluginAuthorPrepublicationRuntimeDeclarations(runtimeRoot, packageNames);
   const runtimePackageJson = readRuntimePackageJson(runtimeRoot);
-  if (isSourceRuntimeAuthority(runtimeAuthority)) {
+  if (isSourceWorkspaceAuthoringAuthority(runtimeAuthority)) {
     return await materializeSourceCliBundledPrepublicationPackages(runtimeRoot, packageNames, projectRoot);
   }
   return await materializePackagedCliBundledPrepublicationPackages({

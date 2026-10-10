@@ -12,7 +12,6 @@ const SOURCE_PRIORITY: Readonly<Record<MarketplaceIndexSourceKindV1, number>> = 
   user: 1,
   'community-npm': 2,
 };
-const MAX_INDEX_DIAGNOSTICS = 128;
 
 /**
  * Curation recommends discovery; it is never hidden authorization for an
@@ -86,9 +85,9 @@ export function createMarketplaceIndexFromNormalizedQuery(params: Readonly<{
     const priority = SOURCE_PRIORITY[a.source.kind] - SOURCE_PRIORITY[b.source.kind];
     return priority || a.source.id.localeCompare(b.source.id);
   });
-  const diagnostics: IndexDiagnostic[] = [...(params.diagnostics ?? [])].slice(0, MAX_INDEX_DIAGNOSTICS);
+  const diagnostics: IndexDiagnostic[] = [...(params.diagnostics ?? [])];
   const diagnose = (diagnostic: IndexDiagnostic): void => {
-    if (diagnostics.length < MAX_INDEX_DIAGNOSTICS) diagnostics.push(diagnostic);
+    diagnostics.push(diagnostic);
   };
   const listings = new Map<string, MarketplaceIndexItemV1>();
   const sourceDistributions = new Map<string, string>();

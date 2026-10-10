@@ -47,8 +47,28 @@ export function readPackageJsonRecord(packageJsonPath: string, description: stri
   return parsed;
 }
 
-export function isSourceRuntimeAuthority(authority: AuthoritativePackagedRuntimeProjectRoot): boolean {
-  return authority.provenance === 'source-module' || authority.provenance === 'source-snapshot';
+export function isSourceWorkspaceAuthoringAuthority(authority: AuthoritativePackagedRuntimeProjectRoot): boolean {
+  return (authority.provenance === 'source-module' || authority.provenance === 'source-snapshot')
+    && resolveSourceBundleAuthorNodeModulesRoot(authority.root) === null;
+}
+
+function resolveSourceBundleAuthorNodeModulesRoot(runtimeRoot: string): string | null {
+  const recordPath = resolve(runtimeRoot, '../..', 'source-bundle.json');
+  let record: Record<string, unknown>;
+  try {
+    record = readPackageJsonRecord(recordPath, 'The source CLI bundle record');
+  } catch (error) {
+    if (error && typeof error === 'object' && Reflect.get(error, 'code') === 'ENOENT') return null;
+    throw error;
+  }
+  // Source-runtime provenance remains unchanged. The finite producer record,
+  // not a repository search or a moving dependency tree, owns author packages.
+  if (typeof record.runtimeDir !== 'string' || typeof record.cliDir !== 'string'
+    || realpathSync(record.runtimeDir) !== realpathSync(runtimeRoot)
+    || realpathSync(record.cliDir) !== realpathSync(runtimeRoot)) {
+    throw new Error('The source CLI bundle record does not own its runtime root');
+  }
+  return join(runtimeRoot, 'authoring', 'node_modules');
 }
 
 export function readRuntimePackageJson(runtimeRoot: string): RuntimePackageJson {
@@ -118,6 +138,16 @@ export function resolvePackagedCliBundledWorkspacePackageRoot(
   runtimeRoot: string,
   packageName: string,
 ): string {
+  const sourceAuthorRoot = resolveSourceBundleAuthorNodeModulesRoot(runtimeRoot);
+  if (sourceAuthorRoot) {
+    const packageRoot = resolvePhysicalBundledWorkspacePackageRoot({
+      candidatePath: join(sourceAuthorRoot, ...packageName.split('/')),
+      allowedRootPath: runtimeRoot,
+      packageName,
+    });
+    if (packageRoot) return packageRoot;
+    throw new Error(`The source CLI has no physical bundled '${packageName}' author dependency`);
+  }
   const candidateRoots: Array<Readonly<{ candidatePath: string; allowedRootPath: string }>> = [{
     candidatePath: join(runtimeRoot, 'node_modules', ...packageName.split('/')),
     // Managed code artifacts link this entire tree to their shared support
@@ -157,7 +187,7 @@ export function resolveHostPluginSdkPackageRoot(
   }
   const runtimeRoot = realpathSync(runtimeAuthority.root);
   assertPluginAuthorPrepublicationRuntimeDeclarations(runtimeRoot, [PLUGIN_SDK_PACKAGE_NAME]);
-  if (isSourceRuntimeAuthority(runtimeAuthority)) {
+  if (isSourceWorkspaceAuthoringAuthority(runtimeAuthority)) {
     const repoRoot = findRepoRoot(runtimeRoot);
     const workspaceBundle = resolveWorkspaceBundlesFromPackageJson({
       repoRoot,

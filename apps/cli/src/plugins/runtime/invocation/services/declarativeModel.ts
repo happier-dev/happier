@@ -1,7 +1,7 @@
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
-import { PluginDeclarativeDocumentNormalizationErrorV1, normalizePluginDeclarativeDocumentV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarativeDocument';
+import { PluginDeclarativeDocumentNormalizationErrorV1, normalizePluginDeclarativeDocumentV1, type PluginDeclarativeQualifiedReferenceV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarativeDocument';
 import { PluginDeclarativeProjectedModelV1Schema } from '@happier-dev/protocol/plugins/contributions/ui/declarativeProjectedModelV1';
 import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import { PluginUiRendererV2Schema } from '@happier-dev/protocol/plugins/contributions/ui/v2';
@@ -88,7 +88,7 @@ export type StablePluginDeclarativeActionNode =
     }>)
     | (StablePluginDeclarativeNodeBase & Readonly<{
         kind: 'action';
-        action: StablePluginQualifiedReference;
+        action: PluginDeclarativeQualifiedReferenceV1;
         label: PluginLocalizedStringV2;
         variant?: StablePluginDeclarativeActionVariant;
         input?: JsonValue;
@@ -104,8 +104,8 @@ export type StablePluginDeclarativeActionNode =
 
 export type StablePluginDeclarativeNode =
     | (Extract<PluginDeclarativeNormalizedNodeV1, { kind: 'metric' | 'table' | 'rows' | 'chart' }>)
-    | (StablePluginDeclarativeNodeBase & Readonly<{ kind: 'dragSource'; source: StablePluginQualifiedReference; reference: PluginJsonValueV2; organizing?: boolean; children: readonly StablePluginDeclarativeNode[] }>)
-    | (StablePluginDeclarativeNodeBase & Readonly<{ kind: 'dropTarget'; target: StablePluginQualifiedReference; input?: PluginJsonValueV2; children: readonly StablePluginDeclarativeNode[] }>)
+    | (StablePluginDeclarativeNodeBase & Readonly<{ kind: 'dragSource'; source: PluginDeclarativeQualifiedReferenceV1; reference: PluginJsonValueV2; organizing?: boolean; children: readonly StablePluginDeclarativeNode[] }>)
+    | (StablePluginDeclarativeNodeBase & Readonly<{ kind: 'dropTarget'; target: PluginDeclarativeQualifiedReferenceV1; input?: PluginJsonValueV2; children: readonly StablePluginDeclarativeNode[] }>)
     | (StablePluginDeclarativeNodeBase & Readonly<{ kind: 'widgetArea'; area: string; context?: Readonly<Record<string, PluginJsonValueV2>> }>)
     | (StablePluginDeclarativeNodeBase & Readonly<{
         kind: 'text';
@@ -176,7 +176,7 @@ export type StablePluginDeclarativeNode =
         icon?: StablePluginDeclarativeIcon;
         tone?: StablePluginDeclarativeTone;
         /** Present together with `enabled`, or absent — an item row is interactive only when both hold. */
-        action?: StablePluginQualifiedReference;
+        action?: PluginDeclarativeQualifiedReferenceV1;
         input?: JsonValue;
         enabled?: boolean;
     }>)
@@ -203,7 +203,7 @@ export type StablePluginAvailabilityInput = Readonly<{
  * projection rather than deriving authority from whichever bindings happened
  * to appear in the static first-paint root.
  */
-export type StablePluginDeclarativeActionBinding = StablePluginQualifiedReference & Readonly<{
+export type StablePluginDeclarativeActionBinding = PluginDeclarativeQualifiedReferenceV1 & Readonly<{
     enabled: boolean;
     /** Current Action-catalog presentation; absent actions cannot become row affordances. */
     title?: string;
@@ -216,7 +216,7 @@ export type StablePluginDeclarativeActionPresentation = Readonly<{
     icon?: string;
 }>;
 
-export type StablePluginDeclarativeDestinationBinding = StablePluginQualifiedReference;
+export type StablePluginDeclarativeDestinationBinding = PluginDeclarativeQualifiedReferenceV1;
 
 export type StablePluginDeclarativeSettingsBinding = Readonly<{
     pluginId: string;
@@ -229,8 +229,8 @@ export type StablePluginDeclarativeSettingsBinding = Readonly<{
 }>;
 
 export type StablePluginDeclarativeInventory = Readonly<{
-    dragSources: readonly (StablePluginQualifiedReference & Readonly<{ referenceSchema: PluginJsonSchemaV2 }>)[];
-    dropTargets: readonly StablePluginQualifiedReference[];
+    dragSources: readonly (PluginDeclarativeQualifiedReferenceV1 & Readonly<{ referenceSchema: PluginJsonSchemaV2 }>)[];
+    dropTargets: readonly PluginDeclarativeQualifiedReferenceV1[];
     actions: readonly StablePluginDeclarativeActionBinding[];
     /** Declared same-plugin surface destinations admitted for dynamic documents. */
     destinations: readonly StablePluginDeclarativeDestinationBinding[];
@@ -244,7 +244,7 @@ export type StablePluginDeclarativeModel = Readonly<{
         pluginId: string;
         localId: string;
         qualifiedId: string;
-        occurrenceId: string;
+        occurrenceId?: string;
     }>;
     visible: boolean;
     requiredHostMethods: readonly PluginUiHostMethodV1[];
@@ -310,11 +310,19 @@ function normalizeOccurrenceId(occurrenceId: string): string {
 function qualifiedReference(
     identity: PluginContributionIdentityV1,
     occurrenceId: string,
-): StablePluginQualifiedReference {
+): StablePluginQualifiedReference;
+function qualifiedReference(
+    identity: PluginContributionIdentityV1,
+    occurrenceId: string | undefined,
+): PluginDeclarativeQualifiedReferenceV1;
+function qualifiedReference(
+    identity: PluginContributionIdentityV1,
+    occurrenceId: string | undefined,
+): PluginDeclarativeQualifiedReferenceV1 {
     return Object.freeze({
         identity: Object.freeze({ ...identity }),
         qualifiedId: buildQualifiedPluginContributionKey(identity),
-        occurrenceId,
+        ...(occurrenceId === undefined ? {} : { occurrenceId }),
     });
 }
 
@@ -415,7 +423,7 @@ function createStablePluginDeclarativeSettingsInventory(input: Readonly<{
 
 function createStablePluginDeclarativeActionInventory(input: Readonly<{
     pluginId: string;
-    occurrenceId: string;
+    occurrenceId?: string;
     actions: readonly PluginContributionIdentityV1[];
     presentations: ReadonlyMap<string, Readonly<{ title: string; icon?: string }>>;
     availability?: StablePluginAvailabilityInput;
@@ -427,7 +435,7 @@ function createStablePluginDeclarativeActionInventory(input: Readonly<{
             const presentation = input.presentations.get(action.qualifiedId);
             return Object.freeze({
                 ...action,
-                enabled: input.availability?.enabledActions[action.qualifiedId] === true,
+                enabled: input.occurrenceId !== undefined && input.availability?.enabledActions[action.qualifiedId] === true,
                 ...(presentation ? presentation : {}),
             });
         }));
@@ -466,7 +474,7 @@ function createStablePluginDeclarativeActionPresentations(input: Readonly<{
 
 function createStablePluginDeclarativeDestinationInventory(input: Readonly<{
     pluginId: string;
-    occurrenceId: string;
+    occurrenceId?: string;
     destinations: readonly PluginContributionIdentityV1[];
 }>): readonly StablePluginDeclarativeDestinationBinding[] {
     return Object.freeze(input.destinations
@@ -476,7 +484,8 @@ function createStablePluginDeclarativeDestinationInventory(input: Readonly<{
 
 export function createStablePluginDeclarativeModel(params: Readonly<{
     pluginId: string;
-    occurrenceId: string;
+    /** Manifest roots can be projected without activating their installation. */
+    occurrenceId?: string;
     renderer: unknown;
     settings: readonly StablePluginSettingsModel[];
     actions: readonly PluginContributionIdentityV1[];
@@ -493,7 +502,7 @@ export function createStablePluginDeclarativeModel(params: Readonly<{
     availability?: StablePluginAvailabilityInput;
 }>): StablePluginDeclarativeModel {
     const pluginId = normalizePluginId(params.pluginId);
-    const occurrenceId = normalizeOccurrenceId(params.occurrenceId);
+    const occurrenceId = params.occurrenceId === undefined ? undefined : normalizeOccurrenceId(params.occurrenceId);
     const plainRenderer = cloneDomainPlainData(
         params.renderer,
         'plugin_declarative_invalid_plain_data',
@@ -685,7 +694,7 @@ export function createStablePluginDeclarativeModel(params: Readonly<{
                         ...source,
                         // The mounted Host API owns host Action admission; the
                         // contributed Action inventory cannot grant authority.
-                        enabled: true,
+                        enabled: occurrenceId !== undefined,
                     });
                 } else if ('effect' in source) {
                     projected = Object.freeze({
@@ -698,7 +707,7 @@ export function createStablePluginDeclarativeModel(params: Readonly<{
                         // Composer availability is resolved only by the mounted
                         // Host API. A static declarative model cannot invent a
                         // second Composer currentness or revision decision.
-                        enabled: true,
+                        enabled: occurrenceId !== undefined,
                     });
                 } else {
                     projected = Object.freeze({
@@ -709,7 +718,7 @@ export function createStablePluginDeclarativeModel(params: Readonly<{
                         label: source.label,
                         ...(source.variant ? { variant: source.variant } : {}),
                         ...(source.input === undefined ? {} : { input: source.input }),
-                        enabled: availability?.enabledActions[source.action.qualifiedId] === true,
+                        enabled: occurrenceId !== undefined && availability?.enabledActions[source.action.qualifiedId] === true,
                     });
                 }
                 break;
@@ -756,7 +765,7 @@ export function createStablePluginDeclarativeModel(params: Readonly<{
                         ? {
                             action: source.action,
                             ...(source.input === undefined ? {} : { input: source.input }),
-                            enabled: availability?.enabledActions[source.action.qualifiedId] === true,
+                            enabled: occurrenceId !== undefined && availability?.enabledActions[source.action.qualifiedId] === true,
                         }
                         : {}),
                 });
@@ -843,7 +852,7 @@ export function createStablePluginDeclarativeModel(params: Readonly<{
         identity: Object.freeze({
             ...identity,
             qualifiedId: buildQualifiedPluginContributionKey(identity),
-            occurrenceId,
+            ...(occurrenceId === undefined ? {} : { occurrenceId }),
         }),
         visible: availability?.visible ?? true,
         requiredHostMethods: Object.freeze([]),

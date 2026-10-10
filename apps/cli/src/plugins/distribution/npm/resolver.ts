@@ -12,7 +12,7 @@ import type {
 } from './types';
 
 export type NpmRegistryJsonClient = Readonly<{
-  getJson(input: Readonly<{ url: string; maxBytes: number; headers: Readonly<Record<string, string>>; deadlineAtMonotonicMs?: number }>): Promise<unknown>;
+  getJson(input: Readonly<{ url: string; maxBytes?: number | null; headers: Readonly<Record<string, string>>; deadlineAtMonotonicMs?: number; signal?: AbortSignal }>): Promise<unknown>;
 }>;
 
 type RecordValue = Record<string, unknown>;
@@ -225,15 +225,17 @@ function parseSignatures(value: unknown): readonly NpmRegistrySignature[] {
 export async function resolveNpmArtifactMetadata(params: Readonly<{
   request: NormalizedNpmArtifactRequest;
   client: NpmRegistryJsonClient;
-  metadataMaxBytes?: number;
+  metadataMaxBytes?: number | null;
   deadlineAtMonotonicMs?: number;
+  signal?: AbortSignal;
 }>): Promise<ResolvedNpmArtifact> {
   const packagePath = encodeURIComponent(params.request.packageName);
   const packument = asRecord(await params.client.getJson({
     url: `${params.request.registryOrigin}/${packagePath}`,
-    maxBytes: params.metadataMaxBytes ?? 8 * 1024 * 1024,
+    maxBytes: params.metadataMaxBytes,
     headers: { accept: 'application/json' },
     deadlineAtMonotonicMs: params.deadlineAtMonotonicMs,
+    signal: params.signal,
   }), 'package metadata');
   if (packument.name !== params.request.packageName) throw new Error('Npm package identity mismatch in registry metadata');
 

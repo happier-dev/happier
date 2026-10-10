@@ -306,6 +306,7 @@ describe('registerDaemonPluginChangeRoutes', () => {
         plugins: [],
         tools,
       }),
+      readCatalogProjection: () => ({ runtimeId: 'test-daemon', contributionRegistryProjectionRevision: 12 }),
     });
 
     const installed = await app.inject({
@@ -315,6 +316,7 @@ describe('registerDaemonPluginChangeRoutes', () => {
     });
     expect(installed.json()).toMatchObject({
       kind: 'available',
+      projection: { runtimeId: 'test-daemon', contributionRegistryProjectionRevision: 12 },
       tools: [{
         actionId: 'acme.example/roundtrip',
         name: 'acme_roundtrip',
@@ -331,6 +333,7 @@ describe('registerDaemonPluginChangeRoutes', () => {
       kind: 'available',
       plugins: [],
       tools: [],
+      projection: { runtimeId: 'test-daemon', contributionRegistryProjectionRevision: 12 },
     });
   });
 

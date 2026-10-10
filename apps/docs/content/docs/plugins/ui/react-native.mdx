@@ -27,6 +27,29 @@ inventory](https://github.com/happier-dev/happier/blob/v0.3/packages/plugin-ui/A
 `node_modules/@happier-dev/plugin-ui/API.md` in the generated project is the
 exact installed inventory. Do not guess exports from examples or app source.
 
+## Find and Search (0.3 development)
+
+A trusted same-realm surface can join the host's Find shortcuts and `ui.find`
+Action with `useFindSurfaceRegistration` from
+`@happier-dev/plugin-ui/hostApi`. Register a plugin-qualified `surfaceId`, the
+surface's `FindController`, and its current focus/open/input-focus callbacks.
+Pass `null` while the surface has no findable content. The hook returns false
+when no host registration binding is available; it does not install listeners
+or search content itself. Hidden mounts cannot receive targeted Find commands.
+
+Use `HappierFindBar` and the pure `matchFindText` from `/presentation` for shared
+chrome and matching. `HappierFindHighlightedText` draws half-open UTF-16 ranges,
+including overlapping selected matches, with caller-supplied `marks.all` and
+`marks.current` styles. `sliceFindRanges` clips those ranges for a snippet.
+Nest the renderer in `HappierText` (or your parent Text); it emits inline text segments.
+Your surface owns its corpus, coverage, reveal and cancellation.
+
+To add a source to universal Search, declare the existing
+[`searchProviders` contribution](/plugins/manifest/contributions#search-providers)
+and implement its referenced Action. Native Agent transcript search instead
+uses the External Sessions source's `contentSearch` declaration and existing
+transcript readers; it does not create a plugin-owned index.
+
 ## Host API
 
 Export a semantic surface. `@happier-dev/plugin-ui`'s `defineUiSurface` owns
@@ -78,6 +101,26 @@ permit an admitted surface to construct a host provider, access internal mount
 state, or import app, host, or protocol internals. Keep
 `defineUiSurface` as the sole provider installation boundary.
 
+### Floating frames in development
+
+`FloatingFrame` is the controlled frame shared with Happier's Session viewer.
+The public component supplies theme and reduced-motion defaults; the neutral
+primitive is also available from `/presentation`. Supply the frame rectangle,
+available space, body aspect and measured obstacles. The shared geometry owner
+handles corner placement, usable minimum width and a request to dock when the
+picture cannot fit. Your domain still owns the mode and settled rectangle.
+
+In the native app, the host supplies finger drag through its optional
+`companionNativeFrame` presentation binding. Only a floating frame with
+`moveInput="surface"` moves by its body; use `moveInput="chrome"` while the
+content owns input. Controls keep their presses, and keyboard/menu placement
+remains available. A custom same-realm host can supply `nativeBinding`, a React
+component accepting `HappierFloatingFrameNativeBindingProps` from
+`/presentation`. Keep native gesture/animation dependencies in that host, not
+the plugin bundle. Without a native binding, placement is keyboard/menu only.
+These are 0.3 development-source interfaces, not a shipped native-device QA
+claim; Happier phone viewers continue using their sticky slot.
+
 ### Artifact presentation in development
 
 The prepublication `/presentation` tier includes `HappierArtifactPreviewCard`,
@@ -124,6 +167,35 @@ declared size; changing the page context keeps that layout identity. The
 the useful choices offered by setup and the frame menu. A
 declarative plugin page can use a `widgetArea` node against the same host port.
 Such nodes are page composition, not Session Board or transcript content.
+
+The host's shared layout tabs let people create a named layout, copy the current
+one, switch layouts, rename, reorder and delete their views. Reset and Undo use
+the same revision-checked widget Actions when the host supplies a preset;
+without one, Reset returns typed unavailable. A page-local
+`widgetArea` request can include `layoutId` to address a named layout without
+supplying Home, Account or page identity. `widgets.area.layout.select` switches
+the answering mounted area; without a mounted area it returns typed unavailable.
+Use `widgets.item.list` to read a layout without selecting it. Area declarations
+do not supply plugin-authored presets.
+
+The **unreleased 0.3 group contract** lets Home and personal page areas arrange
+widgets into non-nesting groups. Groups start with a Card frame and Lines;
+each child keeps its own inputs and saved frame. Following inputs use the
+group's values before the page's values, while pinned inputs keep their own
+selection. A group grants no extra access to a Session, machine or Resource.
+WorkBoards, Session Board and direct Companion keep individual widgets.
+
+Saved groups are private Account library fragments, without people sharing or
+public links. Adding one creates new group and child placements; editing the
+saved group later does not change those placements. Reusable widget definition
+references keep their ordinary edit behavior. Gallery's **Your widgets** entries
+offer Rename, Duplicate and Delete through the fragment Actions. Delete removes
+the saved library entry, not copies already placed in an area.
+
+Host-owned core pages reuse the area layout owner and can supply named
+presets. The host renders an absent preset without saving it, saves a personal
+layout on the first edit, and guards Reset's Undo against later edits. Plugin
+page context cannot supply a preset or create a core-page area.
 
 Copies use the same pointer grip, staged keyboard and Move-to chooser as other
 host widgets. Available destinations come from currently mounted surfaces and
@@ -453,7 +525,17 @@ breakpoints. An action inside a row's peek, a card or a detail header takes
 `Button size="small"`: the host's desktop control height under a pointer, and
 never less than the platform's touch target on a phone. Prose that is read rather
 than scanned — a detail's description, a story step's body — takes
-`Text variant="reading"`; `body` is the denser secondary line a row or a field uses. The disclosure intentionally uses the public instant motion driver;
+`Text variant="reading"`; `body` is the denser secondary line a row or a field uses.
+A row's one loud fact is a `Badge variant="tinted"`, optionally led by an `icon`
+token (`review`, `escalating`, …); the words still name it. The table's Entry cell can follow the title with a quiet
+`titleSuffix` (the item's own designation, "#2481"). In the two-line list a
+row's second line uses the anatomy's `byline` ("payments-api #2481 · Mara Okafor")
+when it has one, and `glyphBadge` pins a small icon or live dot to the row's glyph
+(`{ icon, tone }` or `{ live: true }`); the table shows neither, because its own
+columns say the same. Pass the narrowings in force as `search.tokens`
+(`{ key, qualifier, label, onRemove }`): they sit inside the search field, each one
+press to remove. A `Select presentation="segmented"` option may carry an `icon`
+that leads its label. The disclosure intentionally uses the public instant motion driver;
 a custom animated composition may supply a public `HappierDisclosureMotionDriver`
 while honoring `reducedMotion`. Its header receives the toggle and expanded
 accessibility state together. Keep `defineUiSurface` as the provider boundary.
@@ -463,6 +545,22 @@ strip and requests one panel. Use `layout="fill"` inside a bounded region for a
 self-scrolling view. A retained `Tabs.Item retention="retain"` mounts only after
 its first visit; its asynchronous work must consume `useTabPanelActivity()` and
 stop when `activeSignal` aborts. Retention ends with the Tabs mount.
+
+`Step` is a story or check, not a workflow runner. A numbered marker is
+`{ kind: 'number', value: 1 }`; a checks marker is
+`{ kind: 'state', state: 'passed', label: 'Passed' }` (also `running` or
+`failed`). The label names the state for assistive technology; `titleKey` and
+the state marker's `labelKey` resolve your plugin's declared translations, with
+the supplied words as fallbacks. Put reading content in its body and quiet
+context in `trailing`.
+
+`HappierDisclosure` belongs to the public `/presentation` entry, while `Step`
+and `Tabs` belong to the ordinary package entry. It is controlled by `expanded`
+and `onExpandedChange`; spread its `headerProps` onto the actual press target
+so toggle behavior and expanded accessibility state stay together. `keepMounted`
+retains a stateful body, but does not grant that body's asynchronous work an
+active lifetime. Supply reduced-motion facts and a public motion driver as in
+the example; neither the disclosure nor a hosted Tabs strip owns domain reads.
 
 When several tabs present one stateful renderer, provide it once as
 `Tabs sharedPanel={...}` and update its panel input from the controlled tab value.
@@ -496,8 +594,12 @@ the body as well (an empty state's action). `triggerIcon` on `Menu` and `Popover
 draws the trigger as a glyph alone, the way the host's own "+" and ⋯ look.
 
 In the Developer Preview source contract, a page Collection can supply
-`detailHeader(key)` with the item's `title`, optional `subtitle` and `actions`.
-Happier renders them in its details band and supplies Close. The same
+`detailHeader(key)` with the item's `title`, optional `subtitle` and `actions`,
+plus an optional `leading` mark beside the title (the item's own glyph) and a
+`subtitleLeading` mark before the subtitle (where the item comes from, such as a
+`BrandMark`). Marks stand on their own: do not wrap them in a tile, border or
+fill. Happier renders them in its details band and supplies Close. `DetailsPane`
+takes the same `leading` and `subtitleLeading`. The same
 `renderDetail(key, { headerHosted })` body runs in every container; omit its
 inline heading and close controls when `headerHosted` is true. Keep item
 selection in the page location, and pair a pushed detail location with
@@ -700,6 +802,8 @@ own Work tab, Inbox and workflow maps use, from
 
 - `HappierWorkSection`: a group of a live work list (a compact title and a quiet
   count), or with `anatomy="page"` a configuration section laid flat on the pane.
+  Supply `empty` for an explicitly empty source and `more` for a caller-owned
+  disclosure. Loading retains the section header and skeleton instead.
 - `HappierWorkRowShell` and `HappierWorkSummary`: a Work row's pressable shell
   and its identity leaf (mark, title, one line of facts, the state word at the
   trailing edge).
@@ -711,6 +815,34 @@ own Work tab, Inbox and workflow maps use, from
   order and `resolveHappierWorkStatusBucketLabel` labels them in the host's
   locale. `HappierWorkStatusWord` and `resolveHappierWorkStatusSurfaceStyle` draw
   the tone: a soft ring and tint only for work that needs the person or failed.
+- `HappierWorkUpdateCard`: a result-card frame with mark, title, state, metadata,
+  body, facts and actions. Your source owns the result and handlers; the frame
+  owns their arrangement and status treatment.
+- `HappierFactLine` and `joinHappierFacts`: draw or join ordered facts with the
+  same separator. `resolveHappierWorkKindPresentation` and
+  `resolveHappierRoleRunsAsPresentation` supply the shared glyph and label
+  presentation; pass translated labels when composing your own domain copy.
+
+Navigation and consent use the same shared entrypoint. `HappierBreadcrumb`
+renders ordered items with optional link handlers; omit a handler for the
+current location. `HappierDecisionBar` accepts the available approve, reject
+and dismiss actions and a `Button` renderer. It owns order, emphasis, disabled
+and busy state, while the renderer binds your supported button leaf. Only
+offer dismissal when your consent contract permits it; rendering a bar does
+not grant authority to approve a host Action.
+
+These are development-source Developer Preview interfaces. Consult the
+installed package's public inventory before importing them; source availability
+does not establish package publication or loaded-platform validation.
+
+The development-source `session.work.get` (`{ sessionId }`) and `inbox.get`
+(`{}`) host Actions can read the answering client's existing mounted Work or
+Inbox owner. Their results distinguish `ready`, `loading` and `unavailable`;
+they do not open those surfaces, load a second projection or interpret
+`unavailable` as empty. Calls are bound to the invoking Home and Account.
+Use them only when your installed SDK's generated
+[host Action reference](/plugins/api/host-actions) lists them. Rendering the
+primitives below does not itself mount a host data source.
 
 ```tsx
 import * as React from 'react';

@@ -1,3 +1,4 @@
+import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import {
     type PluginMachineMaterializationRefV1,
@@ -188,6 +189,7 @@ function executableRegistry(params: Readonly<{
         activateContributionsOnDemand: params.activateContributionsOnDemand,
         createAgentInvocationServices: async () => createUnavailablePluginServices(),
         resolveCaptureSource: unexpectedCaptureSourceResolution,
+        resolveProjectNativeAdapter: unexpectedProjectNativeAdapterResolution,
         resolvePromptAssetBlocks: async () => [],
         retireConsumers: () => {},
         retainPluginActivationComponent: () => null,

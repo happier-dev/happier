@@ -1,6 +1,9 @@
 import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { builtinModules } from 'node:module';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { build } from 'vite';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -41,6 +44,56 @@ describe('daemon plugin development root ownership', () => {
     await Promise.all(temporaryDirectories.splice(0).map(async (path) => {
       await rm(path, { recursive: true, force: true });
     }));
+  });
+
+  it('admits frozen bundled JS through canonical first-party membership without starting observers', async () => {
+    const root = await createDirectory('happier-frozen-source-custody-');
+    const cliRoot = join(root, 'apps/cli');
+    const pluginRoot = join(root, 'packages/plugins/codex');
+    const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../..');
+    await mkdir(join(cliRoot, 'src/chunks'), { recursive: true });
+    await mkdir(join(pluginRoot, 'dist'), { recursive: true });
+    await writeFile(join(cliRoot, 'package.json'), JSON.stringify({ name: '@happier-dev/cli', type: 'module' }));
+    await writeFile(join(pluginRoot, 'package.json'), JSON.stringify({ name: '@happier-dev/plugins-codex', type: 'module' }));
+    await writeFile(join(pluginRoot, 'dist/index.js'), 'export async function activate() {}\n');
+    await symlink(join(repoRoot, 'node_modules'), join(root, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
+    const previousRoot = process.env.HAPPIER_STACK_CLI_ROOT_DIR;
+    try {
+      await build({
+        configFile: join(repoRoot, 'apps/cli/vitest.config.ts'), logLevel: 'silent',
+        build: {
+          outDir: join(cliRoot, 'src/chunks'), emptyOutDir: false, minify: false,
+          lib: { entry: fileURLToPath(new URL('./developmentRoots.ts', import.meta.url)), formats: ['es'], fileName: () => 'developmentRoots.mjs' },
+          rollupOptions: { external: (id) => id.startsWith('node:') || builtinModules.includes(id)
+            || (!id.startsWith('.') && !isAbsolute(id) && !id.startsWith('@/') && !id.startsWith('@happier-dev/') && !id.startsWith('#') && !id.startsWith('\0')) },
+        },
+      });
+      process.env.HAPPIER_STACK_CLI_ROOT_DIR = cliRoot;
+      const compiled = await import(/* @vite-ignore */ pathToFileURL(join(cliRoot, 'src/chunks/developmentRoots.mjs')).href) as {
+        createDaemonPluginDevelopmentRootsOwner: typeof createDaemonPluginDevelopmentRootsOwner;
+      };
+      const owner = compiled.createDaemonPluginDevelopmentRootsOwner({
+        happyHomeDir: root, submitObservation: async () => { throw new Error('Frozen bundled roots must not prepare moving source'); },
+        startCollectionObserver: async () => { throw new Error('Frozen bundled roots must not start watchers'); },
+        startSourceObserver: async () => { throw new Error('Frozen bundled roots must not start watchers'); },
+      });
+      expect(owner.resolveDevelopmentSourceAuthority({ pluginId: 'happier.agent.codex', rootPath: pluginRoot })).toMatchObject({
+        kind: 'development', registeredRootId: pluginRoot, canonicalRoot: pluginRoot, observedRevision: 0,
+      });
+      const activation = createBundledActivationSourceResolver({
+        bundledPackageNames: ['@happier-dev/plugins-codex'], repoRoot: root,
+        canImportFirstPartyPluginSource: () => false,
+        resolveDevelopmentSourceAuthority: owner.resolveDevelopmentSourceAuthority,
+      })({ pluginId: 'happier.agent.codex', daemonEntryPath: '@happier-dev/plugins-codex' });
+      expect(activation?.sourceAuthority).toMatchObject({ kind: 'development', canonicalRoot: pluginRoot });
+      expect(typeof (await activation?.load())?.activate).toBe('function');
+      expect(owner.resolveDevelopmentSourceAuthority({ pluginId: 'happier.agent.claude', rootPath: pluginRoot })).toBeNull();
+      expect(owner.resolveDevelopmentSourceAuthority({ pluginId: 'happier.agent.codex', rootPath: join(root, 'unregistered') })).toBeNull();
+      await owner.stop();
+    } finally {
+      if (previousRoot === undefined) delete process.env.HAPPIER_STACK_CLI_ROOT_DIR;
+      else process.env.HAPPIER_STACK_CLI_ROOT_DIR = previousRoot;
+    }
   });
 
   it('returns the typed preparation failure for an explicit standalone root and retains its recovery status', async () => {

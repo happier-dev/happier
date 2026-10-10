@@ -82,6 +82,51 @@ function registry(): ResolvedContributionRegistry {
 type ActionRuntime = NonNullable<ResolvedExecutablePluginRuntimeRegistry['targetActionInvocations']>;
 
 describe('declarative projection models', () => {
+    it('projects installed manifest roots without inventing a runtime occurrence or enabling effects', () => {
+        const declarations = registry();
+        const models = resolveDeclarativeProjectionModels({
+            registry: {
+                ...declarations,
+                uiRenderersV2: declarations.uiRenderersV2?.map((renderer) => ({
+                    ...renderer,
+                    definition: {
+                        ...renderer.definition,
+                        root: {
+                            kind: 'stack',
+                            children: [
+                                { kind: 'field', label: 'Enabled', control: { kind: 'toggle', settingId: 'enabled' } },
+                                { kind: 'action', action: 'save', label: 'Save' },
+                                { kind: 'action', hostAction: 'session.message.send', label: 'Send' },
+                                { kind: 'action', label: 'Replace draft', effect: {
+                                    kind: 'composerApply', expectedRevision: 1, operations: [{ kind: 'text.set', text: 'Draft' }],
+                                } },
+                            ],
+                        },
+                    },
+                })),
+            },
+            readPluginOccurrenceId: () => null,
+            actionRuntime: {
+                has: () => true,
+                evaluateCatalogPolicy: () => ({ outcome: 'visible', code: 'plugin_action_available', requiresCurrentIntent: false }),
+            } satisfies Pick<ActionRuntime, 'has' | 'evaluateCatalogPolicy'>,
+        });
+        const model = models['acme.forms\0preferences'];
+        expect(model).toMatchObject({
+            identity: { pluginId: 'acme.forms', localId: 'preferences' },
+            visible: true,
+            root: { kind: 'stack', children: [
+                { kind: 'field', setting: { id: 'enabled' } },
+                { kind: 'action', action: { qualifiedId: 'acme.forms/save' }, enabled: false },
+                { kind: 'action', hostAction: 'session.message.send', enabled: false },
+                { kind: 'action', effect: { kind: 'composerApply' }, enabled: false },
+            ] },
+        });
+        expect(model?.identity).not.toHaveProperty('occurrenceId');
+        expect(model?.declarativeInventory.actions[0]).not.toHaveProperty('occurrenceId');
+        expect(model?.declarativeInventory.actions[0]?.enabled).toBe(false);
+    });
+
     it('uses only this renderer plugin declared drag families in its document inventory', () => {
         const source = {
             provenance: 'external', source: { kind: 'path' }, pluginId: 'acme.forms', pluginRootPath: '/plugin', manifestPath: '/plugin/plugin.json',

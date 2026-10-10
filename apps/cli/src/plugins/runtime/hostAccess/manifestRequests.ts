@@ -1,4 +1,5 @@
 import type { PluginHostAccessRequestV2 } from '@happier-dev/protocol';
+import { resolvePluginContributionHostAccessRequestsV2 } from '@happier-dev/protocol/plugins/manifest/v2';
 
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 
@@ -13,6 +14,7 @@ type ManifestHostAccessContributionFamily =
     | 'hooks'
     | 'resources'
     | 'backgroundServices'
+    | 'projectNativeAdapters'
     | 'notificationChannels'
     | 'connectedAccountDescriptors';
 
@@ -35,6 +37,11 @@ type ManifestHostAccessContributionPolicy = Readonly<{
  * contributions select the request ids their declaration names.
  */
 const MANIFEST_HOST_ACCESS_CONTRIBUTION_POLICIES: readonly ManifestHostAccessContributionPolicy[] = Object.freeze([
+    Object.freeze({
+        family: 'projectNativeAdapters',
+        scope: 'manifest',
+        readDeclarations: (manifest: Pick<CanonicalPluginManifest, 'contributes'>) => manifest.contributes.projectNativeAdapters,
+    }),
     Object.freeze({
         family: 'agents',
         scope: 'manifest',
@@ -131,31 +138,7 @@ export function resolveManifestHostAccessRequests(input: Readonly<{
             ...input.manifest.hostAccess.optional.map((request) => Object.freeze({ request, required: false })),
         ]);
     }
-    const requestIds = input.requestIds ?? [];
-    return Object.freeze(requestIds.map((requestId) => {
-        const requiredRequest = input.manifest.hostAccess.required.find(
-            (request) => request.id === requestId,
-        );
-        const optionalRequest = input.manifest.hostAccess.optional.find(
-            (request) => request.id === requestId,
-        );
-        const request = requiredRequest ?? optionalRequest;
-        if (!request) {
-            const contributionKind = input.contribution.family === 'actions'
-                ? 'action'
-                : input.contribution.family === 'hooks'
-                    ? 'hook'
-                    : 'resource';
-            throw new Error(
-                `Target ${contributionKind} '${input.pluginId}/${input.contribution.family}/${input.contribution.localId}' `
-                + `references missing host access request '${requestId}'`,
-            );
-        }
-        return Object.freeze({
-            request,
-            required: requiredRequest !== undefined,
-        });
-    }));
+    return resolvePluginContributionHostAccessRequestsV2(input);
 }
 
 /**

@@ -5,13 +5,13 @@ import type {
     PluginProjectionBrandAssetV2,
     PluginProjectionInstalledPackageV2,
     PluginProjectionV2,
-    PluginMachineExecutionOriginV1,
+    PluginMachineMaterializationExecutionOriginV1,
 } from '@happier-dev/protocol';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import { isDynamicPluginResourceContributionV2, PluginAgentCapabilitiesV2Schema, PluginResourceKindV2Schema, PluginDynamicResourceScopeV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 import { PluginActionDeclaredExecutionV2Schema, PluginActionScopeV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
-import { PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { PluginMachineMaterializationExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { PluginSettingsProjectionError, projectPluginSettingsContributionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import type { PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
@@ -45,6 +45,7 @@ import { voiceModelPackProjectionFamily, voiceProviderProjectionFamily } from '.
 import { rolesProjectionFamily } from '../roles';
 import { workflowsProjectionFamily } from '../workflows';
 import { inputTypesProjectionFamily } from '../inputTypes';
+import { machineProvisionersProjectionFamily } from '../machineProvisioners';
 import { dragSourcesProjectionFamily, dropTargetsProjectionFamily } from '../entityDragDrop';
 import {
     composerAttachmentsProjectionFamily,
@@ -409,6 +410,9 @@ function collectPluginContributionMetadata(
     for (const region of registry.composerRegions ?? []) {
         upsert(region);
     }
+    for (const role of registry.roles ?? []) {
+        upsert(role);
+    }
 
     return metadata;
 }
@@ -511,6 +515,7 @@ function toInstalledPackage(
         },
         ...(immutableGenerationId ? { immutableGenerationId } : {}),
         ...(occurrenceId ? { occurrenceId } : {}),
+        ...(entry.manifest?.executionTarget ? { executionTarget: entry.manifest.executionTarget } : {}),
     };
 }
 
@@ -525,6 +530,9 @@ function buildInstalledPackagesById(params: Readonly<{
     const metadataByPluginId = collectPluginContributionMetadata(params.registry);
     const brandAssetsByPluginId = params.brandAssetsByPluginId ?? {};
     const pointPluginIds = new Set((params.registry.pluginContributionPoints ?? []).map((point) => point.pluginId));
+    const executionTargetsByPluginId = new Map((params.registry.pluginDeclarations ?? [])
+        .filter((plugin) => plugin.manifest.executionTarget !== undefined)
+        .map((plugin) => [plugin.pluginId, plugin.manifest.executionTarget!]));
     // The current occurrence's custody and whether it declares contribution
     // points, so a mount of a plugin without points needs no targeted read.
     const readOccurrenceFacts = (
@@ -595,6 +603,7 @@ function buildInstalledPackagesById(params: Readonly<{
             ...(immutableGenerationId ? { immutableGenerationId } : {}),
             ...(occurrenceId ? { occurrenceId } : {}),
             ...readOccurrenceFacts(pluginId, occurrenceId),
+            ...(executionTargetsByPluginId.has(pluginId) ? { executionTarget: executionTargetsByPluginId.get(pluginId) } : {}),
             ...(brand ? { brand } : {}),
         };
     }
@@ -602,7 +611,7 @@ function buildInstalledPackagesById(params: Readonly<{
     return installedPackagesById;
 }
 
-function buildAgentsById(
+export function buildAgentsById(
     registry: ResolvedContributionRegistry,
     generation: number,
 ): PluginProjectionV2['agentsById'] {
@@ -652,7 +661,7 @@ function buildAgentsById(
 
 function buildActionsById(
     registry: ResolvedContributionRegistry,
-    pluginExecutionOriginsByPluginId?: Readonly<Record<string, PluginMachineExecutionOriginV1>>,
+    pluginExecutionOriginsByPluginId?: Readonly<Record<string, PluginMachineMaterializationExecutionOriginV1>>,
     resolveActionPresentUserGatePolicy?: (
         pluginId: string,
         localId: string,
@@ -675,7 +684,7 @@ function buildActionsById(
                 `Action '${action.pluginId}/${action.definition.id}' declares an unresolvable execution target`,
             );
         }
-        const parsedOrigin = PluginMachineExecutionOriginV1Schema.safeParse(
+        const parsedOrigin = PluginMachineMaterializationExecutionOriginV1Schema.safeParse(
             pluginExecutionOriginsByPluginId?.[action.pluginId],
         );
         const executionOrigin = parsedOrigin.success
@@ -787,7 +796,7 @@ function buildCommandsById(
 
 function buildResourcesById(
     registry: ResolvedContributionRegistry,
-    pluginExecutionOriginsByPluginId?: Readonly<Record<string, PluginMachineExecutionOriginV1>>,
+    pluginExecutionOriginsByPluginId?: Readonly<Record<string, PluginMachineMaterializationExecutionOriginV1>>,
 ): PluginProjectionV2['resourcesById'] {
     const resourcesById: PluginProjectionV2['resourcesById'] = {};
     const purposeScopes = deriveRegistryConnectedAccountPurposeAuthorizations(registry);
@@ -806,7 +815,7 @@ function buildResourcesById(
         }
         const key = qualifiedProjectionKey(resource.pluginId, resource.definition.id);
         const occurrenceId = registry.occurrenceIdsByPluginId?.[resource.pluginId];
-        const parsedOrigin = PluginMachineExecutionOriginV1Schema.safeParse(pluginExecutionOriginsByPluginId?.[resource.pluginId]);
+        const parsedOrigin = PluginMachineMaterializationExecutionOriginV1Schema.safeParse(pluginExecutionOriginsByPluginId?.[resource.pluginId]);
         const executionOrigin = occurrenceId && parsedOrigin.success
             && parsedOrigin.data.materializationRef.pluginId === resource.pluginId ? parsedOrigin.data : undefined;
         resourcesById[key] = {
@@ -893,7 +902,7 @@ export function buildPluginProjectionV2(params: Readonly<{
     brandAssetsByPluginId?: Readonly<Record<string, PluginProjectionBrandAssetV2>>;
     pluginUiHostRuntime?: PluginUiProjectionHostRuntimeContext;
     /** Exact machine materialization facts for the same registry lease. */
-    pluginExecutionOriginsByPluginId?: Readonly<Record<string, PluginMachineExecutionOriginV1>>;
+    pluginExecutionOriginsByPluginId?: Readonly<Record<string, PluginMachineMaterializationExecutionOriginV1>>;
     /** Read-only current manifest Action policy owner for the same runtime lease. */
     resolveActionPresentUserGatePolicy?: (
         pluginId: string,
@@ -943,6 +952,7 @@ export function buildPluginProjectionV2(params: Readonly<{
         rolesProjectionFamily,
         workflowsProjectionFamily,
         inputTypesProjectionFamily,
+        machineProvisionersProjectionFamily,
         dragSourcesProjectionFamily,
         dropTargetsProjectionFamily,
         voiceProviderProjectionFamily,

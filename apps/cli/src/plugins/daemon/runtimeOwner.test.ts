@@ -911,7 +911,6 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
 
   it('isolates failing activation and primary-Agent-runtime participants at cold start', async () => {
     vi.useFakeTimers();
-    const startupDeadlineAtMs = Date.now() + 30_000;
     const events: string[] = [];
     const dispose = vi.fn(async () => undefined);
     const activatedPluginIds = new Set([
@@ -927,7 +926,9 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       events.push(`activated:${pluginIds.join(',')}`);
       return Object.freeze([]);
     });
-    const brokenCreateRuntime = vi.fn(() => new Promise<never>(() => undefined));
+    let rejectBrokenRuntime!: (error: Error) => void;
+    const brokenRuntime = new Promise<never>((_resolve, reject) => { rejectBrokenRuntime = reject; });
+    const brokenCreateRuntime = vi.fn(() => brokenRuntime);
     const healthyCreateRuntime = vi.fn(async () => {
       events.push('healthy-runtime-created');
       return Object.freeze({});
@@ -967,20 +968,19 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       staleCandidateCleanup: 'disabled',
       reloadController: createColdStartReloadController(events),
       connectedAccounts: createUnusedConnectedAccountsOwner(),
-      startupDeadlineAtMs,
     });
 
     let initializationSettled = false;
     const initialization = owner.initialize().then(() => { initializationSettled = true; });
     await vi.advanceTimersByTimeAsync(0);
 
-    // Participants share the containing startup deadline: the healthy peer
-    // constructs while the broken peer consumes the remaining owner budget.
+    // Slow construction does not fence a participant. Only its actual
+    // rejection is isolated; the healthy peer can construct meanwhile.
     expect(healthyCreateRuntime).toHaveBeenCalledOnce();
-    await vi.advanceTimersByTimeAsync(startupDeadlineAtMs - Date.now() - 1);
+    await vi.advanceTimersByTimeAsync(60_001);
     expect(initializationSettled).toBe(false);
     expect(events).not.toContain('published');
-    await vi.advanceTimersByTimeAsync(1);
+    rejectBrokenRuntime(new Error('primary runtime construction rejected'));
     await initialization;
 
     // A rejected activation and a rejected Agent-runtime factory are both isolated:
@@ -1003,7 +1003,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
     expect(fencing.fenced[0]?.message).toContain('cold-start activation failed');
     expect(fencing.fenced[0]?.message).toContain('plugin activation rejected');
     expect(fencing.fenced[1]?.message).toContain('cold-start primary Agent runtime construction failed');
-    expect(fencing.fenced[1]?.message).toContain('primary Agent runtime readiness timed out within the daemon startup budget');
+    expect(fencing.fenced[1]?.message).toContain('primary runtime construction rejected');
     expect(dispose).not.toHaveBeenCalled();
   });
 
@@ -1197,6 +1197,12 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
   });
 
   it('reports exact persisted inventories only after registry application without owning machine or server facts', async () => {
+    const { createResolvedContributionRegistry } = await vi.importActual<typeof import('@/plugins/projection/registry/createResolvedContributionRegistry')>('@/plugins/projection/registry/createResolvedContributionRegistry');
+    ownerMocks.resolveRuntimeRegistryOverride = Object.freeze({
+      contributes: createResolvedContributionRegistry({}), stableEventsBroker: ownerMocks.stableEventsBroker,
+    });
+    let servingRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
+    let servingRevision = 7;
     const startupInventory: PluginRegistryAvailabilityInventory = Object.freeze({
       revision: 7,
       releasePublications: Object.freeze([]),
@@ -1216,6 +1222,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       acquireRuntimeRegistry: vi.fn(async (params = {}) => {
         const registry = await params.resolveRuntimeRegistry?.();
         if (!registry) throw new Error('missing initial registry');
+        servingRegistry = registry;
         return Object.freeze({
           registry,
           source: 'active' as const,
@@ -1223,7 +1230,9 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
           release: ownerMocks.releaseInitialLease,
         });
       }),
-      tryAcquireRuntimeRegistry: vi.fn(() => null),
+      tryAcquireRuntimeRegistry: () => servingRegistry ? Object.freeze({
+        registry: servingRegistry, source: 'active' as const, durableRevision: servingRevision, release: async () => undefined,
+      }) : null,
       isRuntimeRegistryCurrent: vi.fn(() => true),
       invalidateRuntimeProjection: vi.fn(),
       applyResourceSessionAccessWitness: vi.fn(),
@@ -1252,6 +1261,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       | ((record: typeof committedRecord) => void)
       | undefined;
     expect(onApplied).toEqual(expect.any(Function));
+    servingRevision = committedRecord.revision;
     onApplied?.(committedRecord);
 
     await vi.waitFor(() => {
@@ -1261,6 +1271,11 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
   });
 
   it('retries the full current Availability snapshot after reconnect without a plugin mutation', async () => {
+    const { createResolvedContributionRegistry } = await vi.importActual<typeof import('@/plugins/projection/registry/createResolvedContributionRegistry')>('@/plugins/projection/registry/createResolvedContributionRegistry');
+    ownerMocks.resolveRuntimeRegistryOverride = Object.freeze({
+      contributes: createResolvedContributionRegistry({}), stableEventsBroker: ownerMocks.stableEventsBroker,
+    });
+    let servingRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
     const currentInventory: PluginRegistryAvailabilityInventory = Object.freeze({
       revision: 9,
       releasePublications: Object.freeze([]),
@@ -1290,6 +1305,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       acquireRuntimeRegistry: vi.fn(async (params = {}) => {
         const registry = await params.resolveRuntimeRegistry?.();
         if (!registry) throw new Error('missing initial registry');
+        servingRegistry = registry;
         return Object.freeze({
           registry,
           source: 'active' as const,
@@ -1297,7 +1313,9 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
           release: ownerMocks.releaseInitialLease,
         });
       }),
-      tryAcquireRuntimeRegistry: vi.fn(() => null),
+      tryAcquireRuntimeRegistry: () => servingRegistry ? Object.freeze({
+        registry: servingRegistry, source: 'active' as const, durableRevision: currentInventory.revision, release: async () => undefined,
+      }) : null,
       isRuntimeRegistryCurrent: vi.fn(() => true),
       invalidateRuntimeProjection: vi.fn(),
       applyResourceSessionAccessWitness: vi.fn(),

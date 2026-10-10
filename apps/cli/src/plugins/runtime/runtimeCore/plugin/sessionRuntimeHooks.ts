@@ -38,6 +38,10 @@ export type PluginRuntimeApplyConfigDeltaInFlight = (
 ) => Promise<PluginRuntimeInFlightConfigApplyOutcome>;
 
 export type PluginRuntimeHookOperations = RuntimeTurnOperations & Readonly<{
+    /** null proves native custody; undefined means the applied identity is unavailable. */
+    readAppliedTeamCredentialModel?: () => import('@happier-dev/protocol').TeamCredentialProviderModelSelectionV1 | null | undefined;
+    /** Called once after this runtime opened, never used to infer subsequent auth state. */
+    openedWithoutConnectedServices?: () => boolean;
     models?: AgentSessionModelsSource;
     modes?: AgentSessionModesSource;
     supportsInFlightSteer?: () => boolean;
@@ -64,4 +68,5 @@ export type PluginRuntimeHookOperations = RuntimeTurnOperations & Readonly<{
     checkUsageLimitRecoveryNow?: SessionRuntimeControls['checkUsageLimitRecoveryNow'];
     consumeUsageLimitResetCredit?: SessionRuntimeControls['consumeUsageLimitResetCredit'];
     prepareRunTeamCredentialProviderBinding?: SessionRuntimeControls['prepareRunTeamCredentialProviderBinding'];
+    managedProviderRunServices?: SessionRuntimeControls['managedProviderRunServices'];
 }>;

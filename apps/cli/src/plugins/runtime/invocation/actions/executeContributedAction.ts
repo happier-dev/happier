@@ -233,7 +233,7 @@ async function resolveCurrentTargetExecutionOrigin(
   try {
     const origin = await resolver(pluginId, signal);
     if (signal?.aborted) return Object.freeze({ status: 'aborted' as const });
-    if (!origin || origin.materializationRef.pluginId !== pluginId) {
+    if (!origin || !('materializationRef' in origin) || origin.materializationRef.pluginId !== pluginId) {
       return Object.freeze({ status: 'unavailable' as const });
     }
     return Object.freeze({ status: 'resolved' as const, origin });

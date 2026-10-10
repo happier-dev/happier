@@ -26,6 +26,34 @@ describe('server plugin permission grant list reader', () => {
     resetAccountLifetimePluginPermissionGrantProjectionForTests();
   });
 
+  it('keeps a cold authoritative read pending past the session-control deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      const output = { grants: [{
+        v: 1, id: 'late-grant', accountId: 'account-1', pluginId: 'acme.voice',
+        capability: 'reviews.comments.write.direct', targetScope: { kind: 'account' }, subject: { kind: 'general' },
+        authoritySource: { kind: 'bundled' }, status: 'active', grantedByUserId: 'user-1',
+        grantedAt: 1, createdAt: 1, updatedAt: 1,
+      }], pendingRequests: [] };
+      vi.mocked(axios.post).mockImplementation(async (_url, _body, config) => new Promise((resolve, reject) => {
+        const timeout = config?.timeout && config.timeout > 0
+          ? setTimeout(() => reject(new Error('relay unavailable')), config.timeout) : undefined;
+        setTimeout(() => { clearTimeout(timeout); resolve({ data: output }); }, 61_000);
+      }));
+      const reader = createAccountLifetimePluginPermissionGrantListReader({
+        credentials: { token: 'account-token', encryption: null },
+        getScopeKey: () => 'cold-account', getLifetimeToken: () => 1,
+      });
+      let settled = false;
+      const pending = reader.list({ includeRevoked: false, includeResolvedRequests: false, limit: 50 })
+        .finally(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(60_001);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(999);
+      expect(await pending).toEqual(output);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('posts the exact canonical query with account authentication and parses the response', async () => {
     const subject = PluginPermissionSubjectV1Schema.parse({
       kind: 'credential_access_disclosure',

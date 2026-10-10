@@ -1,5 +1,8 @@
 import type { ManagedExecutableRef } from '@happier-dev/protocol';
+import { resolveProjectNativeAdapter, type ProjectNativeAdapterResolutionV1 } from './lifecycle/contributions/targetProjectNativeAdapters';
+import type { ProjectNativeAdapterRoleV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
 import type { ResolvedPluginExecutable } from './invocation/services/exec';
+import { authorizePluginExecLaunchForHost } from './invocation/services/exec';
 import { createHash, randomUUID } from 'node:crypto';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { DaemonPluginStoredImageReadRequest } from '@happier-dev/protocol';
@@ -12,6 +15,8 @@ import { sessionMediaToStructuredImageInput, verifySessionStructuredImageInput }
 import { realpath } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
+import type { SharedManagedProviderGatewayBinding } from './invocation/services/managedServicesAdapter';
+import type { ManagedServicesInvocationOwner } from './invocation/services/managedServicesAdapter';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import {
     createPluginRuntimeOccurrenceId,
@@ -141,6 +146,7 @@ import {
     resolveCurrentSessionUiBinding,
 } from '@/session/presentation/currentSessionUiBindings';
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { createPluginSessionsInventory } from '@/session/services/pluginSessionsInventory';
 import { executePluginSessionMessageAction } from '@/session/services/executePluginSessionMessageAction';
@@ -449,6 +455,10 @@ export type ResolvedManagedProviderRuntimeInvocationServices =
                     readonly ConnectedAccountRequestAuthUseV1[];
             }> | null;
         }>;
+        lifetime?: 'sharedConsumer';
+        materializeManagedProviderAgentBinding?: ReturnType<
+            typeof createManagedServicesOwner
+        >['materializeManagedProviderAgentBinding'];
         adoptService?(serviceId: string): Promise<void>;
         cleanup(): void | Promise<void>;
     }>;
@@ -460,6 +470,14 @@ export type ManagedProviderSessionCustodyBinding = Readonly<{
         ManagedProviderRuntimeInvocationServices['projectEndpointAccess'];
     adoptService(serviceId: string): Promise<void>;
     cleanup?(): void | Promise<void>;
+}>;
+
+export type ManagedProviderSessionBootstrapPreparation = Readonly<{
+    sessionId: string;
+    runtimeBindingBasis: ProviderRuntimeBindingBasisV1;
+    retainedScope?: RetainedManagedProviderRuntimeInvocationScope;
+    signal: AbortSignal;
+    isCurrent(): boolean;
 }>;
 
 export type ManagedProviderRuntimeOperationClaim = Readonly<
@@ -514,6 +532,7 @@ export type ManagedProviderExplicitStartJoinInput = Readonly<{
     identity: PluginContributionRef;
     purposeBindings: QualifiedConnectedAccountPurposeBindingsV1;
     machineId: string;
+    sharedGateway?: SharedManagedProviderGatewayBinding;
     operationClaim?: Extract<
         ManagedProviderRuntimeOperationClaim,
         { kind: 'providerBroker' }
@@ -546,6 +565,13 @@ export type ManagedProviderAdoptedPublicOutcome = Readonly<{
 }>;
 
 export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
+    /** Host-private Project supervision/control; the SDK remains plugin-scoped. */
+    projectManagedServices: Pick<ReturnType<typeof createManagedServicesOwner>,
+        'superviseProject' | 'stopForAccessLoss' | 'resolveProjectService' | 'listProjectServices' | 'activity'>;
+    /** Transfers the same generic Project/shared Provider custody at publication. */
+    retainProjectManagedServicesOwner?(owner?: ReturnType<typeof createManagedServicesOwner>,
+        isPhysicalSourceCurrent?: (pluginId: string, occurrenceId: string, sourceCustody: PluginSourceCustody) => boolean):
+        ReturnType<typeof createManagedServicesOwner>;
     // Includes internal merged contribution surfaces (`catalogEntry`).
     contributes: Awaited<ReturnType<typeof resolveMergedContributionRegistry>>;
     /**
@@ -701,6 +727,7 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     resolveServerFeaturesSnapshot?(): CliServerFeaturesSnapshot | undefined;
     activatedPluginIds: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['activatedPluginIds'];
     activateContributionsOnDemand: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['activateContributionsOnDemand'];
+    resolveProjectNativeAdapter(reference: PluginContributionIdentityV1, role: ProjectNativeAdapterRoleV1): Promise<ProjectNativeAdapterResolutionV1>;
     resolveCaptureSource(reference: PluginContributionIdentityV1): Promise<Readonly<{
             declaration: import('@happier-dev/protocol/plugins/contributions/v2').PluginCaptureSourceContributionV1;
         runtime: import('@happier-dev/plugin-sdk').PluginCaptureSourceRuntime;
@@ -728,9 +755,14 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
         identity: PluginContributionRef;
         purposeBindings: QualifiedConnectedAccountPurposeBindingsV1;
         operationClaim?: ManagedProviderRuntimeOperationClaim;
+        sharedGateway?: SharedManagedProviderGatewayBinding;
         signal: AbortSignal;
         isCurrent(): boolean;
     }>): Promise<ResolvedManagedProviderRuntimeInvocationServices | null>;
+    /** Source attestation only: remote workers mint no local request-auth operation. */
+    prepareManagedProviderSessionBootstrap?(
+        input: ManagedProviderSessionBootstrapPreparation,
+    ): Promise<ResolvedManagedProviderRuntimeInvocationServices['bootstrap'] | null>;
     /**
      * Joins the one SVC09-owned explicit managed-Provider operation claim.
      * This is intentionally host-private: callers supply the launch closure,
@@ -742,6 +774,7 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     retireManagedProviderExplicitStart?(input: Readonly<{
         identity: PluginContributionRef;
         machineId: string;
+        sharedGateway?: SharedManagedProviderGatewayBinding;
         operationClaim?: Extract<
             ManagedProviderRuntimeOperationClaim,
             { kind: 'providerBroker' }
@@ -758,6 +791,7 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     ): Promise<number>;
     createRetainedManagedProviderRuntimeInvocationServices?(input: Readonly<{
         scope: RetainedManagedProviderRuntimeInvocationScope;
+        sharedGateway?: SharedManagedProviderGatewayBinding;
         signal: AbortSignal;
         isCurrent(): boolean;
         readAdoptedPublicOutcome():
@@ -1168,10 +1202,9 @@ function resolveManagedDependencyHostPlatform(): 'darwin' | 'linux' | 'win32' {
     });
 }
 
-function mergeActivatedContributes(
+function projectActivatedAgentContributions(
     base: ResolvedContributionRegistry,
     activated: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>,
-    immutableGenerationIdsByPluginId: ReadonlyMap<string, string>,
     isPluginRuntimeCurrent: (pluginId: string) => boolean,
     resolveManagedServiceSessionBaseUrl?: ManagedServiceSessionBaseUrlResolver,
     resolveManagedServiceSessionClientAccess?: ManagedServiceSessionClientAccessResolver,
@@ -1190,72 +1223,8 @@ function mergeActivatedContributes(
         isCurrent(): boolean;
     }>) => Promise<ResolvedPluginExecutable>,
     resolveAgentPreflightLifecycle?: (pluginId: string) => Readonly<{ retirementSignal: AbortSignal; isCurrent(): boolean }>,
-): ResolvedContributionRegistry {
-    const activationTargets = base.activationTargets ?? Object.freeze([]);
-    // Declarative role and workflow sources share the executable occurrence
-    // fence while a predecessor registry is retained during publication.
-    const withCurrentDeclarativeSources = (registry: ResolvedContributionRegistry): ResolvedContributionRegistry => {
-        const roles = registry.roles ?? [];
-        const workflows = registry.workflows ?? [];
-        const inputTypes = registry.inputTypes ?? [];
-        const dragSources = registry.dragSources ?? [];
-        const dropTargets = registry.dropTargets ?? [];
-        if (roles.length === 0 && workflows.length === 0 && inputTypes.length === 0
-            && dragSources.length === 0 && dropTargets.length === 0) return registry;
-        return Object.freeze({
-            ...registry,
-            get roles() {
-                return Object.freeze(roles.filter((role) => isPluginRuntimeCurrent(role.pluginId)));
-            },
-            get workflows() {
-                return Object.freeze(workflows.filter((workflow) => isPluginRuntimeCurrent(workflow.pluginId)));
-            },
-            get inputTypes() {
-                return Object.freeze(inputTypes.filter((type) => isPluginRuntimeCurrent(type.pluginId)));
-            },
-            get dragSources() {
-                return Object.freeze(dragSources.filter((source) => isPluginRuntimeCurrent(source.pluginId)));
-            },
-            get dropTargets() {
-                return Object.freeze(dropTargets.filter((target) => isPluginRuntimeCurrent(target.pluginId)));
-            },
-        });
-    };
-    const contributionKey = (contribution: Readonly<{ pluginId?: string; definition: Readonly<{ id: string }> }>): string => (
-        contribution.pluginId
-            ? buildQualifiedPluginContributionKey(createPluginContributionIdentity({
-                pluginId: contribution.pluginId,
-                localId: contribution.definition.id,
-            }))
-            : contribution.definition.id
-    );
-    const baseActionIds = new Set(base.actions.map(contributionKey));
-    const activatedActions = activated.actions.filter((action) => !baseActionIds.has(contributionKey(action)));
-    const baseToolIds = new Set((base.tools ?? []).map(contributionKey));
-    const activatedTools = activated.tools.filter((tool) => !baseToolIds.has(contributionKey(tool)));
-    const baseCommandIds = new Set((base.commands ?? []).map(contributionKey));
-    const activatedCommands = activated.commands.filter((command) => !baseCommandIds.has(contributionKey(command)));
-    const providerRuntimeRegistrations = activated.targetRegistrations.filter((entry) => (
-        entry.registration.family === 'providers'
-        && activated.isPluginOccurrenceCurrent(entry.pluginId, entry.occurrenceId)
-    ));
-    const projectedProviders = projectTargetProviderRuntimes({
-        providers: base.providers ?? [],
-        activationTargets,
-        targetRegistrations: providerRuntimeRegistrations,
-        sourceCustodiesByPluginId: new Map(
-            [...activated.activatedPluginIds].flatMap((pluginId) => {
-                const sourceCustody = activated.readPluginSourceCustody(pluginId);
-                return sourceCustody ? [[pluginId, sourceCustody] as const] : [];
-            }),
-        ),
-        isRegistrationCurrent: (entry) => (
-            isPluginRuntimeCurrent(entry.pluginId)
-            && activated.activatedPluginIds.has(entry.pluginId)
-            && activated.readPluginOccurrenceId(entry.pluginId) === entry.occurrenceId
-        ),
-    });
-    const providers = projectedProviders.providers;
+    selectedAgentId?: string,
+): Readonly<{ agents: ResolvedContributionRegistry["agents"]; registeredAgentRuntimeCatalogHooksProjected: boolean }> {
     const systemToolsByPluginId = new Map<
         string,
         Array<NonNullable<typeof base.systemTools>[number]['definition']>
@@ -1266,7 +1235,10 @@ function mergeActivatedContributes(
         systemToolsByPluginId.set(systemTool.pluginId, [...existing, systemTool.definition]);
     }
     let registeredAgentRuntimeCatalogHooksProjected = false;
-    const agents = base.agents.map((baseAgent) => {
+    const selectedAgents = selectedAgentId === undefined
+        ? base.agents
+        : base.agents.filter((agent) => agent.id === selectedAgentId);
+    const agents = selectedAgents.map((baseAgent) => {
         let agent = baseAgent;
         const pluginId = agent.identity?.pluginId ?? agent.pluginId;
         const nativePreflight = agent.richDefinition && pluginId
@@ -1501,6 +1473,103 @@ function mergeActivatedContributes(
             }),
         });
     });
+    return { agents, registeredAgentRuntimeCatalogHooksProjected };
+}
+
+function mergeActivatedContributes(
+    base: ResolvedContributionRegistry,
+    activated: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>,
+    immutableGenerationIdsByPluginId: ReadonlyMap<string, string>,
+    isPluginRuntimeCurrent: (pluginId: string) => boolean,
+    resolveManagedServiceSessionBaseUrl?: ManagedServiceSessionBaseUrlResolver,
+    resolveManagedServiceSessionClientAccess?: ManagedServiceSessionClientAccessResolver,
+    resolveAgentPluginSettings?: (input: Readonly<{
+        pluginId: string;
+        localAgentId: string;
+        includeDefaults?: boolean;
+        signal?: AbortSignal;
+    }>) => Promise<AgentCliSessionCommandPluginSettingsV1 | null>,
+    bindAgentPreflightManagedServices?: (input: Readonly<{
+        pluginId: string; localAgentId: string; occurrenceId: string;
+        exec: ExecService; signal: AbortSignal; isCurrent(): boolean;
+    }>) => PluginServices['managedServices'],
+    resolveAgentPreflightManagedExecutable?: (input: Readonly<{
+        pluginId: string; executable: Extract<ManagedExecutableRef, { kind: 'managedDependency' }>;
+        isCurrent(): boolean;
+    }>) => Promise<ResolvedPluginExecutable>,
+    resolveAgentPreflightLifecycle?: (pluginId: string) => Readonly<{ retirementSignal: AbortSignal; isCurrent(): boolean }>,
+): ResolvedContributionRegistry {
+    const activationTargets = base.activationTargets ?? Object.freeze([]);
+    // Declarative role and workflow sources share the executable occurrence
+    // fence while a predecessor registry is retained during publication.
+    const withCurrentDeclarativeSources = (registry: ResolvedContributionRegistry): ResolvedContributionRegistry => {
+        const roles = registry.roles ?? [];
+        const workflows = registry.workflows ?? [];
+        const inputTypes = registry.inputTypes ?? [];
+        const dragSources = registry.dragSources ?? [];
+        const dropTargets = registry.dropTargets ?? [];
+        if (roles.length === 0 && workflows.length === 0 && inputTypes.length === 0
+            && dragSources.length === 0 && dropTargets.length === 0) return registry;
+        return Object.freeze({
+            ...registry,
+            get roles() {
+                return Object.freeze(roles.filter((role) => isPluginRuntimeCurrent(role.pluginId)));
+            },
+            get workflows() {
+                return Object.freeze(workflows.filter((workflow) => isPluginRuntimeCurrent(workflow.pluginId)));
+            },
+            get inputTypes() {
+                return Object.freeze(inputTypes.filter((type) => isPluginRuntimeCurrent(type.pluginId)));
+            },
+            get dragSources() {
+                return Object.freeze(dragSources.filter((source) => isPluginRuntimeCurrent(source.pluginId)));
+            },
+            get dropTargets() {
+                return Object.freeze(dropTargets.filter((target) => isPluginRuntimeCurrent(target.pluginId)));
+            },
+        });
+    };
+    const contributionKey = (contribution: Readonly<{ pluginId?: string; definition: Readonly<{ id: string }> }>): string => (
+        contribution.pluginId
+            ? buildQualifiedPluginContributionKey(createPluginContributionIdentity({
+                pluginId: contribution.pluginId,
+                localId: contribution.definition.id,
+            }))
+            : contribution.definition.id
+    );
+    const baseActionIds = new Set(base.actions.map(contributionKey));
+    const activatedActions = activated.actions.filter((action) => !baseActionIds.has(contributionKey(action)));
+    const baseToolIds = new Set((base.tools ?? []).map(contributionKey));
+    const activatedTools = activated.tools.filter((tool) => !baseToolIds.has(contributionKey(tool)));
+    const baseCommandIds = new Set((base.commands ?? []).map(contributionKey));
+    const activatedCommands = activated.commands.filter((command) => !baseCommandIds.has(contributionKey(command)));
+    const providerRuntimeRegistrations = activated.targetRegistrations.filter((entry) => (
+        entry.registration.family === 'providers'
+        && activated.isPluginOccurrenceCurrent(entry.pluginId, entry.occurrenceId)
+    ));
+    const projectedProviders = projectTargetProviderRuntimes({
+        providers: base.providers ?? [],
+        activationTargets,
+        targetRegistrations: providerRuntimeRegistrations,
+        sourceCustodiesByPluginId: new Map(
+            [...activated.activatedPluginIds].flatMap((pluginId) => {
+                const sourceCustody = activated.readPluginSourceCustody(pluginId);
+                return sourceCustody ? [[pluginId, sourceCustody] as const] : [];
+            }),
+        ),
+        isRegistrationCurrent: (entry) => (
+            isPluginRuntimeCurrent(entry.pluginId)
+            && activated.activatedPluginIds.has(entry.pluginId)
+            && activated.readPluginOccurrenceId(entry.pluginId) === entry.occurrenceId
+        ),
+    });
+    const providers = projectedProviders.providers;
+    const { agents, registeredAgentRuntimeCatalogHooksProjected } = projectActivatedAgentContributions(
+        base, activated, isPluginRuntimeCurrent,
+        resolveManagedServiceSessionBaseUrl, resolveManagedServiceSessionClientAccess,
+        resolveAgentPluginSettings, bindAgentPreflightManagedServices,
+        resolveAgentPreflightManagedExecutable, resolveAgentPreflightLifecycle,
+    );
 
     if (
         activatedActions.length === 0
@@ -1657,8 +1726,6 @@ export type PluginRuntimeMachineAdmissionTransport = CliActionMachineAdmissionTr
 export async function resolveExecutablePluginRuntimeRegistry(
     params?: Readonly<{
         happyHomeDir?: string;
-        /** The daemon start owner's absolute readiness deadline; absent on reload. */
-        startupDeadlineAtMs?: number;
         contributes?: ResolvedContributionRegistry;
         generation?: number;
         /** Daemon-owned live machine identity for host-stamped nested Action callers. */
@@ -1945,6 +2012,13 @@ export async function resolveExecutablePluginRuntimeRegistry(
         );
         if (retainedIdentity) {
             admittedPluginSourceCustodiesByPluginId.set(pluginId, retainedIdentity.sourceCustody);
+            // Retained activation does not load this source again. Its exact
+            // admitted manifest authority still belongs to the source resolver,
+            // rather than disappearing with the predecessor's private map.
+            if (target && activationSource?.sourceAuthority
+                && pluginSourceCustodyEqual(resolvePluginSourceCustody(activationSource.sourceAuthority), retainedIdentity.sourceCustody)) {
+                resolveCommittedActivationSource(target);
+            }
             continue;
         }
         if (activationSource?.sourceAuthority) {
@@ -1963,7 +2037,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
     // materialization through the caller-materialization owner below. This
     // declaration does not grant install-registry projection authority.
     const releaseLessDeclarationsByPluginId = projectReleaseLessPluginDeclarations({
-        activationTargets,
+        activationTargets: contributes.pluginDeclarations ?? activationTargets,
         sourceCustodiesByPluginId: admittedPluginSourceCustodiesByPluginId,
         registryMaterializationIdsByPluginId: contributes.materializationIdsByPluginId ?? {},
         observedAt: Date.now(),
@@ -2044,8 +2118,6 @@ export async function resolveExecutablePluginRuntimeRegistry(
     > = {
         contributes,
         generation,
-        ...(params?.startupDeadlineAtMs === undefined
-            ? {} : { startupDeadlineAtMs: params.startupDeadlineAtMs }),
         immutableGenerationIdsByPluginId,
         occurrenceIdsByPluginId: candidateOccurrenceIdsByPluginId,
         admittedPluginSourceCustodiesByPluginId,
@@ -2214,6 +2286,23 @@ export async function resolveExecutablePluginRuntimeRegistry(
         )).length === 1
     );
     const resolveServerFeaturesSnapshot = params?.resolveServerFeaturesSnapshot;
+    // Both portable and release-less preparation load the exact module through
+    // the canonical activation source/loader, without activating it.
+    const loadCollectionMigrationModule = async (
+        source: NonNullable<ReturnType<typeof resolveCommittedActivationSource>>,
+        target: Parameters<typeof resolveCommittedActivationSource>[0],
+    ) => {
+        if (source.kind === 'bundled' && source.prepare) {
+            try { await source.prepare(); } catch { await source.prepare(); }
+        }
+        const cacheKey = resolveCollectionCandidateModuleCacheKey(source);
+        const module = await loadPluginModule({ source, ...(cacheKey ? { cacheKey } : {}) });
+        // A prepared graph already projected its author manifest at admission;
+        // its executable namespace contains callbacks, not a second manifest.
+        return projectPluginAuthorModule(source.kind === 'prepared'
+            ? { ...module, manifest: target.manifest }
+            : module);
+    };
     const accountStorageHost = createAccountPluginDataStorageHost({
         contracts: scopedActionRuntime
             ? Object.freeze([])
@@ -2235,8 +2324,19 @@ export async function resolveExecutablePluginRuntimeRegistry(
         // this daemon, not by a portable Account release, so only those claim
         // a release-less Account intent with their admitted manifest.
         resolveReleaseLessDeclaration: (pluginId) => (
-            scopedActionRuntime ? null : releaseLessDeclarationsByPluginId.get(pluginId)?.manifest ?? null
+            scopedActionRuntime || !releaseLessDeclarationsByPluginId.get(pluginId)?.claimsAccountIntent
+                ? null : releaseLessDeclarationsByPluginId.get(pluginId)?.manifest ?? null
         ),
+        resolveReleaseLessCollectionMigrations: async (pluginId) => {
+            const declaration = releaseLessDeclarationsByPluginId.get(pluginId)?.manifest;
+            const target = resolveExactActivationTarget(pluginId);
+            if (scopedActionRuntime || !declaration || !target) return null;
+            const source = resolveCommittedActivationSource(target, { recordActivatedManifestAuthority: false });
+            if (!source) return null;
+            const projected = await loadCollectionMigrationModule(source, target);
+            if (serializeCanonicalPluginManifest(projected.manifest) !== serializeCanonicalPluginManifest(declaration)) return null;
+            return projected.module.collectionMigrations;
+        },
     });
     const bindDynamicResourceAccountStorage = createPluginResourceAccountStorageResolver({
         accountStorage: accountStorageHost,
@@ -2284,8 +2384,6 @@ export async function resolveExecutablePluginRuntimeRegistry(
         committedResourceGenerations.size > 0 || dynamicResourceProducers.length > 0
     )
         ? await createStablePluginResourcesOwner({
-            ...(params?.startupDeadlineAtMs === undefined
-                ? {} : { startupDeadlineAtMs: params.startupDeadlineAtMs }),
             registry: {
                 resources: committedResourceContributes.flatMap((resource) => {
                     if (resource.pluginId === undefined) return [];
@@ -2640,25 +2738,11 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 !sourceCustody
                 || !pluginSourceCustodyEqual(sourceCustody, captured.sourceCustody)
             ) return unavailable('candidate_currentness_changed');
-            if (source.kind === 'bundled' && source.prepare) {
-                try {
-                    await source.prepare();
-                } catch {
-                    // Match the canonical activation loader's one bounded
-                    // bundled-preparation retry without creating another loader.
-                    await source.prepare();
-                }
-            }
             if (!await isCandidateCurrent()) return unavailable('candidate_currentness_changed');
-            const cacheKey = resolveCollectionCandidateModuleCacheKey(source);
-            const module = await loadPluginModule({
-                source,
-                ...(cacheKey ? { cacheKey } : {}),
-            });
+            projected = await loadCollectionMigrationModule(source, target);
             if (!await isCandidateCurrent()) return unavailable('candidate_currentness_changed');
             // This validates the static manifest and callback projection but
             // intentionally never invokes `activate`.
-            projected = projectPluginAuthorModule(module);
         } catch {
             return !await isCandidateCurrent()
                 ? unavailable('candidate_currentness_changed')
@@ -2839,7 +2923,12 @@ export async function resolveExecutablePluginRuntimeRegistry(
         consumerAssembly.fencePlugins(pluginIds);
         uiResourceWatches?.retirePlugins(pluginIds);
     };
-    const retirePluginConsumers = consumerAssembly.retirePlugins;
+    const retirePluginConsumers = async (pluginIds: readonly string[]) => {
+        await Promise.all([
+            consumerAssembly.retirePlugins(pluginIds),
+            projectManagedServicesOwner.retireSharedProviderServices(pluginIds),
+        ]);
+    };
     const buildPromptAssetAdapterRegistry = () => createTargetPromptAssetAdapterRegistry({
         promptAssets: (authoritativeContributes.promptAssets ?? []).map((asset) => Object.freeze({
             pluginId: asset.pluginId,
@@ -2851,7 +2940,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         targetRegistrations: activatedRegistry.targetRegistrations,
         resolveOccurrenceLifecycle: resolveRuntimeConsumerLifecycle,
     });
-    // Prompt Asset adapters are re-projected on every on-demand activation, so a
+    // Prompt Asset adapters are re-projected when activation facts change, so a
     // mis-authored adapter's refusal is recorded here and folded into the plugin's
     // diagnostics by `refreshPluginDiagnostics` below.
     let promptAssetProjectionDiagnosticsByPluginId:
@@ -3757,6 +3846,13 @@ export async function resolveExecutablePluginRuntimeRegistry(
                         files: generation.record.files,
                         isCurrent: async () => {
                             try {
+                                if (context.physicalSourceCustody) {
+                                    return context.isCurrent()
+                                        && provider.definition.managedRuntime?.sharing === 'connectionMachine'
+                                        && context.physicalSourceCustody.kind === 'managed'
+                                        && generation.immutableGenerationId === context.physicalSourceCustody.immutableGenerationId
+                                        && isRetainedPhysicalSourceCurrent?.(context.pluginId, context.occurrenceId, context.physicalSourceCustody) === true;
+                                }
                                 return context.isCurrent()
                                     && isPluginConsumerCurrent(context.pluginId)
                                     && await committed.isCurrent()
@@ -3783,9 +3879,73 @@ export async function resolveExecutablePluginRuntimeRegistry(
     const daemonManagedServiceProcessSupervisorHost = createManagedServiceProcessSupervisorHost({
         custodyOwner: 'daemon',
     });
-    const daemonManagedServicesOwner = createManagedServicesOwner({
-        processSupervisorHost: daemonManagedServiceProcessSupervisorHost,
+    const daemonManagedServicesHostBindings = {
         dependencies: (scope) => managedDependencies.bind(scope.pluginId),
+        async resolveManagedExecutable(scope, executable, isCurrent) {
+            const source = scope.sourceCustody;
+            const provider = (authoritativeContributes.providers ?? []).find(candidate => (
+                `${candidate.identity.pluginId}/providers/${candidate.identity.localId}` === scope.contributionQualifiedId
+                && candidate.identity.pluginId === scope.pluginId
+                && candidate.definition.managedRuntime?.sharing === 'connectionMachine'
+            ));
+            const sourceCurrent = () => Boolean(source && isCurrent()
+                && isRetainedPhysicalSourceCurrent?.(scope.pluginId, scope.occurrenceId, source) === true);
+            if (!source || !provider || !sourceCurrent()) throw new PluginError({
+                code: 'plugin_packaged_runtime_binary_unavailable', message: 'Retained managed Provider executable source is unavailable',
+            });
+            const resolved = await executableResolver(executable, scope.pluginId, Object.freeze({
+                kind: 'managedProviderRuntime' as const, pluginId: scope.pluginId,
+                providerLocalId: provider.identity.localId, contributionQualifiedId: scope.contributionQualifiedId,
+                occurrenceId: scope.occurrenceId, physicalSourceCustody: source, isCurrent: sourceCurrent,
+            }));
+            if (!sourceCurrent()) {
+                resolved.release?.();
+                throw new PluginError({ code: 'plugin_packaged_runtime_binary_unavailable', message: 'Retained managed Provider executable source changed' });
+            }
+            return resolved;
+        },
+        async resolveNativeLifecycle(scope, instance, admission) {
+            const scopeIsCurrent = (): boolean => {
+                try {
+                    return !scope.signal?.aborted
+                        && scope.isOccurrenceCurrent() === true
+                        && scope.occurrenceId === readCurrentPluginOccurrenceId(scope.pluginId)
+                        && isPluginConsumerCurrent(scope.pluginId);
+                } catch {
+                    return false;
+                }
+            };
+            if (!scopeIsCurrent()) return null;
+            const resolution = await resolvedRuntimeRegistryOwner?.resolveProjectNativeAdapter(
+                instance.adapter,
+                'nativeServiceLifecycle',
+            );
+            if (!scopeIsCurrent() || resolution?.kind !== 'ready' || resolution.lease.isCurrent() !== true) {
+                return null;
+            }
+            // Use the incumbent exec authorizer to resolve the SDK's cwd/path and
+            // effective environment. This is admission, not another starter.
+            const launch = await authorizePluginExecLaunchForHost(admission.exec, admission.launch);
+            const captured = await (async () => {
+                try {
+                    return resolution.lease.captureNativeServiceLifecycle(instance, {
+                        // An omitted cwd has exactly the OS spawn owner's current directory.
+                        root: launch.cwd ?? process.cwd(), environment: launch.env,
+                    });
+                } finally { await launch.release(); }
+            })();
+            if (!scopeIsCurrent() || resolution.lease.isCurrent() !== true || captured.kind !== 'ready') {
+                return null;
+            }
+            return Object.freeze({
+                inspect: captured.lifecycle.inspect,
+                async stop(...args: Parameters<typeof captured.lifecycle.stop>) {
+                    const result = await captured.lifecycle.stop(...args);
+                    if (result.status === 'stopped') await captured.release();
+                    return result;
+                },
+            });
+        },
         resolveDeclaredSecret: createDeclaredManagedServiceSecretResolver(),
         registerRawForRedaction(scope, value) {
             const correlationId = scope.operationId?.trim();
@@ -3835,7 +3995,33 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     : {}),
             });
         },
+    } satisfies Omit<Parameters<typeof createManagedServicesOwner>[0], 'processSupervisorHost' | 'sharedGatewayAccessDirectory'>;
+    const daemonManagedServicesOwner = createManagedServicesOwner({
+        ...daemonManagedServicesHostBindings,
+        processSupervisorHost: daemonManagedServiceProcessSupervisorHost,
+        sharedGatewayAccessDirectory: join(pluginStorePaths.storageDir, 'managed-provider-consumers'),
     });
+    let projectManagedServicesOwner: ReturnType<NonNullable<
+        ResolvedExecutablePluginRuntimeRegistry['retainProjectManagedServicesOwner']
+    >> = daemonManagedServicesOwner;
+    let preserveProjectServicesOnRegistryRetirement = false;
+    let isRetainedPhysicalSourceCurrent: Parameters<NonNullable<ResolvedExecutablePluginRuntimeRegistry['retainProjectManagedServicesOwner']>>[1];
+    // Ordinary invocation services remain root-owned. Only the canonical
+    // admitted shared binding transfers into the retained generic owner.
+    const invocationManagedServicesOwner: ManagedServicesInvocationOwner = {
+        isAvailable: daemonManagedServicesOwner.isAvailable,
+        bind: daemonManagedServicesOwner.bind,
+        bindWithExec(seed, exec, context) {
+            return (context.managedProvider?.sharedGateway ? projectManagedServicesOwner : daemonManagedServicesOwner)
+                .bindWithExec!(seed, exec, context);
+        },
+        retireGeneration: daemonManagedServicesOwner.retireGeneration,
+        async projectManagedProviderEndpointAccess(input) {
+            const ordinary = await daemonManagedServicesOwner.projectManagedProviderEndpointAccess!(input);
+            return ordinary ?? (projectManagedServicesOwner === daemonManagedServicesOwner ? null
+                : await projectManagedServicesOwner.projectManagedProviderEndpointAccess!(input));
+        },
+    };
     async function resolveAgentPreflightManagedExecutable(input: Readonly<{
         pluginId: string; executable: Extract<ManagedExecutableRef, { kind: 'managedDependency' }>;
         isCurrent(): boolean;
@@ -3981,6 +4167,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 : {}),
             readRegisteredPromptAssetAdapters: () => promptAssetAdapters,
             resolvePluginNotifications: () => invocationServiceOwners.notifications,
+            readPluginVoiceProviders: () => resolvedRuntimeRegistryOwner?.voiceProviders ?? [],
             revalidatePluginActionCallerMaterialization,
             invokeContributedAction: createHostContributedActionInvoker({
                 invokeContributedAction,
@@ -4361,7 +4548,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 });
             },
         },
-        managedServices: daemonManagedServicesOwner,
+        managedServices: invocationManagedServicesOwner,
     });
     disposeInvocationServiceOwners = async () => {
         currentGlobalExternalSessions?.dispose();
@@ -4369,7 +4556,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
         currentGlobalExternalSessionsPublicationBasis = null;
         const results = await Promise.allSettled([
             invocationServiceOwners.dispose(),
-            daemonManagedServicesOwner.dispose(),
+            daemonManagedServicesOwner.dispose({
+                preserveProjectServices: preserveProjectServicesOnRegistryRetirement,
+                preserveSharedProviderServices: preserveProjectServicesOnRegistryRetirement,
+            }),
             daemonDatabaseHost.close(),
         ]);
         const failures = results.flatMap((result) => (
@@ -5180,7 +5370,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
     function resolveCurrentPluginFinalPolicyRuntimes():
     ReadonlyMap<string, PluginFinalPolicyCurrentRuntime> {
         const currentRuntimes = new Map<string, PluginFinalPolicyCurrentRuntime>();
-        for (const [pluginId] of committed?.generations ?? []) {
+        // Source-backed bundled plugins and packaged runtimes carry admitted
+        // custody without a managed installation generation. Enumerate that
+        // same custody owner, then retain the exact per-runtime policy checks.
+        for (const pluginId of admittedPluginSourceCustodiesByPluginId.keys()) {
             const current = resolveCurrentFinalPolicyRuntime(pluginId);
             if (current) currentRuntimes.set(pluginId, current);
         }
@@ -5280,10 +5473,17 @@ export async function resolveExecutablePluginRuntimeRegistry(
         }
     }
 
-    async function activateContributionsOnDemand(
-        demands: Parameters<typeof activatedRegistry.activateContributionsOnDemand>[0],
-    ): Promise<Awaited<ReturnType<typeof activatedRegistry.activateContributionsOnDemand>>> {
-        const results = await activatedRegistry.activateContributionsOnDemand(demands);
+    function refreshActivatedConsumersIfChanged(
+        previousFacts: typeof activatedRegistry.targetActivationFacts,
+    ): void {
+        const currentFacts = activatedRegistry.targetActivationFacts;
+        // Lifecycle facts are immutable and retain their identities until
+        // activation or retirement changes them. A repeated warm demand does
+        // not publish registrations and must not reconstruct bound consumers.
+        if (
+            previousFacts.length === currentFacts.length
+            && previousFacts.every((fact, index) => fact === currentFacts[index])
+        ) return;
         // Lazy activation publishes into the generation-owned registration/fact
         // arrays. Rebuild the complete immutable action index before exposing
         // the activation result so dispatch can never observe a half-published
@@ -5294,6 +5494,14 @@ export async function resolveExecutablePluginRuntimeRegistry(
         refreshAgentRuntimeRegistry();
         refreshSystemToolRegistries();
         refreshPromptAssetAdapterRegistry();
+    }
+
+    async function activateContributionsOnDemand(
+        demands: Parameters<typeof activatedRegistry.activateContributionsOnDemand>[0],
+    ): Promise<Awaited<ReturnType<typeof activatedRegistry.activateContributionsOnDemand>>> {
+        const previousFacts = activatedRegistry.targetActivationFacts;
+        const results = await activatedRegistry.activateContributionsOnDemand(demands);
+        refreshActivatedConsumersIfChanged(previousFacts);
         // The External Sessions author service invokes each configured Agent's
         // `resolveSource` leaf while it is built, and that leaf needs this
         // generation's Agent CLI system-tool services. Publish the synchronous
@@ -5319,10 +5527,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
             family: 'agents',
             localId: declared.identity.localId,
         }]);
-        const projected = mergeActivatedContributes(
+        const projected = projectActivatedAgentContributions(
             contributes,
             activatedRegistry,
-            immutableGenerationIdsByPluginId,
             (pluginId) => isPluginConsumerCurrent(pluginId),
             params?.resolveManagedServiceSessionBaseUrl,
             params?.resolveManagedServiceSessionClientAccess,
@@ -5330,6 +5537,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             bindAgentPreflightManagedServices,
             resolveAgentPreflightManagedExecutable,
             consumerAssembly.resolveLifecycle,
+            agentId,
         );
         return projected.agents.find((agent) => agent.id === agentId)?.catalogEntry ?? null;
     }
@@ -5337,13 +5545,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
     async function activatePluginsForValidation(
         pluginIds: readonly string[],
     ): Promise<Awaited<ReturnType<typeof activatedRegistry.activatePluginsForValidation>>> {
+        const previousFacts = activatedRegistry.targetActivationFacts;
         const results = await activatedRegistry.activatePluginsForValidation(pluginIds);
-        committedTargetActionInvocations.refresh();
-        refreshDeclaredEventSubscriptionBindings();
-        mergeActivatedHookHandlers();
-        refreshAgentRuntimeRegistry();
-        refreshSystemToolRegistries();
-        refreshPromptAssetAdapterRegistry();
+        refreshActivatedConsumersIfChanged(previousFacts);
         // The External Sessions author service invokes each configured Agent's
         // `resolveSource` leaf while it is built, and that leaf needs this
         // generation's Agent CLI system-tool services. Publish the synchronous
@@ -5465,6 +5669,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
     function createExplicitManagedProviderOperationClaimId(
         identity: PluginContributionRef,
         machineId: string,
+        sharedGateway?: SharedManagedProviderGatewayBinding,
     ): string | null {
         const normalizedMachineId = machineId.trim();
         return normalizedMachineId
@@ -5473,6 +5678,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 normalizedMachineId,
                 identity.pluginId,
                 identity.localId,
+                ...(sharedGateway ? [sharedGateway] : []),
             ])
             : null;
     }
@@ -5480,6 +5686,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
     function resolveExplicitManagedProviderOperationClaimId(input: Readonly<{
         identity: PluginContributionRef;
         machineId: string;
+        sharedGateway?: SharedManagedProviderGatewayBinding;
         operationClaim?: Extract<
             ManagedProviderRuntimeOperationClaim,
             { kind: 'providerBroker' }
@@ -5490,6 +5697,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             return createExplicitManagedProviderOperationClaimId(
                 input.identity,
                 input.machineId,
+                input.sharedGateway,
             );
         }
         const operationIdentity = operation.kind === 'session'
@@ -5503,6 +5711,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             identity: input.identity,
             operationKind: operation.kind,
             operationIdentity,
+            sharedGateway: input.sharedGateway,
         });
     }
 
@@ -5510,6 +5719,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         identity: PluginContributionRef;
         operationKind: 'session' | 'execution_run' | 'external_api_key' | 'resource_test';
         operationIdentity: string;
+        sharedGateway?: SharedManagedProviderGatewayBinding;
     }>): string | null {
         const operationIdentity = input.operationIdentity.trim();
         if (!operationIdentity) return null;
@@ -5519,6 +5729,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             operationIdentity,
             input.identity.pluginId,
             input.identity.localId,
+            ...(input.sharedGateway ? [input.sharedGateway] : []),
         ]);
     }
 
@@ -5545,6 +5756,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             operationId = resolveExplicitManagedProviderOperationClaimId({
                 identity,
                 machineId: input.machineId,
+                sharedGateway: input.sharedGateway,
                 ...(input.operationClaim
                     ? { operationClaim: input.operationClaim }
                     : {}),
@@ -5568,6 +5780,15 @@ export async function resolveExecutablePluginRuntimeRegistry(
         if (!inputCurrent) {
             return Object.freeze({ status: 'not_current' as const });
         }
+        const declaration = resolveProviderManagedRuntimeDeclarationV1({
+            implementationIdentity: identity, managedRuntime: provider.definition.managedRuntime,
+        });
+        const sharedProvider = input.sharedGateway !== undefined && isSharedProviderAdmission(
+            declaration, input.purposeBindings, qualifyManagedProviderRequestAuthUses(identity, declaration),
+        );
+        const operationOwner = sharedProvider ? projectManagedServicesOwner : daemonManagedServicesOwner;
+        const operationOccurrenceId = readCurrentPluginOccurrenceId(identity.pluginId)!;
+        const operationSource = readCurrentPluginSourceCustody(identity.pluginId);
         // Runtime acquisition has one owner: the public managed Provider lifecycle
         // coordinator invoked by `input.establish`. Pre-acquiring it here made a
         // permanently missing/integrity-rejected runtime collapse into the joiner's
@@ -5578,10 +5799,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
         const readsOperationCurrent = (): boolean => {
             try {
                 return input.isCurrent() === true
-                    && isPluginConsumerCurrent(identity.pluginId)
-                    && activatedRegistry.activatedPluginIds.has(
-                        identity.pluginId,
-                    );
+                    && (sharedProvider && isRetainedPhysicalSourceCurrent && operationSource
+                        ? isRetainedPhysicalSourceCurrent(identity.pluginId, operationOccurrenceId, operationSource)
+                        : isPluginConsumerCurrent(identity.pluginId)
+                            && activatedRegistry.activatedPluginIds.has(identity.pluginId));
             } catch {
                 return false;
             }
@@ -5589,13 +5810,14 @@ export async function resolveExecutablePluginRuntimeRegistry(
         if (!readsOperationCurrent()) {
             return Object.freeze({ status: 'not_current' as const });
         }
-        return await daemonManagedServicesOwner.runManagedProviderExplicitStart({
+        return await operationOwner.runManagedProviderExplicitStart({
+            ...(sharedProvider ? { sharedProvider: true as const } : {}),
             ...(input.retirementGroup ? { retirementGroup: input.retirementGroup } : {}),
             operationId,
             pluginId: identity.pluginId,
             contributionQualifiedId:
                 `${identity.pluginId}/providers/${identity.localId}`,
-            occurrenceId: readCurrentPluginOccurrenceId(identity.pluginId)!,
+            occurrenceId: operationOccurrenceId,
             purposeBindingsEqualityKey,
             ...(input.signal ? { signal: input.signal } : {}),
             lifecycleKind: input.operationClaim
@@ -5615,6 +5837,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
     async function retireManagedProviderExplicitStart(input: Readonly<{
         identity: PluginContributionRef;
         machineId: string;
+        sharedGateway?: SharedManagedProviderGatewayBinding;
         operationClaim?: Extract<
             ManagedProviderRuntimeOperationClaim,
             { kind: 'providerBroker' }
@@ -5624,13 +5847,15 @@ export async function resolveExecutablePluginRuntimeRegistry(
             input,
         );
         if (!operationId) return false;
-        return await daemonManagedServicesOwner
-            .retireManagedProviderExplicitStart({
+        const claim = {
                 operationId,
                 pluginId: input.identity.pluginId,
                 contributionQualifiedId:
                     `${input.identity.pluginId}/providers/${input.identity.localId}`,
-            });
+            };
+        const ordinary = await daemonManagedServicesOwner.retireManagedProviderExplicitStart(claim);
+        return projectManagedServicesOwner === daemonManagedServicesOwner ? ordinary
+            : await projectManagedServicesOwner.retireManagedProviderExplicitStart(claim) || ordinary;
     }
 
     async function retireManagedProviderExternalApiKey(input: Readonly<{
@@ -5644,33 +5869,54 @@ export async function resolveExecutablePluginRuntimeRegistry(
             operationIdentity: JSON.stringify([input.externalApiKeyId, input.operationId]),
         });
         if (!operationId) return false;
-        return await daemonManagedServicesOwner.retireManagedProviderExplicitStart({
+        const claim = {
             operationId,
             pluginId: input.identity.pluginId,
             contributionQualifiedId:
                 `${input.identity.pluginId}/providers/${input.identity.localId}`,
-        });
+        };
+        const ordinary = await daemonManagedServicesOwner.retireManagedProviderExplicitStart(claim);
+        return projectManagedServicesOwner === daemonManagedServicesOwner ? ordinary
+            : await projectManagedServicesOwner.retireManagedProviderExplicitStart(claim) || ordinary;
     }
 
     async function revalidateManagedProviderExplicitStarts(
         signal?: AbortSignal,
     ): Promise<number> {
-        return await daemonManagedServicesOwner
-            .revalidateManagedProviderExplicitStarts(signal);
+        const ordinary = await daemonManagedServicesOwner.revalidateManagedProviderExplicitStarts(signal);
+        return ordinary + (projectManagedServicesOwner === daemonManagedServicesOwner ? 0
+            : await projectManagedServicesOwner.revalidateManagedProviderExplicitStarts(signal));
     }
 
     async function retireManagedProviderExplicitStarts(
         lifecycleKind: 'publicExplicitStart' | 'providerBroker',
     ): Promise<number> {
-        return await daemonManagedServicesOwner
-            .retireManagedProviderExplicitStarts(lifecycleKind);
+        const ordinary = await daemonManagedServicesOwner.retireManagedProviderExplicitStarts(lifecycleKind);
+        return ordinary + (projectManagedServicesOwner === daemonManagedServicesOwner ? 0
+            : await projectManagedServicesOwner.retireManagedProviderExplicitStarts(lifecycleKind));
     }
 
-    async function createManagedProviderRuntimeInvocationServicesInternal(
-        input: Readonly<{
+    function qualifyManagedProviderRequestAuthUses(identity: PluginContributionRef,
+        declaration: ReturnType<typeof resolveProviderManagedRuntimeDeclarationV1>) {
+        return Object.freeze(declaration.requestAuthUses.map(use => Object.freeze({
+            purpose: Object.freeze({ consumer: Object.freeze({ ...identity }), purpose: use.purpose }),
+            materialization: Object.freeze({ ...use.materialization, headerNames: Object.freeze([...use.materialization.headerNames]) }),
+        })));
+    }
+    function isSharedProviderAdmission(declaration: ReturnType<typeof resolveProviderManagedRuntimeDeclarationV1>,
+        purposeBindings: QualifiedConnectedAccountPurposeBindingsV1,
+        uses: NonNullable<import('./invocation/services/managedServicesAdapter').ManagedProviderRequestAuthCapabilityPathBinding['qualifiedRequestAuthUses']>) {
+        return declaration.sharing === 'connectionMachine' && uses.some(use => purposeBindings.bindings.some(binding => (
+            qualifiedPurposeKey(binding.purpose) === qualifiedPurposeKey(use.purpose)
+        )));
+    }
+
+    type ManagedProviderInvocationPreparation = Readonly<{
             identity: PluginContributionRef;
             purposeBindings: QualifiedConnectedAccountPurposeBindingsV1;
-            operationClaim?: ManagedProviderRuntimeOperationClaim;
+            operationClaim?: Exclude<ManagedProviderRuntimeOperationClaim, { kind: 'sessionDemand' }>
+                | Pick<Extract<ManagedProviderRuntimeOperationClaim, { kind: 'sessionDemand' }>, 'kind' | 'sessionId' | 'runtimeBindingBasis'>;
+            sharedGateway?: SharedManagedProviderGatewayBinding;
             retained?: Readonly<{
                 declaration: ReturnType<
                     typeof resolveProviderManagedRuntimeDeclarationV1
@@ -5687,8 +5933,18 @@ export async function resolveExecutablePluginRuntimeRegistry(
             }>;
             signal: AbortSignal;
             isCurrent(): boolean;
-        }>,
-    ): Promise<ResolvedManagedProviderRuntimeInvocationServices | null> {
+        }>;
+    async function createManagedProviderRuntimeInvocationServicesInternal(
+        input: ManagedProviderInvocationPreparation,
+        preparation: 'bootstrapOnly',
+    ): Promise<ResolvedManagedProviderRuntimeInvocationServices['bootstrap'] | null>;
+    async function createManagedProviderRuntimeInvocationServicesInternal(
+        input: ManagedProviderInvocationPreparation,
+    ): Promise<ResolvedManagedProviderRuntimeInvocationServices | null>;
+    async function createManagedProviderRuntimeInvocationServicesInternal(
+        input: ManagedProviderInvocationPreparation,
+        preparation?: 'bootstrapOnly',
+    ): Promise<ResolvedManagedProviderRuntimeInvocationServices | ResolvedManagedProviderRuntimeInvocationServices['bootstrap'] | null> {
         const target = input.retained
             ? null
             : resolveExactActivationTarget(input.identity.pluginId);
@@ -5702,6 +5958,35 @@ export async function resolveExecutablePluginRuntimeRegistry(
             || (!target && !input.retained)
             || input.signal.aborted
         ) return null;
+        if (input.sharedGateway) {
+            const binding = input.sharedGateway;
+            const [origin, credentials] = await Promise.all([
+                params?.resolveCurrentMachineExecutionOriginContext?.(
+                    input.signal,
+                ).catch(() => null),
+                readSessionCredentials().catch(() => null),
+            ]);
+            const sessionClaim = input.operationClaim?.kind === 'sessionDemand'
+                ? input.operationClaim
+                : null;
+            if (
+                !origin
+                || !credentials
+                || input.signal.aborted
+                || !input.isCurrent()
+                || origin.serverIdentityId !== binding.homeId
+                || origin.machineId !== binding.machineId
+                || readAccountIdFromToken(credentials.token) !== binding.accountId
+                || Object.values(binding).some((value) => (
+                    value.length === 0 || value.trim() !== value
+                ))
+                || (sessionClaim && (
+                    sessionClaim.sessionId !== binding.consumerId
+                    || sessionClaim.runtimeBindingBasis.connectionId
+                        !== binding.connectionId
+                ))
+            ) return null;
+        }
         const declaration = resolveProviderManagedRuntimeDeclarationV1({
             implementationIdentity: input.identity,
             managedRuntime: rawDeclaration,
@@ -5710,6 +5995,17 @@ export async function resolveExecutablePluginRuntimeRegistry(
             QualifiedConnectedAccountPurposeBindingsV1Schema.parse(
                 input.purposeBindings,
             );
+        if (input.operationClaim?.kind === 'sessionDemand') {
+            const basis = ProviderRuntimeBindingBasisV1Schema.safeParse(input.operationClaim.runtimeBindingBasis);
+            if (!basis.success || basis.data.deployment.kind !== 'managedLocal') return null;
+            const deployment = basis.data.deployment;
+            const endpoint = targetProvider?.endpointTemplates.find(candidate => candidate.id === basis.data.endpoint.endpointTemplateId);
+            if (buildQualifiedPluginContributionKey(deployment.implementationIdentity) !== buildQualifiedPluginContributionKey(input.identity)
+                || !isDeepStrictEqual(deployment.managedRuntime, declaration)
+                || !isDeepStrictEqual(deployment.purposeBindings, purposeBindings)
+                || !declaration.endpointTemplateIds.includes(basis.data.endpoint.endpointTemplateId)
+                || (!input.retained && endpoint?.protocol !== basis.data.endpoint.protocol)) return null;
+        }
         const declarationsByPurpose = new Map(
             declaration.connectedAccounts.map((entry) => [
                 entry.purpose,
@@ -5748,23 +6044,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 purpose: entry.purpose,
             })),
         );
-        const qualifiedRequestAuthUses = Object.freeze(
-            declaration.requestAuthUses.map((use) => Object.freeze({
-                purpose: Object.freeze({
-                    consumer: Object.freeze({
-                        pluginId: input.identity.pluginId,
-                        localId: input.identity.localId,
-                    }),
-                    purpose: use.purpose,
-                }),
-                materialization: Object.freeze({
-                    ...use.materialization,
-                    headerNames: Object.freeze([
-                        ...use.materialization.headerNames,
-                    ]),
-                }),
-            })),
-        );
+        const qualifiedRequestAuthUses = qualifyManagedProviderRequestAuthUses(input.identity, declaration);
+        const declaredSharingEligible = isSharedProviderAdmission(declaration, purposeBindings, qualifiedRequestAuthUses);
         const runtime = input.retained
             ? Object.freeze({
                 activationOccurrenceId:
@@ -5792,11 +6073,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
             try {
                 return !input.signal.aborted
                     && input.isCurrent() === true
-                    && runtime.isCurrent() === true
-                    && (
-                        input.retained !== undefined
-                        || isPluginConsumerCurrent(input.identity.pluginId)
-                    );
+                    && (declaredSharingEligible && isRetainedPhysicalSourceCurrent
+                        ? isRetainedPhysicalSourceCurrent(input.identity.pluginId, runtime.activationOccurrenceId, runtime.sourceCustody)
+                        : runtime.isCurrent() === true
+                            && (input.retained !== undefined || isPluginConsumerCurrent(input.identity.pluginId)));
             } catch {
                 return false;
             }
@@ -5810,6 +6090,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 return createExplicitManagedProviderOperationClaimId(
                     input.identity,
                     input.operationClaim.machineId,
+                    input.sharedGateway,
                 );
             }
             if (input.operationClaim.kind === 'providerBroker') {
@@ -5817,6 +6098,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     identity: input.identity,
                     machineId: '',
                     operationClaim: input.operationClaim,
+                    sharedGateway: input.sharedGateway,
                 });
             }
             const sessionId = input.operationClaim.sessionId.trim();
@@ -5831,12 +6113,29 @@ export async function resolveExecutablePluginRuntimeRegistry(
                         input.identity.pluginId,
                     ),
                     manifestAuthority,
+                    ...(input.sharedGateway ? [input.sharedGateway] : []),
                 ])
                 : null;
         })();
         if (!operationClaimId) return null;
+        const bootstrapOccurrenceId = input.retained?.occurrenceId
+            ?? readCurrentPluginOccurrenceId(input.identity.pluginId);
+        const bootstrapSourceCustody = input.retained?.sourceCustody
+            ?? readCurrentPluginSourceCustody(input.identity.pluginId);
+        if (!bootstrapOccurrenceId || !bootstrapSourceCustody) return null;
+        if (preparation === 'bootstrapOnly') {
+            if (bootstrapSourceCustody.kind === 'development' || !readsInvocationCurrent()) return null;
+            return Object.freeze({
+                identity: Object.freeze({ ...input.identity }),
+                occurrenceId: bootstrapOccurrenceId,
+                sourceCustody: bootstrapSourceCustody,
+                manifestAuthority,
+                operationClaimId,
+                requestAuth: null,
+            });
+        }
         const lifetime = createPluginInvocationLifetime(
-            input.retained
+            input.retained || declaredSharingEligible
                 ? input.signal
                 : composePluginConsumerSignal(
                     input.identity.pluginId,
@@ -5867,6 +6166,30 @@ export async function resolveExecutablePluginRuntimeRegistry(
             }
         }
         const requestAuth = operationAuthority?.requestAuth ?? null;
+        // A contribution can use ordinary Provider credentials as well as
+        // connected subscriptions. Only admitted request-auth purposes select
+        // shared consumer custody; an opt-in or placement alone is not enough.
+        const sharingEligible = isSharedProviderAdmission(declaration, purposeBindings, requestAuth?.qualifiedRequestAuthUses ?? []);
+        const sharedGateway = sharingEligible ? input.sharedGateway : undefined;
+        if (sharingEligible && !sharedGateway) {
+            lifetime.complete();
+            await operationAuthority?.cleanup().catch(() => undefined);
+            return null;
+        }
+        const readsPhysicalOccurrenceCurrent = (): boolean => {
+            try {
+                if (isRetainedPhysicalSourceCurrent) return isRetainedPhysicalSourceCurrent(
+                    input.identity.pluginId, runtime.activationOccurrenceId, runtime.sourceCustody,
+                );
+                const source = readCurrentPluginSourceCustody(input.identity.pluginId);
+                return isPluginConsumerCurrent(input.identity.pluginId)
+                    && isCurrentPluginOccurrence(input.identity.pluginId, runtime.activationOccurrenceId)
+                    && source !== null && source !== undefined
+                    && pluginSourceCustodyEqual(source, runtime.sourceCustody);
+            } catch {
+                return false;
+            }
+        };
         const seed = Object.freeze({
             plugin: Object.freeze({
                 id: input.identity.pluginId,
@@ -5908,6 +6231,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     realm: 'managedProviderStart' as const,
                     providerLocalId: input.identity.localId,
                     operationClaimId,
+                    ...(sharedGateway ? { sharedGateway, isPhysicalOccurrenceCurrent: readsPhysicalOccurrenceCurrent } : {}),
                     requestAuth,
                     isCurrent: readsInvocationCurrent,
                 }),
@@ -5937,21 +6261,15 @@ export async function resolveExecutablePluginRuntimeRegistry(
             await operationAuthority?.cleanup().catch(() => undefined);
             return null;
         }
-        const bootstrapOccurrenceId = input.retained?.occurrenceId
-            ?? readCurrentPluginOccurrenceId(input.identity.pluginId);
-        const bootstrapSourceCustody = input.retained?.sourceCustody
-            ?? readCurrentPluginSourceCustody(input.identity.pluginId);
-        if (!bootstrapOccurrenceId || !bootstrapSourceCustody) {
-            lifetime.complete();
-            await operationAuthority?.cleanup().catch(() => undefined);
-            return null;
-        }
         let cleaned = false;
         let cleanupPromise: Promise<void> | null = null;
         let lifetimeCompleted = false;
         let operationAuthorityCleaned = operationAuthority === null;
         return Object.freeze({
             ...services,
+            ...(sharedGateway ? { lifetime: 'sharedConsumer' as const } : {}),
+            materializeManagedProviderAgentBinding:
+                (sharedGateway ? projectManagedServicesOwner : daemonManagedServicesOwner).materializeManagedProviderAgentBinding,
             bootstrap: Object.freeze({
                 identity: Object.freeze({ ...input.identity }),
                 occurrenceId: bootstrapOccurrenceId,
@@ -5997,6 +6315,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             identity: PluginContributionRef;
             purposeBindings: QualifiedConnectedAccountPurposeBindingsV1;
             operationClaim?: ManagedProviderRuntimeOperationClaim;
+            sharedGateway?: SharedManagedProviderGatewayBinding;
             signal: AbortSignal;
             isCurrent(): boolean;
         }>,
@@ -6008,56 +6327,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
         if (!invocation || input.operationClaim?.kind !== 'sessionDemand') {
             return invocation;
         }
-        let runtimeBindingBasis: ProviderRuntimeBindingBasisV1;
-        try {
-            runtimeBindingBasis = ProviderRuntimeBindingBasisV1Schema.parse(
-                input.operationClaim.runtimeBindingBasis,
-            );
-        } catch {
-            await Promise.resolve(invocation.cleanup())
-                .catch(() => undefined);
-            return null;
-        }
-        const provider = (authoritativeContributes.providers ?? []).find(
-            (candidate) => (
-                candidate.identity.pluginId === input.identity.pluginId
-                && candidate.identity.localId === input.identity.localId
-            ),
-        );
-        const declaration = provider?.definition.managedRuntime?.kind
-            === 'managed'
-            ? resolveProviderManagedRuntimeDeclarationV1({
-                implementationIdentity: input.identity,
-                managedRuntime: provider.definition.managedRuntime,
-            })
-            : null;
-        const endpoint = provider?.definition.endpointTemplates.find(
-            (candidate) => candidate.id
-                === runtimeBindingBasis.endpoint.endpointTemplateId,
-        );
-        const deployment = runtimeBindingBasis.deployment;
-        if (
-            deployment.kind !== 'managedLocal'
-            || buildQualifiedPluginContributionKey(
-                deployment.implementationIdentity,
-            ) !== buildQualifiedPluginContributionKey(input.identity)
-            || !declaration
-            || !isDeepStrictEqual(
-                deployment.managedRuntime,
-                declaration,
-            )
-            || endpoint?.protocol !== runtimeBindingBasis.endpoint.protocol
-            || !isDeepStrictEqual(
-                deployment.purposeBindings,
-                QualifiedConnectedAccountPurposeBindingsV1Schema.parse(
-                    input.purposeBindings,
-                ),
-            )
-        ) {
-            await Promise.resolve(invocation.cleanup())
-                .catch(() => undefined);
-            return null;
-        }
+        // The preparation owner validated this exact basis before acquiring
+        // any request-auth or managed-service authority.
+        const runtimeBindingBasis = input.operationClaim.runtimeBindingBasis;
+        if (invocation.lifetime === 'sharedConsumer') return invocation;
         const scope: RetainedManagedProviderRuntimeInvocationScope =
             Object.freeze({
                 sessionId: input.operationClaim.sessionId,
@@ -6132,9 +6405,69 @@ export async function resolveExecutablePluginRuntimeRegistry(
         });
     }
 
+    async function prepareManagedProviderSessionBootstrap(
+        input: ManagedProviderSessionBootstrapPreparation,
+    ): Promise<ResolvedManagedProviderRuntimeInvocationServices['bootstrap'] | null> {
+        const parsed = ProviderRuntimeBindingBasisV1Schema.safeParse(input.runtimeBindingBasis);
+        if (!parsed.success || parsed.data.deployment.kind !== 'managedLocal'
+            || input.sessionId.trim() !== input.sessionId || !input.sessionId
+            || input.signal.aborted || !input.isCurrent()) return null;
+        const basis = parsed.data;
+        const deployment = basis.deployment;
+        if (deployment.kind !== 'managedLocal') return null;
+        const current = await acquireManagedProviderRuntime(deployment.implementationIdentity);
+        if (!current || !current.isCurrent()) return null;
+        let retained: ManagedProviderInvocationPreparation['retained'];
+        let retainedAvailable: (() => Promise<void>) | undefined;
+        if (input.retainedScope) {
+            const scope = input.retainedScope;
+            if (scope.sessionId !== input.sessionId
+                || !isDeepStrictEqual(scope.runtimeBindingBasis, basis)
+                || buildQualifiedPluginContributionKey(scope.identity)
+                    !== buildQualifiedPluginContributionKey(deployment.implementationIdentity)
+                || scope.occurrenceId !== current.activationOccurrenceId
+                || !isDeepStrictEqual(scope.sourceCustody, current.sourceCustody)) return null;
+            const attested = await attestRetainedManagedProvider({
+                paths: resolvePluginStorePaths({ happyHomeDir: params?.happyHomeDir }),
+                sessionId: scope.sessionId,
+                identity: scope.identity,
+                occurrenceId: scope.occurrenceId,
+                sourceCustody: scope.sourceCustody,
+                manifestAuthority: scope.manifestAuthority,
+                runtimeBindingBasis: basis,
+            });
+            if (!attested) return null;
+            retainedAvailable = attested.assertStillAvailable;
+            retained = Object.freeze({
+                declaration: attested.declaration,
+                pluginVersion: attested.pluginVersion,
+                occurrenceId: attested.occurrenceId,
+                sourceCustody: attested.sourceCustody,
+                manifestAuthority: attested.manifestAuthority,
+                requiredHostAccess: attested.requiredHostAccess,
+                operationClaimId: scope.operationClaimId,
+            });
+        }
+        const bootstrap = await createManagedProviderRuntimeInvocationServicesInternal({
+            identity: deployment.implementationIdentity,
+            purposeBindings: deployment.purposeBindings,
+            operationClaim: { kind: 'sessionDemand', sessionId: input.sessionId, runtimeBindingBasis: basis },
+            ...(retained ? { retained } : {}),
+            signal: input.signal,
+            isCurrent: () => input.isCurrent() && current.isCurrent(),
+        }, 'bootstrapOnly');
+        try {
+            await retainedAvailable?.();
+            return !input.signal.aborted && input.isCurrent() && current.isCurrent() ? bootstrap : null;
+        } catch {
+            return null;
+        }
+    }
+
     async function createRetainedManagedProviderRuntimeInvocationServices(
         input: Readonly<{
             scope: RetainedManagedProviderRuntimeInvocationScope;
+            sharedGateway?: SharedManagedProviderGatewayBinding;
             signal: AbortSignal;
             isCurrent(): boolean;
             readAdoptedPublicOutcome():
@@ -6143,11 +6476,13 @@ export async function resolveExecutablePluginRuntimeRegistry(
         }>,
     ): Promise<ResolvedManagedProviderRuntimeInvocationServices | null> {
         if (input.signal.aborted || !input.isCurrent()) return null;
-        let adoptedPublicOutcome: ManagedProviderAdoptedPublicOutcome;
+        let adoptedPublicOutcome: ManagedProviderAdoptedPublicOutcome | null = null;
         try {
-            const candidate = await input.readAdoptedPublicOutcome();
+            const candidate = input.sharedGateway
+                ? null
+                : await input.readAdoptedPublicOutcome();
             if (
-                !candidate
+                !input.sharedGateway && (!candidate
                 || candidate.operationClaimId
                     !== input.scope.operationClaimId
                 || candidate.serviceId.trim().length === 0
@@ -6161,9 +6496,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     endpoint.endpointTemplateId
                         !== candidate.endpointTemplateIds[index]
                     || !endpoint.servicePath.startsWith('/')
-                ))
+                )))
             ) return null;
-            adoptedPublicOutcome = Object.freeze({
+            adoptedPublicOutcome = candidate ? Object.freeze({
                 ...candidate,
                 endpointTemplateIds: Object.freeze([
                     ...candidate.endpointTemplateIds,
@@ -6171,7 +6506,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 endpoints: Object.freeze(candidate.endpoints.map(
                     (endpoint) => Object.freeze({ ...endpoint }),
                 )),
-            });
+            }) : null;
             if (await input.revalidatePolicy() !== true) return null;
         } catch {
             return null;
@@ -6188,9 +6523,15 @@ export async function resolveExecutablePluginRuntimeRegistry(
         });
         if (
             !retainedProvider
-            || !adoptedPublicOutcome.endpointTemplateIds.includes(
+            || (adoptedPublicOutcome && !adoptedPublicOutcome.endpointTemplateIds.includes(
                 retainedProvider.runtimeBindingBasis.endpoint.endpointTemplateId,
-            )
+            ))
+            || (input.sharedGateway && (
+                retainedProvider.declaration.sharing !== 'connectionMachine'
+                || input.sharedGateway.consumerId !== scope.sessionId
+                || input.sharedGateway.connectionId
+                    !== retainedProvider.runtimeBindingBasis.connectionId
+            ))
         ) return null;
         if (!input.isCurrent()) return null;
         const invocation =
@@ -6198,6 +6539,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 identity: retainedProvider.identity,
                 purposeBindings:
                     retainedProvider.runtimeBindingBasis.deployment.purposeBindings,
+                ...(input.sharedGateway ? { sharedGateway: input.sharedGateway } : {}),
                 retained: Object.freeze({
                     declaration: retainedProvider.declaration,
                     pluginVersion: retainedProvider.pluginVersion,
@@ -6220,10 +6562,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     () => false,
                     () => true,
                 )
-                || !isDeepStrictEqual(
+                || (adoptedPublicOutcome && !isDeepStrictEqual(
                     await input.readAdoptedPublicOutcome(),
                     adoptedPublicOutcome,
-                )
+                ))
                 || await input.revalidatePolicy() !== true
             ) {
                 await invocation.cleanup();
@@ -6536,6 +6878,21 @@ export async function resolveExecutablePluginRuntimeRegistry(
     };
 
     const resolvedRuntimeRegistry: ResolvedExecutablePluginRuntimeRegistry = {
+        get projectManagedServices() {
+            return projectManagedServicesOwner;
+        },
+        retainProjectManagedServicesOwner(owner, isPhysicalSourceCurrent) {
+            if (owner && owner !== projectManagedServicesOwner) {
+                if (daemonManagedServicesOwner.listProjectServices().length > 0) {
+                    throw new Error('Cannot replace established Project service custody');
+                }
+                projectManagedServicesOwner = owner;
+            }
+            projectManagedServicesOwner.configureHostBindings(daemonManagedServicesHostBindings);
+            isRetainedPhysicalSourceCurrent = isPhysicalSourceCurrent;
+            preserveProjectServicesOnRegistryRetirement = projectManagedServicesOwner === daemonManagedServicesOwner;
+            return projectManagedServicesOwner;
+        },
         contributes: authoritativeContributes,
         durableRevision: committed?.commit?.revision ?? -1,
         generation: activatedRegistry.generation,
@@ -6559,7 +6916,6 @@ export async function resolveExecutablePluginRuntimeRegistry(
         readReleaseLessMaterializations: () => Object.freeze([...releaseLessDeclarationsByPluginId.values()]
             .flatMap((declaration) => (
                 declaration.runtimeMaterialization
-                && activatedRegistry.activatedPluginIds.has(declaration.runtimeMaterialization.pluginId)
                     ? [declaration.runtimeMaterialization]
                     : []
             ))),
@@ -6611,6 +6967,44 @@ export async function resolveExecutablePluginRuntimeRegistry(
         },
         activateContributionsOnDemand,
         acquireAgentCatalogEntry,
+        resolveProjectNativeAdapter(reference, role) {
+            return resolveProjectNativeAdapter({
+                reference, role, targets: authoritativeContributes.activationTargets,
+                registry: {
+                    activateContributionsOnDemand,
+                    get targetRegistrations() { return activatedRegistry.targetRegistrations; },
+                    readPluginOccurrenceId: readCurrentPluginOccurrenceId,
+                    isPluginOccurrenceCurrent: isCurrentPluginOccurrence,
+                },
+                isAdmitted: () => resolveRuntimeConsumerLifecycle(reference.pluginId).isCurrent(),
+                createInvocationContext(input) {
+                    const target = resolveExactActivationTarget(reference.pluginId);
+                    if (!target || !input.isCurrent()) throw new Error('Native adapter occurrence is unavailable');
+                    const lifetime = createPluginInvocationLifetime(composePluginConsumerSignal(reference.pluginId, input.signal));
+                    try {
+                        const seed: PluginInvocationServicesSeed = {
+                            plugin: { id: reference.pluginId, version: target.manifest.version },
+                            contribution: { id: reference.localId, qualifiedId: `${reference.pluginId}/projectNativeAdapters/${reference.localId}` },
+                            occurrenceId: input.occurrenceId,
+                            sourceCustody: readCurrentPluginSourceCustody(reference.pluginId) ?? undefined,
+                            correlationId: randomUUID(), surface: 'cli',
+                            signal: lifetime.signal, redactionLifetimeSignal: lifetime.redactionLifetimeSignal,
+                            isOccurrenceCurrent: () => !lifetime.signal.aborted && input.isCurrent(),
+                        };
+                        const hostAccessRequests = resolveManifestHostAccessRequestsForQualifiedContribution({
+                            manifest: target.manifest, pluginId: reference.pluginId, contribution: seed.contribution,
+                        });
+                        if (!hostAccessRequests) throw new Error('Native adapter HostAccess is unavailable');
+                        const services = invocationServiceOwners.createOperationServices(seed, {
+                            filesystemRoots: { pluginData: join(pluginStorePaths.storageDir, reference.pluginId, 'fs'), workspace: input.root, projects: new Map() },
+                            hostAccessRequests, environment: input.environment,
+                        });
+                        return { context: { plugin: seed.plugin, contribution: seed.contribution, surface: seed.surface,
+                            invokedAtMs: lifetime.invokedAtMs, signal: lifetime.signal, services }, complete: lifetime.complete };
+                    } catch (error) { lifetime.complete(); throw error; }
+                },
+            });
+        },
         async resolveCaptureSource(reference) {
             const target = authoritativeContributes.activationTargets.find(candidate => candidate.pluginId === reference.pluginId);
             const declaration = target?.manifest.contributes.captureSources?.find(candidate => candidate.id === reference.localId);
@@ -6634,6 +7028,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         revalidateManagedProviderExplicitStarts,
         retireManagedProviderExplicitStarts,
         createManagedProviderRuntimeInvocationServices,
+        prepareManagedProviderSessionBootstrap,
         createRetainedManagedProviderRuntimeInvocationServices,
         activatePluginsForValidation,
         recordPluginActivationFailure,

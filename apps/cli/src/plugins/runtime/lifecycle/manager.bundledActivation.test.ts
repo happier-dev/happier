@@ -1,4 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { builtinModules } from 'node:module';
+import { isAbsolute, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { build } from 'vite';
 
 import { listDeclaredPluginContributionFamilies } from '@happier-dev/protocol';
 
@@ -13,6 +19,77 @@ import type { TargetInvocationServiceOwner } from './contributions/targetHooks';
 import { activatePluginRuntimeRegistry } from './manager';
 
 describe('bundled PluginApi parity', () => {
+    it('activates the real frozen bundled Agent on first demand through canonical source custody', async () => {
+        const repoDir = fileURLToPath(new URL('../../../../../../', import.meta.url));
+        const outputDir = await mkdtemp('/var/tmp/happier-frozen-first-demand-');
+        try {
+            // The repository build script is a genuinely untyped development boundary.
+            const { buildSourceRuntimeBundle } = await import(/* @vite-ignore */ pathToFileURL(join(repoDir, 'apps/stack/scripts/build/build_source_runtime.mjs')).href);
+            const runtime = await buildSourceRuntimeBundle({ repoDir, outputDir: join(outputDir, 'runtime'), component: 'daemon' });
+            const entry = join(outputDir, 'firstDemand.ts');
+            const owner = (path: string) => JSON.stringify(join(repoDir, 'apps/cli/src', path));
+            await writeFile(entry, `
+                import assert from 'node:assert/strict';
+                import {activatePluginRuntimeRegistry} from ${owner('plugins/runtime/lifecycle/manager.ts')};
+                import {createDaemonPluginDevelopmentRootsOwner} from ${owner('plugins/daemon/developmentRoots.ts')};
+                import {createBundledActivationSourceResolver} from ${owner('plugins/runtime/bundledActivationSource.ts')};
+                import {createResolvedContributionRegistry} from ${owner('plugins/projection/registry/createResolvedContributionRegistry.ts')};
+                import {resolveBuiltInContributions} from ${owner('plugins/projection/registry/resolveBuiltInContributions.ts')};
+                export async function verify() {
+                    const contributes = createResolvedContributionRegistry(resolveBuiltInContributions());
+                    const roots = createDaemonPluginDevelopmentRootsOwner({
+                        happyHomeDir: ${JSON.stringify(join(outputDir, 'home'))},
+                        submitObservation: async () => {throw new Error('Frozen demand cannot prepare moving source');},
+                        startCollectionObserver: async () => {throw new Error('Frozen demand cannot start watchers');},
+                        startSourceObserver: async () => {throw new Error('Frozen demand cannot start watchers');},
+                    });
+                    const resolver = createBundledActivationSourceResolver({
+                        bundledPackageNames: contributes.activationTargets.flatMap(target => target.daemonEntryPath ? [target.daemonEntryPath] : []),
+                        resolveDevelopmentSourceAuthority: roots.resolveDevelopmentSourceAuthority,
+                    });
+                    const activated = await activatePluginRuntimeRegistry({
+                        contributes, generation: 1, resolveActivationSource: resolver,
+                        invocationServices: {
+                            createOrdinaryServiceBinding() {throw new Error('First demand must not invoke a service');},
+                            createServices() {throw new Error('First demand must not invoke a service');},
+                            resolveInvocationHostPolicy() {throw new Error('First demand must not invoke a service');},
+                        },
+                    });
+                    try {
+                        const agent = contributes.agents.find(entry => entry.pluginId === 'happier.agent.codex');
+                        assert.ok(agent?.identity);
+                        assert.equal(activated.activatedPluginIds.has(agent.pluginId), false);
+                        const demand = [{pluginId:agent.pluginId,family:'agents',localId:agent.identity.localId}];
+                        await activated.activateContributionsOnDemand(demand);
+                        assert.equal(activated.activatedPluginIds.has(agent.pluginId), true);
+                        assert.deepEqual(activated.pluginDiagnosticsByPluginId[agent.pluginId] ?? [], []);
+                        assert.equal(activated.readPluginSourceCustody(agent.pluginId)?.kind, 'development');
+                        assert.equal(activated.agentRuntimesByAgentId.has(agent.identity.localId), true);
+                        await activated.activateContributionsOnDemand(demand);
+                        assert.equal(activated.targetActivationFacts.filter(fact => fact.pluginId === agent.pluginId && fact.status === 'active').length, 1);
+                    } finally { await activated.dispose(); await roots.stop(); }
+                }
+            `);
+            const harnessDir = join(runtime.cliDir, 'src/chunks');
+            await mkdir(harnessDir, { recursive: true });
+            await build({
+                configFile: join(repoDir, 'apps/cli/vitest.config.ts'), logLevel: 'silent',
+                build: {
+                    outDir: harnessDir, emptyOutDir: false, minify: false,
+                    lib: { entry, formats: ['es'], fileName: () => 'firstDemand.mjs' },
+                    rollupOptions: { external: (id) => id.startsWith('node:') || builtinModules.includes(id)
+                        || (!id.startsWith('.') && !isAbsolute(id) && !id.startsWith('@/') && !id.startsWith('@happier-dev/') && !id.startsWith('#') && !id.startsWith('\0')) },
+                },
+            });
+            const child = spawnSync(process.execPath, ['--input-type=module', '--eval', `await (await import(${JSON.stringify(pathToFileURL(join(harnessDir, 'firstDemand.mjs')).href)})).verify();`], {
+                env: { ...process.env, ...runtime.env, HAPPIER_HOME_DIR: join(outputDir, 'home') }, encoding: 'utf8',
+            });
+            expect(child.status, child.stderr).toBe(0);
+        } finally {
+            await rm(outputDir, { recursive: true, force: true });
+        }
+    }, 120_000);
+
     it('keeps ordinary bundled Agents cold and activates one exactly once on first Agent demand', async () => {
         const contributes = createResolvedContributionRegistry(resolveBuiltInContributions());
         const resolveBundledActivationSource = createBundledActivationSourceResolver({

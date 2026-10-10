@@ -4,14 +4,34 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { resolveAndDownloadNpmArtifact, type NpmRegistryArtifactClient } from './adapter';
 
 const dirs: string[] = [];
-afterEach(async () => Promise.all(dirs.splice(0).map((path) => rm(path, { recursive: true, force: true }))));
+afterEach(async () => {
+  vi.useRealTimers();
+  await Promise.all(dirs.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+});
 
 describe('resolveAndDownloadNpmArtifact', () => {
+  it('honors an explicitly longer enclosing deadline without the former five-minute clamp', async () => {
+    const bytes = Buffer.from('late package');
+    const integrity = `sha512-${createHash('sha512').update(bytes).digest('base64')}`;
+    const dir = await mkdtemp(join(tmpdir(), 'happier-npm-explicit-deadline-'));
+    dirs.push(dir);
+    const client: NpmRegistryArtifactClient = {
+      getJson: async () => ({ name: 'plugin', versions: {
+        '1.0.0': { name: 'plugin', version: '1.0.0', dist: { integrity, tarball: 'https://registry.example.test/plugin.tgz' } },
+      } }),
+      getBody: async () => ({ body: Readable.from([bytes]) }),
+    };
+    await expect(resolveAndDownloadNpmArtifact({
+      input: { registryOrigin: 'https://registry.example.test', packageName: 'plugin', selector: '1.0.0' },
+      destinationPath: join(dir, 'plugin.tgz'), artifactMaxBytes: 1024, timeoutMs: 600_000, client,
+    })).resolves.toMatchObject({ source: { version: '1.0.0' } });
+  });
+
   it('hands an exact integrity-verified immutable candidate to staging without executing package logic', async () => {
     const bytes = Buffer.from('self-contained plugin package');
     const integrity = `sha512-${createHash('sha512').update(bytes).digest('base64')}`;
@@ -141,21 +161,20 @@ describe('resolveAndDownloadNpmArtifact', () => {
         runtime: { apiVersion: 1 },
         contributes: {},
       },
-      uiArtifacts: { version: 1, entries },
+      uiArtifacts: { version: 2, entries },
     });
     const incompatibleUiEntry = {
-      contributionId: 'main',
+      artifactId: 'main',
       tier: 'hostedWeb',
-      entry: 'web/index.html',
+      entry: 'hosted-web/main/index.html',
       files: [{
-        relativePath: 'web/index.html',
+        relativePath: 'hosted-web/main/index.html',
         digest: `sha256:${'a'.repeat(64)}`,
         byteSize: 1,
       }],
       digest: `sha256:${'b'.repeat(64)}`,
-      builtWith: { bundler: 'vite', version: '7.0.0' },
-      hostUiApiVersion: '999.0.0',
-      compat: {},
+      builtWith: { staging: 'staticDirectory' },
+      hostUiApiRange: '^999.0.0',
     };
     const client: NpmRegistryArtifactClient = {
       getJson: async () => ({

@@ -2,8 +2,7 @@ import { spawn } from 'node:child_process';
 import { unlinkSync, writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, stat, unlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -35,13 +34,95 @@ async function waitForChild(child: ReturnType<typeof spawn>): Promise<void> {
   }
 }
 
+async function expectQueuedLockCancellation(params: Parameters<typeof withPluginStoreLock>[0]): Promise<void> {
+  const abort = new AbortController();
+  const operation = withPluginStoreLock({ ...params, signal: abort.signal });
+  const assertion = expect(operation).rejects.toMatchObject({ name: 'AbortError' });
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 40));
+  abort.abort();
+  await assertion;
+}
+
 afterEach(async () => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   await Promise.all(roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true })));
 });
 
 describe('withPluginStoreLock', () => {
+  it('recovers exact dead quarantine ownership without using unknown-record age', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-store-lock-quarantine-'));
+    roots.push(happyHomeDir);
+    const paths = resolvePluginStorePaths({ happyHomeDir });
+    const lockName = 'dead-quarantine.lock';
+    const lockPath = join(paths.locksDir, lockName);
+    const deadPid = 999_997;
+    const artifactPath = `${lockPath}.reclaim-${deadPid}-1-00000000-0000-4000-8000-000000000001`;
+    await mkdir(paths.locksDir, { recursive: true });
+    await writeFile(artifactPath, JSON.stringify({ pid: deadPid, ownerToken: 'dead-owner',
+      processStartedAtMs: 1, createdAtMs: 1, updatedAtMs: 1 }));
+    const abort = new AbortController();
+    let deadOwnerProbes = 0;
+    const actualKill = process.kill.bind(process);
+    vi.spyOn(process, 'kill').mockImplementation(((pid: number, signal?: NodeJS.Signals | number) => {
+      if (pid === deadPid && signal === 0) {
+        // A repeated recovery pass proves the first exact-death observation
+        // failed to reclaim. End the test's own queued occurrence deterministically.
+        if (++deadOwnerProbes > 2) abort.abort();
+        throw Object.assign(new Error('no such process'), { code: 'ESRCH' });
+      }
+      return actualKill(pid, signal);
+    }) as typeof process.kill);
+    await expect(withPluginStoreLock({ paths, lockName, signal: abort.signal, fn: async () => 'recovered' })).resolves.toBe('recovered');
+    await expect(stat(artifactPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+  it('waits beyond the former cutoff until a live predecessor owner releases', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-store-lock-slow-'));
+    roots.push(happyHomeDir);
+    const paths = resolvePluginStorePaths({ happyHomeDir });
+    const lockName = 'slow-owner.lock';
+    const lockPath = join(paths.locksDir, lockName);
+    await mkdir(paths.locksDir, { recursive: true });
+    await writeFile(lockPath, JSON.stringify({ pid: process.pid, createdAtMs: 1 }));
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(0);
+    let settled = false;
+    const operation = withPluginStoreLock({ paths, lockName, fn: async () => 'acquired' });
+    const observed = operation.then(value => { settled = true; return value; }, error => { settled = true; throw error; });
+    const result = Promise.allSettled([observed]);
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 25));
+    vi.setSystemTime(10_001);
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 25));
+    expect(settled).toBe(false);
+    await unlink(lockPath);
+    expect(await result).toEqual([{ status: 'fulfilled', value: 'acquired' }]);
+  });
+
+  it('cancels queued lock admission and preserves an old unknown record rather than stealing it by age', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-store-lock-unknown-'));
+    roots.push(happyHomeDir);
+    const paths = resolvePluginStorePaths({ happyHomeDir });
+    const lockName = 'unknown-owner.lock';
+    const lockPath = join(paths.locksDir, lockName);
+    await mkdir(paths.locksDir, { recursive: true });
+    const raw = JSON.stringify({ unsupportedOwner: 'live' });
+    await writeFile(lockPath, raw);
+    await utimes(lockPath, new Date(1_000), new Date(1_000));
+    vi.stubEnv('HAPPIER_PLUGIN_STORE_LOCK_STALE_AFTER_MS', '1');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const abort = new AbortController();
+    const reason = new Error('operation cancelled');
+    const effect = vi.fn(async () => 'must-not-run');
+    const operation = withPluginStoreLock({ paths, lockName, signal: abort.signal, fn: effect });
+    const assertion = expect(operation).rejects.toMatchObject({ name: 'AbortError' });
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 30));
+    vi.setSystemTime(Date.now() + 10_001);
+    abort.abort(reason);
+    await assertion;
+    expect(effect).not.toHaveBeenCalled();
+    await expect(readFile(lockPath, 'utf8')).resolves.toBe(raw);
+  });
   it('treats EPERM from the process liveness probe as alive and never enters', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-store-lock-eperm-'));
     roots.push(happyHomeDir);
@@ -62,12 +143,10 @@ describe('withPluginStoreLock', () => {
       }
       return actualKill(pid, signal);
     }) as typeof process.kill);
-    vi.stubEnv('HAPPIER_PLUGIN_STORE_LOCK_TIMEOUT_MS', '60');
     vi.stubEnv('HAPPIER_PLUGIN_STORE_LOCK_STALE_AFTER_MS', '1');
     const effect = vi.fn(async () => 'must-not-run');
 
-    await expect(withPluginStoreLock({ paths, lockName, fn: effect }))
-      .rejects.toThrow(`Timeout acquiring plugin store lock '${lockName}' after 60ms`);
+    await expectQueuedLockCancellation({ paths, lockName, fn: effect });
     expect(effect).not.toHaveBeenCalled();
     await expect(readFile(lockPath, 'utf8')).resolves.toBe(ownerRaw);
   });
@@ -96,12 +175,10 @@ describe('withPluginStoreLock', () => {
       }
       return actualKill(pid, signal);
     }) as typeof process.kill);
-    vi.stubEnv('HAPPIER_PLUGIN_STORE_LOCK_TIMEOUT_MS', '75');
     vi.stubEnv('HAPPIER_PLUGIN_STORE_LOCK_STALE_AFTER_MS', '1');
     const effect = vi.fn(async () => 'must-not-run');
 
-    await expect(withPluginStoreLock({ paths, lockName, fn: effect }))
-      .rejects.toThrow(`Timeout acquiring plugin store lock '${lockName}' after 75ms`);
+    await expectQueuedLockCancellation({ paths, lockName, fn: effect });
     expect(substituted).toBe(true);
     expect(effect).not.toHaveBeenCalled();
     await expect(readFile(lockPath, 'utf8')).resolves.toBe(successorRaw);
@@ -130,7 +207,7 @@ describe('withPluginStoreLock', () => {
     await expect(stat(lockPath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('still reclaims a canonical dead owner when unknown-record staleness is bounded past the timeout', async () => {
+  it('still reclaims a canonical dead owner without using unknown-record age', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-store-lock-canonical-dead-'));
     roots.push(happyHomeDir);
     const paths = resolvePluginStorePaths({ happyHomeDir });
@@ -153,7 +230,6 @@ describe('withPluginStoreLock', () => {
       }
       return actualKill(pid, signal);
     }) as typeof process.kill);
-    vi.stubEnv('HAPPIER_PLUGIN_STORE_LOCK_TIMEOUT_MS', '1000');
     vi.stubEnv('HAPPIER_PLUGIN_STORE_LOCK_STALE_AFTER_MS', '1');
 
     await expect(withPluginStoreLock({ paths, lockName, fn: async () => 'reclaimed' }))
@@ -202,7 +278,7 @@ describe('withPluginStoreLock', () => {
     const lockPath = join(paths.locksDir, lockName);
     const readyPath = join(happyHomeDir, 'child-ready');
     const releasePath = join(happyHomeDir, 'child-release');
-    const wrapperUrl = pathToFileURL(resolve(process.cwd(), 'src/utils/fs/jsonOwnerFileLock.ts')).href;
+    const wrapperUrl = new URL('../../utils/fs/jsonOwnerFileLock.ts', import.meta.url).href;
     const source = `
 import { stat, writeFile } from 'node:fs/promises';
 const { withJsonOwnerFileLock } = await import(${JSON.stringify(wrapperUrl)});
@@ -228,22 +304,25 @@ await withJsonOwnerFileLock({
       },
       stdio: ['ignore', 'ignore', 'pipe'],
     });
+    const settlement = waitForChild(child);
 
     try {
-      await waitForFile(readyPath);
-      vi.stubEnv('HAPPIER_PLUGIN_STORE_LOCK_TIMEOUT_MS', '75');
+      await Promise.race([
+        waitForFile(readyPath),
+        settlement.then(() => { throw new Error('Lock owner exited before publishing readiness'); }),
+      ]);
       vi.stubEnv('HAPPIER_PLUGIN_STORE_LOCK_STALE_AFTER_MS', '60000');
       const effect = vi.fn(async () => 'must-not-run');
-      await expect(withPluginStoreLock({ paths, lockName, fn: effect }))
-        .rejects.toThrow(`Timeout acquiring plugin store lock '${lockName}' after 75ms`);
+      await expectQueuedLockCancellation({ paths, lockName, fn: effect });
       expect(effect).not.toHaveBeenCalled();
 
       await writeFile(releasePath, 'release', 'utf8');
-      await waitForChild(child);
+      await settlement;
       await expect(withPluginStoreLock({ paths, lockName, fn: async () => 'acquired' }))
         .resolves.toBe('acquired');
     } finally {
       child.kill('SIGKILL');
+      await settlement.catch(() => undefined);
     }
   });
 });

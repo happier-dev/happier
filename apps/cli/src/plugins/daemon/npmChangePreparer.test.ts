@@ -1142,7 +1142,7 @@ describe('createDaemonNpmPluginChangePreparer', () => {
     })).resolves.toEqual({ kind: 'cancelled' });
   });
 
-  it('keeps a long incompatible generated UI artifact reason compatible with the daemon review contract', async () => {
+  it('reports a generated UI artifact compatibility failure code regardless of authored range length', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-npm-bounded-ui-artifact-compatibility-review-home-'));
     roots.push(happyHomeDir);
     const compatibleFixture = await createNpmPackageFixture({
@@ -1239,7 +1239,6 @@ describe('createDaemonNpmPluginChangePreparer', () => {
     if (result.kind !== 'reviewRequired' || result.reviewKind !== 'installation') throw new Error('Expected a manual installation review');
     const diagnostic = result.review.compatibility.blockedNewerVersions?.[0]?.diagnostics[0];
     expect(diagnostic?.message).not.toContain(longHostUiApiRange);
-    expect(diagnostic?.message.length).toBeLessThanOrEqual(32_768);
     expect(PluginInstallationReviewSchema.safeParse(result.review).success).toBe(true);
     await expect(service.decidePluginChange({
       pendingChangeId: result.pendingChangeId,
@@ -1247,7 +1246,7 @@ describe('createDaemonNpmPluginChangePreparer', () => {
     })).resolves.toEqual({ kind: 'cancelled' });
   });
 
-  it('keeps a long compatible selected happier engine range within the daemon review contract', async () => {
+  it('preserves a long compatible selected happier engine range through the daemon review', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-npm-bounded-selected-engine-review-home-'));
     roots.push(happyHomeDir);
     const happierEngine = `>=0.0.0${' '.repeat(37_980)}<10000.0.0`;
@@ -1278,7 +1277,7 @@ describe('createDaemonNpmPluginChangePreparer', () => {
       review: {
         version: fixture.version,
         compatibility: {
-          happier: 'Declared compatible Happier CLI range',
+          happier: happierEngine,
           runtimeApiVersion: 1,
         },
       },
@@ -1287,7 +1286,7 @@ describe('createDaemonNpmPluginChangePreparer', () => {
     if (result.kind !== 'reviewRequired' || result.reviewKind !== 'installation') {
       throw new Error('Expected a manual installation review');
     }
-    expect(result.review.compatibility.happier).not.toContain(happierEngine);
+    expect(result.review.compatibility.happier).toBe(happierEngine);
     expect(PluginInstallationReviewSchema.safeParse(result.review).success).toBe(true);
     await expect(service.decidePluginChange({
       pendingChangeId: result.pendingChangeId,

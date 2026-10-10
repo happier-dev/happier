@@ -20,6 +20,8 @@ import type {
     PluginNetworkClientBindingScope,
     PluginNetworkBindingScope,
 } from '@/plugins/runtime/invocation/services/types';
+import { normalizeConnectedAccountConfiguredOrigin } from '@happier-dev/protocol/connect/execute-configuration-action';
+export { normalizeConnectedAccountConfiguredOrigin } from '@happier-dev/protocol/connect/execute-configuration-action';
 
 type RuntimeConfiguration = PluginConnectedAccountAuthenticationContext['configuration'];
 
@@ -58,21 +60,6 @@ export type ConnectedAccountConfiguredEndpoint = Readonly<{
     base: string;
     grantTargetKind: 'connectedAccountOrigin' | 'fixedOrigin';
 }>;
-
-export function normalizeConnectedAccountConfiguredOrigin(
-    value: string,
-): Readonly<{ origin: string }> {
-    const url = new URL(value);
-    if (
-        url.protocol !== 'https:'
-        || url.username !== ''
-        || url.password !== ''
-        || url.origin !== value.replace(/\/+$/, '')
-    ) {
-        throw new TypeError('Connected-account configured origin must be an exact credential-free HTTPS origin');
-    }
-    return Object.freeze({ origin: url.origin });
-}
 
 /**
  * Normalizes a configured service base. A base may live beneath a path segment

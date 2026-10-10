@@ -1,3 +1,4 @@
+import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { describe, expect, it, vi } from 'vitest';
 
@@ -137,6 +138,7 @@ function createSpawnHookRuntimeRegistry(params: Readonly<{
     activateContributionsOnDemand: async () => [],
     createAgentInvocationServices: async () => createUnavailablePluginServices(),
     resolveCaptureSource: unexpectedCaptureSourceResolution,
+    resolveProjectNativeAdapter: unexpectedProjectNativeAdapterResolution,
     resolvePromptAssetBlocks: async () => Object.freeze([]),
     retireConsumers: () => {},
     dispose: params.dispose ?? (async () => {}),

@@ -17,8 +17,6 @@ import {
 } from './commitRecord';
 import { verifyPluginRegistryCommitGenerationReferences } from './generationStore';
 
-const DEFAULT_ACQUIRE_TIMEOUT_MS = 10_000;
-
 const LockRecordSchema = z.object({
   t: z.literal('happier_plugin_registry_commit_lock_v1'),
   token: z.string().uuid(),
@@ -37,7 +35,6 @@ export type PluginRegistryCommitResult =
 type CoordinatorDependencies = Readonly<{
   paths: PluginStorePaths;
   owner: Readonly<{ pid: number; instanceId: string }>;
-  acquireTimeoutMs?: number;
   nowMs?: () => number;
   isProcessAlive?: (pid: number) => boolean;
   sleep?: (ms: number) => Promise<void>;
@@ -54,7 +51,8 @@ async function readLock(path: string): Promise<LockSnapshot | null> {
     return parsed.success ? { record: parsed.data, raw } : null;
   } catch (error) {
     if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return null;
-    return null;
+    if (error instanceof SyntaxError) return null;
+    throw error;
   }
 }
 
@@ -66,13 +64,14 @@ async function assertFenceOwned(path: string, expectedRaw: string): Promise<void
 }
 
 async function acquireFence(input: Required<Pick<CoordinatorDependencies,
-  'paths' | 'owner' | 'acquireTimeoutMs' | 'nowMs' | 'isProcessAlive' | 'sleep'
->>): Promise<Readonly<{ token: string; release: () => Promise<void>; assertOwned: () => Promise<void> }>> {
+  'paths' | 'owner' | 'nowMs' | 'isProcessAlive' | 'sleep'
+>> & Readonly<{ signal?: AbortSignal }>): Promise<Readonly<{ token: string; release: () => Promise<void>; assertOwned: () => Promise<void> }>> {
   const path = input.paths.registryCommitLockFilePath;
-  const startedAtMs = input.nowMs();
+  input.signal?.throwIfAborted();
   await mkdir(input.paths.stateDir, { recursive: true });
 
   while (true) {
+    input.signal?.throwIfAborted();
     const token = randomUUID();
     const record: LockRecord = {
       t: 'happier_plugin_registry_commit_lock_v1',
@@ -122,9 +121,6 @@ async function acquireFence(input: Required<Pick<CoordinatorDependencies,
       }
     }
 
-    if (input.nowMs() - startedAtMs >= input.acquireTimeoutMs) {
-      throw new Error(`Timeout acquiring plugin registry commit lock after ${input.acquireTimeoutMs}ms`);
-    }
     await input.sleep(10);
   }
 }
@@ -133,17 +129,18 @@ export async function withPluginRegistryCommitFence<T>(input: Readonly<{
   paths: PluginStorePaths;
   owner: Readonly<{ pid: number; instanceId: string }>;
   operation: () => Promise<T>;
-  acquireTimeoutMs?: number;
+  signal?: AbortSignal;
 }>): Promise<T> {
   const fence = await acquireFence({
     paths: input.paths,
     owner: input.owner,
-    acquireTimeoutMs: input.acquireTimeoutMs ?? DEFAULT_ACQUIRE_TIMEOUT_MS,
+    signal: input.signal,
     nowMs: Date.now,
     isProcessAlive: isPidPresent,
     sleep: async (ms: number) => await new Promise((resolve) => setTimeout(resolve, ms)),
   });
   try {
+    input.signal?.throwIfAborted();
     return await input.operation();
   } finally {
     await fence.release();
@@ -176,11 +173,15 @@ export function createPluginRegistryCommitCoordinator(dependencies: CoordinatorD
       const fence = await acquireFence({
         paths: dependencies.paths,
         owner: dependencies.owner,
-        acquireTimeoutMs: dependencies.acquireTimeoutMs ?? DEFAULT_ACQUIRE_TIMEOUT_MS,
+        signal: input.signal,
         nowMs,
         isProcessAlive,
         sleep,
+      }).catch((error: unknown) => {
+        if (input.signal?.aborted && error === input.signal.reason) return null;
+        throw error;
       });
+      if (!fence) return { status: 'aborted', reason: 'signal' };
       try {
         if (input.signal?.aborted) return { status: 'aborted', reason: 'signal' };
         const current = await readPluginRegistryCommitRecord(dependencies.paths);
@@ -213,6 +214,7 @@ export function createPluginRegistryCommitCoordinator(dependencies: CoordinatorD
         await verifyPluginRegistryCommitGenerationReferences(dependencies.paths, next, {
           allowInvalidUnchangedReferencesFrom: current,
         });
+        if (input.signal?.aborted) return { status: 'aborted', reason: 'signal' };
         try {
           await replacePluginRegistryCommitRecord({
             paths: dependencies.paths,

@@ -337,7 +337,8 @@ describe('Agent registration catalog projections', () => {
     const late = projected.verifyResumeReachable?.({
       vendorResumeId: 'vendor-1',
       sessionFiles: {
-        findDeclaredCandidate: async () => ({ found: true }),
+        verifyDeclaredPaths: async () => ({ found: false }),
+    findDeclaredCandidate: async () => ({ found: true }),
       },
     });
     current = false;

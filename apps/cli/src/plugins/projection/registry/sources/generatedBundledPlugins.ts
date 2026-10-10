@@ -66,6 +66,14 @@ export const BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS: readonly BundledFi
   }),
   Object.freeze({
     identity: Object.freeze({
+      pluginId: "happier.agent.custom-acp",
+      localId: "custom-acp",
+    }),
+    implementationOwnerId: "custom-acp",
+    registrationFamily: "agents",
+  }),
+  Object.freeze({
+    identity: Object.freeze({
       pluginId: "happier.agent.devin",
       localId: "devin",
     }),

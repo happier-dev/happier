@@ -161,6 +161,7 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
         currentOperations.interruptPendingInputAndRun !== undefined;
     const hasPrepareRunTeamCredentialProviderBinding =
         currentOperations.prepareRunTeamCredentialProviderBinding !== undefined;
+    const hasManagedProviderRunServices = currentOperations.managedProviderRunServices !== undefined;
     const hasPrepareTerminalPresentation =
         currentOperations.prepareTerminalPresentation !== undefined;
     let runtimeClosed = false;
@@ -333,6 +334,8 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
             await steerPrompt.call(currentOperations, message, options);
         },
         supportsInFlightSteer: () => currentOperations.supportsInFlightSteer?.() ?? false,
+        readAppliedTeamCredentialModel: () => runtimeClosed ? undefined : currentOperations.readAppliedTeamCredentialModel?.(),
+        openedWithoutConnectedServices: () => !runtimeClosed && (currentOperations.openedWithoutConnectedServices?.() ?? false),
         isTurnInFlight: () => currentOperations.isTurnInFlight?.() ?? false,
         canSteerPrompt: () => currentOperations.canSteerPrompt?.() ?? false,
         canInterruptForPendingInput: () => currentOperations.canInterruptForPendingInput?.() ?? true,
@@ -471,6 +474,30 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
                 },
             }
             : {}),
+        ...(hasManagedProviderRunServices ? {
+            managedProviderRunServices: {
+                async resolvePurpose(request: Parameters<NonNullable<PluginRuntimeHookOperations['managedProviderRunServices']>['resolvePurpose']>[0]) {
+                    const services = currentOperations.managedProviderRunServices;
+                    if (!services || runtimeClosed) throw new Error('Managed Provider Run authority is unavailable');
+                    return await services.resolvePurpose(request);
+                },
+                async openBinding(request: Parameters<NonNullable<PluginRuntimeHookOperations['managedProviderRunServices']>['openBinding']>[0]) {
+                    const services = currentOperations.managedProviderRunServices;
+                    if (!services || runtimeClosed) throw new Error('Managed Provider Run authority is unavailable');
+                    return await services.openBinding(request);
+                },
+                async readBinding(request: Parameters<NonNullable<PluginRuntimeHookOperations['managedProviderRunServices']>['readBinding']>[0]) {
+                    const services = currentOperations.managedProviderRunServices;
+                    if (!services || runtimeClosed) throw new Error('Managed Provider Run authority is unavailable');
+                    return await services.readBinding(request);
+                },
+                async closeBinding(request: Parameters<NonNullable<PluginRuntimeHookOperations['managedProviderRunServices']>['closeBinding']>[0]) {
+                    const services = currentOperations.managedProviderRunServices;
+                    if (!services) throw new Error('Managed Provider Run authority is unavailable');
+                    await services.closeBinding(request);
+                },
+            },
+        } : {}),
         ...(hasPrepareRunTeamCredentialProviderBinding
             ? {
                 prepareRunTeamCredentialProviderBinding: (

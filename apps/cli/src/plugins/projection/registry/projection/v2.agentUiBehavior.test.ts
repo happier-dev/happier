@@ -125,6 +125,7 @@ describe('external Agent UI-behavior descriptor projection', () => {
                     },
                 },
                 ui: {
+                    identityColor: { light: '#112233', dark: '#aabbcc' },
                     behavior: {
                         permissions: {
                             footer: {

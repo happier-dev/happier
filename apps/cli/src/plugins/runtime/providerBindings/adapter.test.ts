@@ -5,6 +5,7 @@ import {
     type AgentProviderRequirementsV1,
 } from '@happier-dev/protocol';
 import type { PluginApi } from '@happier-dev/plugin-sdk';
+import { CLAUDE_PROVIDER_BINDING_ADAPTER_V1, PLUGIN_MANIFEST as CLAUDE_PLUGIN_MANIFEST } from '@happier-dev/plugins-claude';
 
 import type { ResolvedExecutablePluginRuntimeRegistry } from '../resolveExecutablePluginRuntimeRegistry';
 import type { PluginRuntimeRegistryLease } from '../reload/controller';
@@ -108,7 +109,67 @@ const binding = {
     compatibilityFingerprint: 'provider-fingerprint:v1:compatibility:abc',
 };
 
+it('materializes admitted Claude helper pins through the real adapter and closed host boundary', async () => {
+    const support = CLAUDE_PLUGIN_MANIFEST.contributes.agents[0]!.providerRequirements!;
+    const materialization = await materializeCapturedAgentProviderBinding({
+        resolved: {
+            pluginId: 'happier.agent.claude',
+            adapter: CLAUDE_PROVIDER_BINDING_ADAPTER_V1,
+            support,
+            isCurrent: () => true,
+        },
+        binding: {
+            ...binding,
+            endpoint: { ...binding.endpoint, protocol: 'anthropic' },
+            runtimeCredentialTransport: null,
+            claudeHelperModels: { fast: 'gateway-fast', default: 'gateway-default', strongest: 'gateway-strongest' },
+        },
+        prepared: CLAUDE_PROVIDER_BINDING_ADAPTER_V1.prepare({
+            v: 1,
+            agentTargetKey: binding.agentTargetKey,
+            connectionId: binding.selection.connectionId,
+            model: binding.selection.model,
+            claudeHelperModels: { fast: 'gateway-fast', default: 'gateway-default', strongest: 'gateway-strongest' },
+        }),
+        credential: { kind: 'none' },
+    });
+
+    expect(Object.fromEntries(materialization.env.filter((entry) => entry.name.startsWith('ANTHROPIC_DEFAULT_'))
+        .map((entry) => [entry.name, entry.value]))).toEqual({
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'gateway-fast',
+        ANTHROPIC_DEFAULT_SONNET_MODEL: 'gateway-default',
+        ANTHROPIC_DEFAULT_OPUS_MODEL: 'gateway-strongest',
+    });
+});
+
 describe('leased provider-binding adapter ABI', () => {
+    it.each([
+        { keys: ['GATEWAY_KEY'], accepted: true },
+        { keys: ['GATEWAY_KEY', 'HELPER_MODEL'], accepted: true },
+        { keys: ['HELPER_MODEL'], accepted: false },
+        { keys: ['GATEWAY_KEY', 'UNDECLARED_MODEL'], accepted: false },
+    ])('requires static keys and permits only declared optional keys: %j', async ({ keys, accepted }) => {
+        const adapter = {
+            v: 1 as const,
+            adapterVersion: 1,
+            prepare: () => ({ v: 1 as const, materialization: 'engineConfig' as const }),
+            materialize: async () => ({
+                v: 1 as const, kind: 'engineConfig' as const, engineConfig: {},
+                env: keys.map((name) => ({ name, value: 'value', source: 'provider' as const })),
+            }),
+        };
+        const support = { ...staticSupport, authIsolation: {
+            ...staticSupport.authIsolation, optionalOwnedEnvKeys: ['HELPER_MODEL'],
+        } };
+        const materialize = materializeCapturedAgentProviderBinding({
+            resolved: { adapter, support, pluginId: 'fixture.agent', isCurrent: () => true },
+            binding: { ...binding, runtimeCredentialTransport: null },
+            prepared: adapter.prepare(), credential: { kind: 'none' },
+        });
+        if (accepted) expect((await materialize).env.map((entry) => entry.name)).toEqual(keys);
+        else await expect(materialize).rejects.toThrow(/owned environment/i);
+    });
+
     it('fails closed when static support and the executable adapter disagree', () => {
         const adapter = Object.freeze({
             v: 1 as const,

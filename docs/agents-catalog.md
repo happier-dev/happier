@@ -22,6 +22,7 @@ The goal is that both surfaces:
   - An **installed** Agent is routed by its qualified key `"<pluginId>/<localId>"`, so its catalog entry, engine resolution, runtime lease, CLI subcommand and execution target are all plugin-scoped. Two plugins declaring `assistant` therefore both project and activate; neither displaces the other.
   - Consumers that need the author's local id read `contribution.identity.localId`. Never re-derive a local id from a routing id.
   - The inverse direction has one owner too: a consumer holding a durable identity resolves the routing id through the registry index `agentRoutingIdentity.ts#indexAgentRoutingIdsByContributionIdentity` / `#readAgentRoutingIdForContributionIdentity` (External Sessions durable records use `apps/cli/src/api/session/external/linking/qualifiedLinkIdentityRegistry.ts#resolveCurrentExternalSessionAgentRoutingId`). Never compare a routing id against a bare `localId`: that comparison only ever matches bundled Agents and silently rejects every installed one.
+  - In 0.3 development, selectable Agent targets use `agent:<pluginId>/<localId>`. `packages/protocol/src/backends/targets/backendTargetRefV2.ts#buildBackendTargetKeyV2` owns key formatting for both durable targets and routing refs; Custom ACP selections append `:definition:<encoded definitionId>` so two definitions of the same contribution remain distinct. Predecessor configured keys are read at the compatibility boundary. The CLI Action inventory emits contribution identity, and Action options and UI engine readers share that key owner. Enumerating or parsing an option does not resolve a runtime routing id: dispatch carries the structured Agent target to the host catalog, and the existing Agent-start admission policy still applies.
 - **CLI executable**: the Agent's manifest `cli.executable.binaryName` and declared alternatives feed the canonical CLI resolver used by detection and launch. `detectKey` is a legacy bundled-Agent projection, not a separate executable-resolution authority.
   - Source of truth: the admitted Agent contribution's `cli.executable`, projected by `agentCliMetadata.ts` into the CLI runtime descriptor.
 - **cliSubcommand**: the primary CLI subcommand for this agent (usually the same as `AgentId`).
@@ -33,7 +34,60 @@ The goal is that both surfaces:
 - **Checklists**: higher-level groupings of capabilities that the app can render as guided setup steps.
   - Convention: `new-session`, `machine-details`, `resume.<agentId>`.
 
+In 0.3 development, an Agent's manifest `providerRequirements` also supports
+Account-only Provider model browsing. The existing bundled-plugin generator
+publishes those requirements alongside qualified Agent identity and admitted
+Provider declarations; CLI readers obtain the same declaration facts from the
+merged manifest registry without activating a plugin. Protocol's canonical
+compatibility policy consumes these requirements, so browsing does not invent
+an Agent protocol default or treat another plugin's matching local id as the
+selected Agent. Missing declarations remain unavailable. Declared compatibility
+is separate from executable adapter version, authorization, endpoint health and
+runtime confirmation; Account-only rows do not prove that the Agent can run on
+any machine. See [Providers](providers.md#provider-connections) for the Account
+catalog writer and declaration-only model projection.
+
 ---
+
+## Configured ACP definitions (0.3 development)
+
+The configured ACP storage contract has one private Account catalog owned by
+`packages/protocol/src/acp/catalog/catalogRowsV1.ts`, with a strict definitions
+record and the `account_acp_catalog` envelope domain. Definitions are instances
+of one declared **Custom ACP Agent** contribution, owned by
+`packages/plugins/custom-acp/src/agent/**` and declared by that plugin's manifest.
+Its identity is `{ pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }`;
+each strict authored Agent target also carries its `definitionId`. A definition
+does not create another Agent identity or runtime registry. The tolerant stored
+target reader maps the 0.2 `{ kind: 'configuredAcpBackend', backendId }` selection
+to this contribution and the same definition id; new requests and writes use the
+strict current target.
+
+The definition id survives picker selection and draft persistence/reopening,
+then the daemon admits the installed contribution and the exact catalog row.
+The host's existing runtime descriptor carries the selected definition into the
+runner. `accountConfiguredAcp.ts` owns captured Account custody and configured
+command, arguments, environment, authentication metadata, runtime options and
+capability resolution; the contribution uses the public ACP runtime. There is
+no configured-only host runtime or synthetic per-definition identity. A deleted
+definition or unavailable catalog refuses launch and requires selection repair;
+it never silently selects another definition or a bundled Agent.
+
+The Account row is authority only for those configured definitions. Bundled and
+plugin Agent projections remain available while that row is absent, loading,
+partial or unavailable; configured entries appear only from a ready scoped
+catalog. New Session waits for this readiness only when its selected entry is a
+configured backend. A genuinely empty Account can become ready-empty, but a
+failed read or envelope admission must retain its unavailable reason rather than
+publish an empty success.
+
+Retained authored transport semantics use the existing typed ACP `stderrRules`
+contribution seam. The predecessor Kiro recipe's status command/parser is retained
+as closed compatibility data, not promoted into a new executable authentication
+runner. Private SavedSecret references remain under the shared reference and
+resource mutation owner. Consumer cutover and composed runtime validation are
+still being integrated; the row contract alone does not certify Agent startup.
+See [private catalog encryption](encryption.md#private-agent-provider-and-connected-account-catalogs-03-development).
 
 ## What lives where (sources of truth)
 
@@ -133,6 +187,14 @@ snapshot alone cannot establish whether a lazy hook is available.
 Connected Account launch projections qualify declaration-local state-sharing service IDs
 with their owning plugin ID before host continuity decisions compare account selections.
 
+Connected Account generation application uses the explicit launch continuity contract.
+`continuity.generationApplicationScope` distinguishes per-session process authentication
+from a genuinely shared live auth surface; declared request-time auth uses retain their
+own application scope. A native credential directory does not establish live adoption.
+Qualified credential revisions use the existing refresh/distribution owner and preserve
+the exact service, profile and revision through rematerialization. Each Session or Run
+still needs its own application evidence.
+
 The current plugin-preview source contract also keeps two narrowly data-only
 facts in that same `catalog` declaration without routing them through a runtime
 aggregate or catalog-entry hook. `codingPromptBehavior.blocks` is an ordered,
@@ -191,7 +253,11 @@ features. It captures its Agent-owned runtime descriptor before Session creation
 the private runner bootstrap carries that launch intent separately from Agent
 authority. Fresh Session metadata and the selected opener consume the same
 descriptor. An existing Session's accepted descriptor wins over fresh process
-defaults, while current feature admission still fails closed.
+defaults. An explicit Workflow launch choice for the same Agent goes through the
+canonical inactive-Session runtime snapshot: it may select a different driver
+while retaining native Session recovery identities and handles. A different
+Agent is refused, and adoption of a retained live process keeps its actual
+descriptor. Current feature admission still fails closed.
 
 The opened Session's `prepareTerminalPresentation` then prepares its exact native
 identity and returns an optional-client attach target, a terminal launch plan, or
@@ -279,6 +345,13 @@ Current mode facts come from native observation or accepted application, never a
 The canonical V2 catalog permits an unknown current mode while preserving known selectable
 options. Readers prefer it over retained V1/ACP aliases; the same writer projects strict
 `sessionModesV1` compatibility only when the accepted current mode is known.
+
+Host-managed ACP Sessions use those same model and mode bindings at startup, on
+resume and for live ACP updates. Initial selections are applied before publishing
+the accepted startup state. Execution runs do not overwrite their parent Session
+catalog. The UI compatibility reader derives a legacy implicit `plan` mode only
+when the advertised or static catalog offers it; explicit requested mode IDs retain
+their pending state even when discovery has not confirmed them.
 
 OpenCode server Sessions observe their location-scoped native inventories at startup and on
 connection/catalog events. Failed reads retain the previous inventory and emit a default-on
@@ -411,6 +484,28 @@ The Claude plugin owns the native JSON-stream Agent SDK protocol integration wit
 the Claude Code CLI. It does not depend on the `@anthropic-ai/claude-agent-sdk`
 npm package; the SDK changelog below documents the upstream message contract.
 
+Managed Provider bindings in 0.3 development carry per-connection Claude helper
+pins through the Agent provider-binding adapter. `fast`, `default`, and
+`strongest` map to `ANTHROPIC_DEFAULT_HAIKU_MODEL`,
+`ANTHROPIC_DEFAULT_SONNET_MODEL`, and `ANTHROPIC_DEFAULT_OPUS_MODEL` in the
+session-owned launch environment and the existing single `--settings` overlay,
+since native settings `env` can override inherited process values. External
+bindings preserve native alias configuration. Each unset pin uses the selected Session
+model; explicit pins use the same admitted connection catalog and freeform
+policy as that model. Changing the effective pins requires a process restart
+through the existing binding apply policy; three unchanged explicit pins do
+not independently prevent a live Session-model change.
+
+This characterizes Claude Code 2.1.295 against its official
+[model configuration](https://code.claude.com/docs/en/model-config) and
+[subagent precedence](https://code.claude.com/docs/en/sub-agents): an invocation
+model or an explicit Agent definition still wins. Happier does not set a forced
+subagent model, rewrite Agent definitions, or write global settings. Native
+settings follow the documented [environment precedence](https://code.claude.com/docs/en/env-vars#precedence),
+including managed policy above session settings. Native
+helper request/application evidence remains part of the composed Provider QA
+journey; launch-environment assertions alone do not prove that evidence.
+
 In development source, the existing native effective-model evidence feed also
 projects observed effort onto admitted model controls. SDK initialization
 acknowledges the explicit effort captured for that actual query launch;
@@ -479,6 +574,36 @@ This is the app’s single public surface for screens:
 
 First-party Agent UI definitions live with their plugin under `packages/plugins/<agentId>/src/ui/**`. Generated descriptor projections under `apps/ui/sources/agents/registry/generatedBundledPluginEntries*.ts` feed the host registries; do not recreate the retired `apps/ui/sources/agents/providers/**` tree.
 
+In 0.3 development source, `contributes.agents[].ui.identityColor` optionally
+declares a display-only `{ light, dark }` pair of six-digit hex hues. Bundled
+UI configs consume the first-party plugin's `src/ui/descriptor.ts` value through
+the canonical generator; bundled manifest UI declarations remain forbidden.
+`getAgentIdentityColor` at the public app catalog reads installed declarations
+through the existing Account/Machine-scoped projection and uses one shared neutral
+when no valid hue is declared. Usage Agent series consume this owner; magnitude
+ramps remain presentation-owned. Hue accompanies the Agent's mark and name and
+never establishes Agent identity or routing.
+
+In 0.3 development source, full bundled-plugin generation publishes Agent ids,
+contribution identities, shared definitions, and UI cores from the current authored
+Agent set. A package preparation failure aborts full publication before replacing
+these projections and reports the package diagnostic. Correct the failed source
+and rerun the canonical generator. Bounded compiler-input and static-definition
+preparation still unblock dependency builds, and scoped/aggregate publication
+retains its existing recovery contract. Shared identity facts can retain an
+optional Agent that is absent from the admitted UI maps; identity recognition
+does not establish the presence of its UI core.
+
+`getAgentCore(...)` and `getAgent(...)` are nullable even for a bundled id.
+`AGENT_IDS` and `AGENT_CORE_CONFIGS` enumerate the admitted UI subset, rather than
+every shared bundled identity. The canonical Agent catalog projection owns title,
+channel and presentation-backing resolution when a core is absent. Selectable
+backend rows omit a missing local Agent unless the selected machine projects it;
+that machine's declared presentation remains usable without a local core.
+Retained Session identities use neutral presentation, and shared model facts
+continue to come from `@happier-dev/agents`. Consumers must not infer UI-core
+presence from `isBundledAgentId(...)` or borrow another Agent's configuration.
+
 #### Selectable Agent targets are seeded from the machine's agents projection
 
 `apps/ui/sources/agents/backendCatalog/getResolvedBackendCatalogEntries.ts` is the single
@@ -493,8 +618,9 @@ Agent-catalog tools). It seeds from three sources:
   only place a standalone installed Session Agent appears: the daemon's projection
   carries no backend map, so an installed Agent that contributes no configured backend
   has no other route into the client.
-- **Configured ACP backends** in `acpCatalogSettingsV1`, plus targets named by
-  `backendEnabledByTargetKey`.
+- **Configured ACP definitions** from the ready, Account-scoped private ACP
+  catalog, projected as definition-qualified instances of Custom ACP Agent.
+  `backendEnabledByTargetKey` supplies enablement, not missing definitions.
 
 Every row is then filtered by `readBackendTargetEnabled(...)`, so a user's Settings →
 Agents toggle is the one enable/disable authority for bundled and installed Agents alike.
@@ -624,6 +750,24 @@ There are three layers inside `apps/ui/sources/agents/`:
      - spawn env var transforms,
      - new-session UI chips + options.
 
+   In 0.3 development, descriptor-owned per-Home launch URL preferences resolve
+   the selected local routing id through `resolvePortableServerIdentityForRoutingId`
+   before reading the Account map. A present portable Home entry wins, including
+   a blank or rejected value. Only an absent portable entry falls back to the
+   original routing-key carrier written by the 0.2 UI. An explicit launch target
+   does not borrow the active Home's override; resume retains its existing
+   no-active-Home-fallback policy.
+
+In 0.3 development, the canonical bundled-plugin publisher also projects each
+admitted bundled Agent's identity, CLI declaration, Connected Account purposes
+and Account Settings declarations. Agent detail and the Connected services index
+can read these facts without a selected daemon or plugin activation. The existing
+Account Settings projection normalizes the groups and excludes daemon-custodied
+secret fields. These declarations supply neither an installed version nor a
+runtime generation; a current daemon row remains authoritative, including when
+it removes a declaration. An external Agent with the same local id never borrows
+bundled declarations.
+
 ---
 
 ## Capabilities + checklists contract (CLI ↔ app)
@@ -634,6 +778,42 @@ Defined/used in the CLI capability system:
 - `cli.<agentId>`: base “agent detected + login status + (optional) ACP capability surface” probe
 - `tool.<name>`: tool capability (e.g. `tool.tmux`)
 - `dep.<name>`: dependency capability (e.g. `dep.codex-acp`)
+
+### Machine Agent inventory (0.3 development)
+
+`packages/protocol/src/capabilities/machineAgentInventory.ts` owns projection of
+the complete native Agent probe request. A missing, failed or invalid Agent result
+appears in the optional `unavailable` list with its Agent id and reason; valid
+results remain in `items`. Invalid whole-response envelopes still fail the inventory.
+The app consumes this projection once through `machineAgentCapabilityObservation`.
+Only the affected Agent becomes unknown and stale, retaining any last-known facts
+for display; a successful probe clears that reason. Session admission continues to
+require the canonical fresh ready state. Latest-version lookup failure alone yields
+`latestVersion: null` and does not invalidate installation or readiness facts.
+
+Inventory and daemon-scoped system-tool capability caches use the existing
+machine contribution-registry currentness revision. Unrelated workspace-sync or
+local-service publications do not move these readers to empty cache namespaces.
+A failed projection read retains available descriptors and last-good facts for
+display, but marks inventory error/stale; retained facts do not authorize launch.
+Projection RPCs retain the shared connection/setup budget without imposing an
+operation deadline on daemon projection work.
+
+Machine and Agent rows describe aggregate authentication availability: a healthy
+accepted Connected Account can satisfy sign-in while the native CLI is signed out.
+The New Session launcher instead projects the credential in its emitted binding
+through `machineAgentModel#projectMachineAgentForCredential`, using the same
+inventory sign-in and readiness owners. Native selection uses the retained native
+probe; a selected personal account uses that exact account's health, and an account
+group uses its active account. A selected Provider route consumes the same admitted
+source and Agent-adapter Connected Account suppression as route disclosure. Only an
+authorized, selectable exact model whose adapter replaces all of the Agent's accepted
+authentication services removes the native sign-in requirement; native probe facts
+remain unchanged. Missing or refused Provider routes cannot authorize launch, and
+explicit Native still requires its own credential. The inline signed-out state keeps Sign in and offers
+a healthy connected account through the existing launch-binding writer. This changes
+only the draft selection, never the Agent's stored default. An empty admitted
+purpose-default catalog remains Native; availability alone does not select a default.
 
 ### Agent CLI install and update jobs (0.3 development)
 
@@ -729,6 +909,18 @@ when its vendor updater can run. A vendor recipe alone does not establish a late
 
 ### Agent native sign-in (0.3 development)
 
+Native status checks acquire the current Agent catalog entry before invoking its
+CLI auth contribution. Spawn preflight supplies the fully materialized child
+environment; on-demand sign-in status and machine inventory use the same native
+probe owner. A startup manifest-only entry is not executable auth authority,
+and inventory does not retain an auth hook across runtime generations.
+
+Inventory passes its existing login-status probe budget to the native command
+boundary. On-demand sign-in uses the same budget policy; an omitted command
+timeout does not introduce a shorter cutoff. A valid Claude `loggedIn: false`
+result with exit code 1 is signed out, while failed or malformed command evidence
+remains unknown.
+
 Native sign-in uses the existing daemon terminal owner through
 `packages/protocol/src/daemon/startAgentSignIn.ts`. Its start result carries the
 acquired `terminalId` alongside `terminalKey`. Cancel and Restart Actions require
@@ -816,12 +1008,31 @@ that an installed Agent's endpoint is reachable or implements the negotiated ACP
 External Sessions is an optional Agent auxiliary registered through the same manifest Agent identity and plugin generation as the primary runtime. The canonical public SDK owner is `@happier-dev/plugin-sdk/sessions/external`.
 
 An ordinary author places `externalSessions: contribution` on the matching
-`definePlugin` Agent entry. Generated activation registers exactly six bounded
+`definePlugin` Agent entry. Generated activation registers six bounded
 source operations: `resolveSource`, `listCandidates`, `resolveLinkIdentity`,
 `resolveLinkedIdentity`, `pageTranscript`, and `readAfterTranscript`. The
 contribution provides discovery, linking, and transcript source semantics; it
 does not own hosted runtime lifecycle, follow demand, materialization, or
 takeover admission.
+
+In 0.3 development, an optional `readAccounting` facet on that same contribution
+reads normalized numeric accounting with a source-owned cursor. Its strict result
+distinguishes unchanged, advanced, replacement, gap, unavailable and failure.
+`resolveSource` may supply source-accounting observation metadata. The host shares
+the existing source/watch demand and finite-work budget; plugins retain native
+format codecs, not consent or publication authority. Accounting is parsed before
+transcript projection can discard its native evidence, and live usage consumes
+the same Agent codec. Pi's canonical `piAgentDir` source pins the actual
+`sessionsRoot` separately from `agentDir`; that physical root participates in
+source identity and remains fixed when ambient settings change. Old unpinned
+inputs are accepted and normalized at the shared Pi source resolver. Retained
+accounting custody whose admitted source key no longer matches that resolved
+root cannot acquire a reader or watcher; already-captured numeric pending facts
+can still publish. Discovery exposes the current root for explicit new consent.
+Older contributions without this facet are explicitly
+unsupported for machine-wide accounting. See
+[actions.md](actions.md#native-usage-sources-development) for source consent and
+history controls.
 
 A declarative ACP Agent may instead mark every declared External Sessions source
 `resumeOnly: true`, but only when the same Agent is an ACP, Session-primary Agent whose
@@ -867,13 +1078,23 @@ that use native consumption evidence receive it through their runtime's
 `observeSourceTranscript` method after preceding output has acknowledged delivery.
 
 This development-only terminal path requests `projection: 'terminal'` on
-`readAfterTranscript`, and on forward `pageTranscript` calls for fresh catch-up.
-Its closed `source_observation` envelope carries an item identity, timestamp, and
-strict JSON native row. It is not a visual transcript record or user
+`readAfterTranscript` and `pageTranscript`: forward for fresh catch-up, backward
+for historical resume. Historical display rows retain their source selection
+and chronological order. Ordered native observations reach the current runtime
+with `phase: 'initial_replay'` to establish provider correlation without admitting
+historical work or lifecycle activity. Their delivery continues even when the
+corresponding display row already has durable custody. Omitted phase retains
+live observation semantics.
+
+The closed `source_observation` envelope carries an item identity, timestamp,
+and strict JSON native row. It is not a visual transcript record or user
 `source_fact`, and it is admitted only for that explicit projection. Ordinary
 browsing and author-facing transcript operations keep the user/agent transcript
 schema. Provider code retains interpretation and matching authority; the host
-only preserves source order and rejects observations without a live observer.
+only preserves source order and rejects observations without a current observer.
+The optional replay phase is a development SDK source-contract change; Agent
+authors must handle replay as correlation-only context before rebuilding against
+this source cut.
 
 `resolveSource`, `resolveLinkIdentity`, and `resolveLinkedIdentity` may return
 bounded `transcriptMediaReadRoots` as transient producer evidence. The host
@@ -981,10 +1202,10 @@ Instead:
 - let `apps/cli/src/agent/acp/catalog/**` instantiate it generically
 
 Configured user-defined ACP backends/presets do not become `AgentId`s.
-They live in:
-- `packages/protocol/src/acpCatalog/*`
-- account settings `acpCatalogSettingsV1`
-- CLI generic ACP catalog loaders under `apps/cli/src/agent/acp/catalog/configured/**`
+They run through the single declared `custom-acp` contribution and live in:
+- `packages/protocol/src/acp/catalog/**`
+- the private Account ACP catalog row, not a writable Settings root
+- CLI configured launch materialization under `apps/cli/src/agent/runtime/registry/engineRegistry/accountConfiguredAcp.ts`
 
 Tool normalization (if the Agent emits tools):
 - Ensure the CLI normalizes Agent tool calls/results into canonical V2 tool shapes (so the app can render them).

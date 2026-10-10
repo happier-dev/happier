@@ -169,6 +169,19 @@ store publishes that change through its existing projection-invalidation
 subscription. Workspace, transfer and local-service state updates retain the
 revision, so they do not trigger another full projection read. Daemon replacement,
 reconnect, Account or locale changes and explicit invalidation still revalidate.
+The same owner exposes the fact synchronously to the authenticated daemon catalog
+reply and publishes a content-free `session.pluginCatalog.invalidate.v1` hint over
+the existing Session RPC socket. The reply pairs the revision with the existing
+daemon runtime id, so a replacement cannot reuse a retained occurrence's identity.
+Session MCP inventories retain their admitted catalog until this fact changes or
+the Session socket's existing connection epoch advances. A reconnect rereads once;
+concurrent requests share that read. A hint during a pending read cannot mark its
+older snapshot current. Retention requires the relay's positive handler-registration
+acknowledgement; disconnected or unsupported relays and old replies without the
+fact keep per-request reads. Becoming ready rereads rather than admitting a
+snapshot taken before the signal channel was established.
+Neither the hint nor the retained inventory grants executable authority: plugin
+Actions still pass the daemon's occurrence admission at execution time.
 Retained Machine state without the optional revision uses the existing broader
 daemon-state-version signal until the current daemon publishes its revision.
 The projection build cache remains generation- and client-context-owned;
@@ -244,6 +257,24 @@ versions, content or renderer compatibility without appointing an arbitrary prod
 Missing descriptors remain preparing. Reporting an installation does not enable
 Account intent, establish trust, or grant execution.
 
+The AppShell union's current phase does not wait for unrelated Machines to finish
+describing their catalogs. Each published contribution retains its own exact
+Machine currentness and interaction authority. Catalog completeness is a separate
+fact: a missing selected page or sidebar destination stays pending while an
+eligible origin is establishing, rather than becoming an unavailable tombstone.
+Machine presence updates that leave the resolved target set unchanged do not
+republish the installed/runtime catalog.
+
+AppShell reconciles client Action and Voice executables against the latest exact
+target set before waiting for Artifact preparation or foreign plugin cleanup.
+Equivalent inventory publications preserve a committed executable and its pending
+Actions. Cancellation of a superseded preparation request still prevents unfinished
+adoption; committed execution instead follows its exact composition controller,
+Account lifetime and Artifact lease. Machine currentness, occurrence, bytes or
+registration-rights withdrawal fences the incumbent immediately, even while the
+next queued update is blocked. This is 0.3 development source behavior, not a claim
+about an already-loaded client.
+
 In 0.3 development source (not yet released), a populated release-less Collection
 upgrade uses the existing portable-release preparation and promotion owners.
 Availability's `collectionWriters.claim` can return exact incumbent declarations
@@ -269,6 +300,11 @@ freshly resolves the same exact target and revalidates after approval. Machine-f
 UI uses admitted presentation/artifact facts without an execution resolver or picker;
 descriptors and cached bytes alone never grant daemon authority. Session contribution
 families remain scoped to their exact Session host, not the app union.
+
+The daemon's final-policy runtime projection enumerates admitted source custody,
+including bundled development sources and packaged first-party runtimes that have
+no managed installation generation. Each row still comes from the same exact
+occurrence and activation owner; a legacy generation alone supplies no authority.
 
 Manifest-authored declarative roots reuse the canonical declarative projector for
 installed presentation without a runtime occurrence; their machine effects remain
@@ -330,18 +366,53 @@ bytes: rereading remains the single snapshot authority. Unsupported older
 bridge ceilings refuse the new reference without changing incumbent plugin
 references. Source contract tests do not certify a loaded native/hosted journey.
 
+The existing Resource entry admits independent Usage source revisions while
+its read remains pending: current accounting does not wait for comparison or
+another query, and refreshes do not wait for private Work/activity or a later
+quota-history page. Qualified profile sources initiate the canonical quota
+Action even without an opened cache row; that Action reads admitted Home
+records, not a provider refresh. Each accepted history prefix keeps its cursor
+and explicit incompleteness. Accounting observation times come from the
+response's witnessed coverage sources, never the client read clock. The
+advanced Plugin UI Resource client's optional `onProgress` callback is a
+package construction seam; the public Host API and bridge wire stay unchanged.
+
 For collection-based plugin pages, the public Plugin UI `Collection` composes one headless model, item anatomy and detail renderer across presentations and containers. `Step`, controlled `Tabs` (including host-rendered strips) and `HappierDisclosure` belong to that public UI/presentation boundary, rather than feature-local replacements. See [Collection presentation](collection-presentation.md) and the [public author composition](../apps/docs/content/docs/plugins/ui/react-native.mdx).
 
-In 0.3 development source, public `WidgetFrame` and the core widget adapter share the same frame and controlled `disclosure` contract. Collapse belongs to the current viewer; it keeps the body mounted and hidden without changing widget layout, input or Resource identity. Public `/presentation` also owns tree keyboard/focus semantics (`HappierTreeNode` and `useHappierTreeInteraction`), using explicit parent keys rather than filesystem path spelling. Filesystem trees translate their domain rows into that owner.
+In 0.3 development source, the public themed `ApprovalPrompt` and core approval
+adapter share the neutral interaction presentation's title, subtitle, icon, body
+and footer anatomy. Callers supply reviewed facts and decisions; admission,
+approval state, focus and request lifetime remain with their existing owners.
+Changing between card and inline presentation retains the mounted facts. This
+is development-only composition, not a new approval authority or released API
+availability claim.
+
+In 0.3 development source, public `WidgetFrame` and the core widget adapter share the same frame and controlled `disclosure` contract. The frame's `source` slot takes a name, or a bound-source descriptor (`binding: 'pin' | 'follow'`, `text`, optional `compactText` and `accessibilityLabel`): the frame draws the pin or follow glyph, keeps the short form when it narrows, and names the line for assistive tech, so a group's pinned value and a follower's "Following group · value" are one recipe for core and plugin frames. `HappierSegmentedChoiceRow` and its model `resolveHappierSegmentedChoiceRow` (public `/presentation`) own the "label + inline segmented choice" row, where an unavailable option stays visible and says why; core's configuration and menu rows resolve their segments through the same model. Collapse belongs to the current viewer; it keeps the body mounted and hidden without changing widget layout, input or Resource identity. Public `/presentation` also owns tree keyboard/focus semantics (`HappierTreeNode` and `useHappierTreeInteraction`), using explicit parent keys rather than filesystem path spelling. Filesystem trees translate their domain rows into that owner.
 
 Measured `FrameRect` placement and `resolveFloatingFrameRect` share companion geometry with core. Callers supply available space and measured avoid rectangles; the result reports when no non-overlapping placement fits so the domain can use its dock composition. Pointer listeners, native gestures and measurements remain host adapters. These foundations do not create a viewer registry or assert that every capture/viewer shell is integrated.
 
-Public `/presentation` exports `FloatingFrame` / `FloatingFrameProps`: one controlled neutral frame (`floating`, `expanded`, `docked`, `closed`) with a controls band and one body. It owns only geometry and shell mode: drag, velocity and release use the shared companion interaction owner, settling uses `resolveFloatingFrameRect` and asks to dock when nothing fits, arrow keys snap corners and the grip resizes with the body's aspect. `moveInput` decides whether the body or only the controls band and grip move it; the host decides that from its own control facts. While the body moves the frame, a double-click on it expands (and restores) the frame, and Escape restores an expanded frame. An optional `footer` stands one presence capsule below the body (`HAPPIER_FLOATING_FRAME_METRICS.footerHeight` is that capsule's height); `aspectRatio` is the body's own shape, so placement (`resolveFloatingFrameRect` with `chromeHeight`) shrinks both axes together, and `minWidth` is the host's measured usable minimum below which resizing stops and placement docks. `HappierStatusCapsule placement="inline"` with a `leading` mark is the same status capsule standing in flow, as a viewer's identity capsule. The platform pointer boundary comes from the `pointer` prop or the presentation host's `companionPointer`; without one the frame moves by keyboard and menu only. It has no target, Session, network or trust props. In 0.3 development source the Session viewer is its first consumer: it frames the retained Computer or Browser body, publishes its settled rectangle to the shell's measured Voice/pet geometry and moves the reading column aside on snap. Development-only until 0.3 ships.
+Public `/presentation` exports `FloatingFrame` / `FloatingFrameProps`: one controlled neutral frame (`floating`, `expanded`, `docked`, `closed`) with a controls band and one body. It owns only geometry and shell mode: drag, velocity and release use the shared companion interaction owner, settling uses `resolveFloatingFrameRect` and asks to dock when nothing fits, arrow keys snap corners and the grip resizes with the body's aspect. `moveInput` decides whether the body or only the controls band and grip move it; the host decides that from its own control facts. While the body moves the frame, a double-click on it expands (and restores) the frame, and Escape restores an expanded frame. An optional `footer` stands one presence capsule below the body (`HAPPIER_FLOATING_FRAME_METRICS.footerHeight` is that capsule's height); `aspectRatio` is the body's own shape, so placement (`resolveFloatingFrameRect` with `chromeHeight`) shrinks both axes together, and `minWidth` is the host's measured usable minimum below which resizing stops and placement docks. A frame's chrome is public beside it, so an author's frame matches the viewer's without copying it: `FloatingFramePicture` is the body's material (the picture rounded to the frame's body radius and lifted on the host's `elevationStyle`, never a card; `drivenRingColor` draws the thin ring that says the person drives it; `framed={false}` draws the same element tree flush in a pane so a body is not remounted when it moves), `HappierControlCapsule` holds a group of controls on the floating material for the `controls` slot (`HAPPIER_CONTROL_CAPSULE_METRICS`, `HAPPIER_CONTROL_CAPSULE_BUTTON_SIZE`; the material is a backing, not a clip, so a control's touch target may overhang the band without the capsule growing), and `HappierIdentityCapsule` names what the frame shows (a Machine, with a `leading` status dot) as plain text, never a live region. `HappierStatusCapsule` remains the announcing capsule for a state that is not normal. `resolveFloatingFrameSettleTransition` returns the duration and critically damped `linear()` curve a released frame travels on, for a host that draws the body in another layer and must move it in step; `HAPPIER_FLOATING_FRAME_METRICS.resizeStep` is the one resize step for the grip's keys and a host's Larger/Smaller. On the web the controls reveal on hover and focus for a pointer that hovers and stay shown for one that cannot (`(hover: none)`, or once a touch reaches the frame). The platform pointer boundary comes from the `pointer` prop or the presentation host's `companionPointer`; without one the frame moves by keyboard and menu only. It has no target, Session, network or trust props. In 0.3 development source the Session viewer is its first consumer: it frames the retained Computer or Browser body, publishes its settled rectangle to the shell's measured Voice/pet geometry and moves the reading column aside on snap. Development-only until 0.3 ships.
 
 The public root and `/components` export the themed `FloatingFrame` adapter and
 its props over that same neutral owner. It supplies host theme and accessibility
 defaults, including reduced motion, without another geometry or interaction
 engine; `/presentation` retains the neutral primitive for host composition.
+
+Native finger movement in 0.3 development source uses the optional same-realm
+`nativeBinding` component (`HappierFloatingFrameNativeBindingProps`), otherwise
+the presentation host's `companionNativeFrame`. Happier supplies the app-owned
+`NativeFloatingFrame` adapter over `useCompanionNativePanGesture`; Plugin UI
+does not import Gesture Handler, Reanimated or host internals. The adapter enables
+body drag only for a floating, watching frame (`moveInput="surface"`), excluding
+controls, footer and grip. Control-mode content keeps its own touches. The frame
+and its route-stable retained body share native transform values; no per-frame
+React/layout publication occurs. Release or interruption settles through
+`resolveFloatingFrameRect` (including projection, obstacles, aspect/chrome and
+minimum width), then publishes the settled rectangle or requests docking.
+Keyboard/menu placement remains available, and phone viewers retain their sticky
+slot. Without either native binding, frames retain keyboard/menu placement only.
+This is a React presentation seam, not a serialized Host API or wire-epoch change;
+real-device feel remains a separate QA check.
 
 The app shell supplies plugin-column physical focus eligibility through the existing presentation provider, using its dock visibility and peek focus facts. Hover previews may remain presented without receiving programmatic focus; deferred or exiting peek content cannot receive it. Columns explicitly do not publish semantic current UI context: that authority remains with the active page's existing owner.
 
@@ -510,8 +581,18 @@ Reading missing defaults causes no write. The first explicit edit persists the
 defaults plus the edit through CAS; an explicitly empty saved layout remains
 empty. Create with `fromSurface` copies current content into an independent view.
 Preset state and the layout inventory's `isEdited` bit compare the same name and
-items with host defaults. Inventory opens personalized presets at the Artifact
-owner; tab consumers do not issue extra per-preset reads. Reset requires the
+items with host defaults. The area read's preset state also carries `changes`,
+a typed summary (added, removed, moved, changed, renamed, each with its item)
+derived from that same comparison; the edited preset's line words it and no
+consumer diffs layouts itself. Inventory opens personalized presets at the Artifact
+owner; tab consumers do not issue extra per-preset reads. Every area owner draws
+its named layouts through one tab bar
+(`apps/ui/sources/components/widgets/area/WidgetAreaLayoutBar.tsx`). Native and
+declarative plugin areas expose user-created named layouts through that same
+bar and page-local host port. An area declaration still supplies only its name
+and readable context schema, not authored presets or persistence callbacks.
+A saved group records where it was saved from (`origin`) beside
+its provenance date; a fragment saved before that fact existed reads without it. Reset requires the
 current revision, replaces the items immediately and returns the prior layout
 with its acknowledged revision; Reset/Undo refuse intervening edits. These
 owner-level contracts do not certify the loaded controls or visual acceptance.
@@ -544,6 +625,14 @@ configurable Action approval policy. Selective input set/reset intents merge or
 remove exact paths against the writer's current bindings, preserving unrelated
 concurrent choices; omitted paths retain whole-set/whole-reset behavior.
 
+The same policy treats benign personal presentation edits on admitted private
+Projects, plugin areas and core-page areas as safe: rename, size/frame,
+same-surface order, group width/dividers and named-layout create, rename,
+reorder, Reset and Undo. Privacy for these Artifact-backed areas requires a
+positive admitted `isShared: false` fact. Shared writes, destructive layout deletion and reusable
+definition updates/deletion retain danger; an explicit Ask first preference
+still requires approval for safe personal edits.
+
 The [widget presentation owner](../packages/protocol/src/widgets/widgetPresentationV1.ts) defines semantic size names, deterministic order and surface-specific width × height footprints. Definitions, builtin descriptors and plugin widget Views declare `sizeDeclaration: { sizes, defaultSize }`; the default must belong to the nonempty, unique declared set. Protocol resolves the declaration against the surface-supported set once, in canonical size order. `widgets.catalog.list` exposes each entry's resulting `presentation.sizes` and optional `presentation.defaultSize`; a supported declared default wins, otherwise the first admitted size is used.
 
 Home, plugin areas and WorkBoards consume those footprints through their existing layout reducers. Session Board resolves them into its existing native width and item-height owners, including Auto height; it has no second saved-height writer. Existing custom native width/height combinations keep their actual footprint and omit a semantic size when no named rectangle matches. Project aside and Companion remain linear and carry no size operand. Native layout owners retain pixel geometry and responsive reflow: narrowing to a phone changes rendered spans without rewriting saved size intent. Cross-surface moves preserve an admitted size or normalize to the destination's declared/supported default.
@@ -555,6 +644,8 @@ Reusable Account definitions use `widget-definition.v1` Artifacts through the ex
 Declarative metric, table and single-series chart nodes use [typed data-source references](../packages/protocol/src/plugins/contributions/ui/declarativeDataV1.ts). They draw through one presentation owner, [`presentation/data/**`](../packages/plugin-ui/src/presentation/data/), which core's declarative renderer and the public `Metric`, `DataRows`, `DataTable` and `Chart` components share: tabular locale numbers, a proportion column as a share of its largest value, table columns dropped by measured width (`secondary` first, never the name) while every row stays and each row still reads every column to assistive technology, and a chart that is one labelled image naming every point. A live widget document keeps its last authorized content through refresh, a sleeping machine or a failed read, with one freshness line (as of, cause, Retry); `Post a snapshot` freezes exactly the frozen nodes on screen when the confirm opens ([`projectWidgetSnapshotPreviewV1`](../packages/protocol/src/sessions/board/declarative/snapshot.ts)). A Resource reference identifies a current declared Resource, not access authority; its scope, current occurrence and resolved input are admitted by the incumbent Resource owner. `widgets.snapshot.post` publishes the exact previewed inert document, as-of time and provenance through the existing Board item upsert. Snapshot content contains no live Resource, launch input or executable control. The Action never re-queries after approval. Definition edits/deletion, shared Board content upsert and snapshot publication use the existing consequential approval defaults and configurable waivers.
 
 The development public `@happier-dev/plugin-ui/presentation` palette also exposes finite neutral series, grids, intervals, capacity, composition, ranked rows and outcome forms from that same data owner. Callers supply identities, exact values, labels, units and any qualified projections; charts do not fetch Usage, infer accounting totals or decide status. A missing observation remains distinct from zero. Compact presentation retains exact accessible values rather than truncating the dataset. Composition takes an explicit whole, so overlapping categories retain their supplied denominator instead of becoming a misleading stacked total. App tooltip and scrolling-frame adapters may wrap shared visuals, but own no second plot geometry. Capacity and row proportions reuse the existing progress primitive; ledgers remain `DataTable`. The existing declarative one-series `Chart` is the widgets-owned consumer for the subsequent AR-2 renderer consolidation. Visible ink may be compacted through a caller formatter (`317M`, `$1,555`) while assistive technology keeps the exact value: `Metric` adds `hero`/`stat` sizes with a visible label and caption, `RankedRows` takes an explicit whole for share chips and leading identity marks, and a series takes one labelled reference level (a typical day) drawn as a quiet rule. Stacked areas part on a thin paper seam rather than an outline.
+
+`IntervalTimeline` also accepts point events: one known coordinate, without an inferred duration or end. The shared owner places caller-supplied marker ink and retains exact rows when the plot cannot fit. `CapacityBar` can draw a remaining-capacity projection using the same progress owner, with the projected solid remainder bounded by the current remainder. `CompositionStrip` offers a compact static/export legend; art may supply palette and type ink, but every series keeps its supplied whole and exact accessible share. Usage Reset, paced meters and recap cards consume these seams rather than owning private timeline, overlay or segmented-bar geometry.
 
 Metric comparisons project a typed value and authored label with explicit
 `good`, `bad` or `neutral` meaning; numeric sign does not choose semantic color.
@@ -591,9 +682,24 @@ declares `inputType: { hostType: 'usageQuery' }`, not a fabricated plugin
 identity. Its generic host picker and headless validation use that same schema.
 The independently follow-able scope and cost-basis paths consume the general
 field `contextMode`; metric and breakdown retain their own presentation values.
-The Usage builtin catalog declares those nine individual input paths against
-the canonical query schema; the whole-query host input type is not attached to
-scalar paths. Usage's eight core-page presets are portable layout fragments,
+The accounting Usage builtins declare those nine individual input paths against
+the canonical query schema. Sources instead declares only `agents`, `machines`
+and `sources`, through the inventory projection of that same schema. Its widget
+and Sources-only preset can be admitted without accounting period, metric,
+project, Session or cost-basis selections. Period and Session declare the narrow
+`{ hostType: 'usageQuery', field: 'period' | 'session' }` projections, so Add and
+Edit invoke the same typed picker owner without a raw JSON editor. Period uses
+the incumbent concrete period choices with the query's explicit calendar offset;
+saved ranges remain unchanged until a choice is made. Session uses the existing
+qualified Session inventory for the captured Home and projects its selected ids
+into the canonical query; an empty selection means all Sessions. Neither projection
+changes the stored UsageQuery shape or the native qualified Session input type.
+Previously saved in-program Sources copies may still carry the six accounting
+bindings. The canonical binding projection ignores exactly those retired paths
+for this builtin, preserves its three inventory selections and edits, and still
+rejects unrelated undeclared paths. That read projection does not rewrite the
+saved Artifact or add a persistence migration.
+Usage's eight core-page presets are portable layout fragments,
 instantiated by the shared widget platform with Card groups and Lines children.
 Their view selection and user copies use `owner.layoutId` and the ordinary
 `widgets.area.layout.*` Actions, not a Usage-specific view store. The page
@@ -626,10 +732,20 @@ their ordinary Resource/renderer rights. There is no input-type callback registr
 
 Actions, Workflow input adapters and widgets consume the neutral
 [field owner](../packages/protocol/src/inputs/inputFields.ts) and
-[options resolver](../packages/protocol/src/inputs/inputOptions.ts). An input
-type owns its choices, so field-level static options or a competing source are
-refused. Discovery admits the current consuming descriptor and grants before a
-Resource read. The picker uses the incumbent ephemeral renderer mount and
+[options resolver](../packages/protocol/src/inputs/inputOptions.ts). A consuming
+field cannot currently combine its type with static choices. Contributed typed
+fields cannot declare a source different from their type source; host fields
+can declare an explicit source. Workflow input declarations retain their
+existing domain exclusion between a type and an explicit source or enum.
+Broader authored field constraints are not yet supported across executable
+consumers. The shared
+[value admission](../packages/protocol/src/inputs/inputTypeRuntime.ts) intersects
+the type schema with resolved choices for picker results, saved inputs and mounted
+followed values, failing closed when a declared dynamic constraint is unresolved.
+Native Session and Workspace schemas confer no read authority
+and unconstrained exact references add no discovery prerequisite. Discovery
+admits the current consuming descriptor and grants before reading choices.
+The picker uses the incumbent ephemeral renderer mount and
 [`invokeInputTypePicker`](../packages/protocol/src/inputs/inputTypePicker.ts):
 schema/options validation also applies to its result, cancellation causes no
 mutation, and an answer from a replaced occurrence is refused. Removed types
@@ -660,6 +776,18 @@ mutations reuse the Home/widget owners. Declarative area nodes
 require a mounted plugin page and are excluded from Session Board documents
 and transcript projection.
 
+The page-local request's optional `layoutId` selects a document within that
+declared area; the host continues to supply its Home, Account, plugin and page
+identity. The carrier admits the existing `widgets.area.layout.*` operations,
+so native and declarative areas share create, copy, rename, reorder, delete,
+Reset and Undo with Project and core pages. Reset requires a host preset;
+ordinary plugin declarations do not provide one, so Reset remains typed
+unavailable for those layouts. `widgets.area.layout.select`
+changes the answering mounted area's selection through its current selection
+owner. Without that mounted owner it returns typed unavailable; reading a
+document independently uses `widgets.item.list`. Selection stays with the
+page's existing route or local state, rather than an Account-wide preference.
+
 Native/declarative page ScrollAreas and the Project ItemList pass the incumbent
 near-viewport admission to area cards. Offscreen executable bodies release
 Resource read/watch demand while their frames retain measured room; reentry
@@ -687,6 +815,26 @@ only the portable project slot; missing, revoked or retired reads leave that
 slot unavailable without replacing the exact checkout or disabling personal
 layouts. Provenance revision is not an eligibility gate. The Project shell owns desktop and phone
 composition of the same acknowledged document.
+
+### Find and Search presentation (0.3 development)
+
+Trusted same-realm RN/RNW surfaces register their mounted Find controller with
+`useFindSurfaceRegistration` from `@happier-dev/plugin-ui/hostApi`. The mount's
+existing presentation binding forwards registration to the app's one
+`findSurfaceRegistry`; keyboard commands and `ui.find` address that same model.
+Use a plugin-qualified surface id. Hidden or retired mounts are unavailable,
+including explicitly addressed Actions. Matching, reveal, cancellation and
+coverage remain surface-owned; the hook does not create a matcher or index.
+Unhosted and hosted-web surfaces have no registration binding and the hook
+returns false.
+
+`HappierFindBar`, `matchFindText`, `HappierFindHighlightedText` and
+`sliceFindRanges` are shared `/presentation` exports. Core's highlighted-text
+adapter supplies theme marks and its text renderer to the same UTF-16 range
+renderer. Conversation rows and machine-coverage copy remain host domain
+composition, not public layout APIs. Universal Search sources use the existing
+manifest `searchProviders` Action contribution and SDK search-result schema;
+Find registration is not a new search contribution family.
 
 ### External Session content search (0.3 development)
 
@@ -750,6 +898,14 @@ acknowledges a new cursor; replacement and expired-cursor outcomes do not.
 metadata without reading transcript records. Consented machine/source accounting
 demand shares the incumbent resource reconciler with real Session links and can
 retain its watches without creating a Session identity.
+The optional `changedNativeSessionIds` read input carries complete correlated
+invalidations from that shared observer through the collector. Absent evidence
+requests coarse reconciliation; an empty list with a retained cursor has no new
+message work. Readers may ignore this optimization safely. OpenCode rereads only
+the named Sessions after initial capture, including late message settlement with
+an unchanged Session timestamp. Connection boundaries and uncertain reads still
+reconcile the source. Observation refresh callbacks can carry native Session
+evidence without making a linked Happier Session a prerequisite for capture.
 
 SDK inventory paging retains one snapshot per live query demand. `list` returns
 an opaque, serializable, single-use `nextCursor`; every successor belongs to
@@ -1053,6 +1209,16 @@ host dispatcher enforce the same operation as the `scm.history.entries` Action
 and SCM RPC. Absence means unsupported, not a host branch on the backend id.
 See [demanded entry history](scm-diff-summary.md#demanded-entry-history-unreleased-03)
 for captured-HEAD, literal-path and unavailable-history semantics.
+
+The backend command service's optional `runCommandStreaming` operation feeds
+admitted stdout bytes to a consumer without retaining complete stdout. The same
+host command owner enforces executable admission, resource budgets, cancellation
+and process cleanup. `runBackendCommand` selects this operation when supplied a
+`stdoutConsumer`; an older buffered-only host refuses that request. A consumer's
+`stop` acknowledges a settled read, and `stoppedEarly` distinguishes that
+successful settlement from cancellation while preserving the actual process
+exit code. Git entry history consumes this seam; plugins do not spawn a parallel
+history process owner.
 
 SCM Action and RPC entry points share the host dispatcher. Worktree removal
 authorizes the target with the host's filesystem policy and forwards the resolved
@@ -1416,6 +1582,25 @@ not sandbox admission: the app retains isolated-URL validation, credentialless
 web framing and private native WebView/navigation policy. These are 0.3
 development source contracts, not evidence of publication or live visual parity.
 
+Caller-authored HTML in 0.3 development uses only `ArtifactHtmlBundleV1`,
+including the Session Board's `hostedHtml` source and its entrypoint editor.
+The protocol's `artifactHtmlDocumentV1` owner resolves declared local resources
+and builds the document and closed-network CSP for both hosted surfaces and
+Artifact readers. The app wrappers provide mount bootstrap facts; they do not
+maintain another HTML parser or document policy. Legacy `text/html` Artifact
+ingress normalizes to a one-file bundle at publication. Directory publication
+declares an entrypoint and uses the existing workspace-file acquisition owner,
+with confinement, symlink refusal and cancellation. Native frame transport
+loads process-local bytes through an isolated URL rather than submitting an
+expanded document to a WebView2 HTML-string API. Network requests remain closed
+until the admitted caller policy is connected; a requested origin is not a grant.
+Caller native responses carry `Content-Security-Policy: sandbox allow-scripts`;
+the guest's opaque origin does not grant bridge admission. Android admits only
+the current registered document URL in the active view's main frame, then the
+existing host bridge validates the mount nonce and identity. Its caller-only
+wildcard injection leaves installed-plugin origin policy unchanged. Native
+WebView enforcement and callbacks still require device validation.
+
 Notification channel authors must account for the development sender signature's
 [optional-category migration](compatibility.md#notification-channel-sender-source-migration-development)
 when upgrading a category-dependent sender; the plugin send service and host
@@ -1484,6 +1669,42 @@ The shared Plugin UI Work presentation owns the status treatment, including
 retain domain story copy while consuming the host bucket and tone. This is a
 development source-contract extension, not a released API or a persisted-data
 migration. See [linked Session authoring](../apps/docs/content/docs/plugins/ui/index.mdx#linked-session-state-and-permission-answers).
+
+## Work and consent presentation (0.3 development)
+
+Plugin UI's public `/presentation` entrypoint owns Work row shells and summary
+leaves, section empty/start and disclosure lines, update-card frames, fact lines,
+breadcrumbs and the decision bar. Core binds identity lookup, localization,
+navigation and Action handlers to those same components; it does not redraw
+their generic anatomy. The role-mark adapter retains the host Agent catalog
+lookup and delegates portable glyph presentation to `HappierRoleMark`.
+
+`HappierWorkSectionEmptyLine` is a section-description invitation at the Work
+text edge, optionally actionable as a whole sentence. The generic `EmptyState`
+line remains the informational list-row composition with optional glyph and
+separate trailing actions. These are distinct consumed anatomies, not competing
+decisions about whether a source is empty; each source supplies that fact and
+retains its own add/start operation.
+
+Protocol owns executable role kinds through `resolveRoleRunsAsKindV1` and the
+default background intent through `DEFAULT_ROLE_BACKGROUND_INTENT_V1`. Plugin UI
+owns their glyph/label presentation. Plugin
+role sources carry the manifest's display name through the existing projection
+and `roles.list` source reader; a client does not print a raw plugin id or create
+another plugin-name registry. The declarative family needs no activation
+registration. See [role authoring](../apps/docs/content/docs/plugins/guides/roles.mdx).
+
+The client-placed `session.work.get` and `inbox.get` Actions read the existing
+mounted Session Work source and Inbox model. They add answering-client addresses,
+not another projection, subscription or storage owner. Invocation is exact-Home
+and Account-bound, with currentness checked before and after disclosure. Without
+one current mounted owner they return `unavailable`, not an empty snapshot;
+first reads can return `loading`. DTOs whitelist presentation facts and identities,
+not transcript content, raw operation snapshots or callbacks. The canonical
+App Shell Action family and SDK Action generators own their public contracts.
+
+These statements describe development source ownership, not package publication
+or loaded-runtime certification.
 
 ## Generated ownership
 

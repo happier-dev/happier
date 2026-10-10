@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import axios from 'axios';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as protocol from '@happier-dev/protocol';
@@ -8,7 +9,6 @@ import {
     materializeRecipientOperationRequestV1FromOperation,
     PluginContributesV2Schema,
     type PluginRequestInterceptorContributionV1,
-    type VoiceCredentialBindingIdentityV1,
     type VoiceRealtimeJsonValue,
 } from '@happier-dev/protocol';
 import type {
@@ -22,10 +22,10 @@ import type {
 import {
     resetActiveAccountSettingsSnapshotForTests,
     setActiveAccountSettingsSnapshot,
+    getActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import {
     createVoiceCredentialResolver,
-    type VoiceCredentialResolver,
 } from '@/daemon/voice/credentials/resolver';
 import {
     createLoggerAndEventsAvailablePluginInvocationServiceBinding,
@@ -33,7 +33,11 @@ import {
 import { createStablePluginHttpHost as createProductionStablePluginHttpHost } from './service';
 import {
     createVoiceAccountPluginHttpCredentialBindingHost as createUnboundVoiceAccountPluginHttpCredentialBindingHost,
+    createVoiceAccountOperationService,
 } from './voiceAccountCredentialBinding';
+import * as persistence from '@/persistence';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
 
 function createVoiceAccountPluginHttpCredentialBindingHost(
     params: Parameters<typeof createUnboundVoiceAccountPluginHttpCredentialBindingHost>[0],
@@ -252,6 +256,8 @@ function publishCredential(
         settingsVersion,
         loadedAtMs: 1,
         settingsSecretsReadKeys: [],
+        connectedPurposeCatalog: { status: 'ready', revision: 1,
+            record: { key: 'purposes', value: { v: 1, bindings: [] } } },
         settings: {
             secrets: [{
                 id: 'account-voice-key',
@@ -292,6 +298,9 @@ function publishDormantCredentialSelection(
         settingsVersion,
         loadedAtMs: 1,
         settingsSecretsReadKeys: [],
+        connectedPurposeCatalog: { status: 'ready', revision: 1, record: { key: 'purposes', value: { v: 1,
+            bindings: selection === 'connectedAccount' ? [{ purpose: { consumer: contribution, purpose: 'voice.client-auth' },
+                target: { kind: 'account', account: { service: { pluginId: 'happier.agent.openai', localId: 'openai' }, accountId: 'openai-account' } } }] : [] } } },
         settings: {
             secrets: [{
                 id: 'account-voice-key',
@@ -314,27 +323,6 @@ function publishDormantCredentialSelection(
                         account: { api_key: 'account-voice-key' },
                     },
                 }],
-            },
-            connectedAccountPurposeBindingsV1: {
-                v: 1,
-                bindings: selection === 'connectedAccount'
-                    ? [{
-                        purpose: {
-                            consumer: contribution,
-                            purpose: 'voice.client-auth',
-                        },
-                        target: {
-                            kind: 'account',
-                            account: {
-                                service: {
-                                    pluginId: 'happier.agent.openai',
-                                    localId: 'openai',
-                                },
-                                accountId: 'openai-account',
-                            },
-                        },
-                    }]
-                    : [],
             },
         } as never,
     });
@@ -482,6 +470,39 @@ function createCatalogService(
 }
 
 describe('Voice account Plugin fetch credential binding', () => {
+    it('admits the captured purpose row before selecting a declared Voice operation from existing Settings', async () => {
+        const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'voice-owner' })).toString('base64url')}.signature`, encryption: null };
+        publishCredential();
+        const snapshot = getActiveAccountSettingsSnapshot();
+        if (!snapshot) throw new Error('Missing Voice fixture');
+        const raw = { ...snapshot.settings, secrets: [protocol.SavedSecretSchema.parse({
+            id: 'account-voice-key', name: 'Account voice key', kind: 'apiKey', createdAt: 1, updatedAt: 1,
+            encryptedValue: { _isSecretValue: true, value: 'long-lived-account-secret' },
+        })] };
+        setActiveAccountSettingsSnapshot({ ...snapshot, scopeKey: resolveAccountSettingsScopeKey(credentials),
+            settings: protocol.accountSettingsParse(raw), rawSettings: raw, connectedPurposeCatalog: { status: 'loading' } });
+        vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
+        vi.spyOn(axios, 'get').mockImplementation(async input => {
+            const path = new URL(String(input)).pathname;
+            if (path.endsWith('/currentness')) return { status: 200, data: { mode: 'plain', version: 1,
+                signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+            if (path.endsWith('/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+            if (path.endsWith('/connected-accounts/purposes')) return { status: 200, data: { status: 'present', revision: 4,
+                content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [] } } } } };
+            if (path === '/v2/account/settings') return { status: 200, data: { version: 1, content: { t: 'plain', v: raw } } };
+            if (path === PROFILE_TRANSFER_ROUTE_V1 || path.includes('/settings/history')) return { status: 404, data: { error: 'unsupported' } };
+            throw new Error(`Unexpected Home request: ${path}`);
+        });
+        const signal = new AbortController().signal;
+        const service = createVoiceAccountOperationService({ voiceProviders: [{ pluginId: 'acme.voice',
+            identity: { pluginId: 'acme.voice', localId: 'conversation' }, definition, provenance: 'first_party' }],
+            provider: { pluginId: 'acme.voice', localId: 'conversation' }, kind: 'conversation', phase: 'prepare',
+            credentialResolver: createVoiceCredentialResolver({ machineId: null }), isCurrent: () => true, signal,
+            transport: { request: async request => response(request) } });
+        await expect(service.request({ operationId: 'client-auth', parameters: {}, signal })).resolves.toMatchObject({ status: 200 });
+        expect(getActiveAccountSettingsSnapshot()?.connectedPurposeCatalog).toMatchObject({ status: 'ready', revision: 4,
+            record: { key: 'purposes', value: { v: 1, bindings: [] } } });
+    });
   afterEach(() => {
     resetActiveAccountSettingsSnapshotForTests();
   });
@@ -736,61 +757,6 @@ describe('Voice account Plugin fetch credential binding', () => {
             () => false,
         ).request(request)).rejects.toMatchObject({
             code: 'plugin_final_generation_retired',
-        });
-        expect(adapter).not.toHaveBeenCalled();
-    });
-
-    it('rechecks the exact declared origin after secret resolution and before execute', async () => {
-        const mutableDefinition = structuredClone(definition);
-        const operation = mutableDefinition.credentials!.hostMediated!.operations[0]!;
-        const adapter = vi.fn(async (request: TestFetchRequest) => response(request));
-        const credentialResolver: VoiceCredentialResolver = Object.freeze({
-            resolveSelectedSource: () => ({ kind: 'savedSecret' as const }),
-            status: () => ({ available: true, source: 'account' as const, materialStatus: 'ready' as const }),
-            async withSecret<T>(input: Readonly<{
-                identity: VoiceCredentialBindingIdentityV1;
-                recipientContractDigest?: string;
-                use: (secret: string) => Promise<T>;
-            }>): Promise<T> {
-                Object.defineProperty(operation.request, 'origin', {
-                    configurable: true,
-                    value: 'https://attacker.example.test',
-                });
-                return await input.use('long-lived-account-secret');
-            },
-        });
-        const service = createStablePluginHttpHost({
-            adapter,
-            credentialBindingHost: createVoiceAccountPluginHttpCredentialBindingHost({
-                voiceProviders: [{
-                    pluginId: 'acme.voice',
-                    identity: { pluginId: 'acme.voice', localId: 'conversation' },
-                    definition: mutableDefinition,
-                }],
-                credentialResolver,
-            }),
-        }).bind({
-            plugin: { id: 'acme.voice', version: '1.0.0' },
-            contribution: { id: 'mint-session', qualifiedId: 'acme.voice/actions/mint-session' },
-            occurrenceId: 'generation-7',
-            correlationId: 'voice-account-operation-origin-race',
-            surface: 'ui',
-            signal: new AbortController().signal,
-            isOccurrenceCurrent: () => true,
-        }, networkBinding());
-
-        await expect(service.request({
-            url: 'https://voice.example.test/v1/session',
-            method: 'POST',
-            credentialBinding: {
-                kind: 'voiceAccountOperation',
-                provider: { pluginId: 'acme.voice', localId: 'conversation' },
-                operation: 'client-auth',
-                parameters: {},
-            },
-            redirect: 'error',
-        })).rejects.toMatchObject({
-            code: 'plugin_fetch_voice_account_operation_unauthorized',
         });
         expect(adapter).not.toHaveBeenCalled();
     });

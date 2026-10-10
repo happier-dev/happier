@@ -598,6 +598,11 @@ export function createVoiceAccountPluginHttpCredentialBindingHost(params: Readon
                 throw unauthorized();
             }
             if (!params.phase) throw phaseAuthorityUnavailable();
+            await params.credentialResolver.prepareForOperation(input.seed.signal).catch(() => {
+                assertCurrent(authority);
+                throw credentialUnavailable();
+            });
+            assertCurrent(authority);
             const authorized = authorizeVoiceAccountOperation({
                 declarations: params.voiceProviders,
                 provider: binding.provider,
@@ -679,6 +684,11 @@ export function createVoiceAccountOperationService(params: Readonly<{
                 isCurrent: () => params.isCurrent(),
                 isCredentialCurrent: () => params.isCredentialCurrent?.() ?? true,
                 isCancelled: () => params.signal.aborted || request.signal.aborted,
+            });
+            assertCurrent(authority);
+            await params.credentialResolver.prepareForOperation(request.signal).catch(() => {
+                assertCurrent(authority);
+                throw credentialUnavailable();
             });
             assertCurrent(authority);
             const authorized = authorizeVoiceAccountOperation({

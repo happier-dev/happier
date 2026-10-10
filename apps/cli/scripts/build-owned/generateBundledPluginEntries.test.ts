@@ -11,6 +11,8 @@ import * as piDefinition from '../../../../packages/plugins/pi/src/agent/definit
 import * as codexDefinition from '../../../../packages/plugins/codex/src/agent/definition';
 import * as claudeDefinition from '../../../../packages/plugins/claude/src/agent/definition';
 import * as ohMyPiDefinition from '../../../../packages/plugins/ohmypi/src/agent/definition';
+import { AGENT_DEFINITION as CUSTOM_ACP_DEFINITION } from '../../../../packages/plugins/custom-acp/src/agent/definition';
+import { PLUGIN_MANIFEST as CUSTOM_ACP_MANIFEST } from '../../../../packages/plugins/custom-acp/src/manifest';
 import { collectBundledFirstPartyVoiceProjectionSources, collectBundledPluginUiTranslations, reconcileBundledPluginInstalledRuntime, readExternalSessionSourceDeclaration, renderRetainedCliBundledPluginImplementationEntriesTs, resolveGeneratorPackagedRuntimePreparation, selectCanonicalRuntimeWorkspacePackageRoots, publishBundledPluginSemanticProjection, readInheritedBundledPluginFailures } from './generateBundledPluginEntries.ts';
 import { renderBundledAgentDefinitionsTs } from './bundledPlugins/agentFacts.ts';
 import { renderBundledPluginTranslationsTs } from './bundledPlugins/agentUi.ts';
@@ -112,6 +114,33 @@ describe('built-in legacy Connected Account compatibility', () => {
 });
 
 describe('generated output ownership', () => {
+  it('projects a catalog-driven Agent without inventing native CLI metadata', async () => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-no-native-cli-');
+    const packageRoot = writeBundledPluginSourceInputs({ repoRoot, pluginId: 'custom-acp' });
+    writeCliBundledHostPackage({ happyCliDir, bundledDependencies: ['@happier-dev/plugins-custom-acp'] });
+    const projectionPath = join(happyCliDir, 'src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts');
+    mkdirSync(dirname(projectionPath), { recursive: true });
+    writeFileSync(projectionPath, `export const BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS = ${JSON.stringify([{
+      pluginId: CUSTOM_ACP_MANIFEST.id, manifest: CUSTOM_ACP_MANIFEST,
+      sourceSpec: { locator: '@happier-dev/plugins-custom-acp' },
+    }])};`);
+    mkdirSync(join(packageRoot, 'src/agent'), { recursive: true });
+    writeFileSync(join(packageRoot, 'src/agent/definition.ts'), `export const AGENT_DEFINITION = ${JSON.stringify(CUSTOM_ACP_DEFINITION)};`);
+    writeFileSync(join(packageRoot, 'src/manifest.ts'), `export const PLUGIN_MANIFEST = ${JSON.stringify(CUSTOM_ACP_MANIFEST)};`);
+    try {
+      await withWorkspaceBundleLock(async lease => {
+        await runRuntimeConsumedAgentFactsPrivatePhase(repoRoot, lease);
+      }, { lockPath: join(repoRoot, 'publication.lock') });
+      const exports: Record<string, unknown> = {};
+      runInNewContext(transpileModule(readFileSync(join(repoRoot, 'packages/agents/src/generated/bundledAgentDefinitions.ts'), 'utf8'),
+        { compilerOptions: { module: ModuleKind.CommonJS } }).outputText, { exports });
+      expect(exports.BUNDLED_AGENT_DEFINITIONS_BY_ID).toMatchObject({
+        'custom-acp': { core: { id: 'custom-acp' } },
+      });
+      expect(exports.BUNDLED_AGENT_DEFINITIONS_BY_ID).not.toHaveProperty('custom-acp.cli');
+    } finally { cleanup(); }
+  });
+
   it('loads public SDK source facts through the author runtime without compiler declaration aliases', async () => {
     const { repoRoot, cleanup } = createPackageLayoutSandbox('happier-author-source-exports-');
     const entryPath = join(repoRoot, 'author-entry.ts');

@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   parseGeneratorCliArgs,
   normalizeCanonicalGeneratorPublication,
-  resolveGeneratorAuthoringPreparationPolicy,
   resolvePluginAuthorRuntimeLoadScope,
   resolveSelectedBundledPluginPackageNames,
   shouldEvaluateBundledRuntimeSource,
@@ -32,37 +31,6 @@ describe('bundled Plugin publisher options', () => {
     expect(() => parseGeneratorCliArgs(['--agent-definitions', '--aggregate'])).toThrow();
     expect(() => parseGeneratorCliArgs(['--agent-definitions', '--workspace', 'plugins-claude'])).toThrow();
   });
-  it('keeps noncanonical target generation read-only at canonical preparation owners', () => {
-    expect(resolveGeneratorAuthoringPreparationPolicy({
-      mode: 'write',
-      targetsCanonicalRoot: false,
-      targetOwnedOnly: false,
-    })).toEqual({
-      generatedCompilerInputMode: 'check',
-    });
-    expect(resolveGeneratorAuthoringPreparationPolicy({
-      mode: 'write',
-      targetsCanonicalRoot: true,
-      targetOwnedOnly: false,
-    })).toEqual({
-      generatedCompilerInputMode: 'write',
-    });
-    expect(resolveGeneratorAuthoringPreparationPolicy({
-      mode: 'check',
-      targetsCanonicalRoot: true,
-      targetOwnedOnly: false,
-    })).toEqual({
-      generatedCompilerInputMode: 'check',
-    });
-    expect(resolveGeneratorAuthoringPreparationPolicy({
-      mode: 'write',
-      targetsCanonicalRoot: true,
-      targetOwnedOnly: true,
-    })).toEqual({
-      generatedCompilerInputMode: 'check',
-    });
-  });
-
   it('does not evaluate executable runtime source for projection-only checks', () => {
     expect(shouldEvaluateBundledRuntimeSource('projections')).toBe(false);
     expect(shouldEvaluateBundledRuntimeSource('all')).toBe(true);
@@ -97,6 +65,8 @@ describe('bundled Plugin publisher options', () => {
       mode: 'write',
       scope: 'all',
     });
+    expect(parseGeneratorCliArgs(['--mode', 'write', '--package-artifacts'])).toMatchObject({ scope: 'all' });
+    expect(() => parseGeneratorCliArgs(['--package-artifacts', '--scope', 'projections'])).toThrow();
     expect(() => parseGeneratorCliArgs(['--mode', 'check', '--scope', 'all']))
       .toThrow(/scope.*projections/u);
   });

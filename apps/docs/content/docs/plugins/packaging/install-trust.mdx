@@ -21,6 +21,25 @@ pre-validate it. If the displayed package, manifest, artifact, or source facts
 change before approval is applied, the operation fails and must be reviewed
 again.
 
+## Visibility and execution machines
+
+In 0.3 development source, app-level plugin UI is discovered across the Account's
+machines before an execution machine is chosen. Installing Channels on one machine
+and Triage on another does not make either disappear when you change targets.
+Missing declarations stay preparing, and conflicting versions or UI content stay
+visible as a conflict rather than running an arbitrary copy.
+
+Machine-free UI has no execution-machine picker. When a plugin needs a machine,
+Happier uses your valid saved preference first, then the plugin's admitted
+installation default, then a sole eligible compatible installation; otherwise you
+choose a target. A saved offline target remains selected and unavailable until it
+recovers or you explicitly change it. Invocation checks the exact target again,
+including after approval.
+
+Installation administration remains machine-specific: install, installation settings,
+Secrets and Browse operate on the named administration machine. Appearing in the
+Account's installed list does not mean a plugin is enabled, trusted or executable.
+
 For local authoring, use `hdev plugins dev`. The daemon owns replacement and
 validation while the author command automatically observes the source. For an
 intentional watcher-free refresh of a package root, use the same development

@@ -15,6 +15,10 @@ function attachedSpec(id: string): ManagedServiceSpec {
 }
 
 describe('managed-service specification normalization', () => {
+    it('keeps startup unbounded when omitted and accepts an authored deadline beyond the former ceiling', () => {
+        expect(normalizeManagedServiceSpec(attachedSpec('gateway')).startupTimeoutMs).toBeUndefined();
+        expect(normalizeManagedServiceSpec({ ...attachedSpec('gateway'), startupTimeoutMs: 600_000 }).startupTimeoutMs).toBe(600_000);
+    });
     it('refuses an HTTP health check for an explicitly URL-less owned process', () => {
         expect(() => normalizeManagedServiceSpec({
             id: 'worker',

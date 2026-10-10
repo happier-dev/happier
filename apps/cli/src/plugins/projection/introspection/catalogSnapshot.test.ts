@@ -209,6 +209,15 @@ describe('plugin catalog introspection snapshot', () => {
               schema: { type: 'string', minLength: 1, maxLength: 256 },
               default: 'synthetic-voice-v1',
               presentation: { control: 'text' },
+            }, {
+              id: 'format',
+              title: 'Format',
+              schema: { type: 'string', enum: ['mp3', 'wav'] },
+              default: 'wav',
+              presentation: {
+                control: 'select',
+                options: [{ value: 'mp3', title: 'MP3' }, { value: 'wav', title: 'WAV' }],
+              },
             }],
           },
         }, {

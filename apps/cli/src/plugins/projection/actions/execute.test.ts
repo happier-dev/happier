@@ -1,3 +1,4 @@
+import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -327,6 +328,7 @@ function createExecutableRegistry(params: Readonly<{
       : {}),
     createAgentInvocationServices: async () => createUnavailablePluginServices(),
     resolveCaptureSource: unexpectedCaptureSourceResolution,
+    resolveProjectNativeAdapter: unexpectedProjectNativeAdapterResolution,
     resolvePromptAssetBlocks: async () => [],
     retireConsumers: () => {},
     dispose: async () => {},

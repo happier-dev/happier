@@ -119,6 +119,62 @@ occurrence; without it, execution is unavailable. Approval follows the shared
 Action settings, not an invented UI caller identity. These are unreleased 0.3
 contracts: rebuild the Action artifact with the matching host and SDK.
 
+## Open an editable authoring draft (development)
+
+In current **0.3 development** source, `session.authoring.open` opens the
+ordinary New Session composer in an answering signed-in Happier client. This
+is a development contract, not released SDK availability. From an admitted
+surface, use the public host Action:
+
+```ts
+import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+
+export async function requestAuthoringDraft(host: PluginUiHostApi) {
+  return host.executeAction('session.authoring.open', {
+    seed: { prompt: 'Help me update this review integration.' },
+  });
+}
+```
+
+An `opened` result identifies the host-owned `draftId`, not a Session or a
+writable copy of its document. The person can edit the prompt and ordinary
+Agent, model, profile, placement and approval options before explicitly
+pressing **Send**. Opening creates no Session, sends no message and runs no
+setup command. A conversation finishing also does not make project setup
+Ready; preparation has its own result and approvals.
+
+Handle the typed result before continuing: `unavailable` with
+`reason: 'client_unavailable'` means an answering client is needed. Invalid,
+stale and other unavailable outcomes do not acknowledge an opened draft.
+An approval-request result is pending, not `opened`. Do not fall back to
+`session.spawn_new`, an automatic Send or your own router/clipboard bridge.
+Agent, CLI and Voice callers retain their actual invocation authority and the
+shared Action policy.
+
+The existing mounted `host.openNewSession(seed)` method consumes the same
+seed/draft owner and resolves without returning a draft. To suggest an exact
+target, use the qualified machine and directory the person selected:
+
+```ts
+import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+
+export async function openSelectedAuthoringTarget(
+  host: PluginUiHostApi,
+  target: Readonly<{ serverId: string; machineId: string; directory: string }>,
+) {
+  await host.openNewSession({
+    prompt: 'Help me update this review integration.',
+    placement: { kind: 'exactTarget', ...target },
+  });
+}
+```
+
+This is still an editable suggestion, not permission to execute there.
+The host owns Account and mount currentness, attachment admission and navigation;
+authors do not supply currentness flags or destination callbacks. See the
+generated [host Action reference](/plugins/api/host-actions#sessionauthoringopen)
+for the current input and outcome contracts.
+
 ## Approval for a direct UI write (development)
 
 The unreleased 0.3 host API lets a direct Account write respect the same approval
@@ -340,13 +396,13 @@ count** also re-reads it explicitly.
 
 Buttons and agents use the same widget Actions. From the mounted native page,
 the existing `widgetArea` host method supplies the page's identity and routes
-this operation to `widgets.instance.add`:
+this operation to `widgets.item.add`:
 
 ```ts
 await host.widgetArea({
   area: 'pinned', context: { directory, filter },
   operation: {
-    actionId: 'widgets.instance.add',
+    actionId: 'widgets.item.add',
     size: 'medium',
     instance: {
       v: 1, id: 'directory-count',
@@ -365,8 +421,13 @@ await host.widgetArea({
 Inspect the acknowledged result before starting dependent operations: refusal
 and approval-pending are different from a completed add. Outside that page,
 ordinary `widgets.*` Actions take qualified host surface references; they do
-not need a plugin-owned layout writer. Continue with the generated
-[widget Action reference](/plugins/api/host-actions#widgetsinstanceadd),
+not need a plugin-owned layout writer. Native and declarative areas use the
+host's shared named-layout tabs. Page-local requests can include `layoutId` and
+the ordinary `widgets.area.layout.*` operation; the host supplies the remaining
+area identity. Selecting switches the answering mounted area, while
+`widgets.item.list` reads a document without switching. A select without a
+mounted owner returns typed unavailable. Continue with the generated
+[widget Action reference](/plugins/api/host-actions#widgetsitemadd),
 [Resource API](/plugins/api/sdk-entrypoints#one-resources-path-three-resource-workflows),
 [native widget areas](/plugins/ui/react-native#personal-widget-areas-in-development)
 and the advanced [presentation and environment tiers](/plugins/ui/react-native#host-api).
@@ -404,9 +465,9 @@ choose and preview it even if all inputs are already bound. A fully bound
 widget with zero or one size choice keeps the direct Add path. Missing or
 ambiguous inputs use that same setup step.
 
-Submit `size` with `widgets.instance.add`, as in the example above, so placement
+Submit `size` with `widgets.item.add`, as in the example above, so placement
 and presentation are one operation. Change an existing copy through
-`widgets.instance.size.set` with `{ ref, size }`; see the generated
+`widgets.item.size.set` with `{ ref, size }`; see the generated
 [widget Action reference](/plugins/api/host-actions). On grid surfaces, native renderers receive
 `RenderContext.widgetPresentation` with the actual `footprint`, a `size` when
 that native rectangle matches a named intent, and optional measured `geometry`.
@@ -552,6 +613,26 @@ reads and release watches when the host marks their surface inactive. They keep
 the last ready snapshot, ignore late callbacks, and re-read when activity resumes.
 Providers without a host activity fact keep their existing live behavior.
 
+`state.agent`, when present, contains the catalog's `agentId` and `displayName`,
+not the Session title. Its optional `brand.pluginId` targets the public
+`<BrandMark pluginId={state.agent.brand.pluginId} />` renderer. Keep generic
+wording and marks when identity is absent; do not assume a default Agent. A
+known Agent without a package reference still supplies its display name.
+For Collection glyph badges, capture the optional brand first:
+
+```tsx
+import { BrandMark } from '@happier-dev/plugin-ui';
+
+const brand = state.agent?.brand;
+const glyphBadge = brand
+  ? { mark: (pixelSize: number) => <BrandMark pluginId={brand.pluginId} pixelSize={pixelSize} externallyLabelled /> }
+  : undefined;
+```
+
+Collection owns the compact slot
+size; `BrandMark` shares the host's sizing renderer and leaves any visible name
+at its normal text size.
+
 | Host method | What it does |
 |---|---|
 | `readSession(sessionId)` | Returns the Session's current state, or `null` when this Account cannot reach it. |
@@ -653,6 +734,11 @@ export const descriptor = TriageSourceDescriptorV1Schema.parse({
         kind: 'source', id: 'stack-trace', title: 'Stack trace',
         titleKey: 'plugins.exampleErrors.ui.tab.stackTrace',
       },
+      {
+        kind: 'source', id: 'occurrences', title: 'Occurrences',
+        // A row fact your snapshots already carry; Triage shows it beside the title.
+        summaryFact: 'example-errors/events',
+      },
     ],
     detailActions: true,
   }],
@@ -663,7 +749,13 @@ Triage draws the shared Overview, Activity, Files and Checks strip and appends
 your declared source tabs. Declare a source tab's optional `titleKey` in your
 plugin's translation bundles; the host projects the admitted source's strings
 for the active locale, with English fallback, and `title` remains the fallback
-when the key is missing. It mounts your existing detail renderer with the
+when the key is missing. A tab's optional `summaryFact` names one of your row
+facts; Triage reads it from the entry's own snapshot and shows its value beside
+the title ("Checks 2 failing", "Occurrences 1.2K"). Counts use the reader's
+locale (an approximate count keeps a `~`), a status keeps its tone, and an entry
+whose snapshot lacks that fact shows no summary. Files and Checks taken from an
+issue's linked fix PR use the fix PR source's declaration and facts. It mounts
+your existing detail renderer with the
 requested `panel`; `detailActions: true` requests the separate `actions` panel
 in the detail header. Render only that panel, using your own source terminology
 and Action handlers. Parse the input with `TriageDetailSurfaceInputV1Schema`.

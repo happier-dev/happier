@@ -7,6 +7,7 @@ import {
 } from './sourceModule';
 import { activateContributionModule } from '../runtime/lifecycle/activation/activateContributionModule';
 import type { ValidatedAgentSessionRunnerFactoryFactV1 } from '../runtime/activationSources';
+import type { PluginModuleNamespace } from '../runtime/loadPluginModule';
 import { readAgentNativeHomeEnvironmentKeys } from './agentNativeHomeEnvironmentKeys';
 
 export type EvaluatedPluginAuthorRuntimeStagingSource = Readonly<{
@@ -56,6 +57,7 @@ export async function evaluatePluginAuthorRuntimeStagingSource(params: Readonly<
   locator: string;
   rootPath: string;
   authority?: PluginAuthorRuntimeStagingAuthority;
+  loadModule?: (entryPath: string) => Promise<PluginModuleNamespace>;
 }>): Promise<EvaluatedPluginAuthorRuntimeStagingSource> {
   const owned = await evaluatePluginAuthorStagingSource(params);
   const manifestAuthority = await resolveRuntimeStagingManifestAuthority({

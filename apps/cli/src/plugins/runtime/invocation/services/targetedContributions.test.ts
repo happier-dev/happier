@@ -1,3 +1,4 @@
+import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { describe, expect, it, vi } from 'vitest';
 
@@ -307,6 +308,7 @@ function runtimeRegistry(
         activatedPluginIds: new Set(),
         activateContributionsOnDemand: vi.fn(async () => []),
         resolveCaptureSource: unexpectedCaptureSourceResolution,
+        resolveProjectNativeAdapter: unexpectedProjectNativeAdapterResolution,
         resolvePromptAssetBlocks: async () => [],
         retireConsumers: () => {},
         async retirePluginConsumers(pluginIds: readonly string[]) {
@@ -345,6 +347,7 @@ function runtimeRegistryForResolvedContributions(
         activatedPluginIds: new Set(),
         activateContributionsOnDemand: vi.fn(async () => []),
         resolveCaptureSource: unexpectedCaptureSourceResolution,
+        resolveProjectNativeAdapter: unexpectedProjectNativeAdapterResolution,
         resolvePromptAssetBlocks: async () => [],
         retireConsumers: () => {},
         async retirePluginConsumers(pluginIds: readonly string[]) {

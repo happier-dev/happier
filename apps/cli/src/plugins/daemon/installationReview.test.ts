@@ -130,7 +130,7 @@ describe('projectPluginInstallationReview', () => {
     expect(review.compatibility).toEqual({ happier: '^0.2.0', runtimeApiVersion: 1 });
   });
 
-  it('projects a bounded non-sensitive compatibility declaration for a long valid selected engine range', () => {
+  it('preserves the complete long valid selected engine range in the review', () => {
     const happierEngine = `>=0.0.0${' '.repeat(37_980)}<10000.0.0`;
     const review = projectPluginInstallationReview({
       manifest: createManifest({ happierEngine }),
@@ -149,14 +149,13 @@ describe('projectPluginInstallationReview', () => {
     });
 
     expect(review.compatibility).toEqual({
-      happier: 'Declared compatible Happier CLI range',
+      happier: happierEngine,
       runtimeApiVersion: 1,
     });
-    expect(review.compatibility.happier).not.toContain(happierEngine);
     expect(PluginInstallationReviewSchema.safeParse(review).success).toBe(true);
   });
 
-  it('projects bounded evaluator-owned reasons for newer versions without a second compatibility decision', () => {
+  it('projects every evaluator-owned reason and newer version without silently truncating review evidence', () => {
     const source: PluginInstallationReviewSourceFacts = {
       kind: 'npm',
       locator: '@acme/install-review@1.0.0',
@@ -170,10 +169,10 @@ describe('projectPluginInstallationReview', () => {
       curation: { status: 'notApplicable' },
       blockedNewerVersions: Array.from({ length: 33 }, (_, index) => ({
         version: `1.0.${33 - index}`,
-        diagnostics: [{
+        diagnostics: Array.from({ length: 5 }, (_, reason) => ({
           code: 'plugin_manifest_semantic_invalid',
-          message: `Evaluator reason ${index + 1}`,
-        }],
+          message: `Evaluator reason ${index + 1}.${reason + 1}`,
+        })),
       })),
       updatePolicy: 'allowed',
     };
@@ -184,7 +183,8 @@ describe('projectPluginInstallationReview', () => {
       uiArtifacts: { verification: 'verified', contributionIds: [] },
     });
 
-    expect(review.compatibility.blockedNewerVersions).toEqual(source.blockedNewerVersions?.slice(0, 32));
+    expect(review.compatibility.blockedNewerVersions).toEqual(source.blockedNewerVersions);
+    expect(PluginInstallationReviewSchema.safeParse(review).success).toBe(true);
   });
 
   it('projects every declared raw Voice credential grant as non-secret review facts', () => {

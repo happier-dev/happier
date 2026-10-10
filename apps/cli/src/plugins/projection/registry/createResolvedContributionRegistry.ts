@@ -243,6 +243,10 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
     const inputTypes = Object.freeze([...(inputs.inputTypes ?? [])].sort((left, right) =>
         buildQualifiedPluginContributionKey(left.identity).localeCompare(buildQualifiedPluginContributionKey(right.identity))));
     const dragSources = freezeQualifiedContributions(inputs.dragSources ?? []);
+    const machineProvisioners = freezeQualifiedContributions(inputs.machineProvisioners ?? []);
+    const machineProvisionersByContributionKey = new Map(machineProvisioners.map((entry) => [
+        resolveQualifiedContributionRegistryKey(entry), entry,
+    ] as const));
     const dropTargets = freezeQualifiedContributions(inputs.dropTargets ?? []);
     const voiceProviders = Object.freeze([...(inputs.voiceProviders ?? [])].sort((left, right) => (
         buildQualifiedPluginContributionKey(left.identity).localeCompare(buildQualifiedPluginContributionKey(right.identity))
@@ -522,6 +526,8 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         roles,
         workflows,
         inputTypes,
+        machineProvisioners,
+        machineProvisionersByContributionKey: Object.freeze(machineProvisionersByContributionKey),
         dragSources,
         dropTargets,
         voiceProviders,
@@ -532,6 +538,7 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
             return targetedAdmission.read(request);
         },
         activationTargets,
+        pluginDeclarations: inputs.pluginDeclarations,
         materializationIdsByPluginId,
         immutableGenerationIdsByPluginId,
         occurrenceIdsByPluginId,
@@ -950,7 +957,9 @@ export function getResolvedContributionRegistry(): ResolvedContributionRegistry 
 export async function resolveMergedContributionRegistry(
     params?: Readonly<{ happyHomeDir?: string }>,
 ): Promise<ResolvedContributionRegistry> {
-    const builtIn = resolveBuiltInContributions();
+    // Bundled declarations are already admitted for this process. Reuse their
+    // immutable projection; only installed-plugin inputs need a fresh read.
+    const builtIn = getResolvedContributionRegistry();
     const { resolvePluginContributes } = await import('./resolvePluginContributions');
     const plugin = await resolvePluginContributes({
         happyHomeDir: params?.happyHomeDir,
@@ -962,7 +971,7 @@ export async function resolveMergedContributionRegistry(
 
 export function createMergedContributionRegistry(
     plugin: ResolvedContributionInputs,
-    builtIn: ResolvedContributionInputs = resolveBuiltInContributions(),
+    builtIn: ResolvedContributionInputs = getResolvedContributionRegistry(),
 ): ResolvedContributionRegistry {
     return createResolvedContributionRegistry({
         introspectionContributions: Object.freeze([
@@ -1038,6 +1047,7 @@ export function createMergedContributionRegistry(
         roles: Object.freeze([...(builtIn.roles ?? []), ...(plugin.roles ?? [])]),
         workflows: Object.freeze([...(builtIn.workflows ?? []), ...(plugin.workflows ?? [])]),
         inputTypes: Object.freeze([...(builtIn.inputTypes ?? []), ...(plugin.inputTypes ?? [])]),
+        machineProvisioners: Object.freeze([...(builtIn.machineProvisioners ?? []), ...(plugin.machineProvisioners ?? [])]),
         dragSources: Object.freeze([...(builtIn.dragSources ?? []), ...(plugin.dragSources ?? [])]),
         dropTargets: Object.freeze([...(builtIn.dropTargets ?? []), ...(plugin.dropTargets ?? [])]),
         voiceProviders: Object.freeze([...(builtIn.voiceProviders ?? []), ...(plugin.voiceProviders ?? [])]),
@@ -1051,6 +1061,7 @@ export function createMergedContributionRegistry(
             ...(plugin.targetedPluginContributions ?? []),
         ]),
         activationTargets: Object.freeze([...(builtIn.activationTargets ?? []), ...(plugin.activationTargets ?? [])]),
+        pluginDeclarations: Object.freeze([...(builtIn.pluginDeclarations ?? []), ...(plugin.pluginDeclarations ?? [])]),
         materializationIdsByPluginId: Object.freeze({
             ...(builtIn.materializationIdsByPluginId ?? {}),
             ...(plugin.materializationIdsByPluginId ?? {}),
@@ -1344,5 +1355,5 @@ function compareExecutionRunProfileContributes(
 }
 
 export function getBuiltInCatalogEntries(): Record<CatalogAgentId, AgentCatalogEntry> {
-    return createResolvedContributionRegistry(resolveBuiltInContributions()).catalogEntriesById as Record<CatalogAgentId, AgentCatalogEntry>;
+    return getResolvedContributionRegistry().catalogEntriesById as Record<CatalogAgentId, AgentCatalogEntry>;
 }

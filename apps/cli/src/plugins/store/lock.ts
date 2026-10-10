@@ -9,12 +9,6 @@ import {
 
 import type { PluginStorePaths } from './paths';
 
-const PLUGIN_STORE_LOCK_TIMEOUT_MS_ENV = 'HAPPIER_PLUGIN_STORE_LOCK_TIMEOUT_MS';
-const PLUGIN_STORE_LOCK_STALE_AFTER_MS_ENV = 'HAPPIER_PLUGIN_STORE_LOCK_STALE_AFTER_MS';
-
-const DEFAULT_PLUGIN_STORE_LOCK_TIMEOUT_MS = 10_000;
-const DEFAULT_PLUGIN_STORE_LOCK_STALE_AFTER_MS = 120_000;
-
 export const MARKETPLACE_SOURCE_REGISTRY_LOCK_NAME = 'marketplace-source-registry.v1.lock';
 export const NPM_REGISTRY_PROFILES_LOCK_NAME = 'npm-registry-profiles.v1.lock';
 export const NPM_REGISTRY_SECRETS_LOCK_NAME = 'npm-registry-secrets.v1.lock';
@@ -53,10 +47,11 @@ function parsePredecessorPluginStoreLock(raw: string): PredecessorPluginStoreLoc
 
 async function waitForPredecessorPluginStoreLock(params: Readonly<{
   lockFilePath: string;
-  deadlineMs: number;
+  signal?: AbortSignal;
   errorCode: string;
 }>): Promise<void> {
   for (;;) {
+    params.signal?.throwIfAborted();
     let raw: string;
     try {
       raw = await readFile(params.lockFilePath, 'utf8');
@@ -76,72 +71,36 @@ async function waitForPredecessorPluginStoreLock(params: Readonly<{
       continue;
     }
 
-    const remainingMs = params.deadlineMs - Date.now();
-    if (remainingMs <= 0) throw new Error(params.errorCode);
-    await new Promise((resolve) => setTimeout(resolve, Math.min(10, remainingMs)));
+    await new Promise((resolve) => setTimeout(resolve, 10));
   }
-}
-
-function resolvePositiveEnvInt(params: Readonly<{
-  envName: string;
-  defaultValue: number;
-  maxValue: number;
-}>): number {
-  const raw = process.env[params.envName]?.trim();
-  if (!raw) {
-    return params.defaultValue;
-  }
-
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 1) {
-    throw new Error(`Invalid ${params.envName} value: ${raw}`);
-  }
-
-  return Math.min(Math.floor(parsed), params.maxValue);
-}
-
-function resolvePluginStoreLockTimeoutMs(): number {
-  return resolvePositiveEnvInt({
-    envName: PLUGIN_STORE_LOCK_TIMEOUT_MS_ENV,
-    defaultValue: DEFAULT_PLUGIN_STORE_LOCK_TIMEOUT_MS,
-    maxValue: 60_000,
-  });
-}
-
-function resolvePluginStoreLockStaleAfterMs(): number {
-  return resolvePositiveEnvInt({
-    envName: PLUGIN_STORE_LOCK_STALE_AFTER_MS_ENV,
-    defaultValue: DEFAULT_PLUGIN_STORE_LOCK_STALE_AFTER_MS,
-    maxValue: 3_600_000,
-  });
 }
 
 export async function withPluginStoreLock<T>(params: Readonly<{
   paths: PluginStorePaths;
   lockName: string;
+  signal?: AbortSignal;
   fn: () => Promise<T>;
 }>): Promise<T> {
-  const timeoutMs = resolvePluginStoreLockTimeoutMs();
-  const staleAfterMs = resolvePluginStoreLockStaleAfterMs();
   const lockFilePath = join(params.paths.locksDir, params.lockName);
-  const deadlineMs = Date.now() + timeoutMs;
-  const errorCode = `Timeout acquiring plugin store lock '${params.lockName}' after ${timeoutMs}ms`;
+  const errorCode = `Plugin store lock '${params.lockName}'`;
 
   await waitForPredecessorPluginStoreLock({
     lockFilePath,
-    deadlineMs,
+    signal: params.signal,
     errorCode,
   });
 
-  const remainingTimeoutMs = deadlineMs - Date.now();
-  if (remainingTimeoutMs <= 0) throw new Error(errorCode);
   return await withJsonOwnerFileLock({
     lockPath: lockFilePath,
-    timeoutMs: remainingTimeoutMs,
+    timeoutMs: Number.POSITIVE_INFINITY,
     // A predecessor can publish after the compatibility read and before canonical publication.
-    // Require any newly published unrecognized record to age for longer than this bounded attempt;
-    // exact current-schema dead owners remain reclaimable through PID/process-start evidence.
-    staleAfterMs: Math.max(staleAfterMs, remainingTimeoutMs + 1),
+    // Unknown bytes cannot prove a dead owner. Exact current-schema dead owners
+    // remain reclaimable through PID/process-start evidence, never elapsed age.
+    staleAfterMs: Number.POSITIVE_INFINITY,
+    signal: params.signal,
     errorCode,
-  }, params.fn);
+  }, async () => {
+    params.signal?.throwIfAborted();
+    return await params.fn();
+  });
 }

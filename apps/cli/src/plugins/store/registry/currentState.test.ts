@@ -1,3 +1,4 @@
+import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -120,6 +121,7 @@ function createRevisionTaggedRuntimeRegistry(): ResolvedExecutablePluginRuntimeR
     activatedPluginIds: new Set(),
     activateContributionsOnDemand: async () => [],
     resolveCaptureSource: unexpectedCaptureSourceResolution,
+    resolveProjectNativeAdapter: unexpectedProjectNativeAdapterResolution,
     resolvePromptAssetBlocks: async () => [],
     addRuntimeDisposable: (_pluginId, disposable) => disposable,
     createAgentInvocationServices: async () => createUnavailablePluginServices(),

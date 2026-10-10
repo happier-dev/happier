@@ -57,6 +57,37 @@ function locator(overrides: Partial<BundledPluginLocator> = {}): BundledPluginLo
 }
 
 describe('bundled plugin locators', () => {
+    it('admits frozen source declarations from the explicitly launched source bundle without native publication files', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'happier-frozen-source-catalog-'));
+        const projectRoot = join(root, 'apps', 'cli');
+        const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../../../..');
+        const previousRoot = process.env.HAPPIER_STACK_CLI_ROOT_DIR;
+        try {
+            mkdirSync(join(projectRoot, 'src/chunks'), { recursive: true });
+            writeFileSync(join(projectRoot, 'package.json'), JSON.stringify({ name: '@happier-dev/cli', type: 'module' }));
+            symlinkSync(join(repoRoot, 'node_modules'), join(root, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
+            await build({
+                configFile: join(repoRoot, 'apps/cli/vitest.config.ts'), logLevel: 'silent',
+                build: {
+                    outDir: join(projectRoot, 'src/chunks'), emptyOutDir: false, minify: false, sourcemap: false,
+                    lib: { entry: fileURLToPath(new URL('./locators.ts', import.meta.url)), formats: ['es'], fileName: () => 'locators.mjs' },
+                    rollupOptions: { external: (id) => id.startsWith('node:') || builtinModules.includes(id)
+                        || (!id.startsWith('.') && !isAbsolute(id) && !id.startsWith('@/') && !id.startsWith('@happier-dev/') && !id.startsWith('#') && !id.startsWith('\0')) },
+                },
+            });
+            process.env.HAPPIER_STACK_CLI_ROOT_DIR = projectRoot;
+            const compiled = await import(/* @vite-ignore */ pathToFileURL(join(projectRoot, 'src/chunks/locators.mjs')).href) as {
+                loadCurrentBundledPluginLocatorResult: () => ReturnType<typeof loadBundledPluginLocatorResult>;
+            };
+            const loaded = compiled.loadCurrentBundledPluginLocatorResult();
+            expect(loaded.pluginFailures).toEqual([]);
+            expect(loaded.loadedPlugins.some((plugin) => plugin.pluginId === 'happier.agent.codex')).toBe(true);
+        } finally {
+            if (previousRoot === undefined) delete process.env.HAPPIER_STACK_CLI_ROOT_DIR;
+            else process.env.HAPPIER_STACK_CLI_ROOT_DIR = previousRoot;
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
     it('admits distribution failures for compiled modules in a source checkout', async () => {
         const root = mkdtempSync(join(tmpdir(), 'happier-compiled-source-catalog-'));
         const projectRoot = join(root, 'apps', 'cli');

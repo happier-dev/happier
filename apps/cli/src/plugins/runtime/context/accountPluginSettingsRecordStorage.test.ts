@@ -58,6 +58,35 @@ const settingsModel = createStablePluginSettingsModel({ pluginId: 'example.tasks
 describe('Account plugin Settings record storage', () => {
     afterEach(() => clearActiveAccountSettingsSnapshot());
 
+    it('accepts successful record reads and writes after fifteen seconds', async () => {
+        vi.useFakeTimers();
+        try {
+            const delayed = (data: unknown, config: Readonly<Record<string, unknown>>) => new Promise<{ status: number; data: unknown }>((resolve, reject) => {
+                // HTTP is the genuine external boundary; emulate its configured deadline.
+                const timeout = typeof config.timeout === 'number' && config.timeout > 0
+                    ? setTimeout(() => reject(new Error('HTTP deadline elapsed')), config.timeout) : undefined;
+                setTimeout(() => { clearTimeout(timeout); resolve({ status: 200, data }); }, 16_000);
+            });
+            const adapter = createAccountPluginSettingsRecordStorage({
+                readCredentials: async () => plainCredentials, isCurrentAccount: () => true,
+                resolveBaseUrl: () => 'https://server.example',
+                http: {
+                    get: async (url, config) => url.endsWith('/encryption')
+                        ? { status: 200, data: { mode: 'plain', updatedAt: 1 } }
+                        : delayed({ status: 'present', revision: 4, content: { t: 'plain', v: { v: 1, values: { theme: 'dark' } } } }, config),
+                    post: async (_url, _body, config) => delayed({ status: 'updated', revision: 5 }, config),
+                },
+            });
+            const access = await adapter.bindOperation();
+            const read = access.readRecord(model);
+            await vi.advanceTimersByTimeAsync(16_000);
+            expect(await read).toMatchObject({ status: 'present', revision: 4 });
+            const write = access.writeRecord(model, { expectedRevision: 4, values: { theme: 'light' } });
+            await vi.advanceTimersByTimeAsync(16_000);
+            expect(await write).toEqual({ status: 'updated', revision: 5 });
+        } finally { vi.useRealTimers(); }
+    });
+
     it.each(['plain', 'e2ee'] as const)('never retargets a %s logical update after its initial Account read', async (mode) => {
         const accountA = mode === 'plain' ? plainCredentials : e2eeCredentials;
         const accountB: StoredCredentials = mode === 'plain'

@@ -5,7 +5,6 @@ import type { ComposerReferenceCandidatePageV1, ComposerReferenceResolutionV1, C
 
 import type { ContributionRuntimeRegistration } from '@/plugins/runtime/api/registrationRightsHost';
 import type { ResolvedComposerReferenceContribution } from '@/plugins/projection/registry/types';
-import { runWithOptionalTimeout } from '@/plugins/runtime/lifecycle/utils';
 
 type TargetRegistration = Readonly<{
     pluginId: string;
@@ -31,13 +30,6 @@ export type TargetComposerReferenceInvocationContextFactory = (
     complete(): void;
 }>;
 
-/**
- * Matches the existing bounded dynamic-resource callback budget. A reference
- * runtime is trusted but must never hold a Composer query or prompt dispatch
- * indefinitely.
- */
-const COMPOSER_REFERENCE_CALLBACK_TIMEOUT_MS = 5_000;
-
 type ComposerReferenceRegistration = TargetRegistration & Readonly<{
     registration: Extract<ContributionRuntimeRegistration, { family: 'composerReferences' }>;
 }>;
@@ -60,13 +52,6 @@ function notCurrentError(reference: PluginContributionIdentityV1): PluginError {
     return new PluginError({
         code: 'composer_reference_not_current',
         message: `Composer reference '${reference.pluginId}/${reference.localId}' result is no longer current`,
-    });
-}
-
-function timeoutError(reference: PluginContributionIdentityV1): PluginError {
-    return new PluginError({
-        code: 'composer_reference_timed_out',
-        message: `Composer reference '${reference.pluginId}/${reference.localId}' did not answer within its callback budget`,
     });
 }
 
@@ -103,7 +88,6 @@ export function createTargetComposerReferenceRegistry(params: Readonly<{
     targetRegistrations: readonly TargetRegistration[];
     resolveOccurrenceLifecycle(pluginId: string): OccurrenceLifecycle;
     createInvocationContext: TargetComposerReferenceInvocationContextFactory;
-    callbackTimeoutMs?: number;
 }>): Readonly<{
     list(): readonly PluginContributionIdentityV1[];
     search(input: Readonly<{
@@ -120,12 +104,6 @@ export function createTargetComposerReferenceRegistry(params: Readonly<{
         sessionId?: string;
     }>): Promise<ComposerReferenceResolutionV1>;
 }> {
-    const callbackTimeoutMs = typeof params.callbackTimeoutMs === 'number'
-        && Number.isFinite(params.callbackTimeoutMs)
-        && params.callbackTimeoutMs > 0
-        ? Math.trunc(params.callbackTimeoutMs)
-        : COMPOSER_REFERENCE_CALLBACK_TIMEOUT_MS;
-
     const declarations = new Map(params.composerReferences.flatMap((declaration) => (
         declaration.pluginId === declaration.identity.pluginId
         && declaration.identity.localId === declaration.definition.id
@@ -166,14 +144,11 @@ export function createTargetComposerReferenceRegistry(params: Readonly<{
         const lifecycle = params.resolveOccurrenceLifecycle(paramsForCall.reference.pluginId);
         if (!isEntryCurrent(entry, lifecycle)) throw staleError(paramsForCall.reference);
 
-        const timeout = new AbortController();
         const signal = AbortSignal.any([
             paramsForCall.signal,
             lifecycle.retirementSignal,
-            timeout.signal,
         ]);
         const abortError = (): PluginError => {
-            if (timeout.signal.aborted) return timeoutError(paramsForCall.reference);
             if (lifecycle.retirementSignal.aborted || !isEntryCurrent(entry, lifecycle)) {
                 return staleError(paramsForCall.reference);
             }
@@ -182,6 +157,7 @@ export function createTargetComposerReferenceRegistry(params: Readonly<{
         let removeAbortListener = () => {};
         let invocation: ReturnType<TargetComposerReferenceInvocationContextFactory> | null = null;
         try {
+            if (signal.aborted) throw abortError();
             const aborted = new Promise<never>((_resolve, reject) => {
                 const rejectAbort = () => reject(abortError());
                 if (signal.aborted) {
@@ -196,21 +172,13 @@ export function createTargetComposerReferenceRegistry(params: Readonly<{
                 occurrenceId: entry.occurrenceId,
                 ...(paramsForCall.sessionId ? { sessionId: paramsForCall.sessionId } : {}),
                 signal,
-                isCurrent: () => isEntryCurrent(entry, lifecycle),
+                isCurrent: () => !signal.aborted && isEntryCurrent(entry, lifecycle),
             });
             invocation = createdInvocation;
-            const result = await runWithOptionalTimeout(
-                callbackTimeoutMs,
-                async () => await Promise.race([
-                    paramsForCall.operation(entry.registration.value, createdInvocation.context),
-                    aborted,
-                ]),
-                () => {
-                    const error = timeoutError(paramsForCall.reference);
-                    timeout.abort(error);
-                    return error;
-                },
-            );
+            const result = await Promise.race([
+                paramsForCall.operation(entry.registration.value, createdInvocation.context),
+                aborted,
+            ]);
             if (signal.aborted) throw abortError();
             if (!isEntryCurrent(entry, lifecycle)) throw staleError(paramsForCall.reference);
             return result;

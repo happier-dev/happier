@@ -13,6 +13,28 @@ Provider-local supervisor or credential cache.
 
 The service can own process launch, explicit managed-spawn or external-attach mode, port allocation, health checks, startup timeout, bounded credentials, durable log policy, snapshots, exact-handle requests, and cleanup.
 
+## Endpoint-free and native lifetime (0.3 development)
+
+An owned process that does not listen uses `spawn.endpoint: { kind: 'none' }`.
+Its snapshot can be `running` without an address; the host does not invent a
+port or call it HTTP-healthy. Exact-handle requests need an observed endpoint,
+and a health-only wait needs an actual health capability, such as an admitted
+command check. A missing capability returns typed unavailable.
+
+A native resource whose lifetime outlasts its starter uses `mode.kind: 'native'`
+with its admitted launch and exact native instance. The manifest-declared
+`projectNativeAdapters` service lifecycle reports phase, readiness and an
+optional observed endpoint together. Starter exit does not mean the resource
+stopped. A definitive native stop settles the handle; an accepted-only stop
+needs a stopped observation. Unsupported or unconfirmed stop retains custody
+and does not permit replacing the resource as though it had stopped.
+
+These are development-source contracts, not a claim that sessionless Project
+Services or every native tool is available. Native supervision requires the
+current admitted lifecycle role; an unavailable role refuses before launch.
+
+The following HTTP example requires an endpoint-producing specification.
+
 ```ts
 const service = await context.services.managedServices.supervise(spec, {
   signal: context.signal

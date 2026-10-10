@@ -15,13 +15,6 @@ import {
  * lifecycle modules do not each grow their own duplicate copy.
  */
 
-/** Plugin phases inherit the containing startup deadline, when one exists. */
-export function remainingPluginInitializationTimeoutMs(startupDeadlineAtMs?: number): number | null {
-    return startupDeadlineAtMs === undefined
-        ? null
-        : Math.max(0, startupDeadlineAtMs - Date.now());
-}
-
 export function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object';
 }

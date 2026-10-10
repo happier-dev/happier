@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import * as undici from 'undici';
 
 import type { MarketplaceIndexQueryResultV1, MarketplaceIndexSourceSnapshotV1 } from '@happier-dev/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -13,6 +14,16 @@ import {
 } from './service';
 import { createMarketplaceSourceRegistryStore } from './sources/store';
 import { createNpmRegistryProfileService } from '@/plugins/distribution/npm/profiles/service';
+
+// Network boundaries only; acquisition policy, loading and persistence stay real.
+vi.mock('node:dns/promises', async (importOriginal) => ({
+  ...await importOriginal<typeof import('node:dns/promises')>(),
+  lookup: vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]),
+}));
+vi.mock('undici', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('undici')>();
+  return { ...actual, fetch: vi.fn(actual.fetch) };
+});
 
 const homes: string[] = [];
 
@@ -52,8 +63,62 @@ function communityEntries(count: number): MarketplaceIndexSourceSnapshotV1['entr
 }
 
 describe('createMarketplaceIndexService', () => {
+  it('starts every selected source through real acquisition without a four-source cutoff', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-marketplace-source-admission-'));
+    homes.push(home);
+    const sources = Array.from({ length: 5 }, (_, index) => ({
+      id: `source-${index}`, title: `Source ${index}`, sourceUrl: `https://catalog.example/${index}.json`, enabled: true, origin: 'user' as const,
+    }));
+    // DNS and HTTP are system boundaries; the source loader, acquisition policy,
+    // cache parser and index service beneath them remain real.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let startedFour!: () => void;
+    const fourStarted = new Promise<void>((resolve) => { startedFour = resolve; });
+    const started: string[] = [];
+    vi.mocked(undici.fetch).mockImplementation(async (input) => {
+      const sourceUrl = String(input);
+      started.push(sourceUrl);
+      if (started.length === 4) startedFour();
+      await held;
+      const source = sources.find((candidate) => candidate.sourceUrl === sourceUrl)!;
+      return new undici.Response(JSON.stringify({
+        source: { id: source.id, title: source.title, kind: source.origin, sourceUrl },
+        freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: [], diagnostics: [],
+      }), { status: 200 });
+    });
+    const pending = createMarketplaceIndexService({ happyHomeDir: home }).querySources({}, sources);
+    try {
+      await fourStarted;
+      await vi.waitFor(() => expect(started).toEqual(sources.map((source) => source.sourceUrl)));
+    } finally { release(); await pending; }
+    expect((await pending).sources).toHaveLength(5);
+  });
+  it('queries and pages every configured source beyond 65 active sources', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-marketplace-many-sources-'));
+    homes.push(home);
+    const sources = Array.from({ length: 70 }, (_, index) => ({
+      id: `marketplace:source-${index}`, title: `Source ${index}`, sourceUrl: `https://catalog.example/${index}.json`,
+      enabled: true, origin: 'user' as const,
+    }));
+    vi.mocked(undici.fetch).mockImplementation(async (input) => {
+      const sourceUrl = String(input);
+      const source = sources.find((candidate) => candidate.sourceUrl === sourceUrl)!;
+      const document = snapshot(sourceUrl, `acme.plugin-${source.id.split('-').at(-1)}`);
+      document.source = { id: source.id, title: source.title, sourceUrl, kind: source.origin };
+      document.entries[0]!.review = { status: 'unreviewed', reviewedAt: null };
+      return new undici.Response(JSON.stringify(document), { status: 200 });
+    });
+    const service = createMarketplaceIndexService({ happyHomeDir: home });
+    const first = await service.querySources({ filters: {}, limit: 50 }, sources);
+    const last = await service.querySources({ filters: {}, limit: 50, cursor: first.nextCursor }, sources);
+    expect(first.sources).toHaveLength(70);
+    expect([...first.items, ...last.items]).toHaveLength(70);
+    expect(last.nextCursor).toBeNull();
+  });
   afterEach(async () => {
     vi.restoreAllMocks();
+    vi.mocked(undici.fetch).mockReset();
     vi.unstubAllGlobals();
     await Promise.all(homes.splice(0).map(async (home) => await rm(home, { recursive: true, force: true })));
   });
@@ -61,11 +126,11 @@ describe('createMarketplaceIndexService', () => {
   it('derives revision from projected authority so different content cannot reuse revision 1 after restart', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-marketplace-service-'));
     homes.push(home);
-    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+    vi.mocked(undici.fetch).mockImplementation(async (input) => {
       const sourceUrl = String(input);
       const pluginId = sourceUrl.includes('one') ? 'acme.one' : 'acme.two';
-      return new Response(JSON.stringify(snapshot(sourceUrl, pluginId)), { status: 200 });
-    }));
+      return new undici.Response(JSON.stringify(snapshot(sourceUrl, pluginId)), { status: 200 });
+    });
 
     const first = await createMarketplaceIndexService({ happyHomeDir: home }).querySources(
       { filters: {} },
@@ -82,10 +147,10 @@ describe('createMarketplaceIndexService', () => {
   it('changes revision when the persisted source-to-profile binding changes', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-marketplace-service-'));
     homes.push(home);
-    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+    vi.mocked(undici.fetch).mockImplementation(async (input) => {
       const sourceUrl = String(input);
-      return new Response(JSON.stringify(snapshot(sourceUrl, 'acme.private')), { status: 200 });
-    }));
+      return new undici.Response(JSON.stringify(snapshot(sourceUrl, 'acme.private')), { status: 200 });
+    });
     const service = createMarketplaceIndexService({ happyHomeDir: home });
     const source = {
       id: 'marketplace:private', title: 'Private', sourceUrl: 'https://catalog.example/private.json',
@@ -364,19 +429,6 @@ describe('createMarketplaceIndexService', () => {
     await expect(createMarketplaceIndexService({ happyHomeDir: home })
       .queryExactListing({ sourceId: 'marketplace:missing', pluginId: 'acme.wanted' }))
       .resolves.toMatchObject({ ok: false, code: 'install_unavailable' });
-  });
-
-  it('rejects more than 65 active sources including the built-in community source allowance', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'happier-marketplace-service-'));
-    homes.push(home);
-    const sources = Array.from({ length: 66 }, (_, index) => ({
-      id: `marketplace:source-${index}`,
-      title: `Source ${index}`,
-      sourceUrl: `http://source-${index}.example/index.json`,
-      enabled: true,
-      origin: 'user' as const,
-    }));
-    await expect(createMarketplaceIndexService({ happyHomeDir: home }).querySources({ filters: {} }, sources)).rejects.toThrow(/source.*limit|65/i);
   });
 
   it('projects loader failures before returning the outward marketplace query schema', async () => {

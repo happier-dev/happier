@@ -1,5 +1,5 @@
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import type { DaemonPluginUiComposerSurfaceCatalogEntryV1, DaemonPluginUiTargetedSurfaceSelectedRendererV1, PluginMachineExecutionOriginV1, PluginProjectionV2, PluginUiResourceBindingCapabilityV1 } from '@happier-dev/protocol';
+import type { DaemonPluginUiComposerSurfaceCatalogEntryV1, DaemonPluginUiTargetedSurfaceSelectedRendererV1, PluginMachineMaterializationExecutionOriginV1, PluginProjectionV2, PluginUiResourceBindingCapabilityV1 } from '@happier-dev/protocol';
 import { DaemonPluginUiTargetedSurfaceSelectedRendererV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { selectPluginUiRendererChainMemberV1 } from '@happier-dev/protocol/plugins/contributions/ui/surfaceRegistry';
 import type { PluginUiRendererChainBindingV1, PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
@@ -244,7 +244,7 @@ export function projectDaemonComposerSurfaceCatalog(input: Readonly<{
     projection: PluginProjectionV2;
     pluginUiHostRuntime: PluginUiProjectionHostRuntimeContext;
     modelsByRendererKey: Readonly<Record<string, StablePluginDeclarativeModel | undefined>>;
-    pluginExecutionOriginsByPluginId: Readonly<Record<string, PluginMachineExecutionOriginV1>>;
+    pluginExecutionOriginsByPluginId: Readonly<Record<string, PluginMachineMaterializationExecutionOriginV1>>;
     resourceCapabilityForPlugin: (pluginId: string) => PluginUiResourceBindingCapabilityV1;
     readContributorTargetedContributions: (target: Readonly<{
         pluginId: string;

@@ -1,3 +1,4 @@
+import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -33,6 +34,7 @@ function createRuntimeRegistry(durableRevision?: number): ResolvedExecutablePlug
         activatedPluginIds: new Set(),
         activateContributionsOnDemand: async () => [],
         resolveCaptureSource: unexpectedCaptureSourceResolution,
+        resolveProjectNativeAdapter: unexpectedProjectNativeAdapterResolution,
         resolvePromptAssetBlocks: async () => [],
         addRuntimeDisposable: (_pluginId, disposable) => disposable,
         createAgentInvocationServices: async () => createUnavailablePluginServices(),

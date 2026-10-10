@@ -71,7 +71,6 @@ function scopedInvocationContext(
 
 function fixture(
   overrides: Partial<ComposerAttachmentRuntime> = {},
-  options: Readonly<{ callbackTimeoutMs?: number }> = {},
 ) {
   const retirement = new AbortController();
   let current = true;
@@ -134,7 +133,6 @@ function fixture(
       retirementSignal: retirement.signal,
     }),
     createInvocationContext,
-    callbackTimeoutMs: options.callbackTimeoutMs,
   });
   return {
     registry,
@@ -677,30 +675,54 @@ describe('target composer attachment registry', () => {
     }
   });
 
-  it('enforces the host callback deadline even when an attachment ignores cancellation', async () => {
+  it('accepts current attachment preparation after the former callback cutoff', async () => {
     vi.useFakeTimers();
     try {
       let observedSignal: AbortSignal | undefined;
+      const pending = deferred<ComposerAttachmentPrepareResultV1>();
       const subject = fixture({
         prepareForSend: vi.fn(async (_request, context) => {
           observedSignal = context.signal;
-          return await new Promise<ComposerAttachmentPrepareResultV1>(() => {});
+          return await pending.promise;
         }),
-      }, { callbackTimeoutMs: 25 });
+      });
       const prepare = subject.registry.prepareForSend({
         attachment: ATTACHMENT,
         request: prepareRequest,
         signal: new AbortController().signal,
       });
+      const outcome = prepare.then((value) => ({ value }), (error: unknown) => ({ error }));
       // Reaching the attachment runtime is asynchronous: it may have to
       // activate a dormant plugin before the callback can be invoked.
       await vi.advanceTimersByTimeAsync(0);
       expect(subject.runtime.prepareForSend).toHaveBeenCalledTimes(1);
 
-      vi.advanceTimersByTime(25);
+      await vi.advanceTimersByTimeAsync(5_001);
+      const result: ComposerAttachmentPrepareResultV1 = { attachments: prepareRequest.attachments.map(({ instanceId, value }) => ({ instanceId, status: 'ready', value })) };
+      pending.resolve(result);
 
-      await expect(prepare).rejects.toMatchObject({ code: 'composer_attachment_timed_out' });
-      expect(observedSignal?.aborted).toBe(true);
+      await expect(outcome).resolves.toEqual({ value: result });
+      expect(observedSignal?.aborted).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('settles a slow post-acceptance callback once without replaying its effect', async () => {
+    vi.useFakeTimers();
+    try {
+      const completion = deferred<void>();
+      const accepted: string[] = [];
+      const subject = fixture({ afterMessageAccepted: async (event) => {
+        accepted.push(event.localId);
+        await completion.promise;
+      } });
+      const operation = subject.registry.afterMessageAccepted({ attachment: ATTACHMENT, event: acceptedEvent, signal: new AbortController().signal });
+      await vi.advanceTimersByTimeAsync(5_001);
+      expect(accepted).toEqual([acceptedEvent.localId]);
+      completion.resolve();
+      await expect(operation).resolves.toBeUndefined();
+      expect(accepted).toEqual([acceptedEvent.localId]);
     } finally {
       vi.useRealTimers();
     }

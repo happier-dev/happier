@@ -91,6 +91,7 @@ describe('installed external plugin Lane 01 Actions', () => {
             viewerRole: 'owner',
             capabilities: NO_TEAM_CAPABILITIES_V1,
             admission: { historyChoice: { admin: 'choice', member: 'choice', guest: 'hidden' } },
+            counts: null,
         };
         home.get('/v1/account/encryption', async () => ({ mode: 'plain' }));
         home.post('/v1/teams/archive', async (request) => {

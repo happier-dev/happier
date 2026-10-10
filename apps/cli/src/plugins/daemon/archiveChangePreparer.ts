@@ -7,7 +7,6 @@ import type { PluginSourceSpecV1 } from '@happier-dev/protocol';
 
 import {
   cleanupStagedNpmCompatiblePluginArchive,
-  DEFAULT_PORTABLE_ARCHIVE_LIMITS,
   stageNpmCompatiblePluginArchive,
   type StagedNpmCompatiblePluginArchive,
 } from '@/plugins/distribution/archive';
@@ -98,10 +97,7 @@ async function materializeArchive(params: Readonly<{
   integrity: string;
   archiveDigestSha256: `sha256:${string}`;
 }>> {
-  const maximumBytes = Math.min(
-    resolvePluginRemoteArchiveMaxBytes(),
-    DEFAULT_PORTABLE_ARCHIVE_LIMITS.maxExpandedBytes,
-  );
+  const maximumBytes = resolvePluginRemoteArchiveMaxBytes();
   const remoteUrl = readRemoteArchiveUrl(params.locator);
   if (remoteUrl) {
     await downloadRemoteFileWithLimits({
@@ -122,12 +118,12 @@ async function materializeArchive(params: Readonly<{
 
   const sourcePath = expandHomeDirPath(params.locator.trim());
   const sourceStat = await lstat(sourcePath);
-  if ((!sourceStat.isFile() && !sourceStat.isSymbolicLink()) || sourceStat.size > maximumBytes) {
+  if ((!sourceStat.isFile() && !sourceStat.isSymbolicLink()) || (maximumBytes !== null && sourceStat.size > maximumBytes)) {
     throw new Error(`Local plugin archive exceeds the configured size limit (${maximumBytes} bytes) or is not a file`);
   }
   await copyFile(sourcePath, params.destinationPath);
   const copiedStat = await lstat(params.destinationPath);
-  if (!copiedStat.isFile() || copiedStat.isSymbolicLink() || copiedStat.size > maximumBytes) {
+  if (!copiedStat.isFile() || copiedStat.isSymbolicLink() || (maximumBytes !== null && copiedStat.size > maximumBytes)) {
     throw new Error('Local plugin archive could not be copied into daemon-owned temporary storage');
   }
   const facts = await hashArchive(params.destinationPath);

@@ -4,7 +4,7 @@ description: Author the isolated hosted-web artifact without claiming an unverif
 ---
 
 Use an isolated web surface for a packaged application, or a self-contained
-HTML document when the whole interface fits in one source value.
+HTML bundle with a declared entrypoint and local assets.
 
 ## Inline HTML in development
 
@@ -12,9 +12,11 @@ The current development SDK also accepts `hostedHtml`. This is a
 prepublication author contract, not a released runtime-support claim.
 
 Every inline document must initialize the public SDK client, including a
-document that only displays content. The existing ready/bootstrap timeout
-still applies; an HTML string with no client initialization is not a complete
-surface. Start with a client entry such as:
+document that only displays content. In 0.3 development, readiness and SDK
+negotiation wait for the host without an implicit timeout; cancellation,
+retirement, transport failures and explicit caller budgets still apply. An
+HTML string with no client initialization is not a complete surface. Start
+with a client entry such as:
 
 ```ts
 import { createPluginUiRenderContext } from '@happier-dev/plugin-sdk/ui/client';
@@ -26,13 +28,12 @@ document.body.append(summary);
 context.signal.addEventListener('abort', () => summary.remove(), { once: true });
 ```
 
-Bundle that entry and its SDK dependencies into the document itself, with no
-external script imports. Export the resulting complete HTML string from your
-build as `html`, then declare it on the surface:
+Include that entry and its SDK dependencies in a canonical `ArtifactHtmlBundleV1`.
+Export the bundle from your build as `htmlBundle`, then declare it on the surface:
 
 ```ts
 import { definePlugin, defineUiSurfaceDefinition } from '@happier-dev/plugin-sdk';
-import { html } from './ui/summaryDocument.js';
+import { htmlBundle } from './ui/summaryDocument.js';
 
 const summary = defineUiSurfaceDefinition({
   id: 'summary',
@@ -40,10 +41,7 @@ const summary = defineUiSurfaceDefinition({
   title: 'Summary',
   renderer: {
     kind: 'hostedHtml',
-    source: {
-      kind: 'html',
-      html,
-    },
+    source: htmlBundle,
   },
 });
 
@@ -55,15 +53,18 @@ export const { manifest, activate } = definePlugin({
 });
 ```
 
-This form creates no Artifact build target or hosted-asset lookup. The HTML
-field has a 1 MiB UTF-8 ceiling, including inline CSS and JavaScript. Packing
-and installation also enforce the existing 1 MiB limit on the complete
-canonical compatibility projection: the whole manifest, JSON escaping, and UI
-artifact inventory share that budget. The usable HTML size is therefore
-smaller than the field ceiling and depends on the rest of your declaration.
-These are authoring limits, not browser limits; exceeding either rejects
-validation rather than truncating the document. Use the packaged `hostedWeb`
-form below for larger applications and separate assets.
+This form creates no Artifact build target or hosted-asset lookup. The source
+has `v: 1`, an `entrypoint`, and a `files` map. Each file
+declares its MIME type and canonical padded base64 bytes. Use confined relative
+paths; include every referenced local asset. A one-file HTML document uses the
+same representation, not a separate string source. There is no independent
+1 MiB HTML ceiling or compatibility-projection ceiling.
+
+The shared document builder resolves local scripts, module imports, styles,
+images, fonts and runtime resource reads inside the opaque frame. External
+network stays closed until the caller's admitted network policy is wired;
+declaring an origin alone does not open it. The packaged `hostedWeb` form below
+remains the separate installed-asset build workflow.
 
 The host supplies bootstrap configuration, not a second client runtime. Do not
 load the client from a remote script or invent a transport. The document uses the same isolated

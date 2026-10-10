@@ -60,8 +60,8 @@ export function readPortableArchiveEntryPath(input: Readonly<{
   rawPath: string;
   expectedRootDirectory: string;
   entry: Pick<ReadEntry, 'type'>;
-  maxPathBytes: number;
-  maxPathDepth: number;
+  maxPathBytes: number | null;
+  maxPathDepth: number | null;
 }>): Readonly<{ relativePath: string; kind: PortableEntryKind; isRootDirectory: boolean }> {
   const rawPath = input.rawPath.replace(/\/$/u, '');
   if (
@@ -92,10 +92,10 @@ export function readPortableArchiveEntryPath(input: Readonly<{
   if (relativePath !== normalized) {
     fail('archive_path_invalid', `Archive path must use canonical Unicode normalization: ${describeUntrustedPath(input.rawPath)}`);
   }
-  if (Buffer.byteLength(normalized, 'utf8') > input.maxPathBytes) {
+  if (input.maxPathBytes !== null && Buffer.byteLength(normalized, 'utf8') > input.maxPathBytes) {
     throw new PortableArchiveError('archive_limit_path_bytes', `Archive path exceeds the byte limit: ${describeUntrustedPath(input.rawPath)}`);
   }
-  if (relativeSegments.length > input.maxPathDepth) {
+  if (input.maxPathDepth !== null && relativeSegments.length > input.maxPathDepth) {
     throw new PortableArchiveError('archive_limit_path_depth', `Archive path exceeds the depth limit: ${describeUntrustedPath(input.rawPath)}`);
   }
   const kind = input.entry.type === 'Directory' ? 'directory' : 'file';

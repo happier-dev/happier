@@ -9,7 +9,7 @@ import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protoco
 import { PluginMachineMaterializationRefV1Schema } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { deriveVoiceCredentialBindingIdentityV1 } from '@happier-dev/protocol/plugins/contributions/voice';
-import { resolveAccountSettingsVoiceCredentialSource } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { resolveSavedSecretCatalogVoiceCredentialSourceV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import type { PluginContributionIdentityV1, ConnectedServiceCredentialRevisionV1, PluginInstallReviewPrincipalDigest, PluginInstallReviewPrincipalPresentationV1, PluginMachineMaterializationRefV1, PluginPermissionGrantAuthoritySourceV1, PluginPermissionSubjectV1, QualifiedConnectedAccountRef, VoiceCredentialAccessPhase, VoiceCredentialSource, VoiceProviderContribution } from '@happier-dev/protocol';
 
 import type {
@@ -494,9 +494,11 @@ async function selectedSourceFromSnapshot(
   signal: AbortSignal,
 ): Promise<SelectedSource> {
   if (!snapshot) throw unavailable();
-  let resolved: ReturnType<typeof resolveAccountSettingsVoiceCredentialSource>;
+  const purposes = snapshot.connectedPurposeCatalog;
+  if (purposes?.status !== 'ready' || purposes.record.key !== 'purposes') throw unavailable();
+  let resolved: ReturnType<typeof resolveSavedSecretCatalogVoiceCredentialSourceV1>;
   try {
-    resolved = resolveAccountSettingsVoiceCredentialSource(
+    resolved = resolveSavedSecretCatalogVoiceCredentialSourceV1(
       snapshot.settings as unknown as Readonly<Record<string, unknown>>,
       {
         contribution: authority.identity.contribution,
@@ -504,6 +506,7 @@ async function selectedSourceFromSnapshot(
         purpose: authority.identity.purpose,
         machineId: binding.machineId,
       },
+      { connectedPurposes: purposes.record.value },
     );
   } catch {
     throw unavailable();
@@ -786,7 +789,7 @@ async function readSelectedSource(
   allowWarm: boolean,
 ): Promise<SelectedSource> {
   let snapshot = input.getAccountSettingsSnapshot();
-  if (!snapshot && allowWarm && input.ensureAccountSettingsSnapshot) {
+  if ((!snapshot || snapshot.connectedPurposeCatalog?.status !== 'ready') && allowWarm && input.ensureAccountSettingsSnapshot) {
     await input.ensureAccountSettingsSnapshot();
     signal.throwIfAborted();
     assertRuntimeCurrent(input.binding);

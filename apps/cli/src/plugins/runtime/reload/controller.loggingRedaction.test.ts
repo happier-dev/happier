@@ -1,3 +1,4 @@
+import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -49,6 +50,7 @@ function createRuntimeRegistry(): ResolvedExecutablePluginRuntimeRegistry {
         activatedPluginIds: new Set(),
         activateContributionsOnDemand: async () => [],
         resolveCaptureSource: unexpectedCaptureSourceResolution,
+        resolveProjectNativeAdapter: unexpectedProjectNativeAdapterResolution,
         resolvePromptAssetBlocks: async () => [],
         retireConsumers: () => undefined,
         retirePluginConsumers: async () => undefined,

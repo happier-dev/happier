@@ -334,15 +334,28 @@ artifact and plugin-lifecycle contract described above. The generated
 declared invocation surfaces; declaration alone does not guarantee that its
 required mounted owner is present.
 
+Opening the OS file picker inside a standalone third-party embed is an explicit
+parity exclusion. Choosing local files remains a human UI interaction; agents
+attach files through the existing attachment Actions instead. Connected-app
+delivery does not identify that standalone frame as a picker recipient. See
+[embedded attachments](/extending/embed#appearance-and-controls).
+
 ### Widgets and current-Session presentation in development
 
 Use qualified `widgets.*` host Actions to discover, configure and arrange
-widget instances; use public plugin-ui `WidgetSurface` to embed a declared native
+widget layout items; use public plugin-ui `WidgetSurface` to embed a declared native
 page area, or a declarative `widgetArea` node. Hosted HTML pages manage widgets
 through ordinary widget Actions without embedding host areas. The generated
 [host Action reference](/plugins/api/host-actions) supplies
 the exact schemas, while [personal widget areas](/plugins/ui/react-native#personal-widget-areas-in-development)
 explains the component's host-owned layout and context.
+
+In the unreleased 0.3 contract, `widgets.item.*` addresses placements, including
+groups on Home and personal areas. Group operations use the same layout owner;
+saved-group fragment operations create library content that is added as an
+independent copy. The generated reference supplies their current schemas and
+approval metadata. These source contracts do not claim a completed loaded UI
+journey.
 
 `session.presentation.apply` and the optional daemon `context.ui.present`
 capability expose reversible presentation for the exact current Session. Their

@@ -145,8 +145,23 @@ describe('openRemoteAcquisition destination policy', () => {
       errorLabel: 'Remote plugin archive',
       fetchImpl: fetchImpl as unknown as typeof fetch,
       resolveAddresses: resolverFor({}),
-    })).rejects.toThrow(/exceeded 5 redirects/);
-    expect(fetchImpl).toHaveBeenCalledTimes(6);
+    })).rejects.toThrow(/redirect loop/);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('follows a finite chain beyond the former redirect ceiling', async () => {
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const hop = Number(new URL(String(url)).pathname.slice(1));
+      return hop < 12
+        ? new Response(null, { status: 302, headers: { location: `/${hop + 1}` } })
+        : new Response('archive-bytes');
+    });
+    const opened = await openRemoteAcquisition({
+      url: 'https://cdn.example.test/0', headers: {}, policy: ARCHIVE_POLICY,
+      timeoutMs: 5_000, errorLabel: 'Remote plugin archive', fetchImpl, resolveAddresses: resolverFor({}),
+    });
+    await expect(opened.response.text()).resolves.toBe('archive-bytes');
+    await opened.dispose();
   });
 
   it('refuses a URL that carries embedded credentials', async () => {

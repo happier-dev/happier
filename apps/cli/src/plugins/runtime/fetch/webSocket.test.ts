@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { constants as zlibConstants, deflateRawSync } from 'node:zlib';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createEphemeralTlsServerFixture } from '../../../../../../packages/tests/src/testkit/tls/ephemeralTlsServerFixture.mjs';
 
@@ -201,14 +201,17 @@ async function createWebSocketPeer(options: Readonly<{
 async function createHangingUpgradePeer(): Promise<Readonly<{
     url: string;
     upgraded: Promise<void>;
+    completeUpgrade(): void;
     close(): Promise<void>;
 }>> {
     let socket: Duplex | null = null;
     let markUpgraded!: () => void;
+    let acceptKey = '';
     const upgraded = new Promise<void>((resolve) => { markUpgraded = resolve; });
     const server = createServer();
-    server.on('upgrade', (_request, upgradedSocket) => {
+    server.on('upgrade', (request, upgradedSocket) => {
         socket = upgradedSocket;
+        acceptKey = acceptWebSocketKey(String(request.headers['sec-websocket-key']));
         markUpgraded();
     });
     await new Promise<void>((resolve, reject) => {
@@ -222,6 +225,15 @@ async function createHangingUpgradePeer(): Promise<Readonly<{
     return Object.freeze({
         url: `ws://127.0.0.1:${address.port}/hanging-upgrade`,
         upgraded,
+        completeUpgrade() {
+            socket?.write([
+                'HTTP/1.1 101 Switching Protocols',
+                'Upgrade: websocket',
+                'Connection: Upgrade',
+                `Sec-WebSocket-Accept: ${acceptKey}`,
+                '', '',
+            ].join('\r\n'));
+        },
         async close() {
             socket?.destroy();
             await new Promise<void>((resolve, reject) => {
@@ -350,6 +362,49 @@ async function resolveWithin<T>(promise: Promise<T>, timeoutMs: number): Promise
 }
 
 describe('plugin WebSocket host adapter', () => {
+    it.each([undefined, 65_000])('keeps a held real upgrade pending beyond former deadlines with budget %s', async (connectTimeoutMs) => {
+        const peer = await createHangingUpgradePeer();
+        const cancellation = new AbortController();
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+        let settled = false;
+        const opening = createPluginWebSocketConnection({
+            url: peer.url,
+            ...(connectTimeoutMs === undefined ? {} : { connectTimeoutMs }),
+        }, { signal: cancellation.signal });
+        void opening.then(() => { settled = true; }, () => { settled = true; });
+        try {
+            // The socket and HTTP handshake are real; only elapsed time is controlled.
+            await Promise.race([peer.upgraded, opening]);
+            await vi.advanceTimersByTimeAsync(61_000);
+            expect(settled).toBe(false);
+            peer.completeUpgrade();
+            const connection = await opening;
+            connection.dispose();
+        } finally {
+            cancellation.abort();
+            await opening.catch(() => undefined);
+            vi.useRealTimers();
+            await peer.close();
+        }
+    });
+
+    it('retains all messages beyond the former implicit pending-message count while within the byte envelope', async () => {
+        const peer = await createWebSocketPeer();
+        const connection = await createPluginWebSocketConnection({ url: peer.url, protocols: ['fixture-v1'] });
+        try {
+            for (let index = 0; index < 65; index++) peer.sendText(String(index));
+            peer.sendPing('queued');
+            // Pong follows the inbound frames, proving they reached the real driver before draining.
+            expect(await Promise.race([peer.nextReceived(), connection.closed])).toMatchObject({ opcode: 0xa });
+            const messages = [];
+            for (let index = 0; index < 65; index++) messages.push(await connection.receive());
+            expect(messages).toEqual(Array.from({ length: 65 }, (_, index) => ({ kind: 'text', text: String(index) })));
+        } finally {
+            connection.dispose();
+            await peer.close();
+        }
+    });
+
     it('normalizes secure target origin and rejects credential-bearing/insecure non-loopback URLs and invalid headers before transport creation', () => {
         expect(normalizePluginWebSocketOpenInput({
             url: 'wss://gateway.example.test/socket',

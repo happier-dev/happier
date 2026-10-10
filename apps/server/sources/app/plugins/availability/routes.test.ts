@@ -138,6 +138,8 @@ function createOperations(): BrowserArtifactRouteOperations {
         listIntentIds: vi.fn(async () => ({
             availabilityCursor: 0,
             pluginIds: [],
+            intentReads: [],
+            failedPluginIds: [],
         })),
         setIntent: vi.fn(async ({ input }) => {
             const parsed = PluginAvailabilityIntentSetActionInputV1Schema.parse(input);

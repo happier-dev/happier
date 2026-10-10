@@ -75,7 +75,7 @@ export type PreparedPluginDevelopmentActivationGraph = Readonly<{
 
 export type PreparedPluginAuthorStagingGraph = Readonly<{
   module: PreparedPluginActivationGraph['module'];
-  generationScope: object;
+  loadModule: (entryPath: string) => Promise<PluginModuleNamespace>;
   rootPath: string;
   entryPath: string;
 }>;
@@ -429,6 +429,7 @@ export async function evaluateManifestPluginDevelopmentCandidate(input: Readonly
 export async function evaluatePluginAuthorStagingSource(input: Readonly<{
   locator: string;
   rootPath: string;
+  loadModule?: (entryPath: string) => Promise<PluginModuleNamespace>;
 }>): Promise<Readonly<{
   evaluated: EvaluatedPluginAuthorSource;
   graph: PreparedPluginAuthorStagingGraph;
@@ -438,14 +439,18 @@ export async function evaluatePluginAuthorStagingSource(input: Readonly<{
     packageRootPath: entry.packageRoot,
     entryPath: entry.entryPath,
   });
-  const generationScope = createPluginTypeScriptGenerationScope({
-    aliases: typeScriptConfig.aliases,
-  });
-  const namespace = await loadVerifiedPluginModule({
-    entryPath: entry.entryPath,
-    loadMode: 'source-ts',
-    generationScope,
-  });
+  let loadModule = input.loadModule;
+  if (!loadModule) {
+    const generationScope = createPluginTypeScriptGenerationScope({
+      aliases: typeScriptConfig.aliases,
+    });
+    loadModule = entryPath => loadVerifiedPluginModule({
+      entryPath,
+      loadMode: 'source-ts',
+      generationScope,
+    });
+  }
+  const namespace = await loadModule(entry.entryPath);
   const evaluated = Object.freeze({
     entry,
     actionContracts: namespace.actionContracts,
@@ -455,7 +460,7 @@ export async function evaluatePluginAuthorStagingSource(input: Readonly<{
     evaluated,
     graph: Object.freeze({
       module: evaluated.module,
-      generationScope,
+      loadModule,
       rootPath: input.rootPath,
       entryPath: entry.entryPath,
     }),
@@ -501,11 +506,7 @@ export async function resolvePluginAuthorStagingModule(input: Readonly<{
     throw new Error(`Runner module '${input.module}' must be a leaf distinct from the plugin activation entry`);
   }
   return Object.freeze({
-    module: await loadVerifiedPluginModule({
-      entryPath: modulePath,
-      loadMode: 'source-ts',
-      generationScope: input.graph.generationScope,
-    }),
+    module: await input.graph.loadModule(modulePath),
     normalizedModulePath: relativeModulePath.split(sep).join('/'),
     loadMode: 'source-ts',
   });

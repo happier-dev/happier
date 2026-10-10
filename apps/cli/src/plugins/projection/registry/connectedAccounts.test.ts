@@ -31,6 +31,7 @@ describe('connectedAccountProjectionFamily', () => {
           definition: {
             id: 'openai-codex',
             title: 'Codex',
+            billingUrl: 'https://provider.test/billing',
             authentication: {
               defaultModeId: 'oauth',
               modes: [{
@@ -52,6 +53,7 @@ describe('connectedAccountProjectionFamily', () => {
         id: 'openai-codex',
         serviceId: 'openai-codex',
         pluginId: 'happier.agent.codex',
+        billingUrl: 'https://provider.test/billing',
         authentication: {
           defaultModeId: 'oauth',
           modes: [{

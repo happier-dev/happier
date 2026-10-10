@@ -2,6 +2,7 @@ import {
   link,
   mkdir,
   mkdtemp,
+  realpath,
   rename,
   rm,
   symlink,
@@ -34,6 +35,11 @@ import { resolveFirstPartyInstallLayout } from '@happier-dev/cli-common/firstPar
 import { explainPinnedRunnerSnapshotUnreadiness } from '@happier-dev/cli-common/pinnedRunnerSnapshot';
 import { publishPinnedRunnerSnapshotFixture } from '@/testkit/process/spawnHappyCliHarness';
 import { readCliNodeWorkspaceRuntimeIdentityFromRuntimeRoot } from '@happier-dev/cli-common/componentArtifacts/copyCliNodeRuntimePayload';
+import { createBundledActivationSourceResolver } from '../bundledActivationSource';
+import { bindPluginRuntimeSourceAuthority } from '../sourceAuthority';
+import { resolveBuiltInContributions } from '../../projection/registry/resolveBuiltInContributions';
+import { projectManifestAgentContribution } from '../../projection/registry/projectManifestAgentContribution';
+import { createRunnerManagedServiceInvocationOwner } from '../invocation/services/createRunnerManagedServiceInvocationOwner';
 
 async function prepareRetainedFactory(input: Readonly<{
   happyHomeDir: string;
@@ -257,8 +263,9 @@ async function prepareDevelopmentFactory(input: Readonly<{
   happyHomeDir: string;
   sourceRootPath: string;
   moduleBytes?: string;
+  pluginId?: string;
 }>) {
-  const pluginId = 'acme.development-runner';
+  const pluginId = input.pluginId ?? 'acme.development-runner';
   const localAgentId = 'fixture';
   const paths = resolvePluginStorePaths({ happyHomeDir: input.happyHomeDir });
   await mkdir(join(input.sourceRootPath, '.happier-plugin'), {
@@ -305,7 +312,7 @@ async function prepareDevelopmentFactory(input: Readonly<{
       localAgentId,
       sourceCustody: {
         kind: 'development',
-        registeredRootId: input.sourceRootPath,
+        registeredRootId: await realpath(input.sourceRootPath),
       },
       locator: {
         module: './agent/runtime/factory',
@@ -414,7 +421,7 @@ async function prepareHostDeclarativeBinding(input: Readonly<{
 
 describe('loadRetainedAgentRuntimeLeaf', () => {
   it('attests an older pinned runner snapshot after daemon reload and rejects changed custody or unknown source', async () => {
-    const tempRoot = await mkdtemp(join(tmpdir(), 'happier-retained-older-runner-'));
+    const tempRoot = await realpath(await mkdtemp(join(tmpdir(), 'happier-retained-older-runner-')));
     const snapshotsDir = join(tempRoot, '.runner-snapshots');
     const stagingRoot = join(snapshotsDir, '.staging');
     const packageRoot = join(stagingRoot, 'node_modules', '@happier-dev', 'plugins-antigravity');
@@ -478,7 +485,7 @@ describe('loadRetainedAgentRuntimeLeaf', () => {
   });
 
   it('resolves a retained CLI version root after the daemon current alias advances', async () => {
-    const homeDir = await mkdtemp(join(tmpdir(), 'happier-retained-version-root-'));
+    const homeDir = await realpath(await mkdtemp(join(tmpdir(), 'happier-retained-version-root-')));
     const processEnv = { ...process.env, HAPPIER_HOME_DIR: homeDir };
     const layout = resolveFirstPartyInstallLayout({
       componentId: 'happier-cli',
@@ -552,6 +559,93 @@ describe('loadRetainedAgentRuntimeLeaf', () => {
         binding: fixture.binding,
         developmentOccurrenceId: 'occurrence:development-runner:1',
       })).resolves.toEqual({ factory: expect.any(Function) });
+    } finally {
+      await rm(happyHomeDir, { recursive: true, force: true });
+      await rm(sourceRootPath, { recursive: true, force: true });
+    }
+  });
+
+  it('attests the real source-mode Claude declaration with the daemon bootstrap provenance and routing identity', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-runner-first-party-source-'));
+    let serviceOwner: Awaited<ReturnType<typeof createRunnerManagedServiceInvocationOwner>> | null = null;
+    try {
+      const contributes = resolveBuiltInContributions();
+      const agent = contributes.agents.find((entry) => entry.pluginId === 'happier.agent.claude');
+      if (!agent?.identity || !agent.richDefinition || !agent.daemonEntryPath) {
+        throw new Error('Real Claude bootstrap declaration is unavailable');
+      }
+      const resolver = createBundledActivationSourceResolver({
+        bundledPackageNames: [agent.daemonEntryPath],
+        resolveDevelopmentSourceAuthority: ({ rootPath }) => {
+          const authority = bindPluginRuntimeSourceAuthority({
+            custody: { kind: 'development', registeredRootId: rootPath },
+            resolvedRoot: rootPath,
+            observedRevision: 0,
+          });
+          return authority.kind === 'development' ? authority : null;
+        },
+      });
+      const source = resolver({ pluginId: agent.pluginId, daemonEntryPath: agent.daemonEntryPath });
+      if (source?.sourceAuthority?.kind !== 'development') {
+        throw new Error('Real Claude source-mode producer did not admit a development root');
+      }
+      const binding = createAgentSessionRunnerFactoryBinding({
+        v: 1,
+        pluginId: agent.pluginId,
+        pluginVersion: '0.0.0',
+        agentId: agent.id,
+        localAgentId: agent.identity.localId,
+        sourceCustody: { kind: 'development', registeredRootId: source.sourceAuthority.registeredRootId },
+        locator: { module: './agent/runtime/factory', export: 'createClaudeAgentRuntime', runtimeApiVersion: 1 },
+        normalizedModulePath: 'src/agent/runtime/factory.ts',
+        loadMode: 'source-ts',
+      });
+      const attested = await verifyRunnerAgentBindingAgainstGeneration({
+        paths: resolvePluginStorePaths({ happyHomeDir }),
+        binding,
+        developmentOccurrenceId: 'occurrence:real-source-claude',
+      });
+      const claim = projectManifestAgentContribution({
+        pluginId: binding.pluginId,
+        definition: attested.declaredAgent,
+        provenance: attested.manifestAuthority === 'bundled_first_party' ? 'first_party' : 'external',
+        source: agent.source,
+      });
+      expect(claim.provenance).toBe(agent.provenance);
+      expect(claim.id).toBe(agent.id);
+      expect(claim.richDefinition?.definition).toEqual(agent.richDefinition.definition);
+      serviceOwner = await createRunnerManagedServiceInvocationOwner({
+        paths: resolvePluginStorePaths({ happyHomeDir }),
+        retainedAgent: binding,
+        developmentOccurrenceId: 'occurrence:real-source-claude',
+        authority: {
+          happyHomeDir, publicReleaseRing: 'stable', path: join(happyHomeDir, 'authority.json'),
+          sessionId: 'session-source-claude',
+          runner: { pid: 1, processStartTimeMs: 1, processCommandHash: 'a'.repeat(64),
+            snapshotIdentity: 'source:claude-bootstrap' },
+          retainedAgent: binding,
+        },
+      });
+      expect(serviceOwner.verifiedAgentDeclaration).toEqual({
+        provenance: agent.provenance,
+        definition: agent.richDefinition.definition,
+      });
+    } finally {
+      await serviceOwner?.owners.dispose();
+      await rm(happyHomeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not grant first-party provenance to a different development root using a bundled plugin id', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-runner-spoof-home-'));
+    const sourceRootPath = await mkdtemp(join(tmpdir(), 'happier-runner-spoof-source-'));
+    try {
+      const fixture = await prepareDevelopmentFactory({ happyHomeDir, sourceRootPath, pluginId: 'happier.agent.claude' });
+      const attested = await verifyRunnerAgentBindingAgainstGeneration({
+        ...fixture,
+        developmentOccurrenceId: 'occurrence:external-development',
+      });
+      expect(attested.manifestAuthority).toBe('external');
     } finally {
       await rm(happyHomeDir, { recursive: true, force: true });
       await rm(sourceRootPath, { recursive: true, force: true });

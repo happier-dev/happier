@@ -133,6 +133,7 @@ export type AgentUiDescriptor = Readonly<{
     }>;
     icon?: Readonly<{ assetId: string | null }>;
   }>;
+  identityColor?: Readonly<{ light: string; dark: string }>;
   behavior?: JsonObject;
   session?: JsonObject;
   message?: JsonObject;

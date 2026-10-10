@@ -45,7 +45,6 @@ import type {
 import {
     appendDiagnostic,
     appendDiagnostics,
-    remainingPluginInitializationTimeoutMs,
     normalizePositiveTimeoutMs,
     projectPluginFailureText,
     runWithOptionalTimeout,
@@ -254,7 +253,6 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
     invocationServices?: TargetInvocationServiceOwner;
     retryFailedPreparation?: boolean;
     nowMs?: () => number;
-    startupDeadlineAtMs?: number;
     isActivationCurrent?: () => boolean;
     /** Explicit candidate-validation scopes execute activate() even without eager declarations. */
     forceActivation?: boolean;
@@ -405,30 +403,15 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         let moduleNamespace: PluginDaemonModuleNamespace;
         if (activationSource.kind === 'bundled' && activationSource.prepare) {
             const prepareSource = activationSource.prepare;
-            const prepare = async () => {
-                if (params.startupDeadlineAtMs === undefined) {
-                    await prepareSource();
-                    return;
-                }
-                const timeoutMs = remainingPluginInitializationTimeoutMs(params.startupDeadlineAtMs);
-                if (timeoutMs === 0) {
-                    throw new Error(`Plugin '${target.pluginId}' daemon source preparation was not attempted after the daemon startup deadline`);
-                }
-                await runWithOptionalTimeout(
-                    timeoutMs,
-                    prepareSource,
-                    () => new Error(`Plugin '${target.pluginId}' daemon source preparation timed out within the daemon startup deadline`),
-                );
-            };
             try {
                 try {
-                    await prepare();
+                    await prepareSource();
                 } catch {
                     // A failed aggregate source-dev preflight switches the bundled source
                     // to package-local isolation. The activation owner consumes that one
                     // bounded transition before returning to startup or a lazy caller.
                     // A second failure remains retryable on a later lazy demand below.
-                    await prepare();
+                    await prepareSource();
                 }
             } catch (error) {
                 if (!isActivationCurrent()) {
@@ -473,22 +456,12 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
                 cacheGenerationId = committedAuthorization?.immutableGenerationId
                     ?? `development:${developmentAuthority!.registeredRootId}:${developmentAuthority!.observedRevision}`;
             }
-            const moduleLoadTimeoutMs = remainingPluginInitializationTimeoutMs(params.startupDeadlineAtMs);
-            if (moduleLoadTimeoutMs === 0) {
-                throw new Error(`Plugin '${target.pluginId}' daemon module loading was not attempted after the daemon startup deadline`);
-            }
-            moduleNamespace = await runWithOptionalTimeout(
-                moduleLoadTimeoutMs,
-                () => loadPluginModule({
-                    source: activationSource,
-                    // Module graphs are scoped by the direct immutable generation,
-                    // never a copied manifest/package digest.
-                    cacheKey: `generation:${cacheGenerationId}`,
-                }) as Promise<PluginDaemonModuleNamespace>,
-                () => new Error(
-                    `Plugin '${target.pluginId}' daemon module loading timed out after ${moduleLoadTimeoutMs}ms`,
-                ),
-            );
+            moduleNamespace = await loadPluginModule({
+                source: activationSource,
+                // Module graphs are scoped by the direct immutable generation,
+                // never a copied manifest/package digest.
+                cacheKey: `generation:${cacheGenerationId}`,
+            }) as PluginDaemonModuleNamespace;
         } catch (error) {
             if (!isActivationCurrent()) {
                 continue;
@@ -525,8 +498,6 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
                 occurrenceId: targetOccurrenceId,
                 manifest: target.manifest,
                 moduleNamespace,
-                ...(params.startupDeadlineAtMs === undefined
-                    ? {} : { startupDeadlineAtMs: params.startupDeadlineAtMs }),
                 isOccurrenceCurrent: () => targetOccurrenceCurrent,
                 forceActivation: target.activationEvents?.includes('startup') === true
                     || (params.forceActivation ?? params.pluginIds !== undefined),

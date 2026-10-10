@@ -205,6 +205,8 @@ export async function writeCommittedLocalPathPluginFixture(params: Readonly<{
   manifestRelativePath?: string;
   createdAtMs?: number;
   retainedCurrentHostGenerationIds?: readonly string[];
+  /** Multi-plugin publication fixtures keep unrelated committed installations. */
+  preserveExistingPlugins?: true;
 }>): Promise<Readonly<{ immutableGenerationId: string; rootPath: string }>> {
   const manifestRelativePath = params.manifestRelativePath ?? '.happier-plugin/plugin.json';
   const store = createPluginStateStore({
@@ -216,10 +218,12 @@ export async function writeCommittedLocalPathPluginFixture(params: Readonly<{
         }
       : {}),
   });
+  const existingPlugins = params.preserveExistingPlugins ? (await store.read()).plugins : {};
   await store.write({
     t: 'happier_plugin_state_v1',
     schemaVersion: 1,
     plugins: {
+      ...existingPlugins,
       [params.pluginId]: params.plugin,
     },
   });
@@ -252,6 +256,7 @@ export async function writeCommittedLocalPathPluginFixture(params: Readonly<{
     t: 'happier_plugin_state_v1',
     schemaVersion: 1,
     plugins: {
+      ...(params.preserveExistingPlugins ? currentInstallationState.runtimeCatalog.plugins : {}),
       [params.pluginId]: {
         ...params.plugin,
         source: {

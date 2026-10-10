@@ -3,16 +3,16 @@ import { describe, expect, it, vi } from 'vitest';
 import {
     createPluginProtocolCallbackQueue,
     INTERNAL_MAX_PLUGIN_PROTOCOL_PENDING_CALLBACK_BYTES,
-    INTERNAL_MAX_PLUGIN_PROTOCOL_PENDING_CALLBACKS,
 } from './callbackQueue';
 
 describe('createPluginProtocolCallbackQueue', () => {
-    it('accepts the exact callback count bound and fails once at bound plus one', async () => {
+    it('retains more than 256 callbacks in order until they drain and accepts later work', async () => {
         let release!: () => void;
         const blocked = new Promise<void>((resolve) => {
             release = resolve;
         });
         const onFailure = vi.fn();
+        const invoked: number[] = [];
         const queueSamples: Array<{
             family: 'plugin-protocol-callbacks';
             queuedItems: number;
@@ -26,26 +26,46 @@ describe('createPluginProtocolCallbackQueue', () => {
             },
         });
 
-        expect(queue.enqueue(1, () => blocked)).toBe(true);
-        for (let index = 1; index < INTERNAL_MAX_PLUGIN_PROTOCOL_PENDING_CALLBACKS; index += 1) {
-            expect(queue.enqueue(1, async () => undefined)).toBe(true);
+        try {
+            for (let index = 0; index < 300; index += 1) {
+                expect(queue.enqueue(1, async () => {
+                    await blocked;
+                    invoked.push(index);
+                })).toBe(true);
+            }
+            expect(onFailure).not.toHaveBeenCalled();
+            expect(queueSamples.at(-1)).toEqual({
+                family: 'plugin-protocol-callbacks',
+                queuedItems: 300,
+                queuedBytes: 300,
+                backpressured: false,
+            });
+            release();
+            await queue.drained();
+            expect(invoked).toEqual(Array.from({ length: 300 }, (_, index) => index));
+            expect(queue.enqueue(1, () => { invoked.push(300); })).toBe(true);
+            await queue.drained();
+            expect(invoked.at(-1)).toBe(300);
+            expect(queueSamples.at(-1)).toMatchObject({ queuedItems: 1, queuedBytes: 1 });
+        } finally {
+            release();
+            await queue.drained();
         }
-        expect(queue.enqueue(1, async () => undefined)).toBe(false);
-        expect(onFailure).toHaveBeenCalledTimes(1);
-        expect(queueSamples.at(-2)).toEqual({
-            family: 'plugin-protocol-callbacks',
-            queuedItems: INTERNAL_MAX_PLUGIN_PROTOCOL_PENDING_CALLBACKS,
-            queuedBytes: INTERNAL_MAX_PLUGIN_PROTOCOL_PENDING_CALLBACKS,
-            backpressured: false,
-        });
-        expect(queueSamples.at(-1)).toEqual({
-            family: 'plugin-protocol-callbacks',
-            queuedItems: INTERNAL_MAX_PLUGIN_PROTOCOL_PENDING_CALLBACKS + 1,
-            queuedBytes: INTERNAL_MAX_PLUGIN_PROTOCOL_PENDING_CALLBACKS + 1,
-            backpressured: true,
-        });
+    });
+
+    it('preserves an explicit caller callback count budget', async () => {
+        let release!: () => void;
+        const blocked = new Promise<void>((resolve) => { release = resolve; });
+        const onFailure = vi.fn();
+        const invoked: number[] = [];
+        const queue = createPluginProtocolCallbackQueue({ maxPendingCallbacks: 2, onFailure });
+        expect(queue.enqueue(1, async () => { await blocked; invoked.push(1); })).toBe(true);
+        expect(queue.enqueue(1, () => { invoked.push(2); })).toBe(true);
+        expect(queue.enqueue(1, () => { invoked.push(3); })).toBe(false);
+        expect(onFailure).toHaveBeenCalledExactlyOnceWith({ code: 'PLUGIN_EXEC_CLIENT_BACKPRESSURE_EXCEEDED' });
         release();
         await queue.drained();
+        expect(invoked).toEqual([1, 2]);
     });
 
     it('accepts the exact byte bound and rejects bound plus one without invoking it', async () => {

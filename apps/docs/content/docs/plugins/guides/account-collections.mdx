@@ -120,10 +120,17 @@ A few rules keep that claim predictable:
 - Any schema, index, or query change needs a new `schemaVersion`. A changed
   declaration under the same `schemaVersion` is refused and the current writer
   stays in place.
-- A claim does not run migration callbacks. Moving an empty Collection to a new
-  `schemaVersion` is immediate; a development plugin whose Collection already
-  holds rows keeps its current writer until that Collection's Account data is
-  erased.
+- In 0.3 development source, moving an empty Collection to a new `schemaVersion`
+  is immediate. For populated Collections that need a migration, the daemon
+  loads the declaring plugin's exported `collectionMigrations` and uses the same candidate
+  preparation path as a portable release. It validates and stages retained
+  rows against their observed revisions; the server rechecks them and promotes
+  all target Collections with the writer claim in one transaction. Until that
+  succeeds, the old writer remains admitted. Missing callbacks, changed source
+  rows, cancellation or failed validation leave the writer and retained data
+  unchanged; a later operation can retry. Data erasure is not an upgrade step.
+  The existing release-path shortcut for optional private-field additions can
+  adopt the new identity directly after validating retained rows.
 
 ## Writing more rows than one batch carries
 

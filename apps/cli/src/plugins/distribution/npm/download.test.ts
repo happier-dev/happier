@@ -1,5 +1,5 @@
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -23,6 +23,29 @@ function bodyClient(bytes: Uint8Array): NpmArtifactBodyClient {
 }
 
 describe('downloadResolvedNpmArtifact', () => {
+  it('streams a verified artifact beyond the former implicit size ceiling without a caller budget', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-npm-stream-'));
+    tempDirs.push(dir);
+    const chunk = Buffer.alloc(1024 * 1024);
+    const integrityHash = createHash('sha512');
+    for (let index = 0; index < 257; index += 1) integrityHash.update(chunk);
+    const destinationPath = join(dir, 'candidate.tgz');
+    const result = await downloadResolvedNpmArtifact({
+      resolved: {
+        registryOrigin: 'https://registry.example.test', packageName: 'plugin', version: '1.0.0',
+        versionMetadata: {}, integrity: `sha512-${integrityHash.digest('base64')}`,
+        tarballUrl: 'https://registry.example.test/plugin.tgz', signatures: [],
+      },
+      destinationPath,
+      client: { getBody: async () => ({
+        body: Readable.from((async function* () { for (let index = 0; index < 257; index += 1) yield chunk; })()),
+        contentLength: 257 * chunk.byteLength,
+      }) },
+    });
+    expect(result.byteLength).toBe(257 * chunk.byteLength);
+    expect((await stat(destinationPath)).size).toBe(result.byteLength);
+  });
+
   it('streams exact bytes to a candidate only after mandatory SRI succeeds', async () => {
     const bytes = Buffer.from('npm tarball bytes');
     const dir = await mkdtemp(join(tmpdir(), 'happier-npm-test-'));

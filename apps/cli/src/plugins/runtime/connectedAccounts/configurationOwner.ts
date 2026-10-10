@@ -8,11 +8,9 @@ import type {
     PluginConnectedAccountAuthenticationModeV2,
 } from '@happier-dev/protocol';
 
-import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
-import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import { normalizeConnectedAccountConfigurationV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
 
 import type { ConnectedAccountAttemptConfigurationAdmission } from './authenticationAttemptOwner';
-import { normalizeConnectedAccountConfiguredOrigin } from './configuredOrigins';
 import { clonePluginPlainData } from '../plainData';
 import type { PluginSourceCustody } from '../sourceAuthority';
 
@@ -506,120 +504,14 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
         secretValues: Readonly<Record<string, string>>;
         missingFieldIds: readonly string[];
     }>> {
-        const fields = descriptorFields(input.mode);
-        const fieldsById = new Map(fields.map((field) => [field.id, field]));
-        const sourceValues = input.replacement?.values ?? input.record?.values ?? Object.freeze({});
-        const sourceSecretRefs = input.replacement?.secretRefs ?? input.record?.secretRefs ?? Object.freeze({});
-        const sourceSecretValues =
-            input.replacement?.secretValues
-            ?? input.record?.secretValues
-            ?? Object.freeze({});
-        const values = cloneOwnRecord(sourceValues, (entry, key) => {
-            const field = fieldsById.get(key);
-            if (!field || field.secret === true) {
-                throw invalid(`Undeclared or secret configuration field '${key}' was supplied as plaintext`);
+        try {
+            return await normalizeConnectedAccountConfigurationV1({ ...input, hasSecret: params.secrets.has });
+        } catch (error) {
+            if (error instanceof Error && 'code' in error && error.code === 'connected_account_configuration_invalid') {
+                throw invalid(error.message);
             }
-            const cloned = clonePluginPlainData(entry, {
-                path: `Connected-account configuration field '${key}'`,
-                invalid,
-            }) as JsonValue;
-            const validate = compilePluginJsonSchema(field.schema);
-            if (!isValidPluginJsonSchemaValue(validate, cloned)) {
-                throw invalid(`Configuration field '${key}' does not match its declared schema`);
-            }
-            if (field.semantic === 'connectedAccountOrigin') {
-                try {
-                    if (typeof cloned !== 'string') throw new TypeError('Origin must be a string');
-                    normalizeConnectedAccountConfiguredOrigin(cloned);
-                } catch {
-                    throw invalid(
-                        `Configuration field '${key}' must be an exact credential-free HTTPS origin`,
-                    );
-                }
-            }
-            return cloned;
-        });
-        const secretRefs = cloneOwnRecord(sourceSecretRefs, (entry, key) => {
-            const field = fieldsById.get(key);
-            if (!field || field.secret !== true) {
-                throw invalid(`Undeclared or non-secret configuration field '${key}' was supplied as a secret`);
-            }
-            if (
-                typeof entry !== 'string'
-                || entry.length === 0
-                || entry.length > MAX_SECRET_REFERENCE_LENGTH
-            ) {
-                throw invalid(`Configuration secret reference '${key}' is invalid`);
-            }
-            return entry;
-        });
-        const secretValues = cloneOwnRecord(sourceSecretValues, (entry, key) => {
-            const field = fieldsById.get(key);
-            if (!field || field.secret !== true) {
-                throw invalid(`Undeclared or non-secret inline configuration field '${key}' was supplied`);
-            }
-            if (
-                typeof entry !== 'string'
-                || entry.length === 0
-                || entry.length > MAX_SECRET_VALUE_LENGTH
-            ) {
-                throw invalid(`Inline configuration secret '${key}' is invalid`);
-            }
-            return entry;
-        });
-        if (
-            Object.keys(secretRefs).some((fieldId) =>
-                Object.prototype.hasOwnProperty.call(secretValues, fieldId))
-        ) {
-            throw invalid('A configuration secret field cannot have both inline bytes and a SavedSecret reference');
+            throw error;
         }
-        if (input.target.kind === 'service' && Object.keys(secretValues).length > 0) {
-            throw invalid('Service configuration secrets must use Account Settings SavedSecret references');
-        }
-        if (input.target.kind !== 'service' && Object.keys(secretRefs).length > 0) {
-            throw invalid('Account and attempt configuration secrets must stay inline with their owning record');
-        }
-        const normalizedValues: Record<string, JsonValue> = { ...values };
-        const missingFieldIds: string[] = [];
-        for (const field of fields) {
-            if (field.secret === true) {
-                const reference = secretRefs[field.id];
-                const inlineSecret = secretValues[field.id];
-                const referencedSecretPresent =
-                    reference !== undefined && await params.secrets.has(reference);
-                if (reference !== undefined && !referencedSecretPresent) {
-                    throw invalid(`Configuration secret reference '${field.id}' is dangling`);
-                }
-                const present =
-                    referencedSecretPresent
-                    || inlineSecret !== undefined;
-                if (field.required === true && !present) missingFieldIds.push(field.id);
-                continue;
-            }
-            if (normalizedValues[field.id] === undefined && field.default !== undefined) {
-                const clonedDefault = clonePluginPlainData(field.default, {
-                    path: `Connected-account configuration default '${field.id}'`,
-                    invalid,
-                }) as JsonValue;
-                const validate = compilePluginJsonSchema(field.schema);
-                if (!isValidPluginJsonSchemaValue(validate, clonedDefault)) {
-                    throw invalid(`Configuration default '${field.id}' does not match its declared schema`);
-                }
-                normalizedValues[field.id] = clonedDefault;
-            }
-            if (field.required === true && normalizedValues[field.id] === undefined) {
-                missingFieldIds.push(field.id);
-            }
-        }
-        const revision = input.record?.revision ?? null;
-        if (revision !== null) assertBoundedIdentity(revision, 'Connected-account configuration revision');
-        return Object.freeze({
-            revision,
-            values: Object.freeze(normalizedValues),
-            secretRefs,
-            secretValues,
-            missingFieldIds: Object.freeze(missingFieldIds.sort()),
-        });
     }
 
     function serviceForTarget(target: ConnectedAccountConfigurationTarget): PluginContributionRef {

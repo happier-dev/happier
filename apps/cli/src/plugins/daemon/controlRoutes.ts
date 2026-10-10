@@ -8,6 +8,7 @@ import { ManagedResourceDispositionV1Schema } from '@happier-dev/protocol/machin
 
 import type { PluginActionExecutionAttempt } from '@/plugins/runtime/invocation/actions/executeContributedAction';
 import type { CurrentDaemonPluginCatalogSnapshot } from './currentCatalog';
+import type { DaemonPluginCatalogProjection } from './catalogProjection';
 import type {
   TargetActionCurrentIntentRequest,
   TargetActionCurrentIntentResult,
@@ -207,6 +208,7 @@ export function registerDaemonPluginChangeRoutes(
     ) => Promise<TargetActionCurrentIntentResult>;
     readCatalog?: () => Promise<readonly unknown[]>;
     readCatalogSnapshot?: () => Promise<CurrentDaemonPluginCatalogSnapshot>;
+    readCatalogProjection?: () => DaemonPluginCatalogProjection;
   }>,
 ): void {
   app.post(PLUGIN_CATALOG_READ_PATH, { preHandler: params.requireAuth }, async (_request, reply) => {
@@ -217,9 +219,13 @@ export function registerDaemonPluginChangeRoutes(
       });
     }
     if (params.readCatalogSnapshot) {
+      // Capture before the asynchronous snapshot: a concurrent invalidation
+      // must never label an older leased occurrence with the newer revision.
+      const projection = params.readCatalogProjection?.();
       return {
         kind: 'available',
         ...await params.readCatalogSnapshot(),
+        ...(projection ? { projection } : {}),
       };
     }
     return {

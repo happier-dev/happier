@@ -239,6 +239,11 @@ export function createManifestAgentCatalogEntry(params: Readonly<{
     return Object.freeze({
         id: params.agentId,
         cliSubcommand: params.agentId,
+        ...('runtime' in params.definition && params.definition.runtime?.kind === 'acp' && params.definition.runtime.definition?.usageLimitRecoveryBackoff
+            ? { sessionUsageLimitRecoveryBackoffPolicy: {
+                ...params.definition.runtime.definition.usageLimitRecoveryBackoff,
+                providerId: params.agentId, issueProviderFilter: params.agentId,
+            } } : {}),
         // Inferred default only. An Agent that declares `catalog.vendorResume`
         // overrides this through the catalog-entry hook family, which is the
         // only way to express `experimental`.

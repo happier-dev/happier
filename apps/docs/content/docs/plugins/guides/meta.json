@@ -5,6 +5,7 @@
     "cross-plugin-contributions",
     "composer",
     "agent-modes",
+    "roles",
     "providers",
     "scm",
     "voice",

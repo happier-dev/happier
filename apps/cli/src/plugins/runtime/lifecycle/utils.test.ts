@@ -3,14 +3,7 @@ import { PluginInstallationReviewCompatibilityDiagnosticSchema } from '@happier-
 
 import { PluginCompatibilityDiagnosticSchema } from '../../validation/diagnostics/types';
 
-import { mapDaemonModuleLoadErrorToDiagnostic, projectPluginFailureText, remainingPluginInitializationTimeoutMs } from './utils';
-
-describe('plugin initialization budget', () => {
-    it('spends the containing daemon-start remainder without a shorter plugin cutoff', () => {
-        expect(remainingPluginInitializationTimeoutMs(Date.now() + 60_000)).toBeGreaterThan(59_000);
-        expect(remainingPluginInitializationTimeoutMs()).toBeNull();
-    });
-});
+import { mapDaemonModuleLoadErrorToDiagnostic, projectPluginFailureText } from './utils';
 
 describe('plugin lifecycle failure diagnostics', () => {
     it('retains a local development source location relative to its authenticated project root', () => {

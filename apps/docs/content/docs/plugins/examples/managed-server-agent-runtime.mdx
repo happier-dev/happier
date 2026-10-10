@@ -12,8 +12,16 @@ Use `context.services.managedServices` when an Agent needs a local HTTP or proto
 5. Use `handle.request(...)` for authenticated REST or streaming traffic bound to that exact service instance.
 6. Dispose the handle with the owning Agent runtime or Session.
 
-Use loopback binding, startup timeouts, redacted durable logs, and fail-closed
-health validation. Client access defaults to `none`; an owned Session-runner
+Use loopback binding, redacted durable logs, and fail-closed health validation.
+In the unreleased 0.3 development SDK, startup and healthy-wait deadlines are
+optional: omission leaves establishment pending until health succeeds or its
+owning lifetime ends. Supply `startupTimeoutMs` when your Agent or Session
+contract requires a deadline; `waitUntilHealthy({ timeoutMs })` overrides it
+for that wait. Per-probe health budgets are separate. Cancellation, process
+exit or observation failure ends pending endpoint discovery without allowing
+a late scan to republish the retired attempt.
+
+Client access defaults to `none`; an owned Session-runner
 spawn may use `hostBasic`, while `hostBearer` is reserved for managed-Provider
 spawn. Attach accepts only `none`, and plugin code receives neither the raw
 generated `hostBasic` password nor its encoded `Authorization` header. A

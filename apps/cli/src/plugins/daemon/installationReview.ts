@@ -1,7 +1,6 @@
 import { PLUGIN_CONTRIBUTION_CATALOG_V2 } from '@happier-dev/protocol/plugins/contributions/catalog';
 import { PLUGIN_HOST_ACCESS_CAPABILITY_CATALOG_V2 } from '@happier-dev/protocol/plugins/manifest/v2';
 import type { PluginHostAccessRequestV2, PluginUpdatePolicyV1 } from '@happier-dev/protocol';
-import { MAX_PLUGIN_INSTALLATION_REVIEW_STRING_LENGTH } from '@happier-dev/protocol/marketplace/internal';
 import type { PluginInstallationReview } from '@happier-dev/protocol/marketplace/internal';
 
 import type { NpmArtifactCompatibilitySelection } from '@/plugins/distribution/npm/types';
@@ -72,9 +71,6 @@ const hostAccessAuthorizationClassByCapability = new Map(
 );
 
 const accessScopeRegistry = createDefaultPluginAccessScopeRegistry();
-const MAX_REVIEW_BLOCKED_NEWER_VERSIONS = 32;
-const MAX_REVIEW_BLOCKED_NEWER_DIAGNOSTICS = 4;
-const LONG_HAPPIER_ENGINE_REVIEW_DECLARATION = 'Declared compatible Happier CLI range';
 
 function localizedText(value: string | Readonly<{ fallback: string }>): string {
   return typeof value === 'string' ? value : value.fallback;
@@ -230,22 +226,11 @@ function projectBlockedNewerVersions(
 ): ReviewBlockedNewerVersions | undefined {
   if (!blockedNewerVersions || blockedNewerVersions.length === 0) return undefined;
   return Object.freeze(blockedNewerVersions
-    .slice(0, MAX_REVIEW_BLOCKED_NEWER_VERSIONS)
     .map((blocked) => Object.freeze({
       version: blocked.version,
       diagnostics: Object.freeze(blocked.diagnostics
-        .slice(0, MAX_REVIEW_BLOCKED_NEWER_DIAGNOSTICS)
         .map((diagnostic) => Object.freeze({ ...diagnostic }))),
     })));
-}
-
-function projectHappierEngineForReview(
-  happierEngine: string | undefined,
-): string | undefined {
-  if (!happierEngine) return undefined;
-  return happierEngine.length <= MAX_PLUGIN_INSTALLATION_REVIEW_STRING_LENGTH
-    ? happierEngine
-    : LONG_HAPPIER_ENGINE_REVIEW_DECLARATION;
 }
 
 function projectRawCredentialRequest(
@@ -340,7 +325,7 @@ export function projectPluginInstallationReview(params: Readonly<{
   const contributionIds = params.uiArtifacts.verification === 'verified'
     ? providedUiArtifactIds
     : declaredUiArtifactIds;
-  const happierEngine = projectHappierEngineForReview(params.manifest.engines?.happier);
+  const happierEngine = params.manifest.engines?.happier;
   const rawCredentialAccess = projectPluginInstallationReviewRawCredentialAccess(params.manifest);
   return Object.freeze({
     pluginId: params.manifest.id,

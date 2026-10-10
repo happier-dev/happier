@@ -11,7 +11,6 @@ import { readComposerAttachmentRuntimeRegistrationFieldsV1 } from '@happier-dev/
 import type { ComposerAttachmentDraftV1, ComposerAttachmentInputV1, ComposerAttachmentMessageAcceptedV1, ComposerAttachmentPrepareRequestV1, ComposerAttachmentPrepareResultV1, ComposerAttachmentResolveRequestV1, ComposerAttachmentResolveRequestV2, ComposerAttachmentResolveResultV1, PluginJsonSchemaV2, PluginLocalizedStringV2, PluginContributionIdentityV1, PluginExecutionScopeV1 } from '@happier-dev/protocol';
 
 import type { ContributionRuntimeRegistration } from '@/plugins/runtime/api/registrationRightsHost';
-import { runWithOptionalTimeout } from '@/plugins/runtime/lifecycle/utils';
 
 type TargetRegistration = Readonly<{
     pluginId: string;
@@ -51,8 +50,6 @@ type TargetComposerAttachmentAdmissionInput =
         phase: 'prepared';
         attachments: readonly ComposerAttachmentInputV1[];
     }>;
-
-const COMPOSER_ATTACHMENT_CALLBACK_TIMEOUT_MS = 5_000;
 
 type ComposerAttachmentRegistration = TargetRegistration & Readonly<{
     registration: Extract<ContributionRuntimeRegistration, { family: 'composerAttachments' }>;
@@ -101,13 +98,6 @@ function notCurrentError(attachment: PluginContributionIdentityV1): PluginError 
     return new PluginError({
         code: 'composer_attachment_not_current',
         message: `Composer attachment '${attachment.pluginId}/${attachment.localId}' result is no longer current`,
-    });
-}
-
-function timeoutError(attachment: PluginContributionIdentityV1): PluginError {
-    return new PluginError({
-        code: 'composer_attachment_timed_out',
-        message: `Composer attachment '${attachment.pluginId}/${attachment.localId}' did not answer within its callback budget`,
     });
 }
 
@@ -228,7 +218,6 @@ export function createTargetComposerAttachmentRegistry(params: Readonly<{
      * generation-owned `targetRegistrations` array this adapter already reads.
      */
     activateAttachmentOnDemand(attachment: PluginContributionIdentityV1): Promise<void>;
-    callbackTimeoutMs?: number;
 }>): Readonly<{
     list(): readonly PluginContributionIdentityV1[];
     isDeclared(attachment: PluginContributionIdentityV1): boolean;
@@ -258,12 +247,6 @@ export function createTargetComposerAttachmentRegistry(params: Readonly<{
         signal: AbortSignal;
     }>): Promise<void>;
 }> {
-    const callbackTimeoutMs = typeof params.callbackTimeoutMs === 'number'
-        && Number.isFinite(params.callbackTimeoutMs)
-        && params.callbackTimeoutMs > 0
-        ? Math.trunc(params.callbackTimeoutMs)
-        : COMPOSER_ATTACHMENT_CALLBACK_TIMEOUT_MS;
-
     const declarationKey = (attachment: PluginContributionIdentityV1): string => (
         `${attachment.pluginId}\u0000${attachment.localId}`
     );
@@ -355,14 +338,11 @@ export function createTargetComposerAttachmentRegistry(params: Readonly<{
             throw callbackUnavailableError(paramsForCall.attachment, paramsForCall.phase);
         }
 
-        const timeout = new AbortController();
         const signal = AbortSignal.any([
             paramsForCall.signal,
             lifecycle.retirementSignal,
-            timeout.signal,
         ]);
         const abortError = (): PluginError => {
-            if (timeout.signal.aborted) return timeoutError(paramsForCall.attachment);
             if (lifecycle.retirementSignal.aborted || !isEntryCurrent(entry, lifecycle)) {
                 return staleError(paramsForCall.attachment);
             }
@@ -391,18 +371,10 @@ export function createTargetComposerAttachmentRegistry(params: Readonly<{
                 signal.addEventListener('abort', rejectAbort, { once: true });
                 removeAbortListener = () => signal.removeEventListener('abort', rejectAbort);
             });
-            const result = await runWithOptionalTimeout(
-                callbackTimeoutMs,
-                async () => await Promise.race([
-                    paramsForCall.operation(entry.registration.value, createdInvocation.context),
-                    aborted,
-                ]),
-                () => {
-                    const error = timeoutError(paramsForCall.attachment);
-                    timeout.abort(error);
-                    return error;
-                },
-            );
+            const result = await Promise.race([
+                paramsForCall.operation(entry.registration.value, createdInvocation.context),
+                aborted,
+            ]);
             if (signal.aborted) throw abortError();
             if (!isEntryCurrent(entry, lifecycle)) throw staleError(paramsForCall.attachment);
             return result;

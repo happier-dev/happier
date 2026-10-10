@@ -1,7 +1,8 @@
 import { createServer, type AddressInfo, type Socket } from 'node:net';
+import { createHash } from 'node:crypto';
 import { PassThrough } from 'node:stream';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type {
     ExecLoopbackWebSocketEndpointV1,
@@ -9,7 +10,7 @@ import type {
     ExecProcessHandleV1,
 } from './privateContract';
 
-import { encodeLoopbackHandshakeFrame } from './loopbackHandshake';
+import { encodeLoopbackHandshakeFrame, readLoopbackHandshakeFrame } from './loopbackHandshake';
 import {
     createLoopbackWebSocketJsonClient,
     createLoopbackWebSocketProcessClient,
@@ -48,17 +49,53 @@ async function createRawLoopbackProbe(): Promise<{
 
 async function createHangingUpgradeServer(): Promise<{
     readonly port: number;
+    readonly requested: Promise<void>;
+    readonly completeUpgrade: () => void;
+    readonly sendJsonBurst: (count: number) => void;
+    readonly ponged: Promise<void>;
     readonly close: () => Promise<void>;
 }> {
     const sockets = new Set<Socket>();
+    let markRequested!: () => void;
+    const requested = new Promise<void>(resolve => { markRequested = resolve; });
+    let completeUpgrade = () => undefined;
+    let sendJsonBurst = (_count: number) => undefined;
+    let markPonged!: () => void;
+    const ponged = new Promise<void>(resolve => { markPonged = resolve; });
     const server = createServer((socket) => {
         sockets.add(socket);
         socket.on('close', () => {
             sockets.delete(socket);
         });
-        socket.on('data', () => {
+        let request = '';
+        let upgraded = false;
+        socket.on('data', chunk => {
+            if (upgraded) {
+                if ((chunk[0]! & 0x0f) === 0xa) markPonged();
+                return;
+            }
             // Accept the TCP connection and request bytes but never complete the
-            // WebSocket upgrade.
+            // WebSocket upgrade until the test requests it.
+            request += chunk.toString('latin1');
+            if (!request.includes('\r\n\r\n')) return;
+            const key = /Sec-WebSocket-Key: ([^\r\n]+)/i.exec(request)?.[1];
+            if (!key) return;
+            completeUpgrade = () => {
+                const acceptKey = createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+                socket.write([
+                    'HTTP/1.1 101 Switching Protocols', 'Upgrade: websocket', 'Connection: Upgrade',
+                    `Sec-WebSocket-Accept: ${acceptKey}`, '', '',
+                ].join('\r\n'));
+                upgraded = true;
+            };
+            sendJsonBurst = count => {
+                const frames = Array.from({ length: count }, (_, index) => {
+                    const text = Buffer.from(JSON.stringify(index));
+                    return Buffer.concat([Buffer.from([0x81, text.length]), text]);
+                });
+                socket.write(Buffer.concat([...frames, Buffer.from([0x89, 0])]));
+            };
+            markRequested();
         });
     });
     await new Promise<void>((resolve, reject) => {
@@ -71,6 +108,10 @@ async function createHangingUpgradeServer(): Promise<{
     const address = server.address() as AddressInfo;
     return {
         port: address.port,
+        requested,
+        completeUpgrade: () => completeUpgrade(),
+        sendJsonBurst: count => sendJsonBurst(count),
+        ponged,
         close: async () => {
             for (const socket of sockets) {
                 socket.destroy();
@@ -206,6 +247,101 @@ function createAlreadyFlowingHandshakeProcess(
 }
 
 describe('A.13p.10 spawned loopback WebSocket client transport', () => {
+    it('settles a handshake read whose stdout already ended before readiness observation', async () => {
+        const stdout = new PassThrough();
+        const ended = new Promise<void>(resolve => { stdout.once('end', resolve); });
+        stdout.resume();
+        stdout.end();
+        await ended;
+        const result = await Promise.race([
+            readLoopbackHandshakeFrame({ stdout, byteOrder: 'little-endian' }).catch((error: unknown) => error),
+            new Promise(resolve => setTimeout(() => resolve({ status: 'still_pending' }), 120)),
+        ]);
+        expect(result).toMatchObject({ code: 'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR' });
+    });
+
+    it('settles caller cancellation while a handshake endpoint decoder remains pending', async () => {
+        const fake = createAlreadyFlowingHandshakeProcess(encodeLoopbackHandshakeFrame('{}', 'little-endian'));
+        const spec = createSpec(process.execPath, {});
+        const cancellation = new AbortController();
+        let markDecoding!: () => void;
+        const decoding = new Promise<void>(resolve => { markDecoding = resolve; });
+        const pending = createLoopbackWebSocketProcessClient({
+            process: fake.process,
+            optionsSignal: cancellation.signal,
+            spec: {
+                ...spec,
+                protocol: {
+                    ...spec.protocol,
+                    endpoint: {
+                        decodeHandshakeResponse: () => {
+                            markDecoding();
+                            return new Promise<ExecLoopbackWebSocketEndpointV1>(() => {});
+                        },
+                    },
+                },
+            },
+        });
+        await decoding;
+        cancellation.abort();
+        const result = await Promise.race([
+            pending.catch((error: unknown) => error),
+            new Promise(resolve => setTimeout(() => resolve({ status: 'still_pending' }), 120)),
+        ]);
+        expect(result).toMatchObject({ code: 'PLUGIN_EXEC_CLIENT_ABORTED' });
+    });
+
+    it('delivers a valid burst beyond the former implicit pending-message count after a slow listener resumes', async () => {
+        const server = await createHangingUpgradeServer();
+        const pending = createLoopbackWebSocketJsonClient({ endpoint: { host: '127.0.0.1', port: server.port } });
+        await server.requested;
+        server.completeUpgrade();
+        const protocol = await pending;
+        let resume!: () => void;
+        const held = new Promise<void>(resolve => { resume = resolve; });
+        const messages: unknown[] = [];
+        protocol.client.subscribe(async value => {
+            messages.push(value);
+            if (value === 0) await held;
+        });
+        try {
+            server.sendJsonBurst(65);
+            await Promise.race([server.ponged, protocol.client.closed]);
+            resume();
+            await expect.poll(() => messages).toEqual(Array.from({ length: 65 }, (_, index) => index));
+        } finally {
+            resume();
+            protocol.dispose();
+            await server.close();
+        }
+    });
+
+    it.each([undefined, 65_000])('honors an omitted or authored connection budget %s beyond the former 60-second clamp', async (timeoutMs) => {
+        const server = await createHangingUpgradeServer();
+        const cancellation = new AbortController();
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+        let settled = false;
+        const pending = createLoopbackWebSocketJsonClient({
+            endpoint: { host: '127.0.0.1', port: server.port },
+            ...(timeoutMs === undefined ? {} : { connect: { timeoutMs } }),
+            signal: cancellation.signal,
+        });
+        void pending.then(() => { settled = true; }, () => { settled = true; });
+        try {
+            await server.requested;
+            await vi.advanceTimersByTimeAsync(61_000);
+            expect(settled).toBe(false);
+            server.completeUpgrade();
+            const protocol = await pending;
+            protocol.dispose();
+        } finally {
+            cancellation.abort();
+            await pending.catch(() => undefined);
+            vi.useRealTimers();
+            await server.close();
+        }
+    });
+
     it('does not lose a synchronous child handshake response when stdout diagnostics are already flowing', async () => {
         const responseFrame = encodeLoopbackHandshakeFrame(
             Buffer.from(JSON.stringify({

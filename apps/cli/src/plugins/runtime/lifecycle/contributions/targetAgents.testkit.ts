@@ -123,6 +123,7 @@ function authoredFiles(entries: readonly Readonly<{
             ...(entry.value.externalSessionObservation ? [`api.agents.registerExternalSessionObservation(${id},leaf.observation${index});`] : []),
             ...(entry.value.externalSessionTakeover ? [`api.agents.registerExternalSessionTakeover(${id},leaf.takeover${index});`] : []),
             ...(!entry.custom && entry.value.cliAuth ? [`api.agents.registerCliAuth(${id},leaf.cliAuth${index});`] : []),
+            ...(!entry.custom && entry.value.connectedAccountLaunch ? [`api.agents.registerConnectedAccountLaunch(${id},leaf.options${index}.connectedAccountLaunch);`] : []),
         ].join('\n');
     }).join('\n');
     return {

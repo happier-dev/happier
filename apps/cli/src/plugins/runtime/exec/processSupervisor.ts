@@ -50,6 +50,9 @@ export type SupervisedPluginProcess = Readonly<{
     readBufferedStderr(): Uint8Array;
     requestTermination(request: Exclude<PluginProcessTerminationRequest, { kind: 'none' }>): Promise<void>;
     dispose(reason?: DisposeReason): Promise<void>;
+    /** Root/output exit is not evidence that the owned containment settled. */
+    waitForSettlement(): Promise<void>;
+    onOutcomeUncertain(listener: (error: unknown) => void): () => void;
 }>;
 
 /**
@@ -216,6 +219,18 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
     const observedPromise = new Promise<void>((resolve) => {
         resolveObserved = resolve;
     });
+    let resolveSettlement!: () => void;
+    let settled = false;
+    let uncertain: unknown;
+    const settlementPromise = new Promise<void>(resolve => { resolveSettlement = resolve; });
+    const uncertaintyListeners = new Set<(error: unknown) => void>();
+    const confirmSettlement = () => {
+        if (settled) return;
+        settled = true;
+        uncertain = undefined;
+        uncertaintyListeners.clear();
+        resolveSettlement();
+    };
     let terminationPromise: Promise<void> | null = null;
     let disposePromise: Promise<void> | null = null;
     let timeout: ReturnType<typeof setTimeout> | null = null;
@@ -302,6 +317,7 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
     child.once('error', (error) => {
         freezeObserved(failedTermination(error));
         seal();
+        if (!child.pid) confirmSettlement();
     });
     child.once('exit', (exitCode, signal) => {
         freezeObserved(observedTermination(exitCode, signal));
@@ -353,6 +369,7 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
                 await terminate(child);
                 await observedPromise;
                 seal();
+                confirmSettlement();
             })();
             // A bounded caller wait may finish first. Keep a rejection from a
             // later tree-kill attempt observed without relabeling the process.
@@ -386,9 +403,15 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
             }
         })();
         terminationPromise = attempt;
-        void attempt.catch(() => {
+        void attempt.catch((error: unknown) => {
             if (terminationPromise === attempt) {
                 terminationPromise = null;
+            }
+            if (!settled) {
+                uncertain = error;
+                for (const listener of [...uncertaintyListeners]) {
+                    try { listener(error); } catch { /* Observers do not own process custody. */ }
+                }
             }
         });
         return attempt;
@@ -412,7 +435,11 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
     }
 
     const dispose = (reason: DisposeReason = 'caller'): Promise<void> => {
-        if (disposePromise) return disposePromise;
+        // A new explicit Stop may arrive from the uncertainty observer before
+        // the previous disposal's rejection reaches its outer cleanup. Join a
+        // successful attempt, but retry THIS request after a failed attempt;
+        // the first caller still observes its original unconfirmed outcome.
+        if (disposePromise) return disposePromise.catch(() => dispose(reason));
         const attempt = (async () => {
             for (const signal of input.signals ?? []) {
                 signal.removeEventListener('abort', abort);
@@ -461,5 +488,14 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
         readBufferedStderr: () => new Uint8Array(Buffer.concat(stderrChunks, stderrBytes)),
         requestTermination,
         dispose,
+        waitForSettlement: () => settlementPromise,
+        onOutcomeUncertain(listener: (error: unknown) => void) {
+            if (settled) return () => {};
+            uncertaintyListeners.add(listener);
+            if (uncertain !== undefined) {
+                try { listener(uncertain); } catch { /* Observers do not own process custody. */ }
+            }
+            return () => { uncertaintyListeners.delete(listener); };
+        },
     });
 }

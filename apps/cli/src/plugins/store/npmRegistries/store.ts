@@ -7,18 +7,14 @@ import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { NPM_REGISTRY_PROFILES_LOCK_NAME, withPluginStoreLock } from '@/plugins/store/lock';
 import { ensurePluginStoreDirectories, resolvePluginStorePaths, type PluginStorePaths } from '@/plugins/store/paths';
 
-const MAX_PROFILES = 64;
-const MAX_PAUSED_SOURCES = 64;
-const MAX_MUTATIONS = 128;
-
 const PersistedProfileSchema = z.object({
   profileId: NpmRegistryProfileIdV1Schema,
-  displayName: z.string().trim().min(1).max(128),
+  displayName: z.string().trim().min(1),
   origin: NpmRegistryOriginV1Schema,
-  scopes: z.array(NpmRegistryScopeV1Schema).max(64),
+  scopes: z.array(NpmRegistryScopeV1Schema),
   useAsDefault: z.boolean(),
   allowPrivateNetwork: z.boolean(),
-  credentialSecretRef: z.string().trim().min(1).max(256).nullable(),
+  credentialSecretRef: z.string().trim().min(1).nullable(),
   credentialRevision: z.number().int().nonnegative(),
   availability: z.enum(['unknown', 'available', 'sign_in_required', 'offline']),
   lastSuccessfulCheckAtMs: z.number().int().nonnegative().nullable(),
@@ -32,8 +28,8 @@ const PausedSourceSchema = z.object({
 }).strict();
 
 const MutationReceiptSchema = z.object({
-  mutationId: z.string().trim().min(8).max(128),
-  fingerprint: z.string().min(1).max(4096),
+  mutationId: z.string().trim().min(1),
+  fingerprint: z.string().min(1),
   revision: z.number().int().nonnegative(),
 }).strict();
 
@@ -41,9 +37,9 @@ const RegistryFileSchema = z.object({
   t: z.literal('happier_npm_registry_profiles_v1'),
   version: z.literal(1),
   revision: z.number().int().nonnegative(),
-  profiles: z.array(PersistedProfileSchema).max(MAX_PROFILES),
-  pausedSources: z.array(PausedSourceSchema).max(MAX_PAUSED_SOURCES),
-  mutations: z.array(MutationReceiptSchema).max(MAX_MUTATIONS),
+  profiles: z.array(PersistedProfileSchema),
+  pausedSources: z.array(PausedSourceSchema),
+  mutations: z.array(MutationReceiptSchema),
 }).strict().superRefine((value, ctx) => {
   const ids = new Set<string>();
   const origins = new Set<string>();
@@ -128,10 +124,11 @@ export function createNpmRegistryProfileStore(params?: Readonly<{ happyHomeDir?:
           t: 'happier_npm_registry_profiles_v1',
           version: 1,
           revision,
+          // Mutation ids do not expire; receipts retain replay protection across registry restarts.
           mutations: [
             ...current.mutations,
             { mutationId: input.mutationId, fingerprint: input.fingerprint, revision },
-          ].slice(-MAX_MUTATIONS),
+          ],
         });
         await ensurePluginStoreDirectories({ happyHomeDir: paths.happyHomeDir });
         await writeJsonAtomic(paths.npmRegistryProfilesFilePath, next);

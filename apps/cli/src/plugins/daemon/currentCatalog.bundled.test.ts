@@ -13,6 +13,13 @@ vi.mock('@/plugins/projection/catalog/installed', async (importOriginal) => {
   };
 });
 
+// Publication failures belong to the packaged runtime. Source execution has
+// no publication claim and intentionally does not consume staged failures.
+vi.mock('@/packagedRuntime/resolvePackagedRuntimeEntrypoint', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/packagedRuntime/resolvePackagedRuntimeEntrypoint')>(),
+  isExecutingFirstPartySourceRuntime: () => false,
+}));
+
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
   const { createBundledPluginPublicationFsFixture } = await import(

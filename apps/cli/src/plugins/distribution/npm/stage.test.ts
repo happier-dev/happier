@@ -37,6 +37,8 @@ type FixtureOverrides = Readonly<{
   manifestId?: string;
   manifestVersion?: string;
   pluginManifestBody?: string;
+  packageJsonBody?: string;
+  uiArtifactsBody?: string;
   artifactContributionId?: string;
   artifactTier?: 'hostedWeb' | 'reactNative';
   artifactDigest?: string;
@@ -80,7 +82,8 @@ async function createCandidateFixture(overrides: FixtureOverrides = {}): Promise
     ? `react-native/${artifactId}/entry.cjs.bundle`
     : `hosted-web/${artifactId}/index.html`);
   const uiBytes = artifactTier === 'reactNative'
-    ? Buffer.from('module.exports = { activate() {} };\n')
+    ? Buffer.from(`module.exports = { ${(overrides.artifactExportNames ?? ['activate'])
+      .map((name) => `${JSON.stringify(name)}: () => {}`).join(', ')} };\n`)
     : Buffer.from('<!doctype html><div id="root"></div>\n');
   const uiDigest = computePluginUiArtifactFileSetSha256DigestV1([
     { relativePath: uiEntryPath, bytes: uiBytes },
@@ -198,10 +201,10 @@ async function createCandidateFixture(overrides: FixtureOverrides = {}): Promise
     ],
   };
   const entries: TestTarEntry[] = [
-    { name: 'package/package.json', body: JSON.stringify(packageJson) },
+    { name: 'package/package.json', body: overrides.packageJsonBody ?? JSON.stringify(packageJson) },
     { name: 'package/.happier-plugin/plugin.json', body: overrides.pluginManifestBody ?? JSON.stringify(pluginManifest) },
     { name: 'package/dist/daemon.mjs', body: 'export function activate() {}\n' },
-    { name: 'package/dist/happier-plugin-ui/ui-artifacts.json', body: JSON.stringify(artifactManifest) },
+    { name: 'package/dist/happier-plugin-ui/ui-artifacts.json', body: overrides.uiArtifactsBody ?? JSON.stringify(artifactManifest) },
     { name: `package/dist/happier-plugin-ui/${uiEntryPath}`, body: uiBytes },
     ...(overrides.duplicateArtifactSlot
       ? [{ name: `package/dist/happier-plugin-ui/${duplicateUiEntryPath}`, body: duplicateUiBytes }]
@@ -238,6 +241,38 @@ async function createCandidateFixture(overrides: FixtureOverrides = {}): Promise
 }
 
 describe('stageDownloadedNpmArtifactCandidate', () => {
+  it.each([
+    [{ packageJsonBody: '{' }, 'package_json_invalid'],
+    [{ uiArtifactsBody: '{' }, 'ui_artifact_manifest_invalid'],
+  ] as const)('rejects invalid metadata JSON through strict parsing (%s)', async (overrides, code) => {
+    const fixture = await createCandidateFixture(overrides);
+    await expect(stageDownloadedNpmArtifactCandidate({
+      candidate: fixture.candidate,
+      stagingParentPath: fixture.stagingParentPath,
+    })).resolves.toMatchObject({ ok: false, rejection: { code } });
+  });
+
+  it('accepts a generated UI inventory beyond the former 1 MiB cutoff', async () => {
+    const fixture = await createCandidateFixture({
+      includeUiRenderer: false,
+      clientAction: { exportName: 'activate' },
+      artifactContributionId: 'client-actions',
+      artifactTier: 'reactNative',
+      artifactExportNames: ['activate', ...Array.from({ length: 8192 }, (_, index) =>
+        `export_${String(index).padStart(4, '0')}_${'x'.repeat(128)}`)],
+    });
+    const result = await stageDownloadedNpmArtifactCandidate({
+      candidate: fixture.candidate,
+      stagingParentPath: fixture.stagingParentPath,
+    });
+    expect(result).toMatchObject({ ok: true });
+    if (result.ok) {
+      expect(result.candidate.inventory.find((file) => file.path === 'dist/happier-plugin-ui/ui-artifacts.json')?.byteLength)
+        .toBeGreaterThan(1024 * 1024);
+      await cleanupStagedNpmArtifactCandidate(result.candidate);
+    }
+  });
+
   it('accepts the canonical hosted-static artifact emitted by the public SDK builder', async () => {
     const fixture = await createCandidateFixture();
 
@@ -571,8 +606,7 @@ describe('stageDownloadedNpmArtifactCandidate', () => {
     // no ceiling of their own. Strict UTF-8 decoding, JSON parsing, schema and
     // semantic validation, and the depth-bounded traversal guard are owned by
     // manifest ingestion; per-file and aggregate expansion bounds are owned by
-    // the archive. `package.json` and `ui-artifacts.json` keep the retained
-    // control-artifact metadata bound because they stay small by construction.
+    // the archive.
     const resources = Array.from({ length: 3_000 }, (_, index) => ({
       id: `generated-resource-${index}`,
       source: 'dynamic',
@@ -610,13 +644,7 @@ describe('stageDownloadedNpmArtifactCandidate', () => {
     })).resolves.toMatchObject({ ok: true });
   });
 
-  it('still rejects a control artifact that exceeds the retained metadata byte bound', async () => {
-    // Dropping the manifest ceiling was surgical. `package.json` and
-    // `ui-artifacts.json` are small-by-construction control artifacts that the
-    // staging reader parses before anything else has validated them, so they
-    // keep the bounded-read metadata limit the manifest no longer carries.
-    // High-entropy padding: compressible filler would trip the archive's
-    // compression-ratio guard first and this test would stop discriminating.
+  it('accepts valid package metadata beyond the former 1 MiB cutoff', async () => {
     const fixture = await createCandidateFixture({
       extraPackageJson: { padding: randomBytes(600 * 1024).toString('hex') },
     });
@@ -624,7 +652,7 @@ describe('stageDownloadedNpmArtifactCandidate', () => {
     await expect(stageDownloadedNpmArtifactCandidate({
       candidate: fixture.candidate,
       stagingParentPath: fixture.stagingParentPath,
-    })).resolves.toMatchObject({ ok: false, rejection: { code: 'package_json_invalid' } });
+    })).resolves.toMatchObject({ ok: true });
   });
 
   it('accepts unrelated future package happier metadata while keeping manifest ownership exact', async () => {

@@ -247,6 +247,7 @@ describe('plugin invocation ActionsService', () => {
                 viewerRole: 'owner',
                 capabilities: NO_TEAM_CAPABILITIES_V1,
                 admission: { historyChoice: { admin: 'choice', member: 'choice', guest: 'hidden' } },
+                counts: null,
             },
         });
         const signExternalActionApprovalInput = vi.fn().mockReturnValue('machine-signature');
@@ -393,6 +394,7 @@ describe('plugin invocation ActionsService', () => {
             viewerRole: 'owner' as const,
             capabilities: NO_TEAM_CAPABILITIES_V1,
             admission: { historyChoice: { admin: 'choice' as const, member: 'choice' as const, guest: 'hidden' as const } },
+            counts: null,
         };
         const execute = vi.fn(async (
             _actionId: string,

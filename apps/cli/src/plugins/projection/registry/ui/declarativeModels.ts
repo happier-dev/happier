@@ -79,7 +79,6 @@ export function resolveDeclarativeProjectionModels(params: Readonly<{
         const pluginId = renderer.pluginId.trim();
         if (!pluginId) continue;
         const occurrenceId = params.readPluginOccurrenceId(pluginId);
-        if (!occurrenceId) continue;
         try {
             const settingDefinitions = resolveLocalSettingsDeclarations({
                 settings: params.registry.settings ?? [],
@@ -100,7 +99,7 @@ export function resolveDeclarativeProjectionModels(params: Readonly<{
                 .flatMap((collection) => collection.definition.uiQueries));
             const model = createStablePluginDeclarativeModel({
                 pluginId,
-                occurrenceId,
+                ...(occurrenceId ? { occurrenceId } : {}),
                 renderer: renderer.definition,
                 settings,
                 actions,

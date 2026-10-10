@@ -1,3 +1,4 @@
+import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { describe, expect, it, vi } from 'vitest';
 import {
     buildQualifiedPluginContributionKey,
@@ -557,6 +558,7 @@ describe('buildTargetActionInvocationRegistry', () => {
             readPluginSourceCustody: () => sourceCustody,
             activateContributionsOnDemand: async () => { throw new Error('Discovery must not activate a daemon handler'); },
             resolveCaptureSource: unexpectedCaptureSourceResolution,
+            resolveProjectNativeAdapter: unexpectedProjectNativeAdapterResolution,
             resolvePromptAssetBlocks: async () => [],
             addRuntimeDisposable: (_pluginId, disposable) => disposable,
             createAgentInvocationServices: async () => createUnavailablePluginServices(),
@@ -1064,11 +1066,29 @@ describe('buildTargetActionInvocationRegistry', () => {
         expect(handler).not.toHaveBeenCalled();
     });
 
-    it('refuses a headless submitted plugin-type value before the target handler without discarding it', async () => {
+    it('validates a headless host usage input without inventing a plugin contribution', async () => {
+        const pluginManifest = manifest({
+            inputSchema: { type: 'object', properties: { query: { type: 'object', additionalProperties: true } }, required: ['query'], additionalProperties: false },
+            inputHints: { fields: [{ path: 'query', title: 'Usage', widget: 'json', inputType: { hostType: 'usageQuery' } }] },
+        });
+        const target = buildRegistry({ contributes: registry({ pluginManifest }),
+            targetRegistrations: [{ pluginId: 'acme.alpha', occurrenceId: '7',
+                registration: { family: 'actions', localId: 'run', value: async () => ({ accepted: true }) } }],
+            targetActivationFacts: [fact()],
+        });
+        expect(await target.invoke({ pluginId: 'acme.alpha', localId: 'run', input: { query: { agents: ['codex'] } }, surface: 'cli' }))
+            .toMatchObject({ status: 'executed', value: { accepted: true } });
+        expect(await target.invoke({ pluginId: 'acme.alpha', localId: 'run', input: { query: { accountId: 'forged' } }, surface: 'cli' }))
+            .toMatchObject({ status: 'invalid', code: 'input_type_value_invalid' });
+    });
+
+    // Blocked regression preparation: author grammar remains restrictive; the current-source registry bootstrap fails before dispatch assertions.
+    it('[blocked: authored typed static choices] refuses a headless submitted plugin-type value before the target handler without discarding it', async () => {
         const inputType = { pluginId: 'acme.alpha', localId: 'repository' };
         const pluginManifest = manifest({
             inputSchema: { type: 'object', properties: { repository: { type: 'object', additionalProperties: true } }, required: ['repository'], additionalProperties: false },
-            inputHints: { fields: [{ path: 'repository', title: 'Repository', widget: 'select', inputType }] },
+            inputHints: { fields: [{ path: 'repository', title: 'Repository', widget: 'select', inputType,
+                options: [{ value: { repositoryId: 'one' }, label: 'One' }] }] },
             inputTypes: [{ id: 'repository', title: 'Repository', semantic: 'repository',
                 valueSchema: { type: 'object', properties: { repositoryId: { type: 'string', minLength: 1 } },
                     required: ['repositoryId'], additionalProperties: false } }],
@@ -1087,6 +1107,10 @@ describe('buildTargetActionInvocationRegistry', () => {
         expect(await target.invoke({ pluginId: 'acme.alpha', localId: 'run',
             input: { repository: { repositoryId: 'one' } }, surface: 'cli' }))
             .toMatchObject({ status: 'executed', value: { accepted: true } });
+        expect(invoked).toBe(1);
+        expect(await target.invoke({ pluginId: 'acme.alpha', localId: 'run',
+            input: { repository: { repositoryId: 'excluded' } }, surface: 'cli' }))
+            .toMatchObject({ status: 'invalid', code: 'input_type_option_invalid' });
         expect(invoked).toBe(1);
     });
 

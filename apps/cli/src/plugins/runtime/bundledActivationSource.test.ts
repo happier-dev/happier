@@ -97,6 +97,22 @@ afterEach(async () => {
 });
 
 describe('createBundledActivationSourceResolver', () => {
+  it('activates frozen bundle plugins and runner leaves on first demand from a bundled host chunk', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-source-first-demand-'));
+    tempDirs.push(root);
+    const pluginRoot = join(root, 'packages/plugins/fixture');
+    await mkdir(join(pluginRoot, 'dist/agent'), { recursive: true });
+    await writeFile(join(pluginRoot, 'package.json'), JSON.stringify({ name: '@happier-dev/plugins-fixture', type: 'module' }));
+    await writeFile(join(pluginRoot, 'dist/index.js'), "export const marker = 'frozen-activation'; export async function activate() {}\n");
+    await writeFile(join(pluginRoot, 'dist/agent/runner.js'), "export const marker = 'frozen-runner';\n");
+    const repoRoot = resolveBundledActivationSourceRepoRoot(pathToFileURL(join(root, 'apps/cli/src/chunks/runtime.js')).href);
+    const source = createBundledActivationSourceResolver({
+      bundledPackageNames: ['@happier-dev/plugins-fixture'], repoRoot,
+      canImportFirstPartyPluginSource: () => false,
+    })({ pluginId: 'happier.fixture', daemonEntryPath: '@happier-dev/plugins-fixture' });
+    expect((await source?.load())?.marker).toBe('frozen-activation');
+    expect((await source?.resolveRelativeModule('./agent/runner.js'))?.module.marker).toBe('frozen-runner');
+  });
   it('binds packaged activation from an executing runner snapshot to snapshot custody', () => {
     const pluginId = 'happier.snapshot.fixture';
     const packageName = '@happier-dev/plugins-snapshot-fixture';

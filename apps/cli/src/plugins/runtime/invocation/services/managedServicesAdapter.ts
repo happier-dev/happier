@@ -1,6 +1,7 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type {
     ConnectedAccountRequestAuthUseV1,
+    QualifiedConnectedAccountRequestAuthUseV1,
 } from '@happier-dev/protocol';
 import type {
     ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
@@ -62,8 +63,25 @@ export type ManagedProviderRequestAuthCapabilityPathBinding = Readonly<{
     realm: 'managedProviderStart';
     capabilityPath: string;
     requestAuthUses: readonly ConnectedAccountRequestAuthUseV1[];
+    /** Exact admitted authority; legacy bootstrap projection remains unqualified. */
+    qualifiedRequestAuthUses?: readonly QualifiedConnectedAccountRequestAuthUseV1[];
     isCurrent(): boolean;
 }>;
+
+/** Exact admitted physical placement plus one independently disposable consumer. */
+export type SharedManagedProviderGatewayBinding = Readonly<{
+    homeId: string;
+    accountId: string;
+    connectionId: string;
+    machineId: string;
+    consumerId: string;
+}>;
+
+export type ResolveSharedManagedProviderGatewayBinding = (input: Readonly<{
+    connectionId: string;
+    consumerId: string;
+    signal?: AbortSignal;
+}>) => Promise<SharedManagedProviderGatewayBinding | null>;
 
 export type ManagedProviderRuntimeInvocationBinding = Readonly<{
     realm: 'managedProviderStart';
@@ -71,6 +89,9 @@ export type ManagedProviderRuntimeInvocationBinding = Readonly<{
     /** Exact public-operation claim. Catalog probes use a fresh bounded id;
      * repeated explicit-start requests reuse one machine+Provider claim. */
     operationClaimId?: string;
+    sharedGateway?: SharedManagedProviderGatewayBinding;
+    /** Exact plugin source/occurrence authority, independent of consumer lifetime. */
+    isPhysicalOccurrenceCurrent?(): boolean;
     isCurrent(): boolean;
 }>;
 

@@ -19,6 +19,7 @@ import type {
     ResolvedRoleContribution,
     ResolvedWorkflowContribution,
     ResolvedInputTypeContribution,
+    ResolvedMachineProvisionerContribution,
     ResolvedDragSourceContribution,
     ResolvedDropTargetContribution,
     ResolvedEventContribution,
@@ -309,6 +310,7 @@ export function projectLoadedPluginContributes(
     const roleCandidates: ResolvedRoleContribution[] = [];
     const workflowCandidates: ResolvedWorkflowContribution[] = [];
     const inputTypeCandidates: ResolvedInputTypeContribution[] = [];
+    const machineProvisionerCandidates: ResolvedMachineProvisionerContribution[] = [];
     const dragSourceCandidates: ResolvedDragSourceContribution[] = [];
     const dropTargetCandidates: ResolvedDropTargetContribution[] = [];
     const voiceProviderCandidates: ResolvedVoiceProviderContribution[] = [];
@@ -883,6 +885,15 @@ export function projectLoadedPluginContributes(
             manifestPath: contribution.manifestPath, definition: contribution.definition });
     }
 
+    for (const contribution of pluginRegistry.machineProvisioners) {
+        machineProvisionerCandidates.push({
+            provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion,
+            identity: contribution.identity!, manifestPath: contribution.manifestPath,
+            definition: contribution.definition,
+        });
+    }
+
     for (const contribution of pluginRegistry.dragSources) {
         dragSourceCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
@@ -956,6 +967,7 @@ export function projectLoadedPluginContributes(
     ));
     return {
         introspectionContributions: collectNormalizedRegistryIntrospectionCandidates(pluginRegistry),
+        pluginDeclarations: Object.freeze([...loadResult.loadedPlugins]),
         uiViewsV2: Object.freeze(uiViewV2Candidates),
         openableContentViewers: Object.freeze(openableContentViewerCandidates),
         uiSettingsGroupsV2: Object.freeze(uiSettingsGroupV2Candidates),
@@ -996,6 +1008,7 @@ export function projectLoadedPluginContributes(
         roles: Object.freeze(roleCandidates),
         workflows: Object.freeze(workflowCandidates),
         inputTypes: Object.freeze(inputTypeCandidates),
+        machineProvisioners: Object.freeze(machineProvisionerCandidates),
         dragSources: Object.freeze(dragSourceCandidates),
         dropTargets: Object.freeze(dropTargetCandidates),
         voiceProviders: Object.freeze(voiceProviderCandidates),

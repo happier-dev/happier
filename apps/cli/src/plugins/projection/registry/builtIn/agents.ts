@@ -100,13 +100,14 @@ export function projectBuiltInAgents(params: Readonly<{
             throw new Error(`Duplicate bundled canonical agent '${canonicalAgentId}'`);
         }
         projectedIds.add(canonicalAgentId);
-        if (!manifestContribution.runtimeSpec) {
+        if (!manifestContribution.runtimeSpec
+            && (manifestContribution.cliMetadata || manifestContribution.richDefinition?.definition.cli)) {
             throw new Error(`Missing bundled manifest CLI metadata for agent '${canonicalAgentId}'`);
         }
-        const runtimeSpec = Object.freeze({
+        const runtimeSpec = manifestContribution.runtimeSpec ? Object.freeze({
             ...manifestContribution.runtimeSpec,
             id: canonicalAgentId,
-        });
+        }) : null;
         if (!manifestContribution.catalogEntry) {
             throw new Error(`Missing bundled manifest catalog projection for agent '${canonicalAgentId}'`);
         }

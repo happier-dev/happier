@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { performance } from 'node:perf_hooks';
 
-import { createMarketplaceNpmDiscoveryProjectionV1, deriveMarketplaceNpmCompatibilityPlatformsV1, MarketplaceIndexEntryV1Schema, MarketplaceIndexSourceSnapshotV1Schema, marketplaceNpmDiscoveryProjectionEqualV1 } from '@happier-dev/protocol/marketplace/marketplaceIndexV1';
+import { createMarketplaceNpmDiscoveryProjectionV1, deriveMarketplaceNpmCompatibilityPlatformsV1, MARKETPLACE_INDEX_PAGE_MAX_SIZE_V1, MarketplaceIndexEntryV1Schema, MarketplaceIndexSourceSnapshotV1Schema, marketplaceNpmDiscoveryProjectionEqualV1 } from '@happier-dev/protocol/marketplace/marketplaceIndexV1';
 import type { MarketplaceIndexSourceKindV1, MarketplaceIndexSourceSnapshotV1 } from '@happier-dev/protocol';
 import { parseMarketplaceIndexSourceSnapshotV1, readMarketplaceNpmDiscoveryProjectionV1 } from '@happier-dev/protocol/marketplace/marketplaceIndexV1';
 
@@ -13,7 +12,7 @@ import {
   type RemoteAcquisitionAddressResolver,
   type RemoteAcquisitionDestinationPolicy,
 } from '@/plugins/discovery/remote/acquisition';
-import { resolvePluginRemoteCatalogMaxBytes, resolvePluginRemoteFetchTimeoutMs } from '@/plugins/discovery/remote/fetch';
+import { readRemoteJsonResponseWithLimits, resolvePluginRemoteCatalogMaxBytes, resolvePluginRemoteFetchTimeoutMs } from '@/plugins/discovery/remote/fetch';
 import { createNpmRegistryHttpsClient } from '@/plugins/distribution/npm/httpsClient';
 import { normalizeNpmArtifactRequest } from '@/plugins/distribution/npm/normalize';
 import { resolveNpmArtifactMetadata, type NpmRegistryJsonClient } from '@/plugins/distribution/npm/resolver';
@@ -23,29 +22,26 @@ import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { isNetworkConnectionErrorCode } from '@/api/client/classifyServerEndpointError';
 
-const CACHE_MAX_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 /**
  * Community npm discovery is scoped to the plugin ecosystem keyword. It is
  * composed with the caller's search text rather than replaced by it, so a
  * user query narrows the ecosystem instead of leaving it.
  */
 const COMMUNITY_NPM_ECOSYSTEM_QUALIFIER = 'keywords:happier-plugin';
-const COMMUNITY_NPM_SEARCH_TEXT_MAX_LENGTH = 256;
 /**
  * npm search serves one bounded snapshot per query. The merged marketplace
  * index owns paging across sources, so each cursor page is cut from the same
  * source snapshot instead of refetching a wider or differently offset result.
- * 100 is npm's practical page ceiling and each candidate costs one metadata
- * request, so it is also the discovery ceiling.
+ * 100 matches the marketplace query owner's maximum processing page size;
+ * npm's total and returned counts remain visible for continuation. It is not
+ * a total catalog limit or an asserted npm transport ceiling.
  */
-const COMMUNITY_NPM_SEARCH_MAX_SIZE = 100;
 /**
  * npm ranks an exact package name first but still answers with neighbours, so
- * a targeted request asks for a small window and the parser keeps only the
- * named package. It is one search request and at most one metadata request.
+ * the parser keeps only the named package. Targeted and browsing requests
+ * share the index owner's processing page; targeting still acquires at most
+ * one package's metadata.
  */
-const COMMUNITY_NPM_EXACT_SEARCH_SIZE = 20;
-const MAX_CONCURRENT_COMMUNITY_NPM_METADATA_REQUESTS = 4;
 const INDEX_SOURCE_ERROR_LABEL = 'Marketplace index source';
 /**
  * A configured index source is a published catalog: it must be reachable over
@@ -144,10 +140,10 @@ export function buildCommunityNpmSearchUrl(sourceUrl: string, query?: Marketplac
     ...(query?.exactPackageName ? [query.exactPackageName] : []),
     ...(query?.exactPackageName ? [] : [(query?.text ?? '').trim()]),
   ].filter((term) => term.length > 0);
-  url.searchParams.set('text', terms.join(' ').slice(0, COMMUNITY_NPM_SEARCH_TEXT_MAX_LENGTH));
+  url.searchParams.set('text', terms.join(' '));
   const size = query?.exactPackageName
-    ? COMMUNITY_NPM_EXACT_SEARCH_SIZE
-    : Math.max(1, Math.min(query?.size ?? COMMUNITY_NPM_SEARCH_MAX_SIZE, COMMUNITY_NPM_SEARCH_MAX_SIZE));
+    ? MARKETPLACE_INDEX_PAGE_MAX_SIZE_V1
+    : Math.max(1, Math.min(query?.size ?? MARKETPLACE_INDEX_PAGE_MAX_SIZE_V1, MARKETPLACE_INDEX_PAGE_MAX_SIZE_V1));
   const from = query?.exactPackageName ? 0 : Math.max(0, query?.from ?? 0);
   url.searchParams.set('from', String(from));
   url.searchParams.set('size', String(size));
@@ -159,8 +155,9 @@ export async function parseCommunityNpmDiscovery(
   source: { id: string; title: string; sourceUrl: string; kind: 'community-npm' },
   dependencies: Readonly<{
     client: NpmRegistryJsonClient;
-    metadataMaxBytes?: number;
+    metadataMaxBytes?: number | null;
     deadlineAtMonotonicMs?: number;
+    signal?: AbortSignal;
     /** Upper bound of search candidates this query resolves metadata for. */
     maxCandidates?: number;
     /**
@@ -173,13 +170,13 @@ export async function parseCommunityNpmDiscovery(
     size?: number;
   }>,
 ): Promise<LoadedMarketplaceIndexSource> {
-  const maxCandidates = Math.max(1, Math.min(dependencies.maxCandidates ?? COMMUNITY_NPM_SEARCH_MAX_SIZE, COMMUNITY_NPM_SEARCH_MAX_SIZE));
+  const maxCandidates = Math.max(1, Math.min(dependencies.maxCandidates ?? MARKETPLACE_INDEX_PAGE_MAX_SIZE_V1, MARKETPLACE_INDEX_PAGE_MAX_SIZE_V1));
   const searchHits: readonly unknown[] = isRecord(raw) && Array.isArray(raw.objects) ? raw.objects : [];
   const total = isRecord(raw) && Number.isSafeInteger(raw.total) && Number(raw.total) >= 0
     ? Number(raw.total)
     : searchHits.length;
   const from = Math.max(0, dependencies.from ?? 0);
-  const size = Math.max(1, Math.min(dependencies.size ?? maxCandidates, COMMUNITY_NPM_SEARCH_MAX_SIZE));
+  const size = Math.max(1, Math.min(dependencies.size ?? maxCandidates, MARKETPLACE_INDEX_PAGE_MAX_SIZE_V1));
   // A targeted request keeps only the named package, then the window bound
   // applies. Bounding first would let the neighbours npm returned ahead of the
   // exact hit push it out of the window.
@@ -215,29 +212,29 @@ export async function parseCommunityNpmDiscovery(
   const entries: MarketplaceIndexSourceSnapshotV1['entries'] = [];
   let skippedMetadataCandidates = 0;
   let skippedUnsupportedDiscoveryVersions = 0;
-  for (let index = 0; index < requests.length; index += MAX_CONCURRENT_COMMUNITY_NPM_METADATA_REQUESTS) {
-    const resolved = await Promise.allSettled(requests.slice(index, index + MAX_CONCURRENT_COMMUNITY_NPM_METADATA_REQUESTS).map(async (candidate) => ({
-      artifact: await resolveNpmArtifactMetadata({
-        request: candidate.request,
-        client: dependencies.client,
-        metadataMaxBytes: dependencies.metadataMaxBytes,
-        deadlineAtMonotonicMs: dependencies.deadlineAtMonotonicMs,
-      }),
-      publisher: candidate.publisher,
-    })));
-    for (const result of resolved) {
-      if (result.status === 'rejected') {
-        skippedMetadataCandidates += 1;
-        continue;
-      }
-      const outcome = parseCommunityNpmMetadataEntry(result.value.artifact, result.value.publisher);
-      if (outcome.status === 'listed') {
-        entries.push(outcome.entry);
-      } else if (outcome.reason === 'unsupported-discovery-version') {
-        skippedUnsupportedDiscoveryVersions += 1;
-      } else {
-        skippedMetadataCandidates += 1;
-      }
+  const resolved = await Promise.allSettled(requests.map(async (candidate) => ({
+    artifact: await resolveNpmArtifactMetadata({
+      request: candidate.request,
+      client: dependencies.client,
+      metadataMaxBytes: dependencies.metadataMaxBytes,
+      deadlineAtMonotonicMs: dependencies.deadlineAtMonotonicMs,
+      signal: dependencies.signal,
+    }),
+    publisher: candidate.publisher,
+  })));
+  dependencies.signal?.throwIfAborted();
+  for (const result of resolved) {
+    if (result.status === 'rejected') {
+      skippedMetadataCandidates += 1;
+      continue;
+    }
+    const outcome = parseCommunityNpmMetadataEntry(result.value.artifact, result.value.publisher);
+    if (outcome.status === 'listed') {
+      entries.push(outcome.entry);
+    } else if (outcome.reason === 'unsupported-discovery-version') {
+      skippedUnsupportedDiscoveryVersions += 1;
+    } else {
+      skippedMetadataCandidates += 1;
     }
   }
 
@@ -366,25 +363,6 @@ async function readCache(
   }
 }
 
-async function readResponseBody(response: Response): Promise<unknown> {
-  const limit = resolvePluginRemoteCatalogMaxBytes();
-  const contentLength = Number(response.headers.get('content-length'));
-  if (Number.isFinite(contentLength) && contentLength > limit) throw new Error('Marketplace index source exceeds the configured size limit');
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error('Marketplace index source response body is empty');
-  const chunks: Uint8Array[] = [];
-  let bytes = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (!value) continue;
-    bytes += value.byteLength;
-    if (bytes > limit) { await reader.cancel().catch(() => undefined); throw new Error('Marketplace index source exceeds the configured size limit'); }
-    chunks.push(value);
-  }
-  return JSON.parse(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString('utf8')) as unknown;
-}
-
 function isOfflineRefreshError(error: unknown): boolean {
   if (error instanceof TypeError) return true;
   const code = (error as NodeJS.ErrnoException | null)?.code;
@@ -442,18 +420,16 @@ export async function loadMarketplaceIndexSource(params: Readonly<{
           return snapshot;
         }
         if (!response.ok) throw new Error(`Marketplace index source fetch failed with ${response.status}`);
-        const body = await readResponseBody(response);
+        const body = await readRemoteJsonResponseWithLimits<unknown>({ response, signal: opened.signal, errorLabel: INDEX_SOURCE_ERROR_LABEL });
         let parsed: LoadedMarketplaceIndexSource;
         if (params.source.kind === 'community-npm') {
-          const timeoutMs = resolvePluginRemoteFetchTimeoutMs();
           const size = Number(new URL(requestUrl).searchParams.get('size'));
           parsed = await parseCommunityNpmDiscovery(body, { ...params.source, kind: 'community-npm' }, {
             client: params.communityNpmClient ?? createNpmRegistryHttpsClient({
               registryOrigin: new URL(sourceUrl).origin,
-              timeoutMs,
             }),
             metadataMaxBytes: resolvePluginRemoteCatalogMaxBytes(),
-            deadlineAtMonotonicMs: performance.now() + timeoutMs,
+            signal: opened.signal,
             maxCandidates: Number.isSafeInteger(size) && size > 0 ? size : undefined,
             from: params.query?.from,
             size: Number.isSafeInteger(size) && size > 0 ? size : undefined,
@@ -478,8 +454,8 @@ export async function loadMarketplaceIndexSource(params: Readonly<{
       // Stale bytes answer only the exact request that produced them: the
       // slot may hold another query's snapshot, and serving that as this
       // query's result would let one search masquerade as another.
-      if (revalidatable && now() - revalidatable.fetchedAtMs >= 0 && now() - revalidatable.fetchedAtMs <= CACHE_MAX_STALE_MS) {
-        return { ...withConfiguredSourcePresentation(revalidatable.snapshot, params.source.title), freshness: { state: isOfflineRefreshError(error) ? 'stale-offline' : 'stale', fetchedAtMs: revalidatable.fetchedAtMs, staleSinceMs: now() }, diagnostics: [...revalidatable.snapshot.diagnostics.slice(0, 127), { code: 'marketplace_source_refresh_failed', message }], ...(revalidatable.communityNpmPage ? { communityNpmPage: revalidatable.communityNpmPage } : {}) };
+      if (revalidatable && now() - revalidatable.fetchedAtMs >= 0) {
+        return { ...withConfiguredSourcePresentation(revalidatable.snapshot, params.source.title), freshness: { state: isOfflineRefreshError(error) ? 'stale-offline' : 'stale', fetchedAtMs: revalidatable.fetchedAtMs, staleSinceMs: now() }, diagnostics: [...revalidatable.snapshot.diagnostics, { code: 'marketplace_source_refresh_failed', message }], ...(revalidatable.communityNpmPage ? { communityNpmPage: revalidatable.communityNpmPage } : {}) };
       }
       return {
         source: params.source,

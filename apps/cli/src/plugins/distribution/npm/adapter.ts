@@ -1,4 +1,4 @@
-import { performance } from 'node:perf_hooks';
+import { awaitPluginAcquisition, createPluginAcquisitionLifetime } from '../acquisitionLifetime';
 
 import { downloadResolvedNpmArtifact, type NpmArtifactBodyClient } from './download';
 import { normalizeNpmArtifactRequest } from './normalize';
@@ -52,21 +52,22 @@ function parseRetrievedProvenance(value: unknown, declaredPredicateType: string)
 async function retrieveProvenanceSignal(params: Readonly<{
   resolved: ResolvedNpmArtifact;
   client: NpmRegistryArtifactClient;
-  maxBytes: number;
-  deadlineAtMonotonicMs: number;
+  maxBytes?: number | null;
+  signal?: AbortSignal;
 }>): Promise<NpmProvenanceSignal> {
   if (params.resolved.provenance?.status === 'unavailable') return { ...params.resolved.provenance, verified: false };
   if (params.resolved.provenance?.status !== 'declared') return { status: 'absent' };
-  if (performance.now() >= params.deadlineAtMonotonicMs) return { status: 'unavailable', code: 'attestation_unavailable', verified: false };
+  params.signal?.throwIfAborted();
   try {
-    const value = await params.client.getJson({
+    const value = await awaitPluginAcquisition(params.client.getJson({
       url: params.resolved.provenance.url,
       maxBytes: params.maxBytes,
       headers: { accept: 'application/json' },
-      deadlineAtMonotonicMs: params.deadlineAtMonotonicMs,
-    });
+      signal: params.signal,
+    }), params.signal);
     return parseRetrievedProvenance(value, params.resolved.provenance.predicateType);
   } catch {
+    params.signal?.throwIfAborted();
     return { status: 'unavailable', code: 'attestation_unavailable', verified: false };
   }
 }
@@ -74,45 +75,51 @@ async function retrieveProvenanceSignal(params: Readonly<{
 export async function resolveAndDownloadNpmArtifact(params: Readonly<{
   input: NormalizeNpmArtifactRequestInput;
   destinationPath: string;
-  artifactMaxBytes: number;
-  metadataMaxBytes?: number;
-  signingKeysMaxBytes?: number;
-  attestationsMaxBytes?: number;
-  timeoutMs?: number;
+  artifactMaxBytes?: number | null;
+  metadataMaxBytes?: number | null;
+  signingKeysMaxBytes?: number | null;
+  attestationsMaxBytes?: number | null;
+  timeoutMs?: number | null;
+  signal?: AbortSignal;
   /** Automatic updates cannot acquire an artifact without generated compatibility facts. */
   requireCompatibleProjection?: boolean;
   client: NpmRegistryArtifactClient;
 }>): Promise<DownloadedNpmArtifactCandidate> {
-  const timeoutMs = params.timeoutMs ?? 60_000;
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 5 * 60_000) throw new Error('Invalid npm artifact operation timeout');
-  const deadlineAtMonotonicMs = performance.now() + timeoutMs;
-  const request = normalizeNpmArtifactRequest(params.input);
-  const resolved = await resolveNpmArtifactMetadata({ request, client: params.client, metadataMaxBytes: params.metadataMaxBytes, deadlineAtMonotonicMs });
-  const mayDeferCompatibilityToPresentUserReview = (
-    !params.requireCompatibleProjection && request.selector.kind === 'exact'
-  );
-  if (!resolved.compatibility?.automaticEligible && !mayDeferCompatibilityToPresentUserReview) {
-    throw new Error('Npm artifact selection requires a compatible generated compatibility projection before archive download');
+  const lifetime = createPluginAcquisitionLifetime({ ...params, errorLabel: 'Npm artifact operation' });
+  const signal = lifetime.signal;
+  try {
+    signal?.throwIfAborted();
+    const request = normalizeNpmArtifactRequest(params.input);
+    const resolved = await awaitPluginAcquisition(resolveNpmArtifactMetadata({ request, client: params.client, metadataMaxBytes: params.metadataMaxBytes, signal }), signal);
+    const mayDeferCompatibilityToPresentUserReview = (
+      !params.requireCompatibleProjection && request.selector.kind === 'exact'
+    );
+    if (!resolved.compatibility?.automaticEligible && !mayDeferCompatibilityToPresentUserReview) {
+      throw new Error('Npm artifact selection requires a compatible generated compatibility projection before archive download');
+    }
+    const registryKeys = resolved.signatures.length === 0 ? [] : parseRegistryKeys(await awaitPluginAcquisition(params.client.getJson({
+      url: `${request.registryOrigin}/-/npm/v1/keys`,
+      maxBytes: params.signingKeysMaxBytes,
+      headers: { accept: 'application/json' },
+      signal,
+    }), signal));
+    const candidate = await downloadResolvedNpmArtifact({
+      resolved, destinationPath: params.destinationPath, maxBytes: params.artifactMaxBytes,
+      client: params.client, registryKeys, signal,
+    });
+    const provenance = await retrieveProvenanceSignal({
+      resolved,
+      client: params.client,
+      maxBytes: params.attestationsMaxBytes,
+      signal,
+    });
+    signal?.throwIfAborted();
+    return {
+      ...candidate,
+      provenance,
+      ...(resolved.compatibility ? { compatibility: resolved.compatibility } : {}),
+    };
+  } finally {
+    lifetime.dispose();
   }
-  const registryKeys = resolved.signatures.length === 0 ? [] : parseRegistryKeys(await params.client.getJson({
-    url: `${request.registryOrigin}/-/npm/v1/keys`,
-    maxBytes: params.signingKeysMaxBytes ?? 1024 * 1024,
-    headers: { accept: 'application/json' },
-    deadlineAtMonotonicMs,
-  }));
-  const candidate = await downloadResolvedNpmArtifact({
-    resolved, destinationPath: params.destinationPath, maxBytes: params.artifactMaxBytes,
-    client: params.client, registryKeys, deadlineAtMonotonicMs,
-  });
-  const provenance = await retrieveProvenanceSignal({
-    resolved,
-    client: params.client,
-    maxBytes: params.attestationsMaxBytes ?? 2 * 1024 * 1024,
-    deadlineAtMonotonicMs,
-  });
-  return {
-    ...candidate,
-    provenance,
-    ...(resolved.compatibility ? { compatibility: resolved.compatibility } : {}),
-  };
 }

@@ -11,7 +11,6 @@ import { normalizeNpmArtifactRequest } from '@/plugins/distribution/npm/normaliz
 import { createMarketplaceIndexFromNormalizedQuery } from './index';
 import { loadMarketplaceIndexSource, type LoadedMarketplaceIndexSource, type MarketplaceIndexSourceQuery } from './indexSourceLoader';
 
-const MAX_ACTIVE_MARKETPLACE_INDEX_SOURCES = 65;
 const PUBLIC_NPM_REGISTRY_ORIGIN = 'https://registry.npmjs.org';
 
 function revisionForFingerprint(fingerprint: string): number {
@@ -206,9 +205,6 @@ export function createMarketplaceIndexService(params?: Readonly<{
     selectedSources: readonly MarketplaceIndexSourceConfig[],
     exactPackageName?: string,
   ): Promise<MarketplaceIndexQueryResultV1> {
-    if (selectedSources.length > MAX_ACTIVE_MARKETPLACE_INDEX_SOURCES) {
-      throw new Error(`Marketplace active source limit is ${MAX_ACTIVE_MARKETPLACE_INDEX_SOURCES}`);
-    }
     const usesPagedCommunity = !exactPackageName && selectedSources.some((source) => source.origin === 'community-npm');
     const cursorIdentity = communityCursorIdentity(query);
     const paging = usesPagedCommunity ? decodeCommunityCursor(query.cursor, cursorIdentity) : { from: 0, offset: 0 };
@@ -218,27 +214,25 @@ export function createMarketplaceIndexService(params?: Readonly<{
     };
     const diagnostics: { code: string; message: string }[] = [];
     const snapshots: LoadedMarketplaceIndexSource[] = [];
-    for (let offset = 0; offset < selectedSources.length; offset += 4) {
-      const batch = await Promise.all(selectedSources.slice(offset, offset + 4).map(async (source) => {
-        try {
-          const snapshot = await (params?.loadSource ?? loadMarketplaceIndexSource)({
-            happyHomeDir: params?.happyHomeDir,
-            source: { id: source.id, title: source.title, sourceUrl: source.sourceUrl, kind: source.origin },
-            query: source.origin === 'community-npm' && usesPagedCommunity
-              ? { ...sourceQuery, from: paging.from, size: query.limit }
-              : sourceQuery,
-          });
-          return { snapshot } as const;
-        } catch (error) {
-          return {
-            diagnostic: { code: 'marketplace_source_invalid', message: projectPluginFailureText(error) },
-          } as const;
-        }
-      }));
-      for (const outcome of batch) {
-        if (outcome.snapshot !== undefined) snapshots.push(outcome.snapshot);
-        else diagnostics.push(outcome.diagnostic);
+    const outcomes = await Promise.all(selectedSources.map(async (source) => {
+      try {
+        const snapshot = await (params?.loadSource ?? loadMarketplaceIndexSource)({
+          happyHomeDir: params?.happyHomeDir,
+          source: { id: source.id, title: source.title, sourceUrl: source.sourceUrl, kind: source.origin },
+          query: source.origin === 'community-npm' && usesPagedCommunity
+            ? { ...sourceQuery, from: paging.from, size: query.limit }
+            : sourceQuery,
+        });
+        return { snapshot } as const;
+      } catch (error) {
+        return {
+          diagnostic: { code: 'marketplace_source_invalid', message: projectPluginFailureText(error) },
+        } as const;
       }
+    }));
+    for (const outcome of outcomes) {
+      if (outcome.snapshot !== undefined) snapshots.push(outcome.snapshot);
+      else diagnostics.push(outcome.diagnostic);
     }
     const profileState = await registryProfiles.snapshot().catch(() => {
       diagnostics.push({ code: 'marketplace_registry_profiles_unavailable', message: 'Private registry profile state is unavailable' });

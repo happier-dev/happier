@@ -179,12 +179,19 @@ async function callDaemonRpc(params: Readonly<{
       machineId: params.target.machineId,
       method: params.method,
       request: params.request,
-      timeoutMs: 30_000,
+      timeoutMs: null,
       ...(params.signal ? { signal: params.signal } : {}),
     });
-    assertCurrent(params.signal);
+    // A decoded write receipt is authoritative even if its observer withdrew.
+    if (!params.write) assertCurrent(params.signal);
     return response;
   } catch (error) {
+    if (params.write && readMachineRpcRequestDisposition(error) === 'outcomeUnknown') {
+      administrationError(
+        params.outcomeUnknownCode ?? 'plugin_settings_outcome_unknown',
+        'The daemon write outcome is unknown.',
+      );
+    }
     assertCurrent(params.signal);
     if (isRpcMethodNotFoundError(error) || isRpcMethodNotAvailableError(error)) {
       administrationError('plugin_settings_daemon_unsupported', 'The selected daemon does not support this Settings operation.');
@@ -192,12 +199,6 @@ async function callDaemonRpc(params: Readonly<{
     const rpcErrorCode = readRpcErrorCode(error);
     if (rpcErrorCode) {
       administrationError(rpcErrorCode, 'The selected daemon rejected this Settings operation.');
-    }
-    if (params.write && readMachineRpcRequestDisposition(error) === 'outcomeUnknown') {
-      administrationError(
-        params.outcomeUnknownCode ?? 'plugin_settings_outcome_unknown',
-        'The daemon write outcome is unknown.',
-      );
     }
     administrationError('plugin_settings_daemon_unavailable', 'The selected daemon is unavailable.');
   }
@@ -903,7 +904,8 @@ export const executePluginSettingsAdministrationAction: ExecutePluginSettingsAdm
       ...(params.signal ? { signal: params.signal } : {}),
     });
   } catch (error) {
-    if (params.signal?.aborted) throw error;
+    const code = readSafePluginErrorCode(error);
+    if (params.signal?.aborted && code !== 'plugin_settings_outcome_unknown' && code !== 'plugin_secret_outcome_unknown') throw error;
     const normalized = normalizeFailure(error);
     return failure(params.actionId, normalized.code, normalized.message);
   }

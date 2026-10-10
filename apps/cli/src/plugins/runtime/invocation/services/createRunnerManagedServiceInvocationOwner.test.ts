@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -271,10 +271,10 @@ async function prepareDevelopmentRetainedAgentFixture() {
         tmpdir(),
         'happier-managed-service-owner-development-home-',
     ));
-    const sourceRootPath = await mkdtemp(join(
+    const sourceRootPath = await realpath(await mkdtemp(join(
         tmpdir(),
         'happier-managed-service-owner-development-source-',
-    ));
+    )));
     const paths = resolvePluginStorePaths({ happyHomeDir });
     const pluginId = 'acme.development-service-owner';
     const pluginVersion = '1.0.0';

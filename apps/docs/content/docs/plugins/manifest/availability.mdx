@@ -24,9 +24,9 @@ by itself prove that the current platform loaded it or that it was published,
 and the absence of a consumer does not make a complete lifecycle unavailable.
 Likewise, `not-recorded` does not infer the opposite state.
 
-At the time this page was generated: **52 of 52 contribution families**,
-**19 of 19 services**, **10 of 13 host-access capabilities**
-and **48 of 48 SDK entrypoints** are available.
+At the time this page was generated: **54 of 54 contribution families**,
+**20 of 20 services**, **10 of 13 host-access capabilities**
+and **50 of 50 SDK entrypoints** are available.
 
 ## Evidence recorded by the capability matrix
 
@@ -54,6 +54,7 @@ and **48 of 48 SDK entrypoints** are available.
 | `executionRunProfiles` | `available` | `present` | — | `not-recorded` | `not-published` |
 | `hooks` | `available` | `present` | — | `not-recorded` | `not-published` |
 | `inputTypes` | `available` | `present` | — | `not-recorded` | `not-published` |
+| `machineProvisioners` | `available` | `present` | — | `not-recorded` | `not-published` |
 | `managedDependencies` | `available` | `present` | — | `not-recorded` | `not-published` |
 | `mcp.discoverySources` | `available` | `present` | — | `not-recorded` | `not-published` |
 | `mcp.servers` | `available` | `present` | — | `not-recorded` | `not-published` |
@@ -61,6 +62,7 @@ and **48 of 48 SDK entrypoints** are available.
 | `notifications` | `available` | `present` | — | `not-recorded` | `not-published` |
 | `openableContentViewers` | `available` | `present` | — | `not-recorded` | `not-published` |
 | `pluginContributionPoints` | `available` | `present` | — | `not-recorded` | `not-published` |
+| `projectNativeAdapters` | `available` | `present` | — | `not-recorded` | `not-published` |
 | `promptAssets` | `available` | `present` | — | `not-recorded` | `not-published` |
 | `providers` | `available` | `present` | — | `not-recorded` | `not-published` |
 | `requestInterceptors` | `available` | `present` | — | `not-recorded` | `not-published` |
@@ -100,6 +102,7 @@ and **48 of 48 SDK entrypoints** are available.
 | `http` | `available` | `present` | — | `not-recorded` | `not-published` |
 | `interactions` | `available` | `present` | — | `not-recorded` | `not-published` |
 | `logger` | `available` | `present` | — | `not-recorded` | `not-published` |
+| `machineProvisioners` | `available` | `present` | — | `not-recorded` | `not-published` |
 | `managedServices` | `available` | `present` | — | `not-recorded` | `not-published` |
 | `mcp` | `available` | `present` | — | `not-recorded` | `not-published` |
 | `notifications` | `available` | `present` | — | `not-recorded` | `not-published` |
@@ -153,6 +156,8 @@ and **48 of 48 SDK entrypoints** are available.
 | `./hooks` | `available` | `present` | — | `not-recorded` | `not-published` |
 | `./http` | `available` | `present` | — | `not-recorded` | `not-published` |
 | `./interactions` | `available` | `present` | — | `not-recorded` | `not-published` |
+| `./machine-provisioners` | `available` | `present` | — | `not-recorded` | `not-published` |
+| `./machine-provisioners/ssh` | `available` | `present` | — | `not-recorded` | `not-published` |
 | `./managed-services` | `available` | `present` | — | `not-recorded` | `not-published` |
 | `./managed-services/native` | `available` | `present` | — | `not-recorded` | `not-published` |
 | `./manifest` | `available` | `present` | — | `not-recorded` | `not-published` |
@@ -208,6 +213,7 @@ and **48 of 48 SDK entrypoints** are available.
 | `executionRunProfiles` | `executionRunProfiles` | `.` | any |
 | `hooks` | `hooks` | `.` | any |
 | `inputTypes` | `inputTypes` | `.` | any |
+| `machineProvisioners` | `machineProvisioners` | `.` | any |
 | `managedDependencies` | `managedDependencies` | `.` | any |
 | `mcp.discoverySources` | `mcp` | `.` | any |
 | `mcp.servers` | `mcp` | `.` | any |
@@ -215,6 +221,7 @@ and **48 of 48 SDK entrypoints** are available.
 | `notifications` | `notifications` | `.` | any |
 | `openableContentViewers` | `openableContentViewers` | `.` | any |
 | `pluginContributionPoints` | `contributionPoints` | `.` | any |
+| `projectNativeAdapters` | `projectNativeAdapters` | `.` | any |
 | `promptAssets` | `promptAssets` | `.` | any |
 | `providers` | `providers` | `.` | any |
 | `requestInterceptors` | `requestInterceptors` | `.` | any |
@@ -260,6 +267,7 @@ Reached through `context.services` inside a plugin invocation.
 | `context.services.http` | `HttpService` | `./http` | invocation-scoped |
 | `context.services.interactions` | `InteractionsService` | `./interactions` | invocation-scoped |
 | `context.services.logger` | `LoggerService` | `.` | invocation-scoped |
+| `context.services.machineProvisioners` | `MachineProvisionersService` | `.` | invocation-scoped |
 | `context.services.managedServices` | `ManagedServices` | `./managed-services` | invocation-scoped |
 | `context.services.mcp` | `McpService` | `./mcp` | invocation-scoped |
 | `context.services.notifications` | `NotificationsService` | `./notifications` | invocation-scoped |

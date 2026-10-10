@@ -1,3 +1,4 @@
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { describe, expect, it } from 'vitest';
 
 import { readCanonicalPluginManifest } from '@/plugins/manifest/normalize';
@@ -35,7 +36,7 @@ const HOSTED_WEB_PANEL = Object.freeze({
 const HOSTED_HTML_PANEL = Object.freeze({
   id: 'panel',
   kind: 'hostedHtml',
-  source: { kind: 'html', html: '<p>Hello</p>' },
+  source: artifactHtmlBundleFromBodyV1('<p>Hello</p>'),
 });
 const REACT_NATIVE_PANEL = Object.freeze({
   id: 'panel',

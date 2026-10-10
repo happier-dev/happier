@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url';
 
 const OUTPUT_MARKER = '__HAPPIER_GENERATOR_MODULE_JSON__';
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
-const INSPECTION_TIMEOUT_MS = 180_000;
 
 type InspectionPayload = Readonly<{
   exportNames: readonly string[];
@@ -16,7 +15,6 @@ type PendingInspection = Readonly<{
   path: string;
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
-  timeout: NodeJS.Timeout;
 }>;
 
 export type TypescriptModuleInspectionSession = Readonly<{
@@ -48,7 +46,9 @@ export function createTypescriptModuleInspectionSession({
   onSpawn,
 }: Readonly<{ onSpawn?: (pid: number | undefined) => void }> = {}): TypescriptModuleInspectionSession {
   const workerPath = fileURLToPath(new URL('./typescriptModuleInspectionWorker.mjs', import.meta.url));
-  const child = spawn(process.execPath, ['--max-old-space-size=2048', workerPath], {
+  const sourceRuntimePath = fileURLToPath(new URL('../../../../../packages/cli-common/registerSourceRuntime.mjs', import.meta.url));
+  const child = spawn(process.execPath, ['--conditions=happier-source', '--import', sourceRuntimePath,
+    '--max-old-space-size=2048', workerPath], {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   onSpawn?.(child.pid);
@@ -77,7 +77,6 @@ export function createTypescriptModuleInspectionSession({
 
   const rejectPending = (error: Error) => {
     for (const request of pending.values()) {
-      clearTimeout(request.timeout);
       request.reject(error);
     }
     pending.clear();
@@ -122,7 +121,6 @@ export function createTypescriptModuleInspectionSession({
       const request = pending.get(responseId as number);
       if (!request) continue;
       pending.delete(responseId as number);
-      clearTimeout(request.timeout);
       if (response.ok !== true) {
         request.reject(new Error(
           `Failed to inspect TypeScript module ${request.path}: ${String(response.error ?? 'unknown worker error')}`,
@@ -143,7 +141,7 @@ export function createTypescriptModuleInspectionSession({
   const closedPromise = new Promise<void>((resolveClosed) => {
     child.once('close', (status, signal) => {
       closed = true;
-      const error = closeError ?? (status === 0 && signal === null
+      const error = closeError ?? (status === 0 && signal === null && pending.size === 0
         ? undefined
         : new Error(
           `TypeScript inspection worker exited${signal ? ` with ${signal}` : ` with status ${String(status)}`}${stderr.trim() ? `: ${stderr.trim()}` : ''}`,
@@ -161,16 +159,14 @@ export function createTypescriptModuleInspectionSession({
       const id = nextId;
       nextId += 1;
       return new Promise((resolveInspection, rejectInspection) => {
-        const timeout = setTimeout(() => {
-          pending.delete(id);
-          child.kill('SIGKILL');
-          rejectInspection(new Error(`Failed to inspect TypeScript module ${path}: timed out`));
-        }, INSPECTION_TIMEOUT_MS);
+        // Publication owns the operation lifetime. A queued/module-local timer
+        // cannot distinguish slow valid source evaluation from a stuck worker.
+        // Worker failure still rejects pending work; caller cancellation owns
+        // process termination instead of an independent guessed deadline.
         pending.set(id, {
           path,
           resolve: resolveInspection,
           reject: rejectInspection,
-          timeout,
         });
         child.stdin.write(`${JSON.stringify({ id, path })}\n`);
       });

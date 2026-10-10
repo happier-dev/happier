@@ -23,7 +23,7 @@ describe('npm registry profile store', () => {
     const { happyHomeDir, store } = await makeStore();
     const first = await store.mutate({
       expectedRevision: 0,
-      mutationId: 'mutation-add-acme',
+      mutationId: 'm',
       fingerprint: 'add-acme-v1',
       apply: (current) => ({
         ...current,
@@ -39,7 +39,7 @@ describe('npm registry profile store', () => {
 
     await expect(store.mutate({
       expectedRevision: 0,
-      mutationId: 'mutation-add-acme',
+      mutationId: 'm',
       fingerprint: 'add-acme-v1',
       apply: () => { throw new Error('must not reapply'); },
     })).resolves.toMatchObject({ revision: 1, profiles: [{ profileId: 'registry_acme' }] });
@@ -57,7 +57,7 @@ describe('npm registry profile store', () => {
     });
   });
 
-  it('never persists credential material and bounds mutation receipts', async () => {
+  it('retains mutation replay protection after later mutations and restart', async () => {
     const { happyHomeDir, store } = await makeStore();
     let revision = 0;
     for (let index = 0; index < 140; index += 1) {
@@ -71,7 +71,35 @@ describe('npm registry profile store', () => {
     }
     const raw = await readFile(join(happyHomeDir, 'plugins', 'plugins', 'state', 'npm-registry-profiles.v1.json'), 'utf8');
     expect(raw).not.toContain('boundary-secret');
-    expect((JSON.parse(raw) as { mutations: unknown[] }).mutations.length).toBeLessThanOrEqual(128);
+    expect((JSON.parse(raw) as { mutations: unknown[] }).mutations).toHaveLength(140);
+    await expect(createNpmRegistryProfileStore({ happyHomeDir }).mutate({
+      expectedRevision: 0, mutationId: 'mutation-0000', fingerprint: 'fingerprint-0',
+      apply: () => { throw new Error('A replay must not apply twice'); },
+    })).resolves.toMatchObject({ revision: 140 });
+    await expect(store.mutate({ expectedRevision: 140, mutationId: 'mutation-0000', fingerprint: 'changed',
+      apply: value => value,
+    })).rejects.toMatchObject({ code: 'mutation_conflict' });
+  });
+
+  it('preserves more than 64 profiles, scopes and paused sources across restart', async () => {
+    const { happyHomeDir, store } = await makeStore();
+    await store.mutate({ expectedRevision: 0, mutationId: `mutation-${'a'.repeat(140)}`, fingerprint: 'many',
+      apply: current => ({ ...current,
+        profiles: Array.from({ length: 70 }, (_, index) => ({
+          profileId: `registry_${index}_${'a'.repeat(140)}`, displayName: `Registry ${index} ${'name'.repeat(200)}`, origin: `https://registry-${index}.example`,
+          scopes: Array.from({ length: 70 }, (_, scope) => `@scope${scope}`),
+          useAsDefault: false, allowPrivateNetwork: false, credentialSecretRef: `credential-${'a'.repeat(300)}`,
+          credentialRevision: 0, availability: 'unknown' as const, lastSuccessfulCheckAtMs: null, updatedAtMs: 1,
+        })),
+        pausedSources: Array.from({ length: 70 }, (_, index) => ({
+          origin: `https://paused-${index}.example`, reason: 'offline' as const, updatedAtMs: 1,
+        })),
+      }),
+    });
+    const restarted = await createNpmRegistryProfileStore({ happyHomeDir }).read();
+    expect(restarted.profiles).toHaveLength(70);
+    expect(restarted.profiles[0]?.scopes).toHaveLength(70);
+    expect(restarted.pausedSources).toHaveLength(70);
   });
 
   it('rejects a reused mutation id with different intent', async () => {

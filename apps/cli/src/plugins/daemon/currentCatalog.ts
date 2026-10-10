@@ -17,12 +17,14 @@ export type CurrentDaemonPluginCatalogSnapshot = Readonly<{
   tools: readonly ProjectedPluginToolCatalogEntry[];
 }>;
 
-const bundledPlugins = loadCurrentBundledPluginLocatorResult();
-
 function projectCurrentDaemonPluginCatalogEntries(
   installedEntries: readonly PluginCatalogEntry[],
   runtimeRegistry?: Pick<ResolvedExecutablePluginRuntimeRegistry, 'pluginFinalPolicyCurrentRuntimesById'>,
 ): readonly PluginCatalogEntry[] {
+  // Session runners import shared daemon services but do not read this catalog.
+  // Admit bundled declarations only for an actual catalog projection; the
+  // locator owner already retains the immutable process-local admission.
+  const bundledPlugins = loadCurrentBundledPluginLocatorResult();
   const installedPluginIds = new Set(installedEntries.map((entry) => entry.pluginId));
   const desiredGenerationByPluginId = Object.freeze(Object.fromEntries(
     [...(runtimeRegistry?.pluginFinalPolicyCurrentRuntimesById ?? new Map())]

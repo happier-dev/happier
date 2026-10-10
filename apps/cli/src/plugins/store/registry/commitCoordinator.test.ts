@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -28,11 +28,16 @@ const canonicalUnlinkBarrier = vi.hoisted(() => {
     release: () => releaseResolve?.(),
   };
 });
+const lockReadFailure = vi.hoisted(() => ({ path: null as string | null, error: null as Error | null }));
 
 vi.mock('node:fs/promises', async () => {
   const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
   return {
     ...actual,
+    readFile: async (...args: Parameters<typeof actual.readFile>) => {
+      if (String(args[0]) === lockReadFailure.path && lockReadFailure.error) throw lockReadFailure.error;
+      return await actual.readFile(...args);
+    },
     unlink: async (...args: Parameters<typeof actual.unlink>) => {
       await canonicalUnlinkBarrier.pauseIfTarget(String(args[0]));
       return await actual.unlink(...args);
@@ -95,6 +100,75 @@ async function bootstrap(happyHomeDir: string): Promise<ReturnType<typeof resolv
 }
 
 describe('PluginRegistryCommitCoordinator', () => {
+  it('cancels before publication when retirement arrives during asynchronous prepublication work', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-registry-publication-cancel-'));
+    const paths = await bootstrap(happyHomeDir);
+    const expectedCurrent = await readPluginRegistryCommitRecord(paths);
+    const abort = new AbortController();
+    const coordinator = createPluginRegistryCommitCoordinator({ paths, owner: { pid: process.pid, instanceId: 'contender' },
+      beforeReplace: async () => { abort.abort(); } });
+    await expect(coordinator.commit({ transactionId: 'cancelled-publication', baseRevision: 0, expectedCurrent, signal: abort.signal,
+      buildNext: current => createNext(current!, 'cancelled-publication') })).resolves.toEqual({ status: 'aborted', reason: 'signal' });
+    await expect(readPluginRegistryCommitRecord(paths)).resolves.toEqual(expectedCurrent);
+    await expect(readFile(paths.registryCommitLockFilePath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+  it('fails a real filesystem read error instead of treating it as lock contention', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-registry-lock-read-error-'));
+    const paths = await bootstrap(happyHomeDir);
+    await writeFile(paths.registryCommitLockFilePath, JSON.stringify({
+      t: 'happier_plugin_registry_commit_lock_v1', token: '00000000-0000-4000-8000-000000000001',
+      pid: process.pid, instanceId: 'live-owner', createdAtMs: 1,
+    }));
+    const error = Object.assign(new Error('lock read denied'), { code: 'EACCES' });
+    lockReadFailure.path = paths.registryCommitLockFilePath;
+    lockReadFailure.error = error;
+    const coordinator = createPluginRegistryCommitCoordinator({ paths, owner: { pid: process.pid, instanceId: 'contender' },
+      sleep: async () => { throw new Error('must not wait after a filesystem error'); } });
+    try {
+      await expect(coordinator.commit({ transactionId: 'read-error', baseRevision: 0, expectedCurrent: null,
+        buildNext: () => { throw new Error('must not build'); } })).rejects.toBe(error);
+    } finally {
+      lockReadFailure.path = null;
+      lockReadFailure.error = null;
+    }
+  });
+  it('waits beyond the former acquisition cutoff and commits once the live owner releases', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-registry-slow-owner-'));
+    const paths = await bootstrap(happyHomeDir);
+    await writeFile(paths.registryCommitLockFilePath, JSON.stringify({
+      t: 'happier_plugin_registry_commit_lock_v1', token: '00000000-0000-4000-8000-000000000001',
+      pid: process.pid, instanceId: 'live-owner', createdAtMs: 1,
+    }));
+    let nowMs = 0;
+    let waits = 0;
+    const coordinator = createPluginRegistryCommitCoordinator({ paths, owner: { pid: process.pid, instanceId: 'contender' },
+      nowMs: () => nowMs, isProcessAlive: () => true, sleep: async () => {
+        nowMs += 10_001;
+        if (++waits === 2) await unlink(paths.registryCommitLockFilePath);
+      } });
+    const expectedCurrent = await readPluginRegistryCommitRecord(paths);
+    await expect(coordinator.commit({ transactionId: 'slow-owner', baseRevision: 0, expectedCurrent,
+      buildNext: current => createNext(current!, 'slow-owner') })).resolves.toMatchObject({ status: 'committed', record: { revision: 1 } });
+    expect(nowMs).toBeGreaterThan(10_000);
+  });
+
+  it('cancels queued commit admission without stealing the live owner or building a candidate', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-registry-cancel-owner-'));
+    const paths = await bootstrap(happyHomeDir);
+    const raw = JSON.stringify({ t: 'happier_plugin_registry_commit_lock_v1', token: '00000000-0000-4000-8000-000000000001',
+      pid: process.pid, instanceId: 'live-owner', createdAtMs: 1 });
+    await writeFile(paths.registryCommitLockFilePath, raw);
+    const abort = new AbortController();
+    let nowMs = 0;
+    const buildNext = vi.fn(() => { throw new Error('must not build'); });
+    const coordinator = createPluginRegistryCommitCoordinator({ paths, owner: { pid: process.pid, instanceId: 'contender' },
+      nowMs: () => nowMs, isProcessAlive: () => true, sleep: async () => { nowMs += 10_001; abort.abort(); } });
+    await expect(coordinator.commit({ transactionId: 'cancelled', baseRevision: 0,
+      expectedCurrent: await readPluginRegistryCommitRecord(paths), signal: abort.signal, buildNext }))
+      .resolves.toEqual({ status: 'aborted', reason: 'signal' });
+    expect(buildNext).not.toHaveBeenCalled();
+    await expect(readFile(paths.registryCommitLockFilePath, 'utf8')).resolves.toBe(raw);
+  });
   it('never deletes a successor fence when two contenders recover the same dead owner', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-registry-reclaim-race-'));
     const paths = resolvePluginStorePaths({ happyHomeDir });
@@ -127,7 +201,6 @@ describe('PluginRegistryCommitCoordinator', () => {
     const first = withPluginRegistryCommitFence({
       paths,
       owner: { pid: process.pid, instanceId: 'contender-a' },
-      acquireTimeoutMs: 2_000,
       operation: operation(firstEnteredResolve),
     });
     const firstEvent = await Promise.race([
@@ -138,7 +211,6 @@ describe('PluginRegistryCommitCoordinator', () => {
     const second = withPluginRegistryCommitFence({
       paths,
       owner: { pid: process.pid, instanceId: 'contender-b' },
-      acquireTimeoutMs: 2_000,
       operation: operation(secondEnteredResolve),
     });
     if (firstEvent === 'unsafe-unlink') {
@@ -195,7 +267,6 @@ describe('PluginRegistryCommitCoordinator', () => {
     const coordinator = createPluginRegistryCommitCoordinator({
       paths,
       owner: { pid: 102, instanceId: 'daemon-b' },
-      acquireTimeoutMs: 100,
       nowMs: () => nowMs++,
       isProcessAlive: () => false,
       sleep: async () => undefined,
