@@ -116,6 +116,23 @@ describe('Sign-in providers page', () => {
         await waitForHomeGovernance(() => expect(routerReplace).toHaveBeenCalledWith(`/settings/teams/${serverId}/team-1/authentication/company-connection`));
         expect(harness.requestsFor('/v1/teams/identity/workos/connection/create').map((request) => request.input)).toEqual([{ v: 1, teamId: 'team-1', displayName: 'Acme' }]);
     });
+
+    it('keeps WorkOS setup available while the managed-provider read is unavailable, without admitting OIDC creation', async () => {
+        const serverId = await harness.addHome({ name: 'Company Home', serverUrl: 'https://company-home-read-failure.example', accountId: 'owner-1' });
+        harness.answer(serverId, '/v1/home/governance/get', { body: homeGovernanceProjectionFixture() });
+        harness.answer(serverId, '/v1/home/settings/get', { body: homeSettingsProjectionFixture() });
+        harness.answer(serverId, '/v1/identity/providers/list', { status: 503, body: { error: 'unavailable' } });
+        harness.answer(serverId, '/v1/home/identity/connections/list', { body: { items: [], eligibleProviders: [companyChoice('home')] } });
+        const screen = await renderScreen(<HomeAdministrationSignInProvidersScreen serverId={serverId} />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('home-identity-providers-unavailable')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findHostByTestId('home-identity-provider-add')?.props.accessibilityState).toMatchObject({ disabled: false }));
+        await act(async () => { screen.pressByTestId('home-identity-provider-add'); });
+        await act(async () => { screen.pressByTestId('home-eligible-provider:oidc'); });
+        expect(routerPush).not.toHaveBeenCalled();
+        await act(async () => { screen.pressByTestId('home-eligible-provider:workos'); });
+        expect(routerPush).toHaveBeenLastCalledWith(`/settings/home/${serverId}/sign-in-providers/connections/new`);
+    });
+
     it('lists what the deployment provides beside the Home\'s own providers, with the key that sets it', async () => {
         const serverId = await harness.addHome({ name: 'Acme Home', serverUrl: 'https://acme-home.example', accountId: 'owner-1' });
         harness.answer(serverId, '/v1/home/governance/get', {

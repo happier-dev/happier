@@ -30,7 +30,8 @@ export function HomeIdentityProvidersCollection(props: Readonly<{ context: HomeA
     const { theme } = useUnistyles();
     const [menuOpen, setMenuOpen] = React.useState(false);
     const canManage = context.projection.capabilities.manageAuthentication;
-    const actionable = canManage && context.mutationsAvailable && state.kind === 'ready' && !state.refreshing && !state.stale;
+    const canMutateHome = canManage && context.mutationsAvailable;
+    const actionable = canMutateHome && state.kind === 'ready' && !state.refreshing && !state.stale;
     const workos = state.kind === 'ready' ? state.eligibleProviders.find((provider) => provider.providerKind === 'workos_sso' && provider.providerId === null) : undefined;
     const canCreateWorkos = workos?.availability.status === 'available' && workos.availability.setupChoice.kind === 'create_managed';
     const platformMissing = workos?.availability.status === 'unavailable' && workos.availability.code === 'workos_platform_unavailable';
@@ -51,18 +52,18 @@ export function HomeIdentityProvidersCollection(props: Readonly<{ context: HomeA
     const addAction = (managedProvidersWritable: boolean) => <SettingAnchor setting={HOME_SIGN_IN_PROVIDERS_SETTINGS.settings.addProvider}><DropdownMenu
         testID="home-identity-provider-add-menu" open={menuOpen} onOpenChange={setMenuOpen}
         items={[
-            { id: 'oidc', testID: 'home-eligible-provider:oidc', title: t('identityAdministration.providerOidc'), icon: <Icon name="key" />, disabled: !actionable || !managedProvidersWritable },
+            { id: 'oidc', testID: 'home-eligible-provider:oidc', title: t('identityAdministration.providerOidc'), icon: <Icon name="key" />, disabled: !canMutateHome || !managedProvidersWritable },
             { id: 'workos', testID: 'home-eligible-provider:workos', title: t('identityAdministration.homeWorkosAdd'), icon: <WorkosMark size={20} />,
                 subtitle: workos ? eligibleProviderUnavailableReason(workos, context.homeName, t('identityAdministration.homeWorkosAdd')) ?? t('identityAdministration.homeWorkosPurpose') : t('identityAdministration.homeWorkosPlatformRequired'),
                 disabled: !actionable || (!canCreateWorkos && !platformMissing) },
         ]}
         onSelect={(id) => {
-            if (!actionable) return;
+            if (!canMutateHome) return;
             if (id === 'oidc' && managedProvidersWritable) router.push(homeAdministrationIdentityProviderCreatePath(context.scope.serverId));
-            else if (id === 'workos' && canCreateWorkos) router.push(homeAdministrationWorkosSetupPath(context.scope.serverId));
-            else if (id === 'workos' && platformMissing) router.push(homeSignInPlatformHref(context.scope.serverId, 'workos'));
+            else if (id === 'workos' && actionable && canCreateWorkos) router.push(homeAdministrationWorkosSetupPath(context.scope.serverId));
+            else if (id === 'workos' && actionable && platformMissing) router.push(homeSignInPlatformHref(context.scope.serverId, 'workos'));
         }}
-        trigger={({ toggle }) => <SectionActionButton testID="home-identity-provider-add" icon="plus" title={t('homeGovernance.signInProviders.addProvider')} disabled={!actionable} onPress={toggle} />}
+        trigger={({ toggle }) => <SectionActionButton testID="home-identity-provider-add" icon="plus" title={t('homeGovernance.signInProviders.addProvider')} disabled={!canMutateHome || (!managedProvidersWritable && !actionable)} onPress={toggle} />}
     /></SettingAnchor>;
     if (canManage) return <ManagedIdentityProvidersSection context={context} deploymentRows={props.deploymentRows} connectionRows={rows} addAction={addAction} />;
     return <SettingAnchor setting={HOME_SIGN_IN_PROVIDERS_SETTINGS.settings.homeConnections}><ItemGroup title={t('homeGovernance.signInProviders.companySignIn')} description={t('homeGovernance.signInProviders.ownersOnlyBody')}>
