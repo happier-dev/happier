@@ -472,6 +472,7 @@ export async function executeExternalAction(input: Readonly<{
     ...(executionAuthorization?.success
       ? {
           externalActionExecutionAuthorization: admittedAuthorization!,
+          ...(actionId.data === 'projects.open' ? { originalActionEnvelope: envelope.data } : {}),
           signExternalActionApprovalInput: ({ actionId: approvalActionId, input: approvalInput, target: approvalTarget }) =>
             signExternalActionApprovalInputV1({
               authorizationToken: executionAuthorization.data.token,
