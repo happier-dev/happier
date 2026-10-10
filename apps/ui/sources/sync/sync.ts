@@ -7903,6 +7903,7 @@ class Sync {
               assumeUsers: (userIds) => this.assumeUsers(userIds),
               applyTodoSocketUpdates: (changes) => this.applyTodoSocketUpdates(changes),
               invalidateMachines: () => this.machinesSync.invalidate(),
+              invalidateProfile: () => this.profileSync.invalidate(),
               invalidateSessions: () => this.sessionsSync.invalidate(),
             invalidateArtifacts: () => this.artifactsSync.invalidate(),
             invalidateFriends: () => this.friendsSync.invalidate(),

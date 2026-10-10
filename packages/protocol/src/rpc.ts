@@ -74,6 +74,7 @@ export const RPC_METHODS = {
   DAEMON_SESSION_USAGE_LIMIT_CHECK_NOW: 'daemon.sessionUsageLimit.checkNow',
   DAEMON_CONNECTED_SERVICE_QUOTA_RECOVERY_CREDIT_CONSUME: 'daemon.connectedServiceQuota.recoveryCredit.consume',
   DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH: 'daemon.sessionConnectedServiceAuth.switch',
+  DAEMON_CONNECTED_SERVICE_IMPORT: 'daemon.connectedService.import',
   DAEMON_SESSION_RUNNER_STATUS_GET: 'daemon.sessionRunner.status.get',
   DAEMON_SESSION_RUNNER_RESTART: 'daemon.sessionRunner.restart',
   DAEMON_SESSION_RUNNER_RESTART_ALL: 'daemon.sessionRunner.restartAll',

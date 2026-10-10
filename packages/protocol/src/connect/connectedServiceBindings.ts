@@ -6,6 +6,7 @@ export const ConnectedServiceIdSchema = z.enum([
     'anthropic',
     'claude-subscription',
     'gemini',
+    'antigravity',
     'github',
 ]);
 

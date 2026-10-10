@@ -87,6 +87,7 @@ export async function buildAccountConnectedServicesProjection(params: Readonly<{
     tx: ConnectedServicesProjectionClient;
     accountId: string;
     env?: NodeJS.ProcessEnv;
+    includeAntigravity?: boolean;
 }>): Promise<AccountConnectedServicesProjection> {
     const env = params.env ?? process.env;
     const connectedServicesEnabled = isServerFeatureEnabledForRequest("connectedServices", env);
@@ -94,7 +95,7 @@ export async function buildAccountConnectedServicesProjection(params: Readonly<{
         return { connectedServices: [], connectedServicesV2: [], connectedServiceCredentialRevisionsV1: [] };
     }
 
-    const tokens = await params.tx.serviceAccountToken.findMany({
+    const allTokens = await params.tx.serviceAccountToken.findMany({
         where: { accountId: params.accountId },
         select: {
             id: true,
@@ -106,6 +107,10 @@ export async function buildAccountConnectedServicesProjection(params: Readonly<{
         },
         orderBy: [{ vendor: "asc" }, { profileId: "asc" }],
     });
+
+    const tokens = params.includeAntigravity === false
+        ? allTokens.filter((row) => row.vendor !== 'antigravity')
+        : allTokens;
 
     const connectedServices = buildConnectedVendors(tokens);
     const connectedServicesV2 = buildConnectedServicesV2FromTokens(tokens);
@@ -146,6 +151,7 @@ export async function buildAccountConnectedServicesProjection(params: Readonly<{
 
     const servicesById = new Map(connectedServicesV2.map((entry) => [entry.serviceId, entry]));
     for (const group of authGroups) {
+        if (params.includeAntigravity === false && group.vendor === 'antigravity') continue;
         const parsedServiceId = ConnectedServiceIdSchema.safeParse(group.vendor);
         if (!parsedServiceId.success) continue;
 

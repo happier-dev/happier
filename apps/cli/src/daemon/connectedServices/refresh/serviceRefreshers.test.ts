@@ -302,3 +302,22 @@ describe('serviceRefreshers', () => {
     })).rejects.toThrow(/access_token/i);
   });
 });
+
+
+describe('Antigravity issuer refresh', () => {
+  it('uses the validated native issuer and refuses mismatched metadata before sending credentials', async () => {
+    const { AGY_OAUTH_CLIENT_ID } = await import('@happier-dev/agents');
+    const { refreshConnectedAccountOauthTokens } = await import('./serviceRefreshers');
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({ access_token: 'fresh', expires_in: 3600 }));
+    vi.stubGlobal('fetch', fetcher);
+    vi.stubEnv('HAPPIER_CONNECTED_SERVICES_AGY_OAUTH_CLIENT_ID', 'wrong-client');
+    try {
+      await expect(refreshConnectedAccountOauthTokens({ serviceId: 'antigravity', refreshToken: 'secret', now: 1, credentialRaw: { antigravity: { clientId: 'wrong-client', authMethod: 'oauth-personal' } } })).rejects.toThrow(/issuer/);
+      expect(fetcher).not.toHaveBeenCalled();
+      await refreshConnectedAccountOauthTokens({ serviceId: 'antigravity', refreshToken: 'secret', now: 1, credentialRaw: { antigravity: { clientId: AGY_OAUTH_CLIENT_ID, authMethod: 'oauth-personal', projectId: 'project' } } });
+      const request = fetcher.mock.calls[0][1];
+      expect(new URLSearchParams(String(request?.body)).get('client_id')).toBe(AGY_OAUTH_CLIENT_ID);
+      expect(new URLSearchParams(String(request?.body)).has('scope')).toBe(false);
+    } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
+  });
+});

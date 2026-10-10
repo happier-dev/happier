@@ -6,6 +6,7 @@ import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiCo
 import { buildAgentSessionStorageUiConfig } from '@/agents/registry/buildAgentSessionStorageUiConfig';
 import { buildAgentToolsUiConfig } from '@/agents/registry/buildAgentToolsUiConfig';
 import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
+import { projectAgyQuotaSnapshotForModel } from './projectQuotaSnapshotForModel';
 
 export const AGY_CORE: AgentCoreConfig = {
     id: 'agy',
@@ -14,7 +15,8 @@ export const AGY_CORE: AgentCoreConfig = {
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
     availability: { experimental: true },
     connectedServices: buildAgentConnectedServicesUiConfig({ agentId: 'agy' }),
-    uiConnectedService: { serviceId: null, label: 'Antigravity', connectRoute: null },
+    projectQuotaSnapshotForModel: projectAgyQuotaSnapshotForModel,
+    uiConnectedService: { serviceId: 'antigravity', label: 'Antigravity (AGY)', connectRoute: null },
     flavorAliases: ['agy'],
     cli: buildCatalogProviderCliUiConfig('agy'),
     permissions: {

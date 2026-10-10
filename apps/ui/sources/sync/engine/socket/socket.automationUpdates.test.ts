@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ApiUpdateContainer } from '@/sync/api/types/apiTypes';
-import { handleUpdateContainer } from './socket';
+import { handleSocketUpdate, handleUpdateContainer } from './socket';
 
 function buildBaseParams(overrides: Partial<Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'>> = {}) {
     return {
@@ -88,5 +88,30 @@ describe('socket automation updates', () => {
 
         expect(params.invalidateAutomationsCoalesced).toHaveBeenCalledTimes(1);
         expect(params.invalidateAutomations).not.toHaveBeenCalled();
+    });
+});
+
+describe('socket connected-service account projection hints', () => {
+    it('routes a parsed account change hint to the scoped profile refresh', async () => {
+        const invalidateProfile = vi.fn();
+        await handleSocketUpdate({
+            ...buildBaseParams(), invalidateProfile,
+            update: { id: 'update', seq: 1, createdAt: 1, body: {
+                t: 'update-account', id: 'account', connectedServicesV2: [],
+                connectedServiceCredentialRevisionsV1: [], connectedServicesProfileChanged: true,
+            } },
+        });
+        expect(invalidateProfile).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not refresh the current account from a stale socket scope', async () => {
+        const invalidateProfile = vi.fn();
+        await handleSocketUpdate({
+            ...buildBaseParams(), invalidateProfile, shouldContinue: () => false,
+            update: { id: 'update', seq: 1, createdAt: 1, body: {
+                t: 'update-account', id: 'account', connectedServicesV2: [], connectedServicesProfileChanged: true,
+            } },
+        });
+        expect(invalidateProfile).not.toHaveBeenCalled();
     });
 });

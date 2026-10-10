@@ -7,7 +7,24 @@ Happier runs Antigravity through the official pinned `agy_acp_server` ACP transp
 
 ## Requirements and authentication
 
-Install the interactive Antigravity CLI using the [official Antigravity CLI guide](https://antigravity.google/docs/cli/install), and make sure `agy` is available on `PATH` for local terminal control. Happier sessions need a separate login to the ACP server. In development builds with the ACP login command, run this on the machine where Happier runs:
+In development builds with an updated relay and machine CLI, you can connect a
+personal Google account through [Connected services](/accounts/connected-services#antigravity).
+Enable **Experimental features**, **Connected services**, and **Connected services quotas**
+in **Settings → Features** first.
+One sign-in provides quota display and coding sessions. Select that account when
+starting a session; Happier preserves your machine's native login. Existing ACP
+and CLI logins can also be imported. Older CLI logins may need one Google sign-in
+to add coding permission.
+
+Quota shows four bars when Antigravity reports its shared limits: Gemini's
+five-hour and weekly limits, and Claude/GPT's five-hour and weekly limits.
+Flash and Pro share the Gemini limits; Opus, Sonnet, and GPT-OSS share the
+Claude/GPT limits. Versions and thinking levels do not need separate bars.
+The chat usage ring shows the limits for the model running in that session.
+If shared limits are unavailable, Happier shows the reported model-family
+allowances instead. Missing quota stays unknown.
+
+For machine-local authentication, install the interactive Antigravity CLI using the [official Antigravity CLI guide](https://antigravity.google/docs/cli/install), and make sure `agy` is available on `PATH` for local terminal control. The ACP server has its own login. In development builds with the ACP login command, run this on the machine where Happier runs:
 
 ```bash
 happier agy auth login

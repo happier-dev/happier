@@ -12,6 +12,29 @@ The goal is that both surfaces:
 
 ## Key concepts (shared language)
 
+### Antigravity connected accounts (development)
+
+`agy` consumes the distinct `antigravity` OAuth service. Shared native OAuth facts
+and Google identity/project verification live in `packages/agents/src/providers/agy`;
+credential metadata and the machine import request/result are protocol-owned.
+The AGY CLI catalog entry owns cloud connect, native import, credential refresh,
+quota fetching, and isolated official ACP materialization. Server browser exchange
+uses the existing sealed V2 flow. UI service registration and active-model quota
+projection remain provider-owned.
+
+Personal browser grants include ACP's `aicode` scope. Imported grants retain their
+verified granted scopes: legacy CLI grants without `aicode` remain quota-capable
+but fail connected ACP launch until browser reauthorization. Materialized sessions
+set an isolated `GEMINI_HOME` and force file storage, never falling back to native
+auth. Resume copies only supported vendor state with a matching account marker.
+Live cross-account switching and automatic rotation are unsupported.
+
+Quota fetching reads `retrieveUserQuota`, `fetchAvailableModels`, and optional
+`retrieveUserQuotaSummary`; live model buckets override catalog fallback, including
+unknown fractions. Shared windows remain separate account meters, without inferred
+model membership or synthetic request totals. No inference or onboarding runs
+during quota polling.
+
 - **AgentId**: canonical id for an agent across packages (CLI + app + server).
   - Source of truth: `@happier-dev/agents` (`packages/agents/src/manifest.ts`).
 - **detectKey**: CLI executable name used for detection UX and `command -v <detectKey>`-style probes.

@@ -13,10 +13,16 @@ export type CloudConnectResult = Readonly<{
 }>;
 
 export type CloudConnectAuthenticateOptions = Readonly<{
+  projectId?: string;
   paste?: boolean;
   device?: boolean;
   noOpen?: boolean;
   timeoutSeconds?: number;
+}>;
+
+export type CloudConnectImportedCredentials = Readonly<{
+  oauth: unknown;
+  requiresBrowserReauthorization: boolean;
 }>;
 
 export type CloudConnectTarget = Readonly<{
@@ -31,6 +37,8 @@ export type CloudConnectTarget = Readonly<{
    * - experimental: token may be stored but not yet used everywhere
    */
   status: CloudConnectTargetStatus;
+  requireSameProviderAccount?: boolean;
   authenticate: (opts?: CloudConnectAuthenticateOptions) => Promise<unknown>;
+  importCredentials?: (opts: Readonly<{ source: 'acp' | 'cli'; projectId?: string; signal?: AbortSignal }>) => Promise<CloudConnectImportedCredentials>;
   postConnect?: (oauth: unknown) => void;
 }>;

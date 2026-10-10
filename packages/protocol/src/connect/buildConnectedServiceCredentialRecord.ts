@@ -3,8 +3,13 @@ import {
   type ConnectedServiceCredentialRecordV1,
   type ConnectedServiceId,
 } from './connectedServiceSchemas.js';
+import {
+  AntigravityOauthCredentialMetadataSchema,
+  type AntigravityOauthCredentialMetadata,
+} from '../providers/antigravity/credentialMetadata.js';
 
 export type ConnectedServiceOauthCredentialRawMetadata = Readonly<{
+  antigravity?: AntigravityOauthCredentialMetadata;
   claudeAiOauth?: Readonly<{
     subscriptionType?: string;
     rateLimitTier?: string;
@@ -40,7 +45,14 @@ export function normalizeConnectedServiceOauthCredentialRawMetadata(
     ...(subscriptionType ? { subscriptionType } : {}),
     ...(rateLimitTier ? { rateLimitTier } : {}),
   };
-  return Object.keys(claudeAiOauth).length > 0 ? { claudeAiOauth } : null;
+  const antigravity = root.antigravity === undefined
+    ? undefined
+    : AntigravityOauthCredentialMetadataSchema.parse(root.antigravity);
+  const normalized = {
+    ...(Object.keys(claudeAiOauth).length > 0 ? { claudeAiOauth } : {}),
+    ...(antigravity ? { antigravity } : {}),
+  };
+  return Object.keys(normalized).length > 0 ? normalized : null;
 }
 
 export function buildConnectedServiceCredentialRecord(

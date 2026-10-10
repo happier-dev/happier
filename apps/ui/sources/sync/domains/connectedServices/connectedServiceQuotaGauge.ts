@@ -7,7 +7,7 @@ import {
     type SessionRuntimeIssueV1,
 } from '@happier-dev/protocol';
 
-import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
+import { getAgentCore, resolveAgentIdFromFlavor, resolveAgentIdFromConnectedServiceId } from '@/agents/registry/registryCore';
 
 import type { MeterTone } from '@/components/ui/lists/MeterBar';
 
@@ -367,9 +367,14 @@ export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
     formatter: ConnectedServiceQuotaGaugeLabelFormatter;
     providerDisplayName?: string | null;
     activeAccountDisplayLabel?: string | null;
+    activeModelId?: string | null;
 }>): ConnectedServiceQuotaGaugeViewModel | null {
     if (_params.quotaLimitSelection === null) return null;
-    const snapshot = projectConnectedServiceQuotaSnapshotForLimitSelection(_params.snapshot, _params.quotaLimitSelection);
+    const selectedSnapshot = projectConnectedServiceQuotaSnapshotForLimitSelection(_params.snapshot, _params.quotaLimitSelection);
+    if (!selectedSnapshot) return null;
+    const agentId = resolveAgentIdFromConnectedServiceId(selectedSnapshot.serviceId);
+    const projectForModel = agentId ? getAgentCore(agentId).projectQuotaSnapshotForModel : undefined;
+    const snapshot = projectForModel ? projectForModel(selectedSnapshot, _params.activeModelId) : selectedSnapshot;
     if (!snapshot) return null;
     const params = { ..._params, snapshot };
 

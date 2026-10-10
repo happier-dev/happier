@@ -70,6 +70,7 @@ type InternalEntry = {
     loadAttempted: boolean;
     nextFetchAtMs: number;
     consecutiveErrors: number;
+    initialMissingRetryUntilMs: number | null;
     loadPromise: Promise<ConnectedServiceQuotaSnapshotV1 | null> | null;
     refreshPromise: Promise<void> | null;
     pollRetainCount: number;
@@ -82,6 +83,8 @@ type InternalEntry = {
 const REFRESH_RELOAD_DELAYS_MS = [0, 250, 500, 1_000, 2_000, 3_000, 4_000] as const;
 const QUOTA_SNAPSHOT_POLL_MS = 30_000;
 const QUOTA_SNAPSHOT_MISS_RETRY_MS = 30_000;
+const QUOTA_SNAPSHOT_INITIAL_MISS_RETRY_MS = 2_000;
+const QUOTA_SNAPSHOT_INITIAL_MISS_WINDOW_MS = 10_000;
 const QUOTA_SNAPSHOT_ERROR_BACKOFF_MIN_MS = 30_000;
 const QUOTA_SNAPSHOT_ERROR_BACKOFF_MAX_MS = 5 * 60_000;
 
@@ -116,6 +119,7 @@ function getOrCreateEntry(key: string): InternalEntry {
         loadAttempted: false,
         nextFetchAtMs: 0,
         consecutiveErrors: 0,
+        initialMissingRetryUntilMs: null,
         loadPromise: null,
         refreshPromise: null,
         pollRetainCount: 0,
@@ -161,13 +165,20 @@ function clearPollTimer(entry: InternalEntry): void {
     entry.pollTimer = null;
 }
 
-function computeNextFetchAtMs(snapshot: ConnectedServiceQuotaSnapshotV1 | null): number {
-    return Date.now() + (snapshot
+function computeNextFetchAtMs(snapshot: ConnectedServiceQuotaSnapshotV1 | null, entry: InternalEntry): number {
+    const now = Date.now();
+    // The daemon may link a newly connected profile's source just after the
+    // first read. Give that first snapshot a bounded warm-up window; a known
+    // snapshot or an expired window keeps the normal polling cadence.
+    if (snapshot) entry.initialMissingRetryUntilMs = 0;
+    return now + (snapshot
         ? Math.max(
             QUOTA_SNAPSHOT_POLL_MS,
             Math.trunc(snapshot.staleAfterMs ?? QUOTA_SNAPSHOT_POLL_MS),
         )
-        : QUOTA_SNAPSHOT_MISS_RETRY_MS);
+        : now < (entry.initialMissingRetryUntilMs ?? 0)
+            ? QUOTA_SNAPSHOT_INITIAL_MISS_RETRY_MS
+            : QUOTA_SNAPSHOT_MISS_RETRY_MS);
 }
 
 /**
@@ -244,6 +255,9 @@ async function runLoad(key: string, ctx: QuotaSnapshotLoadContext): Promise<Conn
 
     const promise = (async (): Promise<ConnectedServiceQuotaSnapshotV1 | null> => {
         if (!isScopeActive(ctx.credentialScope)) return null;
+        if (entry.initialMissingRetryUntilMs === null) {
+            entry.initialMissingRetryUntilMs = Date.now() + QUOTA_SNAPSHOT_INITIAL_MISS_WINDOW_MS;
+        }
         entry.loading = true;
         entry.error = null;
         publish(key, entry);
@@ -274,13 +288,13 @@ async function runLoad(key: string, ctx: QuotaSnapshotLoadContext): Promise<Conn
                 if (!isScopeActive(ctx.credentialScope)) return null;
                 entry.snapshot = fallback;
                 entry.consecutiveErrors = 0;
-                entry.nextFetchAtMs = computeNextFetchAtMs(fallback);
+                entry.nextFetchAtMs = computeNextFetchAtMs(fallback, entry);
                 return fallback;
             }
             if (!isScopeActive(ctx.credentialScope)) return null;
             entry.snapshot = opened;
             entry.consecutiveErrors = 0;
-            entry.nextFetchAtMs = computeNextFetchAtMs(opened);
+            entry.nextFetchAtMs = computeNextFetchAtMs(opened, entry);
             return opened;
         } catch (error) {
             if (!isScopeActive(ctx.credentialScope)) return null;

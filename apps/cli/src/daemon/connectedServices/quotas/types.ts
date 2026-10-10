@@ -31,6 +31,11 @@ export type ConnectedServiceQuotaFetcher = Readonly<{
     record: ConnectedServiceCredentialRecordV1;
     now: number;
     signal: AbortSignal;
+    /**
+     * Offers acquired readings for the coordinator's fetch-deadline fallback, without publishing immediately.
+     * Caller cancellation and publications after this invocation settles cannot produce a snapshot.
+     */
+    onPartialSnapshot?: (snapshot: ConnectedServiceQuotaSnapshotV1) => void;
   }>) => Promise<ConnectedServiceQuotaSnapshotV1 | null>;
   consumeRecoveryCredit?: (params: Readonly<{
     record: ConnectedServiceCredentialRecordV1;

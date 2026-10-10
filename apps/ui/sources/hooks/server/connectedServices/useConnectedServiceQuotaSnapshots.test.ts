@@ -537,7 +537,7 @@ describe('useConnectedServiceQuotaSnapshots', () => {
     expect(getConnectedServiceQuotaSnapshotPlainSpy).toHaveBeenCalledTimes(1);
     expect(hook.getCurrent().snapshotsByKey['anthropic/work']).toBeNull();
 
-    await flushHookEffects({ cycles: 1, turns: 2, advanceTimersMs: 30_001 });
+    await flushHookEffects({ cycles: 1, turns: 2, advanceTimersMs: 2_001 });
     await flushHookEffects({ cycles: 5, turns: 5 });
 
     expect(getConnectedServiceQuotaSnapshotPlainSpy).toHaveBeenCalledTimes(2);

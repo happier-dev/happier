@@ -1,7 +1,7 @@
 import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { TranslationKey, TranslationKeyNoParams } from '@/text';
 import type { Href } from 'expo-router';
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedServiceId, ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol';
 
 import {
     AGENT_IDS as SHARED_AGENT_IDS,
@@ -71,6 +71,11 @@ export type AgentCoreConfig = Readonly<{
      * Shared Happier Connected Services compatibility from `@happier-dev/agents`.
      */
     connectedServices: SharedAgentCore['connectedServices'];
+    /** Provider-owned session projection when account quota is specific to a model. */
+    projectQuotaSnapshotForModel?: (
+        snapshot: ConnectedServiceQuotaSnapshotV1,
+        modelId: string | null | undefined,
+    ) => ConnectedServiceQuotaSnapshotV1 | null;
     uiConnectedService: Readonly<{
         /**
          * UI presentation metadata for the service backing this agent.

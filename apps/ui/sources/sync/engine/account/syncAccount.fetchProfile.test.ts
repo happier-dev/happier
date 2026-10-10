@@ -30,6 +30,23 @@ describe('fetchAndApplyProfile', () => {
         vi.resetModules();
     });
 
+    it('opts into AGY profiles while retaining the account profile response', async () => {
+        const { fetchAndApplyProfile } = await import('./syncAccount');
+        serverFetchMock.mockResolvedValue(new Response(JSON.stringify({
+            id: 'account-a', firstName: 'Ada', connectedServicesV2: [{
+                serviceId: 'antigravity', profiles: [{ profileId: 'default', status: 'connected' }],
+            }],
+        }), { status: 200 }));
+        const applyProfile = vi.fn();
+        await fetchAndApplyProfile({ credentials: { token: 'token-a', secret: 'secret-a' }, applyProfile });
+        expect(serverFetchMock).toHaveBeenCalledWith('/v1/account/profile', expect.objectContaining({
+            headers: expect.objectContaining({ Accept: 'application/json; happier-connected-service-antigravity=1' }),
+        }), { includeAuth: false });
+        expect(applyProfile).toHaveBeenCalledWith(expect.objectContaining({
+            id: 'account-a', firstName: 'Ada', connectedServicesV2: [expect.objectContaining({ serviceId: 'antigravity' })],
+        }));
+    });
+
     it('drops fetched profile when the captured sync scope is stale before apply', async () => {
         const { fetchAndApplyProfile } = await import('./syncAccount');
         serverFetchMock.mockResolvedValue(new Response(JSON.stringify({

@@ -4,6 +4,7 @@ import type {
     ConnectedServiceQuotaRecoveryCreditsV1,
     ConnectedServiceQuotaSnapshotV1,
 } from '@happier-dev/protocol';
+import { resolveSessionQuotaModelId } from '@/sync/domains/models/resolveSessionQuotaModelId';
 
 import {
     type ConnectedServiceQuotaGaugeLabelFormatter,
@@ -60,6 +61,73 @@ const formatter: ConnectedServiceQuotaGaugeLabelFormatter = {
 };
 
 describe('computeConnectedServiceQuotaGaugeViewModel', () => {
+    it('uses both actual AGY pool windows for active aliases, keeping another pool out of the chat gauge', () => {
+        const usage = { ...snapshot([
+            meter({ meterId: 'shared:gemini-5h', label: 'Gemini · 5 hours', providerLimitId: 'gemini-5h', windowDurationMs: 18_000_000, utilizationPct: 20 }),
+            meter({ meterId: 'shared:gemini-weekly', label: 'Gemini · Weekly', providerLimitId: 'gemini-weekly', windowDurationMs: 604_800_000, utilizationPct: 30 }),
+            meter({ meterId: 'shared:3p-5h', label: 'Claude / GPT · 5 hours', providerLimitId: '3p-5h', windowDurationMs: 18_000_000, utilizationPct: 100 }),
+        ]), serviceId: 'antigravity' as const };
+        for (const activeModelId of ['gemini-pro-agent', 'gemini-3.1-pro-low', 'gemini-3.8-flash-high']) {
+            const params = { snapshot: usage, activeModelId, windowMode: 'most_constrained' as const, nowMs: 2_000, formatter };
+            const view = computeConnectedServiceQuotaGaugeViewModel(params);
+            expect(view?.remainingPct).toBe(70);
+            expect(view?.allMeterRows.map((row) => row.meterId)).toEqual(['shared:gemini-5h', 'shared:gemini-weekly']);
+            expect(computeConnectedServiceQuotaGaugeViewModel({ ...params, windowMode: 'weekly' })?.remainingPct).toBe(70);
+        }
+        expect(computeConnectedServiceQuotaGaugeViewModel({ snapshot: usage, activeModelId: 'claude-sonnet-4-6', windowMode: 'most_constrained', nowMs: 2_000, formatter })?.remainingPct).toBe(0);
+    });
+    it('matches AGY family fallback without confusing another model or hiding it behind a weekly-only response', () => {
+        const usage = { ...snapshot([
+            meter({ meterId: 'family:gemini-flash', label: 'Gemini Flash', utilizationPct: 60 }),
+            meter({ meterId: 'shared:gemini-weekly', label: 'Gemini · Weekly', providerLimitId: 'gemini-weekly', windowDurationMs: 604_800_000, utilizationPct: 10 }),
+            meter({ meterId: 'family:claude-opus', label: 'Claude Opus', utilizationPct: 100 }),
+        ]), serviceId: 'antigravity' as const };
+        const params = { snapshot: usage, activeModelId: 'gemini-3.8-flash-tiered', windowMode: 'most_constrained' as const, nowMs: 2_000, formatter };
+        expect(computeConnectedServiceQuotaGaugeViewModel(params)?.remainingPct).toBe(40);
+        expect(computeConnectedServiceQuotaGaugeViewModel({ ...params, activeModelId: 'unknown-model' })).toBeNull();
+    });
+    it('retains the active model reading when a known AGY bucket reports an unknown window', () => {
+        const usage = { ...snapshot([
+            meter({ meterId: 'family:gemini-flash', label: 'Gemini Flash', utilizationPct: 60 }),
+            meter({ meterId: 'shared:gemini-5h', label: 'Unknown window', providerLimitId: 'gemini-5h', scope: 'unknown', utilizationPct: 0 }),
+        ]), serviceId: 'antigravity' as const };
+        const view = computeConnectedServiceQuotaGaugeViewModel({ snapshot: usage, activeModelId: 'gemini-3.8-flash', windowMode: 'most_constrained', nowMs: 2_000, formatter });
+        expect(view?.remainingPct).toBe(40);
+        expect(view?.allMeterRows.map((row) => row.meterId)).toEqual(['family:gemini-flash', 'shared:gemini-5h']);
+    });
+    it('does not assign a shared allowance to an unreported AGY model family from its vendor prefix', () => {
+        const usage = { ...snapshot([
+            meter({ meterId: 'shared:gemini-5h', label: 'Gemini · 5 hours', providerLimitId: 'gemini-5h', scope: 'five_hour', utilizationPct: 0 }),
+        ]), serviceId: 'antigravity' as const };
+        expect(computeConnectedServiceQuotaGaugeViewModel({ snapshot: usage, activeModelId: 'gemini-unsupported-family', windowMode: 'most_constrained', nowMs: 2_000, formatter })).toBeNull();
+    });
+    it('shows an estimated AGY model allowance when the picker is default and ACP identifies the active model', () => {
+        const activeModelId = resolveSessionQuotaModelId({
+            agentId: 'agy', modelMode: 'default', metadata: {
+                path: '/tmp', host: 'test',
+                sessionModelsV1: { v: 1, provider: 'agy', updatedAt: 10, currentModelId: 'gemini-3.8-flash', availableModels: [] },
+            },
+        });
+        const usage = { ...snapshot([
+            meter({ meterId: 'active', label: 'Gemini Flash', modelId: 'gemini-3.8-flash', utilizationPct: 75, confidence: 'estimated' }),
+            meter({ meterId: 'unrelated', label: 'Claude Opus', modelId: 'claude-opus-5-5', utilizationPct: 100 }),
+        ]), serviceId: 'antigravity' as const, confidence: 'estimated' as const };
+        expect(computeConnectedServiceQuotaGaugeViewModel({ snapshot: usage, activeModelId, windowMode: 'most_constrained', nowMs: 2_000, formatter })?.remainingPct).toBe(25);
+    });
+    it('projects Antigravity usage onto the selected model without borrowing unrelated quota', () => {
+        const usage = { ...snapshot([
+            meter({ meterId: 'other', label: 'Other model', modelId: 'claude-sonnet', utilizationPct: 100 }),
+            meter({ meterId: 'active', label: 'Active model', modelId: 'gemini-3-pro', utilizationPct: 75 }),
+            meter({ meterId: 'weekly-family', label: 'Weekly family', utilizationPct: 99 }),
+        ]), serviceId: 'antigravity' as const };
+        const params = { snapshot: usage, windowMode: 'most_constrained' as const, nowMs: 2_000, formatter, activeModelId: 'gemini-3-pro' };
+        const view = computeConnectedServiceQuotaGaugeViewModel(params);
+        expect(view?.remainingPct).toBe(25);
+        expect(view?.allMeterRows.map((row) => row.meterId)).toEqual(['active']);
+        expect(computeConnectedServiceQuotaGaugeViewModel({ ...params, activeModelId: 'unreported' })).toBeNull();
+        expect(computeConnectedServiceQuotaGaugeViewModel({ ...params, activeModelId: null })).toBeNull();
+        expect(usage.meters).toHaveLength(3);
+    });
     it('selects global windows from the pool allowances across raw usage sources', () => {
         const usage = snapshot([
             meter({ meterId: 'daily-other', label: 'Daily other', providerLimitId: 'other', windowDurationMs: 86_400_000, utilizationPct: 99 }),

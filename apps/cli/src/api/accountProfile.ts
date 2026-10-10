@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { AccountProfileResponseSchema, type AccountProfileResponse } from '@happier-dev/protocol';
+import { AccountProfileResponseSchema, ANTIGRAVITY_ACCOUNT_PROFILE_ACCEPT, type AccountProfileResponse } from '@happier-dev/protocol';
 
 import {
   createAuthenticationHttpStatusError,
@@ -14,6 +14,7 @@ export async function fetchAccountProfile(opts: Readonly<{ token: string; signal
     headers: {
       Authorization: `Bearer ${opts.token}`,
       'Content-Type': 'application/json',
+      Accept: ANTIGRAVITY_ACCOUNT_PROFILE_ACCEPT,
     },
     timeout: 15_000,
     ...(opts.signal ? { signal: opts.signal } : {}),

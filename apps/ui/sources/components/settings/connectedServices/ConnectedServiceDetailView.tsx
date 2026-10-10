@@ -60,6 +60,7 @@ import { invalidateConnectedServiceGroupsRefreshSignal } from '@/sync/domains/co
 import { resolveConnectedServiceProjectionSignature } from '@/sync/domains/connectedServices/resolveConnectedServiceProjectionSignature';
 import { useConnectedServiceAuthGroups } from './model/useConnectedServiceAuthGroups';
 import { Icon } from '@/components/ui/icons/Icon';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 function asStringParam(value: unknown): string {
   if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : '';
@@ -585,6 +586,13 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
         onAddOauthProfile={(method) => void handleAddOauthProfile(method)}
         onConnectToken={() => void handleConnectToken()}
         onOpenTokenSetupUrl={(url) => void handleOpenTokenSetupUrl(url)}
+        onImport={entry.importSources?.length ? () => {
+          fireAndForget((async () => {
+            const profileId = await promptProfileId();
+            if (!profileId) return;
+            router.push({ pathname: '/settings/connected-services/import', params: { serviceId, profileId } });
+          })(), { tag: 'ConnectedServiceDetailView.import' });
+        } : undefined}
       />
     </>
   );

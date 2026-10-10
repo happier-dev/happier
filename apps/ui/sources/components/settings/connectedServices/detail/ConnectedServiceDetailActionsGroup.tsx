@@ -15,6 +15,7 @@ export const ConnectedServiceDetailActionsGroup = React.memo(function ConnectedS
   onAddOauthProfile: (method: 'device' | 'paste' | 'browser' | null) => void;
   onConnectToken: () => void;
   onOpenTokenSetupUrl: (url: string) => void;
+  onImport?: () => void;
 }>) {
   const { theme } = useUnistyles();
   const oauthModes = props.oauthAddActionModes ?? [];
@@ -24,6 +25,15 @@ export const ConnectedServiceDetailActionsGroup = React.memo(function ConnectedS
 
   return (
     <ItemGroup title={t('connectedServices.detail.actionsGroupTitle')}>
+      {props.onImport ? (
+        <Item
+          testID="connected-services-action:import"
+          title={t('connectedServices.importAccounts.title')}
+          subtitle={t('connectedServices.importAccounts.description')}
+          icon={<Icon name="download" size={20} color={theme.colors.accent.blue} />}
+          onPress={props.onImport}
+        />
+      ) : null}
       {props.supportsToken ? (
         <Item
           testID="connected-services-action:connect-token"

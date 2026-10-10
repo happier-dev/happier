@@ -9,7 +9,6 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { useAuth } from '@/auth/context/AuthContext';
-import { exchangeConnectedServiceOauthViaProxy } from '@/sync/api/account/apiConnectedServicesV2';
 import { generateOauthState, generatePkceCodes, parseOauthCallbackUrl } from '@/utils/auth/oauthCore';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
@@ -17,18 +16,15 @@ import { openExternalUrl } from '@/utils/url/openExternalUrl';
 
 import {
   ConnectedServiceIdSchema,
-  encodeBase64,
   type ConnectedServiceId,
 } from '@happier-dev/protocol';
 
 import { getConnectedServiceOauthAdapter } from '@/sync/domains/connectedServices/oauth/connectedServiceOauthAdapters';
-import { buildOauthRecordFromProxyPayload, parseConnectedServiceOauthProxyBundle } from '@/sync/domains/connectedServices/oauth/connectedServiceOauthProxyBundle';
 import { resolveConnectedServiceOauthPasteCopy } from './oauth/resolveConnectedServiceOauthPasteCopy';
 import { resolveConnectedServiceOauthErrorMessage } from './oauth/resolveConnectedServiceOauthErrorMessage';
 import { storeConnectedServiceCredentialWithIdentityConfirmation } from './storeConnectedServiceCredentialWithIdentityConfirmation';
 import { runConnectedServiceCredentialStoredEffects } from './runConnectedServiceCredentialStoredEffects';
 import { Icon } from '@/components/ui/icons/Icon';
-import { createConnectedServiceOauthExchangeKeyPair } from '@/sync/domains/connectedServices/oauth/createConnectedServiceOauthExchangeKeyPair';
 
 function asStringParam(value: unknown): string {
   if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : '';
@@ -53,11 +49,8 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
   const [pkce, setPkce] = React.useState<{ verifier: string; challenge: string } | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [redirectUrlInput, setRedirectUrlInput] = React.useState('');
+  const [projectId, setProjectId] = React.useState('');
   const [didShowOpenInstructions, setDidShowOpenInstructions] = React.useState(false);
-  const keyPairRef = React.useRef<ReturnType<typeof createConnectedServiceOauthExchangeKeyPair> | null>(null);
-  if (!keyPairRef.current) {
-    keyPairRef.current = createConnectedServiceOauthExchangeKeyPair();
-  }
 
   React.useEffect(() => {
     let cancelled = false;
@@ -92,6 +85,7 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
     if (!serviceId || !adapter || !pkce || !state || !profileId) return;
     const pastedUrl = redirectUrlInput.trim();
     if (!pastedUrl) return;
+    let exchangeAttempted = false;
     setBusy(true);
     try {
       const parsed = parseOauthCallbackUrl({ url: pastedUrl, redirectUri });
@@ -104,30 +98,16 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
 
       const credentials = ensureCredentials();
       const now = Date.now();
-      const publicKeyB64Url = encodeBase64(keyPairRef.current!.publicKey, 'base64url');
-
-      const exchanged = await exchangeConnectedServiceOauthViaProxy(credentials, {
-        serviceId,
-        publicKey: publicKeyB64Url,
+      exchangeAttempted = true;
+      const record = await adapter.exchangeAuthorizationCodeForRecord({
+        credentials,
+        profileId,
         code,
         verifier: pkce.verifier,
         redirectUri,
         state: returnedState,
-      });
-
-      const payload = parseConnectedServiceOauthProxyBundle({
-        bundleB64Url: exchanged.bundle,
-        recipientSecretKey: keyPairRef.current!.secretKey,
-      });
-      if (payload.serviceId !== serviceId) {
-        throw new Error('OAuth bundle service mismatch');
-      }
-
-      const record = buildOauthRecordFromProxyPayload({
         now,
-        serviceId,
-        profileId,
-        payload,
+        ...(adapter.supportsProjectId && projectId.trim() ? { projectId: projectId.trim() } : {}),
       });
 
       const stored = await storeConnectedServiceCredentialWithIdentityConfirmation(
@@ -143,6 +123,13 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
       );
       props.onDone();
     } catch (e: unknown) {
+      if (exchangeAttempted) {
+        // Google codes are single-use, including failed exchanges after token issuance.
+        setRedirectUrlInput('');
+        setState(generateOauthState());
+        setPkce(await generatePkceCodes());
+        setDidShowOpenInstructions(false);
+      }
       const message = resolveConnectedServiceOauthErrorMessage(
         e,
         t('connectedServices.oauthPaste.alerts.failedToConnect'),
@@ -154,7 +141,7 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
     } finally {
       setBusy(false);
     }
-  }, [adapter, auth.credentials, copy?.missingStateError, pkce, profileId, props, redirectUri, serviceId, state, redirectUrlInput]);
+  }, [adapter, auth.credentials, copy?.missingStateError, pkce, profileId, projectId, props, redirectUri, serviceId, state, redirectUrlInput]);
 
   const handleOpenAuthorization = React.useCallback(() => {
     if (!authorizationUrl) return;
@@ -237,6 +224,17 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
             autoCorrect={false}
             style={styles.redirectInput}
           />
+          {adapter.supportsProjectId ? (
+            <>
+              <Text style={{ color: theme.colors.text.secondary }}>{t('connectedServices.importAccounts.projectLabel')}</Text>
+              <TextInput
+                testID="connectedServices.oauthPaste.projectInput"
+                value={projectId} onChangeText={setProjectId} editable={!busy}
+                accessibilityLabel={t('connectedServices.importAccounts.projectLabel')}
+                autoCapitalize="none" autoCorrect={false} style={styles.redirectInput}
+              />
+            </>
+          ) : null}
           <RoundButton
             testID="connectedServices.oauthPaste.validateRedirectButton"
             size="normal"

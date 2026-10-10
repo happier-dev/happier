@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { ConnectedServiceCredentialRecordV1Schema } from './connectedServiceSchemas';
 
 import {
   buildConnectedServiceCredentialRecord,
+  normalizeConnectedServiceOauthCredentialRawMetadata,
   type ConnectedServiceOauthCredentialRawMetadata,
 } from './buildConnectedServiceCredentialRecord';
 
@@ -11,6 +13,49 @@ function rawFromUntypedCaller(value: unknown): ConnectedServiceOauthCredentialRa
 }
 
 describe('buildConnectedServiceCredentialRecord', () => {
+  it('preserves only verified Antigravity metadata through normalization and credential serialization', () => {
+    const metadata = {
+      antigravity: {
+        clientId: 'native-client', authMethod: 'oauth-personal', projectId: ' project-a ', tierId: 'paid-tier',
+        access_token: 'must-not-persist', scopes: ['fabricated-scope'], arbitrary: true,
+      },
+    };
+    const safe = { antigravity: { clientId: 'native-client', authMethod: 'oauth-personal', projectId: 'project-a', tierId: 'paid-tier' } };
+    expect(normalizeConnectedServiceOauthCredentialRawMetadata(metadata)).toEqual(safe);
+    const record = buildConnectedServiceCredentialRecord({
+      now: 1700000000000, serviceId: 'antigravity', profileId: 'work', kind: 'oauth', expiresAt: 1700003600000,
+      oauth: {
+        accessToken: 'at', refreshToken: 'rt', idToken: null, scope: 'granted-scope', tokenType: 'Bearer',
+        providerAccountId: 'account-a', providerEmail: 'a@example.test', raw: rawFromUntypedCaller(metadata),
+      },
+    });
+    const restored = ConnectedServiceCredentialRecordV1Schema.parse(JSON.parse(JSON.stringify(record)));
+    expect(restored.oauth.raw).toEqual(safe);
+    expect(restored.oauth.scope).toBe('granted-scope');
+    expect(restored.oauth.idToken).toBeNull();
+    expect(restored.expiresAt).toBe(1700003600000);
+    const directWrite = ConnectedServiceCredentialRecordV1Schema.parse({ ...record, oauth: { ...record.oauth, raw: metadata } });
+    expect(directWrite.oauth?.raw).toEqual(safe);
+  });
+
+  it('rejects unsupported Antigravity auth metadata instead of persisting it', () => {
+    expect(() => normalizeConnectedServiceOauthCredentialRawMetadata({
+      antigravity: { clientId: 'native-client', authMethod: 'oauth-business' },
+    })).toThrow();
+  });
+
+  it('rejects token credentials and missing issuer metadata for Antigravity profiles', () => {
+    expect(() => buildConnectedServiceCredentialRecord({
+      now: 1, serviceId: 'antigravity', profileId: 'work', kind: 'token',
+      token: { token: 'key', providerAccountId: null, providerEmail: null },
+    })).toThrow();
+    expect(() => buildConnectedServiceCredentialRecord({
+      now: 1, serviceId: 'antigravity', profileId: 'work', kind: 'oauth',
+      oauth: { accessToken: 'at', refreshToken: 'rt', idToken: null, scope: null, tokenType: null,
+        providerAccountId: null, providerEmail: null },
+    })).toThrow();
+  });
+
   it('builds an oauth record for codex tokens', () => {
     const now = 1700000000000;
     const rec = buildConnectedServiceCredentialRecord({

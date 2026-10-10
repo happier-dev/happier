@@ -68,6 +68,41 @@ describe('connected-services projection retry scheduler', () => {
     }
   });
 
+  it('runs a fresh committed projection immediately while an older projection is in retry backoff', async () => {
+    vi.useFakeTimers();
+    const scheduler = createConnectedServicesProjectionRetryScheduler({ baseDelayMs: 1_000, maxDelayMs: 30_000 });
+    const observed: string[] = [];
+    try {
+      scheduler.schedule(async () => { observed.push('old'); throw new Error('continuity_unsupported'); }, { runImmediately: true });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(observed).toEqual(['old']);
+      scheduler.schedule(async () => { observed.push('committed-new-profile'); }, { runImmediately: true });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(observed).toEqual(['old', 'committed-new-profile']);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(observed).toEqual(['old', 'committed-new-profile']);
+      expect(scheduler.hasPendingWork()).toBe(false);
+    } finally { scheduler.close(); await scheduler.waitForIdle(); vi.useRealTimers(); }
+  });
+
+  it('preserves an immediate fresh projection behind a failing in-flight predecessor without overlap', async () => {
+    vi.useFakeTimers();
+    const first = createDeferred<void>();
+    const scheduler = createConnectedServicesProjectionRetryScheduler({ baseDelayMs: 1_000, maxDelayMs: 30_000 });
+    const observed: string[] = [];
+    try {
+      scheduler.schedule(async () => { observed.push('old:start'); await first.promise; observed.push('old:failed'); throw new Error('continuity_unsupported'); }, { runImmediately: true });
+      await vi.advanceTimersByTimeAsync(0);
+      scheduler.schedule(async () => { observed.push('committed-new-profile'); }, { runImmediately: true });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(observed).toEqual(['old:start']);
+      first.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(observed).toEqual(['old:start', 'old:failed', 'committed-new-profile']);
+      expect(scheduler.hasPendingWork()).toBe(false);
+    } finally { first.resolve(); scheduler.close(); await scheduler.waitForIdle(); vi.useRealTimers(); }
+  });
+
   it('cancels a pending retry and ignores late completion from the cancelled epoch', async () => {
     vi.useFakeTimers();
     try {

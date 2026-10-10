@@ -559,8 +559,8 @@ export const AGENTS_CORE = {
         cliSubcommand: 'agy',
         detectKey: providerDetectKey('agy'),
         flavorAliases: [],
-        cloudConnect: null,
-        connectedServices: null,
+        cloudConnect: { vendorKey: 'antigravity', status: 'wired' },
+        connectedServices: { supportedServiceIds: ['antigravity'], supportedKindsByServiceId: { antigravity: ['oauth'] } },
         resume: { vendorResume: 'supported', vendorResumeIdField: 'agySessionId' },
         // The managed ACP server owns an opaque provider session id, but Happier does not
         // read an Agy-native transcript store directly.

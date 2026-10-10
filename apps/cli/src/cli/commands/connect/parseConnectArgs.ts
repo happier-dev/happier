@@ -1,5 +1,8 @@
 export type ConnectParsedOptions = Readonly<{
   profileId: string;
+  importExisting?: boolean;
+  importSource?: 'acp' | 'cli';
+  projectId?: string;
   paste: boolean;
   device: boolean;
   noOpen: boolean;
@@ -15,6 +18,12 @@ export function parseConnectArgs(args: ReadonlyArray<string>): Readonly<{
   subcommand: string | null;
   options: ConnectParsedOptions;
 }> {
+  const sourceFlagIdx = args.indexOf('--import-source');
+  const importSource = sourceFlagIdx >= 0 ? args[sourceFlagIdx + 1] : 'acp';
+  if (importSource !== 'acp' && importSource !== 'cli') throw new Error('--import-source must be acp or cli');
+  const projectFlagIdx = args.indexOf('--project');
+  const projectId = projectFlagIdx >= 0 ? args[projectFlagIdx + 1]?.trim() : undefined;
+  if (projectFlagIdx >= 0 && (!projectId || projectId.startsWith('--'))) throw new Error('--project requires a project ID');
   const includeExperimental = args.includes('--all') || args.includes('--experimental');
   const paste = args.includes('--paste');
   const device = args.includes('--device');
@@ -46,8 +55,13 @@ export function parseConnectArgs(args: ReadonlyArray<string>): Readonly<{
     '--token',
     '--profile',
     '--timeout',
+    '--import',
+    '--import-source',
+    '--project',
   ]);
   const valuesConsumedByFlags = new Set<number>([
+    sourceFlagIdx >= 0 ? sourceFlagIdx + 1 : -1,
+    projectFlagIdx >= 0 ? projectFlagIdx + 1 : -1,
     profileFlagIdx !== -1 ? profileFlagIdx + 1 : -1,
     timeoutFlagIdx !== -1 ? timeoutFlagIdx + 1 : -1,
   ]);
@@ -63,6 +77,9 @@ export function parseConnectArgs(args: ReadonlyArray<string>): Readonly<{
     subcommand,
     options: {
       profileId: profileId || 'default',
+      importExisting: args.includes('--import'),
+      importSource,
+      ...(projectId ? { projectId } : {}),
       paste,
       device,
       noOpen,

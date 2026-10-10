@@ -8,6 +8,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { exchangeConnectedServiceOauthViaProxy } from '@/sync/api/account/apiConnectedServicesV2';
+import { readConnectedServiceApiErrorFields } from '@/sync/api/account/connectedServiceApiError';
 
 import { buildOauthRecordFromProxyPayload, parseConnectedServiceOauthProxyBundle } from './connectedServiceOauthProxyBundle';
 import { createConnectedServiceOauthExchangeKeyPair } from './createConnectedServiceOauthExchangeKeyPair';
@@ -15,6 +16,7 @@ import { createConnectedServiceOauthExchangeKeyPair } from './createConnectedSer
 import { buildClaudeSubscriptionAuthorizationUrl, CLAUDE_SUBSCRIPTION_OAUTH } from './claudeSubscriptionOauth';
 import { buildGeminiAuthorizationUrl, GEMINI_OAUTH } from './geminiOauth';
 import { buildOpenAiCodexAuthorizationUrl, OPENAI_CODEX_OAUTH } from './openAiCodexOauth';
+import { buildAntigravityAuthorizationUrl, ANTIGRAVITY_OAUTH } from './antigravityOauth';
 
 export type ConnectedServiceOauthAddMethod = 'device' | 'paste' | 'browser';
 export type ConnectedServiceOauthMode = 'device' | 'paste' | 'embedded';
@@ -22,6 +24,7 @@ export type ConnectedServiceOauthMode = 'device' | 'paste' | 'embedded';
 export type ConnectedServiceOauthAdapter = Readonly<{
   serviceId: ConnectedServiceId;
   defaultRedirectUri: string;
+  supportsProjectId?: boolean;
   buildAuthorizationUrl: (params: Readonly<{
     redirectUri: string;
     state: string;
@@ -35,6 +38,7 @@ export type ConnectedServiceOauthAdapter = Readonly<{
     redirectUri: string;
     state: string;
     now: number;
+    projectId?: string;
   }>) => Promise<ConnectedServiceCredentialRecordV1>;
 }>;
 
@@ -47,6 +51,7 @@ async function exchangeOauthViaProxy(params: Readonly<{
   redirectUri: string;
   state: string;
   now: number;
+  projectId?: string;
 }>): Promise<Extract<ConnectedServiceCredentialRecordV1, { kind: 'oauth' }>> {
   const keyPair = createConnectedServiceOauthExchangeKeyPair();
   const publicKeyB64Url = encodeBase64(keyPair.publicKey, 'base64url');
@@ -57,6 +62,7 @@ async function exchangeOauthViaProxy(params: Readonly<{
     verifier: params.verifier,
     redirectUri: params.redirectUri,
     state: params.state,
+    ...(params.projectId ? { projectId: params.projectId } : {}),
   });
   const payload = parseConnectedServiceOauthProxyBundle({
     bundleB64Url: exchanged.bundle,
@@ -130,7 +136,26 @@ const CLAUDE_SUBSCRIPTION_ADAPTER: ConnectedServiceOauthAdapter = Object.freeze(
   },
 });
 
+const ANTIGRAVITY_ADAPTER: ConnectedServiceOauthAdapter = Object.freeze({
+  serviceId: 'antigravity',
+  defaultRedirectUri: ANTIGRAVITY_OAUTH.defaultRedirectUri,
+  supportsProjectId: true,
+  buildAuthorizationUrl: buildAntigravityAuthorizationUrl,
+  exchangeAuthorizationCodeForRecord: async (params) => {
+    try {
+      return await exchangeOauthViaProxy({ ...params, serviceId: 'antigravity' });
+    } catch (error) {
+      const fields = readConnectedServiceApiErrorFields(error);
+      if (fields?.status === 404 || fields?.code === 'connect_oauth_service_unsupported') {
+        throw new Error('connect_oauth_service_unsupported');
+      }
+      throw error;
+    }
+  },
+});
+
 const ADAPTERS_BY_SERVICE_ID: Readonly<Partial<Record<ConnectedServiceId, ConnectedServiceOauthAdapter>>> = Object.freeze({
+  antigravity: ANTIGRAVITY_ADAPTER,
   'openai-codex': OPENAI_CODEX_ADAPTER,
   gemini: GEMINI_ADAPTER,
   'claude-subscription': CLAUDE_SUBSCRIPTION_ADAPTER,

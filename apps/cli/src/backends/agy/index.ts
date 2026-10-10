@@ -1,3 +1,6 @@
+import { createAgyConnectedServicesMaterializer } from './connectedServices/createAgyConnectedServicesMaterializer';
+import { agyQuotaFetcherDescriptor } from './connectedServices/quotaFetcher';
+import type { ConnectedServiceCredentialLifecycleDescriptor } from '@/daemon/connectedServices/credentials/lifecycleTypes';
 import { INSTALLABLE_KEYS } from '@happier-dev/protocol';
 
 import type { AgentCatalogEntry } from '@/backends/types';
@@ -6,10 +9,22 @@ import { createCatalogDefinedAcpBackend } from '@/agent/acp/catalog/createCatalo
 import type { AccountSettings } from '@happier-dev/protocol';
 import { agyDaemonSpawnHooks } from './daemon/spawnHooks';
 
+const lifecycle: ConnectedServiceCredentialLifecycleDescriptor = {
+  providerId: 'agy', serviceIds: ['antigravity'], spawnPreflightOauthRefresh: { mode: 'expiry_window' },
+  refreshedCredentialApplication: { mode: 'restart_required' }, predictiveSoftSwitch: { mode: 'unsupported' },
+  sameAccountFanoutStrategy: 'none', generationApplicationScope: 'per_session_runtime', runtimeAuthApply: { directLiveHotAuth: 'unsupported' },
+};
+
 const genericEntry = createCatalogDefinedAcpEntry('agy');
 
 export const agent = {
   ...genericEntry,
+  connectedServiceQuotaFetcherDescriptor: agyQuotaFetcherDescriptor,
+  getCloudConnectTarget: async () => (await import('./cloud/connect')).agyCloudConnect,
+  getConnectedServiceMaterializer: async () => createAgyConnectedServicesMaterializer(),
+  getConnectedServiceCredentialLifecycleDescriptor: async () => lifecycle,
+  getPreflightSessionControlsProbeAdapter: async () => ({ connectedServiceAuth: 'materialized-env-for-catalogs' as const }),
+  resolveConnectedServiceSwitchContinuity: async () => ({ mode: 'unsupported' as const, reason: 'Antigravity live account switching is not supported' }),
   getCliCommandHandler: async () => (await import('./cli/command')).handleAgyCliCommand,
   getCapabilities: async () => (await import('./cli/extraCapabilities')).capabilities,
   getAcpBackendFactory: async () => {

@@ -31,6 +31,7 @@ describe('fetchAccountProfile', () => {
     expect((axios.get as any).mock.calls[0]?.[0]).toBe('http://127.0.0.1:41001/v1/account/profile');
     expect((axios.get as any).mock.calls[0]?.[1]).toEqual(expect.objectContaining({
       signal: controller.signal,
+      headers: expect.objectContaining({ Accept: 'application/json; happier-connected-service-antigravity=1' }),
     }));
   });
 });

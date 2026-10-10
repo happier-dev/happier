@@ -4,6 +4,31 @@ This document defines when Happier preserves old behavior across UI, CLI, daemon
 
 ## Trigger
 
+### Antigravity connected-service rollout (development)
+
+`antigravity` adds a value to the closed connected-service ID enum without changing
+credential storage or quota snapshot versions. The released `ui-web-v0.2.12`
+reader at `a357c65536ba89669422977d6f7daf9aa0d17e73` rejects the whole HTTP account
+profile when its strict service or credential-revision rows contain the new ID.
+`GET /v1/account/profile` therefore omits Antigravity profiles, groups, and revision
+rows unless the reader sends `Accept: application/json; happier-connected-service-antigravity=1`.
+Updated canonical UI and CLI/daemon profile readers send this opt-in; predecessor
+readers retain their existing account and service projections. Socket account
+updates use the same legacy filtering: although the released update parser passes
+these fields through, its persisted profile parser would discard the cache on
+reload. The additive `connectedServicesProfileChanged: true` hint makes updated
+UI readers refetch their negotiated HTTP projection; daemon readers retain their
+existing account-change catch-up. Credential and quota reads are scoped to an explicit
+service/profile and need no aggregate-list negotiation. Native AGY sessions remain
+usable on older components.
+
+The native-login import RPC is additive and returns only a profile result, never
+credentials or file paths. Updated UI clients show an update-machine message when
+a predecessor daemon lacks the method. Browser sign-in uses the existing sealed
+V2 exchange; an older relay cannot exchange the new service. Downgrading the relay
+requires removing Antigravity profiles first because predecessor relays lack the
+negotiated projection.
+
 Apply this policy when a change affects a cross-component wire shape or semantic, persisted/session/settings data, schema or migration, feature/capability negotiation, installer or service state, upgrade/coexistence, or rollback. Routine internal refactors that leave these seams unchanged do not need a compatibility matrix or shim.
 
 ## Baseline classes

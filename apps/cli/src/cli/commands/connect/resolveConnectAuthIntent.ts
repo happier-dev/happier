@@ -9,6 +9,7 @@ export function resolveConnectAuthIntent(params: Readonly<{
   targetId: string;
   options: ConnectParsedOptions;
 }>): ConnectAuthIntent {
+  if (params.options.importExisting && params.targetId !== 'agy') throw new Error('--import is only supported for AGY');
   if (params.options.device && params.targetId !== 'codex') {
     throw new Error('--device is only supported for Codex');
   }
@@ -35,6 +36,11 @@ export function resolveConnectAuthIntent(params: Readonly<{
       return { kind: 'token', serviceId: 'openai', tokenKind: 'api-key' };
     }
     return { kind: 'oauth', serviceId: 'openai-codex' };
+  }
+
+  if (params.targetId === 'agy') {
+    if (params.options.setupToken || params.options.apiKey || (params.options.importExisting && params.options.oauth)) throw new Error('AGY supports browser OAuth or --import');
+    return { kind: 'oauth', serviceId: 'antigravity' };
   }
 
   if (params.targetId === 'gemini') {

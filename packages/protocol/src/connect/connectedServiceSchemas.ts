@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ProviderAccountSubscriptionV1Schema, SealedProviderAccountSubscriptionV1Schema } from './accountSubscription.js';
+import { AntigravityOauthCredentialMetadataSchema } from '../providers/antigravity/credentialMetadata.js';
 
 import {
     ConnectedServiceLimitCategoryV1Schema,
@@ -229,7 +230,26 @@ export const ConnectedServiceCredentialRecordV1Schema = z.discriminatedUnion('ki
         oauth: z.null(),
         token: TokenCredentialPayloadSchema,
     }),
-]);
+]).superRefine((record, context) => {
+    if (record.serviceId !== 'antigravity') return;
+    if (record.kind !== 'oauth') {
+        context.addIssue({ code: 'custom', path: ['kind'], message: 'Antigravity requires personal OAuth credentials' });
+        return;
+    }
+    const raw = record.oauth.raw;
+    const metadata = raw !== null && typeof raw === 'object' && 'antigravity' in raw ? raw.antigravity : undefined;
+    if (!AntigravityOauthCredentialMetadataSchema.safeParse(metadata).success) {
+        context.addIssue({ code: 'custom', path: ['oauth', 'raw', 'antigravity'], message: 'Invalid Antigravity OAuth issuer metadata' });
+    }
+}).transform((record) => {
+    if (record.serviceId !== 'antigravity' || record.kind !== 'oauth') return record;
+    const raw = record.oauth.raw;
+    const metadata = raw !== null && typeof raw === 'object' && 'antigravity' in raw ? raw.antigravity : undefined;
+    return {
+        ...record,
+        oauth: { ...record.oauth, raw: { antigravity: AntigravityOauthCredentialMetadataSchema.parse(metadata) } },
+    };
+});
 
 export type ConnectedServiceCredentialRecordV1 = z.infer<typeof ConnectedServiceCredentialRecordV1Schema>;
 

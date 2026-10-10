@@ -29,35 +29,19 @@ import {
     resolveOpenAiCodexOauthTokenUrl,
 } from "./oauthConfig";
 
-export class ConnectedServiceOauthTimeoutError extends Error {
-    constructor() {
-        super("Token exchange timed out");
-        this.name = "ConnectedServiceOauthTimeoutError";
-    }
-}
+import {
+    ConnectedServiceOauthExchangeError,
+    ConnectedServiceOauthStateMismatchError,
+    ConnectedServiceOauthTimeoutError,
+} from "./connectedServiceOauthErrors";
+import { exchangeAntigravityOauthTokens } from "./antigravity/exchangeAntigravityOauthTokens";
 
-export class ConnectedServiceOauthStateMismatchError extends Error {
-    constructor() {
-        super("OAuth state mismatch");
-        this.name = "ConnectedServiceOauthStateMismatchError";
-    }
-}
-
-export type ConnectedServiceOauthExchangeErrorCode =
-    | typeof CONNECTED_SERVICE_ERROR_CODES.oauthExchangeFailed
-    | typeof CONNECTED_SERVICE_ERROR_CODES.oauthInvalidGrant
-    | typeof CONNECTED_SERVICE_ERROR_CODES.oauthInvalidClient
-    | typeof CONNECTED_SERVICE_ERROR_CODES.oauthMissingRefreshToken;
-
-export class ConnectedServiceOauthExchangeError extends Error {
-    constructor(
-        public readonly errorCode: ConnectedServiceOauthExchangeErrorCode,
-        message: string,
-    ) {
-        super(message);
-        this.name = "ConnectedServiceOauthExchangeError";
-    }
-}
+export {
+    ConnectedServiceOauthExchangeError,
+    ConnectedServiceOauthStateMismatchError,
+    ConnectedServiceOauthTimeoutError,
+    type ConnectedServiceOauthExchangeErrorCode,
+} from "./connectedServiceOauthErrors";
 
 type OauthExchangeInput = Readonly<{
     serviceId: ConnectedServiceId;
@@ -66,11 +50,12 @@ type OauthExchangeInput = Readonly<{
     verifier: string;
     redirectUri: string;
     state?: string | null;
+    projectId?: string;
     now: number;
     fetcher?: typeof fetch;
 }>;
 
-type OauthExchangePayload = Readonly<{
+export type OauthExchangePayload = Readonly<{
     serviceId: ConnectedServiceId;
     accessToken: string;
     refreshToken: string;
@@ -348,6 +333,22 @@ export async function exchangeConnectedServiceOauthTokens(params: OauthExchangeI
                 now: params.now,
                 fetcher,
             });
+        }
+        if (params.serviceId === "antigravity") {
+            // The configured exchange budget covers token exchange, identity,
+            // project discovery and any connection-time onboarding together.
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), timeoutMs);
+            try {
+                const result = await exchangeAntigravityOauthTokens({ ...params, fetcher: baseFetcher, signal: controller.signal });
+                if (controller.signal.aborted) throw new ConnectedServiceOauthTimeoutError();
+                return result;
+            } catch (error) {
+                if (controller.signal.aborted) throw new ConnectedServiceOauthTimeoutError();
+                throw error;
+            } finally {
+                clearTimeout(timeout);
+            }
         }
         if (params.serviceId === "gemini") {
             return await exchangeGemini({

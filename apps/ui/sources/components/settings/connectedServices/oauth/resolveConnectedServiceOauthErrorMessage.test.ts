@@ -4,6 +4,10 @@ import { ConnectedServiceCredentialBindingMismatchError } from '@happier-dev/pro
 import { resolveConnectedServiceOauthErrorMessage } from './resolveConnectedServiceOauthErrorMessage';
 
 describe('resolveConnectedServiceOauthErrorMessage', () => {
+  it('makes missing Google project and account eligibility failures actionable', () => {
+    expect(resolveConnectedServiceOauthErrorMessage(new Error('connect_oauth_project_required'), 'fallback')).not.toBe('fallback');
+    expect(resolveConnectedServiceOauthErrorMessage(new Error('connect_oauth_account_ineligible'), 'fallback')).not.toBe('fallback');
+  });
   it('maps oauth state mismatch to a friendly message', () => {
     const message = resolveConnectedServiceOauthErrorMessage(new Error('connect_oauth_state_mismatch'), 'fallback');
     expect(message).toBe('Security validation failed. Please try again');

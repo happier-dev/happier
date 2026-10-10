@@ -21,6 +21,10 @@ function resolveDefaultCopy(): ConnectedServiceOauthPasteCopy {
 type ConnectedServiceOauthPasteCopyOverride = Readonly<Partial<ConnectedServiceOauthPasteCopy>>;
 
 const SERVICE_OVERRIDES: Readonly<Partial<Record<ConnectedServiceId, ConnectedServiceOauthPasteCopyOverride>>> = Object.freeze({
+  antigravity: Object.freeze({
+    connectWebDescription: t('connectedServices.importAccounts.pasteDescription'),
+    pasteRedirectUrlPromptBody: t('connectedServices.importAccounts.pasteBody'),
+  }),
   'claude-subscription': Object.freeze({
     connectWebDescription: t('connectedServices.oauthPaste.providerOverrides.claudeSubscription.connectWebDescription'),
     pasteRedirectUrlPromptBody: t('connectedServices.oauthPaste.providerOverrides.claudeSubscription.pasteRedirectUrlPromptBody'),

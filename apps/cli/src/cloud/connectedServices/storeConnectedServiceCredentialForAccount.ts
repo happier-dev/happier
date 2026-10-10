@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import {
   sealConnectedServiceCredentialCiphertext,
+  openConnectedServiceCredentialCiphertext,
   type ConnectedServiceCredentialCompatibleMutationResponseV1,
   type ConnectedServiceCredentialRecordV1,
   type ConnectedServiceCredentialRevisionBoundaryV1,
@@ -10,6 +11,7 @@ import {
   type SealedConnectedServiceCredentialV1,
 } from '@happier-dev/protocol';
 
+import { parseConnectedServiceCredentialRecord } from './resolveConnectedServiceCredentials';
 import { readHttpStatus } from '@/api/client/httpStatusError';
 import type { Credentials } from '@/persistence';
 
@@ -60,13 +62,23 @@ export type ConnectedServiceCredentialStorageApi = Readonly<{
   registerConnectedServiceCredentialPlain: (params: CredentialBinding & Readonly<{
     content: { t: 'plain'; v: ConnectedServiceCredentialRecordV1 };
     expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
+    signal?: AbortSignal;
   }>) => Promise<ConnectedServiceCredentialCompatibleMutationResponseV1>;
   registerConnectedServiceCredentialSealed: (params: CredentialBinding & Readonly<{
     sealed: SealedConnectedServiceCredentialV1;
     metadata?: CredentialMetadata;
     expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
+    signal?: AbortSignal;
   }>) => Promise<ConnectedServiceCredentialCompatibleMutationResponseV1>;
 }>;
+
+export class ConnectedServiceCredentialStorageResultUnknownError extends Error {
+  constructor() { super('Connected service credential storage result is unknown; check the profile before retrying'); this.name = 'ConnectedServiceCredentialStorageResultUnknownError'; }
+}
+
+export class ConnectedServiceCredentialIdentityMismatchError extends Error {
+  constructor() { super('Connected service profile identity does not match the existing account; use a new profile'); this.name = 'ConnectedServiceCredentialIdentityMismatchError'; }
+}
 
 export class ConnectedServiceCredentialStorageSupersededError extends Error {
   readonly reason: 'revision_mismatch' | 'refresh_lease_lost';
@@ -115,13 +127,28 @@ async function readCurrentRevision(params: Readonly<{
   api: ConnectedServiceCredentialStorageApi;
   mode: 'e2ee' | 'plain';
   binding: CredentialBinding;
-}>): Promise<ConnectedServiceCredentialRevisionBoundaryV1 | null> {
+  credentials?: Credentials;
+}>): Promise<(ConnectedServiceCredentialRevisionBoundaryV1 & { providerAccountId: string | null }) | null> {
   if (params.mode === 'plain') {
     const current = await params.api.getConnectedServiceCredentialPlain(params.binding);
-    return current;
+    return current ? { ...current, providerAccountId: metadataForRecord(current.content.v).providerAccountId } : null;
   }
   const current = await params.api.getConnectedServiceCredentialSealed(params.binding);
-  return current;
+  if (!current) return null;
+  if (params.credentials) {
+    let providerAccountId: string | null;
+    try {
+      const opened = openConnectedServiceCredentialCiphertext({
+        material: params.credentials.encryption.type === 'legacy' ? { type: 'legacy', secret: params.credentials.encryption.secret } : { type: 'dataKey', machineKey: params.credentials.encryption.machineKey },
+        ciphertext: current.sealed.ciphertext,
+      });
+      if (!opened) throw new ConnectedServiceCredentialIdentityMismatchError();
+      const record = parseConnectedServiceCredentialRecord({ binding: params.binding, value: opened.value });
+      providerAccountId = metadataForRecord(record).providerAccountId;
+    } catch { throw new ConnectedServiceCredentialIdentityMismatchError(); }
+    return { ...current, providerAccountId };
+  }
+  return { ...current, providerAccountId: current.metadata.providerAccountId ?? null };
 }
 
 async function didStorePreparedCredential(params: Readonly<{
@@ -148,12 +175,14 @@ async function didStorePreparedCredential(params: Readonly<{
 async function writePreparedCredential(params: Readonly<{
   api: ConnectedServiceCredentialStorageApi;
   prepared: PreparedCredentialWrite;
+  signal?: AbortSignal;
 }>) {
   const { api, prepared } = params;
   if (prepared.mode === 'plain') {
     return await api.registerConnectedServiceCredentialPlain({
       ...prepared.binding,
       content: { t: 'plain', v: prepared.record },
+      ...(params.signal ? { signal: params.signal } : {}),
       ...(prepared.revisionSemantics === 'revisioned'
         ? { expectedCredentialRevision: prepared.expectedCredentialRevision }
         : {}),
@@ -164,6 +193,7 @@ async function writePreparedCredential(params: Readonly<{
     ...prepared.binding,
     sealed: prepared.sealed,
     metadata: prepared.metadata,
+    ...(params.signal ? { signal: params.signal } : {}),
     ...(prepared.revisionSemantics === 'revisioned'
       ? { expectedCredentialRevision: prepared.expectedCredentialRevision }
       : {}),
@@ -174,15 +204,20 @@ export async function storeConnectedServiceCredentialForAccount(params: Readonly
   api: ConnectedServiceCredentialStorageApi;
   credentials: Credentials;
   record: ConnectedServiceCredentialRecordV1;
+  signal?: AbortSignal;
+  requireSameProviderAccount?: boolean;
   randomBytes?: (length: number) => Uint8Array;
 }>): Promise<ConnectedServiceCredentialRevisionBoundaryV1> {
+  params.signal?.throwIfAborted();
   const binding = { serviceId: params.record.serviceId, profileId: params.record.profileId };
   const mode = await params.api.getAccountEncryptionMode({ refresh: true });
   if (mode !== 'e2ee' && mode !== 'plain') {
     throw new Error('Cannot store connected service credential while account encryption mode is unknown');
   }
 
-  const currentRevision = await readCurrentRevision({ api: params.api, mode, binding });
+  const currentRevision = await readCurrentRevision({ api: params.api, mode, binding, ...(params.requireSameProviderAccount ? { credentials: params.credentials } : {}) });
+  if (params.requireSameProviderAccount && currentRevision && currentRevision.providerAccountId !== metadataForRecord(params.record).providerAccountId) throw new ConnectedServiceCredentialIdentityMismatchError();
+  params.signal?.throwIfAborted();
   const expectedCredentialRevision = currentRevision?.credentialRevision ?? null;
   const revisionSemantics = currentRevision?.revisionSemantics ?? 'revisioned';
   const prepared: PreparedCredentialWrite = mode === 'plain'
@@ -207,8 +242,11 @@ export async function storeConnectedServiceCredentialForAccount(params: Readonly
       };
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    let writeIssued = false;
     try {
-      const result = await writePreparedCredential({ api: params.api, prepared });
+      params.signal?.throwIfAborted();
+      writeIssued = true;
+      const result = await writePreparedCredential({ api: params.api, prepared, signal: params.signal });
       if ('error' in result) {
         throw new ConnectedServiceCredentialStorageSupersededError(result);
       }
@@ -216,6 +254,10 @@ export async function storeConnectedServiceCredentialForAccount(params: Readonly
         ? { revisionSemantics: 'revisioned', credentialRevision: result.credentialRevision }
         : { revisionSemantics: 'legacy_unfenced', credentialRevision: null };
     } catch (error) {
+      if (params.signal?.aborted) {
+        if (writeIssued) throw new ConnectedServiceCredentialStorageResultUnknownError();
+        throw error;
+      }
       if (error instanceof ConnectedServiceCredentialStorageSupersededError || !isAmbiguousWriteError(error)) {
         throw error;
       }

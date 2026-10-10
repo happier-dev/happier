@@ -11,7 +11,7 @@ const backendsConnectedServicesRoot = fileURLToPath(
 );
 
 const providerOrServiceIdPattern =
-  /(['"])(codex|claude|opencode|gemini|pi|openai-codex|claude-subscription|github|anthropic|openai)\1/gu;
+  /(['"])(codex|claude|opencode|gemini|pi|agy|antigravity|openai-codex|claude-subscription|github|anthropic|openai)\1/gu;
 const providerBackendImportPattern =
   /from\s+(['"])@\/backends\/(codex|claude|opencode|gemini|pi)(?:\/|\1)/gu;
 const providerPersistedSessionMetadataPattern =
@@ -114,6 +114,13 @@ async function collectProviderLiteralViolations(scope: Readonly<{
 }
 
 describe('connected-services shared core provider branching policy', () => {
+  it('keeps native import permission and failure rules in the provider owner', async () => {
+    const source = await readFile(fileURLToPath(new URL('../../api/machine/rpcHandlers.connectedServiceImport.ts', import.meta.url)), 'utf8');
+    expect(Array.from(source.matchAll(providerOrServiceIdPattern))).toEqual([]);
+    expect(source).not.toMatch(/\bAGENTS\.\w+|AgyOauthAccountError|googleapis\.com\/auth\//u);
+    const command = await readFile(fileURLToPath(new URL('../../cli/commands/connect.ts', import.meta.url)), 'utf8');
+    expect(command).not.toMatch(/googleapis\.com\/auth\//u);
+  });
   it.each(scannedRoots)(
     'keeps provider and service ids out of $label shared core except documented provider-owned seams',
     async (scope) => {

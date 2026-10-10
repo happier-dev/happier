@@ -72,9 +72,11 @@ import { readAccountSettingsVersionFromHint } from '@/settings/accountSettings/a
 import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBaseUrl';
 import { fetchAccountProfile } from '@/api/accountProfile';
 import type { RpcHandlerActiveExecution } from '@/api/rpc/types';
+import type { ConnectedServiceImportAccount } from './machine/rpcHandlers.connectedServiceImport';
 
 export type ApiMachineClientDeps = Readonly<{
     connectedAccounts?: ScmConnectedAccountCredentialResolver;
+    connectedServiceImportAccount?: ConnectedServiceImportAccount;
 }>;
 
 export type AccountSettingsVersionHintSource = 'changes' | 'cursor-gone' | 'page-limit';
@@ -327,7 +329,7 @@ export class ApiMachineClient {
             serviceManaged?: boolean;
             serviceLabel?: string;
         }>,
-        deps?: ApiMachineClientDeps,
+        private readonly deps?: ApiMachineClientDeps,
     ) {
         this.ownershipMetadata = ownershipMetadata ?? {};
         // Initialize RPC handler manager
@@ -432,6 +434,7 @@ export class ApiMachineClient {
             },
             deps: {
                 ...deps,
+                connectedServiceImportAccount: this.deps?.connectedServiceImportAccount,
                 machineRpcWorkingDirectory: this.machineRpcWorkingDirectory,
                 filesystemAccessPolicy: this.filesystemAccessPolicy,
                 emitDirectSessionTranscriptUpdate:

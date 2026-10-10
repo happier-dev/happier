@@ -773,6 +773,7 @@ export class ApiClient {
   ): ApiMachineClient {
     return new ApiMachineClient(this.credential.token, machine, ownershipMetadata, {
       connectedAccounts: this.createConnectedAccountCredentialResolver(),
+      connectedServiceImportAccount: { api: this, credentials: this.credential },
     });
   }
 
@@ -841,6 +842,7 @@ export class ApiClient {
     };
     expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
     refreshLeaseOwnerId?: string;
+    signal?: AbortSignal;
   }): Promise<import('@happier-dev/protocol').ConnectedServiceCredentialCompatibleMutationResponseV1> {
     const serverUrl = resolveServerHttpBaseUrl();
     const serviceId = encodeURIComponent(params.serviceId);
@@ -861,6 +863,7 @@ export class ApiClient {
             'Content-Type': 'application/json',
           },
           timeout: resolveConnectedServicesServerApiTimeoutMs(),
+          ...(params.signal ? { signal: params.signal } : {}),
         },
       );
 
@@ -1356,6 +1359,7 @@ export class ApiClient {
     content: { t: 'plain'; v: ConnectedServiceCredentialRecordV1 };
     expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
     refreshLeaseOwnerId?: string;
+    signal?: AbortSignal;
   }): Promise<import('@happier-dev/protocol').ConnectedServiceCredentialCompatibleMutationResponseV1> {
     const serverUrl = resolveServerHttpBaseUrl();
     const serviceId = encodeURIComponent(params.serviceId);
@@ -1375,6 +1379,7 @@ export class ApiClient {
             'Content-Type': 'application/json',
           },
           timeout: resolveConnectedServicesServerApiTimeoutMs(),
+          ...(params.signal ? { signal: params.signal } : {}),
         },
       );
 

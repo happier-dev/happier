@@ -1,15 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { decodeBase64, encodeBase64, sealBoxBundle } from '@happier-dev/protocol';
+import { decodeBase64, encodeBase64, sealBoxBundle, normalizeConnectedServiceOauthCredentialRawMetadata } from '@happier-dev/protocol';
 
-vi.mock('@/utils/timing/time', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/utils/timing/time')>();
-  const immediate = async <T,>(callback: () => Promise<T>): Promise<T> => await callback();
-  return {
-    ...actual,
-    backoff: immediate,
-    backoffForever: immediate,
-  };
+vi.mock('@/sync/domains/state/storage', async () => {
+  const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+  return createStorageModuleStub({});
 });
 
 afterEach(() => {
@@ -42,6 +37,56 @@ function buildBundle(params: Readonly<{ publicKeyB64Url: string; payload: unknow
 }
 
 describe('ConnectedServiceOauthAdapters (proxy exchange)', () => {
+  it.each([
+    [404, { error: 'Not Found' }],
+    // Exact predecessor route validates the closed service enum before entering its handler.
+    [400, { statusCode: 400, error: 'Bad Request', message: 'params/serviceId Invalid enum value. Received antigravity' }],
+  ])('reports an unsupported Antigravity relay on %s without treating provider failures as version failures', async (status, body) => {
+    mockServerConfig();
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) return new Response('', { status: 200 });
+      return new Response(JSON.stringify(body), { status });
+    }));
+    const { getConnectedServiceOauthAdapter } = await import('./connectedServiceOauthAdapters');
+    const adapter = getConnectedServiceOauthAdapter('antigravity')!;
+    await expect(adapter.exchangeAuthorizationCodeForRecord({ credentials, profileId: 'work', code: 'code', verifier: 'verifier', redirectUri: adapter.defaultRedirectUri, state: 'state', now: 1 })).rejects.toThrow('connect_oauth_service_unsupported');
+  });
+  it('authorizes Antigravity with its native scope and preserves sealed project identity without an ID token', async () => {
+    mockServerConfig();
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) return new Response('', { status: 200 });
+      if (!url.endsWith('/v2/connect/antigravity/oauth/exchange')) return new Response('', { status: 404 });
+      const body = JSON.parse(String(init?.body));
+      expect(body.verifier).toBe('verifier');
+      expect(body.redirectUri).toBe('http://localhost:54545/');
+      return new Response(JSON.stringify({ bundle: buildBundle({
+        publicKeyB64Url: body.publicKey,
+        payload: {
+          serviceId: 'antigravity', accessToken: 'access', refreshToken: 'refresh', idToken: null,
+          scope: 'https://www.googleapis.com/auth/aicode', tokenType: 'Bearer',
+          providerEmail: 'user@example.test', providerAccountId: 'google-account', expiresAt: 1234,
+          raw: { antigravity: { clientId: 'native-client', authMethod: 'oauth-personal', projectId: 'verified-project', tierId: 'paid-tier' } },
+        },
+      }) }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { getConnectedServiceOauthAdapter } = await import('./connectedServiceOauthAdapters');
+    const adapter = getConnectedServiceOauthAdapter('antigravity');
+    expect(adapter).not.toBeNull();
+    const url = new URL(adapter!.buildAuthorizationUrl({ redirectUri: adapter!.defaultRedirectUri, state: 'state', challenge: 'challenge' }));
+    expect(url.searchParams.get('scope')?.split(' ')).toContain('https://www.googleapis.com/auth/aicode');
+    expect(url.searchParams.get('code_challenge_method')).toBe('S256');
+    expect(url.searchParams.get('code_challenge')).toBe('challenge');
+    expect(url.searchParams.get('state')).toBe('state');
+    const record = await adapter!.exchangeAuthorizationCodeForRecord({ credentials, profileId: 'work', code: 'code', verifier: 'verifier', redirectUri: adapter!.defaultRedirectUri, state: 'state', now: 1 });
+    expect(record.kind).toBe('oauth');
+    if (record.kind !== 'oauth') throw new Error('Expected OAuth');
+    expect(record.oauth.idToken).toBeNull();
+    expect(record.oauth.providerAccountId).toBe('google-account');
+    expect(normalizeConnectedServiceOauthCredentialRawMetadata(record.oauth.raw)?.antigravity).toEqual({ clientId: 'native-client', authMethod: 'oauth-personal', projectId: 'verified-project', tierId: 'paid-tier' });
+  });
   it('exchanges openai-codex codes via proxy and returns an oauth record', async () => {
     mockServerConfig();
 

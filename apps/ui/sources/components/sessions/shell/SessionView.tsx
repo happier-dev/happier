@@ -234,6 +234,7 @@ import {
     type ConnectedServiceQuotaGaugeWindowMode,
 } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
 import { resolveConnectedServiceQuotaRecoveryCreditReceiptNoticeKey } from '@/sync/domains/connectedServices/connectedServiceQuotaRecoveryCreditReceiptPresentation';
+import { resolveSessionQuotaModelId } from '@/sync/domains/models/resolveSessionQuotaModelId';
 import { useConnectedServiceQuotaSnapshots } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshots';
 import { useConnectedServiceAuthGroupsQuery } from '@/hooks/server/connectedServices/useConnectedServiceAuthGroupsQuery';
 import { useProviderAccountUsageSnapshots } from '@/hooks/server/connectedServices/useProviderAccountUsageSnapshots';
@@ -4167,6 +4168,7 @@ function SessionViewLoaded({
         if (!gaugeSource) return null;
         return computeConnectedServiceQuotaGaugeViewModel({
             snapshot: gaugeSource.snapshot,
+            activeModelId: resolveSessionQuotaModelId({ agentId: liveComposerState.agentId, modelMode, metadata: session.metadata }),
             windowMode: sessionProviderUsageGaugeWindowMode,
             windowModes: sessionProviderUsageGaugeWindowModesSetting,
             additionalMeterIds: connectedServiceQuotaProfileRef
@@ -4187,6 +4189,9 @@ function SessionViewLoaded({
         connectedServiceQuotaDisplaySnapshot,
         providerUsageDisplaySnapshotSource?.kind,
         providerUsageGaugeSource,
+        modelMode,
+        liveComposerState.agentId,
+        session.metadata,
         connectedServiceQuotaProfileRef,
         pinnedQuotaMeterIdsByKey,
         connectedServiceQuotaLimitSelection,
