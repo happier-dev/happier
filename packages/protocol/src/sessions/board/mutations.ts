@@ -67,15 +67,15 @@ export const SessionBoardMutationV1Schema = lazyZodSchema(() => z.discriminatedU
   if (mutation.operation === 'upsert_item' && mutation.destination === 'transcript' && mutation.placement) {
     context.addIssue({ code: 'custom', path: ['placement'], message: 'Transcript destination does not modify Board layout' });
   }
+  if (mutation.operation === 'upsert_item' && mutation.itemContent.t === 'plain' && mutation.destination !== undefined
+    && mutation.itemContent.v.destination !== undefined && mutation.destination !== mutation.itemContent.v.destination) {
+    context.addIssue({ code: 'custom', path: ['destination'], message: 'Destination must match stored item intent' });
+  }
   if (mutation.operation === 'upsert_item' && mutation.expectedItemRevision === null) {
     const destination = mutation.destination ?? (mutation.itemContent.t === 'plain'
       ? mutation.itemContent.v.destination : undefined) ?? (mutation.placement ? 'board' : 'transcript');
     if ((destination === 'board' || destination === 'both') && !mutation.placement) {
       context.addIssue({ code: 'custom', path: ['placement'], message: 'Board item creation requires an atomic first placement' });
-    }
-    if (mutation.itemContent.t === 'plain' && mutation.destination !== undefined
-      && mutation.itemContent.v.destination !== undefined && mutation.destination !== mutation.itemContent.v.destination) {
-      context.addIssue({ code: 'custom', path: ['destination'], message: 'Creation destination must match stored item intent' });
     }
   }
   if (mutation.operation === 'remove_item' && (mutation.layoutContent === undefined) !== (mutation.expectedLayoutRevision === undefined)) {

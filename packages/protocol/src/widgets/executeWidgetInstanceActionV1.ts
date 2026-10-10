@@ -12,7 +12,7 @@ import { SessionBoardErrorCodeSchema } from '../sessions/board/errors.js';
 import { createHomeWidgetActionPortV1 } from './homeWidgetActionPortV1.js';
 import { createWorkBoardWidgetActionPortV1 } from './workBoardWidgetActionPortV1.js';
 import { createSessionBoardWidgetActionPortV1 } from './sessionBoardWidgetActionPortV1.js';
-import { admitWidgetActionSurfaceV1 } from './widgetActionScopeV1.js';
+import { admitWidgetActionSurfaceV1, readWidgetActionAccountScopeAdmissionV1 } from './widgetActionScopeV1.js';
 import { resolveWidgetSizeChoicesV1, normalizeWidgetSizeForSurfaceV1, supportsWidgetGroupsV1, type WidgetSizeV1 } from './widgetPresentationV1.js';
 import { isWidgetTargetHostableV1 } from './widgetInputAdmissionV1.js';
 import { readBuiltinWidgetDescriptorV1 } from './builtinWidgetDescriptorV1.js';
@@ -158,10 +158,15 @@ export async function executeWidgetInstanceActionV1(
   const ref = 'ref' in args ? args.ref : undefined;
   const surface = readWidgetActionSurfaceV1(args);
   if (!surface) return failure('invalid_parameters');
+  if (actionId === 'widgets.area.layout.select') {
+    const account = readWidgetActionAccountScopeAdmissionV1(deps, surface, context);
+    if (!account.ok) return account;
+    // The mounted owner reads through the ordinary surface admission with its captured defaults.
+    return deps.widgetAreaLayoutSelect ? deps.widgetAreaLayoutSelect(surface, context, context.signal)
+      : failure('widget_area_layout_owner_unavailable');
+  }
   const scopeRefusal = await admitWidgetActionSurfaceV1(deps, surface, context);
   if (scopeRefusal) return scopeRefusal;
-  if (actionId === 'widgets.area.layout.select') return deps.widgetAreaLayoutSelect
-    ? deps.widgetAreaLayoutSelect(surface, context, context.signal) : failure('widget_area_layout_owner_unavailable');
   if (actionId.startsWith('widgets.area.layout.')) {
     if (actionId === 'widgets.area.layout.delete' && surface.owner.kind === 'project' && !surface.owner.layoutId)
       return failure('widget_area_layout_default_protected');

@@ -42,6 +42,12 @@ describe('Board sealed mutation contract', () => {
       { operation: 'remove_item', itemId: 'Note', expectedItemRevision: '1', layoutContent: content, expectedLayoutRevision: '1' },
     ]) expect(SessionBoardMutationV1Schema.safeParse(request).success).toBe(false);
   });
+  it('rejects a plaintext update whose semantic destination contradicts stored intent', () => {
+    const item = { v: 1, destination: 'board', title: 'Note', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
+      source: { kind: 'declarative', document: { version: 1, root: { kind: 'markdown', text: 'Hello' } } } };
+    expect(SessionBoardMutationV1Schema.safeParse({ operation: 'upsert_item', itemId: 'note',
+      expectedItemRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ', destination: 'transcript', itemContent: { t: 'plain', v: item } }).success).toBe(false);
+  });
   it('carries an exact existing-item participant for an atomic layout placement', () => {
     const revision = 'ssr1.AAAACHN5c3JlY18xAAAAAQ';
     const request = {

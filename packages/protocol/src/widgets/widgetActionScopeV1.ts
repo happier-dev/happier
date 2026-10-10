@@ -5,12 +5,12 @@ import { readWidgetActionSurfacePortV1 } from './executeWidgetInstanceActionV1.j
 import { WidgetSurfaceReadV1Schema, type WidgetSurfaceReadV1 } from './actionsV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 
-/** Captured host authority admits metadata reads and instance operations alike. */
-export async function readWidgetActionSurfaceAdmissionV1(
-  deps: Pick<ActionExecutorDeps, 'widgetAccountScope' | 'widgetSurfaceActions' | 'workBoardArtifacts'>,
+/** Captured Account routing is admitted before dispatch or a mounted owner's destination read. */
+export function readWidgetActionAccountScopeAdmissionV1(
+  deps: Pick<ActionExecutorDeps, 'widgetAccountScope'>,
   surface: WidgetSurfaceRefV1,
   context: ActionExecutorContext,
-): Promise<Readonly<{ ok: true; read: WidgetSurfaceReadV1 | null }> | ActionExecuteFailure> {
+): Readonly<{ ok: true; scope: Readonly<{ serverId: string; accountId: string }> }> | ActionExecuteFailure {
   const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
   if (context.signal?.aborted) return failure('cancelled');
   let scope: ReturnType<NonNullable<ActionExecutorDeps['widgetAccountScope']>>;
@@ -22,6 +22,19 @@ export async function readWidgetActionSurfaceAdmissionV1(
     return failure('server_target_mismatch');
   if (scope.accountId !== surface.accountId && !(surface.owner.kind === 'project' && surface.artifactId || surface.owner.kind === 'workBoard'))
     return failure('account_target_mismatch');
+  return { ok: true, scope };
+}
+
+/** Captured host authority admits metadata reads and instance operations alike. */
+export async function readWidgetActionSurfaceAdmissionV1(
+  deps: Pick<ActionExecutorDeps, 'widgetAccountScope' | 'widgetSurfaceActions' | 'workBoardArtifacts'>,
+  surface: WidgetSurfaceRefV1,
+  context: ActionExecutorContext,
+): Promise<Readonly<{ ok: true; read: WidgetSurfaceReadV1 | null }> | ActionExecuteFailure> {
+  const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
+  const account = readWidgetActionAccountScopeAdmissionV1(deps, surface, context);
+  if (!account.ok) return account;
+  const { scope } = account;
   if (surface.owner.kind === 'project' || surface.owner.kind === 'workBoard'
     || surface.owner.kind === 'pluginArea' || surface.owner.kind === 'corePage') {
     const port = readWidgetActionSurfacePortV1(deps, surface);
