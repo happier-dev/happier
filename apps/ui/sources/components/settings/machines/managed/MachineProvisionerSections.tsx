@@ -96,7 +96,8 @@ function ProvisionerGroup(
             key={card.id}
             testID={`${props.testID}.${card.id}`}
             title={card.title}
-            subtitle={[card.kind, card.status.label]
+            // What it creates is named for cloud rows only, as on the cards.
+            subtitle={[card.location === 'cloud' ? card.kind : null, card.status.label]
               .filter(Boolean)
               .join(' · ')}
             subtitleLeading={

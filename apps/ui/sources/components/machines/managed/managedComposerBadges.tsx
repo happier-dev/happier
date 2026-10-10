@@ -120,10 +120,21 @@ export const ManagedProgressPopoverContent = React.memo(
         })),
       [model.stages],
     );
+    const deleteMachine = model.failed && model.onDeleteMachine ? (
+      <RoundButton
+        testID="managed-machine-progress-delete"
+        size="small"
+        display="destructive"
+        title={t('managedMachines.actions.deleteMachine')}
+        onPress={model.onDeleteMachine}
+      />
+    ) : null;
+    const deleteInOwnRow = deleteMachine !== null && Boolean(model.onContinueWithoutSetup)
+      && Boolean(model.onRetrySetup || model.onRetryInstall);
     return (
       <View style={styles.popover}>
         <View style={styles.head}>
-          <View style={styles.mark}>{model.mark}</View>
+          {model.mark ? <View style={styles.mark}>{model.mark}</View> : null}
           <Text style={styles.title} numberOfLines={2}>
             {model.failed
               ? model.failureTitle ?? t('managedMachines.creation.installFailedTitle', {
@@ -142,6 +153,7 @@ export const ManagedProgressPopoverContent = React.memo(
           steps={steps}
           testIDPrefix="managed-machine-progress-step"
           showStepMessages={false}
+          density="compact"
         />
         <Text style={styles.body} accessibilityLiveRegion="polite">
           {model.message}
@@ -151,10 +163,13 @@ export const ManagedProgressPopoverContent = React.memo(
             <Text style={styles.archiveLabel}>
               {t('managedRetention.whenSessionArchived')}
             </Text>
+            {/* Three short words: the control is as wide as its words, not the popover. */}
+            <View style={styles.archiveChoice}>
             <SegmentedTabBar<ManagedArchiveChoice>
               role="radiogroup"
               accessibilityLabel={t('managedRetention.whenSessionArchived')}
               compact
+              segmentSizing="content"
               testIDPrefix="managed-machine-progress-archive"
               activeTabId={model.archiveChoice.value}
               onSelectTab={model.archiveChoice.onChange}
@@ -168,12 +183,15 @@ export const ManagedProgressPopoverContent = React.memo(
                   unavailableReason: archiveUnavailableReason(model.archiveChoice, 'delete') },
               ]}
             />
+            </View>
           </View>
         ) : null}
-        {/* The irreversible delete stands apart at the leading edge; one bordered next step closes the row. */}
+        {/* The ways forward close the popover at its trailing edge, quiet first and the one bordered next step
+            last (lab m-life 1). */}
         <SectionButtonRow
           trailing={
             <>
+              {deleteInOwnRow ? null : deleteMachine}
               {model.failed && model.onContinueWithoutSetup ? (
                 <RoundButton
                   testID="managed-machine-progress-skip-setup"
@@ -213,16 +231,10 @@ export const ManagedProgressPopoverContent = React.memo(
             </>
           }
         >
-          {model.failed && model.onDeleteMachine ? (
-            <RoundButton
-              testID="managed-machine-progress-delete"
-              size="small"
-              display="destructive"
-              title={t('managedMachines.actions.deleteMachine')}
-              onPress={model.onDeleteMachine}
-            />
-          ) : null}
+          {null}
         </SectionButtonRow>
+        {/* Three ways forward do not fit one line: the irreversible one takes the last line on its own. */}
+        {deleteInOwnRow ? <SectionButtonRow trailing={deleteMachine}>{null}</SectionButtonRow> : null}
       </View>
     );
   },
@@ -374,6 +386,10 @@ const styles = StyleSheet.create((theme) => ({
     ...Typography.default('medium'),
     ...rowDescription,
     color: theme.colors.text.link,
+  },
+  // Three one-word segments: as wide as their words, at the popover's leading edge (lab m-pick Aprogd).
+  archiveChoice: {
+    alignSelf: 'flex-start',
   },
   archive: {
     gap: 6,

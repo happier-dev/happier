@@ -226,7 +226,9 @@ describe('UI machine Agent inventory Action transport', () => {
         }, { surface: 'ui', authority: 'present_user', serverId });
         expect(result).toEqual({ ok: true, result: { items: [{ agentId: 'acme/helper', title: 'Remote Helper', ...facts }] } });
         expect(rpc.machine.mock.calls.map(([request]) => request)).toEqual([
-            expect.objectContaining({ machineId: 'machine-1', serverId, method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE }),
+            expect.objectContaining({ machineId: 'machine-1', serverId, method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
+                payload: { machineId: 'machine-1', selection: 'agents' },
+            }),
             expect.objectContaining({ machineId: 'machine-1', serverId, method: RPC_METHODS.CAPABILITIES_DETECT,
                 payload: { requests: [{ id: 'cli.acme/helper', params: { includeLoginStatus: true, includeLatestVersion: true } }], bypassCache: true },
             }),

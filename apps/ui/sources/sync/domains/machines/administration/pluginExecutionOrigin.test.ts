@@ -36,6 +36,39 @@ function candidate(input: Readonly<{
 }
 
 describe('resolvePluginMachineExecutionOriginState', () => {
+    it('selects an exact admitted source and preserves an unavailable saved source', () => {
+        const origin = { serverIdentityId: 'srv_one', sourceRef: { machineId: 'machine-a', pluginId: 'acme.plugin',
+            sourceCustody: { kind: 'development', registeredRootId: 'registered-source-a' } } } as const;
+        const sourceCandidate = { source: { origin, version: '1.0.0', occurrenceId: 'occurrence-a',
+            serverId: 'local-one', generation: 1 }, releaseContent: 'matched', validation: { kind: 'admitted' } } as const;
+        expect(resolvePluginMachineExecutionOriginState({ pluginId: 'acme.plugin', storedOrigin: null,
+            candidates: [sourceCandidate] })).toMatchObject({ kind: 'selected', origin, selectionSource: 'soleCandidate' });
+        expect(resolvePluginMachineExecutionOriginState({ pluginId: 'acme.plugin', storedOrigin: origin,
+            candidates: [{ ...sourceCandidate, validation: { kind: 'rejected', reason: 'offline' } }] }))
+            .toMatchObject({ kind: 'unavailable', storedOrigin: origin, reasons: ['offline'] });
+        const replacement = { ...sourceCandidate, source: { ...sourceCandidate.source, origin: { ...origin,
+            sourceRef: { ...origin.sourceRef, sourceCustody: { kind: 'development', registeredRootId: 'replacement-source' } } } } } as const;
+        expect(resolvePluginMachineExecutionOriginState({ pluginId: 'acme.plugin', storedOrigin: origin,
+            candidates: [replacement] })).toMatchObject({ kind: 'unavailable', reasons: ['missing'] });
+    });
+    it('uses an admitted plugin default after explicit preference and before sole selection', () => {
+        const a = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-a', materializationId: 'mat-a' });
+        const b = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-b', materializationId: 'mat-b' });
+        const origin = (entry: typeof a) => ({ serverIdentityId: entry.materialization.serverIdentityId,
+            materializationRef: { machineId: entry.materialization.machineId, materializationId: entry.materialization.materializationId, pluginId: 'acme.plugin' } });
+        expect(resolvePluginMachineExecutionOriginState({ pluginId: 'acme.plugin', storedOrigin: null,
+            candidates: [a, b], declaredDefaultOrigins: [origin(b)] })).toMatchObject({ kind: 'selected', origin: origin(b), selectionSource: 'pluginDefault' });
+        expect(resolvePluginMachineExecutionOriginState({ pluginId: 'acme.plugin', storedOrigin: null,
+            candidates: [{ ...a, releaseContent: 'unknown' }, b], declaredDefaultOrigins: [origin(b)] }))
+            .toMatchObject({ kind: 'selected', origin: origin(b), selectionSource: 'pluginDefault' });
+        expect(resolvePluginMachineExecutionOriginState({ pluginId: 'acme.plugin', storedOrigin: origin(a),
+            candidates: [a, b], declaredDefaultOrigins: [origin(b)] })).toMatchObject({ kind: 'selected', origin: origin(a), selectionSource: 'stored' });
+        const offline = { ...a, validation: { kind: 'rejected', reason: 'offline' } } as const;
+        expect(resolvePluginMachineExecutionOriginState({ pluginId: 'acme.plugin', storedOrigin: origin(a),
+            candidates: [offline, b], declaredDefaultOrigins: [origin(b)] })).toMatchObject({ kind: 'unavailable', reasons: ['offline'] });
+        expect(resolvePluginMachineExecutionOriginState({ pluginId: 'acme.plugin', storedOrigin: null,
+            candidates: [a, b], declaredDefaultOrigins: [origin(a), origin(b)] }).kind).toBe('selectionRequired');
+    });
     it('composes uncollapsed Availability rows with exact machine state and Artifact-owned release validation', () => {
         const materialization = candidate({
             serverIdentityId: 'srv_one',
@@ -198,13 +231,12 @@ describe('resolvePluginMachineExecutionOriginState', () => {
         })[0]?.validation).toEqual({ kind: 'rejected', reason: 'missing' });
     });
 
-    it('says a plugin included with Happier needs no chosen machine when none reports it', () => {
+    it('does not infer executable installation from a bundled plugin identity', () => {
         expect(resolvePluginMachineExecutionOriginState({
             pluginId: 'happier.claude',
             storedOrigin: null,
             candidates: [],
-            includedWithHappier: true,
-        })).toEqual({ kind: 'unavailable', storedOrigin: null, candidates: [], reasons: ['included_with_happier'] });
+        })).toEqual({ kind: 'unavailable', storedOrigin: null, candidates: [], reasons: ['no_materialization'] });
     });
 
     it('reports unavailable for zero candidates and structurally selects the sole admitted origin', () => {

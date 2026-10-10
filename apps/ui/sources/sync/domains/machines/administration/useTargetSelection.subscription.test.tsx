@@ -1,4 +1,5 @@
 import { act } from 'react-test-renderer';
+import { createRequire } from 'node:module';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createMachineFixture, renderHook, standardCleanup } from '@/dev/testkit';
@@ -18,6 +19,41 @@ afterEach(() => {
 });
 
 describe('machine administration target demand', () => {
+    it('leaves Plugin administration unresolved when more than one Account machine is eligible', async () => {
+        // Vitest's ESM graph and the lazy Node require boundary have separate
+        // module instances. Register the real engine in the latter, as app entry does.
+        const syncRuntime = await import('@/sync/syncEngine');
+        const requiredSync: typeof import('@/sync/sync') = createRequire(import.meta.url)('../../../sync.ts');
+        requiredSync.registerSyncRuntime(syncRuntime);
+        const previous = storage.getState();
+        const serverUrl = 'https://plugin-initial-target.example.test';
+        await upsertServerProfile({ serverUrl, name: 'Plugin initial target' });
+        const profile = await setServerProfileIdentityForUrl(serverUrl, 'srv_plugin_initial_target');
+        if (!profile) throw new Error('Test profile was not created');
+        const scope = { serverId: profile.id, accountId: 'plugin-initial-account' };
+        const machine = createMachineFixture({ id: 'online-plugin-machine', activeAt: Date.now() });
+        const other = createMachineFixture({ id: 'other-plugin-machine', activeAt: Date.now() });
+        const selectionKey = MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.plugins;
+        try {
+            storage.setState((state) => ({
+                profile: { ...state.profile, id: scope.accountId },
+                profileScope: scope,
+                settingsScope: scope,
+                machineListByServerId: { [profile.id]: [other, machine] },
+                machineListStatusByServerId: { [profile.id]: 'idle' },
+                settings: { ...state.settings, machineAdministrationTargetsLocalV1: {} },
+            }));
+            const hook = await renderHook(() => useMachineAdministrationTargetSelection(selectionKey));
+            expect(hook.getCurrent().selectedTarget).toBeNull();
+            expect(hook.getCurrent().resolveExecutionTarget()).toBeNull();
+            expect(storage.getState().settings.machineAdministrationTargetsLocalV1[selectionKey]).toBeUndefined();
+            await hook.unmount();
+        } finally {
+            storage.setState(previous);
+            await removeServerProfile(profile.id);
+        }
+    });
+
     it('uses this device target independently of the Account policy document', async () => {
         const previous = storage.getState();
         const local = { serverIdentityId: 'srv_one', machineId: 'local-machine' };

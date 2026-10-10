@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { MachineDisplayCacheEntryV1 } from '@/sync/domains/state/warmCachePersistence';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
-import { isMachineInventorySettled, resolveAllProfileMachineInventorySnapshots } from './machineInventorySnapshots';
+import { isMachineInventorySettled, readMachineInventoryStatus, resolveAllProfileMachineInventorySnapshots } from './machineInventorySnapshots';
 
 function machine(input: Readonly<{
     id: string;
@@ -52,12 +52,26 @@ const profiles = [
 ] as const;
 
 describe('resolveAllProfileMachineInventorySnapshots', () => {
-    it('does not settle a Home whose machine list has not been read, so an absent machine is not called removed', () => {
+    it.each([true, false])('uses canonical settled rows even when an active or alias list disagrees, contains machine = %s', (containsMachine) => {
+        const row = machine({ id: 'machine-conflict', active: true });
+        const snapshots = resolveAllProfileMachineInventorySnapshots({
+            profiles, activeServerId: 'local-a', activeInventoryLoaded: true, activeMachines: [row],
+            machineListByServerId: { srv_server_a: containsMachine ? [row] : [], 'local-a': containsMachine ? [] : [row] },
+            machineListStatusByServerId: { srv_server_a: 'idle', 'local-a': 'idle' },
+            accountId: 'account-1', loadWarmEntries: () => ({}),
+        });
+        expect(snapshots[0]).toMatchObject({
+            kind: 'resolved', observation: 'live', settled: true, inventoryStatus: 'idle',
+            machines: containsMachine ? [expect.objectContaining({ id: row.id })] : [],
+        });
+    });
+
+    it.each([true, false])('preserves inventory loading and failure with app data ready = %s', (activeInventoryLoaded) => {
         const base = {
             profiles,
             activeServerId: 'local-a',
             // Sessions arrived (the app is "data ready") before this Home's machine list did.
-            activeInventoryLoaded: true,
+            activeInventoryLoaded,
             activeMachines: [],
             machineListByServerId: {},
             accountId: 'account-1',
@@ -65,12 +79,22 @@ describe('resolveAllProfileMachineInventorySnapshots', () => {
         };
         const loading = resolveAllProfileMachineInventorySnapshots({ ...base, machineListStatusByServerId: {} });
         expect(isMachineInventorySettled(loading, 'srv_server_a')).toBe(false);
+        expect(loading[0]).toMatchObject({ inventoryStatus: 'loading' });
+        expect(readMachineInventoryStatus(loading, 'srv_server_a')).toBe('loading');
 
-        const read = resolveAllProfileMachineInventorySnapshots({ ...base, machineListStatusByServerId: { 'local-a': 'idle' } });
+        const read = resolveAllProfileMachineInventorySnapshots({
+            ...base, machineListByServerId: { 'local-a': [] }, machineListStatusByServerId: { 'local-a': 'idle' },
+        });
         expect(isMachineInventorySettled(read, 'srv_server_a')).toBe(true);
+        expect(readMachineInventoryStatus(read, 'srv_server_a')).toBe('idle');
 
         const failed = resolveAllProfileMachineInventorySnapshots({ ...base, machineListStatusByServerId: { 'local-a': 'error' } });
         expect(isMachineInventorySettled(failed, 'srv_server_a')).toBe(false);
+        expect(failed[0]).toMatchObject({ inventoryStatus: 'error' });
+        expect(readMachineInventoryStatus(failed, 'srv_server_a')).toBe('error');
+        const signedOut = resolveAllProfileMachineInventorySnapshots({ ...base, machineListStatusByServerId: { 'local-a': 'signedOut' } });
+        expect(signedOut[0]).toMatchObject({ inventoryStatus: 'signedOut' });
+        expect(readMachineInventoryStatus(signedOut, 'srv_server_a')).toBe('signedOut');
     });
 
     it('never settles a Home from its warm cache alone', () => {

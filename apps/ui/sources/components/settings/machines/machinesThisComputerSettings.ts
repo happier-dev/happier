@@ -7,7 +7,7 @@ export const MACHINES_THIS_COMPUTER_SETTINGS = defineSettingsPage({
         setup: {
             titleKey: 'settingsMachines.setupSectionTitle',
             settings: {
-                openSetupAction: { titleKey: 'setupOnboarding.openSetupAction', descriptionKey: 'settingsMachines.setupRowSubtitle' },
+                openSetupAction: {},
             },
         },
     },

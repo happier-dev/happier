@@ -9,9 +9,10 @@ import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/act
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { getStorage } from '@/sync/domains/state/storage';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
-import { invalidateMachinePoolProjection } from './machinePoolProjection';
+import { invalidateMachinePoolProjection, observeMachinePoolProjection, resetMachinePoolProjectionForTests } from './machinePoolProjection';
 import { applyPlannedChangeActions } from '@/sync/runtime/orchestration/changesApplier';
 import { planSyncActionsFromChanges } from '@/sync/runtime/orchestration/changesPlanner';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 const initialStorageState = getStorage().getState();
 const boundary = {
@@ -63,9 +64,60 @@ describe('machinePoolSyncRuntime', () => {
     });
 
     afterEach(() => {
+        resetMachinePoolProjectionForTests();
         retireActiveServerAccountScopeLifetime(); resetRuntimeFetch(); resetServerFeaturesClientForTests();
         invalidateAccountEncryptionModeCache();
         vi.restoreAllMocks(); vi.unstubAllGlobals();
+    });
+
+    it('lets the focused change planner refresh Pools once while unrelated exact wakes retain their answer', async () => {
+        const release = observeMachinePoolProjection(boundary.serverId);
+        try {
+            await vi.waitFor(() => expect(boundary.pendingResponses).toHaveLength(1));
+            boundary.pendingResponses[0]?.(Response.json({ pools: [poolView('Initial', 1)] }));
+            await vi.waitFor(() => expect(getStorage().getState().machinePoolListStatusByServerId[boundary.serverId]).toBe('idle'));
+            const initialPools = getStorage().getState().machinePoolListByServerId[boundary.serverId];
+
+            const applyPage = (kind: 'session' | 'machinePool', cursor: number) => {
+                const planned = planSyncActionsFromChanges([{ cursor, kind, entityId: `${kind}-a`, changedAt: cursor, hint: null }]);
+                return applyPlannedChangeActions({
+                    planned,
+                    credentials: { token: createAccountTokenForTests('account-a') },
+                    isSessionMessagesLoaded: () => false,
+                    publishAccountChanges: changes => publishHomeAccountChange(boundary.serverId, changes.map(change => change.entityId)),
+                    invalidate: { machinePools: () => invalidateMachinePoolProjection(boundary.serverId) },
+                    invalidateMessagesForSession: async () => {},
+                    invalidateScmStatusForSession: () => {},
+                    applyTodoSocketUpdates: async () => {},
+                    kvBulkGet: async () => ({ values: [] }),
+                });
+            };
+            for (let cursor = 1; cursor <= 20; cursor += 1) await applyPage('session', cursor);
+            expect(getStorage().getState().machinePoolListStatusByServerId[boundary.serverId]).toBe('idle');
+            expect(getStorage().getState().machinePoolListByServerId[boundary.serverId]).toBe(initialPools);
+            expect(boundary.listRequests).toBe(1);
+
+            const changed = applyPage('machinePool', 21);
+            await vi.waitFor(() => expect(boundary.pendingResponses).toHaveLength(2));
+            boundary.pendingResponses[1]?.(Response.json({ pools: [poolView('Changed', 2)] }));
+            expect(await changed).toMatchObject({ status: 'complete', safeAdvanceCursor: '21' });
+            expect(boundary.listRequests).toBe(2);
+            expect(getStorage().getState().machinePoolListByServerId[boundary.serverId]?.[0]?.pool.name).toBe('Changed');
+
+            publishHomeAccountChange(boundary.serverId);
+            await vi.waitFor(() => expect(boundary.pendingResponses).toHaveLength(3));
+            boundary.pendingResponses[2]?.(Response.json({ pools: [poolView('Reconnected', 3)] }));
+            await vi.waitFor(() => expect(getStorage().getState().machinePoolListStatusByServerId[boundary.serverId]).toBe('idle'));
+            expect(getStorage().getState().machinePoolListByServerId[boundary.serverId]?.[0]?.pool.name).toBe('Reconnected');
+
+            publishHomeAccountChange(boundary.serverId, ['self']);
+            await vi.waitFor(() => expect(boundary.pendingResponses).toHaveLength(4));
+            boundary.pendingResponses[3]?.(Response.json({ pools: [poolView('Account changed', 4)] }));
+            await vi.waitFor(() => expect(getStorage().getState().machinePoolListStatusByServerId[boundary.serverId]).toBe('idle'));
+            expect(getStorage().getState().machinePoolListByServerId[boundary.serverId]?.[0]?.pool.name).toBe('Account changed');
+        } finally {
+            release();
+        }
     });
 
     it('replays an invalidation received during a list request and publishes the fresh cycle', async () => {

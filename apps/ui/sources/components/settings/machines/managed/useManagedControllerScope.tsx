@@ -37,6 +37,11 @@ export type ManagedControllerScope = Readonly<{
  * manage, else the first online candidate, else the first candidate. The choice is page-local, as the
  * draft it scopes is.
  */
+/** A machine that can run provider calls for this Home: it has an installation and is not revoked. */
+export function isManagedControllerCandidate(machine: Machine): boolean {
+  return !!machine.installationId && !machine.revokedAt;
+}
+
 export function useManagedControllerScope(
   input: Readonly<{
     serverId: string;
@@ -55,9 +60,7 @@ export function useManagedControllerScope(
 
   const eligible = React.useMemo(
     () =>
-      (machines ?? []).filter(
-        (machine) => !!machine.installationId && !machine.revokedAt,
-      ),
+      (machines ?? []).filter(isManagedControllerCandidate),
     [machines],
   );
   const scopedRows = React.useMemo(

@@ -1,9 +1,12 @@
 import * as React from 'react';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { DevcontainerEffectReviewV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { ManagedMachineActionOutputSchemasV1, type ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineRetentionPolicyV1 } from '@happier-dev/protocol/account/settings/machineRetentionDefaultsV1';
+import { isMachineRetainedWakeEligibleV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { ActionOperationListV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
 import { readInputPath } from '@happier-dev/protocol/inputs';
 
 import { Icon } from '@/components/ui/icons/Icon';
@@ -50,7 +53,7 @@ import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { canRetryManagedInstallation, describeManagedCreation, managedCreationSetup, type ManagedCreationContext } from './managedCreationPresentation';
 import { useManagedMachineActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
 import { publishActionOperationObservation, reconcileActionOperationsOnce } from '@/sync/domains/actionOperations/actionOperationRuntime';
-import { readManagedMachinePolicyParent, type ManagedMachinePolicyParent } from './managedMachinePolicyParent';
+import { readManagedMachinePolicyParent, readManagedMachineRebuildReview, type ManagedMachinePolicyParent } from './managedMachinePolicyParent';
 import { useManagedMachineInventory, type ManagedMachineInventoryEntry } from './useManagedMachineInventory';
 import { ManagedMachineReadApprovalNotice } from './ManagedMachineReadApprovalNotice';
 import { currentManagedMoveController, readManagedMachineMoveCandidates, type ManagedMachineMoveCandidate } from './managedMachineMoveCandidates';
@@ -115,6 +118,7 @@ export function ManagedMachineSections(props: SectionProps) {
         if (id) Modal.hide(id);
     }, []);
     const [deleteReview, setDeleteReview] = React.useState<Readonly<{ key: string; review: ManagedMachineDeleteReview }> | null>(null);
+    const [rebuildReview, setRebuildReview] = React.useState<Readonly<{ key: string; review: DevcontainerEffectReviewV1 }> | null>(null);
     const [moveReview, setMoveReview] = React.useState<Readonly<{ key: string; candidates: readonly ManagedMachineMoveCandidate[] }> | null>(null);
     const [moveLoading, setMoveLoading] = React.useState(false);
     const moveLoadingRef = React.useRef(false);
@@ -122,6 +126,8 @@ export function ManagedMachineSections(props: SectionProps) {
     const deleteReviewKey = JSON.stringify([props.serverId, props.binding?.accountId, props.binding?.revision,
         machine.id, machine.intentRevision, machine.controller, machine.resource]);
     const currentDeleteReview = deleteReview?.key === deleteReviewKey ? deleteReview.review : null;
+    const rebuildReviewKey = JSON.stringify([deleteReviewKey, machine.launch]);
+    const currentRebuildReview = rebuildReview?.key === rebuildReviewKey ? rebuildReview.review : null;
     const reviewedDependencies = currentDeleteReview?.census;
     const interestRef = React.useRef<AbortController | null>(null);
     React.useEffect(() => {
@@ -133,6 +139,7 @@ export function ManagedMachineSections(props: SectionProps) {
         setProposedPolicy(null);
         submittedPolicyRef.current = null;
         setDeleteReview(null);
+        setRebuildReview(null);
         setMoveReview(null);
         setRemoveReviewKey(null);
         moveLoadingRef.current = false;
@@ -141,6 +148,7 @@ export function ManagedMachineSections(props: SectionProps) {
             interest.abort();
             submittedPolicyRef.current = null;
             setProposedPolicy(null);
+            setRebuildReview(null);
             closeKeepSheet();
         });
         return () => {
@@ -190,6 +198,7 @@ export function ManagedMachineSections(props: SectionProps) {
     const operation = useManagedMachineActionOperation({ serverId: props.serverId, accountId: props.binding?.accountId ?? null,
         homeId: machine.homeId, machineId: machine.controller.machineId, managedId: machine.id, enrolledMachineId: machine.enrolledMachineId });
     const [operationReadRevision, refreshOperation] = React.useReducer(value => value + 1, 0);
+    const operationRefreshThroughAction = React.useRef(false);
     const currentControllerAvailable = requiredController !== null;
     React.useEffect(() => {
         const binding = props.binding;
@@ -199,9 +208,20 @@ export function ManagedMachineSections(props: SectionProps) {
         const shouldContinue = () => current && binding.isCurrent();
         const machineIds = [...new Set([...(currentControllerAvailable ? [machine.controller.machineId] : []),
             ...(machine.enrolledMachineId ? [machine.enrolledMachineId] : [])])];
+        const throughAction = operationRefreshThroughAction.current;
+        operationRefreshThroughAction.current = false;
         for (const machineId of machineIds) {
             const scope = { serverId: props.serverId, accountId: binding.accountId, machineId };
-            void reconcileActionOperationsOnce({ scope, shouldContinue, requireCurrentDomainFacts: true }).catch(() => {
+            const list = throughAction ? async ({ request }: Parameters<NonNullable<Parameters<typeof reconcileActionOperationsOnce>[0]['list']>>[0]) => {
+                const result = await props.executeAction('action.operations.list', {
+                    serverId: props.serverId, machineId, ...(request ?? {}),
+                }, { surface: 'ui', authority: 'present_user', serverId: props.serverId,
+                    expectedAccountId: binding.accountId });
+                if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+                return ActionOperationListV1ResponseSchema.parse(result.result);
+            } : undefined;
+            void reconcileActionOperationsOnce({ scope, shouldContinue, requireCurrentDomainFacts: true,
+                ...(list ? { list } : {}) }).catch(() => {
                 if (shouldContinue()) publishActionOperationObservation({ ...scope, observation: 'unavailable' });
             });
         }
@@ -251,6 +271,7 @@ export function ManagedMachineSections(props: SectionProps) {
             onSucceeded?.(result);
             if (actionId !== 'machines.managed.references.get') {
                 publishHomeAccountChange(props.serverId);
+                operationRefreshThroughAction.current = true;
                 refreshOperation();
                 refreshPolicyParent();
             }
@@ -400,6 +421,28 @@ export function ManagedMachineSections(props: SectionProps) {
     };
     const observedPower = machine.observation?.power;
     const resourceGone = machine.observation?.availability === 'absent' || machine.observation?.storage === 'lost';
+    const canRebuild = canMutate && bound && machine.creationState === 'active' && !resourceGone
+        && requiredController !== null && controllerPresence?.online === true && supportedIntents.includes('rebuild');
+    const reviewRebuild = () => fireAndForget((async () => {
+        const binding = props.binding;
+        const interest = interestRef.current;
+        if (!canRebuild || !binding?.isCurrent() || !interest || interest.signal.aborted || pendingRef.current) return;
+        pendingRef.current = true;
+        setPending('machines.provisioners.options');
+        setRebuildReview(null);
+        setError(null);
+        try {
+            const result = await readManagedMachineRebuildReview({ machine, binding, signal: interest.signal,
+                onApprovalPending: registration => approvalRequestRef.current(registration) });
+            if (!binding.isCurrent() || interest.signal.aborted) return;
+            if (result.kind === 'failed') setError(result.code);
+            else setRebuildReview({ key: rebuildReviewKey, review: result.review });
+        } catch {
+            if (binding.isCurrent() && !interest.signal.aborted) setError('managed_parent_unavailable');
+        } finally {
+            if (binding.isCurrent() && !interest.signal.aborted) { pendingRef.current = false; setPending(null); }
+        }
+    })(), { tag: 'ManagedMachineSections.rebuildReview' });
     // Stop and Delete sit at the receipt's foot, where its cost and recipe state the consequence.
     const receiptActions: NonNullable<ManagedReceiptModel['secondary']> = bound && machine.creationState === 'active' && machine.archivedAt === undefined ? [
         // An observed power state leaves only the operations that change it (lab: "Stop server" while it runs).
@@ -411,6 +454,9 @@ export function ManagedMachineSections(props: SectionProps) {
                 onPress: () => fireAndForget(run('machines.managed.power.set', { ...target, when: 'now', expectedRevision: machine.intentRevision,
                     intent }), { tag: 'ManagedMachineSections.power' }) };
         }),
+        ...(supportedIntents.includes('rebuild') ? [{ label: t('managedMachines.actions.rebuild'), testID: 'managed-machine.rebuild',
+            tone: 'bordered' as const, disabled: !canRebuild,
+            loading: pending === 'machines.provisioners.options' || pending === 'machines.managed.rebuild', onPress: reviewRebuild }] : []),
         ...(supportedIntents.includes('delete') ? [{ label: t('managedMachines.actions.delete'), testID: 'managed-machine.delete',
             tone: 'text' as const, disabled: !canMutate,
             loading: pending === 'machines.managed.references.get' || pending === 'machines.managed.delete', onPress: reviewDependencies }] : []),
@@ -446,7 +492,7 @@ export function ManagedMachineSections(props: SectionProps) {
         capabilitiesAvailable: policyParent !== null,
         nativeExpiry: nativeExpiryDescription,
         effects: supportedIntents.filter((intent): intent is 'stop' | 'delete' => intent === 'stop' || intent === 'delete'),
-        canWake: supportedIntents.includes('start') || supportedIntents.includes('resume'),
+        canWake: isMachineRetainedWakeEligibleV1(policy.retention, { supportedIntents }),
         // A live machine is where an explicit, reviewed deadline is set (plan 52); the Action still asks first.
         deadline: true,
         consequence, disabled: !canMutate || !policyParent, onChange: changePolicy,
@@ -532,6 +578,22 @@ export function ManagedMachineSections(props: SectionProps) {
             title={t('surfaceState.asOf', { time: formatAsOfTime(machine.observation.observedAt) })}
             rightElement={<RoundButton title={t('managedMachines.inspect.checkNow')} display="inverted" size="small"
                 testID="managed-machine.observation-check" onPress={inspect} />} /></ItemGroup> : null}
+        {currentRebuildReview ? <>
+            {(['host', 'child'] as const).map(scope => <ItemGroup key={scope} title={t(`managedMachines.rebuildReview.${scope}`)}>
+                {currentRebuildReview.effects.map((effect, index) => effect.scope === scope ? <Item key={index}
+                    title={effect.title} subtitle={effect.details.join('\n')} subtitleLines={0} mode="info" showChevron={false}
+                    testID={`managed-machine.rebuild-effect.${scope}:${index}`} /> : null)}
+            </ItemGroup>)}
+            <ManagedDecisionRow testID="managed-machine.rebuild-decision" footnote={t('managedMachines.rebuildReview.help')}
+                onCancel={canMutate ? () => setRebuildReview(null) : undefined}
+                confirm={{ label: t('managedMachines.actions.rebuild'), testID: 'managed-machine.rebuild-confirm', disabled: !canRebuild,
+                    loading: pending === 'machines.managed.rebuild', onPress: () => {
+                        if (!canRebuild) return;
+                        fireAndForget(run('machines.managed.rebuild', { homeId: machine.homeId, managedMachineId: machine.id,
+                            expectedRevision: machine.intentRevision, kind: 'rebuild', reviewedEffectDigest: currentRebuildReview.reviewedEffectDigest },
+                            () => setRebuildReview(null), () => setRebuildReview(null)), { tag: 'ManagedMachineSections.rebuild' });
+                    } }} />
+        </> : null}
         {reviewedDependencies ? <ItemGroup title={t('managedMachines.dependencies.title')}>
             {reviewedDependencies.references.map(reference => <Item key={`${reference.kind}:${reference.id}`}
                 title={reference.name || reference.id} subtitle={reference.id} mode="info" showChevron={false}
@@ -696,10 +758,14 @@ export function ManagedDecisionRow(props: Readonly<{
 }>) {
     return <ItemGroup surface="none">
         <SectionButtonRow testID={props.testID} footnote={props.footnote} footnoteTestID={`${props.testID}.footnote`}
-            trailing={<RoundButton title={props.confirm.label} display="destructive" size="small" testID={props.confirm.testID}
-                disabled={props.confirm.disabled} loading={props.confirm.loading} onPress={props.confirm.onPress} />}>
-            {props.onCancel ? <RoundButton title={t('common.cancel')} display="inverted" size="small" textStyle={Typography.default()}
-                testID={`${props.testID}.cancel`} onPress={props.onCancel} /> : null}
+            // The way back and the decision are one pair: together at the row's end, the irreversible one last.
+            trailing={<>
+                {props.onCancel ? <RoundButton title={t('common.cancel')} display="inverted" size="small" textStyle={Typography.default()}
+                    testID={`${props.testID}.cancel`} onPress={props.onCancel} /> : null}
+                <RoundButton title={props.confirm.label} display="destructive" size="small" testID={props.confirm.testID}
+                    disabled={props.confirm.disabled} loading={props.confirm.loading} onPress={props.confirm.onPress} />
+            </>}>
+            {null}
         </SectionButtonRow>
     </ItemGroup>;
 }

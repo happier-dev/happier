@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { adoptHomeProfile, type ServerProfile } from '@/sync/domains/server/serverProfiles';
 
 type TestMachine = {
     id: string;
@@ -43,34 +44,15 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverId: runtime.activeServerId, serverUrl: '', generation: 1 }),
 }));
 
-const profileB = {
-    id: 'local-b',
-    name: 'Server B',
-    serverUrl: 'https://b.example.test',
-    serverIdentityId: 'srv_server_b',
-    legacyServerIds: ['legacy-b'],
-    createdAt: 1,
-    updatedAt: 1,
-    lastUsedAt: 1,
-};
-
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    listServerProfiles: () => [profileB],
-    areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => {
-        const profileByIdentifier: Readonly<Record<string, string>> = {
-            'local-a': 'local-a',
-            'local-b': 'local-b',
-            'legacy-b': 'local-b',
-            srv_server_b: 'local-b',
-        };
-        return profileByIdentifier[String(left)] === profileByIdentifier[String(right)];
-    },
-    resolveServerProfileForPortableIdentity: (serverIdentityId: string) => (
-        serverIdentityId === 'srv_server_b'
-            ? { kind: 'resolved', serverIdentityId, profile: profileB }
-            : { kind: 'missing', serverIdentityId }
-    ),
-}));
+let profileB: ServerProfile;
+beforeEach(async () => {
+    const url = 'https://administration-inventory-owner.example.test';
+    profileB = await adoptHomeProfile({ descriptor: {
+        v: 1, homeServerIdentityId: 'srv_server_b', canonicalServerUrl: url,
+        revision: 1, endpoints: [{ kind: 'https', url }],
+    }, source: 'manual' });
+    expect(profileB.id).not.toBe('srv_server_b');
+});
 
 vi.mock('@/sync/store/hooks', () => ({
     useIsDataReady: () => false,
@@ -143,7 +125,7 @@ describe('resolveFreshMachineAdministrationExecutionTarget', () => {
 
         expect(result).toEqual(expect.objectContaining({
             kind: 'resolved',
-            serverId: 'local-b',
+            serverId: profileB.id,
             machine: runtime.state.machineListByServerId['srv_server_b'][0],
         }));
     });
@@ -169,7 +151,7 @@ describe('resolveFreshMachineAdministrationExecutionTarget', () => {
 
     it('does not revive a stale scoped row when the active inventory is authoritatively empty', async () => {
         const { resolveFreshMachineAdministrationExecutionTarget } = await import('./useTargetSelection');
-        runtime.activeServerId = 'local-b';
+        runtime.activeServerId = profileB.id;
         runtime.state.machines = {};
         runtime.state.machineListByServerId['srv_server_b'] = [machine('machine-b', true)];
         runtime.state.machineListStatusByServerId['srv_server_b'] = 'error';
@@ -182,17 +164,17 @@ describe('resolveFreshMachineAdministrationExecutionTarget', () => {
 });
 
 describe('doesMachineAdministrationTargetMatchActiveAccount', () => {
-    it('uses canonical profile equivalence for portable, local, and legacy identifiers', async () => {
+    it('uses real profile equivalence for portable and device-local identifiers', async () => {
         const { doesMachineAdministrationTargetMatchActiveAccount } = await import('./useTargetSelection');
         const target = { serverIdentityId: 'srv_server_b', machineId: 'machine-b' };
 
         expect(doesMachineAdministrationTargetMatchActiveAccount({
             target,
-            activeAccountServerId: 'local-b',
+            activeAccountServerId: profileB.id,
         })).toBe(true);
         expect(doesMachineAdministrationTargetMatchActiveAccount({
             target,
-            activeAccountServerId: 'legacy-b',
+            activeAccountServerId: 'srv_server_b',
         })).toBe(true);
         expect(doesMachineAdministrationTargetMatchActiveAccount({
             target,
@@ -200,7 +182,7 @@ describe('doesMachineAdministrationTargetMatchActiveAccount', () => {
         })).toBe(false);
         expect(doesMachineAdministrationTargetMatchActiveAccount({
             target: null,
-            activeAccountServerId: 'local-b',
+            activeAccountServerId: profileB.id,
         })).toBe(false);
     });
 });

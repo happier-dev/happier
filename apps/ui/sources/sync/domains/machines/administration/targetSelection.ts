@@ -2,6 +2,7 @@ import {
     MachineAdministrationTargetV1Schema,
     type MachineAdministrationTargetV1,
 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
+import type { MachineInventoryStatus } from '../machineInventorySnapshots';
 
 type MachineAdministrationRouteParamV1 = string | readonly string[] | undefined;
 
@@ -69,11 +70,12 @@ export type MachineAdministrationTargetStateV1 =
         target: MachineAdministrationTargetV1;
         snapshot: MachineAdministrationCandidateV1 | null;
         /**
-         * `false` when the target's Home has not answered with its machine list yet (unreachable or
-         * still loading): the machine is absent from what is known, not known to be gone. Absent when
+         * `false` when the target's Home has not answered with its machine list yet:
+         * the machine is absent from what is known, not known to be gone. Absent when
          * the Home's list was read. Either way the target stays unusable (fail closed).
          */
         inventoryKnown?: false;
+        inventoryStatus?: Exclude<MachineInventoryStatus, 'idle'>;
     }>
     | Readonly<{
         kind: 'replaced';
@@ -156,10 +158,8 @@ function compareCandidates(left: MachineAdministrationCandidateV1, right: Machin
 }
 
 /**
- * Administration's sole zero/one/many target decision. Ordering is presentation
- * only: it never selects among multiple candidates. A stored target remains the
- * authority even while unavailable, so another online machine cannot inherit
- * consequential work.
+ * Administration's initial target decision. Ordinary scopes require a sole
+ * candidate. A stored target remains authoritative while unavailable.
  */
 export function resolveMachineAdministrationTargetState(params: Readonly<{
     storedTarget: MachineAdministrationTargetV1 | null;
@@ -167,6 +167,7 @@ export function resolveMachineAdministrationTargetState(params: Readonly<{
     allowSoleCandidate?: boolean;
     /** Whether a Home's machine list has been read and is current; without it no Home counts as read. */
     isInventoryKnown?: (serverIdentityId: string) => boolean;
+    readInventoryStatus?: (serverIdentityId: string) => MachineInventoryStatus;
 }>): MachineAdministrationTargetStateV1 {
     const candidates = [...params.candidates].sort(compareCandidates);
     if (params.storedTarget === null) {
@@ -187,12 +188,16 @@ export function resolveMachineAdministrationTargetState(params: Readonly<{
     ));
     if (!selected) {
         // A saved machine is "gone" only when its Home's settled list lacks it; unread is not removed.
-        const inventoryKnown = params.isInventoryKnown?.(params.storedTarget.serverIdentityId) ?? false;
+        const inventoryStatus = params.readInventoryStatus?.(params.storedTarget.serverIdentityId);
+        const inventoryKnown = inventoryStatus === undefined
+            ? params.isInventoryKnown?.(params.storedTarget.serverIdentityId) ?? false
+            : inventoryStatus === 'idle';
         return Object.freeze({
             kind: 'missing',
             target: params.storedTarget,
             snapshot: null,
             ...(inventoryKnown ? {} : { inventoryKnown: false as const }),
+            ...(inventoryStatus !== undefined && inventoryStatus !== 'idle' ? { inventoryStatus } : {}),
         });
     }
     return projectCandidateState(params.storedTarget, selected);

@@ -5,6 +5,8 @@ import { isMachineRpcDirectRoutePolicy, resolveMachineRpcRelayFallbackDecision, 
 import type { PeerRouteEphemeralProofV2 } from '@happier-dev/protocol/machines/peer/mediation/ephemeralPeerRouteProofV2';
 import type { SignedDirectRouteGrantV2 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
 import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { markRpcRequestDisposition, readRpcRequestDisposition } from '@happier-dev/sync-client';
 
 import { createMachineRpcPeerFallbackReceipt, type MachineRpcPeerFallbackReceipt } from './fallback';
 
@@ -33,6 +35,7 @@ export type MachineRpcWithPeerMediationRouteParams<A> = Readonly<{
     method: string;
     payload: A;
     timeoutMs?: number;
+    operationTimeoutMs?: null;
     authorization?: SocketRpcAuthorizationContext;
     /**
      * Caller abort signal. Forwarded to the direct transport (`postDirect`) so a
@@ -52,6 +55,7 @@ export type MachineRpcWithPeerMediationRouteParams<A> = Readonly<{
         url: string;
         request: PeerMachineRpcDirectRequestV2;
         timeoutMs?: number;
+        operationTimeoutMs?: null;
         signal?: AbortSignal;
         onDispatched?: () => void;
     }>) => Promise<PeerMachineRpcDirectResponseV2>;
@@ -79,6 +83,16 @@ export type MachineRpcWithPeerMediationRouteParams<A> = Readonly<{
 
 function createRequestId(): string {
     return `rpc_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+}
+
+/** No cause/message bag may escape a confidential transport boundary. */
+export function createPrivateContinuationTransportError(cause: unknown, issued = false): Error {
+    const disposition = readRpcRequestDisposition(cause);
+    const uncertain = issued || (disposition !== null && disposition !== undefined && disposition !== 'notSent');
+    const code = uncertain ? 'outcome_uncertain' : 'target_unavailable';
+    const error = Object.assign(new Error(code), { code });
+    markRpcRequestDisposition(error, uncertain ? 'outcomeUnknown' : 'notSent');
+    return error;
 }
 
 function resolveDirectRpcUrl(endpointUrl: string): string {
@@ -156,6 +170,10 @@ async function useServerFallback<R, A>(
 export async function machineRpcWithPeerMediationRoute<R, A>(
     params: MachineRpcWithPeerMediationRouteParams<A>,
 ): Promise<R> {
+    const confidential = params.method === RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE;
+    if (confidential) params = { ...params, recordReceipt: undefined };
+    let issued = false;
+    try {
     const policy = resolveMachineRpcRoutePolicy(params.method);
     if (!isMachineRpcDirectRoutePolicy(policy)) {
         return await useServerFallback<R, A>(
@@ -186,6 +204,12 @@ export async function machineRpcWithPeerMediationRoute<R, A>(
         );
     }
 
+    // Old grants carry no authenticated human authority. Use the incumbent
+    // authenticated relay before delivering anything to that direct endpoint.
+    if (confidential && route.grant.payload.callerAuthority !== 'present_user') {
+        return await useServerFallback<R, A>(params, 'direct_authority_unavailable');
+    }
+
     params.recordReceipt?.({
         receipt: route.receipt,
         method: params.method,
@@ -195,13 +219,13 @@ export async function machineRpcWithPeerMediationRoute<R, A>(
     });
 
     const replayKey = requestId;
-    const requestHash = createPeerMachineRpcRequestHashV1({
+    const requestHash = policy.commandReceiptRequired ? createPeerMachineRpcRequestHashV1({
         method: params.method,
         params: params.payload,
         grantId: route.grant.payload.grantId,
         endpointFingerprint: route.endpoint.endpointFingerprint,
         replayKey,
-    });
+    }) : undefined;
     const directRequest: PeerMachineRpcDirectRequestV2 = {
             v: 2,
             requestId,
@@ -218,7 +242,7 @@ export async function machineRpcWithPeerMediationRoute<R, A>(
                         v: 1 as const,
                         issuer: 'ui' as const,
                         issuedAtMs: Date.now(),
-                        requestHash,
+                        requestHash: requestHash!,
                         replayKey,
                     },
                 }
@@ -227,13 +251,16 @@ export async function machineRpcWithPeerMediationRoute<R, A>(
     const rawDirectResponse = await params.postDirect({
         url: resolveDirectRpcUrl(route.endpoint.url),
         timeoutMs: params.timeoutMs,
+        operationTimeoutMs: params.operationTimeoutMs,
         signal: params.signal,
-        onDispatched: params.onDispatched,
+        onDispatched: () => { issued = true; params.onDispatched?.(); },
         request: directRequest,
     });
+    if (confidential) issued = true;
     const directResponse = PeerMachineRpcDirectResponseV2Schema.parse(rawDirectResponse);
 
     if (directResponse.requestId !== requestId || directResponse.method !== params.method) {
+        if (confidential) throw createPrivateContinuationTransportError(null, true);
         return await useServerFallback<R, A>(
             params,
             'invalid_request',
@@ -247,6 +274,7 @@ export async function machineRpcWithPeerMediationRoute<R, A>(
         );
     }
     if (!directResponse.ok) {
+        if (confidential) throw createPrivateContinuationTransportError(null, true);
         return await useServerFallback<R, A>(
             params,
             directResponse.reasonCode,
@@ -267,4 +295,8 @@ export async function machineRpcWithPeerMediationRoute<R, A>(
         routeKind: directResponse.routeKind,
     });
     return directResponse.result as R;
+    } catch (error) {
+        if (confidential) throw createPrivateContinuationTransportError(error, issued);
+        throw error;
+    }
 }

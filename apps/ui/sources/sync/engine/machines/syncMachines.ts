@@ -367,6 +367,18 @@ export function buildMachineFromMachineActivityEphemeralUpdate(params: {
     };
 }
 
+/** A presence-only publication cannot retire a captured content/access read. */
+function isMachineReadSnapshotCurrent(
+    current: Machine | null | undefined,
+    captured: Machine | null | undefined,
+): boolean {
+    if (current === captured) return true;
+    if (!current || !captured) return false;
+    return Object.keys(current).length === Object.keys(captured).length
+        && Object.entries(current).every(([key, value]) => key === 'active' || key === 'activeAt'
+            || value === captured[key as keyof Machine]);
+}
+
 export async function fetchAndApplyMachines(params: {
     credentials: AuthCredentials;
     /** Persisted custodian Account mode for owner rows without an access projection. */
@@ -450,7 +462,7 @@ export async function fetchAndApplyMachines(params: {
     };
     machines = machines.filter((machine) => {
         const accepted = rowIsNotOlder(machine) && isRequestMachineContextCurrent?.(machine.id) !== false
-            && (!requestMachineSnapshot || requestMachineSnapshot[machine.id] === currentMachineSnapshot?.[machine.id]);
+            && (!requestMachineSnapshot || isMachineReadSnapshotCurrent(currentMachineSnapshot?.[machine.id], requestMachineSnapshot[machine.id]));
         if (!accepted) hasOlderRows = true;
         return accepted;
     });
@@ -480,7 +492,7 @@ export async function fetchAndApplyMachines(params: {
     const isMachineCurrent = (machineId: string) => {
         const row = capturedRows.get(machineId);
         return shouldContinue() && machineContexts.get(machineId)?.isCurrent() !== false
-            && (!(params.getMachineSnapshot || params.getExistingMachine) || readIncumbentRow(machineId) === incumbentRows.get(machineId))
+            && (!(params.getMachineSnapshot || params.getExistingMachine) || isMachineReadSnapshotCurrent(readIncumbentRow(machineId), incumbentRows.get(machineId)))
             && Boolean(row && rowIsNotOlder(row));
     };
     const applyCurrentMachines = (incoming: Machine[], replace: boolean) => {

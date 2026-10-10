@@ -12,12 +12,14 @@ import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useTeamBinding } from '@/hooks/teams/useTeamBinding';
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
-import { useServerScopedMachine } from '@/sync/domains/state/storage';
+import { useMachineListForServer, useServerScopedMachine } from '@/sync/domains/state/storage';
+import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
-import { MachinePresetDetail, type MachinePresetDetailModel } from './MachinePresetDetail';
+import { MachinePresetDetail, managedPresetLimitRow, type MachinePresetDetailModel } from './MachinePresetDetail';
+import { isManagedControllerCandidate } from './useManagedControllerScope';
 import { buildManagedConfigurationReceipt, managedCredentialReceiptTargets } from './managedConfigurationPresentation';
 import { useQualifiedConnectedAccountTargetPresentations } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountTargetPresentations';
 import { useMachinePresetDetail, useMachinePresetConfiguration } from './useMachinePresets';
@@ -63,6 +65,7 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     const team = useTeamBinding(props.serverId, preset?.owner.kind === 'team' ? preset.owner.teamId : '');
     const teamState = team.kind === 'bound' && team.state.kind === 'ready' ? team.state : null;
     const controllerRow = useServerScopedMachine(props.serverId, preset?.controller.machineId ?? '');
+    const machines = useMachineListForServer(props.serverId);
     const controller = controllerRow?.installationId === preset?.controller.installationId ? controllerRow : undefined;
     const [mutating, setMutating] = React.useState(false);
     const [mutationError, setMutationError] = React.useState<string | null>(null);
@@ -91,16 +94,18 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
         const contribution = buildQualifiedPluginContributionKey(visiblePreset.recipe.provider);
         navigate(`/settings/machines/add/${encodeURIComponent(contribution)}?serverId=${encodeURIComponent(props.serverId)}&presetId=${encodeURIComponent(visiblePreset.id)}${edit ? '&presetOnly=true' : ''}`);
     };
-    const archiveOrRestore = async () => {
+    const runMutation = async (mutation: () => ReturnType<typeof detail.archiveOrRestore>) => {
         if (!canManage || busy) return;
         setMutating(true);
         setMutationError(null);
         try {
-            const result = await detail.archiveOrRestore();
+            const result = await mutation();
             if (result.kind === 'failed') setMutationError(result.code);
         } catch { setMutationError('request_failed'); }
         finally { setMutating(false); }
     };
+    const archiveOrRestore = () => runMutation(detail.archiveOrRestore);
+    const edit = (patch: Parameters<typeof detail.update>[0]) => fireAndForget(runMutation(() => detail.update(patch)), { tag: 'MachinePresetView.edit' });
     const approvalNotice = approval.approvalId ? <AttentionBanner testID="machine-preset.approval" tone="neutral"
         title={t('approvals.title')} description={t('approvals.status.open')}
         action={{ label: t('approvals.details'), onPress: () => navigate(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(props.serverId)}`) }} /> : null;
@@ -113,6 +118,8 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     </ItemList>;
 
     const controllerName = getMachineDisplayName(controller) ?? t('common.unknown');
+    // Managed from is edited in place among this Home's machines that can manage; the server re-checks the recipe on it.
+    const controllerChoices = canManage ? (machines ?? []).filter(isManagedControllerCandidate) : [];
     const receipt = buildManagedConfigurationReceipt({ launch: visiblePreset.recipe, reviewedFacts: configuration.facts ?? undefined,
         credentialPresentations: credentialAccounts.presentationsByKey,
         providerTitle: presentation.title ?? t('common.unknown'), localized: presentation.localized,
@@ -140,20 +147,45 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
             title={conflict ? t('machinePresets.conflict') : refusal === 'permission_denied' ? t('machinePresets.accessLost') : t('machinePresets.loadFailed')}
             diagnosticCode={mutationError ?? refusal ?? undefined} action={{ label: t('common.retry'), onPress: () => { setMutationError(null); detail.refresh(); } }} /> : null}
     </>;
+    // "Hetzner server": the provider and what it creates, from the provisioner's own declaration.
+    const what = presentation.title && presentation.kindTitle
+        ? t('managedMachines.detail.kindFact', { provider: presentation.title, kind: presentation.kindTitle })
+        : presentation.title ?? presentation.kindTitle ?? t('common.machine');
     const model: MachinePresetDetailModel = {
-        name: visiblePreset.name, description: t('machinePresets.futureOnly'), mark,
+        name: visiblePreset.name, mark,
+        // The page says what this preset makes and who may make it; the edit rule sits under Edit choices.
+        description: visiblePreset.owner.kind === 'account' ? t('machinePresets.purposePersonal', { what })
+            : teamState ? t('machinePresets.purposeTeam', { what, team: teamState.team.name }) : what,
         meta: [{ key: 'home', text: homeName }, { key: 'owner', text: visiblePreset.owner.kind === 'account' ? t('machinePresets.ownerPersonal') : ownerTitle }],
-        audience: { title: ownerTitle, description: t('machinePresets.audience'), leading: <Icon name={visiblePreset.owner.kind === 'team' ? 'users' : 'user'} color={theme.colors.text.secondary} />,
+        audience: { title: ownerTitle, description: visiblePreset.owner.kind === 'account' ? t('machinePresets.audiencePersonalHelp')
+            : teamState && presentation.title ? t('machinePresets.audienceTeamHelp', { team: teamState.team.name, provider: presentation.title }) : undefined, leading: <Icon name={visiblePreset.owner.kind === 'team' ? 'users' : 'user'} color={theme.colors.text.secondary} />,
             subtitle: [canUse ? t('machinePresets.canUse') : null, canManage ? t('machinePresets.canManage') : null].filter(Boolean).join(' · ') },
-        limit: { description: t('machinePresets.limitHelp'), row: { title: visiblePreset.simultaneousLimit
-            ? `${t('machinePresets.atMost')} ${visiblePreset.simultaneousLimit.maximum}` : t('machinePresets.limitNone') } },
+        limit: { description: t('machinePresets.limitHelp'), row: canManage
+            ? managedPresetLimitRow({ limit: visiblePreset.simultaneousLimit?.maximum, disabled: busy,
+                onChange: next => edit({ simultaneousLimit: next ? { maximum: next } : null }) })
+            : { title: visiblePreset.simultaneousLimit
+                ? `${t('machinePresets.atMost')} ${visiblePreset.simultaneousLimit.maximum}` : t('machinePresets.limitNone'),
+                ...(visiblePreset.simultaneousLimit ? { subtitle: t('machinePresets.limitWaits') } : {}) } },
         controller: { description: t('managedMachines.controller.required', { controller: controllerName }),
-            row: { title: controllerName } },
+            row: controllerChoices.length ? {
+                title: t('machinePresets.controllerRow'),
+                ...(controller ? { subtitle: isMachineOnline(controller) ? t('status.online') : t('status.offline') } : {}),
+                choices: controllerChoices.map(machine => ({ id: machine.id, title: getMachineDisplayName(machine) ?? machine.id,
+                    subtitle: isMachineOnline(machine) ? t('status.online') : t('status.offline') })),
+                value: visiblePreset.controller.machineId, disabled: busy,
+                onChange: id => {
+                    const machine = controllerChoices.find(candidate => candidate.id === id);
+                    if (!machine?.installationId || id === visiblePreset.controller.machineId
+                        && machine.installationId === visiblePreset.controller.installationId) return;
+                    edit({ controller: { machineId: machine.id, installationId: machine.installationId } });
+                },
+            } : { title: controllerName } },
         machines: detail.history.map(row => ({ id: row.managedId, title: row.title,
             subtitle: `${t('machinePresets.fromRevision', { name: visiblePreset.name, revision: row.presetRevision })} · ${row.subtitle}`,
             mark, onPress: () => navigate(row.href) })),
         receipt: { ...receipt,
-            ...(canManage ? { secondary: [{ label: t('machinePresets.editChoices'), testID: 'machine-preset.edit', onPress: () => openConfiguration(true), disabled: busy }] } : {}) },
+            ...(canManage ? { secondary: [{ label: t('machinePresets.editChoices'), testID: 'machine-preset.edit', onPress: () => openConfiguration(true), disabled: busy }],
+                secondaryNote: t('machinePresets.futureOnly') } : {}) },
         ...(canUse && visiblePreset.archivedAt === undefined && configuration.creationEnabled ? { onCreateOne: () => openConfiguration(false) } : {}),
         ...(canManage ? visiblePreset.archivedAt === undefined ? { onArchive: () => fireAndForget(archiveOrRestore(), { tag: 'MachinePresetView.archive' }) }
             : { onRestore: () => fireAndForget(archiveOrRestore(), { tag: 'MachinePresetView.restore' }) } : {}),

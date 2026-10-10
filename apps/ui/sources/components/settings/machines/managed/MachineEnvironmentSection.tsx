@@ -274,13 +274,6 @@ export const MachineEnvironmentSection = React.memo(
                 resolved.entry?.name ??
                 t('machinePresets.environment.secretMissing')
               }
-              icon={
-                <Icon
-                  name="key"
-                  size={20}
-                  color={theme.colors.text.secondary}
-                />
-              }
               rightElement={
                 props.editable ? (
                   <IconButton

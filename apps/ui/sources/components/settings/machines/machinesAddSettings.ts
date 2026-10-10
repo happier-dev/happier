@@ -7,7 +7,7 @@ export const MACHINES_ADD_SETTINGS = defineSettingsPage({
         add: {
             titleKey: 'settings.addMachine',
             settings: {
-                setupNewMachineAction: { titleKey: 'settings.addMachine', descriptionKey: 'settingsMachines.addPageDescription' },
+                setupNewMachineAction: {},
             },
         },
     },

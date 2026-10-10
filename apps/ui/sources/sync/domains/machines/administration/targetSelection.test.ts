@@ -224,6 +224,13 @@ describe('resolveMachineAdministrationTargetState', () => {
         })).toEqual({ kind: 'missing', target: storedTarget, snapshot: null });
     });
 
+    it.each(['loading', 'error', 'signedOut'] as const)('preserves the saved target and its inventory %s without authorizing execution', (inventoryStatus) => {
+        const storedTarget = { serverIdentityId: 'srv_one', machineId: 'machine-a' };
+        expect(resolveMachineAdministrationTargetState({
+            storedTarget, candidates: [], readInventoryStatus: () => inventoryStatus,
+        })).toEqual({ kind: 'missing', target: storedTarget, snapshot: null, inventoryKnown: false, inventoryStatus });
+    });
+
     it('keeps missing and replaced targets as tombstones instead of roaming', () => {
         const storedTarget = { serverIdentityId: 'srv_one', machineId: 'machine-a' };
         const replacement = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-b' });

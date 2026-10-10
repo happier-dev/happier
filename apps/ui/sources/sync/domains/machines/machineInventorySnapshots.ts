@@ -5,13 +5,15 @@ import type { MachineDisplayCacheEntryV1 } from '@/sync/domains/state/warmCacheP
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { isPersistentMachine } from '@happier-dev/protocol/machines/machineKind';
 import { areServerProfileIdentifiersEquivalent, type ServerProfile } from '@/sync/domains/server/serverProfiles';
+import { resolveServerScopedMachines } from './resolveServerScopedMachines';
 
 import {
     buildMachineDisplayRenderableFromMachine,
     type MachineDisplayRenderable,
 } from './machineDisplayRenderable';
 
-type MachineListStatus = 'idle' | 'loading' | 'signedOut' | 'error';
+export type MachineInventoryStatus = 'idle' | 'loading' | 'signedOut' | 'error';
+type MachineListStatus = MachineInventoryStatus;
 
 export type ServerMachineInventorySnapshotV1 =
     | Readonly<{
@@ -25,10 +27,13 @@ export type ServerMachineInventorySnapshotV1 =
          * left. Absent while the list is still loading, failed, or known only from the warm cache.
          */
         settled?: true;
+        /** Current inventory read state; absence is an unobserved, still pending read. */
+        inventoryStatus?: MachineInventoryStatus;
         machines: readonly MachineDisplayRenderable[];
     }>
     | Readonly<{
         kind: 'unknown';
+        inventoryStatus?: MachineInventoryStatus;
         profileId: string;
         serverIdentityId: string;
         serverName: string;
@@ -114,22 +119,27 @@ function resolveRawMachineList(params: Readonly<{
         params.profile.id,
         ...(params.profile.legacyServerIds ?? []),
     ]);
-    if (params.activeInventoryLoaded && keys.includes(params.activeServerId)) {
-        // "Loaded" is the app's data readiness (sessions), which can arrive before this Home's
-        // machine list does: the list is settled only once it has been applied (`idle`).
-        return {
-            machines: params.activeMachines,
-            observation: 'live',
-            settled: keys.some((key) => params.machineListStatusByServerId[key] === 'idle'),
-        };
-    }
-    for (const key of keys) {
-        const machines = params.machineListByServerId[key];
-        if (!Array.isArray(machines)) continue;
-        const settled = params.machineListStatusByServerId[key] === 'idle';
-        return { machines, observation: settled ? 'live' : 'stale', settled };
-    }
-    return null;
+    const activeMachines = params.activeInventoryLoaded ? params.activeMachines : [];
+    const machines = resolveServerScopedMachines({
+        serverId: params.serverIdentityId,
+        serverIdAliases: keys,
+        activeServerId: params.activeServerId,
+        activeMachines,
+        machineListByServerId: params.machineListByServerId,
+        machineListStatusByServerId: params.machineListStatusByServerId,
+    });
+    const usesActiveInventory = params.activeInventoryLoaded && keys.includes(params.activeServerId)
+        && (machines === activeMachines || machines === null);
+    if (machines === null && !usesActiveInventory) return null;
+    // App data readiness can precede the machine list. Only its applied idle
+    // status qualifies the chosen raw rows as a settled inventory.
+    const settled = keys.some((key) => params.machineListStatusByServerId[key] === 'idle'
+        && (usesActiveInventory || params.machineListByServerId[key] === machines));
+    return {
+        machines: machines ?? activeMachines,
+        observation: settled || usesActiveInventory ? 'live' : 'stale',
+        settled,
+    };
 }
 
 /**
@@ -198,6 +208,11 @@ export function resolveAllProfileMachineInventorySnapshots(params: Readonly<{
             machineListByServerId: params.machineListByServerId,
             machineListStatusByServerId: params.machineListStatusByServerId,
         });
+        const inventoryStatuses = uniqueNonEmpty([serverIdentityId, profile.id, ...(profile.legacyServerIds ?? [])])
+            .map((key) => params.machineListStatusByServerId[key]);
+        const inventoryStatus = inventoryStatuses.includes('idle')
+            ? 'idle'
+            : inventoryStatuses.find((status) => status !== undefined) ?? 'loading';
         if (raw) {
             snapshots.push(Object.freeze({
                 kind: 'resolved',
@@ -205,6 +220,7 @@ export function resolveAllProfileMachineInventorySnapshots(params: Readonly<{
                 serverIdentityId,
                 serverName,
                 observation: raw.observation,
+                inventoryStatus,
                 ...(raw.settled ? { settled: true as const } : {}),
                 machines: Object.freeze(raw.machines
                     .filter(isPersistentMachine)
@@ -227,10 +243,12 @@ export function resolveAllProfileMachineInventorySnapshots(params: Readonly<{
                 serverIdentityId,
                 serverName,
                 observation: 'stale',
+                inventoryStatus,
                 machines: cached,
             })
             : Object.freeze({
                 kind: 'unknown',
+                inventoryStatus,
                 profileId: profile.id,
                 serverIdentityId,
                 serverName,
@@ -256,4 +274,21 @@ export function isMachineInventorySettled(
     return snapshots.some((snapshot) => snapshot.kind === 'resolved'
         && snapshot.settled === true
         && areServerProfileIdentifiersEquivalent(snapshot.serverIdentityId, serverIdentityId));
+}
+
+/** Inventory failures describe the list read, never independently diagnose Home reachability. */
+export function readMachineInventoryStatus(
+    snapshots: readonly ServerMachineInventorySnapshotV1[],
+    serverIdentityId: string,
+): MachineInventoryStatus {
+    const snapshot = snapshots.find((entry) => entry.kind !== 'missingIdentity'
+        && areServerProfileIdentifiersEquivalent(entry.serverIdentityId, serverIdentityId));
+    if (snapshot?.kind === 'ambiguousIdentity') return 'error';
+    if (snapshot?.kind === 'resolved' && snapshot.settled) return 'idle';
+    if (snapshot?.kind === 'resolved' || snapshot?.kind === 'unknown') {
+        return snapshot.inventoryStatus === 'error' || snapshot.inventoryStatus === 'signedOut'
+            ? snapshot.inventoryStatus
+            : 'loading';
+    }
+    return 'loading';
 }

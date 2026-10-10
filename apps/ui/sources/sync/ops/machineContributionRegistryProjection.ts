@@ -1,4 +1,4 @@
-import { DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonPluginUiTargetedContributionsReadRequestSchema, DaemonPluginSettingsGetRequestSchema, DaemonPluginSettingsGetResponseSchema, DaemonPluginSettingsSetRequestSchema, DaemonPluginSettingsSetResponseSchema, DAEMON_PLUGIN_UI_RESOURCE_WATCH_DEFAULT_WAIT_MS, DaemonPluginSecretStatusRequestSchema, DaemonPluginSecretStatusResponseSchema, DaemonPluginSecretSetRequestSchema, DaemonPluginSecretSetResponseSchema, DaemonPluginSecretDeleteRequestSchema, DaemonPluginSecretDeleteResponseSchema, DaemonPluginStructuredMessageActionExecuteResponseSchema, DaemonPluginActionFormConnectedAccountOptionsResolveRequestSchema, DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema, DaemonPluginActionSchemasReadRequestSchema, DaemonPluginActionSchemasReadResponseSchema, DaemonPluginUiResourceReadRequestSchema, DaemonPluginUiResourceReadResponseSchema, DAEMON_PLUGIN_UI_RESOURCE_WATCH_MAX_WAIT_MS, DaemonPluginUiResourceWatchOpenRequestSchema, DaemonPluginUiResourceWatchOpenResponseSchema, DaemonPluginUiResourceWatchNextRequestSchema, DaemonPluginUiResourceWatchNextResponseSchema, DaemonPluginUiResourceWatchCloseRequestSchema, DaemonPluginUiResourceWatchCloseResponseSchema, type DaemonPluginSettingsSnapshot, type DaemonPluginSettingsMutation, type DaemonPluginSettingsSetResponse, type DaemonPluginSecretStatusResponse, type DaemonPluginSecretSetResponse, type DaemonPluginSecretDeleteResponse, type DaemonPluginStructuredMessageActionExecuteResponse, type DaemonPluginActionFormConnectedAccountOptionsResolveRequest, type DaemonPluginActionFormConnectedAccountOptionsResolveResponse, type DaemonPluginActionSchemasReadRequest, type DaemonPluginActionSchemasReadResponse, type DaemonPluginUiResourceReadRequest, type DaemonPluginUiResourceReadResponse, type DaemonPluginUiResourceWatchOpenRequest, type DaemonPluginUiResourceWatchOpenResponse, type DaemonPluginUiResourceWatchNextRequest, type DaemonPluginUiResourceWatchNextResponse, type DaemonPluginUiResourceWatchCloseRequest, type DaemonContributionRegistryProjectionAutomationEligibleEventsV1, type DaemonPluginUiComposerSurfaceCatalogEntryV1, type DaemonPluginUiTargetedSurfaceMountV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonPluginUiTargetedContributionsReadRequestSchema, DaemonPluginSettingsGetRequestSchema, DaemonPluginSettingsGetResponseSchema, DaemonPluginSettingsSetRequestSchema, DaemonPluginSettingsSetResponseSchema, DaemonPluginSecretStatusRequestSchema, DaemonPluginSecretStatusResponseSchema, DaemonPluginSecretSetRequestSchema, DaemonPluginSecretSetResponseSchema, DaemonPluginSecretDeleteRequestSchema, DaemonPluginSecretDeleteResponseSchema, DaemonPluginStructuredMessageActionExecuteResponseSchema, DaemonPluginActionFormConnectedAccountOptionsResolveRequestSchema, DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema, DaemonPluginActionSchemasReadRequestSchema, DaemonPluginActionSchemasReadResponseSchema, DaemonPluginUiResourceReadRequestSchema, DaemonPluginUiResourceReadResponseSchema, DaemonPluginUiResourceWatchOpenRequestSchema, DaemonPluginUiResourceWatchOpenResponseSchema, DaemonPluginUiResourceWatchNextRequestSchema, DaemonPluginUiResourceWatchNextResponseSchema, DaemonPluginUiResourceWatchCloseRequestSchema, DaemonPluginUiResourceWatchCloseResponseSchema, type DaemonPluginSettingsSnapshot, type DaemonPluginSettingsMutation, type DaemonPluginSettingsSetResponse, type DaemonPluginSecretStatusResponse, type DaemonPluginSecretSetResponse, type DaemonPluginSecretDeleteResponse, type DaemonPluginStructuredMessageActionExecuteResponse, type DaemonPluginActionFormConnectedAccountOptionsResolveRequest, type DaemonPluginActionFormConnectedAccountOptionsResolveResponse, type DaemonPluginActionSchemasReadRequest, type DaemonPluginActionSchemasReadResponse, type DaemonPluginUiResourceReadRequest, type DaemonPluginUiResourceReadResponse, type DaemonPluginUiResourceWatchOpenRequest, type DaemonPluginUiResourceWatchOpenResponse, type DaemonPluginUiResourceWatchNextRequest, type DaemonPluginUiResourceWatchNextResponse, type DaemonPluginUiResourceWatchCloseRequest, type DaemonContributionRegistryProjectionAutomationEligibleEventsV1, type DaemonPluginUiComposerSurfaceCatalogEntryV1, type DaemonPluginUiTargetedSurfaceMountV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { DaemonPluginStructuredMessageActionExecuteRequestSchema, type DaemonPluginStructuredMessageActionExecuteRequest } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
 import type { PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
 import {
@@ -23,7 +23,8 @@ import {
 import { resolveNativeReactNativeHostRuntimeIdentity } from '@/components/plugins/reactNative/hostRuntimeIdentity';
 import { resolveHostedWebFrameCapability } from '@/components/plugins/hostedWeb/hostedWebFrameCapability';
 import { getPreferredLanguage } from '@/text';
-import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { serverAccountScopeKeySuffix, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 // The projection revision/listener registry lives in its own dependency-light
 // owner so the canonical machine-state writer can advance it without importing
 // this RPC module. It is re-exported here because this is the seam every
@@ -190,6 +191,15 @@ function classifyMachinePluginTransportError(error: unknown): MachinePluginTrans
     return 'error';
 }
 
+/** Plugin work follows its caller's lifetime; setup retains the RPC admission budget. */
+function pluginRpcOperationOptions(opts: Readonly<{ timeoutMs?: number | null; signal?: AbortSignal }>) {
+    return {
+        timeoutMs: opts.timeoutMs ?? undefined,
+        operationTimeoutMs: opts.timeoutMs == null ? null : undefined,
+        signal: opts.signal,
+    };
+}
+
 /**
  * One in-flight read per question. The key is the routed machine scope, its
  * projection revision (endpoint identity: reconnect, daemon replacement,
@@ -265,14 +275,15 @@ async function readProjectionClientContext(machineId: string) {
 }
 
 /**
- * The machine-wide projection transport. Its deadline is the machine RPC
- * owner's own budget; callers do not choose a shorter one.
+ * The machine-wide projection transport uses the RPC owner's connection/setup
+ * budget without imposing an operation deadline on daemon projection work.
  */
 export async function machineContributionRegistryProjectionDescribe(
     machineId: string,
     opts?: Readonly<{
         serverId?: string | null;
         signal?: AbortSignal;
+        selection?: 'agents';
         /** The Account the read is for; reads are shared only within it. */
         accountLifetime?: ProjectionReadAccount | null;
     }>,
@@ -281,7 +292,9 @@ export async function machineContributionRegistryProjectionDescribe(
     let payload: ReturnType<typeof DaemonContributionRegistryProjectionDescribeRequestSchema.parse>;
     try {
         payload = DaemonContributionRegistryProjectionDescribeRequestSchema.parse(
-            await readProjectionClientContext(machineId),
+            opts?.selection === 'agents'
+                ? { machineId, selection: opts.selection }
+                : await readProjectionClientContext(machineId),
         );
     } catch {
         return { supported: false, reason: 'error' };
@@ -298,6 +311,9 @@ export async function machineContributionRegistryProjectionDescribe(
                 accountId: opts?.accountLifetime?.scope.accountId,
                 method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
                 payload,
+                // Projection work has no operation deadline, like capability
+                // detection. Connection/setup admission keeps its RPC budget.
+                operationTimeoutMs: null,
             });
             if (isRpcMethodNotFoundResult(response)) {
                 return { supported: false, reason: 'not-supported' };
@@ -358,6 +374,7 @@ export async function machinePluginUiTargetedContributionsRead(
                 serverId: opts.serverId,
                 method: RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ,
                 payload,
+                operationTimeoutMs: null,
             });
             if (isRpcMethodNotFoundResult(response)) {
                 return { supported: false, reason: 'not-supported' };
@@ -403,6 +420,7 @@ export async function machinePluginSettingsGet(
         serverIdentityId: string;
         pluginId: string;
         timeoutMs?: number | null;
+        signal?: AbortSignal;
     }>,
 ): Promise<MachinePluginSettingsResult> {
     try {
@@ -415,7 +433,7 @@ export async function machinePluginSettingsGet(
         const response = await machineRpcWithServerScope<unknown, typeof payload>({
             machineId,
             serverId: opts.serverId,
-            timeoutMs: typeof opts.timeoutMs === 'number' ? opts.timeoutMs : undefined,
+            ...pluginRpcOperationOptions(opts),
             method: RPC_METHODS.DAEMON_PLUGIN_SETTINGS_GET,
             payload,
         });
@@ -452,6 +470,7 @@ export async function machinePluginSettingsSet(
         mutation: DaemonPluginSettingsMutation;
         expectedRevision?: string;
         timeoutMs?: number | null;
+        signal?: AbortSignal;
     }>,
 ): Promise<MachinePluginSettingsSetResult> {
     let issued = false;
@@ -468,7 +487,7 @@ export async function machinePluginSettingsSet(
         const response = await machineRpcWithServerScope<unknown, typeof payload>({
             machineId,
             serverId: opts.serverId,
-            timeoutMs: typeof opts.timeoutMs === 'number' ? opts.timeoutMs : undefined,
+            ...pluginRpcOperationOptions(opts),
             method: RPC_METHODS.DAEMON_PLUGIN_SETTINGS_SET,
             payload,
             onIssued: () => {
@@ -514,9 +533,8 @@ async function machinePluginSettingsWatchNext(
         const response = await machineRpcWithServerScope<unknown, typeof payload>({
             machineId,
             serverId: opts.serverId,
-            // This is one bounded parked RPC. Its deadline follows the
-            // incumbent Resource-watch budget plus the same round-trip margin.
-            timeoutMs: DAEMON_PLUGIN_UI_RESOURCE_WATCH_DEFAULT_WAIT_MS + 10_000,
+            // The daemon owns the bounded parked wait; disposal owns transport cancellation.
+            operationTimeoutMs: null,
             signal: opts.signal,
             method: RPC_METHODS.DAEMON_PLUGIN_SETTINGS_WATCH,
             payload,
@@ -621,8 +639,7 @@ export async function machinePluginSecretStatus(
         const response = await machineRpcWithServerScope<unknown, typeof payload>({
             machineId,
             serverId: opts.serverId,
-            timeoutMs: typeof opts.timeoutMs === 'number' ? opts.timeoutMs : undefined,
-            signal: opts.signal,
+            ...pluginRpcOperationOptions(opts),
             method: RPC_METHODS.DAEMON_PLUGIN_SECRET_STATUS,
             payload,
         });
@@ -660,8 +677,7 @@ export async function machinePluginSecretSet(
         const response = await machineRpcWithServerScope<unknown, typeof payload>({
             machineId,
             serverId: opts.serverId,
-            timeoutMs: typeof opts.timeoutMs === 'number' ? opts.timeoutMs : undefined,
-            signal: opts.signal,
+            ...pluginRpcOperationOptions(opts),
             method: RPC_METHODS.DAEMON_PLUGIN_SECRET_SET,
             payload,
             onIssued: () => {
@@ -700,8 +716,7 @@ export async function machinePluginSecretDelete(
         const response = await machineRpcWithServerScope<unknown, typeof payload>({
             machineId,
             serverId: opts.serverId,
-            timeoutMs: typeof opts.timeoutMs === 'number' ? opts.timeoutMs : undefined,
-            signal: opts.signal,
+            ...pluginRpcOperationOptions(opts),
             method: RPC_METHODS.DAEMON_PLUGIN_SECRET_DELETE,
             payload,
             onIssued: () => {
@@ -727,10 +742,17 @@ export async function machinePluginStructuredMessageActionExecute(
         serverId?: string | null;
         timeoutMs?: number | null;
         signal?: AbortSignal;
+        /** Host-only authority; the strict request schema below never publishes it. */
+        accountLifetime?: ServerAccountScopeLifetime | null;
+        isCurrent?: () => boolean;
     }>,
 ): Promise<MachinePluginStructuredMessageActionResult> {
     let issued = false;
     try {
+        if (opts.accountLifetime !== undefined && (opts.accountLifetime?.isCurrent() !== true
+            || (opts.serverId && !areServerProfileIdentifiersEquivalent(opts.serverId, opts.accountLifetime.scope.serverId)))) {
+            return { supported: false, reason: 'error' };
+        }
         const payload = DaemonPluginStructuredMessageActionExecuteRequestSchema.parse({
             machineId,
             ...(opts.requestId ? { requestId: opts.requestId } : {}),
@@ -748,12 +770,18 @@ export async function machinePluginStructuredMessageActionExecute(
         });
         const response = await machineRpcWithServerScope<unknown, typeof payload>({
             machineId,
-            serverId: opts.serverId,
-            timeoutMs: typeof opts.timeoutMs === 'number' ? opts.timeoutMs : undefined,
-            signal: opts.signal,
+            serverId: opts.accountLifetime?.scope.serverId ?? opts.serverId,
+            accountId: opts.accountLifetime?.scope.accountId,
+            ...pluginRpcOperationOptions(opts),
             method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
             payload,
             onIssued: () => {
+                // The canonical socket owner invokes this synchronously before emit.
+                // Never reinterpret a consumed acknowledgement after retirement.
+                if ((opts.accountLifetime !== undefined && opts.accountLifetime?.isCurrent() !== true)
+                    || opts.isCurrent?.() === false) {
+                    throw new Error('plugin_ui_generation_retired');
+                }
                 issued = true;
             },
         });
@@ -790,8 +818,7 @@ export async function machinePluginActionFormConnectedAccountOptionsResolve(
         const response = await machineRpcWithServerScope<unknown, typeof payload>({
             machineId: payload.machineId,
             serverId: opts.serverId,
-            timeoutMs: typeof opts.timeoutMs === 'number' ? opts.timeoutMs : undefined,
-            signal: opts.signal,
+            ...pluginRpcOperationOptions(opts),
             method: RPC_METHODS.DAEMON_PLUGIN_ACTION_FORM_CONNECTED_ACCOUNT_OPTIONS_RESOLVE,
             payload,
         });
@@ -855,6 +882,7 @@ export async function machinePluginActionSchemasRead(
                     serverId: opts.serverId,
                     method: RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ,
                     payload,
+                    operationTimeoutMs: null,
                 });
                 if (isRpcMethodNotFoundResult(response)) return { supported: false, reason: 'not-supported' };
                 const parsed = DaemonPluginActionSchemasReadResponseSchema.safeParse(response);
@@ -902,8 +930,7 @@ export async function machinePluginUiResourceRead(
         const response = await machineRpcWithServerScope<unknown, typeof payload>({
             machineId,
             serverId: opts.serverId,
-            timeoutMs: typeof opts.timeoutMs === 'number' ? opts.timeoutMs : undefined,
-            signal: opts.signal,
+            ...pluginRpcOperationOptions(opts),
             method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ,
             payload,
         });
@@ -947,8 +974,7 @@ export async function machinePluginUiResourceWatchOpen(
         const response = await machineRpcWithServerScope<unknown, typeof payload>({
             machineId,
             serverId: opts.serverId,
-            timeoutMs: typeof opts.timeoutMs === 'number' ? opts.timeoutMs : undefined,
-            signal: opts.signal,
+            ...pluginRpcOperationOptions(opts),
             method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN,
             payload,
         });
@@ -980,10 +1006,8 @@ export async function machinePluginUiResourceWatchNext(
         const response = await machineRpcWithServerScope<unknown, typeof payload>({
             machineId,
             serverId: opts.serverId,
-            // The call deliberately outlives the default RPC budget: it is a
-            // long poll, so its timeout is the daemon's parked budget plus a
-            // margin for the round trip rather than a generic request timeout.
-            timeoutMs: (payload.waitMs ?? DAEMON_PLUGIN_UI_RESOURCE_WATCH_MAX_WAIT_MS) + 10_000,
+            // Keep the daemon's protocol wait; caller retirement cancels the transport.
+            operationTimeoutMs: null,
             signal: opts.signal,
             method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_NEXT,
             payload,
@@ -1003,6 +1027,7 @@ export async function machinePluginUiResourceWatchClose(
     opts: Readonly<Omit<DaemonPluginUiResourceWatchCloseRequest, 'machineId'> & {
         serverId?: string | null;
         timeoutMs?: number | null;
+        signal?: AbortSignal;
     }>,
 ): Promise<void> {
     try {
@@ -1014,7 +1039,7 @@ export async function machinePluginUiResourceWatchClose(
         const response = await machineRpcWithServerScope<unknown, typeof payload>({
             machineId,
             serverId: opts.serverId,
-            timeoutMs: typeof opts.timeoutMs === 'number' ? opts.timeoutMs : undefined,
+            ...pluginRpcOperationOptions(opts),
             method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE,
             payload,
         });

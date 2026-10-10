@@ -831,11 +831,13 @@ export default function MachineDetailScreen() {
 
     const headerMeta = React.useMemo((): PageHeaderMetaFact[] => {
         if (!machine) return [];
-        const facts: PageHeaderMetaFact[] = [{
+        // "Running 3 h" already says a created machine is up: presence is named only when it adds something.
+        const powerSaysOnline = machineIsOnline && (managedMeta ?? []).some((fact) => fact.key === 'managed-power');
+        const facts: PageHeaderMetaFact[] = [...(powerSaysOnline ? [] : [{
             key: 'presence',
             text: machineIsOnline ? t('machineDetailPage.online') : t('machineDetailPage.offline'),
             testID: 'machine-detail-presence',
-        }, ...(managedMeta ?? [])];
+        }]), ...(managedMeta ?? [])];
         const platformLabel = formatOSPlatform(machine.metadata?.platform);
         if (platformLabel) facts.push({ key: 'platform', text: platformLabel });
         const host = machine.metadata?.host;
@@ -954,6 +956,8 @@ export default function MachineDetailScreen() {
             {/* An agent's own sign-in opens in this page's bottom pane (lab agent-setup T1). */}
             <AgentSignInPaneHost scopeId={`machine:${machineId}`} main={(
             <ItemList
+                // A machine Happier created reads beside its receipt: the header shares the two columns' edges.
+                pageColumn={managedEnrolled.machine ? 'wide' : undefined}
                 refreshControl={
                     <RefreshControl
                         refreshing={isRefreshing}

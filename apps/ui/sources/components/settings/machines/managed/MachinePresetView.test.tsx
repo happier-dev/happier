@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -47,6 +49,9 @@ const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfig
 const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
 const { Item } = await import('@/components/ui/lists/Item');
 const { MachineConfigurationReceipt } = await import('./MachineConfigurationReceipt');
+const { MachinePresetDetail } = await import('./MachinePresetDetail');
+const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+const { InstalledPluginBrandMark } = await import('@/components/plugins/shared/InstalledPluginBrandMark');
 const { t } = await import('@/text');
 const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
 const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
@@ -81,7 +86,7 @@ const provisioner: MachineProvisionersListResultV1['provisioners'][number] = { c
 } };
 
 function seedOptionsDeclaration(row: MachineProvisionersListResultV1['provisioners'][number], inputSchema: PluginJsonSchemaV2,
-    schemaAvailable = true) {
+    schemaAvailable = true, installed?: Readonly<Record<string, unknown>>) {
     const action = { pluginId: row.contribution.pluginId, localId: row.descriptor.actions.options };
     const actionKey = buildQualifiedPluginContributionKey(action);
     // Infrastructure role metadata may be CLI/plugin-only. Reading its public
@@ -91,7 +96,8 @@ function seedOptionsDeclaration(row: MachineProvisionersListResultV1['provisione
         execution: { target: 'daemon' }, available: true, dangerLevel: 'safe' });
     const projection = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1, projection: {
         ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE, agentsById: {}, diagnostics: [],
-        installedPackagesById: { [action.pluginId]: { ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE.installedPackagesById['acme.review'], id: action.pluginId } },
+        installedPackagesById: { [action.pluginId]: { ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE.installedPackagesById['acme.review'], id: action.pluginId,
+            ...installed } },
         actionsById: { [actionKey]: projectedAction },
     } });
     boundary.rpc.mockImplementation(async (request: { machineId: string; method: string; payload: unknown }) => {
@@ -378,6 +384,11 @@ describe('reachable preset detail', () => {
         await flushHookEffects();
         const receipt = screen.tree.findByType(MachineConfigurationReceipt).props.model;
         expect(receipt.facts).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'controller', value: t('common.unknown') })]));
+        // The page says what the preset makes; its sections never repeat their own title, and the edit rule is not the page's purpose.
+        const detailModel = screen.tree.findByType(MachinePresetDetail).props.model;
+        expect(detailModel.audience.description).not.toBe(t('machinePresets.audience'));
+        expect(detailModel.description).not.toBe(t('machinePresets.futureOnly'));
+        expect(detailModel.description).not.toBe('');
         expect(JSON.stringify(receipt.facts)).not.toContain('Replacement controller computer');
         expect(receipt.facts.find((fact: { id: string; value: string }) => fact.id === 'controller').value).not.toBe(preset.controller.machineId);
     });
@@ -566,6 +577,67 @@ describe('reachable preset detail', () => {
         expect(harness.requests.filter(request => request.path.includes('/managed/')).every(request => request.path.endsWith('/list'))).toBe(true);
         expect(harness.requests.filter(request => request.path.startsWith('/v1/actions/'))
             .every(request => request.path === '/v1/actions/machines.provisioners.list')).toBe(true);
+    });
+
+    it('edits Running at once and Managed from in place through the reviewed preset update Action', async () => {
+        const serverId = await seed();
+        const scopeId = await seedConfiguration(serverId);
+        const { storage } = await import('@/sync/domains/state/storage');
+        const builder = createMachineFixture({ id: 'builder', installationId: 'builder-installation',
+            metadata: { ...createMachineFixture().metadata!, displayName: 'Builder' } });
+        storage.setState({ machineListByServerId: { [scopeId]: [
+            createMachineFixture({ id: preset.controller.machineId, installationId: preset.controller.installationId }), builder] } });
+        await harness.requireUiApproval(serverId, 'machines.presets.update');
+        const screen = await renderSettingsView(<MachinePresetView serverId={serverId} presetId="preset" />);
+        const field = (testID: string) => screen.findAllByType(DropdownMenu)
+            .find(menu => menu.props.itemTrigger?.itemProps?.testID === testID);
+        await waitForHomeGovernance(() => expect(field('machine-preset.detail.limit')?.props.selectedId).toBe('2'));
+        expect(field('machine-preset.detail.controller')?.props.selectedId).toBe(preset.controller.machineId);
+        expect(field('machine-preset.detail.controller')?.props.items.map((item: { id: string }) => item.id))
+            .toEqual(expect.arrayContaining([preset.controller.machineId, 'builder']));
+
+        const limited = { ...preset, revision: 4, simultaneousLimit: { maximum: 3 } };
+        harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'saved', preset: limited } });
+        harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: limited } });
+        await act(async () => field('machine-preset.detail.limit')!.props.onSelect('3'));
+        // The edit asks first, exactly like the configurator's Save; nothing is written before approval.
+        await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(1));
+        expect(harness.requestsFor('/v1/machines/presets/update')).toEqual([]);
+        await expect(decideApprovalAsInbox(scopeId, harness.artifacts(serverId).list()[0]!.id, 'approve')).resolves.toMatchObject({ ok: true });
+        await waitForHomeGovernance(() => expect(field('machine-preset.detail.limit')?.props.selectedId).toBe('3'));
+
+        harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'conflict', currentRevision: 5 } });
+        await act(async () => field('machine-preset.detail.controller')!.props.onSelect('builder'));
+        await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(2));
+        await expect(decideApprovalAsInbox(scopeId, harness.artifacts(serverId).list()[1]!.id, 'approve')).resolves.toMatchObject({ ok: true });
+        await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.mutation-error')).not.toBeNull());
+        expect(harness.requestsFor('/v1/machines/presets/update').map(request => request.input)).toEqual([
+            { homeId: preset.homeId, id: preset.id, expectedRevision: 3, patch: { simultaneousLimit: { maximum: 3 } } },
+            { homeId: preset.homeId, id: preset.id, expectedRevision: 4,
+                patch: { controller: { machineId: 'builder', installationId: 'builder-installation' } } },
+        ]);
+        expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual([]);
+    });
+
+    it('marks the provisioner with its package’s contributed brand mark', async () => {
+        const serverId = await seed();
+        await seedConfiguration(serverId);
+        const resource = { pluginId: preset.recipe.provider.pluginId, localId: 'brand-icon' };
+        const digest = `sha256:${'c'.repeat(64)}`;
+        // The wrapped UI Vitest owner runs at the package root.
+        const bytes = readFileSync(join(resolve(process.cwd(), '../..'), 'packages/plugins/machine-hetzner/assets/brand.png'));
+        seedOptionsDeclaration(provisioner, PluginJsonSchemaV2Schema.parse({ type: 'object', properties: {}, additionalProperties: false }), true,
+            { source: { kind: 'localPath', locator: '/plugins/custom-compute' }, occurrenceId: 'package-occurrence',
+                brand: { state: 'available', resource, digest, width: 256, height: 256 } });
+        const projected = boundary.rpc.getMockImplementation()!;
+        // Daemon Resource transport only: brand admission and rendering stay real.
+        boundary.rpc.mockImplementation(async (request: { machineId: string; method: string; payload: unknown }) =>
+            request.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ
+                ? { ok: true, resource, kind: 'asset', contentType: 'image/png', digest, bytesBase64: bytes.toString('base64') }
+                : projected(request));
+        const screen = await renderSettingsView(<MachinePresetView serverId={serverId} presetId="preset" />);
+        await waitForHomeGovernance(() => expect(screen.findAllByType(InstalledPluginBrandMark)
+            .some(node => node.props.brand.bytes?.byteLength === bytes.byteLength)).toBe(true));
     });
 
     it('withdraws recipe and history after the credential lifetime retires', async () => {

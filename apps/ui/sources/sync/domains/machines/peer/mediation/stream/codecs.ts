@@ -11,32 +11,3 @@ export function resolveMachineLiveStreamCodecPreference(input: Readonly<{
 }>): MachineLiveStreamCodecNegotiationResultV1 {
     return negotiateMachineLiveStreamCodecV1(input);
 }
-
-export type MachineLiveStreamAvccFallbackState = Readonly<{
-    streamed: boolean;
-    fellBackToMjpeg: boolean;
-}>;
-
-export type MachineLiveStreamAvccFallbackEvent =
-    | Readonly<{ type: 'frame' }>
-    | Readonly<{ type: 'startup_timeout' }>
-    | Readonly<{ type: 'reset' }>;
-
-export const initialMachineLiveStreamAvccFallbackState: MachineLiveStreamAvccFallbackState = {
-    streamed: false,
-    fellBackToMjpeg: false,
-};
-
-export function reduceMachineLiveStreamAvccFallbackState(
-    state: MachineLiveStreamAvccFallbackState,
-    event: MachineLiveStreamAvccFallbackEvent,
-): MachineLiveStreamAvccFallbackState {
-    switch (event.type) {
-        case 'frame':
-            return state.streamed ? state : { ...state, streamed: true };
-        case 'startup_timeout':
-            return state.streamed || state.fellBackToMjpeg ? state : { ...state, fellBackToMjpeg: true };
-        case 'reset':
-            return initialMachineLiveStreamAvccFallbackState;
-    }
-}

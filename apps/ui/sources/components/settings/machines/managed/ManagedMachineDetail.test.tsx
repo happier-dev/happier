@@ -413,7 +413,7 @@ describe('managed Machine detail', () => {
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.policy-sheet.keep:deadline-date-input'
             && typeof node.props.onChangeText === 'function')[0]?.props.value).toBe('2099-01-02');
         await act(async () => { Modal.show({ component: () => <Text testID="unrelated-dialog">Other flow</Text> }); });
-        await act(async () => screen.tree.update(<ModalProvider />));
+        await act(async () => screen.tree.update(<ModalProvider>{null}</ModalProvider>));
         expect(screen.findByTestId('managed-machine.policy-sheet.keep:choice:until-delete') === null).toBe(true);
         expect(screen.findByTestId('managed-machine.policy-sheet.keep:deadline-date-input') === null).toBe(true);
         expect(screen.findByTestId('unrelated-dialog')).not.toBeNull();
@@ -1598,6 +1598,97 @@ describe('managed Machine detail', () => {
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.approval').length).toBeGreaterThan(0);
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.start' && node.props.disabled === true).length).toBeGreaterThan(0);
         expect(screen.tree.findByType(ManagedCreationProgress).props.machine.observation.power).toBe('stopped');
+    });
+    it.each(['online', 'offline', 'replaced'] as const)('reviews fresh Devcontainer effects only on the same reachable controller (%s)', async controllerState => {
+        const target = await upsertAndActivateServer({ serverUrl: 'https://managed-rebuild.test', scope: 'tab' });
+        await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_rebuild');
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        const provider = { pluginId: 'custom.container', localId: 'native' };
+        const selectors = { workspaceFolder: '/source', configPath: '/source/.devcontainer/devcontainer.json' };
+        const launch: ManagedMachineV1['launch'] = { provider, schemaVersion: 1, name: 'Existing child',
+            choices: { ...selectors, reviewedEffectDigest: 'a'.repeat(64) } };
+        const machine: ManagedMachineV1 = { id: 'rebuild-existing', homeId: 'srv_managed_rebuild', custodianAccountId: 'owner', launch,
+            controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
+            resource: { contributionRef: provider, schemaVersion: 1, value: { resourceId: 'same-native-child' } },
+            desired: 'start', desiredWhen: 'now', intentRevision: 4, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            reviewedFacts: { launch, controller: { machineId: 'controller', installationId: 'installation' }, optionStatus: 'current',
+                billing: { location: 'local', stoppedBilling: 'not-billed' }, prerequisites: [],
+                retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete', 'rebuild'] },
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } };
+        const descriptor = { id: 'native', title: 'Devcontainer', icon: 'cube', resourceKind: 'devcontainer', schemaVersion: 1,
+            launchSchema: { type: 'object', properties: { workspaceFolder: { type: 'string' }, configPath: { type: 'string' },
+                reviewedEffectDigest: { type: 'string' } }, required: ['workspaceFolder', 'configPath', 'reviewedEffectDigest'], additionalProperties: false },
+            resourceSchema: { type: 'object', properties: { resourceId: { type: 'string' } }, required: ['resourceId'], additionalProperties: false },
+            platforms: ['linux'], prerequisites: [], billing: { location: 'local', stoppedBilling: 'not-billed' },
+            retention: { supportedIntents: ['start', 'stop', 'delete', 'rebuild'] },
+            actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect',
+                power: 'power', destroy: 'destroy', rebuild: 'rebuild' } };
+        operationRpcBoundary.schemaAnswer = { ok: true, inputSchema: { type: 'object', properties: {
+            workspaceFolder: { type: 'string' }, configPath: { type: 'string' } },
+            required: ['workspaceFolder', 'configPath'], additionalProperties: false } };
+        const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
+        storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: 'controller',
+            installationId: controllerState === 'replaced' ? 'replacement' : 'installation',
+            active: controllerState !== 'offline', updatedAt: controllerState === 'offline' ? 1 : Date.now() })] } });
+        const rebuilds: unknown[] = [];
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'plain' });
+        setRuntimeFetch(async (input, init) => {
+            const url = new URL(String(input));
+            expect(url.origin).toBe('https://managed-rebuild.test');
+            const artifact = artifacts.handle(url.pathname, init);
+            if (artifact) return artifact;
+            if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (url.pathname.startsWith('/v1/actions/')) {
+                const actionId = url.pathname.slice('/v1/actions/'.length);
+                const request = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+                if (actionId === 'machines.managed.rebuild') rebuilds.push(request);
+                if (actionId === 'machines.provisioners.options') expect(request.input).toMatchObject({ selectors });
+                const result = actionId === 'machines.provisioners.list' ? MachineProvisionersListResultV1Schema.parse({
+                    provisioners: [{ contribution: provider, occurrenceId: 'container-occurrence', descriptor }] })
+                    : actionId === 'machines.provisioners.options' ? MachineProvisionerOptionsResultV1Schema.parse({ choices: [{
+                        id: 'current-config', title: 'Devcontainer', available: true,
+                        launch: { ...selectors, reviewedEffectDigest: 'b'.repeat(64) }, effectReview: { kind: 'devcontainer',
+                            reviewedEffectDigest: 'b'.repeat(64), effects: [
+                                { scope: 'host', kind: 'initialize', title: 'Initialize on controller', details: ['touch /source/ready'] },
+                                { scope: 'child', kind: 'lifecycle', title: 'Set up child', details: ['make setup'] },
+                            ] } }] }) : actionId === 'machines.managed.rebuild' ? {
+                        kind: 'approval_request_created', artifactId: 'rebuild-approval', actionId,
+                    } : { available: true };
+                return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, requestId: request.requestId,
+                    actionId, execution: { ok: true, result } }));
+            }
+            expect(url.pathname).toBe('/v1/machines/managed/actions/get');
+            return Response.json(machine);
+        });
+        const screen = await renderScreen(<ManagedMachineDetail managedId={machine.id} serverId={target.id}
+            executeAction={createDefaultActionExecutor().execute} />);
+        await flushHookEffects({ cycles: 25 });
+        const rebuild = screen.tree.findAll(node => node.props?.testID === 'managed-machine.rebuild' && typeof node.props.onPress === 'function')[0];
+        expect(rebuild).toBeDefined();
+        if (controllerState !== 'online') {
+            expect(rebuild!.props.disabled).toBe(true);
+            await act(async () => rebuild!.props.onPress());
+            await flushHookEffects({ cycles: 10 });
+            expect(rebuilds).toEqual([]);
+            expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.rebuild-confirm').length).toBe(0);
+            return;
+        }
+        expect(rebuild!.props.disabled).not.toBe(true);
+        await act(async () => rebuild!.props.onPress());
+        await flushHookEffects({ cycles: 25 });
+        expect(rebuilds).toEqual([]);
+        expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.rebuild-effect.host:0').length,
+            JSON.stringify(screen.tree.findAll(node => node.props?.testID === 'managed-machine.control-error').map(node => node.props.diagnosticCode))).toBeGreaterThan(0);
+        expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.rebuild-effect.child:1').length).toBeGreaterThan(0);
+        const confirm = screen.tree.findAll(node => node.props?.testID === 'managed-machine.rebuild-confirm' && typeof node.props.onPress === 'function')[0];
+        await act(async () => confirm!.props.onPress());
+        await flushHookEffects({ cycles: 25 });
+        expect(rebuilds).toEqual([expect.objectContaining({ target: { kind: 'machine', machineId: 'controller' }, input: {
+            homeId: machine.homeId, managedMachineId: machine.id, expectedRevision: 4, kind: 'rebuild', reviewedEffectDigest: 'b'.repeat(64),
+        } })]);
+        expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.approval').length).toBeGreaterThan(0);
+        expect(screen.tree.findByType(ManagedCreationProgress).props.machine.resource).toEqual(machine.resource);
     });
     it('keeps an Ask-first policy Action pending in the ordinary approval owner without applying its policy', async () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-policy-approval.test', scope: 'tab' });

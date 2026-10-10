@@ -10,6 +10,73 @@ async function importClient() {
 }
 
 describe('machineRpcWithPeerMediationRoute', () => {
+    it.each([RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START, RPC_METHODS.DAEMON_BROWSER_VIEW_LIST,
+        RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH])('uses relay before issue for an old live-viewer %s grant and preserves signed automation authority', async (method) => {
+        const { machineRpcWithPeerMediationRoute } = await import('./client');
+        const key = Buffer.from(new Uint8Array(32).fill(1)).toString('base64url');
+        const signature = Buffer.from(new Uint8Array(64).fill(2)).toString('base64url');
+        const route = { kind: 'selected' as const, receipt: 'peer.route.selected' as const,
+            endpoint: { url: 'http://127.0.0.1:3000', endpointFingerprint: 'endpoint_1' },
+            grant: { payload: { v: 2 as const, grantId: 'grant_v2', accountId: 'account_1', machineId: 'machine_1',
+                flowKind: 'machine_rpc' as const, routeKind: 'loopback_direct' as const,
+                scope: { kind: 'machine_rpc' as const, rpcScopeId: 'rpc_1', allowedMethods: [method], maxCalls: 1, maxIdleMs: 10_000 },
+                iat: 1_000, exp: 601_000, aud: 'happier-daemon-route-grant' as const, endpointFingerprint: 'endpoint_1',
+                proofKind: 'ephemeral_ed25519' as const, ephemeralPublicKeyBase64Url: key },
+                signature: { keyId: 'key_1', alg: 'Ed25519' as const, valueBase64Url: signature } },
+            proof: { v: 2 as const, kind: 'ephemeral_ed25519' as const, signedGrantDigestBase64Url: key,
+                nonceBase64Url: Buffer.from(new Uint8Array(16).fill(3)).toString('base64url'), signatureBase64Url: signature } };
+        const serverFallback = vi.fn(async () => ({ started: 'relay' }));
+        const postDirect = vi.fn(async (_input: { onDispatched?: () => void }) => ({ v: 2 as const, ok: true as const,
+            receipt: 'peer.rpc.direct_call_succeeded' as const, requestId: 'request_v2', method,
+            routeKind: 'loopback_direct' as const, result: { started: 'direct' } }));
+        const input = { machineId: 'machine_1', method, payload: { streamId: 'stream_1' },
+            postDirect, serverFallback, createRequestId: () => 'request_v2' };
+        await expect(machineRpcWithPeerMediationRoute({ ...input, resolveDirectRoute: async () => route })).resolves.toEqual({ started: 'relay' });
+        expect(postDirect).not.toHaveBeenCalled();
+        const signedAuthorityRoute = { ...route, grant: { ...route.grant,
+            payload: { ...route.grant.payload, callerAuthority: 'account_automation' as const } } };
+        serverFallback.mockClear();
+        await expect(machineRpcWithPeerMediationRoute({ ...input, resolveDirectRoute: async () => signedAuthorityRoute })).resolves.toEqual({ started: 'direct' });
+        expect(serverFallback).not.toHaveBeenCalled();
+    });
+    it('uses confidential direct delivery without payload receipts or an issued fallback', async () => {
+        const module = await import('./client');
+        const secret = 'd26-recognizable-private-value';
+        const method = 'daemon.approval.request.secretContinue.v1';
+        const publicKey = Buffer.from(new Uint8Array(32).fill(1)).toString('base64url');
+        const signature = Buffer.from(new Uint8Array(64).fill(2)).toString('base64url');
+        const recordReceipt = vi.fn();
+        const serverFallback = vi.fn(async () => ({ status: 'filled', code: 'filled' }));
+        const route = { kind: 'selected' as const, receipt: 'peer.route.selected' as const,
+            endpoint: { url: 'http://127.0.0.1:3000', endpointFingerprint: 'endpoint_1' },
+            grant: { payload: { v: 2 as const, grantId: 'grant_v2', accountId: 'account_1', machineId: 'machine_1',
+                callerAuthority: 'present_user' as const, flowKind: 'machine_rpc' as const, routeKind: 'loopback_direct' as const,
+                scope: { kind: 'machine_rpc' as const, rpcScopeId: 'rpc_1', allowedMethods: [method], maxCalls: 1, maxIdleMs: 10_000 },
+                iat: 1_000, exp: 601_000, aud: 'happier-daemon-route-grant' as const, endpointFingerprint: 'endpoint_1',
+                proofKind: 'ephemeral_ed25519' as const, ephemeralPublicKeyBase64Url: publicKey },
+                signature: { keyId: 'key_1', alg: 'Ed25519' as const, valueBase64Url: signature } },
+            proof: { v: 2 as const, kind: 'ephemeral_ed25519' as const, signedGrantDigestBase64Url: publicKey,
+                nonceBase64Url: Buffer.from(new Uint8Array(16).fill(3)).toString('base64url'), signatureBase64Url: signature } };
+        const postDirect = vi.fn(async (_input: { request: unknown }) => ({ v: 2 as const, ok: false as const,
+            receipt: 'peer.rpc.fell_back_to_server' as const, requestId: 'request_v2', method, reasonCode: 'handler_unavailable' as const }));
+        await expect(module.machineRpcWithPeerMediationRoute({ machineId: 'machine_1', method,
+            payload: { choice: { kind: 'once', value: secret } }, resolveDirectRoute: async () => route,
+            postDirect, serverFallback, recordReceipt, createRequestId: () => 'request_v2' })).rejects.toMatchObject({ code: 'outcome_uncertain' });
+        expect(postDirect).toHaveBeenCalledOnce();
+        expect(serverFallback).not.toHaveBeenCalled();
+        expect(JSON.stringify(recordReceipt.mock.calls)).not.toContain(secret);
+        expect(recordReceipt).not.toHaveBeenCalled();
+        expect(postDirect.mock.calls[0]?.[0]).not.toHaveProperty('request.commandReceipt');
+
+        const { callerAuthority: _authority, ...oldGrantPayload } = route.grant.payload;
+        postDirect.mockClear();
+        await expect(module.machineRpcWithPeerMediationRoute({ machineId: 'machine_1', method,
+            payload: { choice: { kind: 'once', value: secret } },
+            resolveDirectRoute: async () => ({ ...route, grant: { ...route.grant, payload: oldGrantPayload } }),
+            postDirect, serverFallback, recordReceipt })).resolves.toEqual({ status: 'filled', code: 'filled' });
+        expect(postDirect).not.toHaveBeenCalled();
+        expect(recordReceipt).not.toHaveBeenCalled();
+    });
     it('uses server fallback without attempting direct transport for server-required methods', async () => {
         const module = await importClient();
         expect(module).toHaveProperty('machineRpcWithPeerMediationRoute');

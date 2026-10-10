@@ -45,7 +45,7 @@ import { ManagedCreationDisabledBanner } from './ManagedMachineStateRow';
 import { useManagedControllerScope } from './useManagedControllerScope';
 import { buildManagedConfigurationReceipt, describeLocalHeadroom, describeManagedConfigurationSummary, managedCredentialReceiptTargets } from './managedConfigurationPresentation';
 import { MachineEnvironmentSection } from './MachineEnvironmentSection';
-import { ManagedFieldRow } from './MachinePresetDetail';
+import { ManagedFieldRow, managedPresetLimitRow } from './MachinePresetDetail';
 import { useQualifiedConnectedAccountTargetPresentations } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountTargetPresentations';
 import type { ManagedReceiptModel } from './MachineConfigurationReceipt';
 import { createManagedConfiguratorDraft, refreshManagedConfiguratorOptions, selectManagedConfiguratorChoice,
@@ -62,10 +62,7 @@ import type { ManagedPrerequisiteV1 } from '@happier-dev/protocol/machines/manag
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { formatRetentionDuration } from './managedRetentionPresentation';
 
-/** The common simultaneous limits offered in one tap; any other positive number stays one choice away. */
-const LIMIT_CHOICES: readonly number[] = [1, 2, 3, 4, 5, 10];
 const MORE_TEAMS = '__more-teams';
-const OTHER_LIMIT = '__other-limit';
 
 export type ManagedMachineConfigurationViewProps = Readonly<{
     serverId: string; provisioner: string; presetId?: string; presetOnly?: boolean; initialController?: ManagedControllerV1;
@@ -469,7 +466,6 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const pageTitle = props.presetOnly || !kindTitle ? title : t('managedMachines.config.newKind', { provider: title, kind: kindTitle });
     // Unpriced, the bar's value stays short; the sentence belongs to the receipt.
     const summaryValue = summaryPrice ? formatProviderAmount(summaryPrice) : receiptFacts?.billing.location === 'local' ? t('managedMachines.price.noBill') : '—';
-    const limitChoices = [...new Set([...LIMIT_CHOICES, ...(limit ? [limit] : [])])].sort((left, right) => left - right);
     return <ManagedMachineConfigurator title={pageTitle} description={props.presetOnly ? t('machinePresets.futureOnly') : compact ? undefined : t('managedMachines.config.description')} mark={mark}
         actions={scope.chip}
         compact={compact} testID="managed-config" receipt={receipt} summary={{ value: summaryValue,
@@ -532,16 +528,8 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                 onChange: id => { if (id === MORE_TEAMS) teams.loadMore(); else setTeamId(id); } }} />
         </ItemGroup> : null}
         {draft && props.presetOnly ? <ItemGroup title={t('machinePresets.runningAtOnce')} description={t('machinePresets.limitHelp')}>
-            <ManagedFieldRow testID="managed-config.limit" row={{ title: t('machinePresets.atMost'), subtitle: limit ? t('machinePresets.limitWaits') : undefined,
-                choices: [{ id: 'none', title: t('machinePresets.noLimit') }, ...limitChoices.map(value => ({ id: String(value), title: String(value) })),
-                    { id: OTHER_LIMIT, title: t('machinePresets.otherLimit') }],
-                value: limit ? String(limit) : 'none', disabled: busy,
-                onChange: async id => {
-                    if (id === 'none') { setLimit(undefined); return; }
-                    if (id !== OTHER_LIMIT) { setLimit(Number(id)); return; }
-                    const value = await Modal.prompt(t('machinePresets.runningAtOnce'), t('machinePresets.limitHelp'), { defaultValue: limit ? String(limit) : '', inputType: 'numeric' });
-                    if (value !== null && activeBinding?.isCurrent()) { const parsed = Number(value); if (!value.trim()) setLimit(undefined); else if (Number.isSafeInteger(parsed) && parsed > 0) setLimit(parsed); }
-                } }} />
+            <ManagedFieldRow testID="managed-config.limit" row={managedPresetLimitRow({ limit, disabled: busy,
+                onChange: next => { if (activeBinding?.isCurrent()) setLimit(next); } })} />
         </ItemGroup> : null}
         {error ? <SurfaceStateCard kind="error" title={error === 'conflict' ? t('machinePresets.conflict') : t('managedMachines.options.error')}
             testID="managed-config.error" action={{ label: t('managedMachines.actions.tryAgain'), onPress: retry }} /> : null}

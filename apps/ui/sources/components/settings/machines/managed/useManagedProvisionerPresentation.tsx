@@ -4,7 +4,10 @@ import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plug
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
 import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import type { PluginProjectionInstalledPackageV2 } from '@happier-dev/protocol';
 import { Icon } from '@/components/ui/icons/Icon';
+import { InstalledPluginBrandMark } from '@/components/plugins/shared/InstalledPluginBrandMark';
+import { useServerInstalledPluginBrand } from '@/components/settings/plugins/PluginMark';
 import { getPreferredLanguage } from '@/text';
 import { resolvePluginContributedActionIconName } from '@/components/plugins/actions/pluginContributedActionPresentation';
 import { launchPluginSurfaceAction } from '@/components/plugins/surfaces/launchPluginSurfaceAction';
@@ -14,8 +17,27 @@ import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/u
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 type Provisioner = MachineProvisionersListResultV1['provisioners'][number];
-function provisionerMark(provisioner?: Pick<Provisioner, 'contribution' | 'descriptor'>) {
-    return <Icon name={resolvePluginContributedActionIconName(provisioner?.descriptor.icon)} size={28} />;
+type ProvisionerMarkProps = Readonly<{
+    icon?: string;
+    installedPackage?: PluginProjectionInstalledPackageV2 | null;
+    machineId?: string;
+    serverId: string;
+}>;
+
+/** The provisioner's identity: its package's contributed brand mark, else the glyph its descriptor names. */
+function ManagedProvisionerMark(props: ProvisionerMarkProps) {
+    if (props.installedPackage?.brand?.state === 'available' && props.machineId) return <ManagedProvisionerBrandMark {...props} />;
+    return <ManagedProvisionerGlyph icon={props.icon} />;
+}
+
+function ManagedProvisionerBrandMark(props: ProvisionerMarkProps) {
+    const brand = useServerInstalledPluginBrand(props);
+    return brand?.bytes ? <InstalledPluginBrandMark brand={brand} externallyLabelled pixelSize={28} />
+        : <ManagedProvisionerGlyph icon={props.icon} />;
+}
+
+function ManagedProvisionerGlyph(props: Readonly<{ icon?: string }>) {
+    return <Icon name={resolvePluginContributedActionIconName(props.icon)} size={28} />;
 }
 
 /** Catalog declarations own display identity; the selected controller's admitted bundles own translation. */
@@ -50,10 +72,13 @@ export function useManagedProvisionerPresentation(input: Readonly<{
         });
         return result.outcome;
     };
+    const installedPackages = projection.inputs?.pluginProjectionV2?.installedPackagesById;
+    const markFor = (row?: Pick<Provisioner, 'contribution' | 'descriptor'>) => <ManagedProvisionerMark icon={row?.descriptor.icon}
+        installedPackage={row ? installedPackages?.[row.contribution.pluginId] : null} machineId={input.controller?.machineId} serverId={input.serverId} />;
     return { localized, title: provisioner ? localized(provisioner.contribution.pluginId, provisioner.descriptor.title) : null,
         kindTitle: provisioner?.descriptor.kindTitle ? localized(provisioner.contribution.pluginId, provisioner.descriptor.kindTitle) : null,
         description: provisioner?.descriptor.description ? localized(provisioner.contribution.pluginId, provisioner.descriptor.description) : null,
         resourceIdPath: provisioner?.descriptor.resourceIdPath ?? null,
-        mark: provisionerMark(provisioner), markFor: provisionerMark,
+        mark: markFor(provisioner), markFor,
         projection: uiProjection, projectionReady: projection.phase === 'ready', repair };
 }

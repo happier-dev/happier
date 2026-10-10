@@ -5,6 +5,7 @@ import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForId
 import { storage } from '@/sync/domains/state/storage';
 import { createScopedSnapshotLoader } from '@/sync/engine/scope/scopedSnapshotLoader';
 import { refreshMachinePools } from '@/sync/ops/machinePools';
+import { isHomeAdministrationAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 type MachinePoolProjectionTarget = Readonly<{
     key: string;
@@ -22,6 +23,10 @@ const targetFor = (serverIdRaw: string, forceFeatures: boolean): MachinePoolProj
 };
 
 const loader = createScopedSnapshotLoader<MachinePoolProjectionTarget>({
+    // Focused Pool writes already refresh this owner through the awaited change planner.
+    // Preserve Account/configuration and content-free recovery wakes without also replaying
+    // every unrelated exact page (or issuing a second refresh for the same Pool write).
+    matchesWake: isHomeAdministrationAccountChange,
     load: async (target, context) => {
         const forceFeaturesRequested = forceFeatureRefreshByServerId.delete(target.serverId);
         const forceFeatures = target.forceFeatures || forceFeaturesRequested;

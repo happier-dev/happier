@@ -31,9 +31,11 @@ import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSet
 import { readAccountSettingsForScope } from '@/sync/domains/state/accountSettingsPersistence';
 import { storage } from '@/sync/domains/state/storage';
 import { readReplacementAwareMachineRpcTarget } from './machineRpcTarget';
+import { resolveVisibleMachinesForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
 
 type MachineExternalSessionsOpts = Readonly<{
     serverId?: string | null;
+    accountId?: string;
     timeoutMs?: number | null;
     signal?: AbortSignal;
 }>;
@@ -103,7 +105,10 @@ async function callExternalSessionMachineRpc<Request, Response>(params: Readonly
 }>): Promise<Response> {
     const payload = params.requestSchema.parse(params.input);
     const routeTarget = params.routeTarget === undefined
-        ? readReplacementAwareMachineRpcTarget(params.machineId)
+        ? params.opts?.accountId && params.opts.serverId
+            ? resolveReplacementAwareMachineRpcTarget({ machineId: params.machineId,
+                machines: resolveVisibleMachinesForActiveServerFromState(storage.getState(), { serverId: params.opts.serverId }) })
+            : readReplacementAwareMachineRpcTarget(params.machineId)
         : params.routeTarget;
     if (!routeTarget) {
         throw new Error(`Machine RPC target is unavailable (${params.method})`);
@@ -113,7 +118,7 @@ async function callExternalSessionMachineRpc<Request, Response>(params: Readonly
         response = await machineRpcWithServerScope<unknown, Request>({
             machineId: routeTarget.machineId,
             serverId: params.opts?.serverId,
-            ...(params.accountId ? { accountId: params.accountId } : {}),
+            ...((params.accountId ?? params.opts?.accountId) ? { accountId: params.accountId ?? params.opts?.accountId, preferScoped: true } : {}),
             ...(params.onIssued ? { onIssued: params.onIssued } : {}),
             timeoutMs: params.opts?.timeoutMs ?? undefined,
             ...(params.opts?.signal ? { signal: params.opts.signal } : {}),
@@ -136,6 +141,7 @@ async function callExternalSessionMachineRpc<Request, Response>(params: Readonly
         response = await machineRpcWithServerScope<unknown, unknown>({
             machineId: routeTarget.machineId,
             serverId: params.opts?.serverId,
+            ...((params.accountId ?? params.opts?.accountId) ? { accountId: params.accountId ?? params.opts?.accountId, preferScoped: true } : {}),
             timeoutMs: params.opts?.timeoutMs ?? undefined,
             ...(params.opts?.signal ? { signal: params.opts.signal } : {}),
             method: params.legacy.method,

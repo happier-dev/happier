@@ -107,6 +107,7 @@ export function buildMachineAdministrationCandidateInventoryRows(params: Readonl
     activeServerId: string;
     activeMachineRecords: readonly Machine[];
     machineRecordListsByServerId: Readonly<Record<string, readonly Machine[] | null | undefined>>;
+    machineListStatusByServerId?: Readonly<Record<string, 'idle' | 'loading' | 'signedOut' | 'error' | undefined>>;
     nowMs?: number;
 }>): readonly MachineAdministrationCandidateInventoryRowV1<Machine>[] {
     const rowsByTarget = new Map<string, MachineAdministrationCandidateInventoryRowV1<Machine>>();
@@ -136,6 +137,7 @@ export function buildMachineAdministrationCandidateInventoryRows(params: Readonl
             activeServerId: params.activeServerId,
             activeMachines: params.activeMachineRecords,
             machineListByServerId: params.machineRecordListsByServerId,
+            machineListStatusByServerId: params.machineListStatusByServerId,
         }) ?? [];
 
         for (const machine of machines) {
@@ -179,6 +181,7 @@ export function buildMachineAdministrationCandidates(params: Readonly<{
     activeServerId: string;
     activeMachineRecords: readonly Machine[];
     machineRecordListsByServerId: Readonly<Record<string, readonly Machine[] | null | undefined>>;
+    machineListStatusByServerId?: Readonly<Record<string, 'idle' | 'loading' | 'signedOut' | 'error' | undefined>>;
     nowMs?: number;
 }>): readonly MachineAdministrationCandidateV1[] {
     return Object.freeze(buildMachineAdministrationCandidateInventoryRows(params).map((row) => row.candidate));

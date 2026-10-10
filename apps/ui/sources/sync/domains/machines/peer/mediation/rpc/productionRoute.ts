@@ -85,6 +85,7 @@ async function fetchJson(params: Readonly<{
     url: string;
     init: RequestInit;
     timeoutMs?: number;
+    operationTimeoutMs?: null;
     signal?: AbortSignal;
     onDispatched?: () => void;
 }>): Promise<Readonly<{ ok: boolean; status: number; body: unknown }>> {
@@ -92,7 +93,7 @@ async function fetchJson(params: Readonly<{
         ? params.timeoutMs
         : MACHINE_RPC_DIRECT_FETCH_TIMEOUT_MS;
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    const timeoutId = controller && params.operationTimeoutMs !== null ? setTimeout(() => controller.abort(), timeoutMs) : null;
     const externalSignal = params.signal;
     const forwardExternalAbort = controller && externalSignal ? () => controller.abort() : null;
     if (controller && externalSignal && forwardExternalAbort) {
@@ -301,6 +302,7 @@ export async function postProductionMachineRpcDirect(input: Readonly<{
     url: string;
     request: PeerMachineRpcDirectRequestV2;
     timeoutMs?: number;
+    operationTimeoutMs?: null;
     signal?: AbortSignal;
     onDispatched?: () => void;
 }>): Promise<PeerMachineRpcDirectResponseV2> {
@@ -308,6 +310,7 @@ export async function postProductionMachineRpcDirect(input: Readonly<{
         const response = await fetchJson({
             url: input.url,
             timeoutMs: input.timeoutMs,
+            operationTimeoutMs: input.operationTimeoutMs,
             signal: input.signal,
             onDispatched: input.onDispatched,
             init: {

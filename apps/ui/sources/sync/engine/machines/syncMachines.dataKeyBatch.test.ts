@@ -4,6 +4,7 @@ import type { MachineDataKeyCacheEntry } from './syncMachines';
 import tweetnacl from 'tweetnacl';
 import { createDeferred, createMachineFixture } from '@/dev/testkit';
 import { Encryption } from '@/sync/encryption/encryption';
+import { storage } from '@/sync/domains/state/storage';
 import {
     computeRunnerMachineContentKeyFingerprintV1,
     encodePlainMachineStoredContent,
@@ -394,6 +395,72 @@ describe('fetchAndApplyMachines machine data-key unwrapping', () => {
 
 
 describe('fetchAndApplyMachines real selected-envelope hydration', () => {
+    it.each([
+        { phase: 'request', initial: 'locked' }, { phase: 'hydration', initial: 'locked' },
+        { phase: 'request', initial: 'absent' }, { phase: 'hydration', initial: 'absent' },
+    ] as const)('hydrates a $initial Machine despite a presence update during $phase', async ({ phase, initial }) => {
+        const { fetchAndApplyMachines, buildMachineFromMachineActivityEphemeralUpdate } = await import('./syncMachines');
+        const { flushMachineActivityUpdates } = await import('@/sync/engine/socket/socket');
+        const { Encryption } = await import('@/sync/encryption/encryption');
+        const encryption = await Encryption.create(new Uint8Array(32).fill(17));
+        encryption.configureNativeCryptoWorker({ routing: { mode: 'off' } });
+        const key = new Uint8Array(32).fill(29);
+        const envelope = encodeBase64(await encryption.encryptEncryptionKey(key), 'base64');
+        const metadata = createMachineFixture().metadata!;
+        const codec = await encryption.openEncryption(key);
+        const ciphertext = encodeBase64((await codec.encrypt([metadata]))[0]!, 'base64');
+        const row = { ...machineRow('restored', envelope), metadata: ciphertext };
+        const initialState = storage.getState();
+        storage.setState({ machines: {}, machineDisplayById: {}, machineListByServerId: {} });
+        if (initial === 'locked') storage.getState().applyMachines([createMachineFixture({ id: row.id, metadata: null,
+            metadataVersion: 1, daemonState: null, daemonStateVersion: 0, dataEncryptionKey: envelope,
+            storageMode: 'e2ee', availability: { kind: 'locked', reason: 'encryption_material_unavailable' } })]);
+        const entered = createDeferred<void>();
+        const release = createDeferred<void>();
+        const platformCrypto = await import('rn-encryption');
+        const originalDecrypt = platformCrypto.decryptAsyncAES;
+        const spy = phase === 'hydration' ? vi.spyOn(platformCrypto, 'decryptAsyncAES').mockImplementationOnce(async (...args) => {
+            const plaintext = await originalDecrypt(...args);
+            entered.resolve();
+            await release.promise;
+            return plaintext;
+        }) : null;
+        const pending = fetchAndApplyMachines({ credentials: legacyCredentials, sourceServerId: 'home-1',
+            expectedAccountMode: 'e2ee', encryption, machineDataKeys: new Map(),
+            getMachineSnapshot: () => storage.getState().machines,
+            getExistingMachine: id => storage.getState().machines[id],
+            request: async () => {
+                if (phase === 'request') { entered.resolve(); await release.promise; }
+                return jsonResponse([row]);
+            },
+            applyMachineDisplayEntries: (machines, options) => storage.getState().replaceMachineDisplays(machines, options),
+            applyMachines: (machines, replace) => storage.getState().applyMachines(machines, replace),
+        });
+        try {
+            await entered.promise;
+            const current = storage.getState().machines[row.id];
+            if (current) storage.getState().applyMachines([buildMachineFromMachineActivityEphemeralUpdate({ machine: current,
+                updateData: { active: true, activeAt: current.activeAt + 100 } })]);
+            else {
+                flushMachineActivityUpdates({ updates: new Map([[row.id, { id: row.id, active: true, activeAt: 110 }]]),
+                    applyMachines: machines => storage.getState().applyMachines(machines) });
+                flushMachineActivityUpdates({ updates: new Map([[row.id, { id: row.id, active: false, activeAt: 115 }]]),
+                    applyMachines: machines => storage.getState().applyMachines(machines) });
+            }
+            const latestActiveAt = storage.getState().machines[row.id]!.activeAt;
+            const latestActive = storage.getState().machines[row.id]!.active;
+            release.resolve();
+            await pending;
+            await vi.waitFor(() => expect(storage.getState().machines[row.id]).toMatchObject({
+                metadata, availability: { kind: 'available' }, active: latestActive, activeAt: latestActiveAt,
+            }));
+        } finally {
+            release.resolve();
+            await pending;
+            spy?.mockRestore();
+            storage.setState(initialState, true);
+        }
+    });
     it('does not let an older snapshot retire an already committed current cipher', async () => {
         const encryption = await Encryption.create(new Uint8Array(32).fill(17));
         const currentKey = new Uint8Array(32).fill(30);

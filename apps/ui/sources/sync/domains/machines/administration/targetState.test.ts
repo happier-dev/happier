@@ -1,9 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { Machine } from '@/sync/domains/state/storageTypes';
-
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => left === right,
-}));
+import { adoptHomeProfile, type ServerProfile } from '@/sync/domains/server/serverProfiles';
 
 import {
     buildMachineAdministrationCandidateInventoryRows,
@@ -36,16 +33,14 @@ function machine(input: Readonly<{
     };
 }
 
-const profile = {
-    id: 'local-profile-b',
-    name: 'Server B',
-    serverUrl: 'https://b.example.test',
-    serverIdentityId: 'srv_server_b',
-    legacyServerIds: ['legacy-b'],
-    createdAt: 1,
-    updatedAt: 1,
-    lastUsedAt: 1,
-};
+let profile: ServerProfile;
+beforeEach(async () => {
+    const url = 'https://b.example.test';
+    profile = await adoptHomeProfile({ descriptor: {
+        v: 1, homeServerIdentityId: 'srv_server_b', canonicalServerUrl: url,
+        revision: 1, endpoints: [{ kind: 'https', url }],
+    }, source: 'manual', suggestedName: 'Server B' });
+});
 
 describe('buildMachineAdministrationCandidates', () => {
     it('keeps the device-local routing row attached to its portable candidate without exposing it as preference data', () => {
@@ -66,7 +61,7 @@ describe('buildMachineAdministrationCandidates', () => {
                     machineId: 'machine-b',
                 },
             }),
-            serverId: 'local-profile-b',
+            serverId: profile.id,
             serverName: 'Server B',
             machine: rawMachine,
         }]);

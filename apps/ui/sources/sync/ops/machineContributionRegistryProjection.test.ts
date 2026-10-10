@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import '@happier-dev/protocol';
 
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -8,6 +9,7 @@ import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionO
 
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 let network: Awaited<ReturnType<typeof installSessionOpsNetworkBoundary>>;
+let serverAId = '';
 
 const mountedTarget = {
     pluginId: 'acme.preview',
@@ -69,6 +71,12 @@ describe('machine contribution registry projection ops', () => {
             network.addHome('https://server-a', 'account-a'),
             network.addHome('https://server-b', 'account-a'),
         ]);
+        serverAId = homes[0].id;
+        // The network harness publishes plain machine rows; their Account must
+        // advertise that same mode at its real HTTP authority.
+        network.setHttpResponder(async (input) => new URL(String(input)).pathname === '/v1/account/encryption'
+            ? Response.json({ mode: 'plain', updatedAt: 0 })
+            : null);
         // Record the request at the physical Socket.IO boundary. Scoped Home /
         // Account routing, framing, projection parsing and currentness stay real.
         network.setRpcAckResponder(async (request) => {
@@ -90,6 +98,7 @@ describe('machine contribution registry projection ops', () => {
         });
     });
     afterEach(async () => {
+        vi.useRealTimers();
         const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
         const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
         serverScopedRpcSocketPool.resetForTests();
@@ -150,7 +159,7 @@ describe('machine contribution registry projection ops', () => {
         }
     }
 
-    it('routes projection.describe through server-scoped machine rpc within the machine RPC budget', async () => {
+    it('routes projection.describe through server-scoped machine rpc without an operation deadline', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({
             protocolVersion: 1,
             projection: v2Projection(),
@@ -158,7 +167,7 @@ describe('machine contribution registry projection ops', () => {
         });
         const { machineContributionRegistryProjectionDescribe } = await import('./machineContributionRegistryProjection');
 
-        const res = await machineContributionRegistryProjectionDescribe('machine-1', { serverId: 'server-a' });
+        const res = await machineContributionRegistryProjectionDescribe('machine-1', { serverId: serverAId });
 
         expect(res).toEqual({
             supported: true,
@@ -167,20 +176,24 @@ describe('machine contribution registry projection ops', () => {
         });
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',
-            serverId: 'server-a',
+            serverId: serverAId,
             method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
             payload: expect.not.objectContaining({ mountedTarget: expect.anything() }),
         }));
-        // The emitted request consumes, rather than replaces, its owning RPC budget.
-        const { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes');
-        expect(network.requests[0]?.timeoutMs).toBeGreaterThan(0);
-        expect(network.requests[0]?.timeoutMs).toBeLessThanOrEqual(DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS);
+        expect(network.requests).toHaveLength(1);
+        expect(network.requests[0]?.timeoutMs).toBeNull();
     });
 
     it('classifies why a projection read failed', async () => {
         const { machineContributionRegistryProjectionDescribe } = await import('./machineContributionRegistryProjection');
 
         machineRpcWithServerScopeMock.mockRejectedValueOnce(createSocketIoAckTimeoutError());
+        await expect(machineContributionRegistryProjectionDescribe('machine-1', { serverId: 'server-a' }))
+            // No operation deadline was armed, so this unsolicited peer error
+            // is not the shared owner's connection/setup timeout fact.
+            .resolves.toEqual({ supported: false, reason: 'error' });
+
+        machineRpcWithServerScopeMock.mockRejectedValueOnce(Object.assign(new Error('RPC connection setup timed out'), { code: 'MACHINE_RPC_TIMEOUT' }));
         await expect(machineContributionRegistryProjectionDescribe('machine-1', { serverId: 'server-a' }))
             .resolves.toEqual({ supported: false, reason: 'timeout' });
 
@@ -191,6 +204,152 @@ describe('machine contribution registry projection ops', () => {
         machineRpcWithServerScopeMock.mockRejectedValueOnce(new Error('socket closed'));
         await expect(machineContributionRegistryProjectionDescribe('machine-1', { serverId: 'server-a' }))
             .resolves.toEqual({ supported: false, reason: 'error' });
+    });
+
+    it.each(['targeted', 'schemas', 'resource', 'action', 'settings', 'secret'] as const)(
+        'keeps %s plugin work pending beyond the former operation ceiling', async (kind) => {
+            let answer!: (response: unknown) => void;
+            network.setRpcAckResponder(async () => ({ ok: true, result: await new Promise((resolve) => { answer = resolve; }) }));
+            const mod = await import('./machineContributionRegistryProjection');
+            vi.useFakeTimers();
+            const common = { serverId: serverAId, timeoutMs: kind === 'action' || kind === 'settings' ? undefined : null };
+            const exact = { expectedOccurrenceId: 'occurrence-a', qualifiedActionId: 'acme.preview/refresh' };
+            const operation = kind === 'targeted'
+                ? mod.machinePluginUiTargetedContributionsRead('machine-1', { ...common, pluginId: 'acme.preview' })
+                : kind === 'schemas'
+                    ? mod.machinePluginActionSchemasRead('machine-1', { ...common, ...exact })
+                    : kind === 'resource'
+                        ? mod.machinePluginUiResourceRead('machine-1', {
+                            ...common, expectedCallerOccurrenceId: 'occurrence-a', callerPluginId: 'acme.preview',
+                            resource: { pluginId: 'acme.preview', localId: 'config' },
+                        })
+                        : kind === 'action'
+                            ? mod.machinePluginStructuredMessageActionExecute('machine-1', {
+                                ...common, qualifiedActionId: exact.qualifiedActionId,
+                                expectedContributorOccurrenceId: 'occurrence-a', executionSurface: 'ui',
+                            })
+                            : kind === 'settings'
+                                ? mod.machinePluginSettingsGet('machine-1', {
+                                    ...common, serverIdentityId: 'srv_home', pluginId: 'acme.preview',
+                                })
+                                : mod.machinePluginSecretStatus('machine-1', {
+                                    ...common, serverIdentityId: 'srv_home', pluginId: 'acme.preview', secretId: 'token',
+                                });
+            let settled = false;
+            void operation.then(() => { settled = true; });
+            await vi.waitFor(() => expect(answer).toBeTypeOf('function'));
+            await vi.advanceTimersByTimeAsync(31_000);
+            expect(settled).toBe(false);
+            const response = kind === 'targeted'
+                ? { status: 'current', targetedContributions: targetedSnapshot(), targetedSurfaceMounts: [] }
+                : kind === 'schemas' ? { ok: true, inputSchema: { type: 'object' } }
+                    : kind === 'settings'
+                        ? { protocolVersion: 1, pluginId: 'acme.preview', scope: { kind: 'daemon' }, revision: '1', values: {}, redactedKeys: [] }
+                        : kind === 'secret'
+                            ? { protocolVersion: 1, pluginId: 'acme.preview', secretId: 'token', state: 'missing', revision: '1' }
+                            : kind === 'resource'
+                                ? { ok: true, resource: { pluginId: 'acme.preview', localId: 'config' }, kind: 'config',
+                                    contentType: 'application/json', digest: `sha256:${'a'.repeat(64)}`, bytesBase64: 'e30=' }
+                                : { ok: true, result: { ready: true } };
+            answer(response);
+            await expect(operation).resolves.toMatchObject({ supported: true });
+        },
+    );
+
+    it('cancels only the issued Action occurrence and keeps a successor Action live', async () => {
+        const answers = new Map<string, (response: unknown) => void>();
+        network.setRpcAckResponder(async ({ payload }) => {
+            if (!payload || typeof payload !== 'object' || !('expectedContributorOccurrenceId' in payload)
+                || typeof payload.expectedContributorOccurrenceId !== 'string') {
+                throw new Error('The issued Action must name its contributor occurrence');
+            }
+            const occurrenceId = payload.expectedContributorOccurrenceId;
+            return { ok: true, result: await new Promise((resolve) => { answers.set(occurrenceId, resolve); }) };
+        });
+        const { machinePluginStructuredMessageActionExecute } = await import('./machineContributionRegistryProjection');
+        const controller = new AbortController();
+        const input = { serverId: serverAId, qualifiedActionId: 'acme.preview/refresh', executionSurface: 'ui' as const };
+        const first = machinePluginStructuredMessageActionExecute('machine-1', {
+            ...input, expectedContributorOccurrenceId: 'occurrence-a', signal: controller.signal,
+        });
+        const second = machinePluginStructuredMessageActionExecute('machine-1', {
+            ...input, expectedContributorOccurrenceId: 'occurrence-b',
+        });
+        let firstSettled = false;
+        let secondSettled = false;
+        void first.then(() => { firstSettled = true; });
+        void second.then(() => { secondSettled = true; });
+        await vi.waitFor(() => expect([...answers.keys()].sort()).toEqual(['occurrence-a', 'occurrence-b']));
+        controller.abort();
+        await vi.waitFor(() => expect(firstSettled, 'the cancelled occurrence must settle').toBe(true));
+        await expect(first).resolves.toEqual({ supported: false, reason: 'outcomeUnknown' });
+        answers.get('occurrence-b')!({ ok: true, result: 'successor' });
+        await vi.waitFor(() => expect(secondSettled, 'the acknowledged successor must settle').toBe(true));
+        await expect(second).resolves.toEqual({ supported: true, result: { ok: true, result: 'successor' } });
+        expect(network.requests).toHaveLength(2);
+        expect(network.requests.map((request) => request.payload)).toEqual(expect.arrayContaining([
+            expect.objectContaining({ expectedContributorOccurrenceId: 'occurrence-a' }),
+            expect.objectContaining({ expectedContributorOccurrenceId: 'occurrence-b' }),
+        ]));
+        const { SOCKET_RPC_EVENTS } = await import('@happier-dev/protocol/socketRpc');
+        const calls = network.socketBoundaries.flatMap(({ socket }) => socket.emitWithAck.mock.calls)
+            .filter(([event]) => event === SOCKET_RPC_EVENTS.CALL);
+        const cancellations = network.socketBoundaries.flatMap(({ socket }) => socket.emit.mock.calls)
+            .filter(([event]) => event === SOCKET_RPC_EVENTS.CANCEL);
+        const issued = calls.find(([, packet]) => packet && typeof packet === 'object' && 'params' in packet
+            && packet.params && typeof packet.params === 'object' && 'expectedContributorOccurrenceId' in packet.params
+            && packet.params.expectedContributorOccurrenceId === 'occurrence-a')?.[1];
+        if (!issued || typeof issued !== 'object' || !('requestId' in issued)) {
+            throw new Error('The issued Action must carry its correlated request identity');
+        }
+        expect(cancellations).toEqual([[SOCKET_RPC_EVENTS.CANCEL, { requestId: issued.requestId }]]);
+    });
+
+    it('allows one shared schema reader to cancel while another receives the late answer', async () => {
+        let answer!: (response: unknown) => void;
+        network.setRpcAckResponder(async () => ({ ok: true, result: await new Promise((resolve) => { answer = resolve; }) }));
+        const { machinePluginActionSchemasRead } = await import('./machineContributionRegistryProjection');
+        const controller = new AbortController();
+        const input = { serverId: serverAId, expectedOccurrenceId: 'occurrence-a', qualifiedActionId: 'acme.preview/refresh' };
+        const first = machinePluginActionSchemasRead('machine-1', { ...input, signal: controller.signal });
+        const second = machinePluginActionSchemasRead('machine-1', input);
+        await vi.waitFor(() => expect(answer).toBeTypeOf('function'));
+        controller.abort();
+        await expect(first).resolves.toEqual({ supported: false, reason: 'aborted' });
+        answer({ ok: true, inputSchema: { type: 'object' } });
+        await expect(second).resolves.toEqual({ supported: true, result: { ok: true, inputSchema: { type: 'object' } } });
+        expect(network.requests).toHaveLength(1);
+    });
+
+    it('honors an explicit enclosing Resource deadline and preserves a real transport error', async () => {
+        let entered = false;
+        network.setRpcAckResponder(async () => { entered = true; return await new Promise(() => {}); });
+        const { machinePluginUiResourceRead } = await import('./machineContributionRegistryProjection');
+        const input = { serverId: serverAId, expectedCallerOccurrenceId: 'occurrence-a', callerPluginId: 'acme.preview',
+            resource: { pluginId: 'acme.preview', localId: 'config' } };
+        vi.useFakeTimers();
+        const pending = machinePluginUiResourceRead('machine-1', { ...input, timeoutMs: 31_000 });
+        await vi.waitFor(() => expect(entered).toBe(true));
+        await vi.advanceTimersByTimeAsync(31_000);
+        await expect(pending).resolves.toEqual({ supported: false, reason: 'timeout' });
+        vi.useRealTimers();
+        network.setRpcAckResponder(async () => { throw new Error('socket disconnected'); });
+        await expect(machinePluginUiResourceRead('machine-1', input)).resolves.toEqual({ supported: false, reason: 'error' });
+    });
+
+    it('retires a cancelled Settings read without redirecting it to a successor plugin', async () => {
+        let answer!: (response: unknown) => void;
+        network.setRpcAckResponder(async () => ({ ok: true, result: await new Promise((resolve) => { answer = resolve; }) }));
+        const { machinePluginSettingsGet } = await import('./machineContributionRegistryProjection');
+        const controller = new AbortController();
+        const pending = machinePluginSettingsGet('machine-1', {
+            serverId: serverAId, serverIdentityId: 'srv_home', pluginId: 'acme.preview', signal: controller.signal,
+        });
+        await vi.waitFor(() => expect(answer).toBeTypeOf('function'));
+        controller.abort();
+        await expect(pending).resolves.toEqual({ supported: false, reason: 'error' });
+        answer({ protocolVersion: 1, pluginId: 'acme.other', scope: { kind: 'daemon' }, revision: '1', values: {}, redactedKeys: [] });
+        expect(network.requests[0]?.payload).toMatchObject({ pluginId: 'acme.preview' });
     });
 
     it('reads only the target slice and accepts the daemon’s current occurrence tag', async () => {
@@ -532,7 +691,7 @@ describe('machine contribution registry projection ops', () => {
                 machineId: 'machine-1',
                 serverId: 'server-a',
                 method: RPC_METHODS.DAEMON_PLUGIN_SETTINGS_WATCH,
-                timeoutMs: expect.any(Number),
+                timeoutMs: null,
                 payload: {
                     serverIdentityId: 'srv_server_a',
                     machineId: 'machine-1',
@@ -560,8 +719,7 @@ describe('machine contribution registry projection ops', () => {
             }),
         ]);
         for (const request of network.requests.slice(0, 3)) {
-            expect(request.timeoutMs).toBeGreaterThan(30_000);
-            expect(request.timeoutMs).toBeLessThanOrEqual(35_000);
+            expect(request.timeoutMs).toBeNull();
         }
         expect(JSON.stringify(machineRpcWithServerScopeMock.mock.calls)).not.toContain('values');
 
@@ -664,15 +822,10 @@ describe('machine contribution registry projection ops', () => {
     });
 
     it('distinguishes a failed SET before issuance from a lost acknowledgement after issuance', async () => {
-        machineRpcWithServerScopeMock
-            .mockRejectedValueOnce(new Error('connection unavailable before SET emission'))
-            .mockImplementationOnce(async (input: Readonly<{ onIssued?: () => void }>) => {
-                input.onIssued?.();
-                throw new Error('SET acknowledgement lost after emission');
-            });
+        machineRpcWithServerScopeMock.mockRejectedValueOnce(new Error('SET acknowledgement lost after emission'));
         const { machinePluginSettingsSet } = await import('./machineContributionRegistryProjection');
         const input = {
-            serverId: 'server-a',
+            serverId: serverAId,
             serverIdentityId: 'srv_server_a',
             pluginId: 'acme.hooks',
             fieldId: 'endpoint',
@@ -680,26 +833,29 @@ describe('machine contribution registry projection ops', () => {
             expectedRevision: '3',
         };
 
-        await expect(machinePluginSettingsSet('machine-1', input)).resolves.toEqual({
+        // Admission fails before a wire request. A peer rejection during the
+        // ACK wait has already crossed issuance and cannot prove no effect.
+        await expect(machinePluginSettingsSet('machine-1', { ...input, fieldId: '' })).resolves.toEqual({
             supported: false,
             reason: 'error',
         });
+        expect(network.requests).toHaveLength(0);
         await expect(machinePluginSettingsSet('machine-1', input)).resolves.toEqual({
             supported: false,
             reason: 'outcomeUnknown',
         });
-        expect(machineRpcWithServerScopeMock.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
-            onIssued: expect.any(Function),
-        }));
+        expect(network.requests).toHaveLength(1);
+        expect(network.requests[0]?.payload).toMatchObject({ fieldId: 'endpoint', expectedRevision: '3' });
     });
 
     it.each([
         RPC_ERROR_CODES.METHOD_NOT_FOUND,
         RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
     ])('treats a thrown older-daemon Settings receiver absence (%s) as unsupported', async (rpcErrorCode) => {
-        machineRpcWithServerScopeMock
-            .mockRejectedValueOnce(new RpcError('older daemon receiver missing', rpcErrorCode))
-            .mockRejectedValueOnce(new RpcError('older daemon receiver missing', rpcErrorCode));
+        // Receiver absence is a property of this daemon, including the read
+        // transport's retry. One-shot responses can be exhausted by GET before
+        // SET reaches the physical boundary.
+        machineRpcWithServerScopeMock.mockRejectedValue(new RpcError('older daemon receiver missing', rpcErrorCode));
         const mod = await import('./machineContributionRegistryProjection');
 
         await expect(mod.machinePluginSettingsGet('machine-1', {
@@ -714,6 +870,7 @@ describe('machine contribution registry projection ops', () => {
             fieldId: 'endpoint',
             mutation: { kind: 'delete' },
         })).resolves.toEqual({ supported: false, reason: 'not-supported' });
+        expect(network.requests.map(request => request.method)).toContain(RPC_METHODS.DAEMON_PLUGIN_SETTINGS_SET);
     });
 
     it('routes structured-message actions through the exact contributor occurrence fence', async () => {
@@ -771,7 +928,6 @@ describe('machine contribution registry projection ops', () => {
                     },
                 },
             },
-            signal: abortController.signal,
         }));
     });
 
@@ -803,31 +959,53 @@ describe('machine contribution registry projection ops', () => {
     });
 
     it('distinguishes a structured Action failure before issuance from a lost acknowledgement after issuance', async () => {
+        network.setHttpResponder(async (input) => new URL(String(input)).pathname === '/v1/account/encryption'
+            ? Response.json({ mode: 'plain', updatedAt: 0 })
+            : null);
         machineRpcWithServerScopeMock
-            .mockRejectedValueOnce(new Error('connection unavailable before Action emission'))
-            .mockImplementationOnce(async (input: Readonly<{ onIssued?: () => void }>) => {
-                input.onIssued?.();
-                throw new Error('Action socket acknowledgement timed out after emission');
-            });
+            .mockResolvedValueOnce({ ok: true, result: { read: true } })
+            .mockResolvedValueOnce({ result: { read: true } })
+            .mockRejectedValueOnce(new Error('Action socket acknowledgement lost after emission'));
         const { machinePluginStructuredMessageActionExecute } = await import('./machineContributionRegistryProjection');
         const input = {
-            serverId: 'server-a',
+            serverId: serverAId,
             expectedContributorOccurrenceId: 'preview-occurrence-7',
             qualifiedActionId: 'acme.preview/open-preview',
             executionSurface: 'ui' as const,
         };
 
-        await expect(machinePluginStructuredMessageActionExecute('machine-1', input)).resolves.toEqual({
+        // Invalid request admission is real internal logic, before any wire
+        // emission. The responder below is only the physical Socket.IO peer.
+        await expect(machinePluginStructuredMessageActionExecute('machine-1', {
+            ...input, qualifiedActionId: '',
+        })).resolves.toEqual({
             supported: false,
             reason: 'error',
+        });
+        expect(network.requests).toHaveLength(0);
+        await expect(machinePluginStructuredMessageActionExecute('machine-1', input)).resolves.toEqual({
+            supported: true,
+            result: { ok: true, result: { read: true } },
+        });
+        // A received but invalid terminal envelope and a lost ACK are both
+        // unknown after emission; neither is a proved daemon refusal.
+        await expect(machinePluginStructuredMessageActionExecute('machine-1', input)).resolves.toEqual({
+            supported: false,
+            reason: 'outcomeUnknown',
         });
         await expect(machinePluginStructuredMessageActionExecute('machine-1', input)).resolves.toEqual({
             supported: false,
             reason: 'outcomeUnknown',
         });
-        expect(machineRpcWithServerScopeMock.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
-            onIssued: expect.any(Function),
-        }));
+        expect(network.requests.map((request) => ({
+            targetId: request.targetId,
+            serverUrl: request.serverUrl,
+            method: request.method,
+        }))).toEqual(Array.from({ length: 3 }, () => ({
+            targetId: 'machine-1',
+            serverUrl: 'https://server-a',
+            method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
+        })));
     });
 
     it('fails closed when an older daemon does not expose the structured-message Action RPC', async () => {
@@ -1016,7 +1194,7 @@ describe('machine contribution registry projection ops', () => {
         }));
     });
 
-    it('preserves the stable machine-RPC timeout fact for Resource transport consumers', async () => {
+    it('does not label an unsolicited Resource peer ACK error as an operation timeout', async () => {
         machineRpcWithServerScopeMock.mockRejectedValueOnce(createSocketIoAckTimeoutError());
         const { machinePluginUiResourceRead } = await import('./machineContributionRegistryProjection');
 
@@ -1025,7 +1203,7 @@ describe('machine contribution registry projection ops', () => {
             expectedCallerOccurrenceId: 'preview-occurrence-7',
             callerPluginId: 'acme.preview',
             resource: { pluginId: 'acme.preview', localId: 'live-activity' },
-        })).resolves.toEqual({ supported: false, reason: 'timeout' });
+        })).resolves.toEqual({ supported: false, reason: 'error' });
     });
 
     it('fails closed when an older daemon does not expose the Connected Account form-option RPC', async () => {

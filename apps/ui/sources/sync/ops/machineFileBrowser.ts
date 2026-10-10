@@ -6,8 +6,9 @@ import {
     type DaemonFilesystemListDirectoryResponse,
     type DaemonFilesystemListRootsResponse,
 } from '@happier-dev/protocol/machines/fileBrowser';
-import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createRpcCallError, isMachineRpcTimeoutError, MACHINE_RPC_TIMEOUT_ERROR_CODE, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { isTerminalAuthError } from '@/sync/runtime/connectivity/authErrors';
 
 import { callGuardedMachineRpcWithPolicy } from '@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc';
 
@@ -19,23 +20,22 @@ type MachineFileBrowserOpts = Readonly<{
 }>;
 
 function throwUnsupportedResponse(method: string): never {
-    throw new Error(`Unsupported response from machine RPC (${method})`);
+    throw createRpcCallError({ error: `Unsupported response from machine RPC (${method})`, errorCode: 'MACHINE_RPC_INVALID_RESPONSE' });
 }
 
 /**
- * A throw out of the machine RPC means no answer came back: the transport failed, timed out, or the
- * machine is unreachable. The `error` string here is rendered verbatim by the folder picker
- * (`components/ui/filesystemBrowser/FilesystemBrowser.tsx`), so passing `error.message` through put
- * internal exception text — `Cannot read properties of undefined (reading 'emit')` — in front of the
- * user (`F-UI-2`). The local-services inventory adapter, which shares this transport, turns the same
- * throw into a typed reason and never lets the message escape; do the same here. A failure the
- * daemon itself reports still arrives as a parsed `{ ok: false, error }` response and is untouched.
+ * Keep the failure class, not the internal exception message. The shared filesystem
+ * presenter translates the code; an unclassified relay exception is not evidence
+ * that a daemon method is missing. Parsed daemon failures remain unchanged.
  */
 function toMachineFileBrowserRpcError(error: unknown): Readonly<{ ok: false; error: string; errorCode: string }> {
+    const errorCode = readRpcErrorCode(error)
+        ?? (isMachineRpcTimeoutError(error) ? MACHINE_RPC_TIMEOUT_ERROR_CODE
+            : isTerminalAuthError(error) ? 'not_authenticated' : 'MACHINE_RPC_FAILED');
     return {
         ok: false,
-        error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
-        errorCode: readRpcErrorCode(error) ?? RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+        error: errorCode,
+        errorCode,
     };
 }
 

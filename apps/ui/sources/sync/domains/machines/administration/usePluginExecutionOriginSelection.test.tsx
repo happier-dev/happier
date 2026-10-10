@@ -10,6 +10,7 @@ import { renderHook, standardCleanup } from '@/dev/testkit';
 
 const fixture = vi.hoisted(() => ({
     selections: null as MachineAdministrationSelectionsV1 | null,
+    settingsScope: { serverId: 'server-a', accountId: 'account-a' },
     canonicalRaw: {} as Record<string, unknown>,
     setSelections: vi.fn(),
     mutateAccountSettingsOnce: vi.fn(),
@@ -18,6 +19,7 @@ const fixture = vi.hoisted(() => ({
 vi.mock('@/sync/domains/state/storageStore', () => ({
     storage: {
         getState: () => ({
+            settingsScope: fixture.settingsScope,
             settings: {
                 machineAdministrationSelectionsV1: fixture.selections,
             },
@@ -174,8 +176,8 @@ describe('usePluginMachineExecutionOriginSelection', () => {
         }));
         expect(fixture.mutateAccountSettingsOnce).not.toHaveBeenCalled();
         expect(hook.getCurrent().state).toMatchObject({ kind: 'selected', selectionSource: 'soleCandidate' });
-        expect(hook.getCurrent().selectedOrigin).toBeNull();
-        expect(hook.getCurrent().resolveExecutionOrigin()).toBeNull();
+        expect(hook.getCurrent().selectedOrigin).toEqual(selectedOrigin);
+        expect(hook.getCurrent().resolveExecutionOrigin()?.origin).toEqual(selectedOrigin);
         await hook.rerender();
         expect(fixture.mutateAccountSettingsOnce).not.toHaveBeenCalled();
     });
@@ -246,7 +248,7 @@ describe('usePluginMachineExecutionOriginSelection', () => {
             pluginExecutionOriginsByPluginId: {},
         };
 
-        expect(hook.getCurrent().resolveExecutionOrigin()).toBeNull();
+        expect(hook.getCurrent().resolveExecutionOrigin()?.origin).toEqual(selectedOrigin);
         await hook.unmount();
     });
 });

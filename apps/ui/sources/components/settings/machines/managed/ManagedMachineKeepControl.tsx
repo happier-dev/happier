@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
   HappierPressable,
-  HappierRadioMark,
+  HappierRadioChoiceList,
   happierPageTextMetrics,
 } from '@happier-dev/plugin-ui/presentation';
 import type { MachineRetentionPolicyV1 } from '@happier-dev/protocol/account/settings/machineRetentionDefaultsV1';
@@ -304,7 +304,6 @@ function KeepChoices(props: InnerProps) {
     draft || (props.deadline && current.kind === 'deadline')
       ? DEADLINE_CHOICE_ID
       : retentionChoiceId(current);
-  const refs = React.useRef<Array<Readonly<{ focus: () => void }> | null>>([]);
   const choose = (row: KeepChoiceRow) => {
     if (row.retention) {
       setDraft(null);
@@ -327,11 +326,6 @@ function KeepChoices(props: InnerProps) {
         ),
       ),
     });
-  };
-  const move = (from: number, delta: number) => {
-    const next = (from + delta + rows.length) % rows.length;
-    choose(rows[next]!);
-    refs.current[next]?.focus();
   };
   // Keep the draft's owner mounted while native qualification refreshes.
   if (props.capabilitiesAvailable === false) return <UnavailableKeepPolicy {...props} />;
@@ -361,49 +355,19 @@ function KeepChoices(props: InnerProps) {
           />
         )}
       </View>
-      <View
-        accessibilityRole="radiogroup"
+      <HappierRadioChoiceList<string>
         accessibilityLabel={t('managedRetention.keepIt')}
-        aria-label={t('managedRetention.keepIt')}
-      >
-        {rows.map((choice, index) => {
-          const selected = choice.id === selectedId;
-          return (
-            <HappierPressable
-              key={choice.id}
-              testID={`${props.testID}:choice:${choice.id}`}
-              controlRef={(instance) => {
-                refs.current[index] = instance;
-              }}
-              accessibilityRole="radio"
-              accessibilityLabel={choice.title}
-              checked={selected}
-              tabIndex={selected ? 0 : -1}
-              disabled={props.disabled}
-              onPress={() => choose(choice)}
-              onKeyDown={(key) => {
-                if (key === 'ArrowDown' || key === 'ArrowRight') {
-                  move(index, 1);
-                  return true;
-                }
-                if (key === 'ArrowUp' || key === 'ArrowLeft') {
-                  move(index, -1);
-                  return true;
-                }
-                return false;
-              }}
-              style={styles.choice}
-            >
-              <HappierRadioMark
-                selected={selected}
-                disabled={props.disabled}
-                theme={radioTheme}
-              />
-              <Text style={styles.choiceText}>{choice.title}</Text>
-            </HappierPressable>
-          );
-        })}
-      </View>
+        options={rows}
+        value={selectedId}
+        disabled={props.disabled}
+        theme={radioTheme}
+        testIDPrefix={`${props.testID}:choice`}
+        onChange={(id) => {
+          const row = rows.find((candidate) => candidate.id === id);
+          if (row) choose(row);
+        }}
+        renderTitle={(option) => <Text style={styles.choiceText}>{option.title}</Text>}
+      />
       {draft ? (
         <DeadlineEditor
           draft={draft}
@@ -638,12 +602,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   headEnd: {
     justifyContent: 'flex-end',
-  },
-  choice: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 5,
   },
   choiceText: {
     ...Typography.default(),

@@ -1,3 +1,6 @@
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+
 /**
  * The one currentness revision for a machine's contribution-registry
  * projection.
@@ -19,7 +22,10 @@ const projectionListenersByScope = new Map<string, Set<() => void>>();
 export function machineContributionRegistryProjectionScopeKey(
     scope: MachineContributionRegistryProjectionScope,
 ): string {
-    return JSON.stringify([scope.serverId, scope.machineId]);
+    return JSON.stringify([
+        resolveServerProfileScopeIdForIdentifier(scope.serverId ?? getActiveServerSnapshot().serverId),
+        scope.machineId,
+    ]);
 }
 
 export function getMachineContributionRegistryProjectionRevision(

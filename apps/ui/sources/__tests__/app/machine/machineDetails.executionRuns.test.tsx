@@ -1,7 +1,7 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createUseSettingMock, flushHookEffects, renderScreen } from '@/dev/testkit';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createUseSettingMock, flushHookEffects, renderScreen as renderTestScreen } from '@/dev/testkit';
 import type { DaemonExecutionRunEntry } from '@happier-dev/protocol';
 import { installMachineDetailsCommonModuleMocks } from './machineDetailsTestHelpers';
 
@@ -129,7 +129,8 @@ vi.mock('@/sync/ops', () => ({
     machineExecutionRunsList: machineExecutionRunsListSpy,
 }));
 
-vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
+vi.mock('@/sync/ops/sessionExecutionRuns', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/ops/sessionExecutionRuns')>(),
     sessionExecutionRunStop: (...args: any[]) => stopRunSpy(...args),
 }));
 
@@ -213,6 +214,18 @@ vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
 }));
 
 describe('MachineDetailScreen (execution runs section)', () => {
+    // The route's cold import includes the live workspace/pane graph. Load it once,
+    // outside behavior-test timeouts, like the adjacent navigation screen harnesses.
+    beforeAll(async () => {
+        await import('@/app/(app)/machine/[id]');
+        await import('@/components/appShell/panes/AppPaneProvider');
+    }, 240_000);
+
+    async function renderScreen(element: React.ReactElement) {
+        const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+        return renderTestScreen(React.createElement(AppPaneProvider, null, element));
+    }
+
     function createExecutionRun(overrides: Partial<DaemonExecutionRunEntry> & Pick<DaemonExecutionRunEntry, 'runId'>): DaemonExecutionRunEntry {
         const { runId, ...rest } = overrides;
         return {
@@ -267,7 +280,8 @@ describe('MachineDetailScreen (execution runs section)', () => {
         expect(screen.findByTestId('item-group:runs.title')).toBeTruthy();
 
         machineOnlineState.value = false;
-        await act(async () => screen.tree.update(React.createElement(MachineDetailScreen)));
+        const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+        await act(async () => screen.tree.update(React.createElement(AppPaneProvider, null, React.createElement(MachineDetailScreen))));
         await flushHookEffects();
 
         const runsGroup = screen.findByTestId('item-group:runs.title');
@@ -364,6 +378,21 @@ describe('MachineDetailScreen (execution runs section)', () => {
         expect(screen.findByTestId('execution-run-row:run-finished')).toBeTruthy();
     });
 
+    it('offers the finished-run filter only when finished runs exist', async () => {
+        machineExecutionRunsListSpy.mockResolvedValueOnce({ ok: true, runs: [] });
+        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+        const empty = await renderScreen(React.createElement(MachineDetailScreen));
+        await flushHookEffects();
+        expect(empty.findByTestId('item:runs.showFinished')).toBeNull();
+        await act(async () => empty.tree.unmount());
+
+        machineExecutionRunsListSpy.mockResolvedValueOnce({ ok: true, runs: [createExecutionRun({ runId: 'running' })] });
+        const running = await renderScreen(React.createElement(MachineDetailScreen));
+        await flushHookEffects();
+        expect(running.findByTestId('execution-run-row:running')).toBeTruthy();
+        expect(running.findByTestId('item:runs.showFinished')).toBeNull();
+    });
+
     it('offers a stop control for running runs', async () => {
         stopRunSpy.mockClear();
         machineExecutionRunsListSpy.mockResolvedValueOnce({
@@ -398,7 +427,7 @@ describe('MachineDetailScreen (execution runs section)', () => {
         expect(screen.findByTestId('execution-run-row:run-1')).toBeTruthy();
         await screen.pressByTestIdAsync('execution-run-row:run-1');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/session/sess-1/runs/run-1');
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/sess-1/runs/run-1?serverId=server-a');
     });
 
     it('keeps detached daemon runs unlinked and without Session stop controls', async () => {

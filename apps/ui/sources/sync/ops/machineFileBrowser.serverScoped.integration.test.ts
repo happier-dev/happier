@@ -1,181 +1,98 @@
-import { describe, expect, it, vi } from 'vitest';
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 
-import { createRpcCallError } from '@/sync/runtime/rpcErrors';
+// Only socket/HTTP transport and device credential storage are replaced. Home
+// admission, routing, response decoding and the file-browser owners stay real.
+const boundary = await installSessionOpsNetworkBoundary();
+const { socketRpcCodec } = await import('@happier-dev/sync-client');
+const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+await loadSyncSingletonForTests();
+const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
+const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
+const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+const { machineFilesystemListRoots, machineFilesystemListDirectory } = await import('./machineFileBrowser');
+const { resolveFilesystemErrorReason } = await import('@/components/ui/filesystemBrowser/filesystemErrorReason');
+const { t } = await import('@/text');
+let home: Awaited<ReturnType<typeof boundary.addHome>>;
 
-const getReadyServerFeaturesMock = vi.hoisted(() => vi.fn());
-const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
+beforeEach(async () => {
+    boundary.resetRequests();
+    resetScopedMachineTransportCacheForTests();
+    home = await boundary.addHome('https://filesystem.example.test', 'account-a');
+    boundary.setHttpResponder(async input => new URL(String(input)).pathname === '/v1/account/encryption'
+        ? Response.json({ mode: 'plain', updatedAt: 1 }) : null);
+});
+afterEach(async () => {
+    await serverScopedRpcSocketPool.stopAll();
+    await resetServerReachabilitySupervisors();
+});
+afterAll(() => boundary.dispose());
 
-vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
-    getReadyServerFeatures: (params: unknown) => getReadyServerFeaturesMock(params),
-}));
+const listings = [
+    ['roots', (serverId: string) => machineFilesystemListRoots('machine-1', { serverId, accountId: 'account-a' })],
+    ['directory', (serverId: string) => machineFilesystemListDirectory('machine-1', {
+        path: '/home/happier/happier-dev', includeFiles: false,
+    }, { serverId, accountId: 'account-a' })],
+] as const;
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
-    machineRpcWithServerScope: machineRpcWithServerScopeMock,
-}));
-
-describe('machineFileBrowser ops', () => {
-    it('routes root listing through server-scoped machine RPC', async () => {
-        getReadyServerFeaturesMock.mockReset();
-        machineRpcWithServerScopeMock.mockReset();
-        getReadyServerFeaturesMock.mockResolvedValueOnce({
-            features: { machines: { transfer: { enabled: true } } },
-            capabilities: {},
+describe('file-browser failures across the scoped network boundary', () => {
+    it.each(listings)('lists %s on the selected Home with unavailable features', async (_name, list) => {
+        boundary.setRpcResponder(async request => {
+            const decoded = await socketRpcCodec.decodeRequestParams({ mode: 'plain' }, request.payload, `${request.targetId}:${request.method}`);
+            const result = request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_ROOTS
+                ? { ok: true, roots: [{ id: '/', label: '/', path: '/' }] }
+                : { ok: true, path: '/home/happier/happier-dev', entries: [], truncated: false };
+            return await socketRpcCodec.encodeResponse({ mode: 'plain' }, result, decoded.callId);
         });
-        machineRpcWithServerScopeMock.mockResolvedValueOnce({
-            ok: true,
-            roots: [{ id: '/', label: '/', path: '/' }],
-        });
-
-        const { machineFilesystemListRoots } = await import('./machineFileBrowser');
-        const result = await machineFilesystemListRoots('machine-1', { serverId: 'server-1' });
-
-        expect(result).toEqual({
-            ok: true,
-            roots: [{ id: '/', label: '/', path: '/' }],
-        });
-        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
-            machineId: 'machine-1',
-            serverId: 'server-1',
-            method: 'daemon.filesystem.listRoots',
-            payload: undefined,
-        }));
+        expect(await list(home.id)).toMatchObject({ ok: true });
+        expect(boundary.requests).toContainEqual(expect.objectContaining({ serverUrl: home.serverUrl, targetId: 'machine-1' }));
     });
 
-    it('routes directory listing through server-scoped machine RPC and validates the payload', async () => {
-        getReadyServerFeaturesMock.mockReset();
-        machineRpcWithServerScopeMock.mockReset();
-        getReadyServerFeaturesMock.mockResolvedValueOnce({
-            features: { machines: { transfer: { enabled: true } } },
-            capabilities: {},
-        });
-        machineRpcWithServerScopeMock.mockResolvedValueOnce({
-            ok: true,
-            path: '/Users/leeroy',
-            entries: [{ name: 'Documents', path: '/Users/leeroy/Documents', type: 'directory' }],
-            truncated: false,
-        });
-
-        const { machineFilesystemListDirectory } = await import('./machineFileBrowser');
-        const result = await machineFilesystemListDirectory('machine-1', {
-            path: '/Users/leeroy',
-            includeFiles: false,
-        }, { serverId: 'server-1' });
-
-        expect(result.ok).toBe(true);
-        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
-            machineId: 'machine-1',
-            serverId: 'server-1',
-            method: 'daemon.filesystem.listDirectory',
-            payload: {
-                path: '/Users/leeroy',
-                includeFiles: false,
-            },
-        }));
+    it.each(listings)('does not disguise the live server ReferenceError as a missing %s method', async (_name, list) => {
+        boundary.setRpcAckResponder(async () => ({ ok: false, error: 'verifiedWorkspaceSyncTargetContinuation is not defined' }));
+        const result = await list(home.id);
+        expect(boundary.requests.length).toBeGreaterThan(0);
+        expect(result).toEqual({ ok: false, error: 'MACHINE_RPC_FAILED', errorCode: 'MACHINE_RPC_FAILED' });
+        if (!result.ok) expect(resolveFilesystemErrorReason(result.error)).toBe(t('errors.operationFailed'));
     });
 
-    it('fails closed and forces scoped route when server features are unavailable', async () => {
-        getReadyServerFeaturesMock.mockReset();
-        machineRpcWithServerScopeMock.mockReset();
-        getReadyServerFeaturesMock.mockResolvedValueOnce(null);
-        machineRpcWithServerScopeMock.mockResolvedValueOnce({
-            ok: true,
-            roots: [{ id: '/', label: '/', path: '/' }],
-        });
-
-        const { machineFilesystemListRoots } = await import('./machineFileBrowser');
-        const result = await machineFilesystemListRoots('machine-1', { serverId: 'server-1' });
-
-        expect(result.ok).toBe(true);
-        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
-            machineId: 'machine-1',
-            serverId: 'server-1',
-            method: 'daemon.filesystem.listRoots',
-            payload: undefined,
-            skipTransferPolicyEvaluation: false,
-        }));
-    });
-
-    it('returns an error result when root listing RPC is unavailable', async () => {
-        getReadyServerFeaturesMock.mockReset();
-        machineRpcWithServerScopeMock.mockReset();
-        getReadyServerFeaturesMock.mockResolvedValueOnce({
-            features: { machines: { transfer: { enabled: true } } },
-            capabilities: {},
-        });
-        machineRpcWithServerScopeMock.mockRejectedValueOnce(
-            createRpcCallError({
-                error: 'RPC method not available',
-                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-            }),
-        );
-
-        const { machineFilesystemListRoots } = await import('./machineFileBrowser');
-        await expect(machineFilesystemListRoots('machine-1', { serverId: 'server-1' })).resolves.toEqual({
-            ok: false,
-            error: 'RPC method not available',
-            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-        });
-    });
-
-    it('returns an error result when directory listing RPC is unavailable', async () => {
-        getReadyServerFeaturesMock.mockReset();
-        machineRpcWithServerScopeMock.mockReset();
-        getReadyServerFeaturesMock.mockResolvedValueOnce({
-            features: { machines: { transfer: { enabled: true } } },
-            capabilities: {},
-        });
-        machineRpcWithServerScopeMock.mockRejectedValueOnce(
-            createRpcCallError({
-                error: 'RPC method not available',
-                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-            }),
-        );
-
-        const { machineFilesystemListDirectory } = await import('./machineFileBrowser');
-        await expect(machineFilesystemListDirectory('machine-1', {
-            path: '/Users/leeroy',
-            includeFiles: false,
-        }, { serverId: 'server-1' })).resolves.toEqual({
-            ok: false,
-            error: 'RPC method not available',
-            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-        });
-    });
-    it('never surfaces an internal exception message when the machine RPC throws', async () => {
-        // `F-UI-2`: the folder picker renders this `error` string verbatim
-        // (`FilesystemBrowser.tsx:70`), and the adapter passed `error.message` straight through — so
-        // an internal transport exception was displayed to the user. The local-services inventory
-        // adapter, one pane over, turns the very same throw into a typed reason and never lets the
-        // message out (`sync/domains/local/services/inventory/machineRpc.ts:50-52`).
-        for (const thrown of [
-            new TypeError("Cannot read properties of undefined (reading 'emit')"),
-            new Error('Socket not connected'),
-            'not even an error',
-        ]) {
-            getReadyServerFeaturesMock.mockReset();
-            machineRpcWithServerScopeMock.mockReset();
-            getReadyServerFeaturesMock.mockResolvedValue({
-                features: { machines: { transfer: { enabled: true } } },
-                capabilities: {},
-            });
-            machineRpcWithServerScopeMock.mockRejectedValue(thrown);
-
-            const { machineFilesystemListRoots, machineFilesystemListDirectory } = await import('./machineFileBrowser');
-
-            await expect(machineFilesystemListRoots('machine-1', { serverId: 'server-1' })).resolves.toEqual({
-                ok: false,
-                error: 'RPC method not available',
-                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-            });
-            await expect(machineFilesystemListDirectory('machine-1', {
-                path: '/Users/leeroy',
-                includeFiles: false,
-            }, { serverId: 'server-1' })).resolves.toEqual({
-                ok: false,
-                error: 'RPC method not available',
-                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-            });
+    it.each([
+        [RPC_ERROR_CODES.FORBIDDEN, 'errors.permissionDenied'],
+        [RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, 'errors.daemonUnavailableBody'],
+        [RPC_ERROR_CODES.METHOD_NOT_FOUND, 'errors.operationFailed'],
+    ] as const)('preserves the %s failure class without exposing server exception text', async (code, key) => {
+        boundary.setRpcAckResponder(async () => ({ ok: false, error: 'private server internals', errorCode: code }));
+        for (const [, list] of listings) {
+            const result = await list(home.id);
+            expect(boundary.requests.length).toBeGreaterThan(0);
+            expect(result).toMatchObject({ ok: false, errorCode: code });
+            if (result.ok) throw new Error('Expected listing refusal');
+            expect(result.error).not.toContain('private server internals');
+            expect(resolveFilesystemErrorReason(result.error)).toBe(t(key));
         }
+        expect(resolveFilesystemErrorReason(RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE)).toBe(t('errors.daemonUnavailableBody'));
+    });
+
+    it('distinguishes an acknowledgement timeout from unsupported methods', async () => {
+        boundary.setRpcAckResponder(async () => { throw new Error('operation has timed out'); });
+        const result = await machineFilesystemListRoots('machine-1', { serverId: home.id, timeoutMs: 1_000 });
+        expect(result).toEqual({ ok: false, error: 'MACHINE_RPC_TIMEOUT', errorCode: 'MACHINE_RPC_TIMEOUT' });
+        if (!result.ok) expect(resolveFilesystemErrorReason(result.error)).toBe(t('errors.connectionTimeout'));
+    });
+
+    it('classifies a failed socket connection as unreachable without disclosing its exception', async () => {
+        boundary.setSocketConfigurator(({ socket, trigger }) => {
+            socket.connect.mockImplementation(() => trigger('connect_error', new Error('private transport details')));
+        });
+        const result = await machineFilesystemListRoots('machine-1', { serverId: home.id });
+        expect(result).toEqual({ ok: false, error: 'MACHINE_RPC_UNREACHABLE', errorCode: 'MACHINE_RPC_UNREACHABLE' });
+        if (!result.ok) expect(resolveFilesystemErrorReason(result.error)).toBe(t('errors.networkError'));
+    });
+
+    it('preserves caller cancellation rather than presenting a listing failure', async () => {
+        const controller = new AbortController();
+        controller.abort();
+        await expect(machineFilesystemListRoots('machine-1', { serverId: home.id, signal: controller.signal })).rejects.toThrow();
     });
 });

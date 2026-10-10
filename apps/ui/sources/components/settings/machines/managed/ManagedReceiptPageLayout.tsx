@@ -14,6 +14,7 @@ import {
   PageHeader,
   type PageHeaderProps,
 } from '@/components/ui/layout/PageHeader';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { ItemList } from '@/components/ui/lists/ItemList';
 
 import {
@@ -37,15 +38,24 @@ const SIDE_BY_SIDE_MIN_WIDTH_PX =
  * receipt in its own column that stays in view while the sections scroll, so the consequence never
  * leaves the screen; a phone (or a pane too narrow for both) reads the sections first and the receipt
  * after. `compact` is the caller's phone decision; width alone decides side by side otherwise.
+ *
+ * The two columns together are the page column (pages with a receipt use the wide one), centred like the page header above them, so the
+ * title, the sections and the receipt's far edge share the header's edges however wide the pane is.
+ * `closing` (the page's leave-or-destroy row) always ends the page: under the sections on desktop,
+ * after the receipt on a phone. `compactReceipt="first"` leads a phone with the receipt when the
+ * receipt is the thing's identity (a preset is its recipe).
  */
 export const ManagedReceiptColumns = React.memo(function ManagedReceiptColumns(
   props: Readonly<{
     children: React.ReactNode;
     receipt: ManagedReceiptModel | null;
     compact: boolean;
+    closing?: React.ReactNode;
+    compactReceipt?: 'first' | 'last';
     testID: string;
   }>,
 ) {
+  const columnWidth = useLayoutMaxWidthStyle();
   // Split panes are wide enough by construction, so the first paint is already final there.
   const [wide, setWide] = React.useState(!props.compact);
   const onLayout = React.useCallback((event: LayoutChangeEvent) => {
@@ -63,15 +73,21 @@ export const ManagedReceiptColumns = React.memo(function ManagedReceiptColumns(
   if (props.compact || !receipt) {
     return (
       <>
+        {props.compactReceipt === 'first' ? receipt : null}
         {props.children}
-        {receipt}
+        {props.compactReceipt === 'first' ? null : receipt}
+        {props.closing}
       </>
     );
   }
   return (
-    <View onLayout={onLayout} style={wide ? styles.row : undefined}>
-      <View style={wide ? styles.main : undefined}>{props.children}</View>
+    <View onLayout={onLayout} style={wide ? [styles.row, columnWidth] : undefined}>
+      <View style={wide ? styles.main : undefined}>
+        {props.children}
+        {wide ? props.closing : null}
+      </View>
       <View style={wide ? styles.aside : undefined}>{receipt}</View>
+      {wide ? null : props.closing}
     </View>
   );
 });
@@ -86,15 +102,19 @@ export const ManagedReceiptPageLayout = React.memo(
       children: React.ReactNode;
       receipt: ManagedReceiptModel | null;
       compact: boolean;
+      closing?: React.ReactNode;
+      compactReceipt?: 'first' | 'last';
       testID: string;
     }>,
   ) {
     return (
-      <ItemList testID={props.testID}>
+      <ItemList testID={props.testID} pageColumn="wide">
         <PageHeader {...props.header} />
         <ManagedReceiptColumns
           receipt={props.receipt}
           compact={props.compact}
+          closing={props.closing}
+          compactReceipt={props.compactReceipt}
           testID={props.testID}
         >
           {props.children}
@@ -118,6 +138,8 @@ const styles = {
   row: {
     flexDirection: 'row',
     alignItems: 'flex-start',
+    width: '100%',
+    alignSelf: 'center',
   },
   main: {
     flex: 1,

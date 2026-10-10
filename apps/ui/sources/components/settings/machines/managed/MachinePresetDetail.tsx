@@ -10,6 +10,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
+import { Modal } from '@/modal';
 import { t } from '@/text';
 
 import type { ManagedReceiptModel } from './MachineConfigurationReceipt';
@@ -48,7 +49,8 @@ export type MachinePresetDetailModel = Readonly<{
   mark: React.ReactNode;
   meta: readonly PageHeaderMetaFact[];
   audience: Readonly<{
-    description: string;
+    /** The consequence of sharing it (or that it stays personal); the title already says "Who can use it". */
+    description?: string;
     leading: React.ReactNode;
     title: string;
     subtitle: string;
@@ -75,11 +77,40 @@ export const MachinePresetDetail = React.memo(function MachinePresetDetail(
 ) {
   const { theme } = useUnistyles();
   const { model } = props;
+  const closing = model.onArchive || model.onRestore ? (
+        // Closes the page: the quiet archive (or restore) button, then its one consequence line.
+        <ItemGroup surface="none" accessibilityLabel={model.onRestore ? t('common.restore') : t('machinePresets.archive')}>
+          <SectionButtonRow
+            testID={`${props.testID}.closing`}
+            footnote={model.onRestore ? t('machinePresets.archived') : t('machinePresets.archiveHelp')}
+          >
+            <RoundButton
+              testID={`${props.testID}.${model.onRestore ? 'restore' : 'archive'}`}
+              size="normal"
+              display="inverted"
+              title={model.onRestore ? t('common.restore') : t('machinePresets.archive')}
+              loading={model.archivePending}
+              disabled={model.archivePending}
+              leading={
+                <Icon
+                  name="archive"
+                  size={14}
+                  color={theme.colors.text.primary}
+                />
+              }
+              onPress={model.onRestore ?? model.onArchive}
+            />
+          </SectionButtonRow>
+        </ItemGroup>
+      ) : null;
   return (
     <ManagedReceiptPageLayout
       testID={props.testID}
       compact={props.compact}
       receipt={model.receipt}
+      // A preset is its recipe: a phone leads with it, and the archive row always ends the page.
+      compactReceipt="first"
+      closing={closing}
       header={{
         title: model.name,
         description: model.description,
@@ -170,7 +201,8 @@ export const MachinePresetDetail = React.memo(function MachinePresetDetail(
               testID={`${props.testID}.machine.${machine.id}`}
               title={machine.title}
               subtitle={machine.subtitle}
-              icon={machine.mark}
+              // No mark, no column: the title starts at the sheet's edge.
+              icon={machine.mark ?? undefined}
               showChevron={Boolean(machine.onPress)}
               mode={machine.onPress ? 'interactive' : 'info'}
               onPress={machine.onPress}
@@ -178,35 +210,54 @@ export const MachinePresetDetail = React.memo(function MachinePresetDetail(
           ))
         )}
       </ItemGroup>
-      {model.onArchive || model.onRestore ? (
-        // Closes the page: the quiet archive (or restore) button, then its one consequence line.
-        <ItemGroup surface="none" accessibilityLabel={model.onRestore ? t('common.restore') : t('machinePresets.archive')}>
-          <SectionButtonRow
-            testID={`${props.testID}.closing`}
-            footnote={model.onRestore ? t('machinePresets.archived') : t('machinePresets.archiveHelp')}
-          >
-            <RoundButton
-              testID={`${props.testID}.${model.onRestore ? 'restore' : 'archive'}`}
-              size="normal"
-              display="inverted"
-              title={model.onRestore ? t('common.restore') : t('machinePresets.archive')}
-              loading={model.archivePending}
-              disabled={model.archivePending}
-              leading={
-                <Icon
-                  name="archive"
-                  size={14}
-                  color={theme.colors.text.primary}
-                />
-              }
-              onPress={model.onRestore ?? model.onArchive}
-            />
-          </SectionButtonRow>
-        </ItemGroup>
-      ) : null}
     </ManagedReceiptPageLayout>
   );
 });
+
+/** The common simultaneous limits offered in one tap; any other positive number stays one choice away. */
+const LIMIT_CHOICES: readonly number[] = [1, 2, 3, 4, 5, 10];
+const NO_LIMIT = 'none';
+const OTHER_LIMIT = '__other-limit';
+
+/**
+ * "Running at once: At most [3]" (lab `m-presets`). The one limit row for both editors of a preset —
+ * the configurator's draft and the preset page's in-place edit — so they offer the same choices.
+ */
+export function managedPresetLimitRow(
+  input: Readonly<{
+    limit: number | undefined;
+    disabled?: boolean;
+    onChange: (limit: number | undefined) => void;
+  }>,
+): ManagedFieldRowModel {
+  const values = [
+    ...new Set([...LIMIT_CHOICES, ...(input.limit ? [input.limit] : [])]),
+  ].sort((left, right) => left - right);
+  return {
+    title: t('machinePresets.atMost'),
+    subtitle: input.limit ? t('machinePresets.limitWaits') : undefined,
+    choices: [
+      { id: NO_LIMIT, title: t('machinePresets.noLimit') },
+      ...values.map((value) => ({ id: String(value), title: String(value) })),
+      { id: OTHER_LIMIT, title: t('machinePresets.otherLimit') },
+    ],
+    value: input.limit ? String(input.limit) : NO_LIMIT,
+    disabled: input.disabled,
+    onChange: async (id) => {
+      if (id === NO_LIMIT) return input.onChange(undefined);
+      if (id !== OTHER_LIMIT) return input.onChange(Number(id));
+      const value = await Modal.prompt(
+        t('machinePresets.runningAtOnce'),
+        t('machinePresets.limitHelp'),
+        { defaultValue: input.limit ? String(input.limit) : '', inputType: 'numeric' },
+      );
+      if (value === null) return;
+      if (!value.trim()) return input.onChange(undefined);
+      const parsed = Number(value);
+      if (Number.isSafeInteger(parsed) && parsed > 0) input.onChange(parsed);
+    },
+  };
+}
 
 /** One choice row: a select when there is something to choose, the plain fact otherwise. */
 export function ManagedFieldRow(

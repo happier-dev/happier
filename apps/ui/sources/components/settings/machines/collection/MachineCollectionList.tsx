@@ -520,7 +520,10 @@ export function MachinePresetCollectionSectionView(props: Readonly<{
             diagnosticCode={props.state.error} action={props.refresh ? { label: t('common.retry'), onPress: props.refresh } : undefined} /> : null}
         {props.section.rows.map(row => {
             const render = (audience: string) => <Item key={machineCollectionRowKey(row)} testID={`settings.machines.preset.${row.serverId}.${row.presetId}`}
-            title={row.title} subtitle={row.preset.archivedAt !== undefined ? `${audience} · ${t('machinePresets.archived')}` : audience}
+            title={row.title}
+            // The rail is an index: one line, with who it is for as the right-hand fact (lab m-presets).
+            {...(props.rail ? { detail: row.preset.archivedAt !== undefined ? t('machinePresets.archivedShort') : audience }
+                : { subtitle: row.preset.archivedAt !== undefined ? `${audience} · ${t('machinePresets.archived')}` : audience })}
             icon={<HappierCollectionListMark><Icon name="stack" color={theme.colors.text.secondary} /></HappierCollectionListMark>}
             density={props.rail ? 'compact' : undefined} selected={props.rail ? isMachineCollectionRowSelected(props.selectedKey, row) : undefined}
             showChevron={!props.rail} pressableStyle={props.rail ? collectionListStyles.row : undefined}
@@ -537,8 +540,7 @@ export function MachinePresetCollectionSectionView(props: Readonly<{
                 lineDensity={props.rail ? 'compact' : undefined} lineRowStyle={props.rail ? collectionListStyles.row : undefined} />) : null}
     </>;
     if (!props.rail) return <ItemGroup title={title} action={add}>{rows}</ItemGroup>;
-    return <><CollectionListGroupLabel title={title} {...(props.section.rows.length > 0 ? { count: props.section.rows.length } : {})}
-        trailing={add} />
+    return <><CollectionListGroupLabel title={title} trailing={add} />
         {rows}</>;
 }
 

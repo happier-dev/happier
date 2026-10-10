@@ -2,10 +2,13 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MachineRetentionDefaultsV1 } from '@happier-dev/protocol/account/settings/machineRetentionDefaultsV1';
+import { MachineRetentionDefaultsV1Schema } from '@happier-dev/protocol/account/settings/machineRetentionDefaultsV1';
+import { z } from 'zod';
 
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
-import { standardCleanup } from '@/dev/testkit';
-import { createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
 (
@@ -38,25 +41,23 @@ installSettingsViewCommonModuleMocks({
       useGlobalSearchParams: () => state.params,
     };
   },
-  storage: async () => {
-    const { createStorageModuleStub } =
-      await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-      useSettingMutable: createUseSettingMutableMockFromReader((name) => {
-        if (name === 'managedMachineCreationEnabled') return [state.creationEnabled, (value: boolean) => state.creationWrites.push(value)];
-        if (name === 'machineRetentionDefaultsV1') {
-          return [
-            state.defaults,
-            (value: MachineRetentionDefaultsV1) => {
-              state.writes.push(value);
-            },
-          ];
-        }
-        return [undefined, vi.fn()];
-      }),
-    });
-  },
+  storage: 'real',
 });
+
+// Only Metro's lazy loader is substituted; the canonical Action/settings/CAS logic stays real.
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
+  const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
+  return { ...original, createFrontDoorActionExecute: createFrontDoorActionExecuteForVitest(original) };
+});
+const harness = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(harness);
+const { resetScopedHomeActionExecutorsForTests } = await import('@/sync/ops/actions/scopedHomeActionExecutor');
+const settingsWrite = z.object({ expectedVersion: z.number().int(), content: z.object({
+  t: z.literal('plain'), v: z.record(z.string(), z.unknown()),
+}) });
+let home: string;
+let concurrentCategoryWrite = false;
 
 // Platform boundary: the device class decides between the in-place rows and the phone push.
 vi.mock('@/utils/platform/responsive', async (importOriginal) => ({
@@ -64,7 +65,12 @@ vi.mock('@/utils/platform/responsive', async (importOriginal) => ({
   useDeviceType: () => state.device,
 }));
 
-beforeEach(() => {
+beforeEach(async () => {
+  await harness.reset();
+  resetScopedHomeActionExecutorsForTests();
+  await loadSyncSingletonForTests();
+  home = await harness.addHome({ name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
+  await harness.requireUiApproval(home, 'settings.set');
   state.defaults = { v: 1 };
   state.writes = [];
   state.params = {};
@@ -72,19 +78,58 @@ beforeEach(() => {
   state.routerPush.mockReset();
   state.creationEnabled = true;
   state.creationWrites = [];
+  concurrentCategoryWrite = false;
 });
 afterEach(() => standardCleanup());
 
 async function render() {
+  const { storage } = await import('@/sync/domains/state/storage');
+  const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/actionSettings');
+  let current: Record<string, unknown> = { ...storage.getState().settings,
+    machineRetentionDefaultsV1: state.defaults, managedMachineCreationEnabled: state.creationEnabled,
+    actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } }),
+  };
+  const { settingsParse } = await import('@/sync/domains/settings/settings');
+  storage.setState({ settings: settingsParse(current), settingsVersion: 1 });
+  let version = 1;
+  harness.answer(home, '/v2/account/settings', { select: () => ({ body: { content: { t: 'plain', v: current }, version } }) });
+  harness.answer(home, 'POST /v2/account/settings', { select: input => {
+    const request = settingsWrite.parse(input);
+    // Another client changes only its category after our baseline read, before our CAS arrives.
+    if (concurrentCategoryWrite) {
+      concurrentCategoryWrite = false;
+      current = { ...current, machineRetentionDefaultsV1: { v: 1, unknown: {
+        retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+      } } };
+      version += 1;
+    }
+    if (request.expectedVersion !== version) return { status: 409, body: { success: false, error: 'version-mismatch', currentVersion: version, currentContent: { t: 'plain', v: current } } };
+    if (JSON.stringify(request.content.v.machineRetentionDefaultsV1) !== JSON.stringify(current.machineRetentionDefaultsV1)) {
+      state.writes.push(MachineRetentionDefaultsV1Schema.parse(request.content.v.machineRetentionDefaultsV1));
+    }
+    if (request.content.v.managedMachineCreationEnabled !== current.managedMachineCreationEnabled) {
+      state.creationWrites.push(z.boolean().parse(request.content.v.managedMachineCreationEnabled));
+    }
+    current = request.content.v;
+    version += 1;
+    return { body: { success: true, version } };
+  } });
   const [{ MachineDefaultsView }, { NavigationTitleChromeProvider }] = await Promise.all([
     import('./MachineDefaultsView'),
     import('@/components/ui/layout/navigationTitleChrome'),
   ]);
-  return renderSettingsView(
+  const screen = await renderSettingsView(
     <NavigationTitleChromeProvider showsTitle={state.device === 'phone'}>
       <MachineDefaultsView />
     </NavigationTitleChromeProvider>,
   );
+  await waitForHomeGovernance(() => {
+    const control = screen.findByTestId('settings.machineDefaults.creationEnabled.switch')
+      ?? screen.findByTestId(`settings.machineDefaults.${state.params.category}.keep:retention`);
+    expect(control).not.toBeNull();
+    expect(control!.props.disabled).not.toBe(true);
+  });
+  return screen;
 }
 
 function detailOf(screen: Awaited<ReturnType<typeof render>>, testID: string): unknown {
@@ -92,6 +137,24 @@ function detailOf(screen: Awaited<ReturnType<typeof render>>, testID: string): u
 }
 
 describe('MachineDefaultsView', () => {
+  it('rebases a category choice after another client changes a different category', async () => {
+    const screen = await render();
+    await act(async () => { screen.pressByTestId('settings.machineDefaults.local.header'); });
+    const field = screen.findAll(node => node.props?.itemTrigger?.title === 'When unused')[0];
+    expect(field).toBeTruthy();
+    concurrentCategoryWrite = true;
+    await act(async () => field!.props.onSelect('unused:stop:1800000'));
+    await waitForHomeGovernance(() => expect(state.writes).toHaveLength(1));
+    expect(state.writes[0]).toEqual({ v: 1,
+      unknown: { retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+      local: { retention: { kind: 'unused', afterMs: 1_800_000, effect: 'stop' }, wakeOnAcceptedMessage: true },
+    });
+    expect(harness.requestsFor('/v2/account/settings').flatMap(request => {
+      const parsed = settingsWrite.safeParse(request.input);
+      return parsed.success ? [parsed.data.expectedVersion] : [];
+    })).toEqual([1, 2]);
+  });
+
   it('keeps the Defaults page identity in its content beneath phone Back navigation', async () => {
     state.device = 'phone';
     const screen = await render();
@@ -122,7 +185,7 @@ describe('MachineDefaultsView', () => {
     expect(control).not.toBeNull();
     expect(control!.props.value).toBe(false);
     await act(async () => control!.props.onValueChange(true));
-    expect(state.creationWrites).toEqual([true]);
+    await waitForHomeGovernance(() => expect(state.creationWrites).toEqual([true]));
     expect(state.writes).toEqual([]);
   });
   it('summarizes each billing category from the D21 defaults until the person overrides one', async () => {
@@ -168,6 +231,7 @@ describe('MachineDefaultsView', () => {
     await act(async () => {
       field!.props.onSelect('unused:stop:1800000');
     });
+    await waitForHomeGovernance(() => expect(state.writes).toHaveLength(1));
     expect(state.writes.at(-1)).toEqual({
       v: 1,
       unknown: {
@@ -190,7 +254,11 @@ describe('MachineDefaultsView', () => {
     await act(async () => {
       screen.pressByTestId('settings.machineDefaults.unknown.keep:reset');
     });
-    expect(state.writes.at(-1)).toEqual({ v: 1 });
+    await waitForHomeGovernance(() => expect(state.writes).toHaveLength(2));
+    expect(state.writes.at(-1)).toEqual({ v: 1, local: {
+      retention: { kind: 'unused', afterMs: 1_800_000, effect: 'stop' },
+      wakeOnAcceptedMessage: true,
+    } });
   });
 
   it('offers explicit Until-delete wake off by default, preserves Stop wake defaults, and excludes destruction', async () => {
@@ -228,6 +296,7 @@ describe('MachineDefaultsView', () => {
     expect(state.writes).toEqual([]);
 
     await act(async () => retainedWake!.props.onValueChange(true));
+    await waitForHomeGovernance(() => expect(state.writes).toHaveLength(1));
     expect(state.writes).toEqual([{
       v: 1,
       unknown: state.defaults.unknown,
@@ -264,6 +333,7 @@ describe('MachineDefaultsView', () => {
         .findByTestId('settings.machineDefaults.running-only.keep:wake:switch')!
         .props.onValueChange(false);
     });
+    await waitForHomeGovernance(() => expect(state.writes).toHaveLength(1));
     expect(state.writes.at(-1)).toEqual({
       v: 1,
       'running-only': {

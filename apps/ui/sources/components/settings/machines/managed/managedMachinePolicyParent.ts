@@ -1,5 +1,6 @@
 import type { ManagedMachineV1, ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { BillingCapabilitiesV1, RetentionCapabilitiesV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import type { DevcontainerEffectReviewV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import type { MachineRetentionPolicyV1 } from '@happier-dev/protocol/account/settings/machineRetentionDefaultsV1';
 import { resolveMachineRetentionPolicyV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -23,14 +24,19 @@ export type ManagedMachinePolicyParent = Readonly<{
     providerTitle: string;
 }>;
 
-/** Reset reads today's parent; the creation receipt is deliberately not an input to policy resolution. */
-export async function readManagedMachinePolicyParent(input: Readonly<{
+type ManagedMachineNativeReadInput = Readonly<{
     machine: ManagedMachineV1;
     controller?: ManagedControllerV1;
     binding: ServerCredentialAccountScopeBinding;
     signal: AbortSignal;
     onApprovalPending: (approval: ActionApprovalRegistration) => void;
-}>): Promise<Readonly<{ kind: 'ready'; parent: ManagedMachinePolicyParent }> | Readonly<{ kind: 'failed'; code: string }>> {
+}>;
+
+/** Current native options have one Home/controller/schema-qualified reader for Reset and Rebuild. */
+async function readManagedMachineNativeReview(input: ManagedMachineNativeReadInput): Promise<Readonly<{
+    kind: 'ready'; provisioner: ManagedConfiguratorDraft['provisioner']; selected: ManagedConfiguratorDraft['selected'];
+    effectReview?: DevcontainerEffectReviewV1;
+}> | Readonly<{ kind: 'failed'; code: string }>> {
     const { machine, binding, signal } = input;
     const controller = input.controller ?? machine.controller;
     const current = () => !signal.aborted && binding.isCurrent();
@@ -50,6 +56,7 @@ export async function readManagedMachinePolicyParent(input: Readonly<{
     if (checked.kind === 'failed') return checked;
     if (!checked.value.available) return { kind: 'failed', code: 'managed_parent_unavailable' };
     let selected: ManagedConfiguratorDraft['selected'] = null;
+    let effectReview: DevcontainerEffectReviewV1 | undefined;
     const optionsAction = provisioner.descriptor.actions.options;
     if (optionsAction) {
         const schemas = await machinePluginActionSchemasRead(controller.machineId, {
@@ -61,15 +68,49 @@ export async function readManagedMachinePolicyParent(input: Readonly<{
         if (!schemas.result.ok) return { kind: 'failed', code: schemas.result.code };
         // The same current options input projection used for a saved recipe: query fields only,
         // while the returned native variant must still equal the complete retained launch.
-        const selectors = createStoredReadSchema(createPluginJsonSchemaZodValueAdapter(schemas.result.inputSchema)).safeParse(machine.launch.choices);
+        const querySchema = createStoredReadSchema(createPluginJsonSchemaZodValueAdapter(schemas.result.inputSchema));
+        const selectors = querySchema.safeParse(machine.launch.choices);
         if (!selectors.success) return { kind: 'failed', code: 'managed_parent_unavailable' };
         const nativeOptions = await client.read('machines.provisioners.options', { ...nativeInput, selectors: selectors.data }, options);
         if (!current()) return { kind: 'failed', code: 'action_account_scope_changed' };
         if (nativeOptions.kind === 'failed') return nativeOptions;
         selected = nativeOptions.value.choices.find(choice => choice.available !== false
             && pluginJsonValuesEqual(choice.launch, machine.launch.choices)) ?? null;
-        if (!selected) return { kind: 'failed', code: 'managed_parent_unavailable' };
+        // A changed Devcontainer config deliberately has a new effect digest. Match only its
+        // declared query selectors for Rebuild; Reset still requires the exact retained variant.
+        const reviews = nativeOptions.value.choices.filter(choice => {
+            if (choice.available === false || !choice.effectReview) return false;
+            const projected = querySchema.safeParse(choice.launch);
+            return projected.success && pluginJsonValuesEqual(projected.data, selectors.data);
+        });
+        if (reviews.length === 1) effectReview = reviews[0]?.effectReview;
     }
+    return { kind: 'ready', provisioner, selected, ...(effectReview ? { effectReview } : {}) };
+}
+
+export async function readManagedMachineRebuildReview(input: ManagedMachineNativeReadInput): Promise<Readonly<{
+    kind: 'ready'; review: DevcontainerEffectReviewV1;
+}> | Readonly<{ kind: 'failed'; code: string }>> {
+    const native = await readManagedMachineNativeReview(input);
+    if (native.kind === 'failed') return native;
+    if (!native.provisioner.descriptor.retention.supportedIntents.includes('rebuild')
+        || !native.provisioner.descriptor.actions.rebuild || !native.effectReview) {
+        return { kind: 'failed', code: 'managed_parent_unavailable' };
+    }
+    return { kind: 'ready', review: native.effectReview };
+}
+
+/** Reset reads today's parent; the creation receipt is deliberately not an input to policy resolution. */
+export async function readManagedMachinePolicyParent(input: ManagedMachineNativeReadInput): Promise<Readonly<{
+    kind: 'ready'; parent: ManagedMachinePolicyParent;
+}> | Readonly<{ kind: 'failed'; code: string }>> {
+    const { machine, binding, signal } = input;
+    const current = () => !signal.aborted && binding.isCurrent();
+    const options = { signal, onApprovalPending: input.onApprovalPending };
+    const native = await readManagedMachineNativeReview(input);
+    if (native.kind === 'failed') return native;
+    const { provisioner, selected } = native;
+    if (provisioner.descriptor.actions.options && !selected) return { kind: 'failed', code: 'managed_parent_unavailable' };
     const capabilities = managedConfiguratorRetentionCapabilities({ provisioner, selected });
     const preset = machine.preset ? await createMachinePresetCollectionClient(binding.scope, machine.homeId)
         .read('machines.presets.get', { homeId: machine.homeId, id: machine.preset.id }, options) : null;

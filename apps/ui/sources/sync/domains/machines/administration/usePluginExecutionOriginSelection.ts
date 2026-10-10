@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { arePluginMachineMaterializationRefsEqual, arePluginMachineExecutionOriginsEqual, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
-import { isPluginMachineMaterializationOnServerIdentityV1, type PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
+import { arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionOriginRef, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { type PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
 
 import { useAllProfileMachineInventorySnapshots } from '@/sync/domains/machines/useMachineInventorySnapshots';
 import { useActivePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
@@ -19,12 +19,16 @@ import {
 } from './selectionPreferences';
 import {
     buildPluginMachineExecutionOriginCandidates,
-    composePluginMachineExecutionOriginV1,
+    buildPluginMachineSourceExecutionOriginCandidates,
     resolvePluginMachineExecutionOriginState,
-    type PluginMachineExecutionOriginCandidateV1,
     type PluginMachineExecutionOriginStateV1,
     type PluginMachineReleaseClassificationV1,
+    type PluginMachineSourceExecutionOriginCandidateV1,
+    type PluginExecutionOriginCandidateV1,
 } from './pluginExecutionOrigin';
+import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { buildMachineAdministrationCandidatesFromSnapshots } from './targetState';
+import type { MachineAdministrationCandidateV1 } from './targetSelection';
 import {
     resolveFreshMachineAdministrationExecutionTarget,
     type FreshMachineAdministrationExecutionTargetV1,
@@ -32,7 +36,8 @@ import {
 
 export type FreshPluginMachineExecutionOriginV1 = Readonly<{
     origin: PluginMachineExecutionOriginV1;
-    materialization: PluginMachineMaterializationV1;
+    materialization?: PluginMachineMaterializationV1;
+    source?: PluginMachineSourceExecutionOriginCandidateV1['source'];
     machineTarget: FreshMachineAdministrationExecutionTargetV1;
     /** UI-local fence for origin selection changes, including A -> B -> A. */
     selectionRevision?: number;
@@ -60,48 +65,44 @@ export function advancePluginExecutionOriginSelectionRevision(
         : Object.freeze({ pluginId, origin, revision: previous.revision + 1 });
 }
 
-function materializationMatchesOrigin(
-    materialization: PluginMachineMaterializationV1,
-    origin: PluginMachineExecutionOriginV1,
-): boolean {
-    return isPluginMachineMaterializationOnServerIdentityV1(materialization, origin.serverIdentityId)
-        && arePluginMachineMaterializationRefsEqual(materialization, origin.materializationRef);
-}
-
 /** Invocation-time closure over the current Availability and raw machine owners. */
 export function resolveFreshPluginMachineExecutionOrigin(params: Readonly<{
     pluginId: string;
     origin: PluginMachineExecutionOriginV1 | null;
     reader: PluginAccountAvailabilityReader | null;
     classifyRelease: (materialization: PluginMachineMaterializationV1) => PluginMachineReleaseClassificationV1;
+    sourceCandidates?: readonly PluginMachineSourceExecutionOriginCandidateV1[];
+    declaredDefaultOrigins?: readonly PluginMachineExecutionOriginV1[];
 }>): FreshPluginMachineExecutionOriginV1 | null {
-    if (!params.origin || !params.reader) return null;
-    if (params.origin.materializationRef.pluginId !== params.pluginId) return null;
-    const admission = params.reader.readMaterializations();
-    if (admission.kind !== 'available') return null;
-    const materialization = admission.materializations.find((candidate) => (
-        candidate.pluginId === params.pluginId
-        && materializationMatchesOrigin(candidate, params.origin!)
-    ));
-    if (!materialization || !materialization.enabled || materialization.trustState !== 'trusted') return null;
-    const release = params.classifyRelease(materialization);
-    if (
-        release.releaseContent !== 'matched'
-        || release.validation.kind !== 'admitted'
-        || !materialization.portableRelease
-    ) {
-        return null;
+    const admission = params.reader?.readMaterializations();
+    const candidates: PluginExecutionOriginCandidateV1[] = admission?.kind === 'available'
+        ? admission.materializations.filter((entry) => entry.pluginId === params.pluginId).map((materialization) => {
+            const release = params.classifyRelease(materialization);
+            const rejected = !materialization.enabled ? 'disabled' as const
+                : materialization.trustState !== 'trusted' ? 'untrusted' as const
+                    : !resolveFreshMachineAdministrationExecutionTarget({ serverIdentityId: materialization.serverIdentityId, machineId: materialization.machineId }) ? 'offline' as const : null;
+            return { materialization, ...release, ...(rejected ? { validation: { kind: 'rejected' as const, reason: rejected } } : {}) };
+        }) : [];
+    for (const candidate of params.sourceCandidates ?? []) {
+        const origin = candidate.source.origin;
+        const machineTarget = resolveFreshMachineAdministrationExecutionTarget({ serverIdentityId: origin.serverIdentityId, machineId: origin.sourceRef.machineId });
+        candidates.push(machineTarget ? candidate : { ...candidate, validation: { kind: 'rejected', reason: 'offline' } });
     }
+    const state = resolvePluginMachineExecutionOriginState({ pluginId: params.pluginId, storedOrigin: params.origin,
+        candidates, declaredDefaultOrigins: params.declaredDefaultOrigins });
+    if (state.kind !== 'selected') return null;
+    const origin = state.origin;
     const machineTarget = resolveFreshMachineAdministrationExecutionTarget({
-        serverIdentityId: materialization.serverIdentityId,
-        machineId: materialization.machineId,
+        serverIdentityId: origin.serverIdentityId,
+        machineId: getPluginMachineExecutionOriginRef(origin).machineId,
     });
     if (!machineTarget) return null;
-    return Object.freeze({ origin: params.origin, materialization, machineTarget });
+    return Object.freeze({ origin, ...('source' in state.candidate ? { source: state.candidate.source } : { materialization: state.candidate.materialization }), machineTarget });
 }
 
 export type PluginMachineExecutionOriginSelectionV1 = Readonly<{
-    candidates: readonly PluginMachineExecutionOriginCandidateV1[];
+    candidates: readonly PluginExecutionOriginCandidateV1[];
+    machineCandidates?: readonly MachineAdministrationCandidateV1[];
     state: PluginMachineExecutionOriginStateV1;
     selectedOrigin: PluginMachineExecutionOriginV1 | null;
     canExecute: boolean;
@@ -122,11 +123,18 @@ export type PluginExecutionOriginSelectionMutationResult =
 export function usePluginMachineExecutionOriginSelection(params: Readonly<{
     pluginId: string;
     classifyRelease: (materialization: PluginMachineMaterializationV1) => PluginMachineReleaseClassificationV1;
-    /** The plugin ships inside Happier (see `resolvePluginMachineExecutionOriginState`). */
-    includedWithHappier?: boolean;
+    enabled?: boolean;
+    sourceCandidates?: readonly PluginMachineSourceExecutionOriginCandidateV1[];
+    readSourceCandidates?: () => readonly PluginMachineSourceExecutionOriginCandidateV1[];
+    declaredDefaultOrigins?: readonly PluginMachineExecutionOriginV1[];
+    readDeclaredDefaultOrigins?: () => readonly PluginMachineExecutionOriginV1[];
 }>): PluginMachineExecutionOriginSelectionV1 {
     const reader = useActivePluginAccountAvailabilityReader();
-    const machineSnapshots = useAllProfileMachineInventorySnapshots();
+    const enabled = params.enabled !== false;
+    const machineSnapshots = useAllProfileMachineInventorySnapshots(enabled);
+    const machineCandidates = React.useMemo(() => enabled
+        ? buildMachineAdministrationCandidatesFromSnapshots({ snapshots: machineSnapshots })
+        : Object.freeze([]), [enabled, machineSnapshots]);
     const selections = useSetting('machineAdministrationSelectionsV1');
     const settingsVersion = useSettingsVersion();
     const expectedSettingsScope = useAccountSettingsScope();
@@ -142,28 +150,31 @@ export function usePluginMachineExecutionOriginSelection(params: Readonly<{
         storedOrigin,
     );
     const materializationAdmission = React.useMemo(
-        () => reader?.readMaterializations() ?? null,
-        [reader],
+        () => enabled ? reader?.readMaterializations() ?? null : null,
+        [enabled, reader],
     );
-    const candidates = React.useMemo(() => buildPluginMachineExecutionOriginCandidates({
+    const candidates = React.useMemo(() => enabled ? Object.freeze([...buildPluginMachineExecutionOriginCandidates({
         pluginId: params.pluginId,
         materializations: materializationAdmission?.kind === 'available'
             ? materializationAdmission.materializations
             : [],
         machineSnapshots,
         classifyRelease: params.classifyRelease,
-    }), [machineSnapshots, materializationAdmission, params.classifyRelease, params.pluginId]);
-    const includedWithHappier = params.includedWithHappier === true;
-    const state = React.useMemo(() => resolvePluginMachineExecutionOriginState({
+    }), ...buildPluginMachineSourceExecutionOriginCandidates({ pluginId: params.pluginId,
+        sources: params.sourceCandidates ?? [], machineSnapshots })]) : Object.freeze([]), [enabled, machineSnapshots, materializationAdmission, params.classifyRelease, params.pluginId, params.sourceCandidates]);
+    const state = React.useMemo<PluginMachineExecutionOriginStateV1>(() => enabled ? resolvePluginMachineExecutionOriginState({
         pluginId: params.pluginId,
         storedOrigin,
         candidates,
-        includedWithHappier,
-    }), [candidates, includedWithHappier, params.pluginId, storedOrigin]);
+        declaredDefaultOrigins: params.declaredDefaultOrigins,
+    }) : Object.freeze({ kind: 'selectionRequired', candidates }), [enabled, candidates, params.declaredDefaultOrigins, params.pluginId, storedOrigin]);
+    const currentParamsRef = React.useRef(params);
+    currentParamsRef.current = params;
 
     const selectOrigin = React.useCallback(async (
         origin: PluginMachineExecutionOriginV1,
     ): Promise<PluginExecutionOriginSelectionMutationResult> => {
+        if (!enabled) return { status: 'unavailable' };
         const proposed = resolvePluginMachineExecutionOriginState({
             pluginId: params.pluginId,
             storedOrigin: origin,
@@ -173,16 +184,17 @@ export function usePluginMachineExecutionOriginSelection(params: Readonly<{
         return await persistMachineAdministrationSelectionMutation(expectedSettingsScope, settingsVersion, (current) => (
             setPluginMachineExecutionOriginPreference(current, params.pluginId, proposed.origin)
         ));
-    }, [candidates, expectedSettingsScope, params.pluginId, settingsVersion]);
+    }, [enabled, candidates, expectedSettingsScope, params.pluginId, settingsVersion]);
 
     const clearOrigin = React.useCallback(async (): Promise<PluginExecutionOriginSelectionMutationResult> => {
-        if (settingsVersion === null) return { status: 'unavailable' };
+        if (!enabled || settingsVersion === null) return { status: 'unavailable' };
         return await persistMachineAdministrationSelectionMutation(expectedSettingsScope, settingsVersion, (current) => (
             clearPluginMachineExecutionOriginPreference(current, params.pluginId)
         ));
-    }, [expectedSettingsScope, params.pluginId, settingsVersion]);
+    }, [enabled, expectedSettingsScope, params.pluginId, settingsVersion]);
 
     const resolveExecutionOrigin = React.useCallback(() => {
+        if (!enabled || !areAccountSettingsScopesEqual(expectedSettingsScope, storage.getState().settingsScope)) return null;
         const origin = storage.getState().settings.machineAdministrationSelectionsV1
             .pluginExecutionOriginsByPluginId[params.pluginId] ?? null;
         selectionRevisionRef.current = advancePluginExecutionOriginSelectionRevision(
@@ -195,6 +207,8 @@ export function usePluginMachineExecutionOriginSelection(params: Readonly<{
             origin,
             reader,
             classifyRelease: params.classifyRelease,
+            sourceCandidates: currentParamsRef.current.readSourceCandidates?.() ?? currentParamsRef.current.sourceCandidates,
+            declaredDefaultOrigins: currentParamsRef.current.readDeclaredDefaultOrigins?.() ?? currentParamsRef.current.declaredDefaultOrigins,
         });
         return resolved === null
             ? null
@@ -202,26 +216,33 @@ export function usePluginMachineExecutionOriginSelection(params: Readonly<{
                 ...resolved,
                 selectionRevision: selectionRevisionRef.current.revision,
             });
-    }, [params.classifyRelease, params.pluginId, reader]);
+    }, [enabled, expectedSettingsScope, params.classifyRelease, params.pluginId, reader]);
 
     return React.useMemo(() => ({
         candidates,
+        machineCandidates,
         state,
-        selectedOrigin: storedOrigin,
-        canExecute: resolveFreshPluginMachineExecutionOrigin({
+        selectedOrigin: enabled ? state.kind === 'selected' ? state.origin : storedOrigin : null,
+        canExecute: enabled && resolveFreshPluginMachineExecutionOrigin({
             pluginId: params.pluginId,
             origin: storedOrigin,
             reader,
             classifyRelease: params.classifyRelease,
+            sourceCandidates: params.sourceCandidates,
+            declaredDefaultOrigins: params.declaredDefaultOrigins,
         }) !== null,
         selectOrigin,
         clearOrigin,
         resolveExecutionOrigin,
     }), [
         candidates,
+        machineCandidates,
+        enabled,
         clearOrigin,
         params.classifyRelease,
         params.pluginId,
+        params.sourceCandidates,
+        params.declaredDefaultOrigins,
         reader,
         resolveExecutionOrigin,
         selectOrigin,

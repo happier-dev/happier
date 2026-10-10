@@ -1,5 +1,6 @@
 import * as React from 'react';
-import type { ManagedMachinePresetV1, PresetMutationResultV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import type { ManagedMachinePresetUpdateInputV1, ManagedMachinePresetV1, PresetMutationResultV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import type { MachinePresetActionInputV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 
 import { getServerProfileById, areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
@@ -240,6 +241,10 @@ export function useMachinePresets(serverIds: readonly string[], onApprovalPendin
     }, [state, accountScopes, requestedIdsKey, refresh]);
 }
 
+type PresetDetailMutation =
+    | Readonly<{ actionId: 'machines.presets.archive' | 'machines.presets.restore'; input: MachinePresetActionInputV1<'machines.presets.archive'> }>
+    | Readonly<{ actionId: 'machines.presets.update'; input: MachinePresetActionInputV1<'machines.presets.update'> }>;
+
 /** Mounted detail reads the one preset and actual admitted rows; archive never rewrites those rows. */
 export function useMachinePresetDetail(serverId: string, presetId: string,
     onApprovalPending?: (approval: ActionApprovalRegistration) => void) {
@@ -261,9 +266,11 @@ export function useMachinePresetDetail(serverId: string, presetId: string,
             ? { value: null, loading: resolving, error: resolving ? null : resolution.kind }
             : state.queryKey === queryKey ? state : { value: null, loading: true, error: null };
 
-    const archiveOrRestore = React.useCallback(async (): Promise<MachinePresetCollectionResult<PresetMutationResultV1>> => {
+    // Archive, restore and the page's in-place edits are one reviewed write of the visible revision.
+    const mutate = React.useCallback(async (request: (preset: ManagedMachinePresetV1, homeId: string) => PresetDetailMutation): Promise<MachinePresetCollectionResult<PresetMutationResultV1>> => {
         const preset = visibleState.value?.preset;
         if (!binding?.isCurrent() || !client || !homeId || !preset) return { kind: 'failed', code: 'action_account_scope_changed' };
+        const { actionId, input } = request(preset, homeId);
         const controller = new AbortController();
         const retirement = binding.onRetire(() => controller.abort());
         const settle = (value: PresetMutationResultV1) => {
@@ -278,8 +285,7 @@ export function useMachinePresetDetail(serverId: string, presetId: string,
             }
         };
         try {
-            const result = await client.execute(preset.archivedAt === undefined ? 'machines.presets.archive' : 'machines.presets.restore',
-                { homeId, id: preset.id, expectedRevision: preset.revision }, {
+            const result = await client.execute(actionId, input, {
                     signal: controller.signal, onApprovalPending: approval => approvalRef.current?.(approval),
                     onApprovalSucceeded: value => { retirement.dispose(); settle(value); },
                     onApprovalFailed: code => {
@@ -296,8 +302,14 @@ export function useMachinePresetDetail(serverId: string, presetId: string,
             return result;
         } catch (error) { retirement.dispose(); throw error; }
     }, [binding, client, homeId, queryKey, serverId, visibleState.value?.preset]);
+    const archiveOrRestore = React.useCallback(() => mutate((preset, home): PresetDetailMutation => ({
+        actionId: preset.archivedAt === undefined ? 'machines.presets.archive' : 'machines.presets.restore',
+        input: { homeId: home, id: preset.id, expectedRevision: preset.revision } })), [mutate]);
+    /** Writes only the changed fields through the same Action the configurator's Save uses. */
+    const update = React.useCallback((patch: ManagedMachinePresetUpdateInputV1['patch']) => mutate((preset, home): PresetDetailMutation => ({
+        actionId: 'machines.presets.update', input: { homeId: home, id: preset.id, expectedRevision: preset.revision, patch } })), [mutate]);
     const history = React.useMemo(() => visibleState.value && homeId ? buildManagedPresetHistory({ serverId, homeId, presetId,
         machines: visibleState.value.machines }) : [], [visibleState.value?.machines, homeId, presetId, serverId]);
-    return { state: visibleState, history, refresh, archiveOrRestore, accountId,
+    return { state: visibleState, history, refresh, archiveOrRestore, update, accountId,
         mutationResult: mutationResult?.queryKey === queryKey ? mutationResult.value : null };
 }

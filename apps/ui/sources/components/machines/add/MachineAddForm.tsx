@@ -8,7 +8,7 @@ import { SshCredentialsFields } from '@/components/ssh/SshCredentialsFields';
 import type { RemoteSshBootstrapPrompt } from '@/components/systemTasks/remoteSshBootstrap/useRemoteSshBootstrapTask';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { OsCommandBlock } from '@/components/ui/code/blocks/OsCommandBlock';
-import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
+import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
@@ -18,7 +18,6 @@ import { Text } from '@/components/ui/text/Text';
 import { HAPPIER_DESKTOP_DOWNLOAD_URL } from '@/constants/downloadUrls';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { useViewportClass } from '@/utils/platform/useViewportClass';
 
 import { resolveMachineAddInitialPath, type MachineAddPathId } from './machineAddPaths';
 import {
@@ -91,7 +90,6 @@ export function MachineAddForm(props: Readonly<{
     onArrived?: (machine: Readonly<{ machineId: string; serverId: string }>) => void;
 }>) {
     const { theme } = useUnistyles();
-    const phone = useViewportClass() === 'compact';
     const flow = useMachineAddFlow({ initialPath: props.initialPath });
     // "Create one" is the fourth way to add a machine, beside the paths (lab `m-add`), when this Home allows it.
     const creating = useMachineAddFlowDraftSelector((draft) => draft.creating);
@@ -161,23 +159,25 @@ export function MachineAddForm(props: Readonly<{
     return (
         <View testID={props.testID}>
             <ItemGroup surface="none">
-            <SelectionTiles<MachineAddPathId | 'create'>
-                testIdPrefix={`${props.testID}.path`}
+            {/* Two to four short ways in: one segmented bar, as wide as its words (lab m-add). Each pane
+                opens with its own lead line, so the bar carries names only. */}
+            <View style={styles.paths}>
+            <SegmentedTabBar<MachineAddPathId | 'create'>
+                role="radiogroup"
+                segmentSizing="content"
+                testIDPrefix={`${props.testID}.path`}
                 accessibilityLabel={t('settings.addMachine')}
-                density="compact"
-                minimumColumns={phone ? 1 : Math.min(4, paths.length + (offerCreate ? 1 : 0))}
-                maximumColumns={phone ? 1 : undefined}
-                options={[
-                    ...paths.map((path) => ({ id: path.id, title: path.title, subtitle: path.subtitle, icon: PATH_ICON[path.id] })),
-                    ...(offerCreate ? [{ id: 'create' as const, title: t('managedMachines.add.createPath'),
-                        subtitle: t('managedMachines.add.createPathSubtitle'), icon: 'plus' as const }] : []),
+                tabs={[
+                    ...paths.map((path) => ({ id: path.id, label: path.chipLabel ?? path.title })),
+                    ...(offerCreate ? [{ id: 'create' as const, label: t('managedMachines.add.createPath') }] : []),
                 ]}
-                value={showCreate ? 'create' : active}
-                onChange={(next) => {
+                activeTabId={showCreate || active === null ? 'create' : active}
+                onSelectTab={(next) => {
                     if (next === 'create') setCreating(true);
-                    else if (next) { setCreating(false); flow.choosePath(next); }
+                    else { setCreating(false); flow.choosePath(next); }
                 }}
             />
+            </View>
             </ItemGroup>
             {showCreate || active === null ? pane : <ItemGroup surface="none"><View style={styles.page}>{pane}</View></ItemGroup>}
         </View>
@@ -444,6 +444,10 @@ function MachineAddPane(props: Readonly<{
 }
 
 const styles = StyleSheet.create((theme) => ({
+    paths: {
+        alignSelf: 'flex-start',
+        maxWidth: '100%',
+    },
     page: {
         gap: 20,
     },

@@ -9,7 +9,7 @@ import {
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveMachinePickerPresence } from '@/sync/domains/machines/identity/resolveMachinePickerPresence';
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
-import { isMachineInventorySettled, type ServerMachineInventorySnapshotV1 } from '@/sync/domains/machines/machineInventorySnapshots';
+import { readMachineInventoryStatus, type ServerMachineInventorySnapshotV1 } from '@/sync/domains/machines/machineInventorySnapshots';
 import { useAllProfileMachineInventorySnapshots } from '@/sync/domains/machines/useMachineInventorySnapshots';
 import {
     resolvePortableMachineAdministrationTarget,
@@ -141,6 +141,7 @@ export function resolveFreshMachineAdministrationExecutionTarget(
         activeServerId,
         activeMachines,
         machineListByServerId,
+        machineListStatusByServerId: state.machineListStatusByServerId,
     });
     if (resolution.kind !== 'resolved') return null;
     if (!hasLiveExactInventoryRow({
@@ -178,15 +179,15 @@ export type MachineAdministrationTargetSelectionOptions = Readonly<{
     /** Defer detailed inventory and execution while the consuming surface is idle. */
     enabled?: boolean;
     /**
-     * Most administration screens may initialize a sole verified machine.
-     * Consumers whose catalog depends on an explicit machine scope opt out so
-     * they never imply account-wide availability from one observed daemon.
+     * Permit initial target selection: a sole verified machine for ordinary
+     * scopes, or a live online machine in the Account Home for Plugins.
+     * Consumers that require a person's explicit choice opt out.
      */
     allowSoleCandidate?: boolean;
     /**
      * Which machines an explicit choice may name (default `live`). Consumers that show a machine's
      * last known state and disable its operations while it is away pass `lastKnown`. Automatic
-     * initialization still takes only a sole live online candidate.
+     * initialization still takes only live online candidates.
      */
     explicitSelection?: MachineAdministrationExplicitSelectionPolicy;
 }>;
@@ -203,8 +204,7 @@ export function useMachineAdministrationTargetPickerRows(): readonly MachineAdmi
 /**
  * Administration's device-local exact target controller. It consumes the raw
  * all-profile machine producer plus its presentation-only warm fallback; it
- * never derives authority from launch lists, active-machine heuristics, or row
- * order.
+ * never derives authority from launch lists or presentation row order.
  */
 export function useMachineAdministrationTargetSelection(
     selectionKey: string,
@@ -246,14 +246,15 @@ export function useMachineAdministrationTargetSelection(
         storedTarget,
         candidates,
         allowSoleCandidate,
-        isInventoryKnown: (serverIdentityId) => isMachineInventorySettled(snapshots, serverIdentityId),
+        readInventoryStatus: (serverIdentityId) => readMachineInventoryStatus(snapshots, serverIdentityId),
     }), [allowSoleCandidate, candidates, snapshots, storedTarget]);
 
     React.useEffect(() => {
         if (storedTarget || !allowSoleCandidate || targetState.kind !== 'online') return;
         const current = storage.getState();
         if (!expectedSettingsScope || !areAccountSettingsScopesEqual(expectedSettingsScope, current.settingsScope)) return;
-        // Sole-candidate memory is local; mounting a route never mutates Account policy.
+        if (current.settings.machineAdministrationTargetsLocalV1[selectionKey]) return;
+        // Initial-target memory is local; mounting a route never mutates Account policy.
         applySettings({ machineAdministrationTargetsLocalV1: setMachineAdministrationTargetPreference(
             current.settings.machineAdministrationTargetsLocalV1, selectionKey, targetState.target,
         ) });

@@ -4,8 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { Switch } from '@/components/ui/forms/Switch';
+import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -54,12 +53,11 @@ export type ManagedReceiptModel = Readonly<{
     ManagedMachineKeepControlProps,
     'presentation' | 'testID' | 'showLabel'
   >;
-  saveAsPreset?: Readonly<{
-    value: boolean;
-    onChange: (next: boolean) => void;
-  }>;
-  /** A one-off deadline is not part of the reusable recipe saved by the secondary action. */
-  presetSaveNote?: string;
+  /**
+   * One quiet line under the secondary actions: what they leave out or when they apply (a one-off
+   * deadline is not saved into a preset; a preset's edits reach only new machines).
+   */
+  secondaryNote?: string;
   /** Configurator: the one primary action and its billing footnote. */
   primary?: ManagedReceiptAction & Readonly<{ footnote?: string }>;
   /** Created machine: quiet power actions at the foot, where the consequence is stated. */
@@ -85,7 +83,7 @@ export const MachineConfigurationReceipt = React.memo(
         <SectionContentRow>
           <Text style={styles.caption}>{model.caption}</Text>
           <View style={styles.identity}>
-            <View style={styles.mark}>{model.mark}</View>
+            {model.mark ? <View style={styles.mark}>{model.mark}</View> : null}
             <View style={styles.identityText}>
               <View style={styles.nameRow}>
                 <Text style={styles.name} numberOfLines={1}>
@@ -112,6 +110,8 @@ export const MachineConfigurationReceipt = React.memo(
             key={fact.id}
             testID={`${props.testID}:fact:${fact.id}`}
             title={fact.label}
+            // A fact reads label-then-value: the label is the quiet half, the value carries the weight.
+            titleStyle={styles.factLabel}
             density="compact"
             mode="info"
             showChevron={false}
@@ -138,24 +138,6 @@ export const MachineConfigurationReceipt = React.memo(
             />
           </SectionContentRow>
         ) : null}
-        {model.saveAsPreset ? (
-          <Item
-            testID={`${props.testID}:save`}
-            title={t('managedMachines.receipt.saveAsPreset')}
-            subtitle={t('managedMachines.receipt.saveAsPresetHelp')}
-            showChevron={false}
-            rightElement={
-              <Switch
-                accessibilityLabel={t('managedMachines.receipt.saveAsPreset')}
-                value={model.saveAsPreset.value}
-                onValueChange={model.saveAsPreset.onChange}
-              />
-            }
-            onPress={() =>
-              model.saveAsPreset?.onChange(!model.saveAsPreset.value)
-            }
-          />
-        ) : null}
         {model.primary ? (
           <SectionContentRow>
             <RoundButton
@@ -172,6 +154,8 @@ export const MachineConfigurationReceipt = React.memo(
         ) : null}
         {model.secondary && model.secondary.length > 0 ? (
           <SectionContentRow>
+            {/* One action group, one geometry: a bordered Stop and a quiet Delete are the same size. */}
+            <RoundButtonSizeScope size="normal" presentation="uniform">
             <View style={styles.secondary}>
               {model.secondary.map((action) => (
                 <RoundButton
@@ -187,9 +171,10 @@ export const MachineConfigurationReceipt = React.memo(
                 />
               ))}
             </View>
-            {model.presetSaveNote ? (
-              <Text testID={`${props.testID}:save-deadline-note`} style={styles.footnote}>
-                {model.presetSaveNote}
+            </RoundButtonSizeScope>
+            {model.secondaryNote ? (
+              <Text testID={`${props.testID}:secondary-note`} style={styles.footnote}>
+                {model.secondaryNote}
               </Text>
             ) : null}
           </SectionContentRow>
@@ -313,6 +298,10 @@ const styles = StyleSheet.create((theme) => ({
     ...Typography.default(),
     ...Typography.tabular(),
     ...rowDescription,
+    color: theme.colors.text.secondary,
+  },
+  factLabel: {
+    ...Typography.default(),
     color: theme.colors.text.secondary,
   },
   factValue: {

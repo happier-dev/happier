@@ -21,6 +21,7 @@ import {
 type MachinePromptRegistriesOpts = Readonly<{
     serverId?: string | null;
     timeoutMs?: number | null;
+    signal?: AbortSignal;
 }>;
 
 export async function machinePromptRegistriesListAdapters(

@@ -2,7 +2,7 @@ import type * as React from 'react';
 import type { ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { ManagedReceiptModel } from './MachineConfigurationReceipt';
-import { formatProviderAmount, formatPriceUnit, type ManagedReceiptCost } from './managedMachineDisplay';
+import { countryFlag, formatProviderAmount, formatPriceUnit, type ManagedReceiptCost } from './managedMachineDisplay';
 import type { ManagedLocalResourceFactsV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { formatByteCapacity } from '@/utils/files/formatByteSize';
 import type { MachineRetentionOverrideV1 } from '@happier-dev/protocol/account/settings/machineRetentionDefaultsV1';
@@ -35,6 +35,8 @@ export type ManagedConfigurationReceiptInput = Readonly<{
      * contradict it) and creation-time headroom that no longer describes the host.
      */
     created?: boolean;
+    /** The receipt carries the editable Keep it control: its policy is not also listed as a fact above it. */
+    keepEditedBelow?: boolean;
     /** The created detail's shared Keep control already presents the current native Ends fact. */
     nativeLifetimePresented?: boolean;
     /** Current target-Home names, resolved by the canonical privacy-aware Account presenter. */
@@ -58,7 +60,10 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
         if (!fact) continue;
         const value = localized(fact.title);
         nativeLabels.push(value);
-        rows.push({ id: dimension, label: dimension === 'duration' ? t('managedRetention.ends') : t(`managedMachines.config.${dimension}`), value });
+        // A place leads with its country's flag wherever the receipt names it, as in the location choices.
+        const flag = dimension === 'location' ? countryFlag('countryCode' in fact ? fact.countryCode : undefined) : '';
+        rows.push({ id: dimension, label: dimension === 'duration' ? t('managedRetention.ends') : t(`managedMachines.config.${dimension}`),
+            value: flag ? `${flag} ${value}` : value });
     }
     const sizeSpec = size ? describeManagedSize(localized(size.title), size) : null;
     // Lab receipt order: where and what, then who pays, who manages it and where it joins.
@@ -80,11 +85,12 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
         ? t('machinePresets.fromRevision', { name: preset.name, revision: preset.revision })
         : t('managedMachines.receipt.eachOne', { revision: preset.revision }) : null;
     // A created machine names its preset in the caption, where the lab puts it.
-    if (presetLine && !input.created) rows.push({ id: 'preset', label: t('machinePresets.madeFrom'), value: presetLine });
+    // A preset's own receipt is captioned with its revision already; the row is for a machine about to be made from one.
+    if (presetLine && !input.created && !input.caption) rows.push({ id: 'preset', label: t('machinePresets.madeFrom'), value: presetLine });
     if (facts) {
         if (facts.nativeFacts?.monthlyCapStatus) rows.push({ id: 'monthly-cap', label: t('managedMachines.billing.monthlyCap'),
             value: t(facts.nativeFacts.monthlyCapStatus === 'none' ? 'managedMachines.billing.noMonthlyCap' : 'managedMachines.billing.unknownMonthlyCap') });
-        if (!input.created) rows.push({ id: 'retention', label: t('managedRetention.keepIt'), value: describeRetentionPolicy(facts) });
+        if (!input.created && !input.keepEditedBelow) rows.push({ id: 'retention', label: t('managedRetention.keepIt'), value: describeRetentionPolicy(facts) });
         if (facts.retentionCapabilities.nativeExpiry && !input.created) {
             const expiry = facts.retentionCapabilities.nativeExpiry;
             rows.push({ id: 'native-expiry', label: t('managedRetention.keepIt'), value: t('managedRetention.nativeExpiry', {

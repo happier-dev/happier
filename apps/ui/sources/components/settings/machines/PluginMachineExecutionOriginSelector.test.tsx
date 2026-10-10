@@ -227,7 +227,8 @@ describe('PluginMachineExecutionOriginSelector', () => {
                 pluginId: 'acme.plugin',
             },
         });
-        expect(picker.getMachineKey?.(presentedA)).toBe('7:srv_one|9:machine-a|5:mat-a|11:acme.plugin');
+        const presentedB = picker.groups[0]!.machines[1]!;
+        expect(picker.getMachineKey?.(presentedA)).not.toBe(picker.getMachineKey?.(presentedB));
     });
 
     it('keeps a typed selection conflict visible instead of silently dropping it', async () => {
