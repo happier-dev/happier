@@ -95,13 +95,18 @@ describe('Machine fresh-copy model', () => {
     const hook = await renderHook(() => useMachineFreshCopies(serverId, 'worker'));
     expect(hook.getCurrent().copies?.[0]).toHaveProperty('lastCleanSyncAtMs');
     await waitForHomeGovernance(() => expect(hook.getCurrent().copies?.[0]).toMatchObject({ lastCleanSyncAtMs: null }));
+    await act(async () => { storage.getState().setProjectAccountRowsStatusForScope(scope, 'loading'); });
+    expect(hook.getCurrent().copies).toBeNull();
+    expect(hook.getCurrent().loading).toBe(true);
     await act(async () => { storage.getState().setProjectAccountRowsStatusForScope(scope, 'locked'); });
     expect(hook.getCurrent().copies).toBeNull();
+    expect(hook.getCurrent().loading).toBe(false);
     await act(async () => {
       storage.getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete',
         workspaceRefs: [], relationships: [], organizations: [], revisionsByPhysicalKey: {} });
     });
     expect(hook.getCurrent().copies).toEqual([]);
+    expect(hook.getCurrent().loading).toBe(false);
     await hook.unmount();
   });
 

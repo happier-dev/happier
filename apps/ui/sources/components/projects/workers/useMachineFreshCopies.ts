@@ -22,8 +22,11 @@ export type MachineFreshCopyNotice = Readonly<{
 /** Mounted Machine detail model. Sync owns copy identity, facts and retirement; Actions own consent. */
 export function useMachineFreshCopies(serverId: string, machineId: string) {
   const rows = useProjectAccountRows();
-  const { binding } = useServerCredentialAccountScopeBinding(serverId);
+  const { binding, resolution } = useServerCredentialAccountScopeBinding(serverId);
   const accountId = binding?.isCurrent() ? binding.accountId : null;
+  const loading = resolution.kind === 'resolving' || Boolean(accountId && (!rows
+    || (rows.scope.serverId === serverId && rows.scope.accountId === accountId
+      && (rows.status === 'idle' || rows.status === 'loading'))));
   const key = JSON.stringify([serverId, machineId, accountId, binding?.revision]);
   const lifetime = React.useMemo(() => new AbortController(), [binding, key]);
   React.useEffect(() => {
@@ -147,6 +150,6 @@ export function useMachineFreshCopies(serverId: string, machineId: string) {
     }
   };
   const notice = scopedNotice?.key === key ? scopedNotice.value : null;
-  return { copies, remove, notice, refresh, approvalId: approval.approvalId, approvalPending: approval.approvalPending,
+  return { copies, loading, remove, notice, refresh, approvalId: approval.approvalId, approvalPending: approval.approvalPending,
     refreshApproval: approval.refresh, busy: notice?.kind === 'saving' || notice?.kind === 'approval' };
 }
