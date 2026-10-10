@@ -23,10 +23,18 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
 });
+// Radix is the native DOM boundary; the real modal lifecycle and composer remain mounted.
+vi.mock('@/utils/web/radixCjs', async () => {
+    const { createRadixCjsModuleMock } = await import('@/dev/testkit/mocks/radixCjs');
+    return createRadixCjsModuleMock();
+});
 
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
 // The harness installs network leaves before the real UI binds its scoped transport.
+const { KeyboardShortcutProvider, useKeyboardCommand } = await import('@/keyboard');
+const { ModalProvider } = await import('@/modal/ModalProvider');
+const { useWorkflowRunComposerModal } = await import('./useWorkflowRunComposerModal');
 const { WorkflowRunComposer } = await import('./WorkflowRunComposer');
 const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
 const { getStorage } = await import('@/sync/domains/state/storageStore');
@@ -58,6 +66,7 @@ const inputs: readonly WorkflowInputDefinition[] = [
     { name: 'version', valueType: 'number', required: true },
     { name: 'announce', valueType: 'boolean', required: false, default: true },
 ];
+const STARTABLE_DEFAULTS = { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } } as const;
 
 async function mount(initial: React.ComponentProps<typeof WorkflowRunComposer>['values'] = {}) {
     const onRun = vi.fn();
@@ -91,7 +100,7 @@ describe('workflow composer admission', () => {
         await screen.pressByTestIdAsync('review-where-chip');
         expect(screen.findByTestId('review-where-content')).not.toBeNull();
     });
-    it.each([['team-a'], ['team-a', 'team-b']])('reviews only granted Teams before admitting the draft (%j)', async (...teamIds) => {
+    it.each([[['team-a']], [['team-a', 'team-b']]])('reviews only granted Teams before admitting the draft (%j)', async (teamIds) => {
         await offerTeams(teamIds);
         executeMock.mockImplementation(async (action: string) => action === 'artifact.access.grants.list'
             ? { ok: true, result: { artifactId: 'saved-workflow', ownerAccountId: 'account-a', access: 'owner',
@@ -104,7 +113,7 @@ describe('workflow composer admission', () => {
             : { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' });
         const onRun = vi.fn();
         const screen = await renderScreen(<WorkflowRunComposer sourceArtifactId="saved-workflow"
-            definition={createWorkflowDefinitionFixture({ inputs: [] })} inputs={[]} values={{}}
+            definition={createWorkflowDefinitionFixture({ inputs: [], defaults: STARTABLE_DEFAULTS })} inputs={[]} values={{}}
             onChangeValues={() => {}} onRun={onRun} onCancel={() => {}} />);
         await vi.waitFor(() => expect(screen.findByTestId('workflow-run-inputs-visibility-chip')).not.toBeNull());
         expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(teamIds.length > 1);
@@ -126,7 +135,7 @@ describe('workflow composer admission', () => {
                 createdByAccountId: 'account-a', createdAt: 1, display: { name: 'Builders' } }] } });
         const onRun = vi.fn();
         const screen = await renderScreen(<WorkflowRunComposer sourceArtifactId="saved-workflow"
-            definition={createWorkflowDefinitionFixture({ inputs: [] })} inputs={[]} values={{}}
+            definition={createWorkflowDefinitionFixture({ inputs: [], defaults: STARTABLE_DEFAULTS })} inputs={[]} values={{}}
             onChangeValues={() => {}} onRun={onRun} onCancel={() => {}} />);
         await vi.waitFor(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
         expect(screen.findByTestId('workflow-run-inputs-team-required')).not.toBeNull();
@@ -140,7 +149,7 @@ describe('workflow composer admission', () => {
                 createdByAccountId: 'someone-else', createdAt: 1, display: { name: teamId } })) } });
         const onRun = vi.fn();
         const screen = await renderScreen(<WorkflowRunComposer sourceArtifactId="saved-workflow"
-            definition={createWorkflowDefinitionFixture({ inputs: [] })} inputs={[]} values={{}}
+            definition={createWorkflowDefinitionFixture({ inputs: [], defaults: STARTABLE_DEFAULTS })} inputs={[]} values={{}}
             onChangeValues={() => {}} onRun={onRun} onCancel={() => {}} />);
         await vi.waitFor(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
         expect(screen.findByTestId('workflow-run-inputs-team-required')).toBeNull();
@@ -156,7 +165,7 @@ describe('workflow composer admission', () => {
         executeMock.mockResolvedValue({ ok: false, errorCode: 'artifact_access_unavailable', error: 'artifact_access_unavailable' });
         const onRun = vi.fn();
         const screen = await renderScreen(<WorkflowRunComposer sourceArtifactId="saved-workflow"
-            definition={createWorkflowDefinitionFixture({ inputs: [] })} inputs={[]} values={{}}
+            definition={createWorkflowDefinitionFixture({ inputs: [], defaults: STARTABLE_DEFAULTS })} inputs={[]} values={{}}
             onChangeValues={() => {}} onRun={onRun} onCancel={() => {}} />);
         expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(true);
         await screen.pressByTestIdAsync('workflow-run-inputs-run');
@@ -175,7 +184,7 @@ describe('workflow composer admission', () => {
         function Host() {
             const [source, setSource] = React.useState<string | null>('saved-workflow');
             changeSource = setSource;
-            return <WorkflowRunComposer sourceArtifactId={source} definition={createWorkflowDefinitionFixture({ inputs: [] })}
+            return <WorkflowRunComposer sourceArtifactId={source} definition={createWorkflowDefinitionFixture({ inputs: [], defaults: STARTABLE_DEFAULTS })}
                 inputs={[]} values={{}} onChangeValues={() => {}} onRun={onRun} onCancel={() => {}} />;
         }
         const screen = await renderScreen(<Host />);
@@ -287,8 +296,72 @@ describe('workflow composer admission', () => {
     });
 
     it('keeps a no-text workflow inspectable without a dead editable input', async () => {
-        const screen = await renderScreen(<WorkflowRunComposer inputs={[]} values={{}} onChangeValues={() => {}} onRun={() => {}} onCancel={() => {}} />);
+        const screen = await renderScreen(<WorkflowRunComposer inputs={[]} values={{}} onChangeValues={() => {}} onRun={() => {}} onCancel={() => {}}
+            definition={createWorkflowDefinitionFixture({ defaults: STARTABLE_DEFAULTS })} preview={'Build\nReview\nRelease'} />);
         expect(screen.findByTestId('workflow-run-inputs-preview')).not.toBeNull();
+        expect(screen.findByTestId('workflow-run-inputs-summary')).not.toBeNull();
+        expect(screen.findByTestId('new-session-composer-input')).toBeNull();
         expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false);
+    });
+
+    it('starts from the workflow command while open and respects the same required-input admission', async () => {
+        getStorage().getState().applySettingsLocal({ keyboardShortcutsV2Enabled: true });
+        const onRun = vi.fn();
+        let executeCommand: ReturnType<typeof useKeyboardCommand> = () => false;
+        function Commands() { executeCommand = useKeyboardCommand(); return null; }
+        const content = (values: React.ComponentProps<typeof WorkflowRunComposer>['values']) => (
+            <KeyboardShortcutProvider handlers={{}}>
+                <WorkflowRunComposer inputs={[{ name: 'brief', valueType: 'string', required: true }]}
+                    values={values} onChangeValues={() => {}} onRun={onRun} onCancel={() => {}} />
+                <Commands />
+            </KeyboardShortcutProvider>
+        );
+        const screen = await renderScreen(content({}));
+        const start = screen.findByTestId('workflow-run-inputs-run');
+        // The key hint reads beneath Start (convo-N7), not inside its pill.
+        expect(start?.findAllByProps({ testID: 'workflow-run-inputs-shortcut' }).length).toBe(0);
+        expect(screen.findByTestId('workflow-run-inputs-footer')?.findAllByProps({ testID: 'workflow-run-inputs-shortcut' }).length).toBeGreaterThan(0);
+        expect(start?.props.accessibilityLabel).toBe('workflows.start.start');
+        const { act } = await import('react-test-renderer');
+        await act(async () => { executeCommand('workflow.run'); });
+        expect(onRun).not.toHaveBeenCalled();
+        await screen.update(content({ brief: 'Release' }));
+        await act(async () => { executeCommand('workflow.run'); });
+        expect(onRun).toHaveBeenCalledWith({ brief: 'Release' });
+    });
+
+    it('keeps Start unavailable for a definition rejected by the canonical validator', async () => {
+        const definition = createWorkflowDefinitionFixture({ defaults: STARTABLE_DEFAULTS });
+        const onRun = vi.fn();
+        const screen = await renderScreen(<WorkflowRunComposer inputs={[]} values={{}} onChangeValues={() => {}}
+            onRun={onRun} onCancel={() => {}} definition={{ ...definition, blocks: [] }} />);
+        expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(true);
+        await screen.pressByTestIdAsync('workflow-run-inputs-run');
+        expect(onRun).not.toHaveBeenCalled();
+        expect(screen.findByTestId('workflow-run-inputs-reason')).not.toBeNull();
+    });
+
+    it('retains the workflow command across the real globally hosted modal boundary', async () => {
+        const onRun = vi.fn();
+        let executeCommand: ReturnType<typeof useKeyboardCommand> = () => false;
+        function Presenter({ open }: Readonly<{ open: boolean }>) {
+            executeCommand = useKeyboardCommand();
+            return useWorkflowRunComposerModal({ open, props: {
+                inputs: [], values: {}, onChangeValues: () => {}, onRun, onCancel: () => {},
+            } });
+        }
+        const content = (open: boolean) => <ModalProvider>
+            <KeyboardShortcutProvider handlers={{}}><Presenter open={open} /></KeyboardShortcutProvider>
+        </ModalProvider>;
+        const screen = await renderScreen(content(false));
+        await screen.update(content(true));
+        expect(screen.findByTestId('workflow-run-inputs-run')).not.toBeNull();
+        const { act } = await import('react-test-renderer');
+        await act(async () => { executeCommand('workflow.run'); });
+        expect(onRun).toHaveBeenCalledWith(undefined);
+        onRun.mockClear();
+        await screen.update(content(false));
+        await act(async () => { executeCommand('workflow.run'); });
+        expect(onRun).not.toHaveBeenCalled();
     });
 });

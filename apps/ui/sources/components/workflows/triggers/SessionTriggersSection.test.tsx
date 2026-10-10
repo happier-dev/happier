@@ -1,7 +1,10 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { projectSessionTriggerGroups } from './sessionTriggerGroups';
+import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 // Native Markdown SDK boundary; trigger summaries do not use streaming text.
@@ -20,6 +23,7 @@ const { EMPTY_WORKFLOW_TRIGGER_DRAFT } = await import('./workflowTriggerDraft');
 const { WorkflowTriggerSetV1Schema, AutomationTriggerIdSchema } = await import('@happier-dev/protocol');
 
 type Groups = React.ComponentProps<typeof SessionTriggersSectionView>['groups'];
+afterEach(async () => { await standardCleanup(); vi.useRealTimers(); });
 
 const GROUPS: Groups = [
     {
@@ -47,6 +51,49 @@ function separators(screen: Awaited<ReturnType<typeof renderScreen>>) {
 }
 
 describe('SessionTriggersSectionView', () => {
+    it('refreshes mounted next-run and last-result labels with the same projected groups', async () => {
+        vi.useFakeTimers();
+        const now = new Date(2026, 9, 10, 10).getTime();
+        vi.setSystemTime(now);
+        const set = WorkflowTriggerSetV1Schema.parse({ automationId: 'habit', revision: 1, enabled: true, health: 'available',
+            target: { kind: 'inline', definition: { version: 1, blocks: [{ kind: 'step', id: 'review',
+                document: { text: 'Review code', references: [], attachments: [] }, input: [], result: { kind: 'text' } }] } },
+            triggers: [{ id: 'timer', revision: 1, enabled: true, kind: 'schedule', nextRunAt: now + 120_000,
+                createdAt: now, updatedAt: now, triggerDefinitionEnvelope: null,
+                schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null } }] });
+        const groups = projectSessionTriggerGroups({ sets: [set], lastRunAtByAutomationId: { habit: now - 90_000 },
+            resolveWorkflowTitle: () => null, formatAge: (at) => formatRelativeTimeShort(at, now) });
+        const screen = await renderScreen(<SessionTriggersSectionView groups={groups} status="ready"
+            pendingKeys={new Set()} onToggle={vi.fn()} onOpen={vi.fn()} onAdd={vi.fn()} onRetry={vi.fn()} />);
+        expect(screen.getTextContent()).toContain('nextMinutes(count=2)');
+        expect(screen.getTextContent()).toContain('minutesAgoShort(count=1)');
+        await act(async () => { vi.advanceTimersByTime(30_001); });
+        expect(screen.getTextContent()).toContain('nextMinutes(count=1)');
+        expect(screen.getTextContent()).toContain('minutesAgoShort(count=2)');
+        expect(vi.getTimerCount()).toBe(1);
+    });
+    it('keeps history behind the habit row rather than a second control line', async () => {
+        const history = vi.fn();
+        const onOpen = vi.fn();
+        const screen = await renderScreen(<SessionTriggersSectionView groups={GROUPS} status="ready"
+            pendingKeys={new Set()} onToggle={vi.fn()} onOpen={onOpen} onAdd={vi.fn()} onRetry={vi.fn()}
+            onHistory={history} />);
+        expect(screen.findByTestId('session-work-trigger:ci:t3-history')).toBeNull();
+        expect(screen.findByTestId('session-work-trigger:ci:t3-runNow')).toBeNull();
+        screen.pressByTestId('session-work-trigger:ci:t3');
+        expect(onOpen).toHaveBeenCalledWith(GROUPS[1]!.rows[0], expect.anything());
+    });
+    it('keeps a paused habit last result and its directly usable row-end toggle', async () => {
+        const toggle = vi.fn();
+        const screen = await renderScreen(<SessionTriggersSectionView groups={GROUPS} status="ready"
+            pendingKeys={new Set()} onToggle={toggle} onOpen={vi.fn()} onAdd={vi.fn()} onRetry={vi.fn()}
+            onHistory={vi.fn()} />);
+        expect(screen.getTextContent()).toContain('Failed');
+        const actions = screen.findByTestId('session-work-trigger:ci:t3-actions');
+        expect(actions).toBeNull();
+        screen.findByTestId('session-work-trigger:ci:t3-switch')?.props.onValueChange(true);
+        expect(toggle).toHaveBeenCalledWith(GROUPS[1]!.rows[0], true);
+    });
     it('offers PR-link Retry while keeping ordinary trigger rows usable', async () => {
         const retry = vi.fn();
         const screen = await renderScreen(<SessionTriggersSectionView groups={GROUPS} status="ready" pullRequestLinksUnavailable
@@ -126,9 +173,9 @@ describe('SessionTriggersSectionView', () => {
         expect(groupLabel('schedule:daily')?.props.count).toBeUndefined();
         expect(groupLabel('schedule:daily')?.props.title).toBe('Every day at 09:00');
 
-        // A turned-off row reads Off and never claims its last outcome.
+        // Off names the schedule state; it does not erase the actual last result.
         expect(text).toContain('workflows.triggers.row.off');
-        expect(text).not.toContain('Failed');
+        expect(text).toContain('Failed');
         expect(text).toContain('Ran 20m ago');
 
         // The switch writes through the host, and waits while its write is in flight.

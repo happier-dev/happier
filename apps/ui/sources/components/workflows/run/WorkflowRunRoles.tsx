@@ -3,6 +3,8 @@ import { View } from 'react-native';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { resolveRoleSelectionV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
 import type { RoleOverrideV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
+import { resolveRoleRunsAsKindV1 } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
+import { describeRoleRunsAs } from '@/components/roles/catalog/rolePresentation';
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowMaterializedLeafV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
@@ -62,11 +64,10 @@ export function WorkflowRunRoles(props: Readonly<{
             </FieldItem>
             <SegmentedChoiceItem title={t('workflows.page.sections.eachStepRunsIn')}
                 value={current.selection.runsAs.kind} options={[
-                    { id: 'session', label: t('workflows.page.sections.aSession') },
-                    { id: 'background_run', label: t('workflows.page.sections.aBackgroundRun') },
+                    { id: 'session', label: describeRoleRunsAs('session') },
+                    { id: 'background_run', label: describeRoleRunsAs('background_run') },
                 ]} disabled={props.pending} testIDPrefix={`${props.prefix}-role-${roleId}-target`}
-                onChange={(kind) => change({ runsAs: kind === 'session' ? { kind: 'session' }
-                    : { kind: 'background_run', intent: current.selection.runsAs.kind === 'background_run' ? current.selection.runsAs.intent : 'delegate' } })} />
+                onChange={(kind) => change({ runsAs: resolveRoleRunsAsKindV1(kind, current.selection.runsAs) })} />
             {override ? <RoundButton size="small" display="inverted" title={t('workflows.start.useYourRole')}
                 disabled={props.pending} testID={`${props.prefix}-role-${roleId}-reset`}
                 onPress={() => props.onChange(props.overrides.filter((value) => value.roleId !== roleId))} /> : null}
@@ -81,6 +82,6 @@ export function WorkflowAcceptedRunRoles(props: Readonly<{ leaves: readonly Work
         ? [[JSON.stringify([leaf.sourceKey, leaf.role.roleId]), leaf.role] as const] : [])).entries()];
     return <View>{roles.map(([key, role]) => <FieldItem key={key} label={role.name}>
         <Text>{presentEngine(role.engine).label ?? t('roles.rail.defaultEngine')}</Text>
-        <Text>{role.runsAs.kind === 'session' ? t('workflows.page.sections.aSession') : t('workflows.page.sections.aBackgroundRun')}</Text>
+        <Text>{describeRoleRunsAs(role.runsAs.kind)}</Text>
     </FieldItem>)}</View>;
 }

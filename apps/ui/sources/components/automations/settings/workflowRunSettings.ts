@@ -12,22 +12,14 @@ export const WORKFLOW_RUN_SETTINGS = defineSettingsPage({
             titleKey: 'automationPages.settings.capacityTitle',
             featureId: 'automations',
             settings: {
-                maxActiveRunsPerMachine: {
-                    titleKey: 'automations.settings.maxActiveRunsPerMachine',
-                    descriptionKey: 'automations.settings.maxActiveRunsPerMachineSubtitle',
-                    storage: { scope: 'account', kind: 'automationSettings', field: 'maxActiveRunsPerMachine', access: 'read_write' },
-                },
+                maxActiveRunsPerMachine: {},
             },
         },
         history: {
             titleKey: 'automationPages.settings.historyTitle',
             featureId: 'automations',
             settings: {
-                runRetention: {
-                    titleKey: 'automations.settings.runRetention',
-                    descriptionKey: 'automations.settings.runRetentionSubtitle',
-                    storage: { scope: 'account', kind: 'automationSettings', field: 'runRetention', access: 'read_write' },
-                },
+                runRetention: {},
             },
         },
     },

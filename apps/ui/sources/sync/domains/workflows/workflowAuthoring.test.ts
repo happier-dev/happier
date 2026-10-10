@@ -242,19 +242,20 @@ describe('reference vocabulary', () => {
     const draft = draftWith([step('a', '\n  Analyze the repository  \nmore detail'), step('b'), step('c')]);
     expect(listWorkflowProducerOptions(draft, 'b')).toEqual([expect.objectContaining({
       blockId: 'a',
-      label: 'Analyze the repository',
+      isBranch: false,
+      scope: { kind: 'current' },
     })]);
     expect(listWorkflowProducerOptions(draft, 'a')).toEqual([]);
   });
 
-  it('uses exact authored ids for structural producers that have no prompt label', () => {
+  it('keeps exact authored ids and branch identity for structural producers', () => {
     const parallel = createWorkflowBlock('parallel', new Set<string>());
     if (parallel.kind !== 'parallel') throw new Error('unreachable');
     const draft = draftWith([parallel, step('report')]);
     const options = listWorkflowProducerOptions(draft, 'report');
-    expect(options).toContainEqual(expect.objectContaining({ blockId: parallel.id, label: parallel.id }));
+    expect(options).toContainEqual(expect.objectContaining({ blockId: parallel.id, isBranch: false }));
     for (const branch of parallel.branches) {
-      expect(options).toContainEqual(expect.objectContaining({ blockId: branch.id, label: branch.id }));
+      expect(options).toContainEqual(expect.objectContaining({ blockId: branch.id, isBranch: true }));
     }
   });
 

@@ -119,6 +119,28 @@ describe('workflow announcement selection', () => {
     expect(selectWorkflowAnnouncement(after, after)).toBeNull();
   });
 
+  it('carries the editor\'s own wording of the issue, so the announcer says what the step says (DESIGN-5 P3)', async () => {
+    const before = state({ blockIds: ['wait'] });
+    const after = state({ blockIds: ['wait'], blockingIssue: { code: 'invalid_input', blockId: 'wait', reason: 'Write what you should check or decide here.' } });
+    const announcement = selectWorkflowAnnouncement(before, after);
+    expect(announcement).toMatchObject({ kind: 'validation', reason: 'Write what you should check or decide here.' });
+    const { formatWorkflowAnnouncement } = await import('./useWorkflowAnnouncements');
+    const spoken = formatWorkflowAnnouncement(announcement!, () => 'Wait for you');
+    expect(spoken).toContain('Write what you should check or decide here.');
+    expect(spoken).not.toContain('This value is not valid.');
+  });
+
+  it('says the draft is ready once its last blocking issue is repaired, so the live region never keeps a fixed issue (DESIGN-7 P3)', async () => {
+    const broken = state({ blockIds: ['a'], blockingIssue: { code: 'invalid_input', blockId: 'a', reason: 'Engines needs a valid value.' } });
+    const repaired = state({ blockIds: ['a'] });
+    const announcement = selectWorkflowAnnouncement(broken, repaired);
+    expect(announcement).toEqual({ kind: 'ready' });
+    const { formatWorkflowAnnouncement } = await import('./useWorkflowAnnouncements');
+    expect(formatWorkflowAnnouncement(announcement!, () => 'a')).not.toContain('Engines');
+    // Nothing was wrong before: still nothing to say.
+    expect(selectWorkflowAnnouncement(repaired, repaired)).toBeNull();
+  });
+
   it('announces insertion with its position and the new total', () => {
     const before = state({ blockIds: ['a'] });
     const after = state({ blockIds: ['a', 'b'] });

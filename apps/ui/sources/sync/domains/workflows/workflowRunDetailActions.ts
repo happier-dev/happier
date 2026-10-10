@@ -61,6 +61,7 @@ export function createWorkflowRunDetailActions(dependencies: Readonly<{
             limit?: number;
             parentRecordId?: string;
             lifecycles?: readonly WorkflowInvocationLifecycleV1[];
+            includeContent?: boolean;
         }>, signal?: AbortSignal) =>
             call(
                 'workflow.run.invocations.list',
@@ -70,6 +71,7 @@ export function createWorkflowRunDetailActions(dependencies: Readonly<{
                     ...(input.limit === undefined ? {} : { limit: input.limit }),
                     ...(input.parentRecordId === undefined ? {} : { parentRecordId: input.parentRecordId }),
                     ...(input.lifecycles === undefined ? {} : { lifecycles: [...input.lifecycles] }),
+                    ...(input.includeContent === undefined ? {} : { includeContent: input.includeContent }),
                 }),
                 (value) => WorkflowInvocationListResultV1Schema.parse(value),
                 signal,

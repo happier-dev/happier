@@ -14,7 +14,7 @@ import {
     type WorkflowRunInvocationIndexV1,
 } from '@happier-dev/protocol';
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions';
-import { invokeTestInstanceHandler, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { changeTextTestInstance, findAllHostTestInstances, invokeTestInstanceHandler, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { Modal, ModalProvider } from '@/modal';
 import { ScopedAuthoringComposer } from '@/components/sessions/authoring/ScopedAuthoringComposer';
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
@@ -32,6 +32,9 @@ import { WorkflowInvocationReview, type WorkflowInvocationReviewBuffers } from '
 import { WorkflowEditorHostScreen } from '../screens/WorkflowEditorHostScreen';
 import { WorkflowRunScreen } from '../screens/WorkflowRunScreen';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { describeWorkflowOperationProblem } from '../presentation/workflowProblemPresentation';
+import { t } from '@/text';
 import { storeWorkflowReviewedRunSeed } from '@/sync/domains/workflows/workflowReviewedRunSeed';
 
 // Only HTTP, Machine transport, credentials and rendering/platform loaders are replaced.
@@ -73,11 +76,16 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOrigin
     return { ...original, createFrontDoorActionExecute: (executor?: Parameters<typeof original.createFrontDoorActionExecute>[0]) => {
         if (executor) return original.createFrontDoorActionExecute(executor);
         let resolved: ReturnType<typeof original.createFrontDoorActionExecute> | null = null;
-        const execute: ReturnType<typeof original.createFrontDoorActionExecute> = async (id, input, context) => {
+        const execute = async (...args: Parameters<ReturnType<typeof original.createFrontDoorActionExecute>>) => {
             resolved ??= original.createFrontDoorActionExecute((await import('@/sync/ops/actions/defaultActionExecutor')).createDefaultActionExecutor());
-            return resolved(id, input, context);
+            return resolved(...args);
         };
-        return execute;
+        return Object.assign(execute, {
+            prepare: async (...args: Parameters<ReturnType<typeof original.createFrontDoorActionExecute>['prepare']>) => {
+                resolved ??= original.createFrontDoorActionExecute((await import('@/sync/ops/actions/defaultActionExecutor')).createDefaultActionExecutor());
+                return resolved.prepare(...args);
+            },
+        });
     } };
 });
 
@@ -101,10 +109,11 @@ afterEach(async () => {
     machineRpc.mockReset();
     machineRpc.mockImplementation(async () => { throw new Error('offline_machine'); });
     routerMock.spies.push.mockClear();
+    routerMock.resetParams();
 });
 afterAll(() => { vi.unstubAllGlobals(); });
 
-async function harness(options: Readonly<{ runScreen?: boolean; access?: 'owner' | 'edit' | 'view'; wait?: boolean; plan?: boolean; admittedPlan?: boolean; planProposal?: boolean; uncertainPriorEffects?: boolean; acknowledged?: boolean; ownedOrigin?: boolean }> = {}) {
+async function harness(options: Readonly<{ runScreen?: boolean; runReadError?: 'history_not_readable' | 'encryption_setup_required'; compact?: boolean; access?: 'owner' | 'edit' | 'view'; wait?: boolean; fieldlessWait?: boolean; exactRead?: 'pending' | 'failed'; confirmed?: boolean; plan?: boolean; admittedPlan?: boolean; planProposal?: boolean; uncertainPriorEffects?: boolean; acknowledged?: boolean; ownedOrigin?: boolean }> = {}) {
     installShippedNativeFrameScheduler();
     const restorePlatform = withPopoverWebGlobals();
     disposals.push(async () => { restorePlatform(); });
@@ -118,7 +127,7 @@ async function harness(options: Readonly<{ runScreen?: boolean; access?: 'owner'
     if (!validateWorkflowDefinition(proposal).valid) throw new Error('Plan fixture must be semantically valid, not merely schema-shaped');
     const value = options.plan ? { document: 'Implement this exact reviewed plan.\nKeep the second paragraph.', ...(options.planProposal ? { proposal } : {}) } : originalValue;
     const definition = WorkflowDefinitionV1Schema.parse({ version: 1, inputs: [], defaults: {}, blocks: [
-        options.wait ? { kind: 'wait', id: 'review', document: { text: 'Answer', references: [], attachments: [] }, result: resultContract }
+        options.wait ? { kind: 'wait', id: 'review', document: { text: 'Answer', references: [], attachments: [] }, ...(options.fieldlessWait ? {} : { result: resultContract }) }
             : { kind: 'step', id: 'review', document: { text: 'Draft', references: [], attachments: [] }, input: [], result: resultContract, pauseForReview: true },
     ] });
     const origin = { kind: 'direct' as const, ...(options.ownedOrigin ? { originSessionId } : {}) };
@@ -146,7 +155,7 @@ async function harness(options: Readonly<{ runScreen?: boolean; access?: 'owner'
             memberOrdinal: '0', attempt: '0', contentRevision: root ? '0' : '7', lifecycle: root ? 'running' : 'waiting_for_review', createdAt: timestamp, updatedAt: timestamp });
         const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', invocationPath: { blockId: root ? '$root' : 'review', scope: [] },
             blockKind: root ? 'root' : options.wait ? 'wait' : 'step', attempt: '0', logicalInvocationRecordId: id,
-            ...(root ? {} : { resultContract, ...(options.wait ? {} : { result: value,
+            ...(root ? {} : { ...(options.fieldlessWait ? {} : { resultContract }), ...(options.wait ? {} : { result: value,
                 execution: { kind: 'session', sessionId: 'conversation', localInputId: 'initial-input' }, review: { resultSource: { kind: 'execution_input' } } }) }),
             ...(!root && options.uncertainPriorEffects ? { uncertainPriorEffects: { activity: 'stopped' } } : {}),
         });
@@ -155,7 +164,9 @@ async function harness(options: Readonly<{ runScreen?: boolean; access?: 'owner'
     insert(rootId, true); insert(heldId, false);
     const operations: Readonly<Record<string, unknown>>[] = [];
     const events: string[] = [];
-    const boundary = { refuse: false, loseResponse: false, admittedPlan: options.admittedPlan === true, access: options.access ?? 'owner' };
+    const boundary = { refuse: false, loseResponse: false, admittedPlan: options.admittedPlan === true, access: options.access ?? 'owner', exactRead: options.exactRead as 'pending' | 'failed' | undefined };
+    let runReadError: typeof options.runReadError;
+    const exactRead = createDeferred<void>();
     const planRunId = deriveWorkflowPlanRunId(runId, heldId);
     const admittedPlans = new Map<string, typeof admittedPlanSnapshot>();
     const account = await restoreServerAccountForTest({ serverUrl: `https://review-${crypto.randomUUID()}.test`, accountId: actorAccountId, request: async (url, init) => {
@@ -175,6 +186,7 @@ async function harness(options: Readonly<{ runScreen?: boolean; access?: 'owner'
         const operation = JSON.parse(String(init?.body)) as Readonly<Record<string, unknown>>;
         operations.push(operation);
         if (operation.operation === 'get') {
+            if (runReadError && operation.runId === runId) return json({ error: runReadError }, 503);
             if (operation.runId !== runId) {
                 const childId = String(operation.runId);
                 const child = admittedPlans.get(childId) ?? (boundary.admittedPlan && childId === planRunId ? admittedPlanSnapshot : undefined);
@@ -192,7 +204,11 @@ async function harness(options: Readonly<{ runScreen?: boolean; access?: 'owner'
             return json({ invocations: listed.map(row => row.index), parentRevision: run.revision,
                 ...(operation.progressEnvelopes === true ? { progressEnvelopesByInvocationId: Object.fromEntries(listed.map(row => [row.index.id, row.contentEnvelope])) } : {}) });
         }
-        if (operation.operation === 'invocations.get') return json({ invocation: rows.get(String(operation.invocationId)) });
+        if (operation.operation === 'invocations.get') {
+            if (boundary.exactRead === 'pending') await exactRead.promise;
+            if (boundary.exactRead === 'failed') throw new Error('storage_transport_offline');
+            return json({ invocation: rows.get(String(operation.invocationId)) });
+        }
         if (operation.operation === 'invocations.current') return json({ invocation: rows.get(heldId), parentRevision: run.revision });
         if (operation.operation === 'invocations.publish_draft' || operation.operation === 'invocations.complete_review') {
             const row = rows.get(String(operation.invocationId));
@@ -213,6 +229,8 @@ async function harness(options: Readonly<{ runScreen?: boolean; access?: 'owner'
         storage.getState().applySessions([createSessionFixture({ id: originSessionId, access: createSessionAccessFixture('owner') })]);
     }
     const detail = await workflowRunDetailActions.getRun(runId);
+    runReadError = options.runReadError;
+    let callerAccess = detail.callerAccess;
     const readProgress = () => {
         const row = rows.get(heldId)!;
         const opened = openWorkflowProgressStoredEnvelopeV1({ mode: 'plain', binding: binding(row.index), envelope: parseWorkflowStoredContentEnvelopeV1(row.contentEnvelope)! });
@@ -232,8 +250,8 @@ async function harness(options: Readonly<{ runScreen?: boolean; access?: 'owner'
         if (options.runScreen) return <AppPaneProvider><WorkflowRunScreen /></AppPaneProvider>;
         if (editorSeedId !== null) return <AppPaneProvider><WorkflowEditorHostScreen source={{ kind: 'new', reviewedRunSeedId: editorSeedId }} /></AppPaneProvider>;
         const row = rows.get(heldId)!;
-        return <WorkflowInvocationReview run={run} callerAccess={detail.callerAccess} acceptedContext={detail.acceptedContext!} invocation={row.index}
-            progress={readProgress()} contentRevision={row.index.contentRevision} buffers={buffers} active confirmed compact={false}
+        return <WorkflowInvocationReview run={run} callerAccess={callerAccess} acceptedContext={detail.acceptedContext!} definition={detail.definition} invocation={row.index}
+            progress={readProgress()} contentRevision={row.index.contentRevision} buffers={buffers} active confirmed={options.confirmed !== false} compact={options.compact === true}
             viewerAccountId={actorAccountId} current={current} onSettled={onSettled}
             onOpenDraft={(seed) => {
                 onOpenDraft(seed);
@@ -256,6 +274,7 @@ async function harness(options: Readonly<{ runScreen?: boolean; access?: 'owner'
     disposals.push(screen.unmount);
     let mount = 0;
     return { screen, detail, rows, run, readProgress, operations, events, proposal, boundary, onSettled, onOpenDraft, onOpenRun, planRunId,
+        settleExactRead: () => exactRead.resolve(),
         admitPlan: (input: ReturnType<typeof WorkflowRunStartRequestV1Schema.parse>) => {
             if (input.source.kind !== 'inline') throw new Error('Plan admission must be inline');
             const checked = validateWorkflowDefinition(input.source.definition);
@@ -264,11 +283,20 @@ async function harness(options: Readonly<{ runScreen?: boolean; access?: 'owner'
                 definition: checked.normalizedDefinition, authoredDefinition: checked.normalizedDefinition }));
         },
         readOrigin: () => observedOrigin,
+        refreshAccess: async () => {
+            callerAccess = (await workflowRunDetailActions.getRun(runId)).callerAccess;
+            await screen.update(<ModalProvider><Host /></ModalProvider>);
+        },
         refresh: () => screen.update(<ModalProvider><Host /></ModalProvider>),
         reopen: () => screen.update(<ModalProvider><Host key={++mount} /></ModalProvider>) };
 }
 async function change(screen: Awaited<ReturnType<typeof renderScreen>>, id: string, value: string) {
     await act(async () => { screen.changeTextByTestId(id, value); });
+}
+function editorPromptInput(screen: Awaited<ReturnType<typeof renderScreen>>) {
+    // Editable text lives in the host field's value, not in text-node children.
+    return findAllHostTestInstances(screen.findByType(ScopedAuthoringComposer),
+        (node) => node.props.testID === 'new-session-composer-input' || node.props['data-testid'] === 'new-session-composer-input').at(-1);
 }
 // Opening the real editor legitimately probes Machine capabilities. Only the
 // targeted start is an admission; these assertions must not count read probes.
@@ -276,6 +304,90 @@ const admissions = () => machineRpc.mock.calls.filter(([request]) =>
     TargetedActionRpcRequestV1Schema.safeParse(request.payload).success);
 
 describe('Review through the real Account Action owner and HTTP storage boundary', () => {
+    it('mounted review draft Action changes the displayed human buffer without accepting and preserves newer-result choice', async () => {
+        const h = await harness();
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        const scope = { serverId: getActiveServerSnapshot().serverId, accountId };
+        const executor = createDefaultActionExecutor();
+        const input = { scope, draftId: heldId, runId, expectedContentRevision: '7',
+            value: { ...originalValue, summary: 'Agent prepared my edit' } };
+        await act(async () => {
+            expect(await executor.execute('workflow.run.review.draft.set', input,
+                { surface: 'agent', authority: 'account_automation', serverId: scope.serverId }))
+                .toEqual({ ok: true, result: { status: 'applied' } });
+        });
+        expect(h.operations).toEqual([]);
+        expect(h.screen.findByTestId('workflow-review-field-summary')!.props.value).toBe('Agent prepared my edit');
+        expect(await executor.execute('workflow.run.review.draft.set', { ...input, expectedContentRevision: '6' },
+            { surface: 'agent', authority: 'account_automation', serverId: scope.serverId }))
+            .toMatchObject({ ok: true, result: { status: 'refused', reason: 'stale_content_revision' } });
+        await h.reopen();
+        expect(h.screen.findByTestId('workflow-review-field-summary')!.props.value).toBe('Agent prepared my edit');
+        await workflowRunDetailActions.publishDraft({ runId, invocation: { recordId: heldId }, expectedContentRevision: '7',
+            value: { ...originalValue, summary: 'Newer agent publication' } });
+        await h.refresh();
+        expect(h.screen.findByTestId('workflow-review-newer')).not.toBeNull();
+        expect(h.screen.findByTestId('workflow-review-field-summary')!.props.value).toBe('Agent prepared my edit');
+        await h.screen.pressByTestIdAsync('workflow-review-keep-edits');
+        expect(h.screen.findByTestId('workflow-review-field-summary')!.props.value).toBe('Agent prepared my edit');
+        await h.screen.pressByTestIdAsync('workflow-review-cancel');
+        await h.screen.pressByTestIdAsync('workflow-review-show-newer');
+        await h.screen.pressByTestIdAsync('workflow-review-edit');
+        expect(h.screen.findByTestId('workflow-review-field-summary')!.props.value).toBe('Newer agent publication');
+        expect(h.operations.filter(operation => operation.operation === 'invocations.complete_review')).toEqual([]);
+    });
+    it.each(['history_not_readable', 'encryption_setup_required'] as const)('retains %s from the initial Run read and offers only its real recovery', async (runReadError) => {
+        const h = await harness({ runScreen: true, runReadError });
+        await vi.waitFor(() => expect(h.screen.findByTestId('workflow-run-load-failed')).not.toBeNull());
+        const problem = describeWorkflowOperationProblem(runReadError);
+        expect(h.screen.getTextContent()).toContain(problem.title);
+        expect(h.screen.getTextContent()).toContain(problem.message);
+        if (runReadError === 'history_not_readable') {
+            expect(h.screen.findHostByTestId('workflow-run-load-failed-action')).toBeNull();
+        } else {
+            expect(h.screen.getTextContent()).toContain(problem.repairLabel);
+            await h.screen.pressByTestIdAsync('workflow-run-load-failed-action');
+            expect(routerMock.spies.push).toHaveBeenCalledWith({ pathname: '/settings/account/security',
+                params: { serverId: expect.any(String), accountId } });
+        }
+        expect(h.operations.filter(op => op.operation === 'invocations.complete_review')).toHaveLength(0);
+    });
+    it('keeps fieldless Wait Continue visible but refuses mutation without confirmed evidence', async () => {
+        const h = await harness({ wait: true, fieldlessWait: true, confirmed: false });
+        expect(h.screen.findHostByTestId('workflow-review-use')?.props.disabled).toBe(true);
+        await h.screen.pressByTestIdAsync('workflow-review-use');
+        expect(h.operations.filter(op => op.operation === 'invocations.complete_review')).toHaveLength(0);
+        expect(h.rows.get(heldId)?.index.lifecycle).toBe('waiting_for_review');
+    });
+    it('keeps a first-open fieldless Wait visible through a pending and failed exact read, then retries before Continue', async () => {
+        routerMock.module.router.setParams({ invocationId: heldId });
+        const h = await harness({ runScreen: true, wait: true, fieldlessWait: true, exactRead: 'pending' });
+        await vi.waitFor(() => expect(h.screen.findHostByTestId('workflow-review-use')?.props.disabled).toBe(true));
+        expect(h.screen.findByTestId('workflow-run-read-pending')).not.toBeNull();
+        expect(h.screen.getTextContent()).not.toContain(t('workflows.contentUnavailable'));
+        await h.screen.pressByTestIdAsync('workflow-review-use');
+        expect(h.operations.filter(op => op.operation === 'invocations.complete_review')).toHaveLength(0);
+        h.boundary.exactRead = 'failed';
+        await act(async () => h.settleExactRead());
+        await vi.waitFor(() => expect(h.screen.findHostByTestId('workflow-run-read-retry')).not.toBeNull());
+        expect(h.screen.findHostByTestId('workflow-review-use')?.props.disabled).toBe(true);
+        const text = h.screen.getTextContent();
+        const problem = describeWorkflowOperationProblem('storage_unavailable');
+        expect(text).toContain(problem.title);
+        expect(text.split(problem.message).length - 1).toBe(1);
+        expect(text).not.toContain(t('workflows.contentUnavailable'));
+        h.boundary.exactRead = undefined;
+        await h.screen.pressByTestIdAsync('workflow-run-read-retry');
+        await vi.waitFor(() => expect(h.screen.findHostByTestId('workflow-review-use')?.props.disabled).toBe(false));
+        await h.screen.pressByTestIdAsync('workflow-review-use');
+        await vi.waitFor(() => expect(h.rows.get(heldId)?.index.lifecycle).toBe('completed'));
+        expect(h.operations.filter(op => op.operation === 'invocations.complete_review')).toEqual([
+            expect.objectContaining({ expectedContentRevision: '7', mode: 'use_result' }),
+        ]);
+        expect(h.readProgress().result).toBeUndefined();
+        expect(machineRpc).not.toHaveBeenCalled();
+    });
     it.each(['view', 'owner', 'edit'] as const)('Run controls consume the effective %s access through the real detail read', async (access) => {
         const h = await harness({ runScreen: true, access });
         await vi.waitFor(() => expect(h.screen.findByTestId('workflow-run-outcome')).not.toBeNull());
@@ -314,6 +426,26 @@ describe('Review through the real Account Action owner and HTTP storage boundary
         await h.screen.pressByTestIdAsync('workflow-review-use');
         await vi.waitFor(() => expect(h.onSettled).toHaveBeenCalled());
     });
+    it.each([false, true])('keeps newer-publication reading local after access revocation (compact: %s)', async (compact) => {
+        const h = await harness({ compact });
+        await h.screen.pressByTestIdAsync('workflow-review-edit');
+        await change(h.screen, 'workflow-review-field-summary', 'Retained local edits');
+        await workflowRunDetailActions.publishDraft({ runId, invocation: { recordId: heldId }, expectedContentRevision: '7',
+            value: { ...originalValue, summary: 'Readable newer publication' } });
+        h.boundary.access = 'view';
+        await h.refreshAccess();
+        expect(h.screen.findByTestId('workflow-review-field-summary')?.props.value).toBe('Retained local edits');
+        expect(h.screen.findByTestId('workflow-review-use')).toBeNull();
+        expect(h.screen.findByTestId('workflow-review-keep-edits')?.props.disabled).toBe(false);
+        expect(h.screen.findByTestId('workflow-review-use-newer')?.props.disabled).toBe(false);
+        await h.screen.pressByTestIdAsync('workflow-review-use-newer');
+        expect(h.screen.getTextContent()).toContain('Readable newer publication');
+        await h.screen.pressByTestIdAsync('workflow-review-show-full');
+        expect(h.screen.findByTestId('workflow-review-full-value')).not.toBeNull();
+        expect(h.screen.findByTestId('workflow-review-use')).toBeNull();
+        expect(h.operations.filter(op => op.operation === 'invocations.complete_review')).toHaveLength(0);
+        expect(admissions()).toHaveLength(0);
+    });
     it('hands Run it to the same unsaved seeded editor without completing the source hold', async () => {
         const h = await harness({ plan: true, planProposal: true });
         await vi.waitFor(() => expect(h.screen.findHostByTestId('workflow-review-plan-run')).not.toBeNull());
@@ -328,7 +460,7 @@ describe('Review through the real Account Action owner and HTTP storage boundary
         await dismissRunComposer(h.screen);
         expect(h.screen.findByTestId('workflow-editor-name')).not.toBeNull();
         expect(h.screen.findByTestId('workflow-run-inputs-run')).toBeNull();
-        expect(h.screen.getTextContent()).toContain('Implement the proposal');
+        expect(editorPromptInput(h.screen)?.props.value).toBe('Implement the proposal');
         await h.screen.pressByTestIdAsync('workflow-editor-run-now');
         expect(h.screen.findByTestId('workflow-run-inputs-run')).not.toBeNull();
         expect(h.rows.get(heldId)?.index.lifecycle).toBe('waiting_for_review');
@@ -352,12 +484,7 @@ describe('Review through the real Account Action owner and HTTP storage boundary
         await h.screen.pressByTestIdAsync('workflow-review-plan-run');
         await vi.waitFor(() => expect(h.screen.findByTestId('workflow-run-inputs-run')).not.toBeNull());
         await dismissRunComposer(h.screen);
-        const prompt = h.screen.findByType(ScopedAuthoringComposer);
-        await act(async () => {
-            await invokeTestInstanceHandler(prompt, 'onChangeDocument', {
-                text: 'Implement my edited proposal', references: [], attachments: [],
-            });
-        });
+        await act(async () => changeTextTestInstance(editorPromptInput(h.screen), 'Implement my edited proposal', 'Workflow prompt input'));
         await h.screen.pressByTestIdAsync('workflow-editor-run-now');
         await h.screen.pressByTestIdAsync('workflow-run-inputs-run');
         expect(admissions()).toHaveLength(0);
@@ -366,13 +493,13 @@ describe('Review through the real Account Action owner and HTTP storage boundary
             expect(h.rows.get(heldId)?.index.lifecycle).toBe('waiting_for_review');
             expect(h.readProgress().review?.decision).toBeUndefined();
             expect(h.operations.filter(op => op.operation === 'invocations.complete_review')).toHaveLength(acceptEdit ? 1 : 0);
-            expect(h.screen.getTextContent()).toContain('Implement my edited proposal');
+            expect(editorPromptInput(h.screen)?.props.value).toBe('Implement my edited proposal');
         } else {
             await vi.waitFor(() => expect(h.rows.get(heldId)?.index.lifecycle).toBe('completed'));
             expect(h.readProgress().review?.decision).toEqual({ kind: 'use_result', requestedFromContentRevision: '7',
                 followUp: { kind: 'editing' } });
             expect(h.screen.findByTestId('workflow-run-inputs-run')).toBeNull();
-            expect(h.screen.getTextContent()).toContain('Implement my edited proposal');
+            expect(editorPromptInput(h.screen)?.props.value).toBe('Implement my edited proposal');
             machineRpc.mockImplementation(async request => {
                 const input = WorkflowRunStartRequestV1Schema.parse(TargetedActionRpcRequestV1Schema.parse(request.payload).input);
                 expect(input.runId).not.toBe(h.planRunId);

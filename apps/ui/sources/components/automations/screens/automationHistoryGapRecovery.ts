@@ -171,7 +171,7 @@ function resolveCurrentRecoverySnapshot(params: Readonly<{
     const automation = params.resolveCurrentAutomation();
     const status = readAutomationHistoryGapRecoveryStatus(automation, params.triggerId);
     const origin = params.resolveExecutionOrigin();
-    if (!automation || !status || !origin || params.signal.aborted || !params.accountLifetime.isCurrent()) {
+    if (!automation || !status || !origin || !('materializationRef' in origin.origin) || params.signal.aborted || !params.accountLifetime.isCurrent()) {
         return { kind: 'unavailable' };
     }
     if (!arePluginMachineMaterializationRefsEqual(origin.origin.materializationRef, status.reporterMaterializationRef)) {
@@ -225,6 +225,7 @@ function resolveCurrentRecoverySnapshot(params: Readonly<{
                     && currentStatus !== null
                     && sameCurrentSourceStatus(currentStatus, status)
                     && currentOrigin !== null
+                    && 'materializationRef' in currentOrigin.origin
                     && areFreshPluginMachineExecutionOriginsCurrent(currentOrigin, origin)
                     && arePluginMachineMaterializationRefsEqual(
                         currentOrigin.origin.materializationRef,

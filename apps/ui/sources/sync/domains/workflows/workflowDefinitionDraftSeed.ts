@@ -1,6 +1,6 @@
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import type { AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
-import type { WorkflowStarterSessionTarget } from './workflowEditorDraft';
+import type { WorkflowStarterSessionTarget } from '@happier-dev/protocol/workflows/builtins/examples';
 
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getTempData, storeTempData } from '@/utils/sessions/tempDataStore';

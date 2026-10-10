@@ -27,7 +27,7 @@ export type WorkflowAnnouncementState = Readonly<{
   blockIds: readonly string[];
   selectedBlockId: string | null;
   /** The first blocking validation issue, if any. */
-  blockingIssue: Readonly<{ code: WorkflowValidationIssueCode; blockId?: string }> | null;
+  blockingIssue: Readonly<{ code: WorkflowValidationIssueCode; blockId?: string; /** The issue in the editor's own words. */ reason?: string }> | null;
   /** Rows that currently need the user, from the canonical run projection. */
   attentionCount: number;
   /** Set only once the authoritative owner reports a terminal parent state. */
@@ -57,7 +57,9 @@ export const EMPTY_WORKFLOW_ANNOUNCEMENT_STATE: WorkflowAnnouncementState = {
 export type WorkflowAnnouncement =
   | Readonly<{ kind: 'terminal'; terminal: WorkflowAnnouncementTerminalKind; attentionCount: number; attentionHasMore: boolean }>
   | Readonly<{ kind: 'attention'; attentionCount: number; attentionHasMore: boolean }>
-  | Readonly<{ kind: 'validation'; issueCode: WorkflowValidationIssueCode; blockId?: string }>
+  | Readonly<{ kind: 'validation'; issueCode: WorkflowValidationIssueCode; blockId?: string; reason?: string }>
+  /** The last blocking issue was repaired: the live region says so rather than keep the fixed issue. */
+  | Readonly<{ kind: 'ready' }>
   | Readonly<{ kind: 'inserted'; blockId: string; position: number; total: number }>
   | Readonly<{ kind: 'removed'; blockId: string; total: number }>
   | Readonly<{ kind: 'reordered'; blockId: string; position: number; total: number }>
@@ -117,9 +119,10 @@ export function selectWorkflowAnnouncement(
     && (previousIssue === null
       || previousIssue.code !== nextIssue.code
       || previousIssue.blockId !== nextIssue.blockId)) {
+    const reason = nextIssue.reason === undefined ? {} : { reason: nextIssue.reason };
     return nextIssue.blockId === undefined
-      ? { kind: 'validation', issueCode: nextIssue.code }
-      : { kind: 'validation', issueCode: nextIssue.code, blockId: nextIssue.blockId };
+      ? { kind: 'validation', issueCode: nextIssue.code, ...reason }
+      : { kind: 'validation', issueCode: nextIssue.code, blockId: nextIssue.blockId, ...reason };
   }
 
   const structural = firstStructuralDifference(previous.blockIds, next.blockIds);
@@ -133,6 +136,10 @@ export function selectWorkflowAnnouncement(
         total: next.blockIds.length,
       };
   }
+
+  // After a structural change (removing the offending block says "removed"), a repaired last issue
+  // says the draft is ready.
+  if (previousIssue !== null && nextIssue === null) return { kind: 'ready' };
 
   if (next.selectedRowChanged && next.selectedBlockId !== null) {
     return { kind: 'selectedRowUpdated', blockId: next.selectedBlockId };

@@ -13,6 +13,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { CollectionList, CollectionListGroupLabel, CollectionNavigationRow, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
+import { useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -25,7 +26,9 @@ import { t, tLoose } from '@/text';
 import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinitionLibraryTitle } from '@/components/workflows/presentation/workflowProblemPresentation';
 
 import { WorkflowsColumnActions } from './WorkflowsColumnActions';
+import { WorkflowsColumnOwnsCreationContext } from './workflowsColumnCreation';
 import { splitLibraryDefinitions } from './workflowsColumnModel';
+import { WorkflowPurposeGlyph } from '../presentation/WorkflowPurposeGlyph';
 
 type WorkflowsColumnView = 'definitions' | 'runs';
 
@@ -40,8 +43,11 @@ function readOpenDefinition(pathname: string): string | null {
 }
 
 /** Definitions and the canonical Sessions list's Runs view share the destination's column. */
-export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readonly<{ surface?: 'plane' | 'page' }>) {
+export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readonly<{ surface?: 'plane' | 'page'; definitionsContent?: React.ReactNode }>) {
     const access = useWorkflowsDestinationAccess();
+    // Where navigation shows the title (a phone), the home's header actions would fold into a second
+    // overflow of raw buttons; the column's own "+" menu (lab `nav-N1m` rows) carries creation instead.
+    const ownsCreation = useNavigationTitleChromeShowsTitle() && props.definitionsContent !== undefined;
     const pathname = usePathname();
     const params = useGlobalSearchParams<{ trigger?: string }>();
     const [view, setView] = React.useState<WorkflowsColumnView>(() => isRunPath(pathname) ? 'runs' : 'definitions');
@@ -52,7 +58,8 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
     }, [pathname, params.trigger]);
     const content = access.kind === 'workflows' ? <View style={styles.column}>
         <View style={styles.views}>
-            <SegmentedTabBar<WorkflowsColumnView>
+            <View style={styles.viewTabs}>
+                <SegmentedTabBar<WorkflowsColumnView>
                 testIDPrefix="workflows-column:view"
                 accessibilityLabel={t('workflows.tabsAccessibility.savedRuns')}
                 tabs={[
@@ -62,12 +69,19 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
                 activeTabId={view}
                 onSelectTab={setView}
                 segmentSizing="equal"
-            />
+                />
+            </View>
+            {props.definitionsContent === undefined ? null : <WorkflowsColumnActions canCreate={ownsCreation} />}
         </View>
-        {view === 'runs' ? <SessionsList fixedShow="runs" pathname={pathname} /> : (
-            <ItemList presentation="grouped" style={styles.definitionsList}><WorkflowsColumnDefinitions /></ItemList>
-        )}
+        {view === 'runs' ? <SessionsList fixedShow="runs" pathname={pathname} /> : props.definitionsContent !== undefined ? (
+            <WorkflowsColumnOwnsCreationContext.Provider value={ownsCreation}>{props.definitionsContent}</WorkflowsColumnOwnsCreationContext.Provider>
+        ) : <ItemList presentation="grouped" style={styles.definitionsList}><WorkflowsColumnDefinitions /></ItemList>}
     </View> : undefined;
+    // Without a shell column, Definitions is the full home, not a second compact navigation list.
+    // The same view owner still reaches Runs; the home carries its own page identity and actions.
+    if (props.definitionsContent !== undefined && access.kind === 'workflows') {
+        return <View testID="workflows-column" style={styles.column}>{content}</View>;
+    }
     return <View testID="workflows-column" style={styles.column}>
         <CollectionList
             testID="workflows-column:list"
@@ -145,7 +159,7 @@ function ColumnBuiltins(props: Readonly<{ selectedDefinitionId: string | null }>
         {entries.map((entry) => {
             const href = createWorkflowDefinitionRoute(entry.id);
             return <CollectionNavigationRow key={entry.id} href={href} testID={`workflows-column:builtin:${entry.id}`}
-                title={tLoose(entry.titleKey)} icon={<Icon name="tree-structure" />} selected={props.selectedDefinitionId === entry.id}
+                title={tLoose(entry.titleKey)} icon={<WorkflowPurposeGlyph purpose={entry.purpose} />} selected={props.selectedDefinitionId === entry.id}
                 onPress={() => router.push(href as never)} />;
         })}
     </>;
@@ -177,7 +191,9 @@ function ColumnSkeletonRows(props: Readonly<{ count: number }>) {
 
 const styles = StyleSheet.create((theme) => ({
     column: { flex: 1, minHeight: 0 },
-    views: { paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset, paddingBottom: HAPPIER_COLLECTION_LIST_METRICS.groupLabelFirstPaddingTop },
+    views: { paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset, paddingBottom: HAPPIER_COLLECTION_LIST_METRICS.groupLabelFirstPaddingTop,
+        flexDirection: 'row', alignItems: 'center', gap: theme.margins.sm },
+    viewTabs: { flex: 1, minWidth: 0 },
     definitionsList: { backgroundColor: 'transparent' },
     freshness: { paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset, paddingBottom: HAPPIER_COLLECTION_LIST_METRICS.groupLabelFirstPaddingTop },
     groupLink: { borderRadius: theme.borderRadius.sm, borderWidth: 1, borderColor: 'transparent',

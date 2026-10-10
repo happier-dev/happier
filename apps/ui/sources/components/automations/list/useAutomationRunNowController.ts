@@ -1,6 +1,7 @@
 import React from 'react';
 
-import { sync } from '@/sync/sync';
+import { WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import {
@@ -52,7 +53,8 @@ export function useAutomationRunNowController(): AutomationRunNowController {
         stateFor: command.stateFor,
         runNow: async (automationId, _targetType, options) => await command.run({
             commandId: automationId,
-            submit: () => sync.runAutomationNow(automationId),
+            submit: () => callWorkflowAction({ actionId: 'workflow.trigger.run_now', input: { automationId },
+                parseResult: (value) => WorkflowActionOutputSchemasV1['workflow.trigger.run_now'].parse(value) }),
             ...(options?.isInvocationCurrent
                 ? { isInvocationCurrent: options.isInvocationCurrent }
                 : {}),

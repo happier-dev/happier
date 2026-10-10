@@ -9,11 +9,15 @@ import {
     collectWorkflowConditionValueReferences,
     type WorkflowCompareOperator,
     type WorkflowCondition,
+    type WorkflowValueReference,
 } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text } from '@/components/ui/text/Text';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
+import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
+import { findWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
+import { WorkflowLoopOutcomeV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { t } from '@/text';
 
 import { workflowEditorStyles } from './workflowEditorStyles';
@@ -55,12 +59,29 @@ function conditionForKind(kind: WorkflowCondition['kind']): WorkflowCondition {
  * until …", "If …") and the document's quiet "Only when …" line all read it
  * here, so a condition is never worded two ways.
  */
-export function formatWorkflowConditionSentence(draft: WorkflowEditorDraft, condition: WorkflowCondition): string {
+export function formatWorkflowConditionSentence(draft: WorkflowEditorDraft, authored: WorkflowCondition): string {
+    const condition = foldWorkflowConditionGuards(authored);
     switch (condition.kind) {
         case 'exists':
-            return `${formatWorkflowValueReference(draft, condition.value)} ${t('workflows.condition.exists')}`;
-        case 'compare':
-            return `${formatWorkflowValueReference(draft, condition.left)} ${t(OPERATOR_LABEL_KEYS[condition.operator])} ${formatWorkflowValueReference(draft, condition.right)}`;
+            return `${formatConditionValue(draft, condition.value)} ${t('workflows.condition.exists')}`;
+        case 'compare': {
+            const { left, right, operator } = condition;
+            // "Round index, from 0 is more than 0" is how a machine says it; a person says "after the first round".
+            if (left.kind === 'iteration' && left.field === 'index' && operator === 'gt'
+                && right.kind === 'literal' && right.value === 0) return t('workflows.condition.notFirstRound');
+            // How a loop ended, as the loop's own sentence: "Review until it converges ran out of rounds".
+            const loopEnding = formatWorkflowLoopEndingCondition(draft, condition);
+            if (loopEnding !== null) return loopEnding;
+            // A run of the same verdict: "Check progress · Verdict is “no progress” 3 times in a row".
+            if (left.kind === 'loop_trailing_count' && operator === 'gte') {
+                return t('workflows.condition.trailingCountAtLeast', {
+                    source: formatWorkflowValueReference(draft, { kind: 'result', producer: left.producer, path: left.path }),
+                    value: formatConditionValue(draft, { kind: 'literal', value: left.equals }),
+                    count: formatConditionValue(draft, right),
+                });
+            }
+            return `${formatConditionValue(draft, left)} ${t(OPERATOR_LABEL_KEYS[operator])} ${formatConditionValue(draft, right)}`;
+        }
         case 'not':
             return t('workflows.page.inspector.conditionNot', { condition: formatWorkflowConditionSentence(draft, condition.condition) });
         case 'all':
@@ -69,12 +90,65 @@ export function formatWorkflowConditionSentence(draft: WorkflowEditorDraft, cond
     }
 }
 
+/** `loop.outcome == …` and `loop.outcome.kind == "exhausted"` read as how the loop ended, not as its wire fields. */
+function formatWorkflowLoopEndingCondition(draft: WorkflowEditorDraft, condition: Extract<WorkflowCondition, { kind: 'compare' }>): string | null {
+    const { left, right, operator } = condition;
+    if (operator !== 'eq' || left.kind !== 'result' || left.producer.scope.kind !== 'current' || right.kind !== 'literal') return null;
+    const loop = findWorkflowBlock(draft, left.producer.blockId);
+    if (loop === null || loop.kind !== 'loop') return null;
+    const name = workflowBlockReferenceLabel(loop);
+    const path = left.path.join('.');
+    if (path === 'outcome.kind' && right.value === 'exhausted') return t('workflows.condition.loopRanOutOfRounds', { loop: name });
+    const outcome = path === 'outcome' ? WorkflowLoopOutcomeV1Schema.safeParse(right.value) : null;
+    if (outcome?.success !== true) return null;
+    // A stop condition reads as the condition itself: "… stopped because Check progress · Verdict is “done”".
+    if (outcome.data.kind === 'stop_condition' && loop.repetition.kind === 'until') {
+        const stopWhen = loop.repetition.stopWhen;
+        const arm = outcome.data.arm === undefined ? stopWhen
+            : stopWhen.kind === 'all' || stopWhen.kind === 'any' ? stopWhen.conditions[outcome.data.arm]
+                : outcome.data.arm === 0 ? stopWhen : undefined;
+        if (arm !== undefined) {
+            return t('workflows.condition.loopStoppedBecause', { loop: name, condition: formatWorkflowConditionSentence(draft, arm) });
+        }
+    }
+    return t('workflows.condition.loopEnded', { loop: name, outcome: formatWorkflowValueReference(draft, right) });
+}
+
+/**
+ * A condition as a person reads it: an "all of these" that only guards its comparison's operands
+ * ("Tokens used has a value", "Goal token budget has a value", "Tokens used is at least Goal token
+ * budget") reads as the comparison alone — a missing value cannot satisfy it anyway. Presentation
+ * only; the authored condition is untouched.
+ */
+export function foldWorkflowConditionGuards(condition: WorkflowCondition): WorkflowCondition {
+    if (condition.kind === 'not') return { ...condition, condition: foldWorkflowConditionGuards(condition.condition) };
+    if (condition.kind !== 'all' && condition.kind !== 'any') return condition;
+    const arms = condition.conditions.map(foldWorkflowConditionGuards);
+    if (condition.kind !== 'all') return { ...condition, conditions: arms };
+    const operands = new Set(arms.flatMap((arm) => arm.kind === 'compare' ? [JSON.stringify(arm.left), JSON.stringify(arm.right)] : []));
+    const kept = arms.filter((arm) => arm.kind !== 'exists' || !operands.has(JSON.stringify(arm.value)));
+    return kept.length === 1 ? kept[0]! : { ...condition, conditions: kept };
+}
+
+/**
+ * A value as a condition reads it. A literal that is an enum-like identifier (a verdict such as
+ * `done` or `no_progress`) is a word of the sentence — "Verdict is no progress", unquoted (DESIGN-7
+ * M4); free text keeps its quotes, and every other value reads as the document reads it.
+ */
+function formatConditionValue(draft: WorkflowEditorDraft, value: WorkflowValueReference): string {
+    if (value.kind === 'literal' && typeof value.value === 'string' && /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u.test(value.value)) {
+        return value.value.replaceAll('_', ' ');
+    }
+    return formatWorkflowValueReference(draft, value);
+}
+
 /**
  * A condition as the lead of a container sentence: a compound condition's own words ("any of these
  * holds:"), whose arms then read as {@link WorkflowConditionArmLines}; any other condition whole.
  * A heading never runs into a paragraph of tokens (E1), and the words are the sentence's own.
  */
-export function formatWorkflowConditionLead(draft: WorkflowEditorDraft, condition: WorkflowCondition): string {
+export function formatWorkflowConditionLead(draft: WorkflowEditorDraft, authored: WorkflowCondition): string {
+    const condition = foldWorkflowConditionGuards(authored);
     if (condition.kind !== 'all' && condition.kind !== 'any') return formatWorkflowConditionSentence(draft, condition);
     return `${condition.kind === 'all' ? t('workflows.page.inspector.conditionAll') : t('workflows.page.inspector.conditionAny')}:`;
 }
@@ -85,7 +159,7 @@ export function WorkflowConditionArmLines(props: Readonly<{
     condition: WorkflowCondition;
     testID?: string;
 }>): React.ReactElement | null {
-    const { condition } = props;
+    const condition = foldWorkflowConditionGuards(props.condition);
     if (condition.kind !== 'all' && condition.kind !== 'any') return null;
     return (
         <View testID={props.testID} style={workflowEditorStyles.conditionArms}>

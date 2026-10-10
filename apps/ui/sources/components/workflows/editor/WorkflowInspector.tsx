@@ -180,6 +180,7 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
                 {/* One row, one field select (lab E1 "Machine and project"); the Where owner draws it. */}
                 <View testID={`${testIDPrefix}-where-field`}>
                     <WorkflowProjectTargetControl
+                        purpose="workflow"
                         presentation="field"
                         title={t('workflows.page.sections.machineAndProject')}
                         target={props.projectTarget}
@@ -192,6 +193,7 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
                 {props.runAsTargets === undefined || props.onChangeExecutionTarget === undefined ? null : (
                     <SegmentedChoiceItem<WorkflowRunAsTargetKind>
                         accessoryLayout="stacked"
+                        labelSize="field"
                         disabled={readOnly}
                         testIDPrefix={`${testIDPrefix}-run-as`}
                         title={t('workflows.page.sections.eachStepRunsIn')}
@@ -321,13 +323,19 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
                         testIDPrefix={testIDPrefix}
                     />}
                 </SectionContentRow>
-                <SectionContentRow testID={`${testIDPrefix}-final-output-row`}>
-                    {readOnly ? <Text style={workflowEditorStyles.metaText}>{finalOutputLabel}</Text> : <WorkflowFinalOutputEditor
-                        draft={draft}
-                        onChange={(finalOutput) => onChange(setWorkflowFinalOutput(draft, finalOutput))}
-                        testIDPrefix={testIDPrefix}
-                    />}
-                </SectionContentRow>
+                {readOnly ? (
+                    <SectionContentRow testID={`${testIDPrefix}-final-output-row`}>
+                        <Text style={workflowEditorStyles.metaText}>{finalOutputLabel}</Text>
+                    </SectionContentRow>
+                ) : (
+                    <View testID={`${testIDPrefix}-final-output-row`}>
+                        <WorkflowFinalOutputEditor
+                            draft={draft}
+                            onChange={(finalOutput) => onChange(setWorkflowFinalOutput(draft, finalOutput))}
+                            testIDPrefix={testIDPrefix}
+                        />
+                    </View>
+                )}
             </WorkflowInspectorGroup>
         </>
     );

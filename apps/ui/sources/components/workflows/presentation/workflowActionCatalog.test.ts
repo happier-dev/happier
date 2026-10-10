@@ -8,7 +8,8 @@ describe('workflow executing-machine Action catalog', () => {
         const specs = listWorkflowStepActionSpecs();
         const eligible = listActionSpecs().filter((spec) => spec.surfaces.agent
             && spec.executionPlacement !== 'client' && !spec.id.startsWith('workflow.run.'));
-        expect(specs.map((spec) => spec.id)).toEqual(eligible.map((spec) => spec.id));
+        expect(specs.map((spec) => spec.id).sort()).toEqual(eligible.map((spec) => spec.id).sort());
+        expect(specs.slice(0, 2).map(spec => spec.id)).toEqual(['notifications.notify_me', 'review.start']);
         expect(specs.some((spec) => spec.id === 'notifications.notify_me')).toBe(true);
         expect(specs.some((spec) => spec.id === 'session.terminals.open')).toBe(false);
         expect(specs.find((spec) => spec.id === 'artifact.create')?.title).toBe('Create a document');

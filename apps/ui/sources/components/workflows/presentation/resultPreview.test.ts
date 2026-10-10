@@ -34,27 +34,21 @@ describe('normalizeResultPreview', () => {
     });
 
     it('returns empty display for blank input', () => {
-        expect(normalizeResultPreview('   ')).toEqual({ kind: 'text', display: '', truncated: false });
+        expect(normalizeResultPreview('   ')).toEqual({ kind: 'text', display: '' });
     });
 
-    it('caps very long text and marks truncation', () => {
+    it('preserves the complete normalized text for inspection', () => {
         const long = 'x'.repeat(5000);
         const result = normalizeResultPreview(long);
         expect(result.kind).toBe('text');
-        expect(result.display.length).toBeLessThan(long.length);
-        expect(result.truncated).toBe(true);
-        expect(result.display.endsWith('…')).toBe(true);
+        expect(result.display).toBe(long);
     });
 
-    it('caps very long JSON and marks truncation', () => {
+    it('preserves the complete pretty-printed JSON for inspection', () => {
         const big = JSON.stringify({ items: Array.from({ length: 400 }, (_, i) => ({ i, v: `value-${i}` })) });
         const result = normalizeResultPreview(big);
         expect(result.kind).toBe('json');
-        expect(result.truncated).toBe(true);
-    });
-
-    it('marks short content as not truncated', () => {
-        expect(normalizeResultPreview('short').truncated).toBe(false);
+        expect(result.display).toBe(JSON.stringify(JSON.parse(big), null, 2));
     });
 });
 

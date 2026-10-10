@@ -14,6 +14,14 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
 }));
 
 describe('workflow Run list Action client', () => {
+    it('uses exact Automation history and active Session destinations in the shared paged reader', async () => {
+        executeMock.mockResolvedValue({ ok: true, result: { runs: [], metadataByRunId: {} } });
+        await listWorkflowRuns({ filter: buildWorkflowRunListFilter('automation:habit') });
+        await listWorkflowRuns({ filter: buildWorkflowRunListFilter('destination:session-one') });
+        expect(executeMock.mock.calls[0]?.[1]).toEqual({ automationId: 'habit' });
+        expect(executeMock.mock.calls[1]?.[1]).toEqual({ targetSessionId: 'session-one',
+            states: ['queued', 'claimed', 'running', 'pause_requested', 'paused', 'interrupted'] });
+    });
     beforeEach(() => {
         executeMock.mockReset();
     });

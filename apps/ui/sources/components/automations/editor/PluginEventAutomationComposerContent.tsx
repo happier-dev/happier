@@ -153,6 +153,7 @@ function EventPluginBrand(props: Readonly<{
     return brand ? (
         <InstalledPluginBrandMark
             brand={brand}
+            pluginId={props.presentation.installedPackage?.id}
             externallyLabelled
             size="small"
             testID={props.testID}
@@ -227,8 +228,12 @@ export function PluginEventAutomationComposerContent(props: Props) {
                 id: plugin.eventKey,
                 testID: `automation-event-option-${event.event.id}`,
                 label: event.event.title,
-                subtitle: [plugin.displayName, event.event.description].filter(Boolean).join(' · '),
-                accessibilityLabel: `${event.event.title}, ${plugin.displayName}`,
+                subtitle: [event.event.id, plugin.displayName, event.event.description].filter(Boolean).join(' · '),
+                subtitleContent: <View>
+                    <Text style={styles.optionDescription}>{[event.event.description, plugin.displayName].filter(Boolean).join(' · ')}</Text>
+                    <Text style={styles.eventIdentity} numberOfLines={1} ellipsizeMode="middle">{event.event.id}</Text>
+                </View>,
+                accessibilityLabel: `${event.event.title}, ${event.event.id}, ${plugin.displayName}`,
                 icon: (
                     <EventPluginBrand
                         presentation={plugin}
@@ -862,6 +867,8 @@ export function PluginEventAutomationComposerContent(props: Props) {
 const styles = StyleSheet.create((theme) => ({
     section: {
         gap: 10,
+        minWidth: 0,
+        width: '100%',
     },
     targetRow: {
         flexDirection: 'row',
@@ -889,19 +896,22 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.text.primary,
     },
     eventFields: {
+        minWidth: 0,
         gap: 8,
         borderTopWidth: 1,
         borderTopColor: theme.colors.border.default,
         paddingTop: 12,
     },
     fieldLabel: {
-        ...Typography.eyebrow(),
+        ...Typography.rowMeta(),
         color: theme.colors.text.secondary,
         paddingTop: 2,
     },
     selectTrigger: {
-        minHeight: minimumInteractiveTargetSize,
         minWidth: minimumInteractiveTargetSize,
+        maxWidth: '100%',
+        flexShrink: 1,
+        minHeight: minimumInteractiveTargetSize,
         alignItems: 'center',
         flexDirection: 'row',
         justifyContent: 'space-between',
@@ -916,6 +926,7 @@ const styles = StyleSheet.create((theme) => ({
     selectTriggerText: {
         ...Typography.rowTitle(),
         flexShrink: 1,
+        minWidth: 0,
         color: theme.colors.text.primary,
     },
     optionList: {
@@ -956,6 +967,11 @@ const styles = StyleSheet.create((theme) => ({
     },
     optionDescription: {
         ...Typography.rowMeta(),
+        color: theme.colors.text.secondary,
+    },
+    eventIdentity: {
+        ...Typography.rowMeta(),
+        ...Typography.mono(),
         color: theme.colors.text.secondary,
     },
     availableText: {

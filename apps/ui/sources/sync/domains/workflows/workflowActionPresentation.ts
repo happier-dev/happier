@@ -4,6 +4,7 @@ import { t, type TranslationKeyNoParams } from '@/text';
 
 /** UI names for catalog declarations that use machine ids. Never infer a title from an id. */
 const ACTION_TITLE_KEYS = {
+    wait: 'workflows.actionTitles.waitForWork',
     'webhooks.call': 'workflows.actionTitles.callWebhook',
     'machines.command.run': 'workflows.actionTitles.runCommand',
     'artifact.create': 'workflows.actionTitles.artifactCreate',
@@ -34,19 +35,18 @@ const ACTION_TITLE_KEYS = {
     'roles.override.set': 'workflows.actionTitles.roleOverride',
     'roles.override.reset': 'workflows.actionTitles.roleReset',
     'widgets.catalog.list': 'workflows.actionTitles.widgetCatalog',
-    'widgets.instance.list': 'workflows.actionTitles.widgetInstances',
-    'widgets.instance.add': 'workflows.actionTitles.widgetAdd',
-    'widgets.instance.remove': 'workflows.actionTitles.widgetRemove',
-    'widgets.instance.move': 'workflows.actionTitles.widgetMove',
-    'widgets.instance.rename': 'workflows.actionTitles.widgetRename',
-    'widgets.instance.size.set': 'workflows.actionTitles.widgetSize',
-    'widgets.instance.frame.set': 'workflows.actionTitles.widgetFrame',
-    'widgets.instance.inputs.get': 'workflows.actionTitles.widgetInputs',
-    'widgets.instance.inputs.validate': 'workflows.actionTitles.widgetValidate',
-    'widgets.instance.inputs.set': 'workflows.actionTitles.widgetSetInputs',
-    'widgets.instance.inputs.reset': 'workflows.actionTitles.widgetResetInputs',
-    'widgets.area.layout.get': 'workflows.actionTitles.widgetLayout',
-    'widgets.area.layout.update': 'workflows.actionTitles.widgetUpdateLayout',
+    'widgets.item.list': 'workflows.actionTitles.widgetInstances',
+    'widgets.item.add': 'workflows.actionTitles.widgetAdd',
+    'widgets.item.remove': 'workflows.actionTitles.widgetRemove',
+    'widgets.item.move': 'workflows.actionTitles.widgetMove',
+    'widgets.item.rename': 'workflows.actionTitles.widgetRename',
+    'widgets.item.size.set': 'workflows.actionTitles.widgetSize',
+    'widgets.item.frame.set': 'workflows.actionTitles.widgetFrame',
+    'widgets.item.inputs.get': 'workflows.actionTitles.widgetInputs',
+    'widgets.item.inputs.validate': 'workflows.actionTitles.widgetValidate',
+    'widgets.item.inputs.set': 'workflows.actionTitles.widgetSetInputs',
+    'widgets.item.inputs.reset': 'workflows.actionTitles.widgetResetInputs',
+    'widgets.area.layout.select': 'workflows.actionTitles.widgetLayout',
     'widgets.definition.list': 'workflows.actionTitles.widgetDefinitions',
     'widgets.definition.get': 'workflows.actionTitles.widgetDefinition',
     'widgets.definition.create': 'workflows.actionTitles.widgetCreate',
@@ -55,6 +55,14 @@ const ACTION_TITLE_KEYS = {
     'widgets.definition.delete': 'workflows.actionTitles.widgetDelete',
     'widgets.definition.saveFromSession': 'workflows.actionTitles.widgetSave',
 } as const satisfies Partial<Record<ActionId, TranslationKeyNoParams>>;
+
+/** Human outcomes for picker descriptions; the protocol retains its agent-facing contract. */
+export function resolveWorkflowActionDescription(actionId: string, spec: Pick<ActionSpec, 'description'>): string | undefined {
+    if (actionId === 'wait') return t('workflows.actionTitles.waitForWorkDescription');
+    if (actionId === 'webhooks.call') return t('workflows.actionTitles.callWebhookDescription');
+    if (actionId === 'machines.command.run') return t('workflows.actionTitles.runCommandDescription');
+    return spec.description;
+}
 
 /** Shared by the picker, block headings and reference labels. Plugin titles are already localized. */
 export function resolveWorkflowActionTitle(actionId: string, spec: Pick<ActionSpec, 'title'> | null): string {

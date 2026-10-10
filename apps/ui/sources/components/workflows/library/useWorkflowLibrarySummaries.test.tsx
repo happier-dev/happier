@@ -46,6 +46,20 @@ describe('workflow library run summaries', () => {
     const item = { sourceArtifactId, lastRun: null, recent: [], needsYouCount: 1, needsYouRunId: 'private-run-a' };
     const reply = { ok: true, result: { summaries: [item], remainingSourceArtifactIds: [] } };
 
+    it('renews mounted demand and wakes after the same Account becomes available again', async () => {
+        executeMock.mockResolvedValue(reply);
+        const hook = await renderHook(() => useWorkflowLibrarySummaries([sourceArtifactId]));
+        expect(hook.getCurrent()?.get(sourceArtifactId)?.needsYouCount).toBe(1);
+        await act(async () => { publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), false); });
+        expect(hook.getCurrent()).toBeNull();
+        executeMock.mockResolvedValue({ ok: true, result: { summaries: [{ ...item, needsYouCount: 0, needsYouRunId: null }], remainingSourceArtifactIds: [] } });
+        await act(async () => { publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true); });
+        expect(hook.getCurrent()?.get(sourceArtifactId)?.needsYouCount).toBe(0);
+        executeMock.mockResolvedValue(reply);
+        await act(async () => { publishHomeAccountChange(serverId, ['workflow-run:restored']); });
+        expect(hook.getCurrent()?.get(sourceArtifactId)?.needsYouCount).toBe(1);
+    });
+
     it('batches overlapping chrome/library demands and one Account wake through one shared read', async () => {
         const second = '00000000-0000-4000-8000-000000000002';
         const third = '00000000-0000-4000-8000-000000000003';

@@ -10,7 +10,7 @@ import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { useTranscriptRowLayoutMutation } from '@/components/sessions/transcript/measurement/TranscriptRowLayoutMutationContext';
 
-import { clampPreviewLines, normalizeResultPreview } from './resultPreview';
+import { clampPreviewLines, normalizeResultPreview, RESULT_PREVIEW_MAX_LINES } from './resultPreview';
 import { ToolFindText, useToolFindState } from '@/components/tools/renderers/core/ToolFindText';
 
 /**
@@ -20,6 +20,8 @@ import { ToolFindText, useToolFindState } from '@/components/tools/renderers/cor
  * not exist.
  */
 const MINIMUM_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
+// Six nominal body lines is a viewport, never a cutoff in the normalized value.
+const PREVIEW_HEIGHT = Typography.rowMeta().lineHeight! * RESULT_PREVIEW_MAX_LINES;
 
 export type WorkflowAgentDetailProps = Readonly<{
     text: string;
@@ -33,24 +35,33 @@ export type WorkflowAgentDetailProps = Readonly<{
  *
  * The raw provider payload is normalized here through the single `resultPreview` owner (U-9/#11):
  * JSON-ish payloads become a compact pretty-print, everything else is trimmed text, and the length
- * is capped. The collapsed body is clamped to a small line budget with a local "Show more" expand so
+ * is preserved. The collapsed body is clamped to a small line budget with a local "Show more" expand so
  * a long summary never floods the popover (U-20). No raw markdown/JSON source dumps.
  */
 export const WorkflowAgentDetail = React.memo<WorkflowAgentDetailProps>((props) => {
     const { theme } = useUnistyles();
     const find = useToolFindState(props.messageId);
     const [expanded, setExpanded] = React.useState(false);
+    const [measuredBody, setMeasuredBody] = React.useState<Readonly<{ text: string; height: number }> | null>(null);
     const rowLayoutMutation = useTranscriptRowLayoutMutation();
-    const normalized = React.useMemo(() => normalizeResultPreview(props.text, find.active ? null : undefined), [props.text, find.active]);
+    const normalized = React.useMemo(() => normalizeResultPreview(props.text), [props.text]);
     const clamped = React.useMemo(() => clampPreviewLines(normalized.display), [normalized.display]);
     const body = expanded || find.active ? normalized.display : clamped.text;
+    const overflowsViewport = measuredBody?.text === body && measuredBody.height > PREVIEW_HEIGHT;
     const bodyTestID = props.detailTestID ? `${props.detailTestID}-body` : undefined;
     const toggleTestID = props.detailTestID ? `${props.detailTestID}-show-more` : undefined;
 
     return (
         <View style={styles.container} testID={props.detailTestID}>
-            <ToolFindText messageId={props.messageId} blockId={props.findBlockId ?? 'tool-workflow-detail'} text={body} style={[styles.text, normalized.kind === 'json' ? styles.mono : null]} testID={bodyTestID} />
-            {clamped.clamped && !find.active ? (
+            <View style={!expanded && !find.active ? styles.preview : undefined}>
+                <ToolFindText messageId={props.messageId} blockId={props.findBlockId ?? 'tool-workflow-detail'} text={body}
+                    style={[styles.text, normalized.kind === 'json' ? styles.mono : null]} testID={bodyTestID}
+                    onLayout={(event) => {
+                        const height = event.nativeEvent.layout.height;
+                        setMeasuredBody((current) => current?.text === body && current.height === height ? current : { text: body, height });
+                    }} />
+            </View>
+            {(clamped.clamped || overflowsViewport || expanded) && !find.active ? (
                 <HappierPressable
                     accessibilityRole="button"
                     expanded={expanded}
@@ -91,6 +102,10 @@ const styles = StyleSheet.create((theme) => ({
     text: {
         ...Typography.rowMeta(),
         color: theme.colors.text.secondary,
+    },
+    preview: {
+        maxHeight: PREVIEW_HEIGHT,
+        overflow: 'hidden',
     },
     mono: {
         ...Typography.mono(),

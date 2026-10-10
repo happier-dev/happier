@@ -33,7 +33,7 @@ describe('describeWorkflowInvocationLifecycle', () => {
         for (const state of WORKFLOW_RUN_STATES_V1) {
             expect(describeWorkflowRunState(state)).toMatchObject({ state, label: `workflows.runState.${state}` });
         }
-        expect(describeWorkflowRunState('waiting_for_review')).toMatchObject({ terminal: false, variant: 'warning' });
+        expect(describeWorkflowRunState('waiting_for_review')).toMatchObject({ terminal: false, variant: 'attention' });
     });
     it('covers every canonical lifecycle the Protocol declares', () => {
         for (const lifecycle of WORKFLOW_INVOCATION_LIFECYCLES_V1) {
@@ -60,7 +60,7 @@ describe('describeWorkflowInvocationLifecycle', () => {
 
     it('names a held Wait-for-you step "Waiting for you", keeping "Waiting for your review" for review holds', () => {
         expect(describeWorkflowInvocationLifecycle('waiting_for_review', { blockKind: 'wait' })).toMatchObject({
-            label: 'workflows.review.waitTitle', variant: 'warning', attention: true,
+            label: 'workflows.review.waitTitle', variant: 'attention', attention: true,
         });
         expect(describeWorkflowInvocationLifecycle('waiting_for_review', { blockKind: 'step' }).label)
             .toBe('workflows.invocationState.waiting_for_review');

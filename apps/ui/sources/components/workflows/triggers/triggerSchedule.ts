@@ -1,3 +1,6 @@
+import { getPreferredLanguage } from '@/text';
+import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
+
 /**
  * The simple schedules a person picks (07 S4: Repeat Every day · Weekdays · Weekly, At a time) and
  * the cron they are stored as. The summary and the popover both read a cron through this one parser,
@@ -39,6 +42,12 @@ export function buildSimpleScheduleCron(schedule: SimpleSchedule): string {
 }
 
 export function formatClockTime(schedule: Pick<SimpleSchedule, 'hour' | 'minute'>): string {
+    return formatWithCachedDateTimeFormatter(new Date(Date.UTC(2023, 0, 1, schedule.hour, schedule.minute)),
+        getPreferredLanguage(), { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
+}
+
+/** The editable field's round-trippable 24-hour value, independent of the display locale. */
+export function formatClockTimeInput(schedule: Pick<SimpleSchedule, 'hour' | 'minute'>): string {
     return `${String(schedule.hour).padStart(2, '0')}:${String(schedule.minute).padStart(2, '0')}`;
 }
 

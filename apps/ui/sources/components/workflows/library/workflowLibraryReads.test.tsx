@@ -8,6 +8,7 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createAutomationRunFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { storage } from '@/sync/domains/state/storageStore';
+import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { workflowRunRowFromSummary } from '@/sync/store/domains/workflowRuns';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
@@ -68,6 +69,132 @@ afterEach(async () => {
 });
 
 describe('useWorkflowDefinitionLibrary', () => {
+    it('settles an unavailable Account destination read rather than claiming a pending request', async () => {
+        storage.setState({ profileScope: null });
+        const hook = await renderHook(() => useWorkflowRunWindow('destination:stopped-session'));
+        expect(hook.getCurrent().status).toBe('failed');
+        expect(hook.getCurrent().runIds).toEqual([]);
+        expect(executeMock).not.toHaveBeenCalled();
+    });
+    it('keeps Writes here destination membership separate from origins in the canonical Run window', async () => {
+        const projected = createWorkflowRunSummaryFixture({ id: 'writes-here', origin: { kind: 'direct', originSessionId: 'another-session' } });
+        const pending = createDeferred<unknown>();
+        executeMock.mockReturnValue(pending.promise);
+        let renders = 0;
+        const first = await renderHook(() => { renders++; return useWorkflowRunWindow('destination:bot-session'); });
+        const second = await renderHook(() => useWorkflowRunWindow('destination:bot-session'));
+        expect(executeMock).toHaveBeenCalledTimes(1);
+        expect(executeMock.mock.calls[0]?.[1]).toEqual({ targetSessionId: 'bot-session',
+            states: ['queued', 'claimed', 'running', 'pause_requested', 'paused', 'interrupted'] });
+        await act(async () => { pending.resolve({ ok: true, result: { runs: [projected], metadataByRunId: {} } }); await pending.promise; });
+        expect(first.getCurrent().runIds).toEqual(['writes-here']);
+        expect(second.getCurrent().runIds).toBe(first.getCurrent().runIds);
+        expect(storage.getState().workflowRunsById['writes-here']?.summary?.origin).toEqual(projected.origin);
+        const before = first.getCurrent();
+        const beforeRenders = renders;
+        await act(async () => { storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ id: 'unrelated' }))]); });
+        expect(first.getCurrent().runIds).toBe(before.runIds);
+        expect(renders).toBe(beforeRenders);
+    });
+    it('pages Automation history through the shared window and retains the exact filter on continuation', async () => {
+        const { useWorkflowRunWindow } = await import('./workflowLibraryReads');
+        executeMock.mockImplementation(async (_actionId: string, input: { cursor?: string }) => ({ ok: true,
+            result: { runs: [createWorkflowRunSummaryFixture({ id: input.cursor ? 'older' : 'newest' })], metadataByRunId: {},
+                ...(input.cursor ? {} : { nextCursor: 'next' }) } }));
+        const first = await renderHook(() => useWorkflowRunWindow('automation:habit'));
+        const second = await renderHook(() => useWorkflowRunWindow('automation:habit'));
+        await act(async () => { first.getCurrent().loadMore(); });
+        expect(second.getCurrent().runIds).toEqual(['newest', 'older']);
+        expect(executeMock.mock.calls.at(-1)?.[1]).toEqual({ automationId: 'habit', cursor: 'next' });
+    });
+    it('refreshes a mounted library after a successful definition create through the canonical client', async () => {
+        const { useWorkflowDefinitionLibrary } = await import('./workflowLibraryReads');
+        const { createWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
+        const { createWorkflowDefinitionFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
+        const definitionId = '43e5c1c7-73cd-4f79-90c3-dc73262c3651';
+        const content = createWorkflowDefinitionFixture();
+        let created = false;
+        executeMock.mockImplementation(async (actionId: string) => {
+            if (actionId === 'workflow.definition.create') {
+                created = true;
+                return { ok: true, result: { definitionId, definition: content, access: 'owner',
+                    revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Saved here' } } };
+            }
+            return { ok: true, result: { definitions: created ? [definition(definitionId)] : [] } };
+        });
+        const hook = await renderHook(() => useWorkflowDefinitionLibrary());
+        expect(hook.getCurrent().definitions).toEqual([]);
+        await act(async () => { await createWorkflowDefinition({ definitionId, definition: content, metadata: { title: 'Saved here' } }); });
+        expect(hook.getCurrent().definitions.map((row) => row.definitionId)).toEqual([definitionId]);
+    });
+
+    it('retains known rows while the Home change wake refreshes the current mounted library', async () => {
+        const { useWorkflowDefinitionLibrary } = await import('./workflowLibraryReads');
+        executeMock.mockResolvedValueOnce({ ok: true, result: { definitions: [definition('wf-before')] } });
+        const hook = await renderHook(() => useWorkflowDefinitionLibrary());
+        const before = hook.getCurrent().definitions;
+        const refresh = createDeferred<unknown>();
+        executeMock.mockReturnValueOnce(refresh.promise);
+        await act(async () => { publishHomeAccountChange(serverId, ['artifact-changed']); });
+        expect(hook.getCurrent().definitions).toBe(before);
+        await act(async () => { refresh.resolve({ ok: true, result: { definitions: [definition('wf-after')] } }); await refresh.promise; });
+        expect(hook.getCurrent().definitions.map((row) => row.definitionId)).toEqual(['wf-after']);
+    });
+    it('rechecks a wake that arrives while the first library page is still in flight', async () => {
+        const { useWorkflowDefinitionLibrary } = await import('./workflowLibraryReads');
+        const firstPage = createDeferred<unknown>();
+        executeMock.mockReturnValueOnce(firstPage.promise)
+            .mockResolvedValue({ ok: true, result: { definitions: [definition('wf-created')] } });
+        const hook = await renderHook(() => useWorkflowDefinitionLibrary());
+        await act(async () => { publishHomeAccountChange(serverId); });
+        await act(async () => { firstPage.resolve({ ok: true, result: { definitions: [] } }); await firstPage.promise; });
+        expect(hook.getCurrent().definitions.map((row) => row.definitionId)).toEqual(['wf-created']);
+    });
+    it('starts a fresh read when the same Account retires and reactivates while its first page is pending', async () => {
+        const { useWorkflowDefinitionLibrary } = await import('./workflowLibraryReads');
+        const retiredPage = createDeferred<unknown>();
+        executeMock.mockReturnValueOnce(retiredPage.promise)
+            .mockResolvedValueOnce({ ok: true, result: { definitions: [definition('wf-current')] } });
+        const hook = await renderHook(() => useWorkflowDefinitionLibrary());
+        await act(async () => { storage.setState({ profileScope: null }); });
+        await act(async () => { storage.setState({ profileScope: { serverId, accountId: account.id } }); });
+        expect(hook.getCurrent().status).toBe('loaded');
+        expect(hook.getCurrent().definitions.map((row) => row.definitionId)).toEqual(['wf-current']);
+        await act(async () => {
+            retiredPage.resolve({ ok: true, result: { definitions: [definition('wf-retired')] } });
+            await retiredPage.promise;
+        });
+        expect(hook.getCurrent().definitions.map((row) => row.definitionId)).toEqual(['wf-current']);
+    });
+    it('reissues a current wake during a retired continuation and keeps its queued refresh on the fresh read', async () => {
+        const { useWorkflowDefinitionLibrary } = await import('./workflowLibraryReads');
+        const retiredTail = createDeferred<unknown>();
+        const freshPage = createDeferred<unknown>();
+        executeMock.mockResolvedValueOnce({ ok: true, result: { definitions: [definition('wf-old')], nextCursor: 'old-tail' } })
+            .mockReturnValueOnce(retiredTail.promise)
+            .mockReturnValueOnce(freshPage.promise)
+            .mockResolvedValueOnce({ ok: true, result: { definitions: [definition('wf-newest')] } });
+        const hook = await renderHook(() => useWorkflowDefinitionLibrary());
+        await act(async () => { hook.getCurrent().loadMore(); });
+        await act(async () => {
+            storage.setState({ profileScope: null });
+            retireActiveServerAccountScopeLifetime();
+            storage.setState({ profileScope: { serverId, accountId: account.id } });
+            publishHomeAccountChange(serverId);
+        });
+        await act(async () => { publishHomeAccountChange(serverId); });
+        await act(async () => {
+            retiredTail.resolve({ ok: true, result: { definitions: [definition('wf-retired')] } });
+            await retiredTail.promise;
+        });
+        await act(async () => {
+            freshPage.resolve({ ok: true, result: { definitions: [definition('wf-fresh')] } });
+            await freshPage.promise;
+        });
+        expect(hook.getCurrent().status).toBe('loaded');
+        expect(hook.getCurrent().loadingMore).toBe(false);
+        expect(hook.getCurrent().definitions.map((row) => row.definitionId)).toEqual(['wf-newest']);
+    });
     it('refreshes the demanded pages on a later consumer mount, retaining rows until authoritative replacement', async () => {
         const { useWorkflowDefinitionLibrary } = await import('./workflowLibraryReads');
         executeMock.mockResolvedValueOnce({ ok: true, result: { definitions: [definition('wf-1')], nextCursor: 'next' } })
@@ -203,6 +330,94 @@ describe('useWorkflowDefinitionLibrary', () => {
 
 
 describe('useWorkflowRunWindow demand', () => {
+    it.each(['all', 'active', 'attention', 'automationAttention'] as const)('renews %s demand and subsequent wakes on same-Account restore', async (windowId) => {
+        let version = 0;
+        executeMock.mockImplementation(async () => ({ ok: true, result: {
+            runs: [createWorkflowRunSummaryFixture({ id: `run-${version}` })], metadataByRunId: {},
+        } }));
+        automationRequest.mockImplementation(async () => Response.json({
+            runs: [createAutomationRunFixture({ id: `run-${version}`, state: 'failed' })], nextCursor: null,
+        }));
+        const hook = await renderHook(() => useWorkflowRunWindow(windowId));
+        expect(hook.getCurrent().runIds).toContain('run-0');
+        await act(async () => { version = 1; retireActiveServerAccountScopeLifetime(); });
+        expect(hook.getCurrent().runIds).toContain('run-1');
+        await act(async () => { version = 2; publishHomeAccountChange(serverId,
+            [windowId === 'automationAttention' ? 'automation:automation-1' : 'workflow-run:run-2']); });
+        expect(hook.getCurrent().runIds).toContain('run-2');
+    });
+
+    it('renews pending definition demand without waiting for the retired response', async () => {
+        const { useWorkflowDefinitionLibrary } = await import('./workflowLibraryReads');
+        const retired = createDeferred<unknown>();
+        executeMock.mockReturnValueOnce(retired.promise).mockResolvedValue({ ok: true,
+            result: { definitions: [definition('current-definition')] } });
+        const hook = await renderHook(() => useWorkflowDefinitionLibrary());
+        await act(async () => { retireActiveServerAccountScopeLifetime(); });
+        expect(hook.getCurrent().definitions.map(row => row.definitionId)).toEqual(['current-definition']);
+        await act(async () => { retired.resolve({ ok: true, result: { definitions: [definition('retired-definition')] } }); await retired.promise; });
+        expect(hook.getCurrent().definitions.map(row => row.definitionId)).toEqual(['current-definition']);
+    });
+
+    it('releases retired definition pagination busy state even when the replacement refresh fails', async () => {
+        const { useWorkflowDefinitionLibrary } = await import('./workflowLibraryReads');
+        const retired = createDeferred<unknown>();
+        executeMock.mockResolvedValueOnce({ ok: true, result: { definitions: [definition('known')], nextCursor: 'tail' } })
+            .mockReturnValueOnce(retired.promise).mockRejectedValueOnce(new Error('replacement offline'));
+        const hook = await renderHook(() => useWorkflowDefinitionLibrary());
+        await act(async () => { hook.getCurrent().loadMore(); });
+        expect(hook.getCurrent().loadingMore).toBe(true);
+        await act(async () => { retireActiveServerAccountScopeLifetime(); });
+        expect(hook.getCurrent().status).toBe('failed');
+        expect(hook.getCurrent().loadingMore).toBe(false);
+        executeMock.mockResolvedValueOnce({ ok: true, result: { definitions: [definition('current')] } });
+        await act(async () => { hook.getCurrent().retry(); });
+        expect(hook.getCurrent().definitions.map(row => row.definitionId)).toEqual(['current']);
+        await act(async () => { retired.resolve({ ok: true, result: { definitions: [definition('retired-tail')] } }); await retired.promise; });
+        expect(hook.getCurrent().definitions.map(row => row.definitionId)).toEqual(['current']);
+    });
+
+    it('does not restart disabled or unmounted Run windows after retirement', async () => {
+        executeMock.mockResolvedValue({ ok: true, result: { runs: [], metadataByRunId: {} } });
+        await renderHook(() => useWorkflowRunWindow('attention', { enabled: false }));
+        const hook = await renderHook(() => useWorkflowRunWindow('active'));
+        await hook.unmount();
+        executeMock.mockClear();
+        await act(async () => { retireActiveServerAccountScopeLifetime(); publishHomeAccountChange(serverId, ['workflow-run:changed']); });
+        expect(executeMock).not.toHaveBeenCalled();
+    });
+    it('starts a fresh window read after same-Account reactivation and rejects the retired response', async () => {
+        const retiredPage = createDeferred<unknown>();
+        executeMock.mockReturnValueOnce(retiredPage.promise).mockResolvedValueOnce({ ok: true,
+            result: { runs: [createWorkflowRunSummaryFixture({ id: 'current-run' })], metadataByRunId: {} } });
+        const hook = await renderHook(() => useWorkflowRunWindow('all'));
+        await act(async () => { storage.setState({ profileScope: null }); });
+        await act(async () => { storage.setState({ profileScope: { serverId, accountId: account.id } }); });
+        expect(hook.getCurrent().status).toBe('loaded');
+        expect(hook.getCurrent().runIds).toEqual(['current-run']);
+        await act(async () => {
+            retiredPage.resolve({ ok: true, result: { runs: [createWorkflowRunSummaryFixture({ id: 'retired-run' })], metadataByRunId: {} } });
+            await retiredPage.promise;
+        });
+        expect(hook.getCurrent().runIds).toEqual(['current-run']);
+        expect(storage.getState().workflowRunsById['retired-run']).toBeUndefined();
+    });
+    it('reads the window again when its Account lifetime is retired mid-read without the scope changing (sign-in restore)', async () => {
+        // Restoring an Account re-binds its credentials: the lifetime retires and the pending read is
+        // aborted, but the scope the mounted reader sees is the same, so nothing else asks again.
+        const retiredPage = createDeferred<unknown>();
+        executeMock.mockReturnValueOnce(retiredPage.promise).mockResolvedValueOnce({ ok: true,
+            result: { runs: [createWorkflowRunSummaryFixture({ id: 'current-run' })], metadataByRunId: {} } });
+        const hook = await renderHook(() => useWorkflowRunWindow('attention'));
+        await act(async () => { retireActiveServerAccountScopeLifetime(); });
+        await act(async () => {
+            retiredPage.reject(new Error('signal is aborted without reason'));
+            await retiredPage.promise.catch(() => {});
+        });
+        expect(hook.getCurrent().status).toBe('loaded');
+        expect(hook.getCurrent().runIds).toEqual(['current-run']);
+    });
+
     it('does not rerender one window when another window loads or completes its read', async () => {
         executeMock.mockResolvedValueOnce({ ok: true, result: { runs: [], metadataByRunId: {} } });
         let renders = 0;

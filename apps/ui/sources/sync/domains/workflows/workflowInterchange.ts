@@ -2,6 +2,7 @@ import {
   parseWorkflowDocumentJsonIngressV1,
   serializeWorkflowDocumentJsonV1,
   type WorkflowDocumentV1,
+  type WorkflowDocumentParseResultV1,
 } from '@happier-dev/protocol/workflows/workflowDocumentV1';
 import { validateWorkflowDefinition } from '@happier-dev/protocol/workflows/workflowValidationV1';
 import type {
@@ -18,16 +19,18 @@ import {
   validateWorkflowEditorDraft,
 } from './workflowAuthoring';
 import type { WorkflowEditorDraft } from './workflowEditorDraft';
+import { WorkflowDefinitionImportResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+import { callWorkflowAction } from './callWorkflowAction';
 
 /**
  * JSON interchange for authored workflows.
  *
  * This is an adapter, not a parser: Protocol's ingress-aware document parser
  * owns the envelope and delegates definition normalization to the canonical
- * workflow validator, exactly as save and run admission do. The module is
- * pure string-in/string-out
- * so the editor, a test and any CLI caller share one behavior; the platform
- * file, share and download boundary stays with the caller.
+ * workflow validator, exactly as save and run admission do. Mounted import
+ * delegates through the shared Action front door; local draft tools retain
+ * the pure codec and draft projection. The platform file, share and download
+ * boundary stays with the caller.
  *
  * Import opens an unsaved review draft. It never runs, schedules, saves or
  * creates an Artifact, and a failed import returns the caller's draft
@@ -100,7 +103,7 @@ const IMPORT_FAILURE_MESSAGE_KEYS = {
   TranslationKeyNoParams
 >>;
 
-export function importWorkflowDocument(params: Readonly<{
+type WorkflowImportParams = Readonly<{
   source: string;
   /** The draft currently open in the editor; returned unchanged on failure. */
   currentDraft: WorkflowEditorDraft;
@@ -109,7 +112,21 @@ export function importWorkflowDocument(params: Readonly<{
   name?: string;
   /** The same trusted host context the validator receives at save and start. */
   context?: WorkflowIngressContextV1;
-}>): WorkflowImportResult {
+}>;
+
+/** Pure draft projection remains available to local draft tools; document admission has one codec. */
+export function importWorkflowDocument(params: WorkflowImportParams): WorkflowImportResult {
+  return projectImportedWorkflowDocument(params, parseWorkflowDocumentJsonIngressV1(params.source, params.context));
+}
+
+/** The mounted file-import flow consumes the same Action as CLI and agents. Picking stays local. */
+export async function importWorkflowDocumentViaAction(params: Omit<WorkflowImportParams, 'context'>): Promise<WorkflowImportResult> {
+  const parsed = await callWorkflowAction({ actionId: 'workflow.definition.import', input: { json: params.source },
+    parseResult: (value) => WorkflowDefinitionImportResultV1Schema.parse(value) });
+  return projectImportedWorkflowDocument(params, parsed);
+}
+
+function projectImportedWorkflowDocument(params: WorkflowImportParams, parsed: WorkflowDocumentParseResultV1): WorkflowImportResult {
   const failure = (
     code: WorkflowImportFailureCode,
     issues: readonly WorkflowValidationIssue[] = [],
@@ -123,7 +140,6 @@ export function importWorkflowDocument(params: Readonly<{
     ...(repairDraft === undefined ? {} : { repairDraft }),
   });
 
-  const parsed = parseWorkflowDocumentJsonIngressV1(params.source, params.context);
   if (!parsed.ok) {
     if (parsed.code === 'workflow_document_invalid_json') return failure('invalid_json');
     if (parsed.code === 'workflow_document_unsupported_version') return failure('unsupported_version');

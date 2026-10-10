@@ -8,8 +8,14 @@ export const WORKFLOWS_ROUTE = '/workflows';
  * and a list row all address the same Run the same way, and so no caller has to
  * remember to encode the id.
  */
-export function createWorkflowRunRoute(runId: string): string {
-    return `${WORKFLOWS_ROUTE}/runs/${encodeURIComponent(runId)}`;
+export function createWorkflowRunRoute(runId: string, serverId?: string | null): string {
+    return appendWorkflowRunHome(`${WORKFLOWS_ROUTE}/runs/${encodeURIComponent(runId)}`, serverId);
+}
+
+/** An optional exact Home belongs to the route owner, after any invocation query. */
+function appendWorkflowRunHome(route: string, serverId?: string | null): string {
+    if (!serverId) return route;
+    return `${route}${route.includes('?') ? '&' : '?'}serverId=${encodeURIComponent(serverId)}`;
 }
 
 /** The exact saved workflow's editor route (also the link a document share sheet copies). */
@@ -65,8 +71,8 @@ export function createAutomationRunDetailRoute(params: Readonly<{
 }
 
 /** Address one exact invocation while retaining the Run as the route owner. */
-export function createWorkflowInvocationRoute(runId: string, invocationId: string): string {
-    return `${createWorkflowRunRoute(runId)}?invocationId=${encodeURIComponent(invocationId)}`;
+export function createWorkflowInvocationRoute(runId: string, invocationId: string, serverId?: string | null): string {
+    return appendWorkflowRunHome(`${createWorkflowRunRoute(runId)}?invocationId=${encodeURIComponent(invocationId)}`, serverId);
 }
 
 /**

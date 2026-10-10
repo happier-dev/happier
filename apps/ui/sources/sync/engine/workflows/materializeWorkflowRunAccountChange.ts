@@ -1,4 +1,4 @@
-import type { WorkflowRunPrivateMetadataV1, WorkflowRunSummaryV1 } from '@happier-dev/protocol';
+import type { WorkflowRunPrivateMetadataV1, WorkflowRunSummaryV1, WorkflowRunListResultV1 } from '@happier-dev/protocol';
 
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 
@@ -21,10 +21,12 @@ export async function materializeWorkflowRunAccountChange(params: Readonly<{
     getRun: () => Promise<Readonly<{
         run: WorkflowRunSummaryV1;
         metadata: WorkflowRunPrivateMetadataV1 | null;
+        invocationProvenance?: WorkflowRunListResultV1['invocationProvenance'];
     }>>;
     upsertRun: (detail: Readonly<{
         run: WorkflowRunSummaryV1;
         metadata: WorkflowRunPrivateMetadataV1 | null;
+        invocationProvenance?: WorkflowRunListResultV1['invocationProvenance'];
     }>) => void;
     removeRun: (runId: string) => void;
 }>): Promise<void> {

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { WORKFLOW_OPERATION_ERROR_CODES_V1 } from '@happier-dev/protocol';
 
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
+import { formatWorkflowRunDisplayName, resolveWorkflowRunDisplayName } from './workflowRunDisplayName';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -25,6 +26,30 @@ function actionError(rawCode: string | null, message = 'server-internal reason')
  * never reach a person as prose the server chose or as the identifier itself.
  */
 describe('workflowProblemPresentation', () => {
+    it('keeps unreadable history, encryption setup, key waiting and storage recovery distinct', () => {
+        const states = [
+            ['history_not_readable', 'none', 'alert'],
+            ['encryption_setup_required', 'settings', 'alert'],
+            ['waiting_for_keys', 'retry', 'status'],
+            ['storage_unavailable', 'retry', 'alert'],
+        ] as const;
+        const messages = new Set<string>();
+        for (const [code, repair, accessibilitySemantics] of states) {
+            const problem = resolveWorkflowProblemPresentation(actionError(code));
+            expect(problem).toMatchObject({ code, repair, accessibilitySemantics });
+            messages.add(problem.message);
+        }
+        expect(messages.size).toBe(4);
+    });
+    it('keeps the same typed unreadable state in list names and exact Run recovery', () => {
+        for (const reason of ['history_not_readable', 'encryption_setup_required', 'waiting_for_keys', 'storage_unavailable'] as const) {
+            const name = resolveWorkflowRunDisplayName({ kind: 'unavailable', reason });
+            expect(name).toMatchObject({ kind: 'unavailable', reason });
+            expect(formatWorkflowRunDisplayName(name)).toBe(resolveWorkflowProblemPresentation(actionError(reason)).title);
+        }
+        expect(formatWorkflowRunDisplayName(resolveWorkflowRunDisplayName({ kind: 'available', value: { title: 'My known run' } })))
+            .toBe('My known run');
+    });
     it('explains unavailable header content from the typed owner reason', () => {
         const error = new WorkflowActionError({ rawCode: 'content_unavailable', message: 'private implementation text',
             failure: { ok: false, errorCode: 'content_unavailable', error: 'workflow_definition_content_unavailable',
@@ -38,7 +63,7 @@ describe('workflowProblemPresentation', () => {
             const presentation = resolveWorkflowProblemPresentation(actionError(code));
 
             expect(presentation.code).toBe(code);
-            expect(presentation.message).toMatch(/^workflows\./);
+            expect(presentation.message).toMatch(/^(workflows|errors)\./);
             expect(presentation.message).not.toContain(code);
             expect(presentation.message).not.toContain('server-internal reason');
             expect(presentation.title).not.toContain(code);
@@ -74,6 +99,8 @@ describe('workflowProblemPresentation', () => {
     });
 
     it('offers the repair that can actually make progress', () => {
+        expect(resolveWorkflowProblemPresentation(actionError('not_authenticated')))
+            .toMatchObject({ code: 'not_authenticated', repair: 'none', repairLabel: null });
         expect(resolveWorkflowProblemPresentation(actionError('currentness_conflict')))
             .toMatchObject({ repair: 'refresh', repairLabel: 'common.refresh' });
         expect(resolveWorkflowProblemPresentation(actionError('target_unavailable')))

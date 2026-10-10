@@ -173,8 +173,8 @@ export function editWorkflowTriggerDraft(draft: WorkflowTriggerDraft, edit: Work
 
 /**
  * One row of the Runs automatically section: a saved trigger as edited, or a new one. `trigger` is
- * what the row reads; a saved plugin-event trigger keeps its private configuration in its envelope
- * and is shown, turned on and off and deleted here, but not re-configured (its setup flow owns that).
+ * what the row reads; a saved plugin-event trigger keeps its private configuration in its envelope.
+ * Its row editor reads that exact envelope and uses the canonical Event setup flow to reconfigure it.
  */
 export type WorkflowTriggerRowModel =
     | Readonly<{ kind: 'saved'; key: string; triggerId: AutomationTriggerId; trigger: TriggerSummarySource; schedule: WorkflowScheduleTrigger | null; enabled: boolean; changed: boolean }>

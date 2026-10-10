@@ -52,8 +52,8 @@ import {
     EMPTY_WORKFLOW_EDITOR_VIEW_STATE,
     type WorkflowEditorDraft,
     type WorkflowEditorViewState,
-    type WorkflowStarterSessionTarget,
 } from '@/sync/domains/workflows/workflowEditorDraft';
+import type { WorkflowStarterSessionTarget } from '@happier-dev/protocol/workflows/builtins/examples';
 import { countWorkflowStepsV1, setWorkflowDefaultField, setWorkflowStepExecutionField, walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { EMPTY_WORKFLOW_ANNOUNCEMENT_STATE, selectWorkflowAnnouncement } from '../accessibility/workflowAnnouncementSelection';
 import { formatWorkflowAnnouncement } from '../accessibility/useWorkflowAnnouncements';
@@ -94,7 +94,7 @@ import { useActionFieldOptionsForMachine } from '@/components/sessions/actions/u
 import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { findWorkflowActionSpec } from '@/components/workflows/presentation/workflowActionCatalog';
 import { formatWorkflowProblemMessage, resolveWorkflowProblemPresentation } from '@/components/workflows/presentation/workflowProblemPresentation';
-import { exportWorkflowDocument, importWorkflowDocument } from '@/sync/domains/workflows/workflowInterchange';
+import { exportWorkflowDocument, importWorkflowDocumentViaAction, type WorkflowImportResult } from '@/sync/domains/workflows/workflowInterchange';
 import {
     pickWorkflowDocumentText,
 } from '@/sync/domains/workflows/workflowDocumentFile';
@@ -1201,7 +1201,15 @@ export function WorkflowEditorHostScreen(props: Readonly<{
                 return;
             }
             if (importedSource === null || !sourceIsCurrent()) return;
-            const imported = importWorkflowDocument({ source: importedSource, currentDraft: draft, draftId: randomUUID() });
+            let imported: WorkflowImportResult;
+            try {
+                imported = await importWorkflowDocumentViaAction({ source: importedSource, currentDraft: draft, draftId: randomUUID() });
+            } catch {
+                if (sourceIsCurrent()) await Modal.alert(t('workflows.interchange.importFailedTitle'),
+                    t('workflows.interchange.importFailedInvalidDocument'));
+                return;
+            }
+            if (!sourceIsCurrent()) return;
             if (!imported.ok) {
                 if (imported.messageKey !== null || imported.issues.length === 0) {
                     await Modal.alert(

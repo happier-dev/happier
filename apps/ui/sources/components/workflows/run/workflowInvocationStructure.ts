@@ -233,6 +233,43 @@ function collectWorkflowBlocksById(
     }
 }
 
+/** Resolve a private invocation's authored block through the same frozen identity owner as the map. */
+export function resolveWorkflowInvocationBlock(params: Readonly<{
+    definition: WorkflowDefinitionV1;
+    frozenChildren?: FrozenChildren;
+    invocationPath: WorkflowInvocationPathV1;
+}>): WorkflowBlock | undefined {
+    const blocks = new Map<string, WorkflowBlock>();
+    collectWorkflowBlocksById(params.definition.blocks, blocks, params.frozenChildren ?? {});
+    return blocks.get(scopedBlockId(params.invocationPath.blockId, params.invocationPath.scope));
+}
+
+/**
+ * Presentation only, never an opened-progress fact. A frozen, unambiguous
+ * fieldless Wait can keep its Continue card in place while the exact read is
+ * pending. Its caller must still require confirmed evidence before mutation.
+ */
+export function projectUnconfirmedWorkflowWaitReview(params: Readonly<{
+    definition: WorkflowDefinitionV1 | null;
+    frozenChildren?: FrozenChildren;
+    invocation: WorkflowRunInvocationIndexV1 | null;
+    structure: WorkflowInvocationStructureEntry | undefined;
+}>): WorkflowProgressEnvelopeV1 | null {
+    const { definition, invocation, structure } = params;
+    if (!definition || !invocation || invocation.lifecycle !== 'waiting_for_review'
+        || structure?.invocationId !== invocation.id || !structure.nodeId || structure.isFrame) return null;
+    const blocks = new Map<string, WorkflowBlock>();
+    collectWorkflowBlocksById(definition.blocks, blocks, params.frozenChildren ?? {});
+    const block = blocks.get(structure.nodeId);
+    if (block?.kind !== 'wait' || block.result !== undefined) return null;
+    return {
+        kind: 'happier.workflow-progress.v1', blockKind: 'wait',
+        logicalInvocationRecordId: invocation.id, attempt: invocation.attempt,
+        invocationPath: { blockId: block.id, scope: structure.occurrence.map(entry => entry.kind === 'item'
+            ? { kind: 'iteration' as const, blockId: entry.blockId, index: entry.index } : entry) },
+    };
+}
+
 /**
  * The member context an *opened* row establishes for its own children. An
  * opened conditional additionally records which branch it selected, so its

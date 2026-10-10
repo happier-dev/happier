@@ -39,7 +39,7 @@ import {
     type PluginEventAutomationWebhookEndpointBinding,
     type PluginEventAutomationWebhookEndpoint,
 } from './pluginEventAutomationWebhookEndpoint';
-import type { PluginEventAutomationEditSeed } from './pluginEventAutomationEditSeed';
+import type { PluginEventAutomationEditSeed } from '@/sync/domains/automations/pluginEventAutomationEditSeed';
 import {
     readPluginEventAutomationFilterClauses,
     readPluginEventAutomationFilterDraft,
@@ -112,6 +112,8 @@ export type PluginEventAutomationComposerModel = Readonly<{
      * composer keeps them visible until the source is reconfigured.
      */
     webhookEndpoint: PluginEventAutomationWebhookEndpoint | null;
+    /** Current saved endpoint placement, read by the incumbent endpoint owner before catalog loading. */
+    seededObservationMachineId?: string | null;
     /**
      * Re-reads the ensured endpoint's readiness through the same canonical
      * webhook owner. Provider configuration happens outside this composer, so
@@ -237,6 +239,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     projectionPhase: DaemonMergedProjectionPhase;
     projectionInputs: DaemonMergedProjectionInputs | null;
     initialEditSeed?: PluginEventAutomationEditSeed | null;
+    initialEventRef?: Readonly<{ pluginId: string; localId: string }> | null;
 }>): PluginEventAutomationComposerModel {
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     const availabilityReader = useActivePluginAccountAvailabilityReader();
@@ -260,9 +263,17 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     // canonical webhook owner. That owner keeps the endpoint's exact target
     // materialization and public URL, so the Automation projection never
     // duplicates them and an ordinary edit never re-ensures a credential.
-    const [seededWebhookBinding, setSeededWebhookBinding] = React.useState<
-        PluginEventAutomationWebhookEndpointBinding | null
+    const [seededWebhookRead, setSeededWebhookRead] = React.useState<
+        Readonly<{ binding: PluginEventAutomationWebhookEndpointBinding; accountLifetime: ActiveServerAccountScopeLifetime }> | null
     >(null);
+    const seedObservation = initialEditSeed?.observation;
+    const seededWebhookBinding = seededWebhookRead !== null && seededWebhookRead.accountLifetime === accountLifetime
+        && accountLifetime?.isCurrent()
+        && seedObservation?.kind === 'durablePush'
+        && seededWebhookRead.binding.endpoint.webhookEndpointId === seedObservation.webhookEndpointId
+        && seededWebhookRead.binding.sourceInstanceId === seedObservation.webhookRoutingSourceInstanceId
+        && seededWebhookRead.binding.targetMaterialization.pluginId === initialEditSeed?.eventRef.pluginId
+        ? seededWebhookRead.binding : null;
     // The configured source, its ensured endpoint, and the one-time secret that
     // endpoint disclosed belong to the Account they were ensured for. The
     // composer tree stays mounted across an ordinary Account change, so
@@ -271,7 +282,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     const eraseConfiguredSource = React.useCallback(() => {
         setConfiguredSetup(null);
         setWebhookEndpoint(null);
-        setSeededWebhookBinding(null);
+        setSeededWebhookRead(null);
         setSourceStatus('idle');
         setSourceFailure(null);
     }, []);
@@ -511,6 +522,20 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         advanceRevision();
     }, [eligibleEvents]);
 
+    const appliedActivityIntentRef = React.useRef(false);
+    const initialEventPluginId = params.initialEventRef?.pluginId;
+    const initialEventLocalId = params.initialEventRef?.localId;
+    React.useEffect(() => {
+        if (initialEditSeed || appliedActivityIntentRef.current || !initialEventPluginId || !initialEventLocalId
+            || eventCatalogStatus !== 'ready') return;
+        const matches = eligibleEvents.filter((candidate) => arePluginContributionIdentitiesEqual(candidate.event.identity,
+            { pluginId: initialEventPluginId, localId: initialEventLocalId }));
+        if (matches.length !== 1) return;
+        appliedActivityIntentRef.current = true;
+        // Selecting intent does not configure a source or supply admission/currentness witnesses.
+        if (selectedEventRef.current === null) chooseEvent(matches[0]);
+    }, [chooseEvent, eligibleEvents, eventCatalogStatus, initialEditSeed, initialEventLocalId, initialEventPluginId]);
+
     const selectWatcher = React.useCallback((candidate: PluginMachineExecutionOriginCandidateV1) => {
         const selected = selectedEventRef.current;
         if (
@@ -582,7 +607,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         let alive = true;
         const controller = new AbortController();
         const retirement = accountLifetime.onRetire(() => controller.abort());
-        setSeededWebhookBinding(null);
+        setSeededWebhookRead(null);
         void (async () => {
             const result = await readPluginEventAutomationWebhookEndpoint({
                 webhookEndpointId: seededPushEndpointId,
@@ -592,7 +617,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                 signal: controller.signal,
             });
             if (!alive || controller.signal.aborted || !accountLifetime.isCurrent()) return;
-            setSeededWebhookBinding(result.kind === 'available' ? result.binding : null);
+            setSeededWebhookRead(result.kind === 'available' ? { binding: result.binding, accountLifetime } : null);
             advanceRevision();
         })();
         return () => {
@@ -922,6 +947,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         observationTransport: effectiveObservationTransport,
         setObservationTransport,
         webhookEndpoint,
+        seededObservationMachineId: seededWebhookBinding?.targetMaterialization.machineId ?? null,
         refreshWebhookEndpoint: webhookEndpointId === null ? null : refreshWebhookEndpoint,
         webhookEndpointRefreshing,
         watcherCandidates,
@@ -951,6 +977,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         eraseConfiguredSource,
         setObservationTransport,
         webhookEndpoint,
+        seededWebhookBinding,
         webhookEndpointId,
         webhookEndpointRefreshing,
         refreshWebhookEndpoint,

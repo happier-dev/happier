@@ -122,7 +122,9 @@ describe('definition flow projection', () => {
       failurePolicy: 'fail_stop',
       branches: [{ id: 'lint', blocks: [step('run-lint')] }],
     }]));
-    expect(projection.nodesById.get('checks')?.label).toContain('1');
+    // An unnamed fork reads as its kind, its lane count the quiet detail beside it (DESIGN-9 P5).
+    expect(projection.nodesById.get('checks')?.label).toBe(t('workflows.editor.addParallel'));
+    expect(projection.nodesById.get('checks')?.labelDetail).toContain('1');
     expect(projection.nodesById.get('checks#lint')?.label).toContain('1');
   });
 

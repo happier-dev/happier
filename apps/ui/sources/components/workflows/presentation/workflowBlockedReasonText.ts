@@ -7,6 +7,8 @@ import type {
     WorkflowCommandBlockedReason,
     WorkflowRunInputFieldState,
 } from '@/sync/domains/workflows/workflowAuthoring';
+import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
+import { formatWorkflowIssueText } from '../editor/workflowIssueText';
 import { t } from '@/text';
 
 const WORKFLOW_INPUT_VALUE_TYPE_LABEL_KEYS = {
@@ -58,7 +60,9 @@ export function describeWorkflowInputRepair(params: Readonly<{
 export function describeWorkflowCommandBlockedReason(params: Readonly<{
     reason: WorkflowCommandBlockedReason | null;
     /** The first issue the canonical validator reported, when there is one. */
-    blockingIssue?: Readonly<{ code: WorkflowValidationIssue['code'] }> | null;
+    blockingIssue?: Pick<WorkflowValidationIssue, 'code' | 'path'> & Partial<Pick<WorkflowValidationIssue, 'blockId'>> | null;
+    /** The draft the issue belongs to, so the reason names its field in the editor's own words. */
+    draft?: WorkflowEditorDraft;
 }>): string | null {
     switch (params.reason) {
         case null:
@@ -75,6 +79,6 @@ export function describeWorkflowCommandBlockedReason(params: Readonly<{
         case 'definition_invalid':
             return params.blockingIssue == null
                 ? null
-                : t(`workflows.issue.${params.blockingIssue.code}`);
+                : formatWorkflowIssueText(params.blockingIssue, params.draft);
     }
 }

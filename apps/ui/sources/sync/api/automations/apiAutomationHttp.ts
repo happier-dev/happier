@@ -51,12 +51,12 @@ export async function readAutomationJsonOrThrow(response: Response): Promise<unk
 export function getAutomationAuthHeaders(
     credentials: AuthCredentials,
     options: Readonly<{ includeJsonContentType?: boolean }> = {},
-): HeadersInit {
-    const headers: HeadersInit = {
+): Record<string, string> {
+    const headers: Record<string, string> = {
         Authorization: `Bearer ${credentials.token}`,
     };
     if (options.includeJsonContentType) {
-        (headers as Record<string, string>)['Content-Type'] = 'application/json';
+        headers['Content-Type'] = 'application/json';
     }
     return headers;
 }

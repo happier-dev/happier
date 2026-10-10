@@ -17,6 +17,14 @@ describe('workflow Run routes', () => {
             .toBe('/workflows/runs/run%2F42%20a?invocationId=invocation%2F7%20b');
     });
 
+    it('retains an explicit Home without changing unqualified destinations', () => {
+        expect(createWorkflowRunRoute('run/42 a', 'home/1 a'))
+            .toBe('/workflows/runs/run%2F42%20a?serverId=home%2F1%20a');
+        expect(createWorkflowRunRoute('run/42 a', null)).toBe('/workflows/runs/run%2F42%20a');
+        expect(createWorkflowInvocationRoute('run/42 a', 'invocation/7 b', 'home/1 a'))
+            .toBe('/workflows/runs/run%2F42%20a?invocationId=invocation%2F7%20b&serverId=home%2F1%20a');
+    });
+
     it('routes attached and detached leaves through the existing machine Run inspector', () => {
         expect(createMachineExecutionRunRoute('server/1', 'machine/1', 'execution/run 1'))
             .toBe('/runs?serverId=server%2F1&machineId=machine%2F1&runId=execution%2Frun%201');

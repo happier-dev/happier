@@ -7,6 +7,7 @@ import type {
 } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowInvocationLifecycleV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { SessionWorkflowAgentStatusV1, SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
+import { listWorkflowBlockOrdinalsV1 } from '@happier-dev/protocol/workflows/workflowStepLabel';
 import { t } from '@/text';
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 import { buildHappierWorkMap, type HappierWorkMap, type HappierWorkMapPlaced } from '@happier-dev/plugin-ui/presentation';
@@ -71,6 +72,8 @@ export type WorkflowFlowNodeDeclaration = Readonly<{
   kind: WorkflowFlowNodeKind;
   editTarget: WorkflowFlowEditTarget | null;
   label: string;
+  /** The quiet fact after the name, in the regular face (a fork's "2 lanes"). */
+  labelDetail?: string;
   parentNodeId: string | null;
   /** Opening a Flow node selects it in the workflow surface that shows it. */
   open: Readonly<{ kind: 'workflow-step'; nodeId: string }>;
@@ -86,6 +89,8 @@ export type WorkflowFlowNodeDeclaration = Readonly<{
   returns?: readonly string[];
   /** This block produces the workflow's final output. */
   finalOutput?: boolean;
+  /** A leaf's visible number in its own definition (`workflowBlockOrdinalV1`); containers have none. */
+  stepOrdinal?: string;
 }>;
 
 /** A Flow node placed on the Work map: `depth`, 1-based rail `ordinal`, `childNodeIds`. */
@@ -113,7 +118,7 @@ export function resolveWorkflowFlowScopedNodeId(blockId: string, workflowPath: r
 }
 
 /** A declared result's named fields, as the person reads them. Text and decision results name none. */
-function declaredResultFields(result: WorkflowResultContract | undefined): readonly string[] | undefined {
+export function listWorkflowDeclaredResultFields(result: WorkflowResultContract | undefined): readonly string[] | undefined {
   if (result?.kind !== 'json' || result.schema.type !== 'object' || !result.schema.properties) return undefined;
   const fields = Object.entries(result.schema.properties).map(([name, field]) => field?.title ?? name);
   return fields.length > 0 ? fields : undefined;
@@ -153,9 +158,12 @@ export function projectWorkflowFlow(
     declarations.push(declareFlowNode(node));
   };
   const finalOutputBlockId = definition.finalOutput?.producer.blockId ?? null;
-  const resultFacts = (block: WorkflowBlock, workflowPath: readonly string[]) => {
-    const returns = block.kind === 'step' || block.kind === 'wait' ? declaredResultFields(block.result) : undefined;
+  const rootOrdinals = listWorkflowBlockOrdinalsV1(definition.blocks);
+  const resultFacts = (block: WorkflowBlock, workflowPath: readonly string[], ordinals: ReadonlyMap<string, string>) => {
+    const stepOrdinal = ordinals.get(block.id);
+    const returns = block.kind === 'step' || block.kind === 'wait' ? listWorkflowDeclaredResultFields(block.result) : undefined;
     return {
+      ...(stepOrdinal === undefined ? {} : { stepOrdinal }),
       ...(returns === undefined ? {} : { returns }),
       // Only the root definition's own producer is this Run's final output.
       ...(workflowPath.length === 0 && block.id === finalOutputBlockId ? { finalOutput: true } : {}),
@@ -168,6 +176,8 @@ export function projectWorkflowFlow(
     workflowPath: readonly string[] = [],
     childEditTarget: WorkflowFlowEditTarget | null = null,
     refs: readonly string[] = [],
+    // The visible ordinals of the definition this list belongs to (a nested workflow numbers its own).
+    ordinals: ReadonlyMap<string, string> = rootOrdinals,
   ): void => {
     list.forEach((block) => {
       const nodeId = resolveWorkflowFlowScopedNodeId(block.id, workflowPath);
@@ -184,13 +194,14 @@ export function projectWorkflowFlow(
             label: workflowBlockReferenceLabel(block, blockLabels[nodeId]),
             parentNodeId,
             observed: false,
-            ...resultFacts(block, workflowPath),
+            ...resultFacts(block, workflowPath, ordinals),
           });
           if (block.kind === 'workflow') {
             const child = frozenChildren[block.workflowRef];
             // Drafts may contain cycles; accepted definitions are admission-validated.
             if (child !== undefined && !refs.includes(block.workflowRef)) {
-              visitList(child.blocks, nodeId, [...workflowPath, block.id], editTarget, [...refs, block.workflowRef]);
+              visitList(child.blocks, nodeId, [...workflowPath, block.id], editTarget, [...refs, block.workflowRef],
+                listWorkflowBlockOrdinalsV1(child.blocks));
             }
           }
           break;
@@ -204,7 +215,7 @@ export function projectWorkflowFlow(
             label: workflowBlockReferenceLabel(block, blockLabels[nodeId]),
             parentNodeId,
             observed: false,
-            ...resultFacts(block, workflowPath),
+            ...resultFacts(block, workflowPath, ordinals),
           });
           break;
         case 'parallel': {
@@ -213,8 +224,11 @@ export function projectWorkflowFlow(
             blockId: block.id,
             kind: 'parallel',
             editTarget,
-            // 07 S14 / 05 §4.4: the fork reads as its sentence, not a structural name.
-            label: workflowBlockReferenceLabel(block, t('workflows.page.inspector.lanes', { count: block.branches.length })),
+            // 07 S14 / 05 §4.4: the fork reads as its sentence, not a structural name: its authored name
+            // (else "Side by side"), then its lane count as the quiet detail ("Side by side · 2 lanes",
+            // lab nav-N3 `.wm-forkhd`: the name bold, the count regular).
+            label: block.name?.trim() ? workflowBlockReferenceLabel(block) : t('workflows.editor.addParallel'),
+            labelDetail: t('workflows.page.inspector.laneCount', { count: block.branches.length }),
             parentNodeId,
             failurePolicy: block.failurePolicy,
             ...(block.maxConcurrent === undefined ? {} : { maxConcurrent: block.maxConcurrent }),
@@ -229,11 +243,12 @@ export function projectWorkflowFlow(
               // A branch is a frame inside its group, not a block: the group is
               // the editor that can be revealed for it.
               editTarget,
-              label: t('workflows.page.inspector.lane', { position: branchIndex + 1 }),
+              // A lane carries its authored name, else "Lane {n}" (07).
+              label: branch.name ?? t('workflows.page.inspector.lane', { position: branchIndex + 1 }),
               parentNodeId: nodeId,
               observed: false,
             });
-            visitList(branch.blocks, branchNodeId, workflowPath, childEditTarget, refs);
+            visitList(branch.blocks, branchNodeId, workflowPath, childEditTarget, refs, ordinals);
           });
           break;
         }
@@ -256,7 +271,7 @@ export function projectWorkflowFlow(
               : {}),
             observed: false,
           });
-          visitList(block.body, nodeId, workflowPath, childEditTarget, refs);
+          visitList(block.body, nodeId, workflowPath, childEditTarget, refs, ordinals);
           if (block.repetition.kind === 'evaluate') {
             const evaluator = block.repetition.evaluator;
             pushNode({
@@ -267,6 +282,7 @@ export function projectWorkflowFlow(
               label: workflowBlockReferenceLabel(evaluator, t('workflows.editor.evaluator')),
               parentNodeId: nodeId,
               observed: false,
+              ...(ordinals.get(evaluator.id) === undefined ? {} : { stepOrdinal: ordinals.get(evaluator.id)! }),
             });
           }
           break;
@@ -291,7 +307,7 @@ export function projectWorkflowFlow(
             parentNodeId: nodeId,
             observed: false,
           });
-          visitList(block.then, thenNodeId, workflowPath, childEditTarget, refs);
+          visitList(block.then, thenNodeId, workflowPath, childEditTarget, refs, ordinals);
           if (block.otherwise.length > 0) {
             const otherwiseNodeId = resolveWorkflowFlowScopedNodeId(`${block.id}#otherwise`, workflowPath);
             pushNode({
@@ -303,7 +319,7 @@ export function projectWorkflowFlow(
               parentNodeId: nodeId,
               observed: false,
             });
-            visitList(block.otherwise, otherwiseNodeId, workflowPath, childEditTarget, refs);
+            visitList(block.otherwise, otherwiseNodeId, workflowPath, childEditTarget, refs, ordinals);
           }
           break;
         }

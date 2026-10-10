@@ -29,8 +29,10 @@ export function useWorkflowCardModal<C extends CustomModalComponentType<any>>(pa
     testID: string;
     onRequestClose?: () => void;
     focusReturnRef?: FocusReturnRef;
+    phonePresentation?: 'card' | 'sheet';
+    material?: 'glass' | 'solid';
 }>): void {
-    const { open, component, props, identity, title, subtitle, testID, onRequestClose, focusReturnRef } = params;
+    const { open, component, props, identity, title, subtitle, testID, onRequestClose, focusReturnRef, phonePresentation, material } = params;
     const modalRef = React.useRef<Readonly<{ id: string; identity: string | null | undefined }> | null>(null);
     // The closing intent belongs to the latest render, but the sheet is shown
     // once: reading it through a ref keeps a stale callback out of the modal
@@ -60,15 +62,17 @@ export function useWorkflowCardModal<C extends CustomModalComponentType<any>>(pa
             ...(focusReturnRef === undefined ? {} : { focusReturnRef }),
             chrome: {
                 kind: 'card',
+                ...(material === undefined ? {} : { material }),
                 title,
                 ...(subtitle === undefined ? {} : { subtitle }),
                 testID,
                 bodyScroll: 'auto',
+                ...(phonePresentation === undefined ? {} : { phonePresentation }),
                 dimensions: { width: 520, maxHeightRatio: 0.92, size: 'md' },
             },
         });
         modalRef.current = { id, identity };
-    }, [component, focusReturnRef, identity, open, props, subtitle, testID, title]);
+    }, [component, focusReturnRef, identity, material, open, phonePresentation, props, subtitle, testID, title]);
 
     // A route change while the sheet is up must not leave it mounted.
     React.useEffect(() => () => {

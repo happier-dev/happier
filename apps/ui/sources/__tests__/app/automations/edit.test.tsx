@@ -16,7 +16,10 @@ const route = vi.hoisted(() => ({ params: {} as Record<string, string> }));
 const read = vi.hoisted(() => vi.fn());
 const execute = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/sync', () => ({ sync: { refreshAutomationDefinitionDetail: read } }));
-vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({ createFrontDoorActionExecute: () => execute }));
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>(),
+    createFrontDoorActionExecute: () => execute,
+}));
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router'))
     .createExpoRouterMock({ params: () => route.params }).module);
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());

@@ -37,7 +37,7 @@ export function WorkflowFinalOutputEditor(props: Readonly<{
                     title: t('workflows.finalOutput.title'), subtitle: t('workflows.finalOutput.explain'),
                     showSelectedSubtitle: false, field: { invalid: unavailable },
                     detailFormatter: () => selected === undefined ? t('workflows.finalOutput.none') : formatWorkflowValueReference(props.draft, selected),
-                    itemProps: { accessoryLayout: 'stacked', testID: `${props.testIDPrefix}-final-output-trigger` },
+                    itemProps: { accessoryLayout: 'stacked', showDivider: false, testID: `${props.testIDPrefix}-final-output-trigger` },
                 }}
                 onSelect={(id) => {
                     setOpen(false);

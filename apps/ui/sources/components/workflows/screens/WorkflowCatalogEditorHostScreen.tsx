@@ -120,7 +120,7 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
             key: 'workflow-start-where', icon: 'folder', title: t('workflows.page.where.label'),
             label: formatWorkflowWhereSummary({ target, machineName: machine ? getMachineDisplayName(machine) : null }) ?? t('workflows.page.where.choose'),
             testID: `${prefix}:run-where`,
-            renderContent: <WorkflowProjectTargetControl target={target} machines={machines} onChange={setTarget}
+            renderContent: <WorkflowProjectTargetControl purpose="workflow" target={target} machines={machines} onChange={setTarget}
                 machineName={machine ? getMachineDisplayName(machine) : null} testIDPrefix={`${prefix}:run`} />,
         }), controlId: 'path' }],
         onRun: (inputs, overrides) => { void admit(inputs, overrides); }, onCancel: () => { runNow.clearRefusal(); setOpen(false); },
@@ -144,7 +144,7 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
             selectedBlockId={selectedBlockId} onSelectBlock={setSelectedBlockId} onCustomizeBlock={() => {}}
             view={view} onChangeView={setView}
             {...(sessionBound && builtin !== null
-                ? { runNowAction: <WorkflowBuiltinSessionButton entry={builtin} testID={`${prefix}-run-now`} /> }
+                ? { runNowAction: <WorkflowBuiltinSessionButton entry={builtin} primary testID={`${prefix}-run-now`} /> }
                 : { onRunNow: () => setOpen(true), runNowAnchorRef: runAnchorRef })}
             onDuplicate={duplicate} onExportJson={() => { void exportSource(); }}
             menuActions={[{ id: 'export', title: t('workflows.exportJson'), onSelect: () => { void exportSource(); } }]}

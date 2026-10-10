@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Text } from 'react-native';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
@@ -8,8 +9,8 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
-import { createWorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
-import { WorkflowEditorBody } from './WorkflowEditorBody';
+import { createWorkflowEditorDraft, insertWorkflowEditorBlock } from '@/sync/domains/workflows/workflowEditorDraft';
+import { WorkflowEditorBody, type WorkflowEditorCommands } from './WorkflowEditorBody';
 
 const nativeWindow = vi.hoisted(() => ({ width: 400, height: 800 }));
 
@@ -23,11 +24,7 @@ vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock();
 });
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
-    useNavigation: () => ({}),
-    useLocalSearchParams: () => ({}),
-}));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 // This native Markdown SDK is not installed in the source harness. These
 // empty-document command cases never render Markdown or exercise its codec.
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
@@ -40,6 +37,29 @@ beforeEach(() => {
 afterEach(async () => { await standardCleanup(); });
 
 describe('Workflow editor reviewed-copy disclosure', () => {
+    it.each(['save', 'runNow'] as const)('keeps pristine issues silent and reveals one repair readout after refused %s', async command => {
+        nativeWindow.width = 390;
+        const commands = React.createRef<WorkflowEditorCommands>();
+        const onSave = vi.fn();
+        const onRunNow = vi.fn();
+        const draft = insertWorkflowEditorBlock(createWorkflowEditorDraft({
+            draftId: `untouched-${command}`, name: 'Release check', blocks: [],
+        }), { request: { kind: 'wait' }, list: { kind: 'root' } }).draft;
+        const screen = await renderScreen(<AppPaneProvider><WorkflowEditorBody
+            draft={draft} commandsRef={commands} onChange={vi.fn()} onSave={onSave} onRunNow={onRunNow}
+            machineName={null} selectedBlockId={null} onSelectBlock={vi.fn()} onCustomizeBlock={vi.fn()}
+            composerScope={{ kind: 'machine', machineId: null }} view="steps" onChangeView={vi.fn()}
+        /></AppPaneProvider>);
+        expect(screen.findByTestId('workflow-editor-validity')).toBeNull();
+        expect(screen.getTextContent()).not.toContain('Write what you should check or decide here.');
+        await act(async () => commands.current?.[command]());
+        expect(onSave).not.toHaveBeenCalled();
+        expect(onRunNow).not.toHaveBeenCalled();
+        expect(screen.findAllHostsByTestId('workflow-editor-validity')).toHaveLength(1);
+        // The editor's coarse count remains a quiet link; the now-revealed field states its repair.
+        expect(screen.findHostByTestId('workflow-editor-validity')?.props.role).toBe('button');
+        expect(screen.getTextContent()).toContain('Write what you should check or decide here.');
+    });
     it.each(['notSaved', 'unsaved', 'failed'] as const)('offers Add and Save in the phone command bar for a %s draft', async (kind) => {
         nativeWindow.width = 390;
         const onSave = vi.fn();

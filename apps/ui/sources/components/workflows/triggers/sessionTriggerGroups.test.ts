@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { normalizeWorkflowIngress, type WorkflowTriggerSetV1 } from '@happier-dev/protocol';
+import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -7,6 +8,7 @@ vi.mock('@/text', async () => {
 });
 
 const { projectSessionTriggerGroups, describeLegacyTriggerSet } = await import('./sessionTriggerGroups');
+const { formatClockTime } = await import('./triggerSchedule');
 
 function inline(blocks: unknown[]) {
     const outcome = normalizeWorkflowIngress({ version: 1, blocks });
@@ -34,6 +36,19 @@ function set(automationId: string, overrides: Record<string, unknown>): Workflow
 }
 
 describe('projectSessionTriggerGroups', () => {
+    it('shows the real failed last result rather than treating the last firing as success', () => {
+        const groups = projectSessionTriggerGroups({ sets: [set('habit', { target: inline(['Digest']), triggers: [daily('daily', '0 9 * * *')] })],
+            lastRunAtByAutomationId: { habit: 1000 }, lastRunsByAutomationId: { habit: createWorkflowRunSummaryFixture({ state: 'failed' }) },
+            resolveWorkflowTitle: () => null, formatAge: String });
+        expect(groups[0]?.rows[0]?.outcome).toMatchObject({ tone: 'danger' });
+    });
+    it('shows the scheduler-owned next occurrence on a current habit', () => {
+        const groups = projectSessionTriggerGroups({
+            sets: [set('habit', { target: inline(['Daily digest']), triggers: [{ ...daily('daily', '0 9 * * 1-5'), nextRunAt: 1000 }] })],
+            lastRunAtByAutomationId: {}, resolveWorkflowTitle: () => null, formatAge: String,
+        });
+        expect(groups[0]?.rows[0]?.qualifier).toContain('workflows.triggers.row.nextRun');
+    });
     it.each([
         ['session_key_required', 'workflows.triggers.row.sessionKeyRequired'],
         ['migration_required', 'workflows.triggers.row.templateRecoveryRequired'],
@@ -107,7 +122,7 @@ describe('projectSessionTriggerGroups', () => {
         expect(groups.map((group) => [group.id, group.glyph])).toEqual([
             ['lifecycle:turnEnds', 'arrows-clockwise'],
             ['lifecycle:needsYou', 'hand'],
-            ['schedule:workflows.triggers.summary.everyDayAt(time=09:00)', 'clock'],
+            [`schedule:workflows.triggers.summary.everyDayAt(time=${formatClockTime({ hour: 9, minute: 0 })})`, 'clock'],
             ['lifecycle:sessionArchived', 'archive'],
         ]);
         expect(groups[0]!.rows.map((row) => [row.title, row.enabled, row.outcome?.text ?? null, row.revision])).toEqual([

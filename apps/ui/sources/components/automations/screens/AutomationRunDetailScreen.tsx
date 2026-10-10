@@ -35,6 +35,7 @@ import type { AutomationDefinitionRun } from '@/sync/domains/automations/automat
 import { formatAutomationErrorMessage } from '@/components/automations/automationErrorFormatting';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { Icon } from '@/components/ui/icons/Icon';
+import { TriggerFromActivityEvent } from '@/components/workflows/triggers/TriggerFromActivityEvent';
 
 const stylesheet = StyleSheet.create((theme) => ({
     loading: {
@@ -180,7 +181,7 @@ function getRunTargetPrompt(target: AutomationRunDetailTarget): string {
     }
 }
 
-function AutomationRunDetailEvidenceItems(props: Readonly<{
+export function AutomationRunDetailEvidenceItems(props: Readonly<{
     evidence: AutomationRunDetailEvidence;
 }>): React.ReactElement | null {
     const { evidence } = props;
@@ -215,6 +216,7 @@ function AutomationRunDetailEvidenceItems(props: Readonly<{
                     copy={payload}
                     showChevron={false}
                 />
+                <TriggerFromActivityEvent evidence={evidence} />
             </>
         );
     }
@@ -552,13 +554,18 @@ export function AutomationRunDetailScreen(): React.ReactElement {
         ? directDetailState.value
         : null;
     const directDetailIsCurrent = directDetail !== null
-        && (!cachedRun || directDetail.detail.updatedAt >= cachedRun.updatedAt);
+        && (!cachedRun || directDetail.detail.revision > cachedRun.revision
+            || (directDetail.detail.revision === cachedRun.revision
+                && directDetail.detail.updatedAt >= cachedRun.updatedAt));
     const run = directDetailIsCurrent
         ? directDetail.detail
         : cachedRun;
     const privateContent = directDetailIsCurrent
         ? directDetail.privateContent
         : null;
+    const workflowRunId = directDetailIsCurrent
+        ? directDetail.detail.workflowRun?.workflowRunId
+        : undefined;
     const loading = loadingState.generation !== routeGeneration || loadingState.value;
     const loadFailed = loadFailureState.generation === routeGeneration && loadFailureState.value;
     const cancelling = cancellingState.generation === routeGeneration && cancellingState.value;
@@ -1030,6 +1037,17 @@ export function AutomationRunDetailScreen(): React.ReactElement {
                                     onPress={() => void handleDeliverResultAgain(run.revision)}
                                     loading={redeliveringResult}
                                     showChevron={false}
+                                />
+                            ) : null}
+                            {workflowRunId ? (
+                                <Item
+                                    testID="automation-run-open-workflow"
+                                    title={t('runs.runLabel', { runId: workflowRunId })}
+                                    subtitle={t('automations.detail.runDetail.title')}
+                                    onPress={() => navigateWithBlurOnWeb(() => {
+                                        if (!accountLifetime?.isCurrent()) return;
+                                        router.push(`/workflows/runs/${workflowRunId}` as never);
+                                    })}
                                 />
                             ) : null}
                             {producedSessionId ? (

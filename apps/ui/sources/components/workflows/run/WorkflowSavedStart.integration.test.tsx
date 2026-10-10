@@ -8,6 +8,7 @@ import {
     WorkflowRunRecipientCensusResponseV1Schema,
     WorkflowRunRecipientKeyEnvelopesV1Schema,
     WorkflowRunStartRequestV1Schema,
+    WorkflowDefinitionV1Schema,
     TargetedActionRpcRequestV1Schema,
     createAccountScopedCryptoMaterialSnapshotV1,
     convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
@@ -64,10 +65,8 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOrigin
 
 const accountId = 'saved-start-account';
 const definitionId = '8fab3a81-5e64-4000-8000-000000000001';
-const savedDefinition = createWorkflowDefinitionFixture({ inputs: [], defaults: {}, blocks: [{ kind: 'wait', id: 'wait',
+const savedWaitDefinition = createWorkflowDefinitionFixture({ inputs: [], defaults: {}, blocks: [{ kind: 'wait', id: 'wait',
     document: { text: 'Saved fieldless Wait', references: [], attachments: [] } }] });
-const reviewedDefinition = { ...savedDefinition, blocks: [{ ...savedDefinition.blocks[0],
-    document: { text: 'Reviewed unsaved Wait', references: [], attachments: [] } }] };
 const disposals: Array<() => Promise<void>> = [];
 afterEach(async () => {
     for (const dispose of disposals.splice(0).reverse()) await dispose();
@@ -78,7 +77,19 @@ afterEach(async () => {
 });
 
 describe('saved editor Start through the real front door and Account admission', () => {
-    it.each(['plain', 'e2ee'] as const)('admits the reviewed inline draft bound to a readable %s Artifact', async (mode) => {
+    it.each(['plain', 'e2ee', 'agent'] as const)('admits the reviewed inline draft bound to a readable %s Artifact', async (fixture) => {
+        const mode = fixture === 'e2ee' ? 'e2ee' : 'plain';
+        const savedDefinition = fixture === 'agent' ? WorkflowDefinitionV1Schema.parse({ version: 1, inputs: [],
+            defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
+            blocks: [{ kind: 'step', id: 'reply', document: { text: 'Reply exactly QA_FIN20_AGENT_READY. Do not use tools, edit files, or run commands.', references: [], attachments: [] },
+                execution: { acpSessionModeId: 'default', connectedServices: { v: 2, bindingsByServiceId: {
+                    'happier.agent.claude/claude-subscription': { source: 'connected', selection: 'profile', profileId: '00ae5eea-6286-48bc-b82a-30a5f8492864' },
+                    'happier.agent.claude/anthropic': { source: 'native' },
+                } }, engine: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+                    modelSelection: { v: 1, ref: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'claude-haiku-4-5' }, updatedAt: 1791577000000 }, effort: 'low' } }, input: [], result: { kind: 'text' } }],
+        }) : savedWaitDefinition;
+        const reviewedDefinition = { ...savedDefinition, blocks: [{ ...savedDefinition.blocks[0],
+            document: { text: 'Reviewed unsaved prompt', references: [], attachments: [] } }] };
         vi.stubGlobal('React', React);
         installShippedNativeFrameScheduler();
         const restorePlatform = withPopoverWebGlobals();

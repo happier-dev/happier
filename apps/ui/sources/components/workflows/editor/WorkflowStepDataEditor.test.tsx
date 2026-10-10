@@ -128,7 +128,8 @@ describe('WorkflowStepDataEditor field selects', () => {
         if (loop.kind !== 'loop' || condition.kind !== 'if') throw new Error('Invalid builtin fixture');
         const label = formatWorkflowConditionSentence(draft, condition.when);
         expect(label).not.toContain('"kind"');
-        expect(label).toContain('workflows.input.stopCondition');
+        // "Keep going until done stopped because …" — the stop condition read as itself (DESIGN-5 M4).
+        expect(label).toContain('workflows.condition.loopStoppedBecause');
         expect(formatWorkflowLoopSentence(draft, loop)).toContain('workflows.input.tokensUsed');
         expect(formatWorkflowValueReference(draft, { kind: 'iteration', field: 'position' })).toBe('workflows.input.iterationField.position');
         expect(formatWorkflowValueReference(draft, { kind: 'session_context', recentTurns: 1 })).toContain('workflows.input.sessionContext');

@@ -36,14 +36,16 @@ const styles = StyleSheet.create((theme) => ({
 
 export function WorkflowMissingDefinitionState(props: Readonly<{
     testID?: string;
+    /** A lost in-memory copy is not evidence that its original definition is missing. */
+    source?: 'definition' | 'unsaved-copy';
     /** Present wherever the route can return to the collection. */
     onOpenCollection?: () => void;
 }>): React.ReactElement {
     const testID = props.testID ?? 'workflow-missing-definition';
     return (
         <View testID={testID} style={styles.root} accessibilityRole="alert">
-            <Text style={styles.title}>{t('workflows.empty.missingTitle')}</Text>
-            <Text style={styles.body}>{t('workflows.empty.missingBody')}</Text>
+            <Text style={styles.title}>{t(props.source === 'unsaved-copy' ? 'workflows.empty.missingDraftTitle' : 'workflows.empty.missingTitle')}</Text>
+            <Text style={styles.body}>{t(props.source === 'unsaved-copy' ? 'workflows.empty.missingDraftBody' : 'workflows.empty.missingBody')}</Text>
             {props.onOpenCollection === undefined ? null : (
                 <ToolbarButton
                     testID={`${testID}-open-collection`}

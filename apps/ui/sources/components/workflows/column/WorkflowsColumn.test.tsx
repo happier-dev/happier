@@ -12,10 +12,12 @@ import { createWorkBoardV1, getBuiltinWorkflowCatalogV1, normalizeSessionListFil
 import { createWorkflowDefinitionRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { useBoardMembership } from '@/components/boards/model/useBoardContent';
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { configureSessionDraftRepository, resetSessionDraftRepositoryForTests, writeNewSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { WorkflowsRunsRoute } from '@/app/(app)/workflows/runs/index';
 import { WorkflowsColumn } from './WorkflowsColumn';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { UniversalSearchRuntimeProvider } from '@/components/appShell/search/UniversalSearchRuntimeContext';
+import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 
 const searchRuntime = { open: () => {}, buildCommands: () => [] };
 
@@ -25,17 +27,18 @@ function TestAuth({ children }: React.PropsWithChildren) {
 
 const executeMock = vi.hoisted(() => vi.fn());
 const routerPush = vi.hoisted(() => vi.fn());
-const routeState = vi.hoisted(() => ({ params: {} as Record<string, string> }));
+const routeState = vi.hoisted(() => ({ pathname: '/workflows', params: {} as Record<string, string> }));
 
 // The Action front door is the transport boundary; the list clients, parsers, Run store and
 // projections below it stay real.
-vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>(),
     createFrontDoorActionExecute: () => executeMock,
 }));
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({ pathname: '/workflows', params: () => routeState.params, router: { push: routerPush } }).module;
+    return createExpoRouterMock({ pathname: () => routeState.pathname, params: () => routeState.params, router: { push: routerPush } }).module;
 });
 
 vi.mock('react-native-unistyles', async () => {
@@ -68,11 +71,6 @@ vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
         getCredentialsForServerUrl: async () => ({ token: 'header.eyJzdWIiOiJhY2NvdW50LWEifQ==.signature' }),
     } };
 });
-vi.mock('@/sync/runtime/orchestration/connectionManager', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/runtime/orchestration/connectionManager')>(),
-    getAppliedActiveServerSnapshot: () => appliedSnapshot(),
-    isAppliedActiveServerRuntimeAvailable: () => true,
-}));
 let appliedSnapshot: typeof import('@/sync/domains/server/serverRuntime')['getActiveServerSnapshot'];
 
 const waiting = createWorkflowRunSummaryFixture({ id: 'run-waiting', state: 'running', ownerAccountId: 'account-a', startedBy: 'user', attentionRequired: true });
@@ -97,13 +95,19 @@ function answerLists() {
 }
 
 let previousStorageState = storage.getState();
+let previousAppliedSnapshot = getAppliedActiveServerSnapshot();
+let previousRuntimeAvailable = isAppliedActiveServerRuntimeAvailable();
 beforeEach(async () => {
+    routeState.pathname = '/workflows';
     routeState.params = {};
     previousStorageState = storage.getState();
+    previousAppliedSnapshot = getAppliedActiveServerSnapshot();
+    previousRuntimeAvailable = isAppliedActiveServerRuntimeAvailable();
     await loadSyncSingletonForTests();
     const runtime = await import('@/sync/domains/server/serverRuntime');
     appliedSnapshot = runtime.getActiveServerSnapshot;
     const profile = await runtime.upsertAndActivateServer({ serverUrl: 'http://unified-column.test', name: 'Column Home' });
+    publishAppliedActiveServerSnapshot(appliedSnapshot());
     const { settingsDefaults } = await import('@/sync/domains/settings/settings');
     storage.setState({
         profileScope: { serverId: profile.id, accountId: 'account-a' },
@@ -116,15 +120,36 @@ beforeEach(async () => {
 
 afterEach(async () => {
     standardCleanup();
+    resetSessionDraftRepositoryForTests();
     const { resetWorkflowLibraryReadsForTests } = await import('@/components/workflows/library/workflowLibraryReads');
     resetWorkflowLibraryReadsForTests();
     (await import('@/sync/domains/scope/activeServerAccountScope')).retireActiveServerAccountScopeLifetime();
     executeMock.mockReset();
     routerPush.mockReset();
     storage.setState(previousStorageState);
+    publishAppliedActiveServerSnapshot(previousAppliedSnapshot, previousRuntimeAvailable);
 });
 
 describe('WorkflowsColumn', () => {
+    it('selects only the exact open definition and clears that selection on the library home', async () => {
+        answerLists();
+        const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+        const selected = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.findAll(node =>
+            typeof node.props.testID === 'string' && node.props.testID.startsWith('workflows-column:')
+            && typeof node.props.href === 'string' && node.props.selected === true).map(node => node.props.testID);
+        const column = () => <DestinationInstanceHost tabId="workflow" ref={{ kind: 'workflows', params: {} }}
+            pathname={routeState.pathname} focused visible navigation={{ push: routerPush, replace: () => {}, back: () => {} }}>
+            <WorkflowsColumn /></DestinationInstanceHost>;
+        routeState.pathname = '/workflows/builtin%3Aplan-with-a-panel';
+        const screen = await renderScreen(column(), { wrapper: TestAuth });
+        expect(selected(screen)).toEqual(['workflows-column:builtin:builtin:plan-with-a-panel']);
+        routeState.pathname = '/workflows/builtin%3Areview-and-converge';
+        await screen.update(column());
+        expect(selected(screen)).toEqual(['workflows-column:builtin:builtin:review-and-converge']);
+        routeState.pathname = '/workflows';
+        await screen.update(column());
+        expect(selected(screen)).toEqual([]);
+    });
     it('shows the reason for unavailable own and shared definitions beside readable neighbors', async () => {
         answerLists();
         const answer = executeMock.getMockImplementation()!;
@@ -161,10 +186,12 @@ describe('WorkflowsColumn', () => {
         const flattened = () => StyleSheet.flatten(typeof target().props.style === 'function'
             ? target().props.style({ pressed: false }) : target().props.style);
         expect(target().props.role ?? target().props.accessibilityRole).toBe('link');
-        const restingBorder = flattened()?.borderColor;
+        const restingOutline = flattened()?.outlineColor;
         await act(async () => { target().props.onFocus({ target: { matches: () => true } }); });
-        expect(flattened()?.borderColor).toBeTruthy();
-        expect(flattened()?.borderColor).not.toBe(restingBorder);
+        expect(flattened()?.outlineStyle).toBe('solid');
+        expect(flattened()?.outlineWidth).toBeGreaterThan(0);
+        expect(flattened()?.outlineColor).toBeTruthy();
+        expect(flattened()?.outlineColor).not.toBe(restingOutline);
         await screen.pressByTestIdAsync('workflows-column:library:failed:retry');
         expect(executeMock.mock.calls.filter(([actionId]) => actionId === 'workflow.definition.list').length).toBeGreaterThan(1);
     });
@@ -208,6 +235,10 @@ describe('WorkflowsColumn', () => {
     });
     it('lets the Runs view open a run through the shared Sessions list', async () => {
         answerLists();
+        const scope = storage.getState().profileScope!;
+        configureSessionDraftRepository({ scope, syncEnabled: false });
+        const draftId = '99999999-9999-4999-8999-999999999999';
+        writeNewSessionDraft({ scope, draftId, patch: { text: 'Unsent Session draft' }, materializationIntent: 'seeded' });
         const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
         await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
@@ -220,6 +251,7 @@ describe('WorkflowsColumn', () => {
         expect(screen.tree.root.findAll((node) => /workflows-column:(needsYou|running|history):/.test(String(node.props?.testID ?? '')))).toHaveLength(0);
         const runRows = screen.tree.root.findAll((node) => node.props?.testID === 'workflow-run-row:run-waiting' && typeof node.props.onPress === 'function');
         expect(runRows.length).toBeGreaterThan(0);
+        expect(screen.findByTestId(`session-draft-row:new-session:${draftId}`)).toBeNull();
         await act(async () => { runRows[0]!.props.onPress(); });
         expect(routerPush).toHaveBeenCalledWith('/workflows/runs/run-waiting');
 
@@ -246,6 +278,10 @@ describe('WorkflowsColumn', () => {
             // One row anatomy in the column: no inline Run now / Choose a session… beside the row.
             expect(screen.findAllHostsByTestId(`workflow-builtins:${entry.id}:run`)).toHaveLength(0);
             expect(screen.findAllHostsByTestId(`workflow-builtins:${entry.id}:session`)).toHaveLength(0);
+            const mark = screen.findAll(node => node.props.testID === `workflows-column:builtin:${entry.id}`)[0]!;
+            const marks = mark.findAll(node => typeof node.props.name === 'string').map(node => node.props.name);
+            const expectedMark = { goal: 'target', review: 'shield-check', plan: 'list-checks', pull_request: 'git-pull-request' }[entry.purpose];
+            expect(marks).toContain(expectedMark);
             await screen.pressByTestIdAsync(`workflows-column:builtin:${entry.id}`);
             expect(routerPush).toHaveBeenLastCalledWith(createWorkflowDefinitionRoute(entry.id));
         }

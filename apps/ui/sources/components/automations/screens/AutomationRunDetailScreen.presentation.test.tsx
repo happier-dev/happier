@@ -84,6 +84,18 @@ function lifecycleCause(event: 'parentTurnCompleted' | 'sessionStarted' | 'sessi
 }
 
 describe('frozen Run detail presentation', () => {
+    it('offers authoring from exact retained event evidence without inventing a second activity feed', async () => {
+        const { AutomationRunPluginEventTriggerEvidenceV1Schema } = await import('@happier-dev/protocol/automations/automationRunExecutionRecipeV1');
+        const evidence = AutomationRunPluginEventTriggerEvidenceV1Schema.parse({
+            v: 1, kind: 'pluginEvent', eventRef: { pluginId: 'acme.github', localId: 'issue-opened' },
+            sourceSelectorId: '11111111-1111-4111-8111-111111111111', occurrenceId: 'github-delivery-1',
+            occurredAt: 100, sourceInstanceId: 'repository:42', sourceContractVersion: 3,
+            observationReceivedAt: 100, payload: { action: 'opened' }, filter: { version: 1, result: 'matched' },
+        });
+        const screen = await renderScreen(<presentation.AutomationRunDetailEvidenceItems evidence={evidence} />);
+        expect(screen.findByTestId('automation-run-event-create-trigger')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('repository:42');
+    });
     it('shows the admitted path rather than serializing its directory-intent object', () => {
         expect(presentation.formatRunTarget(newSessionTarget({ kind: 'path', path: '/work/project' })))
             .toBe(t('automations.detail.runDetail.newSession', { machineId: 'machine-1', directory: '/work/project' }));

@@ -133,6 +133,7 @@ function hasExactCurrentSetupPresentation(
     if (
         event.event.identity.pluginId !== event.setupAction.identity.pluginId
         || event.event.occurrenceId !== event.setupAction.occurrenceId
+        || !('materializationRef' in origin.origin)
     ) return false;
     const surface = event.setupSurface;
     return surface === undefined || (
@@ -166,7 +167,7 @@ function resolveCurrentSetupSnapshot(params: Readonly<{
 }>): CurrentSetupSnapshot | SetupOutcome {
     const inputs = params.inputs;
     const origin = params.origin;
-    if (!inputs || !origin || params.signal.aborted || !params.accountLifetime.isCurrent()) {
+    if (!inputs || !origin || !origin.materialization || !('materializationRef' in origin.origin) || params.signal.aborted || !params.accountLifetime.isCurrent()) {
         return { kind: 'unavailable' };
     }
     const event = inputs.automationEligibleEvents?.find((candidate) => (
@@ -268,6 +269,8 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
     const currentOrigin = params.resolveExecutionOrigin();
     if (
         !currentOrigin
+        || !currentOrigin.materialization
+        || !('materializationRef' in currentOrigin.origin)
         || !params.accountLifetime.isCurrent()
         || currentOrigin.origin.materializationRef.pluginId !== params.eligibleEvent.event.identity.pluginId
         || currentOrigin.materialization.pluginId !== params.eligibleEvent.event.identity.pluginId

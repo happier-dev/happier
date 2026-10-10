@@ -1,16 +1,14 @@
-import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import * as React from 'react';
 import { View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
-import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1, type HappierPressableStyleState } from '@happier-dev/plugin-ui/presentation';
 
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { Text } from '@/components/ui/text/Text';
 import { doWorkflowParallelBranchesUseSeparateConversations } from '@/sync/domains/workflows/workflowAuthoring';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
-import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
+import { resolveWorkflowUnnamedHeading, workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 import { t } from '@/text';
 
 import { updateWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
@@ -18,13 +16,14 @@ import { WORKFLOW_FAILURE_POLICIES, type WorkflowBlock, type WorkflowFailurePoli
 
 import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
 import { WorkflowBlockHeading, type WorkflowBlockNameEditor } from './WorkflowBlockHeading';
-import { WorkflowContainerSummary } from './WorkflowContainerSummary';
+import { WorkflowContainerBody, WorkflowContainerLane, WorkflowContainerOptionsControl } from './WorkflowContainerBody';
+import { WORKFLOW_BLOCK_KIND_GLYPH } from '@/components/workflows/presentation/workflowBlockKindGlyph';
 import { WorkflowNumberField } from './WorkflowNumberField';
 import { workflowEditorStyles } from './workflowEditorStyles';
 
 type ParallelBlock = Extract<WorkflowBlock, Readonly<{ kind: 'parallel' }>>;
 
-function failurePolicyLabel(policy: WorkflowFailurePolicy): string {
+export function failurePolicyLabel(policy: WorkflowFailurePolicy): string {
     return policy === 'fail_stop' ? t('workflows.failurePolicy.failStop') : t('workflows.failurePolicy.collectOutcomes');
 }
 
@@ -76,6 +75,18 @@ export function WorkflowMaxConcurrentControl(props: Readonly<{
             testID={props.testID}
         />
     );
+}
+
+/**
+ * The heading's meta after its name: "· 2 lanes · 3 at a time" (lab E1 "Side by side · 3 lanes"); the
+ * kind is the heading's mark and the failure policy its trailing select.
+ */
+function formatWorkflowGroupMeta(block: ParallelBlock): string {
+    const parts = [t('workflows.page.inspector.laneCount', { count: block.branches.length })];
+    if (block.maxConcurrent !== undefined && Number.isFinite(block.maxConcurrent)) {
+        parts.push(t('workflows.page.inspector.atATime', { count: block.maxConcurrent }));
+    }
+    return parts.join(' · ');
 }
 
 /** "Side by side · 2 lanes · Stop this group on failure · 3 at a time". */
@@ -148,18 +159,24 @@ export function WorkflowGroupOptions(props: Readonly<{
 }
 
 /**
- * Side by side in the document: the heading, the group read as one sentence
- * (pressing it opens the group's options), then one labelled lane per branch.
+ * Side by side in the document (lab `editor-E1`): the heading carries the
+ * group's kind mark, "Side by side · 2 lanes" as its meta and the failure
+ * policy as its trailing select (pressing it opens the group's options). Each
+ * lane hangs from the group's rail, named on the tree line, its own Remove in
+ * its `⋯`; Add a lane is in the group's `⋯`.
  *
- * The group is an open structure with a rail and indentation, not another
- * rounded card wrapped around rounded step cards. Its lanes are supplied by
- * the caller so the same recursive block list renders every nesting level.
+ * The group is an open structure with a rail, not another rounded card wrapped
+ * around rounded step cards. Its lanes are supplied by the caller so the same
+ * recursive block list renders every nesting level.
  */
 export function WorkflowGroupEditor(props: Readonly<{
     block: ParallelBlock;
     ordinal: number;
+    selected?: boolean;
     nameEditor?: WorkflowBlockNameEditor;
     actions: readonly WorkflowBlockAction[];
+    /** Registers the block's heading as its focus target (blocks without a prompt). */
+    focusRegistration?: (focus: (() => void) | null) => void;
     /** A reader's occurrence selector or state, in the heading line (04 §4.11). */
     headingAccessory?: React.ReactNode;
     onSelect: () => void;
@@ -167,69 +184,74 @@ export function WorkflowGroupEditor(props: Readonly<{
     onOpenOptions?: (anchorRef: React.RefObject<View | null>) => void;
     onAddBranch?: () => void;
     onRemoveBranch?: (branchId: string) => void;
+    /** Names a lane in place; absent in a reading document. */
+    onRenameBranch?: (branchId: string, name: string) => void;
+    /** Commits a lane rename to history (on blur or Enter). */
+    onCommitRename?: () => void;
     renderBranch: (branch: ParallelBlock['branches'][number], index: number) => React.ReactNode;
     testIDPrefix: string;
 }>): React.ReactElement {
-    const { theme } = useUnistyles();
     const displayName = workflowBlockReferenceLabel(props.block);
     const idPrefix = `${props.testIDPrefix}-parallel-${props.block.id}`;
-    const pressStyle = (state: HappierPressableStyleState) => [
-        workflowEditorStyles.actionTarget,
-        state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
+    const { onAddBranch, onRemoveBranch } = props;
+    // Add a lane joins the group's own actions, before the destructive one.
+    const actions = onAddBranch === undefined ? props.actions : [
+        ...props.actions.filter((action) => action.id !== 'remove'),
+        { id: 'addBranch' as const, label: t('workflows.editor.addBranch'), onSelect: onAddBranch },
+        ...props.actions.filter((action) => action.id === 'remove'),
     ];
 
     return (
         <View testID={idPrefix} style={workflowEditorStyles.blockBody}>
             <WorkflowBlockHeading
                 nameEditor={props.nameEditor}
+                kindMark={<Icon name={WORKFLOW_BLOCK_KIND_GLYPH.parallel} size={ICON_SIZE.sm} />}
                 ordinal={props.ordinal}
+                selected={props.selected}
+                unnamed={resolveWorkflowUnnamedHeading(props.block)}
+                {...(props.focusRegistration === undefined ? {} : { focusRegistration: props.focusRegistration })}
                 displayName={displayName}
-                actions={props.actions}
+                meta={formatWorkflowGroupMeta(props.block)}
+                trailing={<WorkflowContainerOptionsControl
+                    label={failurePolicyLabel(props.block.failurePolicy)}
+                    optionsLabel={t('workflows.page.inspector.options')}
+                    {...(props.onOpenOptions === undefined ? {} : { onOpenOptions: props.onOpenOptions })}
+                    testID={`${idPrefix}-summary`}
+                />}
+                actions={actions}
                 accessory={props.headingAccessory}
                 onSelect={props.onSelect}
                 testID={`${idPrefix}-label`}
                 actionsTestID={`${idPrefix}-actions`}
             />
-            <WorkflowContainerSummary
-                sentence={formatWorkflowGroupSentence(props.block)}
-                {...(props.onOpenOptions === undefined ? {} : { onOpenOptions: props.onOpenOptions })}
-                optionsLabel={t('workflows.page.inspector.options')}
-                testID={`${idPrefix}-summary`}
-            />
-
-            {props.block.branches.map((branch, index) => (
-                <View key={branch.id} accessibilityRole="none">
-                    <View style={workflowEditorStyles.heading}>
-                        <Text testID={`${idPrefix}-branch-${branch.id}-label`} style={workflowEditorStyles.headingNameInput}>
-                            {`${t('workflows.editor.branch')} ${index + 1}`}
-                        </Text>
-                        {props.onRemoveBranch !== undefined && props.block.branches.length > 1 ? (
-                            <HappierPressable
-                                testID={`${idPrefix}-branch-${branch.id}-remove`}
-                                accessibilityRole="button"
-                                accessibilityLabel={t('workflows.editor.remove')}
-                                onPress={() => props.onRemoveBranch?.(branch.id)}
-                                style={pressStyle}
-                            >
-                                <Text style={workflowEditorStyles.issueText}>{t('workflows.editor.remove')}</Text>
-                            </HappierPressable>
-                        ) : null}
-                    </View>
-                    {props.renderBranch(branch, index)}
-                </View>
-            ))}
-
-            {props.onAddBranch === undefined ? null : (
-                <HappierPressable
-                    testID={`${idPrefix}-add-branch`}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('workflows.editor.addBranch')}
-                    onPress={props.onAddBranch}
-                    style={pressStyle}
-                >
-                    <Text style={workflowEditorStyles.metaAction}>{t('workflows.editor.addBranch')}</Text>
-                </HappierPressable>
-            )}
+            <WorkflowContainerBody>
+                {props.block.branches.map((branch, index) => {
+                    const placeholder = t('workflows.page.inspector.lane', { position: index + 1 });
+                    const label = branch.name ?? placeholder;
+                    const { onRenameBranch } = props;
+                    return (
+                        <WorkflowContainerLane
+                            key={branch.id}
+                            label={label}
+                            {...(onRenameBranch === undefined ? {} : { nameEditor: {
+                                value: branch.name ?? '',
+                                placeholder,
+                                accessibilityLabel: `${t('common.rename')} · ${label}`,
+                                onChangeText: (name: string) => onRenameBranch(branch.id, name),
+                                ...(props.onCommitRename === undefined ? {} : { onCommit: props.onCommitRename }),
+                            } })}
+                            labelTestID={`${idPrefix}-branch-${branch.id}-label`}
+                            actionsTestID={`${idPrefix}-branch-${branch.id}-actions`}
+                            {...(onRemoveBranch === undefined || props.block.branches.length <= 1 ? {} : {
+                                actions: [{ id: 'remove' as const, label: t('workflows.editor.remove'), destructive: true,
+                                    onSelect: () => onRemoveBranch(branch.id) }],
+                            })}
+                        >
+                            {props.renderBranch(branch, index)}
+                        </WorkflowContainerLane>
+                    );
+                })}
+            </WorkflowContainerBody>
         </View>
     );
 }

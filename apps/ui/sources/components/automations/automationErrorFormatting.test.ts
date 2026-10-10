@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { AutomationApiError } from '../../sync/api/automations/apiAutomations';
 import { formatAutomationError } from './automationErrorFormatting';
+import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 
 describe('formatAutomationError', () => {
     it('maps typed API codes to safe user text and recovery action', () => {
@@ -21,5 +22,12 @@ describe('formatAutomationError', () => {
             new AutomationApiError({ code: 'unknown', status: 500, message: 'internal secret' }),
             'Fallback',
         )).toEqual({ message: 'Fallback', action: 'Please try again' });
+    });
+
+    it('directs an uncertain manual admission to inspection instead of repeating the effect', () => {
+        const result = formatAutomationError(new WorkflowActionError({ rawCode: 'workflow_outcome_unresolved', message: 'private server detail' }), 'Fallback');
+        expect(result.action).toBe('Refresh');
+        expect(result.message).not.toBe('Fallback');
+        expect(result.message).not.toContain('private server detail');
     });
 });

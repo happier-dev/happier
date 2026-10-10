@@ -3,6 +3,7 @@ import * as React from 'react';
 import { SessionWorkView } from '@/components/sessions/work/SessionWorkView';
 
 import { SessionTriggersSection } from './SessionTriggersSection';
+import { SessionWritesHereSection } from './SessionWritesHereSection';
 
 /**
  * The one Work tab host with this session's Triggers section in ORC's `triggersSection` slot. The
@@ -13,6 +14,9 @@ import { SessionTriggersSection } from './SessionTriggersSection';
 export const SessionWorkViewWithTriggers = React.memo(function SessionWorkViewWithTriggers(
     props: Omit<React.ComponentProps<typeof SessionWorkView>, 'triggersSection'>,
 ) {
-    const triggersSection = React.useMemo(() => <SessionTriggersSection sessionId={props.sessionId} />, [props.sessionId]);
+    const triggersSection = React.useMemo(() => <>
+        <SessionTriggersSection sessionId={props.sessionId} serverId={props.serverId} />
+        <SessionWritesHereSection sessionId={props.sessionId} serverId={props.serverId} />
+    </>, [props.sessionId, props.serverId]);
     return <SessionWorkView {...props} triggersSection={triggersSection} />;
 });

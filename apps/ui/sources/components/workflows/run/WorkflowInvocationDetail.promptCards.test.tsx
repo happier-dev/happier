@@ -46,10 +46,6 @@ vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({ spies: modalSpies }).module;
 });
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({ importOriginal });
-});
 vi.mock('@/sync/ops', () => sessionOps);
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
@@ -145,6 +141,18 @@ describe('WorkflowInvocationDetail canonical request cards', () => {
         standardCleanup();
         for (const op of Object.values(sessionOps)) op.mockReset();
         modalSpies.alert.mockReset();
+    });
+
+    it('opens an inputless Session through its recorded readiness without inventing a turn', async () => {
+        const onOpenSession = vi.fn();
+        const screen = await renderDetail({
+            progress: { ...permissionProgress, execution: { kind: 'session_ready', sessionId: 'session-without-input' }, interaction: undefined },
+            recovery: { ...recovery, canInspectExecution: true },
+            onOpenSession,
+        });
+        await screen.pressByTestIdAsync('workflow-run-open-session');
+        expect(onOpenSession).toHaveBeenCalledWith('session-without-input');
+        expectNoSessionTransport();
     });
 
     it('opens only a detached execution run, never an Action correspondence without a run identity', async () => {

@@ -35,6 +35,13 @@ export type WorkflowReviewCardProps = Readonly<{
     progress: WorkflowProgressEnvelopeV1;
     contract: WorkflowResultContract | undefined;
     waitForYou: boolean;
+    /** The exact frozen Wait's authored question and selected occurrence identity. */
+    waitIdentity?: Readonly<{
+        /** Omit identity title/subtitle when existing pane/modal chrome already owns them. */
+        title?: string;
+        subtitle?: string | null;
+        prompt: string;
+    }>;
     contentRevision: string;
     draft: WorkflowReviewDraft | undefined;
     onChangeDraft: (draft: WorkflowReviewDraft | undefined) => void;
@@ -54,6 +61,8 @@ export type WorkflowReviewCardProps = Readonly<{
     pending?: boolean;
     canGenerate?: boolean;
     readOnly?: boolean;
+    /** Edit authority remains, but the exact evidence is not confirmed yet. */
+    disabled?: boolean;
     parentPaused?: boolean;
     machineReachable?: boolean;
     machineName?: string | null;
@@ -162,7 +171,7 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
     const validation = shown === undefined ? null : decodeExecutionRunResultObservation({ encoding: 'typed', value: shown }, props.contract);
     const valid = validation?.ok === true;
     const noValueNeeded = props.waitForYou && props.contract === undefined;
-    const blocked = props.pending === true || props.readOnly === true;
+    const blocked = props.pending === true || props.readOnly === true || props.disabled === true;
     const generatePrimary = !props.waitForYou && !valid && props.draft === undefined && props.canGenerate !== false;
     const readiness = classifyWorkflowHoldV1({ lifecycle: props.lifecycle ?? 'waiting_for_review',
         isCurrent: props.isCurrent ?? true, progress: props.progress });
@@ -173,7 +182,7 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
     const plan = !props.waitForYou && props.contract?.kind === 'json' && shown !== undefined ? readWorkflowPlanResult(shown) : null;
     const planValue = plan !== null && valid ? shown : undefined;
     const issues = validation && !validation.ok ? validation.issues ?? [] : [];
-    const title = props.waitForYou ? t('workflows.review.waitTitle') : editing ? t('workflows.review.editsTitle')
+    const title = props.waitForYou ? props.waitIdentity ? props.waitIdentity.title : t('workflows.review.waitTitle') : editing ? t('workflows.review.editsTitle')
         : plan ? t('workflows.review.planTitle') : valid ? t('workflows.review.title') : t('workflows.review.noValue');
     const updateText = (text: string) => props.onChangeDraft({ text, contentRevision: revision });
     const showNewer = () => {
@@ -220,7 +229,9 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
         ? t(shown === undefined || shown === '' ? 'workflows.issue.missing_required_input' : 'workflows.issue.invalid_input') : null;
     // One message per state: the field names its own problem; the primary says only why it is blocked.
     const hasFieldError = fieldForm ? projected.some((field) => fieldErrorOf(field) !== null) : valueError !== null;
-    const error = editing && !valid && !noValueNeeded && hasFieldError ? t('workflows.review.invalid') : null;
+    const validationReadout = editing && !valid && !noValueNeeded
+        ? hasFieldError ? t('workflows.review.invalid') : props.waitForYou ? t('workflows.review.enterValues') : null
+        : null;
     const decisionEditor = decisionChoices === null ? null : decisionChoices.length >= 2 && decisionChoices.length <= 4
         ? <SegmentedChoiceItem title={t('workflows.input.result')} subtitle={valueError ?? undefined} disabled={blocked}
             value={typeof shown === 'string' ? shown : ''} testIDPrefix={`${prefix}-decision`}
@@ -237,7 +248,8 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
                 title={generatePrimary ? t('workflows.review.generate') : props.waitForYou ? noValueNeeded ? t('workflows.review.continue') : t('workflows.review.useValues')
                     : plan ? t('workflows.review.usePlan') : t('workflows.review.useResult')}
                 onPress={generatePrimary ? generate : use} />
-            {error ? <Text testID={`${prefix}-validation`} style={[styles.error, styles.footnote]} accessibilityRole="alert">{error}</Text> : null}
+            {validationReadout ? <Text testID={`${prefix}-validation`} style={[hasFieldError ? styles.error : styles.secondary, styles.footnote]}
+                accessibilityRole={hasFieldError ? 'alert' : undefined}>{validationReadout}</Text> : null}
             {!noValueNeeded ? <Text style={[styles.secondary, styles.footnote]}>{generatePrimary ? props.parentPaused ? t('workflows.review.startsResume')
                 : t('workflows.review.generateBody') : plan ? t('workflows.review.usePlanBody') : t('workflows.review.useBody')}</Text> : null}
             {editing && !props.waitForYou ? <RoundButton testID={`${prefix}-cancel`} size="small" display="inverted"
@@ -247,16 +259,24 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
     </SectionContentRow> : null;
     // The hold card is one page section: its title and state line above, one sheet that carries the
     // shared needs-you ring and tint while the hold waits (07 §3 "Status quiet, one tone owner").
-    const body = <ListPresentationProvider value="page"><ItemGroup title={title} description={props.waitForYou ? t('workflows.review.waitBody')
+    const body = <ListPresentationProvider value="page"><ItemGroup title={title} description={props.waitForYou
+            ? props.waitIdentity ? props.waitIdentity.title === undefined ? undefined
+                : [props.waitIdentity.subtitle, t('workflows.review.waitTitle')].filter(Boolean).join(' · ') : t('workflows.review.waitBody')
             : editing ? t('workflows.review.editsBody') : held ? t('workflows.review.heldBody') : undefined}
             containerStyle={held ? workStatusSurfaceStyle('attention') : undefined}>
+            {props.waitForYou && props.waitIdentity ? <SectionContentRow>
+                <View style={styles.actions}>
+                    <Text style={styles.secondary}>{t('workflows.review.waitBody')}</Text>
+                    {props.waitIdentity.prompt ? <MarkdownView testID={`${prefix}-wait-prompt`} markdown={props.waitIdentity.prompt} /> : null}
+                </View>
+            </SectionContentRow> : null}
             {changed && (!supplied || keptNewerRevision !== props.contentRevision) ? <SectionContentRow testID={`${prefix}-newer`}>
                 <Text accessibilityLiveRegion="polite">{t('workflows.review.newer')}</Text>
                 <View style={styles.actions}>{supplied ? <>
                     <RoundButton testID={`${prefix}-keep-edits`} title={t('workflows.review.keepMyEdits')} size="small"
-                        display="secondary" disabled={blocked} onPress={() => { if (!blocked) setKeptNewerRevision(props.contentRevision); }} />
+                        display="secondary" disabled={props.pending === true} onPress={() => { if (props.pending !== true) setKeptNewerRevision(props.contentRevision); }} />
                     <RoundButton testID={`${prefix}-use-newer`} title={t('workflows.review.useNewer')} size="small"
-                        display="inverted" disabled={blocked} onPress={showNewer} />
+                        display="inverted" disabled={props.pending === true} onPress={showNewer} />
                 </> : <RoundButton testID={`${prefix}-show-newer`} title={t('workflows.review.showNewer')} size="small"
                     display="secondary" disabled={props.pending === true} onPress={showNewer} />}</View>
             </SectionContentRow> : null}
@@ -353,8 +373,9 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
                 rightElement={<RoundButton testID={`${prefix}-plan-edit`} title={t('common.edit')} size="small" display="secondary" disabled={blocked}
                     onPress={async () => { if (!blocked) await props.onEditPlan?.(planValue, revision); }} />} /> : null}
         </ItemGroup></ListPresentationProvider>;
-    return <View testID={prefix} style={[styles.root, props.primaryActionPlacement === 'footer' ? styles.filled : null]}>
-        {props.primaryActionPlacement === 'footer' ? <ScrollView testID={`${prefix}-scroll`} style={styles.filled}
+    const filledFooter = props.primaryActionPlacement === 'footer' && !props.waitForYou;
+    return <View testID={prefix} style={[styles.root, filledFooter ? styles.filled : null]}>
+        {filledFooter ? <ScrollView testID={`${prefix}-scroll`} style={styles.filled}
             keyboardShouldPersistTaps="handled">{body}</ScrollView> : body}
         {props.primaryActionPlacement === 'footer' ? primaryAction : null}
     </View>;

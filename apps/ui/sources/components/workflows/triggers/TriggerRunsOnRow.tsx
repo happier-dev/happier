@@ -6,6 +6,7 @@ import { useAllMachines } from '@/sync/domains/state/storage';
 import { isWorkflowProjectTarget } from '@/sync/domains/workflows/workflowProjectTarget';
 import { t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
+import { useViewportClass } from '@/utils/platform/useViewportClass';
 
 /**
  * Runs on (04 §5.4, INT §3.1 #9; 07 S4): one machine and folder per trigger set — the set's
@@ -19,10 +20,13 @@ export function TriggerRunsOnRow(props: Readonly<{
     description: string;
 }>): React.ReactElement {
     const machines = useAllMachines();
+    const viewportClass = useViewportClass();
     const machine = props.target === null ? null : machines.find((candidate) => candidate.id === props.target?.machineId) ?? null;
     return (
         <WorkflowProjectTargetControl
+            purpose="trigger"
             presentation="field"
+            accessoryLayout={viewportClass === 'compact' ? 'stacked' : 'inline'}
             title={t('workflows.triggers.editor.runsOn')}
             subtitle={props.description}
             target={props.target}

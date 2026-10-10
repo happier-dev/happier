@@ -5,11 +5,12 @@ import { useUnistyles } from 'react-native-unistyles';
 import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
 import type { WorkflowBlockKind, WorkflowLeafBlockSeed } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
-import type { WorkflowStarterExampleV1 } from '@happier-dev/protocol';
+import type { WorkflowStarterExampleSelection } from '@happier-dev/protocol/workflows/builtins/examples';
 import { WorkflowExamplesPopover } from '../library/WorkflowExamplesPopover';
 
 import { AgentInputSelectionListPopover } from '@/components/sessions/agentInput/components/AgentInputSelectionListPopover';
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { Typography } from '@/constants/Typography';
 import { resolvePluginContributedActionIconName } from '@/components/plugins/actions/pluginContributedActionPresentation';
 import type { SelectionListOption, SelectionListStep } from '@/components/ui/selectionList';
 import { Text } from '@/components/ui/text/Text';
@@ -23,7 +24,9 @@ import {
     useWorkflowReferenceLibrary,
     type WorkflowReferenceOption,
 } from '@/components/workflows/presentation/workflowReferenceOptions';
-import { workflowEditorStyles } from './workflowEditorStyles';
+import { WORKFLOW_BLOCK_KIND_GLYPH } from '@/components/workflows/presentation/workflowBlockKindGlyph';
+import { WorkflowPurposeGlyph } from '@/components/workflows/presentation/WorkflowPurposeGlyph';
+import { WORKFLOW_EDITOR_TOUCH_POINTER, workflowEditorStyles } from './workflowEditorStyles';
 
 /** What the Add menu asks its list to insert: a structure or Agent step by kind, or a step-kind seed. */
 export type WorkflowAddBlockRequest =
@@ -38,7 +41,7 @@ export type WorkflowAddBlockRequest =
  */
 export function WorkflowAddBlockMenu(props: Readonly<{
     onAdd: (request: WorkflowAddBlockRequest) => void;
-    onUseExample?: (example: WorkflowStarterExampleV1) => void;
+    onUseExample?: (example: WorkflowStarterExampleSelection) => void;
     /** Names the scope the new block joins, for the accessible label. */
     scopeLabel: string;
     composerScope?: AuthoringComposerScope;
@@ -64,8 +67,13 @@ export function WorkflowAddBlockMenu(props: Readonly<{
     const close = React.useCallback(() => setOpen(false), []);
 
     if (props.variant === 'inserter') {
+        // Under a finger a hidden inserter is inert: its target overlaps its neighbours' edges so the
+        // gap stays the document's rhythm (lab P1), and it must never take a tap meant for them.
+        const inert = WORKFLOW_EDITOR_TOUCH_POINTER && !open && props.revealed !== true;
         return (
-            <View ref={anchorRef} collapsable={false}>
+            <View ref={anchorRef} collapsable={false} style={workflowEditorStyles.inserterSlot}
+                pointerEvents={inert ? 'none' : 'auto'}
+                {...(inert ? { accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants' as const } : {})}>
                 <HappierPressable
                     testID={props.testID}
                     accessibilityRole="button"
@@ -165,6 +173,9 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
             return {
                 id: optionId(`workflow:${option.ref}`),
                 label: option.title,
+                icon: () => option.purpose === undefined
+                    ? <Icon name={WORKFLOW_BLOCK_KIND_GLYPH.workflow} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
+                    : <WorkflowPurposeGlyph purpose={option.purpose} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />,
                 ...(option.unavailableReason !== undefined ? { subtitle: option.unavailableReason, disabled: true } : self
                     ? { subtitle: t('workflows.page.blocks.selfRef', { workflow: option.title }), disabled: true }
                     : {}),
@@ -205,8 +216,11 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
             label: spec.title,
             searchText: spec.id,
             subtitle: spec.description?.trim() || spec.plugin?.title,
-            icon: () => <Icon name={spec.plugin ? resolvePluginContributedActionIconName(spec.plugin.icon) : 'lightning'}
-                size={16} color={theme.colors.text.secondary} />,
+            icon: () => <Icon name={spec.plugin ? resolvePluginContributedActionIconName(spec.plugin.icon) : spec.icon ?? 'lightning'}
+                size={ICON_SIZE.sm} color={theme.colors.text.secondary} />,
+            rightAccessory: <Text numberOfLines={1} style={{ ...Typography.rowMeta(), color: theme.colors.text.tertiary }}>
+                {spec.plugin?.title ?? spec.sourceLabel ?? t('workflows.actionTitles.host')}
+            </Text>,
             onSelect: add({ kind: 'action', actionId: spec.id }),
         });
         const actionsStep: SelectionListStep = {
@@ -233,17 +247,18 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
             id: 'add-root',
             title: t('workflows.editor.add'),
             inputPlaceholder: t('common.search'),
+            searchAcrossSections: true,
             sections: [
                 {
                     kind: 'static',
                     id: 'kinds',
                     title: t('workflows.tabs.steps'),
                     options: [
-                        { id: optionId('step'), label: t('workflows.editor.addStep'), icon: () => <Icon name="robot" size={16} color={theme.colors.text.secondary} />, onSelect: add({ kind: 'step' }) },
-                        { id: optionId('workflow'), label: t('workflows.page.blocks.menuRun'), subtitle: t('workflows.page.blocks.workflowSub'), icon: () => <Icon name="play" size={16} color={theme.colors.text.secondary} />, openStep: workflowsStep },
-                        { id: optionId('action'), label: t('workflows.page.blocks.menuAction'), subtitle: t('workflows.page.blocks.noAgentTurn'), icon: () => <Icon name="lightning" size={16} color={theme.colors.text.secondary} />, openStep: actionsStep },
+                        { id: optionId('step'), label: t('workflows.editor.addStep'), subtitle: t('workflows.page.blocks.agentSub'), icon: () => <Icon name={WORKFLOW_BLOCK_KIND_GLYPH.step} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />, onSelect: add({ kind: 'step' }) },
+                        { id: optionId('workflow'), label: t('workflows.page.blocks.menuRun'), subtitle: t('workflows.page.blocks.workflowSub'), icon: () => <Icon name={WORKFLOW_BLOCK_KIND_GLYPH.workflow} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />, openStep: workflowsStep },
+                        { id: optionId('action'), label: t('workflows.page.blocks.menuAction'), subtitle: t('workflows.page.blocks.noAgentTurn'), icon: () => <Icon name={WORKFLOW_BLOCK_KIND_GLYPH.action} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />, openStep: actionsStep },
                         ...effectPresets,
-                        { id: optionId('wait'), label: t('workflows.page.blocks.menuWait'), subtitle: t('workflows.page.blocks.waitSub'), icon: () => <Icon name="hand" size={16} color={theme.colors.text.secondary} />, onSelect: add({ kind: 'wait' }) },
+                        { id: optionId('wait'), label: t('workflows.page.blocks.menuWait'), subtitle: t('workflows.page.blocks.waitSub'), icon: () => <Icon name={WORKFLOW_BLOCK_KIND_GLYPH.wait} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />, onSelect: add({ kind: 'wait' }) },
                     ],
                 },
                 {
@@ -251,21 +266,38 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
                     id: 'structure',
                     title: t('workflows.actionTitles.structure'),
                     options: [
-                        { id: optionId('parallel'), label: t('workflows.editor.addParallel'), icon: () => <Icon name="git-branch" size={16} color={theme.colors.text.secondary} />, onSelect: add({ kind: 'parallel' }) },
-                        { id: optionId('loop'), label: t('workflows.editor.addLoop'), icon: () => <Icon name="arrows-clockwise" size={16} color={theme.colors.text.secondary} />, onSelect: add({ kind: 'loop' }) },
-                        { id: optionId('if'), label: t('workflows.editor.addIf'), icon: () => <Icon name="question" size={16} color={theme.colors.text.secondary} />, onSelect: add({ kind: 'if' }) },
+                        { id: optionId('parallel'), label: t('workflows.editor.addParallel'), subtitle: t('workflows.page.blocks.parallelSub'), icon: () => <Icon name={WORKFLOW_BLOCK_KIND_GLYPH.parallel} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />, onSelect: add({ kind: 'parallel' }) },
+                        { id: optionId('loop'), label: t('workflows.editor.addLoop'), subtitle: t('workflows.page.blocks.loopSub'), icon: () => <Icon name={WORKFLOW_BLOCK_KIND_GLYPH.loop} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />, onSelect: add({ kind: 'loop' }) },
+                        { id: optionId('if'), label: t('workflows.editor.addIf'), subtitle: t('workflows.page.blocks.ifSub'), icon: () => <Icon name={WORKFLOW_BLOCK_KIND_GLYPH.if} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />, onSelect: add({ kind: 'if' }) },
                     ],
+                },
+                {
+                    // Typing a workflow's name finds it here too, not only behind "Run a workflow ›" (DESIGN-9 N45).
+                    kind: 'dynamic', id: 'workflow-search', title: t('workflows.page.blocks.menuRun'),
+                    resolverKey: JSON.stringify(libraryOptions),
+                    visibleWhen: (input) => input.trim().length > 0,
+                    debounceMs: 0, loadingSkeletonRows: 0,
+                    resolve: async () => ({ options: [...listBuiltinWorkflowReferenceOptions(), ...libraryOptions].map(workflowOption) }),
+                },
+                {
+                    kind: 'dynamic', id: 'action-search', title: t('workflows.page.blocks.menuAction'),
+                    resolverKey: JSON.stringify(catalog.specs),
+                    visibleWhen: (input) => input.trim().length > 0,
+                    debounceMs: 0, loadingSkeletonRows: 0,
+                    resolve: async () => ({ options: catalog.specs.map(actionOption) }),
                 },
             ],
         };
     }, [libraryOptions, library.hasMore, library.loadingMore, library.loadMore, library.retry, library.status,
-        catalog.specs, onAdd, onClose, props.currentWorkflowRef, props.testID, theme.colors.text.secondary]);
+        catalog.specs, onAdd, onClose, props.currentWorkflowRef, props.testID, theme.colors.text.secondary, theme.colors.text.tertiary]);
 
     return (
         <AgentInputSelectionListPopover
             open
             anchorRef={props.anchorRef}
             rootStep={rootStep}
+            optionPresentation="menu"
+            heightBehavior="fixedToMaxHeight"
             onSelect={() => {
                 // Each option's own `onSelect` is the action source and closes the menu.
             }}

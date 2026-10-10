@@ -1,6 +1,6 @@
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import * as React from 'react';
-import { View, type TextInput } from 'react-native';
+import { View, type TextInput, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
@@ -19,6 +19,8 @@ import { SelectionListFilterChip } from '@/components/ui/selectionList/Selection
 import { KeyboardAwareScrollView } from '@/components/ui/keyboardAvoidance/KeyboardAwareScrollView';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { NavigationBackChromeProvider, useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
+import { DefaultBackButton } from '@/components/navigation/Header';
 import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { Item } from '@/components/ui/lists/Item';
@@ -38,7 +40,6 @@ import { useKeyboardShortcutHandlers } from '@/keyboard';
 import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
 import { Modal, type CustomModalInjectedProps } from '@/modal';
 import { t, tLoose } from '@/text';
-import type { WorkflowStarterExampleV1 } from '@happier-dev/protocol';
 
 import {
     firstBlockingWorkflowIssue,
@@ -64,7 +65,8 @@ import {
     setWorkflowStepExecutionField,
     walkWorkflowBlocks,
 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
-import { insertWorkflowEditorBlock, insertWorkflowStarterExample, type WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
+import { insertWorkflowEditorBlock, insertWorkflowStarterExample, type WorkflowEditorDraft, type WorkflowStarterExampleInsertion } from '@/sync/domains/workflows/workflowEditorDraft';
+import type { WorkflowStarterExampleSelection } from '@happier-dev/protocol/workflows/builtins/examples';
 import type { WorkflowEditorHistoryControls } from '../editor/useWorkflowEditorHistory';
 import {
     resolveSessionAuthoringRuntimeDescriptorAvailability,
@@ -87,6 +89,7 @@ import {
 } from '../editor/WorkflowProjectTargetControl';
 import {
     WorkflowSaveStatus,
+    WorkflowStatusReadout,
     type WorkflowSaveConflict,
     type WorkflowSaveStatusState,
 } from '../editor/WorkflowSaveStatus';
@@ -98,7 +101,12 @@ import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBl
 import type { WorkflowRunAsTarget, WorkflowRunAsTargetKind } from '../run/workflowRunAsTargets';
 import { WorkflowAuthoringSessionPane } from '../authoring/WorkflowAuthoringSessionPane';
 import { WorkflowAgentAuthoringDraft, type WorkflowAgentAuthoringDraftProps } from '../authoring/useWorkflowAgentAuthoring';
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useDestinationFocus, useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { Stack } from '@/components/appShell/workspace/destinationRoute';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
+import { formatWorkflowIssueText } from '../editor/workflowIssueText';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 
 /**
@@ -127,6 +135,17 @@ import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerS
 export const WORKFLOW_EDITOR_PANE_SCOPE_ID = 'workflow-editor';
 const WORKFLOW_FLOW_PANE_DESTINATION_ID = 'workflow-flow';
 
+/** Hosted destinations have no Expo header; their existing Back belongs in the page-header slot. */
+function WorkflowEditorBackControl({ style, onBack }: Readonly<{ style: StyleProp<ViewStyle>; onBack?: () => void }>) {
+    const router = useRouter();
+    const navigation = useNavigation();
+    const focused = useDestinationFocus();
+    const { theme } = useUnistyles();
+    if (!focused) return null;
+    return <View style={style}><DefaultBackButton testID="workflow-back" tintColor={theme.colors.text.primary}
+        onPress={onBack ?? (() => safeRouterBack({ router, navigation, fallbackHref: '/workflows' }))} /></View>;
+}
+
 /** The Agent & model chips the header shows; every field is in Workflow settings. */
 const HEADER_ENGINE_FIELDS = ['agentTarget', 'modelSelection'] as const;
 
@@ -143,9 +162,9 @@ const styles = StyleSheet.create((theme) => ({
         width: '100%',
         paddingBottom: theme.margins.xl,
     },
-    headerActions: {
-        alignItems: 'flex-end',
-        gap: theme.margins.xs,
+    bodyColumn: {
+        alignSelf: 'center',
+        width: '100%',
     },
     headerActionRow: {
         flexDirection: 'row',
@@ -172,21 +191,18 @@ const styles = StyleSheet.create((theme) => ({
         borderBottomWidth: StyleSheet.hairlineWidth,
         borderBottomColor: theme.colors.border.default,
     },
+    whereChip: {
+        flexShrink: 0,
+        minWidth: 0,
+    },
+    engineChip: {
+        flexShrink: 0,
+        minWidth: 0,
+    },
     document: {
         paddingHorizontal: theme.margins.lg,
         paddingTop: theme.margins.lg,
         gap: theme.margins.lg,
-    },
-    validity: {
-        alignSelf: 'flex-end',
-        paddingHorizontal: theme.margins.xs,
-        borderRadius: theme.borderRadius.sm,
-        borderWidth: 1,
-        borderColor: 'transparent',
-    },
-    validityText: {
-        ...Typography.rowMeta(),
-        color: theme.colors.text.secondary,
     },
     undoRow: {
         flexDirection: 'row',
@@ -321,6 +337,8 @@ export type WorkflowEditorBodyProps = Readonly<{
     /** The header's quiet **Edit with an agent** (07 §3); absent where the editor cannot offer it. */
     onEditWithAgent?: () => void;
     onChange: (next: WorkflowEditorDraft, label?: string, committed?: boolean) => void;
+    /** The Host commits the inserted definition, source trigger and placement in one history edit. */
+    onUseExample?: (insertion: WorkflowStarterExampleInsertion) => void;
     history?: WorkflowEditorHistoryControls;
     onCommitChange?: () => void;
     /** The one exact Machine this workflow runs on; `null` stays visibly unresolved. */
@@ -348,10 +366,16 @@ export type WorkflowEditorBodyProps = Readonly<{
     onChangeExecutionTarget?: (kind: WorkflowRunAsTargetKind) => void;
     /** Explicit, separate effects. Omit one to hide it in a host that cannot offer it. */
     onRunNow?: () => void;
+    /** Runs the saved revision for real without replacing or saving this draft. */
+    onTestRun?: () => void;
+    testRunPending?: boolean;
     /** A catalog's Session-scoped Run action uses the canonical Session chooser. */
     runNowAction?: React.ReactNode;
     runNowAnchorRef?: React.RefObject<View | null>;
+    testRunAnchorRef?: React.RefObject<View | null>;
     onSave?: () => void;
+    /** The host's guarded exit, shared with its menu and surrounding navigation. */
+    onBack?: () => void;
     /** Read-only catalog documents duplicate through the host's definition seed owner. */
     onDuplicate?: () => void;
     headerMeta?: React.ComponentProps<typeof PageHeader>['meta'];
@@ -422,6 +446,15 @@ export type WorkflowEditorBodyProps = Readonly<{
     testIDPrefix?: string;
 }>;
 
+/**
+ * A read-only page's purpose and its facts ("· Built-in") as one sentence. Each "·" is held to the
+ * words on both sides, so a fact wraps with the last word before it and never sits alone on a line
+ * (DESIGN-9 M4).
+ */
+function joinReadOnlyDescription(parts: readonly (string | undefined)[]): string {
+    return parts.filter((part): part is string => part !== undefined && part.length > 0).join('\u00A0·\u00A0');
+}
+
 export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactElement {
     const dragRuntime = useEntityDragDropRuntime();
     const refreshDropMeasurements = React.useCallback(() => { void dragRuntime.refreshMeasurements(); }, [dragRuntime]);
@@ -461,6 +494,16 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     // slots, so its panes become `@/modal` and the Steps | Flow switch.
     const detailsPaneAvailable = useDetailsPaneAvailable();
     const compactLayout = !detailsPaneAvailable;
+    const hostedDestination = useDestinationInstanceKey() !== null;
+    // The editable name lives in the page; navigation chrome names the kind only ("Workflow", P12).
+    // Declared here, its route leaf, so the retained phone bar and the Expo stack read the same title.
+    const chromeTitle = t('workflows.page.chromeTitle');
+    const chromeOptions = React.useMemo(() => ({ headerTitle: chromeTitle }), [chromeTitle]);
+    const inheritedBackControl = useNavigationBackControl();
+    const { present: appShellPresent, columnVisible } = useAppShellColumn();
+    const pageBackControl = React.useCallback(({ style }: Readonly<{ style: StyleProp<ViewStyle> }>) => (
+        <WorkflowEditorBackControl style={style} onBack={props.onBack} />
+    ), [props.onBack]);
     const whereRef = React.useRef<WorkflowProjectTargetControlHandle | null>(null);
     const [settingsOpen, setSettingsOpen] = React.useState(false);
     const [detailsTab, setDetailsTab] = React.useState<'settings' | 'agent'>('settings');
@@ -512,10 +555,10 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         pendingPromptFocusId.current = blockId;
     }, []);
 
-    const blockIds = React.useMemo(
-        () => walkWorkflowBlocks(draft.blocks).map((block) => block.id),
-        [draft.blocks],
-    );
+    const { blockIds, hasAgentSteps } = React.useMemo(() => {
+        const blocks = walkWorkflowBlocks(draft.blocks);
+        return { blockIds: blocks.map((block) => block.id), hasAgentSteps: blocks.some((block) => block.kind === 'step') };
+    }, [draft.blocks]);
     /**
      * Custody of every step's live prompt document, held here rather than in the
      * recursive list that re-parents the rows. Moving a block between parents is
@@ -603,9 +646,11 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                 ? null
                 : (() => {
                     const blockId = resolveWorkflowIssueBlockId(draft, blockingIssue);
+                    // The announcer says the issue as the step says it (DESIGN-5 P3).
+                    const reason = formatWorkflowIssueText(blockingIssue, draft);
                     return blockId === null
-                        ? { code: blockingIssue.code }
-                        : { code: blockingIssue.code, blockId };
+                        ? { code: blockingIssue.code, reason }
+                        : { code: blockingIssue.code, blockId, reason };
                 })(),
         }), [blockIds, blockingIssue, draft, props.selectedBlockId]),
         resolveBlockLabel,
@@ -626,7 +671,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     );
     const describeBlockedReason = React.useCallback((
         reason: WorkflowCommandBlockedReason | null,
-    ): string | null => describeWorkflowCommandBlockedReason({ reason, blockingIssue }), [blockingIssue]);
+    ): string | null => describeWorkflowCommandBlockedReason({ reason, blockingIssue, draft }), [blockingIssue, draft]);
     const runDisabled = runBlockedReason !== null;
     const saveDisabled = savePending === true || saveBlockedReason !== null;
     const exportDisabled = exportBlockedReason !== null;
@@ -698,12 +743,16 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     React.useEffect(() => {
         if (props.focusNameOnMount === true) nameInputRef.current?.focus();
     }, [props.focusNameOnMount, draft.draftId]);
-    const useExample = React.useCallback((example: WorkflowStarterExampleV1) => {
+    const useExample = React.useCallback((example: WorkflowStarterExampleSelection) => {
         const insertion = insertWorkflowStarterExample(draft, example, tLoose(example.titleKey));
-        onChange(insertion.draft, t('workflows.editor.history.example'));
+        if (props.onUseExample) props.onUseExample(insertion);
+        else {
+            if (insertion.trigger !== undefined) throw new Error('workflow_starter_trigger_host_required');
+            onChange(insertion.draft, t('workflows.editor.history.example'));
+        }
         props.onSelectBlock(insertion.rootIds[0] ?? null);
         nameInputRef.current?.focus();
-    }, [draft, onChange, props.onSelectBlock]);
+    }, [draft, onChange, props.onSelectBlock, props.onUseExample]);
 
     const { theme } = useUnistyles();
     const runKeyHint = useKeyboardShortcutLabel('workflow.run');
@@ -863,6 +912,8 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                     kind: 'card',
                     title: t('workflows.page.settings'),
                     testID: `${testIDPrefix}-settings-modal`,
+                    phonePresentation: 'sheet',
+                    material: 'solid',
                     bodyScroll: 'auto',
                     dimensions: { width: 560, maxHeightRatio: 0.92, size: 'md' },
                 },
@@ -875,8 +926,8 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         if (settingsModalRef.current !== null) Modal.hide(settingsModalRef.current);
     }, []);
 
-    // Wide: Undo and Redo are icon buttons at the end of the chip line (04 §4.1). The phone and
-    // the commandless composition keep the labelled pair at the document foot.
+    // Undo and Redo are icon buttons: at the end of the chip line when wide (04 §4.1), at the document
+    // foot on a phone. Only the commandless composition keeps the labelled pair.
     const historyIcons = props.history === undefined || (props.history.undoLabel === null && props.history.redoLabel === null) ? null : (
         <View style={styles.chipsHistory}>
             <IconButton
@@ -971,7 +1022,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
 
     const flowContent = flowProjection === null ? (
         <Text testID={`${testIDPrefix}-flow-unavailable`} style={styles.reason}>
-            {blockingIssue === null ? '' : t(`workflows.issue.${blockingIssue.code}`)}
+            {blockingIssue === null ? '' : formatWorkflowIssueText(blockingIssue, draft)}
         </Text>
     ) : (
         <>
@@ -1002,11 +1053,18 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         </>
     );
 
-    const saveStatusNode = props.onDuplicate !== undefined ? (
-        <RoundButton testID={`${testIDPrefix}-duplicate`} size="small" display="inverted"
+    const duplicateButton = props.onDuplicate === undefined ? null : (
+        <RoundButton testID={`${testIDPrefix}-duplicate`} size="small" display="secondary"
             title={t('common.duplicate')} onPress={props.onDuplicate} />
-    ) : (
+    );
+    // 07 "One validity readout": "Ready", or — once a Run or Save has revealed issues — the count that
+    // leads to the first one. Untouched issues stay silent rather than reading as "Ready".
+    const readinessNode = errorCount === 0 && runBlockedReason === null
+        ? <WorkflowStatusReadout testID={`${testIDPrefix}-ready`} text={t('workflows.page.readyToRun')} />
+        : issuesRevealed ? validityNodeFor() : null;
+    const saveStatusNode = props.onDuplicate !== undefined ? null : (
         <WorkflowSaveStatus
+            readout={readinessNode}
             state={props.saveConflict ? { kind: 'conflict', conflict: props.saveConflict } : (props.saveStatus ?? { kind: 'notSaved' })}
             localDraft={draft}
             {...(onSave === undefined ? {} : { onSave: submitSave })}
@@ -1014,17 +1072,11 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             testIDPrefix={testIDPrefix}
         />
     );
-    const validityNode = !issuesRevealed || errorCount === 0 ? null : (
-        <HappierPressable
-            testID={`${testIDPrefix}-validity`}
-            accessibilityRole="button"
-            accessibilityLabel={t('workflows.page.issuesToFix', { count: errorCount })}
-            onPress={focusFirstIssue}
-            style={(state) => [styles.validity, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
-        >
-            <Text style={styles.validityText}>{t('workflows.page.issuesToFix', { count: errorCount })}</Text>
-        </HappierPressable>
-    );
+    function validityNodeFor(): React.ReactElement {
+        return <WorkflowStatusReadout testID={`${testIDPrefix}-validity`}
+            text={t('workflows.page.issuesToFix', { count: errorCount })} onPress={focusFirstIssue} />;
+    }
+    const validityNode = !issuesRevealed || errorCount === 0 ? null : validityNodeFor();
 
     const backToRun = props.onBackToRun === undefined ? null : (
         <HappierPressable
@@ -1037,8 +1089,14 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             <Text style={styles.actionLabel}>{t('workflows.page.backToRun')}</Text>
         </HappierPressable>
     );
-    const pageMenu = props.menuActions === undefined || props.menuActions.length === 0 ? null : (
-        <PageHeaderMenu testID={`${testIDPrefix}-menu`} actions={props.menuActions} />
+    const pageMenuActions: readonly PageHeaderMenuAction[] = [
+        ...(compactLayout && props.onTestRun !== undefined ? [{ id: 'test-run', title: t('workflows.testRun.title'),
+            testID: `${testIDPrefix}-test-run`, disabled: props.testRunPending === true || runPending === true,
+            onSelect: props.onTestRun }] : []),
+        ...(props.menuActions ?? []),
+    ];
+    const pageMenu = pageMenuActions.length === 0 ? null : (
+        <PageHeaderMenu testID={`${testIDPrefix}-menu`} actions={pageMenuActions} />
     );
     const menu = backToRun === null ? pageMenu : <>{backToRun}{pageMenu}</>;
     const runNowButton = props.runNowAction ?? (onRunNow === undefined ? null : (
@@ -1049,33 +1107,51 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             title={t('workflows.editor.runNow')}
             accessibilityLabel={t('workflows.editor.runNow')}
             {...(runReason === null ? {} : { accessibilityHint: runReason })}
-            loading={runPending === true}
+            disabled={runPending === true}
             leading={<Icon name="play" size={14} color={theme.colors.button.primary.tint} />}
             {...(runKeyHint === undefined ? {} : { trailing: <Text style={styles.keyHint}>{runKeyHint}</Text> })}
             onPress={submitRun}
         />
         </View>
     ));
+    const testRunButton = props.onTestRun === undefined ? null : <View ref={props.testRunAnchorRef} collapsable={false}><RoundButton
+        testID={`${testIDPrefix}-test-run`}
+        size="small"
+        display="secondary"
+        title={t('workflows.testRun.title')}
+        accessibilityLabel={t('workflows.testRun.title')}
+        accessibilityHint={t('workflows.testRun.savedNotice')}
+        disabled={props.testRunPending === true || runPending === true}
+        onPress={props.onTestRun}
+    /></View>;
 
     const identity = (
+        <>
+        {hasPageCommands ? <Stack.Screen options={chromeOptions} /> : null}
+        <NavigationBackChromeProvider control={columnVisible ? null : hasPageCommands && (hostedDestination || appShellPresent) ? pageBackControl : inheritedBackControl}>
         <PageHeader
             testID={`${testIDPrefix}-header`}
+            actionsLayout={compactLayout ? 'wrap' : 'inline'}
+            // The save line is the actions' own row, so its changing words never reflow the name
+            // (DESIGN-9 N52). A page without a save line (a built-in's Duplicate) still says what to fix.
+            {...(!hasPageCommands || compactLayout ? {} : { status: saveStatusNode ?? validityNode })}
             title={draft.name.trim().length > 0 ? draft.name : t('workflows.page.untitled')}
             alwaysShowTitle
-            meta={props.headerMeta}
+            meta={documentEditable ? props.headerMeta : undefined}
+            {...(compactLayout ? { details: saveStatusNode } : {})}
             leading={(
                 <PageHeaderMarkSlot>
                     <Icon name="tree-structure" size={22} color={theme.colors.text.secondary} />
                 </PageHeaderMarkSlot>
             )}
-            {...(!documentEditable ? { description: props.description } : {})}
+            {...(!documentEditable ? { description: joinReadOnlyDescription([props.description, ...(props.headerMeta?.map((fact) => fact.text) ?? [])]) } : {})}
             {...(props.showNameField === false || !documentEditable ? {} : {
                 titleEditor: {
                     controlRef: nameInputRef,
                     value: draft.name,
                     placeholder: t('workflows.page.untitled'),
                     accessibilityLabel: t('workflows.page.nameLabel'),
-                    onChangeText: (name: string) => onChange({ ...draft, name }, t('workflows.page.nameLabel'), false),
+                    onChangeText: (name: string) => onChange({ ...draft, name }, t('workflows.editor.history.renameWorkflow'), false),
                     onCommit: props.onCommitChange,
                     testID: `${testIDPrefix}-name`,
                 },
@@ -1092,9 +1168,17 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                 }),
             })}
             actions={!hasPageCommands || compactLayout ? menu : (
-                <View style={styles.headerActions}>
                     <View style={styles.headerActionRow}>
-                        {props.onEditWithAgent === undefined ? null : (
+                        {props.onEditWithAgent === undefined ? null : (settingsOpen || flowOpen) ? (
+                            <IconButton
+                                testID={`${testIDPrefix}-edit-with-agent`}
+                                accessibilityLabel={t('workflows.authoring.edit')}
+                                tooltip={t('workflows.authoring.edit')}
+                                iconName="sparkle"
+                                variant="plain"
+                                onPress={editWithAgent}
+                            />
+                        ) : (
                             <RoundButton
                                 testID={`${testIDPrefix}-edit-with-agent`}
                                 size="small"
@@ -1123,13 +1207,14 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                             selected={settingsOpen}
                             onPress={() => setSettingsOpen((open) => !open)}
                         />}
+                        {duplicateButton}
+                        {testRunButton}
                         {runNowButton}
                     </View>
-                    {saveStatusNode}
-                    {validityNode}
-                </View>
             )}
         />
+        </NavigationBackChromeProvider>
+        </>
     );
 
     // A composition without page commands (the authored Automation wrapper,
@@ -1194,18 +1279,19 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                         )}
                         {/* A value row like Where and Triggers (04 §4.10): its value is the chip's own
                             summary, and it opens the settings where the Agent and model field is. */}
-                        <Item
+                        {hasAgentSteps ? <Item
                             testID={`${testIDPrefix}-agent-row`}
                             title={t('workflows.page.sections.agentTitle')}
                             subtitle={engineSummary}
                             showChevron={canOpenSettings}
                             {...(canOpenSettings ? { onPress: openSettings } : { mode: 'info' as const })}
-                        />
+                        /> : null}
                     </ItemGroup>
-                    <View style={styles.statusLine}>
-                        {saveStatusNode}
-                        {validityNode}
-                    </View>
+                    {saveStatusNode === null && validityNode !== null ? (
+                        <View style={styles.statusLine}>
+                            {validityNode}
+                        </View>
+                    ) : null}
                     <View style={styles.phoneViewSwitch}>
                         <SegmentedTabBar<WorkflowEditorView>
                             testIDPrefix={`${testIDPrefix}-view`}
@@ -1234,7 +1320,8 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                             })}
                         >
                             {blockList}
-                            {historyActions}
+                            {/* Icon controls on a phone too: the change's label is their accessible name (DESIGN-6 N20). */}
+                            {historyIcons}
                         </View>
                         {props.view === 'flow' ? flowContent : null}
                     </View>
@@ -1266,6 +1353,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                         <Icon name="sidebar-right-open" size={20} color={theme.colors.text.secondary} />
                     </HappierPressable>}
                     <View style={styles.phoneBarSpacer} />
+                    {duplicateButton}
                     {onSave === undefined || !documentEditable || (props.saveStatus !== undefined && !['notSaved', 'unsaved', 'failed'].includes(props.saveStatus.kind)) ? null : (
                         <RoundButton
                             testID={`${testIDPrefix}-phone-save`}
@@ -1287,15 +1375,19 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             onScroll={refreshDropMeasurements}
             onLayout={refreshDropMeasurements}
             style={styles.pageScroll}
-            contentContainerStyle={[styles.pageContent, maxWidthStyle]}
+            contentContainerStyle={styles.pageContent}
             contentInsetAdjustmentBehavior="automatic"
             automaticallyAdjustKeyboardInsets
             keyboardShouldPersistTaps="handled"
         >
             {identity}
+            {/* The header measures the pane for Back's gutter; only the document is column-capped. */}
+            <View style={[styles.bodyColumn, maxWidthStyle]}>
             {props.reviewNotice}
             <View testID={`${testIDPrefix}-chips`} style={styles.chipsLine}>
+                <View style={styles.whereChip}>
                 <WorkflowProjectTargetControl
+                    purpose="workflow"
                     ref={whereRef}
                     presentation="chip"
                     target={props.projectTarget}
@@ -1304,6 +1396,8 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                     {...(props.onChangeProjectTarget === undefined ? {} : { onChange: props.onChangeProjectTarget })}
                     testIDPrefix={testIDPrefix}
                 />
+                </View>
+                {hasAgentSteps ? <View style={styles.engineChip}>
                 <SessionAuthoringControls
                     disabled={!documentEditable}
                     fields={HEADER_ENGINE_FIELDS}
@@ -1315,6 +1409,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                     {...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts })}
                     testIDPrefix={`${testIDPrefix}-header-engine`}
                 />
+                </View> : null}
                 {props.triggersSummary === undefined ? null : (
                     <SelectionListFilterChip
                         filter={{
@@ -1336,6 +1431,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                 {blockList}
             </View>
             {stepOptionsPopoverNode}
+            </View>
         </KeyboardAwareScrollView>
     );
 

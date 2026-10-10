@@ -109,7 +109,9 @@ beforeEach(() => {
             workspaceRef('ref-feature', '/repo/payments-feature-auth'),
         ];
     storage.setState({ profileScope: { serverId: 'server-a', accountId: 'account-a' },
-        settings: { ...settingsDefaults, workspaceRefsV1: workspaceRefs },
+        projectAccountRows: { scope: { serverId: 'server-a', accountId: 'account-a' }, status: 'ready', coverage: 'complete', workspaceRefs,
+            relationships: [], organizations: [], revisionsByPhysicalKey: {} },
+        settings: settingsDefaults,
         authoringMemory: { ...authoringMemoryDefaults, recentMachinePaths: [{ machineId: 'machine-2', path: '/home/me/service' }] } });
 });
 

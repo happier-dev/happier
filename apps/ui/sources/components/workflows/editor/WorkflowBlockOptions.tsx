@@ -534,6 +534,17 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
                     subtitle={formatWorkflowResultSummary(step.result)}
                     onPress={() => props.onOpenPage('result')}
                 />
+                {/* Adding an input lives with Result (named results), not on the step's footer, so
+                    selecting a step never reveals a row (DESIGN-7 N27). The new input is edited in
+                    the document, where bound inputs read. */}
+                <Item
+                    testID={`${testIDPrefix}-add-input`}
+                    title={t('workflows.inputs.addInput')}
+                    showChevron={false}
+                    onPress={() => onChange(updateWorkflowBlock(draft, step.id, (current) => (
+                        current.kind === 'step' ? { ...current, input: [...current.input, { kind: 'literal', value: '' }] } : current
+                    )))}
+                />
                 <OnlyRunWhenRow draft={draft} block={step} onOpen={() => props.onOpenPage('condition')} testIDPrefix={testIDPrefix} />
             </ItemGroup>
 

@@ -1,4 +1,5 @@
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -25,13 +26,14 @@ import {
 import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
 import { WorkflowBlockHeading, type WorkflowBlockNameEditor } from './WorkflowBlockHeading';
 import { formatWorkflowConditionLead, formatWorkflowConditionSentence, WorkflowConditionArmLines, WorkflowConditionEditor } from './WorkflowConditionEditor';
-import { WorkflowContainerSummary } from './WorkflowContainerSummary';
-import { WorkflowFailurePolicyControl, WorkflowMaxConcurrentControl } from './WorkflowGroupEditor';
+import { WorkflowContainerBody, WorkflowContainerLane, WorkflowContainerOptionsControl } from './WorkflowContainerBody';
+import { failurePolicyLabel, WorkflowFailurePolicyControl, WorkflowMaxConcurrentControl } from './WorkflowGroupEditor';
+import { WORKFLOW_BLOCK_KIND_GLYPH } from '@/components/workflows/presentation/workflowBlockKindGlyph';
 import { WorkflowNumberField } from './WorkflowNumberField';
 import { formatWorkflowValueReference, WorkflowReferenceSentence, WorkflowValueReferenceEditor } from './WorkflowStepDataEditor';
 import { collectWorkflowConditionValueReferences } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import { workflowEditorStyles } from './workflowEditorStyles';
-import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
+import { resolveWorkflowUnnamedHeading, workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 
 type LoopBlock = Extract<WorkflowBlock, Readonly<{ kind: 'loop' }>>;
 
@@ -315,17 +317,22 @@ export function WorkflowLoopOptions(props: Readonly<{
 }
 
 /**
- * Repeat in the document: the heading, the loop read as one sentence (pressing
- * it opens the loop's options), the body (supplied by the caller as the same
- * recursive block list) and, for "until a step says stop", the step that
- * decides after each round.
+ * Repeat in the document (lab `editor-E1`): the heading carries the repeat
+ * mark and the loop read as one sentence ("For each issue in ↵ Gather changes ·
+ * issues · 6 at a time") with its references as tokens and its literals as
+ * words; the trailing select opens the loop's options. The body hangs from the
+ * loop's rail (the same recursive block list), and for "until a step says
+ * stop", the deciding step sits in its own "After each round" lane.
  */
 export function WorkflowLoopEditor(props: Readonly<{
     draft: WorkflowEditorDraft;
     block: LoopBlock;
     ordinal: number;
+    selected?: boolean;
     nameEditor?: WorkflowBlockNameEditor;
     actions: readonly WorkflowBlockAction[];
+    /** Registers the block's heading as its focus target (blocks without a prompt). */
+    focusRegistration?: (focus: (() => void) | null) => void;
     /** A reader's occurrence selector or state, in the heading line (04 §4.11). */
     headingAccessory?: React.ReactNode;
     onSelect: () => void;
@@ -338,43 +345,50 @@ export function WorkflowLoopEditor(props: Readonly<{
     const { block, testIDPrefix } = props;
     const displayName = workflowBlockReferenceLabel(block);
     const idPrefix = `${testIDPrefix}-loop-${block.id}`;
-    const stopWhen = block.repetition.kind === 'until' ? block.repetition.stopWhen : null;
+    const repetition = block.repetition;
+    const stopWhen = repetition.kind === 'until' ? repetition.stopWhen : null;
+    const sentence = formatWorkflowLoopSentence(props.draft, block);
 
     return (
         <View testID={idPrefix} style={workflowEditorStyles.blockBody}>
             <WorkflowBlockHeading
                 nameEditor={props.nameEditor}
+                kindMark={<Icon name={WORKFLOW_BLOCK_KIND_GLYPH.loop} size={ICON_SIZE.sm} />}
                 ordinal={props.ordinal}
+                selected={props.selected}
+                unnamed={resolveWorkflowUnnamedHeading(block)}
+                {...(props.focusRegistration === undefined ? {} : { focusRegistration: props.focusRegistration })}
                 displayName={displayName}
+                meta={<Text testID={`${idPrefix}-sentence`} accessibilityLabel={sentence}>
+                    <WorkflowReferenceSentence draft={props.draft}
+                        sentence={stopWhen === null ? sentence
+                            : t('workflows.page.inspector.repeatUntil', { condition: formatWorkflowConditionLead(props.draft, stopWhen) })}
+                        references={repetition.kind === 'count' ? [repetition.count]
+                            : repetition.kind === 'items' ? [repetition.items]
+                                : stopWhen !== null ? collectWorkflowConditionValueReferences(stopWhen) : []} />
+                </Text>}
+                trailing={<WorkflowContainerOptionsControl
+                    {...(repetition.kind === 'items' ? { label: failurePolicyLabel(repetition.failurePolicy) } : {})}
+                    optionsLabel={t('workflows.page.inspector.options')}
+                    {...(props.onOpenOptions === undefined ? {} : { onOpenOptions: props.onOpenOptions })}
+                    testID={`${idPrefix}-summary`}
+                />}
                 actions={props.actions}
                 accessory={props.headingAccessory}
                 onSelect={props.onSelect}
                 testID={`${idPrefix}-label`}
                 actionsTestID={`${idPrefix}-actions`}
             />
-            <WorkflowContainerSummary
-                sentence={formatWorkflowLoopSentence(props.draft, block)}
-                sentenceContent={<WorkflowReferenceSentence draft={props.draft}
-                    sentence={stopWhen === null ? formatWorkflowLoopSentence(props.draft, block)
-                        : t('workflows.page.inspector.repeatUntil', { condition: formatWorkflowConditionLead(props.draft, stopWhen) })}
-                    references={block.repetition.kind === 'count' ? [block.repetition.count]
-                        : block.repetition.kind === 'items' ? [block.repetition.items]
-                            : stopWhen !== null ? collectWorkflowConditionValueReferences(stopWhen) : []} />}
-                {...(props.onOpenOptions === undefined ? {} : { onOpenOptions: props.onOpenOptions })}
-                optionsLabel={t('workflows.page.inspector.options')}
-                testID={`${idPrefix}-summary`}
-            />
             {stopWhen === null ? null : <WorkflowConditionArmLines draft={props.draft} condition={stopWhen} testID={`${idPrefix}-summary-arms`} />}
 
-            <Text style={workflowEditorStyles.branchLabel}>{t('workflows.editor.loopBody')}</Text>
-            {props.renderBody()}
-
-            {block.repetition.kind === 'evaluate' ? (
-                <>
-                    <Text style={workflowEditorStyles.branchLabel}>{t('workflows.editor.continuation')}</Text>
-                    {props.renderContinuation?.()}
-                </>
-            ) : null}
+            <WorkflowContainerBody>
+                {props.renderBody()}
+                {repetition.kind === 'evaluate' ? (
+                    <WorkflowContainerLane label={t('workflows.editor.continuation')} labelTestID={`${idPrefix}-continuation-label`}>
+                        {props.renderContinuation?.()}
+                    </WorkflowContainerLane>
+                ) : null}
+            </WorkflowContainerBody>
         </View>
     );
 }

@@ -16,7 +16,9 @@ vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createT
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ spies: { show } }).module);
 vi.mock('@/sync/domains/state/browserRecordStorage', async () => (await import('@/dev/testkit/mocks/browserRecordStorage')).createBrowserRecordStorageModuleMock());
 // Existing library-entry fixtures; repeatable uses the real default executor, not this stub.
-vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({ createFrontDoorActionExecute: () => async (id: string) => {
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>(),
+    createFrontDoorActionExecute: () => async (id: string) => {
     if (id === 'workflow.definition.list') return { ok: true, result: { definitions: state.populated ? [{
         definitionId: '00000000-0000-4000-8000-000000000005', revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Saved' },
     }] : [] } };
@@ -189,7 +191,7 @@ it.each([
         ...(entry === 'message' ? { message } : {}),
     }).prompt;
     const appended = `${initialText}${initialText && !initialText.endsWith('\n') ? '\n' : ''}${expected}`;
-    expect(getSessionDraftSnapshot(scope, address)?.document.composer.text.value).toBe(appended);
+    expect(getSessionDraftSnapshot(scope, address)?.document).toMatchObject({ composer: { text: { value: appended } } });
     expect(composer.read().document.text).toBe(appended);
     expect(screen.root.findByType(MultiTextInput).props.value).toBe(appended);
     expect(focused).toHaveBeenCalled();
@@ -202,7 +204,7 @@ it.each([
     }
     // The ordinary composer remains the editable owner after prefilling.
     await act(async () => screen.root.findByType(MultiTextInput).props.onChangeText(`${appended}\nMy change`));
-    expect(getSessionDraftSnapshot(scope, address)?.document.composer.text.value).toBe(`${appended}\nMy change`);
+    expect(getSessionDraftSnapshot(scope, address)?.document).toMatchObject({ composer: { text: { value: `${appended}\nMy change` } } });
 });
 
 it.each(['unmounted', 'readOnly', 'conflict'] as const)('keeps the draft and does not focus when the repeatable composer is %s', async (condition) => {
@@ -227,7 +229,7 @@ it.each(['unmounted', 'readOnly', 'conflict'] as const)('keeps the draft and doe
         await pending;
     });
     expect(screen.root.findByType(MultiTextInput).props.value).toBe(expected);
-    expect(getSessionDraftSnapshot(scope, { kind: 'session', sessionId: session.id })?.document.composer.text.value).toBe(expected);
+    expect(getSessionDraftSnapshot(scope, { kind: 'session', sessionId: session.id })?.document).toMatchObject({ composer: { text: { value: expected } } });
     expect(focused).not.toHaveBeenCalled();
     expect(show).not.toHaveBeenCalled();
 });

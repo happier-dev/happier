@@ -13,9 +13,7 @@ export type OpenedAutomationWorkflowDefinition =
 /**
  * Opens an Automation's private workflow trigger context for editing.
  *
- * This is the reader half of the writer below, and it deliberately uses the
- * same Account-mode envelope contract as the incumbent one-shot recipe reader
- * (`openAutomationRecipeForAuthoring`): a plain Account reads `{t:'plain'}`
+ * The shared Account envelope owner reads a plain Account's `{t:'plain'}`
  * directly, an E2EE Account decrypts through the caller's Account codec, and
  * unavailable material fails closed rather than presenting an empty editor that
  * would overwrite the stored definition on Save.

@@ -13,6 +13,7 @@ const modalMock = vi.hoisted(() => {
     const hide = vi.fn();
     return { show, update, hide };
 });
+const viewport = vi.hoisted(() => ({ width: 1440, height: 900, scale: 1, fontScale: 1 }));
 
 vi.mock('@/modal', () => ({
     Modal: { show: modalMock.show, update: modalMock.update, hide: modalMock.hide },
@@ -23,7 +24,7 @@ vi.mock('@/text', async () => {
 });
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
+    return createReactNativeWebMock({ useWindowDimensions: () => viewport });
 });
 
 function sheetProps(overrides: Partial<WorkflowRunComposerModalProps> = {}): WorkflowRunComposerModalProps {
@@ -40,9 +41,21 @@ function sheetProps(overrides: Partial<WorkflowRunComposerModalProps> = {}): Wor
 
 describe('useWorkflowRunComposerModal', () => {
     afterEach(() => {
+        viewport.width = 1440;
         modalMock.show.mockClear();
         modalMock.update.mockClear();
         modalMock.hide.mockClear();
+    });
+
+    it('uses one canonical phone sheet rather than a button-sized anchored popup', async () => {
+        viewport.width = 390;
+        const anchorRef = React.createRef<React.ElementRef<typeof View>>();
+        const hook = await renderHook(() => useWorkflowRunComposerModal({ open: true, props: sheetProps(), anchorRef }));
+        expect(hook.getCurrent()).toBeNull();
+        expect(modalMock.show).toHaveBeenCalledWith(expect.objectContaining({
+            focusReturnRef: anchorRef,
+            chrome: expect.objectContaining({ phonePresentation: 'sheet', material: 'solid' }),
+        }));
     });
 
     it('returns an anchored start surface without opening a second modal card', async () => {

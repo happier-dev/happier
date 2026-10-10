@@ -1,16 +1,18 @@
 import React from 'react';
+import { AutomationOccurrenceKeyV1Schema } from '@happier-dev/protocol';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { findAllHostTestInstances, renderScreen } from '@/dev/testkit/render/renderScreen';
-import { createAutomationRunFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { createAutomationRunFixture, createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { materializeWorkflowAcceptedSnapshotV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowFinalResultStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1, WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { AutomationSourceSelectorIdV1Schema, AutomationTriggerIdSchema, AutomationV3RunDetailSchema, createCanonicalJsonSigningInput, deriveAutomationOccurrenceKeyV1, sealAutomationRunResultStoredEnvelopeV1, sealAutomationRunFailureDetailStoredEnvelopeV1, serializeAutomationRunExecutionRecipeV1, type AutomationV3RunDetail, type AutomationV3RunListItem } from '@happier-dev/protocol';
+import { AutomationSourceSelectorIdV1Schema, AutomationTriggerIdSchema, AutomationV3RunDetailSchema, createCanonicalJsonSigningInput, deriveAutomationOccurrenceKeyV1, materializeAutomationRunExecutionRecipeV1, sealAutomationRunResultStoredEnvelopeV1, sealAutomationRunFailureDetailStoredEnvelopeV1, serializeAutomationRunExecutionRecipeV1, type AutomationV3RunDetail, type AutomationV3RunListItem } from '@happier-dev/protocol';
 import { installAutomationScreensCommonModuleMocks } from './automationScreensTestHelpers';
 
 const routeParamsState = vi.hoisted(() => ({ id: 'a1', runId: 'run-1' }));
@@ -182,9 +184,13 @@ vi.mock('@/components/ui/layout/layout', () => ({
     useLayoutMaxWidthStyle: () => ({ maxWidth: 1000 }),
 }));
 
-vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({
-    ActivitySpinner: (props: any) => React.createElement('ActivitySpinner', props),
-}));
+vi.mock('@/components/ui/feedback/ActivitySpinner', async () => {
+    const { iconMatchedSpinnerSize } = await import('@happier-dev/plugin-ui/presentation');
+    return {
+        iconMatchedSpinnerSize,
+        ActivitySpinner: (props: any) => React.createElement('ActivitySpinner', props),
+    };
+});
 
 
 function run(overrides: Partial<AutomationV3RunListItem> = {}) {
@@ -209,7 +215,10 @@ function privateDetail(row = run(), prefix = 'The admitted issue') {
         sourceContractVersion: 1, observationReceivedAt: 11, filter: { version: 1 as const, result: 'matched' as const } };
     const triggerId = AutomationTriggerIdSchema.parse('trigger-1');
     const cause = { kind: 'trigger' as const, triggerId, triggerRevision: 3,
-        triggerKind: 'pluginEvent' as const, occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence }),
+        triggerKind: 'pluginEvent' as const, occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId,
+            evidence: { v: evidence.v, kind: evidence.kind, eventRef: evidence.eventRef,
+                sourceSelectorId: evidence.sourceSelectorId, occurrenceId: evidence.occurrenceId,
+                occurredAt: evidence.occurredAt, payload: evidence.payload } }),
         occurredAt: 10, evidence: { eventRef: evidence.eventRef, sourceSelectorId: evidence.sourceSelectorId } };
     const recipe = serializeAutomationRunExecutionRecipeV1({ v: 1, templateVersion: 4,
         template: { t: 'plain', v: { v: 1, prompt: prefix + ' private recipe' } },
@@ -239,7 +248,7 @@ async function open(row: AutomationV3RunListItem | null = run()) {
 async function respond(row: AutomationV3RunListItem, overrides: Partial<AutomationV3RunDetail> = {}) {
     harness.answer(serverId, DETAIL_PATH, { body: detail(row, overrides) });
     const screen = await open(row);
-    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Admitted details'));
+    await waitForHomeGovernance(() => expect(screen.findAllByProps({ title: 'Admitted recipe' }).length).toBeGreaterThan(0));
     return screen;
 }
 
@@ -249,6 +258,11 @@ async function connectAccount(accountId: string) {
     const { profileDefaults } = await import('@/sync/domains/profiles/profile');
     storage.setState({ profileScope: { serverId, accountId }, profile: { ...profileDefaults, id: accountId } });
 }
+
+// Compile the real Sync graph during collection; each test still restores its
+// singleton bridge and isolates the Account/store through the canonical harness.
+await loadSyncSingletonForTests();
+await import('./AutomationRunDetailScreen');
 
 describe('AutomationRunDetailScreen', () => {
     beforeEach(async () => {
@@ -322,9 +336,8 @@ describe('AutomationRunDetailScreen', () => {
         const screen = await open();
         await waitForHomeGovernance(() => expect(screen.findByTestId('automation-run-detail-stale-refresh-error')).toBeTruthy());
         expect(screen.getTextContent()).toContain('Failed');
-        const notice = findAllHostTestInstances(screen.root, node => node.type === 'Item'
-            && node.props.testID === 'automation-run-detail-stale-refresh-error')[0];
-        expect(notice?.props.accessibilityRole).toBe('alert');
+        const notice = screen.findByTestId('automation-run-detail-stale-refresh-error');
+        expect(notice?.props.role).toBe('alert');
         expect(notice?.props.accessibilityLiveRegion).toBe('assertive');
         expect(screen.findAllByProps({ testID: 'automation-run-detail-load-error' })).toHaveLength(0);
         harness.answer(serverId, DETAIL_PATH, { body: detail(run({ state: 'succeeded', updatedAt: 12 })) });
@@ -346,12 +359,19 @@ describe('AutomationRunDetailScreen', () => {
 
     it('opens admitted recipe, evidence, result and failure through canonical codecs and keeps them route-local', async () => {
         const sealed = privateDetail(run({ updatedAt: 12 }));
+        const materialized = materializeAutomationRunExecutionRecipeV1({
+            recipe: JSON.parse(sealed.executionInputEnvelope!), cause: sealed.cause, runId: sealed.id,
+            accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null },
+        });
+        if (materialized.kind !== 'available' || materialized.target.kind !== 'existingSession') {
+            throw new Error('Expected canonical historical prompt materialization');
+        }
         harness.answer(serverId, DETAIL_PATH, { body: sealed });
         const screen = await open();
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('The admitted issue private result'));
         for (const [title, value] of [
             ['Source instance', 'repository-acme-example'], ['Payload', '{"issue":{"number":42}}'],
-            ['Frozen prompt', 'The admitted issue private recipe'], ['Final result', 'The admitted issue private result'],
+            ['Frozen prompt', materialized.target.prompt], ['Final result', 'The admitted issue private result'],
             ['Failure detail', 'The admitted issue private failure'],
         ]) {
             const row = screen.findByProps({ title });
@@ -456,6 +476,10 @@ describe('AutomationRunDetailScreen', () => {
         expect(harness.requestsFor(cancelPath)).toHaveLength(0);
         expect(modalConfirmSpy).toHaveBeenCalledWith('Cancel Run?', 'This stops the Run when possible.', { cancelText: 'common.keepEditing', confirmText: 'Cancel Run', destructive: true });
         modalConfirmSpy.mockResolvedValueOnce(true);
+        // A fresh read after the mutation observes the canonical cancelled row;
+        // only the already-issued response remains deliberately stale.
+        harness.answer(serverId, DETAIL_PATH, { body: detail(run({ state: 'cancelled', revision: 2,
+            finishedAt: 12, updatedAt: 12, errorCode: null })) });
         await act(async () => cancel.props.onPress());
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Cancelled'));
         await act(async () => pending.resolve());
@@ -510,6 +534,59 @@ describe('AutomationRunDetailScreen', () => {
         expect(screen.getTextContent()).not.toContain('runs.runDetails.failedToLoad');
         await act(async () => pending.resolve());
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('run run-2'));
+    });
+
+    it('keeps Channels recovery reachable while linking Workflow-owned admitted details', async () => {
+        const row = run({ state: 'succeeded', replyHandoffState: 'blocked',
+            cause: { kind: 'conversation', occurredAt: 1, occurrenceKey: AutomationOccurrenceKeyV1Schema.parse('A'.repeat(43)) } });
+        const definition = createWorkflowDefinitionFixture({ defaults: {
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } },
+        } });
+        const materialized = await materializeWorkflowAcceptedSnapshotV1({ definition, admission: { kind: 'user' },
+            effects: { resolveTargetAvailability: async () => true },
+            context: { source: { kind: 'automation', automationId: 'a1' }, inputs: {}, machineId: 'machine-a',
+                executionTarget: { kind: 'session' },
+                workspaceTarget: { project: { machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } },
+                authorization: { principal: { kind: 'host' } } },
+        });
+        if (!materialized.ok) throw new Error(`Workflow fixture admission refused: ${materialized.error.code}`);
+        const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+            mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-a', runId: row.id },
+            acceptedSnapshot: materialized.snapshot,
+        }));
+        const resultEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowFinalResultStoredEnvelopeV1({
+            mode: 'plain', binding: { v: 1, purpose: 'final_result', accountId: 'account-a', runId: row.id },
+            finalResult: { kind: 'happier.workflow-final-result.v1', result: { kind: 'text', value: 'Reply from the Workflow' },
+                producerInvocation: { recordId: 'analyze-invocation' } },
+        }));
+        const workflowRun = createWorkflowRunSummaryFixture({ id: row.id, ownerAccountId: 'account-a', machineId: 'machine-a',
+            origin: { kind: 'automation', automationId: 'a1' }, state: 'succeeded', workflowCustodyState: 'settled' });
+        const keyCensus = WorkflowRunRecipientCensusResponseV1Schema.parse({ runId: row.id, ownerAccountId: 'account-a',
+            access: 'owner', encryptionMode: 'plain', dataEncryptionKey: null, callerDataEncryptionKey: null,
+            recipients: [], visibleTeamId: null, ownerAccountCurrentness: {
+                mode: 'plain', version: 1, contentKeyFingerprint: null,
+            },
+        });
+        // The network supplies actual canonical stored envelopes, never a mocked private projection.
+        harness.answer(serverId, 'POST /v3/automations/runs/workflow-storage', { select: (input) => {
+            const operation = input !== null && typeof input === 'object' && 'operation' in input ? input.operation : undefined;
+            if (operation === 'get') return { body: { run: workflowRun, acceptedEnvelope, checkpointEnvelope: null, resultEnvelope, keyCensus } };
+            if (operation === 'run-key.census') return { body: keyCensus };
+            if (operation === 'invocations.list') return { body: { invocations: [], parentRevision: workflowRun.revision } };
+            return { status: 400, body: { error: 'unexpected_storage_operation' } };
+        } });
+        harness.answer(serverId, DETAIL_PATH, { body: { ...detail(row, { replyHandoffRecoverable: true, resultEnvelope }),
+            workflowRun: { recipeKind: 'workflow-v2', workflowRunId: row.id } } });
+        const { sync } = await import('@/sync/sync');
+        const inspected = await sync.getAutomationRunDetailInspection('a1', row.id);
+        expect(inspected.detail.workflowRun).toEqual({ recipeKind: 'workflow-v2', workflowRunId: row.id });
+        const screen = await open(null);
+        await waitForHomeGovernance(() => expect(screen.findAllByProps({ testID: 'automation-run-retry-reply-handoff' }).length).toBeGreaterThan(0));
+        expect(screen.findAllByProps({ testID: 'automation-run-open-workflow' }).length,
+            JSON.stringify({ text: screen.getTextContent(), detailRequests: harness.requestsFor(DETAIL_PATH).map(({ path }) => path) })).toBeGreaterThan(0);
+        await screen.pressByTestIdAsync('automation-run-open-workflow');
+        expect(routerPushSpy).toHaveBeenCalledWith('/workflows/runs/run-1');
+        expect(screen.findAllByProps({ testID: 'automation-run-retry-reply-handoff' }).length).toBeGreaterThan(0);
     });
 
     it('announces retry when a cold direct read and root-page refresh fail, then recovers', async () => {

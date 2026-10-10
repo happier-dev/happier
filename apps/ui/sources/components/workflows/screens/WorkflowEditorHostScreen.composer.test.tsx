@@ -5,7 +5,7 @@ import { Alert, View } from 'react-native';
 import { invokeTestInstanceHandler, renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture, createWorkflowInvocationIndexFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { buildWorkflowReviewedRunSeed, storeWorkflowReviewedRunSeed } from '@/sync/domains/workflows/workflowReviewedRunSeed';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
@@ -15,12 +15,15 @@ import { resetTeamsSnapshotsForTests } from '@/sync/store/teams/teamsSnapshots';
 
 const transport = vi.hoisted(() => vi.fn());
 const viewport = vi.hoisted(() => ({ width: 1280 }));
-const appliedHome = vi.hoisted(() => ({ serverId: 'server-a', serverUrl: 'https://server-a.example' }));
-vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({ createFrontDoorActionExecute: () => transport }));
-vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
-    getAppliedActiveServerSnapshot: () => appliedHome,
-    isAppliedActiveServerRuntimeAvailable: () => true,
+const appliedHome = vi.hoisted(() => ({ serverId: 'server-a', serverUrl: 'https://server-a.example', generation: 0 }));
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>()),
+    createFrontDoorActionExecute: () => transport,
 }));
+vi.mock('@/sync/runtime/orchestration/connectionManager', async (importOriginal) => {
+    const { createConnectionManagerModuleMock } = await import('@/dev/testkit/mocks/connectionManager');
+    return createConnectionManagerModuleMock(importOriginal, { getSnapshot: () => appliedHome });
+});
 vi.mock('react-native', async () => {
     const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeNativeMock({ platformOS: 'ios' }, {
@@ -61,8 +64,22 @@ const { resolveCompactAppDestinations } = await import('@/components/appShell/de
 const { clearActiveUnsavedChangesGuard } = await import('@/utils/navigation/runGuardedNavigation');
 const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
 const { getStorage } = await import('@/sync/domains/state/storageStore');
+const { ModalProvider } = await import('@/modal');
 
 describe('editor workflow composer', () => {
+    it('keeps the loop card status on its executable container rather than its latest iteration frame', async () => {
+        const { selectWorkflowTestStep } = await import('../editor/useWorkflowTestRunPresentation');
+        const definition = createWorkflowDefinitionFixture({ blocks: [{ kind: 'loop', id: 'items',
+            repetition: { kind: 'items', items: { kind: 'literal', value: [1] }, execution: 'sequential', failurePolicy: 'fail_stop' },
+            body: [{ kind: 'wait', id: 'review', document: { text: 'Review', references: [], attachments: [] } }] }] });
+        const root = createWorkflowInvocationIndexFixture({ id: 'root' });
+        const loop = createWorkflowInvocationIndexFixture({ id: 'loop', parentRecordId: root.id, sequence: '1', lifecycle: 'running' });
+        const frame = createWorkflowInvocationIndexFixture({ id: 'iteration', parentRecordId: loop.id, sequence: '2', lifecycle: 'completed' });
+        const window = { invocationIds: [root.id, loop.id, frame.id], nextCursor: null, parentRevision: 1, loaded: true };
+        expect(selectWorkflowTestStep({ factsById: { root, loop, iteration: frame }, history: window, attention: window,
+            firstFailedId: null }, definition, 'items')).toBe(loop);
+    });
+
     beforeEach(async () => {
         installHomeGovernanceBoundaries(home);
         resetTeamsDirectoryEngineForTests(); resetTeamsSnapshotsForTests();
@@ -89,6 +106,147 @@ describe('editor workflow composer', () => {
         });
     });
     afterEach(() => { clearActiveUnsavedChangesGuard(); standardCleanup(); vi.restoreAllMocks(); });
+
+    it('requires session context before opening a habit from a direct example route', async () => {
+        const screen = await renderScreen(<AppPaneProvider><WorkflowEditorHostScreen source={{ kind: 'new',
+            exampleKey: 'notify-when-agent-waits' }} /></AppPaneProvider>);
+        expect(screen.findByTestId('workflow-editor-starter-context')).not.toBeNull();
+        const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
+        expect(screen.root.findAllByType(WorkflowEditorBody)).toHaveLength(0);
+    });
+
+    it('opens a concrete habit seed with its trigger and exact session placement without writing', async () => {
+        const { WORKFLOW_STARTER_EXAMPLES_V1 } = await import('@happier-dev/protocol');
+        const { storeWorkflowDefinitionDraftSeed } = await import('@/sync/domains/workflows/workflowDefinitionDraftSeed');
+        const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const session = createSessionFixture({ serverId: 'server-a' });
+        getStorage().setState({ sessions: { [session.id]: session },
+            machineListByServerId: { ...getStorage().getState().machineListByServerId, 'server-a': Object.values(getStorage().getState().machines) } });
+        const example = WORKFLOW_STARTER_EXAMPLES_V1.find(entry => entry.key === 'notify-when-agent-waits')!;
+        const definitionDraftSeedId = storeWorkflowDefinitionDraftSeed({ name: 'Notify me', definition: example.definition,
+            trigger: { kind: 'sessionLifecycle', enabled: true, sourceSessionId: session.id,
+                events: ['userActionRequired'], policy: { kind: 'everyMatch' } },
+            sessionTarget: { sessionId: session.id, machineId: 'machine-1' } });
+        const source = { kind: 'new' as const, definitionDraftSeedId };
+        const screen = await renderScreen(<AppPaneProvider><WorkflowEditorHostScreen source={source} /></AppPaneProvider>);
+        const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
+        const body = screen.root.findByType(WorkflowEditorBody);
+        expect(body.props.projectTarget).toEqual({ machineId: 'machine-1', directory: '/Users/tester/project' });
+        await screen.pressByTestIdAsync('workflow-editor-settings-toggle');
+        const section = screen.root.findByType(WorkflowTriggerSection);
+        expect(section.props.draft.adds).toMatchObject([{ trigger: { sourceSessionId: session.id, events: ['userActionRequired'] } }]);
+        await act(async () => screen.update(<AppPaneProvider><WorkflowEditorHostScreen source={{ ...source }} /></AppPaneProvider>));
+        expect(section.props.draft.adds).toHaveLength(1);
+        expect(transport.mock.calls.filter(([action]) => ['workflow.definition.create', 'workflow.trigger.add', 'workflow.run.start'].includes(action))).toHaveLength(0);
+    });
+
+    it('undoes and redoes an inline habit, its trigger and placement as one editor change', async () => {
+        const { WORKFLOW_STARTER_EXAMPLES_V1 } = await import('@happier-dev/protocol');
+        const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const session = createSessionFixture({ serverId: 'server-a' });
+        getStorage().setState({ sessions: { [session.id]: session },
+            machineListByServerId: { ...getStorage().getState().machineListByServerId, 'server-a': Object.values(getStorage().getState().machines) } });
+        const screen = await renderScreen(<AppPaneProvider><WorkflowEditorHostScreen source={{ kind: 'new' }} /></AppPaneProvider>);
+        const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
+        const { WorkflowBlockListEditor } = await import('../editor/WorkflowBlockListEditor');
+        const body = screen.root.findByType(WorkflowEditorBody);
+        const before = { draft: body.props.draft, project: body.props.projectTarget };
+        const example = WORKFLOW_STARTER_EXAMPLES_V1.find(entry => entry.key === 'test-after-every-turn')!;
+        const onUseExample = screen.root.findByType(WorkflowBlockListEditor).props.onUseExample;
+        if (onUseExample === undefined) throw new Error('Missing starter insertion handler');
+        const readHistory = () => {
+            const history = body.props.history;
+            if (history === undefined) throw new Error('Missing workflow editor history');
+            return history;
+        };
+        // The real picker consumer owns insertion; the real Host owns the history and trigger delta.
+        await act(async () => onUseExample({ ...example,
+            trigger: { kind: 'sessionLifecycle', enabled: true, sourceSessionId: session.id,
+                events: ['parentTurnCompleted', 'parentTurnFailed', 'parentTurnCancelled'], policy: { kind: 'everyMatch' } },
+            sessionTarget: { sessionId: session.id, machineId: 'machine-1' } }));
+        expect(body.props.projectTarget).toEqual({ machineId: 'machine-1', directory: '/Users/tester/project' });
+        await screen.pressByTestIdAsync('workflow-editor-settings-toggle');
+        const section = screen.root.findByType(WorkflowTriggerSection);
+        expect(section.props.draft.adds).toHaveLength(1);
+        await act(async () => readHistory().undo());
+        expect(body.props.draft).toEqual(before.draft);
+        expect(body.props.projectTarget).toEqual(before.project);
+        expect(section.props.draft.adds).toHaveLength(0);
+        await act(async () => readHistory().redo());
+        expect(body.props.draft.blocks).toMatchObject([{ kind: 'action', actionId: 'machines.command.run' }]);
+        expect(body.props.projectTarget).toEqual({ machineId: 'machine-1', directory: '/Users/tester/project' });
+        expect(section.props.draft.adds).toHaveLength(1);
+        expect(transport.mock.calls.filter(([action]) => ['workflow.definition.create', 'workflow.trigger.add', 'workflow.run.start'].includes(action))).toHaveLength(0);
+    });
+
+    it('tests the saved revision in place while preserving the unsaved editor document', async () => {
+        const definitionId = '8fab3a81-5e64-4000-8000-000000000001';
+        const definition = createWorkflowDefinitionFixture({ inputs: [], blocks: [{ kind: 'wait', id: 'review',
+            document: { text: 'Saved contents', references: [], attachments: [] } }] });
+        const defaultTransport = transport.getMockImplementation();
+        transport.mockImplementation(async (action: string, input: unknown) => {
+            if (action === 'workflow.definition.get') return { ok: true, result: { definitionId, definition, access: 'owner',
+                revision: { headerVersion: 3, bodyVersion: 3 }, metadata: { title: 'Saved draft' } } };
+            if (action === 'workflow.trigger.list') return { ok: true, result: { sets: [] } };
+            if (action === 'workflow.run.start') {
+                const request = (await import('@happier-dev/protocol')).WorkflowRunStartRequestV1Schema.parse(input);
+                return { ok: true, result: { admission: 'created', run: createWorkflowRunSummaryFixture({ id: request.runId,
+                    sourceArtifactId: definitionId }) } };
+            }
+            if (action === 'workflow.run.invocations.list') {
+                const request = (await import('@happier-dev/protocol')).WorkflowInvocationListRequestV1Schema.parse(input);
+                const root = createWorkflowInvocationIndexFixture({ id: 'root', runId: request.runId, lifecycle: 'completed', contentRevision: '1' });
+                const leaf = createWorkflowInvocationIndexFixture({ id: 'review', runId: request.runId, parentRecordId: root.id,
+                    sequence: '1', lifecycle: 'completed', contentRevision: '1', updatedAt: '2026-09-08T10:00:02.000Z' });
+                const index = request.cursor === undefined ? root : leaf;
+                const detail = (await import('@happier-dev/protocol')).WorkflowInvocationDetailV1Schema.parse({ index, parentRevision: 1,
+                    progress: { kind: 'happier.workflow-progress.v1', blockKind: request.cursor === undefined ? 'root' : 'wait',
+                        invocationPath: { blockId: request.cursor === undefined ? '$root' : 'review', scope: [] }, attempt: '0',
+                        logicalInvocationRecordId: index.id, ...(request.cursor === undefined ? {} : { result: 'Saved result' }) } });
+                return { ok: true, result: { invocations: [index], invocationDetails: [detail], parentRevision: 1,
+                    ...(request.cursor === undefined ? { nextCursor: 'second-page' } : {}) } };
+            }
+            return defaultTransport?.(action, input);
+        });
+        const screen = await renderScreen(<AppPaneProvider><WorkflowEditorHostScreen source={{ kind: 'saved', definitionId }} /></AppPaneProvider>, {
+            createNodeMock: () => ({ measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(600, 100, 160, 40) }),
+        });
+        const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
+        const body = screen.root.findByType(WorkflowEditorBody);
+        const readWait = () => {
+            const block = body.props.draft.blocks[0];
+            if (block?.kind !== 'wait') throw new Error('Expected the saved Wait step');
+            return block;
+        };
+        const changeWhere = body.props.onChangeProjectTarget;
+        if (!changeWhere) throw new Error('Expected the editor target control');
+        await act(async () => {
+            body.props.onChange({ ...body.props.draft, blocks: [{ ...readWait(), document: {
+                text: 'Unsaved changes', references: [], attachments: [],
+            } }] });
+            changeWhere({ machineId: 'machine-1', directory: '/repo' });
+        });
+        expect(screen.findByTestId('workflow-editor-test-run')).not.toBeNull();
+        const { router } = await import('expo-router');
+        vi.mocked(router.push).mockClear();
+        await screen.pressByTestIdAsync('workflow-editor-test-run');
+        await vi.waitFor(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync('workflow-run-inputs-run');
+        expect(transport.mock.calls.filter(([action]) => action === 'workflow.run.start')[0]?.[1]).toMatchObject({
+            source: { kind: 'saved', definitionId, revision: { headerVersion: 3, bodyVersion: 3 } },
+        });
+        expect(readWait().document.text).toBe('Unsaved changes');
+        expect(router.push).not.toHaveBeenCalled();
+        expect(transport.mock.calls.filter(([action]) => ['workflow.definition.update', 'workflow.definition.create'].includes(action))).toHaveLength(0);
+        await vi.waitFor(() => expect(screen.findByTestId('workflow-editor-test-review-status')).not.toBeNull());
+        expect(screen.findByTestId('workflow-editor-test-review-duration')).not.toBeNull();
+        expect(screen.findByTestId('workflow-editor-test-review-output-body')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('Saved result');
+        expect(transport.mock.calls.filter(([action]) => action === 'workflow.run.invocations.list').map(([, input]) => input)).toEqual([
+            expect.objectContaining({ includeContent: true }), expect.objectContaining({ includeContent: true, cursor: 'second-page' }),
+        ]);
+        expect(transport.mock.calls.filter(([action]) => action === 'workflow.run.invocations.get')).toHaveLength(0);
+    });
 
     it('runs the reviewed saved draft with its granted Team without saving or substituting saved contents', async () => {
         appliedHome.serverUrl = 'https://workflow.example';
@@ -336,6 +494,7 @@ describe('editor workflow composer', () => {
             ...(agentSnapshot ? { agentRevision: { definitionId, definition, revision: { headerVersion: 2, bodyVersion: 2 },
                 metadata: { title: 'Reviewed agent snapshot' }, changedBlockIds: [] } } : {}),
         }} /></AppPaneProvider>, {
+            wrapper: ({ children }) => <ModalProvider>{children}</ModalProvider>,
             // The anchor's geometry is a native/DOM boundary, not editor logic.
             createNodeMock: () => ({ getBoundingClientRect: () => ({ left: 600, top: 100, width: 160, height: 40 }),
                 addEventListener: () => {}, removeEventListener: () => {},
@@ -364,7 +523,7 @@ describe('editor workflow composer', () => {
             expect(menuActions.map((action: { id: string }) => action.id)).not.toContain('agent');
             expect(menuActions.map((action: { id: string }) => action.id)).not.toContain('delete');
         } else {
-            expect(body.props.documentPresentation).toBeUndefined();
+            expect(body.props.documentPresentation?.editable).not.toBe(false);
             expect(body.props.onSave).toBeTypeOf('function');
             expect(body.props.onEditWithAgent).toBeTypeOf('function');
             expect(screen.findByTestId('workflow-editor-name')).not.toBeNull();

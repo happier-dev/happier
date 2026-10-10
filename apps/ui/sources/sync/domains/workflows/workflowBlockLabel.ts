@@ -24,6 +24,30 @@ export function workflowBlockReferenceLabel(block: WorkflowBlock, fallbackLabel?
   }
 }
 
+/**
+ * How an unnamed block's heading reads, so a kind is never said twice (DESIGN-6 N19, lab E1):
+ * - `kind`: the kind's own word is the title, in ink ("**Side by side** · 2 lanes");
+ * - `sentence`: the container's sentence is the title ("**If** ↵ … is No", "Repeat 2 times");
+ * - `card`: the heading carries the typed card's identity ("Notify me · Happier", "Review & converge ·
+ *   Built-in  Open ›") and the card shows only its rows, so the title is said once and the heading is
+ *   never an empty row (DESIGN-7);
+ * - `placeholder`: nothing else names it, so the derived label stays a quiet placeholder.
+ */
+export type WorkflowUnnamedHeading = 'kind' | 'sentence' | 'card' | 'placeholder';
+
+export function resolveWorkflowUnnamedHeading(block: WorkflowBlock): WorkflowUnnamedHeading | undefined {
+  if (block.name?.trim()) return undefined;
+  switch (block.kind) {
+    case 'parallel': return 'kind';
+    case 'loop':
+    case 'if': return 'sentence';
+    case 'action':
+    case 'workflow': return 'card';
+    case 'step':
+    case 'wait': return 'placeholder';
+  }
+}
+
 function workflowStepFirstPromptLine(step: WorkflowStep): string | null {
   return step.document.text
     .split(/\r?\n/u)

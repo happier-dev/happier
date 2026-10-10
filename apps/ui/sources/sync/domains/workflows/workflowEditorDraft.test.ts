@@ -4,7 +4,8 @@ import { WorkflowDefinitionV1Schema, type WorkflowBlock, type WorkflowStep } fro
 
 import { createWorkflowEditorDraft, resolveSelectionAfterRemoval, toggleWorkflowBlockCollapsed, EMPTY_WORKFLOW_EDITOR_VIEW_STATE, type WorkflowEditorDraft } from './workflowEditorDraft';
 import * as draftOwner from './workflowEditorDraft';
-import { WORKFLOW_STARTER_EXAMPLES_V1 } from '@happier-dev/protocol';
+import { materializeWorkflowStarterExample } from '@happier-dev/protocol/workflows/builtins/examples';
+import { WORKFLOW_STARTER_EXAMPLES_V1, AutomationTriggerDefinitionInputSchema } from '@happier-dev/protocol';
 import { validateWorkflowEditorDraft } from './workflowAuthoring';
 import { collectWorkflowBlockIds, createWorkflowBlock, findWorkflowBlock, findWorkflowBlockListRef, insertWorkflowBlock, moveWorkflowBlock, resolvePreviousResultInputForInsertion, removeWorkflowBlock, setWorkflowDefaultField, setWorkflowFinalOutput, setWorkflowStepExecutionField, setWorkflowStepText, setWorkflowStepTimeout, updateWorkflowBlock, walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 
@@ -17,18 +18,86 @@ function draftWith(blocks: readonly WorkflowBlock[]): WorkflowEditorDraft {
 }
 
 describe('workflow block creation', () => {
+  it('keeps an ordinary catalog recipe unchanged without Session context and binds it when that context is supplied', () => {
+    const example = WORKFLOW_STARTER_EXAMPLES_V1.find(entry => entry.key === 'ask-once')!;
+    const session = { sessionId: 'session-a', machineId: 'machine-a' };
+    expect(materializeWorkflowStarterExample(example)).toEqual({ status: 'ready', example });
+    const selected = materializeWorkflowStarterExample(example, { session });
+    if (selected.status !== 'ready') throw new Error('Expected materialized ordinary recipe');
+    expect(selected.example.sessionTarget).toEqual(session);
+    expect(selected.example.definition.defaults.conversation).toEqual({ kind: 'existing_session', ...session });
+    const inserted = draftOwner.insertWorkflowStarterExample(setWorkflowDefaultField(draftWith([step('existing')]), 'conversation',
+      { kind: 'existing_session', sessionId: 'prior-session', machineId: 'prior-machine' }), selected.example);
+    expect(inserted.draft.blocks[1]).toMatchObject({ execution: { conversation: { kind: 'existing_session', ...session } } });
+    expect(selected.example.trigger).toBeUndefined();
+    expect(example.definition.defaults.conversation).toBeUndefined();
+    expect(validateWorkflowEditorDraft({ ...selected.example.definition, name: '', draftId: 'ordinary-recipe' }).issues
+      .filter(issue => issue.severity === 'error')).toEqual([]);
+  });
   it.each(WORKFLOW_STARTER_EXAMPLES_V1)('inserts $key atomically, renaming collisions without changing the catalog or existing work', (example) => {
     const existing = setWorkflowDefaultField(draftWith([step('fix')]), 'agentTarget',
       { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } });
     const before = structuredClone(example.definition);
-    const first = draftOwner.insertWorkflowStarterExample(existing, example);
-    const second = draftOwner.insertWorkflowStarterExample(first.draft, example);
+    const selected = materializeWorkflowStarterExample(example, { session: { sessionId: 'session-a', machineId: 'machine-a' }, timezone: 'Europe/Zurich' });
+    if (selected.status !== 'ready') throw new Error('Expected materialized example');
+    const first = draftOwner.insertWorkflowStarterExample(existing, selected.example);
+    const second = draftOwner.insertWorkflowStarterExample(first.draft, selected.example);
     expect(second.draft.blocks[0]).toBe(existing.blocks[0]);
     expect(collectWorkflowBlockIds(second.draft).size).toBe(collectWorkflowBlockIds(existing).size
       + 2 * collectWorkflowBlockIds({ ...existing, blocks: example.definition.blocks }).size);
     expect(validateWorkflowEditorDraft(second.draft).issues.filter((issue) => issue.severity === 'error')).toEqual([]);
     expect(second.before).toEqual(first.draft);
     expect(example.definition).toEqual(before);
+  });
+  it('requires a chosen session before materializing session habits, and preserves their trigger with insertion', () => {
+    const example = WORKFLOW_STARTER_EXAMPLES_V1.find((entry) => entry.key === 'notify-when-agent-waits')!;
+    expect(materializeWorkflowStarterExample(example).status).toBe('requires_session');
+    const selected = materializeWorkflowStarterExample(example, { session: { sessionId: 'session-a', machineId: 'machine-a' } });
+    if (selected.status !== 'ready') throw new Error('Expected materialized example');
+    const inserted = draftOwner.insertWorkflowStarterExample(draftWith([step('existing')]), selected.example);
+    expect(inserted.trigger).toMatchObject({ kind: 'sessionLifecycle', sourceSessionId: 'session-a', events: ['userActionRequired'] });
+    expect(AutomationTriggerDefinitionInputSchema.safeParse(inserted.trigger).success).toBe(true);
+    expect(() => draftOwner.insertWorkflowStarterExample(draftWith([step('existing')]), example)).toThrow('workflow_starter_requires_session');
+  });
+  it('binds a daily summary to its selected session on a schedule without relying on a firing origin', () => {
+    const example = WORKFLOW_STARTER_EXAMPLES_V1.find((entry) => entry.key === 'daily-summary-in-session')!;
+    const selected = materializeWorkflowStarterExample(example, { session: { sessionId: 'session-a', machineId: 'machine-a' }, timezone: 'Europe/Zurich' });
+    if (selected.status !== 'ready') throw new Error('Expected materialized example');
+    const inserted = draftOwner.insertWorkflowStarterExample(draftWith([step('existing')]), selected.example);
+    expect(inserted.trigger).toMatchObject({ kind: 'schedule', schedule: { timezone: 'Europe/Zurich' } });
+    expect(inserted.draft.blocks[1]).toMatchObject({ execution: { conversation: { kind: 'existing_session', sessionId: 'session-a', machineId: 'machine-a' } } });
+    if (inserted.draft.blocks[1]?.kind !== 'step') throw new Error('Expected ordinary summary step');
+    expect(inserted.draft.blocks[1].execution).not.toHaveProperty('engine');
+    expect(inserted.draft.blocks[1].execution).not.toHaveProperty('permissionMode');
+    expect(inserted.draft.defaults.conversation).toBeUndefined();
+    expect(AutomationTriggerDefinitionInputSchema.safeParse(inserted.trigger).success).toBe(true);
+    expect(example.definition.defaults.conversation).toEqual({ kind: 'origin_session' });
+  });
+  it('materializes editable memory upkeep in the current Bot session with its normal model and permissions', () => {
+    const example = WORKFLOW_STARTER_EXAMPLES_V1.find((entry) => entry.key === 'memory-upkeep-in-session');
+    expect(example).toBeDefined();
+    if (!example) throw new Error('Missing memory upkeep template');
+    const selected = materializeWorkflowStarterExample(example, {
+      session: { sessionId: 'bot-session', machineId: 'bot-machine' }, timezone: 'Europe/Zurich',
+    });
+    if (selected.status !== 'ready') throw new Error('Expected materialized upkeep');
+    const inserted = draftOwner.insertWorkflowStarterExample(draftWith([{ ...step('existing'), execution: {
+      conversation: { kind: 'existing_session', sessionId: 'prior-session', machineId: 'prior-machine' },
+    } }]), selected.example);
+    expect(inserted.trigger).toMatchObject({ kind: 'schedule', enabled: true, schedule: { timezone: 'Europe/Zurich' } });
+    expect(inserted.sessionTarget).toEqual({ sessionId: 'bot-session', machineId: 'bot-machine' });
+    const upkeep = inserted.draft.blocks[1];
+    expect(upkeep).toMatchObject({ kind: 'step', execution: {
+      conversation: { kind: 'existing_session', sessionId: 'bot-session', machineId: 'bot-machine' },
+    } });
+    if (upkeep?.kind !== 'step') throw new Error('Expected ordinary agent step');
+    expect(upkeep.execution).not.toHaveProperty('engine');
+    expect(upkeep.execution).not.toHaveProperty('permissionMode');
+    expect(upkeep.document.text).toContain('memory.remember');
+    expect(upkeep.document.text).toContain('memory.update');
+    expect(upkeep.document.text).toContain('memory.forget');
+    expect(validateWorkflowEditorDraft(inserted.draft).issues.filter((issue) => issue.severity === 'error')).toEqual([]);
+    expect(WorkflowDefinitionV1Schema.safeParse(example.definition).success).toBe(true);
   });
   it('assigns a stable id at object creation so no block enters the optional-id dialect', () => {
     const first = createWorkflowBlock('step', new Set<string>());

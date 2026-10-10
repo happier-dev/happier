@@ -283,7 +283,7 @@ describe('Workflow inputs through real Action option resolution', () => {
         const nativeByteReply = DaemonPluginUiArtifactBytesReadResponseSchema.parse({
             ok: true, artifactFamily: 'reactNative', cacheIdentity: { artifactDigest: nativeIdentity.artifactDigest },
             artifact: { artifactKind: 'reactNativeBundle', digest: nativeIdentity.artifactDigest,
-                format: 'plainJs', byteSize: nativeBytes.length }, bytesBase64: encodeBase64(nativeBytes),
+                format: 'plainJs', byteSize: nativeBytes.length },
             files: [{ ...nativeGraph.files[0]!, bytesBase64: encodeBase64(nativeBytes) }],
         });
         rpc.machine.mockImplementation(async (request) => request.method === `input-relay:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`

@@ -8,9 +8,12 @@ import { WorkflowAcceptedRunRoles, WorkflowRunRoles } from './WorkflowRunRoles';
 
 const execute = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({ createFrontDoorActionExecute: () => execute }));
-vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
-    getAppliedActiveServerSnapshot: () => ({ serverId: 'server-a' }), isAppliedActiveServerRuntimeAvailable: () => true,
-}));
+vi.mock('@/sync/runtime/orchestration/connectionManager', async (importOriginal) => {
+    const { createConnectionManagerModuleMock } = await import('@/dev/testkit/mocks/connectionManager');
+    return createConnectionManagerModuleMock(importOriginal, {
+        getSnapshot: () => ({ serverId: 'server-a', serverUrl: 'https://server-a.example', generation: 0 }),
+    });
+});
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({ translate: (key: string) => key }));
@@ -39,7 +42,7 @@ describe('workflow run role controls', () => {
         const screen = await renderScreen(<Host />);
         await screen.pressByTestIdAsync('run-role-portable_builder-target:background_run');
         expect(onChange).toHaveBeenLastCalledWith([other, {
-            roleId: 'portable_builder', workspaceWrites: 'deny', runsAs: { kind: 'background_run', intent: 'delegate' },
+            roleId: 'portable_builder', workspaceWrites: 'deny', runsAs: { kind: 'background_run', intent: 'task' },
         }]);
         await screen.pressByTestIdAsync('run-role-portable_builder-reset');
         expect(onChange).toHaveBeenLastCalledWith([other]);

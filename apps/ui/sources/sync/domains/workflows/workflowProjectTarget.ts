@@ -1,7 +1,7 @@
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol';
 
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { resolveWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { normalizeWorkspaceRootPath } from '@/sync/domains/workspaces/workspaceScope';
 
@@ -52,12 +52,9 @@ export function resolveWorkflowProjectWorkspaceRefId(input: Readonly<{
     const rootPath = normalizeWorkspaceRootPath(input.directory);
     const machineId = input.machineId.trim();
     if (rootPath === null || !machineId) return undefined;
-    const match = input.workspaceRefs.find((ref) => (
-        ref.machineId.trim() === machineId
-        && normalizeWorkspaceRootPath(ref.rootPath) === rootPath
-        && (input.serverId === null || areServerProfileIdentifiersEquivalent(ref.serverId, input.serverId))
-    ));
-    return match?.id;
+    if (!input.serverId) return undefined;
+    const result = resolveWorkspaceRefByScope(input.workspaceRefs, { serverId: input.serverId, machineId, rootPath });
+    return result.kind === 'resolved' ? result.ref.id : undefined;
 }
 
 function withWorkspaceRefId(

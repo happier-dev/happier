@@ -13,11 +13,12 @@ import type { WorkflowAuthoringComposerCustody } from '@/components/sessions/aut
 import { Text } from '@/components/ui/text/Text';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { t } from '@/text';
-import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
+import { resolveWorkflowUnnamedHeading, workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 
 import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
 import { WorkflowBlockHeading, type WorkflowBlockNameEditor } from './WorkflowBlockHeading';
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { WORKFLOW_BLOCK_KIND_GLYPH } from '@/components/workflows/presentation/workflowBlockKindGlyph';
 import { formatWorkflowConditionSentence } from './WorkflowConditionEditor';
 import { useWorkflowStepOptionsChip } from './WorkflowStepOptionsChip';
 import type { WorkflowDocumentStepSlots } from './workflowDocumentPresentation';
@@ -34,6 +35,10 @@ export function WorkflowWaitBlockEditor(props: Readonly<{
     /** The draft the Step options summary reads references from. */
     draft: WorkflowEditorDraft;
     ordinal: number;
+    /** The block's visible number (`workflowBlockOrdinalV1`); `null` for a container. */
+    visibleOrdinal?: string | null;
+    /** Whether this step is the selected block: its ordinal fills. */
+    selected?: boolean;
     nameEditor?: WorkflowBlockNameEditor;
     total: number;
     actions: readonly WorkflowBlockAction[];
@@ -42,6 +47,12 @@ export function WorkflowWaitBlockEditor(props: Readonly<{
     onSelect: () => void;
     onChangeBlock: (next: WorkflowWaitLeafV1) => void;
     editable?: boolean;
+    /** Whether this Wait sits in a lane; at the workflow's root it pauses the workflow (DESIGN-6 P3). */
+    inLane?: boolean;
+    /** Registers the block's heading as its focus target (blocks without a prompt). */
+    focusRegistration?: (focus: (() => void) | null) => void;
+    /** The first issue on this step, once the page reveals issues; named in its own words (P3). */
+    issue?: string | null;
     slots?: WorkflowDocumentStepSlots | null;
     /** Opens this block's Step options, anchored beside its options control; absent when read-only. */
     onOpenOptions?: (anchorRef: React.RefObject<View | null>) => void;
@@ -91,10 +102,15 @@ export function WorkflowWaitBlockEditor(props: Readonly<{
         <View testID={rowPrefix} style={workflowEditorStyles.blockBody}>
             <WorkflowBlockHeading
                 nameEditor={props.nameEditor}
-                kindMark={<Icon name="person" size={16} />}
+                kindMark={<Icon name={WORKFLOW_BLOCK_KIND_GLYPH.wait} size={ICON_SIZE.sm} />}
                 ordinal={props.ordinal}
+                selected={props.selected}
+                unnamed={resolveWorkflowUnnamedHeading(block)}
+                visibleOrdinal={props.visibleOrdinal ?? null}
+                {...(props.focusRegistration === undefined ? {} : { focusRegistration: props.focusRegistration })}
                 displayName={displayName}
                 accessibilityLabel={t('workflows.a11y.stepContext', { block: displayName, position: props.ordinal, total: props.total })}
+                issue={props.issue ?? null}
                 actions={editable ? props.actions : []}
                 accessory={props.slots?.state}
                 onSelect={props.onSelect}
@@ -112,15 +128,20 @@ export function WorkflowWaitBlockEditor(props: Readonly<{
                     attachmentsEnabled
                     placeholder={t('workflows.page.blocks.waitPlaceholder')}
                     editable={editable}
+                    // A workflow step's prompt is written, not spoken to: dictation without the Voice
+                    // planet, as every step composer (07 S-o).
+                    voiceAffordance="dictation"
                     onFocus={handleFocus}
                     {...(composerChips === undefined ? {} : { extraActionChips: composerChips })}
                 />
             </View>
             {props.slots?.reviewedCard ?? null}
             <View style={workflowEditorStyles.metaRow}>
-                <Text style={workflowEditorStyles.metaText}>{t('workflows.page.blocks.waitSub')}</Text>
+                <Text style={workflowEditorStyles.metaText}>{t(props.inLane === true ? 'workflows.page.blocks.waitSub' : 'workflows.page.blocks.waitSubRoot')}</Text>
                 {props.slots?.footer ?? null}
             </View>
+            {props.issue === undefined || props.issue === null ? null
+                : <Text testID={`${rowPrefix}-issue`} style={workflowEditorStyles.issueText}>{props.issue}</Text>}
         </View>
     );
 }

@@ -12,7 +12,7 @@ import type { HappierCollectionWindow } from '@happier-dev/plugin-ui/presentatio
 import type { WorkflowPluginSourceV1 } from '@happier-dev/protocol/workflows';
 import { countWorkflowStepsV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useIsFocused, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -20,28 +20,27 @@ import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
-import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
-import { SelectionListSkeletonRow } from '@/components/ui/selectionList/SelectionListSkeletonRow';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
+import { restoreFocusToBestTarget } from '@/keyboard/focusReturn';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import {
     deleteWorkflowDefinition,
-    getWorkflowDefinition,
+    exportSavedWorkflowDocument,
 } from '@/sync/domains/workflows/workflowDefinitionActions';
-import { exportWorkflowDefinition } from '@/sync/domains/workflows/workflowInterchange';
 import { createWorkflowDefinitionRoute, createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
-import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
+import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { t } from '@/text';
 
 import { confirmWorkflowDocumentExport } from '../actions/confirmWorkflowDocumentExport';
 import { splitLibraryDefinitions } from '../column/workflowsColumnModel';
 import { WORKFLOWS_IMPORT_ROUTE, WORKFLOWS_NEW_ROUTE } from '../column/WorkflowsColumnActions';
+import { useWorkflowsColumnOwnsCreation } from '../column/workflowsColumnCreation';
 import {
-    forgetWorkflowLibraryDefinition,
+    dismissWorkflowLibraryDeletionReceipt,
     useWorkflowDefinitionLibrary,
     useWorkflowRunWindow,
     type WorkflowLibraryDefinition,
@@ -55,6 +54,7 @@ import { useWorkflowAgentAuthoring } from '../authoring/useWorkflowAgentAuthorin
 import { buildWorkflowAgentAuthoringSeed } from '@/sync/domains/workflows/workflowAgentAuthoringSeed';
 import { formatTriggerSetSummary } from '../triggers/formatTriggerSummary';
 import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinitionLibraryTitle } from '../presentation/workflowProblemPresentation';
+import { AccountTriggersSection } from '../triggers/AccountTriggersSection';
 
 /** A library longer than this gets its search field (the collection columns' shared convention). */
 const SEARCH_THRESHOLD = 8;
@@ -70,6 +70,8 @@ type LibraryRow = Readonly<{
 const rowTitle = (row: LibraryRow) => row.group === 'fromPlugins' ? row.plugin.title : formatWorkflowDefinitionLibraryTitle(row.definition);
 
 type LibraryRowCommands = Readonly<{
+    deleting: ReadonlySet<string>;
+    focusRequest: Readonly<{ key: string }> | undefined;
     /** Opens the exact run the summary names as needing you, at its first actionable item. */
     openRun: (runId: string) => void;
     summaries: ReadonlyMap<string, WorkflowLibraryRunSummary> | null;
@@ -102,11 +104,18 @@ const readRowKey = (row: LibraryRow) => row.key;
  * column. A saved row's authored count and attached triggers come from the definition list;
  * "last run {age}", the run strip and **Needs you** come from `workflow.run.summaries`.
  */
-export function WorkflowsLibraryHome(): React.ReactElement {
+export function WorkflowsLibraryHome(props: Readonly<{ includeAccountTriggers?: boolean }> = {}): React.ReactElement {
     const { theme } = useUnistyles();
     const router = useRouter();
     const openAgent = useWorkflowAgentAuthoring();
+    const columnOwnsCreation = useWorkflowsColumnOwnsCreation();
     const library = useWorkflowDefinitionLibrary();
+    const focused = useIsFocused();
+    React.useEffect(() => {
+        const definitionId = library.deletedDefinitionId;
+        if (!focused || definitionId === null) return;
+        return () => dismissWorkflowLibraryDeletionReceipt(definitionId);
+    }, [focused, library.deletedDefinitionId]);
     const libraryIsEmpty = library.definitions.length === 0 && library.pluginWorkflows.length === 0;
     // Only an empty library needs history to distinguish first visit from returning to it.
     const history = useWorkflowRunWindow('all', { enabled: library.status === 'loaded' && libraryIsEmpty });
@@ -151,7 +160,28 @@ export function WorkflowsLibraryHome(): React.ReactElement {
     const summaryIds = React.useMemo(() => rows.flatMap((row) => row.group === 'fromPlugins' ? [] : [row.definition.definitionId]), [rows]);
     const summaries = useWorkflowLibrarySummaries(summaryIds);
     const anatomy = useLibraryAnatomy(summaries);
-    const commands = useLibraryRowCommands(summaries);
+    const visibleKeys = React.useMemo(() => rows.filter(filter).map(readRowKey), [rows, filter]);
+    const commands = useLibraryRowCommands(summaries, library.deletedDefinitionId);
+    const deleted = library.deletedDefinitionId !== null;
+    const visibleKeysRef = React.useRef(visibleKeys);
+    visibleKeysRef.current = visibleKeys;
+    const previousVisibleKeys = React.useRef(visibleKeys);
+    const deletionFocusRequest = React.useMemo(() => {
+        if (library.deletedDefinitionId === null) return undefined;
+        const before = previousVisibleKeys.current;
+        const index = before.indexOf(library.deletedDefinitionId);
+        const neighbor = index < 0 ? undefined : before[index + 1] ?? before[index - 1];
+        const key = neighbor !== undefined && visibleKeysRef.current.includes(neighbor) ? neighbor : visibleKeysRef.current[0];
+        return key === undefined ? undefined : { key };
+    }, [library.deletedDefinitionId, library.status]);
+    React.useEffect(() => { previousVisibleKeys.current = visibleKeys; }, [visibleKeys]);
+    const focusRequest = commands.focusRequest ?? deletionFocusRequest;
+    const creationRef = React.useRef<import('@/keyboard/focusReturn').FocusReturnTarget>(null);
+    const setCreationRef = React.useCallback<NonNullable<React.ComponentProps<typeof RoundButton>['controlRef']>>(
+        target => { creationRef.current = target; }, []);
+    React.useEffect(() => {
+        if (deleted && deletionFocusRequest === undefined) restoreFocusToBestTarget(creationRef);
+    }, [deleted, deletionFocusRequest]);
 
     const newWorkflow = () => router.push(WORKFLOWS_NEW_ROUTE as never);
     const importWorkflow = () => router.push(WORKFLOWS_IMPORT_ROUTE as never);
@@ -159,16 +189,20 @@ export function WorkflowsLibraryHome(): React.ReactElement {
 
     const firstVisit = library.status === 'loaded' && libraryIsEmpty
         && history.status === 'loaded' && history.rows.length === 0;
-    if (firstVisit) return <WorkflowsFirstVisit onNewWorkflow={newWorkflow} onImport={importWorkflow} onCreateWithAgent={createWithAgent} />;
+    if (firstVisit && !deleted) return <WorkflowsFirstVisit onNewWorkflow={newWorkflow} onImport={importWorkflow} onCreateWithAgent={createWithAgent}
+        includeAccountTriggers={props.includeAccountTriggers} />;
 
     const header = (<>
         <PageHeader
             testID="workflows-home:header"
             title={t('workflows.title')}
             description={t('workflows.destination.description')}
-            actions={(
+            actionsPlacement={deleted && deletionFocusRequest === undefined ? 'page' : undefined}
+            // The column normally owns phone creation. An empty deletion landing lends
+            // its real New workflow action to the header so focus never lands on BODY.
+            actions={columnOwnsCreation && !(deleted && deletionFocusRequest === undefined) ? undefined : (
                 <View style={styles.headerActions}>
-                    <RoundButton
+                    {!columnOwnsCreation ? <><RoundButton
                         testID="workflows-home:import"
                         size="small"
                         display="inverted"
@@ -180,9 +214,10 @@ export function WorkflowsLibraryHome(): React.ReactElement {
                     <RoundButton testID="workflows-home:agent" size="small" display="secondary"
                         title={t('workflows.authoring.create')}
                         leading={<Icon name="sparkle" size={14} color={theme.colors.text.primary} />}
-                        onPress={createWithAgent} />
+                        onPress={createWithAgent} /></> : null}
                     <RoundButton
                         testID="workflows-home:new"
+                        controlRef={setCreationRef}
                         size="small"
                         title={t('workflows.newWorkflow')}
                         leading={<Icon name="plus" size={14} color={theme.colors.button.primary.tint} />}
@@ -191,6 +226,9 @@ export function WorkflowsLibraryHome(): React.ReactElement {
                 </View>
             )}
         />
+        {deleted ? <View testID="workflows-home:deleted-focus">
+            <SurfaceStateCard testID="workflows-home:deleted" size="line" kind="success" title={t('common.deleted')} accessibilitySemantics="status" />
+        </View> : null}
         {hasTriggers ? <SegmentedTabBar
             testIDPrefix="workflows-home:filter"
             accessibilityLabel={t('workflows.destination.views.libraryAccessibility')}
@@ -223,15 +261,14 @@ export function WorkflowsLibraryHome(): React.ReactElement {
             title={t('workflows.destination.libraryEmpty')}
         />
     ) : (
-        // First load: list-shaped placeholders where the rows will be, so nothing moves on arrival.
-        <View testID="workflows-home:loading">
-            {[0, 1, 2].map((index) => <SelectionListSkeletonRow key={index} index={index} />)}
-        </View>
+        <SurfaceStateCard testID="workflows-home:loading" size="line" kind="loading" title={t('common.loading')}
+            accessibilitySemantics="status" />
     );
 
     return (
         <LibraryRowCommandsContext.Provider value={commands}>
             <LibraryPageHeaderContext.Provider value={header}>
+            <LibraryAccountTriggersContext.Provider value={props.includeAccountTriggers === true}>
             <CoreCollectionScope renderPageScroller={renderLibraryPageScroller}>
                 <Collection<LibraryRow>
                     testID="workflows-home:collection"
@@ -244,8 +281,8 @@ export function WorkflowsLibraryHome(): React.ReactElement {
                     minListWidth={LIBRARY_MIN_WIDTH_PX}
                     minDetailWidth={LIBRARY_MIN_WIDTH_PX}
                     preferredListRatio={1}
-                    loading={library.status === 'loading' && library.definitions.length === 0}
                     useRowActions={useLibraryRowActions}
+                    {...(focusRequest === undefined ? {} : { selection: { focusRequest } })}
                     {...(rows.length > SEARCH_THRESHOLD ? {
                         search: {
                             label: t('workflows.destination.searchPlaceholder'),
@@ -258,6 +295,7 @@ export function WorkflowsLibraryHome(): React.ReactElement {
                     empty={empty}
                 />
             </CoreCollectionScope>
+            </LibraryAccountTriggersContext.Provider>
             </LibraryPageHeaderContext.Provider>
         </LibraryRowCommandsContext.Provider>
     );
@@ -270,10 +308,11 @@ function LibraryPageColumn(props: Readonly<{ children?: React.ReactNode }>) {
 }
 
 /**
- * The page header, drawn by the page scroller rather than the Collection so the Collection's rows can sit
- * on the same content inset as the sections below them (07 S2: one edge for every section).
+ * The page header is drawn by the page scroller; Collection owns its page-list inset, sharing
+ * the content edge with the sections below it (07 S2: one edge for every section).
  */
 const LibraryPageHeaderContext = React.createContext<React.ReactNode>(null);
+const LibraryAccountTriggersContext = React.createContext(false);
 
 function LibraryPageHeaderSlot() {
     return <>{React.useContext(LibraryPageHeaderContext)}</>;
@@ -285,12 +324,17 @@ function renderLibraryPageScroller(children: React.ReactNode): React.ReactNode {
         <ItemList pageColumn="wide">
             <LibraryPageColumn>
                 <LibraryPageHeaderSlot />
-                <View style={styles.collectionInset}>{children}</View>
+                {children}
+                <LibraryAccountTriggersSlot />
                 <WorkflowBuiltinsSection />
                 <WorkflowExamplesSection />
             </LibraryPageColumn>
         </ItemList>
     );
+}
+
+function LibraryAccountTriggersSlot() {
+    return React.useContext(LibraryAccountTriggersContext) ? <AccountTriggersSection /> : null;
 }
 
 function useLibraryAnatomy(summaries: ReadonlyMap<string, WorkflowLibraryRunSummary> | null): CollectionAnatomy<LibraryRow> {
@@ -329,8 +373,11 @@ function useLibraryRowActions(row: LibraryRow): CollectionRowActions {
     const summary = row.group === 'fromPlugins' ? undefined : commands?.summaries?.get(row.definition.definitionId);
     const needsYouRunId = summary?.needsYouRunId ?? null;
     return {
+        busy: commands?.deleting.has(row.key) === true,
+        accessoryWraps: needsYouRunId !== null || (summary?.recent.length ?? 0) > 0,
         // The row's end (07 S2, lab `nav-N1`): the neutral run strip, **Needs you** when a run waits
-        // (navigation only: the run's own page answers, M3), then the chevron every row opens with.
+        // (navigation only: the run's own page answers, M3). The row itself is the navigation target;
+        // the shared Collection supplies its one trailing overflow control.
         accessory: (
             <View style={styles.rowAccessory}>
                 {summary === undefined || summary.recent.length === 0 ? null : (
@@ -346,7 +393,6 @@ function useLibraryRowActions(row: LibraryRow): CollectionRowActions {
                         onPress={() => commands.openRun(needsYouRunId)}
                     />
                 )}
-                <Icon name="caret-right" size={15} color={theme.colors.text.secondary} />
             </View>
         ),
         secondaryActionAccessibilityLabel: t('workflows.destination.rowMenu.accessibility'),
@@ -354,7 +400,7 @@ function useLibraryRowActions(row: LibraryRow): CollectionRowActions {
             { id: 'run', label: t('workflows.destination.rowMenu.runNow'), disabled: unavailable },
             ...(owned ? [{ id: 'share', label: t('workflows.destination.rowMenu.share') }] : []),
             ...(row.group === 'fromPlugins' ? [] : [{ id: 'export', label: t('workflows.exportJson') }]),
-            ...(owned ? [{ id: 'delete', label: t('common.delete') }] : []),
+            ...(owned ? [{ id: 'delete', label: t('common.delete'), destructive: true }] : []),
         ],
         onSecondaryAction: (id) => {
             if (commands === null) return;
@@ -371,10 +417,17 @@ function useLibraryRowActions(row: LibraryRow): CollectionRowActions {
     };
 }
 
-function useLibraryRowCommands(summaries: ReadonlyMap<string, WorkflowLibraryRunSummary> | null): LibraryRowCommands {
+function useLibraryRowCommands(summaries: ReadonlyMap<string, WorkflowLibraryRunSummary> | null, deletedDefinitionId: string | null): LibraryRowCommands {
     const router = useRouter();
-    const deleting = React.useRef(new Set<string>());
+    const admitted = React.useRef(new Set<string>());
+    const retirement = React.useRef<Readonly<{ dispose(): void }> | null>(null);
+    const [deleting, setDeleting] = React.useState<ReadonlySet<string>>(() => new Set());
+    const [focusRequest, setFocusRequest] = React.useState<Readonly<{ key: string }>>();
+    React.useEffect(() => { setFocusRequest(undefined); }, [deletedDefinitionId]);
+    React.useEffect(() => () => retirement.current?.dispose(), []);
     return React.useMemo(() => ({
+        deleting,
+        focusRequest,
         summaries,
         openRun: (runId) => router.push(createWorkflowRunRoute(runId) as never),
         // A saved row holds an Artifact identity, not a reviewed machine or inputs: Run now opens the
@@ -383,50 +436,65 @@ function useLibraryRowCommands(summaries: ReadonlyMap<string, WorkflowLibraryRun
         exportJson: (definitionId) => { void exportDefinition(definitionId); },
         share: (definition) => showDocumentShareSheet({
             kind: 'workflow-definition.v1', artifactId: definition.definitionId, name: formatWorkflowDefinitionLibraryTitle(definition),
-            subtitle: `${t('workflows.page.chromeTitle')} · ${definition.contentStatus === 'available'
-                ? t('workflows.examples.stepCount', { count: definition.stepCount }) : t('common.unavailable')}`,
+            subtitle: definition.contentStatus === 'available'
+                ? t('workflows.examples.stepCount', { count: definition.stepCount }) : t('common.unavailable'),
             linkPath: createWorkflowDefinitionRoute(definition.definitionId),
             // "Send a copy instead" is the existing JSON export (INT I2).
             onSendCopy: () => { void exportDefinition(definition.definitionId); },
         }),
         remove: (definitionId) => {
-            if (deleting.current.has(definitionId)) return;
+            const admissions = admitted.current;
+            if (admissions.has(definitionId)) return;
+            admissions.add(definitionId);
             void (async () => {
                 const lifetime = captureActiveServerAccountScopeLifetime();
-                if (lifetime === null) return;
-                const confirmed = await Modal.confirm(
-                    t('workflows.destination.deleteTitle'),
-                    t('workflows.destination.deleteBody'),
-                    { cancelText: t('common.cancel'), confirmText: t('common.delete'), destructive: true },
-                );
-                if (!confirmed || !lifetime.isCurrent()) return;
-                deleting.current.add(definitionId);
                 try {
+                    if (lifetime === null) return;
+                    // Runtime reactivation may replace the Account lifetime without a render.
+                    // Bind local operation/focus cleanup to the lifetime actually admitted.
+                    retirement.current?.dispose();
+                    retirement.current = lifetime.onRetire(() => {
+                        if (admitted.current === admissions) admitted.current = new Set();
+                        setDeleting(previous => previous.size === 0 ? previous : new Set());
+                        setFocusRequest(undefined);
+                    });
+                    const confirmed = await Modal.confirm(
+                        t('workflows.destination.deleteTitle'),
+                        t('workflows.page.deleteBody'),
+                        { cancelText: t('common.cancel'), confirmText: t('common.delete'), destructive: true },
+                    );
+                    if (!lifetime.isCurrent()) return;
+                    if (!confirmed) { setFocusRequest({ key: definitionId }); return; }
+                    if (deletedDefinitionId !== null) dismissWorkflowLibraryDeletionReceipt(deletedDefinitionId);
+                    setDeleting(previous => new Set([...previous, definitionId]));
                     await deleteWorkflowDefinition({ definitionId });
-                    if (lifetime.isCurrent()) forgetWorkflowLibraryDefinition(definitionId);
                 } catch {
                     // Deletion never retries by itself; the row stays and the person decides.
-                    if (lifetime.isCurrent()) await Modal.alert(t('workflows.destination.deleteFailedTitle'), t('workflows.loadFailedBody'));
+                    if (lifetime?.isCurrent()) {
+                        await Modal.alertAsync(t('workflows.destination.deleteFailedTitle'), t('workflows.loadFailedBody'));
+                        if (lifetime.isCurrent()) setFocusRequest({ key: definitionId });
+                    }
                 } finally {
-                    deleting.current.delete(definitionId);
+                    admissions.delete(definitionId);
+                    if (lifetime?.isCurrent()) setDeleting(previous => {
+                        if (!previous.has(definitionId)) return previous;
+                        const next = new Set(previous);
+                        next.delete(definitionId);
+                        return next;
+                    });
                 }
             })();
         },
-    }), [router, summaries]);
+    }), [router, summaries, deleting, focusRequest, deletedDefinitionId]);
 }
 
 async function exportDefinition(definitionId: string): Promise<void> {
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (lifetime === null) return;
     try {
-        const opened = await getWorkflowDefinition({ definitionId });
+        const exported = await exportSavedWorkflowDocument({ definitionId });
         if (!lifetime.isCurrent()) return;
-        const exported = exportWorkflowDefinition({ definition: opened.definition });
-        if (!exported.ok) {
-            await Modal.alert(t('workflows.destination.exportFailedTitle'), t('workflows.loadFailedBody'));
-            return;
-        }
-        await confirmWorkflowDocumentExport({ name: opened.metadata.title, json: exported.json, isCurrent: lifetime.isCurrent });
+        await confirmWorkflowDocumentExport({ name: exported.metadata.title, json: exported.json, isCurrent: lifetime.isCurrent });
     } catch {
         if (lifetime.isCurrent()) await Modal.alert(t('workflows.destination.exportFailedTitle'), t('workflows.loadFailedBody'));
     }
@@ -436,7 +504,7 @@ async function exportDefinition(definitionId: string): Promise<void> {
  * First visit (lab `nav-N3`): show, guide, confirm. One primary, and a quiet way in for a file. The
  * examples use the same catalog as the returning home and column picker (08 §6).
  */
-function WorkflowsFirstVisit(props: Readonly<{ onNewWorkflow: () => void; onImport: () => void; onCreateWithAgent: () => void }>) {
+function WorkflowsFirstVisit(props: Readonly<{ onNewWorkflow: () => void; onImport: () => void; onCreateWithAgent: () => void; includeAccountTriggers?: boolean }>) {
     return (
         <ItemList pageColumn="wide">
             <LibraryPageColumn>
@@ -449,6 +517,7 @@ function WorkflowsFirstVisit(props: Readonly<{ onNewWorkflow: () => void; onImpo
                     primaryAction={{ label: t('workflows.newWorkflow'), onPress: props.onNewWorkflow, testID: 'workflows-home:firstVisit:new' }}
                     secondaryAction={{ label: t('workflows.authoring.create'), onPress: props.onCreateWithAgent, testID: 'workflows-home:firstVisit:agent' }}
                 />
+                {props.includeAccountTriggers ? <AccountTriggersSection /> : null}
                 <WorkflowBuiltinsSection />
                 <WorkflowExamplesSection />
                 <View style={styles.importLine}>
@@ -471,10 +540,6 @@ const styles = StyleSheet.create((theme) => ({
         width: '100%',
         alignSelf: 'center',
     },
-    // The rows' edge is the page sections' sheet edge, not the page column's.
-    collectionInset: {
-        paddingHorizontal: resolveItemGroupContentHorizontalInsetPx(),
-    },
     rowAccessory: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -482,6 +547,10 @@ const styles = StyleSheet.create((theme) => ({
     },
     headerActions: {
         flexDirection: 'row',
+        flexWrap: 'wrap',
+        flexShrink: 1,
+        minWidth: 0,
+        maxWidth: '100%',
         alignItems: 'center',
         gap: theme.margins.sm,
     },

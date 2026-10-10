@@ -18,7 +18,8 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 /**
  * `/workflows`. Beside the Workflows column, main shows the library home, which carries only what the
  * column lacks. Without the column — a phone, or a collapsed column — the column is the destination's
- * first screen, so Definitions, the shared Runs view and Account triggers remain reachable.
+ * Definitions carries the same complete home with descriptions, counts and examples. Runs and
+ * Account triggers remain reachable through the existing view and trigger owners.
  */
 export const WorkflowsDestinationIndex = React.memo(function WorkflowsDestinationIndex() {
     const columnVisible = useAppShellColumn().columnVisible;
@@ -29,7 +30,9 @@ export const WorkflowsDestinationIndex = React.memo(function WorkflowsDestinatio
     const sessionId = typeof params.authoringSessionId === 'string' ? params.authoringSessionId : null;
     const close = () => router.setParams({ authoringSessionId: undefined, authoringServerId: undefined });
     const content = !columnVisible && (access.kind === 'workflows' || access.kind === 'triggersOnly')
-        ? <WorkflowsColumn surface="page" /> : <WorkflowsGate surface="destination"><WorkflowsLibraryHome /></WorkflowsGate>;
+        ? <WorkflowsColumn surface="page" {...(access.kind === 'workflows'
+            ? { definitionsContent: <WorkflowsLibraryHome includeAccountTriggers /> } : {})} />
+        : <WorkflowsGate surface="destination"><WorkflowsLibraryHome /></WorkflowsGate>;
     const main = <>{params.automationUnavailable === '1' ? <SurfaceStateCard testID="retired-automation-unavailable"
         size="line" kind="unavailable" title={t('workflows.triggers.legacy.notAvailable')} /> : null}{content}</>;
     if (wide && sessionId && access.kind === 'workflows') return <AppPaneScopeHost scopeId="workflows" main={main}

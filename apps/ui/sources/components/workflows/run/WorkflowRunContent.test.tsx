@@ -134,6 +134,8 @@ async function renderContent(overrides: Partial<ContentProps> = {}) {
         invocations: [],
         invocationsLoaded: true,
         invocationHistoryComplete: true,
+        firstFailedInvocationId: null,
+        firstFailedInvocationResolution: 'resolved',
         selectedInvocationId: null,
         onSelectInvocation: vi.fn(),
         view: 'activity',
@@ -207,6 +209,29 @@ describe('WorkflowRunContent', () => {
             run: createWorkflowRunSummaryFixture({ state: 'succeeded' }),
         }));
         expect(screen.findByTestId('workflow-run-show-current-work') === null).toBe(true);
+    });
+
+    it('draws no pane of its own when it is shown inside another pane, and keeps its header to the title', async () => {
+        viewport.window = { width: 1200, height: 844 };
+        const invocation = createWorkflowInvocationIndexFixture({ id: 'step-1' });
+        const paused = createWorkflowRunSummaryFixture({ id: 'run-1', state: 'running' });
+        const standalone = await renderContent({ run: paused, invocations: [invocation], selectedInvocationId: invocation.id, onCancel: vi.fn() });
+        expect(standalone.findAllByTestId('details-pane').length).toBeGreaterThan(0);
+        const standaloneHeader = standalone.findAllByTestId('workflow-run-header').find((node) => 'leading' in node.props);
+        expect(standaloneHeader?.props.leading).toBeTruthy();
+        expect(standaloneHeader?.props.actions).toBeTruthy();
+        await standardCleanup();
+
+        const embedded = await renderContent({ run: paused, invocations: [invocation], selectedInvocationId: invocation.id, onCancel: vi.fn(), embedded: true });
+        // The host pane is the pane: no nested details column, no second right rail.
+        expect(embedded.findAllByTestId('details-pane')).toHaveLength(0);
+        // One header layout for every detail kind in a pane: the title, with the pane's own controls.
+        const header = embedded.findAllByTestId('workflow-run-header').find((node) => 'title' in node.props && typeof node.props.title === 'string');
+        expect(header?.props.leading).toBeUndefined();
+        expect(header?.props.actions).toBeUndefined();
+        // The run's own controls stay reachable, in the body.
+        expect(embedded.findByTestId('workflow-run-controls')).not.toBeNull();
+        expect(embedded.findByTestId('workflow-run-cancel')).not.toBeNull();
     });
 
     it.each([1200, 390])('retains accepted nested attempt context in the shared header across views at width %s', async (width) => {
@@ -715,20 +740,42 @@ describe('WorkflowRunContent', () => {
         const outcome = String(screen.findByTestId('workflow-run-outcome')?.props.children);
         expect(outcome).toContain('workflows.run.outcomeLine');
         expect(outcome).toContain('"word":"workflows.review.waitTitle"');
-        expect(outcome).toContain('workflows.review.waitBody');
+        expect(outcome).toContain('"sentence":"workflows.review.waitBody"');
         expect(outcome).not.toContain('workflows.run.attentionWaitSentence');
         // A Wait-for-you step never borrows the review hold's word.
         const text = screen.getTextContent();
-        // The outcome line has said it waits for you; the Needs-you card names the step to act on
-        // rather than saying "… is waiting for you" a second time.
+        // The outcome states the consequence; the attention card carries the request.
         expect(screen.findByTestId('workflow-run-needs-you')).toBeTruthy();
-        expect(text).not.toContain('workflows.run.attentionWaitRow');
+        expect(text).toContain('workflows.run.attentionWaitRow');
         expect(text).not.toContain('workflows.runState.waiting_for_review');
         expect(text).not.toContain('workflows.invocationState.waiting_for_review');
         expect(text.indexOf('workflows.tabs.map')).toBeGreaterThan(-1);
         expect(text.indexOf('workflows.tabs.map')).toBeLessThan(text.indexOf('workflows.tabs.steps'));
         expect(text.indexOf('workflows.tabs.steps')).toBeLessThan(text.indexOf('workflows.tabs.activity'));
     });
+
+    it.each(['waiting_for_review', 'running'] as const)(
+        'keeps the %s state and ordinary-review consequence together in the live outcome',
+        async (state) => {
+            const definition = createWorkflowDefinitionFixture({ blocks: [{
+                kind: 'step', id: 'check', name: 'Check the release',
+                document: { text: 'Check the release', references: [], attachments: [] }, input: [], result: { kind: 'text' },
+            }] });
+            const screen = await renderContent({
+                definition,
+                run: createWorkflowRunSummaryFixture({ id: 'run-1', state }),
+                invocations: [
+                    createWorkflowInvocationIndexFixture({ id: 'root', parentRecordId: null, memberOrdinal: '0', sequence: '0' }),
+                    createWorkflowInvocationIndexFixture({ id: 'review', parentRecordId: 'root', memberOrdinal: '0', sequence: '1', lifecycle: 'waiting_for_review' }),
+                ],
+            });
+            const outcome = String(screen.findByTestId('workflow-run-outcome')?.props.children);
+            expect(outcome).toContain('workflows.run.outcomeLine');
+            expect(outcome).toContain(`"word":"${state === 'running' ? 'workflows.runState.running' : 'workflows.runState.waiting_for_review'}"`);
+            expect(outcome).toContain('workflows.run.attentionReviewSentence');
+            expect(outcome).toContain('Check the release');
+        },
+    );
 
     it('shows no usage line when the provider supplied none', async () => {
         const screen = await renderContent();
@@ -1783,6 +1830,7 @@ describe('WorkflowRunContent', () => {
                 createWorkflowInvocationIndexFixture({ id: 'inv-2', sequence: '2', memberOrdinal: '1', lifecycle: 'failed' }),
             ],
             resultLabel: 'partial',
+            firstFailedInvocationId: 'inv-2',
             onSelectInvocation,
         });
 
@@ -1848,6 +1896,7 @@ describe('WorkflowRunContent', () => {
                 createWorkflowInvocationIndexFixture({ id: 'inv-1', sequence: '1', lifecycle: 'completed' }),
                 createWorkflowInvocationIndexFixture({ id: 'inv-2', sequence: '2', memberOrdinal: '1', lifecycle: 'failed' }),
             ],
+            firstFailedInvocationId: 'inv-2',
             onSelectInvocation,
         });
 

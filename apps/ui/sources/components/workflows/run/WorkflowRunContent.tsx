@@ -132,6 +132,12 @@ export type WorkflowRunContentProps = Readonly<{
     machineStatus?: WorkStatusPresentation;
     /** A quiet observation request, independent of durable Run controls. */
     notificationOperation?: React.ReactNode;
+    /**
+     * Shown inside another pane (the Inbox's detail): the host pane is the pane, so the Run opens no
+     * details column or right rail of its own, and its header is the title alone, like every other
+     * detail there; the Run's controls follow in the body.
+     */
+    embedded?: boolean;
     /** The frozen definition this Run was admitted with, when it has been read. */
     definition: WorkflowDefinitionV1 | null;
     frozenChildren?: Readonly<Record<string, WorkflowDefinitionV1>>;
@@ -193,13 +199,9 @@ export type WorkflowRunContentProps = Readonly<{
     /** Exact final-output producer from the encrypted terminal result owner. */
     finalOutputInvocationId?: string | null;
     /** Earliest failed row from the lifecycle-indexed query owner. */
-    firstFailedInvocationId?: string | null;
-    /**
-     * Whether the authoritative lifecycle-indexed failure query has settled.
-     * Omitted retains the compatibility path for callers that only have a
-     * complete local history window.
-     */
-    firstFailedInvocationResolution?: 'loading' | 'resolved' | 'error';
+    firstFailedInvocationId: string | null;
+    /** Whether the authoritative lifecycle-indexed failure query has settled. */
+    firstFailedInvocationResolution: 'loading' | 'resolved' | 'error';
     selectedInvocationProgress?: WorkflowProgressEnvelopeV1 | null;
     selectedInvocationRecoveryAvailability?: WorkflowInvocationRecoveryAvailabilityV1 | null;
     invocationProgressById?: ReadonlyMap<string, WorkflowProgressEnvelopeV1>;
@@ -411,7 +413,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
      * the outline; compact ones present it through the canonical modal (UX
      * §3.2, §4.5). Both read the same selection and the same reviewed buffers.
      */
-    const detailsPaneAvailable = useDetailsPaneAvailable();
+    const sidePanesAvailable = useDetailsPaneAvailable();
+    const detailsPaneAvailable = sidePanesAvailable && props.embedded !== true;
     const phone = useDeviceType() === 'phone';
     /**
      * Where focus returns when the compact modal closes: the exact row or node
@@ -618,15 +621,9 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         kind: 'result_absent';
     }> | null => {
         if (!isTerminalWorkflowRunState(props.run.state)) return null;
-        if (props.firstFailedInvocationResolution !== undefined
-            && props.firstFailedInvocationResolution !== 'resolved') return null;
-        const firstFailedInvocationId = props.firstFailedInvocationResolution === 'resolved'
-            ? props.firstFailedInvocationId ?? null
-            : props.firstFailedInvocationId === undefined
-                ? props.invocations.find((invocation) => invocation.lifecycle === 'failed')?.id
-                : props.firstFailedInvocationId;
-        if (firstFailedInvocationId !== undefined && firstFailedInvocationId !== null) {
-            return { kind: 'see_failures', invocationId: firstFailedInvocationId };
+        if (props.firstFailedInvocationResolution !== 'resolved') return null;
+        if (props.firstFailedInvocationId !== null) {
+            return { kind: 'see_failures', invocationId: props.firstFailedInvocationId };
         }
         if (props.run.state === 'failed') return null;
         const producerBlockId = props.definition?.finalOutput?.producer.blockId ?? null;
@@ -641,7 +638,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         return props.finalOutputInvocationId === undefined || props.finalOutputInvocationId === null
             ? null
             : { kind: 'open_result', invocationId: props.finalOutputInvocationId };
-    }, [props.definition, props.finalOutputInvocationId, props.firstFailedInvocationId, props.firstFailedInvocationResolution, props.invocations, props.resultLabel, props.run.state]);
+    }, [props.definition, props.finalOutputInvocationId, props.firstFailedInvocationId, props.firstFailedInvocationResolution, props.resultLabel, props.run.state]);
 
     /**
      * One dominant action per state (UX §1, §3.3).
@@ -671,6 +668,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         isWorkflowWaitForYouHold(invocation.lifecycle, { blockKind: invocationBlockKind(invocation) })
     ), [invocationBlockKind]);
     const firstAttention = attentionRows[0];
+    const primaryReviewId = attentionRows.find(invocation => invocation.id !== props.selectedInvocationId)?.id;
     const firstAttentionLabel = firstAttention === undefined ? null : invocationLabel(firstAttention);
     const outcomeWord = formatWorkflowRunOutcomeLabel({
         state: props.run.state,
@@ -869,21 +867,24 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 title={props.title ?? t('workflows.contentUnavailable')}
                 alwaysShowTitle
                 // A phone gives the title the full width; the origin fact keeps the workflow glyph (lab P1).
-                leading={phone ? undefined : (
+                leading={phone || props.embedded === true ? undefined : (
                     <PageHeaderMarkSlot>
                         <Icon name="tree-structure" size={22} color={theme.colors.text.secondary} />
                     </PageHeaderMarkSlot>
                 )}
                 meta={headerMeta}
-                actions={runControls}
+                actions={props.embedded === true ? undefined : runControls}
             />
+            {props.embedded === true ? (
+                <View testID={`${testIDPrefix}-controls`} style={styles.pageSection}>{runControls}</View>
+            ) : null}
             <View
                 testID={`${testIDPrefix}-outcome-region`}
                 style={[styles.outcome, props.completionEmphasis === true ? styles.outcomeCompleted : null]}
                 accessibilityRole="summary"
             >
                 {props.completionEmphasis === true ? <View testID={`${testIDPrefix}-outcome-emphasis`} /> : null}
-                {/* The status is said once, as the first words of this line (07 §3). */}
+                {/* The headline names the state; the attention card explains its concrete request. */}
                 <View style={styles.outcomeLine}>
                     <WorkflowRunStateMark
                         state={props.run.state}
@@ -967,7 +968,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             {attentionRows.length === 0 ? null : (
                 <View
                     testID={`${testIDPrefix}-needs-you`}
-                    style={styles.section}
+                    style={[styles.section, styles.pageSection]}
                     // A still-paged window cannot promise a total: the loaded
                     // rows are stated as loaded so a reader never mistakes them
                     // for every intervention that remains.
@@ -997,13 +998,9 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                                     <Icon name="hand" size={ICON_SIZE.sm} color={theme.colors.state.warning.foreground} />
                                     <View style={styles.attentionText}>
                                         <Text style={styles.attentionLabel} numberOfLines={2}>
-                                            {/* The outcome line above already says what the first one
-                                                waits for: its row names the step and nothing more. */}
-                                            {invocation === firstAttention
-                                                ? step
-                                                : attentionWaitsForYou(invocation)
-                                                    ? t('workflows.run.attentionWaitRow', { step })
-                                                    : t('workflows.run.attentionReviewRow', { step })}
+                                            {attentionWaitsForYou(invocation)
+                                                ? t('workflows.run.attentionWaitRow', { step })
+                                                : t('workflows.run.attentionReviewRow', { step })}
                                         </Text>
                                         {where === undefined ? null : (
                                             <Text style={styles.attentionMeta} numberOfLines={1}>{where}</Text>
@@ -1013,6 +1010,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                                         testID={`${testIDPrefix}-needs-you-${invocation.id}`}
                                         onPress={(event) => selectInvocation(invocation.id, event)}
                                         active={reviewing}
+                                        tone={invocation.id === primaryReviewId ? 'primary' : 'default'}
                                         label={reviewing ? t('workflows.run.reviewing') : t('workflows.run.review')}
                                         accessibilityLabel={`${t('workflows.run.review')}: ${step}`}
                                         size="md"
@@ -1035,7 +1033,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
 
             {/* The view switch: Map · Steps · Activity (07 §2.1, §3 control table). `flow` stays the
                 route's view id; the person reads the one map as Map. */}
-            <View style={styles.viewSwitch}>
+            <View style={[styles.viewSwitch, phone ? styles.viewSwitchPhone : null]}>
                 <SegmentedTabBar
                     testIDPrefix={`${testIDPrefix}-view`}
                     accessibilityLabel={t('workflows.tabsAccessibility.runViews')}
@@ -1048,20 +1046,22 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                     activeTabId={props.view}
                     onSelectTab={props.onChangeView}
                 />
-                {isTerminalWorkflowRunState(props.run.state) ? null : <ToolbarButton testID={`${testIDPrefix}-show-current-work`}
-                    label={t('workflows.run.showCurrentWork')} size="md" style={styles.actionTarget}
-                    disabled={currentWork === null}
-                    onPress={(event) => { if (currentWork !== null) selectInvocation(currentWork.id, event); }} />}
-                {props.sourceAction ? <ToolbarButton
-                    testID={`${testIDPrefix}-${props.sourceAction.kind}-workflow`}
-                    label={props.sourceAction.kind === 'edit' ? t('workflows.run.editWorkflow') : t('workflows.run.openWorkflow')}
-                    size="md" style={styles.actionTarget} onPress={props.sourceAction.onPress}
-                /> : props.hasSource !== true && props.onSaveAsWorkflow ? <ToolbarButton
-                    testID={`${testIDPrefix}-save-as-workflow`}
-                    label={t('workflows.run.saveAsWorkflow')} size="md" style={styles.actionTarget}
-                    onPress={props.onSaveAsWorkflow} disabled={props.saveAsWorkflowPending === true}
-                    busy={props.saveAsWorkflowPending === true}
-                /> : null}
+                <View style={styles.viewActions}>
+                    {isTerminalWorkflowRunState(props.run.state) ? null : <ToolbarButton testID={`${testIDPrefix}-show-current-work`}
+                        label={t('workflows.run.showCurrentWork')} size="md" style={styles.actionTarget}
+                        disabled={currentWork === null}
+                        onPress={(event) => { if (currentWork !== null) selectInvocation(currentWork.id, event); }} />}
+                    {props.sourceAction ? <ToolbarButton
+                        testID={`${testIDPrefix}-${props.sourceAction.kind}-workflow`}
+                        label={props.sourceAction.kind === 'edit' ? t('workflows.run.editWorkflow') : t('workflows.run.openWorkflow')}
+                        size="md" style={styles.actionTarget} onPress={props.sourceAction.onPress}
+                    /> : props.hasSource !== true && props.onSaveAsWorkflow ? <ToolbarButton
+                        testID={`${testIDPrefix}-save-as-workflow`}
+                        label={t('workflows.run.saveAsWorkflow')} size="md" style={styles.actionTarget}
+                        onPress={props.onSaveAsWorkflow} disabled={props.saveAsWorkflowPending === true}
+                        busy={props.saveAsWorkflowPending === true}
+                    /> : null}
+                </View>
             </View>
         </View>
     );
@@ -1205,14 +1205,15 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
 
     const footer = (
         <View style={styles.root}>
-            <View testID={`${testIDPrefix}-technical`} style={styles.section}>
+            <View testID={`${testIDPrefix}-technical`} style={[styles.section, styles.pageSection]}>
                 <HappierPressable
                     testID={`${testIDPrefix}-technical-toggle`}
                     accessibilityRole="button"
                     expanded={technicalOpen}
                     onPress={() => setTechnicalOpen((open) => !open)}
-                    style={({ pressed }) => [styles.actionTarget, pressed ? styles.pressed : null]}
+                    style={({ pressed }) => [styles.actionTarget, styles.technicalToggle, pressed ? styles.pressed : null]}
                 >
+                    <Icon name={technicalOpen ? 'caret-down' : 'caret-right'} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
                     <Text style={styles.sectionLabel}>{t('workflows.run.technicalDetails')}</Text>
                 </HappierPressable>
                 {technicalOpen ? (

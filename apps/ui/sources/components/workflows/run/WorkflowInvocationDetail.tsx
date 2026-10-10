@@ -69,6 +69,8 @@ export type WorkflowInvocationDetailProps = Readonly<{
     /** Why this row is waiting or was skipped, when its canonical facts say so. */
     cause?: string | null;
     contentUnavailable?: boolean;
+    /** Undefined retains older callers' notice; null means Review already presents this state. */
+    contentReadState?: React.ReactNode;
     onOpenSession?: (sessionId: string) => void;
     onOpenExecutionRun?: (runId: string) => void;
     /** Read the exact historical attempt; never selects its value for this attempt. */
@@ -258,7 +260,7 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
 
     return (
         <View testID={`${testIDPrefix}-selected-detail`} style={styles.section}>
-            {props.contentUnavailable === true ? (
+            {props.contentUnavailable === true ? props.contentReadState !== undefined ? props.contentReadState : (
                 <Text
                     testID={`${testIDPrefix}-content-unavailable`}
                     style={styles.provenance}
@@ -457,7 +459,7 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                     </View>
                 </View>
             )}
-            {execution?.kind === 'session'
+            {(execution?.kind === 'session' || execution?.kind === 'session_ready')
                 && recovery.canInspectExecution
                 && props.onOpenSession !== undefined ? (
                     <HappierPressable

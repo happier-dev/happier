@@ -22,6 +22,15 @@ function mount(values: WorkflowRunComposerProps['values'] = {}) {
 }
 
 describe('workflow composer accessibility', () => {
+    it('keeps admission status inside a permanent footer, separate from the editable chip row', async () => {
+        const props: WorkflowRunComposerProps = { inputs: [], values: {}, onChangeValues: () => {}, onRun: () => {}, onCancel: () => {} };
+        const screen = await renderScreen(<WorkflowRunComposer {...props} />);
+        expect(screen.findByTestId('workflow-run-inputs-status')).not.toBeNull();
+        expect(screen.findByTestId('workflow-run-inputs-footer')?.findAllByProps({ testID: 'workflow-run-inputs-run' }).length).toBeGreaterThan(0);
+        await screen.update(<WorkflowRunComposer {...props} pending reconciling />);
+        expect(screen.findByTestId('workflow-run-inputs-status')?.findAllByProps({ testID: 'workflow-run-inputs-reconciling' }).length).toBeGreaterThan(0);
+        expect(screen.findByTestId('workflow-run-inputs-preview')?.findAllByProps({ testID: 'workflow-run-inputs-run' })).toHaveLength(0);
+    });
     it('associates the required repair with the actual main input without an untouched alert', async () => {
         const screen = await mount();
         // 07 §3: untouched fields never show errors. The readiness footnote names

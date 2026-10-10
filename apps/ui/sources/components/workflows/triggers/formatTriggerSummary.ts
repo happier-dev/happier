@@ -1,8 +1,65 @@
 import type { AutomationSessionLifecycleEvent, AutomationRunLifecycleTrigger } from '@happier-dev/protocol';
 
 import { getPreferredLanguage, t } from '@/text';
+import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
+import { formatRelativeTimeShort, readRelativeTimeShortRefreshAtMs } from '@/utils/time/formatShortRelativeTime';
 
 import { formatClockTime, parseSimpleSchedule } from './triggerSchedule';
+
+function scheduledRunTimeUnits(nextRunAt: number, nowMs: number) {
+    const next = new Date(nextRunAt);
+    const now = new Date(nowMs);
+    // Calendar days, rather than elapsed 24-hour periods, keep tomorrow truthful across DST.
+    const day = (date: Date) => Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86_400_000;
+    return { days: day(next) - day(now), minutes: Math.round((nextRunAt - nowMs) / MINUTE_MS) };
+}
+
+/** Scheduler-owned occurrence time, shared by habits and upcoming Work rows. */
+export function formatNextScheduledRun(nextRunAt: number | null, enabled = true, nowMs = Date.now()): string {
+    if (nextRunAt === null) return t(enabled ? 'automations.list.nextRunPending' : 'automations.list.noNextRun');
+    const { days, minutes } = scheduledRunTimeUnits(nextRunAt, nowMs);
+    const time = days > 0
+        ? t('workflows.triggers.row.nextDays', { count: days })
+        : minutes <= 0 ? formatRelativeTimeShort(nextRunAt, nowMs)
+            : minutes < 60 ? t('workflows.triggers.row.nextMinutes', { count: minutes })
+                : t('workflows.triggers.row.nextHours', { count: Math.round(minutes / 60) });
+    return t('workflows.triggers.row.nextRun', { time });
+}
+
+/** The occurrence label's actual calendar, rounded-minute/hour, or elapsed-age boundary. */
+export function readNextScheduledRunRefreshAtMs(nextRunAt: number | null, nowMs: number): number | null {
+    if (nextRunAt === null || !Number.isFinite(nextRunAt) || !Number.isFinite(nowMs)) return null;
+    const { days, minutes } = scheduledRunTimeUnits(nextRunAt, nowMs);
+    if (days > 0) {
+        const now = new Date(nowMs);
+        return new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
+    }
+    if (minutes <= 0) return readRelativeTimeShortRefreshAtMs(nextRunAt, nowMs);
+    const nextMinutes = minutes < 60 ? minutes - 1 : Math.max(59, Math.round(minutes / 60) * 60 - 31);
+    // Math.round retains the upper value at a half minute: the lower label starts one ms later.
+    return nextRunAt - (nextMinutes + 0.5) * MINUTE_MS + 1;
+}
+
+/** A scheduler occurrence surrounded by the retained qualifier's static facts. */
+export type ScheduledRunQualifierTime = Readonly<{ atMs: number; prefix?: string; suffix?: string }>;
+
+export function formatScheduledRunQualifier(time: ScheduledRunQualifierTime, nowMs: number, enabled = true): string {
+    return [time.prefix, formatNextScheduledRun(time.atMs, enabled, nowMs), time.suffix].filter(Boolean).join('\n');
+}
+
+/** A firing without accepted lifecycle evidence says only that it ran. */
+export function formatTriggerLastOutcome(age: string, state?: string): string {
+    return state === undefined ? t('workflows.triggers.row.ran', { age })
+        : t('workflows.triggers.row.lastOutcome', { state, age });
+}
+
+/** Exact scheduler time for spoken labels, alongside the compact visible occurrence. */
+export function formatNextScheduledRunAccessibilityLabel(nextRunAt: number | null, enabled = true): string {
+    return nextRunAt === null ? formatNextScheduledRun(null, enabled)
+        : t('workflows.triggers.row.nextRun', { time: formatWithCachedDateTimeFormatter(nextRunAt, getPreferredLanguage(),
+            { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit',
+                second: '2-digit', timeZoneName: 'short' }) });
+}
 
 /**
  * The one "when" summary of a trigger (FIN 04 §5.4, 07 S4): the chip, the Runs automatically row,

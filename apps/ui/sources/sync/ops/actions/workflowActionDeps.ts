@@ -7,10 +7,12 @@ import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/r
 import { isExecutionRunTerminalStatus } from '@happier-dev/protocol/execution/runs/waitForTerminal';
 import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
 import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import type { WorkflowActionExecute } from '@happier-dev/protocol/actions/executor/types';
-import type { WorkflowTriggerActionsDependencies } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
+import { isWorkflowTriggerAgentCallerV1, type WorkflowTriggerActionsDependencies } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
 import type { AutomationTemplateRetainedSessionV1 } from '@happier-dev/protocol/automations/automationTemplateStoredV1';
 import { WorkflowStepExecutionSelectionSchema } from '@happier-dev/protocol/workflows/workflowV1';
+import { ManagedGetOutputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import {
     createAccountWorkflowTriggerActions,
     createWorkflowActionExecutor,
@@ -24,8 +26,6 @@ import {
     SessionPullRequestBindingInputV1Schema,
     SessionPullRequestBindingResultV1Schema,
     type SessionPullRequestBindingInputV1,
-    CONVERSATION_MANAGEMENT_ACTION_IDS_V1,
-    ConversationBindingReadResultV1Schema,
 } from '@happier-dev/channels-protocol/v1';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
@@ -48,11 +48,13 @@ import {
     getAutomationDefinition,
     listAutomationDefinitions,
     reconcileAutomationDefinition,
+    runAutomationDefinitionNow,
 } from '@/sync/api/automations/apiAutomations';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
+import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { loadDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
@@ -61,6 +63,7 @@ import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEnc
 import { parseCompatSessionByIdResponse } from '@/sync/engine/sessions/sessionHttpCompat';
 import { createSessionDataKeyHydrationPlan, hydrateSessionDataKeys, readSessionDataKeyCredentialKind } from '@/sync/encryption/sessionDataKeyHydration';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
+import { listSessionsForVoiceTool } from '@/voice/tools/actionImpl/sessionList';
 import type { LazyActionAccountContext } from './actionAccountContext';
 import { createUiAccountAction, resolveUiAccountActionFallbackMachineId } from './accountActionDeps';
 import type { WorkflowActionTransport } from './workflowActionTransport';
@@ -149,6 +152,7 @@ export function createUiWorkflowAction(params: Readonly<{
         create: (input) => current(() => createAutomationDefinition(account.credentials, input, account)),
         reconcile: (automationId, input) => current(() => reconcileAutomationDefinition(account.credentials, automationId, input, account)),
         delete: (automationId) => current(() => deleteAutomationDefinition(account.credentials, automationId, account)),
+        runNow: (automationId, options) => current(() => runAutomationDefinitionNow(account.credentials, automationId, account, options)),
     };
     const definitions = createWorkflowDefinitionActions({
         artifactStore: account.workflowArtifacts,
@@ -217,6 +221,12 @@ export function createUiWorkflowAction(params: Readonly<{
     });
     const triggers = createAccountWorkflowTriggerActions({
         automations,
+        sessionList: async (input) => {
+            account.assertCurrent();
+            const result = await listSessionsForVoiceTool({ ...input, serverId: account.serverId });
+            account.assertCurrent();
+            return result;
+        },
         resolveEncryption: () => resolveEncryption(),
         resolveRetainedSession: async (sessionId): Promise<AutomationTemplateRetainedSessionV1 | null> => {
             account.assertCurrent();
@@ -261,22 +271,16 @@ export function createUiWorkflowAction(params: Readonly<{
             return result.grants.flatMap((grant) => grant.principal.kind === 'team' ? [grant.principal.teamId] : []);
         },
         resolveSession,
-        observeLegacyChannelAssociation: async ({ automationId }, caller) => {
-            try {
-                account.assertCurrent();
-                const result = await executeRelay({ actionId: 'action.invoke', input: {
-                    action: { pluginId: 'happier.channels', localId: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingRead }, input: { automationId },
-                }, context: { ...caller, surface: caller?.surface ?? 'ui', serverId: account.serverId, runtimeAccountId: account.accountId },
-                ...(caller?.signal ? { signal: caller.signal } : {}) });
-                account.assertCurrent();
-                const parsed = ConversationBindingReadResultV1Schema.safeParse(result);
-                return parsed.success && parsed.data.kind === 'automationAssociation' && parsed.data.automationId === automationId
-                    ? { kind: parsed.data.association } : { kind: 'unknown' };
-            } catch {
-                caller?.signal?.throwIfAborted();
-                account.assertCurrent();
-                return { kind: 'unknown' };
-            }
+        resolveManagedMachine: async (input, caller) => {
+            account.assertCurrent();
+            if (input.homeId !== account.serverIdentityId) targetUnavailable();
+            const response = await account.request(managedMachineActionEndpointPathV1('machines.managed.get'), {
+                method: 'POST', headers: { Authorization: `Bearer ${account.credentials.token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify(input), ...(caller?.signal ? { signal: caller.signal } : {}),
+            }, { includeAuth: false });
+            account.assertCurrent();
+            if (!response.ok) targetUnavailable();
+            return ManagedGetOutputV1Schema.parse(await response.json());
         },
         pullRequests: {
             listLinks: async (sessionId, caller) => {
@@ -348,7 +352,9 @@ export function createUiWorkflowAction(params: Readonly<{
         const definitionWrite = args.actionId === 'workflow.definition.create'
             || args.actionId === 'workflow.definition.update' || args.actionId === 'workflow.definition.edit'
             || args.actionId === 'workflow.definition.delete';
-        const triggerOperation = args.actionId.startsWith('workflow.trigger.') || args.actionId.startsWith('session.trigger.');
+        const savedOccurrence = args.actionId === 'workflow.trigger.run_now';
+        const triggerOperation = !savedOccurrence
+            && (args.actionId.startsWith('workflow.trigger.') || args.actionId.startsWith('session.trigger.'));
         // Prepared recovery publishes executor rows. A present user's trigger
         // reads and writes are Account data served here; any other caller's
         // trigger or definition write consumes the host's agent-start policy
@@ -356,6 +362,7 @@ export function createUiWorkflowAction(params: Readonly<{
         const machineOrHostOperation = args.actionId === 'workflow.run.start'
             || args.actionId === 'workflow.run.invocations.retry'
             || (args.actionId === 'workflow.run.resume' && args.input.mode === 'recover')
+            || (savedOccurrence && isWorkflowTriggerAgentCallerV1(args.context))
             || ((definitionWrite || triggerOperation) && args.context.authority !== 'present_user');
         let result: unknown;
         try {
@@ -372,6 +379,21 @@ export function createUiWorkflowAction(params: Readonly<{
         }
         try { account.assertCurrent(); } catch { return unavailable; }
         const failure = WorkflowActionFailureV1Schema.safeParse(result);
-        return failure.success ? failure.data : result as Awaited<ReturnType<WorkflowActionExecute>>;
+        if (failure.success) return failure.data;
+        if (savedOccurrence) {
+            // Project only after the trigger owner has admitted and bound the exact receipt.
+            // An addressed Home must not publish private content into another focused Account.
+            const receipt = WorkflowActionOutputSchemasV1['workflow.trigger.run_now'].safeParse(result);
+            if (receipt.success) {
+                const active = getActiveServerAccountScope();
+                if (active?.accountId === account.accountId
+                    && areServerProfileIdentifiersEquivalent(active.serverId, account.serverId)) {
+                    storage.getState().upsertAutomationRun(receipt.data.run);
+                }
+                return receipt.data;
+            }
+            // Pending human approval is not an admission receipt; preserve its existing relay result.
+        }
+        return result as Awaited<ReturnType<WorkflowActionExecute>>;
     };
 }

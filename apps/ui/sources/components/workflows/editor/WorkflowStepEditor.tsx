@@ -5,7 +5,8 @@ import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { hasAgentIconMark } from '@/agents/catalog/catalog';
 import { resolveSessionAuthoringAgentId } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import { useSessionAuthoringEngineSummary } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { WORKFLOW_BLOCK_KIND_GLYPH } from '@/components/workflows/presentation/workflowBlockKindGlyph';
 
 import { Text } from '@/components/ui/text/Text';
 import {
@@ -29,7 +30,7 @@ import { useSessionAuthoringEnginePicker } from '@/components/sessions/authoring
 import type { SessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import type { WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
-import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
+import { resolveWorkflowUnnamedHeading, workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 
 import {
     listWorkflowStepOverriddenFields,
@@ -43,6 +44,7 @@ import { WorkflowBlockHeading, type WorkflowBlockNameEditor } from './WorkflowBl
 import { workflowEditorStyles } from './workflowEditorStyles';
 import { formatWorkflowConversationLabel, formatWorkflowWorkspaceLabel } from './WorkflowContinuityControls';
 import { WorkflowStepDataEditor } from './WorkflowStepDataEditor';
+import { formatWorkflowIssueText } from './workflowIssueText';
 import { useWorkflowStepOptionsChip } from './WorkflowStepOptionsChip';
 import { WorkflowStepSessionDropZone, type WorkflowSessionDrop } from './WorkflowStepSessionDropZone';
 import type { WorkflowDocumentStepSlots } from './workflowDocumentPresentation';
@@ -126,6 +128,10 @@ export function WorkflowStepEditor(props: Readonly<{
     step: WorkflowStep;
     draft: WorkflowEditorDraft;
     ordinal: number;
+    /** The block's visible number (`workflowBlockOrdinalV1`); `null` for a container. */
+    visibleOrdinal?: string | null;
+    /** Whether this step is the selected block: its ordinal fills. */
+    selected?: boolean;
     nameEditor?: WorkflowBlockNameEditor;
     total: number;
     /** Where this step's references, files and attachments are addressed from. */
@@ -232,7 +238,7 @@ export function WorkflowStepEditor(props: Readonly<{
     const { theme } = useUnistyles();
     const agentId = resolveSessionAuthoringAgentId({ agentTarget: effective.agentTarget, facts: props.authoringFacts });
     const kindMark = agentId !== null && hasAgentIconMark(agentId, theme)
-        ? <AgentIcon agentId={agentId} size={16} /> : <Icon name="robot" size={16} />;
+        ? <AgentIcon agentId={agentId} size={ICON_SIZE.sm} /> : <Icon name={WORKFLOW_BLOCK_KIND_GLYPH.step} size={ICON_SIZE.sm} />;
     const engine = step.execution?.engine ?? props.draft.defaults.engine;
     const engineChangeRef = React.useRef({ fields: props.onChangeExecutionFields, engine: props.onChangeEngine });
     engineChangeRef.current = { fields: props.onChangeExecutionFields, engine: props.onChangeEngine };
@@ -284,9 +290,12 @@ export function WorkflowStepEditor(props: Readonly<{
                 nameEditor={props.nameEditor}
                 kindMark={kindMark}
                 ordinal={ordinal}
+                selected={props.selected}
+                unnamed={resolveWorkflowUnnamedHeading(step)}
+                visibleOrdinal={props.visibleOrdinal ?? null}
                 displayName={displayName}
                 accessibilityLabel={accessibilityLabel}
-                issue={issues[0] === undefined ? null : t(`workflows.issue.${issues[0].code}`)}
+                issue={issues[0] === undefined ? null : formatWorkflowIssueText(issues[0], props.draft)}
                 actions={editable ? actions : []}
                 accessory={props.slots?.state}
                 onSelect={onSelect}
@@ -336,19 +345,22 @@ export function WorkflowStepEditor(props: Readonly<{
                 editable={editable}
                 {...(!editable && props.slots?.footer ? { footerAccessory: props.slots.footer } : {})}
                 onChangeInput={props.onChangeInput}
-                {...(editable ? { onAddNamedResults: () => onCustomize(promptFrameRef) } : {})}
                 testIDPrefix={testIDPrefix}
             />
 
-            {!editable || props.revealIssues === false ? null : issues.map((issue) => (
-                <Text
-                    key={`${issue.code}:${issue.path}`}
-                    testID={`${testIDPrefix}-step-${step.id}-issue`}
-                    style={workflowEditorStyles.issueText}
-                >
-                    {t(`workflows.issue.${issue.code}`)}
-                </Text>
-            ))}
+            {!editable || props.revealIssues === false || issues.length === 0 ? null : (
+                <View style={workflowEditorStyles.stepIssues}>
+                    {issues.map((issue) => (
+                        <Text
+                            key={`${issue.code}:${issue.path}`}
+                            testID={`${testIDPrefix}-step-${step.id}-issue`}
+                            style={workflowEditorStyles.issueText}
+                        >
+                            {formatWorkflowIssueText(issue, props.draft)}
+                        </Text>
+                    ))}
+                </View>
+            )}
         </View>
     );
 }

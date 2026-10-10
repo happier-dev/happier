@@ -1,5 +1,6 @@
 import { isAutomationApiErrorCode } from '../../sync/api/automations/apiAutomations';
 import { t } from '@/text';
+import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 
 export type AutomationErrorPresentation = Readonly<{
     message: string;
@@ -8,6 +9,9 @@ export type AutomationErrorPresentation = Readonly<{
 
 /** Converts automation failures to a bounded, non-server-controlled UI message. */
 export function formatAutomationError(error: unknown, fallback: string): AutomationErrorPresentation {
+    if (error instanceof WorkflowActionError && error.code === 'workflow_outcome_unresolved') {
+        return { message: t('projects.scripts.run.unknown'), action: t('common.refresh') };
+    }
     if (isAutomationApiErrorCode(error, 'sourceTurnNotCurrent')) {
         return { message: t('automations.exactTurn.staleBody'), action: t('automations.exactTurn.useCurrentTurn') };
     }

@@ -26,9 +26,13 @@ export const SESSION_TRIGGER_WHEN_KINDS = [
     'prComment',
     'ciFailed',
 ] as const;
-export type SessionTriggerWhenKind = (typeof SESSION_TRIGGER_WHEN_KINDS)[number];
+export type SessionTriggerWhenKind = (typeof SESSION_TRIGGER_WHEN_KINDS)[number] | 'pluginEvent';
+
+/** Saved projections omit private source setup; only the exact Event editor can supply it. */
+export type PluginEventTriggerInput = Extract<AutomationTriggerDefinitionInput, Readonly<{ kind: 'pluginEvent'; sourceInstanceId: string }>>;
 
 export type TriggerWhenValue =
+    | Readonly<{ kind: 'pluginEvent'; value: PluginEventTriggerInput | null; eventRef?: Readonly<{ pluginId: string; localId: string }> }>
     | Readonly<{
         kind: 'turnEnds';
         /** "When this turn finishes…" (04 §5.5): bound to that exact turn, it fires once for it. */
@@ -99,6 +103,7 @@ export function createDefaultWhen(
         const link = pullRequestLinks.length === 1 ? pullRequestLinks[0] : undefined;
         return { kind, pullRequest: link ? { repository: link.repository, number: link.number } : null };
     }
+    if (kind === 'pluginEvent') return { kind, value: null };
     return { kind };
 }
 
@@ -122,6 +127,7 @@ export function buildTriggerDefinition(params: Readonly<{
     sessionId: string | null;
 }>): AutomationTriggerDefinitionInput | null {
     const { when, enabled } = params;
+    if (when.kind === 'pluginEvent') return when.value === null ? null : { ...when.value, enabled };
     if (when.kind === 'schedule') {
         if (when.schedule === null && when.everyMs !== undefined) {
             return { kind: 'schedule', enabled, schedule: { kind: 'interval', scheduleExpr: null, everyMs: when.everyMs, timezone: when.timezone } };
@@ -151,6 +157,7 @@ export function buildInitialTriggerDefinition(params: Readonly<{
     enabled: boolean;
 }>): SessionInitialTriggerDefinitionV1 | null {
     const { when, enabled } = params;
+    if (when.kind === 'pluginEvent') return null;
     if (when.kind === 'schedule') {
         const trigger = buildTriggerDefinition({ ...params, sessionId: null });
         return trigger?.kind === 'schedule' ? trigger : null;
@@ -182,15 +189,16 @@ export function buildTriggerTarget(then: TriggerThenValue, scope: 'session' | 'a
         case 'runWorkflow':
             return then.ref === null ? null : { kind: 'workflow', ref: then.ref };
         case 'sendPrompt': {
-            const prompt = then.prompt.trim();
-            if (prompt.length === 0) return null;
+            const source = then.sourceDefinition;
+            const only = source?.blocks.length === 1 ? source.blocks[0] : undefined;
+            // A schedule-only edit must not normalize a retained Agent prompt's bytes.
+            const prompt = only?.kind === 'step' && only.document.text === then.prompt ? then.prompt : then.prompt.trim();
+            if (prompt.trim().length === 0) return null;
             const conversation = scope === 'session'
                 ? { kind: 'origin_session' }
                 : then.runsIn?.kind === 'session'
                     ? { kind: 'existing_session', sessionId: then.runsIn.sessionId, machineId: then.runsIn.machineId }
                     : { kind: 'fresh' };
-            const source = then.sourceDefinition;
-            const only = source?.blocks.length === 1 ? source.blocks[0] : undefined;
             const definition = normalizeInline(source && only?.kind === 'step'
                 ? { ...source, defaults: { ...source.defaults, conversation }, blocks: [{ ...only,
                     document: { ...only.document, text: prompt },
@@ -257,7 +265,7 @@ export function readTriggerThen(
     if (target.definition.inputs.length > 0) return { kind: 'kept', target, inputs };
     const blocks = target.definition.blocks;
     const only = blocks.length === 1 ? blocks[0] : undefined;
-    if (only?.kind === 'step') {
+    if (only?.kind === 'step' && only.inputMode !== 'none') {
         const conversation = only.execution?.conversation ?? target.definition.defaults.conversation;
         const runsIn: TriggerRunsIn | undefined = executionTarget?.kind === 'detached_run'
             ? { kind: 'backgroundRun' }
@@ -310,6 +318,7 @@ export function readScheduleWhen(schedule: Readonly<{
 
 /** Reads a saved trigger back as the When it was written with. */
 export function readTriggerWhen(trigger: SetTrigger | SessionInitialTriggerDefinitionV1): TriggerWhenValue | null {
+    if (trigger.kind === 'pluginEvent') return { kind: 'pluginEvent', value: null, eventRef: trigger.eventRef };
     if (trigger.kind === 'prComment' || trigger.kind === 'ciFailed') {
         return { kind: trigger.kind, pullRequest: trigger.pullRequest ?? null };
     }

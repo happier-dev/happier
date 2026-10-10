@@ -28,7 +28,7 @@ import { t } from '@/text';
  *    anywhere else is a second mapping, which is the drift this replaces.
  */
 
-export type WorkflowProblemRepair = 'retry' | 'refresh' | 'none';
+export type WorkflowProblemRepair = 'retry' | 'refresh' | 'settings' | 'none';
 
 export type WorkflowProblemPresentation = Readonly<{
     /** The closed Protocol code, or `null` for an unrecognized transport failure. */
@@ -48,6 +48,7 @@ export type WorkflowProblemPresentation = Readonly<{
 }>;
 
 type WorkflowProblemShape = Readonly<{
+    titleKey?: TranslationKeyNoParams;
     messageKey: TranslationKeyNoParams;
     repair: WorkflowProblemRepair;
     accessibilitySemantics: 'alert' | 'status';
@@ -64,6 +65,7 @@ type WorkflowProblemShape = Readonly<{
  * and one that cannot be continued both mean the same thing to the reader.
  */
 const WORKFLOW_PROBLEM_SHAPES = {
+    not_authenticated: { messageKey: 'errors.authenticationFailed', repair: 'none', accessibilitySemantics: 'alert' },
     subtree_denied: { messageKey: 'workflows.problem.subtreeDenied', repair: 'none', accessibilitySemantics: 'alert' },
     role_target_unavailable: { messageKey: 'workflows.problem.roleTargetUnavailable', repair: 'none', accessibilitySemantics: 'alert' },
     role_runs_as_mismatch: { messageKey: 'workflows.problem.roleRunsAsMismatch', repair: 'none', accessibilitySemantics: 'alert' },
@@ -94,6 +96,10 @@ const WORKFLOW_PROBLEM_SHAPES = {
     // The Account-content owner already has this sentence; a second one here
     // would be the same concept said two ways.
     content_unavailable: { messageKey: 'workflows.contentUnavailable', repair: 'none', accessibilitySemantics: 'alert' },
+    history_not_readable: { titleKey: 'workflows.readState.historyTitle', messageKey: 'workflows.readState.historyBody', repair: 'none', accessibilitySemantics: 'alert' },
+    encryption_setup_required: { titleKey: 'workflows.readState.encryptionTitle', messageKey: 'workflows.readState.encryptionBody', repair: 'settings', accessibilitySemantics: 'alert' },
+    waiting_for_keys: { titleKey: 'workflows.readState.keysTitle', messageKey: 'workflows.readState.keysBody', repair: 'retry', accessibilitySemantics: 'status' },
+    storage_unavailable: { titleKey: 'workflows.readState.storageTitle', messageKey: 'workflows.readState.storageBody', repair: 'retry', accessibilitySemantics: 'alert' },
     source_unavailable: { messageKey: 'workflows.problem.sourceUnavailable', repair: 'none', accessibilitySemantics: 'alert' },
     legacy_conversion_unsupported: { messageKey: 'workflows.problem.legacyConversionUnsupported', repair: 'none', accessibilitySemantics: 'alert' },
     native_goal_owner: { messageKey: 'workflows.problem.nativeGoalOwner', repair: 'none', accessibilitySemantics: 'alert' },
@@ -136,6 +142,7 @@ export function formatWorkflowDefinitionLibraryTitle(definition: Readonly<{ meta
 function repairLabelFor(repair: WorkflowProblemRepair): string | null {
     if (repair === 'retry') return t('workflows.retry');
     if (repair === 'refresh') return t('common.refresh');
+    if (repair === 'settings') return t('workflows.readState.openSettings');
     return null;
 }
 
@@ -145,7 +152,7 @@ function present(
 ): WorkflowProblemPresentation {
     return {
         code,
-        title: code === 'content_unavailable' ? t('common.unavailable') : shape.accessibilitySemantics === 'status'
+        title: shape.titleKey ? t(shape.titleKey) : code === 'content_unavailable' ? t('common.unavailable') : shape.accessibilitySemantics === 'status'
             ? t('workflows.problem.waitingTitle')
             : t('workflows.problem.title'),
         message: t(shape.messageKey),
@@ -180,7 +187,12 @@ export function resolveWorkflowProblemPresentation(error: unknown): WorkflowProb
         return present(code, { ...WORKFLOW_PROBLEM_SHAPES.legacy_conversion_unsupported,
             messageKey: 'workflows.triggers.legacy.channelReplyRefusal' });
     }
-    return code === null ? present(null, GENERIC_SHAPE) : present(code, WORKFLOW_PROBLEM_SHAPES[code]);
+    return code === null ? present(null, GENERIC_SHAPE) : describeWorkflowOperationProblem(code);
+}
+
+/** A known private-read reason from the metadata owner uses the same presentation as an Action failure. */
+export function describeWorkflowOperationProblem(code: WorkflowOperationErrorCodeV1): WorkflowProblemPresentation {
+    return present(code, WORKFLOW_PROBLEM_SHAPES[code]);
 }
 
 /** Convenience for the surfaces that show one sentence rather than a state card. */

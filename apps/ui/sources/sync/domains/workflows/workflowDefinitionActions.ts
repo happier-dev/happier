@@ -4,6 +4,16 @@ import type { WorkflowArtifactRevisionV1, WorkflowDefinitionMetadataV1 } from '@
 
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { callWorkflowAction } from './callWorkflowAction';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { WorkflowDefinitionExportResultV1Schema, type WorkflowDefinitionExportResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
+
+/** Export reads the saved Artifact once at the canonical document owner. The platform owns delivery. */
+export async function exportSavedWorkflowDocument(params: Readonly<{ definitionId: string; signal?: AbortSignal }>): Promise<WorkflowDefinitionExportResultV1> {
+    return callDefinitionAction({ actionId: 'workflow.definition.export',
+        input: WorkflowDefinitionGetRequestV1Schema.parse({ definitionId: params.definitionId }),
+        parseResult: (value) => WorkflowDefinitionExportResultV1Schema.parse(value), ...signalOption(params.signal) });
+}
 
 /**
  * The workflow library client: `workflow.definition.list/get/create/update/delete`.
@@ -31,11 +41,20 @@ async function callDefinitionAction<TResult>(params: Readonly<{
     input: unknown;
     parseResult: (value: unknown) => TResult;
     signal?: AbortSignal;
+    deletedArtifactId?: string;
 }>): Promise<TResult> {
-    return callWorkflowAction({
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    const result = await callWorkflowAction({
         ...params,
         fallbackMessage: 'Workflow definition request failed',
     });
+    if (lifetime?.isCurrent() && (params.actionId === 'workflow.definition.create'
+        || params.actionId === 'workflow.definition.update' || params.actionId === 'workflow.definition.delete')) {
+        // Local writes consume the same content-free wake as writes from another client.
+        publishHomeAccountChange(lifetime.scope.serverId, undefined,
+            params.deletedArtifactId === undefined ? undefined : { deletedArtifactIds: [params.deletedArtifactId] });
+    }
+    return result;
 }
 
 function signalOption(signal: AbortSignal | undefined): Readonly<{ signal?: AbortSignal }> {
@@ -130,8 +149,8 @@ export async function updateWorkflowDefinition(params: Readonly<{
 }
 
 /**
- * Remove a definition from the library. Existing Automations and admitted Runs
- * are unaffected; that contract is the Action owner's, not this client's.
+ * Remove a definition and its attached triggers. Admitted Runs are unaffected;
+ * that contract is the Action owner's, not this client's.
  */
 export async function deleteWorkflowDefinition(params: Readonly<{
     definitionId: string;
@@ -141,6 +160,7 @@ export async function deleteWorkflowDefinition(params: Readonly<{
     return callDefinitionAction({
         actionId: 'workflow.definition.delete',
         input,
+        deletedArtifactId: input.definitionId,
         parseResult: (value) => WorkflowDefinitionDeleteResultV1Schema.parse(value),
         ...signalOption(params.signal),
     });

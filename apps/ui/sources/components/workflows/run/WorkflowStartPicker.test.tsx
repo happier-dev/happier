@@ -29,6 +29,7 @@ import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalo
 import type { Artifact, ArtifactCreateRequest } from '@/sync/domains/artifacts/artifactTypes';
 import { createWorkflowDefinition } from '@/sync/domains/workflows/workflowDefinitionActions';
 import { SelectionList } from '@/components/ui/selectionList';
+import { WorkflowExamplesSection } from '../library/WorkflowExamplesSection';
 
 const withPanes = ({ children }: React.PropsWithChildren) => <AppPaneProvider>{children}</AppPaneProvider>;
 
@@ -89,11 +90,20 @@ function installPluginProjection() {
 function writes() {
     return home.requests.filter((request) => {
         if (request.method === 'GET') return false;
+        // App Sync uses POST for these read-only startup projections.
+        if (['/v1/plugins/availability/materializations/read', '/v1/plugins/availability/intents/list'].includes(request.path)) return false;
+        // The Project row census is a POST read; /project-rows/mutate must still count as a write.
+        if (request.method === 'POST' && request.path === '/v1/account/project-rows/list') return false;
         const body = request.body as { operation?: string } | undefined;
         return request.path !== '/v3/automations/runs/workflow-storage' || !['list', 'summaries'].includes(body?.operation ?? '');
     });
 }
 function starts() { return machineRpc.mock.calls.map(([request]) => request).filter((request) => request.method === 'workflow.run.start'); }
+function habitSessionFixture() {
+    const base = createSessionFixture({ serverId: storage.getState().profileScope!.serverId });
+    if (!base.metadata) throw new Error('Session fixture metadata is unavailable');
+    return createSessionFixture({ ...base, metadata: { ...base.metadata, flavor: 'claude', claudeSessionId: 'native-session-1' } });
+}
 async function seedUnavailableWorkflowDefinitions() {
     const ids = {
         missingTitle: '00000000-0000-4000-8000-000000000011',
@@ -173,6 +183,13 @@ afterEach(async () => {
 });
 
 describe('WorkflowStartPicker plugin workflows', () => {
+    it('keeps trigger-source templates out of recipe-only insertion under an existing trigger', async () => {
+        const screen = await renderScreen(<WorkflowExamplesSection opensDraft={false} onUse={() => {}} />);
+        expect(screen.findAllByTestId('workflow-examples:notify-when-agent-waits:use')).toHaveLength(0);
+        expect(screen.findAllByTestId('workflow-examples:daily-summary-in-session:use')).toHaveLength(0);
+        expect(screen.findAllByTestId('workflow-examples:test-after-every-turn:use')).toHaveLength(0);
+        expect(screen.findByTestId('workflow-examples:install-deps-in-worktree:use')).toBeTruthy();
+    });
     it('keeps readable start choices when neighboring definitions are unavailable', async () => {
         const ids = await seedUnavailableWorkflowDefinitions();
         const onSelect = vi.fn();
@@ -197,17 +214,18 @@ describe('WorkflowStartPicker plugin workflows', () => {
         routeParams.id = id;
         routeParams.intent = 'run';
         const screen = await renderScreen(<SavedWorkflowRoute />, { wrapper: withPanes });
-        expect(screen.findByTestId('workflow-builtin:session')).not.toBeNull();
-        expect(screen.findByTestId('workflow-builtin:run')).toBeNull();
+        expect(screen.findByTestId('workflow-builtin-run-now')).not.toBeNull();
+        expect(screen.getTextContent()).toContain(t('workflows.examples.chooseSession'));
+        expect(screen.findAllByType(WorkflowRunComposer)).toHaveLength(0);
         expect(Modal.show).not.toHaveBeenCalled();
         expect(starts()).toEqual([]);
-        await screen.pressByTestIdAsync('workflow-builtin:duplicate');
+        await screen.pressByTestIdAsync('workflow-builtin-duplicate');
         const route = routing.push.mock.calls.at(-1)?.[0] as { pathname: string; params: { definitionDraftSeedId: string } };
         expect(route.pathname).toBe('/workflows/new');
         expect(readWorkflowDefinitionDraftSeed(route.params.definitionDraftSeedId)).toMatchObject({
             definition: BUILTIN_WORKFLOW_CATALOG_V1.find((entry) => entry.id === id)!.definition,
         });
-        expect(writes()).toEqual([]);
+        expect(writes(), JSON.stringify(writes().map(({ method, path, body }) => ({ method, path, body })))).toEqual([]);
     });
     it('opens the shared example picker from the column + menu without saving', async () => {
         const screen = await renderScreen(<WorkflowsColumnActions canCreate />);
@@ -220,13 +238,85 @@ describe('WorkflowStartPicker plugin workflows', () => {
         expect(writes()).toEqual([]);
         expect(starts()).toEqual([]);
     });
+    it('chooses the habit source before opening a draft and carries its concrete trigger through the existing seed', async () => {
+        const session = habitSessionFixture();
+        storage.setState({ isDataReady: true, sessions: { [session.id]: session } });
+        const screen = await renderScreen(<WorkflowExamplesSection />);
+        await screen.pressByTestIdAsync('workflow-examples:notify-when-agent-waits:use');
+        expect(routing.push).not.toHaveBeenCalled();
+        const picker = screen.findByType(DropdownMenu);
+        const items: React.ComponentProps<typeof DropdownMenu>['items'] = picker.props.items;
+        expect(items.map((item) => item.id)).toContain(session.id);
+        await act(async () => { picker.props.onSelect(session.id); });
+        const route = routing.push.mock.calls.at(-1)?.[0] as { pathname: string; params: { definitionDraftSeedId: string } };
+        expect(route.pathname).toBe('/workflows/new');
+        expect(readWorkflowDefinitionDraftSeed(route.params.definitionDraftSeedId)).toMatchObject({
+            trigger: { kind: 'sessionLifecycle', sourceSessionId: session.id, events: ['userActionRequired'] },
+            definition: { blocks: [{ kind: 'action', actionId: 'notifications.notify_me' }] },
+        });
+        expect(writes(), JSON.stringify(writes().map(({ method, path, body }) => ({ method, path, body })))).toEqual([]);
+        expect(starts()).toEqual([]);
+    });
+    it('binds a Session\'s Triggers + examples to that Session with no chooser and opens the draft with its concrete trigger', async () => {
+        const session = habitSessionFixture();
+        storage.setState({ isDataReady: true, sessions: { [session.id]: session } });
+        const screen = await renderScreen(<WorkflowExamplesSection presentation="list"
+            session={{ sessionId: session.id, machineId: 'machine-1' }} />);
+        // Only examples that run in a Session are offered here.
+        expect(screen.findByTestId('workflow-examples:ask-once')).toBeNull();
+        // Already bound to this Session: no description asks to choose one.
+        expect(screen.getTextContent()).toContain(t('workflows.examples.sessionNotifyDescription'));
+        expect(screen.getTextContent()).not.toContain(t('workflows.examples.notifyWhenAgentWaits.description'));
+        await screen.pressByTestIdAsync('workflow-examples:daily-summary-in-session:use');
+        expect(screen.findAllByType(DropdownMenu)).toHaveLength(0);
+        const route = routing.push.mock.calls.at(-1)?.[0] as { pathname: string; params: { definitionDraftSeedId: string } };
+        expect(route.pathname).toBe('/workflows/new');
+        expect(readWorkflowDefinitionDraftSeed(route.params.definitionDraftSeedId)).toMatchObject({
+            trigger: { kind: 'schedule' },
+            sessionTarget: { sessionId: session.id, machineId: 'machine-1' },
+            definition: { defaults: { conversation: { kind: 'existing_session', sessionId: session.id, machineId: 'machine-1' } } },
+        });
+        expect(writes()).toEqual([]);
+        expect(starts()).toEqual([]);
+    });
+    it('passes the chosen daily destination and trigger to inline insertion without navigation', async () => {
+        const session = habitSessionFixture();
+        storage.setState({ isDataReady: true, sessions: { [session.id]: session } });
+        const onUse = vi.fn();
+        const screen = await renderScreen(<WorkflowExamplesSection onUse={onUse} />);
+        await screen.pressByTestIdAsync('workflow-examples:daily-summary-in-session:use');
+        expect(onUse).not.toHaveBeenCalled();
+        await act(async () => { screen.findByType(DropdownMenu).props.onSelect(session.id); });
+        expect(onUse).toHaveBeenCalledWith(expect.objectContaining({
+            trigger: expect.objectContaining({ kind: 'schedule' }),
+            definition: expect.objectContaining({ defaults: expect.objectContaining({ conversation: {
+                kind: 'existing_session', sessionId: session.id, machineId: 'machine-1',
+            } }) }),
+        }));
+        expect(routing.push).not.toHaveBeenCalled();
+        expect(writes()).toEqual([]);
+    });
+    it('refuses a session choice made after its Account lifetime retired', async () => {
+        const scope = storage.getState().profileScope!;
+        const session = habitSessionFixture();
+        storage.setState({ isDataReady: true, sessions: { [session.id]: session } });
+        const onUse = vi.fn();
+        const screen = await renderScreen(<WorkflowExamplesSection onUse={onUse} />);
+        await screen.pressByTestIdAsync('workflow-examples:test-after-every-turn:use');
+        const picker = screen.findByType(DropdownMenu);
+        await act(async () => { storage.setState({ profileScope: { ...scope, accountId: 'another-account' } }); });
+        await act(async () => { picker.props.onSelect(session.id); });
+        expect(onUse).not.toHaveBeenCalled();
+        expect(routing.push).not.toHaveBeenCalled();
+        expect(writes()).toEqual([]);
+    });
     it('reviews a built-in in the canonical composer before admitting its catalog source', async () => {
         routeParams.id = 'builtin:open-a-pull-request';
         storage.setState({ machines: { 'machine-1': createMachineFixture({ id: 'machine-1' }) },
             authoringMemory: { ...storage.getState().authoringMemory, recentMachinePaths: [{ machineId: 'machine-1', path: '/project' }] } });
         installPluginProjection();
         const screen = await renderScreen(<SavedWorkflowRoute />, { wrapper: withPanes });
-        await screen.pressByTestIdAsync('workflow-builtin:run');
+        await screen.pressByTestIdAsync('workflow-builtin-run-now');
         expect(starts()).toEqual([]);
         expect(Modal.show).not.toHaveBeenCalled();
         expect(screen.findAllByType(WorkflowRunComposer)).toHaveLength(1);
@@ -269,9 +359,10 @@ describe('WorkflowStartPicker plugin workflows', () => {
         installPluginProjection();
         const screen = await renderScreen(<SavedWorkflowRoute />, { wrapper: withPanes });
         await act(async () => { await Promise.resolve(); });
-        expect(screen.findAllByTestId('workflow-plugin:read-only').length).toBeGreaterThan(0);
+        const { WorkflowEditorBody } = await import('../screens/WorkflowEditorBody');
+        expect(screen.findByType(WorkflowEditorBody).props.documentPresentation.editable).toBe(false);
         expect(screen.findAllByTestId('workflow-editor-name').length).toBe(0);
-        await screen.pressByTestIdAsync('workflow-plugin:duplicate');
+        await screen.pressByTestIdAsync('workflow-plugin-duplicate');
         expect(writes()).toEqual([]);
         const route = routing.push.mock.calls.at(-1)?.[0] as { pathname: string; params: { definitionDraftSeedId: string } };
         expect(route.pathname).toBe('/workflows/new');
@@ -352,7 +443,8 @@ describe('WorkflowStartPicker plugin workflows', () => {
         const launcher = { unavailableReason: null, intents: [], agentIds: [], providerLaunch: null,
             openConversation: vi.fn(), openRun: vi.fn(), openDetails: vi.fn(), startBuiltinWorkflow: vi.fn(), startPluginWorkflow };
         const screen = await renderScreen(<SessionAgentsLaunchMenu launcher={launcher} />);
-        expect(home.requests).toEqual([]);
+        expect(home.requests.filter(request => request.path === '/v1/artifacts'
+            || request.path === '/v3/automations/runs/workflow-storage')).toEqual([]);
         expect(machineRpc).not.toHaveBeenCalled();
         await act(async () => { screen.findByType(DropdownMenu).props.onOpenChange(true); });
         await act(async () => { await Promise.resolve(); });

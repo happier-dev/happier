@@ -1,3 +1,4 @@
+import { useWorkspaceRefs } from '@/sync/domains/state/storage';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { useAuthoringMemoryField } from '@/sync/domains/state/storage';
 import * as React from 'react';
@@ -15,14 +16,14 @@ import { resolveNewSessionCheckoutChipModel } from '@/components/sessions/new/mo
 import { Icon } from '@/components/ui/icons/Icon';
 import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
-import { Item } from '@/components/ui/lists/Item';
+import { Item, type ItemProps } from '@/components/ui/lists/Item';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
 import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
 import { SelectionListFilterChip } from '@/components/ui/selectionList';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { useActiveServerAccountScope, useSetting } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope, } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import {
     selectWorkflowProjectMachine,
@@ -107,6 +108,7 @@ export function formatWorkflowWhereSummary(params: Readonly<{
 export type WorkflowProjectTargetControlHandle = Readonly<{ openPicker: () => void }>;
 
 type WorkflowProjectTargetControlProps = Readonly<{
+    purpose?: 'workflow' | 'trigger' | 'background';
     target: WorkflowAuthoringTarget | null | undefined;
     /** The display name of the target Machine; `null` stays visibly unresolved. */
     machineName: string | null;
@@ -127,6 +129,8 @@ type WorkflowProjectTargetControlProps = Readonly<{
     title?: string;
     /** The field row's description (its consequence), wrapping; `field` only. */
     subtitle?: string;
+    /** Explicit field layout for a narrow desktop popover; defaults to the settings row's stack. */
+    accessoryLayout?: ItemProps['accessoryLayout'];
     testIDPrefix: string;
 }>;
 
@@ -166,6 +170,7 @@ export const WorkflowProjectTargetControl = React.forwardRef<
                         <View testID={`${testIDPrefix}-where-popover`} style={styles.popover}>
                             {props.machines !== undefined && props.onChange !== undefined ? (
                                 <EditableProjectTarget
+                                    purpose={props.purpose ?? 'workflow'}
                                     target={target ?? null}
                                     machines={props.machines}
                                     onChange={props.onChange}
@@ -185,6 +190,7 @@ export const WorkflowProjectTargetControl = React.forwardRef<
             <View testID={`${testIDPrefix}-machine-row`} style={styles.row}>
                 {editable && props.machines !== undefined && props.onChange !== undefined ? (
                     <EditableProjectTarget
+                        purpose={props.purpose ?? 'workflow'}
                         target={target ?? null}
                         machines={props.machines}
                         onChange={props.onChange}
@@ -213,6 +219,7 @@ export const WorkflowProjectTargetControl = React.forwardRef<
     return (
         <WhereField
             title={props.title ?? t('workflows.page.sections.machineAndProject')}
+            accessoryLayout={props.accessoryLayout}
             {...(props.subtitle === undefined ? {} : { subtitle: props.subtitle })}
             summary={summary}
             open={pickerOpen}
@@ -230,6 +237,7 @@ export const WorkflowProjectTargetControl = React.forwardRef<
         >
             {props.machines !== undefined && props.onChange !== undefined ? (
                 <EditableProjectTarget
+                    purpose={props.purpose ?? 'workflow'}
                     target={target ?? null}
                     machines={props.machines}
                     onChange={props.onChange}
@@ -248,6 +256,7 @@ export const WorkflowProjectTargetControl = React.forwardRef<
 function WhereField(props: Readonly<{
     title: string;
     subtitle?: string;
+    accessoryLayout?: ItemProps['accessoryLayout'];
     summary: string | null;
     open: boolean;
     onOpenChange: (open: boolean) => void;
@@ -266,7 +275,7 @@ function WhereField(props: Readonly<{
                 testID={`${props.testIDPrefix}-machine-row`}
                 title={props.title}
                 {...(props.subtitle === undefined ? {} : { subtitle: props.subtitle, subtitleLines: 0 })}
-                accessoryLayout="stacked"
+                accessoryLayout={props.accessoryLayout ?? 'stacked'}
                 showChevron={false}
                 selected={false}
                 {...(editable ? {
@@ -278,7 +287,7 @@ function WhereField(props: Readonly<{
                         detailColor: theme.colors.text.secondary,
                         chevronColor: theme.colors.text.secondary,
                         field: fieldColors,
-                        fieldSpan: 'row',
+                        fieldSpan: props.accessoryLayout === 'inline' ? undefined : 'row',
                         placeholder: t('common.choose'),
                         placeholderColor: theme.colors.input.placeholder,
                     }),
@@ -314,6 +323,7 @@ function WhereChipIcon(): React.ReactElement {
 }
 
 function EditableProjectTarget(props: Readonly<{
+    purpose: 'workflow' | 'trigger' | 'background';
     target: WorkflowAuthoringTarget | null;
     machines: readonly Machine[];
     onChange: (target: WorkflowAuthoringTarget) => void;
@@ -323,7 +333,7 @@ function EditableProjectTarget(props: Readonly<{
     const activeScope = useActiveServerAccountScope();
     const serverId = activeScope?.serverId ?? null;
     const recentMachinePaths = useAuthoringMemoryField('recentMachinePaths');
-    const workspaceRefsSetting = useSetting('workspaceRefsV1');
+    const workspaceRefsSetting = useWorkspaceRefs();
     const workspaceRefs = Array.isArray(workspaceRefsSetting) ? workspaceRefsSetting : EMPTY_WORKSPACE_REFS;
     const resolveRecentPathsForMachine = useStableRecentPathsResolver({
         recentMachinePaths: Array.isArray(recentMachinePaths) ? recentMachinePaths : [],
@@ -391,6 +401,7 @@ function EditableProjectTarget(props: Readonly<{
     return (
         <>
             <MachineSelector
+                purpose={props.purpose}
                 machines={machines}
                 selectedMachine={machine ?? null}
                 onSelect={selectMachine}

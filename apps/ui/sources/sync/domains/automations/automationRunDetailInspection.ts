@@ -7,6 +7,7 @@ import { openAutomationRunResultStoredEnvelopeV1, parseAutomationRunResultStored
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import type { AutomationRunResultCorrespondenceV1, AutomationRunResultV1 } from '@happier-dev/protocol/automations/event';
 import type { AutomationV3RunDetail } from '@happier-dev/protocol/automations/automationApiV3';
+import type { WorkflowRunGetResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { isDataKeyAuthCredentials } from '@/auth/storage/tokenStorage';
@@ -295,7 +296,26 @@ export function inspectAutomationRunDetailPrivateContent(params: Readonly<{
     detail: AutomationV3RunDetail;
     accountCurrentness: AccountEncryptionCurrentnessResponse;
     material?: AccountScopedCryptoMaterial;
+    /** Already opened by workflow.run.get under the captured Account's Run key. */
+    workflowResult?: Readonly<{ accountId: string; detail: WorkflowRunGetResultV1 }>;
 }>): AutomationRunDetailPrivateContentInspection {
+    if (params.detail.workflowRun) {
+        const opened = params.workflowResult;
+        const origin = opened?.detail.run.origin;
+        const matches = opened?.detail.run.id === params.detail.id && origin?.kind === 'automation'
+            && origin.automationId === params.detail.automationId;
+        const value = opened?.detail.result;
+        return {
+            recipe: { kind: 'absent' },
+            result: params.detail.resultEnvelope === null ? { kind: 'absent' }
+                : !opened ? { kind: 'unavailable', reason: 'materialUnavailable' }
+                : !matches || value === undefined ? contentInvalidResult()
+                : { kind: 'available',
+                    correspondence: { accountId: opened.accountId, automationId: params.detail.automationId, runId: params.detail.id },
+                    result: { v: 1, kind: 'text', text: typeof value === 'string' ? value : createCanonicalJsonSigningInput(value) } },
+            failureDetail: inspectFailureDetail(params),
+        };
+    }
     return {
         recipe: inspectRecipe(params),
         result: inspectResult(params),

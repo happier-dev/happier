@@ -35,6 +35,8 @@ export type WorkflowRunListFilter = Readonly<{
      * `workflow.run.get` read.
      */
     runId?: string;
+    runIds?: readonly string[];
+    invocationProvenance?: readonly Readonly<{ runId: string; invocationRecordIds: readonly string[] }>[];
     sourceArtifactId?: string;
     /** `attention: 'required'` asks the server's indexed predicate, not a cached page. */
     attention?: 'required';
@@ -56,6 +58,7 @@ export type WorkflowRunListPage = Readonly<{
      */
     metadataByRunId: Readonly<Record<string, WorkflowRunPrivateMetadataV1 | null>>;
     nextCursor: string | undefined;
+    invocationProvenance?: ReturnType<typeof WorkflowRunListResultV1Schema.parse>['invocationProvenance'];
 }>;
 
 /**
@@ -88,7 +91,8 @@ export async function listWorkflowRuns(params: Readonly<{
             sidecar[run.id] ?? null,
         ]),
     );
-    return { runs: result.runs, metadataByRunId, nextCursor: result.nextCursor };
+    return { runs: result.runs, metadataByRunId, nextCursor: result.nextCursor,
+        ...(result.invocationProvenance ? { invocationProvenance: result.invocationProvenance } : {}) };
 }
 
 /** FIN §4.8: memory is the starter's newest accepted Run, not another preference store. */
@@ -141,7 +145,7 @@ export async function summarizeWorkflowRuns(params: Readonly<{
  * the row; any other failure is left rejected so the caller holds its cursor
  * and retries instead of losing the invalidation.
  */
-export async function getWorkflowRunSummary(runId: string, signal?: AbortSignal): Promise<Readonly<{
+export async function getWorkflowRunSummary(runId: string, signal?: AbortSignal, invocationRecordIds?: readonly string[]): Promise<Readonly<{
     run: WorkflowRunSummaryV1;
     /**
      * Sparse private metadata: `null` is a readable Run whose accepted
@@ -149,18 +153,22 @@ export async function getWorkflowRunSummary(runId: string, signal?: AbortSignal)
      * `unavailable` is content this host could not open.
      */
     metadata: WorkflowRunPrivateMetadataV1 | null;
+    invocationProvenance?: ReturnType<typeof WorkflowRunListResultV1Schema.parse>['invocationProvenance'];
 }>> {
-    const page = await listWorkflowRuns({ filter: { runId }, limit: 1, ...(signal === undefined ? {} : { signal }) });
+    const page = await listWorkflowRuns({ filter: { runId,
+        ...(invocationRecordIds?.length ? { invocationProvenance: [{ runId, invocationRecordIds }] } : {}) },
+        limit: 1, ...(signal === undefined ? {} : { signal }) });
     const run = page.runs.find((candidate) => candidate.id === runId);
     if (!run) {
         throw new WorkflowActionError({ message: 'Workflow Run not found', rawCode: 'run_not_found' });
     }
-    return { run, metadata: page.metadataByRunId[run.id] ?? null };
+    return { run, metadata: page.metadataByRunId[run.id] ?? null,
+        ...(page.invocationProvenance ? { invocationProvenance: page.invocationProvenance } : {}) };
 }
 
 /** Shared read windows; starter membership belongs to SessionListFilterV1. */
 export const WORKFLOW_RUN_LIST_FILTERS = ['all', 'active', 'attention'] as const;
-export type WorkflowRunListFilterId = (typeof WORKFLOW_RUN_LIST_FILTERS)[number];
+export type WorkflowRunListFilterId = (typeof WORKFLOW_RUN_LIST_FILTERS)[number] | `automation:${string}` | `destination:${string}`;
 
 /**
  * Projects a filter chip onto the canonical request.
@@ -170,6 +178,8 @@ export type WorkflowRunListFilterId = (typeof WORKFLOW_RUN_LIST_FILTERS)[number]
  * Boundary-paused alone is deliberately not attention.
  */
 export function buildWorkflowRunListFilter(id: WorkflowRunListFilterId): WorkflowRunListFilter {
+    if (id.startsWith('automation:')) return { automationId: id.slice('automation:'.length) };
+    if (id.startsWith('destination:')) return { targetSessionId: id.slice('destination:'.length), ...buildWorkflowRunListFilter('active') };
     switch (id) {
         case 'all':
             return {};
@@ -178,4 +188,5 @@ export function buildWorkflowRunListFilter(id: WorkflowRunListFilterId): Workflo
         case 'attention':
             return { attention: 'required' };
     }
+    throw new Error('Unknown workflow Run window');
 }

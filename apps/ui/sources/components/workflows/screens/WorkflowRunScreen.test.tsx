@@ -10,6 +10,7 @@ import { getStorage } from '@/sync/domains/state/storageStore';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
 
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
@@ -19,12 +20,17 @@ import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { installShippedNativeFrameScheduler } from '@/dev/testkit/legend/shippedNativeLegendRuntime';
 import {
     createWorkflowDefinitionFixture,
-    createWorkflowInvocationIndexFixture,
-    createWorkflowRunSummaryFixture,
+    createWorkflowInvocationIndexFixture as createInvocationFixture,
+    createWorkflowRunSummaryFixture as createRunFixture,
 } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { readWorkflowReviewedRunSeed } from '@/sync/domains/workflows/workflowReviewedRunSeed';
 import { WorkflowRunScreen } from './WorkflowRunScreen';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+
+// These Run fixtures do not stream Markdown; keep its external web adapter at the boundary.
+vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
+    splitStreamingRevealTextParts: () => { throw new Error('Unexpected vendor Markdown reveal in Run screen test'); },
+}));
 
 type WorkflowRunContentProps = React.ComponentProps<
     typeof import('../run/WorkflowRunContent').WorkflowRunContent
@@ -41,6 +47,17 @@ type WorkflowRunContentProps = React.ComponentProps<
 
 let latestContentProps: WorkflowRunContentProps | null = null;
 let restoreRunPopoverGlobals: (() => void) | undefined;
+
+// The screen validates route identities through Protocol. Fixture defaults
+// and opaque-storage replies must address those same valid identities.
+function createWorkflowRunSummaryFixture(overrides: Parameters<typeof createRunFixture>[0] = {}) {
+    return createRunFixture({ id: '11111111-1111-4111-8111-111111111111', ...overrides });
+}
+
+function createWorkflowInvocationIndexFixture(overrides: Parameters<typeof createInvocationFixture>[0] = {}) {
+    return createInvocationFixture({ id: '77777777-7777-4777-8777-777777777777',
+        runId: '11111111-1111-4111-8111-111111111111', ...overrides });
+}
 
 function requireDefined<T>(value: T | undefined, message: string): T {
     if (value === undefined) throw new Error(message);
@@ -64,10 +81,12 @@ const startResponse = vi.hoisted(() => vi.fn());
 const sourceAccessResponse = vi.hoisted(() => vi.fn());
 const catalogResponse = vi.hoisted(() => vi.fn());
 const routerSpy = vi.hoisted(() => ({ push: vi.fn(), back: vi.fn() }));
-const routeState = vi.hoisted((): { runId: string; invocationId?: string } => ({ runId: 'run-1' }));
+const routeState = vi.hoisted((): { runId: string; invocationId?: string } => ({ runId: '11111111-1111-4111-8111-111111111111' }));
+const platformViewport = vi.hoisted(() => ({ width: 800, height: 600, scale: 1, fontScale: 1 }));
 // Per-Action transport replies. The real detail client still parses every reply.
 const detailActions = vi.hoisted(() => ({
     getRun: vi.fn(),
+    listRuns: vi.fn(),
     listInvocations: vi.fn(),
     getInvocation: vi.fn(),
     resumeRun: vi.fn(),
@@ -96,12 +115,13 @@ type MachineRpcCall = Readonly<{
     [key: string]: unknown;
 }>;
 const machineRpcSpy = vi.hoisted(() => vi.fn<(params: MachineRpcCall) => Promise<unknown>>());
-const appliedRuntime = vi.hoisted(() => ({ serverId: 'server-a' }));
+const appliedRuntime = vi.hoisted(() => ({ serverId: 'server-a', serverUrl: 'https://server-a.example', generation: 0 }));
 const accountScopeHarness = {
     switchTo(scope: Readonly<{ serverId: string; accountId: string }>): void {
         retireActiveServerAccountScopeLifetime();
         appliedRuntime.serverId = scope.serverId;
         getStorage().setState({ profileScope: scope });
+        publishAppliedActiveServerSnapshot(appliedRuntime);
     },
     reset(): void {
         retireActiveServerAccountScopeLifetime();
@@ -111,7 +131,10 @@ const accountScopeHarness = {
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
+    return createReactNativeWebMock({
+        useWindowDimensions: () => platformViewport,
+        Dimensions: { get: () => platformViewport },
+    });
 });
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -132,7 +155,8 @@ vi.mock('expo-router', async () => {
     return createExpoRouterMock({ router: routerSpy, params: () => ({ ...routeState }) }).module;
 });
 vi.mock('expo-crypto', async () => ({ randomUUID: (await import('node:crypto')).randomUUID }));
-vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>(),
     createFrontDoorActionExecute: () => actionTransport,
 }));
 // Recipient-envelope HTTP services are outside this Run's Action transport.
@@ -148,10 +172,6 @@ vi.mock('@/sync/api/teams/membershipSessionDataKeyEnvelopesApi', () => ({
     prepareMembershipHistoryEnvelopesForScope: vi.fn(),
     membershipHistoryPreparationScopeKey: vi.fn(),
     prepareMembershipHistoryEnvelopesDetached: vi.fn(),
-}));
-vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
-    getAppliedActiveServerSnapshot: () => appliedRuntime,
-    isAppliedActiveServerRuntimeAvailable: () => true,
 }));
 vi.mock('@/utils/ui/clipboard', () => ({ setClipboardStringSafe: async () => true }));
 // The machine transport is a real system boundary; everything below it — the
@@ -228,7 +248,7 @@ function permissionInvocationResponse(params: Readonly<{
                 invocationPath: { blockId: 'analyze', scope: [] },
                 blockKind: 'step',
                 attempt: '0',
-                logicalInvocationRecordId: 'analyze-row',
+                logicalInvocationRecordId: '44444444-4444-4444-8444-444444444444',
                 execution: {
                     kind: 'detached_run', runId: params.executionRunId ?? 'exec-1',
                     localInputId: 'input-1', runtimeSelection: {},
@@ -255,9 +275,9 @@ function permissionInvocationResponse(params: Readonly<{
  */
 async function renderSelectedPermissionRequests(contentRevision = '0') {
     const invocations = [
-        createWorkflowInvocationIndexFixture({ id: 'root', parentRecordId: null, memberOrdinal: '0', sequence: '0' }),
+        createWorkflowInvocationIndexFixture({ id: '33333333-3333-4333-8333-333333333333', parentRecordId: null, memberOrdinal: '0', sequence: '0' }),
         createWorkflowInvocationIndexFixture({
-            id: 'analyze-row', parentRecordId: 'root', memberOrdinal: '0', sequence: '1', lifecycle: 'waiting_for_approval', contentRevision,
+            id: '44444444-4444-4444-8444-444444444444', parentRecordId: '33333333-3333-4333-8333-333333333333', memberOrdinal: '0', sequence: '1', lifecycle: 'waiting_for_approval', contentRevision,
         }),
     ];
     detailActions.getInvocation.mockResolvedValue(permissionInvocationResponse({
@@ -266,11 +286,11 @@ async function renderSelectedPermissionRequests(contentRevision = '0') {
     }));
     const screen = await renderRunScreen({
         run: createWorkflowRunSummaryFixture({
-            id: 'run-1', state: 'running', machineId: 'machine-1', origin: { kind: 'direct' },
+            id: '11111111-1111-4111-8111-111111111111', state: 'running', machineId: 'machine-1', origin: { kind: 'direct' },
         }),
         invocations,
     });
-    await act(async () => latestContentProps?.onSelectInvocation('analyze-row'));
+    await act(async () => latestContentProps?.onSelectInvocation('44444444-4444-4444-8444-444444444444'));
     await act(async () => {});
     return screen;
 }
@@ -290,12 +310,13 @@ async function renderRunScreen(overrides: Readonly<{
     wrap?: (screen: React.ReactElement) => React.ReactElement;
 }> = {}) {
     const run = overrides.run ?? createWorkflowRunSummaryFixture({
-        id: 'run-1',
+        id: '11111111-1111-4111-8111-111111111111',
         state: 'succeeded',
         origin: { kind: 'direct' },
         availability: { cancel: false, pause: false },
     });
     const invocations = overrides.invocations ?? [];
+    detailActions.listRuns.mockResolvedValue({ runs: [run], metadataByRunId: {} });
     detailActions.getRun.mockResolvedValue({
         run,
         callerAccess: { canEdit: overrides.canEdit ?? true },
@@ -332,10 +353,12 @@ async function renderRunScreen(overrides: Readonly<{
 beforeEach(() => {
     installShippedNativeFrameScheduler();
     latestContentProps = null;
-    routeState.runId = 'run-1';
+    routeState.runId = '11111111-1111-4111-8111-111111111111';
     routeState.invocationId = undefined;
+    Object.assign(platformViewport, { width: 800, height: 600 });
     accountScopeHarness.reset();
     storeState.reset();
+    publishAppliedActiveServerSnapshot(appliedRuntime);
     Modal.hideAll();
     actionTransport.mockReset();
     startResponse.mockReset();
@@ -373,6 +396,7 @@ beforeEach(() => {
             }
             case 'workflow.run.start': result = await startResponse(input); break;
             case 'workflow.run.get': result = await detailActions.getRun(input.runId, context.signal); break;
+            case 'workflow.run.list': result = await detailActions.listRuns(input, context.signal); break;
             case 'workflow.run.invocations.list': result = await detailActions.listInvocations(input, context.signal); break;
             case 'workflow.run.invocations.get': result = await detailActions.getInvocation(input, context.signal); break;
             case 'workflow.run.pause': result = await detailActions.pauseRun(input, context.signal); break;
@@ -400,6 +424,41 @@ afterEach(async () => {
 });
 
 describe('WorkflowRunScreen', () => {
+    it('opens the Run on Map and closes a query-selected step back to that exact Run', async () => {
+        Object.assign(platformViewport, { width: 390, height: 844 });
+        const replace = vi.fn();
+        routeState.invocationId = '44444444-4444-4444-8444-444444444444';
+        const root = createWorkflowInvocationIndexFixture({ id: '33333333-3333-4333-8333-333333333333' });
+        const step = createWorkflowInvocationIndexFixture({ id: '44444444-4444-4444-8444-444444444444', parentRecordId: root.id });
+        detailActions.getInvocation.mockResolvedValue({ invocation: { index: step, parentRevision: 1,
+            progress: { kind: 'happier.workflow-progress.v1', invocationPath: { blockId: 'analyze', scope: [] },
+                attempt: '0', logicalInvocationRecordId: step.id, blockKind: 'step' } } });
+        const screen = await renderRunScreen({ invocations: [root, step], wrap: screen => <DestinationInstanceHost tabId="hold-tab"
+            ref={{ kind: 'workflowRun', params: { runId: '11111111-1111-4111-8111-111111111111', invocationId: '44444444-4444-4444-8444-444444444444' } }}
+            pathname="/workflows/runs/11111111-1111-4111-8111-111111111111" focused visible phone navigation={{ ...routerSpy, replace, canGoBack: () => false }}>
+            {screen}
+        </DestinationInstanceHost> });
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(screen.findByTestId('workflow-run-selected-header.close')).not.toBeNull();
+        });
+        await screen.pressByTestIdAsync('workflow-run-selected-header.close');
+        expect(replace).toHaveBeenCalledWith('/workflows/runs/11111111-1111-4111-8111-111111111111');
+        expect(latestContentProps?.view).toBe('flow');
+    });
+
+    it('uses the exact Run as the phone step header Back fallback', async () => {
+        Object.assign(platformViewport, { width: 390, height: 844 });
+        const replace = vi.fn();
+        routeState.invocationId = '44444444-4444-4444-8444-444444444444';
+        const screen = await renderRunScreen({ wrap: body => <DestinationInstanceHost tabId="hold-tab"
+            ref={{ kind: 'workflowRun', params: { runId: '11111111-1111-4111-8111-111111111111', invocationId: '44444444-4444-4444-8444-444444444444' } }}
+            pathname="/workflows/runs/11111111-1111-4111-8111-111111111111" focused visible phone navigation={{ ...routerSpy, replace, canGoBack: () => false }}>
+            {body}
+        </DestinationInstanceHost> });
+        await screen.pressByTestIdAsync('workflow-run-back');
+        expect(replace).toHaveBeenCalledWith('/workflows/runs/11111111-1111-4111-8111-111111111111');
+    });
 
     it('admits an accepted repeat with frozen child and role after their live sources change or disappear', async () => {
         const originalId = '11111111-1111-4111-8111-111111111111';
@@ -487,9 +546,9 @@ describe('WorkflowRunScreen', () => {
 
     it('reviews a new Run with one explicit engine replacement after a step loses its agent', async () => {
         restoreRunPopoverGlobals = withPopoverWebGlobals({ frameScheduler: globalThis.requestAnimationFrame });
-        routeState.invocationId = 'analyze-row';
-        const root = createWorkflowInvocationIndexFixture({ id: 'root', lifecycle: 'failed' });
-        const step = createWorkflowInvocationIndexFixture({ id: 'analyze-row', parentRecordId: 'root', lifecycle: 'failed' });
+        routeState.invocationId = '44444444-4444-4444-8444-444444444444';
+        const root = createWorkflowInvocationIndexFixture({ id: '33333333-3333-4333-8333-333333333333', lifecycle: 'failed' });
+        const step = createWorkflowInvocationIndexFixture({ id: '44444444-4444-4444-8444-444444444444', parentRecordId: '33333333-3333-4333-8333-333333333333', lifecycle: 'failed' });
         detailActions.getInvocation.mockResolvedValue({ invocation: { index: step, parentRevision: 1,
             progress: { kind: 'happier.workflow-progress.v1', invocationPath: { blockId: 'analyze', scope: [] },
                 attempt: '0', logicalInvocationRecordId: step.id,
@@ -500,7 +559,7 @@ describe('WorkflowRunScreen', () => {
         });
         const screen = await renderRunScreen({ run: createWorkflowRunSummaryFixture({ state: 'failed', workflowCustodyState: 'settled' }),
             invocations: [root, step], acceptedContext: { ...ACCEPTED_CONTEXT, materializedLeaves: [acceptedLeaf] } });
-        await act(async () => latestContentProps?.onSelectInvocation('analyze-row'));
+        await act(async () => latestContentProps?.onSelectInvocation('44444444-4444-4444-8444-444444444444'));
         await act(async () => {});
         expect(latestContentProps?.selectedInvocationProgress).toMatchObject({ blockKind: 'step', reason: { code: 'target_unavailable' } });
         expect(latestContentProps?.onRunWithAnotherAgent).toEqual(expect.any(Function));
@@ -522,7 +581,7 @@ describe('WorkflowRunScreen', () => {
         await screen.pressByTestIdAsync('workflow-run-inputs-run');
         expect(runStartCalls()).toHaveLength(1);
         const request = WorkflowRunStartRequestV1Schema.parse(runStartCalls()[0]?.[1]);
-        expect(request.source).toMatchObject({ kind: 'inline', replay: { runId: 'run-1', agentOverride: {
+        expect(request.source).toMatchObject({ kind: 'inline', replay: { runId: '11111111-1111-4111-8111-111111111111', agentOverride: {
             sourceKey: '$root', blockId: 'analyze', engine: { agentTarget: {
                 kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
             }, modelSelection: { ref: { modelId: 'gpt-6.1-sol' } } },
@@ -530,7 +589,7 @@ describe('WorkflowRunScreen', () => {
         expect(request.executionTarget).toEqual(ACCEPTED_CONTEXT.executionTarget);
         expect(detailActions.retryInvocation).not.toHaveBeenCalled();
         expect(acceptedLeaf.selection).toEqual({});
-        expect(request.runId).not.toBe('run-1');
+        expect(request.runId).not.toBe('11111111-1111-4111-8111-111111111111');
     });
 
     const sourceArtifactId = '1d7ade5a-0ab4-4fca-b38d-e20261c5beaf';
@@ -680,15 +739,17 @@ describe('WorkflowRunScreen', () => {
         await renderRunScreen({ run: createWorkflowRunSummaryFixture({ sourceArtifactId }) });
         const edit = latestContentProps?.sourceAction;
         expect(edit?.kind).toBe('edit');
-        act(() => retireActiveServerAccountScopeLifetime());
+        await act(async () => retireActiveServerAccountScopeLifetime());
         act(() => edit?.onPress());
         expect(routerSpy.push).not.toHaveBeenCalled();
-        expect(latestContentProps?.sourceAction).toBeNull();
+        expect(latestContentProps?.sourceAction?.kind).toBe('edit');
+        act(() => latestContentProps?.sourceAction?.onPress());
+        expect(routerSpy.push).toHaveBeenCalledOnce();
     });
 
     it('uses exact terminal queries beyond page one and keeps the bounded authoritative result visible', async () => {
         const failed = createWorkflowInvocationIndexFixture({
-            id: 'failed-off-page', sequence: '90', lifecycle: 'failed',
+            id: '99999999-9999-4999-8999-999999999999', sequence: '90', lifecycle: 'failed',
         });
         const definition = createWorkflowDefinitionFixture({
             blocks: [{
@@ -702,9 +763,9 @@ describe('WorkflowRunScreen', () => {
         });
         const longResult = 'x'.repeat(2_100);
         await renderRunScreen({
-            run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'succeeded' }),
+            run: createWorkflowRunSummaryFixture({ id: '11111111-1111-4111-8111-111111111111', state: 'succeeded' }),
             definition,
-            invocations: [createWorkflowInvocationIndexFixture({ id: 'page-one', sequence: '1' })],
+            invocations: [createWorkflowInvocationIndexFixture({ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', sequence: '1' })],
             failedInvocation: failed,
             historyNextCursor: 'more-history',
             result: longResult,
@@ -712,18 +773,18 @@ describe('WorkflowRunScreen', () => {
         });
 
         expect(detailActions.listInvocations).toHaveBeenCalledWith(
-            { runId: 'run-1', lifecycles: ['failed'], limit: 1 },
+            { runId: '11111111-1111-4111-8111-111111111111', lifecycles: ['failed'], limit: 1 },
             expect.any(AbortSignal),
         );
         expect(latestContentProps?.invocationHistoryComplete).toBe(false);
         expect(latestContentProps?.finalOutputInvocationId).toBe('final-off-page');
-        expect(latestContentProps?.firstFailedInvocationId).toBe('failed-off-page');
-        expect(latestContentProps?.resultLabel).toBe(`${'x'.repeat(2_000)}…`);
+        expect(latestContentProps?.firstFailedInvocationId).toBe('99999999-9999-4999-8999-999999999999');
+        expect(latestContentProps?.resultLabel).toBe('x'.repeat(2_100));
     });
 
     it('keeps failure discovery unresolved through loading and error without discarding the result preview', async () => {
         const failedPage = createDeferred<ReturnType<typeof invocationPage>>();
-        const run = createWorkflowRunSummaryFixture({ id: 'run-1', state: 'succeeded' });
+        const run = createWorkflowRunSummaryFixture({ id: '11111111-1111-4111-8111-111111111111', state: 'succeeded' });
         detailActions.getRun.mockResolvedValue({
             run,
             callerAccess: { canEdit: true },
@@ -756,7 +817,7 @@ describe('WorkflowRunScreen', () => {
 
     it('keeps an authoritative JSON null result distinct from no result', async () => {
         await renderRunScreen({
-            run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'succeeded' }),
+            run: createWorkflowRunSummaryFixture({ id: '11111111-1111-4111-8111-111111111111', state: 'succeeded' }),
             result: null,
             finalOutputInvocationId: 'final-null',
         });
@@ -795,12 +856,13 @@ describe('WorkflowRunScreen', () => {
 
     it('keeps a loaded summary visible and exposes the same loader retry when invocation discovery fails', async () => {
         await renderRunScreen({
-            run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'running' }),
+            run: createWorkflowRunSummaryFixture({ id: '11111111-1111-4111-8111-111111111111', state: 'running' }),
             invocationListFailure: new Error('offline'),
         });
 
-        expect(latestContentProps?.run.id).toBe('run-1');
-        expect(latestContentProps?.errorLabel).toBe('workflows.loadFailedBody');
+        expect(latestContentProps?.run.id).toBe('11111111-1111-4111-8111-111111111111');
+        expect(latestContentProps?.errorLabel).toBeTruthy();
+        expect(latestContentProps?.errorSemantics).toBe('alert');
         const reload = latestContentProps?.onReload;
         expect(reload).toBeTypeOf('function');
         const callsBeforeRetry = detailActions.listInvocations.mock.calls.length;
@@ -820,7 +882,7 @@ describe('WorkflowRunScreen', () => {
         await reviewRunAgain(screen);
         await screen.pressByTestIdAsync('workflow-run-inputs-run');
         const request = WorkflowRunStartRequestV1Schema.parse(runStartCalls()[0]?.[1]);
-        expect(request.source).toMatchObject({ kind: 'inline', replay: { runId: 'run-1' } });
+        expect(request.source).toMatchObject({ kind: 'inline', replay: { runId: '11111111-1111-4111-8111-111111111111' } });
     });
 
     it('does not let a late Run-again completion navigate after this mounted screen changes Runs', async () => {
@@ -831,9 +893,9 @@ describe('WorkflowRunScreen', () => {
         await screen.pressByTestIdAsync('workflow-run-inputs-run');
         expect(runStartCalls()).toHaveLength(1);
 
-        routeState.runId = 'run-2';
+        routeState.runId = '22222222-2222-4222-8222-222222222222';
         const runB = createWorkflowRunSummaryFixture({
-            id: 'run-2', state: 'running', origin: { kind: 'direct' },
+            id: '22222222-2222-4222-8222-222222222222', state: 'running', origin: { kind: 'direct' },
         });
         detailActions.getRun.mockResolvedValue({
             run: runB,
@@ -846,9 +908,9 @@ describe('WorkflowRunScreen', () => {
         detailActions.listInvocations.mockResolvedValue(invocationPage([]));
         await screen.update(createRunScreenElement());
         await act(async () => {});
-        expect(latestContentProps?.run.id).toBe('run-2');
+        expect(latestContentProps?.run.id).toBe('22222222-2222-4222-8222-222222222222');
 
-        admission.resolve({ admission: 'created', run: createWorkflowRunSummaryFixture({ id: 'run-again-from-a' }) });
+        admission.resolve({ admission: 'created', run: createWorkflowRunSummaryFixture({ id: '55555555-5555-4555-8555-555555555555' }) });
         await act(async () => {});
 
         expect(routerSpy.push).not.toHaveBeenCalled();
@@ -891,7 +953,7 @@ describe('WorkflowRunScreen', () => {
 
         await screen.unmount();
 
-        admission.resolve({ admission: 'created', run: createWorkflowRunSummaryFixture({ id: 'run-again-after-close' }) });
+        admission.resolve({ admission: 'created', run: createWorkflowRunSummaryFixture({ id: '66666666-6666-4666-8666-666666666666' }) });
         await act(async () => {});
 
         expect(routerSpy.push).not.toHaveBeenCalled();
@@ -907,7 +969,7 @@ describe('WorkflowRunScreen', () => {
         detailActions.deleteRun.mockImplementationOnce(async () => deletion.promise);
         const screen = await renderRunScreen({
             run: createWorkflowRunSummaryFixture({
-                id: 'run-1',
+                id: '11111111-1111-4111-8111-111111111111',
                 state: 'succeeded',
                 origin: { kind: 'direct' },
                 workflowCustodyState: 'settled',
@@ -923,11 +985,11 @@ describe('WorkflowRunScreen', () => {
 
         await screen.unmount();
 
-        deletion.resolve({ deleted: true, runId: 'run-1' });
+        deletion.resolve({ deleted: true, runId: '11111111-1111-4111-8111-111111111111' });
         await act(async () => {});
 
         expect(routerSpy.back).not.toHaveBeenCalled();
-        expect(storeState.state.workflowRunsById['run-1']).toBeDefined();
+        expect(storeState.state.workflowRunsById['11111111-1111-4111-8111-111111111111']).toBeDefined();
     });
 
     it('repeats a Run under exactly the execution target its accepted context froze', async () => {
@@ -949,14 +1011,14 @@ describe('WorkflowRunScreen', () => {
 
     it('supplies the derived structural identity of unopened rows to the shared Run body', async () => {
         await renderRunScreen({
-            run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'running', origin: { kind: 'direct' } }),
+            run: createWorkflowRunSummaryFixture({ id: '11111111-1111-4111-8111-111111111111', state: 'running', origin: { kind: 'direct' } }),
             invocations: [
-                createWorkflowInvocationIndexFixture({ id: 'root', parentRecordId: null, memberOrdinal: '0', sequence: '0' }),
-                createWorkflowInvocationIndexFixture({ id: 'analyze-row', parentRecordId: 'root', memberOrdinal: '0', sequence: '1' }),
+                createWorkflowInvocationIndexFixture({ id: '33333333-3333-4333-8333-333333333333', parentRecordId: null, memberOrdinal: '0', sequence: '0' }),
+                createWorkflowInvocationIndexFixture({ id: '44444444-4444-4444-8444-444444444444', parentRecordId: '33333333-3333-4333-8333-333333333333', memberOrdinal: '0', sequence: '1' }),
             ],
         });
 
-        expect(latestContentProps?.invocationStructure?.get('analyze-row')).toMatchObject({
+        expect(latestContentProps?.invocationStructure?.get('44444444-4444-4444-8444-444444444444')).toMatchObject({
             nodeId: 'analyze',
             blockId: 'analyze',
         });
@@ -971,9 +1033,9 @@ describe('WorkflowRunScreen', () => {
         'scm_unavailable',
     ] as const)('offers a reviewed new Run — never a silent repeat — for %s', async (code) => {
         const invocations = [
-            createWorkflowInvocationIndexFixture({ id: 'root', parentRecordId: null, memberOrdinal: '0', sequence: '0' }),
+            createWorkflowInvocationIndexFixture({ id: '33333333-3333-4333-8333-333333333333', parentRecordId: null, memberOrdinal: '0', sequence: '0' }),
             createWorkflowInvocationIndexFixture({
-                id: 'analyze-row', parentRecordId: 'root', memberOrdinal: '0', sequence: '1', lifecycle: 'needs_attention',
+                id: '44444444-4444-4444-8444-444444444444', parentRecordId: '33333333-3333-4333-8333-333333333333', memberOrdinal: '0', sequence: '1', lifecycle: 'needs_attention',
             }),
         ];
         detailActions.getInvocation.mockResolvedValue({
@@ -985,14 +1047,14 @@ describe('WorkflowRunScreen', () => {
                     invocationPath: { blockId: 'analyze', scope: [] },
                     blockKind: 'step',
                     attempt: '0',
-                    logicalInvocationRecordId: 'analyze-row',
+                    logicalInvocationRecordId: '44444444-4444-4444-8444-444444444444',
                     reason: { code },
                 },
             },
         });
         await renderRunScreen({
             run: createWorkflowRunSummaryFixture({
-                id: 'run-1', state: 'interrupted', origin: { kind: 'direct' },
+                id: '11111111-1111-4111-8111-111111111111', state: 'interrupted', origin: { kind: 'direct' },
                 // Nothing is waiting for a stop to be confirmed, so the reviewed
                 // new Run is genuinely reachable rather than blocked behind
                 // `workflow_outcome_unresolved`.
@@ -1001,7 +1063,7 @@ describe('WorkflowRunScreen', () => {
             }),
             invocations,
         });
-        await act(async () => latestContentProps?.onSelectInvocation('analyze-row'));
+        await act(async () => latestContentProps?.onSelectInvocation('44444444-4444-4444-8444-444444444444'));
         await act(async () => {});
 
         expect(latestContentProps?.onStartReviewedNewRun).toBeTypeOf('function');
@@ -1023,15 +1085,15 @@ describe('WorkflowRunScreen', () => {
         expect(route).toMatchObject({ pathname: '/workflows/new', params: { reviewedRunSeedId: expect.any(String) } });
         if (route === undefined) throw new Error('Expected the reviewed Run route');
         expect(readWorkflowReviewedRunSeed(route.params.reviewedRunSeedId)).toMatchObject({
-            definition: DEFINITION, supersededRunId: 'run-1',
+            definition: DEFINITION, supersededRunId: '11111111-1111-4111-8111-111111111111',
         });
     });
 
     it('restores the selected invocation workspace on the Run Machine without silently starting a new Run', async () => {
         const invocations = [
-            createWorkflowInvocationIndexFixture({ id: 'root', parentRecordId: null, memberOrdinal: '0', sequence: '0' }),
+            createWorkflowInvocationIndexFixture({ id: '33333333-3333-4333-8333-333333333333', parentRecordId: null, memberOrdinal: '0', sequence: '0' }),
             createWorkflowInvocationIndexFixture({
-                id: 'analyze-row', parentRecordId: 'root', memberOrdinal: '0', sequence: '1', lifecycle: 'failed',
+                id: '44444444-4444-4444-8444-444444444444', parentRecordId: '33333333-3333-4333-8333-333333333333', memberOrdinal: '0', sequence: '1', lifecycle: 'failed',
             }),
         ];
         detailActions.getInvocation.mockResolvedValue({
@@ -1040,7 +1102,7 @@ describe('WorkflowRunScreen', () => {
                 parentRevision: 1,
                 progress: {
                     kind: 'happier.workflow-progress.v1', invocationPath: { blockId: 'analyze', scope: [] },
-                    blockKind: 'step', attempt: '0', logicalInvocationRecordId: 'analyze-row',
+                    blockKind: 'step', attempt: '0', logicalInvocationRecordId: '44444444-4444-4444-8444-444444444444',
                     reason: { code: 'workspace_unavailable' },
                     recovery: {
                         conversation: 'fresh_agent',
@@ -1074,13 +1136,13 @@ describe('WorkflowRunScreen', () => {
             },
         });
         const run = createWorkflowRunSummaryFixture({ sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
-            id: 'run-1', state: 'interrupted', revision: 1, machineId: 'machine-1', origin: { kind: 'direct' },
+            id: '11111111-1111-4111-8111-111111111111', state: 'interrupted', revision: 1, machineId: 'machine-1', origin: { kind: 'direct' },
             workflowCustodyState: 'settled',
             availability: { cancel: false, pause: false, restoreWorkspace: true },
         });
         detailActions.restoreWorkspace.mockResolvedValue({ run: { ...run, state: 'running', revision: 2 }, intent: 'resumed' });
         await renderRunScreen({ run, invocations });
-        await act(async () => latestContentProps?.onSelectInvocation('analyze-row'));
+        await act(async () => latestContentProps?.onSelectInvocation('44444444-4444-4444-8444-444444444444'));
         await act(async () => {});
 
         expect(latestContentProps?.onRestoreWorkspace).toBeTypeOf('function');
@@ -1091,9 +1153,9 @@ describe('WorkflowRunScreen', () => {
         await act(async () => {});
 
         expect(detailActions.restoreWorkspace).toHaveBeenCalledWith({
-            mode: 'recover', runId: 'run-1', expectedRevision: 1,
+            mode: 'recover', runId: '11111111-1111-4111-8111-111111111111', expectedRevision: 1,
             invocations: [{
-                kind: 'restore_workspace', invocation: { recordId: 'analyze-row' },
+                kind: 'restore_workspace', invocation: { recordId: '44444444-4444-4444-8444-444444444444' },
                 conversation: 'fresh_agent',
                 input: {
                     kind: 'replacement',
@@ -1110,9 +1172,9 @@ describe('WorkflowRunScreen', () => {
 
     it('requires acknowledgement of an uncertain prior attempt before it will submit a retry', async () => {
         const invocations = [
-            createWorkflowInvocationIndexFixture({ id: 'root', parentRecordId: null, memberOrdinal: '0', sequence: '0' }),
+            createWorkflowInvocationIndexFixture({ id: '33333333-3333-4333-8333-333333333333', parentRecordId: null, memberOrdinal: '0', sequence: '0' }),
             createWorkflowInvocationIndexFixture({
-                id: 'analyze-row', parentRecordId: 'root', memberOrdinal: '0', sequence: '1', lifecycle: 'needs_attention',
+                id: '44444444-4444-4444-8444-444444444444', parentRecordId: '33333333-3333-4333-8333-333333333333', memberOrdinal: '0', sequence: '1', lifecycle: 'needs_attention',
             }),
         ];
         detailActions.getInvocation.mockResolvedValue({
@@ -1124,12 +1186,12 @@ describe('WorkflowRunScreen', () => {
                     invocationPath: { blockId: 'analyze', scope: [] },
                     blockKind: 'step',
                     attempt: '0',
-                    logicalInvocationRecordId: 'analyze-row',
+                    logicalInvocationRecordId: '44444444-4444-4444-8444-444444444444',
                     uncertainPriorEffects: { activity: 'stopped' },
                 },
                 recoveryAvailability: {
                     reattach: { kind: 'unavailable', reason: 'invocation_not_recoverable' },
-                    retry: { kind: 'available', causalInvocationIds: ['analyze-row'] },
+                    retry: { kind: 'available', causalInvocationIds: ['44444444-4444-4444-8444-444444444444'] },
                     continueSameConversation: { kind: 'available' },
                     continueFreshAgent: { kind: 'unavailable', reason: 'recovery_not_prepared' },
                     restoreWorkspace: { kind: 'unavailable', reason: 'recovery_not_prepared' },
@@ -1137,17 +1199,17 @@ describe('WorkflowRunScreen', () => {
             },
         });
         detailActions.retryInvocation.mockResolvedValue({
-            run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'running' }),
+            run: createWorkflowRunSummaryFixture({ id: '11111111-1111-4111-8111-111111111111', state: 'running' }),
             invocation: invocations[1], disposition: 'accepted',
         });
         await renderRunScreen({
             run: createWorkflowRunSummaryFixture({
-                id: 'run-1', state: 'interrupted', origin: { kind: 'direct' },
+                id: '11111111-1111-4111-8111-111111111111', state: 'interrupted', origin: { kind: 'direct' },
                 availability: { cancel: false, pause: false },
             }),
             invocations,
         });
-        await act(async () => latestContentProps?.onSelectInvocation('analyze-row'));
+        await act(async () => latestContentProps?.onSelectInvocation('44444444-4444-4444-8444-444444444444'));
         await act(async () => {});
 
         const replacement = {
@@ -1174,7 +1236,7 @@ describe('WorkflowRunScreen', () => {
         expect(detailActions.retryInvocation).toHaveBeenCalledTimes(1);
         expect(detailActions.retryInvocation.mock.calls[0]?.[0]).toMatchObject({
             acknowledgeUncertainPriorEffects: true,
-            causalInvocationIds: ['analyze-row'],
+            causalInvocationIds: ['44444444-4444-4444-8444-444444444444'],
             conversation: 'same_conversation',
             input: {
                 kind: 'replacement',
@@ -1185,12 +1247,12 @@ describe('WorkflowRunScreen', () => {
 
     it('submits a prepared continuation with every reviewed causal row and replacement input', async () => {
         const invocations = [
-            createWorkflowInvocationIndexFixture({ id: 'root', parentRecordId: null, memberOrdinal: '0', sequence: '0' }),
+            createWorkflowInvocationIndexFixture({ id: '33333333-3333-4333-8333-333333333333', parentRecordId: null, memberOrdinal: '0', sequence: '0' }),
             createWorkflowInvocationIndexFixture({
-                id: 'analyze-row', parentRecordId: 'root', memberOrdinal: '0', sequence: '1', lifecycle: 'needs_attention',
+                id: '44444444-4444-4444-8444-444444444444', parentRecordId: '33333333-3333-4333-8333-333333333333', memberOrdinal: '0', sequence: '1', lifecycle: 'needs_attention',
             }),
             createWorkflowInvocationIndexFixture({
-                id: 'cancelled-row', parentRecordId: 'root', memberOrdinal: '1', sequence: '2', lifecycle: 'cancelled',
+                id: '88888888-8888-4888-8888-888888888888', parentRecordId: '33333333-3333-4333-8333-333333333333', memberOrdinal: '1', sequence: '2', lifecycle: 'cancelled',
             }),
         ];
         detailActions.getInvocation.mockResolvedValue({
@@ -1202,7 +1264,7 @@ describe('WorkflowRunScreen', () => {
                     invocationPath: { blockId: 'analyze', scope: [] },
                     blockKind: 'step',
                     attempt: '0',
-                    logicalInvocationRecordId: 'analyze-row',
+                    logicalInvocationRecordId: '44444444-4444-4444-8444-444444444444',
                     recovery: {
                         conversation: 'same_conversation',
                         input: {
@@ -1216,7 +1278,7 @@ describe('WorkflowRunScreen', () => {
                 },
                 recoveryAvailability: {
                     reattach: { kind: 'unavailable', reason: 'invocation_not_recoverable' },
-                    retry: { kind: 'available', causalInvocationIds: ['root', 'analyze-row', 'cancelled-row'] },
+                    retry: { kind: 'available', causalInvocationIds: ['33333333-3333-4333-8333-333333333333', '44444444-4444-4444-8444-444444444444', '88888888-8888-4888-8888-888888888888'] },
                     continueSameConversation: { kind: 'available' },
                     continueFreshAgent: { kind: 'unavailable', reason: 'recovery_not_prepared' },
                     restoreWorkspace: { kind: 'unavailable', reason: 'recovery_not_prepared' },
@@ -1224,21 +1286,21 @@ describe('WorkflowRunScreen', () => {
             },
         });
         detailActions.resumeRun.mockResolvedValue({
-            run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'running' }),
+            run: createWorkflowRunSummaryFixture({ id: '11111111-1111-4111-8111-111111111111', state: 'running' }),
             intent: 'resumed',
         });
         detailActions.retryInvocation.mockResolvedValue({
-            run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'running' }),
+            run: createWorkflowRunSummaryFixture({ id: '11111111-1111-4111-8111-111111111111', state: 'running' }),
             invocation: invocations[1], disposition: 'accepted',
         });
         await renderRunScreen({
             run: createWorkflowRunSummaryFixture({
-                id: 'run-1', state: 'interrupted', origin: { kind: 'direct' },
+                id: '11111111-1111-4111-8111-111111111111', state: 'interrupted', origin: { kind: 'direct' },
                 availability: { cancel: false, pause: false },
             }),
             invocations,
         });
-        await act(async () => latestContentProps?.onSelectInvocation('analyze-row'));
+        await act(async () => latestContentProps?.onSelectInvocation('44444444-4444-4444-8444-444444444444'));
         await act(async () => {});
 
         expect(latestContentProps?.preparedRecovery).toMatchObject({ conversation: 'same_conversation' });
@@ -1255,10 +1317,10 @@ describe('WorkflowRunScreen', () => {
         expect(detailActions.resumeRun).not.toHaveBeenCalled();
         expect(detailActions.retryInvocation).toHaveBeenCalledTimes(1);
         expect(detailActions.retryInvocation.mock.calls[0]?.[0]).toMatchObject({
-            runId: 'run-1',
+            runId: '11111111-1111-4111-8111-111111111111',
             expectedRevision: 1,
-            invocation: { recordId: 'analyze-row' },
-            causalInvocationIds: ['root', 'analyze-row', 'cancelled-row'],
+            invocation: { recordId: '44444444-4444-4444-8444-444444444444' },
+            causalInvocationIds: ['33333333-3333-4333-8333-333333333333', '44444444-4444-4444-8444-444444444444', '88888888-8888-4888-8888-888888888888'],
             conversation: 'same_conversation',
             input: {
                 kind: 'replacement',
@@ -1278,9 +1340,9 @@ describe('WorkflowRunScreen', () => {
      */
     it('issues exactly one durable Run operation at a time and refuses the rest until it settles', async () => {
         const invocations = [
-            createWorkflowInvocationIndexFixture({ id: 'root', parentRecordId: null, memberOrdinal: '0', sequence: '0' }),
+            createWorkflowInvocationIndexFixture({ id: '33333333-3333-4333-8333-333333333333', parentRecordId: null, memberOrdinal: '0', sequence: '0' }),
             createWorkflowInvocationIndexFixture({
-                id: 'analyze-row', parentRecordId: 'root', memberOrdinal: '0', sequence: '1', lifecycle: 'failed',
+                id: '44444444-4444-4444-8444-444444444444', parentRecordId: '33333333-3333-4333-8333-333333333333', memberOrdinal: '0', sequence: '1', lifecycle: 'failed',
             }),
         ];
         detailActions.getInvocation.mockResolvedValue({
@@ -1289,12 +1351,12 @@ describe('WorkflowRunScreen', () => {
                 parentRevision: 1,
                 progress: {
                     kind: 'happier.workflow-progress.v1', invocationPath: { blockId: 'analyze', scope: [] },
-                    blockKind: 'step', attempt: '0', logicalInvocationRecordId: 'analyze-row',
+                    blockKind: 'step', attempt: '0', logicalInvocationRecordId: '44444444-4444-4444-8444-444444444444',
                 },
             },
         });
         const run = createWorkflowRunSummaryFixture({
-            id: 'run-1', state: 'running', revision: 1, origin: { kind: 'direct' },
+            id: '11111111-1111-4111-8111-111111111111', state: 'running', revision: 1, origin: { kind: 'direct' },
             availability: { pause: true, cancel: true },
         });
         const pause = createDeferred<Readonly<{ run: typeof run; intent: 'pause_requested' }>>();
@@ -1302,7 +1364,7 @@ describe('WorkflowRunScreen', () => {
         detailActions.cancelRun.mockResolvedValue({ run: { ...run, state: 'cancelled', revision: 3 }, intent: 'cancelled' });
         detailActions.retryInvocation.mockResolvedValue({ run: { ...run, revision: 3 }, invocation: invocations[1], disposition: 'accepted' });
         await renderRunScreen({ run, invocations });
-        await act(async () => latestContentProps?.onSelectInvocation('analyze-row'));
+        await act(async () => latestContentProps?.onSelectInvocation('44444444-4444-4444-8444-444444444444'));
         await act(async () => {});
 
         act(() => { latestContentProps?.onPause?.(); });
@@ -1339,7 +1401,7 @@ describe('WorkflowRunScreen', () => {
 
     it('lets a durable operation that outlives a Run change neither settle this screen nor overwrite the new Run', async () => {
         const runA = createWorkflowRunSummaryFixture({
-            id: 'run-1', state: 'running', revision: 1, origin: { kind: 'direct' }, availability: { cancel: true },
+            id: '11111111-1111-4111-8111-111111111111', state: 'running', revision: 1, origin: { kind: 'direct' }, availability: { cancel: true },
         });
         const cancel = createDeferred<Readonly<{ run: typeof runA; intent: 'cancelled' }>>();
         detailActions.cancelRun.mockImplementationOnce(() => cancel.promise);
@@ -1347,10 +1409,11 @@ describe('WorkflowRunScreen', () => {
         act(() => { latestContentProps?.onCancel?.(); });
         expect(latestContentProps?.pendingControl).toBe('cancel');
 
-        routeState.runId = 'run-2';
+        routeState.runId = '22222222-2222-4222-8222-222222222222';
         const runB = createWorkflowRunSummaryFixture({
-            id: 'run-2', state: 'running', revision: 5, origin: { kind: 'direct' }, availability: { cancel: true },
+            id: '22222222-2222-4222-8222-222222222222', state: 'running', revision: 5, origin: { kind: 'direct' }, availability: { cancel: true },
         });
+        detailActions.listRuns.mockResolvedValue({ runs: [runB], metadataByRunId: {} });
         detailActions.getRun.mockResolvedValue({
             run: runB, definition: DEFINITION, authoredDefinition: DEFINITION, acceptedContext: ACCEPTED_CONTEXT, checkpoint: null,
             callerAccess: { canEdit: true },
@@ -1358,11 +1421,17 @@ describe('WorkflowRunScreen', () => {
         detailActions.listInvocations.mockResolvedValue(invocationPage([]));
         await screen.update(createRunScreenElement());
         await act(async () => {});
-        expect(latestContentProps?.run.id).toBe('run-2');
+        expect(latestContentProps?.run.id).toBe('22222222-2222-4222-8222-222222222222');
         // The new Run starts with no operation in flight; A's cancel is not its business.
         expect(latestContentProps?.pendingControl).toBeNull();
 
-        detailActions.cancelRun.mockResolvedValueOnce({ run: { ...runB, state: 'cancelled', revision: 6 }, intent: 'cancelled' });
+        const cancelledB = { ...runB, state: 'cancelled' as const, revision: 6 };
+        detailActions.listRuns.mockResolvedValue({ runs: [cancelledB], metadataByRunId: {} });
+        detailActions.getRun.mockResolvedValue({
+            run: cancelledB, definition: DEFINITION, authoredDefinition: DEFINITION, acceptedContext: ACCEPTED_CONTEXT,
+            checkpoint: null, callerAccess: { canEdit: true },
+        });
+        detailActions.cancelRun.mockResolvedValueOnce({ run: cancelledB, intent: 'cancelled' });
         act(() => { latestContentProps?.onCancel?.(); });
         await act(async () => {});
         expect(detailActions.cancelRun).toHaveBeenCalledTimes(2);
@@ -1370,9 +1439,9 @@ describe('WorkflowRunScreen', () => {
 
         cancel.resolve({ run: { ...runA, state: 'cancelled', revision: 2 }, intent: 'cancelled' });
         await act(async () => {});
-        expect(latestContentProps?.run.id).toBe('run-2');
+        expect(latestContentProps?.run.id).toBe('22222222-2222-4222-8222-222222222222');
         expect(latestContentProps?.run.revision).toBe(6);
-        expect(storeState.state.workflowRunsById['run-1']).toMatchObject({ revision: 1 });
+        expect(storeState.state.workflowRunsById['11111111-1111-4111-8111-111111111111']).toMatchObject({ revision: 1 });
     });
 
     it('keeps both permission controls withdrawn until the exact canonical reread removes the request', async () => {
@@ -1416,7 +1485,7 @@ describe('WorkflowRunScreen', () => {
 
         reconciliation.resolve(permissionInvocationResponse({
             index: createWorkflowInvocationIndexFixture({
-                id: 'analyze-row', parentRecordId: 'root', memberOrdinal: '0', sequence: '1', lifecycle: 'running',
+                id: '44444444-4444-4444-8444-444444444444', parentRecordId: '33333333-3333-4333-8333-333333333333', memberOrdinal: '0', sequence: '1', lifecycle: 'running',
             }),
             requestIds: ['permission-2'],
         }));
@@ -1433,7 +1502,7 @@ describe('WorkflowRunScreen', () => {
         });
         detailActions.getInvocation.mockResolvedValueOnce(permissionInvocationResponse({
             index: createWorkflowInvocationIndexFixture({
-                id: 'analyze-row', parentRecordId: 'root', memberOrdinal: '0', sequence: '1',
+                id: '44444444-4444-4444-8444-444444444444', parentRecordId: '33333333-3333-4333-8333-333333333333', memberOrdinal: '0', sequence: '1',
                 lifecycle: 'running', contentRevision: '1',
             }),
             requestIds: [],
@@ -1442,7 +1511,7 @@ describe('WorkflowRunScreen', () => {
         await act(async () => { await respondToRequest({ requestId: 'permission-1', approved: true }); });
 
         expect([...(latestContentProps?.pendingRequestIds ?? [])]).toEqual(['permission-1']);
-        expect(storeState.state.workflowRunInvocationsByRunId['run-1']?.factsById['analyze-row']?.contentRevision).toBe('2');
+        expect(storeState.state.workflowRunInvocationsByRunId['11111111-1111-4111-8111-111111111111']?.factsById['44444444-4444-4444-8444-444444444444']?.contentRevision).toBe('2');
     });
 
     it('sends structured question answers through the discoverable Action and exact detached-run request writer', async () => {
@@ -1542,7 +1611,7 @@ describe('WorkflowRunScreen', () => {
         expect([...(latestContentProps?.pendingRequestIds ?? [])]).toEqual(['permission-1']);
         reconciliation.resolve(permissionInvocationResponse({
             index: createWorkflowInvocationIndexFixture({
-                id: 'analyze-row', parentRecordId: 'root', memberOrdinal: '0', sequence: '1', lifecycle: 'waiting_for_approval',
+                id: '44444444-4444-4444-8444-444444444444', parentRecordId: '33333333-3333-4333-8333-333333333333', memberOrdinal: '0', sequence: '1', lifecycle: 'waiting_for_approval',
             }),
             requestIds: ['permission-1', 'permission-2'],
         }));
@@ -1589,7 +1658,7 @@ describe('WorkflowRunScreen', () => {
         expect(firstSignal?.aborted).toBe(false);
 
         act(() => accountScopeHarness.switchTo({ serverId: 'server-b', accountId: 'account-b' }));
-        const runB = createWorkflowRunSummaryFixture({ id: 'run-1', state: 'running', machineId: 'machine-1' });
+        const runB = createWorkflowRunSummaryFixture({ id: '11111111-1111-4111-8111-111111111111', state: 'running', machineId: 'machine-1' });
         detailActions.getRun.mockResolvedValue({
             run: runB,
             callerAccess: { canEdit: true },
@@ -1606,7 +1675,7 @@ describe('WorkflowRunScreen', () => {
         act(() => accountScopeHarness.switchTo({ serverId: 'server-a', accountId: 'account-a' }));
         await screen.update(createRunScreenElement());
         await act(async () => {});
-        await act(async () => latestContentProps?.onSelectInvocation('analyze-row'));
+        await act(async () => latestContentProps?.onSelectInvocation('44444444-4444-4444-8444-444444444444'));
         await act(async () => {});
         act(() => { void respondToRequest({ requestId: 'permission-1', approved: false }); });
         await act(async () => {});
@@ -1637,7 +1706,7 @@ describe('WorkflowRunScreen', () => {
         attentionNextCursor?: string;
     }> = {}) {
         const run = createWorkflowRunSummaryFixture({
-            id: 'run-1', state: 'running', origin: { kind: 'direct' },
+            id: '11111111-1111-4111-8111-111111111111', state: 'running', origin: { kind: 'direct' },
         });
         detailActions.getRun.mockResolvedValue({
             run,
@@ -1658,10 +1727,10 @@ describe('WorkflowRunScreen', () => {
     }
 
     it('keeps the loaded history and its cursor when a continuation fails, and clears that failure only once a retry succeeds', async () => {
-        const first = createWorkflowInvocationIndexFixture({ id: 'inv-1', memberOrdinal: '0', sequence: '0' });
-        const second = createWorkflowInvocationIndexFixture({ id: 'inv-2', memberOrdinal: '1', sequence: '1' });
+        const first = createWorkflowInvocationIndexFixture({ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', memberOrdinal: '0', sequence: '0' });
+        const second = createWorkflowInvocationIndexFixture({ id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', memberOrdinal: '1', sequence: '1' });
         await renderPagedRunScreen({ history: [first], historyNextCursor: 'history-2' });
-        expect(latestContentProps?.invocations.map((entry) => entry.id)).toEqual(['inv-1']);
+        expect(latestContentProps?.invocations.map((entry) => entry.id)).toEqual(['bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb']);
 
         detailActions.listInvocations.mockRejectedValueOnce(new Error('offline'));
         await act(async () => { latestContentProps?.onLoadMoreInvocations?.(); });
@@ -1672,7 +1741,7 @@ describe('WorkflowRunScreen', () => {
         expect(latestContentProps?.errorLabel ?? null).toBeNull();
         expect(latestContentProps?.loadMoreInvocationsFailed).toBe(true);
         // The rows already read and the cursor Retry needs both survive.
-        expect(latestContentProps?.invocations.map((entry) => entry.id)).toEqual(['inv-1']);
+        expect(latestContentProps?.invocations.map((entry) => entry.id)).toEqual(['bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb']);
         expect(latestContentProps?.onLoadMoreInvocations).toBeTypeOf('function');
 
         detailActions.listInvocations.mockRejectedValueOnce(new Error('offline again'));
@@ -1685,14 +1754,14 @@ describe('WorkflowRunScreen', () => {
         await act(async () => {});
 
         expect(latestContentProps?.loadMoreInvocationsFailed).toBe(false);
-        expect(latestContentProps?.invocations.map((entry) => entry.id)).toEqual(['inv-1', 'inv-2']);
+        expect(latestContentProps?.invocations.map((entry) => entry.id)).toEqual(['bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'cccccccc-cccc-4ccc-8ccc-cccccccccccc']);
         expect(latestContentProps?.onLoadMoreInvocations).toBeUndefined();
         expect(latestContentProps?.errorLabel ?? null).toBeNull();
     });
 
     it('issues one attention continuation for two presses in the same frame and releases the guard when it settles', async () => {
         const attentionRow = createWorkflowInvocationIndexFixture({
-            id: 'inv-attention', memberOrdinal: '0', sequence: '0', lifecycle: 'waiting_for_approval',
+            id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', memberOrdinal: '0', sequence: '0', lifecycle: 'waiting_for_approval',
         });
         await renderPagedRunScreen({ attention: [attentionRow], attentionNextCursor: 'attention-2' });
         expect(latestContentProps?.onLoadMoreAttention).toBeTypeOf('function');
@@ -1718,7 +1787,7 @@ describe('WorkflowRunScreen', () => {
     });
 
     it('retires a continuation failure and its late response when this mounted screen changes Runs', async () => {
-        const first = createWorkflowInvocationIndexFixture({ id: 'inv-1', memberOrdinal: '0', sequence: '0' });
+        const first = createWorkflowInvocationIndexFixture({ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', memberOrdinal: '0', sequence: '0' });
         const screen = await renderPagedRunScreen({ history: [first], historyNextCursor: 'history-2' });
 
         detailActions.listInvocations.mockRejectedValueOnce(new Error('offline'));
@@ -1731,8 +1800,8 @@ describe('WorkflowRunScreen', () => {
         act(() => { latestContentProps?.onLoadMoreInvocations?.(); });
         await act(async () => {});
 
-        routeState.runId = 'run-2';
-        const runB = createWorkflowRunSummaryFixture({ id: 'run-2', state: 'running', origin: { kind: 'direct' } });
+        routeState.runId = '22222222-2222-4222-8222-222222222222';
+        const runB = createWorkflowRunSummaryFixture({ id: '22222222-2222-4222-8222-222222222222', state: 'running', origin: { kind: 'direct' } });
         detailActions.getRun.mockResolvedValue({
             run: runB,
             callerAccess: { canEdit: true },
@@ -1744,7 +1813,7 @@ describe('WorkflowRunScreen', () => {
         detailActions.listInvocations.mockImplementation(async () => invocationPage([]));
         await screen.update(createRunScreenElement());
         await act(async () => {});
-        expect(latestContentProps?.run.id).toBe('run-2');
+        expect(latestContentProps?.run.id).toBe('22222222-2222-4222-8222-222222222222');
         expect(latestContentProps?.loadMoreInvocationsFailed).toBe(false);
 
         stale.reject(new Error('offline'));
@@ -1763,12 +1832,65 @@ describe('WorkflowRunScreen', () => {
      * for this exact Run, record, revision and attempt confirms it. A response
      * that lost its race is ignored rather than published.
      */
+    describe('Run summary freshness on an invocation wake', () => {
+        it('renews exact detail and its wake subscription on same-Account restore', async () => {
+            const run = createWorkflowRunSummaryFixture({ state: 'claimed', revision: 1 });
+            await renderRunScreen({ run });
+            expect(latestContentProps?.run.state).toBe('claimed');
+            const reply = await detailActions.getRun.mock.results[0]!.value;
+            const restored = { ...run, state: 'succeeded' as const, revision: 2 };
+            detailActions.getRun.mockResolvedValue({ ...reply, run: restored });
+            detailActions.listRuns.mockResolvedValue({ runs: [restored], metadataByRunId: {} });
+            await act(async () => { retireActiveServerAccountScopeLifetime(); });
+            expect(latestContentProps?.run.state).toBe('succeeded');
+            const changed = { ...restored, state: 'interrupted' as const, revision: 3 };
+            detailActions.getRun.mockResolvedValue({ ...reply, run: changed });
+            detailActions.listRuns.mockResolvedValue({ runs: [changed], metadataByRunId: {} });
+            await act(async () => { publishHomeAccountChange('server-a', [`workflow-run:${run.id}`]); });
+            expect(latestContentProps?.run.state).toBe('interrupted');
+        });
+        it.each(['waiting_for_review', 'succeeded', 'claimed'] as const)('refreshes a claimed Run to authoritative %s without waiting for Account catch-up', async (state) => {
+            const runId = '11111111-1111-4111-8111-111111111111';
+            const invocationId = '22222222-2222-4222-8222-222222222222';
+            routeState.runId = runId;
+            const claimed = createWorkflowRunSummaryFixture({ id: runId, state: 'claimed', revision: 1, origin: { kind: 'direct' } });
+            await renderRunScreen({ run: claimed });
+            expect(latestContentProps?.run.state).toBe('claimed');
+
+            const current = { ...claimed, state, revision: 2 };
+            detailActions.listRuns.mockResolvedValue({ runs: [current], metadataByRunId: {} });
+            detailActions.getRun.mockResolvedValue({
+                run: current, callerAccess: { canEdit: true }, definition: DEFINITION,
+                authoredDefinition: DEFINITION, acceptedContext: ACCEPTED_CONTEXT, checkpoint: null,
+                ...(state === 'succeeded' ? { result: 'Release notes are ready', finalOutputInvocationId: invocationId } : {}),
+            });
+            const invocation = createWorkflowInvocationIndexFixture({
+                id: invocationId, runId, lifecycle: state === 'waiting_for_review' ? 'waiting_for_review' : 'completed',
+            });
+            detailActions.listInvocations.mockImplementation(async (input: Readonly<{ lifecycles?: readonly string[] }>) => ({
+                invocations: input.lifecycles === undefined || input.lifecycles.includes(invocation.lifecycle) ? [invocation] : [],
+                parentRevision: 2,
+            }));
+
+            await act(async () => publishHomeAccountChange('server-a', [`workflow-run:${runId}`]));
+            await act(async () => {});
+
+            expect(latestContentProps?.run.state).toBe(state);
+            expect(storeState.state.workflowRunsById[runId]?.summary?.revision).toBe(2);
+            expect(latestContentProps?.invocations.some(row => row.id === invocation.id)).toBe(true);
+            if (state === 'succeeded') {
+                expect(latestContentProps?.resultLabel).toBe('Release notes are ready');
+                expect(latestContentProps?.finalOutputInvocationId).toBe(invocationId);
+            }
+        });
+    });
+
     describe('selected invocation evidence', () => {
         function selectedRows() {
             return [
-                createWorkflowInvocationIndexFixture({ id: 'root', parentRecordId: null, memberOrdinal: '0', sequence: '0' }),
+                createWorkflowInvocationIndexFixture({ id: '33333333-3333-4333-8333-333333333333', parentRecordId: null, memberOrdinal: '0', sequence: '0' }),
                 createWorkflowInvocationIndexFixture({
-                    id: 'analyze-row', parentRecordId: 'root', memberOrdinal: '0', sequence: '1', lifecycle: 'waiting_for_approval',
+                    id: '44444444-4444-4444-8444-444444444444', parentRecordId: '33333333-3333-4333-8333-333333333333', memberOrdinal: '0', sequence: '1', lifecycle: 'waiting_for_approval',
                 }),
             ];
         }
@@ -1782,10 +1904,10 @@ describe('WorkflowRunScreen', () => {
             invocations[1] = { ...invocations[1]!, contentRevision: '2' };
             detailActions.getInvocation.mockResolvedValue(openRequestResponse({ ...invocations[1]!, contentRevision: '1' }, 1));
             await renderRunScreen({
-                run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'running', revision: 1 }),
+                run: createWorkflowRunSummaryFixture({ id: '11111111-1111-4111-8111-111111111111', state: 'running', revision: 1 }),
                 invocations,
             });
-            await act(async () => latestContentProps?.onSelectInvocation('analyze-row'));
+            await act(async () => latestContentProps?.onSelectInvocation('44444444-4444-4444-8444-444444444444'));
             await act(async () => {});
             expect(latestContentProps?.selectedContentUnavailable).toBe(true);
             expect(latestContentProps?.selectedInvocationProgress).toBeNull();
@@ -1800,13 +1922,13 @@ describe('WorkflowRunScreen', () => {
             detailActions.getInvocation.mockReturnValueOnce(refreshedRead.promise);
             const { getStorage } = await import('@/sync/domains/state/storage');
             await renderRunScreen({
-                run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'running', revision: 1 }),
+                run: createWorkflowRunSummaryFixture({ id: '11111111-1111-4111-8111-111111111111', state: 'running', revision: 1 }),
                 invocations,
             });
-            await act(async () => latestContentProps?.onSelectInvocation('analyze-row'));
+            await act(async () => latestContentProps?.onSelectInvocation('44444444-4444-4444-8444-444444444444'));
             expect(latestContentProps?.selectedContentUnavailable).toBe(false);
             act(() => getStorage().getState().upsertWorkflowRunInvocation({
-                runId: 'run-1', invocation: newer, parentRevision: 1,
+                runId: '11111111-1111-4111-8111-111111111111', invocation: newer, parentRevision: 1,
             }));
             await act(async () => {});
             expect(detailActions.getInvocation).toHaveBeenCalledTimes(2);
@@ -1823,8 +1945,8 @@ describe('WorkflowRunScreen', () => {
             let destinationVisible = true;
             const wrap = (screen: React.ReactElement) => React.createElement(DestinationInstanceHost, {
                 tabId: 'workflow-run-tab',
-                ref: { kind: 'workflowRun', params: { runId: 'run-1' } },
-                pathname: '/workflows/runs/run-1',
+                ref: { kind: 'workflowRun', params: { runId: '11111111-1111-4111-8111-111111111111' } },
+                pathname: '/workflows/runs/11111111-1111-4111-8111-111111111111',
                 focused: destinationVisible,
                 visible: destinationVisible,
                 navigation: { ...routerSpy, replace: vi.fn() },
@@ -1832,22 +1954,22 @@ describe('WorkflowRunScreen', () => {
             });
             detailActions.getInvocation.mockResolvedValue(openRequestResponse(invocations[1]!, 1));
             const screen = await renderRunScreen({
-                run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'running' }),
+                run: createWorkflowRunSummaryFixture({ id: '11111111-1111-4111-8111-111111111111', state: 'running' }),
                 invocations,
                 wrap,
             });
-            await act(async () => latestContentProps?.onSelectInvocation('analyze-row'));
+            await act(async () => latestContentProps?.onSelectInvocation('44444444-4444-4444-8444-444444444444'));
             expect(latestContentProps?.selectedContentUnavailable).toBe(false);
 
             const refreshedRead = createDeferred<unknown>();
             detailActions.getInvocation.mockReturnValueOnce(refreshedRead.promise);
             const offPageApproval = createWorkflowInvocationIndexFixture({
-                id: 'off-page-approval', sequence: '99', parentRecordId: 'root', lifecycle: 'waiting_for_approval',
+                id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', sequence: '99', parentRecordId: '33333333-3333-4333-8333-333333333333', lifecycle: 'waiting_for_approval',
             });
             detailActions.listInvocations.mockImplementation(async (input: Readonly<{ lifecycles?: readonly string[] }>) => (
                 invocationPage(input.lifecycles === undefined ? invocations : [offPageApproval])
             ));
-            await act(async () => publishHomeAccountChange('server-a', ['workflow-run:run-1']));
+            await act(async () => publishHomeAccountChange('server-a', ['workflow-run:11111111-1111-4111-8111-111111111111']));
             expect(latestContentProps?.invocations.some((row) => row.id === offPageApproval.id)).toBe(true);
             expect(latestContentProps?.selectedContentUnavailable).toBe(true);
             expect(latestContentProps?.selectedInvocationProgress).not.toBeNull();
@@ -1861,7 +1983,7 @@ describe('WorkflowRunScreen', () => {
             await screen.update(wrap(createRunScreenElement()));
             detailActions.listInvocations.mockClear();
             detailActions.getInvocation.mockClear();
-            await act(async () => publishHomeAccountChange('server-a', ['workflow-run:run-1']));
+            await act(async () => publishHomeAccountChange('server-a', ['workflow-run:11111111-1111-4111-8111-111111111111']));
             expect(detailActions.listInvocations).not.toHaveBeenCalled();
             expect(detailActions.getInvocation).not.toHaveBeenCalled();
 
@@ -1883,11 +2005,11 @@ describe('WorkflowRunScreen', () => {
             const { getStorage } = await import('@/sync/domains/state/storage');
             await renderRunScreen({
                 run: createWorkflowRunSummaryFixture({
-                    id: 'run-1', state: 'running', machineId: 'machine-1', origin: { kind: 'direct' },
+                    id: '11111111-1111-4111-8111-111111111111', state: 'running', machineId: 'machine-1', origin: { kind: 'direct' },
                 }),
                 invocations,
             });
-            await act(async () => latestContentProps?.onSelectInvocation('analyze-row'));
+            await act(async () => latestContentProps?.onSelectInvocation('44444444-4444-4444-8444-444444444444'));
             await act(async () => {});
             expect(detailActions.getInvocation).toHaveBeenCalledTimes(1);
 
@@ -1903,7 +2025,7 @@ describe('WorkflowRunScreen', () => {
             const newerIndex = { ...invocations[1]!, contentRevision: '1', updatedAt: '2026-09-08T11:00:00.000Z' };
             act(() => {
                 getStorage().getState().applyWorkflowRunInvocationPage({
-                    runId: 'run-1',
+                    runId: '11111111-1111-4111-8111-111111111111',
                     invocations: [newerIndex],
                     nextCursor: null,
                     parentRevision: 1,
@@ -1914,7 +2036,7 @@ describe('WorkflowRunScreen', () => {
             expect(detailActions.getInvocation).toHaveBeenCalledTimes(2);
             expect(latestContentProps?.selectedContentUnavailable).toBe(true);
             expect(latestContentProps?.onRespondToRequest).toBeUndefined();
-            expect(latestContentProps?.run.id).toBe('run-1');
+            expect(latestContentProps?.run.id).toBe('11111111-1111-4111-8111-111111111111');
             expect(latestContentProps?.selectedInvocationProgress).toMatchObject({
                 execution: { kind: 'detached_run', runId: 'exec-1' },
             });
@@ -1929,23 +2051,23 @@ describe('WorkflowRunScreen', () => {
             const invocations = selectedRows();
             detailActions.getInvocation.mockResolvedValue({
                 invocation: {
-                    index: createWorkflowInvocationIndexFixture({ id: 'intruder-row', sequence: '9' }),
+                    index: createWorkflowInvocationIndexFixture({ id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', sequence: '9' }),
                     parentRevision: 1,
                     progress: {
                         kind: 'happier.workflow-progress.v1',
                         invocationPath: { blockId: 'analyze', scope: [] },
                         blockKind: 'step', attempt: '0',
-                        logicalInvocationRecordId: 'intruder-row',
+                        logicalInvocationRecordId: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
                     },
                 },
             });
             await renderRunScreen({
                 run: createWorkflowRunSummaryFixture({
-                    id: 'run-1', state: 'running', machineId: 'machine-1', origin: { kind: 'direct' },
+                    id: '11111111-1111-4111-8111-111111111111', state: 'running', machineId: 'machine-1', origin: { kind: 'direct' },
                 }),
                 invocations,
             });
-            await act(async () => latestContentProps?.onSelectInvocation('analyze-row'));
+            await act(async () => latestContentProps?.onSelectInvocation('44444444-4444-4444-8444-444444444444'));
             await act(async () => {});
 
             // Another record's answer is nobody's evidence here: nothing is
@@ -1966,11 +2088,11 @@ describe('WorkflowRunScreen', () => {
             });
             await renderRunScreen({
                 run: createWorkflowRunSummaryFixture({
-                    id: 'run-1', state: 'running', revision: 2, machineId: 'machine-1', origin: { kind: 'direct' },
+                    id: '11111111-1111-4111-8111-111111111111', state: 'running', revision: 2, machineId: 'machine-1', origin: { kind: 'direct' },
                 }),
                 invocations,
             });
-            await act(async () => latestContentProps?.onSelectInvocation('analyze-row'));
+            await act(async () => latestContentProps?.onSelectInvocation('44444444-4444-4444-8444-444444444444'));
             await act(async () => {});
 
             staleRead.resolve(openRequestResponse(invocations[1]!, 1));
@@ -1984,7 +2106,7 @@ describe('WorkflowRunScreen', () => {
                 latestContentProps?.onDeselectInvocation,
                 'Expected an invocation deselection handler',
             )());
-            await act(async () => latestContentProps?.onSelectInvocation('analyze-row'));
+            await act(async () => latestContentProps?.onSelectInvocation('44444444-4444-4444-8444-444444444444'));
             await act(async () => {});
             expect(detailActions.getInvocation).toHaveBeenCalledTimes(2);
             expect(latestContentProps?.selectedContentUnavailable).toBe(true);
@@ -2006,11 +2128,11 @@ describe('WorkflowRunScreen', () => {
             });
             await renderRunScreen({
                 run: createWorkflowRunSummaryFixture({
-                    id: 'run-1', state: 'running', machineId: 'machine-1', origin: { kind: 'direct' },
+                    id: '11111111-1111-4111-8111-111111111111', state: 'running', machineId: 'machine-1', origin: { kind: 'direct' },
                 }),
                 invocations,
             });
-            await act(async () => latestContentProps?.onSelectInvocation('analyze-row'));
+            await act(async () => latestContentProps?.onSelectInvocation('44444444-4444-4444-8444-444444444444'));
             await act(async () => {});
             expect(latestContentProps?.selectedContentUnavailable).toBe(true);
             expect(latestContentProps?.onRespondToRequest).toBeUndefined();
@@ -2023,7 +2145,7 @@ describe('WorkflowRunScreen', () => {
                 latestContentProps?.onDeselectInvocation,
                 'Expected an invocation deselection handler',
             )());
-            await act(async () => latestContentProps?.onSelectInvocation('analyze-row'));
+            await act(async () => latestContentProps?.onSelectInvocation('44444444-4444-4444-8444-444444444444'));
             await act(async () => {});
             expect(detailActions.getInvocation).toHaveBeenCalledTimes(2);
             expect(latestContentProps?.selectedContentUnavailable).toBe(true);

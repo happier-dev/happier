@@ -67,4 +67,33 @@ describe('WorkflowAgentDetail', () => {
         expect(() => tree.root.findByProps({ testID: 'detail-show-more' })).toThrow();
         act(() => tree.unmount());
     });
+    it.each(['text', 'json'] as const)('expands the complete normalized %s value beyond the collapsed preview', async (kind) => {
+        const value = `${'Long summary '.repeat(500)}\n${Array.from({ length: 20 }, (_, i) => `line ${i}`).join('\n')}\nEND_OF_SUMMARY`;
+        const raw = kind === 'json' ? JSON.stringify({ summary: value }) : value;
+        const full = kind === 'json' ? JSON.stringify(JSON.parse(raw), null, 2) : raw;
+        const screen = await renderScreen(<WorkflowAgentDetail text={raw} detailTestID="detail" />);
+        const body = () => collectText(screen.tree.findHostByTestId('detail-body')!.props.children);
+        if (kind === 'text') expect(body()).not.toContain('END_OF_SUMMARY');
+        // A JSON string's escaped newlines wrap visually; the platform reports that height.
+        await act(async () => screen.tree.findHostByTestId('detail-body')!.props.onLayout?.({
+            nativeEvent: { layout: { x: 0, y: 0, width: 320, height: 800 } },
+        }));
+        expect(screen.findByTestId('detail-show-more')).not.toBeNull();
+        await screen.pressByTestIdAsync('detail-show-more');
+        expect(body()).toBe(full);
+        await screen.pressByTestIdAsync('detail-show-more');
+        if (kind === 'text') expect(body()).not.toContain('END_OF_SUMMARY');
+        act(() => screen.tree.unmount());
+    });
+    it('offers full inspection when one long line wraps beyond the preview viewport', async () => {
+        const text = `${'Long summary '.repeat(500)}END_OF_SUMMARY`;
+        const screen = await renderScreen(<WorkflowAgentDetail text={text} detailTestID="detail" />);
+        const body = () => screen.tree.findHostByTestId('detail-body')!;
+        // Native/web text layout is a platform boundary; report its wrapped height.
+        await act(async () => body().props.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 320, height: 800 } } }));
+        expect(screen.findByTestId('detail-show-more')).not.toBeNull();
+        await screen.pressByTestIdAsync('detail-show-more');
+        expect(collectText(body().props.children)).toBe(text);
+        act(() => screen.tree.unmount());
+    });
 });

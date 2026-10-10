@@ -134,10 +134,11 @@ export function WorkflowRunStateStatus(props: Readonly<{
  */
 export function WorkflowRunStateMark(props: Readonly<{
     state: WorkflowRunStateV1;
+    inAttentionWindow?: boolean;
     testID?: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
-    const presentation = describeWorkflowRunState(props.state);
+    const presentation = describeWorkflowRunState(props.state, { inAttentionWindow: props.inAttentionWindow });
     return (
         <View
             {...(props.testID === undefined ? {} : { testID: props.testID })}

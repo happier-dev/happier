@@ -30,6 +30,7 @@ import {
 } from '@happier-dev/protocol/automations/automationApiV3';
 
 import {
+    AutomationApiError,
     getAutomationAuthHeaders,
     readAutomationJsonOrThrow,
 } from './apiAutomationHttp';
@@ -225,13 +226,30 @@ export async function runAutomationDefinitionNow(
     credentials: AuthCredentials,
     automationId: string,
     context?: AutomationRequestContext,
+    options?: Readonly<{ idempotencyKey?: string }>,
 ): Promise<AutomationV3RunMutationResponse> {
     const response = await requestAutomation(context, `/v3/automations/${encodeURIComponent(automationId)}/run-now`, {
         method: 'POST',
-        headers: getAutomationAuthHeaders(credentials),
+        headers: { ...getAutomationAuthHeaders(credentials), ...(options?.idempotencyKey === undefined
+            ? {} : { 'Idempotency-Key': options.idempotencyKey }) },
+    }).catch((cause: unknown) => {
+        throw Object.assign(new Error('workflow_outcome_unresolved', { cause }), { code: 'workflow_outcome_unresolved' });
     });
-    const raw = await readAutomationJsonOrThrow(response);
-    return AutomationV3RunMutationResponseSchema.parse(raw);
+    let raw: unknown;
+    try {
+        raw = await readAutomationJsonOrThrow(response);
+    } catch (cause) {
+        if (cause instanceof AutomationApiError) {
+            const code = cause.status === 401 || cause.status === 403 ? 'not_authenticated' : cause.code;
+            throw Object.assign(cause, { code });
+        }
+        throw Object.assign(new Error('workflow_outcome_unresolved', { cause }), { code: 'workflow_outcome_unresolved' });
+    }
+    try {
+        return AutomationV3RunMutationResponseSchema.parse(raw);
+    } catch (cause) {
+        throw Object.assign(new Error('workflow_outcome_unresolved', { cause }), { code: 'workflow_outcome_unresolved' });
+    }
 }
 
 /** Direct Run detail stays route-owned; the bounded Run list never carries these private envelopes. */

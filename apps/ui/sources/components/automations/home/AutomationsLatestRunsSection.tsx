@@ -146,6 +146,7 @@ function AutomationsLatestRunsWidget(props: HubSectionProps) {
         body = {
             kind: 'empty',
             iconName: 'timer',
+            scene: 'noAutomations',
             title: t('homeWidgets.latestRunsEmptyTitle'),
             reason: t('homeWidgets.latestRunsEmptyReason'),
         };

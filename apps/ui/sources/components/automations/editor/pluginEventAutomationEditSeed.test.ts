@@ -4,16 +4,18 @@ import {
     AutomationTriggerIdSchema,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
 } from '@happier-dev/protocol';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createAutomationDefinitionFromDetail } from '@/sync/domains/automations/automationDefinitionProjection';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import {
     pluginEventAutomationEditSeedFromDraftInput,
     readPluginEventAutomationEditSeed,
     readPluginEventAutomationPrivateDetail,
-} from './pluginEventAutomationEditSeed';
+} from '@/sync/domains/automations/pluginEventAutomationEditSeed';
 
 const triggerId = AutomationTriggerIdSchema.parse('trigger-event-1');
+await loadSyncSingletonForTests();
 
 function eventDefinition(
     revision = 4,
@@ -76,6 +78,36 @@ function eventDefinition(
 }
 
 describe('pluginEventAutomationEditSeed', () => {
+    it('opens a saved event through Sync currentness and exact private transport, without plaintext Account keys', async () => {
+        const { sync } = await import('@/sync/sync');
+        const { apiSocket } = await import('@/sync/api/session/apiSocket');
+        const owner = sync as unknown as {
+            credentials: import('@/auth/storage/tokenStorage').AuthCredentials | undefined;
+            appliedServerTarget: { serverId: string; serverUrl: string; generation: number } | null;
+            getAutomationPluginEventEditSeed(automationId: string, triggerId: string): Promise<unknown>;
+        };
+        const previousCredentials = owner.credentials;
+        const previousTarget = owner.appliedServerTarget;
+        const definition = eventDefinition();
+        if (definition.detail.kind !== 'available') throw new Error('Expected private detail');
+        // apiSocket's prepared request is the network boundary; API parsing, currentness and opening stay real.
+        const transport = vi.spyOn(apiSocket, 'createRequestForPreparedTarget').mockReturnValue(async (path) => {
+            return new Response(JSON.stringify(path === '/v1/account/encryption/currentness'
+                ? { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }
+                : definition.detail.kind === 'available' ? definition.detail.value : null), { status: 200 });
+        });
+        owner.credentials = { token: 'event-authoring-token' };
+        owner.appliedServerTarget = { serverId: 'event-authoring-home', serverUrl: 'https://event-authoring.test', generation: 0 };
+        try {
+            await expect(owner.getAutomationPluginEventEditSeed('automation-1', triggerId)).resolves.toMatchObject({
+                triggerId, expectedTriggerRevision: 4, source: { sourceInstanceId: 'repository:42', sourceConfig: { repository: 'acme/widgets' } },
+            });
+        } finally {
+            transport.mockRestore();
+            owner.credentials = previousCredentials;
+            owner.appliedServerTarget = previousTarget;
+        }
+    });
     it('opens and seeds only the explicitly requested trigger identity and revision', () => {
         const definition = eventDefinition();
         const privateDetail = readPluginEventAutomationPrivateDetail(definition, triggerId, { mode: 'plain' });

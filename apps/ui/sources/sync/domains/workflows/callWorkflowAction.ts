@@ -3,6 +3,8 @@ import { WorkflowActionFailureV1Schema } from '@happier-dev/protocol/workflows/w
 
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
 import { WorkflowActionError } from './workflowActionError';
 
@@ -43,14 +45,20 @@ export async function callWorkflowAction<TResult>(params: Readonly<{
     signal?: AbortSignal;
     /** Host-owned target facts; never merged into caller-authored Action input. */
     context?: Omit<ActionExecutorContext, 'surface' | 'signal'>;
+    /** Routed fields use their captured Home binding; undefined preserves incumbent workflow scope. */
+    accountLifetime?: ServerAccountScopeLifetime | null;
     /** Supplied by tests and by callers that own their executor lifetime. */
     execute?: WorkflowActionExecute;
     /** Used only for the fallback message when the owner returned none. */
     fallbackMessage?: string;
 }>): Promise<TResult> {
-    const activeLifetime = params.execute ? null : captureActiveServerAccountScopeLifetime();
-    if (activeLifetime && params.context?.serverId
-        && params.context.serverId !== activeLifetime.scope.serverId) {
+    const activeLifetime = params.accountLifetime === undefined
+        ? params.execute ? null : captureActiveServerAccountScopeLifetime() : params.accountLifetime;
+    if (params.accountLifetime !== undefined && !activeLifetime?.isCurrent()) {
+        throw new WorkflowActionError({ message: 'action_account_scope_changed', rawCode: 'action_account_scope_changed' });
+    }
+    if (activeLifetime && ((params.context?.serverId && !areServerProfileIdentifiersEquivalent(params.context.serverId, activeLifetime.scope.serverId))
+        || (params.context?.runtimeAccountId && params.context.runtimeAccountId !== activeLifetime.scope.accountId))) {
         throw new WorkflowActionError({ message: 'action_account_scope_changed', rawCode: 'action_account_scope_changed' });
     }
     const result = await resolveExecute(params.execute)(params.actionId, params.input, {

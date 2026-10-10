@@ -10,6 +10,45 @@ import {
 } from './sessionTriggerForm';
 
 describe('session trigger form', () => {
+    it('keeps an inputless predecessor Session start intact when reviewing its trigger', () => {
+        const target = buildTriggerTarget({ kind: 'sendPrompt', prompt: 'seed' }, 'account');
+        if (target?.kind !== 'inline') throw new Error('expected an inline target');
+        const inputless = { ...target, definition: { ...target.definition,
+            blocks: target.definition.blocks.map((block) => block.kind === 'step'
+                ? { ...block, inputMode: 'none' as const, document: { ...block.document, text: '' } } : block) } };
+        const then = readTriggerThen(inputless);
+        expect(then.kind).toBe('kept');
+        expect(buildTriggerTarget(then, 'account')).toEqual(inputless);
+    });
+    it('preserves the exact retained prompt when Save changes only the trigger configuration', () => {
+        const target = buildTriggerTarget({ kind: 'sendPrompt', prompt: 'seed' }, 'account');
+        if (target?.kind !== 'inline') throw new Error('expected an inline target');
+        const retained = { ...target, definition: { ...target.definition,
+            blocks: target.definition.blocks.map((block) => block.kind === 'step'
+                ? { ...block, document: { ...block.document, text: '  retain this prompt\n' } } : block) } };
+        const then = readTriggerThen(retained);
+        expect(buildTriggerTarget(then, 'account')).toEqual(retained);
+    });
+    it('writes a configured plugin event through the shared trigger form without requiring a session', async () => {
+        const { AutomationTriggerDefinitionInputSchema } = await import('@happier-dev/protocol/automations/automationTriggerDefinition');
+        const trigger = AutomationTriggerDefinitionInputSchema.parse({
+            kind: 'pluginEvent', enabled: true,
+            eventRef: { pluginId: 'acme.github', localId: 'issue-opened' },
+            sourceInstanceId: 'repository:42', sourceContractVersion: 3,
+            sourceConfig: { repository: 'acme/widgets' }, displayLabel: 'acme/widgets',
+            observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
+                machineId: 'machine-1',
+                pluginId: 'acme.github', materializationId: 'github-1',
+            } },
+            filter: { v: 1, all: [{ field: '/action', op: 'eq', value: 'opened' }] },
+            maximumObservationAgeMs: null,
+        });
+        if (trigger.kind !== 'pluginEvent' || !('sourceInstanceId' in trigger)) throw new Error('expected a configured event');
+        expect(buildTriggerDefinition({ when: { kind: 'pluginEvent', value: trigger }, enabled: false, sessionId: null }))
+            .toEqual({ ...trigger, enabled: false });
+        expect(buildTriggerDefinition({ when: { kind: 'pluginEvent', value: null }, enabled: true, sessionId: null }))
+            .toBeNull();
+    });
     it('keeps the original prompt step and execution defaults while editing a legacy prompt', () => {
         const created = buildTriggerTarget({ kind: 'sendPrompt', prompt: 'Before' }, 'account');
         if (created?.kind !== 'inline') throw new Error('expected an inline target');

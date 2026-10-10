@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { resolveCompactAppDestinations } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -9,6 +10,8 @@ import { WorkflowTriggerSection } from '../triggers/WorkflowTriggerSection';
 import { editWorkflowTriggerDraft } from '../triggers/workflowTriggerDraft';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import type { IModal } from '@/modal';
+import { Modal as realModal } from '@/modal/ModalManager';
+import { ModalProvider as RealModalProvider } from '@/modal/ModalProvider';
 import { WorkflowDefinitionCreateRequestV1Schema, WorkflowDefinitionGetRequestV1Schema, WorkflowDefinitionUpdateRequestV1Schema, WorkflowDefinitionV1Schema, WorkflowRunStartRequestV1Schema, type ActionExecutorContext, type WorkflowDefinitionCreateRequestV1, type WorkflowDefinitionGetRequestV1, type WorkflowDefinitionGetResultV1, type WorkflowDefinitionUpdateRequestV1, type WorkflowRunStartRequestV1, type WorkflowRunStartResultV1 } from '@happier-dev/protocol';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { AgentInput } from '@/components/sessions/agentInput';
@@ -24,6 +27,7 @@ import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { getActionSpec } from '@happier-dev/protocol';
 import { buildWorkflowReviewedRunSeed, storeWorkflowReviewedRunSeed } from '@/sync/domains/workflows/workflowReviewedRunSeed';
 import { readWorkflowAgentRevision, storeWorkflowAgentRevision } from '@/sync/domains/workflows/workflowAgentRevision';
+import { storeWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 // Resolve the real screen/store graph during collection, outside a behavioral
 // test's timeout; Vitest hoists the system-boundary fixture declarations below.
@@ -33,6 +37,30 @@ import { removeWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDef
 import { WORKFLOW_STARTER_EXAMPLES_V1 } from '@happier-dev/protocol';
 import { t } from '@/text';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
+import { getActiveUnsavedChangesGuard, runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
+import { CommonActions, StackActions, StackRouter } from '@react-navigation/native';
+import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
+import { transformSync } from 'esbuild';
+import type { RouteNode } from 'expo-router/build/Route';
+import { workspaceRouteFiles } from '@/components/appShell/workspace/workspaceRoutes';
+import { WorkflowEditorRoute } from './WorkflowEditorRoute';
+import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { applyAcpCatalogSnapshot, resetAcpCatalogSnapshotsForTests } from '@/sync/store/settings/acpCatalogSnapshot';
+import { resetAcpCatalogEngineForTests } from '@/sync/engine/settings/acpCatalogEngine';
+import { createReactNavigationNativeMock } from '@/dev/testkit/mocks/reactNavigation';
+import { WorkspaceProvider } from '@/components/appShell/workspace/WorkspaceProvider';
+import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
+import type { WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { AppShellTitleStrip } from '@/components/navigation/shell/appRail/AppShellTitleStrip';
+
+// This editor/navigation harness does not stream Markdown; the missing vendor leaf is a boundary.
+vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
+    splitStreamingRevealTextParts: () => { throw new Error('Unexpected vendor Markdown reveal in editor/navigation test'); },
+}));
 
 type WorkflowEditorBodyProps = React.ComponentProps<
     typeof import('./WorkflowEditorBody').WorkflowEditorBody
@@ -41,7 +69,10 @@ type WorkflowEditorBodyProps = React.ComponentProps<
 const modalShowSpy = vi.hoisted(() => vi.fn<IModal['show']>(() => 'workflow-run-input-modal'));
 const modalHideSpy = vi.hoisted(() => vi.fn<IModal['hide']>());
 const modalUpdateSpy = vi.hoisted(() => vi.fn<IModal['update']>());
+const modalAlertSpy = vi.hoisted(() => vi.fn<IModal['alert']>());
+const modalConfirmSpy = vi.hoisted(() => vi.fn<IModal['confirm']>(async () => false));
 let latestBodyProps: WorkflowEditorBodyProps | null = null;
+let renderRealEditorBody = false;
 let restoreWebGlobals: (() => void) | undefined;
 const focusPromptSpy = vi.fn<(blockId: string) => void>();
 
@@ -55,6 +86,8 @@ function renderRunEditor(element: React.ReactElement) {
         wrapper: ({ children }) => <AppPaneProvider>{children}</AppPaneProvider>,
         // Physical anchor geometry is the platform boundary; the Popover and composer stay real.
         createNodeMock: () => ({
+            focus: () => {}, blur: () => {},
+            offsetTop: 0, offsetHeight: 40, offsetWidth: 160,
             getBoundingClientRect: () => ({ left: 600, top: 100, width: 160, height: 40 }),
             addEventListener: () => {}, removeEventListener: () => {},
             measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(600, 100, 160, 40),
@@ -62,14 +95,8 @@ function renderRunEditor(element: React.ReactElement) {
     });
 }
 
-const editorAccountScope = vi.hoisted(() => ({
-    state: {
-        current: { serverId: 'server-a', accountId: 'account-a' } as { serverId: string; accountId: string } | null,
-    },
-}));
-
 function switchEditorAccountScope(next: { serverId: string; accountId: string } | null): void {
-    editorAccountScope.state.current = next;
+    publishAppliedActiveServerSnapshot({ serverId: next?.serverId ?? '', serverUrl: 'https://happier.invalid', generation: 0 }, next !== null);
     getStorage().setState({ profileScope: next });
 }
 
@@ -80,7 +107,10 @@ function setEditorMachines(machines: Machine[]): void {
 function storeReviewedCopyFixture(): string {
     return storeWorkflowReviewedRunSeed(buildWorkflowReviewedRunSeed({
         run: createWorkflowRunSummaryFixture(),
-        definition: createWorkflowDefinitionFixture({ inputs: [{ name: 'topic', valueType: 'string', required: true }] }),
+        definition: createWorkflowDefinitionFixture({
+            inputs: [{ name: 'topic', valueType: 'string', required: true }],
+            defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
+        }),
         acceptedContext: {
             startedBy: 'user',
             source: { kind: 'inline' }, machineId: 'machine-1', origin: { kind: 'direct' },
@@ -91,12 +121,14 @@ function storeReviewedCopyFixture(): string {
     }));
 }
 
-const routerSpy = vi.hoisted(() => ({ push: vi.fn(), back: vi.fn() }));
+const routerSpy = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn(), canGoBack: vi.fn(() => false), setParams: vi.fn() }));
+const nativeRouteBoundary = vi.hoisted(() => ({ platform: 'web', pathname: '/', params: {} as Record<string, string | string[] | undefined> }));
 
 const definitionActions = vi.hoisted(() => ({
     get: vi.fn<(request: WorkflowDefinitionGetRequestV1) => Promise<WorkflowDefinitionGetResultV1>>(),
     create: vi.fn<(request: WorkflowDefinitionCreateRequestV1) => Promise<WorkflowDefinitionGetResultV1>>(),
     update: vi.fn<(request: WorkflowDefinitionUpdateRequestV1) => Promise<WorkflowDefinitionGetResultV1>>(),
+    delete: vi.fn(async () => ({ deleted: true, definitionId: '00000000-0000-4000-8000-000000000005' })),
 }));
 // Trigger transport responses; the client, schemas and shared-store publication stay real.
 const triggerActions = vi.hoisted(() => ({ list: vi.fn(async (_input: unknown) => []), add: vi.fn(), update: vi.fn(), remove: vi.fn() }));
@@ -121,17 +153,25 @@ const daemonProjection = vi.hoisted(() => ({
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
+    return createReactNativeWebMock({ Platform: { get OS() { return nativeRouteBoundary.platform; },
+        select: (values: Record<string, unknown>) => values[nativeRouteBoundary.platform] ?? values.default } });
 });
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock();
 });
+// Radix's DOM SDK cannot mount in react-test-renderer. Keep the real menu,
+// dismissal state and ModalProvider beneath this canonical platform boundary.
+vi.mock('@/utils/web/radixCjs', async () => {
+    const { createRadixCjsModuleMock } = await import('@/dev/testkit/mocks/radixCjs');
+    return createRadixCjsModuleMock();
+});
 vi.mock('@/sync/domains/state/browserRecordStorage', async () => (await import('@/dev/testkit/mocks/browserRecordStorage')).createBrowserRecordStorageModuleMock());
-vi.mock('expo-router', () => ({
-    useRouter: () => routerSpy,
-    useNavigation: () => ({}),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({ router: routerSpy, navigation: {}, pathname: () => nativeRouteBoundary.pathname,
+        params: () => nativeRouteBoundary.params }).module;
+});
 // Ids must be genuinely distinct here: a constant would make a re-created draft
 // compare equal to its baseline and hide exactly the initialization defect these
 // cases exist to catch.
@@ -148,7 +188,7 @@ vi.mock('@/text', async () => {
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({
-        spies: { show: modalShowSpy, hide: modalHideSpy, update: modalUpdateSpy },
+        spies: { show: modalShowSpy, hide: modalHideSpy, update: modalUpdateSpy, alert: modalAlertSpy, confirm: modalConfirmSpy },
     }).module;
 });
 // The exact Machine's daemon projection is a transport boundary; the Agent
@@ -162,17 +202,13 @@ vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
             : { phase: 'idle', inputs: null }
     ),
 }));
-// The applied Account host is a system boundary; its lifetime stays real so
-// returning to an identity cannot bypass retirement.
-vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
-    getAppliedActiveServerSnapshot: () => ({ serverId: editorAccountScope.state.current?.serverId }),
-    isAppliedActiveServerRuntimeAvailable: () => editorAccountScope.state.current !== null,
-}));
-vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>(),
     createFrontDoorActionExecute: () => async (actionId: string, input: unknown, context: ActionExecutorContext) => {
         if (actionId === 'workflow.definition.get') return { ok: true, result: await definitionActions.get(WorkflowDefinitionGetRequestV1Schema.parse(input)) };
         if (actionId === 'workflow.definition.create') return { ok: true, result: await definitionActions.create(WorkflowDefinitionCreateRequestV1Schema.parse(input)) };
         if (actionId === 'workflow.definition.update') return { ok: true, result: await definitionActions.update(WorkflowDefinitionUpdateRequestV1Schema.parse(input)) };
+        if (actionId === 'workflow.definition.delete') return { ok: true, result: await definitionActions.delete() };
         if (actionId === 'workflow.run.start') return { ok: true, result: await runStartSpy(WorkflowRunStartRequestV1Schema.parse(input), context) };
         if (actionId === 'workflow.trigger.list') return { ok: true, result: { sets: await triggerActions.list(input) } };
         const writer = actionId === 'workflow.trigger.add' ? triggerActions.add
@@ -188,58 +224,76 @@ vi.mock('@/sync/domains/workflows/workflowDocumentFile', () => ({
     workflowDocumentFileName: () => 'workflow.json',
 }));
 const runStartSpy = vi.hoisted(() => vi.fn<(request: WorkflowRunStartRequestV1, context: ActionExecutorContext) => Promise<WorkflowRunStartResultV1>>());
-// Navigation interception is a host boundary; this records the dirty verdict the
-// editor reports so pristine/dirty can be asserted without a navigation event.
-vi.mock('@/utils/navigation/useUnsavedChangesBeforeRemoveGuard', () => ({
-    useUnsavedChangesBeforeRemoveGuard: (params: { isDirty: boolean }) => {
-        guardedDirtyStates.push(params.isDirty);
-    },
-}));
-vi.mock('@/utils/navigation/useActiveUnsavedChangesGuard', () => ({
-    useActiveUnsavedChangesGuard: () => {},
-}));
+// Native removal is the navigation boundary; keep the draft guard and global
+// departure decision real so a Save cannot hide a stale dirty verdict.
+vi.mock('@react-navigation/native', async (importOriginal) => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    const actual = await importOriginal<typeof import('@react-navigation/native')>();
+    return { ...createReactNavigationNativeMock({ usePreventRemove: (enabled) => {
+        guardedDirtyStates.push(enabled);
+    } }), CommonActions: actual.CommonActions, StackActions: actual.StackActions, StackRouter: actual.StackRouter };
+});
 // The pane host decides whether a details pane exists; it is this screen's layout boundary.
 const detailsPane = vi.hoisted(() => ({ available: true }));
 vi.mock('@/components/appShell/panes/details/detailsPaneAvailability', () => ({
     useDetailsPaneAvailable: () => detailsPane.available,
 }));
-vi.mock('./WorkflowEditorBody', async () => {
+vi.mock('./WorkflowEditorBody', async (importOriginal) => {
     const ReactModule = await import('react');
+    const actual = await importOriginal<typeof import('./WorkflowEditorBody')>();
+    function LegacyBodyStandIn(props: WorkflowEditorBodyProps) {
+        ReactModule.useImperativeHandle(props.commandsRef, () => ({
+            runNow: () => props.onRunNow?.(),
+            save: () => props.onSave?.(),
+            schedule: () => undefined,
+            exportJson: () => props.onExportJson?.(),
+            focusPrompt: (blockId: string) => { focusPromptSpy(blockId); },
+        }), [props]);
+        return ReactModule.createElement('WorkflowEditorBody', { testID: 'workflow-editor-body', ref: props.runNowAnchorRef });
+    }
     return {
+        ...actual,
         // The host reaches the page commands only through `commandsRef`; this
         // stand-in forwards them to the effect owners without the page gate.
         WorkflowEditorBody: (props: WorkflowEditorBodyProps) => {
             latestBodyProps = props;
-            ReactModule.useImperativeHandle(props.commandsRef, () => ({
-                runNow: () => props.onRunNow?.(),
-                save: () => props.onSave?.(),
-                schedule: () => undefined,
-                exportJson: () => props.onExportJson?.(),
-                focusPrompt: (blockId: string) => { focusPromptSpy(blockId); },
-            }), [props]);
-            return ReactModule.createElement('WorkflowEditorBody', { testID: 'workflow-editor-body', ref: props.runNowAnchorRef });
+            // SURF8's regression cases render the real body; observing its host
+            // inputs must not bypass page commands, chrome or editor logic.
+            return ReactModule.createElement(renderRealEditorBody ? actual.WorkflowEditorBody : LegacyBodyStandIn, props);
         },
-        setWorkflowStepExecutionField: (value: unknown) => value,
     };
 });
 
 beforeEach(() => {
     restoreWebGlobals = withPopoverWebGlobals();
     latestBodyProps = null;
+    renderRealEditorBody = false;
     detailsPane.available = true;
     focusPromptSpy.mockClear();
     setEditorMachines([]);
-    getStorage().setState({ settings: settingsDefaults });
+    resetAcpCatalogEngineForTests();
+    resetAcpCatalogSnapshotsForTests();
+    getStorage().setState({ settings: settingsDefaults, settingsScope: null });
     getStorage().setState({ workflowTriggerSetsById: {}, workflowTriggerSetIdsByQuery: {} });
     guardedDirtyStates.length = 0;
     issuedIds.next = 0;
     routerSpy.push.mockClear();
+    routerSpy.replace.mockReset();
     routerSpy.back.mockClear();
+    routerSpy.canGoBack.mockReset().mockReturnValue(false);
+    routerSpy.setParams.mockReset();
+    nativeRouteBoundary.platform = 'web';
+    nativeRouteBoundary.pathname = '/';
+    nativeRouteBoundary.params = {};
     runStartSpy.mockReset();
     runStartSpy.mockImplementation(async (request) => ({ admission: 'created', run: createWorkflowRunSummaryFixture({ id: request.runId, origin: { kind: 'direct' } }) }));
     modalShowSpy.mockClear();
     modalHideSpy.mockClear();
     modalUpdateSpy.mockClear();
+    modalAlertSpy.mockReset();
+    modalConfirmSpy.mockReset();
+    modalConfirmSpy.mockResolvedValue(false);
+    definitionActions.delete.mockReset();
     definitionActions.get.mockReset();
     definitionActions.get.mockImplementation(async ({ definitionId }) => ({ definitionId, access: 'owner',
         definition: createWorkflowDefinitionFixture(), revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Saved workflow' } }));
@@ -257,9 +311,383 @@ afterEach(async () => {
     await standardCleanup();
     restoreWebGlobals?.();
     restoreWebGlobals = undefined;
+    if (nativeRouteBoundary.platform === 'ios') resetServerFeaturesClientForTests();
 });
 
 describe('WorkflowEditorHostScreen composition', () => {
+    it('does not load or create an editor when mounted draft Actions have no answering host', async () => {
+        const { invokeWorkflowAuthoringAction } = await import('@/sync/ops/actions/workflowAuthoringAction');
+        expect(await invokeWorkflowAuthoringAction({ actionId: 'workflow.authoring.draft.get',
+            input: { scope: { serverId: 'server-a', accountId: 'account-a' }, draftId: 'not-mounted' },
+            context: { serverId: 'server-a', runtimeAccountId: 'account-a' } })).toEqual({ status: 'unavailable' });
+        expect(definitionActions.get).not.toHaveBeenCalled();
+        expect(definitionActions.create).not.toHaveBeenCalled();
+    });
+    it('mounted draft Actions edit atomically, tint, refuse stale revisions and share host undo/redo and Save', async () => {
+        renderRealEditorBody = true;
+        const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+        const owners = await import('@/sync/ops/actions/workflowAuthoringAction');
+        const executor = createActionExecutor({ workflowAuthoringAction: owners.invokeWorkflowAuthoringAction,
+            isActionApprovalRequired: () => false } as unknown as import('@happier-dev/protocol').ActionExecutorDeps);
+        const context = { surface: 'agent' as const, authority: 'account_automation' as const,
+            serverId: 'server-a', runtimeAccountId: 'account-a' };
+        await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        const original = latestBodyProps!.draft;
+        const address = { scope: { serverId: 'server-a', accountId: 'account-a' }, draftId: original.draftId };
+        const get = async () => {
+            const result = await executor.execute('workflow.authoring.draft.get', address, context);
+            if (!result.ok) throw new Error(result.error);
+            return result.result as { status: string; drafts: Array<{ draftRevision: number; dirty: boolean }> };
+        };
+        const initial = await get();
+        expect(initial.status).toBe('available');
+        const edit = { ...address, expectedDraftRevision: initial.drafts[0]!.draftRevision,
+            ops: [{ kind: 'set_step_prompt', blockId: original.blocks[0]!.id, text: 'Agent changed this prompt' },
+                { kind: 'rename', name: 'Agent changed the title' }] };
+        let applied: unknown;
+        await act(async () => { applied = await executor.execute('workflow.authoring.draft.edit', edit, context); });
+        expect(applied).toMatchObject({ ok: true, result: { status: 'applied', changedBlockIds: [original.blocks[0]!.id] } });
+        expect(latestBodyProps!.draft.name).toBe('Agent changed the title');
+        expect(latestBodyProps!.highlightedBlockIds).toEqual([original.blocks[0]!.id]);
+        expect((await get()).drafts[0]!.dirty).toBe(true);
+        expect(await executor.execute('workflow.authoring.draft.edit', edit, context))
+            .toMatchObject({ ok: true, result: { status: 'refused', reason: 'stale_draft_revision' } });
+        await act(async () => { await executor.execute('workflow.authoring.draft.undo', address, context); });
+        expect(latestBodyProps!.draft).toEqual(original);
+        await act(async () => { await executor.execute('workflow.authoring.draft.redo', address, context); });
+        expect(latestBodyProps!.draft.name).toBe('Agent changed the title');
+        const saving = createDeferred<WorkflowDefinitionGetResultV1>();
+        definitionActions.update.mockImplementationOnce(() => saving.promise);
+        let settled = false;
+        let save: Promise<unknown>;
+        await act(async () => { save = executor.execute('workflow.authoring.draft.save', address, context).then(result => { settled = true; return result; }); });
+        expect(settled).toBe(false);
+        const submitted = definitionActions.update.mock.calls[0]![0];
+        expect(submitted.definition.blocks[0]).toMatchObject({ document: { text: 'Agent changed this prompt' } });
+        await act(async () => { saving.resolve({ definitionId: SAVED_TRIGGER_WORKFLOW_ID, access: 'owner',
+            definition: createWorkflowDefinitionFixture(submitted.definition), metadata: submitted.metadata!, revision: { headerVersion: 2, bodyVersion: 2 } });
+            expect(await save!).toMatchObject({ ok: true, result: { status: 'applied' } }); });
+        expect(runStartSpy).not.toHaveBeenCalled();
+        expect(await executor.execute('workflow.authoring.draft.get', { ...address, scope: { ...address.scope, accountId: 'other' } }, context))
+            .toMatchObject({ ok: true, result: { status: 'refused', reason: 'workflow_binding_scope_mismatch' } });
+    });
+
+    it('mounted draft discard respects the existing human confirmation and preserves undo', async () => {
+        renderRealEditorBody = true;
+        const { invokeWorkflowAuthoringAction } = await import('@/sync/ops/actions/workflowAuthoringAction');
+        await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        const original = latestBodyProps!.draft;
+        const address = { scope: { serverId: 'server-a', accountId: 'account-a' }, draftId: original.draftId };
+        const context = { serverId: 'server-a', runtimeAccountId: 'account-a' };
+        await act(async () => { latestBodyProps!.onChange({ ...original, name: 'Keep my edits' }); });
+        expect(await invokeWorkflowAuthoringAction({ actionId: 'workflow.authoring.draft.discard', input: address, context }))
+            .toMatchObject({ status: 'refused', reason: 'cancelled' });
+        expect(latestBodyProps!.draft.name).toBe('Keep my edits');
+        modalConfirmSpy.mockResolvedValueOnce(true);
+        await act(async () => { expect(await invokeWorkflowAuthoringAction({ actionId: 'workflow.authoring.draft.discard', input: address, context }))
+            .toMatchObject({ status: 'applied' }); });
+        expect(latestBodyProps!.draft).toEqual(original);
+        await act(async () => { latestBodyProps!.history!.undo(); });
+        expect(latestBodyProps!.draft.name).toBe('Keep my edits');
+    });
+    it.each([false, true])('delivers Delete from the real editor overflow after it closes (phone=%s, R17a)', async phone => {
+        renderRealEditorBody = true;
+        modalConfirmSpy.mockImplementation((...args) => realModal.confirm(...args));
+        const deletion = createDeferred<{ definitionId: string; deleted: true }>();
+        definitionActions.delete.mockImplementationOnce(() => deletion.promise);
+        const screen = await renderRunEditor(<RealModalProvider><DestinationInstanceHost tabId="delete-editor"
+            ref={{ kind: 'workflows', params: { workspacePathname: `/workflows/${SAVED_TRIGGER_WORKFLOW_ID}` } }}
+            pathname={`/workflows/${SAVED_TRIGGER_WORKFLOW_ID}`} focused visible phone={phone}
+            navigation={{ push: routerSpy.push, replace: routerSpy.replace, back: routerSpy.back, canGoBack: routerSpy.canGoBack }}>
+            <WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />
+        </DestinationInstanceHost></RealModalProvider>);
+        await screen.pressByTestIdAsync(phone ? 'page-header-actions.trigger' : 'workflow-editor-menu.trigger');
+        await act(async () => { await new Promise<void>(resolve => setTimeout(resolve, 0)); });
+        await screen.pressByTestIdAsync('workflow-editor-menu-delete');
+        await act(async () => { await new Promise<void>(resolve => setTimeout(resolve, 150)); });
+        expect(modalConfirmSpy).toHaveBeenCalledOnce();
+        expect(screen.findHostByTestId('workflow-editor-menu-delete')).toBeNull();
+        expect(screen.findHostByTestId('web-modal-confirm')).not.toBeNull();
+        expect(definitionActions.delete).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('web-modal-confirm');
+        expect(definitionActions.delete).toHaveBeenCalledOnce();
+        expect(screen.findHostByTestId('workflow-editor-deleting')).not.toBeNull();
+        expect(routerSpy.replace).not.toHaveBeenCalled();
+        await act(async () => { deletion.resolve({ definitionId: SAVED_TRIGGER_WORKFLOW_ID, deleted: true }); await deletion.promise; });
+        expect(routerSpy.replace).toHaveBeenCalledWith('/workflows');
+        await screen.unmount();
+    });
+    it.each([false, true])('keeps the dirty draft when Delete is cancelled or fails (confirmed=%s)', async confirmed => {
+        modalConfirmSpy.mockResolvedValue(confirmed);
+        definitionActions.delete.mockRejectedValueOnce(new Error('Deletion failed'));
+        const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        await act(async () => latestBodyProps!.onChange({ ...latestBodyProps!.draft, name: 'Keep this rename' }));
+        await act(async () => { await latestBodyProps!.menuActions?.find(action => action.id === 'delete')?.onSelect(); });
+        expect(getActiveUnsavedChangesGuard()?.ignoreRef?.current).not.toBe(true);
+        expect(getActiveUnsavedChangesGuard()?.isDirtyRef.current).toBe(true);
+        expect(latestBodyProps!.draft.name).toBe('Keep this rename');
+        expect(routerSpy.replace).not.toHaveBeenCalled();
+        if (confirmed) expect(modalAlertSpy).toHaveBeenCalledWith('workflows.page.deleteFailedTitle', 'workflows.problem.generic');
+        else expect(definitionActions.delete).not.toHaveBeenCalled();
+        await screen.unmount();
+    });
+    it('retires dirty edits after confirmed Delete before the router asks its departure guard', async () => {
+        modalConfirmSpy.mockResolvedValue(true);
+        const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        await act(async () => latestBodyProps!.onChange({ ...latestBodyProps!.draft, name: 'Unsaved rename' }));
+        const destinations: string[] = [];
+        routerSpy.replace.mockImplementation(href => runGuardedNavigation(() => { destinations.push(String(href)); }));
+        await act(async () => { await latestBodyProps!.menuActions?.find(action => action.id === 'delete')?.onSelect(); });
+        expect(modalConfirmSpy).toHaveBeenCalledOnce();
+        expect(definitionActions.delete).toHaveBeenCalledOnce();
+        expect(modalAlertSpy).not.toHaveBeenCalled();
+        expect(destinations).toEqual(['/workflows']);
+        await screen.unmount();
+    });
+    it('does not persist an empty required Action value and saves once the same draft has real text', async () => {
+        const definition = createWorkflowDefinitionFixture({ defaults: {
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+        }, blocks: [{ kind: 'action', id: 'notify', actionId: 'notifications.notify_me',
+            input: { message: { kind: 'literal', value: '' } } }] });
+        definitionActions.create.mockImplementation(async request => ({ definitionId: SAVED_TRIGGER_WORKFLOW_ID,
+            definition: WorkflowDefinitionV1Schema.parse(request.definition), metadata: request.metadata, access: 'owner',
+            revision: { headerVersion: 1, bodyVersion: 1 } }));
+        const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
+        await act(async () => latestBodyProps!.onChange({ ...latestBodyProps!.draft, name: 'Notify on completion', defaults: definition.defaults, blocks: definition.blocks }));
+        await act(async () => latestBodyProps!.onSave?.());
+        expect(definitionActions.create).not.toHaveBeenCalled();
+        expect(latestBodyProps!.saveStatus?.kind).not.toBe('saved');
+        await act(async () => latestBodyProps!.onChange({ ...latestBodyProps!.draft, blocks: [{ kind: 'action', id: 'notify', actionId: 'notifications.notify_me',
+            input: { message: { kind: 'literal', value: 'Done' } } }] }));
+        await act(async () => latestBodyProps!.onSave?.());
+        expect(definitionActions.create).toHaveBeenCalledOnce();
+        expect(latestBodyProps!.saveStatus?.kind).toBe('saved');
+        await screen.unmount();
+    });
+    it.each(['blank', 'seed', 'saved'] as const)('clears discarded edits before a retained workspace tab is revisited (%s, DESIGN-11 N57)', async kind => {
+        renderRealEditorBody = true;
+        const source: React.ComponentProps<typeof WorkflowEditorHostScreen>['source'] = kind === 'saved'
+            ? { kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }
+            : { kind: 'new', ...(kind === 'seed' ? { definitionDraftSeedId: storeWorkflowDefinitionDraftSeed({
+                name: 'Copied workflow', description: 'Original description', definition: createWorkflowDefinitionFixture(),
+            }) } : {}) };
+        const screen = await renderRunEditor(<WorkflowEditorHostScreen source={source} />);
+        const baseline = latestBodyProps!.draft;
+        const baselineDescription = latestBodyProps!.description;
+        const readTriggers = () => {
+            const section = latestBodyProps!.triggersSection;
+            if (!React.isValidElement<React.ComponentProps<typeof WorkflowTriggerSection>>(section)) throw new Error('Expected trigger editor');
+            return section.props;
+        };
+        const trigger = { kind: 'schedule', enabled: true,
+            schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: null } } as const;
+        await act(async () => readTriggers().onChangeDraft(editWorkflowTriggerDraft(readTriggers().draft,
+            { kind: 'add', clientId: 'discarded-schedule', trigger })));
+        await act(async () => latestBodyProps!.onChange({ ...baseline, name: 'Discard this retained draft' }));
+        await act(async () => latestBodyProps!.onChangeDescription?.('Discard this description'));
+        let left = false;
+        await act(async () => { void runGuardedNavigation(() => { left = true; }); });
+        expect(left).toBe(false);
+        await act(async () => modalAlertSpy.mock.lastCall?.[2]?.find(button => button.style === 'destructive')?.onPress?.());
+        expect(left).toBe(true);
+        expect(latestBodyProps!.draft).toEqual(baseline);
+        expect(latestBodyProps!.description).toBe(baselineDescription);
+        expect(latestBodyProps!.saveStatus?.kind).toBe(kind === 'saved' ? 'saved' : 'notSaved');
+        expect(latestBodyProps!.history?.undoLabel).toBeNull();
+        expect(latestBodyProps!.history?.redoLabel).toBeNull();
+        expect(readTriggers().draft.adds).toHaveLength(0);
+        expect(getActiveUnsavedChangesGuard()?.isDirtyRef.current).toBe(false);
+        expect(definitionActions.create).not.toHaveBeenCalled();
+        expect(definitionActions.update).not.toHaveBeenCalled();
+        expect(triggerActions.add).not.toHaveBeenCalled();
+        await screen.unmount();
+    });
+
+    it.each([
+        { kind: 'new' as const, definitionDraftSeedId: 'lost-on-reload' },
+        { kind: 'saved' as const, definitionId: SAVED_TRIGGER_WORKFLOW_ID, agentRevisionSeedId: 'lost-on-reload' },
+    ])('explains a $kind seed lost on reload without claiming an Account change (DESIGN-11 N56)', async source => {
+        renderRealEditorBody = true;
+        const screen = await renderRunEditor(<WorkflowEditorHostScreen source={source} />);
+        expect(screen.findHostByTestId('workflow-editor-account-changed')).toBeNull();
+        expect(screen.findHostByTestId('workflow-editor-draft-unavailable')).not.toBeNull();
+        expect(screen.findHostByTestId('workflow-editor-body')).toBeNull();
+        await screen.unmount();
+    });
+
+    it.each(['Previous', 'browser Back', 'menu Discard'] as const)('keeps a dirty new draft on %s and pops its workflow origin after discard', async exit => {
+        // Browser history and its event delivery are the system boundary. The
+        // mounted Host, shell control, workspace router and draft decision are real.
+        const entries: Array<{ state: unknown; href: string }> = [{ state: { id: 'initial' }, href: '/workflows/builtin:plan-with-a-panel' }];
+        let position = 0;
+        const browserEvents = new EventTarget();
+        const location = { pathname: entries[0]!.href, search: '', hash: '' };
+        const updateLocation = () => {
+            const url = new URL(entries[position]!.href, 'https://happier.invalid');
+            Object.assign(location, { pathname: url.pathname, search: url.search, hash: url.hash });
+        };
+        const browser = {
+            get state() { return entries[position]!.state; },
+            pushState(state: unknown, _title: string, href?: string | URL | null) {
+                const nextHref = href == null ? entries[position]!.href : String(href);
+                entries.splice(position + 1); entries.push({ state, href: nextHref }); position++; updateLocation();
+            },
+            replaceState(state: unknown, _title: string, href?: string | URL | null) {
+                entries[position] = { state, href: href == null ? entries[position]!.href : String(href) }; updateLocation();
+            },
+            go(delta: number) {
+                if (!entries[position + delta]) return;
+                position += delta; updateLocation();
+                browserEvents.dispatchEvent(Object.assign(new Event('popstate'), { state: browser.state }));
+            },
+        };
+        const previousWindow = globalThis.window;
+        const restoreBrowserGlobals = withPopoverWebGlobals({ window: {
+            ...previousWindow, location, history: browser, sessionStorage: { getItem: () => 'main' },
+            addEventListener: browserEvents.addEventListener.bind(browserEvents),
+            removeEventListener: browserEvents.removeEventListener.bind(browserEvents),
+            dispatchEvent: browserEvents.dispatchEvent.bind(browserEvents),
+        } });
+        getStorage().setState({ isDataReady: true });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: true, friends: false } });
+        let navigation: WorkspaceNavigationContextValue | undefined;
+        try {
+            const screen = await renderScreen(<WorkspaceProvider enabled catalog={catalog}>{owner => {
+                navigation = owner;
+                const state = owner.state;
+                const tab = state.tabs[state.groups[state.focusedGroupId].activeTabId]!;
+                return <><AppShellTitleStrip columnVisible columnToggleAvailable onToggleColumn={() => {}} navigation={owner} />
+                    <DestinationInstanceHost tabId={tab.id} ref={tab.target} pathname={location.pathname} focused visible navigation={owner.navigationForTab(tab.id)}>
+                        {location.pathname === '/workflows/new'
+                            ? <WorkflowEditorHostScreen source={{ kind: 'new', builtinId: 'builtin:plan-with-a-panel' }} /> : null}
+                    </DestinationInstanceHost></>;
+            }}</WorkspaceProvider>);
+            await act(async () => { navigation!.openHref('/workflows/new'); });
+            const draft = latestBodyProps!.draft;
+            await act(async () => latestBodyProps!.onChange({ ...draft, name: 'Do not lose this' }));
+            const leave = async () => {
+                if (exit === 'Previous') await screen.pressByTestIdAsync('app-shell-back');
+                else if (exit === 'menu Discard') await act(async () => latestBodyProps!.menuActions?.find(action => action.id === 'discard')?.onSelect());
+                else await act(async () => browser.go(-1));
+            };
+            await leave();
+            expect(modalAlertSpy).toHaveBeenCalledOnce();
+            expect(location.pathname).toBe('/workflows/new');
+            await act(async () => modalAlertSpy.mock.lastCall?.[2]?.find(button => button.style === 'cancel')?.onPress?.());
+            expect(latestBodyProps!.draft.name).toBe('Do not lose this');
+            await leave();
+            await act(async () => modalAlertSpy.mock.lastCall?.[2]?.find(button => button.style === 'destructive')?.onPress?.());
+            expect(decodeURIComponent(location.pathname)).toBe('/workflows/builtin:plan-with-a-panel');
+            expect(entries.filter(entry => decodeURIComponent(entry.href) === '/workflows/builtin:plan-with-a-panel')).toHaveLength(1);
+            expect(position).toBe(0);
+            expect(definitionActions.create).not.toHaveBeenCalled();
+            await screen.unmount();
+        } finally { restoreBrowserGlobals(); }
+    });
+    it('promotes a native create URL to the saved URL without replacing its mounted draft or undo history', async () => {
+        nativeRouteBoundary.platform = 'ios';
+        // Published Expo CJS bypasses Vitest's native SDK aliases. Execute its
+        // real URL projector with only the native SDK boundary supplied, as the
+        // canonical destinationRoute suite does for Expo's declaration parser.
+        const require = createRequire(import.meta.url);
+        const loadSdk = (specifier: string, boundary: Readonly<Record<string, unknown>>) => {
+            const path = require.resolve(specifier);
+            const sdkRequire = createRequire(path);
+            const exports: Record<string, unknown> = {};
+            const compiled = transformSync(readFileSync(path, 'utf8'), { loader: 'jsx', jsxFactory: 'react_1.default.createElement' });
+            new Function('require', 'exports', compiled.code)(
+                (id: string) => id === 'react' ? React : id in boundary ? boundary[id] : sdkRequire(id), exports);
+            return exports;
+        };
+        const forks = loadSdk('expo-router/build/fork/getPathFromState-forks', {
+            '@react-navigation/native': await import('@react-navigation/native'),
+        });
+        const routeInfo = loadSdk('expo-router/build/global-state/routeInfo', { '../fork/getPathFromState-forks': forks });
+        // Evaluating installed JavaScript is a genuinely untyped SDK boundary.
+        const getRouteInfoFromState = routeInfo.getRouteInfoFromState as typeof import('expo-router/build/global-state/routeInfo').getRouteInfoFromState;
+        const serverId = getActiveServerSnapshot().serverId;
+        getStorage().setState({ settings: { ...settingsDefaults, experiments: true,
+            featureToggles: { ...settingsDefaults.featureToggles, automations: true } } });
+        primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features: createRootLayoutFeaturesResponse() } });
+        const routeName = (key: string) => workspaceRouteFiles[key]!.replace('./(app)/', '').replace(/\.tsx$/, '');
+        const createName = routeName('workflows/new');
+        const savedName = routeName('workflows/[id]');
+        // React Navigation is an SDK boundary. Its real reducer, not an invented
+        // key-preserving mock, decides whether the screen survives navigation.
+        const native = StackRouter({ initialRouteName: createName });
+        const options = { routeNames: [...new Set([createName, savedName])],
+            routeParamList: { [createName]: { id: 'new' } }, routeGetIdList: {} };
+        const initialState = native.getInitialState(options);
+        let currentState = initialState;
+        const nativeSdk = await import('@react-navigation/native');
+        const qualified = loadSdk('expo-router/build/useScreens', {
+            '@react-navigation/native': { ...nativeSdk, useStateForPath: () => currentState },
+            './Route': loadSdk('expo-router/build/Route', {}),
+            './global-state/storeContext': { useExpoRouterStore: () => ({ setFocusedState: () => {} }) },
+            './global-state/utils': loadSdk('expo-router/build/global-state/utils', {
+                'react-native': await import('react-native'), 'expo-constants': { expoConfig: { extra: { router: { adaptiveColors: false } } } },
+            }),
+            './import-mode': 'sync',
+            './navigationEvents': { unstable_navigationEvents: { isEnabled: () => false } },
+            './navigationEvents/utils': {},
+            // Native navigator declarations and visual loading/error frames are
+            // SDK boundaries; the real qualifier, Route context and editor render.
+            './primitives': {}, './views/EmptyRoute': {}, './views/Try': {},
+            './views/SuspenseFallback': { SuspenseFallback: () => null },
+        });
+        const getQualifiedRouteComponent = qualified.getQualifiedRouteComponent as typeof import('expo-router/build/useScreens').getQualifiedRouteComponent;
+        const nodes = new Map(options.routeNames.map(name => [name, {
+            type: 'route', children: [], route: name, contextKey: `./(app)/${name}.tsx`,
+            dynamic: name.includes('[id]') ? [{ name: 'id', deep: false }] : null,
+            loadRoute: () => ({ default: WorkflowEditorRoute }),
+        } satisfies RouteNode]));
+        let dispatch = (_action: ReturnType<typeof CommonActions.setParams> | ReturnType<typeof StackActions.replace>) => {};
+        function NativeScreen() {
+            const [state, setState] = React.useState(initialState);
+            currentState = state;
+            dispatch = (action) => setState(previous => {
+                const next = native.getStateForAction(previous, action, options);
+                return next ? native.getRehydratedState(next, options) : previous;
+            });
+            const route = state.routes[state.index]!;
+            const info = getRouteInfoFromState({ routes: [{ name: '__root', state: {
+                index: state.index,
+                routes: state.routes.map(({ key, name, params }) => ({ key, name, params })),
+            } }], index: 0 });
+            nativeRouteBoundary.pathname = info.pathname;
+            nativeRouteBoundary.params = info.params;
+            const Qualified = getQualifiedRouteComponent(nodes.get(route.name)!);
+            const navigation = createReactNavigationNativeMock({ navigation: {
+                isFocused: () => true, getState: () => state,
+            } }).useNavigation();
+            // The canonical SDK boundary fixture supplies context reads; dispatch goes through the real reducer above.
+            return <Qualified key={route.key} route={route}
+                navigation={navigation as React.ComponentProps<typeof Qualified>['navigation']} />;
+        }
+        routerSpy.replace.mockImplementation((href: string) => dispatch(StackActions.replace(savedName, { id: href.split('/').at(-1)! })));
+        routerSpy.setParams.mockImplementation((params) => dispatch(CommonActions.setParams(params)));
+        const definition = createWorkflowDefinitionFixture({ defaults: {
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+        } });
+        definitionActions.create.mockResolvedValueOnce({ definitionId: SAVED_TRIGGER_WORKFLOW_ID,
+            definition, access: 'owner', revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Saved here' } });
+        const screen = await renderScreen(<NativeScreen />);
+        expect(nativeRouteBoundary.pathname).toBe('/workflows/new');
+        const initial = latestBodyProps!.draft;
+        await act(async () => latestBodyProps!.onChange({ ...initial, name: 'Saved here', inputs: definition.inputs,
+            defaults: definition.defaults, blocks: definition.blocks, finalOutput: definition.finalOutput }, 'Build workflow'));
+        const accepted = latestBodyProps!.draft;
+        await act(async () => latestBodyProps!.onSave?.());
+        expect(nativeRouteBoundary.pathname).toBe(`/workflows/${SAVED_TRIGGER_WORKFLOW_ID}`);
+        expect(currentState.routes[currentState.index]!.key).toBe(initialState.routes[initialState.index]!.key);
+        expect(latestBodyProps!.draft).toBe(accepted);
+        expect(definitionActions.get).not.toHaveBeenCalled();
+        await act(async () => latestBodyProps!.history!.undo());
+        expect(latestBodyProps!.draft).toBe(initial);
+        await act(async () => latestBodyProps!.history!.redo());
+        expect(latestBodyProps!.draft).toBe(accepted);
+        await screen.unmount();
+    });
     it('shows an unavailable header reason when the saved definition cannot open', async () => {
         definitionActions.get.mockRejectedValueOnce(new WorkflowActionError({ rawCode: 'content_unavailable', message: 'private internal text',
             failure: { ok: false, errorCode: 'content_unavailable', error: 'workflow_definition_content_unavailable',
@@ -279,9 +707,208 @@ describe('WorkflowEditorHostScreen composition', () => {
         const discard = latestBodyProps?.menuActions?.find((action) => action.id === 'discard');
         expect(discard).toBeDefined();
         await act(async () => discard?.onSelect());
-        expect(routerSpy.back).toHaveBeenCalledOnce();
+        expect(routerSpy.replace).toHaveBeenCalledWith('/workflows');
         expect(definitionActions.create).not.toHaveBeenCalled();
         expect(definitionActions.update).not.toHaveBeenCalled();
+        await screen.unmount();
+    });
+    it('lists a new draft\'s Discard last, after its safe operations (DESIGN-9 N46)', async () => {
+        const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
+        const actions = latestBodyProps?.menuActions ?? [];
+        expect(actions.at(-1)?.id).toBe('discard');
+        expect(actions[0]?.destructive).not.toBe(true);
+        await screen.unmount();
+    });
+    it('returns a saved workflow with edits to its saved version through Discard changes, and Undo brings the edits back (DESIGN-9 N44)', async () => {
+        const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        // A clean saved workflow has nothing to discard.
+        expect(latestBodyProps!.menuActions?.some((action) => action.id === 'discardChanges')).toBe(false);
+        const saved = latestBodyProps!.draft;
+        await act(async () => latestBodyProps!.onChange({ ...saved, name: 'Unsaved rename' }, 'Rename'));
+        await act(async () => latestBodyProps!.onChangeDescription?.('Unsaved purpose'));
+        await act(async () => latestBodyProps!.onCommitChange?.());
+        const ids = (latestBodyProps!.menuActions ?? []).map((action) => action.id);
+        expect(ids).toContain('discardChanges');
+        // Destructive operations close the menu: Discard changes, then Delete workflow.
+        expect(ids.slice(-2)).toEqual(['discardChanges', 'delete']);
+
+        modalConfirmSpy.mockResolvedValueOnce(false);
+        await act(async () => { await latestBodyProps!.menuActions?.find((action) => action.id === 'discardChanges')?.onSelect(); });
+        expect(latestBodyProps!.draft.name).toBe('Unsaved rename');
+        expect(latestBodyProps!.saveStatus?.kind).toBe('unsaved');
+
+        modalConfirmSpy.mockResolvedValueOnce(true);
+        await act(async () => { await latestBodyProps!.menuActions?.find((action) => action.id === 'discardChanges')?.onSelect(); });
+        expect(modalConfirmSpy).toHaveBeenLastCalledWith(t('common.discardChanges'), t('workflows.page.discardChangesBody'),
+            expect.objectContaining({ destructive: true }));
+        expect(latestBodyProps!.draft).toEqual(saved);
+        expect(latestBodyProps!.description).toBe('');
+        expect(latestBodyProps!.saveStatus?.kind).toBe('saved');
+        expect(getActiveUnsavedChangesGuard()?.isDirtyRef.current).not.toBe(true);
+        expect(routerSpy.replace).not.toHaveBeenCalled();
+        expect(definitionActions.update).not.toHaveBeenCalled();
+        expect(latestBodyProps!.menuActions?.some((action) => action.id === 'discardChanges')).toBe(false);
+
+        expect(latestBodyProps!.history?.undoLabel).toBe(t('common.discardChanges'));
+        await act(async () => latestBodyProps!.history!.undo());
+        expect(latestBodyProps!.draft.name).toBe('Unsaved rename');
+        expect(latestBodyProps!.description).toBe('Unsaved purpose');
+        await screen.unmount();
+    });
+    it('replaces a first successful Save only after the real draft guard is clean', async () => {
+        const definition = createWorkflowDefinitionFixture({ defaults: {
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+        } });
+        definitionActions.create.mockResolvedValueOnce({ definitionId: SAVED_TRIGGER_WORKFLOW_ID,
+            definition, access: 'owner', revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Saved here' } });
+        const destinations: unknown[] = [];
+        routerSpy.replace.mockImplementation((route) => {
+            void runGuardedNavigation(() => { destinations.push(route); });
+        });
+        const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
+        const draft = latestBodyProps?.draft;
+        if (!draft) throw new Error('Expected new draft');
+        await act(async () => latestBodyProps?.onChange({ ...draft, name: 'Saved here', inputs: definition.inputs,
+            defaults: definition.defaults, blocks: definition.blocks, finalOutput: definition.finalOutput }));
+        expect(getActiveUnsavedChangesGuard()?.isDirtyRef.current).toBe(true);
+        await act(async () => latestBodyProps?.onSave?.());
+        expect(definitionActions.create).toHaveBeenCalledOnce();
+        expect(latestBodyProps?.saveStatus).toMatchObject({ kind: 'saved' });
+        expect(destinations).toEqual([`/workflows/${SAVED_TRIGGER_WORKFLOW_ID}`]);
+        expect(modalAlertSpy).not.toHaveBeenCalled();
+        expect(latestBodyProps?.saveStatus?.kind).toBe('saved');
+        await screen.unmount();
+    });
+    it.each([false, true])('uses the existing stack for editor Back, with a list fallback only for a deep link (hasHistory=%s)', async hasHistory => {
+        routerSpy.canGoBack.mockReturnValue(hasHistory);
+        const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
+        await act(async () => latestBodyProps!.onBack!());
+        if (hasHistory) {
+            expect(routerSpy.back).toHaveBeenCalledOnce();
+            expect(routerSpy.replace).not.toHaveBeenCalled();
+        } else {
+            expect(routerSpy.back).not.toHaveBeenCalled();
+            expect(routerSpy.replace).toHaveBeenCalledWith('/workflows');
+        }
+        await screen.unmount();
+    });
+    it.each(['menu', 'back', 'column', 'route'] as const)('guards %s departure from a changed new draft through the shell navigation owner', async (exit) => {
+        const destinations: unknown[] = [];
+        routerSpy.replace.mockImplementation((route) => {
+            void runGuardedNavigation(() => { destinations.push(route); });
+        });
+        const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new', builtinId: 'builtin:plan-with-a-panel' }} />);
+        const draft = latestBodyProps?.draft;
+        if (!draft) throw new Error('Expected built-in draft');
+        await act(async () => latestBodyProps?.onChange({ ...draft, name: 'Changed draft' }));
+        const discard = latestBodyProps?.menuActions?.find((action) => action.id === 'discard');
+        await act(async () => {
+            if (exit === 'menu') discard?.onSelect();
+            else if (exit === 'back') latestBodyProps?.onBack?.();
+            else void runGuardedNavigation(() => { destinations.push(exit === 'column' ? '/workflows/builtin:keep-going' : '/settings'); });
+        });
+        const buttons = modalAlertSpy.mock.calls.at(-1)?.[2];
+        expect(buttons?.some((button) => button.style === 'destructive')).toBe(true);
+        await act(async () => buttons?.find((button) => button.style === 'destructive')?.onPress?.());
+        expect(destinations).toEqual([exit === 'column' ? '/workflows/builtin:keep-going' : exit === 'route' ? '/settings' : '/workflows']);
+        expect(routerSpy.back).not.toHaveBeenCalled();
+        expect(definitionActions.create).not.toHaveBeenCalled();
+        await screen.unmount();
+    });
+    it('keeps the accepted draft and undo history when the first Save promotes its route, but resets on another definition or Account', async () => {
+        const definition = createWorkflowDefinitionFixture({ defaults: {
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+        } });
+        definitionActions.create.mockResolvedValueOnce({ definitionId: SAVED_TRIGGER_WORKFLOW_ID,
+            definition, access: 'owner', revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Saved here' } });
+        const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
+        const initial = latestBodyProps!.draft;
+        await act(async () => latestBodyProps!.onChange({ ...initial, name: 'Saved here', inputs: definition.inputs,
+            defaults: definition.defaults, blocks: definition.blocks, finalOutput: definition.finalOutput }, 'Build workflow'));
+        await act(async () => latestBodyProps!.onSave?.());
+        const accepted = latestBodyProps!.draft;
+        const hydration = createDeferred<WorkflowDefinitionGetResultV1>();
+        definitionActions.get.mockReturnValueOnce(hydration.promise);
+        await screen.update(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        expect(screen.findAllHostsByTestId('workflow-editor-loading')).toHaveLength(0);
+        expect(definitionActions.get).not.toHaveBeenCalled();
+        expect(latestBodyProps!.draft).toBe(accepted);
+        expect(latestBodyProps!.history?.undoLabel).toBe('Build workflow');
+        await act(async () => latestBodyProps!.history!.undo());
+        expect(latestBodyProps!.draft).toBe(initial);
+        expect(latestBodyProps!.saveStatus?.kind).toBe('unsaved');
+        await act(async () => latestBodyProps!.history!.redo());
+        expect(latestBodyProps!.draft).toBe(accepted);
+        expect(latestBodyProps!.saveStatus?.kind).toBe('saved');
+        await act(async () => switchEditorAccountScope({ serverId: 'server-a', accountId: 'account-b' }));
+        expect(screen.findAllHostsByTestId('workflow-editor-loading')).toHaveLength(1);
+        await act(async () => hydration.resolve({ definitionId: SAVED_TRIGGER_WORKFLOW_ID, definition,
+            access: 'view', revision: { headerVersion: 3, bodyVersion: 3 }, metadata: { title: 'Account B workflow' } }));
+        expect(latestBodyProps!.draft.name).toBe('Account B workflow');
+        expect(latestBodyProps!.history).toBeUndefined();
+        definitionActions.get.mockResolvedValueOnce({ definitionId: '00000000-0000-4000-8000-000000000006', definition,
+            access: 'owner', revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Another definition' } });
+        await screen.update(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: '00000000-0000-4000-8000-000000000006' }} />);
+        expect(latestBodyProps!.draft.name).toBe('Another definition');
+        expect(latestBodyProps!.history?.undoLabel).toBeNull();
+        await screen.unmount();
+    });
+    it.each(['save again', 'open saved row'] as const)('keeps edits made during a first Save dirty and does not replace their draft (%s)', async nextAction => {
+        const definition = createWorkflowDefinitionFixture({ defaults: {
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+        } });
+        const pending = createDeferred<WorkflowDefinitionGetResultV1>();
+        definitionActions.create.mockReturnValueOnce(pending.promise);
+        const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
+        const draft = latestBodyProps?.draft;
+        if (!draft) throw new Error('Expected new draft');
+        const submitted = { ...draft, name: 'Submitted', inputs: definition.inputs,
+            defaults: definition.defaults, blocks: definition.blocks, finalOutput: definition.finalOutput };
+        await act(async () => latestBodyProps?.onChange(submitted));
+        await act(async () => latestBodyProps?.onSave?.());
+        await act(async () => latestBodyProps?.onChange({ ...submitted, name: 'Still editing' }));
+        await act(async () => pending.resolve({ definitionId: SAVED_TRIGGER_WORKFLOW_ID,
+            definition, access: 'owner', revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Submitted' } }));
+        expect(routerSpy.replace).not.toHaveBeenCalled();
+        expect(getActiveUnsavedChangesGuard()?.isDirtyRef.current).toBe(true);
+        expect(latestBodyProps?.draft.name).toBe('Still editing');
+        expect(latestBodyProps?.saveStatus?.kind).toBe('unsaved');
+        if (nextAction === 'save again') {
+            const accepted = latestBodyProps!.draft;
+            definitionActions.update.mockResolvedValueOnce({ definitionId: SAVED_TRIGGER_WORKFLOW_ID,
+                definition, access: 'owner', revision: { headerVersion: 2, bodyVersion: 2 }, metadata: { title: 'Still editing' } });
+            await act(async () => latestBodyProps!.onSave?.());
+            expect(routerSpy.replace).toHaveBeenCalledWith(`/workflows/${SAVED_TRIGGER_WORKFLOW_ID}`);
+            await screen.update(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+            expect(latestBodyProps!.draft).toBe(accepted);
+            expect(definitionActions.get).not.toHaveBeenCalled();
+        } else {
+            definitionActions.get.mockResolvedValueOnce({ definitionId: SAVED_TRIGGER_WORKFLOW_ID,
+                definition, access: 'owner', revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Submitted' } });
+            // Opening the saved row separately after choosing to discard the later
+            // edits is not the clean first-Save continuation.
+            await screen.update(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+            expect(latestBodyProps?.draft.name).toBe('Submitted');
+        }
+        await screen.unmount();
+    });
+    it('opens a fresh new draft when leaving a promoted saved editor for the create route', async () => {
+        const definition = createWorkflowDefinitionFixture({ defaults: {
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+        } });
+        definitionActions.create.mockResolvedValueOnce({ definitionId: SAVED_TRIGGER_WORKFLOW_ID,
+            definition, access: 'owner', revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Saved here' } });
+        const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
+        const initial = latestBodyProps!.draft;
+        await act(async () => latestBodyProps!.onChange({ ...initial, name: 'Saved here', inputs: definition.inputs,
+            defaults: definition.defaults, blocks: definition.blocks, finalOutput: definition.finalOutput }, 'Build workflow'));
+        await act(async () => latestBodyProps!.onSave?.());
+        await screen.update(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        await screen.update(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
+        expect(latestBodyProps!.draft.name).toBe('');
+        expect(latestBodyProps!.draft.draftId).not.toBe(initial.draftId);
+        expect(latestBodyProps!.history?.undoLabel).toBeNull();
+        expect(latestBodyProps!.menuActions?.some((action) => action.id === 'discard')).toBe(true);
         await screen.unmount();
     });
     it('lets a Can-use recipient save personal triggers without editing the definition', async () => {
@@ -345,13 +972,13 @@ describe('WorkflowEditorHostScreen composition', () => {
         const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: base.definitionId, agentRevision: base }} />);
         const original = latestBodyProps!.draft;
         const removed = removeWorkflowBlock(original, original.blocks[0]!.id);
-        await act(async () => latestBodyProps!.onChange(removed.draft, 'Remove step'));
+        await act(async () => latestBodyProps!.onChange(removed.draft));
         const inserted = insertWorkflowStarterExample(latestBodyProps!.draft, WORKFLOW_STARTER_EXAMPLES_V1[0]!, 'Example');
         await act(async () => latestBodyProps!.onChange(inserted.draft, 'Insert example'));
         expect(latestBodyProps!.history?.undoLabel).toBe('Insert example');
         await act(async () => latestBodyProps!.history!.undo());
         expect(latestBodyProps!.draft).toEqual(removed.draft);
-        expect(latestBodyProps!.history?.undoLabel).toBe('Remove step');
+        expect(latestBodyProps!.history?.undoLabel).toBe(t('workflows.a11y.removed', { block: t('workflows.editor.addStep'), total: 0 }));
         await act(async () => latestBodyProps!.history!.undo());
         expect(latestBodyProps!.draft).toEqual(original);
         const renamed = { ...base, revision: { headerVersion: 5, bodyVersion: 9 }, metadata: { title: 'Agent rename', description: 'Agent purpose' }, changedBlockIds: ['step-1'] };
@@ -619,6 +1246,7 @@ describe('WorkflowEditorHostScreen composition', () => {
             defaults: definition.defaults, blocks: definition.blocks, finalOutput: definition.finalOutput }));
         await act(async () => latestBodyProps?.onSave?.());
         expect(definitionActions.create).toHaveBeenCalledOnce();
+        expect(routerSpy.replace).toHaveBeenCalledWith(`/workflows/${encodeURIComponent(SAVED_TRIGGER_WORKFLOW_ID)}`);
         await act(async () => latestBodyProps?.onEditWithAgent?.());
         const authoringDraft = latestBodyProps?.authoringDraft;
         if (!authoringDraft) throw new Error('Expected the Agent tab draft');
@@ -659,6 +1287,9 @@ describe('WorkflowEditorHostScreen composition', () => {
      * every step prompt is scoped to that same Machine and project folder.
      */
     it('contributes the incumbent Agent catalog and the Machine composer scope to the editor', async () => {
+        const scope = { serverId: 'server-a', accountId: 'account-a' };
+        getStorage().setState({ settingsScope: scope });
+        applyAcpCatalogSnapshot(scope, { status: 'ready', record: { v: 1, definitions: [] }, revision: 1 }, true);
         setEditorMachines([createMachineFixture({ metadata: {
             host: 'tester.local', happyCliVersion: '0.0.0-test', happyHomeDir: '/Users/tester/.happy-dev',
             homeDir: '/Users/me', platform: 'darwin',
@@ -786,6 +1417,9 @@ describe('WorkflowEditorHostScreen composition', () => {
         });
 
         it('adopts the contextual Agent once the exact Machine projection resolves, without becoming dirty', async () => {
+            const scope = { serverId: 'server-a', accountId: 'account-a' };
+            getStorage().setState({ settingsScope: scope });
+            applyAcpCatalogSnapshot(scope, { status: 'ready', record: { v: 1, definitions: [] }, revision: 1 }, true);
             daemonProjection.resolves = true;
             const { WorkflowEditorHostScreen } = await import('./WorkflowEditorHostScreen');
             const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
@@ -794,6 +1428,8 @@ describe('WorkflowEditorHostScreen composition', () => {
 
             const seeded = latestBodyProps?.draft.defaults.agentTarget;
             const offered = latestBodyProps?.authoringFacts?.agentTargets ?? [];
+            expect(offered.length).toBeGreaterThan(0);
+            expect(latestBodyProps?.authoringFacts?.contextualDefaultAgentTarget).not.toBeNull();
             expect(seeded).toBeDefined();
             // Only an Agent this Machine actually offers: seeding a target the
             // ingress normalizer would reject is the same defect with a nicer
@@ -1230,7 +1866,8 @@ describe('WorkflowEditorHostScreen composition', () => {
             const trigger = { kind: 'schedule', enabled: true, schedule: { kind: 'cron', scheduleExpr: '0 2 * * *', everyMs: null, timezone: 'UTC' } };
             await act(async () => section.props.onChangeDraft({ adds: [{ clientId: 'c1', trigger }], updates: {}, removes: [] }));
             expect(triggerActions.add).not.toHaveBeenCalled();
-            expect(latestBodyProps?.triggersSummary).toBe('workflows.triggers.summary.everyDayAt(time=02:00)');
+            expect((latestBodyProps?.triggersSection as React.ReactElement<{ draft: { adds: unknown[] } }>).props.draft.adds)
+                .toEqual([{ clientId: 'c1', trigger }]);
 
             await act(async () => latestBodyProps?.onSave?.());
             await act(async () => {});
@@ -1240,6 +1877,14 @@ describe('WorkflowEditorHostScreen composition', () => {
             // "Workflow saved · Triggers not updated", with the pending trigger still in the draft.
             expect(latestBodyProps?.saveStatus).toEqual({ kind: 'failed', reason: 'workflows.triggers.editor.partialSave' });
             expect((latestBodyProps?.triggersSection as React.ReactElement<{ draft: { adds: unknown[] } }>).props.draft.adds).toHaveLength(1);
+            // A partial write did not authorize Save's route continuation. Opening
+            // that saved definition separately must hydrate its persisted content.
+            definitionActions.get.mockResolvedValueOnce({ definitionId: SAVED_TRIGGER_WORKFLOW_ID,
+                access: 'owner', revision: { headerVersion: 1, bodyVersion: 1 },
+                definition: createWorkflowDefinitionFixture(), metadata: { title: 'Reopened saved definition' } });
+            await screen.update(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+            expect(latestBodyProps?.draft.name).toBe('Reopened saved definition');
+            expect((latestBodyProps?.triggersSection as React.ReactElement<{ draft: { adds: unknown[] } }>).props.draft.adds).toHaveLength(0);
             await screen.unmount();
         });
 

@@ -11,14 +11,14 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { formatWorkflowInputValue, parseWorkflowInputText } from '@/sync/domains/workflows/workflowInputText';
-import { getPreferredLanguage, t } from '@/text';
-import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
+import { t } from '@/text';
 import { Modal } from '@/modal';
 import { useAllMachines } from '@/sync/domains/state/storage';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
+import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
 
-import { formatTriggerSummary } from './formatTriggerSummary';
-import { createDefaultThen, readScheduleWhen, type TriggerFormValue, type TriggerWhenValue } from './sessionTriggerForm';
+import { formatNextScheduledRun, formatScheduledRunQualifier, formatTriggerSummary, readNextScheduledRunRefreshAtMs } from './formatTriggerSummary';
+import { createDefaultThen, readScheduleWhen, readTriggerWhen, type TriggerFormValue, type TriggerWhenValue } from './sessionTriggerForm';
 import { TriggerPopover } from './TriggerPopover';
 import { TriggerRunsOnRow } from './TriggerRunsOnRow';
 import { TriggerRow } from './TriggerRow';
@@ -49,18 +49,38 @@ export type WorkflowTriggerSectionProps = Readonly<{
     inputs: readonly WorkflowInputDefinition[];
 }>;
 
-function rowWhen(row: WorkflowTriggerRowModel): TriggerWhenValue | null {
-    return row.schedule === null ? null : readScheduleWhen(row.schedule.schedule);
+function rowWhen(row: WorkflowTriggerRowModel, set: WorkflowTriggerSetV1 | null, draft: WorkflowTriggerDraft): TriggerWhenValue | null {
+    if (row.schedule !== null) return readScheduleWhen(row.schedule.schedule);
+    const input = row.kind === 'new' ? draft.adds.find((add) => add.clientId === row.clientId)?.trigger
+        : draft.updates[row.triggerId]?.trigger;
+    if (input?.kind === 'pluginEvent' && 'sourceInstanceId' in input) {
+        return { kind: 'pluginEvent', value: { ...input, enabled: row.enabled } };
+    }
+    const saved = row.kind === 'saved' ? set?.triggers.find((trigger) => trigger.id === row.triggerId) : null;
+    return saved ? readTriggerWhen(saved) : null;
 }
 
 /** "Next run: {time}" for a saved, enabled schedule whose owner has computed its next occurrence. */
-function formatNextRun(set: WorkflowTriggerSetV1 | null, row: WorkflowTriggerRowModel | null): string | undefined {
-    if (row === null || row.kind !== 'saved' || !row.enabled) return undefined;
+function readNextRunAt(set: WorkflowTriggerSetV1 | null, row: WorkflowTriggerRowModel | null): number | null {
+    if (row === null || row.kind !== 'saved' || !row.enabled) return null;
     const saved = set?.triggers.find((trigger) => trigger.id === row.triggerId);
-    if (saved?.kind !== 'schedule' || saved.nextRunAt === null) return undefined;
-    return t('workflows.triggers.row.nextRun', {
-        time: formatWithCachedDateTimeFormatter(saved.nextRunAt, getPreferredLanguage(), { dateStyle: 'medium', timeStyle: 'short' }),
-    });
+    return saved?.kind === 'schedule' ? saved.nextRunAt : null;
+}
+
+/** Only the open editor popover observes its occurrence's display deadline. */
+function WorkflowTriggerPopover(props: React.ComponentProps<typeof TriggerPopover> & Readonly<{ nextRunAt: number | null }>) {
+    const { nextRunAt, ...popover } = props;
+    const readNextRefresh = React.useCallback((nowMs: number) => readNextScheduledRunRefreshAtMs(nextRunAt, nowMs), [nextRunAt]);
+    const nowMs = useSessionListRuntimeDeadlineNowMs(readNextRefresh, nextRunAt !== null);
+    return <TriggerPopover {...popover} {...(nextRunAt === null ? {} : { subtitle: formatNextScheduledRun(nextRunAt, true, nowMs) })} />;
+}
+
+function LegacyWorkflowTriggerSummary(props: Readonly<{ legacy: NonNullable<ReturnType<typeof describeLegacyTriggerSet>> }>) {
+    const time = props.legacy.qualifierTime;
+    const readNextRefresh = React.useCallback((nowMs: number) => readNextScheduledRunRefreshAtMs(time?.atMs ?? null, nowMs), [time]);
+    const nowMs = useSessionListRuntimeDeadlineNowMs(readNextRefresh, time !== undefined);
+    return <Item title={props.legacy.title} titleLines={0}
+        subtitle={time ? formatScheduledRunQualifier(time, nowMs) : props.legacy.qualifier} subtitleLines={0} mode="info" />;
 }
 
 /**
@@ -85,9 +105,9 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
     const initial = React.useMemo((): TriggerFormValue | null => {
         const row = open?.row;
         if (!row) return null;
-        const when = rowWhen(row);
+        const when = rowWhen(row, props.set, props.draft);
         return when === null ? null : { when, then: createDefaultThen('runWorkflow'), enabled: row.enabled };
-    }, [open]);
+    }, [open, props.set, props.draft]);
 
     const change = props.onChangeDraft;
     const row = open?.row ?? null;
@@ -116,12 +136,12 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
             <ItemGroup title={t('workflows.triggers.editor.title')} description={t('workflows.triggers.editor.editInWorkflows')}>
                 {readState}
                 {retained.length === 0 ? (
-                    <Item title={legacy.title} titleLines={0} subtitle={legacy.qualifier} subtitleLines={0} mode="info" />
+                    <LegacyWorkflowTriggerSummary legacy={legacy} />
                 ) : retained.map((trigger) => (
                     <TriggerRow
                         key={trigger.id}
                         testID={`${props.testIDPrefix}-trigger:${trigger.id}`}
-                        title={legacy.title} qualifier={legacy.qualifier} multiline
+                        title={legacy.title} qualifier={legacy.qualifier} qualifierTime={legacy.qualifierTime} multiline
                         enabled={set.enabled && trigger.enabled} toggleDisabled onToggle={() => {}}
                         onPress={() => {
                             void Modal.confirm(t('workflows.triggers.editor.editInWorkflows'), undefined, {
@@ -159,17 +179,20 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                 />
             </View>
             {open !== null && (row === null || initial !== null) ? (
-                <TriggerPopover
+                <WorkflowTriggerPopover
+                    key={row?.key ?? 'new'}
                     testID={`${props.testIDPrefix}-trigger-popover`}
                     anchorRef={open.anchor}
                     onRequestClose={() => setOpen(null)}
-                    {...(formatNextRun(props.set, row) === undefined ? {} : { subtitle: formatNextRun(props.set, row) })}
-                    whenKinds={['schedule']}
+                    nextRunAt={readNextRunAt(props.set, row)}
+                    whenKinds={['schedule', 'pluginEvent']}
                     sessionId={null}
                     showThen={false}
                     initial={initial}
                     workflowOptions={[]}
                     machineId={runsOn?.machineId ?? null}
+                    {...(row?.kind === 'saved' && props.set && initial?.when.kind === 'pluginEvent'
+                        ? { eventEdit: { automationId: props.set.automationId, triggerId: row.triggerId } } : {})}
                     setRows={(
                         <TriggerRunsOnRow
                             testID={`${props.testIDPrefix}-trigger-runs-on`}
@@ -223,13 +246,6 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                         }
                     }}
                     {...(row === null ? {} : {
-                        onToggleEnabled: async (next: boolean) => {
-                            if (row.kind === 'saved') {
-                                change(editWorkflowTriggerDraft(props.draft, { kind: 'update', triggerId: row.triggerId, enabled: next }));
-                            } else if (row.schedule !== null) {
-                                change(editWorkflowTriggerDraft(props.draft, { kind: 'add', clientId: row.clientId, trigger: { ...row.schedule, enabled: next } }));
-                            }
-                        },
                         onDelete: async () => {
                             change(row.kind === 'new'
                                 ? editWorkflowTriggerDraft(props.draft, { kind: 'discardAdd', clientId: row.clientId })
@@ -258,8 +274,8 @@ const WorkflowTriggerRowView = React.memo(function WorkflowTriggerRowView(props:
     const subtitle = row.kind === 'new'
         ? t('workflows.triggers.editor.newRow')
         : row.enabled ? undefined : t('workflows.triggers.row.off');
-    // A plugin event's configuration is private to its setup flow; here it is listed, not re-configured.
-    const editable = row.schedule !== null;
+    // The Event editor opens the exact private source only after the user chooses to edit.
+    const editable = row.schedule !== null || row.trigger.kind === 'pluginEvent';
     return (
         <View ref={anchorRef} collapsable={false}>
             <Item

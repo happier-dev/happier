@@ -73,6 +73,14 @@ async function changeText(screen: Awaited<ReturnType<typeof renderScreen>>, id: 
 }
 
 describe('WorkflowReviewCard', () => {
+    it('retains fieldless Wait Continue while exact evidence is unconfirmed without treating edit access as revoked', async () => {
+        const { screen, onComplete } = await mount({ waitForYou: true, contract: undefined,
+            progress: progress({ blockKind: 'wait', result: undefined }), disabled: true });
+        expect(screen.findHostByTestId('review-use')?.props.disabled).toBe(true);
+        await screen.pressByTestIdAsync('review-use');
+        expect(onComplete).not.toHaveBeenCalled();
+        expect(screen.findAllHostsByTestId('review-editor')).toHaveLength(0);
+    });
     it('keeps the draft and exact reading until an explicit newer-value choice', async () => {
         const { screen, onComplete, publish } = await mount();
         await screen.pressByTestIdAsync('review-edit');
@@ -175,6 +183,36 @@ describe('WorkflowReviewCard', () => {
             summary: 'Human edit', approved: false, retained: { exact: [1, 2] },
         } });
     });
+    it('keeps local newer-publication choices usable after losing edit authority with a retained draft', async () => {
+        const access = { readOnly: false, pending: false };
+        const { screen, publish, onComplete } = await mount(access);
+        await screen.pressByTestIdAsync('review-edit');
+        await changeText(screen, 'review-field-summary', 'Retained local edits');
+        access.readOnly = true;
+        await publish(progress({ result: { summary: 'New readable publication', approved: true } }), '8');
+        expect(screen.findByTestId('review-use')).toBeNull();
+        expect(screen.findByTestId('review-field-summary')?.props.editable).toBe(false);
+        expect(screen.findByTestId('review-keep-edits')?.props.disabled).toBe(false);
+        await screen.pressByTestIdAsync('review-keep-edits');
+        expect(screen.findByTestId('review-field-summary')?.props.value).toBe('Retained local edits');
+        expect(screen.findByTestId('review-newer')).toBeNull();
+        access.pending = true;
+        await publish(progress({ result: { summary: 'Latest readable publication', approved: true } }), '9');
+        expect(screen.findByTestId('review-use-newer')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('review-keep-edits')?.props.disabled).toBe(true);
+        await screen.pressByTestIdAsync('review-use-newer');
+        expect(screen.findByTestId('review-field-summary')?.props.value).toBe('Retained local edits');
+        access.pending = false;
+        await publish(progress({ result: { summary: 'Latest readable publication', approved: true } }), '9');
+        expect(screen.findByTestId('review-use-newer')?.props.disabled).toBe(false);
+        await screen.pressByTestIdAsync('review-use-newer');
+        expect(screen.findByTestId('review-field-summary')).toBeNull();
+        expect(screen.getTextContent()).toContain('Latest readable publication');
+        await screen.pressByTestIdAsync('review-show-full');
+        expect(screen.findByTestId('review-full-value')).not.toBeNull();
+        expect(screen.findByTestId('review-use')).toBeNull();
+        expect(onComplete).not.toHaveBeenCalled();
+    });
     it('keeps invalid edits visible and cannot use a value rejected by the canonical schema', async () => {
         const { screen, onComplete } = await mount();
         await screen.pressByTestIdAsync('review-edit');
@@ -228,17 +266,39 @@ describe('WorkflowReviewCard', () => {
         await empty.screen.pressByTestIdAsync('review-use');
         expect(empty.onComplete).toHaveBeenCalledWith({ mode: 'use_result', expectedContentRevision: '7' });
     });
-    it('keeps an untouched Wait form quiet, then states a touched field problem once', async () => {
+    it('guides an untouched Wait without an error alert, then states a touched field problem once', async () => {
         const { screen } = await mount({ waitForYou: true, progress: progress({ blockKind: 'wait', result: undefined }) });
         expect(screen.findByTestId('review-use')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('review-validation')).not.toBeNull();
+        expect(screen.findByTestId('review-validation')?.props.accessibilityRole).not.toBe('alert');
+        expect(screen.getTextContent()).toContain('workflows.review.enterValues');
+        expect(screen.getTextContent()).not.toContain('workflows.review.noValue');
         expect(screen.getTextContent()).not.toContain('workflows.review.invalid');
         expect(screen.getTextContent()).not.toContain('workflows.issue.');
         await changeText(screen, 'review-field-summary', 'x');
         await changeText(screen, 'review-field-summary', '');
         const text = screen.getTextContent();
+        expect(screen.findByTestId('review-validation')?.props.accessibilityRole).toBe('alert');
         expect(text.split('workflows.review.invalid').length - 1).toBe(1);
         // Only the touched field speaks; the untouched required boolean stays quiet.
         expect(text.split('workflows.issue.').length - 1).toBe(1);
+    });
+    it.each([false, true])('shows the authored Wait question while respecting hosted identity ownership (%s)', async (hosted) => {
+        const { screen } = await mount({ waitForYou: true, progress: progress({ blockKind: 'wait', result: undefined }),
+            waitIdentity: { ...(hosted ? {} : { title: 'Check the release', subtitle: 'Reviewer lane · Attempt 2' }),
+                prompt: 'Check **the release notes** before continuing.' } });
+        if (hosted) {
+            expect(screen.getTextContent()).not.toContain('Check the release');
+            expect(screen.getTextContent()).not.toContain('workflows.review.waitTitle');
+        } else {
+            expect(screen.getTextContent()).toContain('Check the release');
+            expect(screen.getTextContent()).toContain('Reviewer lane · Attempt 2');
+            expect(screen.getTextContent()).toContain('workflows.review.waitTitle');
+        }
+        expect(screen.getTextContent()).toContain('workflows.review.waitBody');
+        expect(screen.findHostByTestId('review-wait-prompt')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('the release notes');
+        expect(screen.findAllHostsByTestId('review-use')).toHaveLength(1);
     });
     it('offers permitted decision values without asking a person to author JSON', async () => {
         const { screen, onComplete } = await mount({ waitForYou: true,

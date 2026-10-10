@@ -3,16 +3,20 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createDeferred, renderHook } from '@/dev/testkit';
 import type {
-    AutomationDefinitionRun,
     AutomationRunNowAdmission,
 } from '@/sync/domains/automations/automationTypes';
 
 function admission(
-    run: Readonly<{ id: string; state: string }>,
+    run: Readonly<{ id: string; state: AutomationRunNowAdmission['run']['state'] }>,
     workflowRun?: AutomationRunNowAdmission['workflowRun'],
 ): AutomationRunNowAdmission {
     return {
-        run: run as unknown as AutomationDefinitionRun,
+        run: { automationId: 'automation-1', revision: 1, triggerId: null, triggerRetired: false,
+            cause: { kind: 'manual', invokedAt: 1 }, dueAt: 1, claimedAt: null, startedAt: null,
+            finishedAt: null, claimedByMachineId: null, leaseExpiresAt: null, attempt: 0,
+            errorCode: null, producedSessionId: null, executionDispatchState: null, executionAttempt: 0,
+            replyHandoffState: 'none', replyHandoffAttempt: 0, replyHandoffDueAt: null,
+            createdAt: 1, updatedAt: 1, ...run },
         ...(workflowRun === undefined ? {} : { workflowRun }),
     };
 }
@@ -26,9 +30,19 @@ type AccountLifetimeState = {
 const activeAccountLifetime = vi.hoisted((): AccountLifetimeState => ({ value: null }));
 const modalAlertSpy = vi.hoisted(() => vi.fn(async () => {}));
 
-vi.mock('@/sync/sync', () => ({
-    sync: { runAutomationNow: runAutomationNowMock },
-}));
+// Metro's lazy loader and the remote Workflow host port are system boundaries;
+// schema admission, Action dispatch and transient-command behavior remain real.
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
+    const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+    const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/actionSettings');
+    const { isApprovalRequiredByActionsSettings } = await import('@happier-dev/protocol/actions/actionApprovalPolicy');
+    const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'workflow.trigger.run_now': ['ui'] } });
+    return { ...original, createFrontDoorActionExecute: () => original.createFrontDoorActionExecute(createActionExecutor({
+        isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
+        workflowAction: async (args) => runAutomationNowMock('automationId' in args.input ? args.input.automationId : null),
+    })) };
+});
 vi.mock('@/modal', () => ({ Modal: { alert: modalAlertSpy } }));
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -169,7 +183,7 @@ describe('useAutomationRunNowController', () => {
         const admitted = admission({ id: 'run-exact', state: 'queued' });
         await act(async () => {
             request.resolve(admitted);
-            await expect(first).resolves.toBe(admitted);
+            await expect(first).resolves.toEqual(admitted);
         });
     });
 
@@ -250,5 +264,17 @@ describe('useAutomationRunNowController', () => {
         // A legacy receipt keeps the incumbent contract: no correspondence is
         // manufactured for it, so no consumer can open a managed Run from it.
         expect(legacy?.workflowRun).toBeUndefined();
+    });
+    it('surfaces a lost Action receipt as uncertain without acknowledging or replaying the occurrence', async () => {
+        activeAccountLifetime.value = accountLifetime({ serverId: 'server-a', accountId: 'account-a' });
+        const { useAutomationRunNowController } = await import('./useAutomationRunNowController');
+        const hook = await renderHook(() => useAutomationRunNowController());
+        runAutomationNowMock.mockResolvedValueOnce({ ok: false, errorCode: 'workflow_outcome_unresolved', error: 'private server detail' });
+        let result: AutomationRunNowAdmission | null | undefined;
+        await act(async () => { result = await hook.getCurrent().runNow('automation-uncertain', null); });
+        expect(result).toBeNull();
+        expect(hook.getCurrent().stateFor('automation-uncertain')).toBe('idle');
+        expect(runAutomationNowMock).toHaveBeenCalledTimes(1);
+        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'projects.scripts.run.unknown common.refresh');
     });
 });

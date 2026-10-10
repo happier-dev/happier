@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { getBuiltinWorkflowCatalogV1 } from '@happier-dev/protocol/workflows';
+import type { BuiltinWorkflowPurposeV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
 
 import { useWorkflowDefinitionLibrary } from '@/components/workflows/library/workflowLibraryReads';
 import { t } from '@/text';
@@ -11,12 +12,13 @@ export type WorkflowReferenceOption = Readonly<{
     title: string;
     /** "Built-in" for catalog workflows; absent for the person's own. */
     origin?: 'builtin';
+    purpose?: BuiltinWorkflowPurposeV1;
     unavailableReason?: string;
 }>;
 
 /** The built-in workflows, named by their catalog titles. */
 export function listBuiltinWorkflowReferenceOptions(): readonly WorkflowReferenceOption[] {
-    return getBuiltinWorkflowCatalogV1().map((entry) => ({ ref: entry.id, title: t(entry.titleKey as never), origin: 'builtin' }));
+    return getBuiltinWorkflowCatalogV1().map((entry) => ({ ref: entry.id, title: t(entry.titleKey as never), origin: 'builtin', purpose: entry.purpose }));
 }
 
 /**

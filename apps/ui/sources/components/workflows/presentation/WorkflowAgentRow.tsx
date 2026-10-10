@@ -64,7 +64,7 @@ function formatAgentMetrics(props: WorkflowAgentRowProps): string {
 
 export function projectWorkflowAgentDisplayText(props: WorkflowAgentRowProps, prefix: string) {
     const preview = props.resultPreview ?? props.summary;
-    const detail = normalizeResultPreview(props.summary ?? props.resultPreview ?? '', null).display;
+    const detail = normalizeResultPreview(props.summary ?? props.resultPreview ?? '').display;
     return [
         ...toolTextBlock(`${prefix}-title`, props.title),
         ...toolTextBlock(`${prefix}-metrics`, formatAgentMetrics(props)),
@@ -91,7 +91,7 @@ export const WorkflowAgentRow = React.memo<WorkflowAgentRowProps>((props) => {
     const collapsedPreview = props.resultPreview ?? props.summary;
     const expandedDetail = props.summary ?? props.resultPreview;
     const isExpanded = expanded || find.active;
-    const showPreview = collapsedPreview && (!isExpanded || (find.active && collapsedPreview !== normalizeResultPreview(expandedDetail ?? '', null).display));
+    const showPreview = collapsedPreview && (!isExpanded || (find.active && collapsedPreview !== normalizeResultPreview(expandedDetail ?? '').display));
     const detailTestID = props.testID ? `${props.testID}-detail` : undefined;
     const content = (
         <View style={styles.mainRow}>

@@ -1,11 +1,12 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
+import { View, useWindowDimensions } from 'react-native';
 
 import type { CustomModalInjectedProps } from '@/modal';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover/Popover';
 import { t } from '@/text';
+import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
+import { KeyboardShortcutContextBridge, useKeyboardShortcutContextSnapshot, type KeyboardShortcutContextSnapshot } from '@/keyboard';
 
 import { useWorkflowCardModal } from './useWorkflowCardModal';
 import { WorkflowRunComposer } from './WorkflowRunComposer';
@@ -22,10 +23,13 @@ import { WorkflowRunComposer } from './WorkflowRunComposer';
 export type WorkflowRunComposerModalProps = React.ComponentProps<typeof WorkflowRunComposer>;
 
 function WorkflowRunComposerModal(
-    props: WorkflowRunComposerModalProps & CustomModalInjectedProps,
+    props: WorkflowRunComposerModalProps & CustomModalInjectedProps & Readonly<{ keyboardContext: KeyboardShortcutContextSnapshot }>,
 ): React.ReactElement {
     // The modal's own close control dismisses it (`onRequestClose`); the composer has no Cancel row.
-    return <WorkflowRunComposer {...props} />;
+    const { keyboardContext, ...composerProps } = props;
+    return <KeyboardShortcutContextBridge snapshot={keyboardContext}>
+        <WorkflowRunComposer {...composerProps} />
+    </KeyboardShortcutContextBridge>;
 }
 
 export function useWorkflowRunComposerModal(params: Readonly<{
@@ -39,16 +43,37 @@ export function useWorkflowRunComposerModal(params: Readonly<{
     testID?: string;
     anchorRef?: React.RefObject<View | null>;
 }>): React.ReactElement | null {
-    const { theme } = useUnistyles();
+    const { width } = useWindowDimensions();
+    const keyboardContext = useKeyboardShortcutContextSnapshot();
+    const anchored = params.anchorRef !== undefined && !isMobileLayoutWidth(width);
+    const hostedIntentRef = React.useRef(false);
+    hostedIntentRef.current = params.open && !anchored && params.props !== null;
+    const onRunRef = React.useRef(params.props?.onRun);
+    onRunRef.current = params.props?.onRun;
+    // The canonical host retains content for its exit motion. Its retired Start must not
+    // admit a new command; an already pending/reconciling command remains caller-owned.
+    const runForCurrentIntent = React.useCallback<WorkflowRunComposerModalProps['onRun']>((...args) => {
+        if (hostedIntentRef.current) onRunRef.current?.(...args);
+    }, []);
+    const onCancel = params.props?.onCancel;
+    const cancelHostedIntent = React.useCallback(() => {
+        hostedIntentRef.current = false;
+        onCancel?.();
+    }, [onCancel]);
+    const modalProps = React.useMemo(() => params.props === null ? null
+        : { ...params.props, onRun: runForCurrentIntent, keyboardContext }, [keyboardContext, params.props, runForCurrentIntent]);
     useWorkflowCardModal({
-        open: params.open && params.anchorRef === undefined,
+        open: params.open && !anchored,
         component: WorkflowRunComposerModal,
-        props: params.props,
+        props: modalProps,
         title: params.props?.workflowName ?? t('workflows.start.workflow'),
         testID: params.testID ?? 'workflow-run-inputs-modal',
-        ...(params.props === null ? {} : { onRequestClose: params.props.onCancel }),
+        phonePresentation: 'sheet',
+        material: 'solid',
+        focusReturnRef: params.anchorRef,
+        ...(params.props === null ? {} : { onRequestClose: cancelHostedIntent }),
     });
-    if (!params.open || params.props === null || params.anchorRef === undefined) return null;
+    if (!params.open || params.props === null || !anchored || params.anchorRef === undefined) return null;
     const composerProps = params.props;
     return (
         <Popover
@@ -65,7 +90,7 @@ export function useWorkflowRunComposerModal(params: Readonly<{
         >
             {({ maxHeight, maxWidth }) => (
                 <FloatingOverlay maxHeight={maxHeight} surfaceChrome="theme"
-                    containerStyle={{ width: Math.min(maxWidth, 520), padding: theme.margins.md }}>
+                    containerStyle={{ width: Math.min(maxWidth, 520) }}>
                     <WorkflowRunComposer {...composerProps} />
                 </FloatingOverlay>
             )}

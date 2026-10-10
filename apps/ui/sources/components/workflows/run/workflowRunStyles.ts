@@ -3,6 +3,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Typography } from '@/constants/Typography';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 /**
  * Text-labelled controls cannot declare a square the way `IconButton` does, so
@@ -59,11 +60,13 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
     },
     outcome: {
         gap: theme.margins.sm,
+        paddingHorizontal: HAPPIER_PAGE_METRICS.pageTextInsetPx,
     },
     /** Pause at boundary, Stop and `⋯` at the header's trailing edge (07 §3 identity-first headers). */
     headerControls: {
         flexDirection: 'row',
         alignItems: 'center',
+        flexWrap: 'wrap',
         gap: theme.margins.sm,
     },
     /** The view switch hugs its labels at the start of its row rather than spanning the column. */
@@ -71,6 +74,24 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         flexWrap: 'wrap',
+        gap: theme.margins.sm,
+        paddingHorizontal: HAPPIER_PAGE_METRICS.pageTextInsetPx,
+    },
+    viewSwitchPhone: {
+        flexDirection: 'column',
+        alignItems: 'flex-start',
+    },
+    viewActions: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: theme.margins.sm,
+    },
+    pageSection: {
+        paddingHorizontal: HAPPIER_PAGE_METRICS.pageTextInsetPx,
+    },
+    technicalToggle: {
+        flexDirection: 'row',
+        alignItems: 'center',
         gap: theme.margins.sm,
     },
     /**

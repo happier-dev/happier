@@ -15,10 +15,12 @@ import { resolveWorkflowProblemPresentation } from '../presentation/workflowProb
 import { WorkflowFlowView } from '../flow/WorkflowFlowView';
 import { projectWorkflowFlow } from '../flow/workflowFlowProjection';
 import { t } from '@/text';
+import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
 import { requiresUncertainPriorEffectsAcknowledgement } from './workflowRunDetailPresentation';
 import { WorkflowReviewCard, decodeWorkflowReviewDraft, type WorkflowReviewChoice,
     type WorkflowReviewDraft, type WorkflowReviewReading } from './WorkflowReviewCard';
+import { resolveWorkflowInvocationBlock } from './workflowInvocationStructure';
 
 export type WorkflowInvocationReviewBuffers = Readonly<{
     drafts: Map<string, WorkflowReviewDraft>;
@@ -30,6 +32,7 @@ export function WorkflowInvocationReview(props: Readonly<{
     run: WorkflowRunSummaryV1;
     callerAccess: WorkflowRunGetResultV1['callerAccess'];
     acceptedContext: WorkflowRunAcceptedContextV1;
+    definition: WorkflowDefinitionV1;
     invocation: WorkflowRunInvocationIndexV1;
     progress: WorkflowProgressEnvelopeV1;
     contentRevision: string;
@@ -37,17 +40,28 @@ export function WorkflowInvocationReview(props: Readonly<{
     active: boolean;
     confirmed: boolean;
     compact: boolean;
+    stepTitle?: string;
+    stepSubtitle?: string | null;
     viewerAccountId: string | null;
     current: () => boolean;
     onSettled: (run: WorkflowRunSummaryV1) => void;
     onOpenDraft: (seed: WorkflowReviewedRunSeed) => void;
     onOpenRun: (runId: string) => void;
     onDiscuss?: () => void;
+    readState?: React.ReactNode;
     machineName?: string | null;
     machineReachable?: boolean;
     acknowledgeUncertainPriorEffects?: Readonly<{ recordId: string; contentRevision: string }>;
 }>): React.ReactElement {
     const { invocation, progress, buffers } = props;
+    const waitIdentity = React.useMemo(() => {
+        if (progress.blockKind !== 'wait') return undefined;
+        const block = resolveWorkflowInvocationBlock({ definition: props.definition,
+            frozenChildren: props.acceptedContext.frozenChildren, invocationPath: progress.invocationPath });
+        return block?.kind === 'wait' ? { title: props.stepTitle === undefined ? workflowBlockReferenceLabel(block) : undefined,
+            subtitle: props.stepTitle === undefined ? props.stepSubtitle : undefined, prompt: block.document.text } : undefined;
+    }, [props.definition, props.acceptedContext.frozenChildren, props.stepSubtitle, props.stepTitle,
+        progress.blockKind, progress.invocationPath]);
     const mounted = useMountedRef();
     const [draft, setDraft] = React.useState(() => buffers.drafts.get(invocation.id));
     const [reading, setReading] = React.useState<WorkflowReviewReading>(() => buffers.readings.get(invocation.id)
@@ -158,8 +172,9 @@ export function WorkflowInvocationReview(props: Readonly<{
                 completeReview: invocation.lifecycle !== 'completed',
                 ...(props.run.origin.originSessionId ? { originSessionId: props.run.origin.originSessionId } : {}) } });
     };
-    return <View style={props.compact ? { flex: 1, minHeight: 0 } : undefined}>
+    return <View style={props.compact && progress.blockKind !== 'wait' ? { flex: 1, minHeight: 0 } : undefined}>
         <WorkflowReviewCard progress={progress} contract={contract} waitForYou={progress.blockKind === 'wait'}
+            waitIdentity={waitIdentity}
             contentRevision={props.contentRevision} lifecycle={invocation.lifecycle} isCurrent={invocation.lifecycle !== 'superseded'}
             reading={reading} onChangeReading={(next) => { buffers.readings.set(invocation.id, next); setReading(next); }}
             draft={draft} onChangeDraft={(next) => {
@@ -171,10 +186,12 @@ export function WorkflowInvocationReview(props: Readonly<{
             resultSourceLabel={resultSourceLabel}
             planProposalPreview={proposalMap ? <WorkflowFlowView projection={proposalMap} selectedNodeId={null} density="compact" /> : undefined}
             canGenerate={canGenerate} primaryActionPlacement={props.compact ? 'footer' : 'inline'}
-            pending={pending} readOnly={!props.callerAccess.canEdit || !props.confirmed || !props.current() || invocation.lifecycle === 'superseded'
+            pending={pending} disabled={!props.confirmed || !props.active || !props.current()}
+            readOnly={!props.callerAccess.canEdit || invocation.lifecycle === 'superseded'
                 || (progress.resultContract !== undefined && !contractResult.success)}
             parentPaused={props.run.state === 'paused' || props.run.state === 'pause_requested'}
             machineName={props.machineName} machineReachable={props.machineReachable} />
         {error ? <Text accessibilityRole="alert" testID="workflow-review-action-error">{error}</Text> : null}
+        {props.readState}
     </View>;
 }

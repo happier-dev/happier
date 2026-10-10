@@ -1,6 +1,6 @@
 import { AutomationEventFilterV1Schema, type AutomationEventFilterV1 } from '@happier-dev/protocol/automations/automationEventFilterV1';
-import { AutomationTriggerDefinitionInputSchema, type AutomationPluginEventDefinitionTriggerInput, type AutomationPluginEventObservationTransportInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
-import { arePluginMachineExecutionOriginsEqual, PluginMachineExecutionOriginV1Schema, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { AutomationTriggerDefinitionInputSchema, type AutomationPluginEventDefinitionTrigger, type AutomationPluginEventObservationTransportInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
+import { arePluginMachineExecutionOriginsEqual, PluginMachineMaterializationExecutionOriginV1Schema, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { PluginWebhookEndpointIdV1Schema, type PluginWebhookEndpointIdV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
 import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginEventAutomationSetupResultV1 } from '@happier-dev/protocol/automations/event-setup-result';
@@ -117,7 +117,7 @@ function normalizeObservationDraft(
  */
 function buildObservationTransportInput(
     draft: PluginEventAutomationAuthoringDraft,
-    origin: PluginMachineExecutionOriginV1,
+    origin: Extract<PluginMachineExecutionOriginV1, { materializationRef: unknown }>,
 ): AutomationPluginEventObservationTransportInput {
     return draft.observation.kind === 'checkpointedPull'
         ? { kind: 'checkpointedPull', watcherMaterializationRef: origin.materializationRef }
@@ -173,7 +173,7 @@ export function createPluginEventAutomationAuthoringDraft(params: Readonly<{
         eligibleEvent: params.eligibleEvent,
         result: params.setupResult,
     });
-    const watcherOrigin = PluginMachineExecutionOriginV1Schema.safeParse(params.watcherOrigin);
+    const watcherOrigin = PluginMachineMaterializationExecutionOriginV1Schema.safeParse(params.watcherOrigin);
     const filter = params.filter === null
         ? { success: true as const, data: null }
         : AutomationEventFilterV1Schema.safeParse(params.filter);
@@ -221,12 +221,12 @@ export function buildPluginEventAutomationTriggerInput(params: Readonly<{
     eligibleEvents: readonly DaemonContributionRegistryProjectionAutomationEligibleEventV1[];
     draft: PluginEventAutomationAuthoringDraft;
     watcherOrigin: PluginMachineExecutionOriginV1;
-}>): AutomationPluginEventDefinitionTriggerInput | null {
+}>): (AutomationPluginEventDefinitionTrigger & Readonly<{ enabled: boolean }>) | null {
     const eligibleEvent = resolveCurrentPluginEventAutomationEligibleEvent({
         eligibleEvents: params.eligibleEvents,
         draft: params.draft,
     });
-    const watcherOrigin = PluginMachineExecutionOriginV1Schema.safeParse(params.watcherOrigin);
+    const watcherOrigin = PluginMachineMaterializationExecutionOriginV1Schema.safeParse(params.watcherOrigin);
     if (
         !eligibleEvent
         || !watcherOrigin.success
@@ -247,5 +247,5 @@ export function buildPluginEventAutomationTriggerInput(params: Readonly<{
             filter: params.draft.filter,
             maximumObservationAgeMs: params.draft.maximumObservationAgeMs,
     });
-    return trigger.success && trigger.data.kind === 'pluginEvent' ? trigger.data : null;
+    return trigger.success && trigger.data.kind === 'pluginEvent' && 'sourceInstanceId' in trigger.data ? trigger.data : null;
 }

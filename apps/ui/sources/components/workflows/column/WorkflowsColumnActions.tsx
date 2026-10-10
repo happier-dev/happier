@@ -66,6 +66,7 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
     ];
     const addItems: readonly DropdownMenuItem[] = props.canCreate ? workflowItems : [newTriggerItem];
     const moreItems: readonly DropdownMenuItem[] = [
+        ...(!props.canCreate ? [newTriggerItem] : []),
         {
             id: 'settings',
             testID: 'workflows-column:more:settings',
@@ -75,14 +76,15 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
     ];
 
     return (
-        <View style={styles.row}>
+        <View ref={addAnchorRef} collapsable={false} style={styles.row}>
             <DropdownMenu
                 testID="workflows-column:more:menu"
                 open={moreOpen}
                 onOpenChange={setMoreOpen}
                 items={moreItems}
-                onSelect={() => {
+                onSelect={(id) => {
                     setMoreOpen(false);
+                    if (id === 'trigger') { setNewTriggerOpen(true); return; }
                     router.push(WORKFLOWS_RUN_SETTINGS_ROUTE as never);
                 }}
                 placement="bottom"
@@ -101,7 +103,7 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
                     />
                 )}
             />
-            <View ref={addAnchorRef} collapsable={false}>
+            {props.canCreate ? <View>
                 <DropdownMenu
                     testID="workflows-column:add:menu"
                     open={addOpen}
@@ -130,7 +132,7 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
                         />
                     )}
                 />
-            </View>
+            </View> : null}
             {newTriggerOpen ? (
                 <NewAccountTriggerPopover anchorRef={addAnchorRef} onRequestClose={() => setNewTriggerOpen(false)} />
             ) : null}

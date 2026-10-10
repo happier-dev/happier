@@ -6,6 +6,8 @@ import {
     WorkflowRunSummaryV1Schema,
 } from '@happier-dev/protocol';
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { callSocketRpc } from '@happier-dev/sync-client';
+import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 
 import { createUiWorkflowActionTransport, type WorkflowActionTransport } from './workflowActionTransport';
 
@@ -28,6 +30,40 @@ function createHarness() {
 }
 
 describe('Workflow Action relay and resource target', () => {
+    it('retains a late admission refusal instead of losing it to the ordinary RPC deadline', async () => {
+        vi.useFakeTimers();
+        try {
+            const { execute, context, transport } = createHarness();
+            const refusal = { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+            // Only the remote socket is substituted; the Account relay and RPC
+            // acknowledgement/deadline owners execute their real logic.
+            transport.mockImplementation(async (request) => await callSocketRpc({
+                socket: {
+                    connected: true,
+                    emit: () => {},
+                    emitWithAck: () => new Promise((resolve) => {
+                        setTimeout(() => resolve({ ok: true, result: refusal }), DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS + 5_000);
+                    }),
+                },
+                target: { kind: 'machine', id: request.machineId },
+                method: request.method,
+                params: request.payload,
+                content: { mode: 'plain' },
+                timeoutMs: 'operationTimeoutMs' in request && request.operationTimeoutMs === null
+                    ? null : DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS,
+                signal: request.signal,
+            }));
+            const result = execute({ actionId: 'workflow.run.start', input: {
+                runId: '00000000-0000-4000-8000-000000000001',
+                source: { kind: 'inline', definition: { blocks: ['Wait'] } },
+            }, context }).catch((error: unknown) => error);
+            await vi.advanceTimersByTimeAsync(DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS + 5_000);
+            await expect(result).resolves.toEqual(refusal);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('reads through an available relay without restricting the Account operation to that relay', async () => {
         const { execute, context, transport } = createHarness();
         await expect(execute({ actionId: 'workflow.definition.list', input: {}, context }))

@@ -1,16 +1,9 @@
-import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import * as React from 'react';
-import { View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
-import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { Popover } from '@/components/ui/popover/Popover';
-import { MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS } from '@/components/ui/popover/modalAwareFloatingPopoverPortalOptions';
-import { Text } from '@/components/ui/text/Text';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
-
-import { workflowEditorStyles } from './workflowEditorStyles';
 
 /**
  * Per-block overflow actions.
@@ -21,7 +14,7 @@ import { workflowEditorStyles } from './workflowEditorStyles';
  */
 
 export type WorkflowBlockAction = Readonly<{
-    id: 'duplicate' | 'moveUp' | 'moveDown' | 'moveIn' | 'moveOut' | 'remove';
+    id: 'duplicate' | 'addBranch' | 'addOtherwise' | 'moveUp' | 'moveDown' | 'moveIn' | 'moveOut' | 'remove';
     label: string;
     destructive?: boolean;
     onSelect: () => void;
@@ -30,21 +23,34 @@ export type WorkflowBlockAction = Readonly<{
 export function WorkflowBlockActionsMenu(props: Readonly<{
     blockLabel: string;
     actions: readonly WorkflowBlockAction[];
+    /**
+     * `more` (default): the block's `⋯`. `caret`: a small caret beside a label it belongs to (a lane's
+     * name), so a lane's menu never stacks a second `⋯` above its first step's (DESIGN-5 N10).
+     */
+    trigger?: 'more' | 'caret';
     testID?: string;
 }>): React.ReactElement | null {
-    const { theme } = useUnistyles();
-    const anchorRef = React.useRef<View>(null);
     const [open, setOpen] = React.useState(false);
 
     if (props.actions.length === 0) return null;
 
     return (
-        <>
-            <View ref={anchorRef} collapsable={false}>
-            <IconButton
+        <DropdownMenu
+            open={open}
+            onOpenChange={setOpen}
+            items={props.actions.map((action) => ({
+                id: action.id,
+                title: action.label,
+                destructive: action.destructive,
+                testID: props.testID === undefined ? undefined : `${props.testID}-${action.id}`,
+            }))}
+            onSelect={(id) => props.actions.find((action) => action.id === id)?.onSelect()}
+            placement="auto"
+            matchTriggerWidth={false}
+            trigger={({ open, toggle }) => <IconButton
                 testID={props.testID}
-                iconName="dots-three"
-                iconSize={18}
+                iconName={props.trigger === 'caret' ? 'caret-down' : 'dots-three'}
+                iconSize={props.trigger === 'caret' ? ICON_SIZE.xs : 18}
                 variant="plain"
                 accessibilityRole="button"
                 // This is the block's overflow menu, not Add. Announcing "Add a
@@ -52,47 +58,10 @@ export function WorkflowBlockActionsMenu(props: Readonly<{
                 // wrong thing about what pressing it does.
                 accessibilityLabel={t('common.moreActions')}
                 accessibilityHint={props.blockLabel}
-                onPress={() => setOpen((value) => !value)}
+                onPress={toggle}
                 expanded={open}
                 hasPopup="menu"
-            />
-            </View>
-            <Popover
-                open={open}
-                anchorRef={anchorRef}
-                onRequestClose={() => setOpen(false)}
-                placement="auto"
-                closeOnAnchorPress
-                portal={MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS}
-            >
-                {() => (
-                    <View style={workflowEditorStyles.menuSurface} accessibilityRole="menu">
-                        {props.actions.map((action) => (
-                            <HappierPressable
-                                key={action.id}
-                                testID={props.testID === undefined ? undefined : `${props.testID}-${action.id}`}
-                                accessibilityRole="menuitem"
-                                accessibilityLabel={action.label}
-                                onPress={() => {
-                                    setOpen(false);
-                                    action.onSelect();
-                                }}
-                                style={(state) => [
-                                    workflowEditorStyles.menuRow,
-                                    state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
-                                ]}
-                            >
-                                <Text style={action.destructive === true
-                                    ? workflowEditorStyles.menuRowLabelDestructive
-                                    : workflowEditorStyles.menuRowLabel}
-                                >
-                                    {action.label}
-                                </Text>
-                            </HappierPressable>
-                        ))}
-                    </View>
-                )}
-            </Popover>
-        </>
+            />}
+        />
     );
 }

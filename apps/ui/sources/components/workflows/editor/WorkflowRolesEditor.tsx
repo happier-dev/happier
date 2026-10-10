@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { resolveRoleSelectionV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
+import { resolveRoleRunsAsKindV1 } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
+import { describeRoleRunsAs } from '@/components/roles/catalog/rolePresentation';
 import type { RoleOverrideV1, WorkflowRoleV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
 import { walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { useRoleCatalog } from '@/components/roles/catalog/useRoleCatalog';
@@ -79,11 +81,10 @@ export function WorkflowRolesEditor(props: Readonly<{
                     <SegmentedChoiceItem title={t('roles.settings.runsAsTitle')}
                         disabled={!editable}
                         value={effective.selection.runsAs.kind} options={[
-                            { id: 'session', label: t('workflows.page.sections.aSession') },
-                            { id: 'background_run', label: t('workflows.page.sections.aBackgroundRun') },
+                            { id: 'session', label: describeRoleRunsAs('session') },
+                            { id: 'background_run', label: describeRoleRunsAs('background_run') },
                         ]} testIDPrefix={`${prefix}-target`}
-                        onChange={(kind) => change({ runsAs: kind === 'session' ? { kind: 'session' }
-                            : { kind: 'background_run', intent: effective.selection.runsAs.kind === 'background_run' ? effective.selection.runsAs.intent : 'delegate' } })} />
+                        onChange={(kind) => change({ runsAs: resolveRoleRunsAsKindV1(kind, effective.selection.runsAs) })} />
                 </> : <Text accessibilityRole="alert">{`${inline?.name ?? roleId} · ${t(catalog.status === 'loading' ? 'common.loading' : 'roles.settings.engineUnavailable')}`}</Text>}
                 {pin && editable ? <RoundButton size="small" display="inverted" title={t(inline ? 'common.remove' : 'roles.session.reset')}
                     testID={`${prefix}-reset`} onPress={() => update(roles.filter((role) => role.roleId !== roleId))} /> : null}

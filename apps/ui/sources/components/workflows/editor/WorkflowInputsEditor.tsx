@@ -22,7 +22,7 @@ const styles = StyleSheet.create((theme) => ({
     root: { gap: theme.margins.sm },
     heading: { flexDirection: 'row', alignItems: 'center', gap: theme.margins.sm },
     title: { ...Typography.default('semiBold'), color: theme.colors.text.primary },
-    add: { ...Typography.default('semiBold'), color: theme.colors.text.link, marginLeft: 'auto' },
+    add: { ...Typography.default('semiBold'), color: theme.colors.text.primary, marginLeft: 'auto' },
     row: {
         gap: theme.margins.sm,
         paddingVertical: theme.margins.sm,

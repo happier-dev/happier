@@ -1,7 +1,8 @@
 import { collectWorkflowBlockIds, copyWorkflowBlocks, createWorkflowBlock, createWorkflowLeafBlock, findWorkflowBlockListRef, getWorkflowBlockList, insertWorkflowBlock, resolvePreviousResultInputForInsertion, type WorkflowBlockKind, type WorkflowBlockListRef, type WorkflowLeafBlockSeed, type WorkflowDefinitionDraftV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import type { WorkflowBlock, WorkflowStepExecutionSelection } from '@happier-dev/protocol/workflows/workflowV1';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
-import type { WorkflowStarterExampleV1 } from '@happier-dev/protocol/workflows/builtins/examples';
+import type { WorkflowStarterExampleSelection, WorkflowStarterSessionTarget } from '@happier-dev/protocol/workflows/builtins/examples';
+import type { AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 
 export type WorkflowEditorDraft = WorkflowDefinitionDraftV1 & Readonly<{ draftId: string }>;
 
@@ -64,14 +65,17 @@ export type WorkflowStarterExampleInsertion = Readonly<{
   rootIds: readonly string[];
   inputNames: readonly string[];
   replacedPlaceholder: boolean;
+  trigger?: AutomationTriggerDefinitionInput;
+  sessionTarget?: WorkflowStarterSessionTarget;
 }>;
 
 /** J12: an example is one editor change, with its references kept inside its own copied blocks. */
 export function insertWorkflowStarterExample(
   draft: WorkflowEditorDraft,
-  example: WorkflowStarterExampleV1,
+  example: WorkflowStarterExampleSelection,
   title?: string,
 ): WorkflowStarterExampleInsertion {
+  if (example.triggerSeed !== undefined && example.trigger === undefined) throw new Error('workflow_starter_requires_session');
   const definition = example.definition;
   const takenIds = new Set(collectWorkflowBlockIds(draft));
   const takenInputs = new Set(draft.inputs.map((input) => input.name));
@@ -92,7 +96,9 @@ export function insertWorkflowStarterExample(
     ...(draft.name.length === 0 && title !== undefined ? { name: title } : {}),
     ...(draft.finalOutput === undefined && definition.finalOutput !== undefined ? { finalOutput: remapResult(definition.finalOutput) } : {}),
   };
-  return { draft: projected, before: draft, rootIds: blocks.map((block) => block.id), inputNames: [...inputs.values()], replacedPlaceholder };
+  return { draft: projected, before: draft, rootIds: blocks.map((block) => block.id), inputNames: [...inputs.values()], replacedPlaceholder,
+    ...(example.trigger === undefined ? {} : { trigger: example.trigger }),
+    ...(example.sessionTarget === undefined ? {} : { sessionTarget: example.sessionTarget }) };
 }
 
 export function selectWorkflowBlock(

@@ -22,7 +22,7 @@ import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } 
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 
-import type { PluginEventAutomationEditSeed } from './pluginEventAutomationEditSeed';
+import type { PluginEventAutomationEditSeed } from '@/sync/domains/automations/pluginEventAutomationEditSeed';
 
 const PLUGIN_ID = 'acme.github';
 const EVENT_LOCAL_ID = 'events/repository';
@@ -154,7 +154,8 @@ function eligibleEventWithSetupSurface(
             rendererChain: [{ pluginId: PLUGIN_ID, localId: rendererLocalId }],
             selectedRenderer: {
                 identity: { pluginId: PLUGIN_ID, localId: rendererLocalId },
-                renderer: { kind: 'hostedWeb', contributionId: rendererLocalId },
+                renderer: { kind: 'hostedWeb', contributionId: rendererLocalId,
+                    source: { kind: 'artifact', artifact: rendererLocalId }, requiredHostMethods: [] },
                 availability: { state: 'available', reason: 'available', diagnostics: [] },
             },
             executionOrigin: {
@@ -254,6 +255,7 @@ async function configureSeededComposer() {
     );
 
     await waitForHomeGovernance(() => expect(hook.getCurrent()).toMatchObject({
+        seededObservationMachineId: WATCHER_MACHINE_ID,
         sourceStatus: 'configured',
         sourceFailure: null,
         webhookEndpoint: {
@@ -288,7 +290,8 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
         const { replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
         const scope = { serverId: SERVER_IDENTITY_ID, accountId: 'account-a' };
         storage.setState({ profileScope: scope, settingsScope: scope, profile: { ...profileDefaults, id: 'account-a' }, isDataReady: true });
-        storage.getState().applyMachines([createMachineFixture({ id: WATCHER_MACHINE_ID })], true, { sourceServerId: serverId });
+        // This endpoint's target is live, not the fixture factory's epoch-old presence observation.
+        storage.getState().applyMachines([createMachineFixture({ id: WATCHER_MACHINE_ID, updatedAt: Date.now() })], true, { sourceServerId: serverId });
         replacePluginAccountAvailabilityProjection({ scope, snapshot: {
             availabilityCursor: 1,
             intentReads: [{ pluginId: PLUGIN_ID, response: availabilityResponse }],

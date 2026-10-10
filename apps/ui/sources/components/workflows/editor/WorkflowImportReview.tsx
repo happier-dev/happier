@@ -11,6 +11,7 @@ import type { CustomModalInjectedProps } from '@/modal';
 import { t } from '@/text';
 import type { WorkflowValidationIssue } from '@happier-dev/protocol/workflows/workflowV1';
 
+import { formatWorkflowIssueText } from './workflowIssueText';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 
 const styles = StyleSheet.create((theme) => ({
@@ -79,7 +80,7 @@ export function WorkflowImportReview(props: Readonly<{
                         role="listitem"
                         testID={`workflow-import-issue-${index}`}
                     >
-                        <Text style={styles.issueMessage}>{t(`workflows.issue.${issue.code}`)}</Text>
+                        <Text style={styles.issueMessage}>{formatWorkflowIssueText(issue)}</Text>
                         <Text selectable style={styles.issuePath}>{issue.path || '/'}</Text>
                     </View>
                 ))}

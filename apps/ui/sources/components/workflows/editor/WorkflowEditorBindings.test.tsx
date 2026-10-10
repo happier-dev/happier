@@ -14,9 +14,12 @@ const execute = vi.hoisted(() => vi.fn());
 const machineRpc = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: machineRpc }));
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({ createFrontDoorActionExecute: () => execute }));
-vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
-    getAppliedActiveServerSnapshot: () => ({ serverId: 'server-a' }), isAppliedActiveServerRuntimeAvailable: () => true,
-}));
+vi.mock('@/sync/runtime/orchestration/connectionManager', async (importOriginal) => {
+    const { createConnectionManagerModuleMock } = await import('@/dev/testkit/mocks/connectionManager');
+    return createConnectionManagerModuleMock(importOriginal, {
+        getSnapshot: () => ({ serverId: 'server-a', serverUrl: 'https://server-a.example', generation: 0 }),
+    });
+});
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({ translate: (key: string) => key }));
@@ -58,7 +61,7 @@ describe('workflow editor declared bindings', () => {
             ] }) });
         const changed = vi.fn();
         const screen = await renderScreen(<harness.WorkflowActionBlockEditor block={block} draft={draft}
-            ordinal={1} total={1} actions={[]} onSelect={() => {}}
+            ordinal={1} total={1} actions={[]} onSelect={() => {}} selected
             onChangeBlock={changed} testIDPrefix="editor" />);
         expect(screen.findByTestId('editor-action-command-field-command-input-0-kind')).toBeNull();
         expect(screen.findByTestId('editor-action-command-field-env-input-0-kind')).not.toBeNull();
@@ -83,7 +86,7 @@ describe('workflow editor declared bindings', () => {
             ] }) });
         const changed = vi.fn();
         const screen = await renderScreen(<harness.WorkflowActionBlockEditor block={block} draft={draft}
-            ordinal={1} total={1} actions={[]} onSelect={() => {}}
+            ordinal={1} total={1} actions={[]} onSelect={() => {}} selected
             onChangeBlock={changed} testIDPrefix="editor" />);
         const source = screen.findAllByType(DropdownMenu).find(node => node.props.testID === `editor-action-bound-field-${field}-input-0-kind`)!;
         await act(async () => source.props.onSelect('input'));
@@ -130,9 +133,10 @@ describe('workflow editor declared bindings', () => {
         expect(screen.getTextContent()).not.toContain('detached');
         expect(screen.getTextContent()).not.toContain('read_only');
         expect(screen.getTextContent()).not.toContain('(json)');
+        // Unnamed, the heading carries the card's identity once (DESIGN-7): its title and "· Happier".
         const card = screen.findByTestId('editor-action-panel-card')!;
-        expect(card.findAll((node) => node.props.testID === 'editor-action-panel-card-title')).not.toHaveLength(0);
-        expect(card.findAll((node) => String(node.type) === 'Text' && node.children.includes('Happier'))).not.toHaveLength(0);
+        expect(card.findAll((node) => node.props.testID === 'editor-action-panel-card-title')).toHaveLength(0);
+        expect(JSON.stringify(screen.findByTestId('editor-action-panel-label-source')?.props.children)).toContain('Happier');
         expect(screen.tree.findHostByTestId('editor-action-panel-label')?.props.accessibilityLabel).toContain('workflows.a11y.stepContext');
     });
 
@@ -151,16 +155,16 @@ describe('workflow editor declared bindings', () => {
                     history.record(draft, next, 'roles'); setDraft(next); changed(next);
                 }} />;
         }
-        const settings = getStorage().getState().settings.rolesV1;
+        const settings = getStorage().getState().settings;
         const screen = await renderScreen(<Host />);
         expect(screen.findByTestId('editor-group-roles')).not.toBeNull();
         await screen.pressByTestIdAsync('editor-role-local_builder-target:background_run');
         expect(changed.mock.lastCall?.[0].roles).toEqual([{ ...definition.roles?.[0],
-            runsAs: { kind: 'background_run', intent: 'delegate' } }]);
+            runsAs: { kind: 'background_run', intent: 'task' } }]);
         await act(async () => undo());
         expect(currentDraft.roles).toEqual(initial.roles);
         expect(screen.getTextContent()).toContain('Builder');
-        expect(getStorage().getState().settings.rolesV1).toBe(settings);
+        expect(getStorage().getState().settings).toBe(settings);
     });
 
     it('offers a fresh plugin child’s declared inputs and preserves authored unavailable fields', async () => {
@@ -229,7 +233,7 @@ describe('workflow editor declared bindings', () => {
             return <harness.WorkflowInspector subject={{ kind: 'workflow' }} presentation="pane" draft={draft}
                 machineName={null} testIDPrefix="editor" onChange={setDraft} />;
         }
-        const settings = getStorage().getState().settings.rolesV1;
+        const settings = getStorage().getState().settings;
         const screen = await renderScreen(<Host />);
         await screen.pressByTestIdAsync('editor-add-role-trigger');
         await act(async () => { await vi.runOnlyPendingTimersAsync(); });
@@ -241,7 +245,7 @@ describe('workflow editor declared bindings', () => {
         expect(current.roles?.[1]).toMatchObject({ name: 'Local reviewer', instructions: 'Review this workflow' });
         await screen.pressByTestIdAsync('editor-role-workflow_role_1-reset');
         expect(current.roles).toEqual(initial.roles);
-        expect(getStorage().getState().settings.rolesV1).toBe(settings);
+        expect(getStorage().getState().settings).toBe(settings);
     });
 
     it('uses shared child Get disclosure, retries denial and retires old Account schema content', async () => {

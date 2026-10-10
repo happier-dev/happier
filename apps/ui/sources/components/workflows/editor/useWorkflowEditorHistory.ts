@@ -58,10 +58,17 @@ export function useWorkflowEditorHistory<T>(scope: string, restore: (snapshot: T
         state.current.past.push(change);
         refresh();
     }, [commit]);
+    const reset = React.useCallback(() => {
+        const current = state.current;
+        current.past = [];
+        current.future = [];
+        current.pending = null;
+        refresh();
+    }, []);
     const controls: WorkflowEditorHistoryControls = {
         undoLabel: state.current.past.at(-1)?.label ?? null,
         redoLabel: state.current.future.at(-1)?.label ?? null,
         undo, redo,
     };
-    return { controls, record, commit };
+    return { controls, record, commit, reset };
 }

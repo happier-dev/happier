@@ -49,8 +49,8 @@ describe('managed workflow Run presentation', () => {
     it('keeps parent state and invocation lifecycle as separate vocabularies', () => {
         // `interrupted` exists only on the parent; `waiting_for_approval` only
         // on an invocation. Neither mapper may accept the other's value.
-        expect(describeWorkflowRunState('interrupted').variant).toBe('warning');
-        expect(describeWorkflowInvocationLifecycle('waiting_for_approval').variant).toBe('warning');
+        expect(describeWorkflowRunState('interrupted').variant).toBe('attention');
+        expect(describeWorkflowInvocationLifecycle('waiting_for_approval').variant).toBe('attention');
         expect(describeWorkflowRunState('paused').variant).toBe('neutral');
         // `queued` and `claimed` are the incumbent Automation parent states the
         // workflow enum extends; they are not an invocation lifecycle.
@@ -602,5 +602,45 @@ describe('managed workflow Run presentation', () => {
         expect(formatWorkflowRunOutcomeSentence({
             run: done, coverage, machine: { name: 'Mac Studio', reachable: false },
         })).toBe(formatWorkflowRunOutcomeSentence({ run: done, coverage }));
+    });
+
+    it('uses the Wait detail sentence for the default step name without repeating the state', () => {
+        const run = createWorkflowRunSummaryFixture({ state: 'waiting_for_review' });
+        const coverage = summarizeWorkflowInvocationCoverage([], { kindsByInvocationId: new Map(), historyComplete: false });
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage, attention: {
+            step: t('workflows.page.blocks.waitTitle'), waitForYou: true,
+        } })).toBe(t('workflows.review.waitBody'));
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage, attention: {
+            step: 'Check the release', waitForYou: true,
+        } })).toBe(t('workflows.run.attentionWaitSentence', { step: 'Check the release' }));
+    });
+
+    it('presents a claimed Run with a known hold through attention while preserving terminal parent authority', () => {
+        const coverage = { observedLeafCounts: { completed: 0, failed: 0, attention: 1 }, coverage: 'complete' as const, knownFailure: false };
+        expect(describeWorkflowRunState('claimed', { inAttentionWindow: true }))
+            .toMatchObject({ state: 'claimed', variant: 'attention', marker: { kind: 'icon', icon: 'hand' }, terminal: false });
+        expect(describeWorkflowRunState('running', { inAttentionWindow: true }).marker.kind).toBe('activity');
+        expect(formatWorkflowRunOutcomeLabel({ state: 'claimed', coverage, inAttentionWindow: true, waitingOnlyForYou: true }))
+            .toBe(t('workflows.review.waitTitle'));
+        expect(formatWorkflowRunOutcomeSentence({ run: createWorkflowRunSummaryFixture({ state: 'claimed' }),
+            coverage, attention: { step: 'Check the release', waitForYou: true } }))
+            .toBe(t('workflows.run.attentionWaitSentence', { step: 'Check the release' }));
+        expect(formatWorkflowRunOutcomeLabel({ state: 'claimed', coverage: {
+            ...coverage, observedLeafCounts: { completed: 1, failed: 0, attention: 0 },
+        } })).toBe(t('workflows.runState.claimed'));
+    });
+
+    it('describes known Agent review attention without parking concurrent work or guessing a terminal parent', () => {
+        const coverage = { observedLeafCounts: { completed: 0, failed: 0, attention: 1 }, coverage: 'partial' as const, knownFailure: false };
+        // The public attention window is membership evidence; a review hold is
+        // not a Wait-for-you block and does not make a running parent parked.
+        for (const state of ['queued', 'claimed'] as const) {
+            expect(formatWorkflowRunOutcomeLabel({ state, coverage, inAttentionWindow: true, waitingOnlyForYou: false }))
+                .toBe(t('workflows.runState.waiting_for_review'));
+        }
+        expect(formatWorkflowRunOutcomeLabel({ state: 'running', coverage, inAttentionWindow: true }))
+            .toBe(t('workflows.runState.running'));
+        expect(formatWorkflowRunOutcomeLabel({ state: 'succeeded', coverage, inAttentionWindow: true }))
+            .toBe(t('workflows.runState.succeeded'));
     });
 });

@@ -29,7 +29,7 @@ import { createExecutionRunStartContentChip } from '@/components/sessions/runs/l
 import { t } from '@/text';
 import { projectWorkflowFlow } from '../flow/workflowFlowProjection';
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
-import { getStorage, useActiveServerAccountScope, useArtifact, useServerScopedMachine, useWorkflowRun } from '@/sync/domains/state/storage';
+import { getStorage, useActiveServerAccountScopeLifetime, useArtifact, useServerScopedMachine, useWorkflowRun } from '@/sync/domains/state/storage';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import {
     isWorkflowInvocationFactOlder,
@@ -281,11 +281,14 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
     const destinationVisible = useDestinationVisibility();
     const activelyViewed = hostActivelyViewed && destinationVisible;
     const runNow = useWorkflowRunNowController();
-    const detailsPaneAvailable = useDetailsPaneAvailable();
+    // Inside another pane the Run opens no details column of its own: a step opens its own page.
+    const sidePanesAvailable = useDetailsPaneAvailable();
+    const detailsPaneAvailable = sidePanesAvailable && props.embedded !== true;
     const params = useDestinationParams<{ runId?: string | string[]; invocationId?: string | string[] }>();
     const runId = readWorkflowRunId(firstParam(params.runId));
     const requestedInvocationId = readWorkflowInvocationId(firstParam(params.invocationId));
-    const activeAccountScope = useActiveServerAccountScope();
+    const accountLifetime = useActiveServerAccountScopeLifetime();
+    const activeAccountScope = accountLifetime?.scope ?? null;
     const accountScopeKey = activeAccountScope === null
         ? null
         : serverAccountScopeKeySuffix(activeAccountScope);
@@ -442,9 +445,9 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
      * new Run's cached lifecycle row, and its still-live actions would address
      * the new Run.
      */
-    const [observedContentIdentity, setObservedContentIdentity] = React.useState(contentIdentity);
-    if (observedContentIdentity !== contentIdentity) {
-        setObservedContentIdentity(contentIdentity);
+    const [observedContent, setObservedContent] = React.useState(() => ({ identity: contentIdentity, lifetime: accountLifetime }));
+    if (observedContent.identity !== contentIdentity || observedContent.lifetime !== accountLifetime) {
+        setObservedContent({ identity: contentIdentity, lifetime: accountLifetime });
         setContentScopeKey(null);
         contentScopeKeyRef.current = null;
         attentionPageCountRef.current = 0;
@@ -482,7 +485,7 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
     // The Run's one invocation fact map and the windows over it (03 §6.2); this
     // screen holds no fact copies, only route paging state.
     const storedInvocations = getStorage()((state) => (activelyViewed && runId ? state.workflowRunInvocationsByRunId[runId] ?? null : null));
-    const contentBelongsToActiveScope = contentScopeKey === contentIdentity;
+    const contentBelongsToActiveScope = accountLifetime?.isCurrent() === true && contentScopeKey === contentIdentity;
     const visibleInvocations = contentBelongsToActiveScope ? storedInvocations : null;
     const invocationWindow = visibleInvocations?.history ?? null;
     const attentionNextCursor = visibleInvocations?.attention.nextCursor ?? null;
@@ -519,7 +522,7 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
             isVisibleWindowLoaded: () => true,
             invalidate: () => setInvocationInvalidationToken((token) => token + 1),
         });
-    }, [accountScopeKey, activelyViewed, runId]);
+    }, [accountLifetime, accountScopeKey, activelyViewed, runId]);
 
     React.useEffect(() => {
         if (!activelyViewed || runId === null) return;
@@ -701,7 +704,7 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
         // they are read from the render that produced `pendingRefreshRevision`,
         // and depending on them directly would restart the whole load whenever
         // the shared row moved for a reason this screen has already read.
-    }, [accountScopeKey, activelyViewed, contentIdentity, invocationInvalidationToken, isContentIdentityCurrent, loadAttempt, pendingRefreshRevision, runId]);
+    }, [accountLifetime, accountScopeKey, activelyViewed, contentIdentity, invocationInvalidationToken, isContentIdentityCurrent, loadAttempt, pendingRefreshRevision, runId]);
 
     const retryLoad = React.useCallback(() => {
         setLoadProblem(null);
@@ -803,7 +806,7 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
             controller.abort();
             retirement.dispose();
         };
-    }, [accountScopeKey, activelyViewed, executeSourceAction, loadAttempt, mountedRef, router, sourceArtifact, sourceArtifactId, sourceAvailable, sourceIdentity, sourceRef]);
+    }, [accountLifetime, accountScopeKey, activelyViewed, executeSourceAction, loadAttempt, mountedRef, router, sourceArtifact, sourceArtifactId, sourceAvailable, sourceIdentity, sourceRef]);
     const sourceAction = activelyViewed && sourceAvailable && sourceObservation?.identity === sourceIdentity
         && sourceObservation.artifact === sourceArtifact && sourceObservation.lifetime.isCurrent()
         ? sourceObservation.action : null;
@@ -971,7 +974,7 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
             controller.abort();
             retirement.dispose();
         };
-    }, [accountScopeKey, activelyViewed, contentIdentity, invocationInvalidationToken, isContentIdentityCurrent, loadAttempt, settleExactInvocation, runId, selectedInvocationId, selectedInvocationContentRevision, summary?.revision]);
+    }, [accountLifetime, accountScopeKey, activelyViewed, contentIdentity, invocationInvalidationToken, isContentIdentityCurrent, loadAttempt, settleExactInvocation, runId, selectedInvocationId, selectedInvocationContentRevision, summary?.revision]);
 
     // One owner decides the haptic and its visible twin together, so a device
     // can never buzz for a completion the screen did not show.
@@ -1708,6 +1711,7 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
             style={props.embedded ? styles.embeddedRoot : styles.root}
         >
             <WorkflowRunContent
+                embedded={props.embedded === true}
                 notificationOperation={activeAccountScope !== null && visibleAcceptedContext !== null
                     && !isTerminalWorkflowRunState(summary.state) ? <RunWorkNotifications
                         source={{ kind: 'workflow_run', runId: summary.id }}

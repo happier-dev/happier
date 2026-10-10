@@ -6,6 +6,11 @@ import { createWorkflowInvocationIndexFixture, createWorkflowRunSummaryFixture }
 import { WorkflowRunContent } from './WorkflowRunContent';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 
+// These Run fixtures do not stream Markdown; keep its external web adapter at the boundary.
+vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
+    splitStreamingRevealTextParts: () => { throw new Error('Unexpected vendor Markdown reveal in attention-count test'); },
+}));
+
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
@@ -50,6 +55,8 @@ async function renderContent(overrides: Partial<ContentProps> = {}) {
         invocations: [],
         invocationsLoaded: true,
         invocationHistoryComplete: true,
+        firstFailedInvocationId: null,
+        firstFailedInvocationResolution: 'resolved',
         selectedInvocationId: null,
         onSelectInvocation: () => {},
         view: 'activity' as const,

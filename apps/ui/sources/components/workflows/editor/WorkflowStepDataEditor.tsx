@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
@@ -7,13 +7,16 @@ import type { JsonValue } from '@happier-dev/protocol';
 import { parsePermissionIntentAlias } from '@happier-dev/agents/permissions';
 import { WorkflowLoopOutcomeV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { WorkflowAuthoredResultReference, WorkflowReferenceScope, WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
+import type { WorkflowActionFieldBindingV1 } from '@happier-dev/protocol/workflows/workflowLeafV1';
 import type { WorkflowResultContract, WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
 
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
+import { focusFirstEntryWithin } from '@/keyboard/webOverlayFocusContainment';
 import {
     listWorkflowProducerOptions,
     resolveWorkflowReferenceScopeFacts,
@@ -24,6 +27,7 @@ import { findWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefin
 import { t } from '@/text';
 import { en } from '@/text/translations/en';
 
+import { listWorkflowDeclaredResultFields } from '@/components/workflows/flow/workflowFlowProjection';
 import { workflowEditorStyles } from './workflowEditorStyles';
 
 type ItemReferenceField = Extract<WorkflowValueReference, { kind: 'item' }>['field'];
@@ -143,7 +147,10 @@ export function formatWorkflowValueReference(draft: WorkflowEditorDraft, referen
         case 'input':
             return t('workflows.input.workflowInput', { name: formatWorkflowFieldLabel(reference.name) });
         case 'result':
-            return withPath(t('workflows.input.previousResult', { block: producerLabel(reference.producer) }), reference.path);
+            // A field reads as its step and field ("Check the fix · Fixed", lab E1); the whole result keeps its noun.
+            return reference.path.length === 0
+                ? t('workflows.input.previousResult', { block: producerLabel(reference.producer) })
+                : withPath(producerLabel(reference.producer), reference.path);
         case 'loop_trailing_count':
             return t('workflows.input.trailingCount', {
                 source: withPath(t('workflows.input.previousResult', { block: producerLabel(reference.producer) }), reference.path),
@@ -185,9 +192,15 @@ function formatWorkflowLiteralValue(value: JsonValue): string {
         : entries.map(([name, nested]) => `${formatWorkflowFieldLabel(name)}: ${formatWorkflowLiteralValue(nested)}`).join('; ');
 }
 
-/** The document's reference token, including in a loop/condition sentence. */
+/**
+ * The document's reference token, including in a loop/condition sentence. A literal is the value
+ * itself, so it reads as words in the sentence ("Repeat 2 times"), never as a binding token.
+ */
 export function WorkflowValueReferenceToken(props: Readonly<{ draft: WorkflowEditorDraft; reference: WorkflowValueReference; testID?: string }>): React.ReactElement {
     const { theme } = useUnistyles();
+    if (props.reference.kind === 'literal') {
+        return <Text testID={props.testID} selectable>{formatWorkflowValueReference(props.draft, props.reference)}</Text>;
+    }
     return <Text testID={props.testID} style={{ color: theme.colors.text.link, backgroundColor: theme.colors.surface.elevated,
         borderRadius: theme.borderRadius.sm }} selectable>{`↵ ${formatWorkflowValueReference(props.draft, props.reference)}`}</Text>;
 }
@@ -207,6 +220,171 @@ export function WorkflowReferenceSentence(props: Readonly<{ draft: WorkflowEdito
         offset = next.at + next.label.length;
     }
     return <>{parts}</>;
+}
+
+/**
+ * One label/value row of a typed step's card (lab `.uwe-kr`): an Action field or a child workflow's
+ * input. The label column says what it is (and "Required" while it is unset); the value reads as the
+ * document reads it — a literal as its words, anything else as the reference token — and, editing,
+ * as the caller's binding editor. An unset field shows its declared default quietly (pressing it
+ * binds that value to edit) or "+ Set"; a reader sees "Not set" only on a required field, and an
+ * optional unset field without a default is left out of a reading document (lab S6 reads two rows).
+ */
+export function WorkflowBindingRow(props: Readonly<{
+    label: string;
+    required?: boolean;
+    /** A fact about how this field binds ("Values go in as environment variables"). */
+    note?: string;
+    binding: WorkflowActionFieldBindingV1 | undefined;
+    /** The value an unset field resolves to, already in the reader's words. */
+    defaultLabel?: string;
+    draft: WorkflowEditorDraft;
+    /** The field name a declared literal is read against (an Action's `target`, `permissionMode`). */
+    fieldName?: string;
+    editable: boolean;
+    /**
+     * Whether the bound value's editor shows: while its step is selected. At rest an editable card
+     * reads its values as values ("Channel  #releases", lab S6) and pressing one selects the step.
+     */
+    editing?: boolean;
+    /** Selects the step so its values can be edited (pressing a value at rest). */
+    onEdit?: () => void;
+    /** Binds an unset field (editing only). */
+    onSet?: () => void;
+    /** Draws the bound value's editor (editing only). */
+    renderEditor?: () => React.ReactNode;
+    /** This field's revealed issue, in the editor's words; marks the row (DESIGN-6 P3). */
+    issue?: string | null;
+    /** A bound literal in the field's own option words ("Acme reviewer"), when it has options. */
+    formatLiteral?: (value: JsonValue) => string | null;
+    testID: string;
+}>): React.ReactElement | null {
+    const { theme } = useUnistyles();
+    const { binding } = props;
+    const track = React.useContext(WorkflowKindCardLabelTrack);
+    const editing = props.editable && props.editing !== false;
+    // "+ Set" unmounts the control that had focus; its value editor takes it, so focus never drops
+    // to the page body (DESIGN-9 N5). Web only: native focus has no body to fall to.
+    const valueRef = React.useRef<View>(null);
+    const focusValueOnOpen = React.useRef(false);
+    const valueEditorOpen = binding !== undefined && editing && props.renderEditor !== undefined;
+    React.useEffect(() => {
+        if (!focusValueOnOpen.current || !valueEditorOpen) return;
+        focusValueOnOpen.current = false;
+        const node = valueRef.current as unknown;
+        if (Platform.OS === 'web' && typeof HTMLElement !== 'undefined' && node instanceof HTMLElement) focusFirstEntryWithin(node);
+    }, [valueEditorOpen]);
+    // A reader sees what the step will use: a field nobody set, with no default, says nothing — a
+    // read-only built-in never reads "Required · Not set" (DESIGN-5 M4). Editing still offers "+ Set".
+    if (!props.editable && binding === undefined && props.defaultLabel === undefined) return null;
+    // The whole pair is the one press target while it has one action ("+ Set", a default to take,
+    // a value to edit), so a value needs no touch frame of its own and stays right under its label
+    // on a phone (DESIGN-7 N5). Editing, the binding's own controls take the presses.
+    let rowAction: Readonly<{ testID: string; accessibilityLabel: string; onPress: () => void }> | null = null;
+    let value: React.ReactNode;
+    if (binding === undefined) {
+        const settable = props.editable && props.onSet !== undefined;
+        if (settable) rowAction = { testID: `${props.testID}-set`, accessibilityLabel: `${t('workflows.page.blocks.set')} ${props.label}`, onPress: () => {
+            focusValueOnOpen.current = true;
+            props.onSet!();
+        } };
+        value = props.defaultLabel !== undefined ? <Text style={workflowEditorStyles.metaText}>{props.defaultLabel}</Text>
+            : settable ? (
+                <View style={workflowEditorStyles.addRow}>
+                    <Icon name="plus" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
+                    <Text style={workflowEditorStyles.footAction}>{t('workflows.page.blocks.set')}</Text>
+                </View>
+            ) : <Text style={workflowEditorStyles.metaText}>{t('workflows.page.blocks.notSet')}</Text>;
+    } else if (editing && props.renderEditor !== undefined) {
+        value = props.renderEditor();
+    } else {
+        if (props.editable && props.onEdit !== undefined) {
+            rowAction = { testID: `${props.testID}-edit`, accessibilityLabel: `${t('common.edit')} ${props.label}`, onPress: props.onEdit };
+        }
+        value = (
+            <View testID={`${props.testID}-value`} style={workflowEditorStyles.metaRow}>
+                {(binding.kind === 'list' ? binding.items : [binding]).map((reference, index) =>
+                    reference.kind === 'origin_session_id'
+                        ? <Text key={index} style={workflowEditorStyles.actionFieldText} selectable>{t('workflows.page.inspector.originSession')}</Text>
+                        : reference.kind === 'literal'
+                            ? isBlankWorkflowLiteral(reference.value)
+                                // A blank value is no value: it reads as unset, never as an empty row (DESIGN-7 N24).
+                                ? <Text key={index} style={workflowEditorStyles.metaText}>{t('workflows.page.blocks.notSet')}</Text>
+                                : <Text key={index} style={workflowEditorStyles.actionFieldText} selectable>
+                                    {props.formatLiteral?.(reference.value) ?? formatWorkflowBindingLiteral(props.draft, reference, props.fieldName)}
+                                </Text>
+                            : <WorkflowValueReferenceToken key={index} draft={props.draft} reference={reference} />)}
+            </View>
+        );
+    }
+    const pair = (
+        <>
+            <View
+                style={[workflowEditorStyles.actionFieldLabelColumn, track?.width == null ? null : { width: track.width }]}
+                onLayout={track === null || track.width !== null ? undefined
+                    : (event) => track.report(props.testID, event.nativeEvent.layout.width)}
+            >
+                <Text style={workflowEditorStyles.actionFieldLabel}>{props.label}</Text>
+                {props.required === true && (binding === undefined || (binding.kind === 'literal' && isBlankWorkflowLiteral(binding.value))) ? (
+                    <Text testID={`${props.testID}-required`} style={workflowEditorStyles.actionFieldMarker}>{t('workflows.page.blocks.required')}</Text>
+                ) : null}
+                {props.note === undefined ? null : <Text style={workflowEditorStyles.groupSummary}>{props.note}</Text>}
+            </View>
+            <View ref={valueRef} style={workflowEditorStyles.actionFieldValue}>
+                {value}
+                {props.issue === undefined || props.issue === null ? null
+                    : <Text testID={`${props.testID}-issue`} style={workflowEditorStyles.issueText}>{props.issue}</Text>}
+            </View>
+        </>
+    );
+    return (
+        <View testID={props.testID}>
+            {rowAction === null ? <View style={workflowEditorStyles.actionFieldRow}>{pair}</View> : (
+                <HappierPressable testID={rowAction.testID} accessibilityRole="button"
+                    accessibilityLabel={rowAction.accessibilityLabel} onPress={rowAction.onPress}
+                    style={(state) => [workflowEditorStyles.actionFieldRow, workflowEditorStyles.actionFieldRowTarget,
+                        state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null,
+                        focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}>
+                    {pair}
+                </HappierPressable>
+            )}
+        </View>
+    );
+}
+
+/** A literal with nothing in it (`""`, spaces): what a pressed "+ Set" leaves before a value is typed. */
+function isBlankWorkflowLiteral(value: JsonValue): boolean {
+    return typeof value === 'string' && value.trim().length === 0;
+}
+
+/**
+ * A literal in a label/value row — bound, or a child input's default — reads as the value itself:
+ * "complete", "#releases", "open" — no quotes (the row already says it is a value, lab S6), an
+ * identifier's underscores as spaces.
+ * Declared execution fields (`target`, `permissionMode`) keep their own words.
+ */
+export function formatWorkflowBindingLiteral(draft: WorkflowEditorDraft, reference: Extract<WorkflowValueReference, { kind: 'literal' }>, fieldName?: string): string {
+    if (typeof reference.value === 'string' && fieldName !== 'permissionMode') {
+        return /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/u.test(reference.value) ? reference.value.replaceAll('_', ' ') : reference.value;
+    }
+    return formatWorkflowValueReference(draft, reference, fieldName);
+}
+
+/**
+ * One label track per typed card (lab `.uwe-kr`: every value starts on one column). Each row
+ * reports its label's natural width once; the card's track is the widest, so values line up
+ * instead of starting where each label ends (DESIGN-6 N5).
+ */
+export const WorkflowKindCardLabelTrack = React.createContext<Readonly<{
+    width: number | null;
+    report: (rowKey: string, width: number) => void;
+}> | null>(null);
+
+/** A declared result field inside the "Returns …" sentence: its words, lower-case ("missingEvidence" → "missing evidence"). */
+function formatWorkflowResultFieldWord(name: string): string {
+    const words = name.replace(/([a-z\d])([A-Z])/gu, '$1 $2').replace(/[_\-.]+/gu, ' ').trim();
+    // Only a key is lower-cased; an authored title keeps its own capitals.
+    return /^[a-z][A-Za-z\d_\-.]*$/u.test(name) ? words.toLocaleLowerCase() : words;
 }
 
 /** What a result contract returns, in the footer and in Step options' Result row. */
@@ -366,6 +544,8 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
                     testID={`${rowId}-literal`}
                     style={workflowEditorStyles.inlineValue}
                     value={literalText(reference.value)}
+                    // An empty value well says what goes in it (DESIGN-7 N5), never a blank grey box.
+                    placeholder={t('workflows.condition.literalPlaceholder')}
                     accessibilityLabel={t('workflows.condition.valuePlaceholder')}
                     onChangeText={(value) => props.onChange({ kind: 'literal', value: parseLiteral(value) })}
                 />
@@ -489,16 +669,24 @@ export function WorkflowStepDataEditor(props: Readonly<{
     step: WorkflowStep;
     editable?: boolean;
     onChangeInput: (input: readonly WorkflowValueReference[]) => void;
-    /** Opens Step options, where named results are added; absent when read-only. */
-    onAddNamedResults?: () => void;
     /** A reader's fact that ends the footer line (05's "Open conversation"). */
     footerAccessory?: React.ReactNode;
     testIDPrefix: string;
-}>): React.ReactElement {
-    const { theme } = useUnistyles();
+}>): React.ReactElement | null {
     const id = `${props.testIDPrefix}-step-${props.step.id}`;
     const editable = props.editable !== false;
     const textResult = props.step.result === undefined || props.step.result.kind === 'text';
+    const namedFields = listWorkflowDeclaredResultFields(props.step.result);
+    // The footer says facts only, the same selected or at rest (DESIGN-7 N27): named results
+    // ("Returns issues, commits, summary"), a decision, or nothing for plain text (lab E1). Adding
+    // named results or an input is Step options' (Result, Add input), so selecting moves nothing.
+    // Field names read as words in a sentence ("missing evidence, next step"), never as wire keys.
+    const returns = namedFields !== undefined ? t('workflows.page.blocks.returnsFields', { fields: namedFields.map(formatWorkflowResultFieldWord).join(', ') })
+        : textResult ? null : formatWorkflowResultSummary(props.step.result);
+    const inputTokens = editable ? [] : props.step.input;
+    const showsLine = returns !== null || inputTokens.length > 0 || props.footerAccessory != null;
+    // Nothing to say renders nothing: an empty line would still take the step's row gap.
+    if (!showsLine && (!editable || props.step.input.length === 0)) return null;
     return (
         <View>
             {!editable ? null : props.step.input.map((reference, index) => (
@@ -518,39 +706,15 @@ export function WorkflowStepDataEditor(props: Readonly<{
                     testIDPrefix={id}
                 />
             ))}
-            {/* One footer line (07 S7): what the step returns, then its quiet actions. A reading
-                document has no binding controls, so the step's inputs sit on that line as tokens. */}
-            <View style={workflowEditorStyles.metaRow}>
-                {editable ? null : props.step.input.map((reference, index) => (
+            {/* One footer line (07 S7): what the step returns. A reading document has no binding
+                controls, so the step's inputs sit on that line as tokens. */}
+            {!showsLine ? null : <View testID={`${id}-footer`} style={workflowEditorStyles.metaRow}>
+                {inputTokens.map((reference, index) => (
                     <WorkflowValueReferenceToken key={index} draft={props.draft} reference={reference} testID={`${id}-input-${index}`} />
                 ))}
-                <Text testID={`${id}-returns`} style={workflowEditorStyles.groupSummary}>
-                    {formatWorkflowResultSummary(props.step.result)}
-                </Text>
-                {editable && textResult && props.onAddNamedResults !== undefined ? (
-                    <HappierPressable
-                        testID={`${id}-add-named-results`}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('workflows.page.blocks.addNamedResults')}
-                        onPress={props.onAddNamedResults}
-                        style={(state) => [workflowEditorStyles.actionTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
-                    >
-                        <Text style={workflowEditorStyles.footAction}>{t('workflows.page.blocks.addNamedResults')}</Text>
-                    </HappierPressable>
-                ) : null}
-                {editable ? (
-                    <HappierPressable
-                        testID={`${id}-add-input`}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('workflows.inputs.addInput')}
-                        onPress={() => props.onChangeInput([...props.step.input, { kind: 'literal', value: '' }])}
-                        style={(state) => [workflowEditorStyles.actionTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
-                    >
-                        <Text style={workflowEditorStyles.footAction}>{t('workflows.inputs.addInput')}</Text>
-                    </HappierPressable>
-                ) : null}
+                {returns === null ? null : <Text testID={`${id}-returns`} style={workflowEditorStyles.groupSummary}>{returns}</Text>}
                 {props.footerAccessory ?? null}
-            </View>
+            </View>}
         </View>
     );
 }

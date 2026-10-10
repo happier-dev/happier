@@ -1,21 +1,27 @@
 import { HappierPageSheetGroup } from '@happier-dev/plugin-ui/presentation';
 import type { TriggerTargetV1 } from '@happier-dev/protocol';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { WorkSection } from '@/components/sessions/work/WorkSection';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Icon } from '@/components/ui/icons/Icon';
 import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
-import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
+import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
-import { useLocalSearchParams } from '@/components/appShell/workspace/destinationRoute';
+import { useIsFocused, useLocalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { parseExactTurnAutomationPrefillRoute } from '@/components/automations/sessionLifecycle/exactTurnAutomationPrefill';
+import { useAutomationRunNowController } from '@/components/automations/list/useAutomationRunNowController';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { useAllMachines } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope, useAllMachines } from '@/sync/domains/state/storage';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
+import { createAdmittedWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 
 import { TriggerPopover } from './TriggerPopover';
@@ -31,6 +37,10 @@ import {
 import { useSessionTriggers } from './useSessionTriggers';
 import { useTriggerThenOptions } from './useTriggerThenOptions';
 import { useOpenTriggerAsWorkflow } from './useOpenTriggerAsWorkflow';
+import { useSessionTriggerLastRuns } from './useSessionTriggerLastRuns';
+import { WorkflowTriggerRunHistory } from './WorkflowTriggerRunHistory';
+import { WorkflowExamplesPopover } from '../library/WorkflowExamplesPopover';
+import { ActionListSection } from '@/components/ui/lists/ActionListSection';
 
 export type SessionTriggersSectionViewProps = Readonly<{
     groups: readonly SessionTriggerGroupModel[];
@@ -42,6 +52,9 @@ export type SessionTriggersSectionViewProps = Readonly<{
     onOpen: (row: SessionTriggerRowModel, anchor: React.RefObject<View | null>) => void;
     onAdd: (anchor: React.RefObject<View | null>) => void;
     onRetry: () => void;
+    onHistory?: (row: SessionTriggerRowModel) => void;
+    historyRowKey?: string;
+    history?: React.ReactNode;
     /** The header "+", which also anchors a popover the host opens itself (a bound turn). */
     addAnchorRef?: React.RefObject<View | null>;
     /** A retired Automation link reveals this set's first row, as in the Account column. */
@@ -125,10 +138,13 @@ export const SessionTriggersSectionView = React.memo(function SessionTriggersSec
                         <AnchoredTriggerRow
                             key={row.key}
                             row={row}
+                            glyph={group.glyph}
                             pending={props.pendingKeys.has(row.key)}
                             deepLink={row === deepLinkedRow}
                             onToggle={props.onToggle}
                             onOpen={props.onOpen}
+                            onHistory={props.onHistory}
+                            history={props.historyRowKey === row.key ? props.history : undefined}
                         />
                     ))}
                 </HappierPageSheetGroup>
@@ -140,10 +156,13 @@ export const SessionTriggersSectionView = React.memo(function SessionTriggersSec
 /** A row that anchors its own popover beside it. */
 const AnchoredTriggerRow = React.memo(function AnchoredTriggerRow(props: Readonly<{
     row: SessionTriggerRowModel;
+    glyph: SessionTriggerGroupModel['glyph'];
     pending: boolean;
     deepLink: boolean;
     onToggle: SessionTriggersSectionViewProps['onToggle'];
     onOpen: SessionTriggersSectionViewProps['onOpen'];
+    onHistory: SessionTriggersSectionViewProps['onHistory'];
+    history: React.ReactNode;
 }>) {
     const anchorRef = React.useRef<View>(null);
     const { row } = props;
@@ -157,12 +176,21 @@ const AnchoredTriggerRow = React.memo(function AnchoredTriggerRow(props: Readonl
                 title={row.title}
                 outcome={row.outcome}
                 qualifier={row.qualifier}
+                qualifierTime={row.qualifierTime}
+                qualifierAccessibilityLabel={row.qualifierAccessibilityLabel}
+                glyph={props.glyph}
                 multiline={row.legacy}
                 enabled={row.enabled}
                 toggleDisabled={props.pending || row.sourceUnavailable || row.legacy}
                 onToggle={(next) => props.onToggle(row, next)}
                 onPress={() => props.onOpen(row, anchorRef)}
+                actions={(row.legacy || row.sourceUnavailable) && props.onHistory ? <>
+                {props.onHistory ? <ToolbarButton testID={`session-work-trigger:${row.key}-history`}
+                    label={t('workflows.destination.history.title')} active={props.history !== undefined}
+                    onPress={() => props.onHistory?.(row)} /> : null}
+                </> : undefined}
             />
+            {props.history}
         </View>
     );
 });
@@ -177,33 +205,104 @@ type OpenPopover = Readonly<{ anchor: React.RefObject<View | null>; row: Session
 /**
  * The section as the Work tab mounts it in ORC's `triggersSection` slot: the session's triggers
  * through `session.trigger.*` (the one writer the Work tab and agents share), the switch and the
- * popover each one immediate call with its own result.
+ * popover each one immediate call with its own result. Last outcomes and expanded history read
+ * the shared Account Run store; a firing timestamp alone never supplies a Run's lifecycle.
  */
-export const SessionTriggersSection = React.memo(function SessionTriggersSection(props: Readonly<{ sessionId: string }>) {
+export const SessionTriggersSection = React.memo(function SessionTriggersSection(props: Readonly<{ sessionId: string; serverId?: string | null }>) {
+    const scope = useActiveServerAccountScope(props.serverId);
+    if (scope === null) return null;
+    return <SessionTriggersContent key={`${serverAccountScopeKeySuffix(scope)}:${props.sessionId}`} sessionId={props.sessionId} />;
+});
+
+function SessionTriggersContent(props: Readonly<{ sessionId: string }>) {
+    const { theme } = useUnistyles();
     const read = useSessionTriggers(props.sessionId);
+    const readRef = React.useRef(read);
+    readRef.current = read;
     const openTriggerAsWorkflow = useOpenTriggerAsWorkflow();
     const thenOptions = useTriggerThenOptions();
     const machines = useAllMachines();
-    const groups = React.useMemo(() => projectSessionTriggerGroups({
-        sets: read.sets,
-        lastRunAtByAutomationId: read.lastRunAtByAutomationId,
-        resolveWorkflowTitle: thenOptions.resolveWorkflowTitle,
-        resolveMachineTitle: (id) => getMachineDisplayName(machines.find((machine) => machine.id === id) ?? { id, absence: 'unlisted' }),
-        formatAge: (at) => formatRelativeTimeShort(at, Date.now()),
-    }), [read.lastRunAtByAutomationId, read.sets, thenOptions.resolveWorkflowTitle, machines]);
+    const automationIds = React.useMemo(() => Object.entries(read.lastRunAtByAutomationId)
+        .filter(([, at]) => at !== null).map(([id]) => id), [read.lastRunAtByAutomationId]);
+    const lastRuns = useSessionTriggerLastRuns(automationIds);
+    const lastRunsRef = React.useRef(lastRuns);
+    lastRunsRef.current = lastRuns;
+    const retry = React.useCallback(() => {
+        readRef.current.retry();
+        lastRunsRef.current.retry();
+    }, []);
+    const previousGroups = React.useRef<readonly SessionTriggerGroupModel[]>([]);
+    const groups = React.useMemo(() => {
+        const projected = projectSessionTriggerGroups({
+            sets: read.sets,
+            lastRunAtByAutomationId: read.lastRunAtByAutomationId,
+            lastRunsByAutomationId: lastRuns.lastRunsByAutomationId,
+            resolveWorkflowTitle: thenOptions.resolveWorkflowTitle,
+            resolveMachineTitle: (id) => getMachineDisplayName(machines.find((machine) => machine.id === id) ?? { id, absence: 'unlisted' }),
+            formatAge: (at) => formatRelativeTimeShort(at, Date.now()),
+        });
+        const oldRows = new Map(previousGroups.current.flatMap(group => group.rows.map(row => [row.key, row] as const)));
+        const next = projected.map(group => {
+            const rows = group.rows.map(row => {
+                const previous = oldRows.get(row.key);
+                return previous && sameStrictJsonValue(previous, row) ? previous : row;
+            });
+            const previous = previousGroups.current.find(candidate => candidate.id === group.id);
+            const nextGroup = { ...group, rows };
+            return previous && sameStrictJsonValue(previous, nextGroup) ? previous : nextGroup;
+        });
+        if (!sameStrictJsonValue(previousGroups.current, next)) previousGroups.current = next;
+        return previousGroups.current;
+    }, [read.lastRunAtByAutomationId, read.sets, lastRuns.lastRunsByAutomationId, thenOptions.resolveWorkflowTitle, machines]);
+
+    const router = useRouter();
+    const pathname = usePathname();
+    const focused = useIsFocused();
+    const focusedRef = React.useRef(focused);
+    focusedRef.current = focused;
+    const pathnameRef = React.useRef(pathname);
+    pathnameRef.current = pathname;
+    const mountedRef = React.useRef(true);
+    React.useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
+    const runNowController = useAutomationRunNowController();
+    const runNowControllerRef = React.useRef(runNowController);
+    runNowControllerRef.current = runNowController;
+    const runNow = React.useCallback(async (row: SessionTriggerRowModel) => {
+        if (row.sourceUnavailable || row.legacy) return;
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        const invocationPathname = pathnameRef.current;
+        const isInvocationCurrent = () => mountedRef.current && focusedRef.current
+            && pathnameRef.current === invocationPathname && lifetime?.isCurrent() === true;
+        if (!isInvocationCurrent()) return;
+        const admitted = await runNowControllerRef.current.runNow(row.automationId, 'existingSession', { isInvocationCurrent });
+        const route = createAdmittedWorkflowRunRoute(admitted?.workflowRun);
+        if (route !== null && isInvocationCurrent()) router.push(route as never);
+    }, [router]);
+    const [historyRowKey, setHistoryRowKey] = React.useState<string>();
+    const openHistory = React.useCallback((row: SessionTriggerRowModel) => {
+        setHistoryRowKey(current => current === row.key ? undefined : row.key);
+    }, []);
+    const historyRow = groups.flatMap(group => group.rows).find(candidate => candidate.key === historyRowKey);
+    const history = React.useMemo(() => historyRow ? <WorkflowTriggerRunHistory automationId={historyRow.automationId} /> : undefined,
+        [historyRow?.automationId]);
 
     const [pendingKeys, setPendingKeys] = React.useState<ReadonlySet<string>>(() => new Set());
+    const pendingKeysRef = React.useRef(pendingKeys);
+    pendingKeysRef.current = pendingKeys;
     const toggle = React.useCallback((row: SessionTriggerRowModel, next: boolean) => {
-        if (row.legacy || pendingKeys.has(row.key)) return;
-        setPendingKeys((current) => new Set(current).add(row.key));
-        void read.update({ triggerId: row.triggerId, expectedRevision: row.revision, patch: { enabled: next } })
-            .catch(() => read.retry())
-            .finally(() => setPendingKeys((current) => {
-                const nextKeys = new Set(current);
-                nextKeys.delete(row.key);
-                return nextKeys;
-            }));
-    }, [pendingKeys, read]);
+        if (row.legacy || pendingKeysRef.current.has(row.key)) return;
+        const nextKeys = new Set(pendingKeysRef.current).add(row.key);
+        pendingKeysRef.current = nextKeys;
+        setPendingKeys(nextKeys);
+        void readRef.current.update({ triggerId: row.triggerId, expectedRevision: row.revision, patch: { enabled: next } })
+            .catch(() => readRef.current.retry())
+            .finally(() => {
+                const remaining = new Set(pendingKeysRef.current);
+                remaining.delete(row.key);
+                pendingKeysRef.current = remaining;
+                setPendingKeys(remaining);
+            });
+    }, []);
 
     const [popover, setPopover] = React.useState<OpenPopover | null>(null);
     const initial = React.useMemo((): TriggerFormValue | null => {
@@ -235,45 +334,78 @@ export const SessionTriggersSection = React.memo(function SessionTriggersSection
         setBoundWhen({ kind: 'turnEnds', sourceTurnId: boundTurnId });
         setPopover({ anchor: addAnchorRef, row: null });
     }, [boundTurnId, read.status]);
+    const openRow = React.useCallback((openedRow: SessionTriggerRowModel, anchor: React.RefObject<View | null>) => {
+        if (openedRow.legacy) {
+            void Modal.confirm(t('workflows.triggers.editor.editInWorkflows'), undefined, {
+                confirmText: t('workflows.triggers.popover.deleteTrigger'), destructive: true,
+            }).then((confirmed) => (confirmed ? readRef.current.remove(openedRow.triggerId) : null)).catch((error: unknown) => {
+                readRef.current.retry();
+                void Modal.alert(t('common.error'), error instanceof Error ? error.message : t('workflows.triggers.section.saveFailed'));
+            });
+            return;
+        }
+        // A trigger whose workflow is gone offers only Delete trigger (07 S16).
+        if (openedRow.sourceUnavailable) {
+            void Modal.confirm(t('workflows.triggers.row.workflowDeleted'), undefined, {
+                confirmText: t('workflows.triggers.popover.deleteTrigger'), destructive: true,
+            }).then((confirmed) => (confirmed ? readRef.current.remove(openedRow.triggerId) : null)).catch(() => readRef.current.retry());
+            return;
+        }
+        setPopover({ anchor, row: openedRow });
+    }, []);
+    // "+" starts from an example already bound to this Session (65s5, lab `b-habit T`); "New trigger" under
+    // the list opens the blank trigger popover at the same anchor. Without a known Machine an example cannot
+    // be bound here, so "+" goes straight to the blank trigger.
+    const [examplesAnchor, setExamplesAnchor] = React.useState<React.RefObject<View | null> | null>(null);
+    const exampleSession = React.useMemo(() => (read.machineId ? { sessionId: props.sessionId, machineId: read.machineId } : undefined),
+        [props.sessionId, read.machineId]);
+    const openBlankTrigger = React.useCallback((anchor: React.RefObject<View | null>) => {
+        setExamplesAnchor(null);
+        setBoundWhen(undefined);
+        setPopover({ anchor, row: null });
+    }, []);
+    const add = React.useCallback((anchor: React.RefObject<View | null>) => {
+        if (exampleSession === undefined) { openBlankTrigger(anchor); return; }
+        setExamplesAnchor(anchor);
+    }, [exampleSession, openBlankTrigger]);
     return (
         <>
             <SessionTriggersSectionView
                 groups={groups}
-                status={read.status}
+                status={lastRuns.failed ? 'failed' : read.status}
                 pullRequestLinksUnavailable={!Array.isArray(read.pullRequestLinks) && read.pullRequestLinks.status === 'unavailable'}
                 pendingKeys={pendingKeys}
                 onToggle={toggle}
-                onOpen={(openedRow, anchor) => {
-                    if (openedRow.legacy) {
-                        void Modal.confirm(t('workflows.triggers.editor.editInWorkflows'), undefined, {
-                            confirmText: t('workflows.triggers.popover.deleteTrigger'), destructive: true,
-                        }).then((confirmed) => (confirmed ? read.remove(openedRow.triggerId) : null)).catch((error: unknown) => {
-                            read.retry();
-                            void Modal.alert(t('common.error'), error instanceof Error ? error.message : t('workflows.triggers.section.saveFailed'));
-                        });
-                        return;
-                    }
-                    // A trigger whose workflow is gone offers only Delete trigger (07 S16).
-                    if (openedRow.sourceUnavailable) {
-                        void Modal.confirm(t('workflows.triggers.row.workflowDeleted'), undefined, {
-                            confirmText: t('workflows.triggers.popover.deleteTrigger'),
-                            destructive: true,
-                        }).then((confirmed) => (confirmed ? read.remove(openedRow.triggerId) : null)).catch(() => read.retry());
-                        return;
-                    }
-                    setPopover({ anchor, row: openedRow });
-                }}
-                onAdd={(anchor) => { setBoundWhen(undefined); setPopover({ anchor, row: null }); }}
-                onRetry={read.retry}
+                onOpen={openRow}
+                onAdd={add}
+                onRetry={retry}
+                onHistory={openHistory}
+                historyRowKey={historyRowKey}
+                history={history}
                 addAnchorRef={addAnchorRef}
                 {...(typeof params.trigger === 'string' ? { deepLinkAutomationId: params.trigger } : {})}
             />
+            {examplesAnchor !== null && exampleSession !== undefined ? (
+                <WorkflowExamplesPopover
+                    testID="session-work-trigger-examples"
+                    anchorRef={examplesAnchor}
+                    session={exampleSession}
+                    onRequestClose={() => setExamplesAnchor(null)}
+                    footer={<ActionListSection separatorAbove actions={[{
+                        id: 'new-trigger',
+                        testID: 'session-work-trigger-examples-new',
+                        label: t('workflows.triggers.popover.newTrigger'),
+                        icon: <Icon name="plus" size={16} color={theme.colors.text.secondary} />,
+                        onPress: () => openBlankTrigger(examplesAnchor),
+                    }]} />}
+                />
+            ) : null}
             {popover !== null && (row === null || initial !== null) ? (
                 <TriggerPopover
                     testID="session-work-trigger-popover"
                     anchorRef={popover.anchor}
                     onRequestClose={close}
-                    whenKinds={SESSION_TRIGGER_WHEN_KINDS}
+                    whenKinds={[...SESSION_TRIGGER_WHEN_KINDS, 'pluginEvent']}
                     unavailableKinds={Object.fromEntries(Object.entries(SESSION_UNAVAILABLE_KINDS).map(([kind, key]) => [kind, t(key)]))}
                     sessionId={props.sessionId}
                     {...(Array.isArray(read.pullRequestLinks) ? { pullRequestLinks: read.pullRequestLinks } : {})}
@@ -294,17 +426,17 @@ export const SessionTriggersSection = React.memo(function SessionTriggersSection
                         });
                     }}
                     machineId={read.machineId}
+                    {...(row !== null && initial?.when.kind === 'pluginEvent' ? { eventEdit: { automationId: row.automationId, triggerId: row.triggerId } } : {})}
                     {...(row === null ? {} : {
                         onSaveAsWorkflow: (target: TriggerTargetV1) => openTriggerAsWorkflow(target, {
                             scope: 'session', sessionId: props.sessionId, triggerId: row.triggerId, expectedRevision: row.revision,
                         }),
-                        onToggleEnabled: async (next: boolean) => {
-                            await read.update({ triggerId: row.triggerId, expectedRevision: row.revision, patch: { enabled: next } });
-                        },
                         onDelete: async () => { await read.remove(row.triggerId); },
+                        onRunNow: async () => { await runNow(row); },
+                        onHistory: () => { openHistory(row); close(); },
                     })}
                 />
             ) : null}
         </>
     );
-});
+}

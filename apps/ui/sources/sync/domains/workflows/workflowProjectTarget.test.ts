@@ -30,6 +30,19 @@ const context = {
 } as const;
 
 describe('workflow project target', () => {
+    it('does not pick a checkout when the selected Home and root have duplicate refs', () => {
+        expect(resolveWorkflowProjectWorkspaceRefId({
+            ...context,
+            workspaceRefs: [ref({ id: 'first', rootPath: '/repo' }), ref({ id: 'second', rootPath: '/repo/' })],
+            machineId: 'machine-1', directory: '/repo',
+        })).toBeUndefined();
+    });
+
+    it('requires a containing Home before binding a folder', () => {
+        expect(resolveWorkflowProjectWorkspaceRefId({
+            ...context, serverId: null, machineId: 'machine-1', directory: '/home/dev/repo',
+        })).toBeUndefined();
+    });
     it('keeps a managed Session intent when changing Machine and binds a project only after choosing a folder', () => {
         const current = { machineId: 'machine-1', directory: { kind: 'managed' as const } };
         const next = selectWorkflowProjectMachine({ ...context, current, machineId: 'machine-2', defaultDirectory: '/home/dev/repo' });

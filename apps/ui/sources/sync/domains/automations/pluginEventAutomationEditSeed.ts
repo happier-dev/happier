@@ -9,7 +9,7 @@ import type { AutomationDefinitionDetail } from '@happier-dev/protocol/automatio
 import type { AutomationEventFilterV1 } from '@happier-dev/protocol/automations/automationEventFilterV1';
 import type { AutomationPluginEventDefinitionTrigger } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 
-import type { AutomationDefinition } from '@/sync/domains/automations/automationTypes';
+import type { AutomationDefinition } from './automationTypes';
 
 type PluginEventTriggerDetail = Extract<
     AutomationDefinitionDetail['triggers'][number],

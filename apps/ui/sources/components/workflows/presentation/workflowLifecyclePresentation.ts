@@ -173,14 +173,25 @@ const WORKFLOW_RUN_STATE_SHAPES: Readonly<Record<
     outcome_uncertain: { marker: icon('question') },
 };
 
-export function describeWorkflowRunState(state: WorkflowRunStateV1): WorkflowRunStatePresentation {
+export function describeWorkflowRunState(
+    state: WorkflowRunStateV1,
+    context?: Readonly<{ word?: string; inAttentionWindow?: boolean }>,
+): WorkflowRunStatePresentation {
     const shape = WORKFLOW_RUN_STATE_SHAPES[state];
-    const status = resolveWorkStatusTone({ kind: 'workflow_run', facts: { state, word: t(`workflows.runState.${state}`) } });
+    const status = resolveWorkStatusTone({ kind: 'workflow_run', facts: {
+        state,
+        word: context?.word ?? t(`workflows.runState.${state}`),
+        inAttentionWindow: context?.inAttentionWindow,
+    } });
     return {
         state,
         label: status.word,
         variant: WORK_STATUS_PILL_VARIANT[status.tone],
-        marker: shape.marker,
+        // A known hold does not claim starting motion while the parent summary
+        // catches up. A running parent may still own concurrent work.
+        marker: context?.inAttentionWindow === true && (state === 'queued' || state === 'claimed')
+            ? WORKFLOW_RUN_STATE_SHAPES.waiting_for_review.marker
+            : shape.marker,
         terminal: isTerminalWorkflowRunState(state),
     };
 }

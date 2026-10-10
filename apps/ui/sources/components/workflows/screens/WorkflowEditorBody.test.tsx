@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { act } from 'react-test-renderer';
+import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -419,6 +419,12 @@ describe('workflow editor body', () => {
         const header = await renderBody(harness, { onEditWithAgent, onSave: () => {} });
         // No agent conversation yet: the pane has no Agent tab and nothing opens as a modal.
         expect(header.findByTestId('workflow-editor-details-tabs:agent')).toBeNull();
+        await header.pressByTestIdAsync('workflow-editor-settings-toggle');
+        // Docked panes use the lab's compact action, while retaining its name
+        // for assistive technology and the same authoring command.
+        const editAction = header.findHostByTestId('workflow-editor-edit-with-agent');
+        expect(editAction?.findAll((node) => typeof node.type === 'string' && node.props.children === 'workflows.authoring.edit')).toHaveLength(0);
+        expect(editAction?.props.accessibilityLabel).toBe('workflows.authoring.edit');
         await header.pressByTestIdAsync('workflow-editor-edit-with-agent');
         expect(onEditWithAgent).toHaveBeenCalledTimes(1);
         expect(modalShowSpy).not.toHaveBeenCalled();
@@ -530,7 +536,9 @@ describe('workflow editor body', () => {
         });
         const screen = await renderBody(harness, { draft, onChange: changed });
         expect(screen.findByTestId('workflow-editor-parallel-parallel-branch-branch-a-label')).not.toBeNull();
-        expect(screen.getTextContent()).toContain('workflows.editor.branch 1');
+        // An unnamed lane reads "Lane 1" (its placeholder) until the author names it (07).
+        expect(screen.findHostByTestId('workflow-editor-parallel-parallel-branch-branch-a-label')?.props.placeholder)
+            .toContain('workflows.page.inspector.lane');
         expect(changed).not.toHaveBeenCalled();
     });
 
@@ -615,6 +623,17 @@ describe('workflow editor body', () => {
         const chip = screen.findByTestId('workflow-editor-defaults-agentTarget');
         expect(chip).not.toBeNull();
         expect(chip?.props.accessibilityLabel).toContain('Claude Code');
+    });
+
+    it('opens workflow settings as the canonical full-width solid phone sheet', async () => {
+        windowDimensions = { width: 390, height: 844 };
+        paneState.detailsAvailable = false;
+        const harness = await loadHarness();
+        const screen = await renderBody(harness, { onRunNow: () => {} });
+        await screen.pressByTestIdAsync('workflow-editor-phone-settings');
+        expect(modalShowSpy).toHaveBeenCalledWith(expect.objectContaining({
+            chrome: expect.objectContaining({ phonePresentation: 'sheet', material: 'solid' }),
+        }));
     });
 
     it('opens the same controlled step options in the canonical modal on a phone', async () => {
@@ -752,9 +771,11 @@ describe('workflow editor body', () => {
     it('authors a typed step input reference without interpolating it into prompt text', async () => {
         const harness = await loadHarness();
         const changed = vi.fn();
-        const screen = await renderBody(harness, { onChange: changed });
+        // Adding an input is Step options' (DESIGN-7 N27), opened from the step's own chip.
+        const screen = await renderBody(harness, { onChange: changed, selectedBlockId: 'analyze' });
 
-        await screen.pressByTestIdAsync('workflow-editor-step-analyze-add-input');
+        await screen.pressByTestIdAsync('workflow-editor-step-analyze-customize');
+        await screen.pressByTestIdAsync('workflow-editor-inspector-add-input');
         const next = changed.mock.calls[0]?.[0];
         expect(next.blocks[0].input).toEqual([{ kind: 'literal', value: '' }]);
         expect(next.blocks[0].document.text).toBe('Analyze the repository');
@@ -890,7 +911,51 @@ describe('workflow editor body', () => {
         expect(ran).not.toHaveBeenCalled();
         expect(screen.findByTestId('workflow-editor-validity')).not.toBeNull();
         expect(screen.getTextContent()).toContain('workflows.page.issuesToFix');
+        // One readout, on the header's status line beside the save state ("Saved · 1 thing to fix").
+        const status = screen.findByTestId('workflow-editor-save-status');
+        expect(status?.findAll((node) => node.props?.testID === 'workflow-editor-validity').length).toBeGreaterThan(0);
+        expect(screen.findAllByTestId('workflow-editor-validity').filter((node) => typeof node.type === 'string').length).toBe(1);
         expect(onSelectBlock).toHaveBeenCalledWith('analyze');
+    });
+
+    it('counts every issue at once: an unwritten prompt and a blank required Action field (DESIGN-7 P3)', async () => {
+        const harness = await loadHarness();
+        const base = buildDraft(harness, { text: '' });
+        const draft = { ...base, blocks: [...base.blocks,
+            { kind: 'action' as const, id: 'notify', actionId: 'notifications.notify_me', input: { message: { kind: 'literal' as const, value: '' } } }] };
+        const screen = await renderBody(harness, {
+            draft,
+            projectTarget: { machineId: 'machine-1', directory: '/Users/me/project' },
+            onRunNow: () => {},
+            onSave: () => {},
+        });
+        await screen.pressByTestIdAsync('workflow-editor-run-now');
+        // The canonical validator's one pass: the prompt and the Message, not "1" then "1 more".
+        expect(screen.getTextContent()).toContain('workflows.page.issuesToFix:{"count":2}');
+    });
+
+    it('reads a valid draft as Ready on the save status line (07 one validity readout)', async () => {
+        const harness = await loadHarness();
+        const screen = await renderBody(harness, {
+            projectTarget: { machineId: 'machine-1', directory: '/Users/me/project' },
+            onRunNow: () => {},
+            onSave: () => {},
+        });
+        const status = screen.findByTestId('workflow-editor-save-status');
+        expect(status?.findAll((node) => node.props?.testID === 'workflow-editor-ready').length).toBeGreaterThan(0);
+        expect(screen.getTextContent()).toContain('workflows.page.readyToRun');
+    });
+
+    it('does not claim Ready while the canonical Run command still needs a target', async () => {
+        const harness = await loadHarness();
+        const screen = await renderBody(harness, {
+            projectTarget: null,
+            onRunNow: () => {},
+            onSave: () => {},
+            saveStatus: { kind: 'saved', savedAtMs: null },
+        });
+        expect(screen.findByTestId('workflow-editor-ready')).toBeNull();
+        expect(screen.findByTestId('workflow-editor-save-status')).not.toBeNull();
     });
 
     it('opens the Where picker instead of refusing when Run now has no machine', async () => {
@@ -1072,6 +1137,21 @@ describe('workflow editor body', () => {
         await oneShared.unmount();
     });
 
+    it('keeps Undo and Redo as icon controls on a phone, their labels only as accessible names (DESIGN-6 N20)', async () => {
+        windowDimensions = { width: 390, height: 700 };
+        paneState.detailsAvailable = false;
+        const harness = await loadHarness();
+        const undo = vi.fn();
+        const screen = await renderBody(harness, { onRunNow: () => {}, onSave: () => {},
+            history: { undoLabel: 'Rename step', redoLabel: null, undo, redo: () => {} } });
+        const control = screen.findAll((node) => node.props?.testID === 'workflow-editor-undo' && node.props?.iconName !== undefined);
+        expect(control.length).toBeGreaterThan(0);
+        // The label is the accessible name, never visible text in the document.
+        expect(screen.getTextContent()).not.toContain('workflows.editor.undoAction');
+        await screen.pressByTestIdAsync('workflow-editor-undo');
+        expect(undo).toHaveBeenCalledTimes(1);
+    });
+
     it('recomposes on a phone: the name stays in the page, value rows, Steps | Flow and a bottom bar', async () => {
         windowDimensions = { width: 390, height: 700 };
         paneState.detailsAvailable = false;
@@ -1085,8 +1165,8 @@ describe('workflow editor body', () => {
         expect(screen.findByTestId('workflow-editor-name')).not.toBeNull();
         const order = [
             'workflow-editor-header',
-            'workflow-editor-where-row',
             'workflow-editor-save-status',
+            'workflow-editor-where-row',
             'workflow-editor-view',
             'workflow-editor-steps-presentation',
         ];
@@ -1108,6 +1188,129 @@ describe('workflow editor body', () => {
         const fresh = await renderBody(harness, { onRunNow: () => {}, onSave: () => {}, saveStatus: { kind: 'unsaved' } });
         await fresh.pressByTestIdAsync('workflow-editor-agent-row');
         expect(modalShowSpy).toHaveBeenCalled();
+    });
+
+    it.each([
+        { width: 390, hasHistory: false },
+        { width: 390, hasHistory: true },
+        { width: 1400, hasHistory: false },
+    ])('keeps one visible Back in the hosted editor (width: $width, has history: $hasHistory)', async ({ width, hasHistory }) => {
+        windowDimensions = { width, height: 700 };
+        paneState.detailsAvailable = width > 390;
+        const harness = await loadHarness();
+        const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+        const back = vi.fn();
+        const replace = vi.fn();
+        const wrapper = ({ children }: React.PropsWithChildren) => (
+            <DestinationInstanceHost tabId="workflow-tab" ref={{ kind: 'workflows', params: { id: 'saved' } }}
+                pathname="/workflows/saved" focused visible
+                navigation={{ push: vi.fn(), back, replace, canGoBack: () => hasHistory }}>
+                {children}
+            </DestinationInstanceHost>
+        );
+        const screen = await renderBody(harness, { onRunNow: vi.fn() }, { wrapper });
+        const header = screen.findHostByTestId('workflow-editor-header');
+        await act(async () => { header?.props.onLayout?.({ nativeEvent: { layout: { width, height: 100, x: 0, y: 0 } } }); });
+        const controls = screen.findAll((node) => typeof node.type === 'string' && node.props.testID === 'workflow-back');
+        expect(controls).toHaveLength(1);
+        const { StyleSheet } = await import('react-native');
+        for (let node: typeof controls[number] | undefined = controls[0]; node; node = node.parent ?? undefined) {
+            const style = StyleSheet.flatten(node.props.style);
+            expect(style?.display).not.toBe('none');
+            expect(style?.opacity).not.toBe(0);
+        }
+        const gutter = screen.findHostByTestId('workflow-editor-header-back-gutter');
+        expect(gutter !== null).toBe(width === 1400);
+        await screen.pressByTestIdAsync('workflow-back');
+        expect(hasHistory ? back : replace).toHaveBeenCalledWith(...(hasHistory ? [] : ['/workflows']));
+        expect(hasHistory ? replace : back).not.toHaveBeenCalled();
+    });
+
+    it('delegates the rendered Back to the host guard instead of the previous destination', async () => {
+        const harness = await loadHarness();
+        const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+        const onBack = vi.fn();
+        const back = vi.fn();
+        const replace = vi.fn();
+        const wrapper = ({ children }: React.PropsWithChildren) => <DestinationInstanceHost
+            tabId="workflow-tab" ref={{ kind: 'workflows', params: { id: 'new' } }} pathname="/workflows/new"
+            focused visible navigation={{ push: vi.fn(), back, replace, canGoBack: () => true }}>
+            {children}
+        </DestinationInstanceHost>;
+        const screen = await renderBody(harness, { onRunNow: vi.fn(), onBack }, { wrapper });
+        await screen.pressByTestIdAsync('workflow-back');
+        expect(onBack).toHaveBeenCalledOnce();
+        expect(back).not.toHaveBeenCalled();
+        expect(replace).not.toHaveBeenCalled();
+    });
+    it.each([false, true])('keeps generic phone chrome and exactly one Back (pushed: %s)', async hasHistory => {
+        windowDimensions = { width: 390, height: 844 };
+        paneState.detailsAvailable = false;
+        const harness = await loadHarness();
+        const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+        const back = vi.fn(); const replace = vi.fn(); const onBack = vi.fn();
+        // The editor names its own generic chrome ("Workflow"); nothing injects it (DESIGN-9 P12).
+        const wrapper = ({ children }: React.PropsWithChildren) => <DestinationInstanceHost phone
+            tabId="workflow-tab" ref={{ kind: 'workflow', params: { id: 'saved' } }} pathname="/workflows/saved"
+            focused visible navigation={{ push: vi.fn(), back, replace, canGoBack: () => hasHistory }}>
+            {children}
+        </DestinationInstanceHost>;
+        const screen = await renderBody(harness, { onRunNow: vi.fn(), onBack }, { wrapper });
+        await act(async () => screen.findHostByTestId('workflow-editor-header')?.props.onLayout?.({ nativeEvent: { layout: { width: 390, height: 100, x: 0, y: 0 } } }));
+        const chrome = screen.findHostByTestId('workspace-destination-header')!;
+        expect(chrome).not.toBeNull();
+        expect(chrome.findAll(node => typeof node.type === 'string' && node.children.includes('workflows.page.chromeTitle'))).not.toHaveLength(0);
+        const backs = screen.findAll(node => typeof node.type === 'string' && node.props.accessibilityLabel === 'common.back');
+        expect(backs).toHaveLength(1);
+        // Pushed or deep-linked, Back lives in the bar, so the identity starts on the same edge.
+        expect(chrome.findAll(node => node === backs[0])).toHaveLength(1);
+        await act(async () => backs[0]!.props.onPress());
+        expect(onBack).toHaveBeenCalledOnce();
+        expect(back).not.toHaveBeenCalled();
+        expect(replace).not.toHaveBeenCalled();
+    });
+
+    it('has no duplicate workflow Back when the navigation column already supplies its destination', async () => {
+        const harness = await loadHarness();
+        const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+        const { AppShellColumnContext } = await import('@/components/navigation/shell/appRail/appShellColumnContext');
+        const wrapper = ({ children }: React.PropsWithChildren) => <AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
+            <DestinationInstanceHost tabId="workflow-tab" ref={{ kind: 'workflows', params: { id: 'saved' } }}
+                pathname="/workflows/saved" focused visible navigation={{ push: vi.fn(), back: vi.fn(), replace: vi.fn() }}>
+                {children}
+            </DestinationInstanceHost>
+        </AppShellColumnContext.Provider>;
+        const screen = await renderBody(harness, { onRunNow: vi.fn() }, { wrapper });
+        expect(screen.findHostByTestId('workflow-back')).toBeNull();
+        expect(screen.findHostByTestId('workflow-editor-header-back-gutter')).toBeNull();
+    });
+
+    it.each([false, true])('only claims actions from its own navigation owner (hosted: %s)', async (hosted) => {
+        const { NavigationRouteContext } = await import('@react-navigation/native');
+        const { useStackHeaderActionsPublisher } = await import('@/components/navigation/stackHeaderActions');
+        const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+        const { PageHeader } = await import('@/components/ui/layout/PageHeader');
+        const retainedAction = vi.fn();
+        const ownAction = vi.fn();
+        const renderRetainedActions = () => React.createElement('Pressable', { testID: 'retained-route-back', onPress: retainedAction });
+        function RetainedHeader() {
+            useStackHeaderActionsPublisher('retained-expo-route', renderRetainedActions);
+            return null;
+        }
+        const header = <PageHeader title="Workflow" actions={React.createElement('Pressable', { testID: 'workflow-own-action', onPress: ownAction })} />;
+        const screen = await renderScreen(<NavigationRouteContext.Provider value={{ key: 'retained-expo-route', name: 'workflows/[id]' }}>
+            <RetainedHeader />
+            {hosted ? <DestinationInstanceHost tabId="workflow-tab" ref={{ kind: 'workflows', params: { id: 'saved' } }}
+                pathname="/workflows/saved" focused visible
+                navigation={{ push: vi.fn(), back: vi.fn(), replace: vi.fn(), canGoBack: () => true }}>{header}</DestinationInstanceHost> : header}
+        </NavigationRouteContext.Provider>);
+        expect(screen.findHostByTestId('retained-route-back') !== null).toBe(!hosted);
+        await screen.pressByTestIdAsync('workflow-own-action');
+        expect(ownAction).toHaveBeenCalledOnce();
+        if (!hosted) {
+            await screen.pressByTestIdAsync('retained-route-back');
+            expect(retainedAction).toHaveBeenCalledOnce();
+        }
     });
 
     it('lets a wrapper host keep one page scroll by composing the body without its own', async () => {
@@ -1159,13 +1362,51 @@ describe('workflow editor body', () => {
         const harness = await loadHarness();
         const ran = vi.fn();
         const saved = vi.fn();
-        await renderBody(harness, { onRunNow: ran, onSave: saved, runPending: true, savePending: true });
+        const screen = await renderBody(harness, { onRunNow: ran, onSave: saved, runPending: true, savePending: true });
+        const runButton = screen.findHostByTestId('workflow-editor-run-now');
+        const label = runButton?.findAll((node) => typeof node.type === 'string'
+            && node.props.children === 'workflows.editor.runNow').at(0);
+        // The native renderer has no paint tree. Follow the label's ancestors
+        // to distinguish a readable label from the spinner's hidden label.
+        const { StyleSheet } = await import('react-native');
+        let readable = label !== undefined;
+        for (let node: ReactTestInstance | undefined = label; node && node !== runButton; node = node.parent ?? undefined) {
+            const style = StyleSheet.flatten(node.props.style);
+            if (style?.opacity === 0 || style?.display === 'none') readable = false;
+        }
+        expect(readable).toBe(true);
         registeredHandlers['workflow.run']!();
         registeredHandlers['workflow.save']!();
         expect(ran).not.toHaveBeenCalled();
         expect(saved).not.toHaveBeenCalled();
         // A pending command is already acknowledged by its own label.
         expect(announceSpy).not.toHaveBeenCalled();
+    });
+
+    it('keeps built-in Duplicate beside the primary in the phone bar, not under the value sheet', async () => {
+        windowDimensions = { width: 390, height: 700 };
+        paneState.detailsAvailable = false;
+        const harness = await loadHarness();
+        const duplicate = vi.fn();
+        const screen = await renderBody(harness, { documentPresentation: { editable: false }, onRunNow: vi.fn(), onDuplicate: duplicate });
+        const bar = screen.findHostByTestId('workflow-editor-phone-bar');
+        expect(bar?.findAll((node) => node.props.testID === 'workflow-editor-duplicate').length).toBeGreaterThan(0);
+        await screen.pressByTestIdAsync('workflow-editor-duplicate');
+        expect(duplicate).toHaveBeenCalledOnce();
+        expect(screen.findByTestId('workflow-editor-save-status')).toBeNull();
+    });
+
+    it('keeps a built-in\'s source with the last word of its description, never alone on a line (DESIGN-9 M4)', async () => {
+        const harness = await loadHarness();
+        const screen = await renderBody(harness, {
+            documentPresentation: { editable: false }, onRunNow: vi.fn(), onDuplicate: vi.fn(),
+            description: 'Several agents plan side by side, then the plan waits for your review.',
+            headerMeta: [{ key: 'catalog', text: 'Built-in' }],
+        });
+        const texts = screen.root.findAll((node) => typeof node.type === 'string' && typeof node.props.children === 'string')
+            .map((node) => node.props.children as string);
+        // No break opportunity around the separator: "review. · Built-in" wraps as one.
+        expect(texts).toContain('Several agents plan side by side, then the plan waits for your review.\u00A0·\u00A0Built-in');
     });
 
     /**
@@ -1189,7 +1430,8 @@ describe('workflow editor body', () => {
         expect(ran).not.toHaveBeenCalled();
         expect(announceSpy).toHaveBeenCalledTimes(1);
         expect(String(announceSpy.mock.calls[0]?.[0])).toContain('workflows.a11y.commandRefused');
-        expect(String(announceSpy.mock.calls[0]?.[0])).toContain('workflows.issue.invalid_input');
+        // The refusal names what to fix, in the step's own words (DESIGN-5 P3).
+        expect(String(announceSpy.mock.calls[0]?.[0])).toContain('workflows.issue.emptyPrompt');
         expect(onSelectBlock).toHaveBeenCalledWith('analyze');
         expect(promptFocus).toHaveBeenCalledTimes(1);
     });
@@ -1272,7 +1514,7 @@ describe('workflow editor body', () => {
         expect(handlers.onRunNow).not.toHaveBeenCalled();
         // Both refusals state the one canonical cause.
         for (const call of announceSpy.mock.calls) {
-            expect(String(call[0])).toContain('workflows.issue.invalid_input');
+            expect(String(call[0])).toContain('workflows.issue.fieldInvalid');
         }
 
         await act(async () => { screen.changeTextByTestId('workflow-editor-input-0-default', '3'); });
@@ -1832,9 +2074,8 @@ describe('workflow editor body', () => {
      * bytes cannot be saved, so the host hears the canonical refusal rather
      * than a Save that silently drops them.
      */
-    it('opens a seeded step on the exact handed-over document and reports its staged bytes as blocking', async () => {
+    it.each(['Compare @issue with @issue', ''])('opens a seeded step on the exact document and blocks staged bytes with prompt %j', async (text) => {
         const harness = await loadHarness();
-        const text = 'Compare @issue with @issue';
         const secondTokenStart = 'Compare @issue with '.length;
         const portableAttachment = {
             v: 1 as const,
@@ -1860,7 +2101,7 @@ describe('workflow editor body', () => {
         };
         const draft = harness.setWorkflowDefaultField(
             harness.createWorkflowEditorDraft({
-                draftId: 'draft-1',
+                draftId: text.length === 0 ? 'seeded-empty-prompt' : 'seeded-written-prompt',
                 name: 'Review',
                 blocks: [{
                     kind: 'step',
@@ -1868,7 +2109,7 @@ describe('workflow editor body', () => {
                     // The portable projection a saved definition may hold.
                     document: {
                         text,
-                        references: [{
+                        references: text.length === 0 ? [] : [{
                             kind: 'partner.reference',
                             ref: 'partner:issue-42',
                             token: '@issue',
@@ -1885,7 +2126,9 @@ describe('workflow editor body', () => {
         );
         const onChange = vi.fn();
         const onValidationChange = vi.fn();
-        await renderScreen(React.createElement(harness.WorkflowEditorBody, {
+        const onSave = vi.fn();
+        const onRunNow = vi.fn();
+        const screen = await renderScreen(React.createElement(harness.WorkflowEditorBody, {
             draft,
             onChange,
             machineName: 'Mac Studio',
@@ -1899,7 +2142,7 @@ describe('workflow editor body', () => {
                 blockId: 'analyze',
                 document: {
                     text,
-                    structuredInputMentions: [{
+                    structuredInputMentions: text.length === 0 ? [] : [{
                         kind: 'partner.reference',
                         ref: 'partner:issue-42',
                         label: 'Issue #42',
@@ -1912,12 +2155,16 @@ describe('workflow editor body', () => {
                 selection: { start: 4, end: 9 },
             }] as never,
             onValidationChange,
+            onSave,
+            onRunNow,
+            saveStatus: { kind: 'unsaved' },
+            projectTarget: { machineId: 'machine-1', directory: '/Users/me/project' },
         }));
 
         const composerRef = composerProps.byBlockId.get('analyze')?.composerRef as never;
         expect(readComposerPresentationSnapshot(composerRef)).toMatchObject({
             text,
-            references: [{
+            references: text.length === 0 ? [] : [{
                 ref: 'partner:issue-42',
                 start: secondTokenStart,
                 end: secondTokenStart + '@issue'.length,
@@ -1936,6 +2183,17 @@ describe('workflow editor body', () => {
                 blockId: 'analyze',
             })]),
         });
+        const validation = onValidationChange.mock.lastCall?.[0];
+        const errors = validation.issues.filter((entry: { severity: string }) => entry.severity === 'error');
+        expect(errors).toHaveLength(text.length === 0 ? 2 : 1);
+        await act(async () => {
+            registeredHandlers['workflow.save']!();
+            registeredHandlers['workflow.run']!();
+        });
+        expect(screen.getTextContent()).toContain(`workflows.page.issuesToFix:${JSON.stringify({ count: errors.length })}`);
+        expect(onSave).not.toHaveBeenCalled();
+        expect(onRunNow).not.toHaveBeenCalled();
+        if (text.length === 0) expect(validation.normalizedDefinition).toBeUndefined();
     });
 
     /**

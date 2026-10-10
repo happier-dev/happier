@@ -1,9 +1,9 @@
 import { z } from 'zod';
 
-import { AutomationStoredDefinitionExecutionRecipeV1Schema, AutomationStoredDefinitionExecutionRecipeV1ReadSchema, type AutomationStoredDefinitionExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
-import { AutomationStoredWorkflowDefinitionRecipeV2Schema, AutomationStoredWorkflowDefinitionRecipeV2ReadSchema, type AutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
+import { AutomationStoredDefinitionExecutionRecipeV1Schema, type AutomationStoredDefinitionExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
+import { AutomationStoredWorkflowDefinitionRecipeV2Schema, type AutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { AutomationSourceSelectorIdV1Schema, type AutomationSourceSelectorIdV1 } from '@happier-dev/protocol/automations/automationEventJsonBoundsV1';
-import type { AutomationAssignmentInput, AutomationDefinitionDetail } from '@happier-dev/protocol/automations/automationApiV3';
+import type { AutomationAssignmentInput } from '@happier-dev/protocol/automations/automationApiV3';
 import type { AutomationEventTriggerDefinitionStoredPayloadV1 } from '@happier-dev/protocol/automations/event';
 import type { AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import type { AutomationTriggerId, AutomationTriggerRevision } from '@happier-dev/protocol/automations/automationTriggerIdentity';
@@ -188,57 +188,4 @@ export function replaceAutomationEditorExecutionRecipe(
         throw new Error('Automation recipe must use the exact next template version');
     }
     return { ...draft, executionRecipe: recipe, recipeDirty: true };
-}
-
-/**
- * Projects direct detail after the caller has opened each private Event
- * envelope through the canonical stored-content owner. Detail intentionally
- * cannot expose those inputs by itself, so a missing exact definition fails
- * closed instead of fabricating an editable trigger.
- */
-export function automationEditorDraftFromDetail(
-    detail: AutomationDefinitionDetail,
-    triggerDefinitions: ReadonlyMap<string, AutomationEditorTriggerDefinitionSeed>,
-): AutomationEditorDraft | null {
-    const executionRecipe = z.union([AutomationStoredDefinitionExecutionRecipeV1ReadSchema, AutomationStoredWorkflowDefinitionRecipeV2ReadSchema]).safeParse(detail.executionRecipe);
-    if (!executionRecipe.success || executionRecipe.data.templateVersion !== detail.templateVersion) return null;
-    const triggers: AutomationEditorTriggerDraft[] = [];
-    for (const trigger of detail.triggers) {
-        const seed = triggerDefinitions.get(trigger.id);
-        if (!seed) return null;
-        if (
-            (seed.definition && seed.definition.kind !== trigger.kind)
-            || (!seed.definition && (trigger.kind !== 'pluginEvent' || !seed.retainedEvent))
-            || (trigger.kind === 'pluginEvent' && !seed.eventSourceBinding)
-        ) return null;
-        triggers.push({
-            clientId: trigger.id,
-            persisted: { id: trigger.id, revision: trigger.revision },
-            definition: seed.definition,
-            ...(seed.retainedEvent ? { retainedEvent: seed.retainedEvent } : {}),
-            ...(seed.eventSourceBinding ? { eventSourceBinding: seed.eventSourceBinding } : {}),
-            ...(seed.retainedEventPrivateDefinition ? {
-                retainedEventPrivateDefinition: seed.retainedEventPrivateDefinition,
-            } : {}),
-        });
-    }
-    return {
-        automationId: detail.id,
-        pendingAutomationId: null,
-        expectedTemplateVersion: detail.templateVersion,
-        workflowDefinitionId: detail.workflowDefinitionId ?? null,
-        scopeSessionId: detail.scopeSessionId ?? null,
-        removedTriggers: [],
-        name: detail.name,
-        description: detail.description,
-        enabled: detail.enabled,
-        recipeDirty: false,
-        executionRecipe: executionRecipe.data,
-        assignments: detail.assignments.map((assignment) => ({
-            machineId: assignment.machineId,
-            enabled: assignment.enabled,
-            priority: assignment.priority,
-        })),
-        triggers,
-    };
 }

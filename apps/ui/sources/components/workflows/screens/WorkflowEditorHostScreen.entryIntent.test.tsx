@@ -11,9 +11,14 @@ import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { WorkflowEditorHostScreen } from './WorkflowEditorHostScreen';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { WorkflowRunComposer } from '../run/WorkflowRunComposer';
-import type { IModal } from '@/modal';
+import { ModalProvider, type IModal } from '@/modal';
 import type { WorkflowDefinitionGetResultV1 } from '@happier-dev/protocol';
 import type { WorkflowRunNowRequest } from '../run/useWorkflowRunNowController';
+
+// Entry-intent tests do not stream Markdown; keep the real editor below this vendor boundary.
+vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
+    splitStreamingRevealTextParts: () => { throw new Error('Unexpected vendor Markdown reveal in editor entry-intent test'); },
+}));
 
 /**
  * The saved-row entry intents, consumed at the one editor owner.
@@ -53,9 +58,14 @@ vi.mock('expo-router', async () => {
 vi.mock('expo-crypto', () => ({ randomUUID: () => 'draft-or-run-id' }));
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: { show: modalShowSpy, hide: modalHideSpy, update: modalUpdateSpy },
-    }).module;
+    const mock = createModalModuleMock({ renderCustomModals: true });
+    modalShowSpy.mockImplementation(mock.spies.show);
+    modalHideSpy.mockImplementation(mock.spies.hide);
+    modalUpdateSpy.mockImplementation(mock.spies.update);
+    return {
+        ...mock.module,
+        Modal: { ...mock.module.Modal, show: modalShowSpy, hide: modalHideSpy, update: modalUpdateSpy },
+    };
 });
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
@@ -88,9 +98,10 @@ vi.mock('@/sync/domains/workflows/workflowDocumentFile', () => ({
 vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', () => ({
     openMachinePathBrowserModal: vi.fn(),
 }));
-// The detached-runtime capability probe is a real network/daemon boundary.
-vi.mock('@/sync/ops/actions/executionRunDetachedSupport', () => ({
-    detectDetachedExecutionRunSupport: async () => 'machine_does_not_support_detached_runs',
+// Leave detached-support decisions real; only its machine RPC is unavailable.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc')>(),
+    machineRpcWithServerScope: async () => { throw new Error('Machine capability RPC unavailable in this fixture'); },
 }));
 const runNowSpy = vi.hoisted(() => vi.fn<(request: WorkflowRunNowRequest) => Promise<null>>(async () => null));
 vi.mock('../run/useWorkflowRunNowController', () => ({
@@ -140,7 +151,7 @@ function pushSpy(): ReturnType<typeof vi.fn> {
 }
 
 function EditorPaneWrapper({ children }: React.PropsWithChildren) {
-    return <AppPaneProvider>{children}</AppPaneProvider>;
+    return <AppPaneProvider><ModalProvider>{children}</ModalProvider></AppPaneProvider>;
 }
 
 beforeEach(() => {

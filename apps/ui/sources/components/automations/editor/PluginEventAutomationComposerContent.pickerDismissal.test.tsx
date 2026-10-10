@@ -219,7 +219,7 @@ describe('PluginEventAutomationComposerContent picker dismissal', () => {
         standardCleanup();
     });
 
-    it('searches and virtualizes a nontrivial semantic Event catalog before selection', async () => {
+    it('finds an event by its human label or exact event id in a virtualized catalog', async () => {
         selectionListLegendMock.state.reset();
         const selectEvent = vi.fn();
         const eligibleEvents = Array.from({ length: 60 }, (_, index) => createEvent(index));
@@ -248,8 +248,16 @@ describe('PluginEventAutomationComposerContent picker dismissal', () => {
         await act(async () => {
             search?.props.onChangeText('Repository event 59');
         });
+        expect(screen.findByTestId(`automation-event-option-${eligibleEvents[59]!.event.id}`)).toBeTruthy();
+
+        // IDs distinguish events that share a human label and let authors use
+        // the identity copied from a real occurrence or plugin documentation.
+        await act(async () => {
+            search?.props.onChangeText(eligibleEvents[59]!.event.id);
+        });
         const option = screen.findByTestId(`automation-event-option-${eligibleEvents[59]!.event.id}`);
         expect(option).toBeTruthy();
+        expect(screen.getTextContent()).toContain(eligibleEvents[59]!.event.id);
         await act(async () => option?.props.onPress());
         expect(selectEvent).toHaveBeenCalledWith(eligibleEvents[59]);
     });

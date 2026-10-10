@@ -133,6 +133,7 @@ export async function ensurePluginEventAutomationWebhookEndpoint(params: Readonl
     executeAction?: PluginWebhookEndpointUiActionExecutor;
 }>): Promise<PluginEventAutomationWebhookEndpointResult> {
     const webhookContribution = params.eligibleEvent.event.automation.source.webhookContributionRef;
+    if (!('materializationRef' in params.origin.origin)) return { kind: 'unavailable' };
     const materializationRef = params.origin.origin.materializationRef;
     // Read through a call so the post-await recheck below observes the live
     // signal instead of the state narrowed by this first guard.

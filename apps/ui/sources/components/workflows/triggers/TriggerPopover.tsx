@@ -3,15 +3,17 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { JsonValue, TriggerTargetV1, WorkflowDefinitionV1 } from '@happier-dev/protocol';
 import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
+import type { AutomationRunPluginEventTriggerEvidenceV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
+import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
+import { FIELD_BOX_METRICS } from '@/components/ui/forms/fieldBox';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
@@ -20,6 +22,7 @@ import { Text } from '@/components/ui/text/Text';
 import { formatWorkflowProblemMessage } from '@/components/workflows/presentation/workflowProblemPresentation';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { useViewportClass } from '@/utils/platform/useViewportClass';
 import { ActionInputFields } from '@/components/sessions/actions/ActionInputFields';
 import { useActionFieldOptionsForMachine } from '@/components/sessions/actions/useSessionActionFieldOptions';
 import { findWorkflowActionSpec } from '@/components/workflows/presentation/workflowActionCatalog';
@@ -43,12 +46,13 @@ import {
     type TriggerThenValue,
     type TriggerWhenValue,
 } from './sessionTriggerForm';
-import { buildSimpleScheduleCron, formatClockTime, parseClockTime, type SimpleScheduleRepeat } from './triggerSchedule';
+import { buildSimpleScheduleCron, formatClockTimeInput, parseClockTime, type SimpleScheduleRepeat } from './triggerSchedule';
 import { useNotifyMeChannelOptions, useTriggerWorkflowDefinition } from './useTriggerThenOptions';
 import { SessionTriggerPullRequestPicker } from './SessionTriggerPullRequestPicker';
 import { WorkflowExamplesSection } from '../library/WorkflowExamplesSection';
 import { resolveWorkflowBuiltinInputPresentation } from '../presentation/workflowBuiltinInputPresentation';
 import type { WorkflowReferenceOption } from '../presentation/workflowReferenceOptions';
+import { TriggerPluginEventRows } from './TriggerPluginEventRows';
 
 /** A choice the popover lists but cannot offer here, with the reason it says instead. */
 export type TriggerKindAvailability = Readonly<Partial<Record<SessionTriggerWhenKind, string>>>;
@@ -81,9 +85,12 @@ type TriggerPopoverBaseProps = Readonly<{
     subtitle?: string;
     /** Reviewed legacy edit: opening never writes; the disclosure stays above Done. */
     submitNotice?: string;
+    /** Explicit consent uses Save rather than the usual Done. */
+    submitLabel?: string;
     /** A retained manual Automation has no firing definition; saving must not invent one. */
     manual?: boolean;
     onRunNow?: () => Promise<void>;
+    onHistory?: () => void;
     /** A new trigger's starting When (the "When this turn finishes…" entry binds it to that turn). */
     initialWhen?: TriggerWhenValue;
     /**
@@ -92,6 +99,10 @@ type TriggerPopoverBaseProps = Readonly<{
      */
     machineId?: string | null;
     serverId?: string | null;
+    /** The exact saved row, whose private source configuration is read only when editing it. */
+    eventEdit?: Readonly<{ automationId: string; triggerId: string }>;
+    /** Route-local retained observation for a non-executing draft test. Never re-admitted. */
+    activityEvent?: AutomationRunPluginEventTriggerEvidenceV1;
     /** Host rows under When (the set's Runs on), and after Then (a workflow's Inputs and Roles). */
     setRows?: React.ReactNode;
     afterRows?: React.ReactNode;
@@ -103,7 +114,6 @@ type TriggerPopoverBaseProps = Readonly<{
      */
     onSaveAsWorkflow?: (target: TriggerTargetV1) => void;
     /** Writes the trigger through its owner; a rejection keeps the popover and its edits. */
-    onToggleEnabled?: (next: boolean) => Promise<void>;
     onDelete?: () => Promise<void>;
 }>;
 
@@ -121,7 +131,9 @@ export type TriggerPopoverProps = TriggerPopoverBaseProps & (
 );
 
 /** The popover is exactly as wide as its content, so no empty band sits beside the rows (lab T1). */
-const TRIGGER_POPOVER_WIDTH = 380;
+// T1's content width plus the canonical page-row insets, rather than charging the insets to its controls.
+const TRIGGER_POPOVER_WIDTH = 380 + 2 * PAGE_LIST_METRICS.rowPaddingHorizontalPx;
+const CLOCK_FIELD_STYLE = { minWidth: 0, width: FIELD_BOX_METRICS.triggerMinWidthPx } as const;
 
 const styles = StyleSheet.create((theme) => ({
     surface: {
@@ -152,6 +164,11 @@ const styles = StyleSheet.create((theme) => ({
 const REPEATS: readonly SimpleScheduleRepeat[] = ['daily', 'weekdays', 'weekly'];
 const REPEAT_LABEL_KEYS = { daily: 'everyDay', weekdays: 'weekdays', weekly: 'weekly' } as const;
 
+// The form is narrow even on desktop. Its layout follows the window, not the list's page breakpoint.
+function useTriggerFieldLayout() {
+    return useViewportClass() === 'compact' ? 'stacked' as const : 'inline' as const;
+}
+
 function whenDescription(kind: SessionTriggerWhenKind, sessionScoped: boolean): string | undefined {
     switch (kind) {
         case 'turnEnds':
@@ -159,6 +176,7 @@ function whenDescription(kind: SessionTriggerWhenKind, sessionScoped: boolean): 
         case 'sessionArchived':
         case 'sessionStarts':
         case 'prComment':
+        case 'pluginEvent':
             return t(`workflows.triggers.kindDescription.${kind}`);
         // "Continues this session on a schedule" is a session trigger's; a workflow or Account
         // schedule runs its own target, which its rows already say.
@@ -181,6 +199,7 @@ function FieldSelect(props: Readonly<{
     onSelect: (id: string) => void;
 }>) {
     const [open, setOpen] = React.useState(false);
+    const accessoryLayout = useTriggerFieldLayout();
     return (
         <DropdownMenu
             testID={props.testID}
@@ -193,7 +212,7 @@ function FieldSelect(props: Readonly<{
             itemTrigger={{
                 title: props.title,
                 ...(props.subtitle === undefined ? {} : { subtitle: props.subtitle }),
-                itemProps: { subtitleLines: 0 },
+                itemProps: { subtitleLines: 0, accessoryLayout },
             }}
             {...(props.search ? { search: true } : {})}
         />
@@ -203,7 +222,7 @@ function FieldSelect(props: Readonly<{
 /**
  * The one trigger popover (FIN 04 §5.4–§5.5; 07 S4, S16, S16b; lab `editor-T1/T2`): title = the
  * summary, **When** (the kinds), the kind's own rows, **Then** with its four choices and their rows,
- * and a foot with **Turn off** and **Delete trigger**, or **Cancel** and **Add trigger** for a new
+ * and a foot with history, Run now and **Delete trigger**, or **Cancel** and **Add trigger** for a new
  * one. Session and Account triggers differ only in the kinds offered and the write their host makes.
  */
 export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
@@ -216,6 +235,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
     const [failure, setFailure] = React.useState<string | null>(null);
     const [rawInputText, setRawInputText] = React.useState<Readonly<Record<string, string>>>({});
     const [examplesOpen, setExamplesOpen] = React.useState(false);
+    const [eventEditing, setEventEditing] = React.useState(false);
     const workflow = useTriggerWorkflowDefinition(then.kind === 'runWorkflow' ? then.ref : null,
         props.libraryWorkflowsAvailable !== false);
     const inlineDefinition = then.kind === 'kept' && then.target.kind === 'inline' ? then.target.definition : null;
@@ -246,7 +266,9 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
     const title = isNew
         ? props.newTitle ?? t('workflows.triggers.popover.newTrigger')
         : props.manual ? t('workflows.triggers.summary.manual')
-            : displayedTrigger === null ? t('workflows.triggers.summary.schedule') : formatTriggerSummary(displayedTrigger);
+            : displayedTrigger === null ? when.kind === 'pluginEvent'
+                ? when.eventRef ? formatTriggerSummary({ kind: 'pluginEvent', eventRef: when.eventRef }) : t('workflows.triggers.kind.pluginEvent')
+                : t('workflows.triggers.summary.schedule') : formatTriggerSummary(displayedTrigger);
 
     const run = React.useCallback((operation: () => Promise<void>, close = true) => {
         if (pending) return;
@@ -283,23 +305,86 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
         testID: `${props.testID}-then:${kind}`,
         title: t(`workflows.triggers.then.${kind}`),
     })), { id: 'example', testID: `${props.testID}-examples`, title: t('workflows.examples.title') }];
+    const completion = <RoundButton testID={`${props.testID}-submit`} size="small"
+        title={props.submitLabel ?? t('workflows.triggers.popover.done')}
+        disabled={!complete} loading={pending} onPress={submit} />;
 
     return (
         <Popover
+            // Each step reuses the overlay's focus/close owner; the parent keeps the form draft.
+            key={eventEditing ? 'event' : 'trigger'}
             open
+            phonePresentation="sheet"
+            sheetHeaderAction={!isNew && !eventEditing ? completion : undefined}
+            sheetSubtitle={eventEditing ? undefined : unavailableWhen ?? props.subtitle}
+            accessibilityLabel={eventEditing ? t('workflows.triggers.popover.configureEvent') : title}
             anchorRef={props.anchorRef}
-            placement="auto"
+            placement="bottom"
             maxWidthCap={TRIGGER_POPOVER_WIDTH}
             maxHeightCap={640}
             autoFocusOnOpen
             onRequestClose={props.onRequestClose}
-            // Beside its row, the popover starts level with it and only moves up as far as the
-            // window needs (lab T1); centring a tall form on a short row pinned it to the window top.
-            portal={{ web: true, native: true, matchAnchorWidth: false, anchorAlignVertical: 'start' }}
+            // Keep both steps on the launching row's edge. Side-auto placement put the event
+            // step over the document when the settings pane had no room to its right.
+            portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false, anchorAlign: 'end' }}
         >
-            {({ maxHeight }) => (
+            {({ maxHeight, placement, presentation }) => eventEditing && when.kind === 'pluginEvent' ? (
+                <TriggerPluginEventRows testID={props.testID} when={when} onChange={setWhen}
+                    machineId={props.machineId ?? null} serverId={props.serverId ?? null}
+                    eventEdit={props.eventEdit} activityEvent={props.activityEvent}
+                    editing onEditingChange={setEventEditing} editorMaxHeight={maxHeight} />
+            ) : (
                 // An opaque theme surface: the form must not show the document through it (lab T1).
-                <FloatingOverlay maxHeight={maxHeight} scrollEnabled surfaceChrome="theme">
+                <FloatingOverlay maxHeight={maxHeight} scrollEnabled surfaceChrome="theme" arrow={{ placement }} footer={<RoundButtonSizeScope size="small" presentation="uniform"><View style={styles.foot}>
+                            {isNew ? (
+                                <>
+                                    <RoundButton size="small" display="inverted"
+                                        testID={`${props.testID}-cancel`}
+                                        title={t('workflows.triggers.popover.cancel')}
+                                        onPress={props.onRequestClose}
+                                    />
+                                    <View style={styles.footEnd}>
+                                        <RoundButton
+                                            testID={`${props.testID}-submit`}
+                                            size="small"
+                                            title={t('workflows.triggers.popover.addTrigger')}
+                                            disabled={!complete}
+                                            loading={pending}
+                                            onPress={submit}
+                                        />
+                                    </View>
+                                </>
+                            ) : (
+                                <>
+                                    {props.onHistory ? <RoundButton size="small" display="inverted" testID={`${props.testID}-history`}
+                                        title={t("workflows.destination.history.title")} onPress={props.onHistory} /> : null}
+                                    {props.onRunNow ? <RoundButton size="small" display="secondary" testID={`${props.testID}-run-now`}
+                                        title={t('workflows.editor.runNow')} disabled={pending}
+                                        onPress={() => run(props.onRunNow!, false)} /> : null}
+                                    {props.onSaveAsWorkflow && target?.kind === 'inline' ? (
+                                        <RoundButton size="small" display="inverted"
+                                        testID={`${props.testID}-save-as-workflow`}
+                                            title={t('workflows.triggers.popover.saveAsWorkflow')}
+                                            accessibilityLabel={`${t('workflows.triggers.popover.saveAsWorkflow')}. ${t('workflows.triggers.popover.saveAsWorkflowDescription')}`}
+                                            onPress={() => {
+                                                props.onSaveAsWorkflow?.(target);
+                                                props.onRequestClose();
+                                            }}
+                                        />
+                                    ) : null}
+                                    {props.onDelete ? (
+                                        <View style={styles.footEnd}>
+                                            <RoundButton size="small" display="destructive"
+                                                testID={`${props.testID}-delete`}
+                                                title={t('workflows.triggers.popover.deleteTrigger')}
+                                                disabled={pending}
+                                                onPress={() => run(props.onDelete!)}
+                                            />
+                                        </View>
+                                    ) : null}
+                                </>
+                            )}
+                        </View></RoundButtonSizeScope>}>
                     <ListPresentationProvider value="page">
                     <View testID={props.testID} style={styles.surface}>
                         {props.submitNotice ? <Item mode="info" title={props.submitNotice} titleLines={0} showChevron={false} /> : null}
@@ -308,22 +393,12 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                             beside the title (lab T1). */}
                         {/* The popover is the surface: its rows sit on it directly, with no card inside it (lab T1). */}
                         <ItemGroup
+                            header={presentation === 'sheet' ? 'none' : 'section'}
                             surface="none"
-                            title={title}
+                            title={presentation === 'sheet' ? undefined : title}
                             {...(unavailableWhen !== undefined ? { description: unavailableWhen }
                                 : props.subtitle === undefined ? {} : { description: props.subtitle })}
-                            {...(isNew ? {} : {
-                                action: (
-                                    <RoundButton
-                                        testID={`${props.testID}-submit`}
-                                        size="small"
-                                        title={t('workflows.triggers.popover.done')}
-                                        disabled={!complete}
-                                        loading={pending}
-                                        onPress={submit}
-                                    />
-                                ),
-                            })}
+                            {...(isNew || presentation === 'sheet' ? {} : { action: completion })}
                         >
                             {props.manual ? <Item mode="info" title={t('workflows.triggers.popover.when')}
                                 detail={t('workflows.triggers.summary.manual')} showChevron={false} /> : <FieldSelect
@@ -339,6 +414,10 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                                 }}
                             />}
                             {!props.manual && when.kind === 'schedule' ? <ScheduleRows testID={props.testID} when={when} onChange={setWhen} /> : null}
+                            {!props.manual && when.kind === 'pluginEvent' ? <TriggerPluginEventRows
+                                testID={props.testID} when={when} onChange={setWhen} machineId={props.machineId ?? null}
+                                serverId={props.serverId ?? null} eventEdit={props.eventEdit} activityEvent={props.activityEvent}
+                                onEditingChange={setEventEditing} /> : null}
                             {(when.kind === 'prComment' || when.kind === 'ciFailed') && props.sessionId !== null ? (
                                 <SessionTriggerPullRequestPicker
                                     testID={`${props.testID}-pull-request`}
@@ -404,65 +483,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                         {failure === null ? null : (
                             <Text testID={`${props.testID}-failure`} accessibilityLiveRegion="polite" style={styles.failure}>{failure}</Text>
                         )}
-                        <View style={styles.foot}>
-                            {isNew ? (
-                                <>
-                                    <ToolbarButton
-                                        testID={`${props.testID}-cancel`}
-                                        label={t('workflows.triggers.popover.cancel')}
-                                        onPress={props.onRequestClose}
-                                    />
-                                    <View style={styles.footEnd}>
-                                        <RoundButton
-                                            testID={`${props.testID}-submit`}
-                                            size="small"
-                                            title={t('workflows.triggers.popover.addTrigger')}
-                                            disabled={!complete}
-                                            loading={pending}
-                                            onPress={submit}
-                                        />
-                                    </View>
-                                </>
-                            ) : (
-                                <>
-                                    {props.onRunNow ? <ToolbarButton testID={`${props.testID}-run-now`}
-                                        label={t('workflows.editor.runNow')} disabled={pending}
-                                        onPress={() => run(props.onRunNow!, false)} /> : null}
-                                    {/* Quiet, never a second primary: Turn off is the trigger's own
-                                        on/off (not the run's Pause), Delete trigger is destructive last. */}
-                                    {props.onToggleEnabled ? (
-                                        <ToolbarButton
-                                            testID={`${props.testID}-toggle`}
-                                            label={t(enabled ? 'workflows.triggers.popover.turnOff' : 'workflows.triggers.popover.turnOn')}
-                                            disabled={pending}
-                                            onPress={() => run(() => props.onToggleEnabled!(!enabled))}
-                                        />
-                                    ) : null}
-                                    {props.onSaveAsWorkflow && target?.kind === 'inline' ? (
-                                        <ToolbarButton
-                                            testID={`${props.testID}-save-as-workflow`}
-                                            label={t('workflows.triggers.popover.saveAsWorkflow')}
-                                            accessibilityLabel={`${t('workflows.triggers.popover.saveAsWorkflow')}. ${t('workflows.triggers.popover.saveAsWorkflowDescription')}`}
-                                            onPress={() => {
-                                                props.onSaveAsWorkflow?.(target);
-                                                props.onRequestClose();
-                                            }}
-                                        />
-                                    ) : null}
-                                    {props.onDelete ? (
-                                        <View style={styles.footEnd}>
-                                            <ToolbarButton
-                                                testID={`${props.testID}-delete`}
-                                                tone="danger"
-                                                label={t('workflows.triggers.popover.deleteTrigger')}
-                                                disabled={pending}
-                                                onPress={() => run(props.onDelete!)}
-                                            />
-                                        </View>
-                                    ) : null}
-                                </>
-                            )}
-                        </View>
+
                     </View>
                     </ListPresentationProvider>
                 </FloatingOverlay>
@@ -478,6 +499,7 @@ function ScheduleRows(props: Readonly<{
     onChange: (next: TriggerWhenValue) => void;
 }>) {
     const { when } = props;
+    const accessoryLayout = useTriggerFieldLayout();
     const schedule = when.schedule;
     const everyMs = when.everyMs;
     if (schedule === null && everyMs !== undefined) {
@@ -485,6 +507,8 @@ function ScheduleRows(props: Readonly<{
         // repeat replaces it with that schedule (09:00 until the person picks a time).
         return (
             <SegmentedChoiceItem<'interval' | SimpleScheduleRepeat>
+                accessoryLayout="stacked"
+                labelSize="field"
                 testIDPrefix={`${props.testID}-repeat`}
                 title={t('workflows.triggers.popover.repeat')}
                 value="interval"
@@ -503,6 +527,7 @@ function ScheduleRows(props: Readonly<{
     if (schedule === null) {
         return (
             <FieldValueItem
+                accessoryLayout={accessoryLayout}
                 testID={`${props.testID}-expression`}
                 title={t('workflows.triggers.popover.expression')}
                 {...(when.timezone ? { subtitle: when.timezone } : {})}
@@ -517,6 +542,8 @@ function ScheduleRows(props: Readonly<{
     return (
         <>
             <SegmentedChoiceItem<SimpleScheduleRepeat>
+                accessoryLayout="stacked"
+                labelSize="field"
                 testIDPrefix={`${props.testID}-repeat`}
                 title={t('workflows.triggers.popover.repeat')}
                 value={schedule.repeat}
@@ -533,13 +560,15 @@ function ScheduleRows(props: Readonly<{
                 />
             ) : null}
             <FieldValueItem
+                accessoryLayout={accessoryLayout}
                 testID={`${props.testID}-at`}
+                fieldStyle={CLOCK_FIELD_STYLE}
                 title={t('workflows.triggers.popover.at')}
                 {...(when.timezone ? { subtitle: when.timezone } : {})}
-                value={formatClockTime(schedule)}
+                value={formatClockTimeInput(schedule)}
                 onCommit={(draft) => {
                     const time = parseClockTime(draft);
-                    if (time === null) return formatClockTime(schedule);
+                    if (time === null) return formatClockTimeInput(schedule);
                     setSchedule({ ...schedule, ...time });
                     return undefined;
                 }}
@@ -565,6 +594,7 @@ function ThenRows(props: Readonly<{
     pending: boolean;
 }>) {
     const { then } = props;
+    const accessoryLayout = useTriggerFieldLayout();
     switch (then.kind) {
         case 'sendPrompt':
             return (
@@ -604,12 +634,14 @@ function ThenRows(props: Readonly<{
             return (
                 <>
                     <FieldValueItem
+                        accessoryLayout={accessoryLayout}
                         testID={`${props.testID}-message`}
                         title={t('workflows.triggers.then.message')}
                         value={then.message}
                         onCommit={(message) => props.onChange({ ...then, message })}
                     />
                     <FieldValueItem
+                        accessoryLayout={accessoryLayout}
                         testID={`${props.testID}-title`}
                         title={t('workflows.triggers.then.title')}
                         value={then.title}
@@ -672,6 +704,7 @@ function RunsInRows(props: Readonly<{
     return (
         <>
             <SegmentedChoiceItem<(typeof RUNS_IN_KINDS)[number]>
+                labelSize="field"
                 testIDPrefix={`${props.testID}-runs-in`}
                 title={t('workflows.triggers.then.runsIn')}
                 value={props.runsIn.kind}
@@ -772,6 +805,7 @@ function SendToSelect(props: Readonly<{
     onChange: (channels: readonly string[]) => void;
 }>) {
     const [open, setOpen] = React.useState(false);
+    const accessoryLayout = useTriggerFieldLayout();
     const options = useNotifyMeChannelOptions();
     const labels = new Map(options.map((option) => [option.value, option.label]));
     const summary = props.selected.length === 0
@@ -792,7 +826,7 @@ function SendToSelect(props: Readonly<{
             onSelect={(id) => props.onChange(props.selected.includes(id)
                 ? props.selected.filter((channel) => channel !== id)
                 : [...props.selected, id])}
-            itemTrigger={{ title: t('workflows.triggers.then.sendTo'), detailFormatter: () => summary }}
+            itemTrigger={{ title: t('workflows.triggers.then.sendTo'), detailFormatter: () => summary, itemProps: { accessoryLayout } }}
         />
     );
 }

@@ -39,12 +39,16 @@ export function formatWorkflowAnnouncement(
         ? `${announcement.attentionCount} ${t('workflows.a11y.needsYouLoaded')}`
         : t('workflows.a11y.needsYou', { count: announcement.attentionCount });
     case 'validation':
+      // The same words the step shows (DESIGN-5 P3): the editor's issue owner, else the code's sentence.
       return announcement.blockId === undefined
-        ? t('workflows.a11y.validation', { reason: t(`workflows.issue.${announcement.issueCode}`) })
+        ? t('workflows.a11y.validation', { reason: announcement.reason ?? t(`workflows.issue.${announcement.issueCode}`) })
         : t('workflows.a11y.validationInBlock', {
           block: resolveBlockLabel(announcement.blockId),
-          reason: t(`workflows.issue.${announcement.issueCode}`),
+          reason: announcement.reason ?? t(`workflows.issue.${announcement.issueCode}`),
         });
+    case 'ready':
+      // The header's own readout word (07 "One validity readout").
+      return t('workflows.page.readyToRun');
     case 'inserted':
       return t('workflows.a11y.inserted', {
         block: resolveBlockLabel(announcement.blockId),

@@ -47,6 +47,12 @@ describe('resolvePluginEventEditorProjectionMachineId', () => {
             },
             authoringMachineId: 'execution-assignment-machine',
         })).toBeNull();
+
+        expect(resolvePluginEventEditorProjectionMachineId({
+            observation: { kind: 'durablePush', endpointMaterializationRef: null },
+            authoringMachineId: 'execution-assignment-machine',
+            resolvedEndpointMachineId: 'current-endpoint-machine',
+        })).toBe('current-endpoint-machine');
     });
 
     it('rejects completion when the selected materialization is no longer current', () => {
