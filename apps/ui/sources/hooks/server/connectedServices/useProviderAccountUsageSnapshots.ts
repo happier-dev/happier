@@ -31,6 +31,7 @@ import type {
     ExpectedActiveServerFetchBasis,
 } from '@/sync/http/client';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { HappyError } from '@/utils/errors/errors';
 
 import type {
     ProviderAccountUsageRecordId,
@@ -209,7 +210,7 @@ export function useProviderAccountUsageSnapshots(
         fireAndForget((async () => {
             type RefreshOutcome = Readonly<
                 | { recordId: string; status: 'success'; opened: ProviderAccountUsageSnapshotV1 | null }
-                | { recordId: string; status: 'error' }
+                | { recordId: string; status: 'error' | 'denied' }
             >;
             let pendingOutcomes: RefreshOutcome[] = [];
             let publicationScheduled = false;
@@ -243,14 +244,14 @@ export function useProviderAccountUsageSnapshots(
                             const existing = entries[recordId];
                             const consecutiveErrors = (existing?.consecutiveErrors ?? 0) + 1;
                             next[recordId] = {
-                                snapshot: existing?.snapshot ?? null,
+                                snapshot: outcome.status === 'denied' ? null : existing?.snapshot ?? null,
                                 nextFetchAtMs: now
                                     + computeConnectedServiceQuotaErrorBackoffMs(
                                         consecutiveErrors,
                                     ),
                                 consecutiveErrors,
                                 loading: false,
-                                hadError: Boolean(existing?.snapshot),
+                                hadError: outcome.status !== 'denied' && Boolean(existing?.snapshot),
                             };
                         }
                     }
@@ -289,8 +290,9 @@ export function useProviderAccountUsageSnapshots(
                             },
                         });
                         enqueueOutcome({ recordId, status: 'success', opened });
-                    } catch {
-                        enqueueOutcome({ recordId, status: 'error' });
+                    } catch (error) {
+                        enqueueOutcome({ recordId, status: error instanceof HappyError && (error.status === 401 || error.status === 403)
+                            ? 'denied' : 'error' });
                     }
                 }));
                 // Promise continuations that settle in the same turn share the

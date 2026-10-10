@@ -2,6 +2,8 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConnectedServiceIdSchema } from '@happier-dev/protocol';
+import type { AccountProfile } from '@happier-dev/protocol/account/profile';
+import type { QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import type { ConnectedAccountIndexFacts } from './index/ConnectedAccountIndexRow';
 import type { ConnectedServicesConnectMore } from './setup/ConnectedServicesConnectMore';
@@ -10,11 +12,15 @@ import {
     connectedServicesModuleState,
     installConnectedServicesCommonModuleMocks,
 } from './connectedServicesTestHelpers';
+import { ConnectedServicesAgentSignInView } from './collection/ConnectedServicesAgentSignInView';
+import { applyConnectedAccountCatalogSnapshot } from '@/sync/store/settings/connectedAccountCatalogSnapshot';
 
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const modalAlertSpy = vi.hoisted(() => vi.fn((..._args: Parameters<IModal['alert']>) => undefined));
+const modalShowSpy = vi.hoisted(() => vi.fn((_config: Parameters<IModal['show']>[0]) => 'screen-default-modal'));
+const modalHideSpy = vi.hoisted(() => vi.fn((_id: string) => {}));
 
 installConnectedServicesCommonModuleMocks({
     modal: async () => {
@@ -42,13 +48,16 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 const profileState = vi.hoisted(() => ({
+    realDefaultAuthRow: false,
     activeAccountScope: null as null | { serverId: string; accountId: string },
+    connectedAccountsV4: [] as AccountProfile['connectedAccountsV4'],
     teamCredentialCatalog: {
         resources: [] as Array<Record<string, unknown>>,
         teamNameById: {} as Record<string, string>,
         homeNameByTeamId: {} as Record<string, string>,
         currentResourceKeys: new Set<string>(),
         current: true,
+        condition: null,
     },
     connectedServicesV2: [
         {
@@ -132,11 +141,14 @@ const SETTINGS_FIXTURE = vi.hoisted(() => ({
     connectedServicesDefaultAuthByAgentIdV1: {},
 }));
 
-vi.mock('@/sync/store/hooks', () => ({
+vi.mock('@/sync/store/hooks', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/sync/store/hooks')>()),
     useActiveServerAccountScope: () => profileState.activeAccountScope,
     useAllMachines: () => machineState.machines,
     useProfile: () => ({
+        id: profileState.activeAccountScope?.accountId ?? '',
         connectedServicesV2: profileState.connectedServicesV2,
+        connectedAccountsV4: profileState.connectedAccountsV4,
     }),
     useSettings: () => SETTINGS_FIXTURE,
     useSettingsSelector: <T,>(selector: (settings: typeof SETTINGS_FIXTURE) => T): T => selector(SETTINGS_FIXTURE),
@@ -146,7 +158,10 @@ vi.mock('@/sync/store/hooks', () => ({
     useLocalSettingMutable: () => [undefined, vi.fn()],
 }));
 
-vi.mock('@/sync/store/settingsWriters', () => ({ useApplySettings: () => vi.fn() }));
+vi.mock('@/sync/store/settingsWriters', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/sync/store/settingsWriters')>()),
+    useApplySettings: () => vi.fn(),
+}));
 
 vi.mock('@/hooks/teams/useHomeTeamCredentialModelCatalog', () => ({
     useHomeTeamCredentialModelCatalog: () => profileState.teamCredentialCatalog,
@@ -180,9 +195,16 @@ vi.mock('./setup/ConnectedServicesConnectMore', () => ({
         React.createElement('ConnectedServicesConnectMore', props),
 }));
 
-vi.mock('./ConnectedServicesDefaultAuthRow', () => ({
-    ConnectedServicesDefaultAuthRow: (props: Record<string, unknown>) => React.createElement('ConnectedServicesDefaultAuthRow', props),
-}));
+vi.mock('./ConnectedServicesDefaultAuthRow', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('./ConnectedServicesDefaultAuthRow')>();
+    return {
+        ...actual,
+        ConnectedServicesDefaultAuthRow: (props: React.ComponentProps<typeof actual.ConnectedServicesDefaultAuthRow>) =>
+            profileState.realDefaultAuthRow
+                ? React.createElement(actual.ConnectedServicesDefaultAuthRow, props)
+                : React.createElement('ConnectedServicesDefaultAuthRow', props),
+    };
+});
 
 vi.mock('./ConnectedServicesProviderStateSharingSettings', () => ({
     ConnectedServicesProviderStateSharingDisclosure: (props: Record<string, unknown>) => React.createElement('ConnectedServicesProviderStateSharingDisclosure', props),
@@ -225,10 +247,22 @@ vi.mock('@/sync/domains/state/warmCachePersistence', () => ({
 }));
 
 describe('ConnectedServicesSettingsView', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        const { Modal } = await import('@/modal');
+        const text = await import('@/text');
+        vi.spyOn(Modal, 'alert').mockImplementation(modalAlertSpy);
+        vi.spyOn(Modal, 'show').mockImplementation(modalShowSpy);
+        vi.spyOn(Modal, 'hide').mockImplementation(modalHideSpy);
+        vi.spyOn(text, 't').mockImplementation((key, params) => (
+            params ? `${key} ${Object.values(params).join(' ')}` : key
+        ));
+        modalShowSpy.mockClear();
+        modalHideSpy.mockClear();
+        profileState.realDefaultAuthRow = false;
+        profileState.connectedAccountsV4 = [];
         profileState.activeAccountScope = null;
         profileState.teamCredentialCatalog = {
-            resources: [], teamNameById: {}, homeNameByTeamId: {}, currentResourceKeys: new Set(), current: true,
+            resources: [], teamNameById: {}, homeNameByTeamId: {}, currentResourceKeys: new Set(), current: true, condition: null,
         };
         daemonAgentProjectionState.mergedProviderProjectionById = {
             codex: {
@@ -259,13 +293,6 @@ describe('ConnectedServicesSettingsView', () => {
         machineState.machines = [];
         connectedServicesModuleState.searchParams = {};
         connectedServicesModuleState.routerPushSpy.mockClear();
-        connectedServicesModuleState.options.text = async () => {
-            const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-            return createTextModuleMock({
-                // Interpolated values stay visible so a test can see what a sentence names.
-                translate: (key, params) => (params ? `${key} ${Object.values(params).join(' ')}` : key),
-            });
-        };
         profileState.connectedServicesV2 = [
             {
                 serviceId: 'openai-codex',
@@ -287,7 +314,7 @@ describe('ConnectedServicesSettingsView', () => {
                 },
             }],
             teamNameById: { 'team-1': 'Acme' }, homeNameByTeamId: { 'team-1': 'Home A' },
-            currentResourceKeys: new Set(['team-1:resource-1']), current: true,
+            currentResourceKeys: new Set(['team-1:resource-1']), current: true, condition: null,
         };
         const { ConnectedServicesSettingsView } = await import('./ConnectedServicesSettingsView');
         const screen = await renderScreen(<ConnectedServicesSettingsView />);
@@ -351,7 +378,7 @@ describe('ConnectedServicesSettingsView', () => {
         } as never);
 
         // The banner shows the presented diagnostic, never the raw reason, anywhere on the page.
-        expect(String(banner.props.description)).toContain('connectedServices.errors.generic');
+        expect(String(banner.props.description)).toBe('connectedServicesSettings.projectionErrorDescription');
         const leaked = screen.tree.root.findAll((node) => Object.values(node.props ?? {}).some((value) => (
             typeof value === 'string' && (value.includes('/private/plugin/registry') || value.includes('token=never-render-this'))
         )));
@@ -361,6 +388,41 @@ describe('ConnectedServicesSettingsView', () => {
             testID: 'connected-services-projection-retry',
         } as never));
         expect(projectionReloadSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows a stale registry read failure once while retaining accounts and service-specific causes', async () => {
+        connectedServiceRegistryState.status = 'stale';
+        connectedServiceRegistryState.errorReason = 'transport';
+        connectedServiceRegistryState.entries = [{
+            serviceId: 'openai-codex', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+            legacyServiceId: 'openai-codex', connectCommand: 'happier connect codex', supportsOauth: false, executable: false,
+            projectedDescriptor: { id: 'openai-codex' }, projectedTitle: 'ChatGPT', projectionStatus: 'stale',
+            availability: { state: 'available' }, diagnostics: [],
+        }, {
+            serviceId: 'bitbucket', service: { pluginId: 'happier.scm.forge.bitbucket', localId: 'bitbucket-account' },
+            legacyServiceId: 'bitbucket', connectCommand: 'happier connect bitbucket', supportsOauth: false, executable: false,
+            projectedDescriptor: { id: 'bitbucket-account' }, projectedTitle: 'Bitbucket Cloud', projectionStatus: 'stale',
+            availability: { state: 'blocked', reason: 'connected_account_configuration_required' }, diagnostics: ['missing_runtime'],
+        }];
+        profileState.connectedServicesV2 = [{ serviceId: 'openai-codex', profiles: [{ profileId: 'work', status: 'connected' }] }];
+        projectionReloadSpy.mockClear();
+        const { ConnectedServicesSettingsView } = await import('./ConnectedServicesSettingsView');
+        const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
+        const screen = await renderScreen(<ConnectedServicesSettingsView />);
+
+        const notices = screen.findAllByType(AttentionBanner).filter((node) => node.props.testID === 'connected-services-projection-error');
+        expect(notices).toHaveLength(1);
+        expect(notices[0]?.props.description).toBe('connectedServicesSettings.projectionErrorDescription');
+        expect(screen.findByTestId('connected-services-account:happier.agent.codex/openai-codex:work')).not.toBeNull();
+        const serviceRows = screen.findAllByType('Item');
+        expect(serviceRows.find((node) => node.props.title === 'ChatGPT')?.props.subtitle ?? '').not.toContain('common.unavailable');
+        expect(screen.findByTestId('connected-services-index:happier.agent.codex/openai-codex:support-details')).toBeNull();
+        expect(screen.findByTestId('connected-services-service:happier.agent.codex/openai-codex:add-account')).toBeNull();
+        expect(serviceRows.find((node) => node.props.title === 'Bitbucket Cloud')?.props.subtitle).toContain('common.blocked');
+        expect(serviceRows.find((node) => node.props.title === 'Bitbucket Cloud')?.props.subtitle).toContain('connectedServices.errors.accountConfigurationRequired');
+        expect(screen.findByTestId('connected-services-index:happier.scm.forge.bitbucket/bitbucket-account:support-details')).not.toBeNull();
+        await pressTestInstanceAsync(screen.tree.root.findByProps({ testID: 'connected-services-projection-retry' } as never));
+        expect(projectionReloadSpy).toHaveBeenCalledOnce();
     });
 
     it('says which machine offers no service and leads to Agents', async () => {
@@ -426,6 +488,115 @@ describe('ConnectedServicesSettingsView', () => {
         expect(tree.root.findByType('ConnectedServicesConnectMore' as never).props.request).toBeNull();
     });
 
+    it('shows the destination purpose default on Agent sign-in with the retired Settings root absent', async () => {
+        const scope = { serverId: 'server-1', accountId: 'destination-account' };
+        profileState.activeAccountScope = scope;
+        profileState.realDefaultAuthRow = true;
+        serverFeaturesState.qualifiedAccounts = { protocolVersion: 4 };
+        profileState.connectedAccountsV4 = [{
+            revisionSemantics: 'legacy_unfenced',
+            ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work' },
+            status: 'connected', authenticationModeId: null, configurationReady: true, configurationRevision: null,
+            kind: 'oauth', expiresAt: null, lastUsedAt: null, providerIdentity: {}, displayName: 'work',
+        }];
+        const purposeBindings: QualifiedConnectedAccountPurposeBindingsV1 = { v: 1, bindings: [{
+            purpose: { consumer: { pluginId: 'happier.agent.codex', localId: 'codex' }, purpose: 'primary' },
+            target: { kind: 'account', account: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work' } },
+        }] };
+        applyConnectedAccountCatalogSnapshot(scope, 'purposes', {
+            status: 'ready', revision: 3,
+            record: { key: 'purposes', value: purposeBindings },
+        }, true);
+        const { tree } = await renderScreen(<ConnectedServicesAgentSignInView />);
+        const row = tree.root.findAllByType('Item' as never)
+            .find(candidate => candidate.props.testID === 'settings-connected-services-default-auth-codex');
+        expect(row).toBeTruthy();
+        const selectedDetail = row?.props.detail;
+        await act(async () => row?.props.onPress());
+        // The native Modal boundary supplies the dynamically selected React component and props.
+        const config = modalShowSpy.mock.calls[0]?.[0] as Readonly<{
+            component: React.ComponentType<Record<string, unknown>>;
+            props: Record<string, unknown>;
+        }> | undefined;
+        if (!config) throw new Error('Expected the default-auth picker');
+        const Content = config.component;
+        const picker = (await renderScreen(<Content {...config.props} onClose={() => {}} />)).tree;
+        expect(picker.root.findByProps({ testID: 'new-session.connected-services.selection-list' }).props.selectedOptionId)
+            .toBe('connected-service:happier.agent.codex%2Fopenai-codex:profile:work');
+        await act(async () => applyConnectedAccountCatalogSnapshot(scope, 'purposes', {
+            status: 'partial', authority: 'active', revision: 4,
+            record: { key: 'purposes', value: purposeBindings },
+            diagnostics: [{ path: 'bindings[1]', reason: 'invalid-stored-content' }],
+        }, true));
+        const safeRow = tree.root.findAllByType('Item' as never)
+            .find(candidate => candidate.props.testID === 'settings-connected-services-default-auth-codex');
+        expect(safeRow?.props.detail).toBe(selectedDetail);
+        expect(safeRow?.props.disabled).toBe(true);
+        await act(async () => applyConnectedAccountCatalogSnapshot(scope, 'purposes', {
+            status: 'partial', authority: 'inactive', revision: 'absent',
+            record: { key: 'purposes', value: { v: 1, bindings: [] } },
+            diagnostics: [{ path: 'bindings[0]', reason: 'invalid-stored-content' }],
+        }, true));
+        const { t } = await import('@/text');
+        const unreadRow = tree.root.findAllByType('Item' as never)
+            .find(candidate => candidate.props.testID === 'settings-connected-services-default-auth-codex');
+        expect(unreadRow?.props.detail).toBe(t('common.unavailable'));
+        expect(unreadRow?.props.disabled).toBe(true);
+        await act(async () => applyConnectedAccountCatalogSnapshot(scope, 'purposes', {
+            status: 'unavailable', reason: 'account-mode-mismatch',
+        }, true));
+        const unavailableRow = tree.root.findAllByType('Item' as never)
+            .find(candidate => candidate.props.testID === 'settings-connected-services-default-auth-codex');
+        expect(unavailableRow?.props.detail).toBe(t('common.unavailable'));
+        expect(unavailableRow?.props.disabled).toBe(true);
+        expect(modalHideSpy).toHaveBeenCalledWith('screen-default-modal');
+        await act(async () => applyConnectedAccountCatalogSnapshot(scope, 'purposes', {
+            status: 'ready', revision: 5, record: { key: 'purposes', value: purposeBindings },
+        }, true));
+        const restoredRow = tree.root.findAllByType('Item' as never)
+            .find(candidate => candidate.props.testID === 'settings-connected-services-default-auth-codex');
+        await act(async () => restoredRow?.props.onPress());
+        modalHideSpy.mockClear();
+        profileState.activeAccountScope = { serverId: 'server-2', accountId: 'other-account' };
+        profileState.connectedAccountsV4 = [];
+        await act(async () => tree.update(<ConnectedServicesAgentSignInView key="other-home" />));
+        const otherHomeRow = tree.root.findAllByType('Item' as never)
+            .find(candidate => candidate.props.testID === 'settings-connected-services-default-auth-codex');
+        expect(otherHomeRow?.props.disabled).toBe(true);
+        expect(otherHomeRow?.props.detail).not.toBe(selectedDetail);
+        expect(modalHideSpy).toHaveBeenCalledWith('screen-default-modal');
+    });
+
+    it('marks the destination Account default in the collection with the retired Settings root absent', async () => {
+        const scope = { serverId: 'server-1', accountId: 'collection-destination-account' };
+        profileState.activeAccountScope = scope;
+        serverFeaturesState.qualifiedAccounts = { protocolVersion: 4 };
+        profileState.connectedAccountsV4 = [{
+            revisionSemantics: 'legacy_unfenced',
+            ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work' },
+            status: 'connected', authenticationModeId: null, configurationReady: true, configurationRevision: null,
+            kind: 'oauth', expiresAt: null, lastUsedAt: null, providerIdentity: {}, displayName: 'work',
+        }];
+        applyConnectedAccountCatalogSnapshot(scope, 'purposes', {
+            status: 'ready', revision: 3,
+            record: { key: 'purposes', value: { v: 1, bindings: [{
+                purpose: { consumer: { pluginId: 'happier.agent.codex', localId: 'codex' }, purpose: 'primary' },
+                target: { kind: 'account', account: profileState.connectedAccountsV4[0]!.ref },
+            }] } },
+        }, true);
+        const { ConnectedServicesSettingsView } = await import('./ConnectedServicesSettingsView');
+        const { t } = await import('@/text');
+        const screen = await renderScreen(<ConnectedServicesSettingsView />);
+        expect(screen.findHostByTestId('connected-services-account:happier.agent.codex/openai-codex:work:star')?.props.accessibilityLabel)
+            .toBe(t('connectedServicesPool.defaultFor', { agent: t('agentInput.agent.codex') }));
+        await act(async () => applyConnectedAccountCatalogSnapshot(scope, 'purposes', {
+            status: 'unavailable', reason: 'account-mode-mismatch',
+        }, true));
+        const unavailableControl = screen.findHostByTestId('connected-services-account:happier.agent.codex/openai-codex:work:star');
+        expect(unavailableControl?.props.accessibilityState).toMatchObject({ disabled: true });
+        expect(unavailableControl?.props.accessibilityLabel).toBe('common.unavailable');
+    });
+
     it('renders default-auth rows from the live qualified external Agent projection', async () => {
         daemonAgentProjectionState.mergedProviderProjectionById['acme.agent/native'] = {
             agentId: 'acme.agent/native',
@@ -472,6 +643,7 @@ describe('ConnectedServicesSettingsView', () => {
             homeNameByTeamId: { 'team-1': 'Home A' },
             currentResourceKeys: new Set(['team-1:resource-1']),
             current: true,
+            condition: null,
         };
         const { ConnectedServicesAgentSignInView } = await import('./collection/ConnectedServicesAgentSignInView');
         const tree = (await renderScreen(<ConnectedServicesAgentSignInView />)).tree;

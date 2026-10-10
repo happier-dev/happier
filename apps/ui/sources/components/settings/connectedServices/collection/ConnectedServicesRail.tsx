@@ -16,7 +16,7 @@ import { buildConnectedAccountSettingsRoute, buildNewConnectedAccountPoolRoute }
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { deriveAccountCapacityPct } from '@/sync/domains/connectedServices/deriveAccountCapacityPct';
 import { resolveQuotaTone } from '@/sync/domains/connectedServices/resolveQuotaTone';
-import { useSetting } from '@/sync/store/hooks';
+import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -30,6 +30,7 @@ import type {
 } from '../model/buildConnectedServicesIndexModel';
 import { presentConnectedServicesIndexAccount, presentConnectedServicesIndexPool } from '../model/presentConnectedServicesIndexAccount';
 import { useConnectedServicesIndex } from '../model/useConnectedServicesIndex';
+import type { ProviderGatewayCollectionRow } from '../../providers/collection/providerCollectionModel';
 import {
     CONNECTED_SERVICES_AGENT_SIGN_IN_ROUTE,
     CONNECTED_SERVICES_COLLECTION_ROUTE,
@@ -42,7 +43,6 @@ import { NewPoolMenu, selectNewPoolServices } from './NewPoolMenu';
 const SEARCH_THRESHOLD = 6;
 /** A disclosed account sits one step in from its service. */
 const ACCOUNT_INDENT_PX = 26;
-const EMPTY_LABELS: Readonly<Record<string, string | undefined>> = {};
 
 /** What an account row shows at its end: the tightest limit, a stale clock, or that it needs you. */
 export type ConnectedServicesRailAccountMeta =
@@ -67,6 +67,9 @@ export type ConnectedServicesRailViewProps = Readonly<{
     /** "+" on Pools (a menu of services when there are several); absent when no service can hold one. */
     renderNewPool?: ((renderTrigger: (onPress: () => void) => React.ReactElement) => React.ReactNode) | null;
     onOpenAgentSignIn: () => void;
+    /** Gateways that draw on these subscriptions; each opens its one page (shared with Providers). */
+    gateways?: readonly ProviderGatewayCollectionRow[];
+    onOpenGateway?: (gateway: ProviderGatewayCollectionRow) => void;
     /** Live rows read their own usage; a fixture preview passes it. */
     renderAccountMeta?: (sheet: ConnectedServicesIndexSheet, account: ConnectedServicesIndexAccount) => React.ReactNode;
 }>;
@@ -268,6 +271,23 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
                     })}
                 </>
             ) : null}
+            {props.gateways && props.gateways.length > 0 ? (
+                <>
+                    <CollectionListGroupLabel title={t('settingsProvidersCollection.gateway.railGroup')} />
+                    {props.gateways.filter((gateway) => !needle || gateway.title.toLowerCase().includes(needle)).map((gateway) => (
+                        <Item
+                            key={gateway.connectionId}
+                            testID={`connected-services-rail:gateway:${gateway.connectionId}`}
+                            title={gateway.title}
+                            icon={<Icon name="path" size={16} color={theme.colors.text.secondary} />}
+                            density="compact"
+                            showChevron={false}
+                            pressableStyle={collectionListStyles.row}
+                            onPress={() => props.onOpenGateway?.(gateway)}
+                        />
+                    ))}
+                </>
+            ) : null}
             {toolSheets.length > 0 ? (
                 <>
                     <CollectionListGroupLabel title={t('connectedServicesSettings.codeAndToolsTitle')} />
@@ -334,8 +354,9 @@ export const ConnectedServicesRail = React.memo(function ConnectedServicesRail()
     const router = useRouter();
     const pathname = usePathname();
     const params = useGlobalSearchParams();
-    const { indexModel } = useConnectedServicesIndex({ agents: 'cached' });
-    const labelsByKey = useSetting('connectedServicesProfileLabelByKey') ?? EMPTY_LABELS;
+    const providersEnabled = useFeatureEnabled('providers');
+    const { indexModel, gateways } = useConnectedServicesIndex({ agents: 'cached', gateways: providersEnabled });
+    const labelsByKey = useConnectedMetadataCatalog(undefined, selectConnectedMetadataLabels);
     const privacy = useConnectedAccountIdentityPrivacy();
     const selection = resolveConnectedServicesSelection(pathname, params);
     const onDetail = selection.kind !== 'index';
@@ -362,6 +383,12 @@ export const ConnectedServicesRail = React.memo(function ConnectedServicesRail()
             onOpenAccount={(sheet, accountId) => open(buildConnectedAccountSettingsRoute(sheet.service, { kind: 'account', accountId }), 'ConnectedServicesRail.account')}
             onOpenPool={(sheet, groupId) => open(buildConnectedAccountSettingsRoute(sheet.service, { kind: 'group', groupId }), 'ConnectedServicesRail.pool')}
             onOpenAgentSignIn={() => open(CONNECTED_SERVICES_AGENT_SIGN_IN_ROUTE, 'ConnectedServicesRail.agentSignIn')}
+            gateways={gateways ?? undefined}
+            onOpenGateway={(gateway) => {
+                // The gateway's page lives with Providers; it is entered, not swapped into this pane.
+                const result = runGuardedNavigation(() => router.push(gateway.detailRoute as never));
+                if (result !== true) fireAndForget(result, { tag: 'ConnectedServicesRail.gateway' });
+            }}
             renderNewPool={accountGroupsEnabled && newPoolServices.length > 0 ? (renderTrigger) => (
                 <NewPoolMenu
                     testID="connected-services-rail:new-pool-menu"

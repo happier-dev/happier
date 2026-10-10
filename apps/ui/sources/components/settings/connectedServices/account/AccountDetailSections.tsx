@@ -49,7 +49,7 @@ export type AccountDetailUsageFacts = Readonly<{
     subscription: ProviderAccountSubscriptionV1 | null;
     recoveryCredits: ConnectedServiceQuotaRecoveryCreditsV1 | null;
     loading: boolean;
-    error: boolean;
+    error: string | null;
     refreshing: boolean;
     /** Null when the account's service reports no usage (Refresh is not offered). */
     refresh: (() => void) | null;
@@ -139,15 +139,7 @@ export const AccountDetailUsageSectionView = React.memo(function AccountDetailUs
                 </SectionContentRow>
             ) : facts.loading ? (
                 <SurfaceStateCard testID={`${testID}:loading`} size="line" kind="loading" title={t('common.loading')} />
-            ) : facts.error ? (
-                <SurfaceStateCard
-                    testID={`${testID}:error`}
-                    size="line"
-                    kind="error"
-                    title={t('connectedServicesSettings.usageReadFailed')}
-                    action={facts.refresh ? { label: t('common.retry'), onPress: facts.refresh } : undefined}
-                />
-            ) : (
+            ) : facts.error ? null : (
                 <SurfaceStateCard
                     testID={`${testID}:none`}
                     size="line"
@@ -155,6 +147,15 @@ export const AccountDetailUsageSectionView = React.memo(function AccountDetailUs
                     title={t('common.unavailable')}
                 />
             )}
+            {facts.error ? (
+                <SurfaceStateCard
+                    testID={`${testID}:error`}
+                    size="line"
+                    kind="error"
+                    title={facts.error}
+                    action={!props.signedOut && facts.refresh ? { label: t('common.retry'), onPress: facts.refresh } : undefined}
+                />
+            ) : null}
         </ItemGroup>
     );
 });
@@ -305,8 +306,9 @@ export const AccountDetailFactsSections = React.memo(function AccountDetailFacts
     legacyServiceId: ConnectedServiceId | null;
     serviceLabel: string;
     signedOut: boolean;
+    machineId?: string | null;
 }>) {
-    const quota = useQualifiedConnectedAccountQuota(props.account);
+    const quota = useQualifiedConnectedAccountQuota(props.account, { refreshMachineId: props.machineId });
     const subscription = useConnectedAccountSubscription(quota.usageRecordId);
     const pins = useConnectedAccountPinnedMeters({ account: props.account, legacyServiceId: props.legacyServiceId });
     const refresh = quota.refresh;
@@ -320,15 +322,16 @@ export const AccountDetailFactsSections = React.memo(function AccountDetailFacts
         subscription,
         recoveryCredits: snapshot?.recoveryCredits ?? null,
         loading: quota.loading,
-        error: quota.error !== null,
+        error: quota.error,
         refreshing: quota.refreshing,
-        refresh: quota.supported === false ? null : retry,
+        refresh: props.machineId === null || quota.supported === false ? null : retry,
     };
     return (
-        <AccountDetailFactsSectionsView facts={facts} serviceLabel={props.serviceLabel} signedOut={props.signedOut} now={now} pins={pins} resetsSection={props.legacyServiceId && !props.signedOut ? (
+        <AccountDetailFactsSectionsView facts={facts} serviceLabel={props.serviceLabel} signedOut={props.signedOut} now={now} pins={pins} resetsSection={props.legacyServiceId && !props.signedOut && props.machineId !== null ? (
                 <LiveResetsSection
                     legacyServiceId={props.legacyServiceId}
                     accountId={props.account.accountId}
+                    machineId={props.machineId}
                     recoveryCredits={facts.recoveryCredits}
                     fetchedAt={facts.fetchedAt}
                     onApplied={retry}
@@ -341,6 +344,7 @@ export const AccountDetailFactsSections = React.memo(function AccountDetailFacts
 const LiveResetsSection = React.memo(function LiveResetsSection(props: Readonly<{
     legacyServiceId: ConnectedServiceId;
     accountId: string;
+    machineId?: string | null;
     recoveryCredits: ConnectedServiceQuotaRecoveryCreditsV1 | null;
     fetchedAt: number | null;
     onApplied: () => void;
@@ -349,6 +353,7 @@ const LiveResetsSection = React.memo(function LiveResetsSection(props: Readonly<
     const action = useAccountUsageResetAction({
         legacyServiceId: props.legacyServiceId,
         accountId: props.accountId,
+        machineId: props.machineId,
         snapshotFetchedAtMs: props.fetchedAt,
         onApplied: props.onApplied,
     });

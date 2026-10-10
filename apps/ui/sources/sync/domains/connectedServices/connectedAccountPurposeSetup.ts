@@ -1,5 +1,5 @@
 import { QualifiedConnectedAccountPurposeV1Schema, type QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
-import { resolveConnectedAccountPurposeSelectedAccountV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeSelectionV1';
+import { readDeclaredConnectedAccountResourcePurposeV1, resolveConnectedAccountPurposeSelectedAccountV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeSelectionV1';
 import type { AccountProfile } from '@happier-dev/protocol/account/profile';
 import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import type { PluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
@@ -34,13 +34,9 @@ export function readConnectedAccountPurposeSetupDeclaration(request: ConnectedAc
     viewer: ServerAccountScope | null, runtime: PluginUiProjectionCurrentness) {
     if (!request || !areServerAccountScopesEqual(viewer, request.scope) || runtime.serverId !== request.scope.serverId
         || runtime.machineId !== request.machineId || runtime.phase !== 'current' || !runtime.interactionEnabled) return null;
-    const consumer = request.purpose.consumer;
-    if (runtime.pluginUiProjection?.installedPackagesById[consumer.pluginId]?.enabled !== true) return null;
-    const resources = Object.values(runtime.pluginUiProjection.resourcesById).filter(resource =>
-        resource.pluginId === consumer.pluginId && resource.id === consumer.localId);
-    const declarations = resources.length === 1 ? resources[0]!.connectedAccountPurposes?.filter(declaration =>
-        declaration.purpose === request.purpose.purpose) ?? [] : [];
-    return declarations.length === 1 ? declarations[0]! : null;
+    return runtime.pluginUiProjection ? readDeclaredConnectedAccountResourcePurposeV1({
+        purpose: request.purpose, projection: runtime.pluginUiProjection,
+    }) : null;
 }
 
 /** The same purpose resolver used by mounted widgets admits the chosen active personal target. */

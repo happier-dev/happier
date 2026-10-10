@@ -1,33 +1,28 @@
-/**
- * Collapse-state key namespacing + read helper for connected-service
- * accounts and pool members.
- *
- * Collapse state is persisted in the dedicated synced account setting
- * `connectedServicesCollapsedItemKeysV1` (a sparse `Record<string, boolean>`).
- * Keys are namespaced so the SAME account rendered as a standalone account and
- * as a pool member never collide:
- *
- *   account     -> `<serviceId>:account:<profileId>`
- *   pool member -> `<serviceId>:pool:<groupId>:<profileId>`
- *
- * Defaults differ by variant: accounts are expanded by default (absent ⇒ not
- * collapsed); pool members are collapsed by default (absent ⇒ collapsed). Only
- * deviations from the default are persisted, keeping the synced map sparse.
- */
+import { QualifiedConnectedDisclosureSubjectSchema } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+
+/** Device-local disclosure in LocalSettings.collapsedGroupKeysV1, qualified by its Home and Account. */
 
 export type ConnectedServiceCollapseKeyParams = Readonly<{
-    serviceId: string;
+    scope: ServerAccountScope;
+    service: PluginContributionIdentityV1;
     profileId: string;
     /** When present, the key namespaces a pool member; otherwise a standalone account. */
     groupId?: string | null;
 }>;
 
 export function resolveConnectedServiceCollapseKey(params: ConnectedServiceCollapseKeyParams): string {
-    const { serviceId, profileId, groupId } = params;
-    if (groupId != null && groupId !== '') {
-        return `${serviceId}:pool:${groupId}:${profileId}`;
-    }
-    return `${serviceId}:account:${profileId}`;
+    const { scope, service, profileId, groupId } = params;
+    const subject = QualifiedConnectedDisclosureSubjectSchema.parse(groupId != null && groupId !== ''
+        ? { kind: 'group-member', group: { service, groupId }, accountId: profileId }
+        : { kind: 'account', account: { service, accountId: profileId } });
+    const address = subject.kind === 'account'
+        ? [scope.serverId, scope.accountId, subject.account.service.pluginId,
+            subject.account.service.localId, 'account', subject.account.accountId]
+        : [scope.serverId, scope.accountId, subject.group.service.pluginId,
+            subject.group.service.localId, 'pool', subject.group.groupId, subject.accountId];
+    return `connectedServices:${JSON.stringify(address)}`;
 }
 
 /**
@@ -51,7 +46,7 @@ export function isConnectedServiceItemCollapsed(
 /**
  * Produces the next sparse map after toggling/setting a key's collapse state.
  * Persists only deviations from the variant default: a value equal to the
- * default is removed so the synced map stays sparse.
+ * default is removed so the device-local map stays sparse.
  */
 export function setConnectedServiceItemCollapsed(
     keys: Readonly<Record<string, boolean>> | null | undefined,

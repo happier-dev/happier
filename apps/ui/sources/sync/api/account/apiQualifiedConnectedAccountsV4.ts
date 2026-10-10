@@ -315,34 +315,6 @@ export async function getQualifiedConnectedAccountQuotaV4(
   }
 }
 
-export async function requestQualifiedConnectedAccountQuotaRefreshV4(
-  credentials: AuthCredentials,
-  ref: QualifiedConnectedAccountRef,
-  opts?: Readonly<{
-    expectedActiveServer?: ExpectedActiveServerFetchBasis;
-  }>,
-): Promise<void> {
-  await mutateQualifiedSnapshot({
-    credentials,
-    path: '/v4/connect/qualified/quotas/refresh',
-    method: 'POST',
-    body: { ref },
-    ...(opts?.expectedActiveServer
-      ? { expectedActiveServer: opts.expectedActiveServer }
-      : {}),
-    parse: (value) => {
-      if (
-        typeof value !== 'object'
-        || value === null
-        || (value as { success?: unknown }).success !== true
-      ) {
-        throw new Error('invalid response');
-      }
-      return undefined;
-    },
-  });
-}
-
 export async function getQualifiedConnectedAccountConfigurationV4(
   credentials: AuthCredentials,
   ref: QualifiedConnectedAccountRef,

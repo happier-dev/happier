@@ -97,6 +97,18 @@ describe('ConnectedServicesRailView (lab csvc C1 rail)', () => {
         expect(onOpenPool).toHaveBeenCalledWith(expect.objectContaining({ serviceKey: CLAUDE_KEY }), 'work-pool');
     });
 
+    it('lists gateways after the pools they compose and opens the pressed one; without any the group is absent', async () => {
+        const onOpenGateway = vi.fn();
+        const gateway = { connectionId: 'pc_gateway', title: 'Main gateway', detailRoute: '/(app)/settings/providers/pc_gateway', revision: 3 };
+        const screen = await render({ gateways: [gateway], onOpenGateway });
+
+        screen.pressByTestId('connected-services-rail:gateway:pc_gateway');
+        expect(onOpenGateway).toHaveBeenCalledWith(gateway);
+
+        const none = await render({ gateways: [] });
+        expect(none.findByTestId('connected-services-rail:gateway:pc_gateway')).toBeNull();
+    });
+
     it('names accounts through the privacy presenter: an address used as a name is masked when identities are hidden', async () => {
         const screen = await render({
             present: (input) => presentConnectedAccountIdentity({ ...input, hidden: true, label: input.label ?? null, email: input.email ?? null, accountId: input.accountId ?? null }),

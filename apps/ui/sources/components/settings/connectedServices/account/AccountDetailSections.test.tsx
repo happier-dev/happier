@@ -22,12 +22,37 @@ const FACTS: AccountDetailUsageFacts = {
     subscription: null,
     recoveryCredits: null,
     loading: false,
-    error: false,
+    error: null,
     refreshing: false,
     refresh: null,
 };
 
 describe('AccountDetailUsageSectionView', () => {
+    it('shows the quota failure reason beside retained usage and offers retry', async () => {
+        const retry = vi.fn();
+        const error = 'Couldn’t refresh usage. (HTTP 429) Try again after 12:30.';
+        const screen = await renderScreen(<AccountDetailUsageSectionView
+            facts={{ ...FACTS, error, refresh: retry }} signedOut={false} now={2_000}
+        />);
+        expect(screen.findByTestId('account-detail-usage:meter:five_hour')).toBeTruthy();
+        expect(screen.getTextContent()).toContain(error);
+        const errorRow = screen.findByTestId('account-detail-usage:error');
+        expect(errorRow).toBeTruthy();
+        await screen.pressByTestIdAsync('account-detail-usage:error-action');
+        expect(retry).toHaveBeenCalledOnce();
+    });
+
+    it('retains failure guidance but withholds quota retry until a signed-out account signs in', async () => {
+        const error = 'Couldn’t refresh usage. (HTTP 401)';
+        const screen = await renderScreen(<AccountDetailUsageSectionView
+            facts={{ ...FACTS, error, refresh: vi.fn() }} signedOut now={2_000}
+        />);
+        expect(screen.findByTestId('account-detail-usage:meter:five_hour')).toBeTruthy();
+        expect(screen.getTextContent()).toContain(error);
+        expect(screen.findByTestId('account-detail-usage:refresh')).toBeNull();
+        expect(screen.findByTestId('account-detail-usage:error-action') === null).toBe(true);
+    });
+
     it('filters empty account windows, preserves a pinned unavailable window, and keeps errors visible', async () => {
         const base = { used: null, limit: null, unit: 'unknown', utilizationPct: null, resetsAt: null, status: 'unavailable', details: {} } as const;
         const reported: ConnectedServiceQuotaMeterV1[] = [
@@ -42,7 +67,7 @@ describe('AccountDetailUsageSectionView', () => {
         expect(screen.findByTestId('account-detail-usage:meter:placeholder')).toBeNull();
         expect(screen.findByTestId('account-detail-usage:pin:pinned')).toBeTruthy();
         expect(screen.getTextContent()).toContain('Unavailable');
-        await screen.update(<AccountDetailUsageSectionView facts={{ ...FACTS, meters: [], error: true }} signedOut={false} now={2_000} />);
+        await screen.update(<AccountDetailUsageSectionView facts={{ ...FACTS, meters: [], error: 'Couldn’t refresh usage.' }} signedOut={false} now={2_000} />);
         expect(screen.findByTestId('account-detail-usage:error')).toBeTruthy();
         await screen.update(<AccountDetailUsageSectionView facts={{ ...FACTS, meters: [] }} signedOut={false} now={2_000} />);
         expect(screen.getTextContent()).not.toContain('billed per use');

@@ -11,6 +11,8 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/feature
 import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import type { UseQualifiedConnectedAccountGroupsResult } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountGroups';
 import type { QualifiedConnectedAccountUiGroup } from '@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource';
+import { connectedEntitySubjectKeyV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
+import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 
 const boundary = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), confirm: vi.fn(async () => true) }));
 
@@ -116,14 +118,14 @@ describe('ConnectedAccountServiceContent focused ownership', () => {
     it('prefills rename only with a saved user name, never a provider identity fallback', async () => {
         const onRenameAccount = vi.fn();
         const identified = { ...account, providerIdentity: { accountId: 'provider-account-42' } };
-        const screen = await renderContent(<ConnectedAccountServiceContent
+        const screen = await renderContent(<ConnectedAccountServiceContent isControllerCurrent={captureActiveServerAccountScopeCurrentness().isCurrent}
             title="Acme" service={service} focus={{ kind: 'account', accountId: 'work' }}
             modes={modes} accounts={[identified]} busy={false} onRenameAccount={onRenameAccount}
         />);
         await screen.pressByTestIdAsync('qualified-account-detail:action:edit-label');
         expect(screen.findHostByTestId('qualified-account-detail:rename:input')?.props.value).toBe('');
 
-        const named = await renderContent(<ConnectedAccountServiceContent
+        const named = await renderContent(<ConnectedAccountServiceContent isControllerCurrent={captureActiveServerAccountScopeCurrentness().isCurrent}
             title="Acme" service={service} focus={{ kind: 'account', accountId: 'work' }}
             modes={modes} accounts={[identified]} busy={false} onRenameAccount={onRenameAccount}
             accountLabels={{ work: 'provider-account-42' }}
@@ -136,7 +138,7 @@ describe('ConnectedAccountServiceContent focused ownership', () => {
     it('keeps declared account and service configuration reachable from the Collection account detail', async () => {
         const onConfigureAccount = vi.fn();
         const onConfigureService = vi.fn();
-        const screen = await renderContent(<ConnectedAccountServiceContent
+        const screen = await renderContent(<ConnectedAccountServiceContent isControllerCurrent={captureActiveServerAccountScopeCurrentness().isCurrent}
             title="Acme" service={service} focus={{ kind: 'account', accountId: 'work' }}
             modes={modes} accounts={[account]} busy={false}
             onConfigureAccount={onConfigureAccount} onConfigureService={onConfigureService}
@@ -150,7 +152,7 @@ describe('ConnectedAccountServiceContent focused ownership', () => {
 
     it('omits account configuration for an unfenced account', async () => {
         const onConfigureAccount = vi.fn();
-        const screen = await renderContent(<ConnectedAccountServiceContent
+        const screen = await renderContent(<ConnectedAccountServiceContent isControllerCurrent={captureActiveServerAccountScopeCurrentness().isCurrent}
             title="Acme" service={service} focus={{ kind: 'account', accountId: 'work' }}
             modes={modes} accounts={[{ ...account, revisionSemantics: 'legacy_unfenced', credentialRevision: null }]}
             busy onConfigureAccount={onConfigureAccount}
@@ -160,7 +162,7 @@ describe('ConnectedAccountServiceContent focused ownership', () => {
     });
 
     it('reports a missing focused account instead of recreating the old per-service list', async () => {
-        const screen = await renderContent(<ConnectedAccountServiceContent
+        const screen = await renderContent(<ConnectedAccountServiceContent isControllerCurrent={captureActiveServerAccountScopeCurrentness().isCurrent}
             title="Acme" service={service} focus={{ kind: 'account', accountId: 'missing' }}
             modes={modes} accounts={[account]} busy={false}
         />);
@@ -172,11 +174,13 @@ describe('ConnectedAccountServiceContent focused ownership', () => {
         const cooldown = Object.assign(new Error('runtime cooldown'), { code: 'connect_group_profile_runtime_cooldown', resetAtMs: Date.now() + 10_000 });
         const setActiveAccount = vi.fn<UseQualifiedConnectedAccountGroupsResult['setActiveAccount']>()
             .mockRejectedValueOnce(cooldown).mockResolvedValueOnce(group);
-        const screen = await renderContent(<ConnectedAccountServiceContent
+        const screen = await renderContent(<ConnectedAccountServiceContent isControllerCurrent={captureActiveServerAccountScopeCurrentness().isCurrent}
             title="Acme" service={service} focus={{ kind: 'group', groupId: 'team' }}
             modes={modes} accounts={[account, { ...account, ref: { service, accountId: 'other' } }]}
             groups={makeGroups({ groups: [group], setActiveAccount })} busy={false}
+            labelsByKey={{ [connectedEntitySubjectKeyV1({ kind: 'group', ...group.ref })]: 'Personal team' }}
         />);
+        expect(screen.getTextContent()).toContain('Personal team');
         await screen.pressByTestIdAsync('connected-services-pool-detail:member:other:active-radio');
         await vi.waitFor(() => expect(setActiveAccount).toHaveBeenLastCalledWith({
             group, account: { service, accountId: 'other' }, overrideRuntimeCooldown: true,
@@ -189,7 +193,7 @@ describe('ConnectedAccountServiceContent focused ownership', () => {
         const withMember = { ...created, members: makeGroup().members.slice(0, 1) };
         const create = vi.fn<UseQualifiedConnectedAccountGroupsResult['create']>().mockResolvedValue(created);
         const addMember = vi.fn<UseQualifiedConnectedAccountGroupsResult['addMember']>().mockResolvedValue(withMember);
-        const screen = await renderContent(<ConnectedAccountServiceContent
+        const screen = await renderContent(<ConnectedAccountServiceContent isControllerCurrent={captureActiveServerAccountScopeCurrentness().isCurrent}
             title="Acme" service={service} focus={{ kind: 'newPool' }} modes={modes} accounts={[account]}
             groups={makeGroups({ groups: [], create, addMember })} busy={false}
         />);
@@ -206,8 +210,8 @@ describe('ConnectedAccountServiceContent focused ownership', () => {
     it('selects the exact deep-linked pool among other groups and leaves its deletion for the Collection', async () => {
         const group = makeGroup();
         const unrelated = { ...makeGroup(), ref: { service, groupId: 'unrelated' }, displayName: 'Unrelated pool' };
-        const deleteGroup = vi.fn<UseQualifiedConnectedAccountGroupsResult['delete']>().mockResolvedValue(true);
-        const screen = await renderContent(<ConnectedAccountServiceContent
+        const deleteGroup = vi.fn<UseQualifiedConnectedAccountGroupsResult['delete']>().mockResolvedValue({ applied: true, metadataCleanup: { status: 'complete' } });
+        const screen = await renderContent(<ConnectedAccountServiceContent isControllerCurrent={captureActiveServerAccountScopeCurrentness().isCurrent}
             title="Acme" service={service} focus={{ kind: 'group', groupId: 'team' }}
             modes={modes} accounts={[account]} groups={makeGroups({ groups: [unrelated, group], delete: deleteGroup })} busy={false}
         />);
@@ -218,7 +222,7 @@ describe('ConnectedAccountServiceContent focused ownership', () => {
 
     it('fails pool creation closed when the server has not enabled account groups', async () => {
         primeServerFeaturesSnapshot({ snapshot: { status: 'ready', features: createRootLayoutFeaturesResponse() } });
-        const screen = await renderContent(<ConnectedAccountServiceContent
+        const screen = await renderContent(<ConnectedAccountServiceContent isControllerCurrent={captureActiveServerAccountScopeCurrentness().isCurrent}
             title="Acme" service={service} focus={{ kind: 'newPool' }} modes={modes} accounts={[account]}
             groups={makeGroups()} busy={false}
         />);

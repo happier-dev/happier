@@ -7,11 +7,10 @@ import {
 import { t } from '@/text';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useProfile, useSettingsSelector } from '@/sync/store/hooks';
-import type { Settings } from '@/sync/domains/settings/settings';
+import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from './useConnectedMetadataCatalog';
 import {
     connectedServiceProfileKey,
     resolveQualifiedConnectedAccountLabel,
-    resolveConnectedServiceProfileLabel,
 } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import {
     getLegacyConnectedServiceRegistryEntry,
@@ -103,7 +102,7 @@ export type ConnectedServiceAccountNeedingSignIn = Readonly<{
 
 function resolveQualifiedSummaryService(params: Readonly<{
     ref: Readonly<{ service: PluginContributionIdentityV1; accountId: string }>;
-    settings: Pick<Settings, 'connectedServicesProfileLabelByKey'>;
+    labelsByKey: Readonly<Record<string, string | undefined>>;
     registryEntries: readonly ConnectedServiceRegistryEntry[];
     localizePluginText: PluginLocalizedTextResolver;
 }>): Readonly<{
@@ -123,9 +122,8 @@ function resolveQualifiedSummaryService(params: Readonly<{
             : t('connectedServices.fallbackName'),
         profileId: params.ref.accountId,
         profileLabel: resolveQualifiedConnectedAccountLabel({
-            labelsByKey: params.settings.connectedServicesProfileLabelByKey,
+            labelsByKey: params.labelsByKey,
             service: params.ref.service,
-            legacyServiceId,
             accountId: params.ref.accountId,
         }),
     };
@@ -134,7 +132,7 @@ function resolveQualifiedSummaryService(params: Readonly<{
 function resolveLegacySummaryService(params: Readonly<{
     serviceId: ConnectedServiceId;
     profileId: string;
-    settings: Pick<Settings, 'connectedServicesProfileLabelByKey'>;
+    labelsByKey: Readonly<Record<string, string | undefined>>;
     localizePluginText: PluginLocalizedTextResolver;
 }>): Readonly<{
     service: PluginContributionIdentityV1;
@@ -150,10 +148,10 @@ function resolveLegacySummaryService(params: Readonly<{
         legacyServiceId: entry.legacyServiceId,
         serviceLabel: resolveConnectedServiceRegistryEntryDisplayName(entry, t, params.localizePluginText),
         profileId: params.profileId,
-        profileLabel: resolveConnectedServiceProfileLabel({
-            labelsByKey: params.settings.connectedServicesProfileLabelByKey,
-            serviceId: entry.legacyServiceId,
-            profileId: params.profileId,
+        profileLabel: resolveQualifiedConnectedAccountLabel({
+            labelsByKey: params.labelsByKey,
+            service: entry.service,
+            accountId: params.profileId,
         }),
     };
 }
@@ -209,11 +207,11 @@ export function useConnectedServiceQuotaSummaries(options?: Readonly<{
 }> {
     const quotasEnabled = useFeatureEnabled('connectedServices.quotas');
     const profile = useProfile();
-    const settings = useSettingsSelector((settings) => ({
+    const quotaSettings = useSettingsSelector((settings) => ({
         connectedServicesQuotaPinnedMeterIdsByKey: settings.connectedServicesQuotaPinnedMeterIdsByKey,
         connectedServicesQuotaSummaryStrategyByKey: settings.connectedServicesQuotaSummaryStrategyByKey,
-        connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
     }));
+    const labelsByKey = useConnectedMetadataCatalog(quotasEnabled ? undefined : null, selectConnectedMetadataLabels);
     const connectedServicesRegistrySnapshot = useProjectedConnectedServicesRegistry();
     const localizePluginText = useProjectedPluginLocalizedTextResolver();
     const serverFeatures = useServerFeaturesRuntimeSnapshot({
@@ -294,14 +292,14 @@ export function useConnectedServiceQuotaSummaries(options?: Readonly<{
             const summaryService = entry.kind === 'qualified'
                 ? resolveQualifiedSummaryService({
                     ref: entry.ref,
-                    settings,
+                    labelsByKey,
                     registryEntries: connectedServicesRegistrySnapshot.entries,
                     localizePluginText,
                 })
                 : resolveLegacySummaryService({
                     serviceId: entry.serviceId,
                     profileId: entry.profileId,
-                    settings,
+                    labelsByKey,
                     localizePluginText,
                 });
             if (!summaryService) continue;
@@ -346,8 +344,8 @@ export function useConnectedServiceQuotaSummaries(options?: Readonly<{
                 continue;
             }
 
-            const pinnedMeterIds = settings.connectedServicesQuotaPinnedMeterIdsByKey[entry.key] ?? [];
-            const strategy = resolveQuotaSummaryStrategy(settings.connectedServicesQuotaSummaryStrategyByKey[entry.key]);
+            const pinnedMeterIds = quotaSettings.connectedServicesQuotaPinnedMeterIdsByKey[entry.key] ?? [];
+            const strategy = resolveQuotaSummaryStrategy(quotaSettings.connectedServicesQuotaSummaryStrategyByKey[entry.key]);
             const meters = buildSummaryMeters(snapshot.meters, pinnedMeterIds, strategy);
             if (meters.length === 0) {
                 withoutUsage.push({
@@ -394,9 +392,9 @@ export function useConnectedServiceQuotaSummaries(options?: Readonly<{
         profile.connectedServicesV2,
         readByKey,
         readsAccounts,
-        settings.connectedServicesProfileLabelByKey,
-        settings.connectedServicesQuotaPinnedMeterIdsByKey,
-        settings.connectedServicesQuotaSummaryStrategyByKey,
+        labelsByKey,
+        quotaSettings.connectedServicesQuotaPinnedMeterIdsByKey,
+        quotaSettings.connectedServicesQuotaSummaryStrategyByKey,
         snapshotsByKey,
     ]);
 
@@ -413,7 +411,7 @@ export function useConnectedServiceQuotaSummaries(options?: Readonly<{
             if (!shouldHideQuotaForCredentialStatus(account.status)) return [];
             const summaryService = resolveQualifiedSummaryService({
                 ref: account.ref,
-                settings,
+                labelsByKey,
                 registryEntries: connectedServicesRegistrySnapshot.entries,
                 localizePluginText,
             });
@@ -434,7 +432,7 @@ export function useConnectedServiceQuotaSummaries(options?: Readonly<{
                 }),
             }];
         });
-    }, [accountTransport, connectedServicesRegistrySnapshot.entries, localizePluginText, profile.connectedAccountsV4, settings]);
+    }, [accountTransport, connectedServicesRegistrySnapshot.entries, localizePluginText, profile.connectedAccountsV4, labelsByKey]);
 
     const groups = (profile as { connectedAccountGroupsV4?: ReadonlyArray<Readonly<{
         ref: Readonly<{ service: PluginContributionIdentityV1 }>;

@@ -81,6 +81,7 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown): str
         case 'connect_credential_unsupported_format':
         case 'connect_group_runtime_fallback_unsupported':
         case 'connected_account_legacy_operation_unsupported':
+        case 'connected_account_v4_operation_unsupported':
         case 'connected_account_service_identity_unsupported':
         case 'connected_account_v4_contract_unavailable':
         case 'connected_account_v4_contract_violation':

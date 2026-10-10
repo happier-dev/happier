@@ -9,17 +9,20 @@ import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHead
 import { SettingSection } from '@/components/settings/shell/SettingRow';
 import { teamCredentialDetailPath } from '@/components/settings/teams/teamsRoutes';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useHomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
 import { Modal } from '@/modal';
 import { buildConnectedAccountSettingsRoute } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
 import { canExecuteConnectedServiceAction, getLegacyConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { useActiveServerAccountScope, useSettingMutable, useSettingsSelector } from '@/sync/store/hooks';
-import { useApplySettings } from '@/sync/store/settingsWriters';
+import { useConnectedAccountPurposeDefaults } from '@/hooks/server/connectedServices/useConnectedAccountPurposeDefaults';
+import { selectConnectedMetadataAcknowledgements, selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
+import { setConnectedAcknowledgement } from '@/sync/api/account/apiConnectedMetadataCatalog';
+import type { QualifiedAcknowledgementSubject } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import { t } from '@/text';
 
 import {
     ConnectedServicesDefaultAuthRow,
-    type ConnectedServicesAgentDefaultAuthWrite,
 } from '../ConnectedServicesDefaultAuthRow';
 import { ConnectedServicesProviderStateSharingDisclosure } from '../ConnectedServicesProviderStateSharingSettings';
 import { CONNECTED_SERVICES_SETTINGS } from '../connectedServicesSettings';
@@ -32,30 +35,27 @@ import { useConnectedServicesIndex } from '../model/useConnectedServicesIndex';
  */
 export const ConnectedServicesAgentSignInView = React.memo(function ConnectedServicesAgentSignInView() {
     const router = useRouter();
-    const activeAccountScope = useActiveServerAccountScope();
+    const activeServer = useActiveServerSnapshot();
+    const activeAccountScope = useActiveServerAccountScope(activeServer.serverId);
     const index = useConnectedServicesIndex({ agents: 'load' });
     const { agentEntries, qualifiedAccounts, qualifiedGroups } = index;
     const settings = useSettingsSelector((settings) => ({
-        connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
         connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,
-        connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
-        connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
     }));
-    const applySettings = useApplySettings();
-    const setDefaultAuthSettings = React.useCallback((next: ConnectedServicesAgentDefaultAuthWrite) => {
-        applySettings(next);
-    }, [applySettings]);
+    const labelsByKey = useConnectedMetadataCatalog(activeAccountScope, selectConnectedMetadataLabels);
+    const poolAdoptionDismissedByKey = useConnectedMetadataCatalog(activeAccountScope, selectConnectedMetadataAcknowledgements);
+    const { catalog: purposeCatalog, legacySettings, mutateDefaults } = useConnectedAccountPurposeDefaults();
     const [providerStateSharingSettings, setProviderStateSharingSettings] =
         useSettingMutable('connectedServicesProviderStateSharingSettingsV1');
     const normalizedProviderStateSharingSettings = React.useMemo(
         () => ConnectedServicesProviderStateSharingSettingsV1Schema.parse(providerStateSharingSettings),
         [providerStateSharingSettings],
     );
-    const [poolAdoptionDismissedByKey, setPoolAdoptionDismissedByKey] =
-        useSettingMutable('connectedServicesDefaultAuthPoolAdoptionDismissedByKey');
-    const dismissPoolAdoptionSuggestion = React.useCallback((key: string) => {
-        setPoolAdoptionDismissedByKey({ ...(poolAdoptionDismissedByKey ?? {}), [key]: true });
-    }, [poolAdoptionDismissedByKey, setPoolAdoptionDismissedByKey]);
+    const dismissPoolAdoptionSuggestion = React.useCallback(async (subject: Extract<QualifiedAcknowledgementSubject, { kind: 'adoption' }>) => {
+        if (!activeAccountScope) return false;
+        try { await setConnectedAcknowledgement({ subject, acknowledged: true }, activeAccountScope); return true; }
+        catch { return false; }
+    }, [activeAccountScope]);
     const accountGroupsEnabled = useFeatureEnabled('connectedServices.accountGroups');
     const teamCredentialResourcesEnabled = useFeatureEnabled('teams.credentialResources', {
         scopeKind: 'spawn',
@@ -87,10 +87,11 @@ export const ConnectedServicesAgentSignInView = React.memo(function ConnectedSer
                 <ItemGroup title={t('connectedServicesSettings.agentDefaultsTitle')} description={t('connectedServicesSettings.agentDefaultsDescription')}>
                     {agentEntries.filter((agentEntry) => agentEntry.connectedAccounts.length > 0).map((agentEntry, agentIndex) => (
                         <ConnectedServicesDefaultAuthRow
-                            key={agentEntry.agentId}
+                            key={`${activeAccountScope?.serverId}:${activeAccountScope?.accountId}:${agentEntry.agentId}`}
                             // Search reaches the per-agent default sign-in rows through the first of them.
                             setting={agentIndex === 0 ? CONNECTED_SERVICES_SETTINGS.settings.agentDefaults : undefined}
                             agentId={agentEntry.agentId}
+                            machineId={index.appShellProjection.machineId ?? undefined}
                             agentIdentity={agentEntry.identity}
                             agentTitle={agentEntry.title}
                             connectedAccountPurposes={agentEntry.connectedAccounts}
@@ -100,6 +101,9 @@ export const ConnectedServicesAgentSignInView = React.memo(function ConnectedSer
                             connectedAccountsV4={qualifiedAccounts}
                             connectedAccountGroupsV4={qualifiedGroups}
                             accountGroupsEnabled={accountGroupsEnabled}
+                            purposeBindings={purposeCatalog.value}
+                            purposeBindingsWritable={purposeCatalog.status === 'ready' && !purposeCatalog.stale}
+                            purposeBindingsLoading={purposeCatalog.status === 'loading'}
                             teamCredentialResources={teamCredentialCatalog.resources}
                             teamNameById={teamCredentialCatalog.teamNameById}
                             currentTeamCredentialResourceKeys={teamCredentialCatalog.currentResourceKeys}
@@ -110,13 +114,12 @@ export const ConnectedServicesAgentSignInView = React.memo(function ConnectedSer
                                     teamId: resource.teamId,
                                 }, resource.id) as never);
                             }}
+                            labelsByKey={labelsByKey}
                             settings={{
-                                connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
                                 connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,
-                                connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
-                                connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
+                                ...legacySettings,
                             }}
-                            setDefaultAuthSettings={setDefaultAuthSettings}
+                            setDefaultAuthSettings={mutateDefaults}
                             onOpenConnectedServicesSettings={openLegacyConnectedServiceSettings}
                             dismissedPoolAdoptionSuggestionKeys={poolAdoptionDismissedByKey}
                             onDismissPoolAdoptionSuggestion={dismissPoolAdoptionSuggestion}

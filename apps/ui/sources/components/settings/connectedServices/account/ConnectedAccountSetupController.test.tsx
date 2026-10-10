@@ -15,12 +15,12 @@ import { Modal } from '@/modal';
 import { storage } from '@/sync/domains/state/storageStore';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { adoptHomeProfile } from '@/sync/domains/server/serverProfiles';
-import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { getActiveServerAccountScope, captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { installConnectedAccountDescriptorProjection } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
-import { resolveQualifiedConnectedAccountLabel } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
+import { readConnectedAccountCatalog } from '@/sync/api/account/apiConnectedAccountCatalog';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createManagedResourceDependencyFixture } from '@/dev/testkit/fixtures/managedResourceDependencyFixtures';
@@ -49,6 +49,7 @@ import {
     buildProviderAccountUsageRecordId,
     QualifiedConnectedAccountQuotaResponseV4Schema,
     QualifiedConnectedAccountRefSchema,
+    QualifiedConnectedAccountProfileV4Schema,
     parseQualifiedConnectedAccountV4StructuredQueryValue,
     CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD,
     CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD,
@@ -61,6 +62,10 @@ import {
     type QualifiedConnectedAccountPurposeBindingTargetV1,
 } from '@happier-dev/protocol';
 import { ConnectedAccountSetupController, ConnectedAccountServiceView } from './ConnectedAccountServiceView';
+import { CONNECTED_PRESENTATION_ROWS_ROUTE_V1, CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1,
+    ConnectedPresentationRowMutationV1Schema, type ConnectedPresentationRecordV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
+import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, ConnectedAccountCatalogRowMutationV1Schema,
+    type ConnectedAccountCatalogRecordV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { ANTHROPIC_API_KEY_INPUT_SCHEMA } from '../../../../../../../packages/plugins/claude/src/connectedAccounts/anthropicRuntime';
 
 const platform = vi.hoisted(() => ({
@@ -140,6 +145,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
     let handleAuthentication: WireHandler<AuthenticationCommand>;
     let handleControl: WireHandler<ControlCommand>;
     let handleHttp: NonNullable<Parameters<typeof restoreServerAccountForTest>[0]['request']>;
+    let purposeBoundary: ReturnType<typeof installPurposeBoundary> | null;
     const httpRequests: URL[] = [];
     const onConnected = vi.fn();
     const onCancel = vi.fn();
@@ -169,12 +175,87 @@ describe('ConnectedAccountSetupController real ownership', () => {
         return screen;
     }
 
-    async function focusedScreen() {
+    async function focusedScreen(withAccountCredentials = false) {
         platform.params = { ...description.service, accountId: 'account-1' };
-        return renderScreen(<InjectedAuthProvider credentials={null}><ConnectedAccountServiceView /></InjectedAuthProvider>);
+        return renderScreen(<InjectedAuthProvider credentials={withAccountCredentials ? account.credentials : null}><ConnectedAccountServiceView /></InjectedAuthProvider>);
     }
 
-    function seedPurposeDefaults(target: QualifiedConnectedAccountPurposeBindingTargetV1) {
+    function installAccountLabelBoundary(targetAccount: QualifiedConnectedAccountProfileV4, beforeWrite?: () => Promise<void>) {
+        const savedProfile = { ...profileDefaults, id: 'account-a', connectedAccountsV4: [targetAccount] };
+        storage.getState().applyProfile(savedProfile);
+        let presentation: ConnectedPresentationRecordV1 = { v: 1, entries: [] };
+        let revision = 1;
+        let writeSignal: AbortSignal | null | undefined;
+        handleHttp = async (rawUrl, init) => {
+            const path = new URL(String(rawUrl)).pathname;
+            if (path === '/v1/account/profile') return Response.json(savedProfile);
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (path === CONNECTED_PRESENTATION_ROWS_ROUTE_V1) {
+                if (init?.method === 'POST') {
+                    const mutation = ConnectedPresentationRowMutationV1Schema.parse(JSON.parse(String(init.body)));
+                    expect(mutation.expectedRevision).toBe(revision);
+                    if (mutation.content?.t !== 'plain') throw new Error('Expected plain Account label');
+                    writeSignal = init.signal;
+                    await beforeWrite?.();
+                    presentation = mutation.content.v;
+                    return Response.json({ status: 'updated', revision: ++revision, cursor: revision });
+                }
+                return Response.json({ status: 'present', revision, content: { t: 'plain', v: presentation } });
+            }
+            if (path === CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1) return Response.json({
+                status: 'present', revision: 1, content: { t: 'plain', v: { v: 1, entries: [] } },
+            });
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        };
+        return { readPresentation: () => presentation, readWriteSignal: () => writeSignal };
+    }
+
+    function installPurposeBoundary(bindings: Extract<ConnectedAccountCatalogRecordV1, { key: 'purposes' }>['value']['bindings']) {
+        let record: Extract<ConnectedAccountCatalogRecordV1, { key: 'purposes' }> | null = null;
+        let revision = 0;
+        let settingsVersion = 3;
+        let raw: Readonly<Record<string, unknown>> | null = null;
+        const rowWrites: Array<Extract<ConnectedAccountCatalogRecordV1, { key: 'purposes' }>> = [];
+        const source = () => raw ??= { ...storage.getState().settings, connectedAccountPurposeBindingsV1: { v: 1, bindings } };
+        return {
+            readBindings: () => record?.value.bindings,
+            readSource: source,
+            rowWrites,
+            request(path: string, init?: RequestInit): Response | null {
+                if (path === '/v2/account/settings') {
+                    if (init?.method === 'POST') {
+                        const mutation = AccountSettingsV2UpdateRequestSchema.parse(JSON.parse(String(init.body)));
+                        expect(mutation.expectedVersion).toBe(settingsVersion);
+                        if (mutation.content?.t !== 'plain') throw new Error('Expected plain predecessor Settings');
+                        raw = mutation.content.v;
+                        return Response.json({ success: true, version: ++settingsVersion });
+                    }
+                    return Response.json({ content: { t: 'plain', v: source() }, version: settingsVersion });
+                }
+                if (path !== `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/purposes`) return null;
+                if (init?.method !== 'POST') return Response.json(record
+                    ? { status: 'present', revision, content: { t: 'plain', v: record } } : { status: 'absent' });
+                const mutation = ConnectedAccountCatalogRowMutationV1Schema.parse(JSON.parse(String(init.body)));
+                expect(mutation.expectedRevision).toBe(record ? revision : 'absent');
+                if (mutation.sourceSettingsVersion !== undefined) expect(mutation.sourceSettingsVersion).toBe(settingsVersion);
+                if (mutation.content?.t !== 'plain' || mutation.content.v.key !== 'purposes') throw new Error('Expected plain purposes row');
+                record = mutation.content.v;
+                rowWrites.push(record);
+                if (mutation.settingsMutation) {
+                    expect(mutation.settingsMutation.expectedSettingsVersion).toBe(settingsVersion);
+                    if (mutation.settingsMutation.content?.t !== 'plain') throw new Error('Expected plain Settings retirement');
+                    raw = mutation.settingsMutation.content.v;
+                    settingsVersion += 1;
+                }
+                return Response.json({ status: 'updated', revision: ++revision, cursor: revision,
+                    ...(mutation.settingsMutation ? { settingsVersion } : {}) });
+            },
+        };
+    }
+
+    async function seedPurposeDefaults(target: QualifiedConnectedAccountPurposeBindingTargetV1) {
         const bindings = [
             { purpose: { consumer: { pluginId: 'custom.agent', localId: 'one' }, purpose: 'model' }, target },
             { purpose: { consumer: { pluginId: 'custom.agent', localId: 'two' }, purpose: 'model' }, target },
@@ -184,7 +265,14 @@ describe('ConnectedAccountSetupController real ownership', () => {
         storage.getState().applySettings({ ...storage.getState().settings,
             connectedAccountPurposeBindingsV1: { v: 1, bindings },
         }, 2);
+        purposeBoundary = installPurposeBoundary(bindings);
         return bindings;
+    }
+
+    async function transferPurposeDefaults() {
+        const result = await readConnectedAccountCatalog({ serverId: account.home.id, accountId: 'account-a' }, 'purposes');
+        expect(result.status).toBe('ready');
+        expect(purposeBoundary!.readSource()).not.toHaveProperty('connectedAccountPurposeBindingsV1');
     }
 
     beforeEach(async () => {
@@ -200,6 +288,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
         authenticationCommands.length = 0;
         controlCommands.length = 0;
         httpRequests.length = 0;
+        purposeBoundary = null;
         handleHttp = async () => new Response('{}', { status: 404 });
         handleAuthentication = (command) => command.operation === 'submitManual'
             ? { status: 'connected', attemptId: 'attempt-1', account: { service, accountId: 'new-account' } }
@@ -213,7 +302,11 @@ describe('ConnectedAccountSetupController real ownership', () => {
             homeServerIdentityId: 'srv_connected_account_setup' }, source: 'manual' });
         account = await restoreServerAccountForTest({
             serverUrl: 'https://connected-account-setup.example.test', accountId: 'account-a',
-            request: async (url, init) => { httpRequests.push(new URL(String(url))); return handleHttp(url, init); },
+            request: async (url, init) => {
+                const parsed = new URL(String(url));
+                httpRequests.push(parsed);
+                return purposeBoundary?.request(parsed.pathname, init) ?? handleHttp(url, init);
+            },
         });
         const active = getActiveServerSnapshot();
         storage.getState().activateProfileScope({ serverId: active.serverId, accountId: 'account-a' });
@@ -290,6 +383,10 @@ describe('ConnectedAccountSetupController real ownership', () => {
     it('names a guided key through the existing Account label preference only after connection succeeds', async () => {
         const keyService = { pluginId: 'happier.agent.claude', localId: 'anthropic' };
         installDescription({ ...described, service: keyService }, 'anthropic');
+        const boundary = installAccountLabelBoundary(QualifiedConnectedAccountProfileV4Schema.parse({
+            ref: { service: keyService, accountId: 'new-key' }, status: 'connected', authenticationModeId: 'manual',
+            revisionSemantics: 'revisioned', credentialRevision, configurationReady: true, configurationRevision: null, scopes: [],
+        }));
         handleAuthentication = (command) => command.operation === 'submitManual'
             ? { status: 'connected', attemptId: 'attempt-1', account: { service: keyService, accountId: 'new-key' } }
             : { status: 'awaitingManual', attemptId: 'attempt-1' };
@@ -299,10 +396,12 @@ describe('ConnectedAccountSetupController real ownership', () => {
             screen.changeTextByTestId('connected-account-manual:token', 'sk-ant-secret');
             screen.changeTextByTestId('connected-account-manual:name', 'Build server');
         });
-        expect(storage.getState().settings.connectedServicesProfileLabelByKey).toEqual({});
+        expect(boundary.readPresentation().entries).toEqual([]);
         await screen.pressByTestIdAsync('connected-account-manual:submit');
-        await vi.waitFor(() => expect(resolveQualifiedConnectedAccountLabel({ service: keyService, legacyServiceId: 'anthropic',
-            accountId: 'new-key', labelsByKey: storage.getState().settings.connectedServicesProfileLabelByKey })).toBe('Build server'));
+        await vi.waitFor(() => expect(boundary.readPresentation().entries).toContainEqual({
+            v: 1,
+            subject: { kind: 'account', account: { service: keyService, accountId: 'new-key' } }, label: 'Build server',
+        }));
         expect(authenticationCommands).toContainEqual({ operation: 'submitManual', attemptId: 'attempt-1', fields: { token: 'sk-ant-secret' } });
     });
 
@@ -314,6 +413,149 @@ describe('ConnectedAccountSetupController real ownership', () => {
         expect(screen.findHostByTestId('connected-account-account-scope-mismatch')).not.toBeNull();
         expect(controlCommands).toEqual([]);
         expect(authenticationCommands).toEqual([]);
+    });
+
+    it.each(['unselected', 'offline', 'foreign'] as const)('keeps captured Account detail and label editing available with an %s machine', async (machineState) => {
+        const targetAccount: QualifiedConnectedAccountProfileV4 = {
+            ref: { service, accountId: 'account-1' }, status: 'connected', authenticationModeId: 'manual',
+            revisionSemantics: 'revisioned', credentialRevision, configurationReady: true, configurationRevision: null, scopes: [],
+        };
+        const boundary = installAccountLabelBoundary(targetAccount);
+        if (machineState === 'unselected') storage.getState().applySettings({ ...storage.getState().settings,
+            machineAdministrationTargetsLocalV1: {},
+        }, 2);
+        else if (machineState === 'offline') {
+            const machine = createMachineFixture({ id: selection.selectedTarget!.machineId, active: false, activeAt: 0 });
+            const serverId = getActiveServerSnapshot().serverId;
+            // Seed the actual inactive census, not an out-of-order activity update over the online fixture.
+            storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] } });
+        }
+        else storage.getState().applySettings({ ...storage.getState().settings,
+            machineAdministrationTargetsLocalV1: { [MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts]: {
+                serverIdentityId: 'srv_foreign_home', machineId: selection.selectedTarget!.machineId,
+            } },
+        }, 2);
+        if (machineState === 'offline') expect(storage.getState().machines[selection.selectedTarget!.machineId].active).toBe(false);
+        const screen = await focusedScreen(true);
+        expect(screen.findHostByTestId('qualified-account-detail'), JSON.stringify({ tree: screen.tree.toJSON(), profile: storage.getState().profile, machines: storage.getState().machines })).not.toBeNull();
+        expect(screen.findHostByTestId('qualified-account-detail:refresh')).toBeNull();
+        expect(screen.findHostByTestId('qualified-account-detail:action:reconnect')).toBeNull();
+        expect(screen.findHostByTestId('qualified-account-detail:action:disconnect')).toBeNull();
+        expect(screen.findHostByTestId('qualified-account-detail:configuration')).toBeNull();
+        await screen.pressByTestIdAsync('qualified-account-detail:action:edit-label');
+        await act(async () => screen.changeTextByTestId('qualified-account-detail:rename:input', 'Travel account'));
+        await screen.pressByTestIdAsync('qualified-account-detail:rename:save');
+        await vi.waitFor(() => expect(boundary.readPresentation().entries).toEqual([
+            { v: 1, subject: { kind: 'account', account: targetAccount.ref }, label: 'Travel account' },
+        ]));
+        expect(controlCommands).toEqual([]);
+        expect(authenticationCommands).toEqual([]);
+        expect(httpRequests.some(url => url.pathname === '/v4/connect/qualified/quotas/refresh')).toBe(false);
+    });
+
+    it('keeps the saved Account detail when the selected machine has no augmentation for it', async () => {
+        storage.getState().applyProfile({ ...profileDefaults, id: 'account-a', connectedAccountsV4: [{
+            ref: { service, accountId: 'account-1' }, status: 'connected', authenticationModeId: 'manual',
+            revisionSemantics: 'revisioned', credentialRevision, configurationReady: true, configurationRevision: null, scopes: [],
+        }] });
+        installDescription({ ...described, accounts: [] });
+        const screen = await focusedScreen();
+        await vi.waitFor(() => expect(controlCommands.some(command => command.operation === 'describeService')).toBe(true));
+        await act(async () => {});
+        expect(screen.findHostByTestId('qualified-account-detail')).not.toBeNull();
+        expect(screen.findHostByTestId('qualified-account-detail:action:edit-label')).not.toBeNull();
+        expect(screen.findHostByTestId('qualified-account-detail:action:reconnect')).toBeNull();
+        expect(screen.findHostByTestId('qualified-account-detail:action:disconnect')).toBeNull();
+        expect(screen.findHostByTestId('qualified-account-detail:configuration')).toBeNull();
+    });
+
+    it('labels an unfenced qualified Account without admitting credential operations', async () => {
+        const targetAccount = QualifiedConnectedAccountProfileV4Schema.parse({
+            ref: { service, accountId: 'account-1' }, status: 'connected', authenticationModeId: 'manual',
+            revisionSemantics: 'legacy_unfenced', credentialRevision: null,
+            configurationReady: false, configurationRevision: null, scopes: [],
+        });
+        const boundary = installAccountLabelBoundary(targetAccount);
+        storage.getState().applySettings({ ...storage.getState().settings, machineAdministrationTargetsLocalV1: {} }, 2);
+        const screen = await focusedScreen(true);
+        expect(screen.findHostByTestId('qualified-account-detail')).not.toBeNull();
+        await screen.pressByTestIdAsync('qualified-account-detail:action:edit-label');
+        await act(async () => screen.changeTextByTestId('qualified-account-detail:rename:input', 'Legacy work'));
+        await screen.pressByTestIdAsync('qualified-account-detail:rename:save');
+        await vi.waitFor(() => expect(boundary.readPresentation().entries).toEqual([
+            { v: 1, subject: { kind: 'account', account: targetAccount.ref }, label: 'Legacy work' },
+        ]));
+        for (const action of ['action:reconnect', 'action:disconnect', 'configuration']) {
+            expect(screen.findHostByTestId(`qualified-account-detail:${action}`)).toBeNull();
+        }
+        expect(authenticationCommands).toEqual([]);
+        expect(controlCommands).toEqual([]);
+    });
+
+    it.each(['draft', 'pending'] as const)('retains the Account label %s across a machine selection change', async phase => {
+        const targetAccount: QualifiedConnectedAccountProfileV4 = {
+            ref: { service, accountId: 'account-1' }, status: 'connected', authenticationModeId: 'manual',
+            revisionSemantics: 'revisioned', credentialRevision, configurationReady: true, configurationRevision: null, scopes: [],
+        };
+        let releaseWrite!: () => void;
+        const writeReady = new Promise<void>(resolve => { releaseWrite = resolve; });
+        const boundary = installAccountLabelBoundary(targetAccount, phase === 'pending' ? () => writeReady : undefined);
+        installDescription({ ...described, accounts: [targetAccount] });
+        storage.getState().applyMachines([
+            createMachineFixture({ id: selection.selectedTarget!.machineId, activeAt: Date.now() }),
+            createMachineFixture({ id: 'machine-second', activeAt: Date.now() }),
+        ], true, { sourceServerId: getActiveServerSnapshot().serverId });
+        const screen = await focusedScreen(true);
+        await screen.pressByTestIdAsync('qualified-account-detail:action:edit-label');
+        await act(async () => screen.changeTextByTestId('qualified-account-detail:rename:input', 'Travel account'));
+        const pendingSave = phase === 'pending' ? screen.pressByTestIdAsync('qualified-account-detail:rename:save') : null;
+        try {
+            if (pendingSave) await vi.waitFor(() => expect(boundary.readWriteSignal()).toBeInstanceOf(AbortSignal));
+            await act(async () => storage.getState().applySettings({ ...storage.getState().settings,
+                machineAdministrationTargetsLocalV1: { [MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts]: {
+                    serverIdentityId: account.home.serverIdentityId!, machineId: 'machine-second',
+                } },
+            }, 2));
+            if (phase === 'draft') {
+                expect(screen.findHostByTestId('qualified-account-detail:rename:input')?.props.value).toBe('Travel account');
+                await screen.pressByTestIdAsync('qualified-account-detail:rename:save');
+            } else {
+                expect(boundary.readWriteSignal()?.aborted).toBe(false);
+                releaseWrite();
+                await pendingSave;
+            }
+            await vi.waitFor(() => expect(boundary.readPresentation().entries).toEqual([
+                { v: 1, subject: { kind: 'account', account: targetAccount.ref }, label: 'Travel account' },
+            ]));
+        } finally { releaseWrite(); await pendingSave; }
+    });
+
+    it('retires native reconnect replies when the detail machine changes', async () => {
+        const targetAccount: QualifiedConnectedAccountProfileV4 = {
+            ref: { service, accountId: 'account-1' }, status: 'connected', authenticationModeId: 'manual',
+            revisionSemantics: 'revisioned', credentialRevision, configurationReady: true, configurationRevision: null, scopes: [],
+        };
+        installAccountLabelBoundary(targetAccount);
+        installDescription({ ...described, accounts: [targetAccount] });
+        storage.getState().applyMachines([
+            createMachineFixture({ id: selection.selectedTarget!.machineId, activeAt: Date.now() }),
+            createMachineFixture({ id: 'machine-second', activeAt: Date.now() }),
+        ], true, { sourceServerId: getActiveServerSnapshot().serverId });
+        const late = deferredReply();
+        handleAuthentication = command => command.operation === 'beginReconnect' ? late.promise
+            : { status: 'cancelled', attemptId: 'old-machine-attempt' };
+        const screen = await focusedScreen(true);
+        await vi.waitFor(() => expect(screen.findHostByTestId('qualified-account-detail:action:reconnect')).not.toBeNull());
+        await screen.pressByTestIdAsync('qualified-account-detail:action:reconnect');
+        await vi.waitFor(() => expect(authenticationCommands.some(command => command.operation === 'beginReconnect')).toBe(true));
+        await act(async () => storage.getState().applySettings({ ...storage.getState().settings,
+            machineAdministrationTargetsLocalV1: { [MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts]: {
+                serverIdentityId: account.home.serverIdentityId!, machineId: 'machine-second',
+            } },
+        }, 2));
+        await act(async () => late.resolve({ status: 'awaitingManual', attemptId: 'old-machine-attempt' }));
+        expect(screen.findHostByTestId('qualified-account-detail')).not.toBeNull();
+        expect(screen.findHostByTestId('connected-account-manual:token')).toBeNull();
     });
 
     it('does not promote a persisted machine choice with no fresh inventory into execution authority', async () => {
@@ -704,7 +946,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
             expectedRevision: 'config-1', values: { endpoint: 'https://new.example' }, secretValues: {} });
     });
 
-    it.each(['account', 'service'] as const)('edits established %s configuration without inferring reconnect or revealing configured secrets', async (scope) => {
+    it.each(['account'] as const)('edits established %s configuration without inferring reconnect or revealing configured secrets', async (scope) => {
         const ref = { service, accountId: 'account-1' };
         const mode: PluginConnectedAccountAuthenticationModeV2 = { ...configuredMode, configuration: { ...configuredMode.configuration!, scope, changeBehavior: 'refresh' } };
         const target = scope === 'account' ? { kind: 'account' as const, account: ref, modeId: 'oauth' }
@@ -736,6 +978,59 @@ describe('ConnectedAccountSetupController real ownership', () => {
             expectedRevision: 'config-1', values: { endpoint: 'https://new.example' }, secretValues: { secret: 'explicit-replacement' } }));
         expect(authenticationCommands).toEqual([]);
         expect(onConnected).not.toHaveBeenCalled();
+    });
+
+    it('edits admitted service configuration through Account CAS without selecting a machine', async () => {
+        const mode: PluginConnectedAccountAuthenticationModeV2 = { ...configuredMode,
+            configuration: { scope: 'service', changeBehavior: 'refresh', fields: [configuredMode.configuration!.fields[0]!] } };
+        installDescription({ ...described, descriptor: { ...described.descriptor,
+            authentication: { defaultModeId: mode.id, modes: [mode] } } });
+        const projected = { scopeKey: getActiveServerSnapshot().serverId, status: 'ready' as const, conflicts: [], errorReason: null,
+            descriptors: [{ id: service.localId, serviceId: 'acme-work', pluginId: service.pluginId, title: 'Acme Work',
+                provenance: 'external' as const, sourceKind: 'installed' as const, authentication: description.descriptor.authentication,
+                capabilities: [], availability: { state: 'available' as const, reason: 'resolved' }, diagnostics: [] }] };
+        installConnectedAccountDescriptorProjection(projected, captureActiveServerAccountScopeLifetime());
+        let value = { v: 1 as const, entries: [{ service, modeId: mode.id, revision: 'config-1',
+            values: { endpoint: 'https://old.example' }, secretRefs: {} }] };
+        let revision = 1;
+        let writes = 0;
+        handleHttp = async (url, init) => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (path === `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/configurations`) {
+                if (init?.method !== 'POST') return Response.json({ status: 'present', revision, content: { t: 'plain', v: { key: 'configurations', value } } });
+                const mutation = ConnectedAccountCatalogRowMutationV1Schema.parse(JSON.parse(String(init.body)));
+                expect(mutation.expectedRevision).toBe(revision);
+                if (mutation.content?.t !== 'plain' || mutation.content.v.key !== 'configurations') throw new Error('Expected Account configuration');
+                expect(mutation.content.v.value.entries[0]?.values).toEqual({ endpoint: 'https://new.example' });
+                writes += 1;
+                value = { ...value, entries: mutation.content.v.value.entries.map(entry => ({ ...entry, values: { endpoint: String(entry.values.endpoint) } })) };
+                return Response.json({ status: 'updated', revision: ++revision, cursor: revision });
+            }
+            return new Response('{}', { status: 404 });
+        };
+        storage.getState().applyMachines([], true, { sourceServerId: getActiveServerSnapshot().serverId });
+        storage.getState().applyProfile({ ...profileDefaults, id: 'account-a', connectedAccountsV4: [
+            QualifiedConnectedAccountProfileV4Schema.parse({ ref: { service, accountId: 'account-1' }, status: 'connected',
+                authenticationModeId: mode.id, revisionSemantics: 'revisioned', credentialRevision,
+                configurationReady: true, configurationRevision: null, scopes: [] }),
+        ] });
+        storage.getState().applySettings({ ...storage.getState().settings,
+            actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+                approvalWaivedSurfaces: { 'connectedServices.configuration.replace': ['ui'] } }),
+        }, 2);
+        platform.params = { ...service, accountId: 'account-1' };
+        const screen = await renderScreen(<InjectedAuthProvider credentials={account.credentials}><ConnectedAccountServiceView /></InjectedAuthProvider>);
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-service-configuration-settings:oauth')).not.toBeNull());
+        await screen.pressByTestIdAsync('connected-service-configuration-settings:oauth');
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-configuration:endpoint')).not.toBeNull());
+        await act(async () => screen.changeTextByTestId('connected-account-configuration:endpoint', 'https://new.example'));
+        await screen.pressByTestIdAsync('connected-account-configuration:save');
+        await vi.waitFor(() => expect(writes).toBe(1));
+        expect(controlCommands).toEqual([]);
+        expect(authenticationCommands).toEqual([]);
+        expect(value.entries[0]!.values.endpoint).toBe('https://new.example');
     });
 
     it('preserves an invalid configuration draft without claiming a successful reconnect', async () => {
@@ -793,7 +1088,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
         }] });
         const screen = await focusedScreen();
         await vi.waitFor(() => expect(screen.findHostByTestId('qualified-account-detail'), JSON.stringify(screen.tree.toJSON())).not.toBeNull());
-        for (const action of ['action:reconnect', 'action:disconnect', 'configuration', 'action:edit-label']) {
+        for (const action of ['action:reconnect', 'action:disconnect', 'configuration']) {
             expect(screen.findHostByTestId(`qualified-account-detail:${action}`)).toBeNull();
         }
         expect(authenticationCommands).toEqual([]);
@@ -805,19 +1100,14 @@ describe('ConnectedAccountSetupController real ownership', () => {
             ref: { service, accountId: 'account-1' }, status: 'connected', authenticationModeId: 'manual',
             revisionSemantics: 'revisioned', credentialRevision, configurationReady: true, configurationRevision: null, scopes: [],
         };
-        const bindings = seedPurposeDefaults({ kind: 'account', account: targetAccount.ref });
+        const bindings = await seedPurposeDefaults({ kind: 'account', account: targetAccount.ref });
         installDescription({ ...described, accounts: [targetAccount] });
         const approvals: ApprovalRequestV2[] = [];
-        const settingsWrites: unknown[] = [];
         handleHttp = async (rawUrl, init) => {
             const url = new URL(String(rawUrl));
             if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
-            if (url.pathname === '/v2/account/settings') {
-                if (init?.method === 'POST') settingsWrites.push(JSON.parse(String(init.body)));
-                return Response.json({ content: { t: 'plain', v: storage.getState().settings }, version: 2 });
-            }
             if (url.pathname === '/v1/artifacts' && init?.method === 'POST') {
                 // The persisted approval is produced by the real executor and
                 // Artifact owner; only their HTTP boundary is replaced.
@@ -836,6 +1126,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
         handleControl = command => command.operation === 'revokeAccount'
             ? { status: 'revoked', account: targetAccount.ref, remoteStatus: 'remoteUnsupported' }
             : command.operation === 'listPendingAttempts' ? { status: 'pendingAttempts', attempts: [] } : description;
+        await transferPurposeDefaults();
         const screen = await focusedScreen();
         await vi.waitFor(() => expect(screen.findHostByTestId('qualified-account-detail:action:disconnect')).not.toBeNull());
         // An awaited final approval may keep this invocation open. Unmount's
@@ -851,14 +1142,8 @@ describe('ConnectedAccountSetupController real ownership', () => {
         // not an additional local destructive-confirmation gate in this view.
         expect(platform.confirm).not.toHaveBeenCalled();
         expect(controlCommands.filter(command => command.operation === 'revokeAccount')).toEqual([]);
-        expect(storage.getState().settings.connectedAccountPurposeBindingsV1.bindings).toEqual(bindings);
-        // Account setup may publish its normalized settings projection. None
-        // of those writes may discard references to an unrevoked credential.
-        for (const write of settingsWrites) {
-            expect(AccountSettingsV2UpdateRequestSchema.parse(write).content).toMatchObject({
-                t: 'plain', v: { connectedAccountPurposeBindingsV1: { bindings } },
-            });
-        }
+        expect(purposeBoundary!.readBindings()).toEqual(bindings);
+        expect(screen.findHostByTestId('qualified-account-detail')).not.toBeNull();
     });
 
     it.each([false, true])('reviews retained native resources before an explicit manual-responsibility revoke retry (confirmed: %s)', async (confirmed) => {
@@ -866,29 +1151,18 @@ describe('ConnectedAccountSetupController real ownership', () => {
             ref: { service, accountId: 'account-1' }, status: 'connected', authenticationModeId: 'manual',
             revisionSemantics: 'revisioned', credentialRevision, configurationReady: true, configurationRevision: null, scopes: [],
         };
-        const bindings = seedPurposeDefaults({ kind: 'account', account: targetAccount.ref });
+        const bindings = await seedPurposeDefaults({ kind: 'account', account: targetAccount.ref });
         installDescription({ ...described, accounts: [targetAccount] });
         storage.getState().applySettings({ ...storage.getState().settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
             v: 1, approvalWaivedSurfaces: { 'connectedServices.accounts.revoke': ['ui'] },
         }) }, 3);
         const resource = createManagedResourceDependencyFixture();
         const renewedResource = createManagedResourceDependencyFixture(resource.intentRevision + 1);
-        let serverContent: unknown = { t: 'plain', v: storage.getState().settings };
-        let serverVersion = 3;
         handleHttp = async (rawUrl, init) => {
             const url = new URL(String(rawUrl));
             if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
-            if (url.pathname === '/v2/account/settings') {
-                if (init?.method === 'POST') {
-                    const write = AccountSettingsV2UpdateRequestSchema.parse(JSON.parse(String(init.body)));
-                    expect(write.expectedVersion).toBe(serverVersion);
-                    serverContent = write.content;
-                    return Response.json({ success: true, version: ++serverVersion });
-                }
-                return Response.json({ content: serverContent, version: serverVersion });
-            }
             return Response.json({ error: 'not_found' }, { status: 404 });
         };
         const revokes: ControlCommand[] = [];
@@ -904,6 +1178,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
             return command.operation === 'listPendingAttempts' ? { status: 'pendingAttempts', attempts: [] } : description;
         };
         platform.confirm.mockResolvedValue(confirmed);
+        await transferPurposeDefaults();
         const screen = await focusedScreen();
         await vi.waitFor(() => expect(screen.findHostByTestId('qualified-account-detail:action:disconnect')).not.toBeNull());
         await screen.pressByTestIdAsync('qualified-account-detail:action:disconnect');
@@ -921,7 +1196,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
                     expectedRecovery: reviewed.recovery, responsibility: 'manual' }],
             })) : []),
         ]);
-        expect(storage.getState().settings.connectedAccountPurposeBindingsV1.bindings).toEqual(bindings);
+        expect(purposeBoundary!.readBindings()).toEqual(bindings);
         // An unknown native result opens the existing recovery flow, not the detail's
         // disconnect button. The exact Account references above remain retained.
         await vi.waitFor(() => expect(screen.findHostByTestId(confirmed ? 'connected-account:error:retry' : 'qualified-account-detail:action:disconnect'),
@@ -989,7 +1264,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
             revisionSemantics: 'revisioned', credentialRevision, configurationReady: true, configurationRevision: null, scopes: [],
         };
         const otherAccount = { ...targetAccount, ref: { service, accountId: 'account-2' } };
-        const bindings = seedPurposeDefaults({ kind: 'account', account: targetAccount.ref });
+        const bindings = await seedPurposeDefaults({ kind: 'account', account: targetAccount.ref });
         installDescription({ ...described, accounts: [targetAccount, otherAccount] });
         // This neighbor exercises a settled reply under an explicit shared
         // policy waiver. The default Ask's Artifact boundary is covered above.
@@ -997,24 +1272,11 @@ describe('ConnectedAccountSetupController real ownership', () => {
             v: 1, approvalWaivedSurfaces: { 'connectedServices.accounts.revoke': ['ui'] },
         }) }, 3);
         expect(storage.getState().settings.actionsSettingsV1.approvalWaivedSurfaces?.['connectedServices.accounts.revoke']).toEqual(['ui']);
-        const settingsWrites: unknown[] = [];
-        let serverContent: unknown = { t: 'plain', v: storage.getState().settings };
-        let serverVersion = 3;
         handleHttp = async (rawUrl, init) => {
             const url = new URL(String(rawUrl));
             if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
-            if (url.pathname === '/v2/account/settings') {
-                if (init?.method === 'POST') {
-                    const write = AccountSettingsV2UpdateRequestSchema.parse(JSON.parse(String(init.body)));
-                    expect(write.expectedVersion).toBe(serverVersion);
-                    settingsWrites.push(write);
-                    serverContent = write.content;
-                    return Response.json({ success: true, version: ++serverVersion });
-                }
-                return Response.json({ content: serverContent, version: serverVersion });
-            }
             return Response.json({ error: 'not_found' }, { status: 404 });
         };
         handleControl = (command) => {
@@ -1026,6 +1288,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
             return command.operation === 'listPendingAttempts' ? { status: 'pendingAttempts', attempts: [] } : description;
         };
         platform.confirm.mockResolvedValueOnce(outcome !== 'declined');
+        await transferPurposeDefaults();
         const screen = await focusedScreen();
         await vi.waitFor(() => expect(screen.findHostByTestId('qualified-account-detail:action:disconnect')).not.toBeNull());
         await screen.pressByTestIdAsync('qualified-account-detail:action:disconnect');
@@ -1034,19 +1297,14 @@ describe('ConnectedAccountSetupController real ownership', () => {
             { operation: 'revokeAccount', account: targetAccount.ref, expectedCredentialRevision: credentialRevision, cleanupGroupReferences: false },
             ...(outcome !== 'declined' ? [{ operation: 'revokeAccount', account: targetAccount.ref, expectedCredentialRevision: credentialRevision, cleanupGroupReferences: true }] : []),
         ]);
-        const changedReferenceWrites = settingsWrites.filter(write => {
-            const { content } = AccountSettingsV2UpdateRequestSchema.parse(write);
-            return content?.t === 'plain'
-                && JSON.stringify(content.v.connectedAccountPurposeBindingsV1) !== JSON.stringify({ v: 1, bindings });
-        });
+        const changedReferenceWrites = purposeBoundary!.rowWrites.filter(record =>
+            JSON.stringify(record.value.bindings) !== JSON.stringify(bindings));
         if (outcome === 'revoked') {
             expect(changedReferenceWrites).not.toEqual([]);
             // A later normalization can acknowledge the same projection again;
             // every changed projection must preserve the unrelated credential.
             for (const write of changedReferenceWrites) {
-                expect(AccountSettingsV2UpdateRequestSchema.parse(write).content).toMatchObject({
-                    t: 'plain', v: { connectedAccountPurposeBindingsV1: { v: 1, bindings: bindings.slice(2) } },
-                });
+                expect(write.value.bindings).toEqual(bindings.slice(2));
             }
         } else {
             expect(changedReferenceWrites).toEqual([]);
@@ -1056,7 +1314,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
             expect(JSON.stringify(screen.tree.toJSON())).toContain('connectedServices.errors.credentialReferencedByGroup');
         }
         expect(onConnected).not.toHaveBeenCalled();
-        await vi.waitFor(() => expect(storage.getState().settings.connectedAccountPurposeBindingsV1.bindings,
+        await vi.waitFor(() => expect(purposeBoundary!.readBindings(),
             JSON.stringify({ tree: screen.tree.toJSON(), scope: storage.getState().settingsScope, version: storage.getState().settingsVersion }))
             .toEqual(outcome === 'revoked' ? bindings.slice(2) : bindings));
     });
@@ -1067,26 +1325,37 @@ describe('ConnectedAccountSetupController real ownership', () => {
             policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({}), activeConnectedAccountId: null,
             generation: 1, runtimeStateRevision: 0, state: {}, createdAt: 0, updatedAt: 0, members: [],
         });
-        const bindings = seedPurposeDefaults({ kind: 'group', ...group.ref });
+        const bindings = await seedPurposeDefaults({ kind: 'group', ...group.ref });
         QualifiedConnectedAccountGroupListResponseV4Schema.parse({ groups: [group] });
         resetServerFeaturesClientForTests();
         primeServerFeaturesSnapshot({ snapshot: { status: 'ready', features: createRootLayoutFeaturesResponse({
             features: { connectedServices: { enabled: true, accountGroups: { enabled: true } } },
         }) } });
         const deletedRequests: URL[] = [];
+        let groupDeleted = false;
         handleHttp = async (url, init) => {
             const request = new URL(String(url));
             if (request.pathname === '/v4/connect/qualified/groups') {
-                return new Response(JSON.stringify({ groups: [group] }), { status: 200 });
+                return Response.json({ groups: groupDeleted ? [] : [group] });
             }
             if (request.pathname === '/v4/connect/qualified/group' && init?.method === 'DELETE') {
                 deletedRequests.push(request);
-                return outcome === 'failed'
-                    ? new Response(JSON.stringify({ error: 'connect_group_generation_conflict' }), { status: 409 })
-                    : new Response(JSON.stringify({ success: true }), { status: 200 });
+                if (outcome === 'failed') return Response.json({ error: 'connect_group_generation_conflict' }, { status: 409 });
+                groupDeleted = true;
+                return Response.json({ success: true });
             }
+            if (request.pathname === '/v4/connect/qualified/group') {
+                // A definite DELETE receipt alone cannot retire a ref that a
+                // recreated pool now owns: model the server's exact absence.
+                return groupDeleted
+                    ? Response.json({ error: 'connect_group_not_found' }, { status: 404 })
+                    : Response.json({ group });
+            }
+            if (request.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (request.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             return new Response('{}', { status: 404 });
         };
+        await transferPurposeDefaults();
         platform.params = { ...service, groupId: group.ref.groupId };
         platform.confirm.mockResolvedValue(outcome !== 'cancelled');
         const screen = await renderScreen(<InjectedAuthProvider credentials={account.credentials}><ConnectedAccountServiceView /></InjectedAuthProvider>);
@@ -1096,7 +1365,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
         await vi.waitFor(() => expect(platform.confirm).toHaveBeenCalledOnce());
         if (outcome !== 'cancelled') await vi.waitFor(() => expect(deletedRequests).toHaveLength(1));
         if (outcome === 'failed') await vi.waitFor(() => expect(screen.findHostByTestId('connected-services-pool-detail:error')).not.toBeNull());
-        await vi.waitFor(() => expect(storage.getState().settings.connectedAccountPurposeBindingsV1.bindings)
+        await vi.waitFor(() => expect(purposeBoundary!.readBindings())
             .toEqual(outcome === 'deleted' ? bindings.slice(2) : bindings));
         if (outcome === 'cancelled') expect(deletedRequests).toEqual([]);
     });
@@ -1122,7 +1391,14 @@ describe('ConnectedAccountSetupController real ownership', () => {
         } }) } });
         handleHttp = async (url) => new URL(String(url)).pathname === '/v4/connect/qualified/quotas'
             ? new Response(JSON.stringify(quota), { status: 200 })
-            : new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
+            : new URL(String(url)).pathname === '/v4/connect/qualified/quotas/refresh'
+                ? Response.json({ success: true })
+                : new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
+        // Another live machine comes first in inventory; operations must use the page's exact target.
+        storage.getState().applyMachines([
+            createMachineFixture({ id: 'other-machine', activeAt: Date.now() }),
+            createMachineFixture({ id: selection.selectedTarget!.machineId, activeAt: Date.now() }),
+        ], true, { sourceServerId: getActiveServerSnapshot().serverId });
         installDescription({ ...described, accounts: [{ ref, status: 'connected', authenticationModeId: 'manual',
             revisionSemantics: 'revisioned', credentialRevision, configurationReady: true, configurationRevision: null, scopes: [] }] });
         platform.params = { ...service, accountId: ref.accountId };
@@ -1133,6 +1409,14 @@ describe('ConnectedAccountSetupController real ownership', () => {
         expect(quotaRequests.map((url) => parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountRefSchema, url.searchParams.get('ref')!)))
             .toEqual(quotaRequests.map(() => ref));
         expect(screen.findHostByTestId('qualified-account-detail:pools-empty')).toBeNull();
+        await screen.pressByTestIdAsync('qualified-account-detail:refresh');
+        await vi.waitFor(() => expect(httpRequests.some(url => url.pathname === '/v4/connect/qualified/quotas/refresh')).toBe(true));
+        const refreshAdmission = vi.mocked(apiSocket.machineRPC).mock.calls.find(([, , payload]) => {
+            const parsed = ConnectedAccountControlCommandRequestSchema.safeParse(payload);
+            return parsed.success && parsed.data.command.operation === 'describeService'
+                && parsed.data.command.requiredOperation === 'quota_refresh';
+        });
+        expect(refreshAdmission?.[0]).toBe(selection.selectedTarget!.machineId);
         expect(onConnected).not.toHaveBeenCalled();
     });
 });

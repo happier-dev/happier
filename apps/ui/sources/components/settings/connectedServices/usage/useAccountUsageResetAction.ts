@@ -5,7 +5,7 @@ import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot'
 import { Modal } from '@/modal';
 import { resolveConnectedServiceQuotaRecoveryCreditReceiptNoticeKey } from '@/sync/domains/connectedServices/connectedServiceQuotaRecoveryCreditReceiptPresentation';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
-import { resolveFreshMachineAdministrationExecutionTarget } from '@/sync/domains/machines/administration/useTargetSelection';
+import { doesMachineAdministrationTargetMatchActiveAccount, resolveFreshMachineAdministrationExecutionTarget } from '@/sync/domains/machines/administration/useTargetSelection';
 import { connectedServiceQuotaRecoveryCreditConsume } from '@/sync/ops/connectedServiceQuotaRecoveryCredits';
 import { storage } from '@/sync/domains/state/storageStore';
 import { t } from '@/text';
@@ -28,6 +28,8 @@ export function useAccountUsageResetAction(params: Readonly<{
     /** The built-in service id the consume operation speaks (usage resets exist for built-in services only). */
     legacyServiceId: ConnectedServiceId;
     accountId: string;
+    /** Detail admission: null refuses; a machine id must still be the fresh Account choice. */
+    machineId?: string | null;
     snapshotFetchedAtMs: number | null;
     onApplied: () => void;
 }>): AccountUsageResetAction {
@@ -37,13 +39,20 @@ export function useAccountUsageResetAction(params: Readonly<{
         profileId: params.accountId,
     });
     const [pending, setPending] = React.useState(false);
-    const { legacyServiceId, accountId, snapshotFetchedAtMs, onApplied } = params;
+    const { legacyServiceId, accountId, snapshotFetchedAtMs, onApplied, machineId: admittedMachineId } = params;
     const use = React.useCallback(async (providerCreditId: string | null) => {
         if (pending) return;
         const selected = storage.getState().settings.machineAdministrationTargetsLocalV1[
             MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts
         ] ?? null;
-        const machineId = sessionMachineId ?? resolveFreshMachineAdministrationExecutionTarget(selected)?.target.machineId ?? null;
+        const selectedMachine = doesMachineAdministrationTargetMatchActiveAccount({
+            target: selected, activeAccountServerId: activeServer.serverId,
+        }) ? resolveFreshMachineAdministrationExecutionTarget(selected)?.machine.id ?? null : null;
+        // The distinct session usage surface retains its bound-session target;
+        // Account detail must not substitute that target for its explicit choice.
+        const machineId = admittedMachineId === undefined
+            ? sessionMachineId ?? selectedMachine
+            : admittedMachineId !== null && admittedMachineId === selectedMachine ? admittedMachineId : null;
         if (!machineId) {
             await Modal.alert(t('common.error'), t('connectedServices.quota.recoveryCreditMachineUnavailable'));
             return;
@@ -69,6 +78,6 @@ export function useAccountUsageResetAction(params: Readonly<{
         } finally {
             setPending(false);
         }
-    }, [accountId, activeServer, legacyServiceId, onApplied, pending, sessionMachineId, snapshotFetchedAtMs]);
+    }, [accountId, activeServer, admittedMachineId, legacyServiceId, onApplied, pending, sessionMachineId, snapshotFetchedAtMs]);
     return { pending, use };
 }

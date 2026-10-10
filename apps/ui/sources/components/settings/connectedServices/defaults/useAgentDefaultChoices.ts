@@ -7,7 +7,6 @@ import { t } from '@/text';
 import { useConnectedServicesIndex } from '../model/useConnectedServicesIndex';
 import {
     buildAgentDefaultChoices,
-    writeAgentDefaultChoice,
     type AgentDefaultChoice,
     type AgentDefaultChoiceAgent,
 } from './agentDefaultChoices';
@@ -25,7 +24,7 @@ export function useAgentDefaultChoices(target: QualifiedConnectedAccountPurposeB
     setDefault: (agentId: string, makeDefault: boolean) => Promise<void>;
     disabledReason: string | undefined;
 }> {
-    const { agentEntries, agentsKnown } = useConnectedServicesIndex({ agents: 'cached' });
+    const { agentEntries, agentsKnown, appShellProjection } = useConnectedServicesIndex({ agents: 'cached' });
     const { catalog, legacySettings, mutateDefaults } = useConnectedAccountPurposeDefaults();
     const agents = agentsKnown ? agentEntries : NO_AGENTS;
     const choices = React.useMemo(
@@ -34,8 +33,9 @@ export function useAgentDefaultChoices(target: QualifiedConnectedAccountPurposeB
     );
     const setDefault = React.useCallback(async (agentId: string, makeDefault: boolean) => {
         if (!agentsKnown) throw new Error('agent_catalog_unavailable');
-        await mutateDefaults((purposeBindings, settings) => writeAgentDefaultChoice({ agents, settings, purposeBindings, target, agentId, makeDefault }));
-    }, [agents, agentsKnown, mutateDefaults, target]);
+        await mutateDefaults({ kind: 'target', target, agentId, makeDefault,
+            ...(appShellProjection.machineId ? { machineId: appShellProjection.machineId } : {}) });
+    }, [agentsKnown, appShellProjection.machineId, mutateDefaults, target]);
     const disabledReason = !agentsKnown || catalog.status === 'loading' ? t('common.loading')
         : catalog.status !== 'ready' || catalog.stale ? t('common.unavailable') : undefined;
     return React.useMemo(() => ({ choices, setDefault, disabledReason }), [choices, setDefault, disabledReason]);

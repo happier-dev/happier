@@ -60,6 +60,7 @@ export type QualifiedAccountDetailViewProps = Readonly<{
      * detail, which owns the member list, its ordering and its policy.
      */
     groups?: readonly QualifiedConnectedAccountUiGroup[];
+    labelsByKey?: Readonly<Record<string, string | undefined>>;
     /** The plan the provider reports ("Pro"), shown with the service in the header. */
     planLabel?: string | null;
     /** ★ "Default for <agent>": the per-agent default menu (never a per-service default). */
@@ -100,6 +101,7 @@ export type QualifiedAccountDetailViewProps = Readonly<{
     usageSection?: React.ReactNode;
     usedBySection?: React.ReactNode;
     worksOnSection?: React.ReactNode;
+    machineSetupSection?: React.ReactNode;
     /** How the account signed in ("Signed in with a code") and when a session last used it. */
     authenticationModeTitle?: string | null;
     lastUsedAt?: number | null;
@@ -187,7 +189,7 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
         target: { kind: 'group', service: group.ref.service, groupId: group.ref.groupId },
         accounts: [],
         groups: [group],
-        labelsByKey: NO_LOCAL_PROFILE_LABELS,
+        labelsByKey: props.labelsByKey ?? NO_LOCAL_PROFILE_LABELS,
         serviceTitle: serviceLabel,
     }).primaryLabel;
 
@@ -314,6 +316,7 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                 />
             ) : null}
             {props.usageSection ?? null}
+            {props.machineSetupSection ?? null}
             {compact && providerAccount ? <ItemGroup title={t('connectedServices.profile.providerAccountId')}><Item title={t('connectedServices.profile.providerAccountId')} subtitle={<ConnectedAccountIdentityText value={providerAccount} style={[stylesheet.factText, stylesheet.mono]} />} showChevron={false} mode="info" /></ItemGroup> : null}
             {props.usedBySection ?? null}
             {showPools ? (
@@ -331,7 +334,7 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                                     },
                                     accounts: [],
                                     groups: [group],
-                                    labelsByKey: NO_LOCAL_PROFILE_LABELS,
+                                    labelsByKey: props.labelsByKey ?? NO_LOCAL_PROFILE_LABELS,
                                     serviceTitle: serviceLabel,
                                 }).primaryLabel}
                                 subtitle={describeMembership(group, account)}

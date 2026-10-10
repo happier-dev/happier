@@ -17,7 +17,6 @@ import {
   resolveConnectedAccountPurposeTeamResourceEligibility,
   type ConnectedAccountPurposeTargetEligibility,
 } from './connectedAccountPurposeTargetEligibility';
-import { getQualifiedConnectedServiceRegistryEntry } from './connectedServiceRegistry';
 import {
   areTeamResourceConnectedServiceSelectionsEqual,
   teamResourceConnectedServiceSelectionKey,
@@ -182,7 +181,6 @@ export function buildConnectedAccountPurposeTargetChoices(input: Readonly<{
         accounts: input.accounts,
         groups: input.groups,
         labelsByKey: input.labelsByKey,
-        legacyServiceId: getQualifiedConnectedServiceRegistryEntry(account.ref.service)?.legacyServiceId ?? null,
         serviceTitle: input.serviceTitle,
         presentIdentity: input.presentIdentity,
       }),
@@ -219,7 +217,6 @@ export function buildConnectedAccountPurposeTargetChoices(input: Readonly<{
         accounts: input.accounts,
         groups: input.groups,
         labelsByKey: input.labelsByKey,
-        legacyServiceId: getQualifiedConnectedServiceRegistryEntry(group.ref.service)?.legacyServiceId ?? null,
         serviceTitle: input.serviceTitle,
         presentIdentity: input.presentIdentity,
       }),
@@ -336,9 +333,6 @@ export function resolveConnectedAccountPurposeTargetDisplay(input: Readonly<{
     accounts: input.accounts,
     groups: input.groups,
     labelsByKey: input.labelsByKey,
-    legacyServiceId: getQualifiedConnectedServiceRegistryEntry(
-      input.target.kind === 'account' ? input.target.account.service : input.target.service,
-    )?.legacyServiceId ?? null,
     serviceTitle: input.serviceTitle,
     sourceNegotiation: input.sourceNegotiation,
     presentIdentity: input.presentIdentity,

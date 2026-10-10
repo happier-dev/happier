@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ConnectedServicesProviderStateSharingSettingsV1Schema,
+  type ConnectedServicesProviderStateSharingSettingsV1,
 } from '@happier-dev/protocol';
 import {
   connectedServicesModuleState,
@@ -136,6 +137,14 @@ function buildExpectedSharedStateRiskAcknowledgements(): Partial<Record<AgentId,
   return acknowledgements;
 }
 
+function expectSharingSettingChange(expected: ConnectedServicesProviderStateSharingSettingsV1) {
+  const change: unknown = setSettingMutableSpy.mock.lastCall?.[0];
+  const next = typeof change === 'function'
+    ? change(ConnectedServicesProviderStateSharingSettingsV1Schema.parse(providerStateSharingSetting.current))
+    : change;
+  expect(next).toEqual(expected);
+}
+
 vi.mock('@/sync/store/hooks', () => ({
   useActiveServerAccountScope: () => null,
   useAllMachines: () => [{ id: 'machine-a', active: true }],
@@ -155,7 +164,7 @@ vi.mock('@/sync/store/hooks', () => ({
 
 vi.mock('@/hooks/teams/useHomeTeamCredentialModelCatalog', () => ({
   useHomeTeamCredentialModelCatalog: () => ({
-    resources: [], teamNameById: {}, homeNameByTeamId: {}, currentResourceKeys: new Set(), current: true,
+    resources: [], teamNameById: {}, homeNameByTeamId: {}, currentResourceKeys: new Set(), current: true, condition: null,
   }),
 }));
 
@@ -267,7 +276,7 @@ describe('ConnectedServicesAgentSignInView sharing and legacy routing', () => {
     // Sharing state asks for the privacy acknowledgement first; the write follows the answer.
     await vi.waitFor(() => expect(modalConfirmSpy).toHaveBeenCalledTimes(1));
     await vi.waitFor(() => expect(setSettingMutableSpy).toHaveBeenCalled());
-    expect(setSettingMutableSpy).toHaveBeenCalledWith({
+    expectSharingSettingChange({
       v: 1,
       defaults: { configMode: 'linked', stateMode: 'shared' },
       byAgentId: {},
@@ -296,7 +305,7 @@ describe('ConnectedServicesAgentSignInView sharing and legacy routing', () => {
     expect(configModeControl.props.value).toBe('copied');
     configModeControl.props.onChange('isolated');
 
-    expect(setSettingMutableSpy).toHaveBeenCalledWith({
+    expectSharingSettingChange({
       v: 1,
       defaults: { configMode: 'isolated', stateMode: 'isolated' },
       byAgentId: {},
@@ -304,7 +313,7 @@ describe('ConnectedServicesAgentSignInView sharing and legacy routing', () => {
     });
 
     configModeControl.props.onChange('linked');
-    expect(setSettingMutableSpy).toHaveBeenCalledWith({
+    expectSharingSettingChange({
       v: 1,
       defaults: { configMode: 'linked', stateMode: 'isolated' },
       byAgentId: {},
@@ -384,7 +393,7 @@ describe('ConnectedServicesAgentSignInView sharing and legacy routing', () => {
 
     await vi.waitFor(() => expect(modalConfirmSpy).toHaveBeenCalledTimes(1));
     await vi.waitFor(() => expect(setSettingMutableSpy).toHaveBeenCalled());
-    expect(setSettingMutableSpy).toHaveBeenCalledWith({
+    expectSharingSettingChange({
       v: 1,
       defaults: { configMode: 'linked', stateMode: 'isolated' },
       byAgentId: {

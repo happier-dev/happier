@@ -4,10 +4,13 @@ import type { ConnectedServicesProfileOption } from '@happier-dev/agents';
 import type { QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol';
 import { connectedServiceProfileKey } from './connectedServiceProfilePreferences';
 import { presentConnectedAccountIdentity } from './maskAccountEmail';
+import { QualifiedConnectedAccountGroupV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { connectedEntitySubjectKeyV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 
 import {
     applyProjectedCredentialKindRestrictions,
     buildQualifiedConnectedAccountProfileOptionsByServiceId,
+    buildQualifiedConnectedAccountGroupOptionsByServiceId,
     resolveProjectedConnectedAccountServiceKeys,
 } from './qualifiedConnectedAccountServiceOptions';
 
@@ -16,6 +19,18 @@ const CLAUDE_SUBSCRIPTION_SERVICE_KEY = 'happier.agent.claude/claude-subscriptio
 // Novel external plugin service: no bundled enum member and no generated
 // legacy mapping — a bundled Agent author fact cannot exist for it.
 const NOVEL_SERVICE_KEY = 'acme.review/reviewer-service';
+
+it('projects the qualified Account pool label into choices without changing its definition', () => {
+    const service = { pluginId: 'acme.review', localId: 'reviewer-service' };
+    const group = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref: { service, groupId: 'primary' },
+        displayName: 'Definition name', incarnation: 'primary:1', generation: 2, runtimeStateRevision: 3,
+        policy: {}, activeConnectedAccountId: null, state: {}, createdAt: 0, updatedAt: 0, members: [] });
+    const input = { groups: [group], supportedServiceIds: [NOVEL_SERVICE_KEY],
+        labelsByKey: { [connectedEntitySubjectKeyV1({ kind: 'group', ...group.ref })]: 'Personal name' } };
+    expect(buildQualifiedConnectedAccountGroupOptionsByServiceId(input)[NOVEL_SERVICE_KEY]?.[0]?.label).toBe('Personal name');
+    expect(buildQualifiedConnectedAccountGroupOptionsByServiceId({ ...input, labelsByKey: {} })[NOVEL_SERVICE_KEY]?.[0]?.label).toBe('Definition name');
+    expect(group.displayName).toBe('Definition name');
+});
 
 describe('buildQualifiedConnectedAccountProfileOptionsByServiceId privacy', () => {
     it('uses the canonical user name before a provider display name and masks derived identities', () => {

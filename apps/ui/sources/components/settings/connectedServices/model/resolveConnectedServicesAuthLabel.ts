@@ -6,6 +6,7 @@ import type {
     ConnectedServicesProfileOptionsByServiceId,
 } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import { isConnectedServiceProfileOptionSelectable } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
+import type { ConnectedAccountPurposeTargetChoice } from '@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices';
 
 export type ConnectedServicesAuthLabelModel = Readonly<{
     label: string;
@@ -18,12 +19,14 @@ export type ConnectedServicesAuthWarningCode =
     | 'connected_profile_unavailable'
     | 'connected_group_unavailable'
     | 'connected_group_disabled'
+    | 'connected_team_resource_unavailable'
     | 'connected_service_unsupported';
 
 export type ConnectedServicesAuthWarningTranslationKey =
     | 'connectedServices.defaultAuth.warning.connected_profile_unavailable'
     | 'connectedServices.defaultAuth.warning.connected_group_unavailable'
     | 'connectedServices.defaultAuth.warning.connected_group_disabled'
+    | 'common.unavailable'
     | 'connectedServices.defaultAuth.warning.connected_service_unsupported';
 
 export type ConnectedServicesAuthServiceState = Readonly<{
@@ -46,11 +49,14 @@ export type ResolveConnectedServicesAuthLabelParams = Readonly<{
     resolveServiceTitle: (serviceId: string) => string;
     nativeLabel: string;
     formatConnectedCountLabel: (count: number) => string;
+    bindingPresentation?: 'effective' | 'requested';
+    teamResourceChoicesByServiceId?: Readonly<Record<string, Pick<ConnectedAccountPurposeTargetChoice, 'presentation' | 'eligibility'> | undefined>>;
 }>;
 
 export function resolveConnectedServicesAuthWarningTranslationKey(
     warningCode: ConnectedServicesAuthWarningCode | undefined,
 ): ConnectedServicesAuthWarningTranslationKey | undefined {
+    if (warningCode === 'connected_team_resource_unavailable') return 'common.unavailable';
     if (warningCode === 'connected_profile_unavailable') {
         return 'connectedServices.defaultAuth.warning.connected_profile_unavailable';
     }
@@ -94,9 +100,11 @@ function resolveConnectedBindingState(
 ): ConnectedServicesAuthServiceState {
     const binding = params.bindingsByServiceId[serviceId];
     if (binding?.source === 'team_resource') {
+        const choice = params.teamResourceChoicesByServiceId?.[serviceId];
         return {
             requestedSource: 'team_resource',
-            effectiveSource: 'team_resource',
+            effectiveSource: choice && choice.eligibility !== 'usable' ? 'native' : 'team_resource',
+            ...(choice && choice.eligibility !== 'usable' ? { warningCode: 'connected_team_resource_unavailable' as const } : {}),
         };
     }
     if (binding?.source !== 'connected') {
@@ -124,6 +132,7 @@ function resolveConnectedBindingState(
             requestedSource: 'connected',
             requestedSelection,
             effectiveSource: 'native',
+            ...(binding.selection === 'group' ? { groupId: binding.groupId } : { profileId: binding.profileId }),
             warningCode: requestedSelection === 'group'
                 ? 'connected_group_unavailable'
                 : 'connected_profile_unavailable',
@@ -215,22 +224,27 @@ function resolveConnectedBindingLabel(
     serviceId: string,
     state: ConnectedServicesAuthServiceState,
 ): string | null {
-    if (state.effectiveSource === 'team_resource') {
-        return params.resolveServiceTitle(serviceId);
+    if (state.effectiveSource === 'team_resource'
+        || (params.bindingPresentation === 'requested' && state.requestedSource === 'team_resource')) {
+        return params.teamResourceChoicesByServiceId?.[serviceId]?.presentation.accessibilityLabel
+            ?? params.resolveServiceTitle(serviceId);
     }
-    if (state.effectiveSource !== 'connected') return null;
+    const requested = params.bindingPresentation === 'requested' && state.requestedSource === 'connected';
+    if (state.effectiveSource !== 'connected' && !requested) return null;
 
-    if (state.effectiveSelection === 'group' && state.groupId) {
+    if ((requested ? state.requestedSelection : state.effectiveSelection) === 'group' && state.groupId) {
         const group = (params.accountGroupOptionsByServiceId?.[serviceId] ?? []).find((option) =>
             option.groupId === state.groupId
         );
-        return group ? `${params.resolveServiceTitle(serviceId)}: ${group.label}` : null;
+        return group ? `${params.resolveServiceTitle(serviceId)}: ${group.label}`
+            : requested ? `${params.resolveServiceTitle(serviceId)}: ${state.groupId}` : null;
     }
 
-    if (state.effectiveSelection === 'profile' && state.profileId) {
+    if ((requested ? state.requestedSelection : state.effectiveSelection) === 'profile' && state.profileId) {
         const profile = (params.profileOptionsByServiceId[serviceId] ?? [])
             .find((option) => isConnectedServiceProfileOptionSelectable(option) && option.profileId === state.profileId);
-        return profile ? `${params.resolveServiceTitle(serviceId)}: ${resolveProfileLabel(profile)}` : null;
+        return profile ? `${params.resolveServiceTitle(serviceId)}: ${resolveProfileLabel(profile)}`
+            : requested ? `${params.resolveServiceTitle(serviceId)}: ${state.profileId}` : null;
     }
 
     return null;

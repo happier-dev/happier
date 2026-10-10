@@ -407,7 +407,7 @@ function DetailFrame(props: Readonly<{ accountKey: 'chatgpt:personal' | 'chatgpt
                             subscription: usage.subscription ?? null,
                             recoveryCredits: usage.resets ?? null,
                             loading: false,
-                            error: false,
+                            error: null,
                             refreshing: false,
                             refresh: noop,
                         }}

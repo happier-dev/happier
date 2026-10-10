@@ -1,9 +1,8 @@
 import * as React from 'react';
 
 import { useAuth } from '@/auth/context/AuthContext';
-import { useApplySettings } from '@/sync/store/settingsWriters';
-import { getStorage } from '@/sync/domains/state/storageStore';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import {
     readConnectedServiceSettingsErrorCode,
     resolveConnectedServiceSettingsErrorMessage,
@@ -11,6 +10,7 @@ import {
 import {
     createQualifiedConnectedAccountGroupsClient,
     isQualifiedConnectedAccountGroupRevisionCurrent as isCurrentGroupRevision,
+    QualifiedConnectedAccountUiSourceError,
     type QualifiedConnectedAccountUiGroup,
     type QualifiedConnectedAccountUiPeerTransport,
     type QualifiedConnectedAccountUiSource,
@@ -20,7 +20,7 @@ import {
     useConnectedServiceGroupsRefreshSignal,
 } from '@/sync/domains/connectedServices/connectedServiceGroupsRefreshSignal';
 import { sameQualifiedConnectedAccountGroupRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
-import { removeAgentConnectedAccountDefaultsForDeletedTarget } from '@happier-dev/protocol/account/settings/connected-services';
+import { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/connect/configurationActionsV1';
 import type { ConnectedServiceAuthGroupPolicyV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
@@ -45,6 +45,10 @@ export type QualifiedConnectedAccountGroupsStatus =
     | 'unsupported'
     | 'error';
 
+export type QualifiedConnectedAccountGroupDeleteReceipt = ReturnType<
+    (typeof CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1)['connectedServices.pools.delete']['parse']
+>;
+
 export type UseQualifiedConnectedAccountGroupsResult = Readonly<{
     status: QualifiedConnectedAccountGroupsStatus;
     source: QualifiedConnectedAccountUiSource | null;
@@ -61,7 +65,7 @@ export type UseQualifiedConnectedAccountGroupsResult = Readonly<{
         displayName?: string | null;
         policy?: Partial<ConnectedServiceAuthGroupPolicyV1>;
     }>): Promise<QualifiedConnectedAccountUiGroup | null>;
-    delete(group: QualifiedConnectedAccountUiGroup): Promise<boolean>;
+    delete(group: QualifiedConnectedAccountUiGroup): Promise<QualifiedConnectedAccountGroupDeleteReceipt | false>;
     addMember(params: Readonly<{
         group: QualifiedConnectedAccountUiGroup;
         account: QualifiedConnectedAccountRef;
@@ -133,7 +137,6 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
     peer: QualifiedConnectedAccountPeerTransportState;
 }>): UseQualifiedConnectedAccountGroupsResult {
     const credentials = useAuth().credentials;
-    const applySettings = useApplySettings();
     const refreshSignal = useConnectedServiceGroupsRefreshSignal();
     const [state, setState] = React.useState<State>(EMPTY_STATE);
     const [mutating, setMutating] = React.useState(false);
@@ -359,11 +362,39 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
             [mutate],
         ),
         delete: React.useCallback(async (group) => {
-            if (!client) return false;
+            if (!client || !basis) return false;
             const operationBasis = basis;
             setMutating(true);
             try {
-                await client.delete(group);
+                if (!sameQualifiedConnectedAccountGroupRef(group.ref, {
+                    service: operationBasis.service,
+                    groupId: group.ref.groupId,
+                })) {
+                    throw new QualifiedConnectedAccountUiSourceError('qualified_connected_accounts_cross_source_ref');
+                }
+                const { withDefaultActionExecuteContext } = await import('@/sync/ops/actions/defaultActionExecutor');
+                const result = await withDefaultActionExecuteContext(undefined, {
+                    serverId: operationBasis.serverId,
+                }, async (executor, account) => {
+                    if (resolveAuthCredentialsScopeKey(account.credentials)
+                        !== resolveAuthCredentialsScopeKey(operationBasis.credentials)
+                        || currentBasisRef.current !== operationBasis) {
+                        throw Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
+                    }
+                    return await executor.execute('connectedServices.pools.delete', {
+                        group: group.ref,
+                        expectedIncarnation: group.revision.incarnation,
+                        expectedGeneration: group.revision.generation,
+                        expectedRuntimeStateRevision: group.revision.runtimeStateRevision,
+                    }, {
+                        surface: 'ui',
+                        authority: 'present_user',
+                        serverId: account.serverId,
+                        runtimeAccountId: account.accountId,
+                    });
+                }, 'connectedServices.pools.delete');
+                if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+                const receipt = CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1['connectedServices.pools.delete'].parse(result.result);
                 if (
                     currentBasisRef.current !== operationBasis
                     || !isCurrentGroupRevision({
@@ -372,24 +403,20 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
                         group,
                         allowAbsent: true,
                     })
-                ) return false;
-                const defaults = removeAgentConnectedAccountDefaultsForDeletedTarget({
-                    settings: getStorage().getState().settings,
-                    target: { kind: 'group', ...group.ref },
-                });
-                if (defaults) applySettings(defaults);
+                ) return receipt;
+                const remainingGroups = stateRef.current.groups.filter((candidate) => (
+                    !sameQualifiedConnectedAccountGroupRef(candidate.ref, group.ref)
+                ));
                 groupsEpochRef.current += 1;
                 setState((previous) => ({
                     ...previous,
                     basis,
                     status: 'loaded',
-                    groups: previous.groups.filter((candidate) => (
-                        candidate.ref.groupId !== group.ref.groupId
-                    )),
+                    groups: remainingGroups,
                     error: null,
                 }));
-                invalidateConnectedServiceGroupsRefreshSignal();
-                return true;
+                await load(remainingGroups);
+                return receipt;
             } catch (error) {
                 if (currentBasisRef.current !== operationBasis) return false;
                 if (isGroupRevisionConflict(error)) {
@@ -403,7 +430,7 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
             } finally {
                 setMutating(false);
             }
-        }, [applySettings, basis, client, load]),
+        }, [basis, client, load]),
         addMember: React.useCallback(
             (input) => mutate((activeClient) => activeClient.addMember(input), input.group),
             [mutate],

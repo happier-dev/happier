@@ -4,7 +4,7 @@ import {
     ConnectedPresentationRowReadResponseV1Schema, ConnectedAcknowledgementsRowReadResponseV1Schema,
     ConnectedPresentationRowMutationV1Schema, ConnectedAcknowledgementsRowMutationV1Schema,
     ConnectedMetadataRowMutationResponseV1Schema, sealConnectedPresentationContentV1, sealConnectedAcknowledgementsContentV1,
-    applyConnectedPresentationMutationV1, applyConnectedAcknowledgementMutationV1, removeConnectedMetadataSubjectV1,
+    applyConnectedPresentationMutationV1, applyConnectedSubscriptionPriceMutationV1, applyConnectedAcknowledgementMutationV1, removeConnectedMetadataSubjectV1,
     removeLegacyConnectedMetadataSubjectV1,
     connectedEntitySubjectKeyV1, connectedDisclosureSubjectKeyV1,
     type ConnectedPresentationRecordV1, type ConnectedAcknowledgementsRecordV1,
@@ -14,7 +14,7 @@ import {
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import type { CapturedAccountSettingsRequest } from './accountSettingsRequest';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { AccountStorageCurrentnessUnavailableError, resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
+import { classifyAccountStorageReadFailure, resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
 import { normalizeAccountSettingsHistoryAfterTransfer } from '@/sync/engine/settings/accountSettingsHistoryRestore';
@@ -24,6 +24,7 @@ import { getRandomBytes } from '@/platform/cryptoRandom';
 import { classifyHttpMutationRequestFailure } from '@/sync/http/mutationRequestOutcome';
 import { AGENT_IDS, BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
 import { resolveConnectedServiceCollapseKey, setConnectedServiceItemCollapsed } from '@/sync/domains/connectedServices/resolveConnectedServiceCollapseKey';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
@@ -92,8 +93,11 @@ async function readInventory(context: ConnectedMetadataAccountContext): Promise<
     return { entities: [
         ...profile.connectedAccountsV4.map(account => ({ kind: 'account' as const, account: account.ref })),
         ...profile.connectedAccountGroupsV4.map(group => ({ kind: 'group' as const, ...group.ref })),
-    ], agents: AGENT_IDS.map(legacyAgentId => ({ legacyAgentId,
-        agentTargetKey: buildBackendTargetKeyV2({ kind: 'agent', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[legacyAgentId] }) })), disclosureSubjects: [
+    ], agents: AGENT_IDS.flatMap(legacyAgentId => {
+        const target = AgentExecutionTargetV1Schema.safeParse({ kind: 'agent', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[legacyAgentId] });
+        // Contribution templates without a configured definition are not legacy executable targets.
+        return target.success ? [{ legacyAgentId, agentTargetKey: buildBackendTargetKeyV2(target.data) }] : [];
+    }), disclosureSubjects: [
         ...profile.connectedAccountsV4.map(account => ({ kind: 'account' as const, account: account.ref })),
         ...profile.connectedAccountGroupsV4.flatMap(group => group.members.map(member => ({ kind: 'group-member' as const,
             group: group.ref, accountId: member.connectedAccountId }))),
@@ -192,9 +196,7 @@ export async function readConnectedMetadataCatalogProjection(scope: ServerAccoun
         assertCurrent?.();
         return await withAccount(scope, context => { assertCurrent?.(); return readConnectedMetadataCatalogInContext(context, signal, publication); }, signal);
     } catch (error) {
-        const reason = signal?.aborted ? 'cancelled'
-            : error instanceof AccountStorageCurrentnessUnavailableError ? error.reason
-                : error instanceof ConnectedMetadataRowOperationError ? error.code : 'unreachable';
+        const reason = classifyAccountStorageReadFailure(error, signal);
         return { presentation: { status: 'unavailable', reason }, acknowledgements: { status: 'unavailable', reason }, disclosure: [] };
     }
 }
@@ -219,6 +221,24 @@ export async function setConnectedLabelInContext(context: ConnectedMetadataAccou
     if (catalog.presentation.status !== 'ready') throw new ConnectedMetadataRowOperationError('incomplete-catalog');
     requireUpdated(await writePresentation(context, { expectedRevision: catalog.presentation.revision,
         record: applyConnectedPresentationMutationV1({ v: 1, entries: [...catalog.presentation.entries] }, input) }, signal));
+    await publishReceipt(context);
+}
+export async function setConnectedSubscriptionPriceInContext(context: ConnectedMetadataAccountContext,
+    input: Readonly<{ account: import('@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence').QualifiedConnectedAccountRef;
+        price: Omit<import('@happier-dev/protocol/connect/accountSubscription').ProviderAccountSubscriptionMonthlyPriceV1, 'enteredAtMs'> | null }>,
+    signal?: AbortSignal): Promise<void> {
+    const profile = await readConnectedMetadataProfileInContext(context);
+    const subject = { kind: 'account' as const, account: input.account };
+    if (profile.connectedAccountsV4.filter(account => connectedEntitySubjectKeyV1({ kind: 'account', account: account.ref })
+        === connectedEntitySubjectKeyV1(subject)).length !== 1) {
+        throw new ConnectedMetadataRowOperationError('connected_metadata_subject_not_owned');
+    }
+    const catalog = await readForMutation(context, 'presentation', signal);
+    if (catalog.presentation.status !== 'ready') throw new ConnectedMetadataRowOperationError('incomplete-catalog');
+    requireUpdated(await writePresentation(context, { expectedRevision: catalog.presentation.revision,
+        record: applyConnectedSubscriptionPriceMutationV1({ v: 1, entries: [...catalog.presentation.entries] }, {
+            account: input.account, price: input.price ? { ...input.price, enteredAtMs: Date.now() } : null,
+        }) }, signal));
     await publishReceipt(context);
 }
 export async function setConnectedAcknowledgementInContext(context: ConnectedMetadataAccountContext,

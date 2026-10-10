@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { HubUsageSectionView } from '@/components/hub/HubUsageSection';
+import { HubUsageCardGrid } from '@/components/hub/usage/HubUsageCardGrid';
 import { ConnectedAccountDeviceForm } from '@/components/settings/connectedServices/account/ConnectedAccountDeviceForm';
 import { ConnectedAccountManualForm } from '@/components/settings/connectedServices/account/ConnectedAccountManualForm';
 import { ConnectedAccountOAuthForm } from '@/components/settings/connectedServices/account/ConnectedAccountOAuthForm';
@@ -294,7 +294,7 @@ function HomeFrame(props: Readonly<{ stage: 'rest' | 'open' | 'after' }>) {
                     onOpenChange={noop}
                 />
             </ItemGroup>
-            {after ? <HubUsageSectionView entries={HOME_USAGE} asOf={Date.now() - 12 * MIN} /> : null}
+            {after ? <ItemGroup title={t('settingsOverview.usageTitle')} surface="none"><HubUsageCardGrid entries={HOME_USAGE} /></ItemGroup> : null}
         </ItemList>
     );
 }

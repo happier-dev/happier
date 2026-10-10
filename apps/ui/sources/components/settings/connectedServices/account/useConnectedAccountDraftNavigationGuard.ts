@@ -1,10 +1,6 @@
 import * as React from 'react';
 
 import { Modal } from '@/modal';
-import {
-    type ActiveUnsavedChangesGuard,
-} from '@/utils/navigation/runGuardedNavigation';
-import { useActiveUnsavedChangesGuard } from '@/utils/navigation/useActiveUnsavedChangesGuard';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
 import { t } from '@/text';
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
@@ -50,15 +46,8 @@ export function useConnectedAccountDraftNavigationGuard(input: Readonly<{
         return saved;
     }, [input.onSave]);
     const continueNavigation = React.useCallback((action: unknown) => {
-        (input.navigation as NavigationDispatcher | null)?.dispatch?.(action);
+        if (action) (input.navigation as NavigationDispatcher | null)?.dispatch?.(action);
     }, [input.navigation]);
-    const activeGuard = React.useMemo<ActiveUnsavedChangesGuard>(() => ({
-        isDirtyRef,
-        requestDecision,
-        onDiscard: discard,
-        onSave: save,
-        tag: input.tag,
-    }), [discard, input.tag, requestDecision, save]);
 
     useUnsavedChangesBeforeRemoveGuard({
         isDirty: input.isDirty,
@@ -68,10 +57,5 @@ export function useConnectedAccountDraftNavigationGuard(input: Readonly<{
         onSave: save,
         onContinue: continueNavigation,
         tag: input.tag,
-    });
-    useActiveUnsavedChangesGuard({
-        navigation: input.navigation,
-        guard: activeGuard,
-        enabled: input.isDirty,
     });
 }

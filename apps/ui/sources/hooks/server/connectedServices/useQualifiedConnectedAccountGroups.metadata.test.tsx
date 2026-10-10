@@ -17,6 +17,7 @@ import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profil
 import { AccountSettingsV2HistoryListResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 
 const navigationBoundary = vi.hoisted(() => ({ events: [] as string[], onPending: null as (() => Promise<void>) | null }));
 installConnectedServicesCommonModuleMocks({
@@ -37,6 +38,125 @@ vi.mock('@/auth/context/AuthContext', () => ({ useAuth: () => auth }));
 afterEach(() => { resetRuntimeFetch(); vi.restoreAllMocks(); });
 
 describe('pool deletion through its shared Action owner', () => {
+    it('holds a mounted Agent pool-adoption acknowledgement at Action approval without writing metadata', async () => {
+        const home = createHomeGovernanceHarness();
+        installHomeGovernanceBoundaries(home);
+        setRuntimeFetch(home.request);
+        const serverId = await home.addHome({ name: 'Pool adoption', serverUrl: 'https://pool-adoption-admission.test',
+            accountId: 'adoption-owner', currentAccount: true });
+        const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+        const group = { v: 1, ref: { service, groupId: 'work' }, displayName: 'Work', incarnation: 'work:1', generation: 2,
+            runtimeStateRevision: 3, policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({ v: 1, strategy: 'least_limited',
+                autoSwitch: true, switchOn: { usageLimit: true, authExpired: true, accountChanged: false, refreshFailure: false } }),
+            activeConnectedAccountId: null, state: {}, members: [], createdAt: 0, updatedAt: 0 };
+        home.answer(serverId, 'GET /v1/account/profile', { body: { ...profileDefaults, id: 'adoption-owner', connectedAccountGroupsV4: [group] } });
+        const emptyMetadata = { status: 'present', revision: 1, content: { t: 'plain', v: { v: 1, entries: [] } } };
+        home.answer(serverId, 'GET /v1/account/entity-rows/connected-metadata/presentation', { body: emptyMetadata });
+        home.answer(serverId, `GET ${CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1}`, { body: emptyMetadata });
+        home.answer(serverId, `POST ${CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1}`, { body: { status: 'updated', revision: 2, cursor: 2 } });
+        home.answer(serverId, 'GET /v1/account/entity-rows/connected-accounts/purposes', { body: { status: 'present', revision: 1,
+            content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [] } } } } });
+        await home.requireUiApproval(serverId, 'connectedServices.acknowledgements.set');
+        const { ConnectedServicesAgentSignInView } = await import('@/components/settings/connectedServices/collection/ConnectedServicesAgentSignInView');
+        const { ConnectedServicesDefaultAuthRow } = await import('@/components/settings/connectedServices/ConnectedServicesDefaultAuthRow');
+        const screen = await renderScreen(<ConnectedServicesAgentSignInView />);
+        try {
+            await waitForHomeGovernance(() => expect(screen.findAllByType(ConnectedServicesDefaultAuthRow).length).toBeGreaterThan(0));
+            const row = screen.findAllByType(ConnectedServicesDefaultAuthRow)[0];
+            // Exercise the real collection's dismissal callback, exposed to its mounted presentation row.
+            const dismiss = row!.props.onDismissPoolAdoptionSuggestion as NonNullable<React.ComponentProps<typeof ConnectedServicesDefaultAuthRow>['onDismissPoolAdoptionSuggestion']>;
+            await act(async () => {
+                expect(await dismiss({ kind: 'adoption', agentTargetKey: buildBackendTargetKeyV2({ kind: 'agent',
+                    identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }),
+                    service, groupId: 'work' })).toBe(false);
+            });
+            expect(home.requestsFor(CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1).filter(request => request.input !== null)).toEqual([]);
+            expect(home.requestsFor('/v1/artifacts').some(request => request.input !== null)).toBe(true);
+        } finally { await screen.unmount(); await home.reset(); }
+    });
+    it('holds a mounted Agent own-login default at Action approval without writing the purpose catalog', async () => {
+        const home = createHomeGovernanceHarness();
+        installHomeGovernanceBoundaries(home);
+        setRuntimeFetch(home.request);
+        const serverId = await home.addHome({ name: 'Purpose default', serverUrl: 'https://purpose-default-admission.test',
+            accountId: 'purpose-owner', currentAccount: true });
+        const path = '/v1/account/entity-rows/connected-accounts/purposes';
+        home.answer(serverId, `GET ${path}`, { body: { status: 'present', revision: 1,
+            content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [] } } } } });
+        await home.requireUiApproval(serverId, 'connectedServices.accounts.purposeDefault.set');
+        const { useConnectedAccountPurposeDefaults } = await import('./useConnectedAccountPurposeDefaults');
+        const hook = await renderHook(() => useConnectedAccountPurposeDefaults());
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent().catalog.status).toBe('ready'));
+            await act(async () => {
+                await expect(hook.getCurrent().mutateDefaults({ kind: 'service', input: { agentId: 'codex',
+                    service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, selection: { source: 'native' } } }))
+                    .rejects.toMatchObject({ code: 'approval_required' });
+            });
+            expect(home.requestsFor(path).filter(request => request.input !== null)).toEqual([]);
+            expect(hook.getCurrent().catalog.value?.bindings).toEqual([]);
+            expect(home.requestsFor('/v1/artifacts').some(request => request.input !== null)).toBe(true);
+        } finally { await hook.unmount(); await home.reset(); }
+    });
+    it('admits the device identity-privacy effect before changing the local identity presenter', async () => {
+        const home = createHomeGovernanceHarness();
+        installHomeGovernanceBoundaries(home);
+        setRuntimeFetch(home.request);
+        const serverId = await home.addHome({ name: 'Identity privacy', serverUrl: 'https://identity-privacy-admission.test',
+            accountId: 'privacy-owner', currentAccount: true });
+        await home.requireUiApproval(serverId, 'connectedServices.identityPrivacy.set');
+        const { storage } = await import('@/sync/domains/state/storage');
+        const previous = storage.getState().localSettings.hideConnectedAccountIdentities;
+        storage.getState().applyLocalSettings({ hideConnectedAccountIdentities: false }, { source: 'ui' });
+        const { useConnectedAccountIdentityPrivacy } = await import('@/hooks/ui/useConnectedAccountIdentityPrivacy');
+        const hook = await renderHook(() => useConnectedAccountIdentityPrivacy());
+        try {
+            await act(async () => { await hook.getCurrent().setHidden(true); });
+            expect(hook.getCurrent().hidden).toBe(false);
+            expect(home.requestsFor('/v1/artifacts').some(request => request.input !== null)).toBe(true);
+        } finally {
+            await hook.unmount();
+            storage.getState().applyLocalSettings({ hideConnectedAccountIdentities: previous }, { source: 'ui' });
+            await home.reset();
+        }
+    });
+    it.each(['create', 'patch', 'switchNow'] as const)('holds a mounted pool %s at the configured Action approval instead of writing the pool directly', async operation => {
+        const home = createHomeGovernanceHarness();
+        installHomeGovernanceBoundaries(home);
+        setRuntimeFetch(home.request);
+        const serverUrl = 'https://pool-edit-admission.test';
+        const serverId = await home.addHome({ name: 'Pool edit', serverUrl, accountId: 'pool-editor', currentAccount: true });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        auth.credentials = await TokenStorage.getCredentialsForServerUrl(serverUrl, { serverId });
+        const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+        const group = { v: 1, ref: { service, groupId: 'work' }, displayName: 'Work', incarnation: 'work:1', generation: 2,
+            runtimeStateRevision: 3, policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({}), activeConnectedAccountId: null,
+            state: {}, createdAt: 0, updatedAt: 0, members: [] };
+        const encodedService = encodeURIComponent(encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountServiceRefSchema, service));
+        home.answer(serverId, `/v4/connect/qualified/groups?service=${encodedService}`, { body: { groups: [group] } });
+        home.answer(serverId, 'PATCH /v4/connect/qualified/group', { body: { group: { ...group, displayName: 'Renamed', generation: 3 } } });
+        home.answer(serverId, 'POST /v4/connect/qualified/groups', { body: { group: { ...group, ref: { service, groupId: 'new-pool' } } } });
+        home.answer(serverId, 'POST /v4/connect/qualified/group/active-account', { body: { group: { ...group, activeConnectedAccountId: 'work', generation: 3 } } });
+        await home.requireUiApproval(serverId, `connectedServices.pools.${operation}`);
+        const { useQualifiedConnectedAccountGroups } = await import('./useQualifiedConnectedAccountGroups');
+        const peer = { status: 'ready' as const, transport: { protocol: 'v4' as const }, errorCode: null };
+        const hook = await renderHook(() => useQualifiedConnectedAccountGroups({ serverId, service, peer }));
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent().groups).toHaveLength(1));
+            await act(async () => {
+                const current = hook.getCurrent();
+                if (operation === 'create') await current.create({ groupId: 'new-pool', displayName: 'New pool' });
+                else if (operation === 'patch') await current.patch({ group: current.groups[0]!, displayName: 'Renamed' });
+                else await current.setActiveAccount({ group: current.groups[0]!, account: { service, accountId: 'work' } }).catch(() => null);
+            });
+            expect(home.requests.filter(request => request.path.startsWith('/v4/connect/qualified/group') && request.input !== null)).toEqual([]);
+            expect(hook.getCurrent().groups[0]?.displayName).toBe('Work');
+            expect(home.requestsFor('/v1/artifacts').some(request => request.input !== null)).toBe(true);
+        } finally {
+            await hook.unmount();
+            await home.reset();
+        }
+    });
     async function runPoolDeletion(partialAcknowledgements: boolean, consumedScreen = false, retireDuringAlert = false, retireAfterDelete = false) {
         navigationBoundary.events.length = 0;
         navigationBoundary.onPending = null;

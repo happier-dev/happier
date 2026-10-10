@@ -16,10 +16,11 @@ import { QualifiedAccountDetailView, type QualifiedAccountDetailViewProps } from
 export const QualifiedAccountDetail = React.memo(function QualifiedAccountDetail(
     props: Omit<QualifiedAccountDetailViewProps, 'planLabel' | 'agentDefaults' | 'usageSection' | 'usedBySection' | 'worksOnSection'> & Readonly<{
         legacyServiceId: ConnectedServiceId | null;
+        machineId?: string | null;
     }>,
 ) {
     const { present, hidden } = useConnectedAccountIdentityPrivacy();
-    const quota = useQualifiedConnectedAccountQuota(props.account);
+    const quota = useQualifiedConnectedAccountQuota(props.account, { refreshMachineId: props.machineId });
     const target = React.useMemo<QualifiedConnectedAccountPurposeBindingTargetV1>(
         () => ({ kind: 'account', account: props.account }),
         [props.account],
@@ -48,7 +49,7 @@ export const QualifiedAccountDetail = React.memo(function QualifiedAccountDetail
             providerAccountId={shown.accountId}
             planLabel={quota.snapshot?.planLabel ?? null}
             agentDefaults={agentDefaults}
-            onRefresh={quota.supported !== false ? () => { void quota.refresh(); } : undefined}
+            onRefresh={props.machineId !== null && quota.supported !== false ? () => { void quota.refresh(); } : undefined}
             refreshing={quota.refreshing}
             usageSection={(
                 <AccountDetailFactsSections
@@ -56,6 +57,7 @@ export const QualifiedAccountDetail = React.memo(function QualifiedAccountDetail
                     legacyServiceId={props.legacyServiceId}
                     serviceLabel={props.serviceLabel}
                     signedOut={signedOut}
+                    machineId={props.machineId}
                 />
             )}
             usedBySection={<AccountDetailUsedBySection account={props.account} />}

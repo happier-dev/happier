@@ -83,7 +83,8 @@ describe('Connected metadata deletion receipt admission', () => {
             // Ready rows do not make an explicitly refused required history
             // normalization complete. No historical collapse purge is requested.
             expect(prepared.failure).toMatchObject({ code: 'history-incomplete' });
-            const result = await createUiConnectedServiceAction(account)({ actionId: 'connectedServices.pools.delete', input });
+            const result = await createUiConnectedServiceAction(account)({ actionId: 'connectedServices.pools.delete', input,
+                context: { surface: 'ui', authority: 'present_user' } });
             expect(result).toEqual({ applied: true, metadataCleanup: { status: 'cleanup-pending', reason: 'connected_metadata_cleanup_pending' } });
             expect(home.requestsFor(deletion.path)).toHaveLength(1);
             expect(presentation.entries).toEqual([]);
@@ -122,7 +123,8 @@ describe('Connected metadata deletion receipt admission', () => {
             const account = await captureLazyActionAccountContext(serverId);
             try {
                 const invoke = createUiConnectedServiceAction(account);
-                const result = await invoke({ actionId: kind === 'member-delete' ? 'connectedServices.pools.members.remove' : 'connectedServices.pools.delete', input });
+                const result = await invoke({ actionId: kind === 'member-delete' ? 'connectedServices.pools.members.remove' : 'connectedServices.pools.delete', input,
+                    context: { surface: 'ui', authority: 'present_user' } });
                 expect(home.requestsFor(request.path)).toHaveLength(1);
                 expect(acknowledgementReturned).toBe(true);
                 if (kind === 'definite-group-delete') {

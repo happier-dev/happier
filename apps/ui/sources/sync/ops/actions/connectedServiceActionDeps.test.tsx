@@ -11,7 +11,8 @@ import * as machineRpc from '@/sync/runtime/orchestration/serverScopedRpc/server
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import { AccountProfileSchema, PluginProjectionV2Schema } from '@happier-dev/protocol';
 import { ConnectedAccountCatalogRowMutationV1Schema, ConnectedPurposeCatalogV1Schema, type ConnectedPurposeCatalogV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
-import { CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD, ConnectedAccountControlCommandRequestSchema, ConnectedAccountRevokeResponseV1Schema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
+import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, ConnectedAccountAuthenticationCommandRequestSchema, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD, ConnectedAccountControlCommandRequestSchema, ConnectedAccountRevokeResponseV1Schema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -21,7 +22,38 @@ import { getConnectedAccountCatalogValue } from '@/sync/store/settings/connected
 
 installDisconnectedServerSocketBoundary();
 
-it('reports native revoke cleanup uncertainty when the issued purpose-row write acknowledgement is unreadable', async () => {
+it('routes admitted authentication to the captured Home and refuses retired Account custody at actual issuance', async () => {
+    const bridge = await loadSyncSingletonForTests();
+    const previous = storage.getState();
+    const http = createHomeHubArtifactHttpBoundary('authentication');
+    const connection = await restoreServerAccountForTest({ serverUrl: 'https://authentication.test', accountId: 'authentication', request: http.request });
+    storage.setState({ profileScope: { serverId: connection.home.id, accountId: 'authentication' }, profile: AccountProfileSchema.parse({ id: 'authentication' }) });
+    const account = await captureLazyActionAccountContext(connection.home.id);
+    const command = { operation: 'submitManual', attemptId: 'attempt-1', fields: { token: 'live-private-token' } };
+    let issued = false;
+    let retireBeforeIssuance = false;
+    const rpc = vi.spyOn(machineRpc, 'machineRpcWithServerScope').mockImplementation(async request => {
+        expect(request.serverId).toBe(connection.home.id);
+        expect(request.accountId).toBe('authentication');
+        expect(request.method).toBe(CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD);
+        expect(ConnectedAccountAuthenticationCommandRequestSchema.parse(request.payload)).toEqual({ v: 1, machineId: 'controller', command });
+        if (retireBeforeIssuance) storage.setState({ profileScope: { serverId: connection.home.id, accountId: 'successor' }, profile: AccountProfileSchema.parse({ id: 'successor' }) });
+        request.onIssued?.();
+        issued = true;
+        return { status: 'awaitingManual', attemptId: 'attempt-1' };
+    });
+    try {
+        const execute = () => createUiConnectedServiceAction(account)({ actionId: ActionIdSchema.parse('connectedServices.authentication.submitManual'),
+            input: { machineId: 'controller', attemptId: 'attempt-1', fields: command.fields }, context: { surface: 'ui', authority: 'present_user' } });
+        expect(await execute()).toEqual({ status: 'awaitingManual', attemptId: 'attempt-1' });
+        expect(issued).toBe(true);
+        issued = false; retireBeforeIssuance = true;
+        await expect(execute()).rejects.toThrow();
+        expect(issued).toBe(false);
+    } finally { rpc.mockRestore(); account.dispose(); storage.setState(previous, true); await connection.dispose(); bridge.dispose(); }
+});
+
+it('retains the native revoke receipt with pending cleanup when the issued purpose-row write acknowledgement is unreadable', async () => {
     const bridge = await loadSyncSingletonForTests();
     const previous = storage.getState();
     const http = createHomeHubArtifactHttpBoundary('native-revoke');
@@ -68,20 +100,24 @@ it('reports native revoke cleanup uncertainty when the issued purpose-row write 
         expect(nativeRevoked).toBe(true);
         expect(issuedCleanup).toMatchObject({ expectedRevision: 1, content: { t: 'plain', v: { key: 'purposes', value: { bindings: [] } } } });
         expect(value.bindings).toEqual([]);
-        expect(outcome).toEqual({ status: 'returned', value: { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' } });
+        expect(outcome).toEqual({ status: 'returned', value: {
+            status: 'revoked', account: selected, remoteStatus: 'remoteRevoked',
+            metadataCleanup: { status: 'cleanup-pending', reason: 'connected_metadata_cleanup_pending' },
+        } });
     } finally { rpc.mockRestore(); account.dispose(); storage.setState(previous, true); await connection.dispose(); bridge.dispose(); }
 });
 
 it.each(['cancelled', 'retired', 'unreadable'] as const)('preserves the default mutation disposition when its captured receipt is %s', async disposition => {
     const bridge = await loadSyncSingletonForTests();
     const previous = storage.getState();
-    const http = createHomeHubArtifactHttpBoundary('default-receipt');
+    const accountId = `default-receipt-${disposition}`;
+    const http = createHomeHubArtifactHttpBoundary(accountId);
     const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
     const controller = new AbortController();
     let value: ConnectedPurposeCatalogV1 = { v: 1, bindings: [] };
     let revision = 1;
     let scope: Readonly<{ serverId: string; accountId: string }>;
-    const connection = await restoreServerAccountForTest({ serverUrl: 'https://default-receipt.test', accountId: 'default-receipt', request: async (input, init) => {
+    const connection = await restoreServerAccountForTest({ serverUrl: `https://${accountId}.test`, accountId, request: async (input, init) => {
         if (new URL(String(input)).pathname !== '/v1/account/entity-rows/connected-accounts/purposes') return http.request(input, init);
         if (init?.method !== 'POST') return Response.json({ status: 'present', revision, content: { t: 'plain', v: { key: 'purposes', value } } });
         const mutation = ConnectedAccountCatalogRowMutationV1Schema.parse(JSON.parse(String(init.body)));
@@ -98,7 +134,7 @@ it.each(['cancelled', 'retired', 'unreadable'] as const)('preserves the default 
         };
         return response;
     } });
-    scope = { serverId: connection.home.id, accountId: 'default-receipt' };
+    scope = { serverId: connection.home.id, accountId };
     storage.setState({ profileScope: scope, profile: AccountProfileSchema.parse({ id: scope.accountId }) });
     const account = await captureLazyActionAccountContext(connection.home.id, controller.signal);
     // Machine RPC and HTTP are the only substituted boundaries. Agent resolution,
@@ -196,6 +232,10 @@ it('admits quota refresh through the exact Home machine before requesting the se
 });
 
 it('publishes a successful Action pool mutation to the real mounted group refresh subscription', async () => {
+    const bridge = await loadSyncSingletonForTests();
+    const previous = storage.getState();
+    const accountId = 'pool-refresh';
+    const http = createHomeHubArtifactHttpBoundary(accountId);
     let observed = 0;
     function Probe() { observed = useConnectedServiceGroupsRefreshSignal(); return null; }
     const screen = await renderScreen(React.createElement(Probe));
@@ -205,17 +245,20 @@ it('publishes a successful Action pool mutation to the real mounted group refres
         policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({}), activeConnectedAccountId: 'personal', generation: 2, runtimeStateRevision: 1,
         state: {}, createdAt: 0, updatedAt: 0, members: [],
     });
-    // Only the authenticated HTTP transport and credential lifetime are substituted.
-    const account = {
-        credentials: { token: 'transport-boundary' }, assertCurrent() {},
-        async request() { return new Response(JSON.stringify({ group }), { status: 200 }); },
-    } as unknown as LazyActionAccountContext;
-    await act(async () => {
-        expect(await createUiConnectedServiceAction(account)({ actionId: 'connectedServices.pools.switchNow',
-            input: { group: group.ref, connectedAccountId: 'personal', expectedGeneration: 1 },
-            context: { surface: 'ui', authority: 'present_user' },
-        })).toEqual({ applied: true });
-    });
-    expect(observed).toBeGreaterThan(before);
-    await screen.unmount();
+    // Only HTTP is substituted; captured Account custody and its lifetime stay real.
+    const connection = await restoreServerAccountForTest({ accountId, serverUrl: 'https://pool-refresh.test', request: async (input, init) => {
+        if (new URL(String(input)).pathname.startsWith('/v4/connect/qualified/group')) return Response.json({ group });
+        return http.request(input, init);
+    } });
+    storage.setState({ profileScope: { serverId: connection.home.id, accountId }, profile: AccountProfileSchema.parse({ id: accountId }) });
+    const account = await captureLazyActionAccountContext(connection.home.id);
+    try {
+        await act(async () => {
+            expect(await createUiConnectedServiceAction(account)({ actionId: 'connectedServices.pools.switchNow',
+                input: { group: group.ref, connectedAccountId: 'personal', expectedGeneration: 1 },
+                context: { surface: 'ui', authority: 'present_user' },
+            })).toEqual({ applied: true });
+        });
+        expect(observed).toBeGreaterThan(before);
+    } finally { account.dispose(); await screen.unmount(); storage.setState(previous, true); await connection.dispose(); bridge.dispose(); }
 });

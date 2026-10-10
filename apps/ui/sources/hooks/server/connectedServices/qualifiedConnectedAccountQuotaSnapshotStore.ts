@@ -4,8 +4,11 @@ import type {
     QualifiedConnectedAccountQuotaSnapshotV4,
 } from '@happier-dev/protocol';
 import { isRuntimeActive, subscribeToRuntimeActiveChange } from '@/utils/runtime/isRuntimeActive';
+import { t } from '@/text';
+import { ConnectedServiceApiError } from '@/sync/api/account/connectedServiceApiError';
 
 import {
+    readConnectedServiceSettingsErrorCode,
     resolveConnectedServiceSettingsErrorMessage,
 } from '@/components/settings/connectedServices/connectedServiceSettingsErrors';
 import {
@@ -213,8 +216,21 @@ async function runLoad(
             const snapshot = read?.snapshot ?? null;
             entry.snapshot = snapshot;
             entry.usageRecordId = read?.recordId ?? null;
-            entry.supported = snapshot !== null;
+            // An absent producer observation says nothing about quota capability.
+            // Manual refresh still goes through the canonical runtime admission.
+            if (snapshot) entry.supported = true;
             entry.error = null;
+            if (read?.status === 'error') {
+                const diagnostic = snapshot?.diagnostics?.find((value) => value.kind === 'provider_http');
+                // Provider messages/headers stay diagnostic-only, never user-facing copy.
+                const error = `${t('connectedServices.errors.quotaRefreshFailed')}${diagnostic?.status ? ` (HTTP ${diagnostic.status})` : ''}`;
+                entry.error = typeof diagnostic?.retryAtMs === 'number'
+                    ? t('connectedServices.errors.quotaRefreshRetryAt', {
+                        error,
+                        time: new Date(diagnostic.retryAtMs).toLocaleString(),
+                    })
+                    : error;
+            }
             entry.consecutiveErrors = 0;
             entry.nextFetchAtMs = Date.now() + (
                 snapshot
@@ -229,9 +245,13 @@ async function runLoad(
             );
             return snapshot;
         } catch (error) {
-            // A failed read is NOT evidence that the account supports quotas:
-            // leaving `supported` unknown keeps the refresh affordance hidden
-            // instead of offering an action that cannot work.
+            // Offline/provider errors retain presentation; an authoritative
+            // Account refusal retires the admission and its protected bytes.
+            if (error instanceof ConnectedServiceApiError && (error.status === 401 || error.status === 403)) {
+                entry.supported = false;
+                entry.snapshot = null;
+                entry.usageRecordId = null;
+            }
             entry.error = resolveConnectedServiceSettingsErrorMessage(error);
             entry.consecutiveErrors += 1;
             entry.nextFetchAtMs = Date.now()
@@ -366,6 +386,9 @@ export async function refreshQualifiedQuotaSnapshot(
             await refreshQualifiedConnectedAccountQuota(context);
             await runLoad(key, context);
         } catch (error) {
+            if (readConnectedServiceSettingsErrorCode(error) === 'connected_account_v4_operation_unsupported') {
+                entry.supported = false;
+            }
             entry.error = resolveConnectedServiceSettingsErrorMessage(error);
         } finally {
             entry.refreshPromise = null;

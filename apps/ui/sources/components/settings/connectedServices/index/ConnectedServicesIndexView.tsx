@@ -7,6 +7,7 @@ import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-d
 import { CardGrid } from '@/components/ui/cardGrid/CardGrid';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
+import { ExpandableItem, type ExpandableItemHeaderState } from '@/components/ui/lists/ExpandableItem';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
@@ -46,7 +47,7 @@ export type ConnectedServicesIndexViewProps = Readonly<{
     now: number;
     presentation: ConnectedServicesIndexPresentation;
     onPresentationChange: (next: ConnectedServicesIndexPresentation) => void;
-    /** Phones (and a stacked collection): the index is the list; limits stack under identities. */
+    /** Phones (and a stacked collection): services expand in place; limits stack under identities. */
     compact: boolean;
     /** Phone header actions (the eye and "+", which the rail carries on wide screens). */
     headerActions?: React.ReactNode;
@@ -55,6 +56,8 @@ export type ConnectedServicesIndexViewProps = Readonly<{
     banner?: React.ReactNode;
     /** The set-up blocks ("Connect more", catalog and flows), mounted after the services. */
     connectMore: React.ReactNode;
+    /** Gateways that draw on these subscriptions, after the pools they compose. */
+    gateways?: React.ReactNode;
     /** Team-shared accounts, after the pools. */
     sharedWithYou?: React.ReactNode;
     /** Shared composer gauge preferences for all Connected accounts. */
@@ -95,7 +98,11 @@ export type ConnectedServicesIndexViewProps = Readonly<{
 export const ConnectedServicesIndexView = React.memo(function ConnectedServicesIndexView(props: ConnectedServicesIndexViewProps) {
     const { theme } = useUnistyles();
     const { model, labelsByKey, present } = props;
-    const grid = props.presentation === 'grid';
+    const grid = !props.compact && props.presentation === 'grid';
+    const [expandedServiceKey, setExpandedServiceKey] = React.useState<string | null>(null);
+    React.useEffect(() => {
+        if (props.settled) setExpandedServiceKey(props.settled.serviceKey);
+    }, [props.settled?.serviceKey, props.settled?.accountId]);
     const agentSheets = model.sheets.filter((sheet) => sheet.section === 'agents');
     const toolSheets = model.sheets.filter((sheet) => sheet.section === 'tools');
     const accountCount = model.sheets.reduce((total, sheet) => total + sheet.accounts.length, 0);
@@ -144,7 +151,6 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
             roles: props.compact && !grid ? indexRoles.filter((role) => role.active) : indexRoles,
             signedOut: needsSignIn ? {
                 reason: t('connectedServicesSettings.signedOutBy', { service: sheet.label }),
-                consequence: t('connectedServicesCollection.signedOutConsequence'),
                 onSignInAgain: sheet.canAdd ? () => props.onSignInAgain(sheet, account.accountId) : null,
             } : null,
             fixProminence: props.settled ? 'secondary' : props.fixProminence,
@@ -203,45 +209,72 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
         };
     };
 
+    const renderAccounts = (sheet: ConnectedServicesIndexSheet) => (
+        <>
+            {sheet.supportDetails ? (
+                <Item
+                    testID={`connected-services-index:${sheet.serviceKey}:support-details`}
+                    title={t('common.details')}
+                    subtitle={t('common.unavailable')}
+                    onPress={() => void Modal.alert(t('common.details'), sheet.supportDetails ?? '')}
+                />
+            ) : null}
+            {sheet.accounts.map((account, index) => {
+                const entry = entryFor(sheet, account);
+                const settled = props.settled?.serviceKey === sheet.serviceKey && props.settled.accountId === account.accountId;
+                return (
+                    <View key={account.accountId} style={settled ? styles.settledRow : undefined}>
+                        {props.renderAccount({
+                            sheet,
+                            account,
+                            render: (facts) => (
+                                <ConnectedAccountIndexRowView {...entry} facts={facts} now={props.now} compact={props.compact} showDivider={!settled && index < sheet.accounts.length - 1} />
+                            ),
+                        })}
+                        {settled ? props.settled!.node : null}
+                    </View>
+                );
+            })}
+        </>
+    );
+
     const renderListSheet = (sheet: ConnectedServicesIndexSheet, sectionTitle?: string) => {
         const header = serviceHeader(sheet);
+        const needsSignIn = sheet.accounts.some((account) => normalizeConnectedServiceCredentialHealthStatus(account.status) === 'needs_reauth');
+        const subtitle = props.compact ? [
+            t('connectedServicesSettings.accountCount', { count: sheet.accounts.length }),
+            needsSignIn ? t('connectedServicesSettings.signedOutBy', { service: sheet.label }) : null,
+            header.summary,
+        ].filter(Boolean).join(' · ') : header.summary;
+        const serviceRow = (disclosure?: ExpandableItemHeaderState) => (
+            <Item
+                {...disclosure?.headerProps}
+                testID={`connected-services-service:${sheet.serviceKey}`}
+                title={sheet.label}
+                subtitle={subtitle}
+                leftElement={<ConnectedServiceMark legacyServiceId={sheet.legacyServiceId} size="row" />}
+                rightElement={props.compact ? (
+                    <Icon name={disclosure?.expanded ? 'caret-down' : 'caret-right'} size={theme.iconSize.medium} color={theme.colors.text.secondary} />
+                ) : header.addAccount}
+                rightElementOutsidePressable={!props.compact}
+                accessoryLayout={props.compact ? 'inline' : 'adaptive'}
+                showChevron={false}
+                mode={props.compact ? undefined : 'info'}
+            />
+        );
         return (
             <ItemGroup key={sheet.serviceKey} title={sectionTitle}>
-                <Item
-                    testID={`connected-services-service:${sheet.serviceKey}`}
-                    title={sheet.label}
-                    subtitle={header.summary}
-                    leftElement={<ConnectedServiceMark legacyServiceId={sheet.legacyServiceId} size="row" />}
-                    rightElement={props.compact ? undefined : header.addAccount}
-                    rightElementOutsidePressable
-                    accessoryLayout="adaptive"
-                    showChevron={false}
-                    mode="info"
-                />
-                {sheet.supportDetails ? (
-                    <Item
-                        testID={`connected-services-index:${sheet.serviceKey}:support-details`}
-                        title={t('common.details')}
-                        subtitle={t('common.unavailable')}
-                        onPress={() => void Modal.alert(t('common.details'), sheet.supportDetails ?? '')}
-                    />
-                ) : null}
-                {sheet.accounts.map((account, index) => {
-                    const entry = entryFor(sheet, account);
-                    const settled = props.settled?.serviceKey === sheet.serviceKey && props.settled.accountId === account.accountId;
-                    return (
-                        <View key={account.accountId} style={settled ? styles.settledRow : undefined}>
-                            {props.renderAccount({
-                                sheet,
-                                account,
-                                render: (facts) => (
-                                    <ConnectedAccountIndexRowView {...entry} facts={facts} now={props.now} compact={props.compact} showDivider={!settled && index < sheet.accounts.length - 1} />
-                                ),
-                            })}
-                            {settled ? props.settled!.node : null}
-                        </View>
-                    );
-                })}
+                {props.compact ? (
+                    <ExpandableItem
+                        testID={`connected-services-service:${sheet.serviceKey}:disclosure`}
+                        expanded={expandedServiceKey === sheet.serviceKey}
+                        onExpandedChange={(expanded) => setExpandedServiceKey(expanded ? sheet.serviceKey : null)}
+                        header={serviceRow}
+                    >
+                        {renderAccounts(sheet)}
+                        {header.addAccount ? <View>{header.addAccount}</View> : null}
+                    </ExpandableItem>
+                ) : <>{serviceRow()}{renderAccounts(sheet)}</>}
             </ItemGroup>
         );
     };
@@ -342,12 +375,10 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
                     title: t('connectedServicesCollection.indexTitle'),
                     description: t('connectedServicesCollection.indexDescription'),
                 })}
-                alwaysShowTitle
                 detailsPlacement="column"
                 actions={props.compact ? props.headerActions : switcher}
                 details={(
                     <View style={styles.details}>
-                        {props.compact ? switcher : null}
                         {accountCount > 0 ? (
                             <ConnectedServicesSummaryLine
                                 accountCount={accountCount}
@@ -364,6 +395,7 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
             {renderSheets(agentSheets)}
             {props.connectMore}
             {pools}
+            {props.gateways ?? null}
             {renderSheets(toolSheets, t('connectedServicesSettings.codeAndToolsTitle'))}
             {props.sharedWithYou ?? null}
             {props.preferences ?? null}

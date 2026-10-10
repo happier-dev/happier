@@ -8,7 +8,7 @@ import type {
 } from '@happier-dev/agents';
 
 import type { ConnectedAccountIdentityPresenter } from './maskAccountEmail';
-import { presentQualifiedConnectedAccountTarget } from './qualifiedConnectedAccountTargetPresentation';
+import { presentQualifiedConnectedAccountTarget, resolveQualifiedConnectedAccountGroupLabel } from './qualifiedConnectedAccountTargetPresentation';
 import { resolveQualifiedConnectedAccountLabel } from './connectedServiceProfilePreferences';
 
 /**
@@ -56,7 +56,7 @@ export function buildQualifiedConnectedAccountProfileOptionsByServiceId(params: 
             // derived identities must not be promoted into a generic name field.
             label: presentation ? presentation.primaryLabel
                 : resolveQualifiedConnectedAccountLabel({
-                    labelsByKey: params.labelsByKey, service: account.ref.service, legacyServiceId: null, accountId: account.ref.accountId,
+                    labelsByKey: params.labelsByKey, service: account.ref.service, accountId: account.ref.accountId,
                 }) ?? (account.displayName?.trim() || null),
         });
     }
@@ -66,6 +66,7 @@ export function buildQualifiedConnectedAccountProfileOptionsByServiceId(params: 
 export function buildQualifiedConnectedAccountGroupOptionsByServiceId(params: Readonly<{
     groups: ReadonlyArray<QualifiedConnectedAccountGroupV4>;
     supportedServiceIds: ReadonlyArray<ConnectedAccountServiceKey>;
+    labelsByKey?: Readonly<Record<string, string | undefined>>;
 }>): Readonly<Record<string, ConnectedServicesAccountGroupOption[]>> {
     const supported = new Set<string>(params.supportedServiceIds);
     const options: Record<string, ConnectedServicesAccountGroupOption[]> = {};
@@ -80,7 +81,8 @@ export function buildQualifiedConnectedAccountGroupOptionsByServiceId(params: Re
             ...(options[serviceKey] ?? []),
             {
                 groupId: group.ref.groupId,
-                label: group.displayName ?? group.ref.groupId,
+                label: (params.labelsByKey ? resolveQualifiedConnectedAccountGroupLabel({ group: group.ref, labelsByKey: params.labelsByKey }) : null)
+                    ?? group.displayName ?? group.ref.groupId,
                 activeProfileId,
                 memberProfileIds,
                 generation: group.generation,

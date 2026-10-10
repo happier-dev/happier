@@ -1,38 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 
 const {
     getQuotaMock,
-    requestRefreshMock,
-    openQuotaMock,
-    resolveMaterialMock,
 } = vi.hoisted(() => ({
     getQuotaMock: vi.fn(),
-    requestRefreshMock: vi.fn(),
-    openQuotaMock: vi.fn(),
-    resolveMaterialMock: vi.fn(),
 }));
 
 vi.mock('@/sync/api/account/apiQualifiedConnectedAccountsV4', () => ({
     getQualifiedConnectedAccountQuotaV4: getQuotaMock,
-    requestQualifiedConnectedAccountQuotaRefreshV4: requestRefreshMock,
-}));
-
-vi.mock(
-    '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials',
-    () => ({
-        resolveAccountScopedCryptoMaterialFromCredentials:
-            resolveMaterialMock,
-    }),
-);
-
-vi.mock('@happier-dev/protocol', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@happier-dev/protocol')>(),
-    openQualifiedConnectedAccountQuotaResponseV4: openQuotaMock,
 }));
 
 const credentials = {
     token: 'token',
-    secret: 'secret',
+    secret: encodeBase64(new Uint8Array(32).fill(1), 'base64url'),
 };
 const tokenOnlyCredentials = {
     token: 'token-only',
@@ -48,43 +29,37 @@ const serverBasis = {
     serverId: 'server-a',
     generation: 4,
 };
-const response = {
-    ref,
-    sourceResolution: { recordId: 'pau-record' },
-    content: {
-        t: 'plain',
-        v: {},
-    },
-    metadata: {
-        fetchedAt: 1,
-        staleAfterMs: 60_000,
-        status: 'ok',
-    },
-};
 const snapshot = {
     v: 1,
     ref,
+    activeAccountId: 'provider-work',
     fetchedAt: 1,
     staleAfterMs: 60_000,
     planLabel: null,
     accountLabel: null,
     meters: [],
 };
+const response = {
+    ref,
+    sourceResolution: {
+        source: { ref, bindingKind: 'account' },
+        recordId: 'paug_v1_testrecord',
+        providerAccountId: 'provider-work',
+        fetchedAt: snapshot.fetchedAt,
+        staleAfterMs: snapshot.staleAfterMs,
+    },
+    content: { t: 'plain', v: snapshot },
+    metadata: { fetchedAt: 1, staleAfterMs: 60_000, status: 'ok' },
+};
 
 describe('qualifiedConnectedAccountQuotaTransport', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        resolveMaterialMock.mockReturnValue({ type: 'legacy' });
         getQuotaMock.mockResolvedValue(response);
-        requestRefreshMock.mockResolvedValue(undefined);
-        openQuotaMock.mockReturnValue(snapshot);
     });
 
     it('reads and opens V4 quota from the pinned server without a daemon admission', async () => {
         const callOrder: string[] = [];
-        const assertOperationAllowed = vi.fn(async () => {
-            callOrder.push('admit');
-        });
         getQuotaMock.mockImplementation(async () => {
             callOrder.push('request');
             return response;
@@ -97,23 +72,15 @@ describe('qualifiedConnectedAccountQuotaTransport', () => {
             credentials,
             ref,
             serverBasis,
-            assertOperationAllowed,
-        })).resolves.toEqual({ snapshot, recordId: 'pau-record' });
+        })).resolves.toEqual({ snapshot, recordId: 'paug_v1_testrecord', status: 'ok' });
 
         expect(callOrder).toEqual(['request']);
-        expect(assertOperationAllowed).not.toHaveBeenCalled();
         expect(getQuotaMock).toHaveBeenCalledWith(credentials, ref, {
             expectedActiveServer: serverBasis,
-        });
-        expect(openQuotaMock).toHaveBeenCalledWith({
-            response,
-            expectedRef: ref,
-            material: { type: 'legacy' },
         });
     });
 
     it('opens plain V4 quota for token-only credentials without resolving account encryption material', async () => {
-        const assertOperationAllowed = vi.fn(async () => {});
         const { readQualifiedConnectedAccountQuota } = await import(
             './qualifiedConnectedAccountQuotaTransport'
         );
@@ -122,43 +89,17 @@ describe('qualifiedConnectedAccountQuotaTransport', () => {
             credentials: tokenOnlyCredentials,
             ref,
             serverBasis,
-            assertOperationAllowed,
-        })).resolves.toEqual({ snapshot, recordId: 'pau-record' });
-
-        expect(resolveMaterialMock).not.toHaveBeenCalled();
-        expect(openQuotaMock).toHaveBeenCalledWith({
-            response,
-            expectedRef: ref,
-            material: null,
-        });
+        })).resolves.toEqual({ snapshot, recordId: 'paug_v1_testrecord', status: 'ok' });
     });
 
-    it('fails closed before the daemon-executed refresh when admission rejects, while the server read proceeds', async () => {
-        const admissionError = Object.assign(new Error('unsupported'), {
-            code: 'connected_account_v4_operation_unsupported',
+    it('rejects a quota response attributed to a different provider account', async () => {
+        getQuotaMock.mockResolvedValue({
+            ...response,
+            sourceResolution: { ...response.sourceResolution, providerAccountId: 'another-provider-account' },
         });
-        const assertOperationAllowed = vi.fn(async () => {
-            throw admissionError;
-        });
-        const {
-            readQualifiedConnectedAccountQuota,
-            refreshQualifiedConnectedAccountQuota,
-        } = await import('./qualifiedConnectedAccountQuotaTransport');
-
+        const { readQualifiedConnectedAccountQuota } = await import('./qualifiedConnectedAccountQuotaTransport');
         await expect(readQualifiedConnectedAccountQuota({
-            credentials,
-            ref,
-            serverBasis,
-            assertOperationAllowed,
-        })).resolves.toEqual({ snapshot, recordId: 'pau-record' });
-        await expect(refreshQualifiedConnectedAccountQuota({
-            credentials,
-            ref,
-            serverBasis,
-            assertOperationAllowed,
-        })).rejects.toBe(admissionError);
-
-        expect(getQuotaMock).toHaveBeenCalledTimes(1);
-        expect(requestRefreshMock).not.toHaveBeenCalled();
+            credentials, ref, serverBasis,
+        })).rejects.toMatchObject({ code: 'qualified_connected_account_quota_invalid' });
     });
 });

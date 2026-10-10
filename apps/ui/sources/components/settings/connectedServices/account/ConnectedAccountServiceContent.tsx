@@ -40,6 +40,7 @@ import { getPreferredLanguage, t } from '@/text';
 import { resolveConnectedAccountModeTitle } from '../model/resolveConnectedAccountModeTitle';
 import {
     isConnectedServiceRuntimeCooldownError,
+    resolveConnectedServiceSettingsErrorMessage,
     resolveConnectedServiceRuntimeCooldownOverrideBody,
 } from '../connectedServiceSettingsErrors';
 import { resolveProjectedLocalizedText } from '@/components/plugins/surfaces/resolvePluginDisplayString';
@@ -114,24 +115,27 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
     accounts: readonly ConnectedAccountServiceProfile[];
     serviceConfigurationStatusByModeId?: ConnectedAccountServiceConfigurationStatusByModeId;
     accountLabels?: Readonly<Record<string, string | undefined>>;
+    labelsByKey?: Readonly<Record<string, string | undefined>>;
     groups?: UseQualifiedConnectedAccountGroupsResult;
     busy: boolean;
+    isControllerCurrent(): boolean;
+    /** Explicit page execution admission; null keeps Account data readable without machine effects. */
+    machineId?: string | null;
+    machineSetupSection?: React.ReactNode;
     /** The account detail's in-place rename (lab D2). */
-    onRenameAccount?(account: QualifiedConnectedAccountRef, label: string): void;
+    onRenameAccount?(account: QualifiedConnectedAccountRef, label: string): void | boolean | Promise<void | boolean>;
     onConfigureAccount?(account: QualifiedConnectedAccountRef): void;
     onConfigureService?(modeId: string): void;
     canReconnectAccount?(account: ConnectedAccountServiceProfile): boolean;
     onBeginReconnect?(account: QualifiedConnectedAccountRef): void;
-    /**
-     * Disconnect for the account detail screen, which owns (and has already
-     * shown) the confirmation. Resolves to whether the account was revoked.
-     */
-    onDisconnectAccount?(account: QualifiedConnectedAccountRef): Promise<boolean>;
+    /** The presented profile binds credential revision before the shared Action approval. */
+    onDisconnectAccount?(account: ConnectedAccountServiceProfile): Promise<boolean>;
 }>) {
     const locale = getPreferredLanguage();
     const router = useRouter();
     const groups = props.groups ?? EMPTY_GROUPS;
     const accountLabels = props.accountLabels ?? EMPTY_ACCOUNT_LABELS;
+    const labelsByKey = props.labelsByKey ?? EMPTY_ACCOUNT_LABELS;
     const service = props.service;
     const focus = props.focus ?? null;
     const accounts = React.useMemo(
@@ -246,11 +250,18 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
             }
         },
         delete: async (group) => {
-            const deleted = await groups.delete(group);
-            if (deleted) leaveFocusedScreen();
-            return deleted;
+            if (!props.isControllerCurrent()) return false;
+            const receipt = await groups.delete(group);
+            if (receipt === false) return false;
+            if (!props.isControllerCurrent()) return receipt;
+            if (receipt.metadataCleanup?.status === 'cleanup-pending') {
+                await Modal.alertAsync(t('common.error'), resolveConnectedServiceSettingsErrorMessage({ code: 'connected_metadata_cleanup_pending' }));
+                if (!props.isControllerCurrent()) return receipt;
+            }
+            if (receipt.applied) leaveFocusedScreen();
+            return receipt;
         },
-    }), [groups, leaveFocusedScreen, locale]);
+    }), [groups, leaveFocusedScreen, locale, props.isControllerCurrent]);
 
     /**
      * Human identity for an account, through the canonical qualified-target
@@ -265,9 +276,8 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
         },
         accounts,
         groups: groups.groups,
-        labelsByKey: EMPTY_ACCOUNT_LABELS,
+        labelsByKey,
         accountLabel: accountLabels[account.ref.accountId] ?? null,
-        legacyServiceId: props.legacyServiceId ?? null,
         serviceTitle: props.title,
     });
 
@@ -335,6 +345,7 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
                 group={group}
                 accounts={accounts}
                 accountLabels={accountLabels}
+                labelsByKey={labelsByKey}
                 serviceLabel={props.title}
                 mutations={poolMutations}
                 fallbackControlsEnabled={accountFallbackEnabled}
@@ -386,10 +397,13 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
         const authenticationMode = props.modes.find((mode) => mode.id === account.authenticationModeId) ?? null;
         return (
             <QualifiedAccountDetail
+                machineId={props.machineId}
+                machineSetupSection={props.machineSetupSection}
                 account={account.ref}
                 serviceLabel={props.title}
                 legacyServiceId={props.legacyServiceId ?? null}
                 presentation={resolveAccountIdentity(account)}
+                labelsByKey={labelsByKey}
                 providerEmail={account.providerIdentity?.email ?? null}
                 providerAccountId={account.providerIdentity?.accountId ?? null}
                 // RAW status: the view owns the recognized-status gate.
@@ -425,7 +439,7 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
                     groups: groups.groups,
                     onOpenPool: (groupId: string) => openFocus({ kind: 'group', groupId }),
                 } : {})}
-                {...(accountIsRevisioned && props.onRenameAccount ? {
+                {...(props.onRenameAccount ? {
                     rename: {
                         currentLabel: accountLabels[account.ref.accountId] ?? '',
                         onRename: (label: string) => props.onRenameAccount?.(account.ref, label),
@@ -448,7 +462,7 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
                 {...(accountIsRevisioned && props.onDisconnectAccount ? {
                     onDisconnect: async () => {
                         // The account is gone once revoked; its detail screen is not.
-                        if (await props.onDisconnectAccount?.(account.ref)) {
+                        if (await props.onDisconnectAccount?.(account)) {
                             leaveFocusedScreen();
                         }
                     },

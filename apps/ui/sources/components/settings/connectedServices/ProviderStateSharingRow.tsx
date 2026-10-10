@@ -13,6 +13,7 @@ import type {
     ConnectedServicesProviderStateSharingSettingsV1,
 } from '@happier-dev/protocol';
 import { resolveConnectedServicesProviderStateSharingPolicyV1 } from '@happier-dev/protocol/account/settings/connected-services';
+import type { ProviderStateSharingSettingsWriter } from './providerStateSharingSettings';
 
 const UNSUPPORTED_PROVIDER_STATE_SHARING_CAPABILITY: ConnectedServicesProviderStateSharingCapability = {
     config: {
@@ -40,7 +41,7 @@ type ProviderStateSharingRowsProps = Readonly<{
     agentTitle: string;
     capability?: ConnectedServicesProviderStateSharingCapability | null;
     settings: ConnectedServicesProviderStateSharingSettingsV1;
-    setSettings: (settings: ConnectedServicesProviderStateSharingSettingsV1) => void;
+    setSettings: ProviderStateSharingSettingsWriter;
 }>;
 
 function resolveUnavailableReasonLabel(
@@ -94,27 +95,27 @@ export function ProviderStateSharingRows({
         stateMode?: ConnectedServicesProviderStateSharingModeV1;
         acknowledgeSharedStatePrivacy?: boolean;
     }>) => {
-        setSettings({
-            ...settings,
+        setSettings(current => ({
+            ...current,
             byAgentId: {
-                ...settings.byAgentId,
+                ...current.byAgentId,
                 [agentId]: {
-                    ...(settings.byAgentId[agentId] ?? {}),
+                    ...(current.byAgentId[agentId] ?? {}),
                     ...(override.configMode ? { configMode: override.configMode } : {}),
                     ...(override.stateMode ? { stateMode: override.stateMode } : {}),
                 },
             },
             acknowledgedRisksByAgentId: override.acknowledgeSharedStatePrivacy
                 ? {
-                    ...settings.acknowledgedRisksByAgentId,
+                    ...current.acknowledgedRisksByAgentId,
                     [agentId]: {
-                        ...(settings.acknowledgedRisksByAgentId[agentId] ?? {}),
+                        ...(current.acknowledgedRisksByAgentId[agentId] ?? {}),
                         sharedStatePrivacy: true,
                     },
                 }
-                : settings.acknowledgedRisksByAgentId,
-        });
-    }, [agentId, setSettings, settings]);
+                : current.acknowledgedRisksByAgentId,
+        }));
+    }, [agentId, setSettings]);
 
     const configModeOptions = React.useMemo(
         () => buildProviderConfigModeChoices()

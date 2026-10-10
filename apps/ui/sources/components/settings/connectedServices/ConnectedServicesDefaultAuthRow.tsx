@@ -3,7 +3,9 @@ import { Pressable, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { parseQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
-import { projectAgentConnectedAccountPurposeDefaultsToSessionBindings, resolveAgentConnectedAccountPurposeDefaults, writeAgentConnectedServiceDefault, type ConnectedServicesDefaultAuthByAgentIdV1 } from '@happier-dev/protocol/account/settings/connected-services';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { connectedAcknowledgementSubjectKeyV1, type QualifiedAcknowledgementSubject } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
+import { projectAgentConnectedAccountPurposeDefaultsToSessionBindings, resolveAgentConnectedAccountPurposeDefaults, type ConnectedServicesDefaultAuthByAgentIdV1 } from '@happier-dev/protocol/account/settings/connected-services';
 import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { AccountProfile } from '@happier-dev/protocol/account/profile';
 import type { PluginProjectedAgentConnectedAccountPurposeV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -24,6 +26,7 @@ import { NewSessionConnectedServicesSelectionContent } from '@/components/sessio
 import { useActionSettingsNarrowLayout } from '@/components/settings/actions/useActionSettingsNarrowLayout';
 import { getPreferredLanguage, t } from '@/text';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
+import type { ConnectedAccountPurposeDefaultsIntent } from '@/hooks/server/connectedServices/useConnectedAccountPurposeDefaults';
 import {
     applyProjectedCredentialKindRestrictions,
     buildQualifiedConnectedAccountGroupOptionsByServiceId,
@@ -48,17 +51,12 @@ import {
     resolveConnectedServicesAuthWarningTranslationKey,
 } from './model/resolveConnectedServicesAuthLabel';
 
-/** One Agent default-authentication write: the purpose-binding store plus the folded released entry. */
-export type ConnectedServicesAgentDefaultAuthWrite = Readonly<{
-    connectedAccountPurposeBindingsV1: QualifiedConnectedAccountPurposeBindingsV1;
-    connectedServicesDefaultAuthByAgentIdV1: ConnectedServicesDefaultAuthByAgentIdV1;
-}>;
-
 export type ConnectedServicesDefaultAuthRowProps = Readonly<{
     /** The search declaration this row answers for (the first agent row carries it). */
     setting?: SettingRef;
     /** Canonical Agent routing id; it keys only the released service-keyed defaults. */
     agentId: string;
+    machineId?: string;
     /** The Agent's contribution identity: the consumer that keys its purpose defaults. */
     agentIdentity: PluginContributionIdentityV1 | null;
     agentTitle: string;
@@ -77,21 +75,24 @@ export type ConnectedServicesDefaultAuthRowProps = Readonly<{
     teamNameById?: Readonly<Record<string, string>>;
     currentTeamCredentialResourceKeys?: ReadonlySet<string>;
     onRecoverTeamCredentialResource?: (resource: TeamCredentialResourceCatalogEntryV1) => void;
+    purposeBindings: QualifiedConnectedAccountPurposeBindingsV1 | null;
+    purposeBindingsWritable?: boolean;
+    purposeBindingsLoading?: boolean;
+    labelsByKey: Readonly<Record<string, string | undefined>>;
     settings: {
-        connectedServicesProfileLabelByKey: Record<string, string | undefined>;
         connectedServicesDefaultProfileByServiceId: Record<string, string | undefined>;
-        connectedAccountPurposeBindingsV1?: QualifiedConnectedAccountPurposeBindingsV1;
         connectedServicesDefaultAuthByAgentIdV1?: ConnectedServicesDefaultAuthByAgentIdV1;
+        connectedServicesAdditionalDefaultAuthByAgentIdV1?: ConnectedServicesDefaultAuthByAgentIdV1;
     };
-    setDefaultAuthSettings: (next: ConnectedServicesAgentDefaultAuthWrite) => void;
+    setDefaultAuthSettings: (intent: ConnectedAccountPurposeDefaultsIntent) => Promise<unknown>;
     onOpenConnectedServicesSettings: (serviceId: string) => void;
     /**
      * Persisted dismissals of the one-time "adopt this autoSwitch pool" suggestion,
-     * keyed by `${agentId}:${serviceId}:${groupId}`. Suppresses the nudge so it does
+     * keyed by the canonical qualified acknowledgement subject. Suppresses the nudge so it does
      * not nag once the user has chosen to keep the literal profile default.
      */
     dismissedPoolAdoptionSuggestionKeys?: Readonly<Record<string, boolean>>;
-    onDismissPoolAdoptionSuggestion?: (key: string) => void;
+    onDismissPoolAdoptionSuggestion?: (subject: Extract<QualifiedAcknowledgementSubject, { kind: 'adoption' }>) => Promise<boolean>;
 }>;
 
 const EMPTY_SERVICE_BINDINGS: Readonly<Record<string, ConnectedServicesServiceBinding | undefined>> = {};
@@ -104,6 +105,7 @@ function resolveDefaultAuthWarningLabel(warningCode: ConnectedServicesAuthWarnin
 
 type PoolAdoptionSuggestion = Readonly<{
     key: string;
+    subject: Extract<QualifiedAcknowledgementSubject, { kind: 'adoption' }>;
     serviceId: string;
     groupId: string;
     groupLabel: string;
@@ -137,7 +139,6 @@ export function ConnectedServicesDefaultAuthRow(props: ConnectedServicesDefaultA
     const locale = getPreferredLanguage();
     const connectedServicesRegistry = useProjectedConnectedServicesRegistry();
     const narrowLayout = useActionSettingsNarrowLayout();
-    const [locallyDismissedKeys, setLocallyDismissedKeys] = React.useState<Readonly<Record<string, boolean>>>({});
 
     const supportedServiceIds = React.useMemo<string[]>(() => {
         const unique: string[] = [];
@@ -152,14 +153,14 @@ export function ConnectedServicesDefaultAuthRow(props: ConnectedServicesDefaultA
         optionsByServiceId: buildQualifiedConnectedAccountProfileOptionsByServiceId({
             accounts: props.connectedAccountsV4 ?? [],
             supportedServiceIds: supportedServiceIds,
-            labelsByKey: props.settings.connectedServicesProfileLabelByKey,
+            labelsByKey: props.labelsByKey,
             presentIdentity: present,
         }),
         connectedAccounts: props.connectedAccountPurposes,
     }), [
         props.connectedAccountsV4,
         props.connectedAccountPurposes,
-        props.settings.connectedServicesProfileLabelByKey,
+        props.labelsByKey,
         supportedServiceIds,
         present,
     ]);
@@ -167,41 +168,60 @@ export function ConnectedServicesDefaultAuthRow(props: ConnectedServicesDefaultA
     const accountGroupOptionsByServiceId = React.useMemo(() => buildQualifiedConnectedAccountGroupOptionsByServiceId({
         groups: props.connectedAccountGroupsV4 ?? [],
         supportedServiceIds: supportedServiceIds,
+        labelsByKey: props.labelsByKey,
     }), [
         props.connectedAccountGroupsV4,
+        props.labelsByKey,
         supportedServiceIds,
     ]);
 
     const defaultAuthSettings = React.useMemo(() => ({
-        connectedAccountPurposeBindingsV1: props.settings.connectedAccountPurposeBindingsV1,
         connectedServicesDefaultAuthByAgentIdV1: props.settings.connectedServicesDefaultAuthByAgentIdV1,
+        connectedServicesAdditionalDefaultAuthByAgentIdV1: props.settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
     }), [
-        props.settings.connectedAccountPurposeBindingsV1,
         props.settings.connectedServicesDefaultAuthByAgentIdV1,
+        props.settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
     ]);
     // The Agent default-authentication owner is the one reader; this row only
     // presents its purpose defaults in the Session's service-keyed shape.
     const persistedBindingsByServiceId = React.useMemo<
         Readonly<Record<string, ConnectedServicesServiceBinding | undefined>>
     >(() => (
-        props.agentIdentity
+        props.agentIdentity && props.purposeBindings
             ? projectAgentConnectedAccountPurposeDefaultsToSessionBindings(
                 resolveAgentConnectedAccountPurposeDefaults({
                     settings: defaultAuthSettings,
+                    purposeBindings: props.purposeBindings,
                     agentId: props.agentId,
                     consumer: props.agentIdentity,
                     declarations: props.connectedAccountPurposes,
                 }),
             )?.bindingsByServiceId ?? EMPTY_SERVICE_BINDINGS
             : EMPTY_SERVICE_BINDINGS
-    ), [defaultAuthSettings, props.agentId, props.agentIdentity, props.connectedAccountPurposes]);
+    ), [defaultAuthSettings, props.purposeBindings, props.agentId, props.agentIdentity, props.connectedAccountPurposes]);
     const [bindingsByServiceId, setBindingsByServiceId] = React.useState<
         Readonly<Record<string, ConnectedServicesServiceBinding | undefined>>
     >(persistedBindingsByServiceId);
 
+    const [draft, setDraft] = React.useState<typeof bindingsByServiceId | null>(null);
+    const pickerModalIdRef = React.useRef<string | null>(null);
+    const closePicker = React.useCallback(() => {
+        if (!pickerModalIdRef.current) return;
+        Modal.hide(pickerModalIdRef.current);
+        pickerModalIdRef.current = null;
+    }, []);
+    React.useEffect(() => closePicker, [closePicker]);
     React.useEffect(() => {
-        setBindingsByServiceId(persistedBindingsByServiceId);
-    }, [persistedBindingsByServiceId]);
+        if (!props.purposeBindings || props.purposeBindingsWritable === false) closePicker();
+    }, [closePicker, props.purposeBindings, props.purposeBindingsWritable]);
+    React.useEffect(() => {
+        if (!props.purposeBindings) {
+            setDraft(null);
+            setBindingsByServiceId(EMPTY_SERVICE_BINDINGS);
+            return;
+        }
+        if (!draft) setBindingsByServiceId(persistedBindingsByServiceId);
+    }, [draft, persistedBindingsByServiceId, props.purposeBindings]);
 
     const authLabelModel = resolveConnectedServicesAuthLabel({
         supportedServiceIds,
@@ -220,14 +240,17 @@ export function ConnectedServicesDefaultAuthRow(props: ConnectedServicesDefaultA
         formatConnectedCountLabel: (count) => t('connectedServices.authChip.connectedCountLabel', { count }),
     });
     const warningCode = authLabelModel.warningCodes[0];
-    const warningLabel = resolveDefaultAuthWarningLabel(warningCode);
+    const warningLabel = props.purposeBindings ? resolveDefaultAuthWarningLabel(warningCode) : undefined;
+    const authLabel = props.purposeBindings && (props.purposeBindingsWritable !== false || authLabelModel.connectedCount > 0) ? authLabelModel.label
+        : t(props.purposeBindingsLoading ? 'common.loading' : 'common.unavailable');
 
     const setBindingForService = React.useCallback((serviceId: string, binding: ConnectedServicesServiceBinding) => {
         const nextBindingsByServiceId: Record<string, ConnectedServicesServiceBinding | undefined> = {
             ...bindingsByServiceId,
             [serviceId]: binding,
         };
-        if (!props.agentIdentity) return;
+        const identity = props.agentIdentity;
+        if (!identity || !props.purposeBindings || props.purposeBindingsWritable === false) return;
         const selection = parseConnectedServicesServiceBinding(binding);
         if (!selection) return;
         const teamId = selection.source === 'team_resource'
@@ -240,12 +263,12 @@ export function ConnectedServicesDefaultAuthRow(props: ConnectedServicesDefaultA
             : undefined;
         const groupId = selection.source === 'connected' ? selection.groupId?.trim() ?? '' : '';
         const profileId = selection.source === 'connected' ? selection.profileId?.trim() ?? '' : '';
-        const written = writeAgentConnectedServiceDefault({
-            settings: defaultAuthSettings,
+        const service = parseQualifiedPluginContributionKey(serviceId);
+        if (!service) return;
+        const intent: ConnectedAccountPurposeDefaultsIntent = { kind: 'service', input: {
             agentId: props.agentId,
-            consumer: props.agentIdentity,
-            declarations: props.connectedAccountPurposes,
-            serviceKey: serviceId,
+            ...(props.machineId ? { machineId: props.machineId } : {}),
+            service,
             selection: selection.source !== 'connected'
                 ? selection
                 : selection.selection === 'group' && groupId
@@ -255,14 +278,18 @@ export function ConnectedServicesDefaultAuthRow(props: ConnectedServicesDefaultA
                         // A connected pick without an exact Account/Pool stores no default.
                         : { source: 'native' },
             ...(teamId ? { teamId } : {}),
-        });
-        if (!written) return;
+        } };
+        setDraft(nextBindingsByServiceId);
         setBindingsByServiceId(nextBindingsByServiceId);
-        props.setDefaultAuthSettings(written);
+        void props.setDefaultAuthSettings(intent).then(() => {
+            setDraft(current => current === nextBindingsByServiceId ? null : current);
+        }).catch(() => Modal.alert(t('common.error'), t('widgetAdd.inputsUnavailable')));
     }, [
         bindingsByServiceId,
-        defaultAuthSettings,
+        props.purposeBindings,
+        props.purposeBindingsWritable,
         props.agentId,
+        props.machineId,
         props.agentIdentity,
         props.connectedAccountPurposes,
         props.setDefaultAuthSettings,
@@ -293,7 +320,9 @@ export function ConnectedServicesDefaultAuthRow(props: ConnectedServicesDefaultA
     ]);
 
     const openPicker = React.useCallback(() => {
-        Modal.show({
+        if (!props.purposeBindings || props.purposeBindingsWritable === false) return;
+        closePicker();
+        pickerModalIdRef.current = Modal.show({
             component: ConnectedServicesDefaultAuthPickerModalContent,
             props: {
                 supportedServiceIds,
@@ -321,9 +350,12 @@ export function ConnectedServicesDefaultAuthRow(props: ConnectedServicesDefaultA
     }, [
         accountGroupOptionsByServiceId,
         bindingsByServiceId,
+        closePicker,
         profileOptionsByServiceId,
         props.agentId,
         props.agentTitle,
+        props.purposeBindings,
+        props.purposeBindingsWritable,
         props.onOpenConnectedServicesSettings,
         props.onRecoverTeamCredentialResource,
         props.currentTeamCredentialResourceKeys,
@@ -336,6 +368,7 @@ export function ConnectedServicesDefaultAuthRow(props: ConnectedServicesDefaultA
     ]);
 
     const poolAdoptionSuggestions = React.useMemo((): ReadonlyArray<PoolAdoptionSuggestion> => {
+        if (!props.agentIdentity || !props.purposeBindings) return [];
         const suggestions: PoolAdoptionSuggestion[] = [];
         for (const serviceId of supportedServiceIds) {
             const group = resolveReadyAutoSwitchPoolForProfile({
@@ -343,16 +376,20 @@ export function ConnectedServicesDefaultAuthRow(props: ConnectedServicesDefaultA
                 groupOptions: accountGroupOptionsByServiceId[serviceId] ?? [],
             });
             if (!group) continue;
-            const key = `${props.agentId}:${serviceId}:${group.groupId}`;
-            if (props.dismissedPoolAdoptionSuggestionKeys?.[key] || locallyDismissedKeys[key]) continue;
-            suggestions.push({ key, serviceId, groupId: group.groupId, groupLabel: group.label });
+            const service = parseQualifiedPluginContributionKey(serviceId);
+            if (!service) continue;
+            const subject = { kind: 'adoption' as const, agentTargetKey: buildBackendTargetKeyV2({ kind: 'agent', identity: props.agentIdentity }),
+                service, groupId: group.groupId };
+            const key = connectedAcknowledgementSubjectKeyV1(subject);
+            if (props.dismissedPoolAdoptionSuggestionKeys?.[key] === true) continue;
+            suggestions.push({ key, subject, serviceId, groupId: group.groupId, groupLabel: group.label });
         }
         return suggestions;
     }, [
         accountGroupOptionsByServiceId,
         bindingsByServiceId,
-        locallyDismissedKeys,
-        props.agentId,
+        props.agentIdentity,
+        props.purposeBindings,
         props.dismissedPoolAdoptionSuggestionKeys,
         supportedServiceIds,
     ]);
@@ -367,9 +404,8 @@ export function ConnectedServicesDefaultAuthRow(props: ConnectedServicesDefaultA
         });
     }, [setBindingForService]);
 
-    const dismissPoolSuggestion = React.useCallback((suggestion: PoolAdoptionSuggestion) => {
-        setLocallyDismissedKeys((prev) => ({ ...prev, [suggestion.key]: true }));
-        props.onDismissPoolAdoptionSuggestion?.(suggestion.key);
+    const dismissPoolSuggestion = React.useCallback(async (suggestion: PoolAdoptionSuggestion) => {
+        await props.onDismissPoolAdoptionSuggestion?.(suggestion.subject);
     }, [props.onDismissPoolAdoptionSuggestion]);
 
     if (supportedServiceIds.length === 0) return null;
@@ -382,9 +418,10 @@ export function ConnectedServicesDefaultAuthRow(props: ConnectedServicesDefaultA
             // the row's right detail next to the title, so surface it in the subtitle and
             // drop the detail. The wide layout keeps it on the right.
             subtitle={narrowLayout
-                ? (warningLabel ?? authLabelModel.label)
+                ? (warningLabel ?? authLabel)
                 : (warningLabel ?? t('connectedServices.defaultAuth.rowDetail'))}
-            detail={narrowLayout ? undefined : authLabelModel.label}
+            detail={narrowLayout ? undefined : authLabel}
+            disabled={!props.purposeBindings || props.purposeBindingsWritable === false}
             showChevron={true}
             onPress={openPicker}
         />
@@ -416,6 +453,7 @@ export function ConnectedServicesDefaultAuthRow(props: ConnectedServicesDefaultA
                         </Pressable>
                         <Pressable
                             testID={`settings-connected-services-pool-adoption-suggestion-${props.agentId}-${suggestion.serviceId}-accept`}
+                            disabled={!props.purposeBindings || props.purposeBindingsWritable === false}
                             accessibilityRole="button"
                             accessibilityLabel={t('connectedServices.defaultAuth.poolSuggestion.accept')}
                             onPress={() => acceptPoolSuggestion(suggestion)}

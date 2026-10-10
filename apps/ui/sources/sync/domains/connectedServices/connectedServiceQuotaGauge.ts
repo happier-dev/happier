@@ -10,7 +10,7 @@ import { readBuiltInLegacyConnectedAccountServiceKeyIngress, readBuiltInLegacyCo
 import { readConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol/connect/connected-service-limit-category';
 import { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/protocol/connect/connectedServiceQuotaMeterLabel';
 
-import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
+import { getAgentCore, resolveAgentIdFromFlavor } from '@happier-dev/agents';
 import { clampQuotaPct, deriveQuotaUtilizationPct } from './deriveQuotaUtilizationPct';
 import {
     resolveQuotaTone,

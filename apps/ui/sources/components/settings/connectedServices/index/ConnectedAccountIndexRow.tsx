@@ -78,7 +78,7 @@ export type ConnectedAccountIndexEntry = Readonly<{
     identityLabel: string | null;
     roles: readonly ConnectedAccountIndexRole[];
     /** The account needs a new sign-in: the fix sits on the row, the cause under its name. */
-    signedOut: Readonly<{ reason: string; consequence: string; onSignInAgain: (() => void) | null }> | null;
+    signedOut: Readonly<{ reason: string; onSignInAgain: (() => void) | null }> | null;
     /** While a set-up panel is open elsewhere on the page, a row's fix steps down to secondary. */
     fixProminence?: 'primary' | 'secondary';
     legacyServiceId: ConnectedServiceId | null;
@@ -177,24 +177,17 @@ export const ConnectedAccountIndexUsageBlock = React.memo(function ConnectedAcco
     return null;
 });
 
-/** The identity column's status lines: signed out, the subscription, and a stale read. */
+/** The identity column's subscription and stale read; sign-out is owned by its recovery. */
 export const ConnectedAccountIndexStatusLines = React.memo(function ConnectedAccountIndexStatusLines(props: Readonly<{
     testID: string;
-    signedOutReason: string | null;
     facts: ConnectedAccountIndexFacts;
     now: number;
 }>) {
     const { theme } = useUnistyles();
     const { facts } = props;
-    if (!props.signedOutReason && !facts.subscription && facts.staleSince === null) return null;
+    if (!facts.subscription && facts.staleSince === null) return null;
     return (
         <View style={styles.statusLines}>
-            {props.signedOutReason ? (
-                <View style={styles.statusLine}>
-                    <Icon name="warning" size={12} color={theme.colors.state.warning.foreground} />
-                    <Text style={[styles.statusText, styles.warning]} numberOfLines={1}>{props.signedOutReason}</Text>
-                </View>
-            ) : null}
             <AccountSubscriptionLine testID={`${props.testID}:subscription`} subscription={facts.subscription} now={props.now} />
             {facts.staleSince !== null ? (
                 <View style={styles.statusLine}>
@@ -271,6 +264,33 @@ export type ConnectedAccountIndexRowViewProps = ConnectedAccountIndexEntry & Rea
     showDivider?: boolean;
 }>;
 
+/** One explanation and one available next step, shared by account rows and cards. */
+export const ConnectedAccountSignInRecovery = React.memo(function ConnectedAccountSignInRecovery(props: Readonly<{
+    testID: string;
+    signedOut: NonNullable<ConnectedAccountIndexEntry['signedOut']>;
+    onOpen: () => void;
+    compact?: boolean;
+    prominence?: 'primary' | 'secondary';
+}>) {
+    const { theme } = useUnistyles();
+    const signIn = props.signedOut.onSignInAgain;
+    return (
+        <View pointerEvents="box-none" style={[styles.fix, props.compact ? styles.fixCompact : null]}>
+            <View style={styles.statusLine}>
+                <Icon name="warning" size={14} color={theme.colors.state.warning.foreground} />
+                <Text style={[styles.statusText, styles.warning]}>{props.signedOut.reason}</Text>
+            </View>
+            <RoundButton
+                testID={`${props.testID}:${signIn ? 'sign-in-again' : 'recovery-details'}`}
+                size="small"
+                display={signIn && props.prominence !== 'secondary' ? 'default' : 'secondary'}
+                title={t(signIn ? 'connectedServicesSettings.signInAgain' : 'common.details')}
+                onPress={signIn ?? props.onOpen}
+            />
+        </View>
+    );
+});
+
 /**
  * An account on the Connected services index, as a list row (lab `csvc` C1): identity on the left (name,
  * email · plan, signed out / subscription / stale, pool chips), every limit on the right with the usage
@@ -278,22 +298,11 @@ export type ConnectedAccountIndexRowViewProps = ConnectedAccountIndexEntry & Rea
  * the account.
  */
 export const ConnectedAccountIndexRowView = React.memo(function ConnectedAccountIndexRowView(props: ConnectedAccountIndexRowViewProps) {
-    const { theme } = useUnistyles();
     const { facts } = props;
     const identity = [props.identityLabel, facts.planLabel].filter(Boolean).join(' · ');
     const use = props.signedOut ? (
-        <View pointerEvents="box-none" style={styles.fix}>
-            <Icon name="warning" size={14} color={theme.colors.state.warning.foreground} />
-            <Text style={[styles.quiet, styles.fixText]} numberOfLines={2}>{props.signedOut.consequence}</Text>
-            <RoundButton
-                testID={`${props.testID}:sign-in-again`}
-                size="small"
-                display={props.fixProminence === 'secondary' ? 'secondary' : 'default'}
-                title={t('connectedServicesSettings.signInAgain')}
-                disabled={!props.signedOut.onSignInAgain}
-                onPress={props.signedOut.onSignInAgain ?? undefined}
-            />
-        </View>
+        <ConnectedAccountSignInRecovery testID={props.testID} signedOut={props.signedOut}
+            onOpen={props.onOpen} compact={props.compact} prominence={props.fixProminence} />
     ) : (
         <>
             <View pointerEvents={facts.usage.kind === 'error' ? 'box-none' : 'none'}>
@@ -336,7 +345,6 @@ export const ConnectedAccountIndexRowView = React.memo(function ConnectedAccount
                     {identity ? <ConnectedAccountIdentityText value={identity} style={styles.subtitle} numberOfLines={1} /> : null}
                     <ConnectedAccountIndexStatusLines
                         testID={props.testID}
-                        signedOutReason={props.signedOut?.reason ?? null}
                         facts={facts}
                         now={props.now}
                     />
@@ -377,7 +385,7 @@ function useQualifiedFacts(account: QualifiedConnectedAccountRef, billedPerUse: 
         fetchedAt: snapshot?.fetchedAt ?? null,
         staleSince: snapshot && now - snapshot.fetchedAt > snapshot.staleAfterMs ? snapshot.fetchedAt : null,
         refreshing: quota.refreshing,
-        refresh: quota.supported === true ? retry : null,
+        refresh: quota.supported === false ? null : retry,
     };
 }
 
@@ -577,9 +585,9 @@ const styles = StyleSheet.create((theme) => ({
         gap: 8,
         minHeight: 30,
     },
-    fixText: {
-        flex: 1,
-        textAlign: 'left',
+    fixCompact: {
+        flexDirection: 'column',
+        alignItems: 'flex-start',
     },
     usageLine: {
         flexDirection: 'row',

@@ -5,6 +5,7 @@ import {
   getLegacyConnectedServiceRegistryEntry,
   getQualifiedConnectedServiceRegistryEntry,
   getConnectedServiceRegistrySnapshot,
+  getAccountConnectedServiceConfigurationMode,
   installConnectedAccountDescriptorProjection,
 } from './connectedServiceRegistry';
 import type { ConnectedAccountDescriptorProjectionState } from './connectedAccountDescriptorProjection';
@@ -34,6 +35,32 @@ describe('connectedServiceRegistry', () => {
     status: ConnectedAccountDescriptorProjectionState['status'] = 'ready',
   ) => installConnectedAccountDescriptorProjection({
     scopeKey: 'server-a', status, descriptors, conflicts: [], errorReason: status === 'stale' ? 'transport' : null,
+  });
+
+  it('admits Account configuration from the exact current descriptor even without a native executable', () => {
+    const service = { pluginId: 'acme.multi', localId: 'cloud' };
+    const mode = { id: 'manual', kind: 'manual' as const, outcomeReconciliation: 'none' as const,
+      fields: [{ id: 'token', title: 'Token', secret: true, schema: { type: 'string' as const, minLength: 1 } }],
+      configuration: { scope: 'service' as const, changeBehavior: 'reconnect' as const, fields: [] } };
+    const projection: ConnectedAccountDescriptorProjectionState = { scopeKey: 'server-a', status: 'ready', conflicts: [], errorReason: null,
+      descriptors: [{ id: service.localId, pluginId: service.pluginId, serviceId: 'cloud', title: 'Cloud', provenance: 'external',
+        sourceKind: 'installed', authentication: { defaultModeId: mode.id, modes: [mode] }, capabilities: [],
+        availability: { state: 'blocked', reason: 'runtime_unavailable' }, diagnostics: [] }] };
+    let current = true;
+    const lifetime = { scope: { serverId: 'server-a', accountId: 'account-a' }, isCurrent: () => current,
+      onRetire: () => ({ dispose() {} }) };
+    const target = { service, modeId: mode.id };
+    installConnectedAccountDescriptorProjection(projection);
+    expect(getAccountConnectedServiceConfigurationMode(target, lifetime.scope)).toBeNull();
+    installConnectedAccountDescriptorProjection(projection, lifetime);
+    expect(getQualifiedConnectedServiceRegistryEntry(service)?.executable).toBe(false);
+    expect(getAccountConnectedServiceConfigurationMode(target, lifetime.scope)).toEqual(mode);
+    expect(getAccountConnectedServiceConfigurationMode(target, { ...lifetime.scope, accountId: 'account-b' })).toBeNull();
+    installConnectedAccountDescriptorProjection({ ...projection, status: 'stale' }, lifetime);
+    expect(getAccountConnectedServiceConfigurationMode(target, lifetime.scope)).toBeNull();
+    installConnectedAccountDescriptorProjection(projection, lifetime);
+    current = false;
+    expect(getAccountConnectedServiceConfigurationMode(target, lifetime.scope)).toBeNull();
   });
 
   it('projects every declared authentication mode and preserves the default mode', () => {

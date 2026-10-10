@@ -46,11 +46,16 @@ export function presentConnectedServicesIndexAccount(
     };
     const presentation = presentQualifiedConnectedAccountTarget({
         target: { kind: 'account', account: profile.ref },
-        accounts: [profile],
+        accounts: sheet.accounts.map((candidate): QualifiedConnectedAccountPresentationAccount => candidate.kind === 'qualified' ? candidate.profile : {
+            ref: { service: sheet.service, accountId: candidate.accountId },
+            providerIdentity: {
+                email: candidate.identityLabelKind === 'email' ? candidate.identityLabel : null,
+                accountId: candidate.identityLabelKind === 'accountId' ? candidate.identityLabel : null,
+            },
+        }),
         groups: [],
         labelsByKey,
         accountLabel: legacyLabel,
-        legacyServiceId: sheet.legacyServiceId,
         serviceTitle: sheet.label,
         presentIdentity: present,
     });

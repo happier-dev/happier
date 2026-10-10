@@ -11,9 +11,6 @@ import {
     type QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol';
 import {
-    useConnectedAccountOperationAdmission,
-} from './useConnectedServiceLegacyOperationAdmission';
-import {
     buildQualifiedQuotaSnapshotScopeKey,
     getQualifiedQuotaSnapshotEntry,
     refreshQualifiedQuotaSnapshot,
@@ -35,11 +32,11 @@ export type UseQualifiedConnectedAccountQuotaResult = Readonly<{
 
 export function useQualifiedConnectedAccountQuota(
     ref: QualifiedConnectedAccountRef,
+    options: Readonly<{ refreshMachineId?: string | null }> = {},
 ): UseQualifiedConnectedAccountQuotaResult {
     const credentials = useAuth().credentials;
     const activeServer = useActiveServerSnapshot();
-    const assertAccountOperationAllowed =
-        useConnectedAccountOperationAdmission();
+    const refreshMachineId = options.refreshMachineId;
     const servicePluginId = ref.service.pluginId;
     const serviceLocalId = ref.service.localId;
     const accountId = ref.accountId;
@@ -51,16 +48,6 @@ export function useQualifiedConnectedAccountQuota(
         },
         accountId,
     }), [accountId, serviceLocalId, servicePluginId]);
-    const assertOperationAllowed = React.useCallback(
-        (operation: Parameters<
-            typeof assertAccountOperationAllowed
-        >[2]) => assertAccountOperationAllowed(
-            exactRef.service,
-            { kind: 'v4' },
-            operation,
-        ),
-        [assertAccountOperationAllowed, exactRef.service],
-    );
     // Composed exactly as `useConnectedServiceQuotaSnapshots` composes it: the
     // list and detail readers must land on ONE store entry per account, so a
     // divergent scope here would mean two poll loops, two network reads, and a
@@ -84,12 +71,12 @@ export function useQualifiedConnectedAccountQuota(
                     serverId: activeServer.serverId,
                     generation: activeServer.generation,
                 },
-                assertOperationAllowed,
+                refreshMachineId,
             };
         }, [
             activeServer.generation,
             activeServer.serverId,
-            assertOperationAllowed,
+            refreshMachineId,
             credentialScope,
             credentials,
             exactRef,
@@ -136,7 +123,7 @@ export function useQualifiedConnectedAccountQuota(
         loading: key
             ? entry.loading
                 || (
-                    entry.supported === null
+                    !entry.read
                     && entry.error === null
                 )
             : false,

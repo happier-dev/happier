@@ -10,8 +10,10 @@ import { Typography } from '@/constants/Typography';
 import { useQualifiedConnectedAccountGroups } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountGroups';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { presentQualifiedConnectedAccountTarget } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
-import { useActiveServerAccountScope, useSettingsSelector } from '@/sync/store/hooks';
-import { useApplySettings } from '@/sync/store/settingsWriters';
+import { useActiveServerAccountScope } from '@/sync/store/hooks';
+import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
+import { useConnectedAccountPurposeDefaults } from '@/hooks/server/connectedServices/useConnectedAccountPurposeDefaults';
+import { Modal } from '@/modal';
 import { t } from '@/text';
 
 import type { ConnectedServicesIndexModel } from '../model/buildConnectedServicesIndexModel';
@@ -38,15 +40,12 @@ export function ConnectedAccountSettled(props: Readonly<{
     account: QualifiedConnectedAccountRef;
     model: ConnectedServicesIndexModel;
     agents: AgentEntries;
+    machineId?: string;
     onDismiss: () => void;
     testID?: string;
 }>) {
-    const settings = useSettingsSelector((settings) => ({
-        connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
-        connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
-        connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
-    }));
-    const applySettings = useApplySettings();
+    const labelsByKey = useConnectedMetadataCatalog(undefined, selectConnectedMetadataLabels);
+    const { catalog: purposeCatalog, legacySettings, mutateDefaults } = useConnectedAccountPurposeDefaults();
     const { present } = useConnectedAccountIdentityPrivacy();
     const { account, onDismiss } = props;
     const sheet = props.model.sheets.find((candidate) => sameService(candidate.service, account.service)) ?? null;
@@ -60,8 +59,7 @@ export function ConnectedAccountSettled(props: Readonly<{
             target: { kind: 'account', account: match.ref },
             accounts: [match],
             groups: [],
-            labelsByKey: settings.connectedServicesProfileLabelByKey ?? {},
-            legacyServiceId: sheet.legacyServiceId,
+            labelsByKey,
             serviceTitle: sheet.label,
         });
         return present({ label: presented.primaryLabel, labelKind: presented.primaryLabelKind }).label;
@@ -77,14 +75,12 @@ export function ConnectedAccountSettled(props: Readonly<{
         })()
         : null;
 
-    const agentDefault = suggestAgentDefaultForNewAccount({
+    const agentDefault = purposeCatalog.status === 'ready' && !purposeCatalog.stale && purposeCatalog.value ? suggestAgentDefaultForNewAccount({
         agents: props.agents,
-        settings: {
-            connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
-            connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
-        },
+        settings: legacySettings,
+        purposeBindings: purposeCatalog.value,
         account,
-    });
+    }) : null;
     const offer = selectConnectedAccountSettleOffer({
         account,
         pools: sheet?.pools ?? [],
@@ -99,9 +95,17 @@ export function ConnectedAccountSettled(props: Readonly<{
             testID="connected-services-settle:use"
             size="small"
             title={t('connectedServicesSettings.settleUseForAction', { agent: offer.agentTitle })}
-            onPress={() => {
-                applySettings(offer.write());
-                onDismiss();
+            onPress={async () => {
+                try {
+                    const written = await mutateDefaults({ kind: 'service', input: {
+                        agentId: offer.agentId, service: account.service,
+                        ...(props.machineId ? { machineId: props.machineId } : {}),
+                        selection: { source: 'connected', selection: 'profile', profileId: account.accountId }, onlyIfUnset: true,
+                    } });
+                    if (written) onDismiss();
+                } catch {
+                    Modal.alert(t('common.error'), t('widgetAdd.inputsUnavailable'));
+                }
             }}
         />
     ) : null;

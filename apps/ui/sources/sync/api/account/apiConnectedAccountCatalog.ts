@@ -7,7 +7,7 @@ import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, ConnectedAccountCatalogRowRead
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
-import { resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
+import { classifyAccountStorageReadFailure, resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
 import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
 import { normalizeAccountSettingsHistoryAfterTransfer } from '@/sync/engine/settings/accountSettingsHistoryRestore';
 import { getRandomBytes } from '@/platform/cryptoRandom';
@@ -15,6 +15,8 @@ import { classifyHttpMutationRequestFailure } from '@/sync/http/mutationRequestO
 import { captureSavedSecretReferenceRevisionsInContext } from './apiSavedSecretCatalog';
 import { listSavedSecretVoiceCredentialMutationReferencesV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import type { ConnectedServiceConfigurationCatalogHostV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
+import { randomUUID } from '@/platform/randomUUID';
 
 export type ConnectedAccountCatalogAccountContext = Awaited<ReturnType<typeof import('@/sync/ops/actions/actionAccountContext').captureLazyActionAccountContext>>;
 export type ConnectedAccountCatalogMutationResponseV1 = ReturnType<typeof ConnectedAccountCatalogRowMutationResponseV1Schema.parse>;
@@ -42,15 +44,7 @@ export async function withConnectedAccountCatalogAccount<T>(scope: ServerAccount
     } finally { context.dispose(); }
 }
 function failure(error: unknown, signal?: AbortSignal): ConnectedAccountCatalogSnapshotV1 {
-    if (signal?.aborted) return { status: 'unavailable', reason: 'cancelled' };
-    const code = error instanceof Error ? 'code' in error ? error.code : error.message : undefined;
-    if (code === 'scope-retired' || code === 'action_account_scope_changed' || code === 'action_home_not_found') return { status: 'unavailable', reason: 'scope-retired' };
-    if (code === 'unauthorized' || code === 'action_home_signed_out') return { status: 'unavailable', reason: 'unauthorized' };
-    if (code === 'forbidden' || code === 'unsupported') return { status: 'unavailable', reason: code };
-    if (code === 'account-mode-mismatch') return { status: 'unavailable', reason: code };
-    if (code === 'account_storage_currentness_unavailable' || code === 'account_encryption_currentness_unavailable') return { status: 'unavailable', reason: 'encryption-material-unavailable' };
-    if (error instanceof Error && error.name === 'ZodError') return { status: 'unavailable', reason: 'invalid-stored-content' };
-    return { status: 'unavailable', reason: 'unreachable' };
+    return { status: 'unavailable', reason: classifyAccountStorageReadFailure(error, signal) };
 }
 export async function readConnectedAccountCatalogRowInContext(context: ConnectedAccountCatalogAccountContext,
     key: ConnectedAccountCatalogKeyV1, signal?: AbortSignal) {
@@ -238,4 +232,54 @@ export async function writeConnectedAccountCatalogRecordAndPublishInContext(cont
 export function writeConnectedAccountCatalogRecord(scope: ServerAccountScope, input: ConnectedAccountCatalogRecordWriteInput,
     signal?: AbortSignal): Promise<ConnectedAccountCatalogMutationResponseV1> {
     return withConnectedAccountCatalogAccount(scope, signal, context => writeConnectedAccountCatalogRecordAndPublishInContext(context, input, signal));
+}
+
+/** Transport adapter; descriptor validation and replacement semantics are Protocol-owned. */
+export function createUiConnectedServiceConfigurationCatalogHost(context: ConnectedAccountCatalogAccountContext,
+    resolveMode: ConnectedServiceConfigurationCatalogHostV1['resolveMode'], signal?: AbortSignal): ConnectedServiceConfigurationCatalogHostV1 {
+    return {
+        resolveMode, createRevision: randomUUID,
+        read: async () => {
+            const admitted = await readAdmittedConnectedAccountCatalogInContext(context, 'configurations', signal);
+            return admitted.status === 'unavailable' && admitted.reason === 'authority-not-confirmed'
+                ? readConnectedAccountCatalogInContext(context, 'configurations', signal) : admitted;
+        },
+        hasSecret: async reference => {
+            await captureSavedSecretReferenceRevisionsInContext(context, { references: [reference], signal });
+            return true;
+        },
+        write: async input => {
+            context.assertCurrent();
+            signal?.throwIfAborted();
+            if (!input.newSecrets.length) return writeConnectedAccountCatalogRecordAndPublishInContext(context, input, signal);
+            const { createSavedSecretResourcesWithCatalogMutationInContext } = await import('@/sync/ops/settings/savedSecretResourceOperations');
+            const timestamp = Date.now();
+            const result = await createSavedSecretResourcesWithCatalogMutationInContext(context, {
+                scope: { serverId: context.serverId, accountId: context.accountId }, catalogKeys: ['connectedConfigurations'],
+                resources: input.newSecrets.map(secret => ({ id: secret.id, name: `Connected Account ${secret.fieldId}`.slice(0, 100),
+                    kind: 'other' as const, encryptedValue: { _isSecretValue: true as const, value: secret.value },
+                    createdAt: timestamp, updatedAt: timestamp })),
+                mutateCatalogs: ({ catalogs, catalogRevisions, resourceRefs }) => {
+                    context.assertCurrent();
+                    signal?.throwIfAborted();
+                    if (catalogRevisions.connectedConfigurations !== input.expectedRevision) return { ok: false, reason: 'changed' };
+                    const value = { ...input.record.value, entries: input.record.value.entries.map(entry => ({ ...entry,
+                        secretRefs: Object.fromEntries(Object.entries(entry.secretRefs).map(([field, reference]) =>
+                            [field, resourceRefs.get(reference) ?? reference])),
+                    })) };
+                    return { catalogs: { ...catalogs, connectedConfigurations: value } };
+                },
+            });
+            if (result.ok) {
+                try {
+                    const { invalidateConnectedAccountCatalogAfterAcknowledgedMutation } = await import('@/sync/engine/settings/connectedAccountCatalogEngine');
+                    await invalidateConnectedAccountCatalogAfterAcknowledgedMutation({ serverId: context.serverId, accountId: context.accountId },
+                        'configurations', context.assertAccountCurrent);
+                } catch { /* Keep the acknowledged effect receipt after retirement. */ }
+                return { status: 'applied' };
+            }
+            throw new ConnectedAccountCatalogOperationError(result.reason === 'changed' ? 'connected_account_configuration_changed'
+                : result.reason === 'outcome_unknown' ? 'outcome_unknown' : 'connected_account_configuration_persistence_unavailable');
+        },
+    };
 }

@@ -14,20 +14,10 @@ vi.mock('@react-navigation/native', async () => {
     return createReactNavigationNativeMock();
 });
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: unknown) => styles },
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                input: { text: 'text', background: 'background', placeholder: 'placeholder' },
-                border: { default: 'border', strong: 'border-strong' },
-                text: { primary: 'primary', secondary: 'secondary' },
-                surface: { base: 'surface' },
-                state: { danger: { foreground: 'danger' } },
-            },
-        },
-    }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('@/components/ui/lists/ItemGroup', () => ({

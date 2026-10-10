@@ -19,19 +19,23 @@ export const ConnectedAccountRenamePopover = React.memo(function ConnectedAccoun
     anchorRef: React.RefObject<React.ComponentRef<typeof View> | null>;
     currentLabel: string;
     serviceLabel: string;
-    onSave: (label: string) => void;
+    onSave: (label: string) => void | Promise<void>;
     onRequestClose: () => void;
     testID: string;
 }>) {
     const [value, setValue] = React.useState(props.currentLabel);
+    const [saving, setSaving] = React.useState(false);
     React.useEffect(() => {
         if (props.open) setValue(props.currentLabel);
     }, [props.currentLabel, props.open]);
     if (!props.open) return null;
-    const save = () => {
+    const save = async () => {
         const next = value.trim();
-        if (next.length === 0) return;
-        props.onSave(next);
+        if (next.length === 0 || saving) return;
+        setSaving(true);
+        try { await props.onSave(next); }
+        catch { /* The write owner presents its failure; leave the draft available for retry. */ }
+        finally { setSaving(false); }
     };
     return (
         <Popover
@@ -71,7 +75,7 @@ export const ConnectedAccountRenamePopover = React.memo(function ConnectedAccoun
                                 testID={`${props.testID}:save`}
                                 size="small"
                                 title={t('common.save')}
-                                disabled={value.trim().length === 0}
+                                disabled={value.trim().length === 0 || saving}
                                 onPress={save}
                             />
                         </View>

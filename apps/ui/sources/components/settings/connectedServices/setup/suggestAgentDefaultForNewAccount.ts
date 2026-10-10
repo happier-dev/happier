@@ -1,4 +1,4 @@
-import { resolveAgentConnectedAccountPurposeDefaults, writeAgentConnectedAccountPurposeDefault, type AgentConnectedAccountPurposeDeclaration } from '@happier-dev/protocol/account/settings/connected-services';
+import { resolveAgentConnectedAccountPurposeDefaults, type AgentConnectedAccountPurposeDeclaration } from '@happier-dev/protocol/account/settings/connected-services';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type { QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 
@@ -28,7 +28,7 @@ export function suggestAgentDefaultForNewAccount(input: Readonly<{
     account: QualifiedConnectedAccountRef;
 }>): Readonly<{
     agentTitle: string;
-    write: (purposeBindings?: QualifiedConnectedAccountPurposeBindingsV1, settings?: AgentDefaultSettings) => ReturnType<typeof writeAgentConnectedAccountPurposeDefault> | null;
+    agentId: string;
 }> | null {
     for (const agent of input.agents) {
         const identity = agent.identity;
@@ -45,33 +45,7 @@ export function suggestAgentDefaultForNewAccount(input: Readonly<{
         if (defaults.some((entry) => entry.target || entry.teamResource)) continue;
         return {
             agentTitle: agent.title,
-            write: (currentPurposeBindings = input.purposeBindings, currentSettings = input.settings) => {
-                const currentDefaults = resolveAgentConnectedAccountPurposeDefaults({
-                    settings: currentSettings,
-                    purposeBindings: currentPurposeBindings,
-                    agentId: agent.agentId,
-                    consumer: identity,
-                    declarations: agent.connectedAccounts,
-                }).filter((entry) => sameService(entry.service, input.account.service));
-                if (currentDefaults.some((entry) => entry.target || entry.teamResource)) return null;
-                let settings = currentSettings;
-                let purposeBindings = currentPurposeBindings;
-                let written: ReturnType<typeof writeAgentConnectedAccountPurposeDefault> | null = null;
-                for (const declaration of declarations) {
-                    written = writeAgentConnectedAccountPurposeDefault({
-                        settings,
-                        purposeBindings,
-                        agentId: agent.agentId,
-                        consumer: identity,
-                        declarations: agent.connectedAccounts,
-                        purpose: declaration.purpose,
-                        target: { kind: 'account', account: input.account },
-                    });
-                    settings = { ...settings, ...written };
-                    purposeBindings = written.connectedAccountPurposeBindingsV1;
-                }
-                return written;
-            },
+            agentId: agent.agentId,
         };
     }
     return null;

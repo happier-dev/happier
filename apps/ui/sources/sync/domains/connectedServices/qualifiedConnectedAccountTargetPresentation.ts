@@ -1,11 +1,11 @@
 import type {
-  ConnectedServiceId,
   PluginContributionIdentityV1,
   QualifiedConnectedAccountPurposeBindingTargetV1,
   QualifiedConnectedAccountRef,
   TeamResourceConnectedServiceSelectionV2,
 } from '@happier-dev/protocol';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
+import { connectedEntitySubjectKeyV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 
 import { t } from '@/text';
 import type { ConnectedAccountUiNegotiation } from './resolveConnectedAccountUiNegotiation';
@@ -55,6 +55,14 @@ export type QualifiedConnectedAccountTargetPresentation = Readonly<{
 function nonEmptyText(value: string | null | undefined): string | null {
   const normalized = typeof value === 'string' ? value.trim() : '';
   return normalized || null;
+}
+
+/** A personal group label is separate from the group's shared definition name. */
+export function resolveQualifiedConnectedAccountGroupLabel(input: Readonly<{
+  group: QualifiedConnectedAccountPresentationGroup['ref'];
+  labelsByKey: Readonly<Record<string, string | undefined>>;
+}>): string | null {
+  return nonEmptyText(input.labelsByKey[connectedEntitySubjectKeyV1({ kind: 'group', ...input.group })]);
 }
 
 function uniqueNonEmpty(parts: ReadonlyArray<string | null>): string[] {
@@ -205,7 +213,6 @@ export function presentQualifiedConnectedAccountTarget(input: Readonly<{
   labelsByKey: Readonly<Record<string, string | undefined>>;
   /** A user label already resolved by the owning screen's current preferences projection. */
   accountLabel?: string | null;
-  legacyServiceId?: ConnectedServiceId | null;
   serviceTitle: string | null | undefined;
   /** Negotiated source state used only when the exact structured target is absent. */
   sourceNegotiation?: ConnectedAccountUiNegotiation;
@@ -233,22 +240,23 @@ export function presentQualifiedConnectedAccountTarget(input: Readonly<{
         secondaryParts: [],
       });
     }
-    const userLabel = nonEmptyText(input.accountLabel)
-      ?? resolveQualifiedConnectedAccountLabel({
-        labelsByKey: input.labelsByKey,
-        service: account.ref.service,
-        legacyServiceId: input.legacyServiceId ?? null,
-        accountId: account.ref.accountId,
-      });
-    const name = presentConnectedAccountName({
-      serviceTitle,
-      userLabel,
-      displayName: account.displayName ?? null,
-      email: account.providerIdentity?.email ?? null,
-      providerAccountId: account.providerIdentity?.accountId ?? null,
-      accountId: account.ref.accountId,
-      presentIdentity: input.presentIdentity,
-    });
+    const name = presentConnectedAccountNames(input.accounts
+      .filter((candidate) => sameService(candidate.ref.service, accountRef.service))
+      .map((candidate) => ({
+        key: candidate.ref.accountId,
+        serviceTitle,
+        userLabel: (candidate.ref.accountId === accountRef.accountId ? nonEmptyText(input.accountLabel) : null)
+          ?? resolveQualifiedConnectedAccountLabel({
+            labelsByKey: input.labelsByKey,
+            service: candidate.ref.service,
+            accountId: candidate.ref.accountId,
+          }),
+        displayName: candidate.displayName ?? null,
+        email: candidate.providerIdentity?.email ?? null,
+        providerAccountId: candidate.providerIdentity?.accountId ?? null,
+        accountId: candidate.ref.accountId,
+        presentIdentity: input.presentIdentity,
+      }))).get(accountRef.accountId)!;
     return createPresentation({
       serviceTitle,
       primaryLabel: name.primaryLabel,
@@ -275,7 +283,8 @@ export function presentQualifiedConnectedAccountTarget(input: Readonly<{
     });
   }
   const displayName = nonEmptyText(group.displayName);
-  const primaryLabel = displayName ?? serviceTitle;
+  const primaryLabel = resolveQualifiedConnectedAccountGroupLabel({ group: group.ref, labelsByKey: input.labelsByKey })
+    ?? displayName ?? serviceTitle;
   return createPresentation({
     serviceTitle,
     primaryLabel,

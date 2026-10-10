@@ -12,9 +12,18 @@ const AGENTS = [
 ];
 
 const POOL = { kind: 'group' as const, service: CLAUDE, groupId: 'work-pool' };
-const EMPTY_SETTINGS = { connectedAccountPurposeBindingsV1: undefined, connectedServicesDefaultAuthByAgentIdV1: undefined };
+const EMPTY_SETTINGS = { connectedServicesDefaultAuthByAgentIdV1: undefined };
 
 describe('agent default choices (★ = default for an agent)', () => {
+    it('uses the explicit catalog value instead of a retired settings root', () => {
+        const purposeBindings = { v: 1 as const, bindings: [{
+            purpose: { consumer: AGENTS[0]!.identity, purpose: 'model' }, target: POOL,
+        }] };
+        expect(buildAgentDefaultChoices({ agents: AGENTS, settings: EMPTY_SETTINGS, purposeBindings, target: POOL })[0]?.isDefault).toBe(true);
+        const written = writeAgentDefaultChoice({ agents: AGENTS, settings: EMPTY_SETTINGS, purposeBindings,
+            target: POOL, agentId: 'claude', makeDefault: false });
+        expect(written?.connectedAccountPurposeBindingsV1.bindings).toEqual([]);
+    });
     it('lists only the agents that sign in through the service, none default yet', () => {
         expect(buildAgentDefaultChoices({ agents: AGENTS, settings: EMPTY_SETTINGS, target: POOL })).toEqual([
             { agentId: 'claude', title: 'Claude Code', isDefault: false },
@@ -26,18 +35,18 @@ describe('agent default choices (★ = default for an agent)', () => {
         const on = writeAgentDefaultChoice({ agents: AGENTS, settings: EMPTY_SETTINGS, target: POOL, agentId: 'opencode', makeDefault: true });
         expect(on).not.toBeNull();
         const afterOn = { ...EMPTY_SETTINGS, ...on! };
-        expect(buildAgentDefaultChoices({ agents: AGENTS, settings: afterOn, target: POOL })).toEqual([
+        expect(buildAgentDefaultChoices({ agents: AGENTS, settings: afterOn, purposeBindings: on!.connectedAccountPurposeBindingsV1, target: POOL })).toEqual([
             { agentId: 'claude', title: 'Claude Code', isDefault: false },
             { agentId: 'opencode', title: 'OpenCode', isDefault: true },
         ]);
         // Its other service keeps its own login.
-        expect(buildAgentDefaultChoices({ agents: AGENTS, settings: afterOn, target: { kind: 'account', account: { service: CHATGPT, accountId: 'personal' } } }))
+        expect(buildAgentDefaultChoices({ agents: AGENTS, settings: afterOn, purposeBindings: on!.connectedAccountPurposeBindingsV1, target: { kind: 'account', account: { service: CHATGPT, accountId: 'personal' } } }))
             .toEqual([
                 { agentId: 'opencode', title: 'OpenCode', isDefault: false },
                 { agentId: 'codex', title: 'Codex', isDefault: false },
             ]);
-        const off = writeAgentDefaultChoice({ agents: AGENTS, settings: afterOn, target: POOL, agentId: 'opencode', makeDefault: false });
-        expect(buildAgentDefaultChoices({ agents: AGENTS, settings: { ...afterOn, ...off! }, target: POOL })
+        const off = writeAgentDefaultChoice({ agents: AGENTS, settings: afterOn, purposeBindings: on!.connectedAccountPurposeBindingsV1, target: POOL, agentId: 'opencode', makeDefault: false });
+        expect(buildAgentDefaultChoices({ agents: AGENTS, settings: { ...afterOn, ...off! }, purposeBindings: off!.connectedAccountPurposeBindingsV1, target: POOL })
             .find((choice) => choice.agentId === 'opencode')?.isDefault).toBe(false);
     });
 });

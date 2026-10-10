@@ -1,5 +1,7 @@
+import { sharingConfigStorage, sharingStateStorage } from '@happier-dev/protocol/actions/settings/accountSettingBindings';
 import { PROVIDER_USAGE_GAUGE_SETTINGS_SECTION } from './providerUsageGaugeSettings';
 import { defineSettingsPage } from '@/components/settings/catalog/settingDeclarations';
+import { prepareDefaultProviderStateSharingChange } from './providerStateSharingSettings';
 
 /**
  * The searchable settings of Connected services. Services and accounts are a collection (they come
@@ -12,30 +14,29 @@ export const CONNECTED_SERVICES_SETTINGS = defineSettingsPage({
         usage: {
             titleKey: 'connectedServicesSettings.usageTitle',
             settings: {
-                agentDefaults: {
-                    titleKey: 'connectedServicesSettings.agentDefaultsTitle',
-                    descriptionKey: 'connectedServicesSettings.agentDefaultsDescription',
-                    keywordKeys: ['connectedServicesSettings.agentDefaultsKeywords'],
-                },
-                sharing: {
-                    titleKey: 'connectedServicesSettings.sharingTitle',
-                    descriptionKey: 'connectedServices.providerStateSharing.footer',
-                },
+                agentDefaults: {},
+                sharing: {},
                 sharingConfig: {
-                    titleKey: 'connectedServices.providerStateSharing.configTitle',
-                    keywordKeys: [
-                        'connectedServicesSettings.configLinkedShort',
-                        'connectedServicesSettings.configCopiedShort',
-                        'connectedServicesSettings.configIsolatedShort',
-                    ],
+                    storage: sharingConfigStorage,
+
                 },
                 sharingState: {
-                    titleKey: 'connectedServices.providerStateSharing.stateTitle',
+                    storage: {
+                        ...sharingStateStorage,
+                        prepare: async (settings, value, _services, context) => {
+                            if (typeof value !== 'boolean') return null;
+                            const apply = await prepareDefaultProviderStateSharingChange(settings.connectedServicesProviderStateSharingSettingsV1, value);
+                            if (!apply || context?.isCurrent() === false) return null;
+                            return current => {
+                                if (context?.isCurrent() === false) return null;
+                                const next = apply(current.connectedServicesProviderStateSharingSettingsV1);
+                                return next ? { connectedServicesProviderStateSharingSettingsV1: next } : null;
+                            };
+                        },
+                    },
+
                 },
-                sharingPerAgent: {
-                    titleKey: 'connectedServicesSettings.perAgentTitle',
-                    descriptionKey: 'connectedServicesSettings.perAgentDescription',
-                },
+                sharingPerAgent: {},
             },
         },
     },

@@ -61,7 +61,7 @@ vi.mock('@/sync/store/settingsWriters', () => ({ useApplySettings: () => vi.fn()
 
 vi.mock('@/hooks/teams/useHomeTeamCredentialModelCatalog', () => ({
     useHomeTeamCredentialModelCatalog: () => ({
-        resources: [], teamNameById: {}, homeNameByTeamId: {}, currentResourceKeys: new Set(), current: true,
+        resources: [], teamNameById: {}, homeNameByTeamId: {}, currentResourceKeys: new Set(), current: true, condition: null,
     }),
 }));
 

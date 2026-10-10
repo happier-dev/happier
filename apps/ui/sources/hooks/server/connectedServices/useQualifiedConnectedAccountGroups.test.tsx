@@ -1,6 +1,6 @@
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { useQualifiedConnectedAccountGroups } from './useQualifiedConnectedAccountGroups';
+import { useQualifiedConnectedAccountGroups, type UseQualifiedConnectedAccountGroupsResult } from './useQualifiedConnectedAccountGroups';
 
 import {
     createDeferred,
@@ -559,17 +559,17 @@ describe('useQualifiedConnectedAccountGroups', () => {
             const hook = await renderHook(() => useQualifiedConnectedAccountGroups({ serverId: 'server-a', service, peer }));
             await flushHookEffects();
             const group = hook.getCurrent().groups[0]!;
-            let pending: Promise<boolean> = Promise.resolve(false);
+            let pending: ReturnType<UseQualifiedConnectedAccountGroupsResult['delete']> = Promise.resolve(false);
             await act(async () => { pending = hook.getCurrent().delete(group); });
             groups = [];
             await act(async () => { await hook.getCurrent().refresh(); });
             expect(hook.getCurrent().groups).toEqual([]);
-            let result = false;
+            let result: Awaited<ReturnType<UseQualifiedConnectedAccountGroupsResult['delete']>> = false;
             await act(async () => {
                 deleted.resolve(new Response(JSON.stringify({ success: true }), { status: 200 }));
                 result = await pending;
             });
-            expect(result).toBe(true);
+            expect(result).toMatchObject({ applied: true });
             expect(hook.getCurrent().groups).toEqual([]);
         } finally {
             serverFetchMock.mockReset();

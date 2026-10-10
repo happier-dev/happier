@@ -6,6 +6,7 @@ import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 
 import { renderScreen } from '@/dev/testkit';
 import { presentConnectedAccountIdentity } from '@/sync/domains/connectedServices/maskAccountEmail';
+import { t } from '@/text';
 import type { QualifiedConnectedAccountUiGroup } from '@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource';
 import {
     ConnectedServiceAuthGroupPolicyV1Schema,
@@ -15,6 +16,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { PoolMemberRow } from './PoolMemberRow';
+import { connectedEntitySubjectKeyV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import { EntityFlatReorderList } from '@/components/ui/treeDragDrop/ui/EntityFlatReorder';
 import { storage } from '@/sync/domains/state/storageStore';
 import {
@@ -378,7 +380,7 @@ beforeEach(() => {
         activeAccountId: account.accountId,
     }));
     deleteGroup.mockReset();
-    deleteGroup.mockResolvedValue(true);
+    deleteGroup.mockResolvedValue({ applied: true, metadataCleanup: { status: 'complete' } });
 });
 
 describe('QualifiedPoolDetailView', () => {
@@ -584,13 +586,13 @@ describe('QualifiedPoolDetailView', () => {
         expect(memberRow(screen, 'backup').usage).toEqual({ kind: 'off' });
     });
 
-    it('names a member once: by its label, else its email, never the raw account id', async () => {
+    it('names a member by its personal label, native name or email, never the raw account id', async () => {
         const { screen } = await renderPoolDetail({}, {
             memberQuotaByAccountId: quota({ work: snapshot('work', [{ id: '5h', label: '5-hour', left: 40, resetsInMs: 60 * MIN }]) }),
         });
-        // No user label: the email names the account and is not repeated on the identity line.
-        expect(memberRow(screen, 'work').title).toBe('work@example.com');
-        expect(memberRow(screen, 'work').identityLabel).toBe('Pro');
+        // A real native name wins over email; the distinct email remains beside it.
+        expect(memberRow(screen, 'work').title).toBe('Work workspace');
+        expect(memberRow(screen, 'work').identityLabel).toBe('work@example.com · Pro');
 
         const labelled = await renderPoolDetail({}, { accountLabels: { work: 'Primary' } });
         expect(memberRow(labelled.screen, 'work').title).toBe('Primary');
@@ -602,11 +604,11 @@ describe('QualifiedPoolDetailView', () => {
                 { ref: accountRef('backup'), status: 'connected' },
             ],
         });
-        expect(memberRow(unnamed.screen, 'backup').title).toBe('Codex');
+        expect(memberRow(unnamed.screen, 'backup').title).toBe(t('connectedServicesCollection.accountLabel', { service: 'Codex' }));
         expect(memberRow(unnamed.screen, 'backup').identityLabel ?? '').not.toContain('backup');
     });
 
-    it('hides provider id fallback names across members, choices and Now while retaining user names', async () => {
+    it('does not promote provider IDs into names across members, choices and Now while retaining user names', async () => {
         const { screen } = await renderPoolDetail({}, {
             accounts: [
                 { ref: accountRef('work'), providerIdentity: { accountId: 'provider-account-42' } },
@@ -618,10 +620,11 @@ describe('QualifiedPoolDetailView', () => {
                 email: input.email ?? null, accountId: input.accountId ?? null,
             }),
         });
-        expect(memberRow(screen, 'work').title).toBe('provi•••42');
+        const fallback = t('connectedServicesCollection.accountLabel', { service: 'Codex' });
+        expect(memberRow(screen, 'work').title).toBe(fallback);
         expect(memberRow(screen, 'backup').title).toBe('provider-account-43');
-        expect(membersDropdown(screen).props.items[0]).toMatchObject({ title: 'provi•••42' });
-        expect(itemProps(screen, 'connected-services-pool-detail:now').title).toBe('connectedServicesPool.using(name=provi•••42)');
+        expect(membersDropdown(screen).props.items[0]).toMatchObject({ title: fallback });
+        expect(itemProps(screen, 'connected-services-pool-detail:now').title).toBe(t('connectedServicesPool.using', { name: fallback }));
         expect(screen.getTextContent()).not.toContain('provider-account-42');
     });
 
@@ -651,7 +654,7 @@ describe('QualifiedPoolDetailView', () => {
             activeSince: { accountId: 'work', atMs: NOW - 30 * MIN },
         });
         const now = itemProps(screen, 'connected-services-pool-detail:now');
-        expect(now.title).toMatch(/^connectedServicesPool\.usingSince\(name=work@example\.com,time=/);
+        expect(now.title).toMatch(/^connectedServicesPool\.usingSince\(name=Work workspace,time=/);
         expect(now.subtitle).toBe('connectedServicesPool.leadInOrder connectedServicesPool.fallbackDescription');
 
         await pressRow(screen, 'connected-services-pool-detail:now:switch');
@@ -660,7 +663,7 @@ describe('QualifiedPoolDetailView', () => {
 
     it('does not claim a since time the pool has not tied to the active member', async () => {
         const { screen } = await renderPoolDetail({ activeSince: null });
-        expect(itemProps(screen, 'connected-services-pool-detail:now').title).toBe('connectedServicesPool.using(name=work@example.com)');
+        expect(itemProps(screen, 'connected-services-pool-detail:now').title).toBe('connectedServicesPool.using(name=Work workspace)');
     });
 
     it('keeps the active account when usage-limit switching is disabled, while still allowing Switch now', async () => {
@@ -672,7 +675,7 @@ describe('QualifiedPoolDetailView', () => {
             }),
         });
         expect(itemProps(screen, 'connected-services-pool-detail:now').subtitle)
-            .toBe('connectedServicesPool.leadInOrder connectedServicesPool.fallbackOff(name=work@example.com)');
+            .toBe('connectedServicesPool.leadInOrder connectedServicesPool.fallbackOff(name=Work workspace)');
         await pressRow(screen, 'connected-services-pool-detail:now:switch');
         expect(setActiveAccount).toHaveBeenCalledWith(expect.objectContaining({ group, account: expect.objectContaining({ accountId: 'backup' }) }));
     });
@@ -684,7 +687,7 @@ describe('QualifiedPoolDetailView', () => {
                 { ref: accountRef('backup'), priority: 200, enabled: false, state: {} },
             ],
         });
-        expect(itemProps(screen, 'connected-services-pool-detail:now').subtitle).toBe('connectedServicesPool.onlyOneOn(name=work@example.com)');
+        expect(itemProps(screen, 'connected-services-pool-detail:now').subtitle).toBe('connectedServicesPool.onlyOneOn(name=Work workspace)');
         await pressRow(screen, 'connected-services-pool-detail:now:turn-on');
         expect(patchMember).toHaveBeenCalledWith(expect.objectContaining({ group, account: expect.objectContaining({ accountId: 'backup' }), enabled: true }));
     });
@@ -726,8 +729,7 @@ describe('QualifiedPoolDetailView', () => {
         const { screen } = await renderPoolDetail();
         const options = membersDropdown(screen).props.items as ReadonlyArray<{ id: string; title: string; subtitle?: string }>;
         expect(options.map((option) => option.id)).toEqual(['work', 'backup', 'spare']);
-        expect(options[0]).toMatchObject({ title: 'work@example.com' });
-        expect(options[0]?.subtitle).toBeUndefined();
+        expect(options[0]).toMatchObject({ title: 'Work workspace', subtitle: 'work@example.com' });
     });
 
     it('toggling a member switch patches that member', async () => {
@@ -812,6 +814,19 @@ describe('QualifiedPoolDetailView', () => {
     it('names a pool whose display name is only whitespace by its service title', async () => {
         const { screen } = await renderPoolDetail({ displayName: '   ' });
         expect(screen.getTextContent()).toContain('Codex');
+    });
+
+    it('presents a personal group label without changing the pool definition rename draft', async () => {
+        const viewOverrides = {
+            serviceLabel: 'Codex',
+            labelsByKey: { [connectedEntitySubjectKeyV1({ kind: 'group', service: SERVICE, groupId: 'primary' })]: 'Personal pool' },
+        };
+        const { screen, group } = await renderPoolDetail({}, viewOverrides);
+        expect(screen.getTextContent()).toContain('Personal pool');
+        expect(group.displayName).toBe('Team pool');
+        await pressRow(screen, 'connected-services-pool-detail:rename');
+        expect(screen.findByTestId('connected-services-pool-detail:name-field')?.props.value).toBe('Team pool');
+        expect(patch).not.toHaveBeenCalled();
     });
 
     it('renames the pool inline only after saving the draft', async () => {

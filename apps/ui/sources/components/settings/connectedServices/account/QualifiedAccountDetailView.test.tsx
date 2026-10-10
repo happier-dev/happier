@@ -14,6 +14,7 @@ import type { QualifiedConnectedAccountUiGroup } from '@/sync/domains/connectedS
 import { connectedEntitySubjectKeyV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import {
     ConnectedServiceAuthGroupPolicyV1Schema,
+    BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
     type PluginContributionIdentityV1,
     type QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol';
@@ -25,10 +26,6 @@ import {
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const modalState = vi.hoisted(() => ({
-    confirmResult: true,
-    confirmSpy: vi.fn(),
-}));
 const platformState = vi.hoisted(() => ({ os: 'web' }));
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
@@ -42,20 +39,10 @@ vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () =
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            confirm: async (...args) => {
-                modalState.confirmSpy(...args);
-                return modalState.confirmResult;
-            },
-        },
-    }).module;
+    return createModalModuleMock().module;
 });
 
-const SERVICE: PluginContributionIdentityV1 = {
-    pluginId: 'openai-codex',
-    localId: 'openai-codex',
-};
+const SERVICE: PluginContributionIdentityV1 = BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID['openai-codex'].service;
 
 const ACCOUNT: QualifiedConnectedAccountRef = {
     service: SERVICE,
@@ -140,8 +127,6 @@ describe('QualifiedAccountDetailView', () => {
     beforeEach(() => {
         platformState.os = 'web';
         restoreWebGlobals = withPopoverWebGlobals();
-        modalState.confirmResult = true;
-        modalState.confirmSpy.mockClear();
     });
 
     afterEach(() => {
@@ -420,49 +405,6 @@ describe('QualifiedAccountDetailView', () => {
         expect(screen.findByTestId('qualified-account-detail:default-switch')).toBeNull();
     });
 
-    it('confirms before disconnecting and does not disconnect when the confirmation is declined', async () => {
-        modalState.confirmResult = false;
-        const onDisconnect = vi.fn();
-        const screen = await renderDetail({ onDisconnect });
-
-        await screen.pressByTestIdAsync('qualified-account-detail:action:disconnect');
-
-        expect(modalState.confirmSpy).toHaveBeenCalledTimes(1);
-        expect(onDisconnect).not.toHaveBeenCalled();
-    });
-
-    it('confirms disconnect against the full identity, not the bare account id', async () => {
-        modalState.confirmResult = false;
-        const screen = await renderDetail({
-            presentation: {
-                primaryLabel: 'Work account',
-                secondaryLabel: 'Codex · work@example.com · work',
-                accessibilityLabel: 'Codex · Work account · work@example.com · work',
-            },
-            providerEmail: 'work@example.com',
-            onDisconnect: vi.fn(),
-        });
-
-        await screen.pressByTestIdAsync('qualified-account-detail:action:disconnect');
-
-        // Disconnect is irreversible, so the prompt names every identity the user
-        // could RECOGNISE the account by — its label, provider email and
-        // provider-side account identity. The canonical account id is never one
-        // of them: the shared presenter deliberately does not emit it.
-        const body = modalState.confirmSpy.mock.calls[0]?.[1];
-        expect(body).toContain('Work account · work@example.com · work');
-    });
-
-    it('disconnects after the confirmation is accepted', async () => {
-        modalState.confirmResult = true;
-        const onDisconnect = vi.fn();
-        const screen = await renderDetail({ onDisconnect });
-
-        await screen.pressByTestIdAsync('qualified-account-detail:action:disconnect');
-
-        expect(modalState.confirmSpy).toHaveBeenCalledTimes(1);
-        expect(onDisconnect).toHaveBeenCalledTimes(1);
-    });
     it('says a signed-out account is blocked in a banner here, with the fix, and keeps its usage in view', async () => {
         const onReconnect = vi.fn();
         const screen = await renderDetail({

@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { AGENT_IDS, getAgentCore, type AgentId } from '@/agents/catalog/catalog';
+import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { SettingAnchor, SettingRow } from '@/components/settings/shell/SettingRow';
 import { Switch } from '@/components/ui/forms/Switch';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
@@ -8,7 +8,6 @@ import { Item } from '@/components/ui/lists/Item';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { Modal } from '@/modal';
 import { getPreferredLanguage, t } from '@/text';
 import { useSettingMutable } from '@/sync/store/hooks';
 import {
@@ -21,43 +20,16 @@ import { buildProviderConfigModeChoices, ProviderStateSharingRows } from './Prov
 import { CONNECTED_SERVICES_SETTINGS, CONNECTED_SERVICES_SHARING_SETTINGS } from './connectedServicesSettings';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { Icon } from '@/components/ui/icons/Icon';
+import { prepareDefaultProviderStateSharingChange, resolveProviderStateSharingAgentIds, type ProviderStateSharingSettingsWriter } from './providerStateSharingSettings';
+export { resolveProviderStateSharingAgentIds } from './providerStateSharingSettings';
+export type { ProviderStateSharingSettingsWriter } from './providerStateSharingSettings';
 
 type ProviderConfigMode = ConnectedServicesProviderConfigSharingModeV1;
-
-export type ProviderStateSharingSettingsWriter = (settings: ConnectedServicesProviderStateSharingSettingsV1) => void;
-
-export function resolveProviderStateSharingAgentIds(
-    agentIds: readonly AgentId[] = AGENT_IDS,
-): readonly AgentId[] {
-    return agentIds.filter((agentId) => {
-        const capability = getAgentCore(agentId)?.connectedServices?.providerStateSharing;
-        return capability?.config.supported === true || capability?.state.supported === true;
-    });
-}
 
 function resolveConfigModeShortLabel(mode: ProviderConfigMode): string {
     if (mode === 'copied') return t('connectedServicesSettings.configCopiedShort');
     if (mode === 'isolated') return t('connectedServicesSettings.configIsolatedShort');
     return t('connectedServicesSettings.configLinkedShort');
-}
-
-function resolveSharedStatePrivacyRiskAgents(
-    agentIds: readonly AgentId[],
-): Array<{ agentId: AgentId; agentTitle: string }> {
-    const entries: Array<{ agentId: AgentId; agentTitle: string }> = [];
-    for (const agentId of agentIds) {
-        const agentCore = getAgentCore(agentId);
-        if (!agentCore) continue;
-        const stateCapability = agentCore.connectedServices?.providerStateSharing?.state;
-        if (stateCapability?.supported !== true) continue;
-        if (!stateCapability.modes.includes('shared')) continue;
-        if (stateCapability.sharedStatePrivacyRiskAcknowledgementRequired !== true) continue;
-        entries.push({
-            agentId,
-            agentTitle: t(agentCore.displayNameKey),
-        });
-    }
-    return entries;
 }
 
 /**
@@ -79,49 +51,18 @@ export function ConnectedServicesProviderStateSharingDisclosure(props: Readonly<
     const stateShared = props.settings.defaults.stateMode === 'shared';
 
     const setProviderConfigMode = React.useCallback((configMode: ProviderConfigMode) => {
-        props.setSettings({
-            ...props.settings,
+        props.setSettings(current => ({
+            ...current,
             defaults: {
-                ...props.settings.defaults,
+                ...current.defaults,
                 configMode,
             },
-        });
+        }));
     }, [props]);
 
     const setProviderStateShared = React.useCallback(async (shared: boolean) => {
-        const acknowledgedRisksByAgentId = { ...props.settings.acknowledgedRisksByAgentId };
-        if (shared) {
-            const agentsNeedingAcknowledgement = resolveSharedStatePrivacyRiskAgents(agentIds).filter(
-                (entry) => acknowledgedRisksByAgentId[entry.agentId]?.sharedStatePrivacy !== true,
-            );
-            if (agentsNeedingAcknowledgement.length > 0) {
-                const confirmed = await Modal.confirm(
-                    t('connectedServices.providerStateSharing.sharedStatePrivacyTitle'),
-                    t('connectedServices.providerStateSharing.sharedStatePrivacyBody', {
-                        agent: agentsNeedingAcknowledgement.map((entry) => entry.agentTitle).join(', '),
-                    }),
-                    {
-                        confirmText: t('common.continue'),
-                        destructive: false,
-                    },
-                );
-                if (!confirmed) return;
-                for (const entry of agentsNeedingAcknowledgement) {
-                    acknowledgedRisksByAgentId[entry.agentId] = {
-                        ...acknowledgedRisksByAgentId[entry.agentId],
-                        sharedStatePrivacy: true,
-                    };
-                }
-            }
-        }
-        props.setSettings({
-            ...props.settings,
-            defaults: {
-                ...props.settings.defaults,
-                stateMode: shared ? 'shared' : 'isolated',
-            },
-            acknowledgedRisksByAgentId,
-        });
+        const apply = await prepareDefaultProviderStateSharingChange(props.settings, shared, agentIds);
+        if (apply) props.setSettings(apply);
     }, [agentIds, locale, props]);
 
     const summary = t('connectedServicesSettings.sharingSummary', {

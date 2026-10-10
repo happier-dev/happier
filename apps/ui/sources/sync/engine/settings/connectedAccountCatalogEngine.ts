@@ -1,4 +1,4 @@
-import type { ConnectedAccountCatalogKeyV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { parseConnectedAccountCatalogPhysicalKeyV1, type ConnectedAccountCatalogKeyV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { readConnectedAccountCatalog, type ConnectedAccountCatalogSourceAdmission } from '@/sync/api/account/apiConnectedAccountCatalog';
 import { createScopedSnapshotLoader, type ScopedLoadTarget } from '@/sync/engine/scope/scopedSnapshotLoader';
@@ -29,6 +29,8 @@ const loader = createScopedSnapshotLoader<Target>({
     shouldLoadOnObserve: ({ scope, catalogKey }) => getConnectedAccountCatalogSnapshot(scope, catalogKey)?.status !== 'ready',
     invalidateServer: invalidateConnectedAccountCatalogsForServer,
     invalidateTarget: ({ scope, catalogKey }) => beginConnectedAccountCatalogLoad(scope, catalogKey),
+    matchesWake: event => event.entityIds === undefined || event.entityIds.some(id =>
+        id === 'self' || parseConnectedAccountCatalogPhysicalKeyV1(id) !== null),
     onCredentialMutation: (_event, { scope, catalogKey }) => {
         applyConnectedAccountCatalogSnapshot(scope, catalogKey, { status: 'unavailable', reason: 'unauthorized' }, true);
         return true;

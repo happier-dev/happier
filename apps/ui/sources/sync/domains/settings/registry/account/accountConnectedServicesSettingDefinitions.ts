@@ -52,14 +52,6 @@ export const ACCOUNT_CONNECTED_SERVICES_SETTING_ANALYTICS = defineAccountSetting
         identityScope: 'person',
         serializeCurrent: objectKeyCount,
     },
-    connectedServicesProfileLabelByKey: {
-        trackCurrentState: true,
-        trackChanges: true,
-        valueKind: 'count',
-        privacy: 'count_only',
-        identityScope: 'person',
-        serializeCurrent: objectKeyCount,
-    },
     connectedServicesQuotaPinnedMeterIdsByKey: {
         trackCurrentState: true,
         trackChanges: true,
@@ -67,14 +59,6 @@ export const ACCOUNT_CONNECTED_SERVICES_SETTING_ANALYTICS = defineAccountSetting
         privacy: 'count_only',
         identityScope: 'person',
         serializeCurrentProperties: buildPinnedMeterSummaryProperties,
-    },
-    connectedServicesCollapsedItemKeysV1: {
-        trackCurrentState: true,
-        trackChanges: true,
-        valueKind: 'count',
-        privacy: 'count_only',
-        identityScope: 'person',
-        serializeCurrent: objectKeyCount,
     },
     connectedServicesQuotaSummaryStrategyByKey: {
         trackCurrentState: true,
@@ -94,14 +78,6 @@ export const ACCOUNT_CONNECTED_SERVICES_SETTING_ANALYTICS = defineAccountSetting
             const parsed = ConnectedServicesDefaultAuthByAgentIdV1Schema.parse(value);
             return objectKeyCount(parsed.bindingsByAgentId);
         },
-    },
-    connectedServicesDefaultAuthPoolAdoptionDismissedByKey: {
-        trackCurrentState: true,
-        trackChanges: true,
-        valueKind: 'count',
-        privacy: 'count_only',
-        identityScope: 'person',
-        serializeCurrent: objectKeyCount,
     },
     connectedServicesProviderStateSharingSettingsV1: {
         trackCurrentState: true,

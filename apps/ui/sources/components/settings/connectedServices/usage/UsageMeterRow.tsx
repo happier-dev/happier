@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { CapacityBar } from '@happier-dev/plugin-ui/presentation';
+import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 
 import { MeterBar, type MeterTone } from '@/components/ui/lists/MeterBar';
 import { Text } from '@/components/ui/text/Text';
@@ -63,6 +65,11 @@ export type UsageMeterRowProps = Readonly<{
     resetText?: string;
     /** The provider estimated the value: it reads "~58% left". */
     estimated?: boolean;
+    /**
+     * The B pace owner's facts on this meter's own "left" axis: a tick where an even pace would leave
+     * the window now, and the share this pace uses before the reset drawn hatched. Absent means none.
+     */
+    pace?: Readonly<{ evenPaceRemainingFraction: number; projectedRemainingFraction: number }>;
     testID?: string;
 }>;
 
@@ -74,6 +81,8 @@ export type UsageMeterRowProps = Readonly<{
  * warning and danger carry colour, on both bar and value. `MeterBar` below is geometry only.
  */
 export const UsageMeterRow = React.memo(function UsageMeterRow(props: UsageMeterRowProps) {
+    const { theme } = useUnistyles();
+    const presentationTheme = React.useMemo(() => projectPluginUiTheme(theme), [theme]);
     const styles = stylesheet;
     const known = props.remainingPct !== null && Number.isFinite(props.remainingPct);
     const remaining = known ? Math.max(0, Math.min(100, Math.round(props.remainingPct!))) : null;
@@ -99,18 +108,32 @@ export const UsageMeterRow = React.memo(function UsageMeterRow(props: UsageMeter
             : size === 'wide' && props.resetsAt !== null
                 ? t('connectedServicesCollection.meterResetsAt', { countdown: relative, time: formatResetAtTime(props.resetsAt, props.now) })
                 : relative);
-    const accessibilityLabel = props.loading
+    const paceLabel = props.pace && remaining !== null ? t('usage.board.plans.meterPaceAccessibility', {
+        even: `${Math.round(props.pace.evenPaceRemainingFraction * 100)}%`,
+        projected: `${Math.round(props.pace.projectedRemainingFraction * 100)}%`,
+    }) : null;
+    const baseAccessibilityLabel = props.loading
         ? props.label
         : remaining !== null && countdown
         ? `${props.label}, ${ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER.remainingWithReset({ percent: `${remaining}%`, reset: countdown })}`
         : `${props.label}, ${value}${resetAt ? `, ${resetAt}` : ''}`;
+    const accessibilityLabel = paceLabel ? `${baseAccessibilityLabel}; ${paceLabel}` : baseAccessibilityLabel;
     const valueStyle = [
         styles.value,
         remaining === null ? styles.valueUnknown : null,
         props.tone === 'warning' ? styles.valueWarning : null,
         props.tone === 'danger' ? styles.valueDanger : null,
     ];
-    const bar = (
+    const pace = props.pace && remaining !== null ? props.pace : null;
+    const bar = pace ? (
+        <CapacityBar theme={presentationTheme} label={accessibilityLabel} value={remaining} capacity={100}
+            evenPace={pace.evenPaceRemainingFraction * 100} projected={pace.projectedRemainingFraction * 100}
+            projection="remaining" showCaption={false} height={USAGE_METER_METRICS.barHeightPx}
+            color={theme.colors.state[barTone].foreground} markerColor={theme.colors.text.primary}
+            trackColor={theme.dark ? theme.colors.surface.pressedOverlay : theme.colors.border.default}
+            style={props.layout === 'stacked' ? undefined : styles.bar}
+            testID={props.testID ? `${props.testID}:bar` : undefined} />
+    ) : (
         <MeterBar
             testID={props.testID ? `${props.testID}:bar` : undefined}
             style={props.layout === 'stacked' ? undefined : styles.bar}
@@ -123,10 +146,10 @@ export const UsageMeterRow = React.memo(function UsageMeterRow(props: UsageMeter
         return (
             <View testID={props.testID} style={styles.stacked} accessible accessibilityLabel={accessibilityLabel}>
                 <View style={styles.stackedLine}>
-                    <Text style={[styles.label, styles.stackedLabel]} numberOfLines={1}>{props.label}</Text>
+                    <Text style={[styles.label, styles.stackedLabel]}>{props.label}</Text>
                     {props.loading
                         ? <View style={styles.valuePlaceholder} />
-                        : <Text style={[valueStyle, styles.stackedValue]} numberOfLines={1}>{value}</Text>}
+                        : <Text style={[valueStyle, styles.stackedValue]}>{value}</Text>}
                 </View>
                 {bar}
                 {resetAt ? (
@@ -145,7 +168,7 @@ export const UsageMeterRow = React.memo(function UsageMeterRow(props: UsageMeter
             if (Number.isFinite(next) && next > 0) setWidth(next);
         }} accessible accessibilityLabel={accessibilityLabel}>
             {/* The name holds its column and grows past it rather than truncating while the bar has room. */}
-            <Text style={[styles.label, styles.inlineLabel, { minWidth: labelWidth }]} numberOfLines={1}>{props.label}</Text>
+            <Text style={[styles.label, styles.inlineLabel, { minWidth: labelWidth }]}>{props.label}</Text>
             {bar}
             {props.loading ? (
                 <View style={[styles.valueSlot, { marginRight: resetWidth + USAGE_METER_METRICS.gapPx }]}>
@@ -153,12 +176,12 @@ export const UsageMeterRow = React.memo(function UsageMeterRow(props: UsageMeter
                 </View>
             ) : remaining === null ? (
                 // Unknown usage spans both columns so the unavailable label and any reset remain readable.
-                <Text style={[styles.value, styles.valueUnknown, { width: USAGE_METER_METRICS.valueWidthPx + USAGE_METER_METRICS.gapPx + resetWidth, textAlign: 'left' }]} numberOfLines={1}>
+                <Text style={[styles.value, styles.valueUnknown, { width: USAGE_METER_METRICS.valueWidthPx + USAGE_METER_METRICS.gapPx + resetWidth, textAlign: 'left' }]}>
                     {resetAt ? `${value} · ${resetAt}` : value}
                 </Text>
             ) : (
                 <>
-                    <Text style={valueStyle} numberOfLines={1}>{value}</Text>
+                    <Text style={valueStyle}>{value}</Text>
                     <Text style={[styles.reset, { width: resetWidth }]} numberOfLines={1}>{resetAt}</Text>
                 </>
             )}
@@ -195,6 +218,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     stackedValue: {
         width: 'auto',
+        flexShrink: 0,
     },
     stackedReset: {
         width: 'auto',
@@ -217,7 +241,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     value: {
         ...Typography.default('medium'),
-        width: USAGE_METER_METRICS.valueWidthPx,
+        minWidth: USAGE_METER_METRICS.valueWidthPx,
+        flexShrink: 0,
         textAlign: 'right',
         fontSize: 12,
         lineHeight: 16,

@@ -7,8 +7,9 @@ import { buildConnectedServiceSetupCatalog } from './buildConnectedServiceSetupC
 import { ConnectedServiceSetupPanel, type ConnectedServiceSetupTarget } from './ConnectedServiceSetupPanel';
 import { ConnectedAccountPurposeTargetChooser } from '../account/ConnectedAccountPurposeTargetChooser';
 import { useScopedPluginUiProjection } from '@/components/plugins/projection/useScopedPluginUiProjection';
-import { useActiveServerAccountScope, useProfile, useSetting } from '@/sync/store/hooks';
-import { useApplyConnectedAccountPurposeTarget } from '@/sync/store/settingsWriters';
+import { useActiveServerAccountScope, useProfile } from '@/sync/store/hooks';
+import { useConnectedAccountPurposeDefaults } from '@/hooks/server/connectedServices/useConnectedAccountPurposeDefaults';
+import { ConnectedAccountCatalogOperationError } from '@/sync/api/account/apiConnectedAccountCatalog';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { captureActiveServerAccountScopeLifetime, getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { readConnectedAccountPurposeSetupRequest, readConnectedAccountPurposeSetupDeclaration,
@@ -28,13 +29,12 @@ export function ConnectedServiceSetupPage() {
         params.purposeConsumerPlugin, params.purposeConsumerId, params.purposeServerId, params.purposeAccountId, params.purposeMachineId]);
     const viewer = useActiveServerAccountScope();
     const profile = useProfile();
-    const bindings = useSetting('connectedAccountPurposeBindingsV1');
+    const { catalog: purposeCatalog, mutateDefaults } = useConnectedAccountPurposeDefaults();
     const lifetime = React.useMemo(() => captureActiveServerAccountScopeLifetime(), [viewer]);
     const purposeRuntime = useScopedPluginUiProjection({ machineId: request?.machineId, serverId: request?.scope.serverId, enabled: Boolean(request) });
     const latestRuntime = React.useRef(purposeRuntime);
     latestRuntime.current = purposeRuntime;
     const declaration = readConnectedAccountPurposeSetupDeclaration(request, viewer, purposeRuntime);
-    const applyTarget = useApplyConnectedAccountPurposeTarget();
     const { indexModel } = useConnectedServicesIndex({ agents: 'load' });
     const catalog = React.useMemo(() => buildConnectedServiceSetupCatalog(indexModel).filter(entry => !request ||
         declaration?.serviceRefs.some(service => service.pluginId === entry.service.pluginId && service.localId === entry.service.localId)), [indexModel, request, declaration]);
@@ -44,9 +44,13 @@ export function ConnectedServiceSetupPage() {
     const select = async (next: QualifiedConnectedAccountPurposeBindingTargetV1 | null) => {
         if (!request) return;
         try {
-            await applyTarget({ purpose: request.purpose, target: next, isCurrent: () => lifetime?.isCurrent() === true
-                && isConnectedAccountPurposeSetupTargetCurrent({ request, viewer: getActiveServerAccountScope(), runtime: latestRuntime.current,
-                    profile: getStorage().getState().profile, target: next }) });
+            if (lifetime?.isCurrent() !== true || !isConnectedAccountPurposeSetupTargetCurrent({ request,
+                    viewer: getActiveServerAccountScope(), runtime: latestRuntime.current,
+                    profile: getStorage().getState().profile, target: next })) {
+                    throw new ConnectedAccountCatalogOperationError('scope-retired');
+            }
+            if (!next) throw new ConnectedAccountCatalogOperationError('connected_account_purpose_unavailable');
+            await mutateDefaults({ kind: 'resource', input: { machineId: request.machineId, purpose: request.purpose, target: next } });
             if (lifetime?.isCurrent()) router.back();
         } catch {
             Modal.alert(t('common.error'), t('widgetAdd.inputsUnavailable'));
@@ -56,12 +60,15 @@ export function ConnectedServiceSetupPage() {
         <SurfaceStateCard testID="connected-account-purpose-unavailable" kind={purposeRuntime.phase === 'establishing' ? 'loading' : 'unavailable'}
             title={t('settings.connectedServices')} diagnosticCode="connected_account_purpose_unavailable" accessibilitySemantics="status" />
     </ItemList>;
-    const selected = request ? bindings.bindings.find(binding => qualifiedPurposeKey(binding.purpose) === qualifiedPurposeKey(request.purpose))?.target ?? null : null;
+    const selected = request ? purposeCatalog.value?.bindings.find(binding => qualifiedPurposeKey(binding.purpose) === qualifiedPurposeKey(request.purpose))?.target ?? null : null;
     return <ItemList>
         {request && declaration?.serviceRefs.map(service => <ConnectedAccountPurposeTargetChooser
             key={`${service.pluginId}/${service.localId}`} testID={`connected-account-purpose:${service.pluginId}/${service.localId}`}
             localizedTextPluginId={request.purpose.consumer.pluginId} declaration={{ purpose: request.purpose.purpose, service, required: true }}
-            value={selected} onChange={next => { void select(next); }} />)}
+            value={selected} disabled={purposeCatalog.status !== 'ready' || purposeCatalog.stale}
+            disabledReason={purposeCatalog.status === 'ready' && !purposeCatalog.stale ? undefined
+                : t(purposeCatalog.status === 'loading' ? 'common.loading' : 'common.unavailable')}
+            onChange={next => { void select(next); }} />)}
         <ConnectedServiceSetupPanel chrome="page" target={target} catalog={catalog}
         onTargetChange={setTarget} onClose={() => router.back()}
         onConnected={(account, serviceKey) => {

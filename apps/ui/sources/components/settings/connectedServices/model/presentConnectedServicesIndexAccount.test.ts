@@ -41,6 +41,29 @@ function presentLegacy(hidden: boolean, labelsByKey: Readonly<Record<string, str
 }
 
 describe('presentConnectedServicesIndexAccount privacy for released profiles', () => {
+    it('distinguishes unnamed accounts through the shared name owner, even when health order changes', () => {
+        const profile: QualifiedConnectedAccountProfileV4 = {
+            ref: { service: ENTRY.service!, accountId: 'second' },
+            status: 'connected', authenticationModeId: 'oauth', revisionSemantics: 'revisioned',
+            credentialRevision: 'credential-1', configurationReady: true, configurationRevision: null,
+            scopes: [], providerIdentity: { accountId: 'opaque-provider-b' },
+        };
+        const model = buildConnectedServicesIndexModel({
+            transport: 'advertised-v4', entries: [ENTRY],
+            qualifiedAccounts: [profile, { ...profile, ref: { ...profile.ref, accountId: 'first' }, providerIdentity: { accountId: 'opaque-provider-a' } }],
+            qualifiedGroups: [], legacyServices: [], defaultAccountByServiceKey: {}, resolveLabel: () => 'ChatGPT',
+            resolveFallbackEntry: () => null, presentDiagnostics: () => ({ primary: null, supportDetails: null }), loadingLabel: 'Loading',
+        });
+        const sheet = model.sheets[0]!;
+        const names = sheet.accounts.map((account) => presentConnectedServicesIndexAccount(sheet, account, {}, (input) => presentConnectedAccountIdentity({
+            ...input, hidden: true, label: input.label ?? null, email: input.email ?? null, accountId: input.accountId ?? null,
+        })).title);
+        expect(new Set(names).size).toBe(2);
+        const reversed = { ...sheet, accounts: [...sheet.accounts].reverse() };
+        expect(reversed.accounts.map((account) => presentConnectedServicesIndexAccount(reversed, account, {}, (input) => presentConnectedAccountIdentity({
+            ...input, hidden: true, label: input.label ?? null, email: input.email ?? null, accountId: input.accountId ?? null,
+        })).title)).toEqual([...names].reverse());
+    });
     it('keeps the provider UUID out of the subtitle when an email identifies a qualified account', () => {
         const profile: QualifiedConnectedAccountProfileV4 = {
             ref: { service: ENTRY.service!, accountId: 'internal-account-id' },
@@ -69,7 +92,7 @@ describe('presentConnectedServicesIndexAccount privacy for released profiles', (
             [connectedServiceProfileKey({ serviceId: SERVICE_ID, profileId: 'work' })]: 'work@example.com',
             [connectedServiceProfileKey({ serviceId: SERVICE_ID, profileId: 'named' })]: 'Primary',
         });
-        expect(presentation['profile-id-42']?.title).toBe('Claude account');
+        expect(presentation['profile-id-42']?.title).toBe('Claude account 2');
         expect(presentation.work?.title).toBe('wo•••@e•••.com');
         expect(presentation.named).toMatchObject({ title: 'Primary', identityLabel: null });
         expect(presentation['at-sign']?.title).toBe('Claude account');
@@ -79,7 +102,7 @@ describe('presentConnectedServicesIndexAccount privacy for released profiles', (
         const labels = { [connectedServiceProfileKey({ serviceId: SERVICE_ID, profileId: 'named' })]: 'provider-account-42' };
         expect(presentLegacy(true, labels).named?.title).toBe('provider-account-42');
         const visible = presentLegacy(false, labels);
-        expect(visible['profile-id-42']?.title).toBe('Claude account');
+        expect(visible['profile-id-42']?.title).toBe('Claude account 2');
         expect(visible.work?.title).toBe('work@example.com');
         expect(visible.named).toMatchObject({ title: 'provider-account-42', identityLabel: null });
     });

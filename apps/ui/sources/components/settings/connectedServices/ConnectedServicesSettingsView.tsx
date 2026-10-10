@@ -19,11 +19,13 @@ import { TeamCredentialCatalogSettingsGroup } from '@/components/settings/teams/
 import { teamCredentialDetailPath } from '@/components/settings/teams/teamsRoutes';
 import { useUsageSummary } from '@/components/hub/usage/useUsageSummary';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useHomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { buildConnectedAccountSettingsRoute, buildNewConnectedAccountPoolRoute } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
-import { useActiveServerAccountScope, useAllMachines, useLocalSettingMutable, useSetting, useSettingsSelector } from '@/sync/store/hooks';
-import { useApplySettings } from '@/sync/store/settingsWriters';
+import { useActiveServerAccountScope, useAllMachines, useLocalSettingMutable } from '@/sync/store/hooks';
+import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
+import { useConnectedAccountPurposeDefaults } from '@/hooks/server/connectedServices/useConnectedAccountPurposeDefaults';
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { getMachineDisplayName, isMachineOnline } from '@/utils/sessions/machineUtils';
@@ -32,12 +34,13 @@ import { useDeviceType } from '@/utils/platform/responsive';
 
 import { AgentDefaultMenuButton } from './defaults/AgentDefaultMenuButton';
 import { ConnectedAccountPrivacyToggle } from './usage/ConnectedAccountPrivacyToggle';
-import { buildAgentDefaultChoices, writeAgentDefaultChoice } from './defaults/agentDefaultChoices';
+import { buildAgentDefaultChoices } from './defaults/agentDefaultChoices';
 import { ConnectedAccountIndexLiveFacts } from './index/ConnectedAccountIndexRow';
 import { ConnectedServicePoolIndexItem } from './index/ConnectedServicePoolIndexItem';
+import { ConnectedServicesGatewaysGroup } from './index/ConnectedServicesGatewaysGroup';
 import { ConnectedServicesIndexView, type ConnectedServicesIndexPresentation } from './index/ConnectedServicesIndexView';
 import { NewPoolMenu, selectNewPoolServices } from './collection/NewPoolMenu';
-import { presentConnectedServiceIndexDiagnosticCopy } from './model/presentConnectedServiceIndexDiagnostics';
+import { presentConnectedServiceRegistryReadFailure } from './model/presentConnectedServiceIndexDiagnostics';
 import type { ConnectedServicesIndexSheet } from './model/buildConnectedServicesIndexModel';
 import { useConnectedServicesIndex } from './model/useConnectedServicesIndex';
 import { ConnectedAccountSettled } from './setup/ConnectedAccountSettled';
@@ -45,7 +48,6 @@ import { ConnectedServicesConnectMore } from './setup/ConnectedServicesConnectMo
 import type { ConnectedServiceSetupTarget } from './setup/ConnectedServiceSetupPanel';
 import { readConnectedServiceSetupResult } from './setup/connectMoreBlocks';
 
-const EMPTY_LABELS: Readonly<Record<string, string | undefined>> = {};
 
 /**
  * Connected services, the collection's index (lab `csvc` C1/C2, P0): every service with its accounts
@@ -56,15 +58,13 @@ const EMPTY_LABELS: Readonly<Record<string, string | undefined>> = {};
  */
 export const ConnectedServicesSettingsView = React.memo(function ConnectedServicesSettingsView() {
   const router = useRouter();
-  const activeAccountScope = useActiveServerAccountScope();
-  const index = useConnectedServicesIndex({ agents: 'load' });
+  const activeServer = useActiveServerSnapshot();
+  const activeAccountScope = useActiveServerAccountScope(activeServer.serverId);
+  const providersEnabled = useFeatureEnabled('providers');
+  const index = useConnectedServicesIndex({ agents: 'load', gateways: providersEnabled });
   const { indexModel, agentEntries, agentsKnown, registrySnapshot, appShellProjection } = index;
-  const settings = useSettingsSelector((settings) => ({
-      connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
-      connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
-  }));
-  const applySettings = useApplySettings();
-  const labelsByKey = useSetting('connectedServicesProfileLabelByKey') ?? EMPTY_LABELS;
+  const { catalog: purposeCatalog, legacySettings, mutateDefaults } = useConnectedAccountPurposeDefaults();
+  const labelsByKey = useConnectedMetadataCatalog(activeAccountScope, selectConnectedMetadataLabels);
   const privacy = useConnectedAccountIdentityPrivacy();
   const [presentationSetting, setPresentation] = useLocalSettingMutable('connectedServicesIndexViewV1');
   const presentation: ConnectedServicesIndexPresentation = presentationSetting === 'grid' ? 'grid' : 'list';
@@ -101,26 +101,24 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
     if (result !== true) fireAndForget(result, { tag });
   }, [router]);
 
-  const defaultSettings = React.useMemo(() => ({
-    connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
-    connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
-  }), [settings.connectedAccountPurposeBindingsV1, settings.connectedServicesDefaultAuthByAgentIdV1]);
   const agents = agentsKnown ? agentEntries : null;
   const renderStar = React.useCallback((target: QualifiedConnectedAccountPurposeBindingTargetV1, testID: string) => {
     if (!agents) return null;
-    const choices = buildAgentDefaultChoices({ agents, settings: defaultSettings, target });
+    const choices = purposeCatalog.value
+      ? buildAgentDefaultChoices({ agents, settings: legacySettings, purposeBindings: purposeCatalog.value, target })
+      : [];
     return (
       <AgentDefaultMenuButton
         testID={testID}
         presentation="icon"
         choices={choices}
-        onChange={(agentId, makeDefault) => {
-          const written = writeAgentDefaultChoice({ agents, settings: defaultSettings, target, agentId, makeDefault });
-          if (written) applySettings(written);
-        }}
+        disabledReason={purposeCatalog.status === 'ready' && !purposeCatalog.stale ? undefined
+          : t(purposeCatalog.status === 'loading' ? 'common.loading' : 'common.unavailable')}
+        onChange={async (agentId, makeDefault) => { await mutateDefaults({ kind: 'target', target, agentId, makeDefault,
+          ...(appShellProjection.machineId ? { machineId: appShellProjection.machineId } : {}) }); }}
       />
     );
-  }, [agents, applySettings, defaultSettings]);
+  }, [agents, appShellProjection.machineId, legacySettings, mutateDefaults, purposeCatalog]);
 
   const accountGroupsEnabled = useFeatureEnabled('connectedServices.accountGroups');
   const teamCredentialResourcesEnabled = useFeatureEnabled('teams.credentialResources', {
@@ -143,15 +141,15 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
     + sheet.accounts.filter((account) => normalizeConnectedServiceCredentialHealthStatus(account.status) === 'needs_reauth').length, 0);
   const projectionLoading = registrySnapshot.status === 'loading';
   const projectionFailed = registrySnapshot.status === 'error';
+  const projectionReadFailed = projectionFailed || (registrySnapshot.status === 'stale' && registrySnapshot.errorReason !== null);
   const agentConnectable = indexModel.connectable.filter((service) => service.section === 'agents');
   const firstRun = accountCount === 0 && indexModel.sheets.length === 0;
 
-  const banner = projectionFailed ? (
+  const banner = projectionReadFailed ? (
     <AttentionBanner
       testID="connected-services-projection-error"
       title={t('connectedServicesSettings.projectionErrorTitle')}
-      description={(registrySnapshot.errorReason ? presentConnectedServiceIndexDiagnosticCopy(registrySnapshot.errorReason) : null)
-        ?? t('connectedServicesSettings.projectionErrorDescription')}
+      description={presentConnectedServiceRegistryReadFailure(registrySnapshot.errorReason)}
       action={{
         label: t('common.retry'),
         testID: 'connected-services-projection-retry',
@@ -246,6 +244,12 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
       }}
       banner={banner}
       connectMore={connectMore}
+      gateways={index.gateways ? (
+        <ConnectedServicesGatewaysGroup
+          gateways={index.gateways}
+          onOpen={(gateway) => navigate(gateway.detailRoute as never, 'ConnectedServices.openGateway')}
+        />
+      ) : null}
       preferences={<ProviderUsageGaugeSettingsGroup settings={CONNECTED_SERVICES_USAGE_GAUGE_SETTINGS.settings} />}
       sharedWithYou={(
         <TeamCredentialCatalogSettingsGroup
@@ -271,6 +275,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
             account={settled.account}
             model={indexModel}
             agents={agentEntries}
+            machineId={appShellProjection.machineId ?? undefined}
             onDismiss={() => setSettled(null)}
           />
         ),

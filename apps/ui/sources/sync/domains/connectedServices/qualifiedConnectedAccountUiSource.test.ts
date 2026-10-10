@@ -1,85 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const listV4Mock = vi.hoisted(() => vi.fn());
-const createV4Mock = vi.hoisted(() => vi.fn());
-const patchV4Mock = vi.hoisted(() => vi.fn());
-const deleteV4Mock = vi.hoisted(() => vi.fn());
-const addMemberV4Mock = vi.hoisted(() => vi.fn());
-const patchMemberV4Mock = vi.hoisted(() => vi.fn());
-const removeMemberV4Mock = vi.hoisted(() => vi.fn());
-const activeV4Mock = vi.hoisted(() => vi.fn());
-const generatedLegacyCompatibility = vi.hoisted(() => ({
-    github: {
-        service: {
-            pluginId: 'happier.scm.forge.github',
-            localId: 'github-account',
-        },
-        peerOperations: {
-            exactV0_2_1: [],
-            revisionedV2V3: [
-                'account_list',
-                'credential_read',
-                'credential_write',
-                'credential_delete',
-                'quota_read',
-                'quota_refresh',
-            ],
-        },
-    },
-    'openai-codex': {
-        service: {
-            pluginId: 'happier.agent.codex',
-            localId: 'openai-codex',
-        },
-        peerOperations: {
-            exactV0_2_1: [
-                'account_list',
-                'credential_read',
-                'one_shot_materialization',
-            ],
-            revisionedV2V3: [
-                'account_list',
-                'credential_read',
-                'credential_write',
-                'credential_delete',
-                'quota_read',
-                'quota_refresh',
-            ],
-        },
-    },
-    bitbucket: {
-        service: {
-            pluginId: 'happier.scm.forge.bitbucket',
-            localId: 'bitbucket-account',
-        },
-        peerOperations: {
-            exactV0_2_1: [],
-            revisionedV2V3: [],
-        },
-    },
-}));
+const network = vi.hoisted(() => ({ responses: [] as unknown[], requests: [] as Array<{ path: string; method: string; body?: unknown }> }));
+// HTTP is the genuine boundary; API parsing, Action admission and pool ownership stay real.
+vi.mock('@/sync/http/client', () => ({ serverFetch: async (path: string, init?: RequestInit) => {
+    network.requests.push({ path, method: init?.method ?? 'GET',
+        ...(typeof init?.body === 'string' ? { body: JSON.parse(init.body) } : {}) });
+    if (!network.responses.length) throw new Error('unexpected_http');
+    return new Response(JSON.stringify(network.responses.shift()), { status: 200, headers: { 'Content-Type': 'application/json' } });
+} }));
 
-vi.mock('@/sync/api/account/apiQualifiedConnectedAccountsV4', () => ({
-    addQualifiedConnectedAccountGroupMemberV4: addMemberV4Mock,
-    createQualifiedConnectedAccountGroupV4: createV4Mock,
-    deleteQualifiedConnectedAccountGroupV4: deleteV4Mock,
-    listQualifiedConnectedAccountGroupsV4: listV4Mock,
-    patchQualifiedConnectedAccountGroupMemberV4: patchMemberV4Mock,
-    patchQualifiedConnectedAccountGroupV4: patchV4Mock,
-    removeQualifiedConnectedAccountGroupMemberV4: removeMemberV4Mock,
-    setQualifiedConnectedAccountGroupActiveAccountV4: activeV4Mock,
-}));
-vi.mock('@happier-dev/protocol', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@happier-dev/protocol')>(),
-    BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID:
-        generatedLegacyCompatibility,
-}));
+import { serverFetch } from '@/sync/http/client';
+import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
+import { executeConnectedServiceConfigurationActionV1, type ConnectedServiceConfigurationActionHostV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
+import { getQualifiedConnectedAccountGroupV4 } from '@/sync/api/account/apiQualifiedConnectedAccountsV4';
+import { buildQualifiedConnectedAccountGroupMutationRequestV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountGroupRequestsV4';
+import type { ConnectedServiceConfigurationActionIdV1 } from '@happier-dev/protocol/connect/configurationActionsV1';
 
 import {
     createQualifiedConnectedAccountGroupsClient,
     MEMBER_PRIORITY_STEP,
     nextMemberPriority,
-    QualifiedConnectedAccountUiSourceError,
 } from './qualifiedConnectedAccountUiSource';
 
 describe('nextMemberPriority', () => {
@@ -99,6 +39,24 @@ const credentials = {
 const service = {
     pluginId: 'happier.scm.forge.github',
     localId: 'github-account',
+};
+const host: ConnectedServiceConfigurationActionHostV1 = {
+    assertCurrent() {}, async resolveAgent() { return null; }, async resetQuota() {},
+    async mutatePurposeBindings() { throw new Error('unexpected_purpose_write'); },
+    async request({ path, method, body }) { return await (await serverFetch(path, { method,
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }) })).json(); },
+};
+const executor = createActionExecutor({ connectedServiceAction: ({ actionId, input }) =>
+    executeConnectedServiceConfigurationActionV1(host, actionId, input) } as unknown as ActionExecutorDeps);
+const mutation = {
+    async execute(actionId: ConnectedServiceConfigurationActionIdV1, input: unknown) {
+        const result = await executor.execute(actionId, input, { surface: 'ui', authority: 'present_user', serverId: 'home', runtimeAccountId: 'account' });
+        if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+        return result.result;
+    },
+    async readGroup(group: Parameters<typeof getQualifiedConnectedAccountGroupV4>[1]['group']) {
+        return (await getQualifiedConnectedAccountGroupV4(credentials, { group, request: serverFetch })).group;
+    },
 };
 const policy = {
     v: 1 as const,
@@ -146,26 +104,20 @@ const qualifiedGroup = {
 };
 describe('createQualifiedConnectedAccountGroupsClient', () => {
     beforeEach(() => {
-        listV4Mock.mockReset();
-        createV4Mock.mockReset();
-        patchV4Mock.mockReset();
-        deleteV4Mock.mockReset();
-        addMemberV4Mock.mockReset();
-        patchMemberV4Mock.mockReset();
-        removeMemberV4Mock.mockReset();
-        activeV4Mock.mockReset();
+        network.responses.length = 0;
+        network.requests.length = 0;
     });
 
     it('exposes active-since only when it belongs to the listed active account', async () => {
-        listV4Mock.mockResolvedValueOnce({ groups: [{
+        network.responses.push({ groups: [{
             ...qualifiedGroup,
             state: { activeSince: { accountId: 'account-a', atMs: 123 } },
         }] });
-        listV4Mock.mockResolvedValueOnce({ groups: [{
+        network.responses.push({ groups: [{
             ...qualifiedGroup,
             state: { activeSince: { accountId: 'old-account', atMs: 12 } },
         }] });
-        listV4Mock.mockResolvedValueOnce({ groups: [qualifiedGroup] });
+        network.responses.push({ groups: [qualifiedGroup] });
         const client = createQualifiedConnectedAccountGroupsClient({
             credentials,
             service,
@@ -180,26 +132,28 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
     });
 
     it('retains exact qualified refs and threads only V4 revision semantics', async () => {
-        listV4Mock.mockResolvedValueOnce({ groups: [qualifiedGroup] });
-        patchV4Mock.mockResolvedValueOnce({
+        network.responses.push({ groups: [qualifiedGroup] });
+        network.responses.push({
             group: {
                 ...qualifiedGroup,
                 policy: { ...policy, autoSwitch: true },
                 runtimeStateRevision: 8,
             },
         });
-        activeV4Mock.mockResolvedValueOnce({
+        const switched = {
             group: {
                 ...qualifiedGroup,
                 activeConnectedAccountId: 'account-a',
                 generation: 5,
                 runtimeStateRevision: 9,
             },
-        });
+        };
+        network.responses.push(switched, switched);
         const client = createQualifiedConnectedAccountGroupsClient({
             credentials,
             service,
             source: { protocol: 'v4' },
+            mutation,
         });
 
         const [group] = await client.list();
@@ -225,34 +179,31 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
             overrideRuntimeCooldown: true,
         });
 
-        expect(patchV4Mock).toHaveBeenCalledWith(credentials, {
+        expect(network.requests[1]).toEqual(buildQualifiedConnectedAccountGroupMutationRequestV4('patch', {
             service,
             groupId: 'team',
             policy: { ...policy, autoSwitch: true },
             expectedGeneration: 4,
             expectedIncarnation: 'qualified-group-row-team',
             expectedRuntimeStateRevision: 7,
-        });
-        expect(activeV4Mock).toHaveBeenCalledWith(credentials, {
+        }));
+        expect(network.requests[2]).toEqual({ method: 'POST', path: '/v4/connect/qualified/group/active-account', body: {
             group: { service, groupId: 'team' },
             connectedAccountId: 'account-a',
             expectedGeneration: 4,
             expectedIncarnation: 'qualified-group-row-team',
             expectedRuntimeStateRevision: 7,
             overrideRuntimeCooldown: true,
-        });
+        } });
     });
 
-    it('keeps V4 create/delete/member CRUD on exact qualified refs and runtime revisions', async () => {
-        createV4Mock.mockResolvedValueOnce({ group: qualifiedGroup });
-        deleteV4Mock.mockResolvedValueOnce(true);
-        addMemberV4Mock.mockResolvedValueOnce({ group: qualifiedGroup });
-        patchMemberV4Mock.mockResolvedValueOnce({ group: qualifiedGroup });
-        removeMemberV4Mock.mockResolvedValueOnce({ group: qualifiedGroup });
+    it('keeps admitted V4 create/member CRUD on exact qualified refs and runtime revisions', async () => {
+        network.responses.push(...Array.from({ length: 4 }, () => ({ group: qualifiedGroup })));
         const client = createQualifiedConnectedAccountGroupsClient({
             credentials,
             service,
             source: { protocol: 'v4' },
+            mutation,
         });
         const group = {
             ref: qualifiedGroup.ref,
@@ -288,13 +239,11 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
             priority: 200,
         });
         await client.removeMember({ group, account });
-        await client.delete(group);
-
-        expect(createV4Mock).toHaveBeenCalledWith(credentials, {
+        expect(network.requests[0]).toEqual(buildQualifiedConnectedAccountGroupMutationRequestV4('create', {
             service,
             group: { groupId: 'team', displayName: 'Team' },
-        });
-        expect(addMemberV4Mock).toHaveBeenCalledWith(credentials, {
+        }));
+        expect(network.requests[1]).toEqual(buildQualifiedConnectedAccountGroupMutationRequestV4('addMember', {
             group: { service, groupId: 'team' },
             connectedAccountId: 'account-b',
             priority: 200,
@@ -302,8 +251,8 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
             expectedGeneration: 4,
             expectedIncarnation: qualifiedGroup.incarnation,
             expectedRuntimeStateRevision: 7,
-        });
-        expect(patchMemberV4Mock).toHaveBeenCalledWith(credentials, {
+        }));
+        expect(network.requests[2]).toEqual(buildQualifiedConnectedAccountGroupMutationRequestV4('patchMember', {
             group: { service, groupId: 'team' },
             connectedAccountId: 'account-b',
             enabled: false,
@@ -311,24 +260,18 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
             expectedGeneration: 4,
             expectedIncarnation: qualifiedGroup.incarnation,
             expectedRuntimeStateRevision: 7,
-        });
-        expect(removeMemberV4Mock).toHaveBeenCalledWith(credentials, {
+        }));
+        expect(network.requests[3]).toEqual(buildQualifiedConnectedAccountGroupMutationRequestV4('removeMember', {
             group: { service, groupId: 'team' },
             connectedAccountId: 'account-b',
             expectedGeneration: 4,
             expectedIncarnation: qualifiedGroup.incarnation,
             expectedRuntimeStateRevision: 7,
-        });
-        expect(deleteV4Mock).toHaveBeenCalledWith(credentials, {
-            group: { service, groupId: 'team' },
-            expectedGeneration: 4,
-            expectedIncarnation: qualifiedGroup.incarnation,
-            expectedRuntimeStateRevision: 7,
-        });
+        }));
     });
 
     it('rejects a mutation response bound to another group id', async () => {
-        patchV4Mock.mockResolvedValueOnce({
+        network.responses.push({
             group: {
                 ...qualifiedGroup,
                 ref: { service, groupId: 'other-team' },
@@ -338,6 +281,7 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
             credentials,
             service,
             source: { protocol: 'v4' },
+            mutation,
         });
         const group = {
             ref: qualifiedGroup.ref,
@@ -361,7 +305,7 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
     });
 
     it('rejects a create response bound to another group id', async () => {
-        createV4Mock.mockResolvedValueOnce({
+        network.responses.push({
             group: {
                 ...qualifiedGroup,
                 ref: { service, groupId: 'other-team' },
@@ -371,6 +315,7 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
             credentials,
             service,
             source: { protocol: 'v4' },
+            mutation,
         });
 
         await expect(client.create({ groupId: 'team', displayName: 'Team' }))

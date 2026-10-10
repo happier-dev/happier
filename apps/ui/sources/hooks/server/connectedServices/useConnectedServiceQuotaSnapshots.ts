@@ -51,7 +51,6 @@ import {
     type QualifiedQuotaSnapshotStoreContext,
 } from './qualifiedConnectedAccountQuotaSnapshotStore';
 import {
-    useConnectedAccountOperationAdmission,
     useConnectedServiceLegacyOperationAdmission,
 } from './useConnectedServiceLegacyOperationAdmission';
 
@@ -177,8 +176,6 @@ export function useConnectedServiceQuotaSnapshots(
     const resolveAccountMode = useCredentialScopedAccountModeResolver({ credentials, credentialScope });
     const assertLegacyOperationAllowed =
         useConnectedServiceLegacyOperationAdmission();
-    const assertQualifiedOperationAllowed =
-        useConnectedAccountOperationAdmission();
 
     const normalizedInput = React.useMemo(
         () => normalizeConnectedServiceQuotaProfileRefs(profiles),
@@ -212,13 +209,6 @@ export function useConnectedServiceQuotaSnapshots(
                     credentialScope,
                     serverBasis,
                     ref: quotaProfile.ref,
-                    assertOperationAllowed: (
-                        operation: BuiltInLegacyConnectedAccountOperation,
-                    ) => assertQualifiedOperationAllowed(
-                        quotaProfile.ref.service,
-                        { kind: 'v4' },
-                        operation,
-                    ),
                 };
                 return [{
                     kind: 'v4' as const,
@@ -240,15 +230,6 @@ export function useConnectedServiceQuotaSnapshots(
                     credentialScope,
                     serverBasis,
                     ref: transport.ref,
-                    assertOperationAllowed: (
-                        operation:
-                            BuiltInLegacyConnectedAccountOperation,
-                    ) =>
-                        assertQualifiedOperationAllowed(
-                            transport.ref.service,
-                            { kind: 'v4' },
-                            operation,
-                        ),
                 };
                 return [{
                     kind: 'v4' as const,
@@ -289,7 +270,6 @@ export function useConnectedServiceQuotaSnapshots(
         );
     }, [
         assertLegacyOperationAllowed,
-        assertQualifiedOperationAllowed,
         activeServer.generation,
         activeServer.serverId,
         credentialScope,

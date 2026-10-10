@@ -76,4 +76,19 @@ describe('UsageMeterRow (lab csvc MT, the one meter)', () => {
         );
         expect(texts(estimated)).toContain('~58% left');
     });
+
+    it('marks even pace and what this pace leaves at the reset, and says both to assistive technology', async () => {
+        const row = await renderScreen(
+            <UsageMeterRow testID="paced" label="Weekly" remainingPct={36} resetsAt={NOW + 3 * 24 * 60 * MIN} tone="neutral" now={NOW}
+                pace={{ evenPaceRemainingFraction: 3 / 7, projectedRemainingFraction: 0.03 }} />,
+        );
+        const label = String(row.findHostByTestId('paced')?.props.accessibilityLabel);
+        expect(label).toContain('43%');
+        expect(label).toContain('3%');
+        expect(row.findHostByTestId('paced:bar-even-pace')).toBeTruthy();
+        expect(row.findHostByTestId('paced:bar-projected-fill')).toBeTruthy();
+        // Without pace facts the bar draws no tick and no projection of its own.
+        const plain = await renderScreen(<UsageMeterRow testID="plain" label="Weekly" remainingPct={36} resetsAt={null} tone="neutral" now={NOW} />);
+        expect(plain.findHostByTestId('plain:bar-even-pace')).toBeFalsy();
+    });
 });

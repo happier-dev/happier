@@ -11,7 +11,7 @@ import { isQuotaGaugeWindowMode, resolveQuotaGaugeWindowModes } from '@/sync/dom
 import { t } from '@/text';
 
 export const ProviderUsageGaugeSettingsGroup = React.memo(function ProviderUsageGaugeSettingsGroup(props: Readonly<{
-    settings?: Readonly<{ gaugeVisible: SettingRef; gaugeWindow: SettingRef; gaugeLabels: SettingRef }>;
+    settings?: Readonly<{ gaugeVisible: SettingRef; gaugeWindow: SettingRef; gaugeLabels: SettingRef; routingHints: SettingRef }>;
 }>) {
     const settings = props.settings ?? SESSION_PROVIDER_LIMITS_SETTINGS.settings;
     const enabled = useFeatureEnabled('connectedServices.quotas');
@@ -19,6 +19,7 @@ export const ProviderUsageGaugeSettingsGroup = React.memo(function ProviderUsage
     const [legacyWindow] = useSettingMutable('sessionProviderUsageGaugeWindowMode');
     const [windows, setWindows] = useSettingMutable('sessionProviderUsageGaugeWindowModes');
     const [labels, setLabels] = useSettingMutable('sessionUsageGaugeLabels');
+    const [routingHints, setRoutingHints] = useSettingMutable('usageRoutingHintsEnabled');
     const selectedIds = resolveQuotaGaugeWindowModes(windows, legacyWindow);
     const visible = visibility !== 'hidden';
     const candidates = [
@@ -61,6 +62,14 @@ export const ProviderUsageGaugeSettingsGroup = React.memo(function ProviderUsage
             rightElement={<Switch testID="settings-session-providerUsageGauge-labels-toggle" value={labels === true} onValueChange={setLabels} />}
             showChevron={false}
             onPress={() => setLabels(labels !== true)}
+        />
+        <SettingRow
+            setting={settings.routingHints}
+            testID="settings-session-providerUsageGauge-routingHints"
+            subtitle={t('usage.board.plans.routingHintsSettingSubtitle')}
+            rightElement={<Switch testID="settings-session-providerUsageGauge-routingHints-toggle" value={routingHints !== false} onValueChange={setRoutingHints} />}
+            showChevron={false}
+            onPress={() => setRoutingHints(routingHints === false)}
         />
     </ItemGroup>;
 });

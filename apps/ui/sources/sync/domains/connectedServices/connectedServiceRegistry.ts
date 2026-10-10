@@ -8,6 +8,7 @@ import type {
   ConnectedAccountDescriptorProjectionState,
 } from './connectedAccountDescriptorProjection';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { ConnectedAccountUiNegotiation } from './resolveConnectedAccountUiNegotiation';
 
 export type ConnectedServiceDisplayNameKey =
@@ -359,6 +360,20 @@ export function getQualifiedConnectedServiceRegistryEntry(
     entry.service
       && buildQualifiedPluginContributionKey(entry.service) === key
   )) ?? null;
+}
+
+/** Account authoring consumes current declaration facts, not native execution availability. */
+export function getAccountConnectedServiceConfigurationMode(
+  target: Readonly<{ service: PluginContributionIdentityV1; modeId: string }>,
+  scope: ServerAccountScope,
+): PluginConnectedAccountAuthenticationModeV2 | null {
+  if (!connectedServiceRegistryAccountLifetime?.isCurrent()
+    || !areServerAccountScopesEqual(connectedServiceRegistryAccountLifetime.scope, scope)) return null;
+  const entry = getQualifiedConnectedServiceRegistryEntry(target.service);
+  if (entry?.projectionStatus !== 'ready' || entry.projectedDescriptorCandidates?.length !== 1
+    || entry.projectionConflicts?.length) return null;
+  const mode = entry.authenticationModes?.find(candidate => candidate.id === target.modeId);
+  return mode && 'configuration' in mode && mode.configuration?.scope === 'service' ? mode : null;
 }
 
 /**

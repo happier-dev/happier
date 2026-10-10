@@ -84,6 +84,41 @@ describe('ConnectedAccountOAuthForm', () => {
         expect(onSubmit.mock.calls[0]?.[0]).not.toHaveProperty('pkceVerifier');
     });
 
+    it.each([
+        { label: 'registered raw code', input: '4/0synthetic-code', allowRawAuthorizationCode: true, authorizationState: 'attempt-state', accepted: true },
+        { label: 'raw code without provider permission', input: '4/0synthetic-code', allowRawAuthorizationCode: false, authorizationState: 'attempt-state', accepted: false },
+        { label: 'raw code without current attempt state', input: '4/0synthetic-code', allowRawAuthorizationCode: true, authorizationState: null, accepted: false },
+        { label: 'foreign callback', input: 'https://foreign.example.test/callback?code=synthetic-code&state=attempt-state', allowRawAuthorizationCode: true, authorizationState: 'attempt-state', accepted: false },
+        { label: 'callback missing returned state', input: 'https://antigravity.google/oauth-callback?code=synthetic-code', allowRawAuthorizationCode: true, authorizationState: 'attempt-state', accepted: false },
+        { label: 'code with another returned state', input: 'synthetic-code#another-attempt', allowRawAuthorizationCode: true, authorizationState: 'attempt-state', accepted: false },
+    ])('validates $label before completion effects', async ({ input, allowRawAuthorizationCode, authorizationState, accepted }) => {
+        const onSubmit = vi.fn();
+        const { ConnectedAccountOAuthForm } = await import('./ConnectedAccountOAuthForm');
+        const authorizationUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+        if (authorizationState) authorizationUrl.searchParams.set('state', authorizationState);
+        const tree = (await renderScreen(
+            <ConnectedAccountOAuthForm
+                authorizationUrl={authorizationUrl.toString()}
+                callbackUrl="https://antigravity.google/oauth-callback"
+                allowRawAuthorizationCode={allowRawAuthorizationCode}
+                submitting={false}
+                onSubmit={onSubmit}
+            />,
+        )).tree;
+        await act(async () => {
+            tree.find((node) => node.type === ('TextInput' as never) && node.props.testID === 'connected-account-oauth:callback')
+                .props.onChangeText(input);
+        });
+        await pressTestInstanceAsync(tree.find((node) => node.props.testID === 'connected-account-oauth:submit'));
+        if (accepted) {
+            expect(onSubmit).toHaveBeenCalledWith({
+                code: '4/0synthetic-code', callbackUrl: 'https://antigravity.google/oauth-callback', state: 'attempt-state',
+            });
+        } else {
+            expect(onSubmit).not.toHaveBeenCalled();
+        }
+    });
+
     it('keeps OAuth recovery visible when the external authorization page cannot open', async () => {
         openExternalUrlMock.mockResolvedValueOnce(false);
         const { ConnectedAccountOAuthForm } = await import('./ConnectedAccountOAuthForm');

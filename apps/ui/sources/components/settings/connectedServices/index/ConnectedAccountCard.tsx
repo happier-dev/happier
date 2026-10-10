@@ -1,18 +1,15 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { AgentIcon } from '@/agents/registry/AgentIcon';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { Icon } from '@/components/ui/icons/Icon';
-import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { t } from '@/text';
 
 import { ConnectedServiceMark } from '../ConnectedServiceMark';
 import { AccountUsageResetsLine } from '../usage/AccountUsageFacts';
 import {
     ConnectedAccountIndexActions,
+    ConnectedAccountSignInRecovery,
     ConnectedAccountIndexRoles,
     ConnectedAccountIndexStatusLines,
     ConnectedAccountIndexUsageBlock,
@@ -33,7 +30,6 @@ export const ConnectedAccountCardView = React.memo(function ConnectedAccountCard
     agentIds: readonly string[];
     now: number;
 }>) {
-    const { theme } = useUnistyles();
     const { facts } = props;
     const identity = [props.identityLabel, facts.planLabel].filter(Boolean).join(' · ');
     return (
@@ -41,7 +37,7 @@ export const ConnectedAccountCardView = React.memo(function ConnectedAccountCard
             testID={props.testID}
             accessibilityLabel={props.title}
             onPress={props.onOpen}
-            style={[styles.card, props.signedOut ? styles.cardAttention : null]}
+            style={styles.card}
             hoveredStyle={styles.hovered}
         >
             <View pointerEvents="box-none" style={styles.top}>
@@ -58,21 +54,11 @@ export const ConnectedAccountCardView = React.memo(function ConnectedAccountCard
                 />
             </View>
             <View pointerEvents="none">
-                <ConnectedAccountIndexStatusLines testID={props.testID} signedOutReason={null} facts={facts} now={props.now} />
+                <ConnectedAccountIndexStatusLines testID={props.testID} facts={facts} now={props.now} />
             </View>
             {props.signedOut ? (
-                <View pointerEvents="box-none" style={styles.fix}>
-                    <Icon name="warning" size={14} color={theme.colors.state.warning.foreground} />
-                    <Text style={styles.fixText} numberOfLines={2}>{props.signedOut.reason}</Text>
-                    <RoundButton
-                        testID={`${props.testID}:sign-in-again`}
-                        size="small"
-                        display="secondary"
-                        title={t('connectedServicesSettings.signInAgain')}
-                        disabled={!props.signedOut.onSignInAgain}
-                        onPress={props.signedOut.onSignInAgain ?? undefined}
-                    />
-                </View>
+                <ConnectedAccountSignInRecovery testID={props.testID} signedOut={props.signedOut}
+                    onOpen={props.onOpen} compact prominence={props.fixProminence} />
             ) : (
                 <View pointerEvents={facts.usage.kind === 'error' ? 'box-none' : 'none'}>
                     <ConnectedAccountIndexUsageBlock testID={props.testID} usage={facts.usage} now={props.now} size="card" />
@@ -115,9 +101,6 @@ const styles = StyleSheet.create((theme) => ({
         borderColor: theme.colors.border.default,
         backgroundColor: theme.colors.surface.sectionTint,
     },
-    cardAttention: {
-        borderColor: theme.colors.state.warning.border,
-    },
     hovered: {
         borderColor: theme.colors.border.strong,
     },
@@ -140,18 +123,6 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default(),
         fontSize: 12,
         lineHeight: 16,
-        color: theme.colors.text.secondary,
-    },
-    fix: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-    },
-    fixText: {
-        ...Typography.default(),
-        flex: 1,
-        fontSize: 12.5,
-        lineHeight: 17,
         color: theme.colors.text.secondary,
     },
     footer: {

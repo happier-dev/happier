@@ -73,7 +73,9 @@ export async function runConnectedAccountAuthenticationCommand(
     input: Readonly<{
         serverId: string | null;
         machineId: string;
+        accountId?: string;
         expectedActiveServer?: ExpectedActiveServer;
+        assertCurrent?: () => void;
         command: ConnectedAccountDaemonCommand;
         signal?: AbortSignal;
     }>,
@@ -83,7 +85,10 @@ export async function runConnectedAccountAuthenticationCommand(
             input.expectedActiveServer,
             input.serverId,
         );
-    assertExpectedActiveServer?.();
+    const assertCurrent = input.assertCurrent || assertExpectedActiveServer
+        ? () => { input.assertCurrent?.(); assertExpectedActiveServer?.(); }
+        : undefined;
+    assertCurrent?.();
     const payload =
         ConnectedAccountAuthenticationCommandRequestSchema.parse({
             v: 1,
@@ -96,14 +101,59 @@ export async function runConnectedAccountAuthenticationCommand(
     >({
         serverId: input.serverId,
         machineId: input.machineId,
+        ...(input.accountId ? { accountId: input.accountId } : {}),
         method: CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD,
         payload,
-        ...(assertExpectedActiveServer
-            ? { onIssued: assertExpectedActiveServer }
+        ...(assertCurrent
+            ? { onIssued: assertCurrent }
             : {}),
         ...(input.signal ? { signal: input.signal } : {}),
     });
     return ConnectedAccountAttemptResponseSchema.parse(response);
+}
+
+/** UI ingress shares the admitted Actions; the transport above remains daemon-owned delivery. */
+export async function runConnectedAccountAuthenticationAction(
+    input: Omit<Parameters<typeof runConnectedAccountAuthenticationCommand>[0], 'serverId' | 'accountId'>
+        & Readonly<{ serverId: string; expectedAccountId: string }>,
+): Promise<ConnectedAccountAttemptResponse> {
+    const assertExpected = createExpectedActiveServerAssertion(input.expectedActiveServer, input.serverId);
+    input.signal?.throwIfAborted();
+    assertExpected?.();
+    input.assertCurrent?.();
+    const [{ createDefaultActionExecutor }, { CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_ID_BY_OPERATION }] = await Promise.all([
+        import('@/sync/ops/actions/defaultActionExecutor'),
+        import('@happier-dev/protocol/connect/configurationActionsV1'),
+    ]);
+    input.signal?.throwIfAborted();
+    assertExpected?.();
+    input.assertCurrent?.();
+    const { operation, ...operands } = ConnectedAccountDaemonCommandSchema.parse(input.command);
+    const result = await createDefaultActionExecutor().execute(CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_ID_BY_OPERATION[operation],
+        { machineId: input.machineId, ...operands }, { surface: 'ui', authority: 'present_user', serverId: input.serverId,
+            expectedAccountId: input.expectedAccountId,
+            ...(input.signal ? { signal: input.signal } : {}) });
+    if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+    assertExpected?.();
+    input.assertCurrent?.();
+    return ConnectedAccountAttemptResponseSchema.parse(result.result);
+}
+
+export async function listPendingConnectedAccountAuthenticationActions(
+    input: Readonly<{ serverId: string; machineId: string; expectedAccountId: string;
+        expectedActiveServer?: ExpectedActiveServer; service: Extract<ConnectedAccountDaemonControlCommand, { operation: 'listPendingAttempts' }>['service']; signal?: AbortSignal }>,
+): Promise<ConnectedAccountDaemonControlResponse> {
+    const assertExpected = createExpectedActiveServerAssertion(input.expectedActiveServer, input.serverId);
+    input.signal?.throwIfAborted();
+    assertExpected?.();
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    assertExpected?.();
+    const result = await createDefaultActionExecutor().execute('connectedServices.authentication.pending.list',
+        { machineId: input.machineId, service: input.service }, { surface: 'ui', authority: 'present_user', serverId: input.serverId,
+            expectedAccountId: input.expectedAccountId, ...(input.signal ? { signal: input.signal } : {}) });
+    if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+    assertExpected?.();
+    return ConnectedAccountDaemonControlResponseSchema.parse(result.result);
 }
 
 export async function runConnectedAccountControlCommand(
@@ -111,6 +161,8 @@ export async function runConnectedAccountControlCommand(
         serverId: string | null;
         machineId: string;
         expectedActiveServer?: ExpectedActiveServer;
+        /** Captured caller custody, checked at the incumbent transport's actual issuance point. */
+        assertCurrent?: () => void;
         command: ConnectedAccountDaemonControlCommand;
         signal?: AbortSignal;
     }>,
@@ -120,7 +172,10 @@ export async function runConnectedAccountControlCommand(
             input.expectedActiveServer,
             input.serverId,
         );
-    assertExpectedActiveServer?.();
+    const assertCurrent = input.assertCurrent || assertExpectedActiveServer
+        ? () => { input.assertCurrent?.(); assertExpectedActiveServer?.(); }
+        : undefined;
+    assertCurrent?.();
     const payload = ConnectedAccountControlCommandRequestSchema.parse({
         v: 1,
         machineId: input.machineId,
@@ -134,8 +189,8 @@ export async function runConnectedAccountControlCommand(
         machineId: input.machineId,
         method: CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD,
         payload,
-        ...(assertExpectedActiveServer
-            ? { onIssued: assertExpectedActiveServer }
+        ...(assertCurrent
+            ? { onIssued: assertCurrent }
             : {}),
         ...(input.signal ? { signal: input.signal } : {}),
     });

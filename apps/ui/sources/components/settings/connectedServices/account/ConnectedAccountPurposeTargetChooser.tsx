@@ -23,7 +23,8 @@ import { getConnectedAccountAuthentication } from '@/sync/domains/connectedServi
 import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 import { resolveConnectedAccountUiNegotiation } from '@/sync/domains/connectedServices/resolveConnectedAccountUiNegotiation';
 import { useServerFeaturesRuntimeSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
-import { useActiveServerAccountScope, useProfile, useSettingsSelector } from '@/sync/store/hooks';
+import { useActiveServerAccountScope, useProfile } from '@/sync/store/hooks';
+import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
 import type { HomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
 import { getPreferredLanguage, t } from '@/text';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
@@ -90,6 +91,10 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
   ) => void;
   disabled?: boolean;
   disabledReason?: string;
+  /** The identity mark of what this purpose draws on (a service), in the row's leading column. */
+  icon?: React.ReactNode;
+  /** What the current choice means here, said when the row has no state of its own to report. */
+  description?: string;
   onReload?: () => Promise<void> | void;
   /** Provider's current status, presented by the provider status owner. */
   reloadSubtitle?: string;
@@ -106,9 +111,7 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
   const profile = useProfile();
   const { present } = useConnectedAccountIdentityPrivacy();
   const locale = getPreferredLanguage();
-  const settings = useSettingsSelector((settings) => ({
-      connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
-  }));
+  const labelsByKey = useConnectedMetadataCatalog(undefined, selectConnectedMetadataLabels);
   const pathname = usePathname();
   const registry = useProjectedConnectedServicesRegistry();
   const localizePluginText = useProjectedPluginLocalizedTextResolver();
@@ -151,7 +154,7 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
     selectedTeamResource: props.teamResourceValue ?? null,
     accounts,
     groups,
-    labelsByKey: settings.connectedServicesProfileLabelByKey,
+    labelsByKey,
     serviceTitle,
     sourceNegotiation: effectiveAccountTransport,
     presentIdentity: present,
@@ -170,7 +173,7 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
     props.value,
     props.teamResourceValue,
     serviceTitle,
-    settings.connectedServicesProfileLabelByKey,
+    labelsByKey,
     // The registry is the descriptor/currentness owner for authentication.
     registry,
   ]);
@@ -180,7 +183,8 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
     ? localizePluginText(props.localizedTextPluginId, props.declaration.title)
     : '';
   const purposeTitle = declaredPurposeTitle || serviceTitle;
-  const selectedTargetAccessibilityLabel = selected?.selectable
+  const unreadSelectionReason = props.value === null && !props.teamResourceValue ? props.disabledReason : null;
+  const selectedTargetAccessibilityLabel = !unreadSelectionReason && selected?.selectable
     ? selected.presentation.accessibilityLabel
     : null;
   const unresolvedSourceLabel = effectiveAccountTransport === 'indeterminate'
@@ -194,7 +198,8 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
   const triggerStatus = props.disabledReason
     ?? unresolvedSourceLabel
     ?? (selectedTargetAccessibilityLabel ? null : requiredUnsetLabel ?? t('common.unavailable'));
-  const triggerDetail = selected?.presentation.primaryLabel
+  const triggerDetail = unreadSelectionReason
+    ?? selected?.presentation.primaryLabel
     ?? unresolvedSourceLabel
     ?? requiredUnsetLabel
     ?? t('common.unavailable');
@@ -273,8 +278,10 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
   return <>
     <Item
       testID={props.testID}
+      icon={props.icon}
       title={purposeTitle}
-      subtitle={triggerStatus ?? undefined}
+      subtitle={triggerStatus ?? props.description}
+      subtitleLines={props.description ? 0 : undefined}
       detail={triggerDetail}
       accessibilityLabel={triggerAccessibilityLabel}
       showChevron

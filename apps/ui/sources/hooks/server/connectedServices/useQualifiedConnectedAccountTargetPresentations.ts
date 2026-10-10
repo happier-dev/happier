@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ConnectedServiceId, QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol';
+import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol';
 
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -16,7 +16,6 @@ export type QualifiedConnectedAccountPresentationTarget = Readonly<{
     key: string;
     target: QualifiedConnectedAccountPurposeBindingTargetV1;
     serviceTitle?: string | null;
-    legacyServiceId?: ConnectedServiceId | null;
 }>;
 
 type ProfilePresentationSource = Readonly<{
@@ -82,8 +81,8 @@ export function useQualifiedConnectedAccountTargetPresentations(input: Readonly<
     const visible = binding?.isCurrent() && hasTargets && state.scopeKey === scopeKey ? state : null;
     const loading = Boolean(binding?.isCurrent() && hasTargets && (!visible || visible.loading));
     const source = visible?.source;
-    const presentationsByKey = React.useMemo(() => Object.fromEntries(targets.map(({ key, target, serviceTitle, legacyServiceId }) => [key,
-        presentQualifiedConnectedAccountTarget({ target, serviceTitle, legacyServiceId,
+    const presentationsByKey = React.useMemo(() => Object.fromEntries(targets.map(({ key, target, serviceTitle }) => [key,
+        presentQualifiedConnectedAccountTarget({ target, serviceTitle,
             accounts: source?.profile.connectedAccountsV4 ?? [], groups: source?.profile.connectedAccountGroupsV4 ?? [],
             labelsByKey, sourceNegotiation: loading ? 'indeterminate' : 'advertised-v4', presentIdentity: present }),
     ])), [targets, source, labelsByKey, loading, present]);

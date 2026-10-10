@@ -8,6 +8,7 @@ import {
   presentQualifiedConnectedAccountTarget,
 } from './qualifiedConnectedAccountTargetPresentation';
 import { presentConnectedAccountIdentity } from './maskAccountEmail';
+import { connectedEntitySubjectKeyV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 
 const service = Object.freeze({
   pluginId: 'example.external.gateway',
@@ -30,6 +31,14 @@ const group = Object.freeze({
 });
 
 describe('presentQualifiedConnectedAccountTarget', () => {
+  it('uses the Account-assigned pool label and returns to the definition label after reset', () => {
+    const target = { kind: 'group' as const, service, groupId: group.ref.groupId };
+    const input = { target, accounts: [account], groups: [group], serviceTitle: 'External Gateway' };
+    expect(presentQualifiedConnectedAccountTarget({ ...input,
+      labelsByKey: { [connectedEntitySubjectKeyV1(target)]: 'Personal pool name' } }).primaryLabel).toBe('Personal pool name');
+    expect(presentQualifiedConnectedAccountTarget({ ...input, labelsByKey: {} }).primaryLabel).toBe('Team pool');
+    expect(group.displayName).toBe('Team pool');
+  });
   it('preserves an assigned name while giving an unnamed account service copy', () => {
     const idOnlyAccount = { ref: account.ref, providerIdentity: { accountId: 'provider-account-42' } };
     const present = (accountLabel?: string) => {

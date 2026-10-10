@@ -69,6 +69,8 @@ import { PoolMemberRow, type PoolMemberNote, type PoolMemberUsage } from './Pool
 import { PoolQuotaLimitsSelectField, type PoolQuotaLimitCandidate } from './PoolQuotaLimitsSelectField';
 import { computePoolMembershipDiff } from './poolMembershipDiff';
 import { derivePoolUsage, resolvePoolManualSwitchSuggestion, type PoolUsage } from './derivePoolUsage';
+import type { usePoolGatewayChoices } from './usePoolGatewayChoices';
+import { PoolGatewaySection, type PoolGatewaySectionProps } from './PoolGatewaySection';
 
 type GroupStrategy = ConnectedServiceAuthGroupPolicyV1['strategy'];
 type GroupRecoveryMode = ConnectedServiceAuthGroupPolicyV1['recoveryMode'];
@@ -117,6 +119,7 @@ export type QualifiedPoolDetailViewProps = Readonly<{
     /** Every account of this service (members and non-members alike). */
     accounts: ReadonlyArray<QualifiedPoolDetailAccount>;
     accountLabels?: Readonly<Record<string, string | undefined>>;
+    labelsByKey?: Readonly<Record<string, string | undefined>>;
     serviceLabel: string;
     legacyServiceId?: string | null;
     mutations: QualifiedPoolDetailMutations;
@@ -134,7 +137,12 @@ export type QualifiedPoolDetailViewProps = Readonly<{
     /** The one identity presenter (privacy); defaults to showing identities as given. */
     presentIdentity?: ConnectedAccountIdentityPresenter;
     /** ★: the agents that sign in through this service and whether this pool is their default. */
-    agentDefaults?: Readonly<{ choices: readonly AgentDefaultChoice[]; setDefault: (agentId: string, makeDefault: boolean) => void }> | null;
+    agentDefaults?: Readonly<{ choices: readonly AgentDefaultChoice[]; setDefault: (agentId: string, makeDefault: boolean) => void | Promise<void>; disabledReason?: string }> | null;
+    /** The existing Provider update Action, with each gateway's exact vendor slot and replacement target. */
+    gatewayUsage?: ReturnType<typeof usePoolGatewayChoices> | null;
+    /** Names the account or pool a gateway draws on today, for the replacement question. */
+    presentGatewayTarget?: PoolGatewaySectionProps['presentTarget'];
+    onOpenGateway?: PoolGatewaySectionProps['onOpenGateway'];
     onOpenAccount?: (account: QualifiedConnectedAccountRef) => void;
     /** Latest failure reported by the mutation owner; a rejected change must not fail silently. */
     error?: string | null;
@@ -297,6 +305,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
     const fallbackDisabledSubtitle = fallbackControlsEnabled ? undefined : props.fallbackDisabledSubtitle;
     const memberQuota = props.memberQuotaByAccountId ?? EMPTY_USAGE;
     const accountLabels = props.accountLabels ?? EMPTY_LABELS;
+    const labelsByKey = props.labelsByKey ?? EMPTY_LABELS;
     const [advancedExpanded, setAdvancedExpanded] = React.useState(props.initialAdvancedExpanded === true);
     const [membersMenuOpen, setMembersMenuOpen] = React.useState(props.initialManageMembersOpen === true);
     const [recoveryOpen, setRecoveryOpen] = React.useState(false);
@@ -316,9 +325,9 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
         target: { kind: 'group', service: group.ref.service, groupId: group.ref.groupId },
         accounts,
         groups: [group],
-        labelsByKey: EMPTY_LABELS,
+        labelsByKey,
         serviceTitle: props.serviceLabel,
-    }).primaryLabel, [accounts, group, props.serviceLabel]);
+    }).primaryLabel, [accounts, group, labelsByKey, props.serviceLabel]);
 
     /** One identity per account: the canonical presenter's name, then the privacy presenter over name and email. */
     const identityOf = React.useCallback((accountId: string) => {
@@ -326,7 +335,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
             target: { kind: 'account', account: { service: group.ref.service, accountId } },
             accounts,
             groups: [group],
-            labelsByKey: EMPTY_LABELS,
+            labelsByKey,
             accountLabel: accountLabels[accountId],
             serviceTitle: props.serviceLabel,
         });
@@ -337,7 +346,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
         const email = rawEmail && rawEmail !== presentation.primaryLabel ? rawEmail : null;
         const shown = present({ label: presentation.primaryLabel, labelKind: presentation.primaryLabelKind, email });
         return { name: shown.label ?? presentation.primaryLabel, email: shown.email };
-    }, [accountLabels, accounts, group, present, props.serviceLabel]);
+    }, [accountLabels, accounts, group, labelsByKey, present, props.serviceLabel]);
 
     const sortedMembers = React.useMemo(() => sortMembersByPriority(group.members), [group.members]);
     const memberItems = React.useMemo(() => sortedMembers.map((member) => ({ id: member.ref.accountId, title: identityOf(member.ref.accountId).name })), [identityOf, sortedMembers]);
@@ -651,6 +660,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                         presentation="text"
                         choices={props.agentDefaults.choices}
                         onChange={props.agentDefaults.setDefault}
+                        disabledReason={props.agentDefaults.disabledReason}
                     /></> : null}
                 </View>}
                 actions={!compact ? (
@@ -660,6 +670,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                                 testID={`${TEST_ID}:default-for`}
                                 choices={props.agentDefaults.choices}
                                 onChange={props.agentDefaults.setDefault}
+                                disabledReason={props.agentDefaults.disabledReason}
                             />
                         ) : null}
                         <DropdownMenu
@@ -867,6 +878,18 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                     </EntityFlatReorderList>
                 ) : null}
             </ItemGroup>
+
+            {props.gatewayUsage ? (
+                <PoolGatewaySection
+                    testID={`${TEST_ID}:gateway`}
+                    usage={props.gatewayUsage}
+                    poolTitle={label}
+                    serviceLabel={props.serviceLabel}
+                    nativeAgentTitles={(props.agentDefaults?.choices ?? []).map((choice) => choice.title)}
+                    presentTarget={props.presentGatewayTarget}
+                    onOpenGateway={props.onOpenGateway}
+                />
+            ) : null}
 
             {memberCount > 0 ? <ItemGroup title={t('connectedServicesPool.behaviorTitle')}>
                 <SegmentedChoiceItem<GroupStrategy>

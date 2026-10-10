@@ -61,6 +61,7 @@ describe('connected-service settings errors', () => {
         'connect_credential_unsupported_format',
         'connect_group_runtime_fallback_unsupported',
         'connected_account_legacy_operation_unsupported',
+        'connected_account_v4_operation_unsupported',
         'connected_account_service_identity_unsupported',
         'connected_account_v4_contract_unavailable',
         'connected_account_v4_contract_violation',

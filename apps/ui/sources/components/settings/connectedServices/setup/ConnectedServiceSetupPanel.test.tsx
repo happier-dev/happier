@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -69,6 +70,37 @@ function staleServiceModel(withAccount = false) {
 }
 
 describe('ConnectedServiceSetupPanel tools disclosure', () => {
+    it.each(['list', 'grid'] as const)('expands compact service accounts in place for the %s preference while keeping attention visible when closed', async (presentation) => {
+        const element = <ConnectedServicesIndexView
+            model={staleServiceModel(true)} labelsByKey={{}} present={(input) => presentConnectedAccountIdentity({
+                ...input, hidden: false, label: input.label ?? null, email: input.email ?? null, accountId: input.accountId ?? null,
+            })}
+            now={0} presentation={presentation} onPresentationChange={() => {}} compact
+            summary={{ needsYouCount: 1, asOf: null }} connectMore={null} fixProminence="primary" settled={null}
+            renderAccount={({ render }) => render({ usage: { kind: 'none' }, planLabel: null, subscription: null,
+                recoveryCredits: null, fetchedAt: null, staleSince: null, refreshing: false, refresh: null })}
+            renderPool={() => { throw new Error('No pool exists'); }} renderStar={() => null}
+            onAddAccount={() => {}} onSignInAgain={() => {}} onOpenAccount={() => {}} onOpenPool={() => {}}
+        />;
+        const screen = await renderScreen(element);
+        const serviceId = 'connected-services-service:happier.agent.codex/openai-codex';
+        expect(screen.findHostByTestId(serviceId)?.props.accessibilityState?.expanded).toBe(false);
+        expect(screen.getTextContent()).toContain('connectedServicesSettings.signedOutBy');
+        expect(screen.findHostByTestId('connected-services-account:happier.agent.codex/openai-codex:work')).toBeNull();
+        await screen.pressByTestIdAsync(serviceId);
+        expect(screen.findHostByTestId(serviceId)?.props.accessibilityState?.expanded).toBe(true);
+        expect(screen.findHostByTestId('connected-services-account:happier.agent.codex/openai-codex:work')).not.toBeNull();
+        await screen.pressByTestIdAsync(serviceId);
+        expect(screen.findHostByTestId(serviceId)?.props.accessibilityState?.expanded).toBe(false);
+        expect(screen.getTextContent()).toContain('connectedServicesSettings.signedOutBy');
+        await act(async () => screen.update(React.cloneElement(element, { settled: {
+            serviceKey: 'happier.agent.codex/openai-codex', accountId: 'work',
+            node: <View testID="connected-account-next-step" />,
+        } })));
+        expect(screen.findHostByTestId(serviceId)?.props.accessibilityState?.expanded).toBe(true);
+        expect(screen.findHostByTestId('connected-account-next-step')).not.toBeNull();
+    });
+
     it.each(['list', 'grid'] as const)('retains stale credential warnings in %s without admitting Add, reconnect or New pool', async (presentation) => {
         const model = staleServiceModel(true);
         const reconnect = vi.fn();
@@ -86,7 +118,8 @@ describe('ConnectedServiceSetupPanel tools disclosure', () => {
         expect(screen.getTextContent()).toContain('connectedServicesSettings.signedOutBy');
         expect(screen.findHostByTestId('connected-services-service:happier.agent.codex/openai-codex:add-account')).toBeNull();
         const action = screen.findHostByTestId('connected-services-account:happier.agent.codex/openai-codex:work:sign-in-again');
-        expect(action?.props.disabled).toBe(true);
+        if (action) expect(action.props.disabled).toBe(true);
+        await act(async () => { action?.props.onPress?.(); });
         expect(selectNewPoolServices(model)).toEqual([]);
         expect(reconnect).not.toHaveBeenCalled();
     });

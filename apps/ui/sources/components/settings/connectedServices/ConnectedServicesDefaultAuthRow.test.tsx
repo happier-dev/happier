@@ -1,8 +1,9 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { createDeferred, renderScreen } from '@/dev/testkit';
 import { installConnectedServicesCommonModuleMocks } from './connectedServicesTestHelpers';
+import { ConnectedServicesDefaultAuthRow } from './ConnectedServicesDefaultAuthRow';
 import type {
     AccountProfile,
     ConnectedServicesDefaultAuthByAgentIdV1,
@@ -11,6 +12,43 @@ import type {
 } from '@happier-dev/protocol';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
 import type { ConnectedServicesServiceBinding } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
+import { connectedAcknowledgementSubjectKeyV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
+import {
+    migrateLegacyAgentConnectedAccountPurposeDefaultsForActivation,
+    type AgentConnectedAccountPurposeMigrationDescriptor,
+} from '@happier-dev/protocol/account/settings/connected-services';
+
+import type { ConnectedAccountPurposeDefaultsIntent } from '@/hooks/server/connectedServices/useConnectedAccountPurposeDefaults';
+import { executeConnectedServiceConfigurationActionV1, type ConnectedServiceConfigurationActionHostV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
+
+function captureDefaultAuthWrites() {
+    const writtenDefaults: {
+        connectedAccountPurposeBindingsV1: QualifiedConnectedAccountPurposeBindingsV1;
+        connectedServicesDefaultAuthByAgentIdV1?: ConnectedServicesDefaultAuthByAgentIdV1;
+        connectedServicesAdditionalDefaultAuthByAgentIdV1?: ConnectedServicesDefaultAuthByAgentIdV1;
+    }[] = [];
+    const host: ConnectedServiceConfigurationActionHostV1 = {
+        assertCurrent() {}, async request() { throw new Error('unexpected_pool_request'); }, async resetQuota() {},
+        // Installed Agent declaration and persistence are the genuine host boundaries; writers remain real.
+        async resolveAgent(agentId) {
+            return agentId === 'claude' ? { agentId, title: 'Claude', identity: CLAUDE_IDENTITY, connectedAccounts: CLAUDE_ACCOUNT_PURPOSES }
+                : agentId === 'codex' ? { agentId, title: 'Codex', identity: CODEX_IDENTITY, connectedAccounts: CODEX_ACCOUNT_PURPOSES } : null;
+        },
+        async mutatePurposeBindings(mutate) {
+            const next = mutate({ v: 1, bindings: [] }, {
+                connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
+                connectedServicesAdditionalDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
+            });
+            if (next) writtenDefaults.push({ connectedAccountPurposeBindingsV1: next.purposeBindings, ...next.legacySettingsDelta });
+        },
+    };
+    const setDefaultAuthSettings = async (intent: ConnectedAccountPurposeDefaultsIntent) => {
+        if (intent.kind !== 'service') throw new Error('unexpected_default_intent');
+        const result = await executeConnectedServiceConfigurationActionV1(host, 'connectedServices.accounts.purposeDefault.set', intent.input);
+        if ('ok' in result && !result.ok) throw new Error(result.error);
+    };
+    return { setDefaultAuthSettings, writtenDefaults };
+}
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -24,6 +62,19 @@ const CLAUDE_ACCOUNT_PURPOSES: readonly PluginProjectedAgentConnectedAccountPurp
 ];
 const CLAUDE_IDENTITY = { pluginId: 'happier.agent.claude', localId: 'claude' } as const;
 const CODEX_IDENTITY = { pluginId: 'happier.agent.codex', localId: 'codex' } as const;
+/** Legacy intent reaches a mounted row only after the canonical activation owner admits it. */
+function activateLegacyDefaultFixture(
+    agent: AgentConnectedAccountPurposeMigrationDescriptor,
+    legacy: ConnectedServicesDefaultAuthByAgentIdV1,
+): QualifiedConnectedAccountPurposeBindingsV1 {
+    const result = migrateLegacyAgentConnectedAccountPurposeDefaultsForActivation({
+        settings: { connectedServicesDefaultAuthByAgentIdV1: legacy },
+        purposeBindings: { v: 1, bindings: [] },
+        agents: [agent],
+    });
+    if (result.status !== 'ready') throw new Error(`Default fixture activation refused: ${result.reason}`);
+    return result.purposeBindings;
+}
 /** The Agent default-authentication write: one purpose-binding store, released entries folded away. */
 function agentDefaultWrite(
     consumer: Readonly<{ pluginId: string; localId: string }>,
@@ -35,6 +86,7 @@ function agentDefaultWrite(
             bindings: [{ purpose: { consumer, purpose: 'primary' }, target }],
         },
         connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
+        connectedServicesAdditionalDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
     };
 }
 /** A Team default persists as the canonical Team selection of its Team (lane 10 child 02 :271). */
@@ -49,6 +101,7 @@ function agentTeamDefaultWrite(
             teamResourceSelections: [{ purpose: { consumer, purpose: 'primary' }, ...teamResource }],
         },
         connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
+        connectedServicesAdditionalDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
     };
 }
 const CODEX_ACCOUNT_PURPOSES: readonly PluginProjectedAgentConnectedAccountPurposeV2[] = [
@@ -246,7 +299,10 @@ function hasPoolSuggestion(
 }
 
 describe('ConnectedServicesDefaultAuthRow', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        const { Modal } = await import('@/modal');
+        vi.spyOn(Modal, 'show').mockImplementation(config => modalShowMock(config as CapturedDefaultAuthModalConfig));
+        vi.spyOn(Modal, 'update').mockImplementation((modalId, props) => modalUpdateMock(modalId, props));
         modalShowMock.mockClear();
         modalUpdateMock.mockClear();
         narrowLayoutRef.value = false;
@@ -255,7 +311,8 @@ describe('ConnectedServicesDefaultAuthRow', () => {
     async function renderClaudeNativeRow() {
         const { ConnectedServicesDefaultAuthRow } = await import('./ConnectedServicesDefaultAuthRow');
         return (await renderScreen(
-            <ConnectedServicesDefaultAuthRow
+            <ConnectedServicesDefaultAuthRow labelsByKey={{}}
+                purposeBindings={{ v: 1, bindings: [] }}
                 agentId="claude"
                 agentIdentity={CLAUDE_IDENTITY}
                 agentTitle="Claude"
@@ -265,11 +322,10 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                 connectedAccountGroupsV4={[]}
                 accountGroupsEnabled={false}
                 settings={{
-                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 }}
-                setDefaultAuthSettings={vi.fn()}
+                setDefaultAuthSettings={vi.fn(async () => {})}
                 onOpenConnectedServicesSettings={vi.fn()}
             />,
         )).tree;
@@ -293,12 +349,111 @@ describe('ConnectedServicesDefaultAuthRow', () => {
         expect(trigger.subtitle).toBe('connectedServices.defaultAuth.rowDetail');
     });
 
-    it('writes the per-agent default binding under the canonical qualified key', async () => {
-        const { ConnectedServicesDefaultAuthRow } = await import('./ConnectedServicesDefaultAuthRow');
-        const setDefaultAuthSettings = vi.fn();
+    it('selects the destination purpose default when the retired Settings root is absent', async () => {
+        const { tree } = await renderScreen(
+            <ConnectedServicesDefaultAuthRow labelsByKey={{}}
+                agentId="claude"
+                agentIdentity={CLAUDE_IDENTITY}
+                agentTitle="Claude"
+                connectedAccountPurposes={CLAUDE_ACCOUNT_PURPOSES}
+                connectedAccountServiceKeys={[CLAUDE_SERVICE_KEY]}
+                connectedAccountsV4={[CLAUDE_V4_ACCOUNT]}
+                connectedAccountGroupsV4={[]}
+                accountGroupsEnabled={false}
+                purposeBindings={{ v: 1, bindings: [{
+                    purpose: { consumer: CLAUDE_IDENTITY, purpose: 'primary' },
+                    target: { kind: 'account', account: CLAUDE_V4_ACCOUNT.ref },
+                }] }}
+                settings={{ connectedServicesDefaultProfileByServiceId: {} }}
+                setDefaultAuthSettings={vi.fn(async () => {})}
+                onOpenConnectedServicesSettings={vi.fn()}
+            />,
+        );
+        const modalTree = await openPickerModal(tree, 'claude');
+        expect(findSelectionListProps(modalTree).selectedOptionId)
+            .toBe(`connected-service:${ENCODED_CLAUDE_SERVICE_KEY}:profile:work`);
+    });
 
+    it('presents the direct qualified label projection instead of the retired Settings-shaped input', async () => {
+        const presentation = {
+            labelsByKey: { [`${ENCODED_CLAUDE_SERVICE_KEY}/work`]: 'Personal workspace' },
+        };
+        const obsoleteSettings = {
+            connectedServicesProfileLabelByKey: { [`${ENCODED_CLAUDE_SERVICE_KEY}/work`]: 'Obsolete Settings label' },
+            connectedServicesDefaultProfileByServiceId: {},
+        };
         const { tree } = await renderScreen(
             <ConnectedServicesDefaultAuthRow
+                {...presentation}
+                agentId="claude"
+                agentIdentity={CLAUDE_IDENTITY}
+                agentTitle="Claude"
+                connectedAccountPurposes={CLAUDE_ACCOUNT_PURPOSES}
+                connectedAccountServiceKeys={[CLAUDE_SERVICE_KEY]}
+                connectedAccountsV4={[CLAUDE_V4_ACCOUNT]}
+                connectedAccountGroupsV4={[]}
+                accountGroupsEnabled={false}
+                purposeBindings={{ v: 1, bindings: [{
+                    purpose: { consumer: CLAUDE_IDENTITY, purpose: 'primary' },
+                    target: { kind: 'account', account: CLAUDE_V4_ACCOUNT.ref },
+                }] }}
+                settings={obsoleteSettings}
+                setDefaultAuthSettings={vi.fn(async () => {})}
+                onOpenConnectedServicesSettings={vi.fn()}
+            />,
+        );
+        expect(findDefaultAuthTrigger(tree, 'claude').detail).toContain('Personal workspace');
+    });
+
+    it.each([null, { v: 1 as const, bindings: [] }])('does not admit the picker or show native authentication for an unread purpose catalog %j', async (purposeBindings) => {
+        const { tree } = await renderScreen(
+            <ConnectedServicesDefaultAuthRow labelsByKey={{}}
+                agentId="claude"
+                agentIdentity={CLAUDE_IDENTITY}
+                agentTitle="Claude"
+                connectedAccountPurposes={CLAUDE_ACCOUNT_PURPOSES}
+                connectedAccountServiceKeys={[CLAUDE_SERVICE_KEY]}
+                connectedAccountsV4={[CLAUDE_V4_ACCOUNT]}
+                connectedAccountGroupsV4={[]}
+                accountGroupsEnabled={false}
+                purposeBindings={purposeBindings}
+                purposeBindingsWritable={false}
+                settings={{ connectedServicesDefaultProfileByServiceId: {} }}
+                setDefaultAuthSettings={vi.fn(async () => {})}
+                onOpenConnectedServicesSettings={vi.fn()}
+            />,
+        );
+        const trigger = findDefaultAuthTrigger(tree, 'claude');
+        expect(trigger.detail).toBe('common.unavailable');
+        await act(async () => trigger.onPress?.());
+        expect(modalShowMock).not.toHaveBeenCalled();
+    });
+
+    it('does not admit pool adoption from a safe but unread purpose projection', async () => {
+        const row = <ConnectedServicesDefaultAuthRow labelsByKey={{}}
+            agentId="codex" agentIdentity={CODEX_IDENTITY} agentTitle="Codex"
+            connectedAccountPurposes={CODEX_ACCOUNT_PURPOSES} connectedAccountServiceKeys={[CODEX_SERVICE_KEY]}
+            connectedAccountsV4={[v4Account({ pluginId: CODEX_IDENTITY.pluginId, localId: 'openai-codex', accountId: 'fresh', kind: 'oauth' })]}
+            connectedAccountGroupsV4={[CODEX_V4_GROUP]} accountGroupsEnabled
+            purposeBindings={{ v: 1, bindings: [{ purpose: { consumer: CODEX_IDENTITY, purpose: 'primary' },
+                target: { kind: 'account', account: { service: CODEX_ACCOUNT_PURPOSES[0]!.service, accountId: 'fresh' } } }] }}
+            purposeBindingsWritable={false}
+            settings={{ connectedServicesDefaultProfileByServiceId: {} }}
+            setDefaultAuthSettings={vi.fn(async () => {})} onOpenConnectedServicesSettings={vi.fn()} />;
+        const { tree } = await renderScreen(row);
+        const accept = tree.root.findByProps({ testID: `settings-connected-services-pool-adoption-suggestion-codex-${CODEX_SERVICE_KEY}-accept` });
+        expect(accept.props.disabled).toBe(true);
+        await act(async () => tree.update(React.cloneElement(row, { purposeBindings: null })));
+        expect(hasPoolSuggestion(tree, 'codex', CODEX_SERVICE_KEY)).toBe(false);
+    });
+
+    it('writes the per-agent default binding under the canonical qualified key', async () => {
+        const { ConnectedServicesDefaultAuthRow } = await import('./ConnectedServicesDefaultAuthRow');
+        const { setDefaultAuthSettings, writtenDefaults } = captureDefaultAuthWrites();
+
+        const { tree } = await renderScreen(
+            <ConnectedServicesDefaultAuthRow labelsByKey={{}}
+                purposeBindings={{ v: 1, bindings: [] }}
                 agentId="claude"
                 agentIdentity={CLAUDE_IDENTITY}
                 agentTitle="Claude"
@@ -308,7 +463,6 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                 connectedAccountGroupsV4={[]}
                 accountGroupsEnabled={false}
                 settings={{
-                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 }}
@@ -328,18 +482,50 @@ describe('ConnectedServicesDefaultAuthRow', () => {
             findSelectionOption(modalTree, `connected-service:${ENCODED_CLAUDE_SERVICE_KEY}:profile:work`).onSelect();
         });
 
-        expect(setDefaultAuthSettings).toHaveBeenCalledWith(agentDefaultWrite(CLAUDE_IDENTITY, {
+        expect(writtenDefaults).toContainEqual(agentDefaultWrite(CLAUDE_IDENTITY, {
             kind: 'account',
             account: { service: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, accountId: 'work' },
         }));
     });
 
+    it.each(['refused', 'acknowledged'] as const)('preserves the selected draft until a default write is %s', async (outcome) => {
+        const write = createDeferred<void>();
+        const row = <ConnectedServicesDefaultAuthRow labelsByKey={{}}
+            agentId="claude" agentIdentity={CLAUDE_IDENTITY} agentTitle="Claude"
+            connectedAccountPurposes={CLAUDE_ACCOUNT_PURPOSES} connectedAccountServiceKeys={[CLAUDE_SERVICE_KEY]}
+            connectedAccountsV4={[CLAUDE_V4_ACCOUNT]} accountGroupsEnabled={false}
+            purposeBindings={{ v: 1, bindings: [] }}
+            settings={{ connectedServicesDefaultProfileByServiceId: {} }}
+            setDefaultAuthSettings={() => write.promise} onOpenConnectedServicesSettings={vi.fn()} />;
+        const { tree } = await renderScreen(row);
+        const picker = await openPickerModal(tree, 'claude');
+        await act(async () => findSelectionOption(picker, `connected-service:${ENCODED_CLAUDE_SERVICE_KEY}:profile:work`).onSelect());
+        await act(async () => tree.update(React.cloneElement(row, { purposeBindings: { v: 1, bindings: [] } })));
+        const pendingPicker = await openPickerModal(tree, 'claude', 1);
+        expect(findSelectionListProps(pendingPicker).selectedOptionId)
+            .toBe(`connected-service:${ENCODED_CLAUDE_SERVICE_KEY}:profile:work`);
+        await act(async () => outcome === 'refused'
+            ? write.reject(new Error('source-version-conflict'))
+            : write.resolve());
+        await act(async () => tree.update(React.cloneElement(row, { purposeBindings: { v: 1, bindings: [] } })));
+        const retryPicker = await openPickerModal(tree, 'claude', 2);
+        expect(findSelectionListProps(retryPicker).selectedOptionId)
+            .toBe(`connected-service:${ENCODED_CLAUDE_SERVICE_KEY}:${outcome === 'refused' ? 'profile:work' : 'native'}`);
+        await act(async () => tree.update(React.cloneElement(row, { purposeBindings: null, purposeBindingsWritable: false })));
+        expect(findDefaultAuthTrigger(tree, 'claude').detail).toBe('common.unavailable');
+        await act(async () => tree.update(React.cloneElement(row, { purposeBindings: { v: 1, bindings: [] } })));
+        const restoredPicker = await openPickerModal(tree, 'claude', 3);
+        expect(findSelectionListProps(restoredPicker).selectedOptionId)
+            .toBe(`connected-service:${ENCODED_CLAUDE_SERVICE_KEY}:native`);
+    });
+
     it('translates released bundled scalar declarations through the generated built-in mapping', async () => {
         const { ConnectedServicesDefaultAuthRow } = await import('./ConnectedServicesDefaultAuthRow');
-        const setDefaultAuthSettings = vi.fn();
+        const { setDefaultAuthSettings, writtenDefaults } = captureDefaultAuthWrites();
 
         const { tree } = await renderScreen(
-            <ConnectedServicesDefaultAuthRow
+            <ConnectedServicesDefaultAuthRow labelsByKey={{}}
+                purposeBindings={{ v: 1, bindings: [] }}
                 agentId="claude"
                 agentIdentity={CLAUDE_IDENTITY}
                 agentTitle="Claude"
@@ -351,7 +537,6 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                 connectedAccountGroupsV4={[]}
                 accountGroupsEnabled={false}
                 settings={{
-                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 }}
@@ -365,7 +550,7 @@ describe('ConnectedServicesDefaultAuthRow', () => {
             findSelectionOption(modalTree, `connected-service:${ENCODED_CLAUDE_SERVICE_KEY}:profile:work`).onSelect();
         });
 
-        expect(setDefaultAuthSettings).toHaveBeenCalledWith(agentDefaultWrite(CLAUDE_IDENTITY, {
+        expect(writtenDefaults).toContainEqual(agentDefaultWrite(CLAUDE_IDENTITY, {
             kind: 'account',
             account: { service: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, accountId: 'work' },
         }));
@@ -373,9 +558,23 @@ describe('ConnectedServicesDefaultAuthRow', () => {
 
     it('reflects the persisted qualified binding as the selected option in the picker list', async () => {
         const { ConnectedServicesDefaultAuthRow } = await import('./ConnectedServicesDefaultAuthRow');
+        const persisted: ConnectedServicesDefaultAuthByAgentIdV1 = {
+            v: 1,
+            bindingsByAgentId: {
+                claude: {
+                    v: 1,
+                    bindingsByServiceId: {
+                        [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' },
+                    },
+                },
+            },
+        };
 
         const { tree } = await renderScreen(
-            <ConnectedServicesDefaultAuthRow
+            <ConnectedServicesDefaultAuthRow labelsByKey={{}}
+                purposeBindings={activateLegacyDefaultFixture({
+                    agentId: 'claude', identity: CLAUDE_IDENTITY, connectedAccounts: CLAUDE_ACCOUNT_PURPOSES,
+                }, persisted)}
                 agentId="claude"
                 agentIdentity={CLAUDE_IDENTITY}
                 agentTitle="Claude"
@@ -385,21 +584,10 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                 connectedAccountGroupsV4={[]}
                 accountGroupsEnabled={false}
                 settings={{
-                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: {
-                        v: 1,
-                        bindingsByAgentId: {
-                            claude: {
-                                v: 1,
-                                bindingsByServiceId: {
-                                    [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' },
-                                },
-                            },
-                        },
-                    },
+                    connectedServicesDefaultAuthByAgentIdV1: persisted,
                 }}
-                setDefaultAuthSettings={vi.fn()}
+                setDefaultAuthSettings={vi.fn(async () => {})}
                 onOpenConnectedServicesSettings={vi.fn()}
             />,
         );
@@ -412,10 +600,11 @@ describe('ConnectedServicesDefaultAuthRow', () => {
 
     it('stores group defaults as group bindings without a fallback profile id', async () => {
         const { ConnectedServicesDefaultAuthRow } = await import('./ConnectedServicesDefaultAuthRow');
-        const setDefaultAuthSettings = vi.fn();
+        const { setDefaultAuthSettings, writtenDefaults } = captureDefaultAuthWrites();
 
         const { tree } = await renderScreen(
-            <ConnectedServicesDefaultAuthRow
+            <ConnectedServicesDefaultAuthRow labelsByKey={{}}
+                purposeBindings={{ v: 1, bindings: [] }}
                 agentId="codex"
                 agentIdentity={CODEX_IDENTITY}
                 agentTitle="Codex"
@@ -431,7 +620,6 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                 connectedAccountGroupsV4={[CODEX_V4_GROUP]}
                 accountGroupsEnabled={true}
                 settings={{
-                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 }}
@@ -445,7 +633,7 @@ describe('ConnectedServicesDefaultAuthRow', () => {
             findSelectionOption(modalTree, `connected-service:${ENCODED_CODEX_SERVICE_KEY}:group:primary`).onSelect();
         });
 
-        expect(setDefaultAuthSettings).toHaveBeenCalledWith(agentDefaultWrite(CODEX_IDENTITY, {
+        expect(writtenDefaults).toContainEqual(agentDefaultWrite(CODEX_IDENTITY, {
             kind: 'group',
             service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
             groupId: 'primary',
@@ -456,13 +644,14 @@ describe('ConnectedServicesDefaultAuthRow', () => {
         'persists and reloads an exact Team-qualified %s Team resource default',
         async (deliveryMode) => {
             const { ConnectedServicesDefaultAuthRow } = await import('./ConnectedServicesDefaultAuthRow');
-            const setDefaultAuthSettings = vi.fn();
+            const { setDefaultAuthSettings, writtenDefaults } = captureDefaultAuthWrites();
             const selection = TEAM_RESOURCE.connectedServiceSelections.find((candidate) => candidate.deliveryMode === deliveryMode)!;
 
             const renderRow = async (
                 persisted: QualifiedConnectedAccountPurposeBindingsV1 = { v: 1, bindings: [] },
             ) => (await renderScreen(
-                <ConnectedServicesDefaultAuthRow
+                <ConnectedServicesDefaultAuthRow labelsByKey={{}}
+                    purposeBindings={persisted}
                     agentId="codex"
                     agentIdentity={CODEX_IDENTITY}
                     agentTitle="Codex"
@@ -475,9 +664,7 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                     teamNameById={{ 'team-a': 'Acme' }}
                     currentTeamCredentialResourceKeys={new Set(['team-a:resource-a'])}
                     settings={{
-                        connectedServicesProfileLabelByKey: {},
                         connectedServicesDefaultProfileByServiceId: {},
-                        connectedAccountPurposeBindingsV1: persisted,
                     }}
                     setDefaultAuthSettings={setDefaultAuthSettings}
                     onOpenConnectedServicesSettings={vi.fn()}
@@ -491,7 +678,7 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                 : `connected-service:team-resource:resource-a:direct:${CODEX_SERVICE_KEY.replace('/', '%2F')}:account-a`;
             await act(async () => findSelectionOption(modalTree, optionId).onSelect());
 
-            const written = setDefaultAuthSettings.mock.calls[0]![0];
+            const written = writtenDefaults[0]!;
             // A default is a Team-qualified reference, never a pinned revision.
             expect(written).toEqual(agentTeamDefaultWrite(CODEX_IDENTITY, {
                 teamId: 'team-a',
@@ -528,7 +715,10 @@ describe('ConnectedServicesDefaultAuthRow', () => {
             },
         };
         const { tree } = await renderScreen(
-            <ConnectedServicesDefaultAuthRow
+            <ConnectedServicesDefaultAuthRow labelsByKey={{}}
+                purposeBindings={activateLegacyDefaultFixture({
+                    agentId: 'codex', identity: CODEX_IDENTITY, connectedAccounts: CODEX_ACCOUNT_PURPOSES,
+                }, persisted)}
                 agentId="codex"
                 agentIdentity={CODEX_IDENTITY}
                 agentTitle="Codex"
@@ -542,11 +732,10 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                 currentTeamCredentialResourceKeys={new Set<string>()}
                 onRecoverTeamCredentialResource={onRecoverTeamCredentialResource}
                 settings={{
-                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: persisted,
                 }}
-                setDefaultAuthSettings={vi.fn()}
+                setDefaultAuthSettings={vi.fn(async () => {})}
                 onOpenConnectedServicesSettings={vi.fn()}
             />,
         );
@@ -562,11 +751,26 @@ describe('ConnectedServicesDefaultAuthRow', () => {
         expect(list.selectedOptionId).not.toBe(`connected-service:${ENCODED_CODEX_SERVICE_KEY}:native`);
     });
 
-    it('offers the ready autoSwitch pool of a stored member profile as a pool-adoption suggestion', async () => {
+    it('offers the ready pool and keeps its adoption suggestion until dismissal is acknowledged', async () => {
         const { ConnectedServicesDefaultAuthRow } = await import('./ConnectedServicesDefaultAuthRow');
-
-        const { tree } = await renderScreen(
-            <ConnectedServicesDefaultAuthRow
+        const dismissal = createDeferred<boolean>();
+        const onDismiss = vi.fn(() => dismissal.promise);
+        const persisted: ConnectedServicesDefaultAuthByAgentIdV1 = {
+            v: 1,
+            bindingsByAgentId: {
+                codex: {
+                    v: 1,
+                    bindingsByServiceId: {
+                        [CODEX_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'fresh' },
+                    },
+                },
+            },
+        };
+        const row = (
+            <ConnectedServicesDefaultAuthRow labelsByKey={{}}
+                purposeBindings={activateLegacyDefaultFixture({
+                    agentId: 'codex', identity: CODEX_IDENTITY, connectedAccounts: CODEX_ACCOUNT_PURPOSES,
+                }, persisted)}
                 agentId="codex"
                 agentIdentity={CODEX_IDENTITY}
                 agentTitle="Codex"
@@ -582,33 +786,53 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                 connectedAccountGroupsV4={[CODEX_V4_GROUP]}
                 accountGroupsEnabled={true}
                 settings={{
-                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: {
-                        v: 1,
-                        bindingsByAgentId: {
-                            codex: {
-                                v: 1,
-                                bindingsByServiceId: {
-                                    [CODEX_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'fresh' },
-                                },
-                            },
-                        },
-                    },
+                    connectedServicesDefaultAuthByAgentIdV1: persisted,
                 }}
-                setDefaultAuthSettings={vi.fn()}
+                setDefaultAuthSettings={vi.fn(async () => {})}
                 onOpenConnectedServicesSettings={vi.fn()}
-            />,
+                onDismissPoolAdoptionSuggestion={onDismiss}
+            />
         );
+        const { tree } = await renderScreen(row);
 
+        expect(hasPoolSuggestion(tree, 'codex', CODEX_SERVICE_KEY)).toBe(true);
+        const dismiss = tree.root.findByProps({ testID: `settings-connected-services-pool-adoption-suggestion-codex-${CODEX_SERVICE_KEY}-dismiss` });
+        await act(async () => { dismiss.props.onPress(); });
+        expect(hasPoolSuggestion(tree, 'codex', CODEX_SERVICE_KEY)).toBe(true);
+        await act(async () => dismissal.resolve(false));
+        expect(hasPoolSuggestion(tree, 'codex', CODEX_SERVICE_KEY)).toBe(true);
+        onDismiss.mockImplementation(async () => true);
+        await act(async () => { dismiss.props.onPress(); });
+        const key = connectedAcknowledgementSubjectKeyV1({ kind: 'adoption',
+            agentTargetKey: 'agent:happier.agent.codex/codex', service: CODEX_ACCOUNT_PURPOSES[0]!.service, groupId: CODEX_V4_GROUP.ref.groupId });
+        await act(async () => tree.update(React.cloneElement(row, { dismissedPoolAdoptionSuggestionKeys: { [key]: true } })));
+        expect(hasPoolSuggestion(tree, 'codex', CODEX_SERVICE_KEY)).toBe(false);
+        await act(async () => tree.update(React.cloneElement(row, { dismissedPoolAdoptionSuggestionKeys: {} })));
         expect(hasPoolSuggestion(tree, 'codex', CODEX_SERVICE_KEY)).toBe(true);
     });
 
     it('renders the effective fallback warning for stale group defaults on the trigger', async () => {
         const { ConnectedServicesDefaultAuthRow } = await import('./ConnectedServicesDefaultAuthRow');
+        const persisted: ConnectedServicesDefaultAuthByAgentIdV1 = {
+            v: 1,
+            bindingsByAgentId: {
+                codex: {
+                    v: 1,
+                    bindingsByServiceId: {
+                        [CODEX_SERVICE_KEY]: {
+                            source: 'connected', selection: 'group', groupId: 'missing-group',
+                        },
+                    },
+                },
+            },
+        };
 
         const { tree } = await renderScreen(
-            <ConnectedServicesDefaultAuthRow
+            <ConnectedServicesDefaultAuthRow labelsByKey={{}}
+                purposeBindings={activateLegacyDefaultFixture({
+                    agentId: 'codex', identity: CODEX_IDENTITY, connectedAccounts: CODEX_ACCOUNT_PURPOSES,
+                }, persisted)}
                 agentId="codex"
                 agentIdentity={CODEX_IDENTITY}
                 agentTitle="Codex"
@@ -624,25 +848,10 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                 connectedAccountGroupsV4={[]}
                 accountGroupsEnabled={true}
                 settings={{
-                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: {
-                        v: 1,
-                        bindingsByAgentId: {
-                            codex: {
-                                v: 1,
-                                bindingsByServiceId: {
-                                    [CODEX_SERVICE_KEY]: {
-                                        source: 'connected',
-                                        selection: 'group',
-                                        groupId: 'missing-group',
-                                    },
-                                },
-                            },
-                        },
-                    },
+                    connectedServicesDefaultAuthByAgentIdV1: persisted,
                 }}
-                setDefaultAuthSettings={vi.fn()}
+                setDefaultAuthSettings={vi.fn(async () => {})}
                 onOpenConnectedServicesSettings={vi.fn()}
             />,
         );
