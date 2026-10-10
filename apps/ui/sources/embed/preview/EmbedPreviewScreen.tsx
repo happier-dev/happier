@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import type { Message } from '@happier-dev/session-core/messages';
+import type { Metadata } from '@happier-dev/session-core/state';
 
 import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import type { ComposerSuggestionKindId } from '@/components/autocomplete/composerSuggestionKinds';
@@ -20,8 +21,8 @@ import {
     type SessionViewEmbeddedPresentation,
 } from '@/components/sessions/shell/embedded/embeddedSessionPresentation';
 import { TranscriptList } from '@/components/sessions/transcript/TranscriptList';
-import { SessionTranscriptSourceProvider } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
-import type { SessionTranscriptActions } from '@/components/sessions/transcript/source/types';
+import { SessionTranscriptSourceProvider, useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
+import type { SessionTranscriptActions, SessionTranscriptSource } from '@/components/sessions/transcript/source/types';
 import { useDemoMessages } from '@/hooks/session/useDemoMessages';
 import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
 import { storage } from '@/sync/domains/state/storage';
@@ -65,7 +66,9 @@ const PREVIEW_ACTIONS: SessionTranscriptActions = Object.freeze({
     abort: async () => undefined,
     submitMessage: async () => undefined,
 });
-const PREVIEW_SOURCE_OPTIONS = Object.freeze({ interaction: PREVIEW_INTERACTION, actions: PREVIEW_ACTIONS });
+// The sample declares its Agent for prompt presentation; it has no machine or live Session.
+const PREVIEW_METADATA = Object.freeze({ path: '', host: '', flavor: DEFAULT_AGENT_ID } satisfies Metadata);
+const PREVIEW_SOURCE_OPTIONS = Object.freeze({ metadata: PREVIEW_METADATA, interaction: PREVIEW_INTERACTION, actions: PREVIEW_ACTIONS });
 
 /** A fixed conversation that exercises the real rows: bubble, reply, code, tool output, approval. */
 function buildPreviewMessages(): Message[] {
@@ -109,6 +112,7 @@ export function EmbedPreviewScreen(): React.ReactElement | null {
     const { theme } = useUnistyles();
     const params = React.useMemo(() => (typeof window === 'undefined' ? null : readEmbedPreviewParams(window.location.search)), []);
     const [refused, setRefused] = React.useState(false);
+    const [admitted, setAdmitted] = React.useState(false);
     const [configuration, setConfiguration] = React.useState<EmbedPreviewConfiguration>(EMPTY_EMBED_PREVIEW_CONFIGURATION);
     const messages = React.useMemo(buildPreviewMessages, []);
     const source = useDemoMessages(messages, PREVIEW_SOURCE_OPTIONS);
@@ -125,16 +129,20 @@ export function EmbedPreviewScreen(): React.ReactElement | null {
             window,
             identity: params.identity,
             // Each configure carries the whole current style; unchanged parts keep their reference.
-            onConfigure: (configure) => setConfiguration((current) => adoptEmbedPreviewConfiguration(current, configure)),
+            onConfigure: (configure) => {
+                setConfiguration((current) => adoptEmbedPreviewConfiguration(current, configure));
+                setAdmitted(true);
+            },
         });
         setRefused(guest.refused);
+        setAdmitted(guest.admitted);
         return guest.dispose;
     }, [params]);
 
     React.useEffect(() => {
-        if (refused) return;
+        if (!admitted || refused) return;
         fireAndForget(applyEmbedStyle(mergeEmbedStyles(configuration.style), styleDependencies), { tag: 'EmbedPreviewScreen.style' });
-    }, [refused, configuration.style]);
+    }, [admitted, refused, configuration.style]);
 
     const reconnecting = params?.reconnecting === true;
     const presentation = React.useMemo(
@@ -149,10 +157,16 @@ export function EmbedPreviewScreen(): React.ReactElement | null {
     );
     const newChat = params?.newChat === true;
     // The composer keeps its own draft, so typing in the preview re-renders only the composer.
-    const composer = React.useMemo(() => <EmbedPreviewComposer controls={controls} inputLock={inputLock} />, [controls, inputLock]);
+    const composer = React.useMemo(() => {
+        return newChat ? <EmbedPreviewComposer controls={controls} inputLock={inputLock} /> : (
+            <SessionTranscriptSourceProvider source={source}>
+                <EmbedPreviewConversationComposer controls={controls} inputLock={inputLock} />
+            </SessionTranscriptSourceProvider>
+        );
+    }, [controls, inputLock, newChat, source]);
     const transcript = React.useMemo(() => (newChat ? null : (
         <SessionTranscriptSourceProvider source={source}>
-            <TranscriptList datasetKey="embed-preview" metadata={null} messages={messages} />
+            <TranscriptList datasetKey="embed-preview" metadata={PREVIEW_METADATA} messages={messages} />
         </SessionTranscriptSourceProvider>
     )), [messages, newChat, source]);
     const parts = React.useMemo<EmbeddedSessionPartsValue>(() => ({
@@ -164,6 +178,7 @@ export function EmbedPreviewScreen(): React.ReactElement | null {
     }), [composer, newChat, transcript]);
 
     if (!params || refused) return <EmbedErrorState code="origin_not_allowed" />;
+    if (!admitted) return null;
 
     return (
         <View style={{ flex: 1, minHeight: 0, backgroundColor: theme.colors.background.canvas }} testID="embed-preview">
@@ -178,9 +193,22 @@ export function EmbedPreviewScreen(): React.ReactElement | null {
     );
 }
 
-function EmbedPreviewComposer(props: Readonly<{
+type EmbedPreviewComposerProps = Readonly<{
     controls: NonNullable<ReturnType<typeof resolveEmbeddedComposerControls>>;
     inputLock: ReturnType<typeof narrowEmbeddedComposerInputLock>;
+}>;
+
+function EmbedPreviewConversationComposer(props: EmbedPreviewComposerProps) {
+    const source = useSessionTranscriptSource();
+    const pending = source.usePendingRequests();
+    const interaction = source.useInteraction();
+    const metadata = source.useMetadata();
+    return <EmbedPreviewComposer {...props} metadata={metadata} attention={{ pending, interaction }} />;
+}
+
+function EmbedPreviewComposer(props: EmbedPreviewComposerProps & Readonly<{
+    metadata?: Metadata | null;
+    attention?: Readonly<{ pending: ReturnType<SessionTranscriptSource['usePendingRequests']>; interaction: TranscriptInteraction }>;
 }>) {
     const [draft, setDraft] = React.useState('');
     return (
@@ -189,7 +217,11 @@ function EmbedPreviewComposer(props: Readonly<{
             onChangeText={setDraft}
             placeholder={t('session.inputPlaceholder')}
             onSend={noop}
-            sessionActive
+            metadata={props.metadata ?? undefined}
+            permissionRequests={props.attention?.pending.permissionRequests}
+            approvalRequests={props.attention?.pending.approvalRequests}
+            canApprovePermissions={props.attention?.interaction.canApprovePermissions}
+            permissionDisabledReason={props.attention?.interaction.permissionDisabledReason}
             contentPaddingHorizontal={COMPOSER_CONTENT_HORIZONTAL_INSET}
             agentType={DEFAULT_AGENT_ID}
             modelMode="default"

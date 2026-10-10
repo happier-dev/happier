@@ -1,4 +1,4 @@
-import { arePluginMachineExecutionOriginsEqual, arePluginMachineMaterializationRefsEqual, PluginMachineExecutionOriginV1Schema, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { arePluginMachineExecutionOriginsEqual, arePluginMachineMaterializationRefsEqual, PluginMachineMaterializationExecutionOriginV1Schema, type PluginMachineMaterializationExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { isExactPluginMachineMaterializationReleaseCorrespondenceV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import { resolvePluginCollectionMigrationArtifactOwnerV1 } from '@happier-dev/protocol/plugins/data/collectionContributionV1';
 import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -25,7 +25,7 @@ export type CandidateCollectionReleaseDaemonExecution = Readonly<{
     kind: 'daemon';
     /** The exact immutable Account release coordinate and read cursor. */
     release: CandidateCollectionReleaseExecutionTarget;
-    origin: PluginMachineExecutionOriginV1;
+    origin: PluginMachineMaterializationExecutionOriginV1;
     /** Active machine-RPC route paired with the origin-stamped projection. */
     serverId: string;
     artifactGraph: PluginUiArtifactsManifestEntryV2;
@@ -131,7 +131,7 @@ export function resolveCandidateCollectionReleaseExecution(input: Readonly<{
             platform: slot.platform,
         })
         : null;
-    const origin = PluginMachineExecutionOriginV1Schema.safeParse({
+    const origin = PluginMachineMaterializationExecutionOriginV1Schema.safeParse({
         serverIdentityId: entry.serverIdentityId,
         materializationRef: entry.materializationRef,
     });
@@ -157,7 +157,7 @@ export function resolveCandidateCollectionReleaseExecution(input: Readonly<{
     ));
     if (matchedMaterializations.length !== 1) return unavailable();
     const materialization = matchedMaterializations[0]!;
-    const materializationOrigin = PluginMachineExecutionOriginV1Schema.parse({
+    const materializationOrigin = PluginMachineMaterializationExecutionOriginV1Schema.parse({
         serverIdentityId: materialization.serverIdentityId,
         materializationRef: {
             machineId: materialization.machineId,

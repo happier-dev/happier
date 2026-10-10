@@ -211,7 +211,6 @@ function fixture(input: Readonly<{
             format: 'plainJs' as const,
             byteSize: entryBytes.byteLength,
         },
-        bytesBase64: encodeBase64(entryBytes),
         files: [
             { ...files[0], bytesBase64: encodeBase64(entryBytes) },
         ],

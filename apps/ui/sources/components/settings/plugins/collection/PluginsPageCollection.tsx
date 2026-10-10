@@ -5,6 +5,7 @@ import type { HappierCollectionModel } from '@happier-dev/plugin-ui/presentation
 
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { usePageNoticeActive } from '@/components/ui/lists/listPresentation';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 
 import { PLUGIN_CARD_MIN_WIDTH_PX } from './PluginCardStatus';
@@ -17,9 +18,9 @@ function PluginsPageColumn(props: Readonly<{ children?: React.ReactNode }>) {
 }
 
 /** The Plugins page's one scroller: the settings page anatomy, the page's content column. */
-function renderPluginsPageScroller(children: React.ReactNode): React.ReactNode {
+function renderPluginsPageScroller(children: React.ReactNode, pageNoticeActive: boolean): React.ReactNode {
     return (
-        <ItemList style={{ paddingTop: 0 }} pageColumn="wide">
+        <ItemList style={{ paddingTop: 0 }} pageColumn="wide" pageNoticeActive={pageNoticeActive}>
             <PluginsPageColumn>{children}</PluginsPageColumn>
         </ItemList>
     );
@@ -43,8 +44,14 @@ export function PluginsPageCollection<Item>(props: Readonly<{
     useRowActions?: (item: Item) => CollectionRowActions;
     testID: string;
 }>) {
+    // This scroller continues the same Plugins page scope, including its notice above the toolbar.
+    const pageNoticeActive = usePageNoticeActive();
+    const renderPageScroller = React.useCallback(
+        (children: React.ReactNode) => renderPluginsPageScroller(children, pageNoticeActive),
+        [pageNoticeActive],
+    );
     return (
-        <CoreCollectionScope renderPageScroller={renderPluginsPageScroller}>
+        <CoreCollectionScope renderPageScroller={renderPageScroller}>
             <Collection<Item>
                 model={props.model}
                 anatomy={props.anatomy}

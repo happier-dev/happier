@@ -57,7 +57,7 @@ import {
     createPluginContributedActionController,
     type PluginContributedActionCurrentSnapshot,
 } from './pluginContributedActionController';
-import { PLUGIN_PRESENT_USER_INTERACTION_DEADLINE_MS } from '@/components/plugins/hostApi/interactionLifetime';
+import type { ServerScopedMachineRpcParams } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 
 const MACHINE_ID = 'machine-a';
 const SERVER_ID = 'server-a';
@@ -1155,7 +1155,7 @@ describe('plugin contributed Action controller', () => {
             if (deadlineOpened.kind !== 'form') throw new Error('expected form Action');
 
             deadlineOpened.form.replaceInput({ token: 'keep-while-filling-form' });
-            await vi.advanceTimersByTimeAsync(PLUGIN_PRESENT_USER_INTERACTION_DEADLINE_MS);
+            await vi.advanceTimersByTimeAsync(31_000);
             expect(deadlineOpened.form.isRetired()).toBe(false);
             expect(deadlineOpened.form.getInput()).toEqual({ token: 'keep-while-filling-form' });
         } finally {
@@ -2197,47 +2197,70 @@ describe('plugin contributed Action controller', () => {
         });
     });
 
-    it('aborts the exact canonical handler signal when the host-owned form deadline elapses without hiding a known success', async () => {
+    it.each(['Connected Account lookup', 'submitted Action'] as const)(
+        'completes a valid %s through the daemon RPC after the former form deadline', async (phase) => {
         vi.useFakeTimers();
         try {
-            let settleDispatch: (outcome: PluginSurfaceActionDispatchOutcome) => void = () => {
-                throw new Error('dispatch resolver was not initialized');
+            const account = {
+                service: { pluginId: 'com.acme.accounts', localId: 'service' },
+                accountId: 'account-a',
             };
-            const pendingDispatch = new Promise<PluginSurfaceActionDispatchOutcome>((resolve) => {
-                settleDispatch = resolve;
+            const delayedMethod = phase === 'Connected Account lookup'
+                ? RPC_METHODS.DAEMON_PLUGIN_ACTION_FORM_CONNECTED_ACCOUNT_OPTIONS_RESOLVE
+                : RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE;
+            const defaultRpc = machineRpcWithServerScopeMock.getMockImplementation();
+            if (!defaultRpc) throw new Error('expected schema RPC boundary');
+            // Model the real transport boundary's authored operation budget and
+            // cancellation. Keep schema, lookup, dispatch and settlement real.
+            machineRpcWithServerScopeMock.mockImplementation((request: ServerScopedMachineRpcParams<unknown>) => {
+                if (request.method !== delayedMethod) return defaultRpc(request);
+                request.onIssued?.();
+                return new Promise<unknown>((resolve, reject) => {
+                    const abort = () => reject(new Error('RPC aborted'));
+                    request.signal?.addEventListener('abort', abort, { once: true });
+                    const deadline = request.timeoutMs === undefined ? undefined
+                        : setTimeout(() => reject(new Error('RPC timed out')), request.timeoutMs);
+                    setTimeout(() => {
+                        if (deadline !== undefined) clearTimeout(deadline);
+                        request.signal?.removeEventListener('abort', abort);
+                        resolve(phase === 'Connected Account lookup'
+                            ? { ok: true, options: [{ value: account, label: 'Work account' }] }
+                            : { ok: true, result: { completed: true } });
+                    }, 31_000);
+                });
             });
-            const dispatch = vi.fn(async (
-                _input: DispatchPluginSurfaceActionInput,
-            ): Promise<PluginSurfaceActionDispatchOutcome> => await pendingDispatch);
+            const current = snapshot([action({
+                id: 'configure',
+                inputHints: {
+                    fields: phase === 'Connected Account lookup'
+                        ? [{ path: 'credentialRef', title: 'Account', widget: 'select', connectedAccountOptions: true }]
+                        : [{ path: 'token', title: 'Token', widget: 'secret', required: true }],
+                },
+            })]);
             const controller = createPluginContributedActionController({
-                resolveCurrent: () => snapshot([action({
-                    id: 'configure',
-                    inputHints: {
-                        fields: [{ path: 'token', title: 'Token', widget: 'secret', required: true }],
-                    },
-                })]),
-                dispatch,
+                resolveCurrent: () => current,
             });
             const [entry] = controller.list({ placement: 'primary', scope: 'session' });
             if (!entry) throw new Error('expected eligible Action');
-            const opened = await controller.open(entry);
+            const opening = controller.open(entry);
+            if (phase === 'Connected Account lookup') await vi.advanceTimersByTimeAsync(31_000);
+            const opened = await opening;
             if (opened.kind !== 'form') throw new Error('expected form Action');
-
-            opened.form.replaceInput({ token: 'deadline-while-submitting' });
+            if (phase === 'Connected Account lookup') {
+                expect(opened.form.getFields()[0]?.options).toEqual([{ value: account, label: 'Work account' }]);
+                opened.form.retire();
+                return;
+            }
+            opened.form.replaceInput({ token: 'clear-before-late-dispatch' });
             const submitting = opened.form.submit();
-            expect(dispatch).toHaveBeenCalledOnce();
-            const handlerSignal = dispatch.mock.calls[0]?.[0]?.signal;
-            expect(handlerSignal).toBeDefined();
-            expect(handlerSignal?.aborted).toBe(false);
-
-            await vi.advanceTimersByTimeAsync(PLUGIN_PRESENT_USER_INTERACTION_DEADLINE_MS);
-
-            expect(handlerSignal?.aborted).toBe(true);
-            settleDispatch({ ok: true, result: { completed: true } });
+            expect(opened.form.getInput()).toEqual({});
+            await vi.advanceTimersByTimeAsync(31_000);
             await expect(submitting).resolves.toEqual({
                 kind: 'settled',
                 outcome: { ok: true, result: { completed: true } },
             });
+            expect(opened.form.isRetired()).toBe(false);
+            opened.form.retire();
         } finally {
             vi.useRealTimers();
         }

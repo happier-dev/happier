@@ -300,7 +300,7 @@ describe('declarative data nodes', () => {
     });
 
     it('gives the widget body’s height to a chart only when the chart is the whole body, never to one beside a metric', () => {
-        const sized = { ...context, widgetPresentation: { size: 'medium' as const, footprint: { columns: 2, columnSpan: 1, rowSpan: 2, height: 'regular' as const, width: 'half' as const },
+        const sized = { ...context, presentationTheme: { spacing: { small: 4, medium: 8, large: 12 } } as unknown as HappierUiTheme, widgetPresentation: { size: 'medium' as const, footprint: { columns: 2, columnSpan: 1, rowSpan: 2, height: 'regular' as const, width: 'half' as const },
             geometry: { width: 320, height: 300 } } } satisfies DeclarativeNodeRenderContext;
         const series = { kind: 'chart', label: 'Signups per day', style: 'bar', rows: [],
             data: { kind: 'value', value: [{ x: 'Tue', y: 236 }, { x: 'Wed', y: 183 }] },

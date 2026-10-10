@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { StyleSheet } from 'react-native';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { measureMountedCollections, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
@@ -65,6 +66,10 @@ describe('Installed plugins collection', () => {
         expect(onNavigateToPlugin).toHaveBeenCalledWith('alpha');
         const toggle = screen.findByTestId('settings.plugins.marketplace.installed.alpha.action.disable');
         expect(toggle?.props.disabled).toBe(false);
+        // The grid has one footer control, not a second copy in the body accessory slot.
+        const { Switch } = await import('@/components/ui/forms/Switch');
+        expect(screen.root.findAll((node) => node.type === Switch
+            && node.props.testID === 'settings.plugins.marketplace.installed.alpha.action.disable')).toHaveLength(1);
         expect(onRunAction).not.toHaveBeenCalled();
     });
 
@@ -90,6 +95,15 @@ describe('Installed plugins collection', () => {
         expect(screen.findByTestId('settings.plugins.marketplace.installed.loading')).toBeNull();
         await screen.pressByTestIdAsync('settings.plugins.marketplace.installed.readFailed-action');
         expect(onRetry).toHaveBeenCalledTimes(1);
+    });
+
+    it('names the absence of retained details when an offline machine has no snapshot', async () => {
+        const screen = await renderInstalled({ collectionState: 'offline', presentation: 'list' });
+        expect(screen.findByTestId('settings.plugins.marketplace.installed.noSnapshot')).not.toBeNull();
+        expect(screen.findByTestId('settings.plugins.marketplace.installed.empty')).toBeNull();
+        expect(screen.findByTestId('settings.plugins.marketplace.installed.loading')).toBeNull();
+        const retained = await renderInstalled({ collectionState: 'offline', presentation: 'list', plugins: [installed('alpha')] });
+        expect(retained.findByTestId('settings.plugins.marketplace.installed.noSnapshot')).toBeNull();
     });
 
     it('answers a search that hid every plugin inline, naming it, with Clear', async () => {
@@ -141,7 +155,7 @@ describe('Installed plugins collection', () => {
         expect(text).not.toContain('On 2 machines');
     });
 
-    it('says only what differs from the default on a card: no repeated source, no "Enabled", no invented text', async () => {
+    it('gives every grid card its status footer without repeating its source or inventing a purpose', async () => {
         const bundled = (pluginId: string, overrides: Partial<InstalledPluginEntry> = {}) => installed(pluginId, {
             source: { kind: 'bundled', locator: pluginId }, ...overrides,
         });
@@ -155,13 +169,27 @@ describe('Installed plugins collection', () => {
         const text = screen.getTextContent();
         // The section header names the source once; its cards do not repeat it.
         expect(text.split(t('settingsPlugins.rowSource.bundled'))).toHaveLength(2);
-        expect(text).not.toContain(t('settingsPlugins.rowStatus.enabled'));
+        expect(text).toContain(t('settingsPlugins.rowStatus.enabled'));
         expect(text).toContain(t('settingsPlugins.rowStatus.disabled'));
         expect(text).toContain('On 3 machines');
-        // A card with no purpose to state draws no description text in the lines the grid keeps (the grid's slot
-        // rule, where footers line up, is the Collection's own: `Collection.rnw.test.tsx`).
-        expect(screen.findByTestId('settings.plugins.marketplace.installed.claude:description')).toBeNull();
+        // The empty description declares the two-line slot, not invented copy.
+        expect(screen.findByTestId('settings.plugins.marketplace.installed.claude:description')?.props.children).toBe('');
         expect(screen.findByTestId('settings.plugins.marketplace.installed.mine:description')).not.toBeNull();
+    });
+
+    it('keeps the card anatomy when none has a purpose yet, while healthy list rows stay quiet', async () => {
+        const bundled = installed('quiet', { description: null, source: { kind: 'bundled', locator: 'quiet' } });
+        const described = await renderInstalled({ collectionState: 'ready', plugins: [{ ...bundled, description: 'Does a thing' }] });
+        const undescribed = await renderInstalled({ collectionState: 'ready', plugins: [bundled] });
+        const height = (screen: Awaited<ReturnType<typeof renderInstalled>>) => StyleSheet.flatten(
+            screen.findByTestId('settings.plugins.marketplace.installed.quiet:card')?.props.style,
+        ).height;
+        expect(height(undescribed)).toBe(height(described));
+        expect(undescribed.findByTestId('settings.plugins.marketplace.installed.quiet:description')?.props.children).toBe('');
+        const { t } = await import('@/text');
+        expect(undescribed.getTextContent()).toContain(t('settingsPlugins.rowStatus.enabled'));
+        const list = await renderInstalled({ collectionState: 'ready', presentation: 'list', plugins: [bundled] });
+        expect(list.getTextContent()).not.toContain(t('settingsPlugins.rowStatus.enabled'));
     });
 
     it('gives a card with no description the kind of thing the plugin adds as its second line', async () => {
@@ -181,7 +209,7 @@ describe('Installed plugins collection', () => {
         expect(description('auggie')?.props.children).toBe(t('settingsPlugins.surfaces.kinds.agent'));
         expect(description('github')?.props.children).toBe(t('settingsPlugins.surfaces.kinds.scmHostingProviders'));
         // Nothing projected, nothing invented.
-        expect(description('quiet')).toBeNull();
+        expect(description('quiet')?.props.children).toBe('');
     });
 
     it('shows the included plugins, not an empty page, when only those are installed', async () => {

@@ -1,6 +1,7 @@
 import type {
     DaemonContributionRegistryProjection,
 } from '@/sync/api/daemon/daemonContributionRegistryProjectionProtocol';
+import type { PluginDeclaredUiEntriesV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { resolveLocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/platform';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
 import { PluginUiWidgetAreaDeclarationsV1Schema, type PluginUiWidgetAreaDeclarationV1 } from '@happier-dev/protocol/plugins/contributions/ui/widgetAreas';
@@ -91,7 +92,7 @@ export type PluginUiSearchProviderProjection = UnknownRecord & Readonly<{
 export type PluginUiHostedWebProjection = UnknownRecord & Readonly<{
     id: string;
     pluginId: string;
-    occurrenceId: string;
+    occurrenceId?: string;
     contributionKind: 'hostedWeb';
     contributionId: string;
 }>;
@@ -131,7 +132,7 @@ type PluginUiSurfacePlacementProjectionFields = UnknownRecord & Readonly<{
     id: string;
     pluginId: string;
     /** Exact process-local occurrence projected with this contribution row. */
-    occurrenceId: string;
+    occurrenceId?: string;
     contributionKind: 'surfacePlacement';
     descriptorId: string;
     /**
@@ -619,7 +620,6 @@ function isSurfacePlacement(entry: UnknownRecord): entry is PluginUiPhysicalSurf
     return entry.contributionKind === 'surfacePlacement'
         && readString(entry.id) !== null
         && readString(entry.pluginId) !== null
-        && readString(entry.occurrenceId) !== null
         && readString(entry.descriptorId) !== null
         // The CLI projection has one already-admitted binding. Do not call a
         // client-side normalizer here: the daemon projection owns that
@@ -798,8 +798,29 @@ function normalizeComposerAttachmentEntriesById(
  * catalogs and pickers — sees the same admitted set. It defaults to this
  * client's own platform so a caller cannot opt out of the gate by omission.
  */
+type PluginUiProjectionNormalizationInput = Omit<DaemonContributionRegistryProjection, 'generation' | 'familiesById'> & Readonly<{
+    generation: number | null;
+    familiesById: Omit<DaemonContributionRegistryProjection['familiesById'], 'pluginUi'> & Readonly<{
+        pluginUi?: Readonly<{ family: 'pluginUi'; entriesById: PluginDeclaredUiEntriesV1 | NonNullable<DaemonContributionRegistryProjection['familiesById']['pluginUi']>['entriesById'] }>;
+    }>;
+}>;
+
+/** Reuses Registry-normalized presentation; installed declarations carry no live occurrence. */
+export function normalizePluginInstalledUiDeclarations(
+    entriesById: PluginDeclaredUiEntriesV1,
+    platform?: PluginUiPlatformV1,
+    installedPackage?: PluginProjectionInstalledPackageV2,
+): PluginUiProjectionModel {
+    return normalizePluginUiProjection({
+        v: 2, generation: null,
+        installedPackagesById: installedPackage ? { [installedPackage.id]: installedPackage } : {}, agentsById: {}, actionsById: {}, toolsById: {},
+        commandsById: {}, resourcesById: {}, settingsById: {},
+        familiesById: { pluginUi: { family: 'pluginUi', entriesById } }, diagnostics: [],
+    }, platform);
+}
+
 export function normalizePluginUiProjection(
-    projection: DaemonContributionRegistryProjection | null,
+    projection: PluginUiProjectionNormalizationInput | null,
     platform: PluginUiPlatformV1 = resolvePluginUiProjectionPlatform(),
 ): PluginUiProjectionModel {
     if (!projection) {

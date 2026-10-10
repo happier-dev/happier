@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { arePluginMachineExecutionOriginsEqual, PluginMachineExecutionOriginV1Schema, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionOriginRef, PluginMachineExecutionOriginV1Schema, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { buildQualifiedPluginContributionKey, createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import { derivePluginClientContributionRegistrationRights, type PluginContributionClientPlatform, type PluginContributionRegistrationRight } from '@happier-dev/protocol/plugins/contributions/catalog';
 import type { PluginProjectedActionV2, PluginProjectedDragSourceEntryV1, PluginProjectedDropTargetEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -27,6 +27,7 @@ import type {
 import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';
 import { isPluginProjectedActionExecutable } from '@/sync/domains/plugins/ui/projection';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { readPluginUiContributionOrigin, readPluginUiProjectionEntryExecutionOrigin } from '@/sync/domains/plugins/ui/projectionUnion';
 
 export type PluginUiClientExecutableTarget = Readonly<{
     artifactId: string;
@@ -156,7 +157,9 @@ function sameExecutionOrigin(
 function freezeExecutionOrigin(origin: PluginMachineExecutionOriginV1): PluginMachineExecutionOriginV1 {
     return Object.freeze({
         serverIdentityId: origin.serverIdentityId,
-        materializationRef: Object.freeze({ ...origin.materializationRef }),
+        ...('materializationRef' in origin
+            ? { materializationRef: Object.freeze({ ...origin.materializationRef }) }
+            : { sourceRef: Object.freeze({ ...origin.sourceRef, sourceCustody: Object.freeze({ ...origin.sourceRef.sourceCustody }) }) }),
     });
 }
 
@@ -208,7 +211,7 @@ function validateScopeInput(input: Readonly<{
     const parsedOrigin = input.executionOrigin === null
         ? null
         : PluginMachineExecutionOriginV1Schema.safeParse(input.executionOrigin);
-    if (parsedOrigin && (!parsedOrigin.success || parsedOrigin.data.materializationRef.pluginId !== input.pluginId)) {
+    if (parsedOrigin && (!parsedOrigin.success || getPluginMachineExecutionOriginRef(parsedOrigin.data).pluginId !== input.pluginId)) {
         throw new Error('client_executable_origin_mismatch');
     }
     if (
@@ -442,7 +445,15 @@ export type PluginUiClientExecutableCompositionAttempt = Readonly<{
     reused: boolean;
 }>;
 
+export type PluginUiClientExecutableAdmission = Pick<PluginUiClientExecutableActivation,
+    'pluginId' | 'contributes' | 'target' | 'executionOrigin' | 'occurrenceId' | 'hostUiApiRange'
+    | 'pluginVersion' | 'identity' | 'moduleReference' | 'authority'>;
+
 export type PluginUiClientExecutableComposition = Readonly<{
+    /** Withdraw obsolete exact targets before successor Artifact preparation awaits. */
+    retain(admissions: readonly PluginUiClientExecutableAdmission[]): Promise<void>;
+    /** The committed activation must still own its exact controller and index target. */
+    isCurrentActivation(activation: PluginUiClientExecutableActivation): boolean;
     reconcile(
         activations: readonly PluginUiClientExecutableActivation[],
     ): Promise<readonly PluginUiClientExecutableCompositionAttempt[]>;
@@ -497,10 +508,7 @@ export function getPluginUiClientExecutableTargetAddressKey(input: Pick<
         input.target.artifactId,
         input.target.exportName,
         input.target.platform,
-        input.executionOrigin?.serverIdentityId ?? '',
-        input.executionOrigin?.materializationRef.machineId ?? '',
-        input.executionOrigin?.materializationRef.materializationId ?? '',
-        input.executionOrigin?.materializationRef.pluginId ?? '',
+        input.executionOrigin === null ? '' : JSON.stringify(PluginMachineExecutionOriginV1Schema.parse(input.executionOrigin)),
         clientExecutableAuthorityKey(input.authority),
     ].join('\u0000');
 }
@@ -510,7 +518,7 @@ export function getPluginUiClientExecutableTargetAddressKey(input: Pick<
  * and plugin occurrence intentionally do not participate: they select exact
  * index publication and currentness, not what one module is allowed to register.
  */
-function clientExecutableModuleKey(activation: PluginUiClientExecutableActivation): string {
+function clientExecutableModuleKey(activation: PluginUiClientExecutableAdmission): string {
     return [
         activation.identity.artifactDigest,
         activation.moduleReference.exportName,
@@ -525,7 +533,7 @@ function clientExecutableModuleKey(activation: PluginUiClientExecutableActivatio
  * registration index to derive and validate their rights once.
  */
 function mergeClientExecutableRegistrationContributes(
-    activations: readonly PluginUiClientExecutableActivation[],
+    activations: readonly PluginUiClientExecutableAdmission[],
 ): Readonly<Record<string, unknown>> {
     const merged: Record<string, readonly unknown[]> = {};
     for (const activation of activations) {
@@ -542,7 +550,7 @@ function mergeClientExecutableRegistrationContributes(
 }
 
 function clientExecutableActivationFingerprint(
-    activation: PluginUiClientExecutableActivation,
+    activation: PluginUiClientExecutableAdmission,
     registrationContributes: Readonly<Record<string, unknown>> = activation.contributes,
 ): string {
     return [
@@ -562,6 +570,24 @@ function clientExecutableActivationFingerprint(
     ].join('\u0000');
 }
 
+function clientExecutableRegistrationContributesByTarget(
+    admissions: readonly PluginUiClientExecutableAdmission[],
+): ReadonlyMap<string, Readonly<Record<string, unknown>>> {
+    const compatible = new Map<string, PluginUiClientExecutableAdmission[]>();
+    for (const admission of admissions) {
+        const moduleKey = clientExecutableModuleKey(admission);
+        const group = compatible.get(moduleKey) ?? [];
+        group.push(admission);
+        compatible.set(moduleKey, group);
+    }
+    const rights = new Map<string, Readonly<Record<string, unknown>>>();
+    for (const group of compatible.values()) {
+        const contributes = mergeClientExecutableRegistrationContributes(group);
+        for (const admission of group) rights.set(getPluginUiClientExecutableTargetAddressKey(admission), contributes);
+    }
+    return rights;
+}
+
 function isClientExecutableActivationCurrent(
     activation: PluginUiClientExecutableActivation,
 ): boolean {
@@ -573,14 +599,14 @@ function isClientExecutableActivationCurrent(
 }
 
 function isClientExecutableActivationCoherent(
-    activation: PluginUiClientExecutableActivation,
+    activation: PluginUiClientExecutableAdmission,
 ): boolean {
     return activation.identity.pluginId === activation.pluginId
         && activation.identity.platform === activation.target.platform
         && activation.moduleReference.exportName === activation.target.exportName
         && (activation.executionOrigin === null || (
-            activation.authority.machineId === activation.executionOrigin.materializationRef.machineId
-            && activation.executionOrigin.materializationRef.pluginId === activation.pluginId
+            activation.authority.machineId === getPluginMachineExecutionOriginRef(activation.executionOrigin).machineId
+            && getPluginMachineExecutionOriginRef(activation.executionOrigin).pluginId === activation.pluginId
         ))
         && activation.occurrenceId.trim().length > 0
         && activation.hostUiApiRange.trim().length > 0
@@ -670,6 +696,38 @@ export function createPluginUiClientExecutableComposition(input: Readonly<{
         }
     };
 
+    const retain = async (admissions: readonly PluginUiClientExecutableAdmission[]): Promise<void> => {
+        const byKey = new Map<string, PluginUiClientExecutableAdmission>();
+        const duplicates = new Set<string>();
+        for (const admission of admissions) {
+            if (!isClientExecutableActivationCoherent(admission)) continue;
+            const key = getPluginUiClientExecutableTargetAddressKey(admission);
+            if (byKey.has(key)) duplicates.add(key);
+            byKey.set(key, admission);
+        }
+        for (const key of duplicates) byKey.delete(key);
+        const rights = clientExecutableRegistrationContributesByTarget([...byKey.values()]);
+        const requestedAuthorities = new Set([...byKey.values()].map(admission => clientExecutableAuthorityKey(admission.authority)));
+        const retirements: Promise<void>[] = [];
+        for (const [key, active] of activeByTargetKey) {
+            const replacement = byKey.get(key);
+            if (replacement && active.fingerprint === clientExecutableActivationFingerprint(
+                replacement, rights.get(key),
+            )) continue;
+            activeByTargetKey.delete(key);
+            active.controller.abort();
+            if (requestedAuthorities.has(active.authorityKey)) {
+                retirements.push(active.executableHost.invalidateActivation({ identity: active.identity, moduleReference: active.moduleReference }));
+            }
+        }
+        for (const [authorityKey, leaf] of [...authorityLeavesByKey]) {
+            if (requestedAuthorities.has(authorityKey)) continue;
+            releaseAuthorityLeaf(authorityKey, leaf);
+            retirements.push(leaf.executableHost.unload());
+        }
+        await Promise.all(retirements);
+    };
+
     const reconcile = async (
         activations: readonly PluginUiClientExecutableActivation[],
     ): Promise<readonly PluginUiClientExecutableCompositionAttempt[]> => {
@@ -724,63 +782,16 @@ export function createPluginUiClientExecutableComposition(input: Readonly<{
             }));
         }
 
-        const compatibleTargetsByModuleKey = new Map<
-            string,
-            Array<(typeof preparedTargets)[number]>
-        >();
-        for (const preparedTarget of preparedTargets) {
-            const moduleKey = clientExecutableModuleKey(preparedTarget.activation);
-            const compatible = compatibleTargetsByModuleKey.get(moduleKey);
-            if (compatible) {
-                compatible.push(preparedTarget);
-            } else {
-                compatibleTargetsByModuleKey.set(moduleKey, [preparedTarget]);
-            }
-        }
-        const registrationContributesByTargetKey = new Map<string, Readonly<Record<string, unknown>>>();
-        for (const compatibleTargets of compatibleTargetsByModuleKey.values()) {
-            const registrationContributes = mergeClientExecutableRegistrationContributes(
-                compatibleTargets.map((candidate) => candidate.activation),
-            );
-            for (const preparedTarget of compatibleTargets) {
-                registrationContributesByTargetKey.set(preparedTarget.key, registrationContributes);
-            }
-        }
+        const registrationContributesByTargetKey = clientExecutableRegistrationContributesByTarget(
+            preparedTargets.map(candidate => candidate.activation),
+        );
         const prepared: PreparedClientExecutableTarget[] = preparedTargets.map((preparedTarget) => Object.freeze({
             ...preparedTarget,
             registrationContributes: registrationContributesByTargetKey.get(preparedTarget.key)
                 ?? preparedTarget.activation.contributes,
         }));
 
-        const preparedByKey = new Map(prepared.map((candidate) => [candidate.key, candidate]));
-        const retirements: Promise<void>[] = [];
-        for (const [key, active] of activeByTargetKey.entries()) {
-            const replacement = preparedByKey.get(key);
-            if (replacement && active.fingerprint === clientExecutableActivationFingerprint(
-                replacement.activation,
-                replacement.registrationContributes,
-            )) {
-                continue;
-            }
-            activeByTargetKey.delete(key);
-            active.controller.abort();
-            if (!requestedAuthoritiesByKey.has(active.authorityKey)) continue;
-            // The host invokes scope unwind synchronously before cleanup.
-            retirements.push(active.executableHost.invalidateActivation({
-                identity: active.identity,
-                moduleReference: active.moduleReference,
-            }));
-        }
-        for (const [authorityKey, leaf] of [...authorityLeavesByKey.entries()]) {
-            if (requestedAuthoritiesByKey.has(authorityKey)) continue;
-            // The host fences the registration synchronously, but its plugin
-            // cleanup may await. Remove this retiring leaf before that await
-            // so a same-authority remount installs current authority instead
-            // of reusing the fenced host.
-            releaseAuthorityLeaf(authorityKey, leaf);
-            retirements.push(leaf.executableHost.unload());
-        }
-        await Promise.all(retirements);
+        await retain(prepared.map(candidate => candidate.activation));
 
         const leavesByAuthorityKey = new Map<string, ExecutableAuthorityLeaf>();
         for (const [authorityKey, requestedAuthority] of requestedAuthoritiesByKey.entries()) {
@@ -925,6 +936,11 @@ export function createPluginUiClientExecutableComposition(input: Readonly<{
     };
 
     return Object.freeze({
+        retain,
+        isCurrentActivation: (activation) => {
+            const active = activeByTargetKey.get(getPluginUiClientExecutableTargetAddressKey(activation));
+            return active?.activation === activation && !active.controller.signal.aborted;
+        },
         reconcile,
         read: registrationIndex.read,
         revision: registrationIndex.revision,
@@ -978,6 +994,23 @@ export function getInstalledPluginUiClientExecutableComposition(): PluginUiClien
  * not prove that its executable module committed a handler, so every consumer
  * reads this generic index instead of rebuilding target/origin checks locally.
  */
+function readProjectedClientRegistrationOrigin(
+    entry: Readonly<{ pluginId: string }>,
+): Readonly<{ origin: PluginMachineExecutionOriginV1 | null }> | null {
+    const stamped = readPluginUiContributionOrigin(entry);
+    if (stamped) {
+        if (stamped.phase !== 'current' || !stamped.interactionEnabled) return null;
+        const origin = stamped.executionOrigin;
+        if (origin && (getPluginMachineExecutionOriginRef(origin).pluginId !== entry.pluginId
+            || getPluginMachineExecutionOriginRef(origin).machineId !== stamped.machineId)) return null;
+        return { origin };
+    }
+    const origin = readPluginUiProjectionEntryExecutionOrigin(entry);
+    if (origin) return { origin };
+    // A partial or invalid producer stamp is not an originless client target.
+    return 'serverIdentityId' in entry || 'materializationRef' in entry ? null : { origin: null };
+}
+
 export function resolvePluginUiClientActionRegistration(input: Readonly<{
     action: PluginProjectedActionV2;
     /** The one platform mapper is `resolvePluginUiClientExecutablePlatform`. */
@@ -992,21 +1025,8 @@ export function resolvePluginUiClientActionRegistration(input: Readonly<{
     ) {
         return null;
     }
-    // An originless (bundled/development) Action carries neither fact; one
-    // that carries either must carry a valid origin for its own plugin.
-    const originless = action.serverIdentityId === undefined && action.materializationRef === undefined;
-    const parsedOrigin = originless
-        ? null
-        : PluginMachineExecutionOriginV1Schema.safeParse({
-            serverIdentityId: action.serverIdentityId,
-            materializationRef: action.materializationRef,
-        });
-    if (
-        parsedOrigin
-        && (!parsedOrigin.success || parsedOrigin.data.materializationRef.pluginId !== action.pluginId)
-    ) {
-        return null;
-    }
+    const producer = readProjectedClientRegistrationOrigin(action);
+    if (!producer) return null;
     if (!action.execution.platforms.includes(platform)) return null;
     const address = Object.freeze({
         family: 'actions' as const,
@@ -1017,7 +1037,7 @@ export function resolvePluginUiClientActionRegistration(input: Readonly<{
             exportName: action.execution.client.exportName,
             platform,
         }),
-        executionOrigin: parsedOrigin?.success ? freezeExecutionOrigin(parsedOrigin.data) : null,
+        executionOrigin: producer.origin ? freezeExecutionOrigin(producer.origin) : null,
         occurrenceId: action.occurrenceId,
     }) satisfies PluginUiClientExecutableRegistrationAddress;
     let registration: PluginUiClientExecutableRegistration | null;
@@ -1075,18 +1095,15 @@ function resolvePluginUiClientEntityRegistration(input: Readonly<{
     const { contribution, platform, family } = input;
     if (!contribution.occurrenceId || contribution.id !== `${contribution.pluginId}/${contribution.definition.id}`
         || !contribution.definition.platforms.includes(platform)) return null;
-    const originless = contribution.serverIdentityId === undefined && contribution.materializationRef === undefined;
-    const origin = originless ? null : PluginMachineExecutionOriginV1Schema.safeParse({
-        serverIdentityId: contribution.serverIdentityId, materializationRef: contribution.materializationRef,
-    });
-    if (origin && (!origin.success || origin.data.materializationRef.pluginId !== contribution.pluginId)) return null;
+    const producer = readProjectedClientRegistrationOrigin(contribution);
+    if (!producer) return null;
     let registration: PluginUiClientExecutableRegistration | null;
     try {
         registration = (input.reader ?? getInstalledPluginUiClientExecutableComposition()).read({
             family, pluginId: contribution.pluginId, localId: contribution.definition.id,
             occurrenceId: contribution.occurrenceId,
             target: freezeTarget({ ...contribution.definition.client, platform }),
-            executionOrigin: origin?.success ? freezeExecutionOrigin(origin.data) : null,
+            executionOrigin: producer.origin ? freezeExecutionOrigin(producer.origin) : null,
         });
     } catch { return null; }
     return registration && registration.right.family === family && registration.registration.family === family

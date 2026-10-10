@@ -170,6 +170,7 @@ vi.mock('@/sync/domains/state/storageStore', async () => {
     const store = createLiveStorageStoreMock(() => ({
         settings: { machineAdministrationSelectionsV1: fixture.selections } as never,
         settingsVersion: 7,
+        settingsScope: { serverId: 'server-account', accountId: 'account-origin-detail' },
     }));
     return { storage: store, getStorage: () => store };
 });
@@ -223,6 +224,7 @@ vi.mock('../model/usePluginSettingsScreenState', () => ({
         executionServerId: null,
         executionServerIdentityId: null,
         installedPluginById: fixture.installedPluginById,
+        installedPlugins: [...fixture.installedPluginById.values()],
         isPluginActionInFlight: () => false,
         isDaemonSettingsTargetCurrent: () => true,
         administrationTargetSelection,
@@ -284,7 +286,7 @@ describe('PluginDetailScreen execution-origin ownership', () => {
         standardCleanup();
     });
 
-    it('initializes one sole origin and keeps the selector and log reader on its exact target through an origin change', async () => {
+    it('projects one sole origin without persisting and keeps the log reader on its exact target through an origin change', async () => {
         const { PluginDetailScreen } = await import('./PluginDetailScreen');
         const RerenderablePluginDetailScreen = PluginDetailScreen as unknown as React.ComponentType<{
             pluginId: string;
@@ -295,12 +297,8 @@ describe('PluginDetailScreen execution-origin ownership', () => {
             await flushAsync();
         });
 
-        expect(mutateAccountSettingsOnceMock).toHaveBeenCalledOnce();
-        expect(fixture.accountSettings).toMatchObject({
-            machineAdministrationSelectionsV1: {
-                pluginExecutionOriginsByPluginId: { 'acme.plugin': ORIGIN_A },
-            },
-        });
+        expect(mutateAccountSettingsOnceMock).not.toHaveBeenCalled();
+        expect(fixture.accountSettings).toMatchObject({ machineAdministrationSelectionsV1: { pluginExecutionOriginsByPluginId: {} } });
         await act(async () => {
             screen.tree.update(<RerenderablePluginDetailScreen pluginId="acme.plugin" revision={2} />);
             await flushAsync();
@@ -338,7 +336,7 @@ describe('PluginDetailScreen execution-origin ownership', () => {
             await flushAsync();
         });
 
-        expect(mutateAccountSettingsOnceMock).toHaveBeenCalledOnce();
+        expect(mutateAccountSettingsOnceMock).not.toHaveBeenCalled();
         // The current-origin row names the server and, on its own line, the
         // materialized version running there.
         expect(screen.findByTestId('settings.plugins.detail.executionOrigin.current')?.props)

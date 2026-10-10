@@ -29,18 +29,18 @@ describe('hosted widget-area Host API admission', () => {
         await handler({ version: 1, identity, sequence: 0, kind: 'ready', payload: { ready: true } });
         await expect(handler(envelope({ wireVersion: 1, kind: 'negotiate', identity, apiRange: '^1.0.0' })))
             .resolves.toMatchObject({ kind: 'result', payload: { kind: 'negotiated', methods: ['context', 'executeAction'] } });
-        const operation = { actionId: 'widgets.instance.remove', instanceId: 'copy' };
+        const operation = { actionId: 'widgets.item.remove', instanceId: 'copy' };
         await expect(handler(envelope({ wireVersion: 1, kind: 'request', identity, requestId: 'forged-area',
             method: 'widgetArea', payload: { area: 'pinned', operation } })))
             .resolves.toMatchObject({ kind: 'result', payload: { kind: 'error', error: { code: 'unsupported_method' } } });
         expect(dispatched).toEqual([]);
         await expect(handler(envelope({ wireVersion: 1, kind: 'request', identity, requestId: 'ordinary-widget-action',
-            method: 'executeAction', payload: { action: 'widgets.instance.remove', input: { ref: {
+            method: 'executeAction', payload: { action: 'widgets.item.remove', input: { ref: {
                 surface: { serverId: 'home', accountId: 'viewer', owner: { kind: 'home' } }, instanceId: 'copy',
             } } } })))
             .resolves.toMatchObject({ kind: 'result', payload: { kind: 'result', result: { accepted: true } } });
         expect(dispatched).toHaveLength(1);
-        expect(dispatched[0]).toMatchObject({ method: 'executeAction', payload: { action: 'widgets.instance.remove' } });
+        expect(dispatched[0]).toMatchObject({ method: 'executeAction', payload: { action: 'widgets.item.remove' } });
         handler.dispose();
     });
 });

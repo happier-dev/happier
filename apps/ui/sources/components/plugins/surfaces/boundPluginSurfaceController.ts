@@ -1,7 +1,11 @@
 import * as React from 'react';
+import { randomUUID } from '@/platform/randomUUID';
 import { createPluginWidgetAreaHostHandler } from './pluginWidgetAreaHost';
-import type { PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
+import { createPluginUiResourceStore, type PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
 import { createPluginDeclaredResourceStore } from './PluginContextualResourceStoreProvider';
+import { createPluginSurfaceHostReadStore } from './pluginSurfaceHostReadStore';
+import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { getUsageQueryResourceStore } from '@/sync/api/account/usageQueryResource';
 
 import type {
     ActionExecutorContext,
@@ -54,6 +58,7 @@ import {
 import type { CurrentUiContextMountedEnrichment } from '@/components/appShell/currentUiContext/currentUiContextModel';
 import {
     createPluginSurfaceActionHostApi,
+    preparePluginSurfaceHostRead,
     type PluginSurfaceActionMountedBinding,
     type PluginSurfaceContributedActionDescriptorResolver,
     type PluginSurfaceContributedActionTransport,
@@ -67,8 +72,8 @@ import {
     createPluginOpenConnectedAccountsHostApiHandler,
     type PluginOpenConnectedAccountsHandler,
 } from './openPluginConnectedAccounts';
-import type { PluginSurfaceResourceReadTransport } from './pluginSurfaceResourceRead';
-import type { PluginSurfaceResourceWatchTransport } from './pluginSurfaceResourceWatch';
+import { createPluginContextualResourceReadClient, type PluginSurfaceResourceReadTransport } from './pluginSurfaceResourceRead';
+import { createPluginContextualResourceWatchClient, type PluginSurfaceResourceWatchTransport } from './pluginSurfaceResourceWatch';
 import type { PluginSurfaceOpenableContentBinding } from './pluginSurfaceOpenableContent';
 import {
     createPluginActionInputSelectionHostApiHandler,
@@ -230,6 +235,8 @@ export type BoundPluginSurfaceFacts = Readonly<{
      * with the already-current parent mount.
      */
     parentLifetime?: BoundPluginSurfaceMountLifetime | null;
+    /** Live admission of a containing host document; this is not another mount lifetime. */
+    isHostCurrent?: () => boolean;
     /**
      * The resolver-stamped ephemeral instance identity. It is intentionally
      * separate from the artifact-qualified durable crash-disable key.
@@ -307,6 +314,8 @@ export type BoundPluginSurfaceCurrentUiContextPublication = Readonly<{
  * a fact about the host around the surface, never a pre-composed API.
  */
 export type BoundPluginSurfaceBinding = Readonly<{
+    /** Invocation-time revalidation supplied by the canonical per-plugin target owner. */
+    isExecutionOriginCurrent?: () => boolean;
     /**
      * The host-ActionSpec front door. Defaults to the canonical lazily-resolved
      * `ActionExecutor.execute`, so ActionsSettings enablement and approval routing
@@ -441,8 +450,7 @@ const EMPTY_RESOURCE_SCOPE: readonly PluginUiSurfaceContextV1['resourceScope'][n
 const NOOP_MOUNT_RETIREMENT = Object.freeze({ dispose(): void {} });
 
 function isDaemonOwnedPluginSurfaceMethod(method: PluginUiHostMethodV1): boolean {
-    return method === 'watchLiveStream' || method === 'readStoredImage' || method === 'readResource'
-        || method === 'watchResource'
+    return method === 'watchLiveStream' || method === 'readStoredImage' || method === 'readResource' || method === 'watchResource'
         || method === 'statOpenableContent'
         || method === 'readOpenableContent'
         || method === 'selectActionInput';
@@ -508,7 +516,9 @@ function resolvePluginSurfaceCallerBinding(
         ? facts.machineId
         : null;
     const occurrenceId = facts.occurrenceId?.trim();
-    const materializationRef = facts.executionOrigin?.materializationRef;
+    const materializationRef = facts.executionOrigin && 'materializationRef' in facts.executionOrigin
+        ? facts.executionOrigin.materializationRef : undefined;
+    const sourceRef = facts.executionOrigin && 'sourceRef' in facts.executionOrigin ? facts.executionOrigin.sourceRef : undefined;
     if (
         !machineId
         || !occurrenceId
@@ -516,6 +526,7 @@ function resolvePluginSurfaceCallerBinding(
             materializationRef.pluginId !== facts.pluginId
             || materializationRef.machineId !== machineId
         ))
+        || (sourceRef !== undefined && (sourceRef.pluginId !== facts.pluginId || sourceRef.machineId !== machineId))
     ) {
         return null;
     }
@@ -731,10 +742,12 @@ export function createBoundPluginSurfaceController(input: Readonly<{
     const accountLifetime = input.facts.accountLifetime;
     const parentLifetime = input.facts.parentLifetime ?? null;
     const accountActiveAtConstruction = accountLifetime?.isCurrent() === true;
-    const parentActiveAtConstruction = parentLifetime?.isCurrent() !== false;
+    const parentActiveAtConstruction = parentLifetime?.isCurrent() !== false && input.facts.isHostCurrent?.() !== false;
     const isCurrent = (): boolean => !retired
         && accountLifetime?.isCurrent() === true
-        && parentLifetime?.isCurrent() !== false;
+        && parentLifetime?.isCurrent() !== false
+        && input.facts.isHostCurrent?.() !== false;
+    const isInteractionCurrent = (): boolean => isCurrent() && input.facts.interactionEnabled;
     const binding = input.binding;
     const openConnectedAccounts = binding?.openConnectedAccounts
         ? createPluginOpenConnectedAccountsHostApiHandler(
@@ -743,7 +756,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         )
         : undefined;
     const isOpenableContentViewer = binding?.openableContent !== undefined;
-    if (!accountActiveAtConstruction || !parentActiveAtConstruction || !input.facts.interactionEnabled) {
+    if (!accountActiveAtConstruction || !parentActiveAtConstruction) {
         const hostApi = createPluginSurfaceHostApi({
             surfaceContext,
             // Missing/retired Account scope is a stronger refusal than a
@@ -751,26 +764,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
             // navigation because there is no mounted Account authority to
             // retire the facade with.
             isCurrent,
-            // A placement-local destination selection neither reaches the daemon
-            // nor mutates daemon-owned state. Keep this one admitted navigation
-            // method live while its Account is offline; every daemon Action,
-            // Resource, and presentation method remains uninstalled. An opaque
-            // file-viewer binding is a different host role: it cannot gain that
-            // generic navigation handler while its stat/read binding is absent.
-            handlers: accountActiveAtConstruction
-                && parentActiveAtConstruction
-                && !isOpenableContentViewer
-                && binding?.openSurface
-                ? {
-                    openSurface: createPluginSurfaceOpenSurfaceHandler(
-                        binding.openSurface,
-                        isCurrent,
-                    ),
-                    ...(openConnectedAccounts ? { openConnectedAccounts } : {}),
-                }
-                : !isOpenableContentViewer && openConnectedAccounts
-                    ? { openConnectedAccounts }
-                    : {},
+            handlers: {},
         });
         const dispatchAction = createBoundPluginSurfaceActionDispatcher({ surfaceContext, hostApi });
         const applyComposer = createBoundPluginSurfaceComposerApplyDispatcher({ surfaceContext, hostApi });
@@ -829,7 +823,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
     // method ceiling rather than acquiring a generic semantic capability.
     const mountedHandlerBundle = isOpenableContentViewer
         ? undefined
-        : binding?.createMountedHostApiHandlers?.({ isCurrent });
+        : binding?.createMountedHostApiHandlers?.({ isCurrent: isInteractionCurrent });
     const currentUiContextPublication = mountedHandlerBundle?.currentUiContext;
     const publishCurrentUiContext = currentUiContextPublication
         ? (request: PluginUiHostApiRequestEnvelopeV1): PluginUiJsonValueV1 => {
@@ -881,12 +875,12 @@ export function createBoundPluginSurfaceController(input: Readonly<{
     // prevents an abandoned render from registering semantic context.
     const activateMountedHostApiHandlers = mountedHandlerBundle?.activate
         ? () => {
-            if (isCurrent()) mountedHandlerBundle.activate?.();
+            if (isInteractionCurrent()) mountedHandlerBundle.activate?.();
         }
         : undefined;
     const setCurrentUiContextEligibility = mountedHandlerBundle?.setCurrentUiContextEligibility
         ? (eligible: boolean) => {
-            if (isCurrent()) mountedHandlerBundle.setCurrentUiContextEligibility?.(eligible);
+            if (isInteractionCurrent()) mountedHandlerBundle.setCurrentUiContextEligibility?.(eligible);
         }
         : undefined;
     const clearCurrentUiContext = (): void => {
@@ -906,10 +900,23 @@ export function createBoundPluginSurfaceController(input: Readonly<{
                 ? { currentUiContext: input.facts.readCurrentUiContext }
                 : {}),
         };
-    const isDaemonInteractionEnabled = input.facts.isDaemonInteractionEnabled
-        ?? (() => input.facts.daemonInteractionEnabled);
+    const isDaemonInteractionEnabled = () => (input.facts.isDaemonInteractionEnabled?.() ?? input.facts.daemonInteractionEnabled)
+        && binding?.isExecutionOriginCurrent?.() !== false;
+    // Home-family Actions and borrowed Resources share the exact same target scope.
+    const homeFamilyScope = accountLifetime
+        && (!input.facts.serverId || input.facts.serverId === accountLifetime.scope.serverId)
+        ? accountLifetime.scope
+        : null;
+    const canAdmitHostReads = Boolean(homeFamilyScope && callerBinding && !isOpenableContentViewer
+        && (binding?.executeHostAction ? binding.executeHostAction.prepare : true));
+    // Retained projection data still describes the installed structural host
+    // contract. Narrow live effects through the existing Host API availability
+    // seam instead of constructing a reduced facade that de-admits the page.
+    // Navigation/context remain useful without lending retained data authority.
     const isMethodAvailable = (method: PluginUiHostMethodV1): boolean => (
-        !isDaemonOwnedPluginSurfaceMethod(method) || isDaemonInteractionEnabled()
+        method === 'context' || method === 'openSurface' || method === 'openConnectedAccounts'
+        || (isInteractionCurrent() && ((canAdmitHostReads && (method === 'readResource' || method === 'watchResource'))
+            || !isDaemonOwnedPluginSurfaceMethod(method) || isDaemonInteractionEnabled()))
     );
     // Keep host-Action target stamping compatible with the incumbent cold
     // offline facade. Reconnects change daemon-owned method availability live;
@@ -922,7 +929,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
     // subscription contract. The daemon owns exact-resource admission once
     // this selected-member gate has installed the transport.
     const canWatchResource = canReadResource && resourceCapability?.dynamic === true;
-    const resourceStore = canReadResource && daemon && accountLifetime && input.facts.pluginUiProjection
+    const declaredResourceStore = canReadResource && daemon && accountLifetime && input.facts.pluginUiProjection
         ? createPluginDeclaredResourceStore({ accountLifetime, pluginId: input.facts.pluginId,
             machineId: daemon.machineId, serverId: daemon.serverId ?? null,
             expectedCallerOccurrenceId: daemon.expectedOccurrenceId,
@@ -970,6 +977,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
     const sessionHandlers = accountLifetime && !isOpenableContentViewer
         ? createPluginSurfaceSessionHandlers({
             accountScope: accountLifetime.scope,
+            accountLifetime,
             isCurrent,
             deliver: deliverResourceInvalidation,
         })
@@ -1005,14 +1013,6 @@ export function createBoundPluginSurfaceController(input: Readonly<{
             disposeMountedHostApiHandlers?.();
         }
         : disposeMountedHostApiHandlers;
-    // The exact Home/Account this mount may address the Home family as. A mount
-    // whose surface names a different Home than the current Account scope has
-    // no such scope, and its Home-family Actions stay unsupported rather than
-    // being redirected to whichever Home the Account happens to be on.
-    const homeFamilyScope = accountLifetime
-        && (!input.facts.serverId || input.facts.serverId === accountLifetime.scope.serverId)
-        ? accountLifetime.scope
-        : null;
     // One controller-owned lifetime fences target selection and all
     // daemon-backed Resource work. Replacements abort obsolete work rather than
     // merely withholding its eventual delivery.
@@ -1069,6 +1069,66 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         execute: binding?.executeHostAction ?? (homeFamilyScope ? scopedHomeActionExecutor(homeFamilyScope) : createFrontDoorActionExecute()),
         ...(hostActionContext ? { context: hostActionContext } : {}),
     };
+    const resourceStore = accountLifetime && homeFamilyScope && callerBinding && hostAction.execute.prepare && !isOpenableContentViewer
+        ? createPluginSurfaceHostReadStore({
+            isCurrent: isInteractionCurrent,
+            lifetimeSignal: mountLifetime.signal,
+            // Borrowed Account reads must not replace the ordinary Resource
+            // path when an admitted projection has no shareable declarations.
+            // This is the provider's incumbent mount-local store, using the
+            // exact controller target and selected Resource capability.
+            declaredStore: declaredResourceStore ?? createPluginUiResourceStore({
+                pluginId: input.facts.pluginId,
+                accountLifetime,
+                client: {
+                    async readResource(resource, options) {
+                        if (!canReadResource || !daemon || !isInteractionCurrent() || !isDaemonInteractionEnabled()) {
+                            throw Object.assign(new Error('Resource transport is unavailable'), { code: 'plugin_resource_transport_unavailable' });
+                        }
+                        return createPluginContextualResourceReadClient({
+                            pluginId: input.facts.pluginId,
+                            resource: { machineId: daemon.machineId, serverId: daemon.serverId,
+                                expectedCallerOccurrenceId: daemon.expectedOccurrenceId,
+                                ...(input.facts.resourceContext ? { context: input.facts.resourceContext } : {}),
+                                ...(binding?.readResource ? { read: binding.readResource } : {}) },
+                            isCurrent: () => isInteractionCurrent() && isDaemonInteractionEnabled(),
+                        }).readResource(resource, options);
+                    },
+                    ...(canWatchResource && daemon ? createPluginContextualResourceWatchClient({
+                        pluginId: input.facts.pluginId,
+                        resource: { machineId: daemon.machineId, serverId: daemon.serverId,
+                            expectedCallerOccurrenceId: daemon.expectedOccurrenceId,
+                            ...(input.facts.resourceContext ? { context: input.facts.resourceContext } : {}) },
+                        subscriptionIdPrefix: `surface-resource:${randomUUID()}`,
+                        isCurrent: () => isInteractionCurrent() && isDaemonInteractionEnabled(),
+                        ...(binding?.watchResource ? { transport: binding.watchResource } : {}),
+                    }) : {}),
+                },
+            }),
+            async admit(reference, signal) {
+                const account = await captureLazyActionAccountContext(accountLifetime.scope.serverId, signal);
+                try {
+                    if (!isInteractionCurrent() || account.accountId !== accountLifetime.scope.accountId) {
+                        throw Object.assign(new Error('Plugin Account authority retired'), { code: 'plugin_surface_retired' });
+                    }
+                    // API-token prepare defers server grant admission until invocation.run.
+                    // A shared subscription cannot borrow bytes under that deferred proof.
+                    if (account.credentialAuthorityKind === 'api_token') {
+                        throw Object.assign(new Error('Host Resource admission is unavailable for this credential'), { code: 'action_prepare_unavailable' });
+                    }
+                    const admission = await preparePluginSurfaceHostRead({
+                        action: reference.hostRead, input: reference.input,
+                        callerPluginId: surfaceContext.pluginId,
+                        callerContributionLocalId: surfaceContext.contributionId,
+                        callerBinding,
+                        ...(targetedContributions ? { callerSourceCustody: targetedContributions.target.sourceCustody } : {}),
+                        hostAction, signal, isCurrent: isInteractionCurrent,
+                    }, reference.hostRead);
+                    if (!admission.ok) throw Object.assign(new Error(admission.reason), { code: admission.reason });
+                    return getUsageQueryResourceStore(account).getEntry(reference);
+                } finally { account.dispose(); }
+            },
+        }) : declaredResourceStore;
     const widgetArea = createPluginWidgetAreaHostHandler({ facts: input.facts, isCurrent, lifetimeSignal: mountLifetime.signal, hostAction, callerBinding });
     const hostApi = createPluginSurfaceActionHostApi({
         pluginUiProjection: input.facts.pluginUiProjection,
@@ -1082,6 +1142,10 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         isCurrent,
         resourceLifetimeSignal: mountLifetime.signal,
         hostAction,
+        ...(resourceStore && resourceStore !== declaredResourceStore ? { hostResourceStore: resourceStore } : {}),
+        ...((canWatchResource && daemon) || (resourceStore && resourceStore !== declaredResourceStore)
+            ? { resourceInvalidation: { deliver: deliverResourceInvalidation, allowPluginResources: canWatchResource,
+                ...(binding?.watchResource ? { transport: binding.watchResource } : {}) } } : {}),
         ...(callerBinding ? { callerBinding } : {}),
         ...(input.facts.resolveContributedAction
             ? { resolveContributedAction: input.facts.resolveContributedAction }
@@ -1109,15 +1173,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
                                 ? {}
                                 : { context: input.facts.resourceContext }),
                             ...(binding?.readResource ? { read: binding.readResource } : {}),
-                            ...(resourceStore ? { store: resourceStore } : {}),
-                        },
-                    }
-                    : {}),
-                ...(canWatchResource
-                    ? {
-                        resourceInvalidation: {
-                            deliver: deliverResourceInvalidation,
-                            ...(binding?.watchResource ? { transport: binding.watchResource } : {}),
+                            ...(declaredResourceStore ? { store: declaredResourceStore } : {}),
                         },
                     }
                     : {}),
@@ -1202,6 +1258,9 @@ export function useBoundPluginSurfaceController(input: Readonly<{
 }>): BoundPluginSurfaceController {
     const facts = input.facts;
     const binding = input.binding;
+    const executionOriginCurrentRef = React.useRef(binding?.isExecutionOriginCurrent);
+    executionOriginCurrentRef.current = binding?.isExecutionOriginCurrent;
+    const isExecutionOriginCurrent = React.useCallback(() => executionOriginCurrentRef.current?.() !== false, []);
     const daemonInteractionEnabledRef = React.useRef(facts.daemonInteractionEnabled);
     daemonInteractionEnabledRef.current = facts.daemonInteractionEnabled;
     const isDaemonInteractionEnabled = React.useCallback(
@@ -1217,7 +1276,7 @@ export function useBoundPluginSurfaceController(input: Readonly<{
     const controller = React.useMemo(
         () => createBoundPluginSurfaceController({
             facts: { ...facts, isDaemonInteractionEnabled },
-            ...(binding ? { binding } : {}),
+            binding: { ...binding, isExecutionOriginCurrent },
         }),
         // eslint-disable-next-line react-hooks/exhaustive-deps -- the memo is keyed
         // on the facts themselves; `facts`/`binding` are caller-built objects whose
@@ -1236,16 +1295,14 @@ export function useBoundPluginSurfaceController(input: Readonly<{
             facts.targetAuthorityKey,
             facts.occurrenceId,
             facts.readCurrentUiContext,
-            facts.executionOrigin?.serverIdentityId,
-            facts.executionOrigin?.materializationRef.pluginId,
-            facts.executionOrigin?.materializationRef.machineId,
-            facts.executionOrigin?.materializationRef.materializationId,
+            stableJsonStringify(facts.executionOrigin ?? null),
             facts.resourceCapability?.readable,
             facts.resourceCapability?.dynamic,
             stableJsonStringify(facts.pluginUiProjection?.resourcesById ?? null),
             serializeBoundPluginSurfaceResourceContext(facts.resourceContext),
             facts.accountLifetime,
             facts.parentLifetime,
+            facts.isHostCurrent,
             facts.mountInstanceKey,
             facts.interactionEnabled,
             actionInputSelectionFactsKey,

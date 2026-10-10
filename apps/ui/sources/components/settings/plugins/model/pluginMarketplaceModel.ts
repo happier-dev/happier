@@ -21,6 +21,8 @@ import {
 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 
 import type { PluginMarketplaceCatalogEntry } from '../readPluginMarketplaceCatalog';
+import type { PluginAccountInstalledPluginsAdmission, PluginAccountInstalledPluginInstallation } from '@/sync/domains/plugins/availability/reader';
+import { resolvePluginLocalizedText } from '@/sync/domains/plugins/ui/i18n';
 
 export const MARKETPLACE_CAPABILITY_ID = 'tool.plugins' as CapabilityId;
 
@@ -117,7 +119,38 @@ export type InstalledPluginEntry = Readonly<{
         diagnostics: readonly InstalledPluginDiagnostic[];
     }>;
     diagnostics: readonly InstalledPluginDiagnostic[];
+    /** Descriptive Account installation evidence; never a daemon lifecycle record. */
+    accountInstallations?: readonly PluginAccountInstalledPluginInstallation[];
 }>;
+
+/** Account discovery extends the display; the administered daemon's records stay exact. */
+export function projectAccountInstalledPlugins(
+    administered: readonly InstalledPluginEntry[],
+    admission: PluginAccountInstalledPluginsAdmission | null,
+): readonly InstalledPluginEntry[] {
+    if (admission?.kind !== 'available') return administered;
+    const administeredIds = new Set(administered.map((entry) => entry.pluginId));
+    const observed: InstalledPluginEntry[] = [];
+    for (const plugin of admission.plugins) {
+        if (administeredIds.has(plugin.pluginId) || plugin.installations.length === 0) continue;
+        const first = plugin.installations[0]!;
+        const declaration = plugin.installations.find((installation) => installation.declaration)?.declaration;
+        const versions = [...new Set(plugin.installations.map((installation) => installation.materialization.version))];
+        observed.push(Object.freeze({
+            pluginId: plugin.pluginId,
+            title: resolvePluginLocalizedText({ projection: null, pluginId: plugin.pluginId, value: declaration?.displayName }) || plugin.pluginId,
+            description: resolvePluginLocalizedText({ projection: null, pluginId: plugin.pluginId, value: declaration?.description }) || null,
+            version: versions.length === 1 ? versions[0]! : '',
+            enabled: plugin.installations.some((installation) => installation.materialization.enabled),
+            source: { kind: first.materialization.sourceClass === 'bundledFirstParty' ? 'bundled' : 'account', locator: '' },
+            install: { mode: 'observed', manifestVersion: '' },
+            compatibility: { status: 'unknown', diagnostics: [] },
+            diagnostics: [],
+            accountInstallations: plugin.installations,
+        }));
+    }
+    return observed.length === 0 ? administered : Object.freeze([...administered, ...observed]);
+}
 
 export type InstalledPluginLifecycleCapabilities = Readonly<{
     canEnable: boolean;
@@ -148,7 +181,7 @@ export type InstalledPluginLifecycleCapabilities = Readonly<{
 export function projectInstalledPluginLifecycleCapabilities(
     installed: InstalledPluginEntry,
 ): InstalledPluginLifecycleCapabilities {
-    const userManaged = installed.source.kind !== 'bundled';
+    const userManaged = installed.accountInstallations === undefined && installed.source.kind !== 'bundled';
     const trusted = installed.source.trustPolicy !== 'untrusted';
     return Object.freeze({
         canEnable: userManaged && !installed.enabled,

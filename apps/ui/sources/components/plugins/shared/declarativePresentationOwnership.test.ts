@@ -18,7 +18,8 @@ describe('declarative shared-presentation ownership', () => {
     });
 
     it('adapts structure and press lifecycle through plugin-ui presentation instead of local RN copies', () => {
-        const source = readFileSync(new URL('./declarativeNodes.tsx', import.meta.url), 'utf8');
+        const source = readFileSync(new URL('./declarativeNodes.tsx', import.meta.url), 'utf8')
+            + readFileSync(new URL('../../../../../../packages/plugin-ui/src/declarative/declarativeNodes.tsx', import.meta.url), 'utf8');
 
         expect(source).toContain("from '@happier-dev/plugin-ui/presentation'");
         expect(source).toContain('<HappierStack');
@@ -69,21 +70,24 @@ describe('declarative shared-presentation ownership', () => {
     });
 
     it('routes action-panel grouping through the shared semantic toolbar owner', () => {
-        const source = readFileSync(new URL('./declarativeNodes.tsx', import.meta.url), 'utf8');
+        const source = readFileSync(new URL('./declarativeNodes.tsx', import.meta.url), 'utf8')
+            + readFileSync(new URL('../../../../../../packages/plugin-ui/src/declarative/declarativeNodes.tsx', import.meta.url), 'utf8');
 
         expect(source).toContain('<HappierActionPanel');
         expect(source).not.toMatch(/<View[\s\S]{0,240}accessibilityRole="toolbar"/u);
     });
 
     it('routes declarative list rows through the shared semantic row owner', () => {
-        const source = readFileSync(new URL('./declarativeNodes.tsx', import.meta.url), 'utf8');
+        const source = readFileSync(new URL('./declarativeNodes.tsx', import.meta.url), 'utf8')
+            + readFileSync(new URL('../../../../../../packages/plugin-ui/src/declarative/declarativeNodes.tsx', import.meta.url), 'utf8');
 
         expect(source).toContain('<HappierListItem');
         expect(source).not.toContain("from '@/components/ui/lists/Item'");
     });
 
     it('routes declarative state containers through the shared info-state owner', () => {
-        const source = readFileSync(new URL('./declarativeNodes.tsx', import.meta.url), 'utf8');
+        const source = readFileSync(new URL('./declarativeNodes.tsx', import.meta.url), 'utf8')
+            + readFileSync(new URL('../../../../../../packages/plugin-ui/src/declarative/declarativeNodes.tsx', import.meta.url), 'utf8');
 
         expect(source).toContain('<HappierInfoState');
         expect(source).toContain('<HappierInfoTile');
@@ -91,7 +95,8 @@ describe('declarative shared-presentation ownership', () => {
     });
 
     it('routes declarative status rows through the shared status owner', () => {
-        const source = readFileSync(new URL('./declarativeNodes.tsx', import.meta.url), 'utf8');
+        const source = readFileSync(new URL('./declarativeNodes.tsx', import.meta.url), 'utf8')
+            + readFileSync(new URL('../../../../../../packages/plugin-ui/src/declarative/declarativeNodes.tsx', import.meta.url), 'utf8');
 
         expect(source).toContain('<HappierStatus');
         expect(source).not.toContain('<HappierStatusDot');
@@ -99,7 +104,8 @@ describe('declarative shared-presentation ownership', () => {
     });
 
     it('routes declarative Markdown through the shared semantic content owner', () => {
-        const source = readFileSync(new URL('./declarativeNodes.tsx', import.meta.url), 'utf8');
+        const source = readFileSync(new URL('./declarativeNodes.tsx', import.meta.url), 'utf8')
+            + readFileSync(new URL('../../../../../../packages/plugin-ui/src/declarative/declarativeNodes.tsx', import.meta.url), 'utf8');
 
         expect(source).toContain('<HappierMarkdown');
         expect(source).toContain('renderContent={(input) =>');

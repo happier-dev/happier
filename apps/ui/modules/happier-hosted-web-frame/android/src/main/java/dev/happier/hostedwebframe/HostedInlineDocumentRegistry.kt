@@ -7,16 +7,19 @@ import kotlin.concurrent.write
 /** Process-local, synchronously revocable source for caller-authored HTML. */
 internal object HostedInlineDocumentRegistry {
   private val lock = ReentrantReadWriteLock()
-  private val documents = mutableMapOf<String, ByteArray>()
+  private data class Document(val bytes: ByteArray, val contentSecurityPolicy: String)
+  private val documents = mutableMapOf<String, Document>()
 
   fun register(input: Map<String, Any?>): Boolean {
-    if (input.keys != setOf("token", "html")) return false
+    if (input.keys != setOf("token", "html", "contentSecurityPolicy")) return false
     val token = input["token"] as? String ?: return false
     val html = input["html"] as? String ?: return false
+    val contentSecurityPolicy = input["contentSecurityPolicy"] as? String ?: return false
+    if (contentSecurityPolicy != "sandbox allow-scripts") return false
     if (!isToken(token)) return false
     return lock.write {
       if (documents.containsKey(token)) return@write false
-      documents[token] = html.toByteArray(Charsets.UTF_8)
+      documents[token] = Document(html.toByteArray(Charsets.UTF_8), contentSecurityPolicy)
       true
     }
   }
@@ -33,14 +36,23 @@ internal object HostedInlineDocumentRegistry {
     if (!documents.containsKey(token)) null else "https://$token.plugins.happier.dev"
   }
 
+  fun isCurrentDocumentUrl(token: String, url: String): Boolean = lock.read {
+    // A fragment changes the document's location, not its registered identity.
+    // Query strings, paths and every other origin must still match exactly.
+    documents.containsKey(token) && url.substringBefore('#') == "https://$token.plugins.happier.dev/"
+  }
+
   fun <T> withResolved(token: String, requestPath: String, body: (HostedWebArtifactResponse) -> T): T = lock.read {
-    val bytes = documents[token]
-    val response = if (bytes != null && requestPath == "/") {
+    val document = documents[token]
+    val response = if (document != null && requestPath == "/") {
       HostedWebArtifactResponse.content(
         resourceId = "inline-document",
         contentType = "text/html; charset=utf-8",
-        headers = mapOf("Cache-Control" to "no-store", "X-Content-Type-Options" to "nosniff"),
-        bytes = bytes,
+        headers = mapOf(
+          "Cache-Control" to "no-store", "X-Content-Type-Options" to "nosniff",
+          "Content-Security-Policy" to document.contentSecurityPolicy
+        ),
+        bytes = document.bytes,
         fallback = false
       )
     } else {

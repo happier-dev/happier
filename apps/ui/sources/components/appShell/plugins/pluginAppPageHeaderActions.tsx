@@ -66,6 +66,7 @@ export async function dispatchPluginAppPageHeaderAction(input: Readonly<{
     execute?: PluginSurfaceContributedActionTransport;
     signal?: AbortSignal;
     isCurrent?: () => boolean;
+    isDaemonExecutionCurrent?: () => boolean;
     readCurrentUiContext?: () => CurrentUiContextSnapshotV1 | null | undefined;
 }>): Promise<
     PluginSurfaceActionDispatchOutcome
@@ -91,7 +92,8 @@ export async function dispatchPluginAppPageHeaderAction(input: Readonly<{
     // A daemon binding is a daemon-target fact, never a blanket action gate.
     // The canonical dispatcher still owns the target result and fail-closed
     // missing-projection outcome after this caller supplies its exact lookup.
-    if (projectedAction?.execution.target === 'daemon' && (occurrenceId === null || machineId.length === 0)) {
+    if (projectedAction?.execution.target === 'daemon' && (occurrenceId === null || machineId.length === 0
+        || input.isDaemonExecutionCurrent?.() === false)) {
         return { ok: false, code: 'unavailable', reason: 'plugin_ui_action_unavailable' };
     }
     const launched = await launchPluginSurfaceAction({
@@ -124,7 +126,10 @@ export async function dispatchPluginAppPageHeaderAction(input: Readonly<{
             : {}),
         pluginUiProjection: input.projection,
         ...(input.signal ? { signal: input.signal } : {}),
-        ...(input.isCurrent ? { isCurrent: input.isCurrent } : {}),
+        ...((input.isCurrent || input.isDaemonExecutionCurrent) ? { isCurrent: () => (
+            input.isCurrent?.() !== false
+            && (projectedAction.execution.target !== 'daemon' || input.isDaemonExecutionCurrent?.() !== false)
+        ) } : {}),
     });
     return launched.outcome;
 }
@@ -153,6 +158,7 @@ export function PluginAppPageHeaderActions(props: Readonly<{
     openSurface: PluginSurfaceOpenHandler;
     signal?: AbortSignal;
     isCurrent?: () => boolean;
+    isDaemonExecutionCurrent?: () => boolean;
 }>): React.ReactElement | null {
     const { theme } = useUnistyles();
     const currentUiContextReader = useOptionalCurrentUiContextReader();
@@ -178,6 +184,7 @@ export function PluginAppPageHeaderActions(props: Readonly<{
                 }) !== null;
         }
         return locallyCurrent
+            && props.isDaemonExecutionCurrent?.() !== false
             && props.actionAuthority?.occurrenceId !== null
             && props.actionAuthority?.occurrenceId !== undefined
             && (props.actionAuthority?.machineId?.trim().length ?? 0) > 0;
@@ -209,6 +216,7 @@ export function PluginAppPageHeaderActions(props: Readonly<{
                                 resolveContributedAction,
                                 ...(props.signal ? { signal: props.signal } : {}),
                                 ...(props.isCurrent ? { isCurrent: props.isCurrent } : {}),
+                                ...(props.isDaemonExecutionCurrent ? { isDaemonExecutionCurrent: props.isDaemonExecutionCurrent } : {}),
                                 ...(currentUiContextReader
                                     ? { readCurrentUiContext: currentUiContextReader.readCurrentUiContext }
                                     : {}),

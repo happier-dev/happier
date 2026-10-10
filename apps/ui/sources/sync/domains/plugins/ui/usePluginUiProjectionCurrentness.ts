@@ -36,8 +36,16 @@ import {
 } from '@/sync/domains/state/storage';
 import {
     captureActiveServerAccountScopeLifetime,
+    getActiveServerAccountScope,
     type ActiveServerAccountScopeLifetime,
 } from '@/sync/domains/scope/activeServerAccountScope';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import {
+    getAppliedActiveServerId,
+    subscribeAppliedActiveServer,
+} from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import {
     readConnectedAccountDescriptorProjection,
     type ConnectedAccountDescriptorMachineProjection,
@@ -106,6 +114,8 @@ export type PluginUiProjectionCurrentness = Readonly<{
     machineId: string | null;
     serverId: string | null;
     platform: LocalServicePreviewPlatform;
+    /** The same opaque credential lifetime which admitted this projection. */
+    accountLifetime: ServerAccountScopeLifetime | null;
     /** Present on machine-owned reports; aggregate surface projections have no descriptor authority. */
     connectedAccountProjection?: ConnectedAccountDescriptorMachineProjection | null;
 }>;
@@ -251,18 +261,36 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
     const targetKey = enabled && machineId
         ? pluginUiProjectionAdmissionTargetKey({ serverId, machineId })
         : null;
-    // This is the one incumbent ServerAccountScope lifetime. Its identity is
-    // deliberately owner-local currentness, not an Account id or UI epoch.
-    const accountLifetime = targetKey ? captureActiveServerAccountScopeLifetime() : null;
-    const accountLifetimeCurrent = isAccountLifetimeCurrent(accountLifetime);
+    const { binding: routedAccountLifetime } = useServerCredentialAccountScopeBinding(targetKey ? serverId : null);
+    // Explicit Homes borrow the existing credential owner, never the focused
+    // Home's Account. Unqualified legacy readers retain their incumbent owner.
+    const accountLifetime = targetKey
+        ? serverId ? routedAccountLifetime : captureActiveServerAccountScopeLifetime()
+        : null;
+    const accountLifetimeCurrent = serverId
+        ? accountLifetime?.isCurrent() === true
+        : isAccountLifetimeCurrent(accountLifetime);
     const target = React.useMemo(() => (
         targetKey && machineId ? { machineId, serverId } : null
     ), [machineId, serverId, targetKey]);
     const endpointStatus = useEndpointStatus();
-    const machineCliDetectionTarget = useMachineCliDetectionTarget(machineId);
+    const machineCliDetectionTarget = useMachineCliDetectionTarget(machineId, serverId);
+    const appliedServerId = React.useSyncExternalStore(
+        subscribeAppliedActiveServer,
+        getAppliedActiveServerId,
+        getAppliedActiveServerId,
+    );
+    const focusedAccountScope = getActiveServerAccountScope();
+    // The singleton endpoint reports only its applied Home/Account. A routed
+    // projection on another Home is admitted by that Home's existing RPC
+    // transport, not withdrawn when the focused connection is torn down.
+    const usesFocusedEndpoint = !serverId || Boolean(
+        areServerProfileIdentifiersEquivalent(serverId, appliedServerId)
+        && (!focusedAccountScope || accountLifetime?.scope.accountId === focusedAccountScope.accountId),
+    );
     const online = Boolean(
         targetKey
-        && endpointStatus === 'online'
+        && (!usesFocusedEndpoint || endpointStatus === 'online')
         && machineCliDetectionTarget.isOnline,
     );
     const [connectionState, setConnectionState] = React.useState<ProjectionConnectionState>(() => ({
@@ -298,7 +326,6 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
     const authorityKey = targetKey && online && accountLifetimeCurrent
         ? [
             targetKey,
-            machineCliDetectionTarget.daemonStateVersion,
             nextConnectionState.reconnectSequence,
             nextConnectionState.reloadRevision,
             projectionInvalidationRevision,
@@ -310,9 +337,21 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
     const currentAccountLifetimeRef = React.useRef(accountLifetime);
     currentAccountLifetimeRef.current = accountLifetime;
     const currentPluginUiProjectionRef = React.useRef<PluginUiProjectionModel | null>(null);
-    const [loadedProjection, setLoadedProjection] = React.useState<LoadedProjectionState>(() => (
-        createEmptyLoadedProjectionState(null, null)
+    const [loadedProjectionState, setLoadedProjection] = React.useState<LoadedProjectionState>(() => (
+        targetKey && machineId
+            ? createRestoredLoadedProjectionState({ targetKey, machineId, accountLifetime, platform })
+            : createEmptyLoadedProjectionState(null, null)
     ));
+    let loadedProjection = loadedProjectionState;
+    if (loadedProjection.targetKey !== targetKey || loadedProjection.accountLifetime !== accountLifetime) {
+        // Scope adoption belongs to this loaded-state owner. Restore only the
+        // proven Account's existing custody in its first render, before a live
+        // refresh can answer; the restored authorityKey remains null.
+        loadedProjection = targetKey && machineId
+            ? createRestoredLoadedProjectionState({ targetKey, machineId, accountLifetime, platform })
+            : createEmptyLoadedProjectionState(null, null);
+        setLoadedProjection(loadedProjection);
+    }
 
     React.useEffect(() => {
         if (!accountLifetime) return;
@@ -358,7 +397,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
         });
         setLoadedProjection((previous) => {
             if (previous.targetKey !== targetKey || previous.accountLifetime !== accountLifetime) {
-                return restoreRetained();
+                return previous;
             }
             // Losing live authority before this process confirmed anything is
             // the same cold state as booting without it: the Account server's
@@ -499,7 +538,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
             cancelled = true;
             if (retryTimer !== null) clearTimeout(retryTimer);
         };
-    }, [accountLifetime, authorityKey, machineCliDetectionTarget.daemonStateVersion, platform, target, targetKey]);
+    }, [accountLifetime, authorityKey, platform, target, targetKey]);
 
     const hasLoadedCurrentScope = Boolean(
         targetKey
@@ -567,6 +606,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
         machineId,
         serverId,
         platform,
+        accountLifetime,
         connectedAccountProjection,
     }), [
         interactionEnabled,
@@ -574,6 +614,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
         machineId,
         phase,
         platform,
+        accountLifetime,
         pluginBrowserProjection,
         currentPluginUiProjection,
         serverId,

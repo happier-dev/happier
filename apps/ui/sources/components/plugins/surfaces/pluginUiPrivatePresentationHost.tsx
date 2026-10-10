@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { COMPANION_WEB_POINTER_BINDING } from '@/components/companion/interaction/useCompanionPointerDragSession';
+import { NativeFloatingFrame } from '@/components/companion/interaction/NativeFloatingFrame';
 import type { PluginProjectionInstalledPackageV2 } from '@happier-dev/protocol';
 import type {
     PluginUiInstanceKeyV1,
@@ -55,7 +57,7 @@ import { CORE_CAPSULE_HOST } from '@/components/ui/status/capsuleHost';
 import { reanimatedDisclosureMotion } from '@/components/ui/lists/ExpandableItem';
 import { reanimatedCollectionMotion } from '@/components/ui/motion/reanimatedCollectionMotion';
 import { Popover } from '@/components/ui/popover/Popover';
-import { GlassSurface } from '@/components/ui/glass/GlassSurface';
+import { renderThemeMaterialSurface } from '@/components/ui/glass/GlassSurface';
 import { MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS } from '@/components/ui/popover/modalAwareFloatingPopoverPortalOptions';
 import { Text } from '@/components/ui/text/Text';
 import {
@@ -65,6 +67,8 @@ import {
 import { InstalledPluginBrandMark } from '@/components/plugins/shared/InstalledPluginBrandMark';
 import type { HappierUiPalette } from '@happier-dev/plugin-ui/environment';
 import type { PluginUiSessionPartPresentation, PluginUiWidgetAreaPresentation } from '@happier-dev/plugin-ui/advanced';
+import type { FindSurfaceRegistrationHost } from '@happier-dev/plugin-ui/advanced';
+import { createPluginUiPrivateFocusPresentation } from './pluginUiPrivateFocusPresentation';
 import type { DragSourceProps, DropTargetProps, ItemProps, NavigationListDestination } from '@happier-dev/plugin-ui';
 import type { HappierPageChrome, HappierStateSize, HappierLiveStreamProps } from '@happier-dev/plugin-ui/presentation';
 import type { DetailsPaneSlotBinding } from '@/components/appShell/panes/details/DetailsPaneSlot';
@@ -78,6 +82,10 @@ import {
     type InstalledPluginBrandPresentation,
     type InstalledPluginBrandPresentationInput,
 } from '@/components/plugins/shared/installedPluginBrandPresentation';
+
+type PluginUiPrivatePageChrome = HappierPageChrome & Readonly<{
+    renderNavigationActions?: (actions: React.ReactNode) => React.ReactNode;
+}>;
 
 const MATCHING_PLUGIN_POPOVER_PORTAL_OPTIONS = Object.freeze({
     web: true,
@@ -176,10 +184,12 @@ export type PluginUiPrivatePresentationHostOptions = Readonly<{
      * mount and availability are necessary but insufficient for focus.
      */
     isFocusEligible?: () => boolean;
+    find?: FindSurfaceRegistrationHost;
     /** The host's configuration-page colour roles for the current theme (`projectPluginUiHostPalette`). */
     palette?: HappierUiPalette;
+    resolveMaterialColor?: import('@happier-dev/plugin-ui/advanced').PluginUiPresentationHost['resolveMaterialColor'];
     /** The navigation chrome the mount sits in (title shown, back control, content column). */
-    pageChrome?: HappierPageChrome;
+    pageChrome?: PluginUiPrivatePageChrome;
     /** The container's state size (`SurfaceStateSizeProvider`): a plugin's unsized states take it. */
     stateSize?: HappierStateSize;
     /** The page's app details pane, when the mount sits in a page that has one (`DetailsPaneSlotHost`). */
@@ -193,6 +203,7 @@ type PluginUiPrivateTargetBrandMarkInput = Readonly<{
     fallbackBrandDisplayName: string;
     brandPresentationInput?: PluginUiPrivateBrandPresentationInput;
     size?: HappierImageSize;
+    pixelSize?: number;
     showName: boolean;
     externallyLabelled: boolean;
     testID?: string;
@@ -200,7 +211,9 @@ type PluginUiPrivateTargetBrandMarkInput = Readonly<{
 
 function renderPluginUiPrivateBrandMark(input: Readonly<{
     brand: InstalledPluginBrandPresentation;
+    pluginId?: string;
     size?: HappierImageSize;
+    pixelSize?: number;
     showName: boolean;
     externallyLabelled: boolean;
     testID?: string;
@@ -208,7 +221,9 @@ function renderPluginUiPrivateBrandMark(input: Readonly<{
     const mark = (
         <InstalledPluginBrandMark
             brand={input.brand}
+            pluginId={input.pluginId}
             size={input.size}
+            pixelSize={input.pixelSize}
             externallyLabelled={input.showName || input.externallyLabelled}
             testID={input.showName && input.testID ? `${input.testID}-mark` : input.testID}
         />
@@ -232,7 +247,9 @@ function ResolvedPluginUiPrivateTargetBrandMark(props: PluginUiPrivateTargetBran
     });
     return renderPluginUiPrivateBrandMark({
         brand: resolved ?? { displayName: props.target.displayName },
+        pluginId: props.target.installedPackage.id,
         size: props.size,
+        pixelSize: props.pixelSize,
         showName: props.showName,
         externallyLabelled: props.externallyLabelled,
         testID: props.testID,
@@ -250,7 +267,9 @@ function PluginUiPrivateTargetBrandMark(props: PluginUiPrivateTargetBrandMarkInp
     }
     return renderPluginUiPrivateBrandMark({
         brand: { displayName: props.target?.displayName ?? props.fallbackBrandDisplayName },
+        pluginId: props.target?.installedPackage.id,
         size: props.size,
+        pixelSize: props.pixelSize,
         showName: props.showName,
         externallyLabelled: props.externallyLabelled,
         testID: props.testID,
@@ -336,18 +355,7 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
         return <PluginDictationButton {...input} />;
     },
     storedImageHost: SESSION_STORED_IMAGE_HOST,
-    renderMaterialSurface(input: Readonly<{ role: HappierMaterialRole; nested?: boolean; children?: React.ReactNode; style?: HappierSurfaceProps['style']; testID?: string }>) {
-        // The portable style reaches RN at this presentation boundary. Its
-        // base token is a tint input, never an opaque paint over the material.
-        const { backgroundColor, ...style } = StyleSheet.flatten(input.style as StyleProp<ViewStyle>) ?? {};
-        return <GlassSurface
-            surfaceGroup={input.role}
-            nested={input.role === 'floating' ? input.nested : true}
-            solidColor={typeof backgroundColor === 'string' ? backgroundColor : undefined}
-            style={style}
-            testID={input.testID}
-        >{input.children}</GlassSurface>;
-    },
+    renderMaterialSurface: renderThemeMaterialSurface,
     renderMarkdown(input: Readonly<{ value: string; selectable: boolean; testID?: string }>) {
         return <MarkdownView markdown={input.value} selectable={input.selectable} testID={input.testID} />;
     },
@@ -436,7 +444,8 @@ export type PluginUiPrivatePresentationHost = Readonly<
         typography: ReturnType<typeof readPluginUiHostTypography>;
         /** The host's configuration-page colour roles, when the mount supplies its theme. */
         palette?: HappierUiPalette;
-        pageChrome?: HappierPageChrome;
+        find?: FindSurfaceRegistrationHost;
+        pageChrome?: PluginUiPrivatePageChrome;
         stateSize?: HappierStateSize;
         detailsPane?: DetailsPaneSlotBinding;
         paneHeader?: NonNullable<ReturnType<typeof usePaneHeaderSlotBinding>>;
@@ -457,6 +466,7 @@ export type PluginUiPrivatePresentationHost = Readonly<
         renderBrandMark?(input: Readonly<{
             pluginId: string;
             size?: HappierImageSize;
+            pixelSize?: number;
             showName?: boolean;
             externallyLabelled?: boolean;
             testID?: string;
@@ -561,6 +571,7 @@ export function createPluginUiPrivatePresentationHost(
             renderBrandMark(input: Readonly<{
                 pluginId: string;
                 size?: HappierImageSize;
+                pixelSize?: number;
                 showName?: boolean;
                 externallyLabelled?: boolean;
                 testID?: string;
@@ -575,6 +586,7 @@ export function createPluginUiPrivatePresentationHost(
                             ? {}
                             : { brandPresentationInput: options.brandPresentationInput })}
                         size={input.size}
+                        pixelSize={input.pixelSize}
                         showName={input.showName === true}
                         externallyLabelled={input.externallyLabelled === true}
                         testID={input.testID}
@@ -583,14 +595,11 @@ export function createPluginUiPrivatePresentationHost(
             },
         }
         : undefined;
-    const focusPresentation = options?.isFocusEligible
-        ? {
-            focusTarget(target: unknown): boolean {
-                return options.isFocusEligible?.() === true
-                    && focusPluginUiPrivatePresentationTarget(target);
-            },
-        }
-        : undefined;
+    const focusPresentation = createPluginUiPrivateFocusPresentation({
+        isFocusEligible: options?.isFocusEligible,
+        focusTarget: focusPluginUiPrivatePresentationTarget,
+        find: options?.find,
+    });
     return Object.freeze({
         ...presentationRenderers,
         createScrollActivityTracker: createScrollViewNearViewportTracker,
@@ -599,6 +608,7 @@ export function createPluginUiPrivatePresentationHost(
         ...(options?.renderLiveStream ? { renderLiveStream: options.renderLiveStream } : {}),
         typography: readPluginUiHostTypography(),
         ...(options?.palette === undefined ? {} : { palette: options.palette }),
+        ...(options?.resolveMaterialColor === undefined ? {} : { resolveMaterialColor: options.resolveMaterialColor }),
         ...(options?.pageChrome === undefined ? {} : { pageChrome: options.pageChrome }),
         ...(options?.stateSize === undefined ? {} : { stateSize: options.stateSize }),
         ...(options?.detailsPane === undefined ? {} : { detailsPane: options.detailsPane }),
@@ -610,6 +620,9 @@ export function createPluginUiPrivatePresentationHost(
         // `useMotion` created, so the Reanimated pair stays consistent.
         disclosureMotion: reanimatedDisclosureMotion as unknown as HappierDisclosureMotionDriver,
         capsuleHost: CORE_CAPSULE_HOST,
+        // A public FloatingFrame drags through the same web pointer boundary as Happier's companions.
+        ...(Platform.OS === 'web' ? { companionPointer: COMPANION_WEB_POINTER_BINDING } : {}),
+        ...(Platform.OS !== 'web' ? { companionNativeFrame: NativeFloatingFrame } : {}),
         // Widened like the disclosure: the cursor hands `Pointer`/`Ring` only the motion its own
         // `useMotion` created.
         agentCursorMotion: reanimatedAgentCursorMotion as unknown as HappierAgentCursorMotionDriver,

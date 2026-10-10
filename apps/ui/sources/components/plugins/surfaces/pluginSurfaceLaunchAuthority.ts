@@ -7,8 +7,10 @@ import {
 } from '@/sync/domains/plugins/ui/projectionUnion';
 import {
     arePluginMachineExecutionOriginsEqual,
+    getPluginMachineExecutionOriginRef,
     type PluginMachineExecutionOriginV1,
 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
 /**
  * The authority a plugin launch input belongs to.
@@ -93,8 +95,8 @@ export function resolveSelectedPluginSurfaceLaunchAuthority(input: Readonly<{
         || (
             executionOrigin !== null
             && (
-                executionOrigin.materializationRef.pluginId !== input.placement.pluginId
-                || executionOrigin.materializationRef.machineId !== origin.machineId
+                getPluginMachineExecutionOriginRef(executionOrigin).pluginId !== input.placement.pluginId
+                || getPluginMachineExecutionOriginRef(executionOrigin).machineId !== origin.machineId
             )
         )
     ) {
@@ -138,6 +140,14 @@ export function resolvePluginSurfaceLaunchAuthority(input: Readonly<{
 }>): PluginSurfaceLaunchAuthority | null {
     if (!input.placement || input.accountLifetime?.isCurrent() === false) return null;
 
+    // An exact Session/Project scope borrows its own credential authority,
+    // including when its projection carries an app-union origin stamp.
+    if (input.scoped && (!input.accountLifetime?.isCurrent()
+        || !input.scoped.serverId
+        || !areServerProfileIdentifiersEquivalent(input.accountLifetime.scope.serverId, input.scoped.serverId))) {
+        return null;
+    }
+
     if (hasContributionOriginField(input.placement)) {
         return resolveSelectedPluginSurfaceLaunchAuthority({
             placement: input.placement,
@@ -161,8 +171,8 @@ export function resolvePluginSurfaceLaunchAuthority(input: Readonly<{
     const executionOrigin = readPluginUiProjectionEntryExecutionOrigin(input.placement);
     if (
         !executionOrigin
-        || executionOrigin.materializationRef.pluginId !== input.placement.pluginId
-        || executionOrigin.materializationRef.machineId !== scoped.machineId
+        || getPluginMachineExecutionOriginRef(executionOrigin).pluginId !== input.placement.pluginId
+        || getPluginMachineExecutionOriginRef(executionOrigin).machineId !== scoped.machineId
     ) {
         return null;
     }

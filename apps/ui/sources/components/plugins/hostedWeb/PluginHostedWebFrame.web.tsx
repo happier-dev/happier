@@ -4,6 +4,7 @@ import type {
 } from '@happier-dev/protocol';
 import type { UiSurfaceNetworkOriginV1 } from '@happier-dev/protocol/plugins/ui';
 import * as React from 'react';
+import type { ArtifactHtmlBundleV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 
 import type {
     BrowserDiagnosticsEngineBridgeConfig,
@@ -22,7 +23,7 @@ export function PluginHostedWebFrame(props: Readonly<{
     title: string;
     /** Ordinary browser frames require URLs; desktop Artifact frames are direct Wry children. */
     url?: string;
-    html?: string;
+    bundle?: ArtifactHtmlBundleV1;
     networkOrigins?: readonly UiSurfaceNetworkOriginV1[];
     bootstrapConfig?: PluginHostedWebBridgeBootstrapConfigV1;
     sandbox: PluginHostedWebSandboxPolicy;
@@ -84,8 +85,8 @@ export function PluginHostedWebFrame(props: Readonly<{
             />
         );
     }
-    const source = props.html !== undefined
-        ? { html: props.html }
+    const source = props.bundle !== undefined
+        ? { bundle: props.bundle }
         : props.url !== undefined ? { url: props.url } : null;
     if (!source) return <></>;
     return (

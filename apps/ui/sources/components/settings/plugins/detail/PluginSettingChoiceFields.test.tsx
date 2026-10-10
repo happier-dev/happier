@@ -60,6 +60,108 @@ const SELECT_FIELD: PluginProjectionEditableSettingField = {
 const DISABLED_REASON = 'Enable this capability in the plugin manifest.';
 
 describe('PluginSettingSwitchField', () => {
+    it('preserves the ordinary field presentation snapshot across shared-renderer extraction', async () => {
+        const screen = await renderScreen(
+            <>
+                <PluginSettingSwitchField pluginId="acme.plugin" group={GROUP}
+                    field={{ ...SELECT_FIELD, control: 'switch', valueType: 'boolean', defaultValue: false }}
+                    value={true} disabled={false} onChangeValue={() => {}} />
+                <PluginSettingSelectField pluginId="acme.plugin" group={GROUP} field={SELECT_FIELD}
+                    value="safe" disabled={false} onChangeValue={() => {}} />
+                <PluginSettingMultiSelectField pluginId="acme.plugin" group={GROUP}
+                    field={{ ...SELECT_FIELD, control: 'multiSelect' }}
+                    value={['safe']} disabled={false} onChangeValue={() => {}} />
+            </>,
+        );
+        const dropdown = screen.findAllByType(DropdownMenu)[0];
+        expect({
+            rows: screen.findAllByType(Item).map((node) => ({
+                title: node.props.title,
+                subtitle: node.props.subtitle,
+                showChevron: node.props.showChevron,
+                rightElementOutsidePressable: node.props.rightElementOutsidePressable,
+            })),
+            switches: screen.findAllByType(Switch).map((node) => ({
+                value: node.props.value,
+                disabled: node.props.disabled,
+                accessibilityLabel: node.props.accessibilityLabel,
+            })),
+            select: {
+                selectedId: dropdown?.props.selectedId,
+                items: dropdown?.props.items,
+                variant: dropdown?.props.variant,
+                rowKind: dropdown?.props.rowKind,
+                showSelectedSubtitle: dropdown?.props.itemTrigger.showSelectedSubtitle,
+            },
+        }).toMatchInlineSnapshot(`
+          {
+            "rows": [
+              {
+                "rightElementOutsidePressable": true,
+                "showChevron": false,
+                "subtitle": "Choose how this plugin runs.",
+                "title": "Execution mode",
+              },
+              {
+                "rightElementOutsidePressable": undefined,
+                "showChevron": false,
+                "subtitle": "Safe",
+                "title": "Execution mode",
+              },
+              {
+                "rightElementOutsidePressable": true,
+                "showChevron": false,
+                "subtitle": "Use conservative defaults.",
+                "title": "Safe",
+              },
+              {
+                "rightElementOutsidePressable": true,
+                "showChevron": false,
+                "subtitle": "Prioritize speed.",
+                "title": "Fast",
+              },
+            ],
+            "select": {
+              "items": [
+                {
+                  "accessibilityLabel": "Safe. Use conservative defaults.",
+                  "id": ""safe"",
+                  "subtitle": "Use conservative defaults.",
+                  "title": "Safe",
+                },
+                {
+                  "accessibilityLabel": "Fast. Prioritize speed.",
+                  "id": ""fast"",
+                  "subtitle": "Prioritize speed.",
+                  "title": "Fast",
+                },
+              ],
+              "rowKind": "item",
+              "selectedId": ""safe"",
+              "showSelectedSubtitle": false,
+              "variant": "selectable",
+            },
+            "switches": [
+              {
+                "accessibilityLabel": "Execution mode",
+                "disabled": false,
+                "value": true,
+              },
+              {
+                "accessibilityLabel": "Safe. Use conservative defaults.",
+                "disabled": false,
+                "value": true,
+              },
+              {
+                "accessibilityLabel": "Fast. Prioritize speed.",
+                "disabled": false,
+                "value": false,
+              },
+            ],
+          }
+        `);
+    });
+
     it('exposes an author-declared disabled reason visibly and as an accessibility hint', async () => {
         const screen = await renderScreen(
             <PluginSettingSwitchField

@@ -73,7 +73,7 @@ const executeSelectedOperation = vi.fn(async () => ({
 
 describe('openNewSession Host API producer', () => {
     it('attributes the exact plugin and Account scope and settles with JSON null', async () => {
-        const openNewSession = vi.fn(async () => ({ kind: 'opened' as const, dataId: 'handoff-1' }));
+        const openNewSession = vi.fn(async () => ({ kind: 'opened' as const, dataId: 'handoff-1', draftId: 'draft-1' }));
         const handler = createPluginOpenNewSessionHostApiHandler({
             pluginId: 'happier.triage',
             accountLifetime,
@@ -91,7 +91,7 @@ describe('openNewSession Host API producer', () => {
     });
 
     it('materializes the exact selected operation before opening on its exact machine', async () => {
-        const openNewSession = vi.fn(async () => ({ kind: 'opened' as const, dataId: 'handoff-1' }));
+        const openNewSession = vi.fn(async () => ({ kind: 'opened' as const, dataId: 'handoff-1', draftId: 'draft-1' }));
         const handler = createPluginOpenNewSessionHostApiHandler({
             pluginId: 'happier.triage',
             accountLifetime,
@@ -130,7 +130,7 @@ describe('openNewSession Host API producer', () => {
     });
 
     it('refuses retired, malformed, stale-target, failed and cancelled preparation before navigation', async () => {
-        const openNewSession = vi.fn(async () => ({ kind: 'opened' as const, dataId: 'handoff-1' }));
+        const openNewSession = vi.fn(async () => ({ kind: 'opened' as const, dataId: 'handoff-1', draftId: 'draft-1' }));
         const stale = createPluginOpenNewSessionHostApiHandler({
             pluginId: 'happier.triage',
             accountLifetime: { ...accountLifetime, isCurrent: () => false },

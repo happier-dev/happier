@@ -2,7 +2,7 @@ import CryptoKit
 import Darwin
 import Foundation
 
-#if canImport(XCTest)
+#if canImport(XCTest) && !HOSTED_WEB_REGISTRY_STANDALONE
 import XCTest
 
 final class HostedWebArtifactRegistryTests: XCTestCase {
@@ -33,11 +33,19 @@ private enum HostedWebArtifactRegistryTestFailure: Error, CustomStringConvertibl
 
 private func assertInlineDocumentTokenIsProcessLocalAndSynchronouslyRevoked() throws {
   let token = "hpa_\(String(repeating: "a", count: 64))"
-  let html = "<!doctype html><main>current</main>"
+  let html = "<!doctype html><main>\(String(repeating: "current", count: 300_000))</main>"
+  let contentSecurityPolicy = "sandbox allow-scripts"
   let registry = HostedInlineDocumentRegistry.shared
   registry.clear()
+  guard !registry.register(["token": token, "html": html]),
+        !registry.register([
+          "token": token, "html": html,
+          "contentSecurityPolicy": "sandbox allow-scripts allow-same-origin",
+        ]) else {
+    throw HostedWebArtifactRegistryTestFailure.assertionFailed("inline registration must refuse absent or widened sandbox policy")
+  }
 
-  guard registry.register(["token": token, "html": html]) else {
+  guard registry.register(["token": token, "html": html, "contentSecurityPolicy": contentSecurityPolicy]) else {
     throw HostedWebArtifactRegistryTestFailure.assertionFailed("inline registration must accept the exact opaque token")
   }
   guard registry.origin(for: token)?.serialized == "happier-hosted-artifact://\(token)" else {
@@ -46,8 +54,13 @@ private func assertInlineDocumentTokenIsProcessLocalAndSynchronouslyRevoked() th
   let registeredResponse = registry.readResponse(token: token, requestPath: "/")
   guard registeredResponse.status == 200,
         registeredResponse.bytes == Data(html.utf8),
-        registeredResponse.headers["Cache-Control"] == "no-store" else {
+        registeredResponse.headers["Cache-Control"] == "no-store",
+        registeredResponse.headers["Content-Security-Policy"] == contentSecurityPolicy else {
     throw HostedWebArtifactRegistryTestFailure.assertionFailed("registered inline bytes must be reachable only through the current token")
+  }
+  guard registry.readResponse(token: token, requestPath: "/foreign").status == 404,
+        registry.readResponse(token: "hpa_\(String(repeating: "b", count: 64))", requestPath: "/").status == 404 else {
+    throw HostedWebArtifactRegistryTestFailure.assertionFailed("inline registration must reject foreign paths and unregistered tokens")
   }
 
   guard registry.unregister(token) else {
@@ -212,7 +225,7 @@ private let accountKeyHash = String(repeating: "a", count: 64)
 private let artifactKeyHash = String(repeating: "b", count: 64)
 private let storedFileName = String(repeating: "c", count: 64) + ".bin"
 
-#if !canImport(XCTest)
+#if !canImport(XCTest) || HOSTED_WEB_REGISTRY_STANDALONE
 @main
 private struct HostedWebArtifactRegistryTestRunner {
   static func main() {

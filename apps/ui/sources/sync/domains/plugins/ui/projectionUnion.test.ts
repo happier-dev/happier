@@ -1,9 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import {
     normalizePluginUiDestinationBindingV1,
     type PluginUiDestinationBindingInputV1,
 } from '@happier-dev/protocol/plugins/ui';
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
+import type { PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
 
 import { normalizePluginUiProjection, EMPTY_PLUGIN_UI_PROJECTION } from './projection';
 import { selectPluginSurfacePlacementsForBinding } from './surfacePlacementSelectors';
@@ -12,8 +14,85 @@ import {
     readPluginUiContributionOrigin,
     readPluginUiProjectionEntryExecutionOrigin,
     unionPluginUiProjections,
+    mergeInstalledPluginUiProjections,
+    readPluginUiContributionSupplies,
+    readPluginUiExecutionOriginCandidates,
     type PluginUiProjectionUnionMember,
 } from './projectionUnion';
+
+it('retains proven installed declarations on a cold client without fabricating runtime identity', () => {
+    const entry = { ...placementEntry({ pluginId: 'acme.channels', localId: 'channels', container: 'appPage' }), occurrenceId: undefined };
+    const installed = { ...machineProjection({ generation: 1, entriesById: { [String(entry.id)]: entry } }), generation: null };
+    const merged = mergeInstalledPluginUiProjections([installed], null);
+    expect(merged?.surfacePlacementsById[String(entry.id)]).toMatchObject({ pluginId: 'acme.channels' });
+    expect(merged?.surfacePlacementsById[String(entry.id)]?.occurrenceId).toBeUndefined();
+    expect(merged?.generation).toBeNull();
+    expect(mergeInstalledPluginUiProjections([], null)).toBeNull();
+});
+
+it('reuses the live occurrence for the same declared root without confusing runtime identity with content', () => {
+    const pluginId = 'acme.channels';
+    const entry = placementEntry({ pluginId, localId: 'channels', container: 'appPage' });
+    const declarative = {
+        identity: { pluginId, localId: 'inspector', qualifiedId: `${pluginId}/inspector` },
+        visible: true, requiredHostMethods: [],
+        declarativeInventory: { actions: [], destinations: [], settings: [], uiQueries: [] },
+        root: { kind: 'text', path: 'root', order: 0, text: 'Channels' },
+    };
+    const declaredEntry = { ...entry, occurrenceId: undefined, renderer: { kind: 'declarative', contributionId: 'inspector', model: declarative } };
+    const runtimeEntry = { ...entry, renderer: { kind: 'declarative', contributionId: 'inspector', model: {
+        ...declarative, identity: { ...declarative.identity, occurrenceId: entry.occurrenceId },
+    } } };
+    const declared = { ...machineProjection({ generation: 1, entriesById: { [String(entry.id)]: declaredEntry } }), generation: null };
+    const runtime = machineProjection({ generation: 7, entriesById: { [String(entry.id)]: runtimeEntry } });
+    expect(mergeInstalledPluginUiProjections([declared], runtime)?.surfacePlacementsById[String(entry.id)])
+        .toBe(runtime.surfacePlacementsById[String(entry.id)]);
+    const changed = { ...declared, surfacePlacementsById: { ...declared.surfacePlacementsById,
+        [String(entry.id)]: { ...declared.surfacePlacementsById[String(entry.id)]!, renderer: { ...declaredEntry.renderer,
+            model: { ...declarative, root: { ...declarative.root, text: 'New content' } } } } } };
+    expect(mergeInstalledPluginUiProjections([changed], runtime)?.surfacePlacementsById[String(entry.id)]?.occurrenceId).toBeUndefined();
+});
+
+it('retains the declaring installation default beside each exact contribution supply', () => {
+    const pluginId = 'acme.channels';
+    const entry = placementEntry({ pluginId, localId: 'channels', container: 'appPage' });
+    const projection = unionPluginUiProjections([member({ machineId: 'machine-a', generation: 1,
+        entriesById: { [String(entry.id)]: entry }, installedPackagesById: { [pluginId]: {
+            id: pluginId, displayName: 'Channels', version: '1.0.0', enabled: true,
+            source: { kind: 'bundled' }, executionTarget: { default: 'installation' },
+        } } })]).pluginUiProjection;
+    expect(readPluginUiContributionSupplies(projection?.surfacePlacementsById[String(entry.id)])[0])
+        .toMatchObject({ executionTargetDefault: true });
+});
+
+it('projects only a real current source occurrence for execution and retains its exact offline identity', () => {
+    const pluginId = 'acme.local';
+    const entry = placementEntry({ pluginId, localId: 'local', container: 'appPage' });
+    const occurrenceId = String(entry.occurrenceId);
+    const sourceCustody = { kind: 'development' as const, registeredRootId: 'registered-root-a' };
+    const source: PluginUiProjectionUnionMember = {
+        machineId: 'machine-a', serverId: 'server-1', serverIdentityId: 'srv_test', phase: 'current', interactionEnabled: true,
+        projection: machineProjection({ generation: 7, entriesById: { [String(entry.id)]: entry }, installedPackagesById: {
+            [pluginId]: { id: pluginId, displayName: 'Local', version: '1.0.0', enabled: true, source: { kind: 'localPath' },
+                occurrenceId, sourceCustody, executionTarget: { default: 'installation' } },
+        } }),
+    };
+    const read = (member: PluginUiProjectionUnionMember) => readPluginUiExecutionOriginCandidates({
+        projection: unionPluginUiProjections([member]).pluginUiProjection, pluginId,
+    });
+    expect(read(source).sourceCandidates).toEqual([expect.objectContaining({ source: {
+        origin: { serverIdentityId: 'srv_test', sourceRef: { machineId: 'machine-a', pluginId, sourceCustody } },
+        version: '1.0.0', occurrenceId, serverId: 'server-1', generation: 7,
+    }, validation: { kind: 'admitted' } })]);
+    expect(read(source).declaredDefaultOrigins).toEqual([read(source).sourceCandidates[0]!.source.origin]);
+    expect(read({ ...source, phase: 'retainedOffline', interactionEnabled: false }).sourceCandidates[0])
+        .toMatchObject({ source: { occurrenceId, origin: read(source).sourceCandidates[0]!.source.origin }, validation: { kind: 'rejected', reason: 'stale' } });
+    const revoked: PluginMachineMaterializationV1 = { serverIdentityId: 'srv_test', machineId: 'machine-a',
+        materializationId: 'source-observation', pluginId, version: '1.0.0', sourceClass: 'localPath',
+        portableRelease: false, uiArtifacts: [], enabled: false, trustState: 'revoked', observedAt: 2 };
+    expect(read({ ...source, materializationsByPluginId: { [pluginId]: revoked } }).sourceCandidates[0]?.validation.kind)
+        .toBe('rejected');
+});
 
 function machineProjection(input: Readonly<{
     generation: number;
@@ -47,7 +126,7 @@ function placementEntry(input: Readonly<{
     container?: PluginUiDestinationBindingInputV1['container'];
     target?: PluginUiDestinationBindingInputV1['target'];
     order?: number;
-}>): Readonly<Record<string, unknown>> {
+}>) {
     const binding = normalizePluginUiDestinationBindingV1({
         pluginId: input.pluginId,
         destinationId: input.localId,
@@ -99,7 +178,8 @@ function stampEntriesWithProducerOrigins(
         return [id, {
             ...candidate,
             serverIdentityId: origin.serverIdentityId,
-            materializationRef: origin.materializationRef,
+            ...('materializationRef' in origin ? { materializationRef: origin.materializationRef }
+                : { sourceCustody: origin.sourceRef.sourceCustody }),
         }];
     }));
 }
@@ -115,6 +195,8 @@ function member(input: Readonly<{
     producerOriginsByPluginId?: Readonly<Record<string, PluginMachineExecutionOriginV1>>;
     phase?: PluginUiProjectionUnionMember['phase'];
     interactionEnabled?: boolean;
+    archiveDigest?: `sha256:${string}`;
+    uiArtifacts?: PluginMachineMaterializationV1['uiArtifacts'];
 }>): PluginUiProjectionUnionMember {
     return {
         machineId: input.machineId,
@@ -138,10 +220,22 @@ function member(input: Readonly<{
         }),
         phase: input.phase ?? (input.interactionEnabled === false ? 'retainedOffline' : 'current'),
         interactionEnabled: input.interactionEnabled ?? true,
+        materializationsByPluginId: Object.fromEntries(Object.values(input.entriesById ?? input.actionsById ?? {})
+            .flatMap(entry => {
+                const value = entry as Readonly<Record<string, unknown>>;
+                if (typeof value.pluginId !== 'string') return [];
+                const pluginId = value.pluginId;
+                const origin = input.producerOriginsByPluginId?.[pluginId] ?? selectedOrigin(pluginId, input.machineId);
+                if (!('materializationRef' in origin)) return [];
+                return [[pluginId, { ...origin.materializationRef, serverIdentityId: origin.serverIdentityId,
+                    version: '1.0.0', sourceClass: 'registryPackage', portableRelease: true,
+                    archiveDigestSha256: input.archiveDigest ?? `sha256:${'a'.repeat(64)}`,
+                    uiArtifacts: input.uiArtifacts ?? [], enabled: true, trustState: 'trusted', observedAt: 1 } satisfies PluginMachineMaterializationV1]];
+            })),
     };
 }
 
-function selectedOrigin(pluginId: string, machineId: string): PluginMachineExecutionOriginV1 {
+function selectedOrigin(pluginId: string, machineId: string): Extract<PluginMachineExecutionOriginV1, { materializationRef: unknown }> {
     return {
         serverIdentityId: 'srv_test',
         materializationRef: {
@@ -153,10 +247,116 @@ function selectedOrigin(pluginId: string, machineId: string): PluginMachineExecu
 }
 
 function selectedOrigins(...origins: readonly PluginMachineExecutionOriginV1[]): ReadonlyMap<string, PluginMachineExecutionOriginV1> {
-    return new Map(origins.map((origin) => [origin.materializationRef.pluginId, origin]));
+    return new Map(origins.map((origin) => [('materializationRef' in origin ? origin.materializationRef : origin.sourceRef).pluginId, origin]));
 }
 
 describe('unionPluginUiProjections', () => {
+    it('shows Channels on A and Triage on B before any execution or administration selection', () => {
+        const union = unionPluginUiProjections([
+            member({ machineId: 'machine-a', generation: 1, entriesById: {
+                channels: placementEntry({ pluginId: 'happier.channels', localId: 'conversations', container: 'appPage' }),
+            } }),
+            member({ machineId: 'machine-b', generation: 2, entriesById: {
+                triage: placementEntry({ pluginId: 'happier.triage', localId: 'triage', container: 'appPage' }),
+            } }),
+        ], new Map());
+        expect(union.pluginUiProjection).not.toBeNull();
+        expect(selectPluginSurfacePlacementsForBinding(union.pluginUiProjection!, {
+            container: 'appPage', targetKind: 'app',
+        }).map(entry => entry.pluginId)).toEqual(['happier.channels', 'happier.triage']);
+    });
+
+    it('keeps identical portable declarations visible without electing an execution origin', () => {
+        const entries = { panel: placementEntry({ pluginId: 'acme.notes', localId: 'notes', container: 'appPage' }) };
+        const union = unionPluginUiProjections([
+            member({ machineId: 'machine-a', generation: 1, entriesById: entries }),
+            member({ machineId: 'machine-b', generation: 2, entriesById: entries }),
+        ], new Map());
+        const placement = union.pluginUiProjection?.surfacePlacementsById['surfacePlacement:acme.notes:notes'];
+        expect(placement).toBeDefined();
+        expect(readPluginUiContributionOrigin(placement)).toBeNull();
+        expect(placement?.hostSupplies).toHaveLength(2);
+    });
+
+    it('does not coalesce the same version with different content or renderer ABI', () => {
+        const entries = { panel: placementEntry({ pluginId: 'acme.notes', localId: 'notes', container: 'appPage' }) };
+        const a = member({ machineId: 'machine-a', generation: 1, entriesById: entries });
+        const differingContent = member({ machineId: 'machine-b', generation: 2, entriesById: entries,
+            archiveDigest: `sha256:${'b'.repeat(64)}` });
+        const differingAbi = member({ machineId: 'machine-b', generation: 2, entriesById: entries,
+            uiArtifacts: [{ contributionId: 'notes', artifactId: 'notes-web', tier: 'hostedWeb', platform: 'web',
+                artifactDigest: `sha256:${'c'.repeat(64)}`, hostUiApiRange: '^2.0.0' }] });
+        for (const b of [differingContent, differingAbi]) {
+            const placement = unionPluginUiProjections([a, b]).pluginUiProjection?.surfacePlacementsById['surfacePlacement:acme.notes:notes'];
+            expect(placement).toMatchObject({ hostCompatibility: 'conflict', availability: { state: 'blocked' } });
+            expect(readPluginUiContributionOrigin(placement)).toBeNull();
+            expect(readPluginUiProjectionEntryExecutionOrigin(placement)).toBeNull();
+        }
+    });
+
+    it('retains visible declarations when a saved execution target is offline', () => {
+        const union = unionPluginUiProjections([
+            member({ machineId: 'machine-a', generation: 1, phase: 'retainedOffline', interactionEnabled: false,
+                entriesById: { panel: placementEntry({ pluginId: 'acme.notes', localId: 'notes' }) } }),
+        ], new Map());
+        const placement = union.pluginUiProjection?.surfacePlacementsById['surfacePlacement:acme.notes:notes'];
+        expect(placement).toBeDefined();
+        expect(readPluginUiContributionOrigin(placement)).toMatchObject({ phase: 'retainedOffline', interactionEnabled: false });
+    });
+
+    it('lists divergent installed versions as a conflict instead of hiding or selecting one', () => {
+        const pluginId = 'acme.notes';
+        const replica = (machineId: string, version: string) => member({ machineId, generation: 1,
+            entriesById: { panel: placementEntry({ pluginId, localId: 'notes', container: 'appPage' }) },
+            installedPackagesById: { [pluginId]: { id: pluginId, displayName: 'Notes', version, enabled: true,
+                source: { kind: 'marketplace', locator: pluginId } } },
+        });
+        const union = unionPluginUiProjections([replica('machine-a', '1.0.0'), replica('machine-b', '2.0.0')], new Map());
+        const placement = union.pluginUiProjection?.surfacePlacementsById['surfacePlacement:acme.notes:notes'];
+        expect(placement).toMatchObject({ hostCompatibility: 'conflict', availability: { state: 'blocked' } });
+        expect(placement?.hostSupplies).toHaveLength(2);
+        expect(readPluginUiContributionOrigin(placement)).toBeNull();
+    });
+
+    it('handles absent optional execution origins without allocating schema errors', () => {
+        const source = { machineId: 'machine-a', serverId: 'server-1', phase: 'current', interactionEnabled: true,
+            projection: machineProjection({ generation: 1, entriesById: {
+                placement: placementEntry({ pluginId: 'acme.inspector', localId: 'panel' }),
+            } }) } as const;
+        // Call-through instrumentation: all present/invalid records still use the real schema.
+        const parse = vi.spyOn(PluginMachineExecutionOriginV1Schema, 'safeParse');
+        try {
+            const union = unionPluginUiProjections([source], new Map());
+            const placement = Object.values(union.pluginUiProjection?.surfacePlacementsById ?? {})[0];
+            expect(placement).toBeDefined();
+            expect(readPluginUiContributionOrigin(placement)).toMatchObject({ machineId: 'machine-a', executionOrigin: null });
+            expect(parse).not.toHaveBeenCalled();
+        } finally {
+            parse.mockRestore();
+        }
+        expect(readPluginUiProjectionEntryExecutionOrigin({ pluginId: 'acme.inspector', serverIdentityId: 'srv_test',
+            materializationRef: { pluginId: 'acme.inspector' } })).toBeNull();
+        expect(readPluginUiContributionOrigin({ hostOrigin: { machineId: 'machine-a', phase: 'current',
+            executionOrigin: { serverIdentityId: 'srv_test', materializationRef: {} } } })?.executionOrigin).toBeNull();
+        const valid = selectedOrigin('acme.inspector', 'machine-a');
+        expect(readPluginUiProjectionEntryExecutionOrigin({ pluginId: 'acme.inspector', ...valid })).toEqual(valid);
+    });
+
+    it.runIf(process.env.HAPPIER_MEASURE_UI_HOT_LOOPS === '1')('measures 2,000 originless contributions', () => {
+        const source = { machineId: 'machine-a', serverId: 'server-1', phase: 'current', interactionEnabled: true,
+            projection: machineProjection({ generation: 1, entriesById: Object.fromEntries(
+                Array.from({ length: 2_000 }, (_, index) => [`placement-${index}`,
+                    placementEntry({ pluginId: 'acme.inspector', localId: `panel-${index}` })]),
+            ) }) } as const;
+        const start = performance.now();
+        for (let index = 0; index < 5; index++) {
+            const union = unionPluginUiProjections([source], new Map());
+            expect(Object.keys(union.pluginUiProjection?.surfacePlacementsById ?? {})).toHaveLength(2_000);
+        }
+        console.log(JSON.stringify({ measurement: 'originless-projection', contributions: 2_000, unions: 5,
+            elapsedMs: performance.now() - start }));
+    });
+
     it('retains a schema-only input type from its selected serving occurrence without a UI sibling', () => {
         const pluginId = 'acme.types';
         const origin = selectedOrigin(pluginId, 'machine-a');
@@ -266,12 +466,12 @@ describe('unionPluginUiProjections', () => {
         })], selectedOrigins(selected));
 
         expect(union.pluginUiProjection?.resourcesById['acme.inspector/report']).toMatchObject(resource);
-        expect(readPluginUiContributionOrigin(union.pluginUiProjection?.resourcesById['acme.inspector/report']))
-            .toMatchObject({ machineId: 'machine-a', executionOrigin: selected });
+        expect(readPluginUiContributionOrigin(union.pluginUiProjection?.resourcesById['acme.inspector/report'])).toBeNull();
         expect(Object.isFrozen(union.pluginUiProjection?.resourcesById)).toBe(true);
         expect(union.pluginUiProjection?.surfacePlacementsById).not.toEqual({});
-        expect(unionPluginUiProjections([source], selectedOrigins(selectedOrigin('acme.inspector', 'machine-b')))
-            .pluginUiProjection).toBeNull();
+        const unavailableChoice = unionPluginUiProjections([source], selectedOrigins(selectedOrigin('acme.inspector', 'machine-b')));
+        expect(unavailableChoice.pluginUiProjection?.surfacePlacementsById['surfacePlacement:acme.inspector:panel']).toBeDefined();
+        expect(readPluginUiContributionOrigin(unavailableChoice.pluginUiProjection?.surfacePlacementsById['surfacePlacement:acme.inspector:panel'])).toBeNull();
         const originless = machineProjection({ generation: 4,
             entriesById: { placement: placementEntry({ pluginId: 'acme.inspector', localId: 'panel' }) },
             resourcesById: { 'acme.inspector/report': resource },
@@ -282,69 +482,21 @@ describe('unionPluginUiProjections', () => {
             .toMatchObject({ machineId: 'machine-a', executionOrigin: null });
     });
 
-    it('keeps a package brand fact from the Administration-selected materialization', () => {
-        const selected = selectedOrigin('acme.inspector', 'machine-a');
-        const entries = {
-            placement: placementEntry({ pluginId: 'acme.inspector', localId: 'panel' }),
-            reactNativeBundle: reactNativeBundleEntry('acme.inspector'),
-        };
-        const union = unionPluginUiProjections([
-            member({
-                machineId: 'machine-a',
-                generation: 3,
-                entriesById: entries,
-                installedPackagesById: {
-                    'acme.inspector': {
-                        id: 'acme.inspector',
-                        displayName: 'Inspector A',
-                        version: '1.0.0',
-                        enabled: true,
-                        source: { kind: 'bundled', locator: 'acme.inspector' },
-                        brand: {
-                            state: 'available',
-                            resource: { pluginId: 'acme.inspector', localId: 'brand-a' },
-                            width: 64,
-                            height: 64,
-                            digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-                        },
-                    },
-                },
-            }),
-            member({
-                machineId: 'machine-b',
-                generation: 4,
-                entriesById: entries,
-                installedPackagesById: {
-                    'acme.inspector': {
-                        id: 'acme.inspector',
-                        displayName: 'Inspector B',
-                        version: '2.0.0',
-                        enabled: true,
-                        source: { kind: 'bundled', locator: 'acme.inspector' },
-                        brand: {
-                            state: 'available',
-                            resource: { pluginId: 'acme.inspector', localId: 'brand-b' },
-                            width: 64,
-                            height: 64,
-                            digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-                        },
-                    },
-                },
-            }),
-        ], selectedOrigins(selected));
-
-        // The union may not take a package fact from a newer or richer replica:
-        // the selected materialization owns its artifact and brand identity.
-        expect(union.pluginUiProjection?.installedPackagesById['acme.inspector']).toMatchObject({
-            displayName: 'Inspector A',
-            brand: {
-                state: 'available',
-                resource: { pluginId: 'acme.inspector', localId: 'brand-a' },
-            },
-        });
+    it('does not appoint a package brand or serving occurrence when installations conflict', () => {
+        const pluginId = 'acme.inspector';
+        const entries = { placement: placementEntry({ pluginId, localId: 'panel' }) };
+        const union = unionPluginUiProjections(['machine-a', 'machine-b'].map((machineId, index) => member({
+            machineId, generation: 3, entriesById: entries,
+            installedPackagesById: { [pluginId]: { id: pluginId, displayName: 'Inspector', version: String(index),
+                enabled: true, source: { kind: 'bundled', locator: pluginId }, occurrenceId: machineId } },
+        })), selectedOrigins(selectedOrigin(pluginId, 'machine-a')));
+        expect(union.pluginUiProjection?.surfacePlacementsById['surfacePlacement:acme.inspector:panel'])
+            .toMatchObject({ hostCompatibility: 'conflict' });
+        expect(union.pluginUiProjection?.installedPackagesById[pluginId]?.occurrenceId).toBeUndefined();
+        expect(union.pluginUiProjection?.installedPackagesById[pluginId]?.enabled).toBe(false);
     });
 
-    it('withholds a replicated plugin until Administration supplies its exact origin', () => {
+    it('keeps nonidentical replicated declarations as a visible conflict before selection', () => {
         const replicaEntries = {
             placement: placementEntry({ pluginId: 'acme.inspector', localId: 'panel' }),
             reactNativeBundle: reactNativeBundleEntry('acme.inspector'),
@@ -364,10 +516,11 @@ describe('unionPluginUiProjections', () => {
             }),
         ], new Map());
 
-        expect(union.pluginUiProjection).toBeNull();
+        expect(union.pluginUiProjection?.surfacePlacementsById['surfacePlacement:acme.inspector:panel'])
+            .toMatchObject({ hostCompatibility: 'conflict', availability: { state: 'blocked' } });
     });
 
-    it('withholds a same-machine replica when its producer materialization differs from the selected origin', () => {
+    it('retains a same-machine declaration without binding a replaced materialization', () => {
         const pluginId = 'acme.inspector';
         const selected = selectedOrigin(pluginId, 'machine-a');
         const staleSameMachine: PluginMachineExecutionOriginV1 = {
@@ -388,10 +541,11 @@ describe('unionPluginUiProjections', () => {
         // A machine id match alone used to admit this entry. The direct V2
         // producer stamp has a different install/materialization identity, so
         // its page/panel must be unavailable rather than silently elected.
-        expect(union.pluginUiProjection).toBeNull();
+        expect(union.pluginUiProjection?.surfacePlacementsById['surfacePlacement:acme.inspector:panel']).toBeDefined();
+        expect(readPluginUiContributionOrigin(union.pluginUiProjection?.surfacePlacementsById['surfacePlacement:acme.inspector:panel'])).toBeNull();
     });
 
-    it('withholds a same-machine entry when its producer server identity differs from the selected origin', () => {
+    it('retains a declaration without binding a foreign server identity', () => {
         const pluginId = 'acme.inspector';
         const selected = selectedOrigin(pluginId, 'machine-a');
         const foreignServer = {
@@ -409,7 +563,8 @@ describe('unionPluginUiProjections', () => {
         // The materialization key is scoped by server identity. Keeping the
         // same machine/plugin/install coordinates is still not enough to make
         // bytes from another server a selected App contribution.
-        expect(union.pluginUiProjection).toBeNull();
+        expect(union.pluginUiProjection?.surfacePlacementsById['surfacePlacement:acme.inspector:panel']).toBeDefined();
+        expect(readPluginUiContributionOrigin(union.pluginUiProjection?.surfacePlacementsById['surfacePlacement:acme.inspector:panel'])).toBeNull();
     });
 
     it('keeps every machine\'s contributions and stamps each with its own origin', () => {
@@ -462,7 +617,7 @@ describe('unionPluginUiProjections', () => {
         expect(union.machineId).toBeNull();
     });
 
-    it('follows the exact selected origin even when another replica projects more entries', () => {
+    it('retains differing replica entries as conflict without choosing the selected producer', () => {
         const replicaEntries = {
             placement: placementEntry({ pluginId: 'acme.inspector', localId: 'panel' }),
             reactNativeBundle: reactNativeBundleEntry('acme.inspector'),
@@ -485,22 +640,10 @@ describe('unionPluginUiProjections', () => {
                 targetKind: 'app',
             })
             : [];
-        expect(placements).toHaveLength(1);
-        expect(readPluginUiContributionOrigin(placements[0])?.machineId).toBe('machine-a');
-        // The generated V2 React Native bundle comes from the SAME machine and
-        // generation as its placement, so its cache identity can never be
-        // checked against a different machine's generation.
-        const bundle = union.pluginUiProjection?.reactNativeBundlesById['reactNativeBundle:acme.inspector:bundle'];
-        expect(readPluginUiContributionOrigin(bundle)).toEqual({
-            machineId: 'machine-a',
-            serverId: 'server-1',
-            generation: 2,
-            interactionEnabled: true,
-            phase: 'current',
-            executionOrigin: selectedOrigin('acme.inspector', 'machine-a'),
-        });
-        expect(union.pluginUiProjection?.surfacePlacementsById['surfacePlacement:acme.inspector:extra'])
-            .toBeUndefined();
+        expect(placements).toHaveLength(2);
+        expect(placements.every(placement => placement.hostCompatibility === 'conflict')).toBe(true);
+        expect(placements.every(placement => readPluginUiContributionOrigin(placement) === null)).toBe(true);
+
     });
 
     it('carries a client Action only from its exact selected producer and preserves its execution target', () => {
@@ -603,15 +746,9 @@ describe('unionPluginUiProjections', () => {
             })
             : [];
         expect(placements.map((entry) => entry.id)).toEqual(['surfacePlacement:acme.inspector:panel']);
-        expect(readPluginUiContributionOrigin(placements[0])?.machineId).toBe('machine-b');
-        // The whole plugin follows its owner: no half from each machine.
-        expect(Object.keys(union.pluginUiProjection?.surfacePlacementsById ?? {}).sort()).toEqual([
-            'surfacePlacement:acme.inspector:panel',
-            'surfacePlacement:acme.inspector:session',
-        ]);
-        expect(readPluginUiContributionOrigin(
-            union.pluginUiProjection?.surfacePlacementsById['surfacePlacement:acme.inspector:session'],
-        )?.machineId).toBe('machine-b');
+        expect(placements[0]?.hostCompatibility).toBe('conflict');
+        expect(readPluginUiContributionOrigin(placements[0])).toBeNull();
+
     });
 
     it('publishes the sole member\'s machine and generation unchanged', () => {
@@ -705,13 +842,13 @@ describe('unionPluginUiProjections', () => {
         // selected machine. A restored page for that plugin must remain
         // unresolved until machine-b's first describe settles.
         expect(union).toMatchObject({
-            pluginUiProjection: null,
-            phase: 'establishing',
-            interactionEnabled: false,
+            phase: 'current',
+            hasEstablishingMembers: true,
+            interactionEnabled: true,
         });
     });
 
-    it('keeps the coarse union inert while another member is establishing', () => {
+    it('keeps an admitted current contribution usable while forty unrelated members are establishing', () => {
         const union = unionPluginUiProjections([
             member({
                 machineId: 'machine-a',
@@ -720,20 +857,19 @@ describe('unionPluginUiProjections', () => {
                     selected: placementEntry({ pluginId: 'acme.selected', localId: 'panel' }),
                 },
             }),
-            member({
-                machineId: 'machine-b',
+            ...Array.from({ length: 40 }, (_, index) => member({
+                machineId: `offline-${index}`,
                 generation: undefined,
                 phase: 'establishing',
                 interactionEnabled: false,
-            }),
+            })),
         ], selectedOrigins(selectedOrigin('acme.selected', 'machine-a')));
 
-        // Exact mounts retain machine-a's stamped current authority, but a
-        // generic consumer of the aggregate cannot execute while the catalog
-        // itself is still incomplete.
+        // The admitted contribution owns its readiness. An offline Machine
+        // with no current description cannot withhold that origin's catalog.
         expect(union).toMatchObject({
-            phase: 'establishing',
-            interactionEnabled: false,
+            phase: 'current',
+            interactionEnabled: true,
         });
         expect(readPluginUiContributionOrigin(
             union.pluginUiProjection?.surfacePlacementsById['surfacePlacement:acme.selected:panel'],
@@ -806,7 +942,7 @@ describe('unionPluginUiProjections', () => {
         }
     });
 
-    it('still withholds an unstamped contribution wherever a selection exists for that plugin', () => {
+    it('retains an unstamped declaration without granting the selected materialization authority', () => {
         // The fail-closed half that must survive the re-key: once the Account
         // holds a selection for a plugin id, only the exact producer stamp
         // admits it. A daemon that lost its execution-origin context publishes
@@ -831,78 +967,10 @@ describe('unionPluginUiProjections', () => {
             selectedOrigins(selectedOrigin('acme.selected', 'machine-a')),
         );
 
-        expect(union.pluginUiProjection?.surfacePlacementsById['surfacePlacement:acme.selected:panel'])
-            .toBeUndefined();
-        expect(union.pluginUiProjection?.installedPackagesById['acme.selected']).toBeUndefined();
-    });
+        const placement = union.pluginUiProjection?.surfacePlacementsById['surfacePlacement:acme.selected:panel'];
+        expect(placement).toBeDefined();
+        expect(readPluginUiContributionOrigin(placement)).toBeNull();
 
-    it('follows the selected Administration machine when multiple machines project the same originless plugin', () => {
-        const pluginId = 'happier.triage';
-        const actionId = `${pluginId}/open-triage`;
-        const replica = (machineId: string, version: string): PluginUiProjectionUnionMember => ({
-            machineId,
-            serverId: 'server-1',
-            projection: machineProjection({
-                generation: 7,
-                entriesById: {
-                    placement: placementEntry({ pluginId, localId: 'triage' }),
-                },
-                actionsById: {
-                    [actionId]: {
-                        id: 'open-triage',
-                        pluginId,
-                        occurrenceId: `${machineId}:triage-occurrence`,
-                        title: 'Open triage',
-                        scopes: ['session'],
-                        surfaces: ['ui'],
-                        placementBindings: ['detailsPanel'],
-                        dangerLevel: 'safe',
-                        available: true,
-                        execution: { target: 'daemon' },
-                    },
-                },
-                installedPackagesById: {
-                    [pluginId]: {
-                        id: pluginId,
-                        displayName: 'Triage',
-                        version,
-                        enabled: true,
-                        source: { kind: 'bundled', locator: pluginId },
-                    },
-                },
-            }),
-            phase: 'current',
-            interactionEnabled: true,
-        });
-
-        const members = [replica('machine-b', '2.0.0'), replica('machine-a', '1.0.0')];
-        const unresolved = unionPluginUiProjections(members, new Map());
-        expect(unresolved.pluginUiProjection).toBeNull();
-        expect(unresolved.interactionEnabled).toBe(false);
-
-        const unionA = unionPluginUiProjections(members, new Map(), 'machine-a');
-        const placementA = unionA.pluginUiProjection
-            ?.surfacePlacementsById['surfacePlacement:happier.triage:triage'];
-        expect(readPluginUiContributionOrigin(placementA)).toMatchObject({
-            machineId: 'machine-a',
-            executionOrigin: null,
-        });
-        expect(unionA.pluginUiProjection?.actionsById[actionId]?.occurrenceId)
-            .toBe('machine-a:triage-occurrence');
-        expect(unionA.pluginUiProjection?.installedPackagesById['happier.triage']?.version).toBe('1.0.0');
-        expect(unionA.interactionEnabled).toBe(true);
-
-        const unionB = unionPluginUiProjections(members, new Map(), 'machine-b');
-        const placementB = unionB.pluginUiProjection
-            ?.surfacePlacementsById['surfacePlacement:happier.triage:triage'];
-        expect(readPluginUiContributionOrigin(placementB)).toMatchObject({
-            machineId: 'machine-b',
-            executionOrigin: null,
-        });
-        expect(unionB.pluginUiProjection?.actionsById[actionId]?.occurrenceId)
-            .toBe('machine-b:triage-occurrence');
-        expect(unionB.pluginUiProjection?.installedPackagesById['happier.triage']?.version).toBe('2.0.0');
-        expect(unionB.interactionEnabled).toBe(true);
     });
 
     it('treats an authority flip as a member change and an unchanged snapshot as none', () => {

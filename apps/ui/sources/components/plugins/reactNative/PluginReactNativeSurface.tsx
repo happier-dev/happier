@@ -49,7 +49,6 @@ import {
     readPluginSurfaceDiagnosticError,
 } from '@/components/plugins/shared/pluginSurfaceDiagnosticLog';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
-import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import {
     createPluginReactNativeWatchdog,
     type PluginReactNativeWatchdog,
@@ -140,7 +139,6 @@ type PluginReactNativeSurfaceProps = Readonly<{
         machineId?: string | null;
         serverId?: string | null;
     }>;
-    loadTimeoutMs?: number;
     /** Targeted caller fallback, consumed only for a contributor render crash. */
     targetedFallback?: React.ReactNode;
     onCrash?: (surfaceId: string, error: Error) => void;
@@ -157,16 +155,6 @@ type PendingPluginReactNativeModuleState = LoadedPluginReactNativeModuleState & 
     writeFence: PluginReactNativeModuleRegistryWriteFence | null;
 }>;
 
-/**
- * The load deadline is the budget of the slowest bounded phase it contains: a
- * cold load reads the Artifact's bytes from the daemon over one server-scoped
- * machine RPC (`fetchPluginArtifactBytesViaMachineRpc`), which inherits the
- * canonical RPC ceiling. Every other phase is local (digest verification,
- * cache write, synchronous CommonJS evaluation). A shorter local cutoff
- * abandoned multi-megabyte transfers that were still within their contract,
- * so the deadline is derived from that owner rather than restated.
- */
-const DEFAULT_LOAD_TIMEOUT_MS = DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS;
 const loadedModuleRegistry = getInstalledPluginReactNativeModuleRegistry();
 let nextPluginReactNativeMountOwnerId = 0;
 const defaultWatchdog = createPluginReactNativeWatchdog();
@@ -336,7 +324,8 @@ function readCanonicalPluginUiRenderContextDiagnostic(value: unknown): string | 
     if (!PluginUiMountContextV1Schema.safeParse(context.surface.mount).success) {
         return 'render_context_surface_mount_invalid';
     }
-    if (!PluginUiTargetedContributionsV1Schema.safeParse(context.surface.targetedContributions).success) {
+    if (context.surface.targetedContributions !== undefined
+        && !PluginUiTargetedContributionsV1Schema.safeParse(context.surface.targetedContributions).success) {
         return 'render_context_targeted_contributions_invalid';
     }
     if (!(context.signal instanceof AbortSignal)) return 'render_context_signal_missing';
@@ -384,6 +373,12 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         : resolvePluginReactNativeLoaderPolicy(props.loadPolicy);
     const watchdog = props.watchdog ?? defaultWatchdog;
     const artifactDigest = props.loadedRuntimeIdentity?.artifactDigest;
+    const pluginId = readRenderContextPluginId(props.renderContext);
+    const loadRef = React.useRef(props.load);
+    const hasLoader = Boolean(props.load);
+    React.useLayoutEffect(() => {
+        loadRef.current = props.load;
+    }, [props.load]);
     const watchdogCacheKey = props.cacheKey ?? props.surfaceId;
     const mountAttemptId = React.useMemo(() => [
         'plugin-rn-mount',
@@ -430,7 +425,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
     ) => {
         logPluginSurfaceDiagnostic(
             {
-                pluginId: readRenderContextPluginId(props.renderContext),
+                pluginId,
                 contributionId: null,
                 surfaceId: props.surfaceId,
             },
@@ -444,7 +439,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         }
     }, [
         artifactDigest,
-        props.renderContext,
+        pluginId,
         props.surfaceId,
         watchdog,
     ]);
@@ -453,7 +448,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         if (
             props.decision.state !== 'load'
             || props.module
-            || !props.load
+            || !hasLoader
             || !loadPolicy.canLoad
             || cachedModule !== null
             || pendingModuleState?.cacheKey === props.cacheKey
@@ -464,28 +459,19 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         }
 
         let cancelled = false;
-        let timedOut = false;
+        // Acquisition belongs to this Artifact/mount attempt. Fresh host
+        // closures and presentation contexts do not replace that lifecycle.
+        const load = loadRef.current;
         // The registry—not this consumer—owns active projection currentness.
         // Capture its key-local admission before the loader can settle.
         const moduleWriteFence = loadedModuleRegistry.captureWriteFence(props.cacheKey);
-        const timeout = setTimeout(() => {
-            if (!cancelled) {
-                timedOut = true;
-                // A bounded load deadline is presentation/liveness policy, not
-                // evidence that plugin code evaluated or rendered and crashed.
-                // Keep the current mount fenced and offer retry, but leave the
-                // durable crash owner for actual loader/module/render failures.
-                setLoadFailureDiagnostics(['load_timeout']);
-                setLoadFailed(true);
-                setRetrying(false);
-            }
-        }, props.loadTimeoutMs ?? DEFAULT_LOAD_TIMEOUT_MS);
-
+        // The Artifact loader owns acquisition and its transport failures.
+        // Its async phases do not share the byte RPC's start time: another
+        // renderer timer could discard a valid result while that owner is live.
         Promise.resolve()
-            .then(() => props.load?.())
+            .then(() => load?.())
             .then((nextModule) => {
-                if (!cancelled && !timedOut && isPluginReactNativeSurfaceModule(nextModule)) {
-                    clearTimeout(timeout);
+                if (!cancelled && isPluginReactNativeSurfaceModule(nextModule)) {
                     setLoadFailureDiagnostics([]);
                     setLoadFailed(false);
                     setPendingModuleState({
@@ -494,8 +480,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
                         writeFence: moduleWriteFence,
                     });
                     setRetrying(false);
-                } else if (!cancelled && !timedOut) {
-                    clearTimeout(timeout);
+                } else if (!cancelled) {
                     recordLocalFailure('invalid_surface_module');
                     setLoadFailureDiagnostics(['invalid_surface_module']);
                     setLoadFailed(true);
@@ -503,8 +488,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
                 }
             })
             .catch((error: unknown) => {
-                if (!cancelled && !timedOut) {
-                    clearTimeout(timeout);
+                if (!cancelled) {
                     recordLocalFailure('load_error', error);
                     setLoadFailureDiagnostics(readLoaderErrorDiagnostics(error));
                     setLoadFailed(true);
@@ -514,7 +498,6 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
 
         return () => {
             cancelled = true;
-            clearTimeout(timeout);
         };
     }, [
         loadPolicy.canLoad,
@@ -523,8 +506,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         cachedModule,
         props.cacheKey,
         props.decision.state,
-        props.load,
-        props.loadTimeoutMs,
+        hasLoader,
         props.module,
         recordLocalFailure,
         pendingQuarantine,

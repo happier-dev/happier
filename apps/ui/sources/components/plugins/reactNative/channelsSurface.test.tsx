@@ -40,6 +40,7 @@ import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/plugin
 import {
   createPluginSurfaceHostApi,
   createPluginSurfaceHostApiError,
+  readPluginSurfaceHostApiErrorPayload,
   type PluginSurfaceHostApiHandlers,
   type PluginSurfaceHostApiMethodHandler,
 } from '@/components/plugins/surfaces/createPluginSurfaceHostApi';
@@ -920,7 +921,7 @@ function createChannelsHostApi(input: Readonly<{
     const payload = request.payload;
     if (!isRecord(payload)) throw new Error('Expected a Resource read payload.');
     const resource = PluginUiResourceSubscriptionTargetV1Schema.parse(payload.resource);
-    if (typeof resource === 'string') throw new Error('Channels sends qualified Resource references.');
+    if (typeof resource === 'string' || !('localId' in resource)) throw new Error('Channels sends qualified Resource references.');
     const content = resource.localId === CHANNELS_BINDINGS_RESOURCE.localId
       ? await input.readBindingsResource?.() ?? bindingResourceContent([])
       : await input.readResource(resource);
@@ -930,9 +931,13 @@ function createChannelsHostApi(input: Readonly<{
   if (methods.includes('executeAction')) handlers.executeAction = async (request) => {
     const payload = PluginUiExecuteActionRequestV1Schema.parse(request.payload);
     if (typeof payload.action !== 'string') throw new Error('Channels management uses its local Action ids.');
-    return PluginUiJsonValueV1Schema.parse(
-      await input.executeAction?.(payload.action, payload.input) ?? { kind: 'updated' },
-    );
+    const result = await input.executeAction?.(payload.action, payload.input) ?? { kind: 'updated' };
+    // Daemon dispatch returns declared host failures; unexpected handler
+    // exceptions still become internal_error through the real settlement owner.
+    const failure = readPluginSurfaceHostApiErrorPayload(result);
+    return failure === null
+      ? PluginUiJsonValueV1Schema.parse(result)
+      : createPluginSurfaceHostApiError(failure.code, failure.diagnostics);
   };
   if (methods.includes('selectActionInput')) handlers.selectActionInput = async (request) => {
     const payload = PluginUiSelectActionInputRequestV1Schema.parse(request.payload);
@@ -943,7 +948,7 @@ function createChannelsHostApi(input: Readonly<{
   if (methods.includes('watchResource')) {
     handlers.watchResource = (request) => {
       const payload = PluginUiResourceSubscriptionRequestV1Schema.parse(request.payload);
-      if (typeof payload.resource === 'string') throw new Error('Channels watches qualified Resources.');
+      if (typeof payload.resource === 'string' || !('localId' in payload.resource)) throw new Error('Channels watches qualified Resources.');
       subscriptions.set(payload.resource.localId, payload.subscriptionId);
       return {};
     };
@@ -2084,7 +2089,7 @@ describe('Channels settings surface (real source, mounted)', () => {
         return bindingResourceContent([binding]);
       },
       executeAction: async () => {
-        throw Object.assign(new Error('The binding update may have reached the Account.'), { code: 'timeout' });
+        return createPluginSurfaceHostApiError('timeout');
       },
     });
 
@@ -2148,7 +2153,7 @@ describe('Channels settings surface (real source, mounted)', () => {
         return bindingResourceContent(bindings, bindingDigestCharacter);
       },
       executeAction: async () => {
-        throw Object.assign(new Error('The binding update may have reached the Account.'), { code: 'timeout' });
+        return createPluginSurfaceHostApiError('timeout');
       },
     });
 
@@ -2189,266 +2194,84 @@ describe('Channels settings surface (real source, mounted)', () => {
     expect(findPressableByTestId(renderer, 'channels-binding-pause-binding-2').props.disabled).toBe(false);
   });
 
-  it('offers provider filters only when the joined binding rows span multiple provider types', async () => {
-    const firstConnection = connectionFixture({
-      providerPluginId: 'example.channel.alpha',
-      integrationPrincipalLabel: 'Alpha Relay',
-    });
-    const firstBinding = bindingFixture();
-    const singleProviderHost = createChannelsHostApi({
-      readResource: async () => connectionResourceContent([firstConnection]),
-      readBindingsResource: async () => bindingResourceContent([firstBinding]),
-    });
-    renderer = await renderChannelsSurface(singleProviderHost.hostApi);
-    expect(findByTestId(renderer, 'channels-binding-provider-filters')).toHaveLength(0);
-
-    act(() => renderer?.unmount());
-    renderer = null;
-    const secondConnection = connectionFixture({
-      connectionId: 'connection-2',
-      providerPluginId: 'example.channel.beta',
-      integrationPrincipalLabel: 'Beta Relay',
-    });
-    const secondBinding = bindingFixture({
-      bindingId: 'binding-2',
-      connectionId: secondConnection.connectionId,
-      endpoint: { label: 'Build discussion' },
-    });
-    const multiProviderHost = createChannelsHostApi({
-      readResource: async () => connectionResourceContent([firstConnection, secondConnection]),
-      readBindingsResource: async () => bindingResourceContent([firstBinding, secondBinding]),
-    });
-    renderer = await renderChannelsSurface(multiProviderHost.hostApi);
-
-    expect(findByTestId(renderer, 'channels-binding-provider-filters').length).toBeGreaterThan(0);
-    const allProviders = findPressableByTestId(renderer, 'channels-binding-provider-filters:all');
-    expect(allProviders.props.accessibilityRole).toBe('tab');
-    const alphaProviders = findPressableByTestId(
-      renderer,
-      'channels-binding-provider-filters:example.channel.alpha',
-    );
-    await act(async () => {
-      alphaProviders.props.onPress();
-    });
-    await flushHookEffects();
-
-    expect(alphaProviders.props.selected).toBe(true);
-    expect(findByTestId(renderer, 'channels-binding-binding-1').length).toBeGreaterThan(0);
-    expect(findByTestId(renderer, 'channels-binding-binding-2')).toHaveLength(0);
-  });
-
-  it('projects admitted setup and existing binding brands through the installed plugin presentation', async () => {
+  it('groups page conversations by provider and bot identity while Settings owns setup', async () => {
     const targetedContributions = channelsProviderTargetedContributions();
-    const alphaProviderId = 'example.channel.alpha';
-    const betaProviderId = 'example.channel.beta';
-    const alphaConnection = connectionFixture({
-      connectionId: 'connection-alpha',
-      providerPluginId: alphaProviderId,
-      integrationPrincipalLabel: 'Zulu connection identity',
-    });
-    const duplicateAlphaConnection = connectionFixture({
-      connectionId: 'connection-alpha-2',
-      providerPluginId: alphaProviderId,
-      integrationPrincipalLabel: 'Another Alpha connection',
-    });
-    const betaConnection = connectionFixture({
-      connectionId: 'connection-beta',
-      providerPluginId: betaProviderId,
-      integrationPrincipalLabel: 'Alpha connection identity',
-    });
+    const alpha = 'example.channel.alpha';
+    const beta = 'example.channel.beta';
+    const connections = [
+      connectionFixture({ connectionId: 'alpha-1', providerPluginId: alpha, integrationPrincipalLabel: 'Zulu bot' }),
+      connectionFixture({ connectionId: 'alpha-2', providerPluginId: alpha, integrationPrincipalLabel: 'Another bot' }),
+      connectionFixture({ connectionId: 'beta-1', providerPluginId: beta, integrationPrincipalLabel: 'Beta bot' }),
+    ];
+    const bindings = connections.map((connection, index) => bindingFixture({
+      bindingId: `binding-${index}`, connectionId: connection.connectionId,
+    }));
     const host = createChannelsHostApi({
       methods: ['executeAction', 'readResource', 'selectActionInput', 'watchContext', 'watchResource'],
-      readResource: async () => connectionResourceContent([
-        betaConnection,
-        duplicateAlphaConnection,
-        alphaConnection,
-      ]),
-      readBindingsResource: async () => bindingResourceContent([
-        bindingFixture({ bindingId: 'binding-alpha', connectionId: alphaConnection.connectionId }),
-        bindingFixture({ bindingId: 'binding-alpha-2', connectionId: duplicateAlphaConnection.connectionId }),
-        bindingFixture({ bindingId: 'binding-beta', connectionId: betaConnection.connectionId }),
-      ]),
+      readResource: async () => connectionResourceContent(connections),
+      readBindingsResource: async () => bindingResourceContent(bindings),
       selectActionInput: async () => ({ kind: 'cancelled' }),
     });
-    const brands = createChannelsBrandPresentationHost({
-      [alphaProviderId]: 'Alpha Provider',
-      [betaProviderId]: 'Beta Provider',
-    });
-
-    renderer = await renderChannelsSurface(
-      host.hostApi,
-      createChannelsSettingsSurfaceContextFixture({
-        targetedContributions,
-      }),
-      brands.presentationHost,
-    );
-
-    const filterIds = [...new Set(renderedTestIds(renderer).filter((testID) => (
-      testID.startsWith('channels-binding-provider-filters:')
-    )))];
-    expect(filterIds).toEqual([
-      'channels-binding-provider-filters:all',
-      `channels-binding-provider-filters:${alphaProviderId}`,
-      `channels-binding-provider-filters:${betaProviderId}`,
-    ]);
-    const alphaTab = findPressableByTestId(renderer, `channels-binding-provider-filters:${alphaProviderId}`);
-    const betaTab = findPressableByTestId(renderer, `channels-binding-provider-filters:${betaProviderId}`);
-    expect(alphaTab.props.accessibilityLabel).toBe('Alpha Provider');
-    expect(betaTab.props.accessibilityLabel).toBe('Beta Provider');
-    expect(alphaTab.props.accessibilityLabel).not.toContain(alphaConnection.integrationPrincipalLabel);
-    expect(betaTab.props.accessibilityLabel).not.toContain(betaConnection.integrationPrincipalLabel);
-    expect(brands.resolveBrandDisplayName).toHaveBeenCalledWith(alphaProviderId);
-    expect(brands.resolveBrandDisplayName).toHaveBeenCalledWith(betaProviderId);
-    expect(findByTestId(renderer, `channels-provider-brand-filter-${alphaProviderId}`).some(
-      (instance) => instance.props.accessible === false && instance.props.accessibilityLabel === undefined,
-    )).toBe(true);
-    expect(findByTestId(renderer, `channels-provider-brand-filter-${betaProviderId}`).some(
-      (instance) => instance.props.accessible === false && instance.props.accessibilityLabel === undefined,
-    )).toBe(true);
-    expect(brands.renderBrandMark).toHaveBeenCalledWith({
-      pluginId: alphaProviderId,
-      size: 'small',
-      showName: false,
-      externallyLabelled: true,
-      testID: `channels-provider-brand-filter-${alphaProviderId}`,
-    });
-    expect(brands.renderBrandMark).toHaveBeenCalledWith({
-      pluginId: betaProviderId,
-      size: 'small',
-      showName: false,
-      externallyLabelled: true,
-      testID: `channels-provider-brand-filter-${betaProviderId}`,
-    });
-
-    const alphaBinding = findByTestId(renderer, 'channels-binding-binding-alpha')[0];
-    const betaBinding = findByTestId(renderer, 'channels-binding-binding-beta')[0];
-    expect(alphaBinding?.props.accessibilityLabel).toContain('Provider: Alpha Provider');
-    expect(alphaBinding?.props.accessibilityLabel).toContain(`Account: ${alphaConnection.integrationPrincipalLabel}`);
-    expect(betaBinding?.props.accessibilityLabel).toContain('Provider: Beta Provider');
-    expect(betaBinding?.props.accessibilityLabel).toContain(`Account: ${betaConnection.integrationPrincipalLabel}`);
-    expect(findByTestId(renderer, 'channels-provider-brand-binding-binding-alpha').some(
-      (instance) => instance.props.accessible === false && instance.props.accessibilityLabel === undefined,
-    )).toBe(true);
-    expect(findByTestId(renderer, 'channels-provider-brand-binding-binding-beta').some(
-      (instance) => instance.props.accessible === false && instance.props.accessibilityLabel === undefined,
-    )).toBe(true);
-    expect(brands.renderBrandMark).toHaveBeenCalledWith({
-      pluginId: alphaProviderId,
-      size: 'small',
-      showName: false,
-      externallyLabelled: true,
-      testID: 'channels-provider-brand-binding-binding-alpha',
-    });
-    expect(brands.renderBrandMark).toHaveBeenCalledWith({
-      pluginId: betaProviderId,
-      size: 'small',
-      showName: false,
-      externallyLabelled: true,
-      testID: 'channels-provider-brand-binding-binding-beta',
-    });
-
-    const alphaSetup = findPressableByTestId(
-      renderer,
-      'channels-provider-setup-example.channel.alpha-provider',
-    );
-    const betaSetup = findPressableByTestId(
-      renderer,
-      'channels-provider-setup-example.channel.beta-provider',
-    );
-    expect(alphaSetup.props.accessibilityLabel).toBe('Set up Alpha Provider');
-    expect(betaSetup.props.accessibilityLabel).toBe('Set up Beta Provider');
-    expect(findByTestId(renderer, 'channels-provider-setup-brand-example.channel.alpha-provider').some(
-      (instance) => instance.props.accessible === false && instance.props.accessibilityLabel === undefined,
-    )).toBe(true);
-    expect(findByTestId(renderer, 'channels-provider-setup-brand-example.channel.beta-provider').some(
-      (instance) => instance.props.accessible === false && instance.props.accessibilityLabel === undefined,
-    )).toBe(true);
-    expect(brands.renderBrandMark).toHaveBeenCalledWith({
-      pluginId: alphaProviderId,
-      size: 'small',
-      showName: false,
-      externallyLabelled: true,
-      testID: 'channels-provider-setup-brand-example.channel.alpha-provider',
-    });
-    expect(brands.renderBrandMark).toHaveBeenCalledWith({
-      pluginId: betaProviderId,
-      size: 'small',
-      showName: false,
-      externallyLabelled: true,
-      testID: 'channels-provider-setup-brand-example.channel.beta-provider',
-    });
-
-    await act(async () => {
-      betaTab.props.onPress();
-    });
-    await flushHookEffects();
-
-    expect(findByTestId(renderer, 'channels-binding-binding-beta').length).toBeGreaterThan(0);
-    expect(findByTestId(renderer, 'channels-binding-binding-alpha')).toHaveLength(0);
-    expect(findByTestId(renderer, 'channels-binding-binding-alpha-2')).toHaveLength(0);
+    const brands = createChannelsBrandPresentationHost({ [alpha]: 'Alpha Provider', [beta]: 'Beta Provider' });
+    renderer = await renderChannelsSurface(host.hostApi, createChannelsSettingsSurfaceContextFixture({ targetedContributions }), brands.presentationHost);
+    for (const providerId of [alpha, beta]) {
+      const setup = findPressableByTestId(renderer, `channels-provider-setup-${providerId}-provider`);
+      expect(setup.props.accessibilityLabel).toBe(`Set up ${providerId === alpha ? 'Alpha Provider' : 'Beta Provider'}`);
+    }
+    expect(findByTestId(renderer, 'channels-settings-open-channels').length).toBeGreaterThan(0);
+    expect(findByTestId(renderer, 'channels-page-row-binding-0')).toHaveLength(0);
+    act(() => renderer?.unmount());
+    renderer = await renderChannelsSurface(host.hostApi, createChannelsPageSurfaceContextFixture(), brands.presentationHost);
+    for (const binding of bindings) {
+      expect(findByTestId(renderer, `channels-page-row-${binding.bindingId}`).length).toBeGreaterThan(0);
+    }
+    // Multiple bots group by bot identity; a sole bot groups by provider brand.
+    for (const title of ['Zulu bot', 'Another bot', 'Beta Provider']) {
+      expect(renderer.root.findAll((instance) => instance.props.title === title).length).toBeGreaterThan(0);
+    }
+    for (const pluginId of [alpha, beta]) {
+      expect(brands.resolveBrandDisplayName).toHaveBeenCalledWith(pluginId);
+      expect(brands.renderBrandMark).toHaveBeenCalledWith(expect.objectContaining({ pluginId, externallyLabelled: true }));
+    }
+    expect(findByTestId(renderer, 'channels-binding-provider-filters')).toHaveLength(0);
   });
 
-  it('uses one neutral, labelled filter fallback when no canonical provider presentation is mounted', async () => {
-    const alphaProviderId = 'example.channel.alpha';
-    const betaProviderId = 'example.channel.beta';
-    const alphaConnection = connectionFixture({
-      connectionId: 'connection-alpha',
-      providerPluginId: alphaProviderId,
-      integrationPrincipalLabel: 'Connection-only Alpha label',
-    });
-    const betaConnection = connectionFixture({
-      connectionId: 'connection-beta',
-      providerPluginId: betaProviderId,
-      integrationPrincipalLabel: 'Connection-only Beta label',
-    });
+  it('uses neutral provider group labels when no canonical presentation is mounted', async () => {
+    const connections = [
+      connectionFixture({ connectionId: 'connection-alpha', providerPluginId: 'example.channel.alpha', integrationPrincipalLabel: 'Connection-only Alpha label' }),
+      connectionFixture({ connectionId: 'connection-beta', providerPluginId: 'example.channel.beta', integrationPrincipalLabel: 'Connection-only Beta label' }),
+    ];
     const host = createChannelsHostApi({
-      readResource: async () => connectionResourceContent([betaConnection, alphaConnection]),
-      readBindingsResource: async () => bindingResourceContent([
-        bindingFixture({ bindingId: 'binding-alpha', connectionId: alphaConnection.connectionId }),
-        bindingFixture({ bindingId: 'binding-beta', connectionId: betaConnection.connectionId }),
-      ]),
+      readResource: async () => connectionResourceContent(connections),
+      readBindingsResource: async () => bindingResourceContent(connections.map((connection, index) => bindingFixture({
+        bindingId: `binding-${index}`, connectionId: connection.connectionId,
+      }))),
     });
-
-    renderer = await renderChannelsSurface(host.hostApi);
-
-    const alphaTab = findPressableByTestId(renderer, `channels-binding-provider-filters:${alphaProviderId}`);
-    const betaTab = findPressableByTestId(renderer, `channels-binding-provider-filters:${betaProviderId}`);
-    expect(alphaTab.props.accessibilityLabel).toBe('Integration provider');
-    expect(betaTab.props.accessibilityLabel).toBe('Integration provider');
-    expect(alphaTab.props.accessibilityLabel).not.toContain(alphaConnection.integrationPrincipalLabel);
-    expect(betaTab.props.accessibilityLabel).not.toContain(betaConnection.integrationPrincipalLabel);
-    expect(findByTestId(renderer, `channels-provider-brand-filter-${alphaProviderId}`).length).toBeGreaterThan(0);
-    expect(findByTestId(renderer, `channels-provider-brand-filter-${betaProviderId}`).length).toBeGreaterThan(0);
+    renderer = await renderChannelsSurface(host.hostApi, createChannelsPageSurfaceContextFixture());
+    expect(new Set(renderedTestIds(renderer).filter((id) => id.startsWith('channels-page-row-'))).size).toBe(2);
+    expect(renderer.root.findAll((instance) => instance.props.title === 'Integration provider').length).toBeGreaterThan(0);
+    const rendered = JSON.stringify(renderer.toJSON());
+    expect(rendered).not.toContain('Connection-only Alpha label');
+    expect(rendered).not.toContain('Connection-only Beta label');
   });
 
-  it('keeps a representative maximum binding list virtualized with accessible enable controls', async () => {
+  it('keeps every conversation addressable on the page in a representative large Account', async () => {
     const connection = connectionFixture();
     const bindings = Array.from({ length: 256 }, (_unused, index) => bindingFixture({
-      bindingId: `binding-${String(index + 1).padStart(3, '0')}`,
-      revision: index + 1,
+      bindingId: `binding-${String(index + 1).padStart(3, '0')}`, revision: index + 1,
       endpoint: { label: `External discussion ${index + 1}` },
     }));
     const host = createChannelsHostApi({
       readResource: async () => connectionResourceContent([connection]),
       readBindingsResource: async () => bindingResourceContent(bindings),
     });
-
-    renderer = await renderChannelsSurface(host.hostApi);
-
-    const renderedBindingRows = new Set(renderedTestIds(renderer).filter((testID) => (
-      /^channels-binding-binding-\d{3}$/u.test(testID)
-    )));
-    expect(renderedBindingRows.size).toBe(256);
-    const virtualizedLists = renderer.root.findAll((instance) => (
-      hasRenderedHostType(instance, 'FlatList') && instance.props?.testID === 'channels-bindings-list'
-    ));
-    expect(virtualizedLists.some((list) => (
-      list.props.data?.length === 256 && !hasRenderedAncestor(list, 'ScrollView')
-    ))).toBe(true);
-    const firstToggle = findPressableByTestId(renderer, 'channels-binding-enabled-binding-001');
-    expect(firstToggle.props.accessibilityRole).toBe('switch');
-    expect(firstToggle.props.accessibilityLabel).toBe('Binding enabled');
-    expect(firstToggle.props.checked).toBe(true);
+    renderer = await renderChannelsSurface(host.hostApi, createChannelsPageSurfaceContextFixture());
+    const rows = new Set(renderedTestIds(renderer).filter((id) => /^channels-page-row-binding-\d{3}$/u.test(id)));
+    expect(rows.size).toBe(256);
+    expect(findPressableByTestId(renderer, 'channels-page-row-binding-001').props.onPress).toEqual(expect.any(Function));
+    act(() => renderer?.unmount());
+    renderer = await renderChannelsConversation(host.hostApi, undefined, undefined, undefined, 'binding-001');
+    expect(findPressableByTestId(renderer, 'channels-binding-pause-binding-001').props.disabled).toBe(false);
   });
 
   it('keeps healthy connection management usable while only the binding Resource fails', async () => {
@@ -2749,7 +2572,7 @@ describe('Channels settings surface (real source, mounted)', () => {
         return connectionResourceContent([connection]);
       },
       executeAction: async () => {
-        throw Object.assign(new Error('The update may have reached the Account.'), { code: 'timeout' });
+        return createPluginSurfaceHostApiError('timeout');
       },
     });
     renderer = await renderChannelsSurface(host.hostApi);
@@ -2825,7 +2648,7 @@ describe('Channels settings surface (real source, mounted)', () => {
         return connectionResourceContent([connection]);
       },
       executeAction: async () => {
-        throw Object.assign(new Error('The update may have reached the Account.'), { code: 'timeout' });
+        return createPluginSurfaceHostApiError('timeout');
       },
     });
     renderer = await renderChannelsSurface(host.hostApi);
@@ -2879,7 +2702,7 @@ describe('Channels settings surface (real source, mounted)', () => {
         return connectionResourceContent([connection], digestCharacter);
       },
       executeAction: async () => {
-        throw Object.assign(new Error('The update may have reached the Account.'), { code: 'timeout' });
+        return createPluginSurfaceHostApiError('timeout');
       },
     });
     renderer = await renderChannelsSurface(host.hostApi);
@@ -3001,7 +2824,7 @@ describe('Channels settings surface (real source, mounted)', () => {
         });
       },
       executeAction: async () => {
-        throw Object.assign(new Error('The update may have reached the Account.'), { code: 'timeout' });
+        return createPluginSurfaceHostApiError('timeout');
       },
     });
     renderer = await renderChannelsSurface(host.hostApi);
@@ -3270,8 +3093,8 @@ describe('Channels settings surface (real source, mounted)', () => {
     if (!isRecord(preparedPayload)) {
       throw new Error('Expected the management prepare input to be an object.');
     }
-    expect(preparedPayload.providerSelection).toBe(selection);
-    expect(preparedPayload.providerSetupInput).toBe(providerSetupInput);
+    expect(preparedPayload.providerSelection).toEqual(selection);
+    expect(preparedPayload.providerSetupInput).toEqual(providerSetupInput);
     expect(preparedPayload).not.toHaveProperty('action');
     expect(preparedPayload).not.toHaveProperty('localId');
     expect(preparedPayload).not.toHaveProperty('providerSetupAction');
@@ -3317,9 +3140,7 @@ describe('Channels settings surface (real source, mounted)', () => {
         presentation: { connectedAccountLabel: null, machineDisplayName: 'Development Mac' },
       }),
       executeAction: async () => {
-        throw Object.assign(new Error('Provider preparation may have reached the selected provider.'), {
-          code: 'timeout',
-        });
+        return createPluginSurfaceHostApiError('timeout');
       },
     });
 
@@ -3438,9 +3259,9 @@ describe('Channels settings surface (real source, mounted)', () => {
           maximumObservationAgeMs: 86_400_000,
         });
         if (!isRecord(payload)) throw new Error('Expected a connection-create input object.');
-        expect(payload.providerSelection).toBe(selection);
-        expect(payload.providerSetupInput).toBe(providerSetupInput);
-        expect(payload.credentialRef).toBe(credentialRef);
+        expect(payload.providerSelection).toEqual(selection);
+        expect(payload.providerSetupInput).toEqual(providerSetupInput);
+        expect(payload.credentialRef).toEqual(credentialRef);
         expect(payload).not.toHaveProperty('action');
         expect(payload).not.toHaveProperty('providerSetupAction');
         connections = [connectionFixture({
@@ -3537,7 +3358,7 @@ describe('Channels settings surface (real source, mounted)', () => {
           };
         }
         expect(actionId).toBe(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionCreate);
-        throw Object.assign(new Error('Connection creation may have reached the Account.'), { code: 'timeout' });
+        return createPluginSurfaceHostApiError('timeout');
       },
     });
 
@@ -3662,7 +3483,7 @@ describe('Channels settings surface (real source, mounted)', () => {
     if (!isRecord(preparedPayload)) {
       throw new Error('Expected the management prepare input to be an object.');
     }
-    expect(preparedPayload.credentialRef).toBe(credentialRef);
+    expect(preparedPayload.credentialRef).toEqual(credentialRef);
   });
 
   it('renders core preparation remediation without creating a connection', async () => {
@@ -4253,7 +4074,7 @@ describe('Channels settings surface (real source, mounted)', () => {
     const host = createChannelsHostApi({
       readResource: async () => connectionResourceContent([connectionFixture()]),
       executeAction: async () => {
-        throw Object.assign(new Error('The retry may already be scheduled.'), { code: 'aborted' });
+        return createPluginSurfaceHostApiError('timeout');
       },
     });
     renderer = await renderChannelsSurface(host.hostApi, undefined, undefined, data.client);
@@ -4533,7 +4354,7 @@ describe('Channels settings surface (real source, mounted)', () => {
     expect(rendered).not.toContain('provider-message-private');
   });
 
-  it('keeps an aborted delivery decision locked until an explicit direct custody reread completes', async () => {
+  it('keeps a timed-out delivery decision locked until an explicit direct custody reread completes', async () => {
     const custodyId = 'P'.repeat(43);
     const deliveryData = createDeliveryResolutionDataClient({
       rows: [deliveryResolutionRow({ custodyId, revision: 7, state: 'partial' })],
@@ -4550,9 +4371,7 @@ describe('Channels settings surface (real source, mounted)', () => {
         },
       })]),
       executeAction: async () => {
-        throw Object.assign(new Error('The delivery decision may have reached the Account.'), {
-          code: 'aborted',
-        });
+        return createPluginSurfaceHostApiError('timeout');
       },
     });
     renderer = await renderChannelsSurface(host.hostApi, undefined, undefined, deliveryData.client);
@@ -4669,7 +4488,7 @@ describe('Channels settings surface (real source, mounted)', () => {
     expect(safeAreaOwnerCount(renderer)).toBe(1);
   });
 
-  it('preserves each nonzero safe-area inset before populated binding-index spacing on RNW', async () => {
+  it('preserves each nonzero safe-area inset before Settings scroll content on RNW', async () => {
     const safeAreaInsets = { top: 44, right: 7, bottom: 34, left: 9 } as const;
     const surface = createChannelsSettingsSurfaceContextFixture({
       safeAreaInsets,
@@ -4683,15 +4502,10 @@ describe('Channels settings surface (real source, mounted)', () => {
     const safeAreaOwners = renderer.root.findAll((instance) => instance.props?.safeAreaInsets !== undefined);
     expect(safeAreaOwners).toHaveLength(1);
     expect(safeAreaOwners[0]?.props.safeAreaInsets).toEqual(safeAreaInsets);
-    const bindingLists = renderer.root.findAll((instance) => (
-      hasRenderedHostType(instance, 'FlatList') && instance.props?.testID === 'channels-bindings-list'
-    ));
-    expect(bindingLists.some((list) => hasRenderedAncestor(list, 'ScrollView'))).toBe(false);
-    expect(bindingLists.some((list) => (
-      StyleSheet.flatten(list.props.contentContainerStyle).paddingBottom === surface.theme.spacing.large
-    ))).toBe(true);
-    expect(findByTestId(renderer, 'channels-bindings-content').some((content) => (
-      StyleSheet.flatten(content.props.style).padding === surface.theme.spacing.large
-    ))).toBe(true);
+    const settingsContent = findByTestId(renderer, 'channels-settings-content')[0];
+    expect(settingsContent).toBeDefined();
+    expect(hasRenderedAncestor(settingsContent!, 'ScrollView')).toBe(true);
+    const scrollers = renderer.root.findAll((instance) => hasRenderedHostType(instance, 'ScrollView'));
+    expect(scrollers.some((scroll) => StyleSheet.flatten(scroll.props.contentContainerStyle).padding === surface.theme.spacing.large)).toBe(true);
   });
 });

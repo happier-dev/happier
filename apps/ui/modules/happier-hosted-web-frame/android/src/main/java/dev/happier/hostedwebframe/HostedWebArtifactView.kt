@@ -200,13 +200,15 @@ internal class HostedWebArtifactView(
     settings.mediaPlaybackRequiresUserGesture = true
     nextWebView.setBackgroundColor(Color.TRANSPARENT)
     android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(nextWebView, false)
-    // Unlike addJavascriptInterface, AndroidX binds this object to the exact
-    // Artifact origin and gives the host the actual sender origin/frame. The
-    // native bridge is a top-level page capability, never an iframe capability.
+    // Installed content keeps its exact-origin injection rule. Sandboxed caller
+    // documents have an opaque sender origin, so wildcard injection is needed;
+    // current view, main frame and registered document URL independently admit
+    // each message. The JS host still checks its existing nonce and identity.
+    val inlineDocument = inlineDocumentHandleToken != null
     WebViewCompat.addWebMessageListener(
       nextWebView,
       BRIDGE_INTERFACE_NAME,
-      setOf(origin.asString()),
+      if (inlineDocument) setOf("*") else setOf(origin.asString()),
       object : WebViewCompat.WebMessageListener {
         override fun onPostMessage(
           view: WebView,
@@ -215,10 +217,11 @@ internal class HostedWebArtifactView(
           isMainFrame: Boolean,
           replyProxy: JavaScriptReplyProxy
         ) {
+          val admittedSource = if (inlineDocument) sourceOrigin.toString() == "null" else origin.matches(sourceOrigin)
           if (
             view !== nextWebView ||
             !isMainFrame ||
-            !origin.matches(sourceOrigin) ||
+            !admittedSource ||
             message.type != WebMessageCompat.TYPE_STRING ||
             !isActiveHostedPage(nextWebView)
           ) {
@@ -226,8 +229,9 @@ internal class HostedWebArtifactView(
           }
           val data = message.data ?: return
           post {
-            if (isActiveHostedPage(nextWebView) && origin.matches(sourceOrigin)) {
-              onMessage(mapOf("data" to data, "url" to sourceOrigin.toString()))
+            if (isActiveHostedPage(nextWebView) && admittedSource) {
+              val messageUrl = if (inlineDocument) "${origin.asString()}/" else sourceOrigin.toString()
+              onMessage(mapOf("data" to data, "url" to messageUrl))
             }
           }
         }
@@ -280,7 +284,7 @@ internal class HostedWebArtifactView(
       WebViewCompat.addDocumentStartJavaScript(
         nextWebView,
         DOCUMENT_START_BRIDGE,
-        setOf(origin.asString())
+        if (inlineDocument) setOf("*") else setOf(origin.asString())
       )
     }.getOrNull()
     if (installedDocumentStartScript == null) {
@@ -371,7 +375,7 @@ internal class HostedWebArtifactView(
     }
     if (currentOrigin != origin.asString()) return false
     val url = currentWebView.url ?: return false
-    return parseOrigin(url) == origin
+    return if (activeInlineDocument) HostedInlineDocumentRegistry.isCurrentDocumentUrl(token, url) else parseOrigin(url) == origin
   }
 
   private fun profileIsolationUnavailableEvent(): Map<String, Any> {
@@ -576,6 +580,7 @@ internal class HostedWebArtifactView(
 
     private val DOCUMENT_START_BRIDGE = """
       (function () {
+        if (window.top !== window) return;
         var bridge = window.$BRIDGE_INTERFACE_NAME;
         if (!bridge || typeof bridge.postMessage !== 'function') return;
         var nativeBridge = Object.freeze({

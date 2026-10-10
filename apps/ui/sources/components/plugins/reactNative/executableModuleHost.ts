@@ -1,5 +1,4 @@
 import type { PluginReactNativeBundleCache } from './bundleCache';
-import { raceWithTimeout } from '@happier-dev/plugin-sdk/async';
 import type {
     PluginReactNativeLoaderBackend,
     PluginReactNativeExecutableModuleReference,
@@ -7,8 +6,6 @@ import type {
 import { loadPluginReactNativeBundleExport } from './loader';
 import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';
 import { log } from '@/log';
-
-const PLUGIN_UI_EXECUTABLE_CLEANUP_TIMEOUT_MS = 5_000;
 
 export type PluginUiExecutableActivationScope<TApi> = Readonly<{
     api: TApi;
@@ -128,20 +125,15 @@ export function createPluginUiExecutableModuleHost(): PluginUiExecutableModuleHo
         } catch (error) {
             unwind = Promise.reject(error);
         }
-        const unwindResult = await raceWithTimeout(unwind, PLUGIN_UI_EXECUTABLE_CLEANUP_TIMEOUT_MS);
-        if (unwindResult.type === 'timeout') {
-            log.log(`[PluginUiExecutableModuleHost] scope_unwind_timeout:${active.pluginId}`);
-        } else if (unwindResult.type === 'rejected') {
+        try {
+            await unwind;
+        } catch {
             log.log(`[PluginUiExecutableModuleHost] scope_unwind_failed:${active.pluginId}`);
         }
         if (!active.cleanup) return;
-        const cleanupResult = await raceWithTimeout(
-            Promise.resolve().then(() => active.cleanup!()),
-            PLUGIN_UI_EXECUTABLE_CLEANUP_TIMEOUT_MS,
-        );
-        if (cleanupResult.type === 'timeout') {
-            log.log(`[PluginUiExecutableModuleHost] plugin_cleanup_timeout:${active.pluginId}`);
-        } else if (cleanupResult.type === 'rejected') {
+        try {
+            await active.cleanup();
+        } catch {
             log.log(`[PluginUiExecutableModuleHost] plugin_cleanup_failed:${active.pluginId}`);
         }
     }

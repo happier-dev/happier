@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -51,6 +52,7 @@ export function PluginDiagnosticsSection(props: Readonly<{
                         <Text
                             testID={`${props.testIDPrefix}.${diagnostic.code}.${index}.message`}
                             selectable
+                            style={styles.message}
                         >
                             {formatPluginUiDiagnosticMessage(diagnostic)}
                             {'\n'}
@@ -72,3 +74,9 @@ export function PluginDiagnosticsSection(props: Readonly<{
         </ItemGroup>
     );
 }
+
+const styles = StyleSheet.create((theme) => ({
+    message: {
+        color: theme.colors.text.secondary,
+    },
+}));

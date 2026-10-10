@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { createPluginReactNativeBundleCache } from './bundleCache';
 import { createPluginUiExecutableModuleHost } from './executableModuleHost';
@@ -450,34 +450,81 @@ describe('PluginUiExecutableModuleHost', () => {
         expect(cleanup).toHaveBeenCalledTimes(1);
     });
 
-    it('bounds unresolved cleanup and diagnoses its timeout without blocking replacement', async () => {
-        vi.useFakeTimers();
+    it('diagnoses real retirement failures without retaining the old authority', async () => {
         const logDiagnostic = vi.spyOn(log, 'log').mockImplementation(() => {});
+        onTestFinished(() => { logDiagnostic.mockRestore(); });
+        const authorityB = Object.freeze({ serverId: 'server-b', machineId: 'machine-b' });
+        const cleanup = vi.fn(async () => { throw new Error('plugin cleanup failed'); });
+        const host = createPluginUiExecutableModuleHost();
+        await host.replaceAuthority(authority);
+        await expect(host.activate({
+            cache: cacheWithIdentity(), identity, moduleReference,
+            backend: backend(async () => cleanup), hostPlatform: 'web', authority,
+            createScope: () => ({
+                api: Object.freeze({}), commit: vi.fn(),
+                unwind: async () => { throw new Error('scope cleanup failed'); },
+            }),
+        })).resolves.toEqual({ ok: true });
+        await host.replaceAuthority(authorityB);
+        expect(cleanup).toHaveBeenCalledOnce();
+        expect(logDiagnostic.mock.calls).toEqual([
+            [`[PluginUiExecutableModuleHost] scope_unwind_failed:${identity.pluginId}`],
+            [`[PluginUiExecutableModuleHost] plugin_cleanup_failed:${identity.pluginId}`],
+        ]);
+        await expect(host.activate({
+            cache: cacheWithIdentity(), identity, moduleReference,
+            backend: backend(vi.fn()), hostPlatform: 'web', authority,
+            createScope: () => ({ api: Object.freeze({}), commit: vi.fn(), unwind: vi.fn() }),
+        })).resolves.toMatchObject({ ok: false, code: 'artifact_replaced' });
+    });
+
+    it('withdraws authority immediately and joins slow scope and plugin retirement beyond the former cutoffs', async () => {
+        vi.useFakeTimers();
+        onTestFinished(() => { vi.useRealTimers(); });
+        const logDiagnostic = vi.spyOn(log, 'log').mockImplementation(() => {});
+        onTestFinished(() => { logDiagnostic.mockRestore(); });
         const authorityB = Object.freeze({
             serverId: 'server-b', machineId: 'machine-b',
         });
-        const unwind = vi.fn();
+        let scopeCurrent = true;
+        let releaseUnwind!: () => void;
+        const unwind = () => {
+            scopeCurrent = false;
+            return new Promise<void>((resolve) => { releaseUnwind = resolve; });
+        };
+        let releaseCleanup!: () => void;
+        const cleanup = vi.fn(() => new Promise<void>((resolve) => { releaseCleanup = resolve; }));
         const host = createPluginUiExecutableModuleHost();
         await host.replaceAuthority(authority);
         await expect(host.activate({
             cache: cacheWithIdentity(),
             identity,
             moduleReference,
-            backend: backend(async () => () => new Promise<void>(() => {})),
+            backend: backend(async () => cleanup),
             hostPlatform: 'web',
             authority,
-            createScope: () => ({ api: Object.freeze({}), commit: vi.fn(), unwind }),
+            createScope: () => ({ api: Object.freeze({}), commit: vi.fn(), unwind, isCurrent: () => scopeCurrent }),
         })).resolves.toEqual({ ok: true });
 
         const replacement = host.replaceAuthority(authorityB);
-        await vi.advanceTimersByTimeAsync(5_000);
+        let retired = false;
+        void replacement.then(() => { retired = true; });
+        expect(scopeCurrent).toBe(false);
+        await vi.advanceTimersByTimeAsync(5_001);
+        expect(retired).toBe(false);
+        expect(cleanup).not.toHaveBeenCalled();
+        await expect(host.activate({
+            cache: cacheWithIdentity(), identity, moduleReference,
+            backend: backend(vi.fn()), hostPlatform: 'web', authority,
+            createScope: () => ({ api: Object.freeze({}), commit: vi.fn(), unwind: vi.fn() }),
+        })).resolves.toMatchObject({ ok: false, code: 'artifact_replaced' });
+        releaseUnwind();
+        await vi.advanceTimersByTimeAsync(5_001);
+        expect(cleanup).toHaveBeenCalledOnce();
+        expect(retired).toBe(false);
+        releaseCleanup();
         await replacement;
-
-        expect(unwind).toHaveBeenCalledTimes(1);
-        expect(logDiagnostic).toHaveBeenCalledWith(
-            '[PluginUiExecutableModuleHost] plugin_cleanup_timeout:acme.preview',
-        );
-        logDiagnostic.mockRestore();
-        vi.useRealTimers();
+        expect(retired).toBe(true);
+        expect(logDiagnostic).not.toHaveBeenCalled();
     });
 });

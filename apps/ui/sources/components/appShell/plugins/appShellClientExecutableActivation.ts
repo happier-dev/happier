@@ -5,6 +5,7 @@ import {
 } from '@/components/plugins/reactNative/clientExecutableContributions';
 import {
     reconcileProjectedPluginUiClientExecutables,
+    retainProjectedPluginUiClientExecutables,
     type PluginUiClientExecutableReconciliationAttempt,
 } from '@/components/plugins/reactNative/clientExecutableActivation';
 import {
@@ -27,6 +28,21 @@ type AppShellVoiceExecutableProjection = Readonly<{
     machineId: string;
     serverId: string | null;
 }>;
+
+export function retainAppShellProjectedClientExecutables(input: Readonly<{
+    projection: PluginUiProjectionModel | null;
+    voice: AppShellVoiceExecutableProjection | null;
+    platform: PluginContributionClientPlatform;
+    accountLifetime?: ActiveServerAccountScopeLifetime | null;
+}>): Promise<void> {
+    return retainProjectedPluginUiClientExecutables({
+        actionProjection: input.projection ? { projection: input.projection } : null,
+        voiceProjection: input.voice ? { projection: input.voice.projection, directMachineAuthority: {
+            machineId: input.voice.machineId, serverId: input.voice.serverId,
+        } } : null,
+        platform: input.platform, accountLifetime: input.accountLifetime,
+    });
+}
 
 /**
  * AppShell owns the only production complete-set update. Its caller already
@@ -76,6 +92,7 @@ export async function reconcileAppShellProjectedClientExecutables(input: Readonl
         reader: input.reader,
         accountLifetime: input.accountLifetime,
         isCurrent: input.isCurrent,
+        retainCommittedActivation: true,
         createDerivedScope,
     });
 }

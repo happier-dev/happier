@@ -6,6 +6,7 @@ import {
 } from '@happier-dev/protocol/plugins/ui';
 
 import { derivePluginUiPersistentArtifactKey } from '@/sync/domains/plugins/ui/artifactByteCache';
+import * as platformDigest from '@/platform/digest';
 
 import {
     createPluginReactNativeArtifactLeaseCacheSink,
@@ -95,6 +96,43 @@ function createMemoryPersistentArtifactStore() {
 }
 
 describe('React Native bundle cache', () => {
+    it.each(['read', 'write'] as const)('does not finish a %s from an Account lifetime retired during hashing', async (mode) => {
+        const persistent = createMemoryPersistentArtifactStore();
+        const cache = createPluginReactNativeBundleCache({ persistentStore: persistent.store });
+        const bytes = new TextEncoder().encode('// async cached bytes');
+        const stableIdentity = { ...persistentIdentity, artifactDigest: fileSetDigestFor('entry.js', bytes) };
+        const record = singleFileRecord(stableIdentity, 'entry.js', bytes);
+        persistent.records.set(derivePluginReactNativePersistentArtifactKey(stableIdentity), record);
+        let hashingStarted!: () => void;
+        const started = new Promise<void>((resolve) => { hashingStarted = resolve; });
+        let releaseDigest!: () => void;
+        const waiting = new Promise<void>((resolve) => { releaseDigest = resolve; });
+        const realDigest = platformDigest.digest;
+        const hashing = vi.spyOn(platformDigest, 'digest').mockImplementation(async (algorithm, data) => {
+            hashingStarted();
+            await waiting;
+            return realDigest(algorithm, data);
+        });
+        try {
+            const result = mode === 'read'
+                ? cache.readPersistentArtifact(stableIdentity)
+                : cache.writePersistentArtifact(record);
+            await started;
+            await cache.retireAccount(stableIdentity.accountScope);
+            cache.bindAccountLifetime({
+                scope: stableIdentity.accountScope,
+                isCurrent: () => true,
+                onRetire: () => ({ dispose: () => {} }),
+            });
+            releaseDigest();
+            await expect(result).resolves.toBe(mode === 'read' ? null : false);
+            expect(persistent.writes).toEqual([]);
+        } finally {
+            releaseDigest();
+            hashing.mockRestore();
+        }
+    });
+
     it('does not expose a second Artifact byte-fetch path from the cache owner', async () => {
         const cacheModule = await import('./bundleCache');
 

@@ -11,6 +11,11 @@ installDisconnectedServerSocketBoundary();
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
 let restoreActionExecutor: (() => void) | undefined;
 
+// Load the real runtime and Action graph outside per-test setup deadlines.
+await loadSyncSingletonForTests();
+const warmActionLoader = await installRealActionExecutorModuleLoader();
+warmActionLoader();
+
 /**
  * The mounted plugin front door and the Home family.
  *
@@ -40,6 +45,7 @@ function team(id: string, name: string): TeamSummaryV1 {
         viewerRole: 'member',
         capabilities: NO_TEAM_CAPABILITIES_V1,
         admission: { historyChoice: { admin: 'choice', member: 'choice', guest: 'hidden' } },
+        counts: null,
     };
 }
 
@@ -90,7 +96,9 @@ async function mountedSurface() {
     connection = await restoreServerAccountForTest({
         serverUrl: 'https://home-plugin-front-door.example', accountId: 'account-1',
     });
-    (await import('@/sync/domains/state/storage')).storage.setState({ profileScope: { serverId, accountId: 'account-1' } });
+    const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+    const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);
+    (await import('@/sync/domains/state/storage')).storage.setState({ profileScope: { serverId: scopeId, accountId: 'account-1' } });
     const accountLifetime = (await import('@/sync/domains/scope/activeServerAccountScope')).captureActiveServerAccountScopeLifetime();
     if (!accountLifetime) throw new Error('Expected the restored Home Account to be applied.');
     const facts = {
@@ -101,7 +109,7 @@ async function mountedSurface() {
         platform: 'web',
         channel: 'internal',
         machineId: 'machine_1',
-        serverId,
+        serverId: scopeId,
         projectionGeneration: 12,
         occurrenceId: 'browser-front-door-occurrence-12',
         executionOrigin: {

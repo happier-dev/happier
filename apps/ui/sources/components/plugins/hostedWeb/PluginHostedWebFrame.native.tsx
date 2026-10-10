@@ -4,6 +4,7 @@ import type {
 } from '@happier-dev/protocol';
 import type { UiSurfaceNetworkOriginV1 } from '@happier-dev/protocol/plugins/ui';
 import * as React from 'react';
+import type { ArtifactHtmlBundleV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { StyleSheet, View } from 'react-native';
 
 import type {
@@ -26,7 +27,7 @@ export function PluginHostedWebFrame(props: Readonly<{
     title: string;
     /** Present only for the legacy daemon/session endpoint frame path. */
     url?: string;
-    html?: string;
+    bundle?: ArtifactHtmlBundleV1;
     networkOrigins?: readonly UiSurfaceNetworkOriginV1[];
     bootstrapConfig?: PluginHostedWebBridgeBootstrapConfigV1;
     sandbox: PluginHostedWebSandboxPolicy;
@@ -120,11 +121,11 @@ export function PluginHostedWebFrame(props: Readonly<{
             </View>
         );
     }
-    if (props.html !== undefined) {
+    if (props.bundle !== undefined) {
         return (
             <HostedInlineDocumentFrame
                 title={props.title}
-                html={props.html}
+                bundle={props.bundle}
                 networkOrigins={props.networkOrigins}
                 bootstrapConfig={props.bootstrapConfig}
                 allowedNavigationOrigins={props.security.allowedNavigationOrigins}

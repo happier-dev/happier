@@ -540,11 +540,15 @@ describe('PluginReactNativeSurface', () => {
         expect(screen.findByTestId('plugin-native-data-client:missing')).toBeNull();
     });
 
-    it('accepts a structurally valid render context without treating freezing as provenance', async () => {
+    it('accepts a structurally valid app render context without optional targeted contributions or freezing', async () => {
         const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');
         const renderSurface = vi.fn(() => React.createElement('PluginNativeSurface', { testID: 'plugin-native-unfrozen-context' }));
         const unfrozenRenderContext = {
             ...defaultRenderContext,
+            surface: createPluginSurfaceContextFixture({
+                target: { kind: 'app' },
+                targetedContributions: undefined,
+            }),
         } satisfies RenderContext;
 
         const screen = await renderScreen(<PluginReactNativeSurface
@@ -556,6 +560,23 @@ describe('PluginReactNativeSurface', () => {
 
         expect(renderSurface).toHaveBeenCalledOnce();
         expect(screen.findByTestId('plugin-native-unfrozen-context')).toBeTruthy();
+    });
+
+    it('rejects present malformed targeted contributions rather than treating them as absent', async () => {
+        const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');
+        const screen = await renderScreen(<PluginReactNativeSurface
+            surfaceId="surface_1"
+            decision={{ state: 'load', reason: 'compatible', diagnostics: [] }}
+            // The renderer admits unknown external render contexts at this boundary.
+            renderContext={{
+                ...defaultRenderContext,
+                surface: { ...defaultCanonicalSurface, targetedContributions: null },
+            } as unknown as RenderContext}
+            module={{ renderSurface: () => React.createElement('PluginNativeSurface', { testID: 'plugin-native-invalid-target' }) }}
+        />);
+
+        expect(screen.findByTestId('plugin-native-invalid-target')).toBeNull();
+        expect(screen.findByTestId('plugin-rn-ui-unavailable')).toBeTruthy();
     });
 
     it('rejects a noncanonical render context instead of adapting it at the surface boundary', async () => {
@@ -636,7 +657,7 @@ describe('PluginReactNativeSurface', () => {
     });
 
 
-    it('retries a startup failure with a fresh mount and fences an old loader settlement', async () => {
+    it('retries a rejected cached loader with a fresh mount and pending feedback', async () => {
         vi.useFakeTimers();
         let rejectFirstLoad!: (error: Error) => void;
         const watchdog = createPluginReactNativeWatchdog();
@@ -663,13 +684,13 @@ describe('PluginReactNativeSurface', () => {
                 load={load}
                 loadPolicy={{ source: 'installedArtifact' }}
                 cacheKey="cache_retry_owner"
-                loadTimeoutMs={100}
                 watchdog={watchdog}
                             />);
             await flushHookEffects({ cycles: 1, turns: 2 });
 
             expect(load).toHaveBeenCalledTimes(1);
-            await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 100 });
+            rejectFirstLoad(new Error('loader failed'));
+            await flushHookEffects({ cycles: 1, turns: 2 });
 
             expect(screen.findByTestId('plugin-rn-ui-unavailable-action')?.props.accessibilityLabel).toBe('common.retry');
 
@@ -687,62 +708,66 @@ describe('PluginReactNativeSurface', () => {
             expect(screen.findByTestId('plugin-native-retry-healthy')).toBeTruthy();
             expect(screen.findByTestId('plugin-rn-ui-unavailable')).toBeNull();
 
-            rejectFirstLoad(new Error('stale loader failure'));
-            await flushHookEffects({ cycles: 2, turns: 2 });
-
-            expect(screen.findByTestId('plugin-native-retry-healthy')).toBeTruthy();
-            expect(screen.findByTestId('plugin-rn-ui-unavailable')).toBeNull();
         } finally {
             vi.useRealTimers();
         }
     });
 
-    it('gives a cold artifact load the budget of the byte transfer it contains', async () => {
-        // A cold load transfers a multi-megabyte bundle over the machine RPC,
-        // whose canonical deadline is DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS. A
-        // shorter surface-local cutoff abandoned valid transfers ("load_timeout",
-        // then a Retry that only worked because the uncancellable load had
-        // finished behind it). The deadline still exists: a load that outlives
-        // the transfer budget falls back with Retry.
+    it('adopts a composed artifact load across context updates without imposing a competing deadline', async () => {
         const { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes');
         vi.useFakeTimers();
+        let renderedContext: RenderContext | undefined;
         const slowModule = {
-            renderSurface: () => React.createElement('PluginNativeSurface', { testID: 'plugin-native-cold-load' }),
+            renderSurface: (context: RenderContext) => {
+                renderedContext = context;
+                return React.createElement('PluginNativeSurface', { testID: 'plugin-native-cold-load' });
+            },
         };
-        const slowLoad = vi.fn(() => new Promise<typeof slowModule>((resolve) => {
-            setTimeout(() => resolve(slowModule), 12_000);
-        }));
-        const hungLoad = vi.fn(() => new Promise<never>(() => {}));
+        // External Artifact acquisition can await persistent storage before its
+        // bounded byte RPC begins. Both phases complete; the renderer must not
+        // invent a deadline for their composition or discard its valid result.
+        const cacheRead = createDeferred<void>();
+        const byteRead = createDeferred<typeof slowModule>();
+        let acquisitions = 0;
+        const slowLoad = async () => {
+            acquisitions += 1;
+            await cacheRead.promise;
+            return await byteRead.promise;
+        };
         const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');
 
         try {
-            const slow = await renderScreen(<PluginReactNativeSurface
+            const element = (renderContext: RenderContext) => <PluginReactNativeSurface
                 surfaceId="surface_1"
-                renderContext={defaultRenderContext}
+                renderContext={renderContext}
                 decision={{ state: 'load', reason: 'compatible', diagnostics: [] }}
-                load={slowLoad}
+                // The host rebuilds acquisition closures from its current
+                // projection; the unchanged cache key still names one Artifact.
+                load={() => slowLoad()}
                 loadPolicy={{ source: 'installedArtifact' }}
                 cacheKey="cache_cold_transfer"
-            />);
+            />;
+            const slow = await renderScreen(element(defaultRenderContext));
             await flushHookEffects({ cycles: 1, turns: 2 });
-            await flushHookEffects({ cycles: 2, turns: 2, advanceTimersMs: 12_000 });
+            const currentContext = Object.freeze({ ...defaultRenderContext });
+            await slow.update(element(currentContext));
+            await flushHookEffects({ cycles: 1, turns: 2 });
+            // Presentation context is not an Artifact identity. Restarting its
+            // pending acquisition discards valid work and evaluates it again.
+            expect(acquisitions).toBe(1);
+            const phaseDuration = Math.floor(DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS * 2 / 3);
+            await flushHookEffects({ cycles: 1, turns: 2, advanceTimersMs: phaseDuration });
+            cacheRead.resolve();
+            await flushHookEffects({ cycles: 1, turns: 2 });
+            await flushHookEffects({ cycles: 1, turns: 2, advanceTimersMs: phaseDuration });
+            expect(slow.findByTestId('plugin-rn-ui-unavailable-action')).toBeNull();
+            expect(slow.findByTestId('plugin-rn-ui-loading')).toBeTruthy();
 
+            byteRead.resolve(slowModule);
+            await flushHookEffects({ cycles: 2, turns: 2 });
             expect(slow.findByTestId('plugin-rn-ui-unavailable')).toBeNull();
             expect(slow.findByTestId('plugin-native-cold-load')).toBeTruthy();
-
-            const hung = await renderScreen(<PluginReactNativeSurface
-                surfaceId="surface_1"
-                renderContext={defaultRenderContext}
-                decision={{ state: 'load', reason: 'compatible', diagnostics: [] }}
-                load={hungLoad}
-                loadPolicy={{ source: 'installedArtifact' }}
-                cacheKey="cache_hung_transfer"
-            />);
-            await flushHookEffects({ cycles: 1, turns: 2 });
-            await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS - 1 });
-            expect(hung.findByTestId('plugin-rn-ui-unavailable-action')).toBeNull();
-            await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 1 });
-            expect(hung.findByTestId('plugin-rn-ui-unavailable-action')?.props.accessibilityLabel).toBe('common.retry');
+            expect(renderedContext).toBe(currentContext);
         } finally {
             vi.useRealTimers();
         }
@@ -798,7 +823,6 @@ describe('PluginReactNativeSurface', () => {
                 load={load}
                 loadPolicy={{ source: 'installedArtifact' }}
                 cacheKey="cache_render_surface_only_host_commit"
-                loadTimeoutMs={100}
                 watchdog={watchdog}
                 loadedRuntimeIdentity={{
                     pluginId: 'acme.preview',
@@ -847,7 +871,6 @@ describe('PluginReactNativeSurface', () => {
                 load={load}
                 loadPolicy={{ source: 'installedArtifact' }}
                 cacheKey={cacheKey}
-                loadTimeoutMs={1000}
                             />);
             await flushHookEffects({ cycles: 2, turns: 2 });
 
@@ -876,7 +899,6 @@ describe('PluginReactNativeSurface', () => {
                 load={load}
                 loadPolicy={{ source: 'installedArtifact' }}
                 cacheKey={cacheKey}
-                loadTimeoutMs={1000}
                             />);
             await flushHookEffects({ cycles: 1, turns: 2 });
 
@@ -918,7 +940,6 @@ describe('PluginReactNativeSurface', () => {
                 load={load}
                 loadPolicy={{ source: 'installedArtifact' }}
                 cacheKey={currentCacheKey}
-                loadTimeoutMs={1000}
                             />);
             await flushHookEffects({ cycles: 1, turns: 2 });
 
@@ -960,7 +981,6 @@ describe('PluginReactNativeSurface', () => {
                 load={load}
                 loadPolicy={{ source: 'installedArtifact' }}
                 cacheKey={cacheKey}
-                loadTimeoutMs={1000}
                             />);
             await flushHookEffects({ cycles: 1, turns: 2 });
 
@@ -1254,7 +1274,6 @@ describe('PluginReactNativeSurface', () => {
             load={firstLoad}
             loadPolicy={{ source: 'installedArtifact' }}
             cacheKey="cache_1"
-            loadTimeoutMs={1000}
                     />);
         await flushHookEffects({ cycles: 2, turns: 2 });
 
@@ -1270,7 +1289,6 @@ describe('PluginReactNativeSurface', () => {
                 loadPolicy={{ source: 'installedArtifact' }}
                 cacheKey="cache_2"
                 recoveryAction={{ label: 'route fallback', onPress: managePlugin }}
-                loadTimeoutMs={1000}
                             />);
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
@@ -1316,7 +1334,6 @@ describe('PluginReactNativeSurface', () => {
                 load={firstLoad}
                 loadPolicy={{ source: 'installedArtifact' }}
                 cacheKey="render-incumbent"
-                loadTimeoutMs={1000}
             />);
             await flushHookEffects({ cycles: 3, turns: 2 });
             expect(screen.findByTestId('plugin-native-render-incumbent')).toBeTruthy();
@@ -1328,7 +1345,6 @@ describe('PluginReactNativeSurface', () => {
                 load={candidateLoad}
                 loadPolicy={{ source: 'installedArtifact' }}
                 cacheKey="render-candidate"
-                loadTimeoutMs={1000}
             />);
             await flushHookEffects({ cycles: 3, turns: 2 });
 

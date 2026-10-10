@@ -69,6 +69,28 @@ function model(inventory: Readonly<Record<string, unknown>>) {
 }
 
 describe('admitDeclarativeStaticModel', () => {
+    it('admits installed presentation without a runtime occurrence and retains only inert Actions', () => {
+        const { occurrenceId: _actionOccurrence, ...declaredAction } = action;
+        const { occurrenceId: _destinationOccurrence, ...declaredDestination } = destination;
+        const candidate = model({
+            actions: [{ ...declaredAction, enabled: false }],
+            destinations: [declaredDestination],
+            settings: [setting],
+        });
+        const { occurrenceId: _modelOccurrence, ...identity } = candidate.identity;
+        const installed = { ...candidate, identity };
+        const admitted = admitDeclarativeStaticModel({ model: installed, expectedPluginId: 'acme.dashboard' });
+        expect(admitted?.root).toMatchObject({ kind: 'text', text: 'Dashboard' });
+        expect(admitted?.occurrenceId).toBeUndefined();
+        expect(admitted?.actions.get(action.qualifiedId)?.enabled).toBe(false);
+        expect(admitted?.destinations.get(destination.qualifiedId)?.identity).toEqual(destination.identity);
+        expect(admitted?.settingsById.get('density')?.inventory).toEqual(expect.objectContaining({ id: 'density' }));
+        expect(admitDeclarativeStaticModel({
+            model: { ...installed, declarativeInventory: { ...installed.declarativeInventory, actions: [declaredAction] } },
+            expectedPluginId: 'acme.dashboard',
+        })).toBeNull();
+    });
+
     it('reattaches drag nodes only to this model declaration and occurrence', () => {
         const source = { ...destination, identity: { pluginId: 'acme.dashboard', localId: 'card' }, qualifiedId: 'acme.dashboard/card', referenceSchema: { type: 'string' } };
         const target = { ...destination, identity: { pluginId: 'acme.dashboard', localId: 'tray' }, qualifiedId: 'acme.dashboard/tray' };

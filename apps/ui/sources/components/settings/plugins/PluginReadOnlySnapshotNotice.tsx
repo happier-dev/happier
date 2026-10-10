@@ -5,20 +5,24 @@ import { t } from '@/text';
 
 import type { PluginReadOnlySnapshotReason } from './model/pluginMarketplaceModel';
 
-function resolveNoticeSubtitle(reason: PluginReadOnlySnapshotReason): string {
-    if (reason === 'refreshing') {
-        return t('settingsPlugins.readOnlyRefreshing');
-    }
+function resolveNoticeSubtitle(reason: Exclude<PluginReadOnlySnapshotReason, 'refreshing'>): string {
     if (reason === 'installationUnavailable') {
         return t('settingsPlugins.installationReadUnavailable');
     }
     if (reason === 'projectionUnavailable') {
-        return t('settingsPlugins.readOnlyProjectionUnavailable');
+        return t('settingsPlugins.surfaces.projectionFailedBody');
     }
     if (reason === 'accountRecovery') {
         return t('settingsPlugins.readOnlyAccountRecovery');
     }
-    return t('settingsPlugins.readOnlySnapshot');
+    return t('settingsPlugins.surfaces.machineOfflineBody');
+}
+
+function resolveNoticeTitle(reason: Exclude<PluginReadOnlySnapshotReason, 'refreshing'>): string {
+    if (reason === 'projectionUnavailable') return t('settingsPlugins.surfaces.projectionFailedTitle');
+    if (reason === 'installationUnavailable') return t('settingsPlugins.surfaces.readFailedTitle');
+    if (reason === 'accountRecovery') return t('settingsPlugins.detailMissingTitle');
+    return t('settingsPlugins.surfaces.machineOfflineTitle');
 }
 
 /**
@@ -30,14 +34,16 @@ export const PluginReadOnlySnapshotNotice = React.memo(function PluginReadOnlySn
     reason: PluginReadOnlySnapshotReason;
     onRetry?: () => void;
 }>) {
-    const refreshing = props.reason === 'refreshing';
+    // Retained content is already visible. Routine refresh is not a warning or a second
+    // whole-surface loading state; failed reads below retain their recovery action.
+    if (props.reason === 'refreshing') return null;
     // Only failed reads from a reachable machine can be retried here.
     const onRetry = props.reason === 'projectionUnavailable' || props.reason === 'installationUnavailable' ? props.onRetry : undefined;
     return (
         <AttentionBanner
             testID={props.testID}
-            tone={refreshing ? 'neutral' : 'warning'}
-            title={t(refreshing ? 'common.loading' : 'common.unavailable')}
+            tone="warning"
+            title={resolveNoticeTitle(props.reason)}
             description={resolveNoticeSubtitle(props.reason)}
             accessibilityLiveRegion="polite"
             action={onRetry ? { label: t('common.retry'), onPress: onRetry, testID: `${props.testID}-retry` } : null}

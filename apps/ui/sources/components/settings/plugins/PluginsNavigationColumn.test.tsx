@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderSettingsView, standardCleanup } from '@/dev/testkit';
@@ -43,12 +42,6 @@ vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
         refresh: vi.fn(),
     }),
 }));
-vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
-    useDaemonMergedProjectionInputs: () => ({
-        phase: 'ready',
-        inputs: { pluginProjectionById: { 'happier.claude': { iconAgentId: 'claude' }, 'happier.codex': { iconAgentId: 'codex' } } },
-    }),
-}));
 
 afterEach(() => {
     standardCleanup();
@@ -65,66 +58,15 @@ const rowIds = (screen: Awaited<ReturnType<typeof renderSettingsView>>, prefix: 
     .map((node) => String(node.props.testID)))];
 
 describe('PluginsNavigationColumn', () => {
-    it('lists the plugins on the machine the page administers as Added, then Included with Happier, with their agent marks', async () => {
+    it('keeps destination navigation without rendering a second installed collection or search', async () => {
         const { PluginsNavigationColumn } = await import('./PluginsNavigationColumn');
         const screen = await renderSettingsView(<PluginsNavigationColumn />);
-
-        expect(rowIds(screen, 'plugins-column:plugin:')).toEqual([
-            'plugins-column:plugin:acme.notes',
-            'plugins-column:plugin:happier.claude',
-            'plugins-column:plugin:happier.codex',
-        ]);
+        expect(rowIds(screen, 'plugins-column:plugin:')).toEqual([]);
+        expect(screen.findByTestId('plugins-column:search')).toBeNull();
         const installedRow = screen.findAll((node) => node.props?.testID === 'plugins-column:installed' && typeof node.props.title === 'string')[0];
         expect(installedRow?.props.detail).toBe('3');
-        const marks = screen.findAll((node) => node.props?.title === 'Claude' && 'iconAgentId' in node.props);
-        expect(marks[0]?.props.iconAgentId).toBe('claude');
         expect(screen.findByTestId('plugins-column:developers.trigger')).not.toBeNull();
     });
-
-    it('opens a plugin beside the Plugins page, and marks the open one', async () => {
-        const { PluginsNavigationColumn } = await import('./PluginsNavigationColumn');
-        route.params = { view: 'installed', plugin: 'happier.claude' };
-        const screen = await renderSettingsView(<PluginsNavigationColumn />);
-
-        const selected = (testID: string) => screen.findAll((node) => node.props?.testID === testID && typeof node.props.selected === 'boolean')[0]?.props.selected;
-        expect(selected('plugins-column:plugin:happier.claude')).toBe(true);
-        expect(selected('plugins-column:plugin:happier.codex')).toBe(false);
-        // A plugin open beside the page is not a different view: Installed stays the current one.
-        expect(selected('plugins-column:installed')).toBe(true);
-
-        // On the Plugins page the selection changes in place; the grid, its filters and scroll stay.
-        screen.pressByTestId('plugins-column:plugin:happier.codex');
-        expect(route.setParams).toHaveBeenCalledWith({ plugin: 'happier.codex', source: undefined });
-        expect(route.replace).not.toHaveBeenCalled();
-    });
-
-    it('returns to the Plugins page with the plugin open when pressed from another Plugins page', async () => {
-        const { PluginsNavigationColumn } = await import('./PluginsNavigationColumn');
-        route.pathname = '/plugins/listing';
-        const screen = await renderSettingsView(<PluginsNavigationColumn />);
-        screen.pressByTestId('plugins-column:plugin:acme.notes');
-        expect(route.replace).toHaveBeenCalledWith('/plugins?view=installed&plugin=acme.notes');
-    });
-
-    it('writes its search to the one installed-plugins query the page filters by', async () => {
-        const { PluginsNavigationColumn } = await import('./PluginsNavigationColumn');
-        const { readPluginsInstalledQuery, setPluginsInstalledQuery } = await import('./model/pluginsInstalledSearch');
-        const previous = installedPlugins.value;
-        installedPlugins.value = Array.from({ length: 9 }, (_, index) => ({
-            pluginId: `acme.p${index}`, title: `Plugin ${index}`, description: null, version: '1', enabled: true, source: { kind: 'npm', locator: `p${index}` },
-        }));
-        try {
-            const screen = await renderSettingsView(<PluginsNavigationColumn />);
-            const field = screen.findAll((node) => node.props?.testID === 'plugins-column:search' && typeof node.props.onChangeText === 'function')[0];
-            await act(async () => { field?.props.onChangeText('Plugin 3'); });
-            expect(readPluginsInstalledQuery()).toBe('Plugin 3');
-            expect(rowIds(screen, 'plugins-column:plugin:')).toEqual(['plugins-column:plugin:acme.p3']);
-        } finally {
-            installedPlugins.value = previous;
-            setPluginsInstalledQuery('');
-        }
-    });
-
     it('drives the Plugins page between Installed and Browse', async () => {
         const { PluginsNavigationColumn } = await import('./PluginsNavigationColumn');
         route.params = { view: 'browse' };

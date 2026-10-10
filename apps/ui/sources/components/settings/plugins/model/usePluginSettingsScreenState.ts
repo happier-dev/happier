@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useActivePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
 
 import {
     getMachineCapabilitiesCacheState,
@@ -63,6 +64,7 @@ import {
     readDevelopmentSourceInstallAvailable,
     readDevelopmentPlugins,
     readInstalledPlugins,
+    projectAccountInstalledPlugins,
     isPluginMutationVisibleAfterRefresh,
     readPluginChangeKind,
     readPluginManagedResourceRemovalReview,
@@ -282,6 +284,8 @@ export type PluginSettingsScreenState = Readonly<{
 
 export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolean }> = {}): PluginSettingsScreenState {
     const activeServer = useActiveServerSnapshot();
+    const availabilityReader = useActivePluginAccountAvailabilityReader();
+    const accountInstalledAdmission = React.useMemo(() => availabilityReader?.readInstalledPlugins() ?? null, [availabilityReader]);
     // The one administration-target owner. It supplies the selection, the exact
     // Settings/Secrets record target, and the single currentness fence every
     // asynchronous write re-checks — shared with the deep-linked Settings page
@@ -398,12 +402,13 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
             installedPlugins: currentInstalledPlugins,
         };
     }
-    const installedPlugins = hasCapabilitySnapshot
+    const administeredInstalledPlugins = hasCapabilitySnapshot
         ? currentInstalledPlugins
         : lastKnownInstalledPluginsRef.current.installedPlugins;
+    const installedPlugins = React.useMemo(() => projectAccountInstalledPlugins(administeredInstalledPlugins, accountInstalledAdmission), [accountInstalledAdmission, administeredInstalledPlugins]);
     const installedPluginById = React.useMemo(
-        () => new Map(installedPlugins.map((entry) => [entry.pluginId, entry] as const)),
-        [installedPlugins],
+        () => new Map(administeredInstalledPlugins.map((entry) => [entry.pluginId, entry] as const)),
+        [administeredInstalledPlugins],
     );
     const installedPluginByIdRef = React.useRef(installedPluginById);
     installedPluginByIdRef.current = installedPluginById;
@@ -427,8 +432,8 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
     const administrationCandidatesRef = React.useRef(administrationTargetSelection.candidates);
     administrationCandidatesRef.current = administrationTargetSelection.candidates;
     const currentDevelopmentPlugins = React.useMemo(
-        () => readDevelopmentPlugins(machineCapabilities.state, installedPlugins),
-        [installedPlugins, machineCapabilities.state],
+        () => readDevelopmentPlugins(machineCapabilities.state, administeredInstalledPlugins),
+        [administeredInstalledPlugins, machineCapabilities.state],
     );
     const lastKnownDevelopmentPluginsRef = React.useRef<Readonly<{
         scopeKey: string | null;
@@ -525,13 +530,15 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
     const pluginProjectionV2 = daemonOperationsAvailable
         ? daemonMergedProjection.inputs?.pluginProjectionV2 ?? null
         : null;
-    const { pluginTruthSettled, targetResolving, installedPluginsRead } = resolvePluginTruthReadState({
+    const { pluginTruthSettled, targetResolving, installedPluginsRead: administeredInstalledPluginsRead } = resolvePluginTruthReadState({
         targetOnline: administrationTargetSelection.state.kind === 'online',
         hasExecutionTarget: executionTarget !== null,
         capabilitiesLoaded: machineCapabilities.state.status === 'loaded',
         daemonAdministrationAvailable,
         projectionPhase: daemonMergedProjection.phase,
     });
+    const installedPluginsRead = accountInstalledAdmission?.kind === 'available'
+        || (executionTarget !== null && administeredInstalledPluginsRead);
     const registryDiagnostics = projectionInputs?.registryDiagnostics ?? [];
     const currentDiagnostics = React.useMemo(() => [
         ...registryDiagnostics,

@@ -56,6 +56,19 @@ describe('Plugins page without a chosen machine', () => {
         expect(text).not.toContain('settingsPlugins.discover.status.empty');
     });
 
+    it('claims an empty catalog only after a query returned an empty result', async () => {
+        const { DiscoverStatusSummary } = await import('./PluginMarketplaceSections');
+        const props = { loading: false, error: null, stale: false, entryCount: 0, sourceStatuses: [], diagnostics: [], nonInstallable: [], selectedSourceTitle: null };
+        const screen = await renderScreen(<DiscoverStatusSummary {...props} searchText={null} />);
+        expect(screen.findByTestId('settings.plugins.marketplace.discover.status.summary')).toBeNull();
+        await screen.update(<DiscoverStatusSummary {...props} searchText={null} loading />);
+        expect(screen.findByTestId('settings.plugins.marketplace.discover.status.summary')).not.toBeNull();
+        await screen.update(<DiscoverStatusSummary {...props} searchText={null} error="read failed" />);
+        expect(screen.getTextContent()).toContain('settingsPlugins.discover.status.errorTitle');
+        await screen.update(<DiscoverStatusSummary {...props} searchText="" />);
+        expect(screen.getTextContent()).toContain('settingsPlugins.surfaces.browseEmpty');
+    });
+
     it('answers a search with no results inline, naming the query, with a way to clear it', async () => {
         const { DiscoverStatusSummary } = await import('./PluginMarketplaceSections');
         const onClearSearch = vi.fn();
@@ -63,7 +76,27 @@ describe('Plugins page without a chosen machine', () => {
             sourceStatuses={[]} diagnostics={[]} nonInstallable={[]} selectedSourceTitle={null} searchText="jira"
             onClearSearch={onClearSearch} />);
         expect(screen.getTextContent()).toContain('settingsPlugins.surfaces.noMatch');
+        // A changed query has one quiet status announcement, not another page-sized empty state.
+        const announcements = screen.findAll((node) => node.props.accessibilityRole === 'status' || node.props.role === 'status');
+        expect(announcements).toHaveLength(1);
         await screen.pressByTestIdAsync('settings.plugins.marketplace.discover.clearSearch');
         expect(onClearSearch).toHaveBeenCalledTimes(1);
+    });
+
+    it('defers an empty Browse summary to the page cause but keeps retained result counts', async () => {
+        const { DiscoverStatusSummary } = await import('./PluginMarketplaceSections');
+        const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
+        const props = { loading: false, error: null, stale: false, entryCount: 0, sourceStatuses: [], diagnostics: [], nonInstallable: [], selectedSourceTitle: null, searchText: '' };
+        const view = (entryCount: number, pageNoticeActive: boolean) => (
+            <ListPresentationProvider value="page" pageNoticeActive={pageNoticeActive}>
+                <DiscoverStatusSummary {...props} entryCount={entryCount} />
+            </ListPresentationProvider>
+        );
+        const screen = await renderScreen(view(0, true));
+        expect(screen.findByTestId('settings.plugins.marketplace.discover.status.summary')).toBeNull();
+        await screen.update(view(3, true));
+        expect(screen.findByTestId('settings.plugins.marketplace.discover.status.summary')).not.toBeNull();
+        await screen.update(view(0, false));
+        expect(screen.findByTestId('settings.plugins.marketplace.discover.status.summary')).not.toBeNull();
     });
 });

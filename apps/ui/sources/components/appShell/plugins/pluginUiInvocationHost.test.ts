@@ -32,7 +32,6 @@ import type { PluginSurfaceOpenRequest } from '@/components/plugins/surfaces/ope
 import {
     createAppShellPluginUiInvocationHost,
 } from './pluginUiInvocationHost';
-import { PLUGIN_PRESENT_USER_INTERACTION_DEADLINE_MS } from '@/components/plugins/hostApi/interactionLifetime';
 
 // Keep schema reads, dispatch, serialization and outcome classification real;
 // only the external daemon RPC transport supplies fixture responses.
@@ -467,10 +466,24 @@ describe('AppShell plugin UI invocation host', () => {
                 input: null,
                 executionSurface: 'voice',
             },
-            timeoutMs: PLUGIN_PRESENT_USER_INTERACTION_DEADLINE_MS,
+            operationTimeoutMs: null,
             signal: expect.any(AbortSignal),
         }));
         expect(machineRpc.mock.calls[0]?.[0].payload).not.toHaveProperty('invocation');
+    });
+
+    it('preserves a caller-authored Voice Action budget', async () => {
+        answerDaemonAction(daemonSuccess({ token: 'budgeted-voice-success' }));
+        const ui = createAppShellPluginUiInvocationHost({
+            pluginId: 'acme.voice', contributionId: 'conversation',
+            occurrenceId: 'acme-voice-occurrence-12', machineId: 'machine-1', signal: new AbortController().signal,
+            isCurrent: () => true,
+            timeoutMs: 90_000,
+            resolveContributedAction: resolveDaemonAction,
+        });
+
+        await expect(ui.executeAction('mint-session', null)).resolves.toEqual({ token: 'budgeted-voice-success' });
+        expect(machineRpc).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 90_000 }));
     });
 
     it('keeps the complete UI host API present while unsupported mounted-only methods fail closed', async () => {

@@ -1,4 +1,4 @@
-import { arePluginMachineExecutionOriginsEqual, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionOriginRef, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { buildQualifiedPluginContributionKey, createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import { DaemonPluginUiArtifactByteIdentityV1Schema, type PluginProjectedDragSourceEntryV1, type PluginProjectedDropTargetEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginContributionClientPlatform } from '@happier-dev/protocol/plugins/contributions/catalog';
@@ -154,13 +154,13 @@ function isCurrentUnionOrigin(
         // The projecting daemon is the route. A materialization, when the
         // plugin has one, must live on that same machine.
         && (origin.executionOrigin === null
-            || origin.executionOrigin.materializationRef.machineId === origin.machineId);
+            || getPluginMachineExecutionOriginRef(origin.executionOrigin).machineId === origin.machineId);
 }
 
 /** A materialization, when present, must belong to the plugin it serves. */
 function originServesPlugin(origin: ProjectedExecutableOrigin, pluginId: string): boolean {
     return origin.executionOrigin === null
-        || origin.executionOrigin.materializationRef.pluginId === pluginId;
+        || getPluginMachineExecutionOriginRef(origin.executionOrigin).pluginId === pluginId;
 }
 
 function readCurrentProjectedExecutableOrigin(input: Readonly<{
@@ -188,7 +188,7 @@ function readCurrentProjectedExecutableOrigin(input: Readonly<{
         || !Number.isInteger(projectionGeneration)
         || projectionGeneration < 0
         || (executionOrigin !== null
-            && executionOrigin.materializationRef.machineId !== directMachineAuthority.machineId)
+            && getPluginMachineExecutionOriginRef(executionOrigin).machineId !== directMachineAuthority.machineId)
     ) {
         return null;
     }

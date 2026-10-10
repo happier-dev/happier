@@ -23,6 +23,8 @@ import {
 } from './pluginScaffoldUiModeOptions';
 import { usePluginAuthoringSession } from './usePluginAuthoringSession';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { useMountedShouldContinue } from '@/hooks/ui/useMountedShouldContinue';
 
 function PluginSourceRootDraft(props: Readonly<{
     available: boolean;
@@ -91,6 +93,7 @@ function PluginSourceRootDraft(props: Readonly<{
  */
 export const PluginDevelopmentScreen = React.memo(function PluginDevelopmentScreen() {
     const isFocused = useIsFocused();
+    const shouldContinue = useMountedShouldContinue();
     const state = usePluginSettingsScreenState({ focused: isFocused });
     const openPluginAuthoringSession = usePluginAuthoringSession({
         serverId: state.executionServerId,
@@ -126,6 +129,8 @@ export const PluginDevelopmentScreen = React.memo(function PluginDevelopmentScre
      */
     const createDevelopmentPlugin = React.useCallback((withAgent: boolean) => {
         if (!state.daemonOperationsAvailable || !state.developmentCreateAvailable) return;
+        const lifetime = withAgent ? captureActiveServerAccountScopeLifetime() : null;
+        if (withAgent && !lifetime) return;
         const title = t(withAgent
             ? 'settingsPlugins.developmentCreateWithAgent'
             : 'settingsPlugins.developmentCreate');
@@ -158,30 +163,34 @@ export const PluginDevelopmentScreen = React.memo(function PluginDevelopmentScre
                 const displayName = typeof input.displayName === 'string' ? input.displayName.trim() : '';
                 const pluginId = typeof input.pluginId === 'string' ? input.pluginId.trim() : '';
                 const ui = readPluginScaffoldUiMode(input.ui) ?? DEFAULT_PLUGIN_SCAFFOLD_UI_MODE;
-                if (!targetDir || !displayName || !pluginId || context.signal.aborted) return { ok: false };
+                if (!targetDir || !displayName || !pluginId || context.signal.aborted
+                    || (withAgent && lifetime?.isCurrent() !== true) || !shouldContinue()) return { ok: false };
                 const settlement = await state.runDevelopmentCreate({
                     targetDir,
                     displayName,
                     pluginId,
                     ui,
                 });
-                if (settlement.status !== 'success' || context.signal.aborted) return { ok: false };
+                if (settlement.status !== 'success' || context.signal.aborted
+                    || (withAgent && lifetime?.isCurrent() !== true) || !shouldContinue()) return { ok: false };
                 setCreatedPlugin(settlement.created);
                 if (withAgent) openCreatedPluginWithAgent(settlement.created);
                 return { ok: true };
             },
         });
         presentActionInputForm({ form });
-    }, [openCreatedPluginWithAgent, state]);
+    }, [openCreatedPluginWithAgent, shouldContinue, state]);
 
     /**
      * Re-resolves the current admitted source through the selected daemon, then
      * opens the ordinary authoring Session in its canonical working directory.
      */
     const editDevelopmentPluginWithAgent = React.useCallback((editPluginId: string) => {
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) return;
         void (async () => {
             const settlement = await state.resolveDevelopmentEditTarget(editPluginId);
-            if (settlement.status !== 'success') return;
+            if (settlement.status !== 'success' || !lifetime.isCurrent() || !shouldContinue()) return;
             openPluginAuthoringSession({
                 sessionDirectory: settlement.target.sessionDirectory,
                 promptText: `${settlement.target.sourceRootPath}\n\n${t(
@@ -190,7 +199,7 @@ export const PluginDevelopmentScreen = React.memo(function PluginDevelopmentScre
                 )}`,
             });
         })();
-    }, [openPluginAuthoringSession, state]);
+    }, [openPluginAuthoringSession, shouldContinue, state]);
 
     // Adopting an existing file or folder turns authored code into a running
     // development source. The path the user types

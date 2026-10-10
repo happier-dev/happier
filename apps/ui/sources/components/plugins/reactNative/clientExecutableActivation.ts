@@ -6,6 +6,7 @@ import {
 import {
     getPluginUiClientExecutableComposition,
     type PluginUiClientExecutableActivation,
+    type PluginUiClientExecutableAdmission,
     type PluginUiClientExecutableComposition,
     type PluginUiClientExecutableCompositionAttempt,
     type PluginUiClientExecutableDerivedScope,
@@ -60,6 +61,36 @@ function release(releaseResource: () => void): void {
     }
 }
 
+function targetAdmission(target: PluginUiProjectedClientExecutableTarget): PluginUiClientExecutableAdmission {
+    return {
+        pluginId: target.pluginId,
+        ...(target.pluginVersion === undefined ? {} : { pluginVersion: target.pluginVersion }),
+        contributes: target.contributes,
+        target: target.target,
+        executionOrigin: target.executionOrigin,
+        occurrenceId: target.occurrenceId,
+        hostUiApiRange: target.artifactGraph.hostUiApiRange,
+        identity: target.cacheIdentity,
+        moduleReference: target.moduleReference,
+        authority: target.authority,
+    };
+}
+
+/** Same normalization and composition fingerprint as adoption, without acquiring bytes. */
+export function retainProjectedPluginUiClientExecutables(input: Readonly<{
+    actionProjection?: PluginUiClientExecutableProjectionSource | null;
+    voiceProjection?: PluginUiClientExecutableProjectionSource | null;
+    platform: PluginContributionClientPlatform;
+    accountLifetime?: ActiveServerAccountScopeLifetime | null;
+    executableHost?: PluginUiExecutableModuleHost;
+}>): Promise<void> {
+    const composition = getPluginUiClientExecutableComposition(input.executableHost ?? getInstalledPluginUiExecutableModuleHost());
+    const targets = input.accountLifetime?.isCurrent()
+        ? resolveProjectedPluginUiClientExecutables(input)
+        : [];
+    return composition.retain(targets.map(targetAdmission));
+}
+
 async function createProjectedClientExecutableActivation(input: Readonly<{
     target: PluginUiProjectedClientExecutableTarget;
     composition: PluginUiClientExecutableComposition;
@@ -68,6 +99,7 @@ async function createProjectedClientExecutableActivation(input: Readonly<{
     reader: PluginAccountAvailabilityReader | null | undefined;
     accountLifetime: ActiveServerAccountScopeLifetime | null | undefined;
     isCurrent?: () => boolean;
+    retainCommittedActivation?: boolean;
     createDerivedScope?: PluginUiClientExecutableDerivedScopeFactory;
 }>): Promise<Readonly<{
     activation: PluginUiClientExecutableActivation;
@@ -76,6 +108,13 @@ async function createProjectedClientExecutableActivation(input: Readonly<{
     const { accountLifetime, reader, target } = input;
     const serverId = target.authority.serverId;
     if (!reader || !accountLifetime || !serverId || !isCurrent(input)) return null;
+    let committed = false;
+    let activation: PluginUiClientExecutableActivation;
+    const scopeIsCurrent = () => accountLifetime.isCurrent() && (
+        committed && input.retainCommittedActivation
+            ? input.composition.isCurrentActivation(activation)
+            : isCurrent(input)
+    );
 
     const acquired = await acquirePluginReactNativeArtifactAvailability({
         reader,
@@ -94,11 +133,11 @@ async function createProjectedClientExecutableActivation(input: Readonly<{
                     occurrenceId: target.occurrenceId,
                     contributionId: target.cacheIdentity.contributionId,
                     releaseVersion: target.pluginVersion,
-                    isCurrent: () => isCurrent(input),
+                    isCurrent: scopeIsCurrent,
                 },
             }
             : {}),
-        isCurrent: () => isCurrent(input),
+        isCurrent: scopeIsCurrent,
     });
     if (acquired.kind !== 'available') return null;
     if (!acquired.isCurrent() || !isCurrent(input)) {
@@ -127,30 +166,25 @@ async function createProjectedClientExecutableActivation(input: Readonly<{
         return null;
     }
 
-    const activation: PluginUiClientExecutableActivation = Object.freeze({
-        pluginId: target.pluginId,
-        ...(target.pluginVersion === undefined ? {} : { pluginVersion: target.pluginVersion }),
+    activation = Object.freeze({
+        ...targetAdmission(target),
         accountLifetime,
-        contributes: target.contributes,
-        target: target.target,
-        executionOrigin: target.executionOrigin,
-        occurrenceId: target.occurrenceId,
-        hostUiApiRange: target.artifactGraph.hostUiApiRange,
         cache: input.cache,
-        identity: target.cacheIdentity,
-        moduleReference: target.moduleReference,
         backend: input.backend,
-        authority: target.authority,
-        isCurrent: () => isCurrent(input) && acquired.isCurrent(),
+        isCurrent: () => scopeIsCurrent() && acquired.isCurrent(),
         createScope: (registrationScope) => {
             const derivedScope = input.createDerivedScope?.({ target, registrationScope }) ?? null;
             let unwound = false;
             return Object.freeze({
-                commit: () => derivedScope
-                    ? derivedScope.commit()
-                    : registrationScope.commit(),
+                commit: async () => {
+                    if (!isCurrent(input) || !acquired.isCurrent()) throw new Error('client_executable_activation_retired');
+                    if (derivedScope) await derivedScope.commit();
+                    else registrationScope.commit();
+                    if (!isCurrent(input)) throw new Error('client_executable_activation_retired');
+                    committed = true;
+                },
                 isCurrent: () => (
-                    isCurrent(input)
+                    scopeIsCurrent()
                     && acquired.isCurrent()
                     && (derivedScope?.isCurrent?.() ?? true)
                 ),
@@ -183,6 +217,8 @@ export async function reconcileProjectedPluginUiClientExecutables(input: Readonl
     reader?: PluginAccountAvailabilityReader | null;
     accountLifetime?: ActiveServerAccountScopeLifetime | null;
     isCurrent?: () => boolean;
+    /** AppShell publishes every latest exact target set before queued preparation. */
+    retainCommittedActivation?: boolean;
     createDerivedScope?: PluginUiClientExecutableDerivedScopeFactory;
 }>): Promise<readonly PluginUiClientExecutableReconciliationAttempt[]> {
     const executableHost = input.executableHost ?? getInstalledPluginUiExecutableModuleHost();
@@ -208,13 +244,16 @@ export async function reconcileProjectedPluginUiClientExecutables(input: Readonl
             reader: input.reader,
             accountLifetime: input.accountLifetime,
             isCurrent: input.isCurrent,
+            retainCommittedActivation: input.retainCommittedActivation,
             createDerivedScope: input.createDerivedScope,
         });
         if (activation) prepared.push(activation);
     }
     if (!isCurrent(input)) {
         for (const candidate of prepared) release(candidate.release);
-        await composition.reconcile([]);
+        // AppShell has already published the latest complete-set retention.
+        // An obsolete preparation request cannot withdraw its newer owner.
+        if (!input.retainCommittedActivation) await composition.reconcile([]);
         return Object.freeze([]);
     }
 

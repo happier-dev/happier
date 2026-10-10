@@ -21,6 +21,7 @@ export type PluginArtifactDaemonByteFetcher = (input: Readonly<{
     transport: PluginArtifactDaemonTransport;
     family: PluginArtifactDaemonFamily;
     digest: PluginUiArtifactDigestV1;
+    signal?: AbortSignal;
 }>) => Promise<DaemonPluginUiArtifactBytesReadResponse>;
 
 function unavailableArtifactBytes(diagnostic: string): DaemonPluginUiArtifactBytesReadResponse {
@@ -44,6 +45,10 @@ export const fetchPluginArtifactBytesViaMachineRpc: PluginArtifactDaemonByteFetc
             serverId: input.transport.serverId,
             method: RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ,
             payload,
+            // Artifact work follows the requesting surface's lifetime. A slow
+            // read is still pending; only connection/setup uses the RPC budget.
+            operationTimeoutMs: null,
+            ...(input.signal ? { signal: input.signal } : {}),
         });
         if (isRpcMethodNotFoundResult(raw)) return unavailableArtifactBytes('artifact_bytes_rpc_unavailable');
         const parsed = DaemonPluginUiArtifactBytesReadResponseSchema.safeParse(raw);
@@ -91,13 +96,15 @@ export function createPluginArtifactDaemonSource(input: Readonly<{
     const fetchArtifactBytes = input.fetchArtifactBytes ?? fetchPluginArtifactBytesViaMachineRpc;
     return Object.freeze({
         kind: 'daemon' as const,
-        fetch: async ({ artifact }) => {
+        fetch: async ({ artifact, signal }) => {
+            if (signal?.aborted) return null;
             const response = await fetchArtifactBytes({
                 transport: input.transport,
                 family: input.family,
                 digest: artifact.digest,
+                ...(signal ? { signal } : {}),
             });
-            return decodeDaemonFileSet(response, input.family, artifact.digest);
+            return signal?.aborted ? null : decodeDaemonFileSet(response, input.family, artifact.digest);
         },
     });
 }

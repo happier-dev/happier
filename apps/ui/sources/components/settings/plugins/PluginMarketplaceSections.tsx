@@ -9,6 +9,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { PluginProjectionDiagnostic } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { Item } from '@/components/ui/lists/Item';
+import { usePageNoticeActive } from '@/components/ui/lists/listPresentation';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
@@ -37,7 +38,7 @@ import { resolvePluginContributionKindLabel } from './model/pluginContributionKi
 import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 
 /** The machine's contribution projection facts a plugin row reads: its Agent mark and what it adds. */
-type PluginProjectionFactsById = Readonly<Record<string, Pick<PluginProjectionEntry, 'iconAgentId' | 'contributionKinds'> | undefined>>;
+type PluginProjectionFactsById = Readonly<Record<string, Pick<PluginProjectionEntry, 'iconAgentId' | 'contributionKinds' | 'installedPackage'> | undefined>>;
 import type { PluginsCollectionState } from './model/pluginsCollectionState';
 import { PluginDiagnosticsSection } from './diagnostics/PluginDiagnosticsSection';
 import type {
@@ -93,6 +94,8 @@ export function InstalledPluginsSection(props: Readonly<{
     filtering?: boolean;
     /** The machine's contribution projection by plugin id: the Agent mark and what each plugin adds. */
     projectionByPluginId?: PluginProjectionFactsById;
+    machineId?: string | null;
+    serverId?: string | null;
     /** Where each plugin runs across the Account ("On 3 machines"), from the machine matrix owner. */
     machineCoverageByPluginId?: Readonly<Record<string, string>>;
     onClearSearch: () => void;
@@ -126,7 +129,7 @@ export function InstalledPluginsSection(props: Readonly<{
         openKey: props.selectedPluginId ?? null,
         onOpenChange,
     });
-    const anatomy = useInstalledPluginAnatomy(props.projectionByPluginId);
+    const anatomy = useInstalledPluginAnatomy(props.projectionByPluginId, props.machineId, props.serverId, props.presentation);
     const controls = React.useMemo(
         () => new Map(rows.map((row) => [row.entry.pluginId, row.control] as const)),
         [rows],
@@ -201,8 +204,18 @@ export function InstalledPluginsSection(props: Readonly<{
                     />
                 );
             case 'ready':
-            case 'offline':
                 return undefined;
+            case 'offline':
+                return props.installedPlugins.length === 0 ? (
+                    <ItemGroup>
+                        <Item
+                            testID="settings.plugins.marketplace.installed.noSnapshot"
+                            title={t('settingsPlugins.surfaces.noSavedDetails')}
+                            mode="info"
+                            showChevron={false}
+                        />
+                    </ItemGroup>
+                ) : undefined;
         }
     })();
     return (
@@ -217,7 +230,8 @@ export function InstalledPluginsSection(props: Readonly<{
                 footer={props.footer}
                 loading={props.collectionState === 'loading'}
                 {...(empty === undefined ? {} : { empty })}
-                useRowActions={useInstalledPluginRowActions}
+                // Cards use the anatomy's footer action; only list rows carry the accessory beside the body.
+                useRowActions={props.presentation === 'list' ? useInstalledPluginRowActions : undefined}
             />
         </InstalledPluginControlsContext.Provider>
     );
@@ -261,6 +275,7 @@ function useInstalledPluginRowActions(row: InstalledPluginRow): CollectionRowAct
 function projectInstalledPluginRows(
     props: Readonly<{
         installedPlugins: readonly InstalledPluginEntry[];
+        presentation: PluginsCollectionPresentation;
         machineCoverageByPluginId?: Readonly<Record<string, string>>;
         canRunActions: boolean;
         isPluginActionInFlight: (pluginId: string) => boolean;
@@ -277,13 +292,18 @@ function projectInstalledPluginRows(
         const canToggle = entry.enabled ? capabilities.canDisable : capabilities.canEnable;
         const busy = props.isPluginActionInFlight(entry.pluginId);
         const presentation = projectInstalledPluginPresentation(entry);
-        const needsDecision = presentation.status.id === 'incompatible'
+        const observedOnly = entry.accountInstallations !== undefined;
+        const needsDecision = !observedOnly && (presentation.status.id === 'incompatible'
             || presentation.status.id === 'trustRemoved'
-            || presentation.status.id === 'needsAttention';
-        // The default state (enabled and healthy) has no status line; only a state worth reading does.
-        const statusLabel = offline
+            || presentation.status.id === 'needsAttention');
+        // Cards always name their state in the footer; a healthy list row needs no repeated boilerplate.
+        const statusLabel = observedOnly
+            ? entry.accountInstallations!.some((installation) => installation.declarationState === 'preparing')
+                ? t('common.loading') : t('common.installed')
+            : offline
             ? t('settingsPlugins.surfaces.lastKnown', { status: presentation.status.label })
-            : presentation.status.id === 'enabled' ? null : presentation.attentionLabel ?? presentation.status.label;
+            : presentation.status.id === 'enabled' && props.presentation === 'list'
+                ? null : presentation.attentionLabel ?? presentation.status.label;
         // A healthy, enabled plugin says where it runs; anything else keeps its own status.
         const coverage = !offline && !needsDecision && entry.enabled
             ? props.machineCoverageByPluginId?.[entry.pluginId] ?? null
@@ -321,30 +341,32 @@ function projectInstalledPluginRows(
             group,
             statusLabel: coverage ?? statusLabel,
             statusTone,
-            control: locked ? null : control,
-            byline: group === 'included' ? null : presentation.sourceLabel,
+            control: locked || observedOnly ? null : control,
+            byline: group === 'included' || observedOnly ? null : presentation.sourceLabel,
         };
     };
     return [...added.map((entry) => project(entry, 'added')), ...included.map((entry) => project(entry, 'included'))];
 }
 
 /** One anatomy for the grid's cards and the list's rows. */
-function useInstalledPluginAnatomy(projectionByPluginId: PluginProjectionFactsById | undefined): CollectionAnatomy<InstalledPluginRow> {
+function useInstalledPluginAnatomy(projectionByPluginId: PluginProjectionFactsById | undefined, machineId: string | null | undefined, serverId: string | null | undefined, presentation: PluginsCollectionPresentation): CollectionAnatomy<InstalledPluginRow> {
     const host = resolvePluginsSurfaceHost(usePathname());
     return React.useMemo(() => ({
         wrapItem: (row, content) => <WorkspaceDestinationRow href={buildPluginsHomeRoute(host, {
             view: 'installed', open: { kind: 'installed', pluginId: row.entry.pluginId },
         })}>{content}</WorkspaceDestinationRow>,
         glyph: (row) => (
-            <PluginMark title={row.entry.title} iconAgentId={projectionByPluginId?.[row.entry.pluginId]?.iconAgentId ?? null} />
+            <PluginMark title={row.entry.title} pluginId={row.entry.pluginId} iconAgentId={projectionByPluginId?.[row.entry.pluginId]?.iconAgentId ?? null}
+                installedPackage={projectionByPluginId?.[row.entry.pluginId]?.installedPackage} machineId={machineId} serverId={serverId} />
         ),
         title: (row) => row.entry.title,
         // The version, and the source unless the group names it.
         where: (row) => [installedPluginVersionLabel(row.entry), row.byline].filter(Boolean).join(' · ') || null,
-        // What it is for, else the kind of thing it adds.
+        // What it is for, else the kind of thing it adds. An empty grid value reserves the canonical two-line
+        // slot even before purpose facts arrive; it states nothing the machine has not supplied.
         description: (row) => row.entry.description
             ?? resolvePluginContributionKindLabel(projectionByPluginId?.[row.entry.pluginId]?.contributionKinds)
-            ?? null,
+            ?? (presentation === 'grid' ? '' : null),
         reason: (row) => (row.statusLabel
             ? <PluginCardStatus label={row.statusLabel} tone={row.statusTone} />
             : null),
@@ -352,7 +374,7 @@ function useInstalledPluginAnatomy(projectionByPluginId: PluginProjectionFactsBy
         accessibilityLabel: (row) => buildActionRowAccessibilityLabel([row.entry.title, t('common.details')]) ?? row.entry.title,
         testID: (row) => `settings.plugins.marketplace.installed.${row.entry.pluginId}`,
         columnTitles: { title: t('settingsPlugins.surfaces.navigationTitle') },
-    }), [host, projectionByPluginId]);
+    }), [host, projectionByPluginId, machineId, serverId, presentation]);
 }
 
 /**
@@ -365,22 +387,19 @@ function PluginsNoMatch(props: Readonly<{
     query: string;
     onClear?: () => void;
 }>) {
-    const { theme } = useUnistyles();
     return (
         <ItemGroup>
-            <EmptyState
+            <SurfaceStateCard
                 testID={props.testID}
-                layout="inline"
-                icon={<Icon name="magnifying-glass" size={18} color={theme.colors.text.tertiary} />}
+                size="line"
+                kind="empty"
+                accessibilitySemantics="status"
                 title={t('settingsPlugins.surfaces.noMatch', { query: props.query.trim() })}
-                action={props.onClear ? (
-                    <SectionActionButton
-                        testID={props.clearTestID}
-                        title={t('settingsPlugins.surfaces.clearSearch')}
-                        icon="x"
-                        onPress={props.onClear}
-                    />
-                ) : null}
+                action={props.onClear ? {
+                    testID: props.clearTestID,
+                    label: t('settingsPlugins.surfaces.clearSearch'),
+                    onPress: props.onClear,
+                } : undefined}
             />
         </ItemGroup>
     );
@@ -789,26 +808,32 @@ export function DiscoverStatusSummary(props: Readonly<{
     selectedSourceTitle: string | null;
     /** No machine is chosen yet: nothing was searched, so no result count is claimed. */
     noTarget?: boolean;
-    /** The search the shown results answer. "No match" is said only when something was searched. */
-    searchText?: string;
+    /** The query the results answer; null means no query has returned yet. */
+    searchText?: string | null;
     onClearSearch?: () => void;
     /** Asks every source again; offered on each source notice when a refresh can run. */
     onRetry?: () => void;
     /** Opens Sources & registries, where a source that keeps failing is fixed. */
     onOpenSources?: () => void;
 }>) {
+    const pageNoticeActive = usePageNoticeActive();
     const { theme } = useUnistyles();
     const styles = sectionStylesheet;
     const maxWidthStyle = useLayoutMaxWidthStyle();
     const searched = (props.searchText ?? '').trim().length > 0;
-    const noMatch = searched && !props.loading && props.error === null && !props.noTarget
-        && props.entryCount === 0 && props.nonInstallable.length === 0;
+    const waitingForQuery = props.searchText === null && !props.loading && props.error === null && !props.noTarget;
     // One issue per source (and one for the index), however many ways the daemon reported it.
     const issues = React.useMemo(
         () => buildPluginMarketplaceDiscoverIssues({ sourceStatuses: props.sourceStatuses, diagnostics: props.diagnostics }),
         [props.diagnostics, props.sourceStatuses],
     );
     const sourceIssueCount = issues.filter((issue) => issue.sourceId !== null).length;
+    // Unanswered sources cannot establish an empty catalog or a no-match search.
+    // With no retained rows, the source notices own the cause and recovery.
+    const sourceFailureWithoutResults = issues.length > 0 && props.entryCount === 0
+        && props.nonInstallable.length === 0 && !props.loading;
+    const noMatch = searched && !props.loading && props.error === null && !props.noTarget
+        && props.entryCount === 0 && props.nonInstallable.length === 0 && !sourceFailureWithoutResults;
     const message = props.noTarget && props.entryCount === 0 && !props.loading
         ? t('settingsPlugins.surfaces.chooseMachineBrowse')
         : props.loading
@@ -855,7 +880,7 @@ export function DiscoverStatusSummary(props: Readonly<{
               * qualifier. It is the pane's only live region; the rows below it
               * stay outside so each one can be traversed on its own.
               */}
-            {noMatch ? null : (<View
+            {noMatch || waitingForQuery || sourceFailureWithoutResults || (pageNoticeActive && props.entryCount === 0 && !props.loading) ? null : (<View
                 style={[styles.statusLine, maxWidthStyle]}
                 accessible
                 accessibilityRole={props.error === null ? 'text' : 'alert'}
@@ -884,7 +909,8 @@ export function DiscoverStatusSummary(props: Readonly<{
                         : issue.reachable
                             ? t('settingsPlugins.discover.diagnostic.behindTitle', { source: issue.sourceTitle ?? issue.sourceId })
                             : t('settingsPlugins.discover.diagnostic.unreachableTitle', { source: issue.sourceTitle ?? issue.sourceId })}
-                    description={issue.sourceId === null ? undefined : t('settingsPlugins.discover.diagnostic.otherSourcesShown')}
+                    description={issue.sourceId === null || props.entryCount === 0
+                        ? undefined : t('settingsPlugins.discover.diagnostic.otherSourcesShown')}
                     action={props.onRetry ? { label: t('common.retry'), onPress: props.onRetry } : null}
                     secondaryAction={props.onOpenSources && issue.sourceId !== null
                         ? { label: t('settingsPlugins.sourceAdministration.title'), onPress: props.onOpenSources }
@@ -950,6 +976,8 @@ export function DiscoverListingsSection(props: Readonly<{
     installedPluginById: ReadonlyMap<string, InstalledPluginEntry>;
     /** Listings of installed plugins that contribute an Agent show that Agent's logo. */
     projectionByPluginId?: PluginProjectionFactsById;
+    machineId?: string | null;
+    serverId?: string | null;
     canRunActions: boolean;
     isPluginActionInFlight: (pluginId: string) => boolean;
     onAction: (request: PluginMarketplaceActionRequest) => void;
@@ -1067,7 +1095,7 @@ export function DiscoverListingsSection(props: Readonly<{
                 header={header}
                 footer={footer}
                 groupAction={groupAction}
-                useRowActions={useDiscoverListingRowActions}
+                useRowActions={presentation === 'list' ? useDiscoverListingRowActions : undefined}
             />
         </DiscoverListingControlsContext.Provider>
     );
@@ -1088,6 +1116,8 @@ function useDiscoverListingRowActions(item: DiscoverListingItem): CollectionRowA
 }
 
 type DiscoverListingActionInputs = Readonly<{
+    machineId?: string | null;
+    serverId?: string | null;
     installedPluginById: ReadonlyMap<string, InstalledPluginEntry>;
     canRunActions: boolean;
     loading: boolean;
@@ -1135,7 +1165,8 @@ function useDiscoverListingAnatomy(props: DiscoverListingActionInputs & Readonly
             view: 'browse', open: { kind: 'listing', sourceId: entry.sourceId, pluginId: entry.id },
         })}>{content}</WorkspaceDestinationRow>,
         glyph: ({ entry }) => (
-            <PluginMark title={entry.title} iconAgentId={projectionByPluginId?.[entry.id]?.iconAgentId ?? null} />
+            <PluginMark title={entry.title} pluginId={entry.id} iconAgentId={projectionByPluginId?.[entry.id]?.iconAgentId ?? null}
+                installedPackage={projectionByPluginId?.[entry.id]?.installedPackage} machineId={props.machineId} serverId={props.serverId} />
         ),
         title: ({ entry }) => entry.title,
         // A registry the install needs is the one fact to read before installing, on cards and rows alike; it
@@ -1143,7 +1174,8 @@ function useDiscoverListingAnatomy(props: DiscoverListingActionInputs & Readonly
         where: ({ entry }) => (!installedPluginById.has(entry.id) && entry.registrySelectionOrigin !== null
             ? t('settingsPlugins.discover.registrySelectionRequired', { origin: entry.registrySelectionOrigin })
             : `${entry.publisher.displayName} · ${entry.sourceTitle}`),
-        description: ({ entry }) => entry.description ?? null,
+        // The grid-only slot keeps its two-line place without inventing unavailable catalog copy.
+        description: ({ entry }) => entry.description ?? '',
         reason: ({ entry }) => (installedPluginById.has(entry.id) && entry.warning !== 'withdrawn' ? (
             <PluginCardStatus
                 testID={`settings.plugins.marketplace.installedStatus.${entry.sourceId}.${entry.id}`}

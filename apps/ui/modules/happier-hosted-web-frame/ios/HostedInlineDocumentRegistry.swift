@@ -4,17 +4,23 @@ import Foundation
 final class HostedInlineDocumentRegistry {
   static let shared = HostedInlineDocumentRegistry()
   private let lock = NSLock()
-  private var documents = [String: Data]()
+  private struct Document {
+    let bytes: Data
+    let contentSecurityPolicy: String
+  }
+  private var documents = [String: Document]()
 
   func register(_ input: [String: Any]) -> Bool {
-    guard Set(input.keys) == Set(["token", "html"]),
+    guard Set(input.keys) == Set(["token", "html", "contentSecurityPolicy"]),
           let token = input["token"] as? String,
           let html = input["html"] as? String,
+          let contentSecurityPolicy = input["contentSecurityPolicy"] as? String,
+          contentSecurityPolicy == "sandbox allow-scripts",
           Self.isToken(token),
           let bytes = html.data(using: .utf8) else { return false }
     return withLock {
       guard documents[token] == nil else { return false }
-      documents[token] = bytes
+      documents[token] = Document(bytes: bytes, contentSecurityPolicy: contentSecurityPolicy)
       return true
     }
   }
@@ -35,11 +41,14 @@ final class HostedInlineDocumentRegistry {
 
   func readResponse(token: String, requestPath: String) -> HostedWebArtifactLoadedResponse {
     withLock {
-      guard requestPath == "/", let bytes = documents[token] else { return .rejected(404) }
+      guard requestPath == "/", let document = documents[token] else { return .rejected(404) }
       return .content(
         contentType: "text/html; charset=utf-8",
-        headers: ["Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"],
-        bytes: bytes
+        headers: [
+          "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+          "Content-Security-Policy": document.contentSecurityPolicy,
+        ],
+        bytes: document.bytes
       )
     }
   }

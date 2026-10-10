@@ -55,6 +55,20 @@ describe('readPluginUiDaemonProjectionSelection', () => {
             transport: { machineId: 'machine-b', serverId: 'server-a' },
         });
     });
+
+    it('uses compatible current renderer supplies for bytes without restoring execution authority', () => {
+        const supply = { machineId: 'machine-b', serverId: 'server-a', phase: 'current', interactionEnabled: true,
+            generation: 3, executionOrigin: null, occurrenceId: 'occurrence-b', pluginVersion: '1.2.3', sourceCustody: null };
+        const contribution = { artifactSelectionOwner: 'daemonProjection', contributionId: 'renderer-a', pluginVersion: '1.2.3',
+            hostOrigin: null, hostCompatibility: 'compatible',
+            hostSupplies: [{ ...supply, machineId: 'machine-a', phase: 'retainedOffline', interactionEnabled: false }, supply] };
+        expect(readPluginUiDaemonProjectionSelection(contribution)).toEqual({
+            occurrenceId: 'occurrence-b', contributionId: 'renderer-a', releaseVersion: '1.2.3',
+            transport: { machineId: 'machine-b', serverId: 'server-a' },
+        });
+        expect(readPluginUiDaemonProjectionSelection({ ...contribution, hostCompatibility: 'conflict' })).toBeNull();
+        expect(readPluginUiDaemonProjectionSelection({ ...contribution, artifactSelectionOwner: 'accountRelease' })).toBeNull();
+    });
 });
 
 type ArtifactHandle = Readonly<{
@@ -67,6 +81,23 @@ function available(handle: ArtifactHandle) {
 }
 
 describe('PluginUiArtifactAdoptionOwner', () => {
+    it('cancels a pending acquisition on supersession and owner retirement', async () => {
+        const owner = new PluginUiArtifactAdoptionOwner({ isCurrent: () => true });
+        const signals: (AbortSignal | undefined)[] = [];
+        const acquire = (signal?: AbortSignal) => new Promise<Readonly<{ kind: 'unavailable'; code: string }>>(resolve => {
+            signals.push(signal);
+            signal?.addEventListener('abort', () => resolve({ kind: 'unavailable', code: 'artifact_lease_revoked' }), { once: true });
+        });
+        const retired = owner.adopt({ kind: 'reactNative', desiredArtifactKey: 'first', acquire });
+        const current = owner.adopt({ kind: 'reactNative', desiredArtifactKey: 'second', acquire });
+        expect(signals[0]?.aborted).toBe(true);
+        expect(signals[1]?.aborted).toBe(false);
+        owner.dispose();
+        expect(signals[1]?.aborted).toBe(true);
+        await expect(retired).resolves.toEqual({ kind: 'unavailable', code: 'artifact_lease_revoked' });
+        await expect(current).resolves.toEqual({ kind: 'unavailable', code: 'artifact_lease_revoked' });
+    });
+
     it('uses structural host-method admission identically for hosted web and React Native', () => {
         const requiredHostMethods = ['context', 'readResource'] as const;
         const structuralHostMethods = ['context', 'readResource'] as const;

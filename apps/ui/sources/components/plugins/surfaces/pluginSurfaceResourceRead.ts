@@ -4,6 +4,7 @@ import type {
 import type {
     PluginUiJsonValueV1,
 } from '@happier-dev/protocol/plugins/ui';
+import { PluginUiHostReadReferenceV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import type { PluginUiResourceClient, PluginUiResourceEntry, PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
 import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
 
@@ -22,11 +23,10 @@ import {
 /**
  * The mounted `readResource` handler (§3.6).
  *
- * `readResource` is the single snapshot authority for plugin UI. This module is
- * a transport adapter only: admission, generation currentness, path containment,
- * byte bounds and integrity verification all belong to the daemon's declared
- * resource service, which this handler reaches through the canonical machine
- * RPC. It owns no caching, no second resource registry and no invalidation.
+ * This module is a transport adapter only. Declared plugin resources delegate
+ * to the daemon's resource service; admitted host reads borrow the host widget's
+ * Account Resource entry through the mounted permission facade. Neither arm
+ * creates a value cache, resource registry, or invalidation owner here.
  *
  * The reference is **caller-scoped**: a bare local id binds to the plugin that
  * owns the mounted surface, and a structured reference naming a different plugin
@@ -58,7 +58,7 @@ export type PluginSurfaceResourceBinding = Readonly<{
     store?: PluginUiResourceStore;
 }>;
 
-/** Hold the incumbent entry's static subscription until its current read settles. */
+/** Hold static demand until admitted bytes are available or the read settles. */
 export function readPluginResourceStoreSnapshot(entry: PluginUiResourceEntry, signal?: AbortSignal): Promise<PluginUiResourceSnapshot> {
     return new Promise((resolve, reject) => {
         let release = () => {};
@@ -66,7 +66,7 @@ export function readPluginResourceStoreSnapshot(entry: PluginUiResourceEntry, si
         const finish = (error?: Error): void => {
             if (settled) return;
             const snapshot = entry.getSnapshot();
-            if (!error && snapshot.pending !== 'idle') return;
+            if (!error && snapshot.value === undefined && snapshot.pending !== 'idle') return;
             settled = true;
             release();
             signal?.removeEventListener('abort', abort);
@@ -218,17 +218,34 @@ function resourceAbortPayload(isCurrent: (() => boolean) | undefined): PluginUiJ
 
 export function createPluginSurfaceResourceReadHandler(input: Readonly<{
     pluginId: string;
-    resource: PluginSurfaceResourceBinding;
+    resource?: PluginSurfaceResourceBinding;
+    hostResourceStore?: PluginUiResourceStore;
+    isDaemonAvailable?: () => boolean;
     isCurrent?: () => boolean;
     /** The bound controller's one mount lifetime; absent for direct unit composition. */
     lifetimeSignal?: AbortSignal;
 }>) {
-    const read = input.resource.read ?? machinePluginUiResourceRead;
+    const read = input.resource?.read ?? machinePluginUiResourceRead;
     return async (
         request: PluginResourceHostRequest,
         options?: PluginSurfaceHostApiRequestOptions,
     ): Promise<PluginUiJsonValueV1> => {
         const payload = readJsonRecord(request.payload);
+        const hostReference = PluginUiHostReadReferenceV1Schema.safeParse(payload?.resource);
+        if (hostReference.success && input.hostResourceStore) {
+            const merged = mergeAbortSignals([input.lifetimeSignal, options?.signal]);
+            try {
+                if (merged.signal?.aborted || input.isCurrent?.() === false) return resourceAbortPayload(input.isCurrent);
+                const snapshot = await readPluginResourceStoreSnapshot(input.hostResourceStore.getEntry(hostReference.data), merged.signal);
+                if (merged.signal?.aborted || input.isCurrent?.() === false) return resourceAbortPayload(input.isCurrent);
+                if (!snapshot.value) return errorPayload('unavailable', snapshot.error?.code ?? 'plugin_resource_unavailable');
+                return { contentType: snapshot.value.contentType, digest: snapshot.value.digest,
+                    bytesBase64: encodeBase64(snapshot.value.bytes, 'base64') };
+            } catch (error) {
+                return errorPayload('unavailable', error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+                    ? error.code : 'plugin_resource_unavailable');
+            } finally { merged.dispose(); }
+        }
         const reference = payload
             ? readPluginSurfaceResourceReference(input.pluginId, payload.resource)
             : null;
@@ -237,6 +254,9 @@ export function createPluginSurfaceResourceReadHandler(input: Readonly<{
         }
         if (reference.pluginId !== input.pluginId) {
             return errorPayload('unavailable', 'plugin_resource_not_found');
+        }
+        if (!input.resource || input.isDaemonAvailable?.() === false) {
+            return errorPayload('unavailable', 'plugin_resource_transport_unavailable');
         }
         if (input.isCurrent?.() === false) {
             return errorPayload('unavailable', 'plugin_surface_retired');

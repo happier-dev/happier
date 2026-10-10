@@ -363,6 +363,25 @@ describe('resolveProjectedPluginUiClientExecutables', () => {
         });
     });
 
+    it('retains exact source provenance for client registration and rejects another machine', () => {
+        const current = singleActionProjection();
+        const sourceOrigin = { serverIdentityId: origin.serverIdentityId, sourceRef: {
+            pluginId, machineId: hostOrigin.machineId,
+            sourceCustody: { kind: 'development' as const, registeredRootId: 'registered-source' },
+        } };
+        const sourceHost = { ...hostOrigin, executionOrigin: sourceOrigin };
+        const projected = { ...current,
+            actionsById: { [firstActionKey]: { ...firstAction(current), [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: sourceHost } },
+            reactNativeBundlesById: { [firstBundleKey]: { ...firstBundle(current), [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: sourceHost } },
+        } satisfies PluginUiProjectionModel;
+        expect(resolve(projected)).toMatchObject([{ executionOrigin: sourceOrigin, authority: { machineId: hostOrigin.machineId } }]);
+        const foreignHost = { ...sourceHost, executionOrigin: { ...sourceOrigin,
+            sourceRef: { ...sourceOrigin.sourceRef, machineId: 'another-machine' } } };
+        expect(resolve({ ...projected,
+            actionsById: { [firstActionKey]: { ...firstAction(current), [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: foreignHost } },
+        })).toEqual([]);
+    });
+
     it('routes an originless bundled Action through its projecting daemon', () => {
         // A bundled or development plugin has no materialization: its union
         // stamp names only the projecting daemon, which is also its route.

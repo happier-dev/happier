@@ -24,6 +24,7 @@ import type {
     PluginReactNativeLoaderBackend,
 } from './loader';
 import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';
+import { PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY } from '@/sync/domains/plugins/ui/projectionUnion';
 
 const pluginId = 'acme.preview';
 const target = Object.freeze({
@@ -34,14 +35,14 @@ const target = Object.freeze({
 const projectionGeneration = 12;
 const occurrenceId = 'preview-occurrence-12';
 const hostUiApiRange = '^1.0.0';
-const executionOrigin: PluginMachineExecutionOriginV1 = Object.freeze({
+const executionOrigin = Object.freeze({
     serverIdentityId: 'srv_server1',
     materializationRef: Object.freeze({
         machineId: 'machine-1',
         materializationId: 'materialization-1',
         pluginId,
     }),
-});
+}) satisfies PluginMachineExecutionOriginV1;
 const identity: PluginReactNativeBundleCacheIdentity = Object.freeze({
     pluginId,
     contributionId: target.artifactId,
@@ -58,6 +59,31 @@ const moduleReference = Object.freeze({
 });
 
 describe('getPluginUiClientExecutableTargetAddressKey', () => {
+    it('partitions exact sources by custody without inventing materializations', async () => {
+        const sourceOrigin = { serverIdentityId: executionOrigin.serverIdentityId,
+            sourceRef: { pluginId, machineId: authority.machineId,
+                sourceCustody: { kind: 'development' as const, registeredRootId: 'source-a' } } };
+        const address = { pluginId, target, executionOrigin: sourceOrigin, authority };
+        expect(getPluginUiClientExecutableTargetAddressKey(address)).not.toEqual(getPluginUiClientExecutableTargetAddressKey({
+            ...address, executionOrigin: { ...sourceOrigin, sourceRef: { ...sourceOrigin.sourceRef,
+                sourceCustody: { kind: 'development', registeredRootId: 'source-b' } } },
+        }));
+        const index = createPluginUiClientExecutableRegistrationIndex();
+        const scope = index.createScope({ pluginId, contributes: actionOnlyContributes(), target, executionOrigin: sourceOrigin,
+            occurrenceId, pluginVersion: '1.0.0', lifecycle: createLifecycle() });
+        scope.api.actions.register('open-preview', async () => null);
+        scope.commit();
+        expect(index.read({ family: 'actions', pluginId, localId: 'open-preview', target,
+            executionOrigin: sourceOrigin, occurrenceId })?.executionOrigin).toEqual(sourceOrigin);
+        const { serverIdentityId: _server, materializationRef: _materialization, ...sourceAction } = withCurrentAuthorization(projectedClientAction());
+        const stampedAction = { ...sourceAction, [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: {
+            machineId: authority.machineId, serverId: authority.serverId, generation: projectionGeneration,
+            phase: 'current', interactionEnabled: true, executionOrigin: sourceOrigin,
+        } };
+        expect(resolvePluginUiClientActionRegistration({ action: stampedAction, platform: target.platform, reader: index }))
+            .toMatchObject({ registration: { executionOrigin: sourceOrigin }, pluginVersion: '1.0.0' });
+        await scope.unwind();
+    });
     it('keeps every executable target address field distinct', () => {
         const address = Object.freeze({
             pluginId,

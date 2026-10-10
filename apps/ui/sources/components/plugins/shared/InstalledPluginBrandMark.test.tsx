@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { StyleSheet } from 'react-native';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createValidPluginBrandPngFixture, renderScreen } from '@/dev/testkit';
@@ -8,8 +9,10 @@ import type { InstalledPluginBrandPresentation } from './installedPluginBrandPre
 const themeState = vi.hoisted(() => ({ theme: null as unknown as Theme }));
 
 vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: themeState.theme }),
+    useUnistyles: () => ({ theme: themeState.theme, rt: { colorScheme: 'light' } }),
 }));
+// SVG is a native renderer boundary; keep AgentIcon/catalog resolution real.
+vi.mock('react-native-svg', () => ({ SvgXml: (props: Record<string, unknown>) => React.createElement('SvgXml', props) }));
 
 import { InstalledPluginBrandMark } from './InstalledPluginBrandMark';
 import { materializeHappierRenderableImage } from '@happier-dev/plugin-ui/advanced';
@@ -26,6 +29,16 @@ beforeEach(() => {
 });
 
 describe('InstalledPluginBrandMark', () => {
+    it('renders an exact bundled Agent package with its canonical artwork at the compact slot size', async () => {
+        const screen = await renderScreen(<InstalledPluginBrandMark
+            brand={{ displayName: 'Codex' }} pluginId="happier.agent.codex" pixelSize={10} externallyLabelled
+        />);
+        const logo = screen.findByType('SvgXml');
+        expect(logo?.props.xml).toContain('<path');
+        expect(logo?.props.width).toBe(10);
+        expect(screen.getTextContent()).not.toContain('C');
+    });
+
     it('renders an admitted colored PNG without a tile with one accessible display name', async () => {
         const screen = await renderScreen(
             <InstalledPluginBrandMark brand={brand} size="small" testID="plugin-brand" />,
@@ -71,7 +84,6 @@ describe('InstalledPluginBrandMark', () => {
         const screen = await renderScreen(
             <InstalledPluginBrandMark
                 brand={brand}
-                size="small"
                 pixelSize={14}
                 externallyLabelled
                 testID="plugin-brand"
@@ -86,6 +98,17 @@ describe('InstalledPluginBrandMark', () => {
             && view.props.style?.transform?.[0]?.scale === 14 / 32
         ));
         expect(scaled).toBeTruthy();
+        expect(screen.findByType('Image')?.props.style.width).toBe(32);
+    });
+
+    it.each([['small', 32], ['medium', 48], ['large', 72]] as const)('keeps the %s monogram proportional to its centered identity slot', async (size, pixels) => {
+        const screen = await renderScreen(<InstalledPluginBrandMark brand={{ displayName: 'Acme' }} size={size} externallyLabelled />);
+        const glyph = screen.findAllByType('Text').find((node) => node.children.includes('A'));
+        const geometry = StyleSheet.flatten(glyph?.props.style);
+        expect(geometry.fontSize).toBeCloseTo(pixels * 0.75);
+        expect(geometry.lineHeight).toBe(pixels);
+        const slot = screen.findAllByProps({ accessibilityElementsHidden: true })[0];
+        expect(slot?.props.style).toEqual(expect.objectContaining({ width: pixels, height: pixels, alignItems: 'center', justifyContent: 'center' }));
     });
 
     it('renders a declared monochrome glyph in the dark theme foreground without changing its bytes', async () => {

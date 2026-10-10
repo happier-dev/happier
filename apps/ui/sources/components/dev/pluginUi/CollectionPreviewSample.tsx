@@ -15,6 +15,7 @@ import {
     useHappierCollection,
     usePluginTheme,
     type CollectionAnatomy,
+    type IconName,
     type TextTone,
 } from '@happier-dev/plugin-ui';
 import { HAPPIER_TONE_COLOR_TOKEN, HappierStatusDot } from '@happier-dev/plugin-ui/presentation';
@@ -32,7 +33,11 @@ type PreviewEntry = Readonly<{
     kind: 'pr' | 'issue' | 'error';
     title: string;
     where: string;
-    reason: Readonly<{ label: string; tone: TextTone }> | null;
+    /** The entry's own designation ("#2481"); errors have none here. */
+    num: string | null;
+    /** Who opened it ("You" when the reader did); errors have none. */
+    who: string | null;
+    reason: Readonly<{ label: string; tone: TextTone; icon?: IconName }> | null;
     signal: Readonly<{ label: string; tone: TextTone }> | null;
     agent: string | null;
     age: string;
@@ -40,18 +45,18 @@ type PreviewEntry = Readonly<{
 }>;
 
 const ENTRIES: readonly PreviewEntry[] = [
-    { id: 'pr2481', group: 'needs', kind: 'pr', title: 'Retry idempotent payment intents on 409 conflicts', where: 'payments-api #2481', reason: { label: 'Review requested', tone: 'warning' }, signal: { label: 'Checks passed', tone: 'success' }, agent: 'Working', age: '18m', summary: 'Stripe returns 409 when two confirms race on the same payment intent. This retries idempotent confirms once with the original key.' },
-    { id: 'pr2476', group: 'needs', kind: 'pr', title: 'Move cart totals to server-side rounding', where: 'checkout-web #2476', reason: { label: 'Codex needs you', tone: 'warning' }, signal: { label: '2 failing', tone: 'danger' }, agent: 'Needs you', age: '42m', summary: 'Cart totals were rounded on the client, which drifts from the server by a cent on some tax combinations.' },
-    { id: 'err1', group: 'needs', kind: 'error', title: "TypeError: Cannot read properties of undefined (reading 'currency')", where: 'checkout-web', reason: { label: 'Escalating', tone: 'danger' }, signal: { label: '318 users', tone: 'danger' }, agent: 'Ready for review', age: '2h', summary: 'CartSummary.tsx reads currency before the pricing response resolves.' },
-    { id: 'pr2470', group: 'needs', kind: 'pr', title: 'Add Stripe webhook replay tool for support', where: 'payments-api #2470', reason: { label: 'Ready to merge', tone: 'success' }, signal: { label: 'Checks passed', tone: 'success' }, agent: null, age: '1d', summary: 'A support-only tool to replay a webhook delivery by event id.' },
-    { id: 'mr88', group: 'needs', kind: 'pr', title: 'Pin Terraform AWS provider to 5.62 across modules', where: 'infra-modules !88', reason: { label: 'Mentioned', tone: 'warning' }, signal: { label: '2 running', tone: 'warning' }, agent: null, age: '7h', summary: 'Pins the provider so plans stop drifting between machines.' },
-    { id: 'is903', group: 'agent', kind: 'issue', title: 'Checkout button stays disabled after Apple Pay is cancelled', where: 'checkout-web #903', reason: { label: 'Assigned to you', tone: 'warning' }, signal: null, agent: 'Working', age: '3h', summary: 'Cancelling the Apple Pay sheet leaves the button disabled until reload.' },
-    { id: 'pr1193', group: 'review', kind: 'pr', title: 'Android: stop double-firing push notifications on resume', where: 'mobile #1193', reason: { label: 'Waiting on Priya', tone: 'secondary' }, signal: { label: 'Checks passed', tone: 'success' }, agent: null, age: '5h', summary: 'Resume re-registered the listener, so pushes fired twice.' },
-    { id: 'pr2459', group: 'review', kind: 'pr', title: 'Batch settlement export to S3', where: 'payments-api #2459', reason: { label: 'Waiting on Mara', tone: 'secondary' }, signal: { label: 'Checks passed', tone: 'success' }, agent: null, age: '1d', summary: 'Exports daily settlement batches to S3 for finance.' },
-    { id: 'ph1', group: 'rest', kind: 'error', title: 'Unhandled promise rejection in onboarding step 3', where: 'tidewater-app', reason: { label: 'New in 4.12.0', tone: 'warning' }, signal: { label: '57 users', tone: 'danger' }, agent: null, age: '6h', summary: 'A rejected profile fetch is never caught on step 3.' },
-    { id: 'is912', group: 'rest', kind: 'issue', title: 'Dark mode: date picker text unreadable on Android', where: 'mobile #912', reason: null, signal: { label: 'bug, android', tone: 'secondary' }, agent: null, age: '1d', summary: 'The picker keeps its light text colour in dark mode.' },
-    { id: 'ab4417', group: 'rest', kind: 'issue', title: 'Rotate staging service principals before 1 October', where: 'Ops AB#4417', reason: null, signal: { label: 'ops', tone: 'secondary' }, agent: null, age: '2d', summary: 'The staging principals expire on 1 October.' },
-    { id: 'err2', group: 'rest', kind: 'error', title: 'PaymentIntentConflict: 409 on confirm', where: 'payments-api', reason: null, signal: { label: '41 users', tone: 'danger' }, agent: null, age: '2d', summary: 'The conflict the retry PR fixes.' },
+    { id: 'pr2481', group: 'needs', kind: 'pr', title: 'Retry idempotent payment intents on 409 conflicts', where: 'payments-api', num: '#2481', who: 'Mara Okafor', reason: { label: 'Review requested', tone: 'warning', icon: 'review' }, signal: { label: 'Checks passed', tone: 'success' }, agent: 'Working', age: '18m', summary: 'Stripe returns 409 when two confirms race on the same payment intent. This retries idempotent confirms once with the original key.' },
+    { id: 'pr2476', group: 'needs', kind: 'pr', title: 'Move cart totals to server-side rounding', where: 'checkout-web', num: '#2476', who: 'You', reason: { label: 'Codex needs you', tone: 'warning', icon: 'attention' }, signal: { label: '2 failing', tone: 'danger' }, agent: 'Needs you', age: '42m', summary: 'Cart totals were rounded on the client, which drifts from the server by a cent on some tax combinations.' },
+    { id: 'err1', group: 'needs', kind: 'error', title: "TypeError: Cannot read properties of undefined (reading 'currency')", where: 'checkout-web', num: null, who: null, reason: { label: 'Escalating', tone: 'danger', icon: 'escalating' }, signal: { label: '318 users', tone: 'danger' }, agent: 'Ready for review', age: '2h', summary: 'CartSummary.tsx reads currency before the pricing response resolves.' },
+    { id: 'pr2470', group: 'needs', kind: 'pr', title: 'Add Stripe webhook replay tool for support', where: 'payments-api', num: '#2470', who: 'You', reason: { label: 'Ready to merge', tone: 'success', icon: 'merge-ready' }, signal: { label: 'Checks passed', tone: 'success' }, agent: null, age: '1d', summary: 'A support-only tool to replay a webhook delivery by event id.' },
+    { id: 'mr88', group: 'needs', kind: 'pr', title: 'Pin Terraform AWS provider to 5.62 across modules', where: 'infra-modules', num: '!88', who: 'Tomás Ferreira', reason: { label: 'Mentioned', tone: 'warning', icon: 'mention' }, signal: { label: '2 running', tone: 'warning' }, agent: null, age: '7h', summary: 'Pins the provider so plans stop drifting between machines.' },
+    { id: 'is903', group: 'agent', kind: 'issue', title: 'Checkout button stays disabled after Apple Pay is cancelled', where: 'checkout-web', num: '#903', who: 'Priya Raman', reason: { label: 'Assigned to you', tone: 'warning', icon: 'assigned' }, signal: null, agent: 'Working', age: '3h', summary: 'Cancelling the Apple Pay sheet leaves the button disabled until reload.' },
+    { id: 'pr1193', group: 'review', kind: 'pr', title: 'Android: stop double-firing push notifications on resume', where: 'mobile', num: '#1193', who: 'You', reason: { label: 'Waiting on Priya', tone: 'secondary', icon: 'waiting' }, signal: { label: 'Checks passed', tone: 'success' }, agent: null, age: '5h', summary: 'Resume re-registered the listener, so pushes fired twice.' },
+    { id: 'pr2459', group: 'review', kind: 'pr', title: 'Batch settlement export to S3', where: 'payments-api', num: '#2459', who: 'You', reason: { label: 'Waiting on Mara', tone: 'secondary', icon: 'waiting' }, signal: { label: 'Checks passed', tone: 'success' }, agent: null, age: '1d', summary: 'Exports daily settlement batches to S3 for finance.' },
+    { id: 'ph1', group: 'rest', kind: 'error', title: 'Unhandled promise rejection in onboarding step 3', where: 'tidewater-app', num: null, who: null, reason: { label: 'New in 4.12.0', tone: 'warning', icon: 'new' }, signal: { label: '57 users', tone: 'danger' }, agent: null, age: '6h', summary: 'A rejected profile fetch is never caught on step 3.' },
+    { id: 'is912', group: 'rest', kind: 'issue', title: 'Dark mode: date picker text unreadable on Android', where: 'mobile', num: '#912', who: 'Jonas Lindqvist', reason: null, signal: { label: 'bug, android', tone: 'secondary' }, agent: null, age: '1d', summary: 'The picker keeps its light text colour in dark mode.' },
+    { id: 'ab4417', group: 'rest', kind: 'issue', title: 'Rotate staging service principals before 1 October', where: 'Ops', num: 'AB#4417', who: 'Ines Kowalczyk', reason: null, signal: { label: 'ops', tone: 'secondary' }, agent: null, age: '2d', summary: 'The staging principals expire on 1 October.' },
+    { id: 'err2', group: 'rest', kind: 'error', title: 'PaymentIntentConflict: 409 on confirm', where: 'payments-api', num: null, who: null, reason: null, signal: { label: '41 users', tone: 'danger' }, agent: null, age: '2d', summary: 'The conflict the retry PR fixes.' },
 ];
 
 const GROUPS = {
@@ -78,6 +83,13 @@ function CellState(props: Readonly<{ tone: TextTone; label: string; live?: boole
 }
 
 const AGENT_TONES: Readonly<Record<string, TextTone>> = { Working: 'info', 'Needs you': 'warning', 'Ready for review': 'secondary' };
+/** The list glyph's corner badge for the linked agent (Triage `readTriageAgentBadgeV1`). */
+const AGENT_BADGES: Readonly<Record<string, 'live' | Readonly<{ icon: IconName; tone: TextTone }>>> = {
+    Working: 'live',
+    'Needs you': { icon: 'attention', tone: 'attention' },
+    'Ready for review': { icon: 'check', tone: 'success' },
+};
+
 
 function useAnatomy(open: (key: string) => void): CollectionAnatomy<PreviewEntry> {
     return React.useMemo(() => ({
@@ -88,11 +100,21 @@ function useAnatomy(open: (key: string) => void): CollectionAnatomy<PreviewEntry
                 tone={entry.kind === 'error' ? 'danger' : 'success'}
             />
         ),
+        glyphBadge: (entry) => {
+            const badge = entry.agent === null ? null : AGENT_BADGES[entry.agent];
+            if (badge === undefined || badge === null) return null;
+            return badge === 'live' ? { live: true } : { icon: badge.icon, tone: badge.tone };
+        },
         title: (entry) => entry.title,
+        titleSuffix: (entry) => entry.num,
         where: (entry) => entry.where,
+        byline: (entry) => {
+            const where = entry.num === null ? entry.where : `${entry.where} ${entry.num}`;
+            return entry.who === null ? where : `${where} · ${entry.who}`;
+        },
         reason: (entry) => (entry.reason === null ? null : entry.reason.tone === 'secondary' ? (
             <Text variant="caption" tone="secondary" value={entry.reason.label} numberOfLines={1} />
-        ) : <Badge variant="tinted" tone={entry.reason.tone} value={entry.reason.label} />),
+        ) : <Badge variant="tinted" tone={entry.reason.tone} value={entry.reason.label} {...(entry.reason.icon === undefined ? {} : { icon: entry.reason.icon })} />),
         signal: (entry) => (entry.signal === null ? null : <CellState tone={entry.signal.tone} label={entry.signal.label} />),
         agent: (entry) => (entry.agent === null ? null : (
             <CellState tone={AGENT_TONES[entry.agent] ?? 'secondary'} label={entry.agent} live={entry.agent === 'Working'} />
@@ -116,6 +138,10 @@ function useAnatomy(open: (key: string) => void): CollectionAnatomy<PreviewEntry
 }
 
 const NO_ENTRIES: readonly PreviewEntry[] = [];
+const SAMPLE_TOKENS = [
+    { key: 'view', qualifier: 'view', label: 'My work' },
+    { key: 'state', qualifier: 'is', label: 'open' },
+] as const;
 
 export function CollectionPreviewSample(): React.ReactElement {
     const [openKey, setOpenKey] = React.useState<string | null>(null);
@@ -132,6 +158,13 @@ export function CollectionPreviewSample(): React.ReactElement {
         window: { kind: 'partial', continuations: [{ key: 'ado', label: 'Load more from Azure DevOps', load: () => undefined }] },
     });
     const anatomy = useAnatomy(setOpenKey);
+    // The lab's toolbar field: the narrowings in force as tokens (this sample narrows nothing; removing one drops it).
+    const [query, setQuery] = React.useState('');
+    const [tokens, setTokens] = React.useState<readonly Readonly<{ key: string; qualifier: string; label: string }>[]>(SAMPLE_TOKENS);
+    const searchTokens = React.useMemo(() => tokens.map((token) => ({
+        ...token,
+        onRemove: () => { setTokens((current) => current.filter((candidate) => candidate.key !== token.key)); },
+    })), [tokens]);
     const opened = ENTRIES.find((entry) => entry.id === openKey) ?? null;
     return (
         <View testID="dev-collection-preview" style={{ height: 760 }}>
@@ -173,11 +206,12 @@ export function CollectionPreviewSample(): React.ReactElement {
                 minDetailWidth={520}
                 preferredListRatio={0.37}
                 windowStatement={['12 loaded', 'complete for GitHub, GitLab, Sentry, PostHog', 'Azure DevOps has more']}
+                search={{ label: 'Search PRs & Issues', value: query, onValueChange: setQuery, tokens: searchTokens, testID: 'dev-collection-search' }}
                 testID="dev-collection"
                 renderDetail={() => (opened === null ? null : (
                     <Stack gap="medium" style={{ padding: 24 }}>
                         <Row justify="space-between" align="center">
-                            <Text variant="caption" tone="secondary" value={opened.where} />
+                            <Text variant="caption" tone="secondary" value={opened.num === null ? opened.where : `${opened.where} ${opened.num}`} />
                             <Button title="Close" variant="plain" size="small" onPress={() => { setOpenKey(null); }} />
                         </Row>
                         <Heading level={1} value={opened.title} />

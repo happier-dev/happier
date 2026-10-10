@@ -30,7 +30,7 @@ export type AdmittedDeclarativeStaticModel = Readonly<{
     dropTargets: ReadonlyMap<string, AdmittedDeclarativeDestination>;
     model: DeclarativeStaticRecord;
     root: DeclarativeStaticRecord;
-    occurrenceId: string;
+    occurrenceId?: string;
     qualifiedId: string;
     actions: ReadonlyMap<string, AdmittedDeclarativeAction>;
     destinations: ReadonlyMap<string, AdmittedDeclarativeDestination>;
@@ -57,7 +57,7 @@ export function declarativeCollectionUiQueryKey(collectionId: string, uiQueryId:
 function readQualifiedReference(input: Readonly<{
     value: unknown;
     pluginId: string;
-    occurrenceId: string;
+    occurrenceId?: string;
 }>): AdmittedDeclarativeDestination | null {
     const value = record(input.value);
     const identity = PluginContributionIdentityV1Schema.safeParse(value?.identity);
@@ -94,7 +94,7 @@ export function admitDeclarativeStaticModel(input: Readonly<{
         pluginId: identity?.pluginId,
         localId: identity?.localId,
     });
-    const occurrenceId = nonemptyString(identity?.occurrenceId);
+    const occurrenceId = structural.data.identity.occurrenceId;
     const qualifiedId = nonemptyString(identity?.qualifiedId);
     const root = record(model?.root);
     if (
@@ -102,7 +102,6 @@ export function admitDeclarativeStaticModel(input: Readonly<{
         || model.visible !== true
         || !contributionIdentity.success
         || contributionIdentity.data.pluginId !== input.expectedPluginId
-        || !occurrenceId
         || qualifiedId !== buildQualifiedPluginContributionKey(contributionIdentity.data)
         || !root
     ) {

@@ -27,6 +27,23 @@ const configure = (sequence: number, radius: 'sharp' | 'round') => ({
 });
 
 describe('embed preview guest', () => {
+    it('keeps rendering unadmitted without ancestorOrigins until its parent supplies a valid same-origin configure', () => {
+        const frame = createPreviewWindow(null);
+        const onConfigure = vi.fn();
+        const guest = startEmbedPreviewGuest({ window: frame.previewWindow, identity, onConfigure });
+        expect(guest.admitted).toBe(false);
+        frame.deliver({ source: frame.parent as Window, origin: 'https://evil.example', data: configure(0, 'sharp') });
+        frame.deliver({ source: {} as Window, origin: OWN_ORIGIN, data: configure(1, 'sharp') });
+        frame.deliver({ source: frame.parent as Window, origin: OWN_ORIGIN, data: { ...configure(2, 'sharp'), identity: { instanceId: 'x', mountNonce: 'y' } } });
+        expect(guest.admitted).toBe(false);
+        expect(onConfigure).not.toHaveBeenCalled();
+        frame.deliver({ source: frame.parent as Window, origin: OWN_ORIGIN, data: configure(3, 'round') });
+        expect(guest.admitted).toBe(true);
+        expect(onConfigure).toHaveBeenCalledTimes(1);
+        guest.dispose();
+        frame.deliver({ source: frame.parent as Window, origin: OWN_ORIGIN, data: configure(4, 'sharp') });
+        expect(onConfigure).toHaveBeenCalledTimes(1);
+    });
     it('applies configure messages from its same-origin parent only', () => {
         const frame = createPreviewWindow([OWN_ORIGIN]);
         const onConfigure = vi.fn();

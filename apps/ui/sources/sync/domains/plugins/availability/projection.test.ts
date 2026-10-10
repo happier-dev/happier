@@ -26,6 +26,15 @@ const snapshot: PluginAccountAvailabilitySnapshot = {
 };
 
 describe('Plugin Account Availability React publication', () => {
+    it('publishes materializations before surfacing an incomplete census with no named failures', async () => {
+        const hook = await renderHook(() => useActivePluginAccountAvailabilityReader()?.readMaterializations());
+        await act(async () => {
+            expect(() => applyPluginAccountAvailabilityProjectionRefresh({ scope, snapshot,
+                failedPluginIds: [], intentCensusIncomplete: true,
+            })).toThrow();
+        });
+        expect(hook.getCurrent()).toMatchObject({ kind: 'available', availabilityCursor: 1 });
+    });
     beforeEach(() => {
         clearPluginAccountAvailabilityProjection();
         storage.setState({ profileScope: scope });

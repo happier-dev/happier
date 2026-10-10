@@ -1,24 +1,29 @@
+import { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import {
     PluginProjectionV2Schema,
-    type PluginMachineExecutionOriginV1,
+    DaemonContributionRegistryProjectionDescribeRequestSchema,
+    DaemonPluginUiTargetedContributionsReadRequestSchema,
 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
     normalizePluginUiDestinationBindingV1,
     type PluginUiLaunchInputV1,
 } from '@happier-dev/protocol/plugins/ui';
 
-import { renderScreen } from '@/dev/testkit';
+import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { storage } from '@/sync/domains/state/storageStore';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
 import type {
     StackScreenOptions,
     StackScreenOptionsInput,
 } from '@/dev/testkit/runtime/routerRuntime';
-import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { CompactAppDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import {
     PluginSurfaceDestinationNavigationBindingProvider,
@@ -32,7 +37,6 @@ import {
     type PluginUiProjectionModel,
 } from '@/sync/domains/plugins/ui/projection';
 import {
-    readPluginUiProjectionEntryExecutionOrigin,
     unionPluginUiProjections,
 } from '@/sync/domains/plugins/ui/projectionUnion';
 import { selectPluginDestinationSurfacePlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
@@ -64,20 +68,13 @@ const {
     routerLocation: { pathname: '/' },
 }));
 
-const targetedContributionsReadMock = vi.hoisted(() => vi.fn());
+const targetedContributionsReadMock = vi.hoisted(() => vi.fn<(machineId: string,
+    options: Readonly<{ pluginId: string; serverId?: string | null }>) => Promise<unknown>>());
 // The daemon answers a target read with its current occurrence: the one the
 // most recently built fixture projection names.
 const fixtureDaemonGeneration = vi.hoisted(() => ({ value: 9 }));
-const contributionProjectionDescribeMock = vi.hoisted(() => vi.fn<
-    typeof import('@/sync/ops/machineContributionRegistryProjection').machineContributionRegistryProjectionDescribe
->());
-const accountEncryptionModeCredentials = vi.hoisted((): { value: AuthCredentials | null } => ({
-    value: { token: 'plugin-app-page-account-mode-test-token' },
-}));
-const accountEncryptionModeFetch = vi.hoisted(() => vi.fn<
-    typeof import('@/sync/api/account/apiAccountEncryptionMode').fetchAccountEncryptionMode
->());
-let restoreCredentialBoundary: (() => void) | undefined;
+const contributionProjectionDescribeMock = vi.hoisted(() => vi.fn<(machineId: string,
+    options: Readonly<Record<string, unknown>>) => Promise<unknown>>());
 
 const compactDestinationState = vi.hoisted(() => ({
     destinations: [{
@@ -165,67 +162,48 @@ const routeRemoval = vi.hoisted(() => {
     };
 });
 
-const pluginSurfaceConnectivity = vi.hoisted(() => ({
-    endpointStatus: 'online' as 'online' | 'offline',
-    machineOnline: true,
-    daemonStateVersion: 1,
-}));
+const pluginSurfaceAccountLifetime: { value: ActiveServerAccountScopeLifetime | null } = { value: null };
+let pageConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
+installDisconnectedServerSocketBoundary();
 
-// The production host deliberately refuses to expose an interactive surface
-// without the Account lifetime that owns its currentness. This page-route
-// fixture is an active Account mount, so provide that real boundary fact rather
-// than weakening the host just to make a renderer mock appear.
-const pluginSurfaceAccountLifetime = vi.hoisted(() => {
-    const create = (serverId: string) => {
-        let current = true;
-        const retireListeners = new Set<() => void>();
-        return Object.freeze({
-            scope: Object.freeze({ serverId, accountId: 'account-1' }),
-            isCurrent: () => current,
-            onRetire: (listener: () => void) => {
-                if (!current) {
-                    listener();
-                    return Object.freeze({ dispose: () => {} });
-                }
-                retireListeners.add(listener);
-                return Object.freeze({ dispose: () => { retireListeners.delete(listener); } });
-            },
-            retire: () => {
-                if (!current) return;
-                current = false;
-                for (const listener of [...retireListeners]) listener();
-                retireListeners.clear();
-            },
-        });
-    };
-    const initialLifetime = create('server-1');
-    return {
-        create,
-        value: initialLifetime as typeof initialLifetime | null,
-    };
+// Only external RPC replies are replaced. Parsing, cached target admission,
+// currentness and exact-origin selection use their actual internal owners.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
+    const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+    return createServerScopedMachineRpcBoundaryMock(async params => {
+        if (params.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+            const payload = DaemonContributionRegistryProjectionDescribeRequestSchema.parse(params.payload);
+            return contributionProjectionDescribeMock(params.machineId, { ...payload, serverId: params.serverId });
+        }
+        if (params.method === RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ) {
+            const payload = DaemonPluginUiTargetedContributionsReadRequestSchema.parse(params.payload);
+            return targetedContributionsReadMock(params.machineId, { ...payload, serverId: params.serverId });
+        }
+        throw new Error(`Unexpected AppPage fixture RPC: ${params.method}`);
+    });
 });
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/sync/domains/state/storage')>()),
-    useEndpointStatus: () => pluginSurfaceConnectivity.endpointStatus,
-    useMachineCliDetectionTarget: () => ({
-        isOnline: pluginSurfaceConnectivity.machineOnline,
-        daemonStateVersion: pluginSurfaceConnectivity.daemonStateVersion,
-    }),
-}));
-
-vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
-    captureActiveServerAccountScopeLifetime: () => pluginSurfaceAccountLifetime.value,
-}));
-
-// A generated React Native mount must consume the exact target-scoped daemon
-// snapshot, rather than the app-page fixture reconstructing target facts at the
-// host. Keep that RPC boundary real beneath this response mock.
-vi.mock('@/sync/ops/machineContributionRegistryProjection', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/sync/ops/machineContributionRegistryProjection')>()),
-    machineContributionRegistryProjectionDescribe: contributionProjectionDescribeMock,
-    machinePluginUiTargetedContributionsRead: targetedContributionsReadMock,
-}));
+async function restorePageAccount(serverId = 'server-1') {
+    await pageConnection?.dispose();
+    pageConnection = await restoreServerAccountForTest({ serverUrl: `https://${serverId}`,
+        serverIdentityId: serverId === 'server-1' ? 'srv_account_one' : 'srv_account_two', accountId: 'account-1',
+        request: async url => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/health') return Response.json({ status: 'ok' });
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ version: 1, updatedAt: 1 }));
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        } });
+    if (pageConnection.home.id !== serverId) throw new Error('AppPage fixture must route through its restored Home');
+    pluginSurfaceAccountLifetime.value = captureActiveServerAccountScopeLifetime();
+    if (!pluginSurfaceAccountLifetime.value) throw new Error('AppPage fixture has no applied Account lifetime');
+    const machine = createMachineFixture({ id: 'machine-1', active: true, activeAt: 0, daemonStateVersion: 1 });
+    storage.setState({ profileScope: pluginSurfaceAccountLifetime.value.scope,
+        settingsScope: pluginSurfaceAccountLifetime.value.scope, endpointStatus: 'online', isDataReady: true,
+        machines: { 'machine-1': machine }, machineListByServerId: { [serverId]: [machine] },
+        machineListStatusByServerId: { [serverId]: 'idle' },
+        settings: { ...storage.getState().settings, machineAdministrationSelectionsV1: { v: 1, pluginExecutionOriginsByPluginId: {} } } });
+}
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -382,15 +360,11 @@ function daemonProjection(input: Readonly<{
         // deliberately distinct from the aggregate projection generation.
         immutableGenerationId: `${pluginId}-generation-${generation}`,
         occurrenceId: `${pluginId}-generation-${generation}`,
-        ...(input.withoutContributionPoints
-            ? {
-                declaresContributionPoints: false,
-                sourceCustody: {
-                    kind: 'bundled_first_party',
-                    packagedRuntime: { kind: 'cli_version_root', versionRootId: 'plugin-app-page-fixture-root' },
-                },
-            }
-            : {}),
+        sourceCustody: {
+            kind: 'bundled_first_party',
+            packagedRuntime: { kind: 'cli_version_root', versionRootId: 'plugin-app-page-fixture-root' },
+        },
+        ...(input.withoutContributionPoints ? { declaresContributionPoints: false } : {}),
         brand: { state: 'missing' },
     });
     const placementEntry = (pluginId: string) => {
@@ -416,12 +390,6 @@ function daemonProjection(input: Readonly<{
             display: { titleKey: 'notes', developerFallback: pluginId === NOTES_PLUGIN_ID ? 'Notes' : 'Journal' },
             actions: [],
             ...(input.headerActions === undefined ? {} : { headerActions: input.headerActions }),
-            serverIdentityId: 'srv_account_one',
-            materializationRef: {
-                pluginId,
-                machineId: 'machine-1',
-                materializationId: `${pluginId}-install-${generation}`,
-            },
             availability: input.availability
                 ?? { state: 'available', reason: 'available', diagnostics: [] },
         };
@@ -430,17 +398,15 @@ function daemonProjection(input: Readonly<{
         id: `reactNativeBundle:${pluginId}:notes-renderer`,
         pluginId,
         occurrenceId: `${pluginId}-generation-${generation}`,
-        serverIdentityId: 'srv_account_one',
-        materializationRef: {
-            pluginId,
-            machineId: 'machine-1',
-            materializationId: `${pluginId}-install-${generation}`,
-        },
         pluginVersion: '1.0.0',
         contributionKind: 'reactNativeBundle',
         contributionId: 'notes-renderer',
         generatedV2: true,
         hostApi: { minVersion: '1.0.0', methods: ['context'] },
+        // This fixture exercises a daemon-backed page (its refresh Action is
+        // declared below). The renderer must request that capability before
+        // Administration selects an exact Machine and admits its target slice.
+        requiredHostMethods: ['executeAction'],
         artifactGraph: {
             artifactId: 'notes-renderer',
             tier: 'reactNative',
@@ -486,12 +452,6 @@ function daemonProjection(input: Readonly<{
                 id: 'refresh',
                 pluginId: NOTES_PLUGIN_ID,
                 occurrenceId: `${NOTES_PLUGIN_ID}-generation-${generation}`,
-                serverIdentityId: 'srv_account_one',
-                materializationRef: {
-                    pluginId: NOTES_PLUGIN_ID,
-                    machineId: 'machine-1',
-                    materializationId: `${NOTES_PLUGIN_ID}-install-${generation}`,
-                },
                 title: 'Refresh notes',
                 scopes: ['global'],
                 surfaces: ['ui'],
@@ -511,22 +471,14 @@ function daemonProjection(input: Readonly<{
 
 function composeAppProjection(rawProjection: unknown, serverId = 'server-1'): PluginUiProjectionModel {
     const projection = normalizePluginUiProjection(PluginProjectionV2Schema.parse(rawProjection));
-    const selectedOrigins = new Map<string, PluginMachineExecutionOriginV1>();
-    for (const entry of [
-        ...Object.values(projection.surfacePlacementsById),
-        ...Object.values(projection.reactNativeBundlesById),
-        ...Object.values(projection.actionsById),
-    ]) {
-        const origin = readPluginUiProjectionEntryExecutionOrigin(entry);
-        if (origin) selectedOrigins.set(origin.materializationRef.pluginId, origin);
-    }
     return unionPluginUiProjections([{
         machineId: 'machine-1',
         serverId,
+        serverIdentityId: serverId === 'server-1' ? 'srv_account_one' : 'srv_account_two',
         projection,
         phase: 'current',
         interactionEnabled: true,
-    }], selectedOrigins).pluginUiProjection ?? EMPTY_PLUGIN_UI_PROJECTION;
+    }]).pluginUiProjection ?? EMPTY_PLUGIN_UI_PROJECTION;
 }
 
 async function primePageArtifact(pluginId: string) {
@@ -581,7 +533,7 @@ async function renderPage(input: Readonly<{
                 machineId: input.machineId === undefined ? 'machine-1' : input.machineId,
                 serverId: input.serverId === undefined ? 'server-1' : input.serverId,
                 platform: 'web',
-                clientExecutableActivation: input.clientExecutableActivation ?? { status: 'ready' },
+                accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: input.clientExecutableActivation ?? { status: 'ready' },
                 reloadClientExecutables: input.reloadClientExecutables ?? (() => {}),
                 reloadConnectedAccountProjection: () => {},
             }}
@@ -722,7 +674,7 @@ async function loadPageHost(): Promise<React.ComponentType<PageHostProps>> {
                     machineId: props.machineId ?? 'machine-1',
                     serverId: props.serverId ?? 'server-1',
                     platform: 'web',
-                    clientExecutableActivation: { status: 'ready' },
+                    accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' },
                     reloadClientExecutables: () => {},
                     reloadConnectedAccountProjection: () => {},
                 }}
@@ -764,36 +716,7 @@ beforeEach(async () => {
     routeRemoval.reset();
     stackOptions.length = 0;
     routerLocation.pathname = '/';
-    pluginSurfaceAccountLifetime.value = pluginSurfaceAccountLifetime.create('server-1');
-    accountEncryptionModeCredentials.value = { token: 'plugin-app-page-account-mode-test-token' };
-    const credentialBoundary = vi.spyOn((await import('@/sync/syncEngine')).sync, 'getCredentials')
-        .mockImplementation(() => {
-            const credentials = accountEncryptionModeCredentials.value;
-            if (credentials === null) {
-                throw new Error('Plugin app page test credentials are unavailable');
-            }
-            return credentials;
-        });
-    restoreCredentialBoundary = () => credentialBoundary.mockRestore();
-    accountEncryptionModeFetch.mockReset();
-    accountEncryptionModeFetch.mockResolvedValue({ mode: 'plain', updatedAt: 1 });
-    const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
-    setRuntimeFetch(async (_input, init) => {
-        const headers = new Headers(init?.headers);
-        if (!headers.has('Authorization')) {
-            return new Response(JSON.stringify({ status: 'ok' }), {
-                status: 200,
-                headers: { 'Content-Type': 'application/json' },
-            });
-        }
-        const credentials = accountEncryptionModeCredentials.value;
-        if (!credentials) throw new Error('Account credentials unavailable in AppPage test boundary');
-        const result = await accountEncryptionModeFetch(credentials);
-        return new Response(JSON.stringify(result), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-        });
-    });
+    await restorePageAccount();
     const { resetServerReachabilitySupervisors } = await import(
         '@/sync/runtime/connectivity/serverReachabilitySupervisorPool'
     );
@@ -811,12 +734,12 @@ beforeEach(async () => {
     clearDaemonMergedProjectionCacheForTests();
     contributionProjectionDescribeMock.mockReset();
     contributionProjectionDescribeMock.mockImplementation(async () => ({
-        supported: true,
+        protocolVersion: 1,
         projection: daemonProjection({ generation: fixtureDaemonGeneration.value }),
     }));
     targetedContributionsReadMock.mockReset();
     targetedContributionsReadMock.mockImplementation(async (_machineId, options) => ({
-        supported: true,
+        status: 'current',
         targetedContributions: {
             target: {
                 pluginId: options.pluginId,
@@ -838,16 +761,16 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-    pluginSurfaceConnectivity.endpointStatus = 'online';
-    pluginSurfaceConnectivity.machineOnline = true;
+    await standardCleanup();
+    await pageConnection?.dispose();
+    pageConnection = null;
+    pluginSurfaceAccountLifetime.value = null;
     const { resetRuntimeFetch } = await import('@/utils/system/runtimeFetch');
     resetRuntimeFetch();
     const { resetServerReachabilitySupervisors } = await import(
         '@/sync/runtime/connectivity/serverReachabilitySupervisorPool'
     );
     await resetServerReachabilitySupervisors();
-    restoreCredentialBoundary?.();
-    restoreCredentialBoundary = undefined;
 });
 
 describe('plugin app page host route (EU-5b)', () => {
@@ -892,12 +815,13 @@ describe('plugin app page host route (EU-5b)', () => {
                 value={{
                     pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION,
                     pluginBrowserProjection: null,
-                    phase: 'establishing',
-                    interactionEnabled: false,
+                    phase: 'current',
+                    hasEstablishingMembers: true,
+                    interactionEnabled: true,
                     machineId: null,
                     serverId: null,
                     platform: 'web',
-                    clientExecutableActivation: { status: 'establishing' },
+                    accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'establishing' },
                     reloadClientExecutables: () => {},
                     reloadConnectedAccountProjection: () => {},
                 }}
@@ -964,7 +888,7 @@ describe('plugin app page host route (EU-5b)', () => {
 
         const { act } = await import('react-test-renderer');
         await act(async () => {
-            pluginSurfaceAccountLifetime.value?.retire();
+            retireActiveServerAccountScopeLifetime();
         });
 
         expect(header.props.signal?.aborted).toBe(true);
@@ -1551,8 +1475,8 @@ describe('plugin app page host route (EU-5b)', () => {
         // cross-server handoff contract.
         const { act } = await import('react-test-renderer');
         await act(async () => {
-            pluginSurfaceAccountLifetime.value?.retire();
-            pluginSurfaceAccountLifetime.value = pluginSurfaceAccountLifetime.create('server-2');
+            retireActiveServerAccountScopeLifetime();
+            await restorePageAccount('server-2');
             await screen.update(<PageHost model={pageModel({}, 'server-2')} serverId="server-2" />);
         });
 

@@ -1315,7 +1315,7 @@ describe('PluginHostedWebPane', () => {
             pluginUiProjection={projection}
             endpointUrl="https://preview.happier.test/plugin/acme/"
             {...(sourceKind === 'inlineHtml' ? {
-                inlineDocument: { kind: 'html' as const, html: '<p>No SDK</p>' },
+                inlineDocument: artifactHtmlBundleFromBodyV1('<p>No SDK</p>'),
                 projectedContribution: null,
             } : {})}
             platform="web"
@@ -2099,7 +2099,9 @@ describe('PluginHostedWebPane', () => {
             else Reflect.deleteProperty(globalThis, 'location');
         }
     });
-    it('admits the strict ready lifecycle for a canonical host API bridge and sends bootstrap only after readiness', async () => {
+    it('keeps the loaded plugin frame pending beyond the former cutoff and bootstraps late readiness', async () => {
+        vi.useFakeTimers();
+        onTestFinished(() => { vi.useRealTimers(); });
         const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
         const listeners = new Set<(event: MessageEvent) => void>();
         const iframeSource = { postMessage: vi.fn() } as unknown as WindowProxy;
@@ -2167,6 +2169,12 @@ describe('PluginHostedWebPane', () => {
             );
             expect(iframeSource.postMessage).not.toHaveBeenCalled();
             expect(new URL(String(findHostedWebIframe(screen).props.src)).searchParams.get('happierSessionId')).toBeNull();
+
+            const frameIdentity = readFrameWireIdentity(screen);
+            await act(async () => { findHostedWebIframe(screen).props.onLoad?.(); });
+            await act(async () => { await vi.advanceTimersByTimeAsync(30_001); });
+            expect(readFrameWireIdentity(screen)).toEqual(frameIdentity);
+            expect(iframeSource.postMessage).not.toHaveBeenCalled();
 
             await act(async () => {
                 (globalThis as any).window.dispatchEvent({

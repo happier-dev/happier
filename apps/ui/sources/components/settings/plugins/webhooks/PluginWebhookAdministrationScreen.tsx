@@ -19,6 +19,7 @@ import { usePluginMachineExecutionOriginSelection } from '@/sync/domains/machine
 import {
     composePluginMachineExecutionOriginV1,
     type PluginMachineReleaseClassificationV1,
+    type PluginMachineExecutionOriginCandidateV1,
 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import { useActivePluginAccountAvailabilityReleaseClassifier } from '@/sync/domains/plugins/availability/projection';
 import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -151,7 +152,7 @@ const WebhookEndpointSection = React.memo(function WebhookEndpointSection(props:
 
     const retarget = React.useCallback(async () => {
         const fresh = selection.resolveExecutionOrigin();
-        if (!fresh) {
+        if (!fresh || !('materializationRef' in fresh.origin)) {
             await Modal.alertAsync(
                 t('common.unavailable'),
                 t('settingsPlugins.webhookAdministration.retargetUnavailable'),
@@ -285,12 +286,14 @@ const WebhookEndpointSection = React.memo(function WebhookEndpointSection(props:
         }
     }, [endpoint.revision, endpoint.webhookEndpointId, previousCredentialVersionId, props]);
 
-    const selectedTarget = selection.state.kind === 'selected'
+    const selectedTarget = selection.state.kind === 'selected' && 'materializationRef' in selection.state.origin
         ? selection.state.origin.materializationRef
         : null;
     const selectedTargetIsCurrent = selectedTarget !== null
         && arePluginMachineMaterializationRefsEqual(selectedTarget, endpoint.targetMaterialization);
-    const selectableOrigins = selection.candidates.filter((candidate) => (
+    const selectableOrigins = selection.candidates.filter((candidate): candidate is PluginMachineExecutionOriginCandidateV1 => (
+        'materialization' in candidate
+        &&
         candidate.validation.kind === 'admitted'
         && candidate.releaseContent === 'matched'
         && candidate.materialization.portableRelease

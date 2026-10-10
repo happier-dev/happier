@@ -12,8 +12,14 @@ import {
 } from '@happier-dev/protocol/plugins/ui';
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex } from '@noble/hashes/utils';
+import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES, isBundledAgentId } from '@happier-dev/agents/agent-ids';
 
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
+import { loadDaemonMergedProjectionCacheEntry, readCachedDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
+import { subscribeMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjection';
 import { storage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import {
@@ -65,6 +71,20 @@ type ProjectedSession = Readonly<{
 function projectSession(session: Session, accountScope: ServerAccountScope | null): ProjectedSession {
     const status = getSessionStatus(session, Date.now(), { workingTextMode: 'static', vibingIndex: 0 });
     const { awareness } = status;
+    const agentId = readSessionPresentationAgentId(session);
+    const cached = readCachedDaemonMergedProjectionCacheEntry({
+        machineId: awareness.workspace?.machineId,
+        serverId: accountScope?.serverId,
+    });
+    const inputs = cached && areServerAccountScopesEqual(cached.accountScope, accountScope)
+        && (cached.kind === 'ready' || cached.kind === 'error') ? cached.inputs : null;
+    const catalog = agentId === null ? null : resolveAgentCatalogProjection(agentId, {
+        enabledAgentIds: [],
+        mergedBackendProjectionById: inputs?.mergedBackendProjectionById,
+        mergedProviderProjectionById: inputs?.mergedProviderProjectionById,
+    });
+    const identity = catalog?.identity ?? (catalog?.isBuiltIn && isBundledAgentId(catalog.agentId)
+        ? BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[catalog.agentId] : null);
     const workStatus = resolveWorkStatusTone({
         kind: 'session',
         facts: sessionWorkStatusFactsFromStatus(session, status),
@@ -91,6 +111,11 @@ function projectSession(session: Session, accountScope: ServerAccountScope | nul
         sessionId: session.id,
         ...(accountScope ? { serverId: accountScope.serverId } : {}),
         ...(awareness.title ? { title: awareness.title } : {}),
+        ...(catalog ? { agent: {
+            agentId: catalog.agentId,
+            displayName: catalog.title,
+            ...(identity ? { brand: { pluginId: identity.pluginId } } : {}),
+        } } : {}),
         lifecycle: awareness.lifecycle,
         runtime: awareness.runtime,
         operational: awareness.operational.primary,
@@ -131,6 +156,7 @@ export type PluginSurfaceSessionHandlers = Readonly<{
 
 export function createPluginSurfaceSessionHandlers(input: Readonly<{
     accountScope: ServerAccountScope | null;
+    accountLifetime: ActiveServerAccountScopeLifetime;
     isCurrent: () => boolean;
     /** The mount's one invalidation fan-out, shared with Resource watches. */
     deliver: (event: PluginUiResourceSubscriptionEventV1) => void;
@@ -151,14 +177,29 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
         watch.release();
     };
 
-    const readSession = (
+    const readSession = async (
         request: PluginUiHostApiRequestEnvelopeV1,
         options?: PluginSurfaceHostApiRequestOptions,
-    ): PluginUiJsonValueV1 => {
+    ): Promise<PluginUiJsonValueV1> => {
         const refused = refusal(options);
         if (refused) return refused;
         const parsed = PluginUiReadSessionRequestV1Schema.safeParse(request.payload);
         if (!parsed.success) return createPluginSurfaceHostApiError('invalid_payload', ['session_read_payload_invalid']);
+        const session = storage.getState().sessions[parsed.data.sessionId];
+        const agentId = session ? readSessionPresentationAgentId(session) : null;
+        const machineId = session ? getSessionStatus(session).awareness.workspace?.machineId : null;
+        // Built-ins have a local catalog. Installed Agents need the same cold,
+        // exact-Account catalog loader used by Session chrome, not an ambient cache.
+        if (agentId && !isBundledAgentId(agentId) && machineId) {
+            await loadDaemonMergedProjectionCacheEntry({
+                machineId,
+                serverId: input.accountScope?.serverId,
+                accountLifetime: input.accountLifetime,
+                reuseFreshReady: true,
+            });
+            const retired = refusal(options);
+            if (retired) return retired;
+        }
         return readProjectedSession(parsed.data.sessionId, input.accountScope)?.state ?? null;
     };
 
@@ -184,14 +225,34 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
         if (!initial) return createPluginSurfaceHostApiError('unavailable', ['session_unavailable']);
 
         let lastDigest = digestSessionState(initial.state);
+        let catalogMachineId: string | undefined;
+        let unsubscribeCatalog = () => {};
+        const bindCatalog = (state: PluginUiSessionStateV1) => {
+            const machineId = state.workspace?.machineId;
+            if (machineId === catalogMachineId) return;
+            unsubscribeCatalog();
+            catalogMachineId = machineId;
+            unsubscribeCatalog = machineId ? subscribeMachineContributionRegistryProjectionInvalidation({
+                machineId, serverId: input.accountScope?.serverId ?? null,
+            }, () => {
+                if (!input.isCurrent()) return;
+                const current = readProjectedSession(sessionId, input.accountScope);
+                if (current) input.deliver({
+                    version: 1, subscriptionId, kind: 'invalidated', digest: digestSessionState(current.state),
+                });
+            }) : () => {};
+        };
+        bindCatalog(initial.state);
         const readInputs = (state: ReturnType<typeof storage.getState>) => ({
             session: state.sessions[sessionId],
             messages: state.sessionMessages?.[sessionId],
+            locale: state.settings.preferredLanguage,
         });
         let lastInputs = readInputs(storage.getState());
         const unsubscribe = storage.subscribe((state) => {
             const nextInputs = readInputs(state);
-            if (nextInputs.session === lastInputs.session && nextInputs.messages === lastInputs.messages) return;
+            if (nextInputs.session === lastInputs.session && nextInputs.messages === lastInputs.messages
+                && nextInputs.locale === lastInputs.locale) return;
             lastInputs = nextInputs;
             if (!input.isCurrent()) return;
             if (!nextInputs.session) {
@@ -205,12 +266,14 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
                 });
                 return;
             }
-            const digest = digestSessionState(projectSession(nextInputs.session, input.accountScope).state);
+            const projected = projectSession(nextInputs.session, input.accountScope).state;
+            bindCatalog(projected);
+            const digest = digestSessionState(projected);
             if (digest === lastDigest) return;
             lastDigest = digest;
             input.deliver({ version: 1, subscriptionId, kind: 'invalidated', digest });
         });
-        watches.set(subscriptionId, { release: unsubscribe });
+        watches.set(subscriptionId, { release: () => { unsubscribe(); unsubscribeCatalog(); } });
         return null;
     };
 

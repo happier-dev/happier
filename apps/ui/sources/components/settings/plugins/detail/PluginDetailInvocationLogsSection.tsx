@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { PluginInvocationLogRecordV1 } from '@happier-dev/protocol';
+import { getPluginMachineExecutionOriginRef } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 
 import {
     resolvePluginMachineExecutionOriginPresentation,
@@ -46,11 +47,12 @@ function resolveTargetStatus(selection: PluginMachineExecutionOriginSelectionV1)
 function exactOriginKey(selection: PluginMachineExecutionOriginSelectionV1): string | null {
     if (selection.state.kind !== 'selected' || !selection.canExecute) return null;
     const origin = selection.state.origin;
+    const ref = getPluginMachineExecutionOriginRef(origin);
     return [
         origin.serverIdentityId,
-        origin.materializationRef.machineId,
-        origin.materializationRef.materializationId,
-        origin.materializationRef.pluginId,
+        ref.machineId,
+        'materializationId' in ref ? ref.materializationId : JSON.stringify(ref.sourceCustody),
+        ref.pluginId,
     ].map((part) => `${part.length}:${part}`).join('|');
 }
 

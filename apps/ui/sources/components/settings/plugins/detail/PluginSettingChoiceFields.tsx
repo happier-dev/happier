@@ -5,9 +5,9 @@ import type {
     ResolvedPluginProjectionEditableSettingField as PluginProjectionEditableSettingField,
     ResolvedPluginProjectionEditableSettingsGroup as PluginProjectionEditableSettingsGroup,
 } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
-import { Switch } from '@/components/ui/forms/Switch';
-import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { Item } from '@/components/ui/lists/Item';
+import { SchemaFieldControl } from '@/components/settings/schemaFields/SchemaFieldControl';
+import { SchemaFieldRow } from '@/components/settings/schemaFields/SchemaFieldRow';
+import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { buildActionRowAccessibilityLabel } from '@/components/ui/lists/actionRowAccessibility';
 
 type PluginSettingChoiceOption = NonNullable<
@@ -47,22 +47,21 @@ export function PluginSettingSwitchField(props: Readonly<{
     const testID = `settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}`;
 
     return (
-        <Item
+        <SchemaFieldRow
             testID={testID}
             title={props.field.title}
-            subtitle={[props.field.subtitle, props.disabledReason].filter(Boolean).join('\n') || undefined}
+            hint={[props.field.subtitle, props.disabledReason].filter(Boolean).join('\n') || undefined}
             accessibilityHint={props.disabledReason ?? undefined}
-            rightElement={(
-                <Switch
-                    value={props.value}
-                    disabled={props.disabled}
-                    accessibilityLabel={props.field.title}
-                    accessibilityHint={props.disabledReason ?? undefined}
-                    onValueChange={(nextValue) => props.onChangeValue(props.field, nextValue)}
-                />
+            layout="inline"
+            control={(
+                <SchemaFieldControl control="switch" inputProps={{
+                    value: props.value,
+                    disabled: props.disabled,
+                    accessibilityLabel: props.field.title,
+                    accessibilityHint: props.disabledReason ?? undefined,
+                    onValueChange: (nextValue) => props.onChangeValue(props.field, nextValue),
+                }} />
             )}
-            rightElementOutsidePressable
-            showChevron={false}
             disabled={props.disabled}
             onPress={() => props.onChangeValue(props.field, !props.value)}
         />
@@ -103,21 +102,21 @@ export function PluginSettingSelectField(props: Readonly<{
     }, [open, props.disabled]);
 
     return (
-        <DropdownMenu
-            open={open}
-            onOpenChange={(nextOpen) => {
+        <SchemaFieldControl control="select" inputProps={{
+            open,
+            onOpenChange: (nextOpen) => {
                 if (nextOpen && props.disabled) return;
                 setOpen(nextOpen);
-            }}
-            selectedId={selectedId}
-            variant="selectable"
-            rowKind="item"
-            search={false}
-            showCategoryTitles={false}
-            matchTriggerWidth
-            connectToTrigger
-            popoverBoundaryRef={props.popoverBoundaryRef}
-            itemTrigger={{
+            },
+            selectedId,
+            variant: 'selectable',
+            rowKind: 'item',
+            search: false,
+            showCategoryTitles: false,
+            matchTriggerWidth: true,
+            connectToTrigger: true,
+            popoverBoundaryRef: props.popoverBoundaryRef,
+            itemTrigger: {
                 title: props.field.title,
                 // The trigger names the SELECTED OPTION, not its description:
                 // options now carry their description as a row subtitle, and the
@@ -132,15 +131,15 @@ export function PluginSettingSelectField(props: Readonly<{
                     disabled: props.disabled,
                     accessibilityHint: props.disabledReason ?? undefined,
                 },
-            }}
-            items={items}
-            onSelect={(itemId) => {
+            },
+            items,
+            onSelect: (itemId) => {
                 const option = options.find((candidate) => JSON.stringify(candidate.value) === itemId);
                 if (!option || props.disabled) return;
                 props.onChangeValue(option.value);
                 setOpen(false);
-            }}
-        />
+            },
+        }} />
     );
 }
 
@@ -162,40 +161,24 @@ export function PluginSettingMultiSelectField(props: Readonly<{
 }>) {
     const selectedValues = Array.isArray(props.value) ? props.value : [];
     const selectedIds = new Set(selectedValues.map((value) => JSON.stringify(value)));
+    const options = props.field.presentation?.options ?? [];
     return (
-        <>
-            {(props.field.presentation?.options ?? []).map((option) => {
+        <SchemaFieldControl
+            control="multiSelect"
+            options={options.map((option) => {
                 const semantics = resolvePluginSettingChoiceOptionSemantics(option);
-                const optionId = semantics.id;
-                const selected = selectedIds.has(optionId);
-                const toggle = () => {
-                    props.onChangeValue(selected
-                        ? selectedValues.filter((value) => JSON.stringify(value) !== optionId)
-                        : [...selectedValues, option.value]);
-                };
-                return (
-                    <Item
-                        key={optionId}
-                        title={semantics.title}
-                        subtitle={[semantics.description, props.disabledReason].filter(Boolean).join('\n') || undefined}
-                        accessibilityLabel={semantics.accessibilityLabel}
-                        accessibilityHint={props.disabledReason ?? undefined}
-                        rightElement={(
-                            <Switch
-                                value={selected}
-                                disabled={props.disabled}
-                                accessibilityLabel={semantics.accessibilityLabel}
-                                accessibilityHint={props.disabledReason ?? undefined}
-                                onValueChange={toggle}
-                            />
-                        )}
-                        rightElementOutsidePressable
-                        showChevron={false}
-                        disabled={props.disabled}
-                        onPress={toggle}
-                    />
-                );
+                return { ...semantics, subtitle: semantics.description };
             })}
-        </>
+            selectedIds={selectedIds}
+            disabled={props.disabled}
+            disabledReason={props.disabledReason}
+            onToggle={(optionId) => {
+                const option = options.find((candidate) => JSON.stringify(candidate.value) === optionId);
+                if (!option) return;
+                props.onChangeValue(selectedIds.has(optionId)
+                    ? selectedValues.filter((value) => JSON.stringify(value) !== optionId)
+                    : [...selectedValues, option.value]);
+            }}
+        />
     );
 }

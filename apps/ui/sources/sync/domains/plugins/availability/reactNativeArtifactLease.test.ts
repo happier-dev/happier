@@ -85,7 +85,7 @@ const inactiveAppExactSource = Object.freeze({
     fetch: async () => null,
 });
 
-const permanentlyCurrentLifetime = createLifetime().lifetime;
+let permanentlyCurrentLifetime = createLifetime().lifetime;
 
 type ReactNativeLeaseTestInput = Omit<
     Parameters<typeof acquirePluginReactNativeArtifactLease>[0],
@@ -103,6 +103,7 @@ function acquire(input: ReactNativeLeaseTestInput) {
 }
 
 beforeEach(() => {
+    permanentlyCurrentLifetime = createLifetime().lifetime;
     activeAccountHostedArtifactSource.create.mockReset();
     activeAccountHostedArtifactSource.create.mockReturnValue(inactiveAccountHostedSource);
 });

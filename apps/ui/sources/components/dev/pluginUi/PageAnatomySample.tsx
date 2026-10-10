@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     EmptyState as PluginEmptyState,
     Item as PluginItem,
@@ -13,7 +13,7 @@ import {
     Toggle as PluginToggle,
     Banner as PluginBanner,
     Progress as PluginProgress,
-    Step as PluginStep,
+    SetupSteps as PluginSetupSteps,
 } from '@happier-dev/plugin-ui';
 
 import { EmptyState } from '@/components/ui/empty/EmptyState';
@@ -84,6 +84,11 @@ type Channel = 'session' | 'comment';
 type Depth = 'quick' | 'thorough';
 type Layout = 'compact' | 'detailed';
 
+const SETUP_STEPS = [
+    { key: 'connect', title: 'Connect your account', state: 'done' },
+    { key: 'review', title: 'Start the first review', state: 'current', detail: 'Findings appear in the linked session.' },
+] as const;
+
 /** A finding row at static props: the preview both halves render for a layout tile. */
 function FindingPreview(props: Readonly<{ lines: number }>) {
     return (
@@ -105,6 +110,7 @@ function useSampleState() {
 }
 
 export function CorePageAnatomySample() {
+    const { theme } = useUnistyles();
     const state = useSampleState();
     const [channelOpen, setChannelOpen] = React.useState(false);
     return (
@@ -120,11 +126,10 @@ export function CorePageAnatomySample() {
                 <AttentionBanner testID="core-page-anatomy-notice" title="Sign-in needs attention"
                     description="Reconnect the account to resume reviews." tone="warning" />
                 <ItemGroup title="Setup" surface="none">
-                    <MeterBar tone="neutral" fillFraction={0.5} progressAccessibilityLabel="Setup progress" testID="core-page-anatomy-progress" />
-                    <SetupSteps testID="core-page-anatomy-steps" steps={[
-                        { key: 'connect', title: 'Connect your account', state: 'done' },
-                        { key: 'review', title: 'Start the first review', state: 'current', detail: 'Findings appear in the linked session.' },
-                    ]} />
+                    <MeterBar tone="neutral" fillFraction={0.5} height={8}
+                        fillColor={theme.colors.button.primary.background} trackColor={theme.colors.button.primary.disabled}
+                        progressAccessibilityLabel="Setup progress" testID="core-page-anatomy-progress" />
+                    <SetupSteps testID="core-page-anatomy-steps" steps={SETUP_STEPS} />
                 </ItemGroup>
                 <ItemGroup title={COPY.reviews.title} description={COPY.reviews.description}>
                     <Item
@@ -200,8 +205,7 @@ export function PluginPageAnatomySample() {
             </PluginItemGroup>
             <PluginItemGroup title="Setup" surface="none">
                 <PluginProgress value={0.5} label="Setup progress" testID="plugin-page-anatomy-progress" />
-                <PluginStep marker={{ kind: 'state', state: 'passed', label: 'Done' }} title="Connect your account" testID="plugin-page-anatomy-step-done" />
-                <PluginStep marker={{ kind: 'number', value: 2 }} title="Start the first review" testID="plugin-page-anatomy-step-current" />
+                <PluginSetupSteps testID="plugin-page-anatomy-steps" steps={SETUP_STEPS} />
             </PluginItemGroup>
             <PluginItemGroup title={COPY.reviews.title} description={COPY.reviews.description}>
                 <PluginItem

@@ -21,6 +21,8 @@ import {
 } from './policy';
 import type { PluginBrowserActionProjection, PluginBrowserProjectionModel } from './targets';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
 export type PluginBrowserActionTransport = PluginSurfaceContributedActionTransport;
 
@@ -70,6 +72,8 @@ export async function executePluginBrowserAction(params: Readonly<{
     action: PluginBrowserActionProjection | null | undefined;
     machineId: string | null | undefined;
     serverId?: string | null;
+    /** Process-local authority borrowed from the admitted Browser projection. */
+    accountLifetime: ServerAccountScopeLifetime | null;
     sessionId?: string | null;
     input: unknown;
     policyContext?: PluginUiPolicyEvaluationContext;
@@ -102,7 +106,9 @@ export async function executePluginBrowserAction(params: Readonly<{
     if (projectedAction?.execution.target === 'daemon' && !machineId) {
         return { ok: false, code: 'unavailable', reason: 'plugin_browser_action_unavailable' };
     }
-    const isCurrent = params.isCurrent ?? (() => true);
+    const isCurrent = () => params.accountLifetime?.isCurrent() === true
+        && (!params.serverId || areServerProfileIdentifiersEquivalent(params.serverId, params.accountLifetime.scope.serverId))
+        && (params.isCurrent?.() ?? true);
 
     const launched = await launchPluginSurfaceAction({
         callerPluginId: params.action.pluginId,
@@ -115,7 +121,8 @@ export async function executePluginBrowserAction(params: Readonly<{
             ? {
                 contributedAction: {
                     machineId: machineId!,
-                    serverId: params.serverId ?? null,
+                    serverId: params.accountLifetime?.scope.serverId ?? params.serverId ?? null,
+                    accountLifetime: params.accountLifetime,
                     ...(params.sessionId ? { sessionId: params.sessionId } : {}),
                     ...(params.execute ? { execute: params.execute } : {}),
                 },

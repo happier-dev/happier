@@ -294,6 +294,13 @@ describe('PluginContextualResourceStoreProvider', () => {
             projection, phase: 'retainedOffline', interactionEnabled: false }], new Map(), 'machine-1');
         expect(Object.values(retained.pluginUiProjection!.resourcesById)).toEqual(expect.arrayContaining([expect.objectContaining({ id: RESOURCE_ID })]));
         if (document.root.kind !== 'metric') throw new Error('Expected metric');
+        const foreign = unionPluginUiProjections([{ machineId: 'machine-1', serverId: 'other-home',
+            projection, phase: 'current', interactionEnabled: true }], new Map(), 'machine-1');
+        // Local declarative bodies need no unique AppShell scope, but each live
+        // node still denies an origin from another Home before opening a read.
+        expect(resolveDeclarativeDataResourceBinding({ projection: foreign.pluginUiProjection, input: {},
+            machineId: null, serverId: null, accountLifetime: a.lifetime, sessionId: 'session-1',
+            isCurrent: a.lifetime.isCurrent }, document.root)).toBeNull();
         expect(resolveDeclarativeDataResourceBinding({ projection: retained.pluginUiProjection, input: {},
             machineId: 'machine-1', serverId: a.lifetime.scope.serverId, accountLifetime: a.lifetime,
             sessionId: 'session-1', isCurrent: a.lifetime.isCurrent, requireReadAuthority: true }, document.root)).toBeNull();
@@ -428,7 +435,7 @@ describe('PluginContextualResourceStoreProvider', () => {
         const account = await createAccountLifetime({ accountId: 'account-a' });
         const instance = { v: 1 as const, id: 'configured-widget', definition: { kind: 'installed' as const,
             surface: { pluginId: 'acme.composer', localId: 'widget' } }, bindings: {} };
-        account.http.seed({ v: 1, instances: [instance], order: [instance.id], hidden: [] });
+        account.http.seed({ v: 1, items: [{ kind: 'widget', instance }], order: [instance.id], hidden: [] });
         const resources = { state: { id: RESOURCE_ID, pluginId: 'acme.composer', resourceKind: 'config' as const,
             contentType: 'application/json', scope: 'global' as const } };
         const model = widgetProjectionOf([{ pluginId: 'acme.composer', localId: 'widget', target: 'app',
@@ -443,16 +450,16 @@ describe('PluginContextualResourceStoreProvider', () => {
         let tree: renderer.ReactTestRenderer | null = null;
         try {
             await act(async () => { tree = renderer.create(<AppShellPluginUiProjectionValueProvider value={{ ...projected,
-                pluginBrowserProjection: null, platform: 'web', clientExecutableActivation: { status: 'ready' },
+                pluginBrowserProjection: null, platform: 'web', accountLifetime: account.lifetime, clientExecutableActivation: { status: 'ready' },
                 reloadClientExecutables() {}, reloadConnectedAccountProjection() {} }}><></></AppShellPluginUiProjectionValueProvider>); });
             const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
             const executor = createDefaultActionExecutor();
             const ref = { surface: { ...account.lifetime.scope, owner: { kind: 'home' as const } }, instanceId: instance.id };
             const context = { serverId: account.lifetime.scope.serverId, expectedAccountId: 'account-a', surface: 'ui' as const };
-            expect(await executor.execute('widgets.instance.refresh', { ref }, context)).toEqual({ ok: true, result: { ref, status: 'refreshed' } });
+            expect(await executor.execute('widgets.item.refresh', { ref }, context)).toEqual({ ok: true, result: { ref, status: 'refreshed' } });
             expect(entry.getSnapshot().digest).toBe(`sha256:${'b'.repeat(64)}`);
             machineResourceRpc.read.mockResolvedValue({ supported: true, result: { ok: false, reason: 'unavailable', code: 'plugin_resource_unavailable' } });
-            expect(await executor.execute('widgets.instance.refresh', { ref }, context)).toMatchObject({ ok: false, errorCode: 'plugin_resource_unavailable' });
+            expect(await executor.execute('widgets.item.refresh', { ref }, context)).toMatchObject({ ok: false, errorCode: 'plugin_resource_unavailable' });
             expect(entry.getSnapshot().error?.code).toBe('plugin_resource_unavailable');
             expect(account.http.writes).toHaveLength(0);
         } finally { await act(async () => { tree?.unmount(); }); release(); store.dispose(); }

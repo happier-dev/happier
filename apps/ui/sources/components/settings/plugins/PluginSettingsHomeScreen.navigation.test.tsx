@@ -223,7 +223,7 @@ describe('Settings > Plugins information architecture', () => {
         expect(await readManagementSegmentIds(inShell(true))).toEqual(['installed', 'discover']);
     });
 
-    it('has one installed-plugins search: the Plugins column owns it, and the page filters by the same query', async () => {
+    it('keeps the single installed-plugins search on the page beside the navigation-only Plugins column', async () => {
         const { AppShellColumnContext } = await import('@/components/navigation/shell/appRail/appShellColumnContext');
         const { setPluginsInstalledQuery } = await import('./model/pluginsInstalledSearch');
         mocks.pathname = '/plugins';
@@ -236,7 +236,7 @@ describe('Settings > Plugins information architecture', () => {
             { value: { present: true, columnVisible: true } },
             React.createElement(PluginSettingsHomeScreen),
         ));
-        expect(screen.findByTestId('settings.plugins.marketplace.installed.search')).toBeNull();
+        expect(screen.findByTestId('settings.plugins.marketplace.installed.search')).not.toBeNull();
         await act(async () => { setPluginsInstalledQuery('bet'); });
         const installedSection = screen.findAll((node) => typeof node.props?.onNavigateToPlugin === 'function')[0];
         expect(installedSection?.props.installedPlugins.map((entry: { pluginId: string }) => entry.pluginId)).toEqual(['acme.beta']);

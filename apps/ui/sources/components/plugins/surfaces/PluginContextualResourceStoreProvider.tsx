@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import type { PluginResourceContextV1 } from '@happier-dev/protocol';
-import { createPluginUiResourceStore, type PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
+import { createPluginUiResourceStore, pluginUiResourceReferenceKey, type PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
 import type {
     PluginUiResourceReference,
     PluginUiResourceSnapshot,
@@ -293,9 +293,7 @@ export function usePluginContextualResourceStoreOwner(): PluginContextualResourc
 }
 
 function resourceRenderKey(resource: PluginUiResourceReference): string {
-    return typeof resource === 'string'
-        ? `local:${resource}`
-        : `qualified:${resource.pluginId}\u0000${resource.localId}`;
+    return pluginUiResourceReferenceKey(resource);
 }
 
 type AcquiredPluginContextualResource = Readonly<{

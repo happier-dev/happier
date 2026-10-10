@@ -7,9 +7,10 @@ import {
     type PluginUiHostApiErrorCodeV1,
     type PluginUiJsonValueV1,
     type PluginUiExecuteActionRequestV1,
+    type SessionNewSessionSeedOutcome,
 } from '@happier-dev/protocol/plugins/ui';
 
-import type { SessionNewSessionSeedOutcome } from '@/components/sessions/new/newSessionSeedComposer';
+import { openOrdinaryNewSessionSeed } from '@/components/sessions/new/newSessionSeedNavigation';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
@@ -31,44 +32,6 @@ type OpenNewSession = (params: Readonly<{
     signal?: AbortSignal;
     isCurrent: () => boolean;
 }>) => Promise<SessionNewSessionSeedOutcome>;
-
-async function openDefaultNewSession(params: Parameters<OpenNewSession>[0]): Promise<SessionNewSessionSeedOutcome> {
-    try {
-        const [{ seedAndOpenNewSession }, { router }] = await Promise.all([
-            import('@/components/sessions/new/newSessionSeedComposer'),
-            import('expo-router'),
-        ]);
-        return seedAndOpenNewSession({
-            seed: params.seed,
-            pluginId: params.pluginId,
-            scope: params.scope,
-            ...(params.signal ? { signal: params.signal } : {}),
-            isCurrent: params.isCurrent,
-            navigateToNewSession: ({
-                dataId,
-                draftId,
-                worktree,
-                spawnServerId,
-                machineId,
-                directory,
-            }) => {
-                router.push({
-                    pathname: '/new',
-                    params: {
-                        draftId,
-                        ...(dataId === null ? {} : { dataId }),
-                        ...(worktree === undefined ? {} : { worktree }),
-                        ...(spawnServerId === undefined ? {} : { spawnServerId }),
-                        ...(machineId === undefined ? {} : { machineId }),
-                        ...(directory === undefined ? {} : { directory }),
-                    },
-                });
-            },
-        });
-    } catch {
-        return { kind: 'unavailable', reason: 'navigation_unavailable' };
-    }
-}
 
 function failure(outcome: Exclude<SessionNewSessionSeedOutcome, Readonly<{ kind: 'opened' }>>): PluginUiJsonValueV1 {
     if (outcome.kind === 'stale') return errorPayload('stale_surface', outcome.reason);
@@ -195,7 +158,7 @@ export function createPluginOpenNewSessionHandler(input: PluginOpenNewSessionBin
             ) {
                 return errorPayload('invalid_payload', 'prepared_review_workspace_selection_unexpected');
             }
-            const outcome = await (input.openNewSession ?? openDefaultNewSession)({
+            const outcome = await (input.openNewSession ?? openOrdinaryNewSessionSeed)({
                 seed: settledSeed,
                 pluginId: input.pluginId,
                 scope: input.accountLifetime.scope,

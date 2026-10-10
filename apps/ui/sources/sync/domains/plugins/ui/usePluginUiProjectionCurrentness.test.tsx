@@ -59,13 +59,18 @@ const { clearBrowserRecords } = await import('@/sync/domains/state/browserRecord
 const { createServerFetchAtEndpoint } = await import('@/sync/http/client');
 const { areServerProfileIdentifiersEquivalent } = await import('@/sync/domains/server/serverProfiles');
 const { isMachineOnline } = await import('@/utils/sessions/machineUtils');
+const { resolveServerScopedMachine } = await import('@/sync/store/domains/machines/resolveServerScopedMachine');
 const { getPreferredLanguage } = await import('@/text');
 const { resolveNativeReactNativeHostRuntimeIdentity } = await import('@/components/plugins/reactNative/hostRuntimeIdentity');
 const { resolveHostedWebFrameCapability } = await import('@/components/plugins/hostedWeb/hostedWebFrameCapability');
 const { publishMachineContributionRegistryProjectionInvalidation, publishMachineContributionRegistryProjectionReconnect } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
 
 const { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
-const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+const {
+    clearDaemonMergedProjectionCacheForTests,
+    loadDaemonMergedProjectionCacheEntry,
+    readCachedDaemonMergedProjectionCacheEntry,
+} = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
 const { PluginAppPageLaunchInputScope } = await import('@/components/appShell/plugins/pluginAppPageNavigation');
 const {
     clearPluginAccountAvailabilityProjection,
@@ -82,8 +87,10 @@ const {
     resolvePluginUiProjectionPlatform,
     usePluginUiProjectionCurrentness,
 } = await import('./usePluginUiProjectionCurrentness');
+const { unionPluginUiProjections } = await import('./projectionUnion');
+const { AppShellPluginUiProjectionProvider, useAppShellPluginUiProjection } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
 
-function setMachine(input: { active?: boolean; daemonStateVersion?: number }) {
+function setMachine(input: { active?: boolean; daemonStateVersion?: number; daemonState?: Readonly<Record<string, unknown>> }) {
     const current = storage.getState().machines['machine-1'];
     // No heartbeat timestamp in this boundary fixture: the real presence
     // owner therefore uses the Home-published active bit, not a stale clock.
@@ -143,7 +150,7 @@ function answerBootstrap() {
     harness.answer(homeId, '/v1/feed?limit=100', { body: FeedResponseSchema.parse({ items: [], hasMore: false }) });
     harness.answer(homeId, '/v3/automations?limit=100', { body: AutomationDefinitionListResponseSchema.parse({ automations: [], nextCursor: null }) });
     harness.answer(homeId, `POST ${PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']}`, {
-        body: PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 0, pluginIds: [] }),
+        body: PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 0, pluginIds: [], intentReads: [], failedPluginIds: [] }),
     });
 }
 
@@ -257,6 +264,81 @@ describe('usePluginUiProjectionCurrentness', () => {
         await clearBrowserRecords();
         storage.setState(storage.getInitialState(), true);
         delete (globalThis as Record<string, unknown>).__TAURI_INTERNALS__;
+    });
+
+    it('publishes one exact Home Machine inventory through device-local and portable aliases', () => {
+        if (!connection) throw new Error('The real focused Home was not restored');
+        expect(connection.home.id).not.toBe(serverIdentityId);
+        // A complete Home list may settle before a later Machine event uses
+        // this device's equivalent local profile id. Both are the same owner.
+        storage.getState().applyMachines([], true, { sourceServerId: serverIdentityId });
+        setMachine({ active: true, daemonStateVersion: 2 });
+        expect(storage.getState().machines['machine-1']?.active).toBe(true);
+        for (const serverId of [serverIdentityId, connection.home.id]) {
+            const machine = resolveServerScopedMachine(storage.getState(), serverId, 'machine-1');
+            expect(machine, JSON.stringify({
+                requestedHome: serverId,
+                scopedInventory: Object.fromEntries(Object.entries(storage.getState().machineListByServerId)
+                    .map(([home, machines]) => [home, machines?.map((entry) => entry.id)])),
+                statuses: storage.getState().machineListStatusByServerId,
+            })).toMatchObject({ id: 'machine-1', active: true, daemonStateVersion: 2 });
+            expect(machine && isMachineOnline(machine)).toBe(true);
+        }
+    });
+
+    it('retires legacy aliases of the disconnected Home Machine inventory without clearing another Home', async () => {
+        if (!connection) throw new Error('The real focused Home was not restored');
+        const focusedConnection = connection;
+        const legacyHomeId = focusedConnection.home.id;
+        expect(legacyHomeId).not.toBe(serverIdentityId);
+        expect(areServerProfileIdentifiersEquivalent(legacyHomeId, serverIdentityId)).toBe(true);
+        const otherIdentityId = 'srv_machine_inventory_reset_neighbor';
+        const otherHomeId = await harness.addHome({
+            name: 'Retained Machine inventory neighbor',
+            serverUrl: 'https://machine-inventory-neighbor.example.test',
+            serverIdentityId: otherIdentityId,
+            accountId: 'account-b',
+            active: false,
+        });
+        const freshMachine = createMachineFixture({ id: 'machine-1', activeAt: 0, daemonStateVersion: 2 });
+        const legacyMachine = createMachineFixture({ id: 'machine-1', activeAt: 0, daemonStateVersion: 1 });
+        const otherMachine = createMachineFixture({ id: 'machine-1', activeAt: 0, daemonStateVersion: 7 });
+        storage.getState().applyMachines([freshMachine], true, { sourceServerId: serverIdentityId });
+        storage.getState().applyMachines([otherMachine], true, { sourceServerId: otherHomeId });
+
+        // Prospective predecessor input: ../0.2 HEAD 37a6541578749067b49d4579be8c752c9591b8c8
+        // store/domains/machines.ts:342–368 (and this writer before normalization)
+        // writes full Machine arrays and idle status under the caller's literal
+        // local profile id. Keep that already-existing cache shape beside the
+        // fresh canonical write, so writer normalization alone cannot pass.
+        const legacySnapshot = {
+            machineListByServerId: { ...storage.getState().machineListByServerId, [legacyHomeId]: [legacyMachine] },
+            machineListStatusByServerId: { ...storage.getState().machineListStatusByServerId, [legacyHomeId]: 'idle' },
+        } satisfies Pick<ReturnType<typeof storage.getState>, 'machineListByServerId' | 'machineListStatusByServerId'>;
+        storage.setState(legacySnapshot);
+        expect(resolveServerScopedMachine(storage.getState(), serverIdentityId, 'machine-1')?.daemonStateVersion).toBe(2);
+        expect(storage.getState().machineListByServerId[legacyHomeId]).toEqual([legacyMachine]);
+        const otherInventory = Object.fromEntries(Object.entries(storage.getState().machineListByServerId)
+            .filter(([key]) => areServerProfileIdentifiersEquivalent(key, otherIdentityId)));
+        const otherStatuses = Object.fromEntries(Object.entries(storage.getState().machineListStatusByServerId)
+            .filter(([key]) => areServerProfileIdentifiersEquivalent(key, otherIdentityId)));
+        expect(resolveServerScopedMachine(storage.getState(), otherIdentityId, 'machine-1')?.daemonStateVersion).toBe(7);
+
+        // dispose invokes the real connectionManager disconnect -> public Sync
+        // disconnect -> outgoing applied-Home reset, not a mocked reset helper.
+        await act(async () => { await focusedConnection.dispose(); });
+        connection = null;
+        const state = storage.getState();
+        expect(resolveServerScopedMachine(state, serverIdentityId, 'machine-1')).toBeNull();
+        expect(Object.keys(state.machineListByServerId)
+            .filter((key) => areServerProfileIdentifiersEquivalent(key, serverIdentityId))).toEqual([]);
+        expect(Object.keys(state.machineListStatusByServerId)
+            .filter((key) => areServerProfileIdentifiersEquivalent(key, serverIdentityId))).toEqual([]);
+        expect(Object.fromEntries(Object.entries(state.machineListByServerId)
+            .filter(([key]) => areServerProfileIdentifiersEquivalent(key, otherIdentityId)))).toEqual(otherInventory);
+        expect(Object.fromEntries(Object.entries(state.machineListStatusByServerId)
+            .filter(([key]) => areServerProfileIdentifiersEquivalent(key, otherIdentityId)))).toEqual(otherStatuses);
+        expect(resolveServerScopedMachine(state, otherIdentityId, 'machine-1')?.daemonStateVersion).toBe(7);
     });
 
   it('uses the canonical local-service resolver for Tauri desktop projection surfaces', () => {
@@ -527,12 +609,48 @@ describe('usePluginUiProjectionCurrentness', () => {
 
         projectionRuntime.describe.mockReset();
         projectionRuntime.describe.mockImplementationOnce(() => new Promise(() => {}));
-        const refreshing = await renderHook(() => usePluginUiProjectionCurrentness({
-            machineId: 'machine-1',
-            serverId: serverIdentityId,
-        }));
+        const renderedScopes: Array<Readonly<{
+            accountCurrent: boolean;
+            accountId: string | null;
+            catalog: unknown;
+            phase: ReturnType<typeof usePluginUiProjectionCurrentness>['phase'];
+            interactionEnabled: boolean;
+            browserProjection: unknown;
+        }>> = [];
+        const refreshing = await renderHook(() => {
+            const currentness = usePluginUiProjectionCurrentness({
+                machineId: 'machine-1',
+                serverId: serverIdentityId,
+            });
+            renderedScopes.push({
+                accountCurrent: currentness.accountLifetime?.isCurrent() === true,
+                accountId: currentness.accountLifetime?.scope.accountId ?? null,
+                catalog: currentness.pluginUiProjection?.translationsByPluginId['acme.preview']?.bundles,
+                phase: currentness.phase,
+                interactionEnabled: currentness.interactionEnabled,
+                browserProjection: currentness.pluginBrowserProjection,
+            });
+            return currentness;
+        });
         await flushHookEffects();
+        await waitForHomeGovernance(() => {
+            expect(refreshing.getCurrent().accountLifetime?.isCurrent()).toBe(true);
+            expect(projectionRuntime.describe).toHaveBeenCalledTimes(1);
+        });
 
+        // The exact Home must finish native credential admission before any
+        // device custody can be disclosed. Once admitted, its first frame
+        // already has the read-only catalog; a later restoration effect must
+        // not make this assertion pass retroactively.
+        expect(renderedScopes[0]).toMatchObject({
+            accountCurrent: false, accountId: null, catalog: undefined,
+            interactionEnabled: false, browserProjection: null,
+        });
+        expect(renderedScopes.filter((frame) => !frame.accountCurrent).every((frame) => frame.catalog === undefined)).toBe(true);
+        expect(renderedScopes.find((frame) => frame.accountCurrent)).toMatchObject({
+            accountId: 'account-a', catalog: { en: { title: 'Retained catalog' } },
+            phase: 'establishing', interactionEnabled: false, browserProjection: null,
+        });
         expect(refreshing.getCurrent().phase).toBe('establishing');
         expect(refreshing.getCurrent().interactionEnabled).toBe(false);
         expect(refreshing.getCurrent().pluginBrowserProjection).toBeNull();
@@ -605,6 +723,65 @@ describe('usePluginUiProjectionCurrentness', () => {
         expect(rendered.getCurrent().pluginUiProjection?.surfacePlacementsById).toEqual({});
     });
 
+    it('keeps the live catalog current with forty mounted offline readers without republishing unchanged currentness', async () => {
+        const offlineMachines = Array.from({ length: 40 }, (_, index) => createMachineFixture({
+            id: `offline-${index}`, active: false, activeAt: 0,
+        }));
+        storage.getState().applyMachines(offlineMachines, false, { sourceServerId: connection!.home.id });
+        projectionRuntime.describe.mockResolvedValue(supportedProjection('Live catalog'));
+        const rendered = await renderHook(() => {
+            // The reader count is fixed for this mounted test. Each reader
+            // runs the real store/currentness owner, as AppShell's children do.
+            const readers = ['machine-1', ...offlineMachines.map(machine => machine.id)].map(machineId => (
+                usePluginUiProjectionCurrentness({ machineId, serverId: serverIdentityId })
+            ));
+            return { readers, union: unionPluginUiProjections(readers.map(reader => ({
+                ...reader, machineId: reader.machineId!,
+                projection: reader.pluginUiProjection,
+            }))) };
+        });
+        await waitForHomeGovernance(() => expect(rendered.getCurrent().readers[0]?.phase).toBe('current'));
+        expect(rendered.getCurrent().readers.slice(1).every(reader => reader.phase === 'establishing')).toBe(true);
+        expect(rendered.getCurrent().union).toMatchObject({ phase: 'current', interactionEnabled: true });
+        expect(projectionRuntime.describe.mock.calls.map(([machineId]) => machineId)).toEqual(['machine-1']);
+        const settledReaders = rendered.getCurrent().readers;
+        await act(async () => {
+            setMachine({ active: true, daemonStateVersion: 1 });
+        });
+        await flushHookEffects();
+        expect(rendered.getCurrent().readers.every((reader, index) => reader === settledReaders[index])).toBe(true);
+        await rendered.unmount();
+    });
+
+    it('retains the AppShell catalog identity across real Machine presence updates with installed declarations', async () => {
+        const scope = storage.getState().profileScope!;
+        const materialization = {
+            serverIdentityId, machineId: 'machine-1', materializationId: 'preview-install',
+            pluginId: 'acme.preview', version: '1.0.0', sourceClass: 'registryPackage' as const,
+            portableRelease: true, uiArtifacts: [], enabled: true, trustState: 'trusted' as const,
+            observedAt: 1,
+        };
+        replacePluginAccountAvailabilityProjection({ scope, snapshot: {
+            availabilityCursor: 1, intentReads: [], materializations: [materialization],
+            snapshots: [{ serverIdentityId, machineId: 'machine-1', materializations: [materialization] }],
+        } });
+        projectionRuntime.describe.mockResolvedValue(supportedProjection('Stable catalog'));
+        const snapshot: { current: ReturnType<typeof useAppShellPluginUiProjection> | null } = { current: null };
+        function Probe() { snapshot.current = useAppShellPluginUiProjection(); return null; }
+        const rendered = await renderWithAppProviders(<AppShellPluginUiProjectionProvider><Probe /></AppShellPluginUiProjectionProvider>);
+        await waitForHomeGovernance(() => expect(snapshot.current?.phase).toBe('current'));
+        const settledProjection = snapshot.current!.pluginUiProjection;
+        expect(settledProjection?.translationsByPluginId['acme.preview']?.bundles).toEqual({ en: { title: 'Stable catalog' } });
+        await act(async () => {
+            const machine = storage.getState().machines['machine-1']!;
+            storage.getState().applyMachines([{ ...machine, activeAt: Date.now() }], false, { sourceServerId: connection!.home.id });
+        });
+        await flushHookEffects();
+        expect(snapshot.current!.pluginUiProjection).toBe(settledProjection);
+        await rendered.unmount();
+        clearPluginAccountAvailabilityProjection();
+    });
+
     it('reports an answered unsupported projection as unavailable', async () => {
         projectionRuntime.describe.mockResolvedValueOnce({ error: 'Method not found', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
 
@@ -656,13 +833,11 @@ describe('usePluginUiProjectionCurrentness', () => {
 
         const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
         try {
-            // An unrelated Account-scoped surface may be the first render to
-            // observe the new profile. Capture retires A synchronously, while
-            // the mounted projection owner belongs to a different component.
+            // A real credential replacement and Sync publication retire both
+            // A's exact-Home projection and its active Account reader. A sibling
+            // may then capture B during render without updating another owner.
             await act(async () => {
-                storage.setState({ profileScope: { serverId: serverIdentityId, accountId: 'account-b' },
-                    settingsScope: { serverId: serverIdentityId, accountId: 'account-b' },
-                    profile: { ...profileDefaults, id: 'account-b' } });
+                await switchAccount('account-b');
                 await rendered.update(surface(true));
             });
 
@@ -890,18 +1065,51 @@ describe('usePluginUiProjectionCurrentness', () => {
         expect(rendered.getCurrent().interactionEnabled).toBe(true);
     });
 
-    it('keeps a successful projection through idle rerenders and re-describes only on explicit refresh', async () => {
+    it.each(['identity', 'default'] as const)('keeps a successful projection through idle rerenders and re-describes only on registry adoption or explicit refresh using the %s Home', async (routing) => {
+        const otherHomeId = await harness.addHome({
+            name: 'Other projection Home',
+            serverUrl: 'https://other-projection.example.test',
+            serverIdentityId: 'srv_other_projection_currentness',
+            accountId: 'account-a',
+            active: false,
+        });
+        const daemonState = { status: 'running', pid: 17, contributionRegistryProjectionRevision: 0 };
+        setMachine({ daemonStateVersion: 2, daemonState });
+        storage.getState().applyMachines([createMachineFixture({
+            id: 'machine-1', daemonStateVersion: 1, daemonState,
+        })], false, { sourceServerId: otherHomeId });
         projectionRuntime.describe
             .mockResolvedValueOnce(supportedProjection('Before refresh'))
+            .mockResolvedValueOnce(supportedProjection('After registry adoption'))
             .mockResolvedValueOnce(supportedProjection('After refresh'));
         let reloadRevision = 0;
         const rendered = await renderHook(() => usePluginUiProjectionCurrentness({
             machineId: 'machine-1',
-            serverId: serverIdentityId,
+            serverId: routing === 'identity' ? serverIdentityId : null,
             reloadRevision,
         }));
         await flushHookEffects();
+        // The identity route resolves its real credential binding through
+        // secure storage; draining a fixed number of microtasks does not wait
+        // for that system boundary to admit the first projection.
+        await waitForHomeGovernance(() => {
+            const currentness = rendered.getCurrent();
+            expect({
+                phase: currentness.phase,
+                interactionEnabled: currentness.interactionEnabled,
+                accountCurrent: currentness.accountLifetime?.isCurrent(),
+            }).toMatchObject({ phase: 'current', interactionEnabled: true, accountCurrent: true });
+        });
         expect(projectionRuntime.describe).toHaveBeenCalledTimes(1);
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        await expect(loadDaemonMergedProjectionCacheEntry({
+            machineId: 'machine-1',
+            serverId: connection?.home.id,
+            accountLifetime,
+            reuseFreshReady: true,
+        })).resolves.toMatchObject({ kind: 'ready' });
+        expect(projectionRuntime.describe).toHaveBeenCalledTimes(1);
+        expect(readCachedDaemonMergedProjectionCacheEntry({ machineId: 'machine-1', serverId: otherHomeId })).toBeNull();
 
         // Cross both the old full-projection poll cadence and the shared
         // cache's freshness window. Neither elapsed time nor a fresh options
@@ -909,12 +1117,31 @@ describe('usePluginUiProjectionCurrentness', () => {
         vi.useFakeTimers();
         try {
             await flushHookEffects({ advanceTimersMs: 90_000, cycles: 1, turns: 2 });
+            await act(async () => {
+                storage.getState().applyMachines([createMachineFixture({
+                    id: 'machine-1', daemonStateVersion: 2,
+                    daemonState: { ...daemonState, contributionRegistryProjectionRevision: 1 },
+                })], false, { sourceServerId: otherHomeId });
+            });
+            await act(async () => { setMachine({ daemonStateVersion: 3, daemonState: {
+                ...daemonState,
+                localServices: { v: 1, state: 'ready', runningCount: 1 },
+            } }); });
             await rendered.rerender();
             await flushHookEffects();
             expect(projectionRuntime.describe).toHaveBeenCalledTimes(1);
             expect(rendered.getCurrent().phase).toBe('current');
             expect(rendered.getCurrent().pluginUiProjection?.translationsByPluginId['acme.preview']?.bundles)
                 .toEqual({ en: { title: 'Before refresh' } });
+            await act(async () => { setMachine({ daemonStateVersion: 4, daemonState: {
+                ...daemonState,
+                contributionRegistryProjectionRevision: 1,
+                localServices: { v: 1, state: 'ready', runningCount: 2 },
+            } }); });
+            await flushHookEffects();
+            expect(projectionRuntime.describe).toHaveBeenCalledTimes(2);
+            expect(rendered.getCurrent().pluginUiProjection?.translationsByPluginId['acme.preview']?.bundles)
+                .toEqual({ en: { title: 'After registry adoption' } });
         } finally {
             vi.useRealTimers();
         }
@@ -922,7 +1149,7 @@ describe('usePluginUiProjectionCurrentness', () => {
         reloadRevision = 1;
         await rendered.rerender();
         await flushHookEffects();
-        expect(projectionRuntime.describe).toHaveBeenCalledTimes(2);
+        expect(projectionRuntime.describe).toHaveBeenCalledTimes(3);
         expect(rendered.getCurrent().pluginUiProjection?.translationsByPluginId['acme.preview']?.bundles)
             .toEqual({ en: { title: 'After refresh' } });
     });
@@ -958,6 +1185,41 @@ describe('usePluginUiProjectionCurrentness', () => {
                 en: { title: 'Recovered' },
             });
             expect(rendered.getCurrent().interactionEnabled).toBe(true);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('recovers a cold projection after repeated transport timeouts outlast the transient retry burst', async () => {
+        vi.useFakeTimers();
+        try {
+            const startedAt = Date.now();
+            // Only the machine transport is simulated. The real projection
+            // cache/currentness owner must keep retrying a cold build instead
+            // of treating a socket observation timeout as terminal admission.
+            projectionRuntime.describe.mockImplementation(() => {
+                if (Date.now() - startedAt >= 160_523) {
+                    return Promise.resolve(supportedProjection('Cold build ready'));
+                }
+                return new Promise((_, reject) => {
+                    setTimeout(() => reject(new Error('RPC timeout')), 30_000);
+                });
+            });
+            const rendered = await renderHook(() => usePluginUiProjectionCurrentness({
+                machineId: 'machine-1',
+                serverId: serverIdentityId,
+            }));
+            await flushHookEffects();
+            expect(rendered.getCurrent().interactionEnabled).toBe(false);
+            for (const retryDelay of [250, 1_000, 2_500, 5_000, 30_000]) {
+                await flushHookEffects({ advanceTimersMs: 30_000, cycles: 1, turns: 2 });
+                expect(rendered.getCurrent().interactionEnabled).toBe(false);
+                await flushHookEffects({ advanceTimersMs: retryDelay, cycles: 1, turns: 2 });
+            }
+            expect(rendered.getCurrent().phase).toBe('current');
+            expect(rendered.getCurrent().interactionEnabled).toBe(true);
+            expect(rendered.getCurrent().pluginUiProjection?.translationsByPluginId['acme.preview']?.bundles)
+                .toEqual({ en: { title: 'Cold build ready' } });
         } finally {
             vi.useRealTimers();
         }

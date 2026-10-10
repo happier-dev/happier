@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PluginManifestV2Schema } from '@happier-dev/protocol';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { PluginDetailScreen } from './PluginDetailScreen';
 
 vi.mock('@react-navigation/native', async () => (await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock());
 
@@ -28,7 +29,7 @@ const accountAvailabilityReader = vi.hoisted(() => ({
         code: 'account_availability_not_loaded' as const,
     })),
 }));
-const pluginSettingsState = vi.hoisted(() => ({ pluginTruthSettled: true }));
+const pluginSettingsState = vi.hoisted(() => ({ pluginTruthSettled: true, refreshing: false, failed: false }));
 
 vi.mock('expo-router', () => ({
     Redirect: 'Redirect',
@@ -102,12 +103,15 @@ vi.mock('../model/usePluginSettingsScreenState', () => ({
         executionServerId: null,
         executionServerIdentityId: null,
         installedPluginById: new Map(),
+        installedPlugins: [],
+        installedPluginsRead: !pluginSettingsState.failed,
         isDaemonSettingsTargetCurrent: () => true,
         isPluginActionInFlight: () => false,
         pluginProjectionById: {},
         pluginProjectionV2: null,
         pluginTruthSettled: pluginSettingsState.pluginTruthSettled,
-        readOnlySnapshotNotice: null,
+        readOnlySnapshotNotice: pluginSettingsState.failed ? { reason: 'projectionUnavailable' }
+            : pluginSettingsState.refreshing ? { reason: 'refreshing' } : null,
         refreshPluginTruth: vi.fn(),
         registryDiagnostics: [],
         runInstalledPluginAction: vi.fn(),
@@ -118,6 +122,8 @@ vi.mock('../model/usePluginSettingsScreenState', () => ({
 afterEach(() => {
     standardCleanup();
     pluginSettingsState.pluginTruthSettled = true;
+    pluginSettingsState.refreshing = false;
+    pluginSettingsState.failed = false;
     accountAvailabilityReader.readCurrentSettingsDeclaration.mockReturnValue({
         kind: 'unavailable',
         code: 'account_availability_not_loaded',
@@ -127,11 +133,18 @@ afterEach(() => {
 describe('PluginDetailScreen Account hosting reachability', () => {
     it('keeps a cold deep link in place until the selected machine truth settles', async () => {
         pluginSettingsState.pluginTruthSettled = false;
-        const { PluginDetailScreen } = await import('./PluginDetailScreen');
+        pluginSettingsState.refreshing = true;
         const screen = await renderScreen(<PluginDetailScreen pluginId={PLUGIN_ID} />);
 
         expect(screen.findAllByType('Redirect')).toHaveLength(0);
         expect(screen.findAllByType('PaneLoadingFallback')).toHaveLength(1);
+    });
+
+    it('does not claim an installation is missing when the settled machine read failed', async () => {
+        pluginSettingsState.failed = true;
+        const screen = await renderScreen(<PluginDetailScreen pluginId={PLUGIN_ID} />);
+        expect(screen.findAllByType('PluginReadOnlySnapshotNotice')).toHaveLength(1);
+        expect(screen.findByTestId(`settings.plugins.detail.${PLUGIN_ID}.notInstalled`)).toBeNull();
     });
 
     it('keeps the Account hosting lifecycle reachable when no machine holds the plugin', async () => {
@@ -143,7 +156,6 @@ describe('PluginDetailScreen Account hosting reachability', () => {
             availabilityCursor: 7,
             declaration,
         } as never);
-        const { PluginDetailScreen } = await import('./PluginDetailScreen');
         const screen = await renderScreen(<PluginDetailScreen pluginId={PLUGIN_ID} />);
 
         expect(screen.findAllByType('Redirect')).toHaveLength(0);

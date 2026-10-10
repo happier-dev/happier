@@ -40,5 +40,7 @@ describe('what the Plugins collection shows', () => {
     it('says "no match" only when a search or filter hides every plugin', () => {
         expect(resolvePluginsCollectionState({ ...base, visibleCount: 0, filtering: true })).toBe('noMatch');
         expect(resolvePluginsCollectionState({ ...base, itemCount: 0, visibleCount: 0, filtering: true })).toBe('noMatch');
+        expect(resolvePluginsCollectionState({ ...base, noticeReason: 'disconnected', visibleCount: 0, filtering: true })).toBe('noMatch');
+        expect(resolvePluginsCollectionState({ ...base, noticeReason: 'disconnected', itemCount: 0, visibleCount: 0, filtering: true })).toBe('offline');
     });
 });

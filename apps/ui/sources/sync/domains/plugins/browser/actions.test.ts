@@ -2,6 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { PluginProjectionV2 } from '@happier-dev/protocol';
 import { createPluginUiProjectedActionResolver } from '@/sync/domains/plugins/ui/projection';
+import { renderHook } from '@/dev/testkit';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 import {
     EMPTY_PLUGIN_BROWSER_PROJECTION,
@@ -22,6 +26,36 @@ const target = {
     targetId: 'browserTarget:acme.preview:preview-target',
     url: 'https://preview.example.test/',
 } as const;
+
+async function withBrowserAccount(run: (context: Readonly<{
+    accountLifetime: ServerAccountScopeLifetime;
+    serverId: string;
+    execute: typeof executePluginBrowserAction;
+}>) => Promise<void>): Promise<void> {
+    vi.resetModules();
+    const network = await installSessionOpsNetworkBoundary();
+    const home = await network.addHome('https://browser-action.example.test', 'browser-action-account');
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    // Borrow the actual credential owner through device custody, not the harness's
+    // shortcut getter or a hand-authored lifecycle object.
+    vi.mocked(TokenStorage.getCredentialsForServerUrl).mockRestore();
+    await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, {
+        token: createAccountTokenForTests('browser-action-account'),
+    });
+    const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+    const hook = await renderHook(() => useServerCredentialAccountScopeBinding(home.id));
+    try {
+        await vi.waitFor(() => expect(hook.getCurrent().binding?.scope.accountId).toBe('browser-action-account'));
+        const accountLifetime = hook.getCurrent().binding;
+        if (!accountLifetime) throw new Error('Browser Account authority was not admitted');
+        const { executePluginBrowserAction: execute } = await import('./actions');
+        await run({ accountLifetime, serverId: home.id, execute });
+    } finally {
+        await hook.unmount();
+        await TokenStorage.removeCredentialsForServerUrl(home.serverUrl, { serverId: home.id });
+        network.dispose();
+    }
+}
 
 function createProjection(): PluginProjectionV2 {
     return {
@@ -118,22 +152,25 @@ describe('plugin browser projection normalization', () => {
         const action = model.actionsById['browserAction:acme.preview:open-preview'];
         const execute = vi.fn();
 
-        await expect(executePluginBrowserAction({
-            action,
-            machineId: null,
-            input: { targetId: action?.targetId },
-            policyContext: {
-                profileMode: 'session',
-                isFeatureEnabled: () => true,
-            },
-            resolveContributedAction: createPluginUiProjectedActionResolver(raw.actionsById),
-            execute,
-        })).resolves.toEqual({
-            ok: false,
-            code: 'unavailable',
-            reason: 'plugin_surface_client_action_unavailable',
+        await withBrowserAccount(async ({ accountLifetime, execute: executeAction }) => {
+            await expect(executeAction({
+                action,
+                machineId: null,
+                accountLifetime,
+                input: { targetId: action?.targetId },
+                policyContext: {
+                    profileMode: 'session',
+                    isFeatureEnabled: () => true,
+                },
+                resolveContributedAction: createPluginUiProjectedActionResolver(raw.actionsById),
+                execute,
+            })).resolves.toEqual({
+                ok: false,
+                code: 'unavailable',
+                reason: 'plugin_surface_client_action_unavailable',
+            });
+            expect(execute).not.toHaveBeenCalled();
         });
-        expect(execute).not.toHaveBeenCalled();
     });
 
     it('normalizes plugin browser targets and actions into stable lookup maps', () => {
@@ -282,35 +319,40 @@ describe('plugin browser projection normalization', () => {
         const action = model.actionsById['browserAction:acme.preview:open-preview'];
         const execute = vi.fn(async () => ({ supported: true as const, result: { ok: true as const, result: null } }));
 
-        await expect(executePluginBrowserAction({
-            action,
-            machineId: 'machine-1',
-            serverId: 'server-a',
-            sessionId: 'session-1',
-            input: {
-                browserSessionId: 'browser-session-1',
-                viewId: 'view-1',
-                targetId: action.targetId,
-            },
-            policyContext: {
-                profileMode: 'session',
-                isFeatureEnabled: () => true,
-            },
-            resolveContributedAction: createPluginUiProjectedActionResolver(raw.actionsById),
-            execute,
-        })).resolves.toEqual({ ok: true, result: null });
+        await withBrowserAccount(async ({ accountLifetime, serverId, execute: executeAction }) => {
+            await expect(executeAction({
+                action,
+                machineId: 'machine-1',
+                serverId,
+                accountLifetime,
+                sessionId: 'session-1',
+                input: {
+                    browserSessionId: 'browser-session-1',
+                    viewId: 'view-1',
+                    targetId: action.targetId,
+                },
+                policyContext: {
+                    profileMode: 'session',
+                    isFeatureEnabled: () => true,
+                },
+                resolveContributedAction: createPluginUiProjectedActionResolver(raw.actionsById),
+                execute,
+            })).resolves.toEqual({ ok: true, result: null });
 
-        expect(execute).toHaveBeenCalledWith('machine-1', {
-            serverId: 'server-a',
-            expectedContributorOccurrenceId: 'occurrence-preview',
-            qualifiedActionId: 'acme.preview/open-preview',
-            input: {
-                browserSessionId: 'browser-session-1',
-                viewId: 'view-1',
-                targetId: 'browserTarget:acme.preview:preview-target',
-            },
-            sessionId: 'session-1',
-            executionSurface: 'ui',
+            expect(execute).toHaveBeenCalledWith('machine-1', {
+                serverId,
+                accountLifetime,
+                isCurrent: expect.any(Function),
+                expectedContributorOccurrenceId: 'occurrence-preview',
+                qualifiedActionId: 'acme.preview/open-preview',
+                input: {
+                    browserSessionId: 'browser-session-1',
+                    viewId: 'view-1',
+                    targetId: 'browserTarget:acme.preview:preview-target',
+                },
+                sessionId: 'session-1',
+                executionSurface: 'ui',
+            });
         });
     });
 

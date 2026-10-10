@@ -68,12 +68,7 @@ function retireAccount(record: AccountScopeRecord): void {
 
 function readExecutionOriginSlot(executionOrigin: PluginMachineExecutionOriginV1 | null | undefined): string {
     if (!executionOrigin) return 'unqualified';
-    return JSON.stringify([
-        executionOrigin.serverIdentityId,
-        executionOrigin.materializationRef.pluginId,
-        executionOrigin.materializationRef.machineId,
-        executionOrigin.materializationRef.materializationId,
-    ]);
+    return JSON.stringify(executionOrigin);
 }
 
 function readAccountRecord(
@@ -282,7 +277,7 @@ export function retireIdlePluginUiEphemeralSharedValuesExcept(
 type MountedScopeInput = Readonly<{
     accountLifetime: ActiveServerAccountScopeLifetime | null;
     pluginId: string;
-    occurrenceId: string;
+    occurrenceId?: string;
     executionOrigin?: PluginMachineExecutionOriginV1 | null;
     mountLifetime: Readonly<{ isCurrent(): boolean }>;
 }>;
@@ -317,13 +312,13 @@ export function usePluginUiEphemeralSharedScopeBinding(
         : { ...input, scope: null };
 
     useLayoutEffect(() => {
-        const scope = getPluginUiEphemeralSharedScope({
+        const scope = input.occurrenceId ? getPluginUiEphemeralSharedScope({
             accountLifetime: input.accountLifetime,
             pluginId: input.pluginId,
             occurrenceId: input.occurrenceId,
             executionOrigin: input.executionOrigin,
             isCurrent: input.mountLifetime.isCurrent,
-        });
+        }) : null;
         setState((current) => isSameMountedScopeInput(current, input)
             ? { ...input, scope }
             : current);

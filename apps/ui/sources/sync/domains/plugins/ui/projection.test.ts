@@ -1,3 +1,4 @@
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -64,6 +65,7 @@ function placementEntryWithPlatforms(input: Readonly<{
         binding: parsed,
         target: parsed.target,
         ...(parsed.kind === 'inline' && parsed.role === 'widget' && parsed.targetKind === 'session' ? {
+            sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' },
             inputs: { fields: [{ path: 'session', title: 'Session', widget: 'json', required: true }] },
             inputSchema: { type: 'object', properties: { session: { type: 'object' } }, required: ['session'], additionalProperties: false },
             sessionInputPath: 'session',
@@ -881,7 +883,7 @@ describe('plugin UI projection normalization', () => {
                 kind,
                 contributionId: 'review-renderer',
                 source: kind === 'hostedHtml'
-                    ? { kind: 'html', html: '<p>Review</p>' }
+                    ? artifactHtmlBundleFromBodyV1('<p>Review</p>')
                     : { kind: 'artifact', artifact: 'review-renderer' },
                 requiredHostMethods: [],
             },

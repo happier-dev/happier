@@ -1,16 +1,23 @@
 import type { ResourceSubscriptionEvent } from '@happier-dev/plugin-sdk/ui';
+import { SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockSessionRpcWithPreferredSessionScope } = vi.hoisted(() => ({
+const { mockSessionRpcWithPreferredSessionScope, mockMachineRpcWithServerScope } = vi.hoisted(() => ({
     mockSessionRpcWithPreferredSessionScope: vi.fn(),
+    mockMachineRpcWithServerScope: vi.fn(),
 }));
 
-// The Session RPC transport is the only substituted boundary. The mounted
+// Network transports and their encryption adapter are the substituted boundaries. The mounted
 // controller, the React Native adapter and its subscription registry, the
 // Session store, the awareness/pending-request/interaction owners and the
 // permission-answer owner are all real.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/sessionRpcWithPreferredSessionScope', () => ({
     sessionRpcWithPreferredSessionScope: (...args: unknown[]) => mockSessionRpcWithPreferredSessionScope(...args),
+}));
+// The daemon catalog is reached through the real loader/parser/catalog, with
+// only its machine RPC transport substituted.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: (...args: unknown[]) => mockMachineRpcWithServerScope(...args),
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -26,6 +33,8 @@ import { createCanonicalPluginReactNativeHostApiAdapter } from '@/components/plu
 import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { storage } from '@/sync/domains/state/storage';
+import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { publishMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjectionRevision';
 import type { Session } from '@/sync/domains/state/storageTypes';
 
 import { createBoundPluginSurfaceController } from './boundPluginSurfaceController';
@@ -103,6 +112,8 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
         storage.setState(initialStorageState, true);
         mockSessionRpcWithPreferredSessionScope.mockReset();
         mockSessionRpcWithPreferredSessionScope.mockResolvedValue(undefined);
+        clearDaemonMergedProjectionCacheForTests();
+        mockMachineRpcWithServerScope.mockReset();
     });
 
     it('reads what a waiting Session wants to run, where, and which answers the viewer may give', async () => {
@@ -149,6 +160,81 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
         await expect(mounted.api.readSession('offline')).resolves.toMatchObject({
             workStatus: { bucket: 'offline', tone: 'neutral' },
         });
+        mounted.dispose();
+    });
+
+    it('projects the catalog Agent identity and never assigns a brand to an unknown Session', async () => {
+        const session = waitingSession();
+        storage.getState().applySessions([
+            waitingSession({ metadata: { ...session.metadata!, flavor: 'codex' } }),
+            waitingSession({ id: 'unknown-agent', metadata: null }),
+        ]);
+        const mounted = mountSurface();
+        try {
+            await expect(mounted.api.readSession('linked-1')).resolves.toMatchObject({
+                agent: { agentId: 'codex', displayName: 'Codex', brand: { pluginId: 'happier.agent.codex' } },
+            });
+            expect(await mounted.api.readSession('unknown-agent')).not.toHaveProperty('agent');
+        } finally {
+            mounted.dispose();
+        }
+    });
+
+    it('resolves a cold installed Agent from its own catalog package, never its backing Agent', async () => {
+        const session = waitingSession();
+        storage.getState().applySessions([waitingSession({
+            metadataLayoutVersion: 1,
+            // The store's flattened Metadata type predates its strict shared envelope; fixture the real wire boundary.
+            metadata: SessionSharedMetadataV1Schema.parse({
+                v: 1, agentPresentation: { agentId: 'acme.agent/fork' },
+            }) as unknown as Session['metadata'],
+            ownerMetadataView: session.metadata,
+        })]);
+        mockMachineRpcWithServerScope.mockResolvedValue({
+            protocolVersion: 1,
+            projection: {
+                v: 2, generation: 1, installedPackagesById: {},
+                agentsById: { 'acme.agent/fork': {
+                    id: 'acme.agent/fork', identity: { pluginId: 'acme.agent', localId: 'fork' },
+                    title: 'Acme Agent', channel: 'plugin', isBuiltIn: false,
+                    catalogAgentId: 'codex', iconAgentId: 'codex', providerOwnedEnvironmentKeys: [],
+                } },
+                actionsById: {}, toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
+            },
+        });
+        const mounted = mountSurface();
+        try {
+            await expect(mounted.api.readSession('linked-1')).resolves.toMatchObject({
+                agent: { agentId: 'acme.agent/fork', displayName: 'Acme Agent', brand: { pluginId: 'acme.agent' } },
+            });
+        } finally {
+            mounted.dispose();
+        }
+    });
+
+    it('watches the linked machine catalog and releases its old machine on relocation and disposal', async () => {
+        const session = waitingSession();
+        storage.getState().applySessions([session]);
+        const mounted = mountSurface();
+        const events: ResourceSubscriptionEvent[] = [];
+        const watch = await mounted.api.watchSession('linked-1', (event) => { events.push(event); });
+        const invalidate = (machineId: string) => publishMachineContributionRegistryProjectionInvalidation({
+            machineId, serverId: CURRENT_ACCOUNT_LIFETIME.scope.serverId,
+        });
+        invalidate('machine-1');
+        await vi.waitFor(() => expect(events).toHaveLength(1));
+        storage.getState().applySessions([waitingSession({ metadata: { ...session.metadata!, machineId: 'machine-2' } })]);
+        await vi.waitFor(() => expect(events).toHaveLength(2));
+        events.length = 0;
+        invalidate('machine-1');
+        expect(events).toEqual([]);
+        invalidate('machine-2');
+        await vi.waitFor(() => expect(events).toHaveLength(1));
+        watch.dispose();
+        events.length = 0;
+        invalidate('machine-2');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(events).toEqual([]);
         mounted.dispose();
     });
 

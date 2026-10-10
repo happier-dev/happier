@@ -58,6 +58,8 @@ const PLUGIN_UI_ICON_TOKEN_TO_ICON_NAME: Readonly<Record<PluginUiIconTokenV1, Ic
     assigned: 'crosshair',
     new: 'sparkle',
     waiting: 'clock',
+    list: 'list',
+    board: 'kanban',
 });
 
 /** Glyph rendered for a missing or non-canonical semantic icon token. */

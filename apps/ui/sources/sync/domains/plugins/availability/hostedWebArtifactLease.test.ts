@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { DaemonPluginUiArtifactBytesReadResponse } from '@happier-dev/protocol';
 import {
@@ -36,11 +36,13 @@ const slot = Object.freeze({
     tier: 'hostedWeb' as const,
     platform: 'web' as const,
 });
-const accountLifetime = Object.freeze({
+const createLifetime = () => Object.freeze({
     scope,
     isCurrent: () => true,
     onRetire: () => Object.freeze({ dispose: () => {} }),
 });
+let accountLifetime = createLifetime();
+beforeEach(() => { accountLifetime = createLifetime(); });
 
 function acquire(input: Omit<PluginHostedWebArtifactLeaseInput, 'accountLifetime'>) {
     return acquirePluginHostedWebArtifactLease({ ...input, accountLifetime });
@@ -203,7 +205,6 @@ function fixture(input: Readonly<{
                 digest,
                 byteSize: entryBytes.byteLength,
             }),
-            bytesBase64: encodeBase64(entryBytes),
             files: files.map((file) => ({
                 ...file,
                 bytesBase64: encodeBase64(file.relativePath === entryPath ? entryBytes : scriptBytes),
@@ -476,7 +477,6 @@ describe('hosted-web Artifact lease acquisition', () => {
                 format: 'plainJs',
                 byteSize: 1,
             },
-            bytesBase64: 'YQ==',
             files: [{
                 relativePath: 'native.js',
                 digest: computePluginUiArtifactSha256DigestV1(new TextEncoder().encode('a')),

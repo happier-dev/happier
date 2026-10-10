@@ -141,7 +141,7 @@ export const PluginSettingsPageScreen = React.memo(function PluginSettingsPageSc
         && props.pageId
         && subPath !== null
         && !destination
-        && appShell.phase === 'establishing'
+        && (appShell.phase === 'establishing' || appShell.hasEstablishingMembers)
     ) {
         return (
             <>

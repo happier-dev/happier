@@ -57,3 +57,43 @@ it('refreshes pane authority after render-time Account retirement without updati
         consoleError.mockRestore();
     }
 });
+
+it('keeps exact pane authority unavailable instead of borrowing the active Account when its supplied lifetime is null or retired', async () => {
+    const http = createHomeHubArtifactHttpBoundary('exact-pane-account-a');
+    const connection = await restoreServerAccountForTest({
+        serverUrl: 'https://exact-pane-launch.test',
+        accountId: 'exact-pane-account-a',
+        request: http.request,
+    });
+    const observed: { current: ReturnType<typeof usePluginSurfacePaneLaunchScope> } = { current: null };
+    function Probe() {
+        observed.current = usePluginSurfacePaneLaunchScope();
+        return null;
+    }
+    let tree: ReturnType<typeof create> | undefined;
+    try {
+        const exactLifetime = captureActiveServerAccountScopeLifetime();
+        expect(exactLifetime?.isCurrent()).toBe(true);
+        await act(async () => {
+            tree = create(<PluginSurfacePaneLaunchScope accountLifetime={null}><Probe /></PluginSurfacePaneLaunchScope>);
+        });
+        expect(observed.current?.accountLifetime).toBeNull();
+
+        await act(async () => {
+            tree!.update(<PluginSurfacePaneLaunchScope accountLifetime={exactLifetime}><Probe /></PluginSurfacePaneLaunchScope>);
+        });
+        expect(observed.current?.accountLifetime).toBe(exactLifetime);
+
+        await act(async () => {
+            storage.getState().activateProfileScope({ serverId: connection.home.id, accountId: 'exact-pane-account-b' });
+            tree!.update(<PluginSurfacePaneLaunchScope accountLifetime={exactLifetime}><Probe /></PluginSurfacePaneLaunchScope>);
+        });
+        expect(exactLifetime?.isCurrent()).toBe(false);
+        expect(captureActiveServerAccountScopeLifetime()?.scope.accountId).toBe('exact-pane-account-b');
+        expect(observed.current?.accountLifetime).toBe(exactLifetime);
+        expect(observed.current?.accountLifetime?.isCurrent()).toBe(false);
+    } finally {
+        await act(async () => { tree?.unmount(); });
+        await connection.dispose();
+    }
+});

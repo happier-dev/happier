@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol';
 import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -407,7 +408,7 @@ describe('HostedArtifactFrame native adapter', () => {
             renderer.create(
                 <HostedInlineDocumentFrame
                     title="Caller view"
-                    html="<main>private</main>"
+                    bundle={artifactHtmlBundleFromBodyV1('<main>private</main>')}
                     networkOrigins={['https://api.example.test']}
                     bootstrapConfig={{
                         identity: { instanceId: 'inline-1', mountNonce: 'nonce-1' },
@@ -432,6 +433,7 @@ describe('HostedArtifactFrame native adapter', () => {
         expect(nativeModuleMock.registerInlineDocument).toHaveBeenCalledExactlyOnceWith({
             token,
             html: expect.stringContaining('<main>private</main>'),
+            contentSecurityPolicy: 'sandbox allow-scripts',
         });
         const registeredDocument = nativeModuleMock.registerInlineDocument.mock.calls[0]?.[0]?.html as string;
         expect(registeredDocument).toContain("connect-src https://api.example.test");
@@ -479,7 +481,7 @@ describe('HostedArtifactFrame native adapter', () => {
             renderer.create(
                 <HostedInlineDocumentFrame
                     title="Caller view"
-                    html="<main>private</main>"
+                    bundle={artifactHtmlBundleFromBodyV1('<main>private</main>')}
                     allowedNavigationOrigins={[]}
                     onUnavailable={onUnavailable}
                     testID="hosted-inline-document-frame"
@@ -501,7 +503,7 @@ describe('HostedArtifactFrame native adapter', () => {
         const renderInline = (html: string) => (
             <HostedInlineDocumentFrame
                 title="Caller view"
-                html={html}
+                bundle={artifactHtmlBundleFromBodyV1(html)}
                 allowedNavigationOrigins={[]}
                 testID="hosted-inline-document-frame"
             />
@@ -539,7 +541,7 @@ describe('HostedArtifactFrame native adapter', () => {
             renderer.create(
                 <HostedInlineDocumentFrame
                     title="Caller view"
-                    html="<main>private</main>"
+                    bundle={artifactHtmlBundleFromBodyV1('<main>private</main>')}
                     allowedNavigationOrigins={[]}
                     onLoadError={onLoadError}
                     onUnavailable={onUnavailable}
@@ -573,7 +575,7 @@ describe('HostedArtifactFrame native adapter', () => {
             renderer.create(
                 <HostedInlineDocumentFrame
                     title="Caller view"
-                    html="<main>private</main>"
+                    bundle={artifactHtmlBundleFromBodyV1('<main>private</main>')}
                     allowedNavigationOrigins={[]}
                     onBlockedNavigation={onBlockedNavigation}
                     onUnavailable={onUnavailable}
@@ -606,7 +608,7 @@ describe('HostedArtifactFrame native adapter', () => {
         const { HostedInlineDocumentFrame } = await import('./HostedArtifactFrame.native');
         let root: renderer.ReactTestRenderer | null = null;
         const renderInline = (html: string) => (
-            <HostedInlineDocumentFrame title="Caller view" html={html} allowedNavigationOrigins={[]} testID="inline" />
+            <HostedInlineDocumentFrame title="Caller view" bundle={artifactHtmlBundleFromBodyV1(html)} allowedNavigationOrigins={[]} testID="inline" />
         );
         await act(async () => {
             root = renderer.create(renderInline('<main>G</main>'));

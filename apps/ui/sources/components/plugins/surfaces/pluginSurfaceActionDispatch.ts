@@ -1,11 +1,11 @@
-import { PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, isPluginActionCallerPolicySatisfied, PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE, PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE, createPluginActionInvocation, createPluginActionPresentUserGate, pluginActionRequiresPresentUserIntent, projectPluginActionUnavailableOutcomeCode, readPluginActionFailureAuthorPayload, type PluginActionCurrentIntentRequest, type PluginActionCurrentIntentResult } from '@happier-dev/protocol/plugins/actions/invocation';
 import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { pluginSourceCustodyV1Equal, type PluginSourceCustodyV1 } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecutorContext, ActionPrepareResult } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionOperationDeclarationV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { DaemonPluginStructuredMessageActionInvocationV1, DaemonPluginStructuredMessageActionMountedBinding } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
@@ -28,6 +28,7 @@ import type {
     PluginClientActionUi,
 } from '@happier-dev/plugin-sdk/actions';
 import type { PluginUiActionExecutionOptions, PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+import type { PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
 import {
     normalizePluginUiMountedContributedActionReferenceV1,
     PluginUiExecuteActionRequestV1Schema,
@@ -58,6 +59,7 @@ import {
     machinePluginUiTargetedContributionsRead,
     machineContributionRegistryProjectionDescribe,
 } from '@/sync/ops/machineContributionRegistryProjection';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import {
     resolvePluginUiClientActionRegistration,
     type PluginUiClientExecutableRegistration,
@@ -154,11 +156,13 @@ type PluginSurfaceUnMountedActionInvocation = Exclude<
  * successful action result (UI-D08).
  */
 
-export type PluginSurfaceHostActionExecute = (
+export type PluginSurfaceHostActionExecute = ((
     actionId: ActionId,
     input: unknown,
     context?: ActionExecutorContext,
-) => Promise<ActionExecuteResult>;
+) => Promise<ActionExecuteResult>) & Readonly<{
+    prepare?: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => Promise<ActionPrepareResult>;
+}>;
 
 /** Branch 1 wiring: the canonical ActionExecutor plus the host front-door context. */
 export type PluginSurfaceHostActionBinding = Readonly<{
@@ -185,6 +189,8 @@ export type PluginSurfaceContributedActionDescriptorResolver = (
 export type PluginSurfaceContributedActionBinding = Readonly<{
     machineId: string;
     serverId?: string | null;
+    /** Borrowed host authority, never part of the plugin invocation DTO. */
+    accountLifetime?: ServerAccountScopeLifetime | null;
     sessionId?: string;
     /** Opaque server-issued message identity, resolved by the daemon before dispatch. */
     messageActionReference?: MessageActionReferenceV1;
@@ -1206,8 +1212,16 @@ async function executeHostAction(
 
     const clientCaller = input.invocation?.kind === 'clientPluginAction' ? input.invocation.clientActionBinding : null;
 
-    const result = await binding.execute(actionId, input.input, {
-        ...binding.context,
+    const result = await binding.execute(actionId, input.input, mountedHostActionContext(input, caller, clientCaller));
+    if (result.ok) return { ok: true, result: result.result as PluginUiJsonValueV1 };
+    return failure('unavailable', result.errorCode);
+}
+
+/** Execution and Resource admission stamp exactly the same mounted caller. */
+function mountedHostActionContext(input: DispatchPluginSurfaceActionInput, caller: MountedPluginActionCaller | null,
+    clientCaller: Extract<NonNullable<DispatchPluginSurfaceActionInput['invocation']>, { kind: 'clientPluginAction' }>['clientActionBinding'] | null): ActionExecutorContext {
+    return {
+        ...input.hostAction?.context,
         // Admission belongs to the continued parent, not an Action it invokes.
         ...(clientCaller ? { bypassApprovals: false } : {}),
         ...(input.actionRequestId ? { actionRequestId: input.actionRequestId } : {}),
@@ -1229,9 +1243,30 @@ async function executeHostAction(
                 },
             }
             : {}),
-    });
-    if (result.ok) return { ok: true, result: result.result as PluginUiJsonValueV1 };
-    return failure('unavailable', result.errorCode);
+    };
+}
+
+/** Admit a borrowed host Resource without invoking the read effect. */
+export async function preparePluginSurfaceHostRead(input: DispatchPluginSurfaceActionInput,
+    actionId: ActionId): Promise<PluginSurfaceActionDispatchOutcome> {
+    const stopped = preflightFailure(input);
+    if (stopped) return stopped;
+    const caller = resolveMountedPluginActionCaller(input);
+    if (!caller) return failure('unavailable', 'plugin_mounted_caller_unavailable');
+    const spec = getActionSpec(actionId);
+    const context = mountedHostActionContext(input, caller, null);
+    if (!spec.surfaces.plugin || !spec.pluginCallerPolicy
+        || !isPluginActionCallerPolicySatisfied(spec.pluginCallerPolicy, input.input, context.actionCaller)) {
+        return failure('unavailable', 'plugin_action_caller_forbidden');
+    }
+    const prepare = input.hostAction?.execute.prepare;
+    if (!prepare) return failure('unavailable', 'action_prepare_unavailable');
+    const prepared = await prepare(actionId, input.input, context);
+    const late = preflightFailure(input);
+    if (late) return late;
+    if (prepared.kind === 'settled') return failure('unavailable', prepared.result.ok
+        ? 'plugin_resource_admission_unavailable' : prepared.result.errorCode);
+    return { ok: true, result: null };
 }
 
 async function executeContributedAction(
@@ -1280,6 +1315,14 @@ async function executeContributedAction(
 
     const presentUserIntent = await settleDaemonActionPresentUserIntent(input, identity, projectedAction);
     if (!presentUserIntent.ok) return presentUserIntent;
+    const currentFailure = preflightFailure(input);
+    if (currentFailure) return currentFailure;
+    if (input.isContributedActionAvailable?.() === false) {
+        return failure('unavailable', 'plugin_surface_contributed_action_unavailable');
+    }
+    if (binding.accountLifetime !== undefined && binding.accountLifetime?.isCurrent() !== true) {
+        return failure('stale_surface', 'plugin_ui_generation_retired');
+    }
 
     const execute = binding.execute ?? machinePluginStructuredMessageActionExecute;
     // The admitted projection owns whether this invocation can produce a daemon
@@ -1292,6 +1335,8 @@ async function executeContributedAction(
     const actionInput = settlement.input;
     const result = await execute(binding.machineId, {
         serverId: binding.serverId ?? null,
+        ...(binding.accountLifetime === undefined ? {} : { accountLifetime: binding.accountLifetime }),
+        isCurrent: () => input.isCurrent?.() !== false && input.isContributedActionAvailable?.() !== false,
         expectedContributorOccurrenceId: projectedAction.occurrenceId,
         qualifiedActionId: buildQualifiedPluginContributionKey(identity),
         ...(admittedRequestId ? { requestId: admittedRequestId } : {}),
@@ -1495,6 +1540,8 @@ export function createPluginSurfaceActionHostApi(input: Readonly<{
      * can actually be served.
      */
     resource?: PluginSurfaceResourceBinding;
+    /** Borrowed Account read entries, after this exact mounted caller's Action admission. */
+    hostResourceStore?: PluginUiResourceStore;
     /** The bound controller's mount lifetime for daemon-backed Resource work. */
     resourceLifetimeSignal?: AbortSignal;
     /**
@@ -1506,6 +1553,8 @@ export function createPluginSurfaceActionHostApi(input: Readonly<{
     resourceInvalidation?: Readonly<{
         deliver: (event: PluginUiResourceSubscriptionEventV1) => void;
         transport?: Partial<PluginSurfaceResourceWatchTransport>;
+        /** Host reads can watch without widening a static plugin Resource's ceiling. */
+        allowPluginResources?: boolean;
     }>;
     /** Exact selected workspace-file viewer binding; absent means no file custody. */
     openableContent?: PluginSurfaceOpenableContentBinding;
@@ -1567,10 +1616,12 @@ export function createPluginSurfaceActionHostApi(input: Readonly<{
         ...(input.interactionRequester ? { interactionRequester: input.interactionRequester } : {}),
         ...(input.isCurrent ? { isCurrent: input.isCurrent } : {}),
     });
-    const resourceWatch = input.resource && input.resourceInvalidation
+    const resourceWatch = (input.resource || input.hostResourceStore) && input.resourceInvalidation
         ? createPluginSurfaceResourceWatchHandlers({
             pluginId: input.surfaceContext.pluginId,
-            resource: input.resource,
+            ...(input.resource && input.resourceInvalidation.allowPluginResources !== false ? { resource: input.resource } : {}),
+            ...(input.hostResourceStore ? { hostResourceStore: input.hostResourceStore } : {}),
+            ...(input.isContributedActionAvailable ? { isDaemonAvailable: input.isContributedActionAvailable } : {}),
             deliver: input.resourceInvalidation.deliver,
             ...(input.resourceInvalidation.transport
                 ? { transport: input.resourceInvalidation.transport }
@@ -1627,11 +1678,13 @@ export function createPluginSurfaceActionHostApi(input: Readonly<{
             executeAction,
             notify: feedback.notify,
             confirm: feedback.confirm,
-            ...(input.resource
+            ...(input.resource || input.hostResourceStore
                 ? {
                     readResource: createPluginSurfaceResourceReadHandler({
                         pluginId: input.surfaceContext.pluginId,
-                        resource: input.resource,
+                        ...(input.resource ? { resource: input.resource } : {}),
+                        ...(input.hostResourceStore ? { hostResourceStore: input.hostResourceStore } : {}),
+                        ...(input.isContributedActionAvailable ? { isDaemonAvailable: input.isContributedActionAvailable } : {}),
                         ...(input.resourceLifetimeSignal
                             ? { lifetimeSignal: input.resourceLifetimeSignal }
                             : {}),

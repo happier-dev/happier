@@ -298,6 +298,40 @@ describe('active Account-hosted plugin Artifact reader', () => {
         }).then((files) => files?.get(artifactGraph.entry))).resolves.toEqual(entryBytes);
     });
 
+    it.each([
+        createActivePluginAccountHostedArtifactSourceCandidate,
+        createActivePluginAccountHostedArtifactTargetSourceCandidate,
+    ])('cancels a held Account-hosted source read when its acquisition retires', async (createSource) => {
+        const { lifetime } = createLifetime();
+        const controller = new AbortController();
+        let started!: () => void;
+        const requestStarted = new Promise<void>((resolve) => { started = resolve; });
+        const current = createReader({
+            lifetime,
+            request: async (_path, init) => {
+                started();
+                return new Promise<Response>((_resolve, reject) => {
+                    init?.signal?.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
+                });
+            },
+        });
+        const source = createSource({ accountLifetime: lifetime, reader: current.reader });
+        let result: Awaited<ReturnType<typeof source.fetch>> | undefined;
+        void source.fetch({
+            artifact: {
+                pluginId: release.pluginId, contributionId: slot.contributionId,
+                artifactId: slot.artifactId, tier: slot.tier, platform: slot.platform,
+                digest: artifactDigest, hostUiApiRange: artifactGraph.hostUiApiRange,
+                releaseVersion: release.version,
+            },
+            accountHostedArtifactId: accountArtifactId,
+            signal: controller.signal,
+        }).then((value) => { result = value; });
+        await requestStarted;
+        controller.abort();
+        await vi.waitFor(() => expect(result).toBeNull());
+    });
+
     it('drops a response that arrives after the captured Account lifetime retires', async () => {
         const active = createLifetime();
         const response = await createResponse();

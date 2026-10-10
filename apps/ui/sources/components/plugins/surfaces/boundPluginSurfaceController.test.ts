@@ -30,6 +30,7 @@ import {
     usePluginSurfaceDaemonInteraction,
 } from './boundPluginSurfaceController';
 import type { PluginSurfaceResourceReadTransport } from './pluginSurfaceResourceRead';
+import type { PluginSurfaceResourceWatchTransport } from './pluginSurfaceResourceWatch';
 
 const clipboard = vi.hoisted(() => ({
     getStringAsync: vi.fn(),
@@ -126,6 +127,82 @@ const FACTS = {
 
 const TARGETED_RESOURCE_MOUNT_INSTANCE_KEY = 'targeted-surface:v1:review:mount-a';
 
+describe('mounted host Resource admission', () => {
+    it('separates ordinary Resource subscriptions for two mounts of the same surface', async () => {
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ isActionEnabled: () => false }));
+        const opened: string[] = [];
+        const watch: PluginSurfaceResourceWatchTransport = {
+            open: async (_machineId, request) => {
+                opened.push(request.subscriptionId);
+                return { supported: true, result: { ok: true, subscriptionId: request.subscriptionId,
+                    digest: `sha256:${'a'.repeat(64)}` } };
+            },
+            next: async () => await new Promise<never>(() => {}),
+            close: async () => {},
+        };
+        const controllers = [0, 1].map(() => createBoundPluginSurfaceController({ facts: FACTS, binding: {
+            executeHostAction: Object.assign(executor.execute, { prepare: executor.prepare }),
+            readResource: async (_machineId, request) => ({ supported: true, result: { ok: true,
+                resource: request.resource, kind: 'asset', contentType: 'application/json',
+                digest: `sha256:${'a'.repeat(64)}`, bytesBase64: 'e30=' } }),
+            watchResource: watch,
+        } }));
+        const retire: (() => void)[] = [];
+        try {
+            for (const controller of controllers) {
+                if (!controller.resourceStore) throw new Error('Expected mounted Resource store');
+                retire.push(controller.resourceStore.getEntry('status').subscribe(() => {}, true));
+            }
+            await vi.waitFor(() => expect(opened).toHaveLength(2));
+            expect(new Set(opened).size).toBe(2);
+        } finally {
+            retire.forEach(unsubscribe => unsubscribe());
+            controllers.forEach(controller => controller.dispose());
+        }
+    });
+    it('revalidates the selected execution origin without retiring machine-free context', async () => {
+        let exactTargetCurrent = true;
+        const executeContributedAction = vi.fn(async () => ({ supported: true as const, result: { ok: true as const, result: { accepted: true } } }));
+        const controller = createBoundPluginSurfaceController({
+            facts: FACTS,
+            binding: { executeContributedAction, isExecutionOriginCurrent: () => exactTargetCurrent },
+        });
+        exactTargetCurrent = false;
+        await expect(controller.dispatchAction({ pluginId: FACTS.pluginId, localId: 'refresh' })).resolves.toMatchObject({ code: 'unavailable' });
+        expect(executeContributedAction).not.toHaveBeenCalled();
+        expect(controller.isCurrent()).toBe(true);
+        expect(controller.installedMethods).toContain('context');
+        controller.dispose();
+    });
+    it('offers host reads without a daemon Resource declaration and exposes no unadmitted bytes', () => {
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            isActionEnabled: () => false,
+        }));
+        const execute = Object.assign(executor.execute, { prepare: executor.prepare });
+        const controller = createBoundPluginSurfaceController({
+            facts: { ...FACTS, daemonInteractionEnabled: false, resourceCapability: undefined },
+            binding: { executeHostAction: execute },
+        });
+        expect(controller.installedMethods).toContain('readResource');
+        expect(controller.installedMethods).toContain('watchResource');
+        expect(controller.resourceStore).toBeDefined();
+        const entry = controller.resourceStore!.getEntry({ hostRead: 'usage.query', input: { queries: [{}] } });
+        const snapshot = entry.getSnapshot();
+        expect(snapshot.value).toBeUndefined();
+        controller.dispose();
+    });
+
+    it('does not borrow an Account entry when the Action target names another Home', () => {
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({}));
+        const controller = createBoundPluginSurfaceController({
+            facts: { ...FACTS, serverId: 'another-home', daemonInteractionEnabled: false, resourceCapability: undefined },
+            binding: { executeHostAction: Object.assign(executor.execute, { prepare: executor.prepare }) },
+        });
+        expect(controller.resourceStore).toBeUndefined();
+        controller.dispose();
+    });
+});
+
 function createTargetedSurfaceResourceContext(
     launchInput: PluginUiJsonValueV1,
 ): PluginResourceContextV1 {
@@ -156,16 +233,29 @@ function request(method: string, payload?: unknown) {
 }
 
 describe('BoundPluginSurfaceController (§3.1)', () => {
+    it('refuses an existing mounted Host API when its containing document admission is withdrawn', () => {
+        let documentCurrent = true;
+        const controller = createBoundPluginSurfaceController({ facts: { ...FACTS, isHostCurrent: () => documentCurrent } });
+        expect(controller.isCurrent()).toBe(true);
+        expect(controller.hostApi.handleRequest(request('context'))).not.toMatchObject({ code: 'stale_surface' });
+        documentCurrent = false;
+        expect(controller.hostApi.handleRequest(request('context'))).toEqual({ code: 'stale_surface', diagnostics: ['plugin_surface_retired'] });
+        expect(controller.isCurrent()).toBe(false);
+        const renewed = createBoundPluginSurfaceController({ facts: { ...FACTS, isHostCurrent: () => true } });
+        expect(renewed.hostApi.handleRequest(request('context'))).not.toMatchObject({ code: 'stale_surface' });
+        controller.dispose();
+        renewed.dispose();
+    });
     it('installs a declared page area on the actual mounted host port and persists its Action result', async () => {
         const scope = CURRENT_ACCOUNT_LIFETIME.scope;
         let row: Awaited<ReturnType<HomeHubArtifactTransportV1['read']>> = null;
         let onRead: (() => void) | undefined;
         const transport: HomeHubArtifactTransportV1 = {
             read: async () => { onRead?.(); return row; },
-            create: async input => { row = { artifactId: input.artifactId, ownerAccountId: scope.accountId, header: input.header,
+            create: async input => { row = { artifactId: input.artifactId, ownerAccountId: scope.accountId, access: 'owner', header: input.header,
                 body: input.body, revision: { headerVersion: 1, bodyVersion: 1 } }; return row; },
             update: async input => { const revision = { headerVersion: 2, bodyVersion: 2 }; row = { artifactId: input.artifactId,
-                ownerAccountId: scope.accountId, header: input.header!, body: input.body!, revision }; return { ok: true, revision }; },
+                ownerAccountId: scope.accountId, access: 'owner', header: input.header!, body: input.body!, revision }; return { ok: true, revision }; },
         };
         const area = createWidgetAreaActionPortV1(surface => createWidgetSurfaceArtifactPortV1(transport, { surface, isCurrent: () => true }));
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({ widgetAccountScope: () => scope, widgetSurfaceActions: { pluginArea: area },
@@ -188,7 +278,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         const instance = { v: 1, id: 'copy', definition: { kind: 'builtin', id: 'session_summary' }, bindings: {
             session: { kind: 'value', value: { serverId: scope.serverId, sessionId: 'readable-session' } },
         } };
-        const added = await controller.hostApi.handleRequest(request('widgetArea', { area: 'pinned', operation: { actionId: 'widgets.instance.add', instance } }));
+        const added = await controller.hostApi.handleRequest(request('widgetArea', { area: 'pinned', operation: { actionId: 'widgets.item.add', instance } }));
         if (added && typeof added === 'object' && !Array.isArray(added) && 'ok' in added && added.ok === false) throw new Error(JSON.stringify(added));
         expect(added)
             .toMatchObject({ ok: true, result: { instance, ref: { surface: { ...scope, owner: { kind: 'pluginArea', pluginId: FACTS.pluginId, pageId: FACTS.contributionId, area: 'pinned' } } } } });
@@ -196,9 +286,9 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         const before = row;
         // Retirement during the real Artifact read must prevent the subsequent write.
         onRead = () => controller.dispose();
-        await controller.hostApi.handleRequest(request('widgetArea', { area: 'pinned', operation: { actionId: 'widgets.instance.remove', instanceId: 'copy' } }));
+        await controller.hostApi.handleRequest(request('widgetArea', { area: 'pinned', operation: { actionId: 'widgets.item.remove', instanceId: 'copy' } }));
         expect(row).toBe(before);
-        expect(await controller.hostApi.handleRequest(request('widgetArea', { area: 'pinned', operation: { actionId: 'widgets.instance.remove', instanceId: 'copy' } })))
+        expect(await controller.hostApi.handleRequest(request('widgetArea', { area: 'pinned', operation: { actionId: 'widgets.item.remove', instanceId: 'copy' } })))
             .toMatchObject({ code: 'stale_surface' });
         expect(row).toBe(before);
         expect(createBoundPluginSurfaceController({ facts: FACTS }).installedMethods).not.toContain('widgetArea');
@@ -291,15 +381,18 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
 
     it('fails closed when the mount has no captured active Account lifetime', () => {
         const executeContributedAction = vi.fn();
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({}));
         const controller = createBoundPluginSurfaceController({
             facts: { ...FACTS, accountLifetime: null },
-            binding: { executeContributedAction: executeContributedAction as never },
+            binding: { executeContributedAction: executeContributedAction as never,
+                executeHostAction: Object.assign(executor.execute, { prepare: executor.prepare }) },
         });
 
         // An absent Account scope is not an implicit global lifetime. The facade
         // must neither advertise handlers nor answer even its local context.
         expect(controller.isCurrent()).toBe(false);
         expect(controller.installedMethods).toEqual([]);
+        expect(controller.resourceStore).toBeUndefined();
         expect(controller.interactive).toBe(false);
         expect(controller.hostApi.handleRequest(request('context'))).toEqual({
             code: 'stale_surface',
@@ -873,6 +966,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
             serverId: 'server-1',
             expectedContributorOccurrenceId: 'daemon-action-occurrence-a',
             qualifiedActionId: `${FACTS.pluginId}/self-check`,
+            isCurrent: expect.any(Function),
             input: {},
             executionSurface: 'ui',
             invocation: {
@@ -1329,6 +1423,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
                 serverId: 'server-1',
                 expectedContributorOccurrenceId: 'daemon-action-occurrence-a',
                 qualifiedActionId: 'happier.channels/connection/prepare-v1',
+                isCurrent: expect.any(Function),
                 input: {
                     providerSelection: selection.selection,
                     providerSetupInput: selection.input,
@@ -1475,6 +1570,24 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         }
     });
 
+    it('preserves structural Action admission without dispatching from a retained inactive projection', async () => {
+        const controller = createBoundPluginSurfaceController({
+            facts: { ...FACTS, interactionEnabled: false, daemonInteractionEnabled: false },
+        });
+
+        expect(controller.admissionMethods).toContain('executeAction');
+        expect(controller.installedMethods).not.toContain('executeAction');
+        await expect(Promise.resolve(controller.hostApi.handleRequest(request('executeAction', {
+            action: 'save',
+            input: {},
+        })))).resolves.toEqual({
+            code: 'unavailable',
+            diagnostics: ['host_api_method_unavailable:executeAction'],
+        });
+        controller.dispose();
+        expect(controller.admissionMethods).toEqual([]);
+    });
+
     it('keeps placement-local openSurface available when daemon interaction is inactive', async () => {
         const openSurface = vi.fn(async () => ({ ok: true as const }));
         const controller = createBoundPluginSurfaceController({
@@ -1497,8 +1610,8 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
             action: 'save',
             input: {},
         }))).toEqual({
-            code: 'unsupported_method',
-            diagnostics: ['host_api_method_not_installed:executeAction'],
+            code: 'unavailable',
+            diagnostics: ['host_api_method_unavailable:executeAction'],
         });
 
         await expect(controller.applyComposer(
@@ -1553,6 +1666,8 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         expect(controller.installedMethods).toEqual([
             'context',
             'executeAction',
+            'readResource',
+            'watchResource',
             'notify',
             'confirm',
             'diagnostic',
@@ -1747,6 +1862,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
             serverId: 'server-1',
             expectedContributorOccurrenceId: 'daemon-action-occurrence-a',
             qualifiedActionId: 'acme.browser/save',
+            isCurrent: expect.any(Function),
             input: null,
             executionSurface: 'ui',
             invocation: {
@@ -1821,6 +1937,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
             expectedContributorOccurrenceId: 'daemon-action-occurrence-a',
             qualifiedActionId: 'acme.reviewer/publish',
             input: { source: 'mounted-surface' },
+            isCurrent: expect.any(Function),
             executionSurface: 'ui',
             // The bound placement, never the target, supplies this claim; the
             // daemon revalidates it before deriving caller provenance.
@@ -1856,6 +1973,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
             expectedContributorOccurrenceId: 'daemon-action-occurrence-a',
             qualifiedActionId: 'acme.reviewer/publish',
             input: { source: 'bound-session' },
+            isCurrent: expect.any(Function),
             executionSurface: 'ui',
             sessionId: 'session-bound',
             invocation: {
@@ -2124,7 +2242,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         expect(dispose).toHaveBeenCalledTimes(1);
     });
 
-    it('does not advertise Resource methods when the selected surface has no readable Resource capability', () => {
+    it('does not admit plugin Resources when only host reads have a readable capability', async () => {
         const controller = createBoundPluginSurfaceController({
             // The selected-member capability is an admission fact. A sibling
             // projection cannot make this mount read or watch Resources.
@@ -2134,13 +2252,13 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
             },
         });
 
-        expect(controller.installedMethods).not.toContain('readResource');
-        expect(controller.installedMethods).not.toContain('watchResource');
-        expect(controller.hostApi.handleRequest(request('readResource', {
+        expect(controller.installedMethods).toContain('readResource');
+        expect(controller.installedMethods).toContain('watchResource');
+        await expect(controller.hostApi.handleRequest(request('readResource', {
             resource: 'sibling-or-static-resource',
-        }))).toEqual({
-            code: 'unsupported_method',
-            diagnostics: ['host_api_method_not_installed:readResource'],
+        }))).resolves.toEqual({
+            code: 'unavailable',
+            diagnostics: ['plugin_resource_transport_unavailable'],
         });
     });
 
@@ -2153,7 +2271,10 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         });
 
         expect(controller.installedMethods).toContain('readResource');
-        expect(controller.installedMethods).not.toContain('watchResource');
+        expect(controller.installedMethods).toContain('watchResource');
+        await expect(controller.hostApi.handleRequest(request('watchResource', {
+            resource: 'static-resource', subscriptionId: 'static-plugin-watch',
+        }))).resolves.toMatchObject({ code: 'unavailable' });
         // This remains an envelope-only transport operation, so it is never
         // advertised in `version().methods`; without watch ownership it is not
         // installed behind that transport path either.

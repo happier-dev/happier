@@ -18,12 +18,11 @@ import {
 import { useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SavedSecretPickerModal } from '@/components/ui/forms/valueRefs/SavedSecretPickerModal';
-import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { Text } from '@/components/ui/text/Text';
-import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
-import { Typography } from '@/constants/Typography';
+import { SchemaFieldControl, resolveSchemaFieldKind } from '@/components/settings/schemaFields/SchemaFieldControl';
+import { SchemaFieldRow, SchemaFieldStatusLine } from '@/components/settings/schemaFields/SchemaFieldRow';
+import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { projectAccountDeclaredPluginSettingsGroups } from '@/sync/domains/plugins/settings/accountDeclaredPluginSettings';
@@ -65,43 +64,10 @@ import {
     PluginSettingSwitchField,
 } from './PluginSettingChoiceFields';
 
-const stylesheet = StyleSheet.create((theme) => ({
-    fieldContainer: {
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-    },
-    fieldLabel: {
-        ...Typography.default('semiBold'),
-        color: theme.colors.text.primary,
-        fontSize: 14,
-        marginBottom: 4,
-    },
-    fieldHint: {
-        ...Typography.default(),
-        color: theme.colors.text.secondary,
-        fontSize: 13,
-        lineHeight: 18,
-        marginBottom: 8,
-    },
-    fieldActions: {
-        alignItems: 'flex-end',
-        flexDirection: 'row',
-        flexWrap: 'wrap',
+const stylesheet = StyleSheet.create(() => ({
+    // The field, its stored-state line, its refusal and its actions, one beneath the other.
+    fieldStack: {
         gap: 8,
-        justifyContent: 'flex-end',
-        marginTop: 8,
-    },
-    secretStatus: {
-        ...Typography.default(),
-        color: theme.colors.text.secondary,
-        fontSize: 13,
-        marginTop: 8,
-    },
-    fieldError: {
-        ...Typography.default(),
-        color: theme.colors.state.danger.foreground,
-        fontSize: 13,
-        marginTop: 8,
     },
     saveButton: {
         minWidth: 96,
@@ -263,114 +229,121 @@ export function PluginSettingTextField(props: Readonly<{
     };
 
     return (
-        <View testID={`${testID}.row`} style={styles.fieldContainer}>
-            <Text style={styles.fieldLabel}>{props.field.title}</Text>
-            {props.field.subtitle ? <Text style={styles.fieldHint}>{props.field.subtitle}</Text> : null}
-            {props.disabledReason ? (
-                <Text
-                    testID={`settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}.disabledReason`}
-                    style={styles.fieldHint}
-                >
-                    {props.disabledReason}
-                </Text>
-            ) : null}
-            <FieldTextInput
-                testID={testID}
-                accessibilityLabel={props.field.title}
-                accessibilityHint={props.disabledReason ?? props.status ?? undefined}
-                placeholder={placeholder}
-                value={props.value}
-                onChangeText={(value) => {
-                    // Native controls ignore input while non-editable, but
-                    // keep the same invariant at this presentation boundary
-                    // for programmatic and web event paths as well.
-                    if (!props.persistenceDisabled || props.acceptDraftInputWhileBusy) {
-                        props.onChangeText(value);
-                    }
-                }}
-                editable={!props.persistenceDisabled}
-                secureTextEntry={isSecret}
-                multiline={multiline}
-            />
-            {props.status ? (
-                <Text
-                    testID={`settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}.status`}
-                    style={styles.secretStatus}
-                >
-                    {props.status}
-                </Text>
-            ) : null}
-            {/*
-              * The commit that produced this text finished asynchronously and
-              * moves nothing else on screen, so a reader who is not looking at
-              * this field would never learn it failed. Same alert/live
-              * semantics as the incumbent account credential forms.
-              */}
-            {props.errorMessage ? (
-                <Text
-                    testID={`settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}.error`}
-                    accessibilityRole="alert"
-                    accessibilityLiveRegion="assertive"
-                    style={styles.fieldError}
-                >
-                    {props.errorMessage}
-                </Text>
-            ) : null}
-            <View style={styles.fieldActions}>
-                {/*
-                  * Delete and Remove sit side by side and destroy different
-                  * things: one erases the stored secret, the other only
-                  * detaches it from this setting. Each names its own object,
-                  * and the hint states what survives the press.
-                  */}
-                {props.onDelete ? (
-                    <RoundButton
-                        testID={`settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}.delete`}
-                        size="normal"
-                        display="inverted"
-                        title={t('settingsPlugins.secretFieldActions.delete')}
-                        accessibilityLabel={`${t('settingsPlugins.secretFieldActions.delete')}: ${props.field.title}`}
-                        accessibilityHint={t('settingsPlugins.secretFieldActions.deleteHint')}
-                        textStyle={{ color: theme.colors.state.danger.foreground }}
-                        disabled={props.saving || props.persistenceDisabled}
-                        onPress={() => { void confirmDelete(); }}
-                    />
-                ) : null}
-                {props.onUnbind ? (
-                    <RoundButton
-                        testID={`settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}.unbind`}
-                        size="normal"
-                        display="inverted"
-                        title={t('settingsPlugins.secretFieldActions.unbind')}
-                        accessibilityLabel={`${t('settingsPlugins.secretFieldActions.unbind')}: ${props.field.title}`}
-                        accessibilityHint={t('settingsPlugins.secretFieldActions.unbindHint')}
-                        disabled={props.saving || props.persistenceDisabled}
-                        onPress={props.onUnbind}
-                    />
-                ) : null}
-                {props.onBindExisting ? (
-                    <RoundButton
-                        testID={`settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}.bind`}
-                        size="normal"
-                        display="inverted"
-                        title={t('settings.mcpServersImportMappingSavedSecret')}
-                        accessibilityLabel={`${t('settings.mcpServersImportMappingSavedSecret')}: ${props.field.title}`}
-                        disabled={props.saving || props.persistenceDisabled}
-                        onPress={props.onBindExisting}
-                    />
-                ) : null}
-                <RoundButton
-                    testID={`settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}.save`}
-                    size="normal"
-                    title={saveLabel}
-                    accessibilityLabel={`${saveLabel}: ${props.field.title}`}
-                    style={styles.saveButton}
-                    disabled={!props.dirty || props.saving || props.persistenceDisabled || props.commitDisabled}
-                    loading={props.saving}
-                    onPress={props.onCommit}
-                />
-            </View>
-        </View>
+        <SchemaFieldRow
+            testID={`${testID}.row`}
+            title={props.field.title}
+            hint={props.field.subtitle ?? undefined}
+            layout="stacked"
+            control={(
+                <View style={styles.fieldStack}>
+                    {props.disabledReason ? (
+                        <SchemaFieldStatusLine
+                            testID={`settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}.disabledReason`}
+                        >
+                            {props.disabledReason}
+                        </SchemaFieldStatusLine>
+                    ) : null}
+                    <SchemaFieldControl control="text" inputProps={{
+                        testID,
+                        accessibilityLabel: props.field.title,
+                        accessibilityHint: props.disabledReason ?? props.status ?? undefined,
+                        placeholder,
+                        value: props.value,
+                        onChangeText: (value) => {
+                            // Native controls ignore input while non-editable, but
+                            // keep the same invariant at this presentation boundary
+                            // for programmatic and web event paths as well.
+                            if (!props.persistenceDisabled || props.acceptDraftInputWhileBusy) {
+                                props.onChangeText(value);
+                            }
+                        },
+                        editable: !props.persistenceDisabled,
+                        secureTextEntry: isSecret,
+                        multiline,
+                    }} />
+                    {props.status ? (
+                        <SchemaFieldStatusLine
+                            testID={`settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}.status`}
+                        >
+                            {props.status}
+                        </SchemaFieldStatusLine>
+                    ) : null}
+                    {/*
+                      * The commit that produced this text finished asynchronously and
+                      * moves nothing else on screen, so a reader who is not looking at
+                      * this field would never learn it failed: the status line announces it.
+                      */}
+                    {props.errorMessage ? (
+                        <SchemaFieldStatusLine
+                            testID={`settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}.error`}
+                            tone="danger"
+                        >
+                            {props.errorMessage}
+                        </SchemaFieldStatusLine>
+                    ) : null}
+                    <SectionButtonRow
+                        trailing={(
+                            <>
+                            {/*
+                              * Delete and Remove sit side by side and destroy different
+                              * things: one erases the stored secret, the other only
+                              * detaches it from this setting. Each names its own object,
+                              * and the hint states what survives the press.
+                              */}
+                            {props.onDelete ? (
+                                <RoundButton
+                                    testID={`settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}.delete`}
+                                    size="normal"
+                                    display="inverted"
+                                    title={t('settingsPlugins.secretFieldActions.delete')}
+                                    accessibilityLabel={`${t('settingsPlugins.secretFieldActions.delete')}: ${props.field.title}`}
+                                    accessibilityHint={t('settingsPlugins.secretFieldActions.deleteHint')}
+                                    textStyle={{ color: theme.colors.state.danger.foreground }}
+                                    disabled={props.saving || props.persistenceDisabled}
+                                    onPress={() => { void confirmDelete(); }}
+                                />
+                            ) : null}
+                            {props.onUnbind ? (
+                                <RoundButton
+                                    testID={`settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}.unbind`}
+                                    size="normal"
+                                    display="inverted"
+                                    title={t('settingsPlugins.secretFieldActions.unbind')}
+                                    accessibilityLabel={`${t('settingsPlugins.secretFieldActions.unbind')}: ${props.field.title}`}
+                                    accessibilityHint={t('settingsPlugins.secretFieldActions.unbindHint')}
+                                    disabled={props.saving || props.persistenceDisabled}
+                                    onPress={props.onUnbind}
+                                />
+                            ) : null}
+                            {props.onBindExisting ? (
+                                <RoundButton
+                                    testID={`settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}.bind`}
+                                    size="normal"
+                                    display="inverted"
+                                    title={t('settings.mcpServersImportMappingSavedSecret')}
+                                    accessibilityLabel={`${t('settings.mcpServersImportMappingSavedSecret')}: ${props.field.title}`}
+                                    disabled={props.saving || props.persistenceDisabled}
+                                    onPress={props.onBindExisting}
+                                />
+                            ) : null}
+                            <RoundButton
+                                testID={`settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}.save`}
+                                size="normal"
+                                title={saveLabel}
+                                accessibilityLabel={`${saveLabel}: ${props.field.title}`}
+                                style={styles.saveButton}
+                                disabled={!props.dirty || props.saving || props.persistenceDisabled || props.commitDisabled}
+                                loading={props.saving}
+                                onPress={props.onCommit}
+                            />
+                            </>
+                        )}
+                    >
+                        {null}
+                    </SectionButtonRow>
+                </View>
+            )}
+        />
     );
 }
 
@@ -1280,17 +1253,19 @@ function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSec
                     const error = fieldModelByKey.get(field.key)?.error;
                     return error === 'failed' || error === 'outcomeUnknown';
                 });
+                const groupDescription = groupOutcomeUnknown
+                    ? t('settingsProviders.errors.mutationOutcomeUnknownDescription')
+                    : groupHasSaveError
+                        ? t('settingsPlugins.genericSettingsSaveError')
+                        : group.description;
+                const scopeDescription = t(group.scope.kind === 'account'
+                    ? 'settingsPlugins.genericSettingsAccountFooter'
+                    : 'settingsPlugins.genericSettingsFooter');
                 return (
                     <ItemGroup
                         key={group.id}
                         title={group.title}
-                        description={groupOutcomeUnknown
-                            ? t('settingsProviders.errors.mutationOutcomeUnknownDescription')
-                            : groupHasSaveError
-                                ? t('settingsPlugins.genericSettingsSaveError')
-                            : group.description ?? t(group.scope.kind === 'account'
-                                ? 'settingsPlugins.genericSettingsAccountFooter'
-                                : 'settingsPlugins.genericSettingsFooter')}
+                        description={groupDescription ? `${groupDescription}\n${scopeDescription}` : scopeDescription}
                     >
                         {groupIndex === 0 && loadError ? (
                             <Item
@@ -1364,7 +1339,10 @@ function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSec
                                 || !scopedOperationsAvailable
                                 || loading
                                 || model.pending;
-                            if (field.control === 'switch') {
+                            // The plugin projection already owns schema inference; its retained
+                            // auto presentation uses the text editor, as before extraction.
+                            const control = resolveSchemaFieldKind({ control: field.control === 'auto' ? 'text' : field.control });
+                            if (control === 'switch') {
                                 return (
                                     <PluginSettingSwitchField
                                         key={field.key}
@@ -1380,8 +1358,8 @@ function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSec
                                     />
                                 );
                             }
-                            if (field.control === 'select' || field.control === 'multiSelect') {
-                                return field.control === 'select' ? (
+                            if (control === 'select' || control === 'multiSelect') {
+                                return control === 'select' ? (
                                     <PluginSettingSelectField
                                         key={field.key}
                                         pluginId={props.pluginId}

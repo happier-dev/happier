@@ -7,13 +7,15 @@ import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContri
 import { MachineAdministrationContextBar } from '@/components/settings/machines/MachineAdministrationContextBar';
 import { PluginMachineExecutionOriginSelectorView } from '@/components/settings/machines/PluginMachineExecutionOriginSelector';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { Item } from '@/components/ui/lists/Item';
+import { usePageNoticeActive } from '@/components/ui/lists/listPresentation';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import type { PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { usePluginMachineExecutionOriginSelection } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
+import { usePluginSurfaceExecutionOrigin } from '@/components/plugins/surfaces/pluginSurfaceExecutionOrigin';
+import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import {
     useActivePluginAccountAvailabilityReader,
-    useActivePluginAccountAvailabilityReleaseClassifier,
 } from '@/sync/domains/plugins/availability/projection';
 import type { PluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/reader';
 import { t } from '@/text';
@@ -35,7 +37,6 @@ import {
 } from '../model/usePluginSettingsScreenState';
 import { buildPluginsHomeRoute, usePluginsSurfaceHost } from '../model/pluginsSurfaceRoutes';
 import {
-    isPluginIncludedWithHappier,
     projectInstalledPluginLifecycleCapabilities,
     type InstalledPluginEntry,
 } from '../model/pluginMarketplaceModel';
@@ -63,12 +64,9 @@ function PluginDetailCurrentContent(props: Readonly<{
     accountSettingsDeclaration: PluginPortableReleaseManifestV1 | null;
     accountAvailability: PluginAccountAvailabilityReader | null;
 }>) {
-    const classifyRelease = useActivePluginAccountAvailabilityReleaseClassifier();
-    const includedWithHappier = isPluginIncludedWithHappier({ installed: props.installed, projection: props.projection });
-    const selection = usePluginMachineExecutionOriginSelection({
-        pluginId: props.pluginId,
-        classifyRelease,
-        includedWithHappier,
+    const appProjection = useAppShellPluginUiProjection();
+    const { selection } = usePluginSurfaceExecutionOrigin({
+        pluginId: props.pluginId, projection: appProjection.pluginUiProjection, enabled: true,
     });
     const { installed, state } = props;
     const accountReleaseVersion = installed?.version ?? props.projection?.version ?? null;
@@ -115,6 +113,8 @@ function PluginDetailCurrentContent(props: Readonly<{
                 pluginId={props.pluginId}
                 installed={installed}
                 projection={props.projection}
+                machineId={state.executionMachineId}
+                serverId={state.executionServerId}
                 enabled={installed ? {
                     value: installed.enabled,
                     disabled: !canToggle || actionsDisabled,
@@ -123,7 +123,7 @@ function PluginDetailCurrentContent(props: Readonly<{
                 } : null}
                 menuActions={menuActions}
             />
-            {state.readOnlySnapshotNotice ? (
+            {props.presentation === 'page' && state.readOnlySnapshotNotice ? (
                 <PluginReadOnlySnapshotNotice
                     testID="settings.plugins.detail.readOnlySnapshot"
                     reason={state.readOnlySnapshotNotice.reason}
@@ -188,7 +188,7 @@ function PluginDetailCurrentContent(props: Readonly<{
               */}
             <PluginMachineMatrixSection
                 pluginId={props.pluginId}
-                includedWithHappier={includedWithHappier}
+                includedWithHappier={installed?.source.kind === 'bundled'}
                 testIDPrefix="settings.plugins.detail.machineMatrix"
             />
             <PluginDetailInvocationLogsSection
@@ -245,8 +245,9 @@ export const PluginDetailView = React.memo(function PluginDetailView(props: Read
 }>) {
     const host = usePluginsSurfaceHost();
     const { state } = props;
+    const pageNoticeActive = usePageNoticeActive();
     const accountAvailability = useActivePluginAccountAvailabilityReader();
-    const installed = props.pluginId ? (state.installedPluginById.get(props.pluginId) ?? null) : null;
+    const installed = state.installedPlugins.find(entry => entry.pluginId === props.pluginId) ?? null;
     const projection = props.pluginId ? (state.pluginProjectionById[props.pluginId] ?? null) : null;
     const accountSettingsDeclaration = React.useMemo(() => {
         if (projection || !props.pluginId || !accountAvailability) return null;
@@ -271,18 +272,22 @@ export const PluginDetailView = React.memo(function PluginDetailView(props: Read
             ? accountSettingsDeclaration.displayName
             : accountSettingsDeclaration?.displayName?.fallback ?? accountRecoveryPluginId ?? '');
 
-    if (!installed && !projection && !accountRecoveryPluginId && !state.pluginTruthSettled) {
-        return state.readOnlySnapshotNotice ? (
+    if (!installed && !projection && !accountRecoveryPluginId) {
+        if (state.readOnlySnapshotNotice && state.readOnlySnapshotNotice.reason !== 'refreshing') return (
             <ItemList style={{ paddingTop: 0 }}>
-                <PluginReadOnlySnapshotNotice
+                {pageNoticeActive ? <Item
+                    testID="settings.plugins.detail.noSnapshot"
+                    title={t('settingsPlugins.surfaces.noSavedDetails')}
+                    mode="info"
+                    showChevron={false}
+                /> : <PluginReadOnlySnapshotNotice
                     testID="settings.plugins.detail.readOnlySnapshot"
                     reason={state.readOnlySnapshotNotice.reason}
                     onRetry={state.refreshPluginTruth}
-                />
+                />}
             </ItemList>
-        ) : (
-            <PaneLoadingFallback />
         );
+        if (!state.pluginTruthSettled) return <PaneLoadingFallback />;
     }
 
     if (!installed && !projection && !accountRecoveryPluginId) {

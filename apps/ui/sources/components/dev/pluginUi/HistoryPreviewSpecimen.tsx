@@ -12,6 +12,7 @@ const HIGHLIGHT: ConversationHighlight = {
     key: 'dev-hit',
     title: 'Stabilise CI on the release branch',
     meta: 'Claude Code · ~/happier · MacBook Pro · 3w ago',
+    agentLabel: 'Claude Code',
     candidate: { remoteSessionId: 'dev-hit', title: 'Stabilise CI on the release branch', updatedAtMs: 1,
         match: { snippet: '…the flaky e2e is the settings sheet: it remounts when the viewport changes, so the test sometimes types into a sheet that is about to be replaced.',
             sourceItemId: 'dev-item', messageIndex: 41 } },
@@ -24,9 +25,12 @@ export function HistoryPreviewSpecimen() {
     return (
         <View style={styles.cell} testID="dev-find-history-preview">
             <Text style={styles.cellTitle}>H1r · Conversations preview</Text>
-            <Text style={styles.cellDescription}>The highlighted hit’s matched message, from the match the search returned; Open in Happier lands on it with Find.</Text>
+            <Text style={styles.cellDescription}>The highlighted hit’s exchange, read on demand; Open in Happier lands on the match with Find.</Text>
             <View style={styles.row}>
-                <View style={styles.panel}><ConversationPreview highlight={HIGHLIGHT} query={QUERY} disabled={false} /></View>
+                <View style={styles.panel}><ConversationPreview highlight={HIGHLIGHT} query={QUERY} disabled={false} exchange={{ failed: false, messages: [
+                    { kind: 'user-text', id: 'dev-prompt', localId: null, createdAt: 1, text: 'The flaky e2e fails one run in five. Find out why.' },
+                    { kind: 'agent-text', id: 'dev-item', realID: 'dev-item', localId: null, createdAt: 2, text: 'The flaky e2e is the settings sheet: it remounts when the viewport changes, so the test sometimes types into a sheet that is about to be replaced.' },
+                ] }} /></View>
                 <View style={styles.panel}><ConversationPreview highlight={null} query={QUERY} disabled={false} /></View>
             </View>
         </View>

@@ -11,7 +11,7 @@ import type { TextStyle } from 'react-native';
 import { pageTitleTypography } from '@/components/ui/layout/pageTitleTypography';
 import { ITEM_TITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { FontWeights, getMonoFont, Typography } from '@/constants/Typography';
-import { resolveThemeControlEdge, resolveThemeGloss } from '@/components/ui/surfaces/themeRaisedEdge';
+import { resolveThemeControlEdge, resolveThemeGloss, resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
 import { shadowLevelStyle } from '@/shadowElevation';
 import type { Theme } from '@/theme';
 import type { ThemeColorTokenId } from '@/theme/tokens/themeColorTokenDefinitions';
@@ -180,6 +180,10 @@ export function projectPluginUiTheme(theme: Theme): PluginUiThemeV1 {
     const code = Typography.keyHint();
     return Object.freeze({
         version: 1,
+        surfaceFinish: Object.fromEntries((['card', 'floating', 'composer', 'primaryButton', 'secondaryButton'] as const).map(role => {
+            const gradient = resolveThemeSurfaceFinish(theme, role);
+            return [role, gradient ? { ...gradient, colors: [...gradient.colors], ...(gradient.locations ? { locations: [...gradient.locations] } : {}) } : null];
+        })) as PluginUiThemeV1['surfaceFinish'],
         statusText: Object.freeze({
             success: theme.colors.state.success.textForeground,
             warning: theme.colors.state.warning.textForeground,

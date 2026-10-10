@@ -16,6 +16,7 @@ import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { ToolbarSelect } from '@/components/ui/forms/ToolbarSelect';
 import { Icon } from '@/components/ui/icons/Icon';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -127,8 +128,7 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
     }, [presentationByView, presentationKey, setPresentationByView]);
 
     // Installed search and status filter narrow the machine's list locally; Browse searches every source.
-    // The installed query is the one the Plugins column's search writes (one query, one control on
-    // screen): beside the column the page shows no field of its own.
+    // The page owns the collection's one search control; the column only chooses the destination.
     const installedQuery = usePluginsInstalledQuery();
     const [installedStatus, setInstalledStatus] = React.useState<InstalledPluginStatusFilter>('all');
     const visibleInstalledPlugins = React.useMemo(
@@ -136,8 +136,8 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
         [installedQuery, installedStatus, state.installedPlugins],
     );
     const installedCollectionState = resolvePluginsCollectionState({
-        noTarget,
-        noticeReason: state.readOnlySnapshotNotice?.reason ?? null,
+        noTarget: false,
+        noticeReason: null,
         listRead: state.installedPluginsRead,
         itemCount: state.installedPlugins.length,
         visibleCount: visibleInstalledPlugins.length,
@@ -197,6 +197,7 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
     ));
     // The read-failed state card carries its own Retry; the banner would repeat it.
     const showSnapshotNotice = state.readOnlySnapshotNotice !== null
+        && state.readOnlySnapshotNotice.reason !== 'refreshing'
         && !noTarget
         && !(state.activeView === 'installed' && installedCollectionState === 'readFailed');
     const styles = stylesheet;
@@ -253,7 +254,7 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
             onSelectPresentation={setPresentation}
             installed={state.activeView === 'installed' ? {
                 // Beside the rail the Plugins column holds the search over this query.
-                query: viewChoiceInColumn ? null : installedQuery,
+                query: installedQuery,
                 onChangeQuery: setPluginsInstalledQuery,
                 status: installedStatus,
                 onSelectStatus: setInstalledStatus,
@@ -286,6 +287,7 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
     );
 
     return (
+        <ListPresentationProvider value="page" pageNoticeActive={showSnapshotNotice}>
         <DetailsPaneHost
             testID="settings.plugins.detailPane"
             mainMinWidthPx={PLUGINS_PAGE_MIN_WIDTH_PX}
@@ -349,6 +351,8 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
                         searchText={installedQuery.trim() || installedStatusFilterTitle(installedStatus)}
                         filtering={installedQuery.trim().length > 0 || installedStatus !== 'all'}
                         projectionByPluginId={state.pluginProjectionById}
+                        machineId={state.executionMachineId}
+                        serverId={state.executionServerId}
                         machineCoverageByPluginId={machineCoverageByPluginId}
                         onClearSearch={clearInstalledFilters}
                         onDiscover={() => state.setActiveView('discover')}
@@ -401,6 +405,8 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
                         canLoadMore={state.discoverNextCursor !== null}
                         installedPluginById={state.installedPluginById}
                         projectionByPluginId={state.pluginProjectionById}
+                        machineId={state.executionMachineId}
+                        serverId={state.executionServerId}
                         canRunActions={state.canRunDiscoverActions}
                         isPluginActionInFlight={state.isPluginActionInFlight}
                         onAction={state.runCatalogAction}
@@ -413,6 +419,7 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
             </View>
             )}
         />
+        </ListPresentationProvider>
     );
 });
 
@@ -503,19 +510,6 @@ function PluginsToolbar(props: Readonly<{
                                 style={styles.search}
                             />
                         ) : null}
-                        <ToolbarSelect
-                            testID="settings.plugins.marketplace.installed.statusFilter"
-                            label={t('settingsPlugins.surfaces.statusFilterLabel')}
-                            items={INSTALLED_STATUS_FILTERS.map((status) => ({
-                                id: status,
-                                title: installedStatusFilterTitle(status),
-                            }))}
-                            selectedId={props.installed.status}
-                            onSelect={(id) => {
-                                const status = INSTALLED_STATUS_FILTERS.find((candidate) => candidate === id);
-                                if (status && props.installed) props.installed.onSelectStatus(status);
-                            }}
-                        />
                     </>
                 ) : null}
                 {props.discover ? (
@@ -529,11 +523,21 @@ function PluginsToolbar(props: Readonly<{
                             placeholder={t('settingsPlugins.discoverSearchPlaceholder')}
                             style={styles.search}
                         />
-                        {/*
-                          * The source filter narrows the same one aggregate query before
-                          * acquisition; "All sources" sends no filter at all. It is never a
-                          * second index.
-                          */}
+                    </>
+                ) : null}
+                <View style={styles.viewControls}>
+                    {props.installed ? <ToolbarSelect
+                        testID="settings.plugins.marketplace.installed.statusFilter"
+                        label={t('settingsPlugins.surfaces.statusFilterLabel')}
+                        items={INSTALLED_STATUS_FILTERS.map((status) => ({ id: status, title: installedStatusFilterTitle(status) }))}
+                        selectedId={props.installed.status}
+                        onSelect={(id) => {
+                            const status = INSTALLED_STATUS_FILTERS.find((candidate) => candidate === id);
+                            if (status && props.installed) props.installed.onSelectStatus(status);
+                        }}
+                    /> : null}
+                    {props.discover ? (
+                        // This narrows the aggregate query; it never creates a second index.
                         <ToolbarSelect
                             testID="settings.plugins.marketplace.sourceFilter"
                             label={t('settingsPlugins.discoverSourceFilterLabel')}
@@ -544,8 +548,7 @@ function PluginsToolbar(props: Readonly<{
                             selectedId={props.discover.selectedSourceId ?? DISCOVER_ALL_SOURCES_ID}
                             onSelect={(id) => props.discover?.onSelectSource(id === DISCOVER_ALL_SOURCES_ID ? null : id)}
                         />
-                    </>
-                ) : null}
+                    ) : null}
                 <SegmentedTabBar
                     tabs={presentationTabs}
                     activeTabId={props.presentation}
@@ -556,6 +559,7 @@ function PluginsToolbar(props: Readonly<{
                     slidingThumb
                     targetSize="platform"
                 />
+                </View>
             </View>
         </View>
     );
@@ -631,6 +635,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexShrink: 1,
         flexBasis: 220,
         minWidth: 0,
+    },
+    viewControls: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        alignSelf: 'flex-start',
+        gap: 10,
     },
     developer: {
         width: '100%',

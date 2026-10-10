@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import {
     PluginContributesV2Schema,
     PluginProjectionV2Schema,
@@ -9,6 +9,8 @@ import {
     type VoiceProviderContribution,
 } from '@happier-dev/protocol';
 import type { PluginClientApi } from '@happier-dev/plugin-sdk';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { DaemonPluginUiArtifactBytesReadResponse } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
     PluginUiArtifactsManifestV2Schema,
     computePluginUiArtifactFileSetSha256DigestV1,
@@ -17,16 +19,17 @@ import {
 } from '@happier-dev/protocol/plugins/ui';
 
 import { createDeferred, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import * as projectionCurrentness from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import {
     selectCurrentAppShellPluginExecutionOrigins,
     selectCurrentAppShellPluginUiCurrentness,
     isAppShellPluginClientExecutableAvailable,
     settleAppShellPluginRuntimeUpdate,
+    resolveAppShellPluginProjectionTargets,
     useAppShellPluginUiProjection,
 } from './AppShellPluginUiProjection';
 import { selectPluginSurfacePlacementsForBinding } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import { readPluginUiContributionOrigin } from '@/sync/domains/plugins/ui/projectionUnion';
-import { useScopedPluginUiProjection } from '@/components/plugins/projection/useScopedPluginUiProjection';
 import {
     getQualifiedConnectedServiceRegistryEntry,
     getConnectedServiceRegistrySnapshot,
@@ -45,20 +48,20 @@ import {
 import type {
     PluginAccountAvailabilitySnapshot,
 } from '@/sync/domains/plugins/availability/reader';
-import type {
-    PluginReactNativeArtifactAvailability,
-} from '@/sync/domains/plugins/availability/reactNativeArtifactAvailability';
 import {
+    captureActiveServerAccountScopeLifetime,
     retireActiveServerAccountScopeLifetime,
     type ActiveServerAccountScopeLifetime,
 } from '@/sync/domains/scope/activeServerAccountScope';
+import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { storage as persistentStorage } from '@/sync/domains/state/storageStore';
 import type { PluginUiPageHeaderActionProjection } from '@/sync/domains/plugins/ui/projection';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
+import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import {
-    createPluginReactNativeBundleCache,
-    type PluginReactNativeBundleCache,
+    getInstalledPluginReactNativeBundleCache,
 } from '@/components/plugins/reactNative/bundleCache';
 import {
     getPluginUiClientExecutableComposition,
@@ -72,6 +75,20 @@ import type { PluginReactNativeLoaderBackend } from '@/components/plugins/reactN
 import type { PluginSurfaceLaunchAuthority } from '@/components/plugins/surfaces/pluginSurfaceLaunchAuthority';
 import { PluginAppPageHeaderActions } from './pluginAppPageHeaderActions';
 import type { PluginAppPage } from './pluginAppPages';
+import { publishMachineContributionRegistryProjectionReconnect } from '@/sync/ops/machineContributionRegistryProjectionRevision';
+
+describe('app-shell projection bootstrap targets', () => {
+    it('restores retained presentation targets before live machine inventory arrives', () => {
+        expect(resolveAppShellPluginProjectionTargets({
+            activeServerId: 'home-1',
+            machines: [],
+            retainedMachineIds: ['machine-1'],
+        })).toEqual([{ machineId: 'machine-1', serverId: 'home-1' }]);
+        expect(resolveAppShellPluginProjectionTargets({
+            activeServerId: 'home-1', machines: [], retainedMachineIds: [],
+        })).toEqual([]);
+    });
+});
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -87,7 +104,7 @@ type SupportedMachineContributionRegistryProjectionDescribeResult = Extract<
 const projectionDescribeSpy = vi.hoisted(() => vi.fn<
     MachineContributionRegistryProjectionModule['machineContributionRegistryProjectionDescribe']
 >());
-const clientArtifactAvailabilitySpy = vi.hoisted(() => vi.fn());
+const artifactByteRead = vi.hoisted(() => vi.fn<() => Promise<DaemonPluginUiArtifactBytesReadResponse>>());
 const pluginRuntimeSpies = vi.hoisted(() => ({
     activate: vi.fn<(input: unknown) => Promise<readonly unknown[]>>(async () => []),
     withdraw: vi.fn<() => Promise<void>>(async () => {}),
@@ -95,24 +112,13 @@ const pluginRuntimeSpies = vi.hoisted(() => ({
         previous: Readonly<{ generation: number | null }>,
         next: Readonly<{ generation: number | null }>,
     ) => Promise<void>>(async () => {}),
-    reconcileSourceUpdate: vi.fn<(input: unknown) => void>(),
-    reconcileSourceDispose: vi.fn<() => void>(),
-    replaceAuthority: vi.fn<(authority: unknown) => Promise<void>>(async () => {}),
 }));
 const pluginExecutableHostState = vi.hoisted(() => ({
     override: null as PluginUiExecutableModuleHost | null,
 }));
 const appShellClientExecutableRuntimeState = vi.hoisted(() => ({
     useRealActivation: false,
-    cache: null as PluginReactNativeBundleCache | null,
     loaderBackend: null as PluginReactNativeLoaderBackend | null,
-    availability: null as Extract<PluginReactNativeArtifactAvailability, { kind: 'available' }> | null,
-}));
-type TestActiveServerAccountScopeLifetime = ActiveServerAccountScopeLifetime & Readonly<{
-    retireForTest(): void;
-}>;
-const activeAccountLifetimeState = vi.hoisted(() => ({
-    current: null as TestActiveServerAccountScopeLifetime | null,
 }));
 const storageState = vi.hoisted(() => ({
     machines: [] as Array<Record<string, unknown>>,
@@ -121,10 +127,6 @@ const storageState = vi.hoisted(() => ({
         machineId: null as string | null,
     },
     activeServer: { serverId: 'server-1', serverUrl: 'https://server.example.test', generation: 1 },
-    endpointConnectivity: {
-        status: 'online' as 'online' | 'offline',
-        lastConnectedAt: 1 as number | null,
-    },
     machineTargets: {} as Record<string, { daemonStateVersion: number; isOnline: boolean }>,
 }));
 const serverProfilesState = vi.hoisted(() => ({
@@ -134,50 +136,22 @@ const serverProfilesState = vi.hoisted(() => ({
 const localServicePreviewPlatformState = vi.hoisted(() => ({
     platform: 'web' as 'web' | 'ios' | 'android' | 'desktop',
 }));
-const projectionRefreshState = vi.hoisted(() => {
-    let revision = 0;
-    const listeners = new Set<() => void>();
-    return {
-        getRevision: () => revision,
-        subscribe: (listener: () => void) => {
-            listeners.add(listener);
-            return () => listeners.delete(listener);
-        },
-        publish: () => {
-            revision += 1;
-            for (const listener of listeners) listener();
-        },
-        reset: () => {
-            revision = 0;
-            listeners.clear();
-        },
-    };
-});
+const projectionRefreshState = { publish: publishMachineContributionRegistryProjectionReconnect };
 
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { resetMachineProjectionReadsForTests } from '@/sync/ops/machineContributionRegistryProjection';
-// The projection revision registry is dependency-free, and the machine RPC is
-// the genuine network boundary. Mocking these two (never the transport module
-// itself, which sits inside the app-wide sync import cycle) keeps the real
-// transport, the per-machine projection owner and the AppShell reader in play.
-vi.mock('@/sync/ops/machineContributionRegistryProjectionRevision', async (importOriginal) => {
-    const { mergeModuleMock } = await import('@/dev/testkit/mocks/_shared');
-    return mergeModuleMock<typeof import('@/sync/ops/machineContributionRegistryProjectionRevision')>({
-        importOriginal,
-        overrides: {
-            getMachineContributionRegistryProjectionRevision: () => projectionRefreshState.getRevision(),
-            subscribeMachineContributionRegistryProjectionInvalidation: (_scope, listener) => (
-                projectionRefreshState.subscribe(listener)
-            ),
-        },
-    });
-});
-
+// Only the network boundary is replaced. Revision publication and every
+// projection/currentness owner beneath it remain real.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
     const { answerMachineProjectionDescribeAtRpcBoundary } = await import('@/dev/testkit/mocks/machineProjectionRpc');
+    const describe = answerMachineProjectionDescribeAtRpcBoundary(
+        (machineId, options) => projectionDescribeSpy(machineId, options) as never,
+    );
     return {
-        machineRpcWithServerScope: answerMachineProjectionDescribeAtRpcBoundary(
-            (machineId, options) => projectionDescribeSpy(machineId, options) as never,
+        machineRpcWithServerScope: (params: Parameters<typeof describe>[0]) => (
+            params.method === RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ
+                ? artifactByteRead()
+                : describe(params)
         ),
     };
 });
@@ -191,15 +165,6 @@ vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => {
             subscribeActiveServer: () => () => {},
         },
     });
-});
-
-vi.mock('@/sync/domains/scope/activeServerAccountScope', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/scope/activeServerAccountScope')>();
-    return {
-        ...actual,
-        captureActiveServerAccountScopeLifetime: () => activeAccountLifetimeState.current,
-        retireActiveServerAccountScopeLifetime: () => activeAccountLifetimeState.current?.retireForTest(),
-    };
 });
 
 vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
@@ -234,34 +199,15 @@ vi.mock('./appShellClientExecutableActivation', async (importOriginal) => {
     };
 });
 
-vi.mock('@/components/plugins/reactNative/projectionInvalidation', () => ({
-    applyInstalledAppShellPluginUiReactNativeExecutableAuthorityInvalidation: (
-        previous: Readonly<{ generation: number | null }>,
-        next: Readonly<{ generation: number | null }>,
-    ) => pluginRuntimeSpies.invalidate(previous, next),
-    createInstalledPluginUiReactNativeRuntimeProjectionSource: () => ({
-        update: pluginRuntimeSpies.reconcileSourceUpdate,
-        dispose: pluginRuntimeSpies.reconcileSourceDispose,
-    }),
-}));
-
-vi.mock('@/components/plugins/reactNative/executableModuleHost', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/components/plugins/reactNative/executableModuleHost')>();
+vi.mock('@/components/plugins/reactNative/projectionInvalidation', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/components/plugins/reactNative/projectionInvalidation')>();
     return {
         ...actual,
-        getInstalledPluginUiExecutableModuleHost: () => (
-            pluginExecutableHostState.override ?? actual.getInstalledPluginUiExecutableModuleHost()
-        ),
-    };
-});
-
-vi.mock('../../plugins/reactNative/bundleCache', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('../../plugins/reactNative/bundleCache')>();
-    return {
-        ...actual,
-        getInstalledPluginReactNativeBundleCache: () => (
-            appShellClientExecutableRuntimeState.cache ?? actual.getInstalledPluginReactNativeBundleCache()
-        ),
+        applyInstalledAppShellPluginUiReactNativeExecutableAuthorityInvalidation: (
+            ...args: Parameters<typeof actual.applyInstalledAppShellPluginUiReactNativeExecutableAuthorityInvalidation>
+        ) => appShellClientExecutableRuntimeState.useRealActivation
+            ? actual.applyInstalledAppShellPluginUiReactNativeExecutableAuthorityInvalidation(...args)
+            : pluginRuntimeSpies.invalidate(...args),
     };
 });
 
@@ -275,20 +221,6 @@ vi.mock('../../plugins/reactNative/resolveDefaultReactNativeLoaderBackend', asyn
     };
 });
 
-vi.mock('@/sync/domains/plugins/availability/reactNativeArtifactAvailability', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/plugins/availability/reactNativeArtifactAvailability')>();
-    return {
-        ...actual,
-        acquirePluginReactNativeArtifactAvailability: async (
-            ...args: Parameters<typeof actual.acquirePluginReactNativeArtifactAvailability>
-        ) => {
-            clientArtifactAvailabilitySpy(args[0]);
-            return appShellClientExecutableRuntimeState.availability
-                ?? await actual.acquirePluginReactNativeArtifactAvailability(...args);
-        },
-    };
-});
-
 vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
     useActiveServerSnapshot: () => storageState.activeServer,
 }));
@@ -297,7 +229,8 @@ vi.mock('@/sync/domains/local/services/preview/platform', () => ({
     resolveLocalServicePreviewPlatform: () => localServicePreviewPlatformState.platform,
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     const readStorageState = () => ({
         machines: Object.fromEntries(storageState.machines.map((machine) => [machine.id, machine])),
@@ -321,7 +254,7 @@ vi.mock('@/sync/domains/state/storage', async () => {
     return createStorageModuleStub({
         storage,
         useAllMachines: () => storageState.machines,
-        useEndpointStatus: () => storageState.endpointConnectivity.status,
+        useEndpointStatus: actual.useEndpointStatus,
         useMachineCliDetectionTarget: (machineId: string | null) => (
             machineId
                 ? storageState.machineTargets[machineId] ?? {
@@ -337,6 +270,16 @@ vi.mock('@/sync/domains/state/storage', async () => {
 
 const initialPersistentStorageState = persistentStorage.getState();
 
+beforeEach(() => {
+    persistentStorage.setState({ endpointStatus: 'online' });
+    // Secure storage is the credential boundary; routed admission and lifetime
+    // creation remain real and read the Account currently installed by the fixture.
+    vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async () => ({
+        token: `header.${Buffer.from(JSON.stringify({ sub: persistentStorage.getState().profileScope?.accountId ?? 'account-fixture' })).toString('base64url')}.signature`,
+    }));
+    installActiveAccountScope('account-fixture');
+});
+
 afterEach(async () => {
     vi.useRealTimers();
     standardCleanup();
@@ -348,34 +291,26 @@ afterEach(async () => {
     retireActiveServerAccountScopeLifetime();
     persistentStorage.setState(initialPersistentStorageState, true);
     projectionDescribeSpy.mockReset();
-    clientArtifactAvailabilitySpy.mockReset();
+    artifactByteRead.mockReset();
     pluginRuntimeSpies.activate.mockReset();
     pluginRuntimeSpies.activate.mockResolvedValue([]);
     pluginRuntimeSpies.withdraw.mockReset();
     pluginRuntimeSpies.withdraw.mockResolvedValue(undefined);
     pluginRuntimeSpies.invalidate.mockReset();
     pluginRuntimeSpies.invalidate.mockResolvedValue(undefined);
-    pluginRuntimeSpies.reconcileSourceUpdate.mockReset();
-    pluginRuntimeSpies.reconcileSourceDispose.mockReset();
-    pluginRuntimeSpies.replaceAuthority.mockReset();
-    pluginRuntimeSpies.replaceAuthority.mockResolvedValue(undefined);
     pluginExecutableHostState.override = null;
     appShellClientExecutableRuntimeState.useRealActivation = false;
-    appShellClientExecutableRuntimeState.cache = null;
     appShellClientExecutableRuntimeState.loaderBackend = null;
-    appShellClientExecutableRuntimeState.availability = null;
     storageState.machines = [];
     storageState.voiceExecutionMachine = {
         mode: 'auto',
         machineId: null,
     };
     storageState.activeServer = { serverId: 'server-1', serverUrl: 'https://server.example.test', generation: 1 };
-    storageState.endpointConnectivity = { status: 'online', lastConnectedAt: 1 };
     storageState.machineTargets = {};
     serverProfilesState.generation = 0;
     serverProfilesState.profiles = [];
     localServicePreviewPlatformState.platform = 'web';
-    projectionRefreshState.reset();
     // The one per-machine projection owner is module state shared by every
     // reader; a case that left a describe pending must not strand the next.
     clearDaemonMergedProjectionCacheForTests();
@@ -450,8 +385,10 @@ function installSelectedAppScopePluginFixture(input: Readonly<{
     machineId: string;
     pluginId: string;
     artifacts?: readonly AppScopeArtifactFixture[];
+    accountId?: string;
 }>): PluginMachineExecutionOriginV1 {
     const artifacts = input.artifacts ?? [];
+    const accountId = input.accountId ?? APP_SCOPE_FIXTURE.accountId;
     const origin: PluginMachineExecutionOriginV1 = Object.freeze({
         serverIdentityId: APP_SCOPE_FIXTURE.serverIdentityId,
         materializationRef: Object.freeze({
@@ -464,10 +401,10 @@ function installSelectedAppScopePluginFixture(input: Readonly<{
     const previous = persistentStorage.getState();
     persistentStorage.setState({
         isDataReady: true,
-        profile: { ...previous.profile, id: APP_SCOPE_FIXTURE.accountId },
+        profile: { ...previous.profile, id: accountId },
         profileScope: {
             serverId: APP_SCOPE_FIXTURE.serverId,
-            accountId: APP_SCOPE_FIXTURE.accountId,
+            accountId,
         },
         machines: { [machine.id]: machine },
         machineListByServerId: {
@@ -565,11 +502,11 @@ function installSelectedAppScopePluginFixture(input: Readonly<{
     replacePluginAccountAvailabilityProjection({
         scope: {
             serverId: APP_SCOPE_FIXTURE.serverId,
-            accountId: APP_SCOPE_FIXTURE.accountId,
+            accountId,
         },
         snapshot,
     });
-    installActiveAccountLifetime(APP_SCOPE_FIXTURE.accountId);
+    installActiveAccountLifetime(accountId);
     return origin;
 }
 
@@ -625,7 +562,7 @@ function installActiveAccountScope(accountId: string): void {
         ...previous,
         isDataReady: true,
         profile: { ...previous.profile, id: accountId },
-        profileScope: { serverId: 'server-1', accountId },
+        profileScope: { serverId: storageState.activeServer.serverId, accountId },
     }, true);
     installActiveAccountLifetime(accountId);
 }
@@ -659,11 +596,6 @@ function ClientActionHeaderPresentationProbe(props: Readonly<{
     );
 }
 
-function ScopedProjectionProbe() {
-    const value = useScopedPluginUiProjection({ machineId: 'machine-scoped', serverId: 'server-scoped' });
-    return React.createElement('ScopedProjectionProbe', { value });
-}
-
 function accountLifetimeFixture(input: Readonly<{
     accountId: string;
     isCurrent?: () => boolean;
@@ -676,54 +608,20 @@ function accountLifetimeFixture(input: Readonly<{
 }
 
 function installActiveAccountLifetime(accountId: string): ActiveServerAccountScopeLifetime {
-    activeAccountLifetimeState.current?.retireForTest();
-    let retired = false;
-    const retirementListeners = new Set<() => void>();
-    let lifetime: TestActiveServerAccountScopeLifetime;
-    lifetime = Object.freeze({
-        scope: Object.freeze({ serverId: 'server-1', accountId }),
-        isCurrent: () => !retired && activeAccountLifetimeState.current === lifetime,
-        onRetire: (listener: () => void) => {
-            if (retired) {
-                listener();
-                return Object.freeze({ dispose() {} });
-            }
-            retirementListeners.add(listener);
-            return Object.freeze({ dispose: () => retirementListeners.delete(listener) });
-        },
-        retireForTest: () => {
-            if (retired) return;
-            retired = true;
-            if (activeAccountLifetimeState.current === lifetime) activeAccountLifetimeState.current = null;
-            const listeners = [...retirementListeners];
-            retirementListeners.clear();
-            for (const listener of listeners) listener();
-        },
-    });
-    activeAccountLifetimeState.current = lifetime;
+    // Admit the fixture's restored Home through the real connection projection;
+    // profileScope is already installed in the canonical storage boundary.
+    publishAppliedActiveServerSnapshot(storageState.activeServer);
+    if (!getServerProfileById(storageState.activeServer.serverId)) {
+        serverProfilesState.profiles = [...serverProfilesState.profiles, {
+            id: storageState.activeServer.serverId,
+            serverUrl: storageState.activeServer.serverUrl,
+            name: 'Test Home', createdAt: 1, updatedAt: 1, lastUsedAt: 1, source: 'manual',
+        }];
+        serverProfilesState.generation += 1;
+    }
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime || lifetime.scope.accountId !== accountId) throw new Error('Account fixture was not admitted');
     return lifetime;
-}
-
-function createAvailableClientArtifactHandle() {
-    let current = true;
-    const revocationListeners = new Set<() => void>();
-    const dispose = vi.fn(() => {
-        current = false;
-        revocationListeners.clear();
-    });
-    return Object.freeze({
-        availability: Object.freeze({
-            kind: 'available' as const,
-            cacheKey: 'app-shell-client-action-artifact',
-            isCurrent: () => current,
-            onRevoke: (listener: () => void) => {
-                revocationListeners.add(listener);
-                return Object.freeze({ dispose: () => revocationListeners.delete(listener) });
-            },
-            dispose,
-        }),
-        dispose,
-    });
 }
 
 function unselectedAppScopeOrigin(input: Readonly<{
@@ -794,6 +692,124 @@ function pluginUiProjectionWithAppTab(input: Readonly<{
         },
         diagnostics: [],
     });
+}
+
+function createAppShellClientActionFixture(input: Readonly<{
+    pluginId: string;
+    machineId: string;
+    accountId?: string;
+}>) {
+    const { pluginId } = input;
+    const actionId = 'open-client-action';
+    const actionArtifactId = 'client-action-runtime';
+    const generation = 5;
+    const entryPath = 'react-native/client-action-runtime/entry.cjs.bundle';
+    const bytes = new TextEncoder().encode('// synthetic AppShell client Action executable');
+    const entryDigest = computePluginUiArtifactSha256DigestV1(bytes);
+    const artifactDigest = computePluginUiArtifactFileSetSha256DigestV1([{ relativePath: entryPath, bytes }]);
+    const artifactGraph = PluginUiArtifactsManifestV2Schema.parse({
+        version: 2,
+        entries: [{
+            artifactId: actionArtifactId,
+            tier: 'reactNative',
+            entry: entryPath,
+            files: [{ relativePath: entryPath, digest: entryDigest, byteSize: bytes.byteLength }],
+            digest: artifactDigest,
+            builtWith: { bundler: 'esbuild', version: '0.27.2' },
+            executable: { exports: ['activate'] },
+            hostUiApiRange: '^1.0.0',
+        }],
+    }).entries[0]!;
+    const artifactBytesResponse = {
+        ok: true,
+        artifactFamily: 'reactNative',
+        cacheIdentity: { artifactDigest },
+        artifact: {
+            artifactKind: 'reactNativeBundle', digest: artifactDigest,
+            format: 'plainJs', byteSize: bytes.byteLength,
+        },
+        files: [{
+            relativePath: entryPath, digest: entryDigest, byteSize: bytes.byteLength,
+            bytesBase64: Buffer.from(bytes).toString('base64'),
+        }],
+    } satisfies DaemonPluginUiArtifactBytesReadResponse;
+    artifactByteRead.mockResolvedValue(artifactBytesResponse);
+    const cacheIdentity = Object.freeze({
+        pluginId,
+        contributionId: actionId,
+        artifactId: actionArtifactId,
+        artifactDigest,
+        platform: 'web' as const,
+    });
+    const origin = installSelectedAppScopePluginFixture({
+        machineId: input.machineId,
+        pluginId,
+        accountId: input.accountId,
+        artifacts: [{
+            contributionId: actionId,
+            artifactId: actionArtifactId,
+            tier: 'reactNative',
+            platform: 'web',
+            artifactDigest,
+            hostUiApiRange: '^1.0.0',
+        }],
+    });
+    const baseProjection = pluginUiProjectionWithClientAction({
+        generation,
+        pluginId,
+        origin,
+    });
+    const baseClientAction = baseProjection.actionsById[`${pluginId}/${actionId}`];
+    if (!baseClientAction) {
+        throw new Error('AppShell client Action test fixture is missing its Action declaration');
+    }
+    const appProjection = PluginProjectionV2Schema.parse({
+        ...baseProjection,
+        actionsById: {
+            ...baseProjection.actionsById,
+            [`${pluginId}/${actionId}`]: {
+                ...baseClientAction,
+                authorization: {
+                    generation: {
+                        targetGeneration: String(generation),
+                        desiredGeneration: String(generation),
+                        appliedGeneration: String(generation),
+                    },
+                    resourceSelections: [],
+                    scopedGrants: [],
+                    serviceAvailability: [],
+                    operatingSystemAuthorization: [],
+                },
+            },
+        },
+        familiesById: {
+            ...baseProjection.familiesById,
+            pluginUi: {
+                family: 'pluginUi',
+                entriesById: {
+                    ...baseProjection.familiesById.pluginUi?.entriesById,
+                    [`reactNativeBundle:${pluginId}:${actionId}`]: {
+                        id: `reactNativeBundle:${pluginId}:${actionId}`,
+                        pluginId,
+                        occurrenceId: origin.materializationRef.materializationId,
+                        serverIdentityId: origin.serverIdentityId,
+                        materializationRef: origin.materializationRef,
+                        contributionKind: 'reactNativeBundle',
+                        contributionId: actionId,
+                        generatedOwnerKind: 'clientContribution',
+                        artifactGraph,
+                        runtime: {
+                            decision: { state: 'load' },
+                            loadPolicy: { source: 'installedArtifact' },
+                            cacheIdentity: { artifactDigest: cacheIdentity.artifactDigest },
+                        },
+                    },
+                },
+            },
+        },
+    });
+    return { pluginId, actionId, actionArtifactId, bytes, entryPath, entryDigest, artifactDigest,
+        artifactGraph, cacheIdentity, origin, baseClientAction, appProjection, artifactBytesResponse };
 }
 
 function pluginUiProjectionWithClientAction(input: Readonly<{
@@ -1355,100 +1371,10 @@ describe('AppShellPluginUiProjectionProvider', () => {
             mode: 'fixed',
             machineId: 'machine-b',
         };
-        const pluginId = 'acme.app-shell-action-without-voice';
-        const actionId = 'open-client-action';
-        const actionArtifactId = 'client-action-runtime';
-        const generation = 5;
-        const entryPath = 'react-native/client-action-runtime/entry.cjs.bundle';
-        const bytes = new TextEncoder().encode('// synthetic AppShell client Action executable');
-        const entryDigest = computePluginUiArtifactSha256DigestV1(bytes);
-        const artifactDigest = computePluginUiArtifactFileSetSha256DigestV1([{ relativePath: entryPath, bytes }]);
-        const artifactGraph = PluginUiArtifactsManifestV2Schema.parse({
-            version: 2,
-            entries: [{
-                artifactId: actionArtifactId,
-                tier: 'reactNative',
-                entry: entryPath,
-                files: [{ relativePath: entryPath, digest: entryDigest, byteSize: bytes.byteLength }],
-                digest: artifactDigest,
-                builtWith: { bundler: 'esbuild', version: '0.27.2' },
-                executable: { exports: ['activate'] },
-                hostUiApiRange: '^1.0.0',
-            }],
-        }).entries[0]!;
-        const cacheIdentity = Object.freeze({
-            pluginId,
-            contributionId: actionId,
-            artifactId: actionArtifactId,
-            artifactDigest,
-            platform: 'web' as const,
+        const { actionId, actionArtifactId, cacheIdentity, origin, baseClientAction, appProjection } = createAppShellClientActionFixture({
+            pluginId: 'acme.app-shell-action-without-voice', machineId: 'machine-a',
         });
-        const origin = installSelectedAppScopePluginFixture({
-            machineId: 'machine-a',
-            pluginId,
-            artifacts: [{
-                contributionId: actionId,
-                artifactId: actionArtifactId,
-                tier: 'reactNative',
-                platform: 'web',
-                artifactDigest,
-                hostUiApiRange: '^1.0.0',
-            }],
-        });
-        const baseProjection = pluginUiProjectionWithClientAction({
-            generation,
-            pluginId,
-            origin,
-        });
-        const baseClientAction = baseProjection.actionsById[`${pluginId}/${actionId}`];
-        if (!baseClientAction) {
-            throw new Error('AppShell client Action test fixture is missing its Action declaration');
-        }
-        const appProjection = PluginProjectionV2Schema.parse({
-            ...baseProjection,
-            actionsById: {
-                ...baseProjection.actionsById,
-                [`${pluginId}/${actionId}`]: {
-                    ...baseClientAction,
-                    authorization: {
-                        generation: {
-                            targetGeneration: String(generation),
-                            desiredGeneration: String(generation),
-                            appliedGeneration: String(generation),
-                        },
-                        resourceSelections: [],
-                        scopedGrants: [],
-                        serviceAvailability: [],
-                        operatingSystemAuthorization: [],
-                    },
-                },
-            },
-            familiesById: {
-                ...baseProjection.familiesById,
-                pluginUi: {
-                    family: 'pluginUi',
-                    entriesById: {
-                        ...baseProjection.familiesById.pluginUi?.entriesById,
-                        [`reactNativeBundle:${pluginId}:${actionId}`]: {
-                            id: `reactNativeBundle:${pluginId}:${actionId}`,
-                            pluginId,
-                            occurrenceId: origin.materializationRef.materializationId,
-                            serverIdentityId: origin.serverIdentityId,
-                            materializationRef: origin.materializationRef,
-                            contributionKind: 'reactNativeBundle',
-                            contributionId: actionId,
-                            generatedOwnerKind: 'clientContribution',
-                            artifactGraph,
-                            runtime: {
-                                decision: { state: 'load' },
-                                loadPolicy: { source: 'installedArtifact' },
-                                cacheIdentity: { artifactDigest: cacheIdentity.artifactDigest },
-                            },
-                        },
-                    },
-                },
-            },
-        });
+        const pluginId = origin.materializationRef.pluginId;
         const clientActionHeaderAction = Object.freeze({
             id: 'run-client-action',
             title: 'Run client action',
@@ -1493,8 +1419,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
         // the installed host in production. Keep this composed test on that
         // same host rather than creating a test-only second registration index.
         const executableHost = getInstalledPluginUiExecutableModuleHost();
-        const executableCache = createPluginReactNativeBundleCache();
-        executableCache.putInstalledArtifact({ identity: cacheIdentity, bytes, format: 'plainJs' });
+        const executableCache = getInstalledPluginReactNativeBundleCache();
         let failActivation = true;
         const activate = vi.fn((api: PluginClientApi) => {
             if (failActivation) throw new Error('synthetic client executable activation failure');
@@ -1505,11 +1430,8 @@ describe('AppShellPluginUiProjectionProvider', () => {
             available: true,
             loadInstalledBundle: vi.fn(async () => activate),
         });
-        const failedActivationArtifactAvailability = createAvailableClientArtifactHandle();
         pluginExecutableHostState.override = executableHost;
-        appShellClientExecutableRuntimeState.cache = executableCache;
         appShellClientExecutableRuntimeState.loaderBackend = loaderBackend;
-        appShellClientExecutableRuntimeState.availability = failedActivationArtifactAvailability.availability;
         appShellClientExecutableRuntimeState.useRealActivation = true;
         let describedAppProjection = appProjection;
         projectionDescribeSpy.mockImplementation(async (machineId: string) => ({
@@ -1559,9 +1481,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
             }),
         );
         await vi.waitFor(() => {
-            expect(clientArtifactAvailabilitySpy).toHaveBeenCalledWith(expect.objectContaining({
-                daemon: expect.objectContaining({ machineId: origin.materializationRef.machineId }),
-            }));
+            expect(artifactByteRead).toHaveBeenCalled();
         });
         await vi.waitFor(() => {
             expect(activate).toHaveBeenCalledTimes(1);
@@ -1587,7 +1507,6 @@ describe('AppShellPluginUiProjectionProvider', () => {
         // client Action can be presented or dispatched before its target
         // commits the exact registration.
         expect(registration()).toBeNull();
-        expect(failedActivationArtifactAvailability.dispose).toHaveBeenCalledTimes(1);
         expect(pluginRuntimeSpies.activate).not.toHaveBeenCalled();
         expect(headerControl().props.disabled).toBe(true);
         expect(headerControl().props.onPress).toBeUndefined();
@@ -1609,8 +1528,6 @@ describe('AppShellPluginUiProjectionProvider', () => {
         // The AppShell owner exposes one explicit reload of the same complete
         // set. Recovery must not depend on a daemon projection change, a timer,
         // or a second executable index.
-        const recoveredActivationArtifactAvailability = createAvailableClientArtifactHandle();
-        appShellClientExecutableRuntimeState.availability = recoveredActivationArtifactAvailability.availability;
         failActivation = false;
         await act(async () => {
             screen.tree.findByType('ProjectionProbe' as never).props.value.reloadClientExecutables();
@@ -1639,7 +1556,24 @@ describe('AppShellPluginUiProjectionProvider', () => {
             expect(headerControl().props.disabled).toBe(false);
             expect(headerControl().props.onPress).toEqual(expect.any(Function));
         });
-        const artifactAvailabilityCallCountBeforeMalformed = clientArtifactAvailabilitySpy.mock.calls.length;
+        const artifactReadsBeforeMalformed = artifactByteRead.mock.calls.length;
+        const currentRegistration = registration();
+        storageState.machines = storageState.machines.map((machine) => ({
+            ...machine, activeAt: Date.now() + 1_000,
+        }));
+        await screen.update(
+            <AppShellPluginUiProjectionProvider>
+                <ProjectionProbe />
+                <ClientActionHeaderPresentationProbe
+                    action={clientActionHeaderAction}
+                    page={clientActionHeaderPage}
+                    actionAuthority={clientActionHeaderAuthority}
+                />
+            </AppShellPluginUiProjectionProvider>,
+        );
+        await flushHookEffects({ cycles: 5 });
+        expect(registration()).toBe(currentRegistration);
+        expect(activate).toHaveBeenCalledTimes(2);
 
         describedAppProjection = malformedActionProjection;
         await act(async () => {
@@ -1649,13 +1583,11 @@ describe('AppShellPluginUiProjectionProvider', () => {
 
         await vi.waitFor(() => {
             expect(registration()).toBeNull();
-            expect(recoveredActivationArtifactAvailability.dispose).toHaveBeenCalledTimes(1);
+            expect(executableCache.readInstalledArtifact(cacheIdentity)).toBeNull();
         });
         expect(activate).toHaveBeenCalledTimes(2);
-        expect(clientArtifactAvailabilitySpy).toHaveBeenCalledTimes(artifactAvailabilityCallCountBeforeMalformed);
+        expect(artifactByteRead).toHaveBeenCalledTimes(artifactReadsBeforeMalformed);
 
-        const accountTeardownArtifactAvailability = createAvailableClientArtifactHandle();
-        appShellClientExecutableRuntimeState.availability = accountTeardownArtifactAvailability.availability;
         describedAppProjection = appProjection;
         await act(async () => {
             projectionRefreshState.publish();
@@ -1677,55 +1609,129 @@ describe('AppShellPluginUiProjectionProvider', () => {
 
         await vi.waitFor(() => {
             expect(registration()).toBeNull();
-            expect(accountTeardownArtifactAvailability.dispose).toHaveBeenCalledTimes(1);
+            expect(executableCache.readInstalledArtifact(cacheIdentity)).toBeNull();
         });
     });
 
-    it('revokes an in-flight projection activation on unmount before same-generation remount', async () => {
-        storageState.machines = [{
-            id: 'machine-1', active: true, activeAt: Date.now(), metadata: { host: 'local' },
-        }];
-        projectionDescribeSpy.mockResolvedValue({
-            supported: true,
-            projection: {
-                v: 2, generation: 5, installedPackagesById: {}, agentsById: {},
-                actionsById: {}, toolsById: {}, commandsById: {}, resourcesById: {},
-                settingsById: {}, familiesById: {}, diagnostics: [],
-            },
+    it('rejects late Artifact bytes admitted by the retired Account before evaluating its executable', async () => {
+        appShellClientExecutableRuntimeState.useRealActivation = true;
+        storageState.machines = [createLiveMachine('machine-1')];
+        const fixture = createAppShellClientActionFixture({
+            pluginId: 'acme.late-app-shell-artifact', machineId: 'machine-1', accountId: 'account-a',
         });
-        const firstActivation = createDeferred<never[]>();
-        pluginRuntimeSpies.activate.mockImplementationOnce(async () => await firstActivation.promise);
-
+        projectionDescribeSpy.mockResolvedValue({ supported: true, projection: fixture.appProjection });
+        const firstBytes = createDeferred<DaemonPluginUiArtifactBytesReadResponse>();
+        artifactByteRead.mockReturnValueOnce(firstBytes.promise);
+        const evaluatedAccounts: string[] = [];
+        const activate = (api: PluginClientApi) => {
+            evaluatedAccounts.push(captureActiveServerAccountScopeLifetime()!.scope.accountId);
+            api.actions.register(fixture.actionId, async () => 'current');
+        };
+        const loadInstalledBundle = vi.fn(async () => activate);
+        appShellClientExecutableRuntimeState.loaderBackend = {
+            backendId: 'commonJs', available: true, loadInstalledBundle,
+        };
+        const executableHost = getInstalledPluginUiExecutableModuleHost();
+        pluginExecutableHostState.override = executableHost;
         const { AppShellPluginUiProjectionProvider } = await import('./AppShellPluginUiProjection');
-        const first = await renderScreen(
-            <AppShellPluginUiProjectionProvider><ProjectionProbe /></AppShellPluginUiProjectionProvider>,
+        const renderApp = () => (
+            <AppShellPluginUiProjectionProvider><ProjectionProbe /></AppShellPluginUiProjectionProvider>
         );
-        await flushHookEffects({ cycles: 5 });
-        expect(pluginRuntimeSpies.activate).toHaveBeenCalledTimes(1);
-        const nullInvalidationsBeforeUnmount = pluginRuntimeSpies.invalidate.mock.calls
-            .filter(([, next]) => (next as { generation?: unknown }).generation === null).length;
+        const screen = await renderScreen(renderApp());
+        await vi.waitFor(() => expect(artifactByteRead).toHaveBeenCalledTimes(1));
+        expect(loadInstalledBundle).not.toHaveBeenCalled();
 
-        await first.unmount();
-        await flushHookEffects({ cycles: 2 });
-        expect(pluginRuntimeSpies.invalidate.mock.calls
-            .filter(([, next]) => (next as { generation?: unknown }).generation === null)).toHaveLength(
-                nullInvalidationsBeforeUnmount + 1,
-            );
-
-        await renderScreen(
-            <AppShellPluginUiProjectionProvider><ProjectionProbe /></AppShellPluginUiProjectionProvider>,
-        );
-        await flushHookEffects({ cycles: 5 });
-        expect(pluginRuntimeSpies.activate).toHaveBeenCalledTimes(3);
-
-        firstActivation.resolve([]);
-        await flushHookEffects({ cycles: 4 });
-        expect(pluginRuntimeSpies.invalidate.mock.calls
-            .filter(([, next]) => (next as { generation?: unknown }).generation === null)).toHaveLength(
-                nullInvalidationsBeforeUnmount + 1,
-            );
-        expect(pluginRuntimeSpies.activate).toHaveBeenCalledTimes(3);
+        await act(async () => {
+            createAppShellClientActionFixture({
+                pluginId: fixture.pluginId, machineId: 'machine-1', accountId: 'account-b',
+            });
+        });
+        await screen.update(renderApp());
+        firstBytes.resolve(fixture.artifactBytesResponse);
+        await flushHookEffects({ cycles: 8 });
+        await vi.waitFor(() => {
+            expect(screen.tree.findByType('ProjectionProbe' as never).props.value
+                .clientExecutableActivation).toEqual({ status: 'ready' });
+            expect(evaluatedAccounts).toEqual(['account-b']);
+        });
+        expect(loadInstalledBundle).toHaveBeenCalledTimes(1);
+        expect(artifactByteRead).toHaveBeenCalledTimes(2);
     });
+
+    it.each(['Account switch', 'unmount/remount'] as const)(
+        'rejects a late executable from the retired occurrence after %s while its successor remains usable',
+        async (transition) => {
+            appShellClientExecutableRuntimeState.useRealActivation = true;
+            storageState.machines = [createLiveMachine('machine-1')];
+            const fixture = createAppShellClientActionFixture({
+                pluginId: 'acme.late-app-shell-executable', machineId: 'machine-1', accountId: 'account-a',
+            });
+            projectionDescribeSpy.mockResolvedValue({ supported: true, projection: fixture.appProjection });
+            const discardedActivate = vi.fn((api: PluginClientApi) => {
+                api.actions.register(fixture.actionId, async () => 'retired');
+            });
+            const successorActivate = vi.fn((api: PluginClientApi) => {
+                api.actions.register(fixture.actionId, async () => 'current');
+            });
+            const firstLoad = createDeferred<typeof discardedActivate>();
+            const loadInstalledBundle = vi.fn(async () => successorActivate)
+                .mockImplementationOnce(async () => await firstLoad.promise);
+            appShellClientExecutableRuntimeState.loaderBackend = {
+                backendId: 'commonJs', available: true, loadInstalledBundle,
+            };
+            const executableHost = getInstalledPluginUiExecutableModuleHost();
+            pluginExecutableHostState.override = executableHost;
+            const registration = () => getPluginUiClientExecutableComposition(executableHost).read({
+                family: 'actions', pluginId: fixture.pluginId,
+                occurrenceId: fixture.baseClientAction.occurrenceId, localId: fixture.actionId,
+                target: { artifactId: fixture.actionArtifactId, exportName: 'activate', platform: 'web' },
+                executionOrigin: fixture.origin,
+            });
+            const accountA = captureActiveServerAccountScopeLifetime();
+            const { AppShellPluginUiProjectionProvider } = await import('./AppShellPluginUiProjection');
+            const renderApp = () => (
+                <AppShellPluginUiProjectionProvider><ProjectionProbe /></AppShellPluginUiProjectionProvider>
+            );
+            const first = await renderScreen(renderApp());
+            await vi.waitFor(() => expect(loadInstalledBundle).toHaveBeenCalledTimes(1));
+            expect(registration()).toBeNull();
+            expect(artifactByteRead).toHaveBeenCalled();
+
+            let successor = first;
+            if (transition === 'Account switch') {
+                await act(async () => {
+                    createAppShellClientActionFixture({
+                        pluginId: fixture.pluginId, machineId: 'machine-1', accountId: 'account-b',
+                    });
+                });
+                expect(accountA?.isCurrent()).toBe(false);
+                await first.update(renderApp());
+                // A same-server Account successor queues behind preparation, but
+                // the stale executable must not run when that module finally loads.
+                firstLoad.resolve(discardedActivate);
+            } else {
+                await first.unmount();
+                successor = await renderScreen(renderApp());
+                await vi.waitFor(() => expect(registration()).not.toBeNull());
+                firstLoad.resolve(discardedActivate);
+            }
+            await flushHookEffects({ cycles: 8 });
+            await vi.waitFor(() => {
+                expect(successorActivate).toHaveBeenCalledTimes(1);
+                expect(registration()).not.toBeNull();
+                expect(successor.tree.findByType('ProjectionProbe' as never).props.value
+                    .clientExecutableActivation).toEqual({ status: 'ready' });
+            });
+            expect(discardedActivate).not.toHaveBeenCalled();
+            expect(registration()?.accountLifetime).toBe(captureActiveServerAccountScopeLifetime());
+
+            await successor.unmount();
+            expect(registration()).toBeNull();
+            await vi.waitFor(() => {
+                expect(getInstalledPluginReactNativeBundleCache().readInstalledArtifact(fixture.cacheIdentity)).toBeNull();
+            });
+        },
+    );
 
     it('reapplies an unchanged projection when the Voice runtime host generation is replaced', async () => {
         storageState.machines = [{
@@ -1759,42 +1765,6 @@ describe('AppShellPluginUiProjectionProvider', () => {
         replacementGeneration.revoke();
     });
 
-    it('keeps the active plugin runtime when the same target republishes the same projection generation', async () => {
-        storageState.machines = [{
-            id: 'machine-1', active: true, activeAt: Date.now(), metadata: { host: 'local' },
-        }];
-        projectionDescribeSpy.mockImplementation(async () => ({
-            supported: true,
-            projection: {
-                v: 2, generation: 5, installedPackagesById: {}, agentsById: {},
-                actionsById: {}, toolsById: {}, commandsById: {}, resourcesById: {},
-                settingsById: {}, familiesById: {}, diagnostics: [],
-            },
-        }));
-
-        const { AppShellPluginUiProjectionProvider } = await import('./AppShellPluginUiProjection');
-        const renderApp = () => (
-            <AppShellPluginUiProjectionProvider><ProjectionProbe /></AppShellPluginUiProjectionProvider>
-        );
-        const screen = await renderScreen(renderApp());
-        await flushHookEffects({ cycles: 5 });
-        const initialActivationCount = pluginRuntimeSpies.activate.mock.calls.length;
-        expect(initialActivationCount).toBeGreaterThan(0);
-        const describesAfterInitialLoad = projectionDescribeSpy.mock.calls.length;
-        const invalidationsAfterInitialLoad = pluginRuntimeSpies.invalidate.mock.calls.length;
-
-        storageState.machines = [{
-            id: 'machine-1', active: true, activeAt: Date.now() + 1_000, metadata: { host: 'local' },
-        }];
-        await screen.update(renderApp());
-        await flushHookEffects({ cycles: 5 });
-
-        // A presence-only republish carries no new projection authority, so it must
-        // neither re-describe the target nor disturb the active runtime.
-        expect(projectionDescribeSpy).toHaveBeenCalledTimes(describesAfterInitialLoad);
-        expect(pluginRuntimeSpies.invalidate).toHaveBeenCalledTimes(invalidationsAfterInitialLoad);
-        expect(pluginRuntimeSpies.activate).toHaveBeenCalledTimes(initialActivationCount);
-    });
 
     it('does not load a projection when the app shell has no active machine scope', async () => {
         const { AppShellPluginUiProjectionProvider } = await import('./AppShellPluginUiProjection');
@@ -1845,30 +1815,9 @@ describe('AppShellPluginUiProjectionProvider', () => {
         }));
     });
 
-    it('reports scoped projection currentness to the central cache reconciler', async () => {
-        storageState.machineTargets['machine-scoped'] = {
-            daemonStateVersion: 5,
-            isOnline: true,
-        };
-        projectionDescribeSpy.mockResolvedValue({
-            supported: true,
-            projection: {
-                v: 2, generation: 5, installedPackagesById: {}, agentsById: {},
-                actionsById: {}, toolsById: {}, commandsById: {}, resourcesById: {},
-                settingsById: {}, familiesById: {}, diagnostics: [],
-            },
-        });
-
-        await renderScreen(<ScopedProjectionProbe />);
-        await flushHookEffects({ cycles: 5 });
-
-        expect(pluginRuntimeSpies.reconcileSourceUpdate).toHaveBeenCalled();
-        expect(pluginRuntimeSpies.invalidate).not.toHaveBeenCalled();
-        expect(pluginRuntimeSpies.replaceAuthority).not.toHaveBeenCalled();
-    });
 
     it('keeps last-known projection authority inert until reconnect re-description settles', async () => {
-        storageState.endpointConnectivity = { status: 'online', lastConnectedAt: null };
+        await act(async () => persistentStorage.setState({ endpointStatus: 'online' }));
         storageState.machines = [{
             id: 'machine-1',
             active: true,
@@ -1910,7 +1859,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
         }));
         const describesBeforeReconnect = projectionDescribeSpy.mock.calls.length;
 
-        storageState.endpointConnectivity = { status: 'offline', lastConnectedAt: null };
+        await act(async () => persistentStorage.setState({ endpointStatus: 'offline' }));
         await screen.update(renderApp());
         await flushHookEffects({ cycles: 2 });
         expect(readProjection()).toEqual(expect.objectContaining({
@@ -1921,11 +1870,13 @@ describe('AppShellPluginUiProjectionProvider', () => {
 
         const reDescription = createDeferred<SupportedMachineContributionRegistryProjectionDescribeResult>();
         projectionDescribeSpy.mockReturnValueOnce(reDescription.promise);
-        storageState.endpointConnectivity = { status: 'online', lastConnectedAt: null };
         // A socket reconnect advances every machine's projection revision
         // (`publishMachineContributionRegistryProjectionReconnect`), which is
         // what makes the one per-machine owner re-describe.
-        await act(async () => projectionRefreshState.publish());
+        await act(async () => {
+            persistentStorage.setState({ endpointStatus: 'online' });
+            projectionRefreshState.publish();
+        });
         await screen.update(renderApp());
         await flushHookEffects({ cycles: 2 });
         expect(projectionDescribeSpy.mock.calls.length).toBeGreaterThan(describesBeforeReconnect);
@@ -2051,7 +2002,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
             },
             diagnostics: [],
         });
-        storageState.endpointConnectivity = { status: 'online', lastConnectedAt: null };
+        await act(async () => persistentStorage.setState({ endpointStatus: 'online' }));
         localServicePreviewPlatformState.platform = 'desktop';
         storageState.machines = [{
             id: 'machine-1',
@@ -2126,14 +2077,14 @@ describe('AppShellPluginUiProjectionProvider', () => {
         const initialActivationCount = pluginRuntimeSpies.activate.mock.calls.length;
         expect(initialActivationCount).toBeGreaterThan(0);
 
-        storageState.endpointConnectivity = { status: 'offline', lastConnectedAt: null };
+        await act(async () => persistentStorage.setState({ endpointStatus: 'offline' }));
         await screen.update(renderApp());
         await flushHookEffects({ cycles: 3 });
         expect(pluginRuntimeSpies.activate).toHaveBeenLastCalledWith(expect.objectContaining({ voice: null }));
         const activationCountAfterOffline = pluginRuntimeSpies.activate.mock.calls.length;
 
         reconnectDescription = createDeferred();
-        storageState.endpointConnectivity = { status: 'online', lastConnectedAt: null };
+        await act(async () => persistentStorage.setState({ endpointStatus: 'online' }));
         // A socket reconnect advances the machine's projection revision.
         await act(async () => projectionRefreshState.publish());
         await screen.update(renderApp());
@@ -2147,7 +2098,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
     });
 
     it('ignores a pre-disconnect describe result that settles after reconnect starts', async () => {
-        storageState.endpointConnectivity = { status: 'online', lastConnectedAt: null };
+        await act(async () => persistentStorage.setState({ endpointStatus: 'online' }));
         storageState.machines = [{
             id: 'machine-1',
             active: true,
@@ -2194,7 +2145,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
             screen.tree.findByType('ProjectionProbe' as never).props.value as AuthorityAwareProjection
         );
 
-        storageState.endpointConnectivity = { status: 'offline', lastConnectedAt: null };
+        await act(async () => persistentStorage.setState({ endpointStatus: 'offline' }));
         await screen.update(renderApp());
         await flushHookEffects({ cycles: 2 });
         expect(readProjection()).toEqual(expect.objectContaining({
@@ -2202,7 +2153,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
             pluginBrowserProjection: null,
         }));
 
-        storageState.endpointConnectivity = { status: 'online', lastConnectedAt: null };
+        await act(async () => persistentStorage.setState({ endpointStatus: 'online' }));
         // A socket reconnect advances the machine's projection revision.
         await act(async () => projectionRefreshState.publish());
         await screen.update(renderApp());
@@ -2383,6 +2334,41 @@ describe('AppShellPluginUiProjectionProvider', () => {
         });
     });
 
+    it('does not render unchanged machine owners when the app shell rerenders, but still refreshes invalidated projections', async () => {
+        storageState.machines = [
+            { id: 'machine-a', active: true, activeAt: Date.now(), metadata: { host: 'a' } },
+        ];
+        let includeDescriptor = true;
+        projectionDescribeSpy.mockImplementation(async () => ({
+            supported: true,
+            projection: {
+                ...projectionWithConnectedAccount({ serviceId: 'bitbucket', pluginId: 'acme.plugin.a' }),
+                ...(includeDescriptor ? {} : { familiesById: {} }),
+            },
+        }));
+        // Observe the real hook executing in the real renderless machine component.
+        // Replacing it would hide the subscription that must still refresh after memoization.
+        const renders = vi.spyOn(projectionCurrentness, 'usePluginUiProjectionCurrentness');
+        onTestFinished(() => renders.mockRestore());
+        const { AppShellPluginUiProjectionProvider } = await import('./AppShellPluginUiProjection');
+        const element = () => <AppShellPluginUiProjectionProvider><ProjectionProbe /></AppShellPluginUiProjectionProvider>;
+        const screen = await renderScreen(element());
+        await flushHookEffects({ cycles: 5 });
+        const initialProjection = screen.findByType('ProjectionProbe' as never).props.value.pluginUiProjection;
+        expect(getProjectedEntry('acme.plugin.a')).toMatchObject({ supportsToken: true });
+        renders.mockClear();
+
+        for (let update = 0; update < 10; update += 1) await screen.update(element());
+        expect(renders.mock.calls.filter(([input]) => input.machineId === 'machine-a' && input.enabled !== false)).toHaveLength(0);
+        expect(screen.findByType('ProjectionProbe' as never).props.value.pluginUiProjection).toBe(initialProjection);
+
+        includeDescriptor = false;
+        await act(async () => projectionRefreshState.publish());
+        await flushHookEffects({ cycles: 6 });
+        expect(renders.mock.calls.some(([input]) => input.machineId === 'machine-a' && input.enabled !== false)).toBe(true);
+        expect(getProjectedEntry('acme.plugin.a')).toBeNull();
+    });
+
     it('does not re-describe a current snapshot on presence heartbeats or the membership expiry cadence', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-07-13T00:00:00Z'));
@@ -2538,6 +2524,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
         expect(getProjectedEntry('acme.server.one')?.projectedDescriptor).toEqual(expect.objectContaining({ pluginId: 'acme.server.one' }));
 
         storageState.activeServer = { serverId: 'server-2', serverUrl: 'https://server-two.example.test', generation: 2 };
+        installActiveAccountScope('account-fixture');
         await screen.update(
             <AppShellPluginUiProjectionProvider><ProjectionProbe /></AppShellPluginUiProjectionProvider>,
         );
@@ -2568,6 +2555,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
         await flushHookEffects({ cycles: 2 });
 
         storageState.activeServer = { serverId: 'server-2', serverUrl: 'https://server-two.example.test', generation: 2 };
+        installActiveAccountScope('account-fixture');
         await screen.update(
             <AppShellPluginUiProjectionProvider><ProjectionProbe /></AppShellPluginUiProjectionProvider>,
         );
@@ -2586,6 +2574,10 @@ describe('AppShellPluginUiProjectionProvider', () => {
 
     it('synchronously removes same-server descriptors when the active Account changes', async () => {
         installActiveAccountScope('account-a');
+        const lifetimeA = captureActiveServerAccountScopeLifetime();
+        expect(lifetimeA?.isCurrent()).toBe(true);
+        let accountARetired = false;
+        lifetimeA?.onRetire(() => { accountARetired = true; });
         storageState.machines = [
             { id: 'machine-a', active: true, activeAt: Date.now(), metadata: { host: 'a' } },
         ];
@@ -2609,8 +2601,22 @@ describe('AppShellPluginUiProjectionProvider', () => {
         expect(getProjectedEntry('acme.account.a')?.projectedDescriptor).toEqual(
             expect.objectContaining({ pluginId: 'acme.account.a' }),
         );
+        const readValue = () => screen.tree.findByType('ProjectionProbe' as never).props.value;
+        const valueA = readValue();
+        expect(valueA.accountLifetime).toBe(lifetimeA);
+        await screen.update(
+            <AppShellPluginUiProjectionProvider><ProjectionProbe /></AppShellPluginUiProjectionProvider>,
+        );
+        expect(captureActiveServerAccountScopeLifetime()).toBe(lifetimeA);
+        expect(readValue()).toBe(valueA);
+        expect(accountARetired).toBe(false);
 
         installActiveAccountScope('account-b');
+        const lifetimeB = captureActiveServerAccountScopeLifetime();
+        expect(lifetimeA?.isCurrent()).toBe(false);
+        expect(accountARetired).toBe(true);
+        expect(lifetimeB?.isCurrent()).toBe(true);
+        expect(lifetimeB).not.toBe(lifetimeA);
         await screen.update(
             <AppShellPluginUiProjectionProvider><ProjectionProbe /></AppShellPluginUiProjectionProvider>,
         );
@@ -2621,6 +2627,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
             entries: [],
         });
         expect(getProjectedEntry('acme.account.a')).toBeNull();
+        expect(readValue().accountLifetime).toBe(lifetimeB);
     });
 
     it('does not commit a late same-server descriptor from the retired Account', async () => {
@@ -2697,7 +2704,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
         expect(getProjectedEntry('acme.plugin.a')).toBeNull();
     });
 
-    it('withholds app-scope contributions while Account Availability has not loaded', async () => {
+    it('retains proven app declarations before Availability execution admission loads', async () => {
         storageState.machines = [
             { id: 'machine-newer', active: true, activeAt: Date.now(), metadata: { host: 'newer-heartbeat' } },
             { id: 'machine-older', active: true, activeAt: Date.now() - 30_000, metadata: { host: 'older-heartbeat' } },
@@ -2705,11 +2712,8 @@ describe('AppShellPluginUiProjectionProvider', () => {
         projectionDescribeSpy.mockImplementation(async (machineId: string) => ({
             supported: true,
             projection: machineId === 'machine-older'
-                // The entry carries an exact producer stamp, so it is a
-                // MATERIALIZED contribution awaiting Administration selection.
-                // (An unstamped contribution has no selection to wait for and
-                // is admitted structurally; that arm belongs to the union owner
-                // and must not be what this test accidentally exercises.)
+                // A real producer descriptor remains visible; execution
+                // admission still belongs to Availability/Administration.
                 ? pluginUiProjectionWithAppTab({
                     generation: 7,
                     pluginId: 'acme.inspector',
@@ -2747,9 +2751,6 @@ describe('AppShellPluginUiProjectionProvider', () => {
         expect(projectionDescribeSpy).toHaveBeenCalledWith('machine-newer', { serverId: 'server-1' });
         expect(projectionDescribeSpy.mock.calls.filter(([machineId]) => machineId === 'machine-older')).toHaveLength(1);
 
-        // No Account Availability reader exists in this harness. F7 fails closed
-        // rather than deriving a source from projection order or freshness.
-
         const value = screen.tree.findByType('ProjectionProbe' as never).props.value;
         const placements = value.pluginUiProjection
             ? selectPluginSurfacePlacementsForBinding(value.pluginUiProjection, {
@@ -2757,13 +2758,12 @@ describe('AppShellPluginUiProjectionProvider', () => {
                 targetKind: 'app',
             })
             : [];
-        expect(placements).toEqual([]);
-        expect(value.pluginUiProjection).toBeNull();
+        expect(placements.map(placement => placement.pluginId)).toEqual(['acme.inspector']);
         // No single machine owns the app scope, and none is inferred from `activeAt`.
         expect(value.machineId).toBeNull();
     });
 
-    it('does not elect a source for different app plugins before selection, even across heartbeats', async () => {
+    it('keeps different app plugins visible before selection across heartbeats', async () => {
         const renderApp = () => (
             <AppShellPluginUiProjectionProvider>
                 <ProjectionProbe />
@@ -2776,8 +2776,8 @@ describe('AppShellPluginUiProjectionProvider', () => {
         projectionDescribeSpy.mockImplementation(async (machineId: string) => ({
             supported: true,
             projection: machineId === 'machine-a'
-                // Both contributions are exactly stamped, so each is selectable
-                // and neither may be elected before Administration selects one.
+                // Displaying these distinct plugins does not elect one
+                // machine as Account catalog authority.
                 ? pluginUiProjectionWithAppTab({
                     generation: 3,
                     pluginId: 'acme.alpha',
@@ -2809,7 +2809,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
                 })
                 : [];
         };
-        expect(readPlacements()).toEqual([]);
+        expect(readPlacements().map(placement => placement.pluginId)).toEqual(['acme.alpha', 'acme.beta']);
         const projectionBeforeHeartbeat = screen.tree.findByType('ProjectionProbe' as never)
             .props.value.pluginUiProjection;
 
@@ -2826,7 +2826,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
             .toBe(projectionBeforeHeartbeat);
     });
 
-    it('projects originless plugin UI from the selected Plugin Administration machine and follows A to B', async () => {
+    it('keeps divergent originless UI visible as conflict when the Administration machine changes', async () => {
         const machines = [createLiveMachine('machine-a'), createLiveMachine('machine-b')];
         storageState.machines = machines as unknown as Array<Record<string, unknown>>;
         const previous = persistentStorage.getState();
@@ -2894,11 +2894,9 @@ describe('AppShellPluginUiProjectionProvider', () => {
                 })
                 : [];
         };
-        expect(readPlacements().map((placement) => placement.descriptorId)).toEqual(['panel-a']);
-        expect(readPluginUiContributionOrigin(readPlacements()[0])).toMatchObject({
-            machineId: 'machine-a',
-            executionOrigin: null,
-        });
+        expect(readPlacements().map((placement) => placement.descriptorId)).toEqual(['panel-a', 'panel-b']);
+        expect(readPlacements().every(placement => placement.hostCompatibility === 'conflict')).toBe(true);
+        expect(readPluginUiContributionOrigin(readPlacements()[0])).toBeNull();
 
         await act(async () => {
             persistentStorage.setState((state) => ({
@@ -2917,11 +2915,8 @@ describe('AppShellPluginUiProjectionProvider', () => {
         await screen.update(renderApp());
         await flushHookEffects({ cycles: 6 });
 
-        expect(readPlacements().map((placement) => placement.descriptorId)).toEqual(['panel-b']);
-        expect(readPluginUiContributionOrigin(readPlacements()[0])).toMatchObject({
-            machineId: 'machine-b',
-            executionOrigin: null,
-        });
+        expect(readPlacements().map((placement) => placement.descriptorId)).toEqual(['panel-a', 'panel-b']);
+        expect(readPluginUiContributionOrigin(readPlacements()[0])).toBeNull();
 
         await screen.unmount();
     });

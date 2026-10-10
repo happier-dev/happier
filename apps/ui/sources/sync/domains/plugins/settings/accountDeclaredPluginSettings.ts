@@ -1,5 +1,6 @@
 import { projectPluginSettingsContributionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
+import { qualifyPluginContributionReferenceV1, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import {
     mapV2EditableSettingsGroup,
@@ -26,14 +27,23 @@ export const EMPTY_ACCOUNT_DECLARED_SETTINGS_GROUPS: readonly PluginProjectionEd
 
 export function projectAccountDeclaredPluginSettingsGroups(params: Readonly<{
     pluginId: string;
-    declaration: PluginPortableReleaseManifestV1 | null | undefined;
+    declaration: Readonly<{
+        id: string;
+        contributes: Pick<PluginPortableReleaseManifestV1['contributes'], 'settings'>;
+    }> | null | undefined;
+    targetAgent?: PluginContributionIdentityV1;
 }>): readonly PluginProjectionEditableSettingsGroup[] {
     const declaration = params.declaration;
     if (!declaration || declaration.id !== params.pluginId) return EMPTY_ACCOUNT_DECLARED_SETTINGS_GROUPS;
 
     const groups: PluginProjectionEditableSettingsGroup[] = [];
     for (const definition of declaration.contributes.settings ?? []) {
-        if (definition.scope !== 'account' || definition.target.kind !== 'plugin') continue;
+        if (definition.scope !== 'account') continue;
+        if (params.targetAgent) {
+            if (definition.target.kind !== 'agent') continue;
+            const target = qualifyPluginContributionReferenceV1(definition.target.agent, params.pluginId);
+            if (target.pluginId !== params.targetAgent.pluginId || target.localId !== params.targetAgent.localId) continue;
+        } else if (definition.target.kind !== 'plugin') continue;
         try {
             const projected = projectPluginSettingsContributionV2({
                 pluginId: params.pluginId,

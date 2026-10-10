@@ -13,6 +13,7 @@ import {
 } from '@/sync/api/plugins/availability/pluginAvailabilityProjection';
 import {
     createPluginAccountAvailabilityReader,
+    createPluginAccountAvailabilityReaderStore,
     type PluginAccountAvailabilityReader,
 } from '@/sync/domains/plugins/availability/reader';
 
@@ -308,6 +309,7 @@ function createAccountAvailabilityReader(input: Pick<
 >): PluginAccountAvailabilityReader {
     return {
         ...input,
+        readInstalledPlugins: createPluginAccountAvailabilityReaderStore().bind(ACCOUNT_SCOPE).readInstalledPlugins,
         readCurrentArtifact: () => ({
             kind: 'unavailable',
             code: 'account_availability_not_loaded',

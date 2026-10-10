@@ -1437,14 +1437,14 @@ describe('PluginSettingsHomeScreen', () => {
         const screen = await renderInAppPanes(React.createElement(RerenderableHome, { capabilityRevision: 1 }));
         await act(async () => { await flushAsync(); });
         expect(screen.findRow('settings.plugins.marketplace.installed.empty')).toBeFalsy();
-        expect(screen.findRow('settings.plugins.marketplace.installed.loading')).toBeTruthy();
+        expect(screen.findByTestId('settings.plugins.marketplace.installed:skeleton-row')).toBeTruthy();
 
         capabilityState = createMachineCapabilitiesState([]);
         await act(async () => {
             screen.tree.update(inAppPanes(React.createElement(RerenderableHome, { capabilityRevision: 2 })));
             await flushAsync();
         });
-        expect(screen.findRow('settings.plugins.marketplace.installed.loading')).toBeFalsy();
+        expect(screen.findByTestId('settings.plugins.marketplace.installed:skeleton-row')).toBeFalsy();
         expect(screen.findRow('settings.plugins.marketplace.installed.empty')).toBeTruthy();
         await act(async () => { screen.pressRow('settings.plugins.marketplace.installed.empty.browse'); });
         expect(screen.findByTestId('settings.plugins.management.view:discover')?.props.accessibilityState).toMatchObject({ selected: true });
@@ -1481,7 +1481,7 @@ describe('PluginSettingsHomeScreen', () => {
             await act(async () => { await flushAsync(); await flushAsync(); });
             expect(screen.findRow('settings.plugins.marketplace.readOnlySnapshot')).toBeFalsy();
             expect(screen.findRow('settings.plugins.marketplace.installed.empty')).toBeFalsy();
-            expect(screen.findRow('settings.plugins.marketplace.installed.loading')).toBeTruthy();
+            expect(screen.findByTestId('settings.plugins.marketplace.installed:skeleton-row')).toBeTruthy();
         } finally {
             administrationTargetBoundary.controller.setExecutionPending(false);
         }
@@ -1519,7 +1519,7 @@ describe('PluginSettingsHomeScreen', () => {
             : 'settings.plugins.detail.readOnlySnapshot-retry';
         expect(screen.findRow(retryTestID)).toBeTruthy();
         expect(screen.findRow('settings.plugins.marketplace.installed.empty')).toBeFalsy();
-        expect(screen.findRow('settings.plugins.marketplace.installed.loading')).toBeFalsy();
+        expect(screen.findByTestId('settings.plugins.marketplace.installed:skeleton-row')).toBeFalsy();
         await act(async () => {
             screen.pressRow(retryTestID);
             await flushAsync();

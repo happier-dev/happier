@@ -40,7 +40,6 @@ function okResponse(family: 'hostedWeb' | 'reactNative', responseDigest: string 
                 format: 'plainJs' as const,
                 byteSize: entryBytes.byteLength,
             },
-        bytesBase64: encodeBase64(entryBytes),
         files: [{
             relativePath: 'index.html',
             digest: `sha256:${'b'.repeat(64)}`,
@@ -52,6 +51,25 @@ function okResponse(family: 'hostedWeb' | 'reactNative', responseDigest: string 
 
 describe('daemon Artifact byte source', () => {
     beforeEach(() => guardedMachineRpc.mockReset());
+
+    it('cancels a held daemon byte read when its acquisition retires', async () => {
+        const lifetime = new AbortController();
+        // The fetcher is the machine byte transport boundary; source decoding
+        // and the supplied acquisition cancellation remain real.
+        const source = createPluginArtifactDaemonSource({
+            transport,
+            family: 'hostedWeb',
+            fetchArtifactBytes: ({ signal }) => new Promise((resolve) => {
+                signal?.addEventListener('abort', () => resolve({
+                    ok: false, code: 'artifact_unavailable', diagnostics: [],
+                }), { once: true });
+            }),
+        });
+        let result: Awaited<ReturnType<typeof source.fetch>> | undefined;
+        void source.fetch({ artifact, signal: lifetime.signal }).then((value) => { result = value; });
+        lifetime.abort();
+        await vi.waitFor(() => expect(result).toBeNull());
+    });
 
     it.each(['hostedWeb', 'reactNative'] as const)(
         'asks the selected machine for the %s file set by digest only',
@@ -65,6 +83,7 @@ describe('daemon Artifact byte source', () => {
                 machineId: 'machine-a',
                 serverId: 'server-a',
                 method: RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ,
+                operationTimeoutMs: null,
                 payload: {
                     artifactFamily: family,
                     machineId: 'machine-a',

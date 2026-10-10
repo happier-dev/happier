@@ -74,6 +74,21 @@ const resolveUnavailableDaemonTargetAction = createPluginUiProjectedActionResolv
 });
 
 describe('dispatchPluginAppPageHeaderAction', () => {
+    it('withdraws daemon execution independently of still-current page navigation', async () => {
+        const execute = vi.fn(async () => ({ supported: true as const, result: { ok: true as const, result: {} } }));
+        const openSurface = vi.fn(async () => ({ ok: true as const }));
+        const shared = { page: page(), actionAuthority: actionAuthority(), openSurface,
+            resolveContributedAction: resolveDaemonTargetAction, execute, isCurrent: () => true,
+            isDaemonExecutionCurrent: () => false };
+        await expect(dispatchPluginAppPageHeaderAction({ ...shared, action: { id: 'refresh', title: 'Refresh',
+            command: { kind: 'executeAction', action: { pluginId: 'acme.notes', localId: 'refresh-index' } } } }))
+            .resolves.toMatchObject({ ok: false, code: 'unavailable' });
+        expect(execute).not.toHaveBeenCalled();
+        await dispatchPluginAppPageHeaderAction({ ...shared, action: { id: 'details', title: 'Details',
+            command: { kind: 'openSurface', destination: { pluginId: 'acme.notes', localId: 'details' } } } });
+        expect(openSurface).toHaveBeenCalled();
+    });
+
     it('does not require daemon authority or call the daemon for a client-target Action', async () => {
         const execute = vi.fn();
 
@@ -186,12 +201,12 @@ describe('dispatchPluginAppPageHeaderAction', () => {
             execute,
         })).resolves.toEqual({ ok: true, result: { refreshed: true } });
 
-        expect(execute).toHaveBeenCalledWith('machine-1', {
+        expect(execute).toHaveBeenCalledWith('machine-1', expect.objectContaining({
             serverId: 'server-a',
             expectedContributorOccurrenceId: NOTES_OCCURRENCE_ID,
             qualifiedActionId: 'acme.notes/refresh-index',
             executionSurface: 'ui',
-        });
+        }));
     });
 
     it('refuses a terminally unavailable projected Action before app-page header dispatch', async () => {

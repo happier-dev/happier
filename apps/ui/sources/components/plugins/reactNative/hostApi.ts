@@ -25,6 +25,7 @@ import {
     PluginUiArtifactDigestV1Schema,
     PluginUiDisposeHostResourceRequestV1Schema,
     PluginUiResourceSubscriptionRequestV1Schema,
+    PluginUiResourceSubscriptionTargetV1Schema,
     PluginUiReadComposerRequestV1Schema,
     PluginUiPickComposerMediaRequestV1Schema,
     PluginUiPickComposerMediaResultV1Schema,
@@ -698,6 +699,12 @@ function canonicalReferencePayload(reference: string | Readonly<{ pluginId: stri
         : { pluginId: reference.pluginId, localId: reference.localId };
 }
 
+function canonicalResourceReferencePayload(reference: Parameters<PluginUiHostApi['readResource']>[0]): PluginUiJsonValueV1 {
+    const parsed = PluginUiResourceSubscriptionTargetV1Schema.safeParse(reference);
+    if (!parsed.success) throwHostApiError('invalid_payload', ['resource_reference_invalid']);
+    return parsed.data;
+}
+
 function throwIfAborted(signal: AbortSignal | undefined): void {
     if (signal?.aborted) {
         throwHostApiError('unavailable', ['aborted']);
@@ -1107,7 +1114,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             assertActive(options?.signal);
             assertInstalled('readResource');
             const result = await transport.request('readResource', {
-                resource: canonicalReferencePayload(resource),
+                resource: canonicalResourceReferencePayload(resource),
             }, options?.signal ? { signal: options.signal } : undefined);
             return readCanonicalResource(result);
         },
@@ -1142,7 +1149,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             const subscription = await transport.watchResource(
                 {
                     subscriptionId: `${params.requestIdPrefix}:resource:${subscriptionSequence}`,
-                    resource: canonicalReferencePayload(resource) as PluginUiResourceSubscriptionRequestV1['resource'],
+                    resource: canonicalResourceReferencePayload(resource) as PluginUiResourceSubscriptionRequestV1['resource'],
                 },
                 listener,
                 options?.signal ? { signal: options.signal } : undefined,

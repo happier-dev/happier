@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
@@ -144,7 +145,7 @@ describe('PluginHostedWebFrame native Artifact adoption', () => {
         await renderScreen(
             <PluginHostedWebFrame
                 title="Caller view"
-                html="<!doctype html><p>isolated</p>"
+                bundle={artifactHtmlBundleFromBodyV1('<!doctype html><p>isolated</p>')}
                 security={{
                     allowedNavigationOrigins: [],
                     allowedCallbackOrigins: [],
@@ -172,7 +173,7 @@ describe('PluginHostedWebFrame native Artifact adoption', () => {
         expect(inlineDocumentFrameProps).toHaveLength(1);
         expect(inlineDocumentFrameProps[0]).toMatchObject({
             title: 'Caller view',
-            html: '<!doctype html><p>isolated</p>',
+            bundle: artifactHtmlBundleFromBodyV1('<!doctype html><p>isolated</p>'),
             testID: 'caller-html-frame',
             networkOrigins: undefined,
             bootstrapConfig: undefined,

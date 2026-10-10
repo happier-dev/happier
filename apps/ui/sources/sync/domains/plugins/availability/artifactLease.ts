@@ -1,11 +1,13 @@
 import {
     PluginUiArtifactsManifestEntryV2Schema,
-    verifyPluginUiArtifactBytesIntegrityV1,
-    verifyPluginUiArtifactFileSetIntegrityV1,
     type PluginUiArtifactDigestV1,
     type PluginUiArtifactFileV1,
     type PluginUiArtifactsManifestEntryV2,
 } from '@happier-dev/protocol/plugins/ui';
+import {
+    computePluginUiArtifactSha256Digest,
+    computePluginUiArtifactFileSetSha256Digest,
+} from '@/sync/domains/plugins/ui/artifactIntegrity';
 
 import type {
     PluginAccountAvailabilityArtifactAdmission,
@@ -97,6 +99,7 @@ type PluginSelectedArtifactAdmission =
 export type PluginArtifactByteRequest = Readonly<{
     artifact: PluginSelectedArtifactIdentity;
     accountHostedArtifactId?: string;
+    signal?: AbortSignal;
 }>;
 
 /** A source's complete file set for one digest, keyed by relative path. */
@@ -231,10 +234,6 @@ function isGraphCompatible(
         && graph.hostUiApiRange === artifact.hostUiApiRange;
 }
 
-function artifactKindFor(tier: PluginSelectedArtifactIdentity['tier']): string {
-    return tier === 'reactNative' ? 'reactNativeBundle' : 'hostedWebAsset';
-}
-
 function orderedSources(
     sources: readonly PluginArtifactSourceCandidate[],
 ): readonly PluginArtifactSourceCandidate[] | null {
@@ -269,6 +268,7 @@ export type PluginArtifactVerifiedSourceResult =
 type InFlightArtifactMaterializationParticipant = Readonly<{
     sources: readonly PluginArtifactSourceCandidate[];
     isCurrent: () => boolean;
+    signal: AbortSignal;
     accountHostedArtifactId?: string;
 }>;
 
@@ -277,7 +277,7 @@ type InFlightArtifactMaterialization = Readonly<{
     promise: Promise<PluginArtifactVerifiedSourceResult>;
 }>;
 
-const inFlightMaterializationsByLifetime = new WeakMap<
+const sharedMaterializationsByLifetime = new WeakMap<
     object,
     Map<PluginUiArtifactDigestV1, InFlightArtifactMaterialization>
 >();
@@ -616,68 +616,60 @@ export async function materializeVerifiedPluginArtifactSource(input: Readonly<{
     /** Already ordered by the caller's admitted source order. */
     sources: readonly PluginArtifactSourceCandidate[];
     isCurrent: () => boolean;
+    signal?: AbortSignal;
     /** Supplied only when the Account-hosted source needs its current link. */
     accountHostedArtifactId?: string;
 }>): Promise<PluginArtifactVerifiedSourceResult> {
+    const isCurrent = () => !input.signal?.aborted && input.isCurrent();
     let sawIntegrityFailure = false;
     for (const source of input.sources) {
-        if (!input.isCurrent()) return Object.freeze({ kind: 'notCurrent' });
+        if (!isCurrent()) return Object.freeze({ kind: 'notCurrent' });
         let fetched: PluginArtifactFileSet | null;
         try {
-            fetched = await source.fetch({
+            fetched = await awaitArtifactWork(source.fetch({
                 artifact: input.artifact,
+                ...(input.signal ? { signal: input.signal } : {}),
                 ...(input.accountHostedArtifactId
                     ? { accountHostedArtifactId: input.accountHostedArtifactId }
                     : {}),
-            });
+            }), input.signal);
         } catch {
             fetched = null;
         }
-        if (!input.isCurrent()) return Object.freeze({ kind: 'notCurrent' });
+        if (!isCurrent()) return Object.freeze({ kind: 'notCurrent' });
         if (!fetched) continue;
         const materialized: PluginArtifactVerifiedSourceFile[] = [];
         let sourceUsable = true;
         for (const declared of input.graph.files) {
-            const bytes = fetched.get(declared.relativePath);
-            if (!bytes) {
+            const fetchedBytes = fetched.get(declared.relativePath);
+            if (!fetchedBytes) {
                 sourceUsable = false;
                 break;
             }
-            if (bytes.byteLength !== declared.byteSize) {
+            if (fetchedBytes.byteLength !== declared.byteSize) {
                 sawIntegrityFailure = true;
                 sourceUsable = false;
                 break;
             }
-            const integrity = verifyPluginUiArtifactBytesIntegrityV1({
-                bytes,
-                integrity: {
-                    digest: declared.digest,
-                    pluginId: input.artifact.pluginId,
-                    contributionId: input.artifact.contributionId,
-                    artifactKind: artifactKindFor(input.artifact.tier),
-                },
-            });
-            if (!integrity.ok) {
+            const bytes = new Uint8Array(fetchedBytes);
+            const digest = await computePluginUiArtifactSha256Digest(bytes);
+            if (!isCurrent()) return Object.freeze({ kind: 'notCurrent' });
+            if (digest !== declared.digest) {
                 sawIntegrityFailure = true;
                 sourceUsable = false;
                 break;
             }
-            materialized.push(Object.freeze({ file: cloneFile(declared), bytes: new Uint8Array(bytes) }));
+            materialized.push(Object.freeze({ file: cloneFile(declared), bytes }));
         }
         if (!sourceUsable) {
             await discardInvalidPersistentSource(source);
             continue;
         }
-        const setIntegrity = verifyPluginUiArtifactFileSetIntegrityV1({
-            files: materialized.map(({ file, bytes }) => ({ relativePath: file.relativePath, bytes })),
-            integrity: {
-                digest: input.artifact.digest,
-                pluginId: input.artifact.pluginId,
-                contributionId: input.artifact.contributionId,
-                artifactKind: artifactKindFor(input.artifact.tier),
-            },
-        });
-        if (!setIntegrity.ok) {
+        const setDigest = await computePluginUiArtifactFileSetSha256Digest(
+            materialized.map(({ file, bytes }) => ({ relativePath: file.relativePath, bytes })),
+        );
+        if (!isCurrent()) return Object.freeze({ kind: 'notCurrent' });
+        if (setDigest !== input.artifact.digest) {
             sawIntegrityFailure = true;
             await discardInvalidPersistentSource(source);
             continue;
@@ -689,6 +681,18 @@ export async function materializeVerifiedPluginArtifactSource(input: Readonly<{
         });
     }
     return Object.freeze({ kind: 'unavailable', integrityFailed: sawIntegrityFailure });
+}
+
+/** A retired reader must settle even when a byte transport ignores cancellation. */
+function awaitArtifactWork<T>(work: Promise<T>, signal?: AbortSignal): Promise<T | null> {
+    if (!signal) return work;
+    let cancelled!: () => void;
+    return new Promise<T | null>((resolve, reject) => {
+        cancelled = () => resolve(null);
+        if (signal.aborted) cancelled();
+        else signal.addEventListener('abort', cancelled, { once: true });
+        work.then(resolve, reject);
+    }).finally(() => signal.removeEventListener('abort', cancelled));
 }
 
 function isInFlightArtifactParticipantCurrent(
@@ -752,6 +756,7 @@ async function materializeInFlightVerifiedPluginArtifactSource(input: Readonly<{
             graph: input.graph,
             sources: [next.source],
             isCurrent: next.participant.isCurrent,
+            signal: next.participant.signal,
             ...(next.participant.accountHostedArtifactId
                 ? { accountHostedArtifactId: next.participant.accountHostedArtifactId }
                 : {}),
@@ -765,22 +770,31 @@ async function materializeInFlightVerifiedPluginArtifactSource(input: Readonly<{
 
 function materializeSharedVerifiedPluginArtifactSource(input: Readonly<{
     reader: PluginAccountAvailabilityReader;
-    acquisitionLifetime?: object;
+    acquisitionLifetime?: PluginArtifactLeaseAccountLifetime;
     artifact: PluginSelectedArtifactIdentity;
     graph: PluginUiArtifactsManifestEntryV2;
     sources: readonly PluginArtifactSourceCandidate[];
     isCurrent: () => boolean;
+    signal: AbortSignal;
     accountHostedArtifactId?: string;
 }>): Promise<PluginArtifactVerifiedSourceResult> {
     const lifetime = input.acquisitionLifetime ?? input.reader;
-    let byDigest = inFlightMaterializationsByLifetime.get(lifetime);
+    let byDigest = sharedMaterializationsByLifetime.get(lifetime);
     if (!byDigest) {
         byDigest = new Map();
-        inFlightMaterializationsByLifetime.set(lifetime, byDigest);
+        sharedMaterializationsByLifetime.set(lifetime, byDigest);
+        const retained = byDigest;
+        let retirement: Readonly<{ dispose: () => void }> | undefined;
+        retirement = input.acquisitionLifetime?.onRetire(() => {
+            retirement?.dispose();
+            retained.clear();
+            sharedMaterializationsByLifetime.delete(lifetime);
+        });
     }
     const participant: InFlightArtifactMaterializationParticipant = Object.freeze({
         sources: input.sources,
         isCurrent: input.isCurrent,
+        signal: input.signal,
         ...(input.accountHostedArtifactId
             ? { accountHostedArtifactId: input.accountHostedArtifactId }
             : {}),
@@ -797,6 +811,9 @@ function materializeSharedVerifiedPluginArtifactSource(input: Readonly<{
         graph: input.graph,
         participants,
     }).finally(() => {
+        participants.clear();
+        // Settled byte reuse belongs to the existing persistent/cache owner,
+        // including its eviction policy. This map shares only active work.
         if (byDigest?.get(input.artifact.digest)?.promise === promise) {
             byDigest.delete(input.artifact.digest);
         }
@@ -831,6 +848,8 @@ export async function acquirePluginSelectedArtifactLease(input: Readonly<{
      * currentness facts and scopes in-flight digest sharing.
      */
     accountLifetime?: PluginArtifactLeaseAccountLifetime;
+    /** This requesting surface's lifetime, independent of other joined readers. */
+    signal?: AbortSignal;
     slot: PluginAccountAvailabilityArtifactSlot;
     daemonProjectionSelection?: PluginDaemonProjectionArtifactSelection;
     artifactGraph: unknown;
@@ -857,10 +876,12 @@ export async function acquirePluginSelectedArtifactLease(input: Readonly<{
     }
 
     const revokeListeners = new Set<() => void>();
+    const cancellation = new AbortController();
     let unsubscribe: (() => void) | null = null;
     let retirement: Readonly<{ dispose: () => void }> | null = null;
     let revoked = false;
     const stopObserving = () => {
+        input.signal?.removeEventListener('abort', revoke);
         unsubscribe?.();
         unsubscribe = null;
         retirement?.dispose();
@@ -869,6 +890,7 @@ export async function acquirePluginSelectedArtifactLease(input: Readonly<{
     const revoke = () => {
         if (revoked) return;
         revoked = true;
+        cancellation.abort();
         stopObserving();
         for (const listener of revokeListeners) {
             try {
@@ -899,7 +921,7 @@ export async function acquirePluginSelectedArtifactLease(input: Readonly<{
     };
     const isCurrent = () => {
         if (revoked) return false;
-        if (!lifetimeIsCurrent() || !sameArtifactIdentity(artifact, readSelectedArtifactAdmission(input))) {
+        if (input.signal?.aborted || !lifetimeIsCurrent() || !sameArtifactIdentity(artifact, readSelectedArtifactAdmission(input))) {
             revoke();
             return false;
         }
@@ -909,19 +931,24 @@ export async function acquirePluginSelectedArtifactLease(input: Readonly<{
         isCurrent();
     });
     retirement = input.accountLifetime?.onRetire(revoke) ?? null;
+    input.signal?.addEventListener('abort', revoke, { once: true });
+    if (!isCurrent()) {
+        return Object.freeze({ kind: 'unavailable', code: 'artifact_lease_revoked' });
+    }
 
-    const materializedSource = await materializeSharedVerifiedPluginArtifactSource({
+    const materializedSource = await awaitArtifactWork(materializeSharedVerifiedPluginArtifactSource({
         reader: input.reader,
         ...(input.accountLifetime ? { acquisitionLifetime: input.accountLifetime } : {}),
         artifact,
         graph: graph.data,
         sources,
         isCurrent,
+        signal: cancellation.signal,
         ...(admission.artifact.accountArtifactId
             ? { accountHostedArtifactId: admission.artifact.accountArtifactId }
             : {}),
-    });
-    if (!isCurrent() || materializedSource.kind === 'notCurrent') {
+    }), cancellation.signal);
+    if (!isCurrent() || !materializedSource || materializedSource.kind === 'notCurrent') {
         return Object.freeze({ kind: 'unavailable', code: 'artifact_lease_revoked' });
     }
     if (materializedSource.kind === 'unavailable') {
@@ -936,6 +963,20 @@ export async function acquirePluginSelectedArtifactLease(input: Readonly<{
     const files = new Map(materializedSource.files.map(
         ({ file, bytes }) => [file.relativePath, { file, bytes }] as const,
     ));
+    // Digest reuse never admits a contradictory graph supplied by another
+    // occurrence. Check its declared metadata against the verified file set
+    // without hashing or copying those immutable bytes again.
+    if (
+        graph.data.files.length !== materializedSource.files.length
+        || new Set(graph.data.files.map((file) => file.relativePath)).size !== files.size
+        || graph.data.files.some((declared) => {
+            const verified = files.get(declared.relativePath)?.file;
+            return verified?.digest !== declared.digest || verified.byteSize !== declared.byteSize;
+        })
+    ) {
+        stopObserving();
+        return Object.freeze({ kind: 'unavailable', code: 'artifact_source_integrity_invalid' });
+    }
     const readFile = async (relativePath: string): Promise<PluginSelectedArtifactLeaseFileResult> => {
         if (!isCurrent()) {
             return Object.freeze({ kind: 'unavailable', code: 'artifact_lease_revoked' });

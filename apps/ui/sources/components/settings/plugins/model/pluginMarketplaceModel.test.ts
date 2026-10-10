@@ -12,6 +12,7 @@ import {
     isPluginMutationVisibleAfterRefresh,
     projectDevelopmentPluginPresentation,
     projectInstalledPluginLifecycleCapabilities,
+    projectAccountInstalledPlugins,
     projectInstalledPluginPresentation,
     readDevelopmentPlugins,
     readPendingPluginChangeReview,
@@ -138,6 +139,19 @@ describe('selected plugin truth read lifecycle', () => {
 });
 
 describe('installed plugin lifecycle capabilities', () => {
+    it('shows every Account installation while lifecycle actions stay on the administered machine', () => {
+        const rows = projectAccountInstalledPlugins([installed], {
+            kind: 'available', availabilityCursor: 1, completeness: 'complete',
+            plugins: [{ pluginId: 'elsewhere.plugin', installations: [{
+                materialization: { serverIdentityId: 'home', machineId: 'machine-b', materializationId: 'elsewhere', pluginId: 'elsewhere.plugin', version: '2.0.0', sourceClass: 'registryPackage', portableRelease: true, uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: 10 },
+                declaration: null, declarationState: 'preparing', uiDeclarationState: 'preparing', release: null,
+                execution: { releaseContent: 'unknown', validation: { kind: 'rejected', reason: 'unknown' } },
+            }] }],
+        });
+        expect(rows.map((row) => row.pluginId)).toEqual(['example.plugin', 'elsewhere.plugin']);
+        expect(rows[0]).toBe(installed);
+        expect(projectInstalledPluginLifecycleCapabilities(rows[1]!)).toEqual({ canEnable: false, canDisable: false, canRollback: false, canUninstall: false, canForgetTrust: false, canUpdate: false });
+    });
     it('does not advertise user-managed lifecycle mutations for host-bundled plugins', () => {
         expect(projectInstalledPluginLifecycleCapabilities({
             ...installed,

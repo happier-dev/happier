@@ -60,6 +60,7 @@ export function replacePluginAccountAvailabilityProjection(input: Readonly<{
     scope: ServerAccountScope;
     snapshot: PluginAccountAvailabilitySnapshot;
     failedPluginIds?: readonly string[];
+    intentCensusIncomplete?: boolean;
 }>): void {
     readerStore.replace(input);
     const lifetime = currentProjectionLifetime(input.scope);
@@ -83,10 +84,14 @@ export function applyPluginAccountAvailabilityProjectionRefresh(input: Readonly<
     scope: ServerAccountScope;
     snapshot: PluginAccountAvailabilitySnapshot;
     failedPluginIds: readonly string[];
+    intentCensusIncomplete?: boolean;
 }>): void {
     replacePluginAccountAvailabilityProjection(input);
     if (input.failedPluginIds.length > 0) {
         throw new Error(`Plugin Availability refresh failed for: ${input.failedPluginIds.join(', ')}`);
+    }
+    if (input.intentCensusIncomplete) {
+        throw new Error('Plugin Availability intent census is incomplete.');
     }
 }
 

@@ -17,20 +17,60 @@ class HostedWebArtifactRegistryTest {
   @Test
   fun `inline document token is process-local and synchronously revoked`() {
     val token = "hpa_${"a".repeat(64)}"
-    val html = "<!doctype html><main>current</main>"
+    val html = "<!doctype html><main>${"current".repeat(300_000)}</main>"
+    val contentSecurityPolicy = "sandbox allow-scripts"
     HostedInlineDocumentRegistry.clear()
+    assertFalse(HostedInlineDocumentRegistry.register(mapOf("token" to token, "html" to html)))
+    assertFalse(HostedInlineDocumentRegistry.register(mapOf(
+      "token" to token, "html" to html,
+      "contentSecurityPolicy" to "sandbox allow-scripts allow-same-origin"
+    )))
 
-    assertTrue(HostedInlineDocumentRegistry.register(mapOf("token" to token, "html" to html)))
+    assertTrue(HostedInlineDocumentRegistry.register(mapOf(
+      "token" to token, "html" to html, "contentSecurityPolicy" to contentSecurityPolicy
+    )))
     assertEquals("https://$token.plugins.happier.dev", HostedInlineDocumentRegistry.originFor(token))
     HostedInlineDocumentRegistry.withResolved(token, "/") { response ->
       assertEquals(200, response.status)
       assertTrue(response.bytes?.contentEquals(html.toByteArray()) == true)
+      assertEquals(contentSecurityPolicy, response.headers["Content-Security-Policy"])
     }
+    HostedInlineDocumentRegistry.withResolved(token, "/foreign") { response -> assertEquals(404, response.status) }
+    HostedInlineDocumentRegistry.withResolved("hpa_${"b".repeat(64)}", "/") { response -> assertEquals(404, response.status) }
 
     assertTrue(HostedInlineDocumentRegistry.unregister(token))
     assertNull(HostedInlineDocumentRegistry.originFor(token))
     HostedInlineDocumentRegistry.withResolved(token, "/") { response ->
       assertEquals(404, response.status)
+    }
+  }
+
+  @Test
+  fun `inline document identity survives only fragment navigation and rejects revoked handles`() {
+    val token = "hpa_${"c".repeat(64)}"
+    val documentUrl = "https://$token.plugins.happier.dev/"
+    HostedInlineDocumentRegistry.clear()
+    assertTrue(HostedInlineDocumentRegistry.register(mapOf(
+      "token" to token, "html" to "<!doctype html><a href='#details'>details</a>",
+      "contentSecurityPolicy" to "sandbox allow-scripts"
+    )))
+    try {
+      assertTrue(HostedInlineDocumentRegistry.isCurrentDocumentUrl(token, documentUrl))
+      // URI fragments address the same root document, including an empty hash.
+      assertEquals("/", java.net.URI("${documentUrl}#details").rawPath)
+      assertNull(java.net.URI("${documentUrl}#details").rawQuery)
+      assertTrue(HostedInlineDocumentRegistry.isCurrentDocumentUrl(token, "${documentUrl}#details"))
+      assertTrue(HostedInlineDocumentRegistry.isCurrentDocumentUrl(token, "${documentUrl}#"))
+      for (foreignUrl in listOf(
+        "${documentUrl}?replacement", "${documentUrl}foreign#details",
+        "${documentUrl}?replacement#details", "${documentUrl}%23details",
+        "https://hpa_${"d".repeat(64)}.plugins.happier.dev/#details",
+        "https://foreign.test/#details", "about:blank#details"
+      )) assertFalse(HostedInlineDocumentRegistry.isCurrentDocumentUrl(token, foreignUrl))
+      assertTrue(HostedInlineDocumentRegistry.unregister(token))
+      assertFalse(HostedInlineDocumentRegistry.isCurrentDocumentUrl(token, "${documentUrl}#details"))
+    } finally {
+      HostedInlineDocumentRegistry.clear()
     }
   }
 

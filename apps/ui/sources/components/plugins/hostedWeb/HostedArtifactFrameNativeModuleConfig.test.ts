@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { runInNewContext } from 'node:vm';
 
 import { describe, expect, it } from 'vitest';
 
@@ -323,7 +324,7 @@ describe('hosted Artifact native-frame Expo module config', () => {
         }
     });
 
-    it('binds the Android bridge to the exact active top-level origin instead of exposing a global JS interface', () => {
+    it('admits opaque caller messages only at the current registered document while retaining exact installed origins', () => {
         const viewSource = readFileSync(join(
             moduleRoot,
             'android/src/main/java/dev/happier/hostedwebframe/HostedWebArtifactView.kt',
@@ -347,9 +348,39 @@ describe('hosted Artifact native-frame Expo module config', () => {
         expect(configureWebView).toContain('setOf(origin.asString())');
         expect(configureWebView).toContain('!isMainFrame');
         expect(configureWebView).toContain('origin.matches(sourceOrigin)');
+        expect(configureWebView).toContain('if (inlineDocument) setOf("*") else setOf(origin.asString())');
+        expect(configureWebView).toContain('sourceOrigin.toString() == "null"');
+        expect(configureWebView).toContain('isActiveHostedPage(nextWebView)');
+        expect(viewSource).toContain('HostedInlineDocumentRegistry.isCurrentDocumentUrl(token, url)');
         expect(clearCurrentFrameState).toContain(
             'WebViewCompat.removeWebMessageListener(currentWebView, BRIDGE_INTERFACE_NAME)',
         );
+    });
+
+    it('executes the Android document-start bridge only in the main frame', () => {
+        const source = readFileSync(join(moduleRoot,
+            'android/src/main/java/dev/happier/hostedwebframe/HostedWebArtifactView.kt'), 'utf8');
+        const script = source.match(/private val DOCUMENT_START_BRIDGE = """([\s\S]*?)"""\.trimIndent\(\)/)?.[1]
+            .replaceAll('$BRIDGE_INTERFACE_NAME', 'HappierHostedWebFrameBridge');
+        expect(script).toBeTruthy();
+        const messages: string[] = [];
+        const mainWindow: Record<string, unknown> = {
+            HappierHostedWebFrameBridge: { postMessage: (data: string) => messages.push(data) },
+        };
+        mainWindow.top = mainWindow;
+        runInNewContext(script!, { window: mainWindow });
+        const bridge = mainWindow.ReactNativeWebView as { postMessage(data: string): void };
+        bridge.postMessage('current nonce envelope');
+        expect(messages).toEqual(['current nonce envelope']);
+        expect(Object.getOwnPropertyDescriptor(mainWindow, 'ReactNativeWebView')?.writable).toBe(false);
+
+        const childWindow = {
+            top: mainWindow,
+            HappierHostedWebFrameBridge: { postMessage: (data: string) => messages.push(data) },
+        };
+        runInNewContext(script!, { window: childWindow });
+        expect(childWindow).not.toHaveProperty('ReactNativeWebView');
+        expect(messages).toEqual(['current nonce envelope']);
     });
 
     it('retires an iOS hosted frame synchronously on UIKit detachment and can reload after a reattach', () => {

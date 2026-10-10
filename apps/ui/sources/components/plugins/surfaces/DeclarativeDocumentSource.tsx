@@ -36,7 +36,7 @@ type DeclarativeDocumentSourceMountLifetime = Readonly<{
  */
 export type DeclarativeDocumentSourceMountScope = Readonly<{
     pluginId: string;
-    occurrenceId: string;
+    occurrenceId?: string;
     accountLifetime: DeclarativeDocumentSourceAccountLifetime | null;
     /** Captured from the one mounted surface controller; never a new owner. */
     mountLifetime: DeclarativeDocumentSourceMountLifetime;

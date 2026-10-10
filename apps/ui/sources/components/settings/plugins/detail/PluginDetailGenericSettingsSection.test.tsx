@@ -1870,9 +1870,11 @@ describe('PluginDetailGenericSettingsSection', () => {
         const input = screen.findByTestId(ENDPOINT_INPUT_ID);
         expect(input?.props.placeholder).toBe('https://api.example.test');
         expect(input?.props.editable).toBe(false);
+        // The author's reason is its own line of the field, read as written.
         expect(screen.findByTestId(
             `settings.plugins.detail.${PLUGIN_ID}.settings.${GROUP_ID}.endpoint.disabledReason`,
-        )?.props.children).toBe('Connect this machine before changing the endpoint.');
+        )).not.toBeNull();
+        expect(screen.getTextContent()).toContain('Connect this machine before changing the endpoint.');
     });
 
     it('names the exact machine that loses a daemon-custodied secret', async () => {
@@ -2458,6 +2460,19 @@ describe('PluginDetailGenericSettingsSection', () => {
 
         expect(machinePluginSettingsGetMock).toHaveBeenCalledTimes(2);
         expect(screen.findByTestId(ENDPOINT_INPUT_ID)?.props.value).toBe('https://recovered.example.test');
+    });
+
+    it('keeps the record custody visible beside an authored settings purpose', async () => {
+        const projection = createProjection(1);
+        const purpose = 'Send review updates to the configured endpoint.';
+        const { screen } = await renderSection({
+            ...projection,
+            editableSettingsGroups: projection.editableSettingsGroups.map((group) => ({ ...group, description: purpose })),
+        });
+
+        expect(screen.findByTestId(ENDPOINT_INPUT_ID)?.props.value).toBe('https://api.example.test');
+        expect(screen.getTextContent()).toContain(purpose);
+        expect(screen.getTextContent()).toContain('settingsPlugins.genericSettingsFooter');
     });
 
     it.each([

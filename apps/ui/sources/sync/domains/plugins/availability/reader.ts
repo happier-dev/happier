@@ -5,14 +5,18 @@ import type {
     PluginMachineMaterializationV1,
     PluginMachineMaterializationRefV1,
     PluginPortableReleaseManifestV1,
+    PluginReleaseFactsV1,
 } from '@happier-dev/protocol/plugins/availability';
 import {
     isExactPluginMachineMaterializationReleaseCorrespondenceV1,
     isPluginUiReleaseSlotCompatibleWithArtifactLinkV1,
     normalizePluginReleaseFactsV1,
+    PluginPortableReleaseManifestV1Schema,
 } from '@happier-dev/protocol/plugins/availability';
 import type { PluginUiArtifactDigestV1 } from '@happier-dev/protocol/plugins/ui';
 import type { PluginCollectionContractRefV1 } from '@happier-dev/protocol';
+import { PluginDeclaredUiEntriesV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { normalizePluginInstalledUiDeclarations, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 
 import {
     areServerAccountScopesEqual,
@@ -36,7 +40,31 @@ export type PluginAccountAvailabilitySnapshot = Readonly<{
     materializations: readonly PluginMachineMaterializationV1[];
     /** Complete per-machine inventory facts, including exact empty reports. */
     snapshots: readonly PluginMachineMaterializationSnapshotV1[];
+    /** False means omitted machines are unknown, rather than uninstalled. */
+    inventoryComplete?: boolean;
+    /** Exact immutable installed release facts, not enabled selection intent. */
+    releases?: readonly PluginReleaseFactsV1[];
 }>;
+
+export type PluginAccountInstalledPluginInstallation = Readonly<{
+    materialization: PluginMachineMaterializationV1;
+    declaration: PluginPortableReleaseManifestV1 | null;
+    declarationState: 'known' | 'preparing';
+    /** Manifest knowledge alone does not prove projected renderer descriptors. */
+    uiDeclarationState: 'known' | 'preparing';
+    release: PluginReleaseFactsV1 | null;
+    execution: PluginAccountAvailabilityReleaseClassificationV1;
+    uiModel: PluginUiProjectionModel;
+}>;
+
+export type PluginAccountInstalledPluginsAdmission =
+    | Readonly<{
+        kind: 'available';
+        availabilityCursor: number;
+        completeness: 'complete' | 'incomplete';
+        plugins: readonly Readonly<{ pluginId: string; installations: readonly PluginAccountInstalledPluginInstallation[] }>[];
+    }>
+    | Extract<PluginMachineMaterializationAdmission, { kind: 'unavailable' }>;
 
 export type PluginAccountAvailabilityIntentReadProjection = Readonly<{
     pluginId: string;
@@ -427,6 +455,8 @@ export type PluginAccountAvailabilityReader = Readonly<{
         materialization: PluginMachineMaterializationV1,
     ) => PluginAccountAvailabilityReleaseClassificationV1;
     readMaterializations: () => PluginMachineMaterializationAdmission;
+    /** Descriptive installation census, independent of enabled Account intent. */
+    readInstalledPlugins: () => PluginAccountInstalledPluginsAdmission;
     /**
      * A lifecycle signal only. Consumers re-read through this owner; they
      * never receive a raw snapshot or a second currentness owner.
@@ -439,6 +469,7 @@ export type PluginAccountAvailabilityReaderStore = Readonly<{
         scope: ServerAccountScope;
         snapshot: PluginAccountAvailabilitySnapshot;
         failedPluginIds?: readonly string[];
+        intentCensusIncomplete?: boolean;
     }>) => PluginAccountAvailabilityStoredProjection | null;
     clear: () => PluginAccountAvailabilityStoredProjection | null;
     /**
@@ -489,10 +520,24 @@ function cloneMaterialization(
 ): PluginMachineMaterializationV1 {
     return freezeAvailabilitySnapshotValue({
         ...materialization,
+        ...(materialization.declaredManifest ? {
+            declaredManifest: freezeDeepDeclaration(PluginPortableReleaseManifestV1Schema.parse(materialization.declaredManifest)),
+        } : {}),
+        ...(materialization.declaredUiEntries ? {
+            declaredUiEntries: freezeDeepDeclaration(PluginDeclaredUiEntriesV1Schema.parse(materialization.declaredUiEntries)),
+        } : {}),
         uiArtifacts: freezeAvailabilitySnapshotValue(materialization.uiArtifacts.map((artifact) => (
             freezeAvailabilitySnapshotValue({ ...artifact })
         ))),
     });
+}
+
+function freezeDeepDeclaration<T>(value: T): T {
+    if (value && typeof value === 'object') {
+        for (const child of Object.values(value)) freezeDeepDeclaration(child);
+        Object.freeze(value);
+    }
+    return value;
 }
 
 function snapshotIntentReadResponse(
@@ -546,6 +591,8 @@ function snapshotPluginAccountAvailabilitySnapshot(
 ): PluginAccountAvailabilitySnapshot {
     return freezeAvailabilitySnapshotValue({
         availabilityCursor: snapshot.availabilityCursor,
+        inventoryComplete: snapshot.inventoryComplete !== false,
+        releases: Object.freeze((snapshot.releases ?? []).map(normalizePluginReleaseFactsV1)),
         intentReads: freezeAvailabilitySnapshotValue(snapshot.intentReads.map((projection) => (
             freezeAvailabilitySnapshotValue({
                 pluginId: projection.pluginId,
@@ -631,10 +678,56 @@ function readMaterializationAdmission(
                     }),
                 });
             })),
-        materializations: Object.freeze(snapshot.materializations.map(cloneMaterialization)),
-        snapshots: Object.freeze(snapshot.snapshots.map((machineSnapshot) => Object.freeze({
-            ...machineSnapshot,
-            materializations: Object.freeze(machineSnapshot.materializations.map(cloneMaterialization)),
+        // Ingestion already validates, copies and freezes this inventory.
+        // Reuse those owned facts until the Account projection replaces them.
+        materializations: snapshot.materializations,
+        snapshots: snapshot.snapshots,
+    });
+}
+
+function readInstalledPluginsAdmission(
+    state: AvailabilityProjectionState | null,
+    scope: ServerAccountScope,
+): PluginAccountInstalledPluginsAdmission {
+    const admitted = readMaterializationAdmission(state, scope);
+    if (admitted.kind === 'unavailable') return admitted;
+    const snapshot = readProjectionForScope(state, scope)!;
+    const byPluginId = new Map<string, PluginAccountInstalledPluginInstallation[]>();
+    for (const materialization of admitted.materializations) {
+        const releases = [...(snapshot.releases ?? []), ...snapshot.intentReads.flatMap((entry) => {
+            const release = entry.pluginId === materialization.pluginId ? entry.response.release : null;
+            return release ? [release] : [];
+        })].filter(release => isExactPluginMachineMaterializationReleaseCorrespondenceV1(materialization, release));
+        const uniqueReleases = new Map(releases.map(release => [release.archiveDigestSha256, release]));
+        const release = uniqueReleases.size === 1 ? [...uniqueReleases.values()][0]! : null;
+        const declaration = release?.normalizedManifest ?? materialization.declaredManifest ?? null;
+        const installations = byPluginId.get(materialization.pluginId) ?? [];
+        installations.push(Object.freeze({
+            materialization,
+            declaration,
+            declarationState: declaration ? 'known' : 'preparing',
+            uiDeclarationState: materialization.declaredUiEntries !== undefined ? 'known' : 'preparing',
+            release,
+            execution: classifyMaterializationRelease(state, scope, materialization),
+            uiModel: normalizePluginInstalledUiDeclarations(materialization.declaredUiEntries ?? {}, undefined, {
+                id: materialization.pluginId,
+                displayName: typeof declaration?.displayName === 'string'
+                    ? declaration.displayName : declaration?.displayName.fallback ?? materialization.pluginId,
+                version: materialization.version,
+                enabled: materialization.enabled,
+                source: { kind: materialization.sourceClass, locator: materialization.materializationId },
+                ...(declaration?.executionTarget ? { executionTarget: declaration.executionTarget } : {}),
+            }),
+        }));
+        byPluginId.set(materialization.pluginId, installations);
+    }
+    return Object.freeze({
+        kind: 'available',
+        availabilityCursor: snapshot.availabilityCursor,
+        completeness: snapshot.inventoryComplete === false ? 'incomplete' : 'complete',
+        plugins: Object.freeze([...byPluginId].sort(([a], [b]) => a.localeCompare(b)).map(([pluginId, installations]) => Object.freeze({
+            pluginId,
+            installations: Object.freeze(installations),
         }))),
     });
 }
@@ -1231,6 +1324,7 @@ function createBoundReader(input: Readonly<{
             materialization,
         ),
         readMaterializations: () => readMaterializationAdmission(input.readState(), input.scope),
+        readInstalledPlugins: () => readInstalledPluginsAdmission(input.readState(), input.scope),
         subscribe: input.subscribe,
     });
 }
@@ -1275,6 +1369,17 @@ export function createPluginAccountAvailabilityReaderStore(): PluginAccountAvail
             const previous = state;
             const canMerge = previous !== null && areServerAccountScopesEqual(previous.scope, input.scope);
             const incoming = snapshotPluginAccountAvailabilitySnapshot(input.snapshot);
+            const replacedMachineKeys = new Set(incoming.snapshots.map((entry) => `${entry.serverIdentityId}\0${entry.machineId}`));
+            const retainedSnapshots = canMerge && incoming.inventoryComplete === false
+                ? previous.snapshot.snapshots.filter((entry) => !replacedMachineKeys.has(`${entry.serverIdentityId}\0${entry.machineId}`))
+                : [];
+            const retainedMaterializations = canMerge && incoming.inventoryComplete === false
+                ? previous.snapshot.materializations.filter((entry) => !replacedMachineKeys.has(`${entry.serverIdentityId}\0${entry.machineId}`))
+                : [];
+            const retainedReleases = canMerge && incoming.inventoryComplete === false
+                ? (previous.snapshot.releases ?? []).filter(release => retainedMaterializations.some(
+                    materialization => isExactPluginMachineMaterializationReleaseCorrespondenceV1(materialization, release),
+                )) : [];
             const replacedPluginIds = new Set(incoming.intentReads.map((entry) => entry.pluginId));
             const retainedIntentReads = canMerge
                 ? previous.snapshot.intentReads.filter((entry) => !replacedPluginIds.has(entry.pluginId))
@@ -1284,6 +1389,9 @@ export function createPluginAccountAvailabilityReaderStore(): PluginAccountAvail
             const retainedPluginIds = new Set(intentReads.map((entry) => entry.pluginId));
             const stalePluginIds = new Set(canMerge ? previous.stalePluginIds : []);
             for (const pluginId of replacedPluginIds) stalePluginIds.delete(pluginId);
+            if (input.intentCensusIncomplete) {
+                for (const entry of retainedIntentReads) stalePluginIds.add(entry.pluginId);
+            }
             for (const pluginId of input.failedPluginIds ?? []) {
                 if (retainedPluginIds.has(pluginId)) stalePluginIds.add(pluginId);
             }
@@ -1298,6 +1406,9 @@ export function createPluginAccountAvailabilityReaderStore(): PluginAccountAvail
                         ...(canMerge ? retainedIntentReads.map((entry) => entry.response.availabilityCursor) : []),
                     ),
                     intentReads,
+                    snapshots: Object.freeze([...retainedSnapshots, ...incoming.snapshots]),
+                    materializations: Object.freeze([...retainedMaterializations, ...incoming.materializations]),
+                    releases: Object.freeze([...retainedReleases, ...(incoming.releases ?? [])]),
                 }),
             });
             notify();

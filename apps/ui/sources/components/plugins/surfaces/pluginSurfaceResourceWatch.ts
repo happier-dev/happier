@@ -14,7 +14,8 @@ import {
 } from '@/sync/ops/machineContributionRegistryProjection';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
-import type { PluginUiResourceClient } from '@happier-dev/plugin-ui/advanced';
+import type { PluginUiResourceClient, PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
+import { PluginUiHostReadReferenceV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 
 import {
     readPluginSurfaceResourceReference,
@@ -30,12 +31,11 @@ import {
 /**
  * The mounted `watchResource` / `disposeHostResource` handlers (§3.6, EU-4b).
  *
- * `readResource` remains the single snapshot authority; this module carries the
- * bounded invalidation SIGNAL only. It owns no cache, no second resource
- * registry and no event queue: admission, per-observer delivery accounting,
- * digest suppression and the queue/byte bounds all live in the daemon, and
- * delivery into the surface reuses the mount's existing subscription registry
- * through the `deliver` sink rather than standing up a second one.
+ * This module carries invalidation signals, never Resource values. Declared
+ * resources keep the existing daemon watch lifecycle; admitted host reads
+ * subscribe to the same Account Resource entry as host widgets. Both deliver
+ * through the mount's existing subscription sink without a value cache or poll
+ * loop for host reads.
  *
  * **Resynchronization** is this module's real responsibility. `open` answers
  * with the digest the daemon currently observes; the handler keeps that as the
@@ -502,7 +502,9 @@ export function createPluginContextualResourceWatchClient(input: Readonly<{
 
 export function createPluginSurfaceResourceWatchHandlers(input: Readonly<{
     pluginId: string;
-    resource: PluginContextualResourceBinding;
+    resource?: PluginContextualResourceBinding;
+    hostResourceStore?: PluginUiResourceStore;
+    isDaemonAvailable?: () => boolean;
     /** Publishes one event into the mount's existing subscription registry. */
     deliver: (event: PluginUiResourceSubscriptionEventV1) => void;
     isCurrent?: () => boolean;
@@ -512,7 +514,8 @@ export function createPluginSurfaceResourceWatchHandlers(input: Readonly<{
     /** Injected only so the pump's backoff is deterministic in tests. */
     delayMs?: (ms: number, signal: AbortSignal) => Promise<void>;
 }>) {
-    const owner = createContextualResourceWatchOwner(input);
+    const owner = input.resource ? createContextualResourceWatchOwner({ ...input, resource: input.resource }) : null;
+    const hostWatches = new Map<string, () => void>();
     return Object.freeze({
         watchResource: async (
             request: PluginResourceHostRequest,
@@ -525,6 +528,47 @@ export function createPluginSurfaceResourceWatchHandlers(input: Readonly<{
             if (!parsed?.success) {
                 return errorPayload('invalid_payload', 'plugin_surface_resource_subscription_payload_invalid');
             }
+            const hostReference = PluginUiHostReadReferenceV1Schema.safeParse(parsed.data.resource);
+            if (hostReference.success && input.hostResourceStore) {
+                const { subscriptionId } = parsed.data;
+                hostWatches.get(subscriptionId)?.();
+                const merged = mergeAbortSignals([input.lifetimeSignal, options?.signal]);
+                const signal = merged.signal;
+                if (signal?.aborted || input.isCurrent?.() === false) { merged.dispose(); return resourceAbortPayload(input.isCurrent); }
+                const entry = input.hostResourceStore.getEntry(hostReference.data);
+                let lastDigest: string | undefined;
+                let established = false;
+                let release = () => {};
+                const close = () => {
+                    release(); merged.dispose(); signal?.removeEventListener('abort', close);
+                    if (hostWatches.get(subscriptionId) === close) hostWatches.delete(subscriptionId);
+                };
+                hostWatches.set(subscriptionId, close);
+                release = entry.subscribe(() => {
+                    if (!established || signal?.aborted || input.isCurrent?.() === false) return;
+                    const snapshot = entry.getSnapshot();
+                    if (!snapshot.value && snapshot.error) {
+                        input.deliver(terminalEvent(subscriptionId, 'denied', snapshot.error.code ?? 'plugin_resource_unavailable'));
+                        close();
+                    } else if (snapshot.digest && snapshot.digest !== lastDigest) {
+                        lastDigest = snapshot.digest;
+                        input.deliver(invalidatedEvent(subscriptionId, snapshot.digest));
+                    }
+                }, true);
+                signal?.addEventListener('abort', close, { once: true });
+                try {
+                    const snapshot = await readPluginResourceStoreSnapshot(entry, signal);
+                    if (signal?.aborted || input.isCurrent?.() === false) { close(); return resourceAbortPayload(input.isCurrent); }
+                    if (!snapshot.digest || !snapshot.value) { close(); return errorPayload('unavailable', snapshot.error?.code ?? 'plugin_resource_unavailable'); }
+                    lastDigest = snapshot.digest;
+                    established = true;
+                    return { subscriptionId, digest: snapshot.digest };
+                } catch (error) {
+                    close();
+                    return errorPayload('unavailable', error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+                        ? error.code : 'plugin_resource_unavailable');
+                }
+            }
             const reference = readPluginSurfaceResourceReference(
                 input.pluginId,
                 parsed.data.resource as PluginUiJsonValueV1,
@@ -535,6 +579,7 @@ export function createPluginSurfaceResourceWatchHandlers(input: Readonly<{
             if (reference.pluginId !== input.pluginId) {
                 return errorPayload('unavailable', 'plugin_resource_not_found');
             }
+            if (!owner || input.isDaemonAvailable?.() === false) return errorPayload('unavailable', 'plugin_resource_transport_unavailable');
             if (input.isCurrent?.() === false) {
                 return errorPayload('unavailable', 'plugin_surface_retired');
             }
@@ -571,11 +616,12 @@ export function createPluginSurfaceResourceWatchHandlers(input: Readonly<{
             if (!parsed.success) {
                 return errorPayload('invalid_payload', 'plugin_surface_resource_subscription_payload_invalid');
             }
-            owner.retire(parsed.data.subscriptionId);
+            owner?.retire(parsed.data.subscriptionId);
+            hostWatches.get(parsed.data.subscriptionId)?.();
             // This is a transport-control operation, not an author-visible
             // result. The hosted wire acknowledges it separately.
             return null;
         },
-        dispose: owner.dispose,
+        dispose: () => { owner?.dispose(); for (const close of [...hostWatches.values()]) close(); },
     });
 }

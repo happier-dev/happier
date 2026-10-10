@@ -11,6 +11,9 @@ import {
     createPluginAccountAvailabilityReaderStore,
     type PluginAccountAvailabilitySnapshot,
 } from './reader';
+import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
+import { admitDeclarativeStaticModel } from '@/components/plugins/surfaces/declarativeStaticModel';
 
 const scope = { serverId: 'srv-local-a', accountId: 'account-a' } as const;
 
@@ -108,6 +111,141 @@ function snapshot(overrides: Partial<PluginAccountAvailabilitySnapshot> = {}): P
 }
 
 describe('Plugin Account Availability reader', () => {
+    it('projects cold portable app and settings destinations from the exact release without reported descriptors or execution authority', () => {
+        const release = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
+            ...intentRead(),
+            release: {
+                ...intentRead().release!,
+                normalizedManifest: {
+                    ...intentRead().release!.normalizedManifest,
+                    contributes: { settings: [{
+                        id: 'preferences', title: 'Preferences', scope: 'account', target: { kind: 'plugin' },
+                        fields: [{ id: 'enabled', title: 'Enabled', schema: { type: 'boolean' }, default: true }],
+                    }], ui: {
+                        renderers: [
+                            { id: 'page', kind: 'declarative', root: { kind: 'stack', children: [
+                                { kind: 'text', text: 'Portable page' },
+                                { kind: 'field', label: 'Enabled', control: { kind: 'toggle', settingId: 'enabled' } },
+                            ] } },
+                            { id: 'inline', kind: 'hostedHtml', source: artifactHtmlBundleFromBodyV1('<p>Portable settings</p>') },
+                        ],
+                        views: [{ id: 'page', container: 'appPage', target: { kind: 'app' }, renderer: 'page', title: 'Page' }],
+                        settingsPages: [{ id: 'settings', group: { kind: 'host', id: 'general' }, renderer: 'inline', title: 'Settings' }],
+                    } },
+                },
+            },
+        }).release!;
+        const base = snapshot();
+        // This is the descriptor-free shape reconstructed by Availability on the server.
+        const materialization = PluginMachineMaterializationV1Schema.parse({
+            ...base.materializations[0]!, archiveDigestSha256: release.archiveDigestSha256, uiArtifacts: release.uiSlots,
+        });
+        const reader = createPluginAccountAvailabilityReader({ scope, snapshot: snapshot({
+            releases: [release], materializations: [materialization],
+            snapshots: [{ ...base.snapshots[0]!, materializations: [materialization] }],
+        }) });
+        const installed = reader.readInstalledPlugins();
+        if (installed.kind !== 'available') throw new Error('Expected installed inventory');
+        const installation = installed.plugins[0]!.installations[0]!;
+        const page = installation.uiModel.surfacePlacementsById['surfacePlacement:com.acme.fixture:page'];
+        const settings = installation.uiModel.settingsPagesById['settingsPage:com.acme.fixture:settings'];
+        expect(installation.uiDeclarationState).toBe('known');
+        expect(page).toMatchObject({ descriptorId: 'page', availability: { state: 'available' } });
+        expect(settings).toMatchObject({ descriptorId: 'settings', renderer: { kind: 'hostedHtml' } });
+        expect(admitDeclarativeStaticModel({ model: page?.renderer.kind === 'declarative' ? page.renderer.model : null,
+            expectedPluginId: materialization.pluginId })?.root).toMatchObject({ kind: 'stack', children: [
+                { kind: 'text', text: 'Portable page' },
+                { kind: 'field', setting: { id: 'enabled', descriptor: { scope: 'account', default: true } } },
+            ] });
+        for (const destination of [page, settings]) {
+            expect(destination).not.toHaveProperty('occurrenceId');
+            expect(destination).not.toHaveProperty('materializationRef');
+            expect(destination).not.toHaveProperty('hostOrigin');
+        }
+        expect(installation.uiModel.generation).toBeNull();
+        expect(installation.execution.validation.kind).toBe('rejected');
+    });
+    it('uses installed immutable release facts descriptively without enabling Account execution', () => {
+        const release = intentRead().release!;
+        const base = snapshot();
+        const materialization = { ...base.materializations[0]!, archiveDigestSha256: release.archiveDigestSha256, uiArtifacts: release.uiSlots };
+        const reader = createPluginAccountAvailabilityReader({ scope, snapshot: snapshot({
+            releases: [release], materializations: [materialization],
+            snapshots: [{ ...base.snapshots[0]!, materializations: [materialization] }],
+        }) });
+        expect(reader.readInstalledPlugins()).toMatchObject({ plugins: [{ installations: [{ release, declaration: release.normalizedManifest }] }] });
+        expect(reader.classifyRelease(materialization).validation.kind).toBe('rejected');
+    });
+    it('projects reported offline page declarations without inventing a process occurrence', () => {
+        const base = snapshot();
+        const id = 'surfacePlacement:com.acme.fixture:page';
+        const materialization = PluginMachineMaterializationV1Schema.parse({ ...base.materializations[0],
+            declaredManifest: intentRead().release!.normalizedManifest,
+            declaredUiEntries: { [id]: {
+                id, pluginId: 'com.acme.fixture', contributionKind: 'surfacePlacement', descriptorId: 'page',
+                binding: normalizePluginUiDestinationBindingV1({ pluginId: 'com.acme.fixture', destinationId: 'page', rendererId: 'renderer', container: 'appPage', target: { kind: 'app' } }),
+                target: { kind: 'app' }, renderer: { kind: 'declarative', contributionId: 'renderer' },
+                display: { title: 'Page' }, availability: { state: 'available', reason: 'available', diagnostics: [] },
+            } },
+        });
+        const reader = createPluginAccountAvailabilityReader({ scope, snapshot: snapshot({
+            materializations: [materialization], snapshots: [{ ...base.snapshots[0]!, materializations: [materialization] }],
+        }) });
+        const installed = reader.readInstalledPlugins();
+        expect(installed.kind).toBe('available');
+        if (installed.kind !== 'available') throw new Error('Expected descriptive inventory');
+        const page = installed.plugins[0]!.installations[0]!.uiModel.surfacePlacementsById[id];
+        expect(page).toMatchObject({ descriptorId: 'page' });
+        expect(page).not.toHaveProperty('occurrenceId');
+        expect(page).not.toHaveProperty('materializationRef');
+        expect(installed.plugins[0]!.installations[0]!.uiModel.generation).toBeNull();
+        expect(installed.plugins[0]!.installations[0]!.uiModel.installedPackagesById[materialization.pluginId]).toMatchObject({
+            id: materialization.pluginId, version: materialization.version, enabled: false,
+        });
+    });
+    it('describes an installed release without an enabled Account intent and retains unknown declarations as preparing', () => {
+        const base = snapshot();
+        const declaration = intentRead().release!.normalizedManifest;
+        const known = { ...base.materializations[0]!, declaredManifest: declaration };
+        const unknown = { ...base.materializations[0]!, materializationId: 'install-2', machineId: 'machine-2' };
+        const reader = createPluginAccountAvailabilityReader({ scope, snapshot: snapshot({
+            materializations: [known, unknown],
+            snapshots: [
+                { serverIdentityId: known.serverIdentityId, machineId: known.machineId, materializations: [known] },
+                { serverIdentityId: unknown.serverIdentityId, machineId: unknown.machineId, materializations: [unknown] },
+            ],
+        }) });
+        expect(reader.readInstalledPlugins()).toMatchObject({
+            kind: 'available', completeness: 'complete',
+            plugins: [{ pluginId: known.pluginId, installations: [
+                { declaration, declarationState: 'known', execution: { validation: { kind: 'rejected' } } },
+                { declaration: null, declarationState: 'preparing' },
+            ] }],
+        });
+        expect(reader.readCurrentArtifact({ pluginId: known.pluginId, ...hostedSlot }).kind).toBe('unavailable');
+        expect(reader.readInstalledPlugins()).toMatchObject({ plugins: [{ installations: [
+            { uiDeclarationState: 'preparing' }, { uiDeclarationState: 'preparing' },
+        ] }] });
+    });
+
+    it('retains omitted installations on incomplete inventory and removes only a machine with an exact empty report', () => {
+        const store = createPluginAccountAvailabilityReaderStore();
+        const base = snapshot();
+        const first = base.materializations[0]!;
+        const second = { ...first, machineId: 'machine-2', materializationId: 'install-2' };
+        store.replace({ scope, snapshot: snapshot({ materializations: [first, second], snapshots: [
+            base.snapshots[0]!, { serverIdentityId: second.serverIdentityId, machineId: second.machineId, materializations: [second] },
+        ] }) });
+        store.replace({ scope, snapshot: snapshot({ materializations: [], snapshots: [{
+            serverIdentityId: first.serverIdentityId, machineId: first.machineId, materializations: [],
+        }], inventoryComplete: false }) });
+        expect(store.bind(scope).readInstalledPlugins()).toMatchObject({
+            completeness: 'incomplete', plugins: [{ installations: [{ materialization: second }] }],
+        });
+        store.replace({ scope, snapshot: snapshot({ materializations: [], snapshots: [], inventoryComplete: false }) });
+        expect(store.bind(scope).readMaterializations()).toMatchObject({ materializations: [second] });
+    });
+
     const machineBoundSlot = {
         pluginId: 'happier.fixture',
         contributionId: 'fixture-list-page-native',
@@ -706,6 +844,74 @@ describe('Plugin Account Availability reader', () => {
             .toEqual({ kind: 'unavailable', code: 'account_availability_scope_mismatch' });
     });
 
+    it('reuses immutable materialization facts until replacement without leaking caller mutations or another Account', () => {
+        const store = createPluginAccountAvailabilityReaderStore();
+        const base = snapshot();
+        const parsed = PluginMachineMaterializationV1Schema.parse({
+            ...base.materializations[0],
+            declaredManifest: intentRead().release!.normalizedManifest,
+            declaredUiEntries: {},
+        });
+        const materialization = {
+            ...parsed,
+            uiArtifacts: parsed.uiArtifacts.map((artifact) => ({ ...artifact })),
+            declaredUiEntries: { ...parsed.declaredUiEntries },
+        };
+        store.replace({ scope, snapshot: snapshot({
+            materializations: [materialization],
+            snapshots: [{ ...base.snapshots[0]!, materializations: [materialization] }],
+        }) });
+        const reader = store.bind(scope);
+        const first = reader.readMaterializations();
+        if (first.kind !== 'available') throw new Error('Expected materialization inventory');
+
+        materialization.enabled = true;
+        const declaredManifest = materialization.declaredManifest;
+        if (!declaredManifest?.engines) throw new Error('Fixture requires declared manifest engines');
+        declaredManifest.displayName = 'Mutated input';
+        declaredManifest.engines.happier = '^9.0.0';
+        materialization.uiArtifacts.splice(0, 1);
+        Object.assign(materialization.declaredUiEntries!, { mutated: {} });
+
+        const repeated = reader.readMaterializations();
+        if (repeated.kind !== 'available') throw new Error('Expected materialization inventory');
+        expect(repeated.materializations).toBe(first.materializations);
+        expect(repeated.snapshots).toBe(first.snapshots);
+        expect(repeated.materializations[0]).toMatchObject({
+            enabled: false,
+            declaredManifest: { displayName: 'Fixture', engines: { happier: '^1.0.0' } },
+            declaredUiEntries: {},
+            uiArtifacts: [{ contributionId: 'hosted' }],
+        });
+        const owned = repeated.materializations[0]!;
+        expect(owned.declaredUiEntries).toEqual({});
+        for (const value of [repeated.materializations, repeated.snapshots, owned,
+            owned.declaredManifest, owned.declaredManifest!.engines, owned.declaredUiEntries,
+            owned.uiArtifacts, owned.uiArtifacts[0], repeated.snapshots[0],
+            repeated.snapshots[0]!.materializations]) {
+            expect(Object.isFrozen(value)).toBe(true);
+        }
+        const installed = reader.readInstalledPlugins();
+        if (installed.kind !== 'available') throw new Error('Expected descriptive inventory');
+        expect(installed.plugins[0]!.installations[0]!.materialization).toBe(owned);
+        expect(installed.plugins[0]!.installations[0]!.declaration).toBe(owned.declaredManifest);
+
+        store.replace({ scope, snapshot: snapshot({
+            availabilityCursor: 43,
+            materializations: [],
+            snapshots: [],
+        }) });
+        expect(reader.readMaterializations()).toMatchObject({
+            availabilityCursor: 43, materializations: [], snapshots: [],
+        });
+        expect(first.materializations).toHaveLength(1);
+        expect(reader.readInstalledPlugins()).toMatchObject({ availabilityCursor: 43, plugins: [] });
+
+        store.replace({ scope: { ...scope, accountId: 'account-b' }, snapshot: snapshot() });
+        expect(reader.readMaterializations()).toEqual({ kind: 'unavailable', code: 'account_availability_scope_mismatch' });
+        expect(reader.readInstalledPlugins()).toEqual({ kind: 'unavailable', code: 'account_availability_scope_mismatch' });
+    });
+
     it('replaces one complete materialization projection atomically', () => {
         const store = createPluginAccountAvailabilityReaderStore();
         store.replace({ scope, snapshot: snapshot() });
@@ -729,7 +935,7 @@ describe('Plugin Account Availability reader', () => {
         });
     });
 
-    it('replaces successful plugin reads while failed siblings keep their prior content readable and flagged stale (AVD-07)', () => {
+    it.each(['named failure', 'incomplete census'] as const)('replaces successful plugin reads while a %s keeps prior sibling content readable and flagged stale (AVD-07)', (failure) => {
         const failedPluginId = 'com.acme.failed';
         const failedResponse = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
             ...intentRead(),
@@ -765,7 +971,7 @@ describe('Plugin Account Availability reader', () => {
                     }),
                 }],
             }),
-            failedPluginIds: [failedPluginId],
+            ...(failure === 'named failure' ? { failedPluginIds: [failedPluginId] } : { intentCensusIncomplete: true }),
         });
 
         expect(reader.readCurrentArtifact({ pluginId: 'com.acme.fixture', ...hostedSlot }))

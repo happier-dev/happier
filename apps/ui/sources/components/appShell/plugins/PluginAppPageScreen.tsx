@@ -14,6 +14,8 @@ import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/boundPluginSurfaceController';
 import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import { resolveSelectedPluginSurfaceLaunchAuthority } from '@/components/plugins/surfaces/pluginSurfaceLaunchAuthority';
+import { isPluginSurfaceMachineBound, usePluginSurfaceExecutionOrigin } from '@/components/plugins/surfaces/pluginSurfaceExecutionOrigin';
+import { readSelectedPluginUiResourceCapability } from '@/sync/domains/plugins/ui/resourceCapability';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { t } from '@/text';
 import { buildPluginDetailRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
@@ -91,6 +93,18 @@ export function PluginAppPageScreen(props: Readonly<{
     }), [pages, props.localId, props.pluginId]);
 
     const accountLifetime = captureActiveServerAccountScopeLifetime();
+    const pageExecution = usePluginSurfaceExecutionOrigin({
+        pluginId: props.pluginId,
+        projection: projection.pluginUiProjection,
+        entry: page?.placement,
+        enabled: !!page && isPluginSurfaceMachineBound({
+            pluginId: props.pluginId,
+            renderer: page.placement.renderer,
+            projection: projection.pluginUiProjection,
+            headerActions: page.placement.headerActions,
+            resourceCapability: readSelectedPluginUiResourceCapability(page.placement),
+        }),
+    });
     // An app-scope projection is a catalog union, so its top-level machine and
     // generation are intentionally absent when more than one contributor is
     // selected. Page chrome belongs to this exact admitted page instead: reuse
@@ -237,6 +251,7 @@ export function PluginAppPageScreen(props: Readonly<{
                         openSurface={openSurface}
                         signal={pageHeaderActionScope.signal}
                         isCurrent={isPageHeaderActionCurrent}
+                        isDaemonExecutionCurrent={pageExecution.isExecutionOriginCurrent}
                     />
                 ),
             }
@@ -250,9 +265,10 @@ export function PluginAppPageScreen(props: Readonly<{
         projection.pluginUiProjection,
         pageHeaderActionAuthority,
         isPageHeaderActionCurrent,
+        pageExecution.isExecutionOriginCurrent,
     ]);
 
-    if (props.subPath !== null && !page && projection.phase === 'establishing') {
+    if (props.subPath !== null && !page && (projection.phase === 'establishing' || projection.hasEstablishingMembers)) {
         return (
             <>
                 <Stack.Screen options={headerOptions} />

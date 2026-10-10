@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
     PluginAvailabilityActionHttpPathsV1,
+    PluginAvailabilityIntentReadActionOutputV1Schema,
+    PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE,
 } from '@happier-dev/protocol/plugins/availability';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 
@@ -72,7 +74,7 @@ function materializationSnapshot(cursor: number, pluginIds: readonly string[]) {
 }
 
 function intentRead(cursor: number, id: string) {
-    return {
+    return PluginAvailabilityIntentReadActionOutputV1Schema.parse({
         availabilityCursor: cursor,
         packageAssets: [],
         hostingCapability: { enabled: false },
@@ -86,22 +88,181 @@ function intentRead(cursor: number, id: string) {
         },
         release: id === pluginId ? releaseFacts() : null,
         uiArtifacts: [],
-    };
+    });
+}
+
+function intentList(cursor: number, ids: readonly string[], readCursor = cursor) {
+    return { availabilityCursor: cursor, pluginIds: [...ids].sort(),
+        intentReads: ids.map(pluginId => ({ pluginId, response: intentRead(readCursor, pluginId) })),
+        failedPluginIds: [] };
 }
 
 describe('active Plugin Account Availability projection hydrator', () => {
-    it('starts independent discovery reads together and commits only their coherent completed projection', async () => {
+    it('publishes incomplete installation evidence and immutable facts without needing selection intent', async () => {
+        const release = releaseFacts();
+        const hydrator = createActivePluginAccountAvailabilityProjectionHydrator({
+            captureLifetime: () => ({ scope, isCurrent: () => true, onRetire: () => ({ dispose: () => {} }) }),
+            getServerSnapshot: () => ({ serverId: scope.serverId, generation: 4 }),
+            captureRequestAuthority: async () => ({ request: async path => {
+                if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']) {
+                    return jsonResponse({ ...materializationSnapshot(23, []), inventoryComplete: false, releases: [release] });
+                }
+                return jsonResponse({ availabilityCursor: 23, pluginIds: [], intentReads: [], failedPluginIds: [] });
+            } }),
+        });
+        expect(await hydrator.refresh()).toMatchObject({ snapshot: {
+            inventoryComplete: false, releases: [release], intentReads: [],
+        } });
+    });
+    it('assembles every census page beyond 200 before returning complete intent facts', async () => {
+        const ids = Array.from({ length: 401 }, (_, index) =>
+            `com.acme.paged${index % 2 === 0 ? '-' : '.'}${String(index).padStart(3, '0')}`).sort();
+        const requestKnownIds: string[][] = [];
+        const hydrator = createActivePluginAccountAvailabilityProjectionHydrator({
+            captureLifetime: () => ({ scope, isCurrent: () => true, onRetire: () => ({ dispose: () => {} }) }),
+            getServerSnapshot: () => ({ serverId: scope.serverId, generation: 4 }),
+            captureRequestAuthority: async () => ({ request: async (path, init) => {
+                if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']) {
+                    return jsonResponse(materializationSnapshot(23, ids));
+                }
+                const body = JSON.parse(String(init?.body)) as { cursor?: string; knownPluginIds: string[] };
+                requestKnownIds.push(body.knownPluginIds);
+                const offset = body.cursor ? ids.indexOf(body.cursor) + 1 : 0;
+                const page = ids.slice(offset, offset + 200);
+                return jsonResponse({ ...intentList(23, page), nextCursor: offset + page.length < ids.length ? page.at(-1) : null });
+            } }),
+        });
+        const refreshed = await hydrator.refresh();
+        expect(refreshed?.snapshot.intentReads.map(entry => entry.pluginId)).toEqual(ids);
+        expect(refreshed?.failedPluginIds).toEqual([]);
+        expect(requestKnownIds).toEqual([
+            ids.slice(0, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE + 1),
+            ids.slice(PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE, 2 * PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE + 1),
+            ids.slice(2 * PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE),
+        ]);
+    });
+
+    it('retains completed pages and marks the census incomplete when a server repeats its cursor', async () => {
+        const hydrator = createActivePluginAccountAvailabilityProjectionHydrator({
+            captureLifetime: () => ({ scope, isCurrent: () => true, onRetire: () => ({ dispose: () => {} }) }),
+            getServerSnapshot: () => ({ serverId: scope.serverId, generation: 4 }),
+            captureRequestAuthority: async () => ({ request: async (path) => {
+                if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']) {
+                    return jsonResponse(materializationSnapshot(23, []));
+                }
+                return jsonResponse({ ...intentList(23, [pluginId]), nextCursor: pluginId });
+            } }),
+        });
+        await expect(hydrator.refresh()).resolves.toMatchObject({ intentCensusIncomplete: true,
+            snapshot: { intentReads: [{ pluginId }] },
+        });
+    });
+
+    it('retains successful pages and machine facts when a later census page fails', async () => {
+        const ids = ['com.acme.page-a', 'com.acme.page-b'];
+        const hydrator = createActivePluginAccountAvailabilityProjectionHydrator({
+            captureLifetime: () => ({ scope, isCurrent: () => true, onRetire: () => ({ dispose: () => {} }) }),
+            getServerSnapshot: () => ({ serverId: scope.serverId, generation: 4 }),
+            captureRequestAuthority: async () => ({ request: async (path, init) => {
+                if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']) {
+                    return jsonResponse(materializationSnapshot(23, [ids[1]!]));
+                }
+                const body = JSON.parse(String(init?.body)) as { cursor?: string };
+                if (body.cursor) throw new Error('Connection lost on next page');
+                return jsonResponse({ ...intentList(23, [ids[0]!]), nextCursor: ids[0] });
+            } }),
+        });
+        const refreshed = await hydrator.refresh();
+        expect(refreshed).toMatchObject({ intentCensusIncomplete: true, failedPluginIds: [ids[1]],
+            snapshot: { intentReads: [{ pluginId: ids[0] }], materializations: [{ pluginId: ids[1] }] } });
+    });
+
+    it('retires the Account occurrence while a later census page is pending', async () => {
+        const secondPage = createDeferred<Response>();
+        const secondPageStarted = createDeferred<void>();
+        let current = true;
+        let retire = () => {};
+        let pageSignal: AbortSignal | null = null;
+        const hydrator = createActivePluginAccountAvailabilityProjectionHydrator({
+            captureLifetime: () => ({ scope, isCurrent: () => current, onRetire: callback => {
+                retire = callback;
+                return { dispose: () => {} };
+            } }),
+            getServerSnapshot: () => ({ serverId: scope.serverId, generation: 4 }),
+            captureRequestAuthority: async () => ({ request: async (path, init) => {
+                if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']) {
+                    return jsonResponse(materializationSnapshot(23, []));
+                }
+                const body = JSON.parse(String(init?.body)) as { cursor?: string };
+                if (!body.cursor) return jsonResponse({ ...intentList(23, ['com.acme.page-a']), nextCursor: 'com.acme.page-a' });
+                pageSignal = init?.signal ?? null;
+                secondPageStarted.resolve();
+                return await secondPage.promise;
+            } }),
+        });
+        const refresh = hydrator.refresh();
+        await secondPageStarted.promise;
+        current = false;
+        retire();
+        secondPage.resolve(jsonResponse({ ...intentList(23, ['com.acme.page-b']), nextCursor: null }));
+        expect((pageSignal as AbortSignal | null)?.aborted).toBe(true);
+        await expect(refresh).resolves.toBeNull();
+    });
+
+    it('hydrates every intent from one list response without per-plugin HTTP reads', async () => {
+        const removedPluginId = 'com.acme.removed';
+        const ids = Array.from({ length: 38 }, (_, index) => `com.acme.plugin${index}`);
+        const reads = [pluginId, ...ids, removedPluginId].map((id) => ({
+            pluginId: id,
+            response: id === removedPluginId
+                ? { ...intentRead(17, id), intent: null }
+                : intentRead(17, id),
+        }));
+        const request = vi.fn(async (path: string, init?: RequestInit) => {
+            if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']) {
+                return jsonResponse(materializationSnapshot(17, [pluginId]));
+            }
+            if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
+                return jsonResponse({ availabilityCursor: 17, pluginIds: [...ids, pluginId].sort(),
+                    intentReads: reads, failedPluginIds: [] });
+            }
+            if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read']) {
+                const id = (JSON.parse(String(init?.body)) as { pluginId: string }).pluginId;
+                return jsonResponse(reads.find(entry => entry.pluginId === id)?.response);
+            }
+            throw new Error(`Unexpected Availability path: ${path}`);
+        });
+        const hydrator = createActivePluginAccountAvailabilityProjectionHydrator({
+            captureLifetime: () => ({ scope, isCurrent: () => true, onRetire: () => ({ dispose: () => {} }) }),
+            getServerSnapshot: () => ({ serverId: scope.serverId, generation: 4 }),
+            captureRequestAuthority: async () => ({ request }),
+        });
+        hydrator.invalidate([{ cursor: 17, kind: 'pluginDomain',
+            entityId: `pluginDomain/${removedPluginId}/availability`, changedAt: 1,
+            hint: { pluginDomain: 'availability', pluginId: removedPluginId } }]);
+
+        const result = await hydrator.refresh();
+        expect(request.mock.calls.map(([path]) => path)).toEqual([
+            PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'],
+            PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'],
+        ]);
+        expect(JSON.parse(String(request.mock.calls[1]?.[1]?.body))).toEqual({ knownPluginIds: [pluginId, removedPluginId].sort() });
+        expect(result).toMatchObject({
+            failedPluginIds: [], snapshot: { intentReads: expect.arrayContaining(reads),
+                materializations: [expect.objectContaining({ pluginId })] },
+        });
+    });
+
+    it('waits for materialization IDs before requesting their complete intent projection', async () => {
         const materializations = createDeferred<Response>();
-        const intentListStarted = createDeferred<void>();
         const request = vi.fn(async (path: string) => {
             if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']) {
                 return await materializations.promise;
             }
             if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
-                intentListStarted.resolve();
-                return jsonResponse({ availabilityCursor: 17, pluginIds: [pluginId] });
+                return jsonResponse(intentList(17, [pluginId]));
             }
-            return jsonResponse(intentRead(17, pluginId));
+            throw new Error(`Unexpected Availability path: ${path}`);
         });
         const hydrator = createActivePluginAccountAvailabilityProjectionHydrator({
             captureLifetime: () => ({
@@ -117,14 +278,11 @@ describe('active Plugin Account Availability projection hydrator', () => {
         let committed = false;
         void refresh.then(() => { committed = true; });
         try {
-            await vi.waitFor(() => expect(request.mock.calls.map(([path]) => path)).toContain(
-                PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'],
-            ));
-            await intentListStarted.promise;
+            await vi.waitFor(() => expect(request).toHaveBeenCalled());
             expect(committed).toBe(false);
-            expect(request.mock.calls.map(([path]) => path)).not.toContain(
-                PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'],
-            );
+            expect(request.mock.calls.map(([path]) => path)).toEqual([
+                PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'],
+            ]);
         } finally {
             materializations.resolve(jsonResponse(materializationSnapshot(17, [pluginId])));
             await refresh;
@@ -160,10 +318,9 @@ describe('active Plugin Account Availability projection hydrator', () => {
                 return jsonResponse(materializationSnapshot(17, [pluginId]));
             }
             if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
-                return jsonResponse({ availabilityCursor: 17, pluginIds: [pluginId] });
+                return jsonResponse(intentList(17, [pluginId]));
             }
-            const body = JSON.parse(String(init?.body ?? '{}')) as { pluginId: string };
-            return jsonResponse(intentRead(17, body.pluginId));
+            throw new Error(`Unexpected Availability path: ${path}`);
         });
         const hydrator = createActivePluginAccountAvailabilityProjectionHydrator({
             captureLifetime: () => ({
@@ -193,7 +350,6 @@ describe('active Plugin Account Availability projection hydrator', () => {
         expect(request.mock.calls.map(([path]) => path)).toEqual([
             PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'],
             PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'],
-            PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'],
         ]);
         current = false;
     });
@@ -222,14 +378,10 @@ describe('active Plugin Account Availability projection hydrator', () => {
                         });
                     }
                     if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
-                        return jsonResponse({
-                            availabilityCursor: 23,
-                            pluginIds: [pluginId],
-                        });
+                        requestedPluginIds.push(...(JSON.parse(String(init?.body)) as { knownPluginIds: string[] }).knownPluginIds);
+                        return jsonResponse(intentList(23, [pluginId]));
                     }
-                    const body = JSON.parse(String(init?.body ?? '{}')) as { pluginId: string };
-                    requestedPluginIds.push(body.pluginId);
-                    return jsonResponse(intentRead(23, body.pluginId));
+                    throw new Error(`Unexpected Availability path: ${path}`);
                 },
             }),
         });
@@ -261,7 +413,7 @@ describe('active Plugin Account Availability projection hydrator', () => {
                 snapshots: [expect.objectContaining({ machineId: 'machine-empty' })],
             },
         });
-        expect(requestedPluginIds).toEqual([pluginId, pluginId]);
+        expect(requestedPluginIds).toEqual([pluginId]);
         expect(requestedPaths).toContain(
             PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'],
         );
@@ -283,12 +435,9 @@ describe('active Plugin Account Availability projection hydrator', () => {
                         return jsonResponse(materializationSnapshot(23, []));
                     }
                     if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
-                        return jsonResponse({
-                            availabilityCursor: 24,
-                            pluginIds: [pluginId],
-                        });
+                        return jsonResponse(intentList(24, [pluginId], 25));
                     }
-                    return jsonResponse(intentRead(25, pluginId));
+                    throw new Error(`Unexpected Availability path: ${path}`);
                 },
             }),
         });
@@ -320,16 +469,10 @@ describe('active Plugin Account Availability projection hydrator', () => {
                         return jsonResponse(materializationSnapshot(23, []));
                     }
                     if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
-                        return jsonResponse({
-                            availabilityCursor: 24,
-                            pluginIds: [failedPluginId, pluginId],
-                        });
+                        return jsonResponse({ ...intentList(24, [pluginId], 25),
+                            pluginIds: [failedPluginId, pluginId], failedPluginIds: [failedPluginId] });
                     }
-                    const body = JSON.parse(String(init?.body ?? '{}')) as { pluginId: string };
-                    if (body.pluginId === failedPluginId) {
-                        return jsonErrorResponse(503, { error: 'temporarily_unavailable' });
-                    }
-                    return jsonResponse(intentRead(25, body.pluginId));
+                    throw new Error(`Unexpected Availability path: ${path}`);
                 },
             }),
         });
@@ -346,7 +489,7 @@ describe('active Plugin Account Availability projection hydrator', () => {
         });
     });
 
-    it('does not treat a missing intent-list route as a supported predecessor', async () => {
+    it('retains admitted materializations with an incomplete census when intent discovery is unavailable', async () => {
         const hydrator = createActivePluginAccountAvailabilityProjectionHydrator({
             captureLifetime: () => ({
                 scope,
@@ -371,10 +514,14 @@ describe('active Plugin Account Availability projection hydrator', () => {
             }),
         });
 
-        await expect(hydrator.refresh()).rejects.toThrow('status 404');
+        await expect(hydrator.refresh()).resolves.toMatchObject({
+            intentCensusIncomplete: true,
+            failedPluginIds: [pluginId],
+            snapshot: { intentReads: [], materializations: [{ pluginId }] },
+        });
     });
 
-    it('fails closed on a 404 that only resembles the exact older Fastify route-missing envelope', async () => {
+    it('does not admit a missing-route response as an empty census', async () => {
         const hydrator = createActivePluginAccountAvailabilityProjectionHydrator({
             captureLifetime: () => ({
                 scope,
@@ -400,7 +547,11 @@ describe('active Plugin Account Availability projection hydrator', () => {
             }),
         });
 
-        await expect(hydrator.refresh()).rejects.toThrow('status 404');
+        await expect(hydrator.refresh()).resolves.toMatchObject({
+            intentCensusIncomplete: true,
+            failedPluginIds: [pluginId],
+            snapshot: { intentReads: [], materializations: [{ pluginId }] },
+        });
     });
 
     it.each([
@@ -467,7 +618,11 @@ describe('active Plugin Account Availability projection hydrator', () => {
             }),
         });
 
-        await expect(hydrator.refresh()).rejects.toThrow(`status ${status}`);
+        await expect(hydrator.refresh()).resolves.toMatchObject({
+            intentCensusIncomplete: true,
+            failedPluginIds: [pluginId],
+            snapshot: { intentReads: [], materializations: [{ pluginId }] },
+        });
         expect(requestedPaths).toEqual([
             PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'],
             PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'],
@@ -508,7 +663,11 @@ describe('active Plugin Account Availability projection hydrator', () => {
             }),
         });
 
-        await expect(hydrator.refresh()).rejects.toThrow();
+        await expect(hydrator.refresh()).resolves.toMatchObject({
+            intentCensusIncomplete: true,
+            failedPluginIds: [pluginId],
+            snapshot: { intentReads: [], materializations: [{ pluginId }] },
+        });
         expect(requestedPaths).toEqual([
             PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'],
             PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'],
@@ -538,10 +697,13 @@ describe('active Plugin Account Availability projection hydrator', () => {
             }),
         });
 
-        await expect(hydrator.refresh()).rejects.toThrow('status 404');
+        await expect(hydrator.refresh()).resolves.toMatchObject({
+            intentCensusIncomplete: true,
+            snapshot: { intentReads: [], materializations: [] },
+        });
     });
 
-    it('fails closed when supported intent discovery returns a non-404 failure', async () => {
+    it('does not infer an empty census when intent discovery returns a non-404 failure', async () => {
         const hydrator = createActivePluginAccountAvailabilityProjectionHydrator({
             captureLifetime: () => ({
                 scope,
@@ -562,7 +724,10 @@ describe('active Plugin Account Availability projection hydrator', () => {
             }),
         });
 
-        await expect(hydrator.refresh()).rejects.toThrow('status 503');
+        await expect(hydrator.refresh()).resolves.toMatchObject({
+            intentCensusIncomplete: true,
+            snapshot: { intentReads: [], materializations: [] },
+        });
     });
 
     it('does not publish a response after the captured Account lifetime retires', async () => {
@@ -584,7 +749,7 @@ describe('active Plugin Account Availability projection hydrator', () => {
                         return pendingResponse;
                     }
                     if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
-                        return jsonResponse({ availabilityCursor: 17, pluginIds: [pluginId] });
+                        return jsonResponse(intentList(17, [pluginId]));
                     }
                     throw new Error(`Unexpected Availability path: ${path}`);
                 },
@@ -602,8 +767,8 @@ describe('active Plugin Account Availability projection hydrator', () => {
     it.each([
         ['reset', 'intent discovery'],
         ['Availability invalidation', 'intent discovery'],
-        ['reset', 'per-intent read'],
-        ['Availability invalidation', 'per-intent read'],
+        ['reset', 'materializations'],
+        ['Availability invalidation', 'materializations'],
     ] as const)(
         'does not publish a projection when a %s supersedes an in-flight %s',
         async (supersession, pendingStage) => {
@@ -622,6 +787,10 @@ describe('active Plugin Account Availability projection hydrator', () => {
                 captureRequestAuthority: async () => ({
                     request: async (path) => {
                         if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']) {
+                            if (pendingStage === 'materializations') {
+                                pendingReadStarted = true;
+                                return pendingResponse;
+                            }
                             return jsonResponse(materializationSnapshot(23, [pluginId]));
                         }
                         if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
@@ -629,13 +798,9 @@ describe('active Plugin Account Availability projection hydrator', () => {
                                 pendingReadStarted = true;
                                 return pendingResponse;
                             }
-                            return jsonResponse({ availabilityCursor: 23, pluginIds: [pluginId] });
+                            return jsonResponse(intentList(23, [pluginId]));
                         }
-                        if (pendingStage === 'per-intent read') {
-                            pendingReadStarted = true;
-                            return pendingResponse;
-                        }
-                        return jsonResponse(intentRead(23, pluginId));
+                        throw new Error(`Unexpected Availability path: ${path}`);
                     },
                 }),
             });
@@ -655,8 +820,8 @@ describe('active Plugin Account Availability projection hydrator', () => {
             }
             resolvePendingResponse(
                 pendingStage === 'intent discovery'
-                    ? jsonResponse({ availabilityCursor: 23, pluginIds: [pluginId] })
-                    : jsonResponse(intentRead(23, pluginId)),
+                    ? jsonResponse(intentList(23, [pluginId]))
+                    : jsonResponse(materializationSnapshot(23, [pluginId])),
             );
 
             await expect(pending).resolves.toBeNull();
@@ -692,10 +857,9 @@ describe('active Plugin Account Availability projection hydrator', () => {
                         return jsonResponse(materializationSnapshot(31, [pluginId]));
                     }
                     if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
-                        return jsonResponse({ availabilityCursor: 31, pluginIds: [pluginId] });
+                        return jsonResponse(intentList(31, [pluginId]));
                     }
-                    const body = JSON.parse(String(init?.body ?? '{}')) as { pluginId: string };
-                    return jsonResponse(intentRead(31, body.pluginId));
+                    throw new Error(`Unexpected Availability path: ${path}`);
                 },
             }),
         });

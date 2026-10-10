@@ -35,6 +35,7 @@ import {
     captureActiveServerAccountScopeLifetime,
     type ActiveServerAccountScopeLifetime,
 } from '@/sync/domains/scope/activeServerAccountScope';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 /**
  * The one normalized result of an admitted `openSurface` destination lookup.
@@ -566,9 +567,13 @@ const PluginSurfacePaneLaunchScopeContext = React.createContext<PluginSurfacePan
  */
 export function PluginSurfacePaneLaunchScope(props: Readonly<{
     children: React.ReactNode;
+    /** Exact Session/Project scopes borrow their producer's lifetime, including unavailable `null`. */
+    accountLifetime?: ServerAccountScopeLifetime | null;
 }>): React.ReactElement {
     const [store] = React.useState(createPluginSurfacePaneLaunchStore);
-    const accountLifetime = captureActiveServerAccountScopeLifetime();
+    const accountLifetime = props.accountLifetime === undefined
+        ? captureActiveServerAccountScopeLifetime()
+        : props.accountLifetime;
     const [, refreshAfterAccountRetirement] = React.useReducer((revision: number) => revision + 1, 0);
 
     React.useEffect(() => {

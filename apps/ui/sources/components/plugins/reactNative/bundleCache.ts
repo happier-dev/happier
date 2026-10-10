@@ -1,9 +1,11 @@
 import {
-    computePluginUiArtifactFileSetSha256DigestV1,
-    computePluginUiArtifactSha256DigestV1,
     isPluginUiHermesBytecodeArtifactV1,
     type PluginUiArtifactDigestV1,
 } from '@happier-dev/protocol/plugins/ui';
+import {
+    computePluginUiArtifactFileSetSha256Digest,
+    computePluginUiArtifactSha256Digest,
+} from '@/sync/domains/plugins/ui/artifactIntegrity';
 
 import {
     type PluginReactNativeBundleCacheIdentity,
@@ -200,22 +202,22 @@ function persistentIdentityMatches(
         === derivePluginReactNativePersistentArtifactKey(right);
 }
 
-function persistentRecordHasValidIntegrity(
+async function persistentRecordHasValidIntegrity(
     record: PluginReactNativePersistentArtifactRecord,
     expected: PluginReactNativePersistentArtifactIdentity,
-): boolean {
+): Promise<boolean> {
     if (!persistentIdentityMatches(record.persistentIdentity, expected)) return false;
     // The record always carries the Artifact-owned exact file graph, so the
     // declared entry supplies the entry digest. A record whose declared entry
     // is missing from its own graph is invalid, never an entry-only record.
     const declaredEntry = record.files.find((file) => file.relativePath === record.entryRelativePath);
     if (!declaredEntry) return false;
-    if (computePluginUiArtifactSha256DigestV1(record.bytes) !== declaredEntry.digest) return false;
-    if (record.files.some((file) => {
-        if (file.bytes.byteLength !== file.byteSize) return true;
-        return computePluginUiArtifactSha256DigestV1(file.bytes) !== file.digest;
-    })) return false;
-    return computePluginUiArtifactFileSetSha256DigestV1(
+    if (await computePluginUiArtifactSha256Digest(record.bytes) !== declaredEntry.digest) return false;
+    for (const file of record.files) {
+        if (file.bytes.byteLength !== file.byteSize) return false;
+        if (await computePluginUiArtifactSha256Digest(file.bytes) !== file.digest) return false;
+    }
+    return await computePluginUiArtifactFileSetSha256Digest(
         record.files.map((file) => ({
             relativePath: file.relativePath,
             bytes: file.bytes,
@@ -626,16 +628,37 @@ export function createPluginReactNativeBundleCache(
                 : null;
         },
         readPersistentArtifact: async (identity) => {
-            const record = await persistentCustody.readPersistentArtifact(identity);
-            if (!record || !persistentRecordHasValidIntegrity(record as PluginReactNativePersistentArtifactRecord, identity)) {
-                if (record) await persistentCustody.removePersistentArtifact(identity);
-                return null;
+            const operation = persistentCustody.capturePersistentAccountOperation({
+                scope: identity.accountScope,
+                isCurrent: () => true,
+            });
+            if (!operation) return null;
+            try {
+                // Custody returns detached bytes and keeps the same Account
+                // generation captured across the asynchronous integrity work.
+                const record = await operation.readPersistentArtifact(identity) as PluginReactNativePersistentArtifactRecord | null;
+                if (!record || !await persistentRecordHasValidIntegrity(record, identity)) {
+                    if (record) await operation.removePersistentArtifact(identity);
+                    return null;
+                }
+                return operation.isCurrent() ? record : null;
+            } finally {
+                operation.release();
             }
-            return clonePersistentArtifactRecord(record as PluginReactNativePersistentArtifactRecord);
         },
         writePersistentArtifact: async (record) => {
-            if (!persistentRecordHasValidIntegrity(record, record.persistentIdentity)) return false;
-            return persistentCustody.writePersistentArtifact(record);
+            const operation = persistentCustody.capturePersistentAccountOperation({
+                scope: record.persistentIdentity.accountScope,
+                isCurrent: () => true,
+            });
+            if (!operation) return false;
+            try {
+                const detached = clonePersistentArtifactRecord(record);
+                if (!await persistentRecordHasValidIntegrity(detached, detached.persistentIdentity)) return false;
+                return (await operation.writePersistentArtifact(detached)) !== null;
+            } finally {
+                operation.release();
+            }
         },
         removePersistentArtifact: (identity, isCurrent) => persistentCustody.removePersistentArtifact(identity, isCurrent),
         removePersistentArtifactsForAccount: async (scope) => {

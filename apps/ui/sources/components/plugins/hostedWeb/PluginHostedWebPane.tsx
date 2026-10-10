@@ -553,7 +553,7 @@ export function PluginHostedWebPane(props: Readonly<{
         /** §3.2: the plugin's projected translation bundle for the active locale. */
         translations: Readonly<Record<string, string>>;
         /** Exact daemon-admitted target snapshot; an empty snapshot is valid. */
-        targetedContributions: SurfaceContext['targetedContributions'];
+        targetedContributions?: SurfaceContext['targetedContributions'];
     }>;
     /**
      * The mounted host's single Account-scoped Data bridge factory. The pane
@@ -653,7 +653,7 @@ export function PluginHostedWebPane(props: Readonly<{
     const lifecycle = useHostedFrameLifecycle({
         lifetimeKey: rendererDocumentKey,
         readyRequired,
-        readyTimeoutMs: props.readyTimeoutMs,
+        readyTimeoutMs: props.readyTimeoutMs ?? null,
         onReadyTimeout: () => { hostApiBridgeHandlerRef.current?.recordReadyTimeout(); },
         onRetireAttempt: (reason) => {
             if (reason === 'unexpected_navigation') frameSinkRef.current = null;
@@ -985,8 +985,8 @@ export function PluginHostedWebPane(props: Readonly<{
             canonicalHostApi.identity.instanceId,
             canonicalHostApi.identity.mountNonce,
             getPluginSurfaceTargetAuthorityKey(canonicalHostApi.target),
-            canonicalHostApi.surface.targetedContributions.target.pluginId,
-            canonicalHostApi.surface.targetedContributions.target.occurrenceId,
+            canonicalHostApi.surface.targetedContributions?.target.pluginId ?? '',
+            canonicalHostApi.surface.targetedContributions?.target.occurrenceId ?? '',
         ].join('')
         : null;
     const frameOrigin = (inlineDocument ? 'null' : null)
@@ -1391,7 +1391,7 @@ export function PluginHostedWebPane(props: Readonly<{
                 title={frameTitle}
                 {...(frameUrl ? { url: frameUrl } : {})}
                 {...(inlineDocument && bridgeIdentity && canonicalHostOrigin ? {
-                    html: inlineDocument.html,
+                    bundle: inlineDocument,
                     networkOrigins: props.inlineDocumentNetworkOrigins,
                     bootstrapConfig: { identity: bridgeIdentity, frameOrigin: 'null', hostOrigin: canonicalHostOrigin },
                     onUnexpectedNavigation: handleOpaqueArtifactUnexpectedNavigation,

@@ -101,6 +101,8 @@ export const PluginDetailHeader = React.memo(function PluginDetailHeader(props: 
     pluginId: string;
     installed: InstalledPluginEntry | null;
     projection: PluginProjectionEntry | null;
+    machineId?: string | null;
+    serverId?: string | null;
     enabled?: PluginDetailEnabledControl | null;
     menuActions?: readonly PageHeaderMenuAction[];
 }>) {
@@ -119,7 +121,8 @@ export const PluginDetailHeader = React.memo(function PluginDetailHeader(props: 
             title={title}
             description={description}
             meta={meta}
-            leading={<PluginMark title={title} iconAgentId={props.projection?.iconAgentId ?? null} size="page" />}
+            leading={<PluginMark title={title} pluginId={props.pluginId} iconAgentId={props.projection?.iconAgentId ?? null} size="page"
+                installedPackage={props.projection?.installedPackage} machineId={props.machineId} serverId={props.serverId} />}
             actions={enabled || hasMenu ? (
                 <View style={styles.actions}>
                     {enabled ? (

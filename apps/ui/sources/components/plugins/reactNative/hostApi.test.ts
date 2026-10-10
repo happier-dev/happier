@@ -59,6 +59,20 @@ function readProductionSource(relativePath: string): string {
 }
 
 describe('canonical React Native plugin Host API adapter', () => {
+    it('transports host reads through the same mounted read ceiling without dropping their identity', async () => {
+        const reference = { hostRead: 'usage.query' as const, input: { queries: [] } };
+        const owner = createPluginSurfaceHostApi({ surfaceContext: surface, handlers: {
+            readResource: request => request.payload && typeof request.payload === 'object'
+                && !Array.isArray(request.payload) && JSON.stringify(request.payload.resource) === JSON.stringify(reference)
+                ? { contentType: 'application/json', digest: `sha256:${'a'.repeat(64)}`, bytesBase64: 'Nw==' }
+                : { code: 'denied', diagnostics: [] },
+        } });
+        const adapter = createCanonicalPluginReactNativeHostApiAdapter({ surface: createPluginSurfaceContextFixture({ mount: canonicalRightPaneMount }), requestSurface: surface,
+            requestIdPrefix: 'rn-host-read', handleRequest: owner.handleRequest, installedMethods: owner.installedMethods });
+        await expect(adapter.api.readResource(reference)).resolves.toMatchObject({ bytes: new Uint8Array([55]) });
+        adapter.dispose();
+        await expect(adapter.api.readResource(reference)).rejects.toMatchObject({ code: 'stale_surface' });
+    });
     it('preserves an acknowledged area mutation when the carrier retires after the mounted edit', async () => {
         let retire = () => {};
         const result = { ok: true, result: { ref: { surface: { serverId: 'home', accountId: 'viewer',
@@ -67,7 +81,7 @@ describe('canonical React Native plugin Host API adapter', () => {
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({ surface: createPluginSurfaceContextFixture({ mount: canonicalRightPaneMount }), requestSurface: surface,
             requestIdPrefix: 'rn-area-edit', handleRequest: owner.handleRequest, installedMethods: owner.installedMethods });
         retire = adapter.dispose;
-        await expect(adapter.api.widgetArea({ area: 'pinned', operation: { actionId: 'widgets.instance.remove', instanceId: 'copy' } })).resolves.toEqual(result);
+        await expect(adapter.api.widgetArea({ area: 'pinned', operation: { actionId: 'widgets.item.remove', instanceId: 'copy' } })).resolves.toEqual(result);
     });
     it('transports declared-area operations through the mounted host and refuses author authority', async () => {
         const requests: unknown[] = [];
@@ -75,7 +89,7 @@ describe('canonical React Native plugin Host API adapter', () => {
             handlers: { widgetArea: request => { requests.push(request.payload); return { ok: false, errorCode: 'unavailable', error: 'area_not_available' }; } } });
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({ surface: createPluginSurfaceContextFixture({ mount: canonicalRightPaneMount }), requestSurface: surface,
             requestIdPrefix: 'rn-area', handleRequest: owner.handleRequest, installedMethods: owner.installedMethods });
-        const request = { area: 'pinned', operation: { actionId: 'widgets.instance.list' as const } };
+        const request = { area: 'pinned', operation: { actionId: 'widgets.item.list' as const } };
         await expect(adapter.api.widgetArea(request)).resolves.toMatchObject({ ok: false, errorCode: 'unavailable' });
         await expect(adapter.api.widgetArea({ ...request, accountId: 'other' } as never)).rejects.toMatchObject({ code: 'invalid_payload' });
         expect(requests).toEqual([request]);

@@ -1,3 +1,4 @@
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
@@ -79,7 +80,7 @@ async function renderColumn(model: PluginUiProjectionModel) {
                 machineId: 'machine-1',
                 serverId: 'server-1',
                 platform: 'web',
-                clientExecutableActivation: { status: 'ready' },
+                accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' },
                 reloadClientExecutables: () => {},
                 reloadConnectedAccountProjection: () => {},
             }}

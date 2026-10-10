@@ -5,6 +5,8 @@ import {
     type UiSurfaceNetworkOriginV1,
 } from '@happier-dev/protocol/plugins/ui';
 import * as React from 'react';
+import type { ArtifactHtmlBundleV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
+import { ARTIFACT_HTML_RESPONSE_SANDBOX_CSP_V1 } from '@happier-dev/protocol/artifacts/artifactHtmlDocumentV1';
 import { Platform } from 'react-native';
 import {
     requireNativeModule,
@@ -33,7 +35,7 @@ type HostedArtifactFrameNativeModule = Readonly<{
     postHostMessage?: (view: unknown, serializedMessage: string) => Promise<boolean> | boolean;
     /** The view-owned native history command; never a guest-controlled URL. */
     goBack?: (view: unknown) => Promise<boolean> | boolean;
-    registerInlineDocument?: (input: Readonly<{ token: string; html: string }>) => Promise<unknown>;
+    registerInlineDocument?: (input: Readonly<{ token: string; html: string; contentSecurityPolicy: string }>) => Promise<unknown>;
     /** Synchronous revocation acknowledgement for one process-local document. */
     unregisterInlineDocument?: (token: string) => boolean;
 }>;
@@ -327,7 +329,7 @@ export function HostedArtifactFrame(props: HostedArtifactFrameProps): React.Reac
 }
 
 type HostedInlineDocumentFrameProps = HostedNativeFrameSharedProps & Readonly<{
-    html: string;
+    bundle: ArtifactHtmlBundleV1;
     networkOrigins?: readonly UiSurfaceNetworkOriginV1[];
     bootstrapConfig?: PluginHostedWebBridgeBootstrapConfigV1;
     bridge?: (PluginHostedWebNativeBridgeConfig & Readonly<{
@@ -403,17 +405,19 @@ export function HostedInlineDocumentFrame(
     props: HostedInlineDocumentFrameProps,
 ): React.ReactElement | null {
     const adapter = React.useMemo(resolveNativeAdapter, []);
-    let documentHtml: string | null = null;
-    try {
-        documentHtml = buildHostedHtmlDocument(
-            props.html,
-            props.bootstrapConfig,
-            { networkOrigins: props.networkOrigins, externalHttpLinks: props.externalHttpLinks },
-        );
-    } catch {
-        // The outer surface admission normally rejects malformed input. Keep
-        // this physical boundary fail-closed if it is called independently.
-    }
+    const documentHtml = React.useMemo(() => {
+        try {
+            return buildHostedHtmlDocument(
+                props.bundle,
+                props.bootstrapConfig,
+                { networkOrigins: props.networkOrigins, externalHttpLinks: props.externalHttpLinks },
+            );
+        } catch {
+            // The outer surface admission normally rejects malformed input. Keep
+            // this physical boundary fail-closed if it is called independently.
+            return null;
+        }
+    }, [props.bundle, props.bootstrapConfig, props.networkOrigins, props.externalHttpLinks]);
     const generation = React.useMemo(
         () => createInlineDocumentGeneration(documentHtml),
         [documentHtml],
@@ -459,6 +463,7 @@ export function HostedInlineDocumentFrame(
             request = Promise.resolve(register({
                 token: generation.token,
                 html: generation.documentHtml,
+                contentSecurityPolicy: ARTIFACT_HTML_RESPONSE_SANDBOX_CSP_V1,
             }));
         } catch {
             revokeToken(generation.token);

@@ -7,29 +7,29 @@ export const PLUGINS_SETTINGS = defineSettingsPage({
         updates: {
             titleKey: 'settingsPlugins.surfaces.updatesTitle',
             settings: {
-                updateReview: { storage: { scope: 'account', key: 'pluginUpdateReviewModeV1', access: 'read_write' }, titleKey: 'settingsPlugins.updateReview.title' },
+                updateReview: {},
             },
         },
         // Native apps only, and only while a plugin offers an app panel (page state).
         appPanels: {
             host: settingsHosts.native,
             settings: {
-                appPanels: { titleKey: 'settingsPlugins.appPanelsTitle', descriptionKey: 'settingsPlugins.appPanelsSubtitle' },
+                appPanels: {},
             },
         },
         more: {
             titleKey: 'settingsPlugins.surfaces.forDevelopers',
             settings: {
-                sourceAdministration: { titleKey: 'settingsPlugins.sourceAdministration.title', descriptionKey: 'settingsPlugins.sourceAdministration.subtitle' },
-                development: { titleKey: 'settingsPlugins.views.development', descriptionKey: 'settingsPlugins.developerDevelopmentSubtitle' },
-                diagnostics: { titleKey: 'settingsPlugins.views.diagnostics', descriptionKey: 'settingsPlugins.developerDiagnosticsSubtitle' },
+                sourceAdministration: {},
+                development: {},
+                diagnostics: {},
             },
         },
         moreWebhooks: {
             titleKey: 'settingsPlugins.surfaces.forDevelopers',
             featureId: 'plugins.webhooks',
             settings: {
-                webhookAdministration: { titleKey: 'settingsPlugins.webhookAdministration.title', descriptionKey: 'settingsPlugins.webhookAdministration.footer' },
+                webhookAdministration: {},
             },
         },
     },

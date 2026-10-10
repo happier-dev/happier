@@ -1,12 +1,17 @@
 import * as React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
     normalizePluginUiSettingsPageBindingV1,
     type PluginUiHostApiRequestEnvelopeV1,
 } from '@happier-dev/protocol/plugins/ui';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture, renderScreen as renderScreenWithProviders, standardCleanup } from '@/dev/testkit';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { AppShellPluginUiProjectionValueProvider, useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { storage } from '@/sync/domains/state/storageStore';
+import { unionPluginUiProjections } from '@/sync/domains/plugins/ui/projectionUnion';
 import type { PluginSurfaceOpenHandler } from '@/components/plugins/surfaces/openPluginSurface';
 import {
     PluginSurfaceDestinationNavigationBindingProvider,
@@ -43,6 +48,7 @@ const routeRemovalState = vi.hoisted(() => ({
 const appShellState = vi.hoisted(() => ({
     projection: null as PluginUiProjectionModel | null,
     phase: 'current' as 'establishing' | 'current' | 'retainedOffline' | 'unavailable',
+    hasEstablishingMembers: false,
     interactionEnabled: true,
 }));
 const routeFocusState = vi.hoisted(() => ({ value: true }));
@@ -112,22 +118,8 @@ vi.mock('@react-navigation/native', async () => {
     };
 });
 
-vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
-    useAppShellPluginUiProjection: () => ({
-        pluginUiProjection: appShellState.projection,
-        machineId: 'machine-1',
-        serverId: 'server-1',
-        platform: 'web',
-        phase: appShellState.phase,
-        interactionEnabled: appShellState.interactionEnabled,
-    }),
-}));
-
-vi.mock('@/sync/domains/machines/administration/selectionPreferences', () => ({
-    MACHINE_ADMINISTRATION_SELECTION_KEYS_V1: { plugins: 'plugins' },
-}));
-
-vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
+vi.mock('@/sync/domains/machines/administration/useTargetSelection', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/sync/domains/machines/administration/useTargetSelection')>()),
     useMachineAdministrationTargetSelection: () => administrationSelectionFixture,
 }));
 
@@ -172,9 +164,10 @@ function settingsPage(input: Readonly<{
         rendererId: 'settings-form',
     });
     if (!binding) throw new Error('Settings page fixture needs a normalized binding');
-    return {
+    const page: PluginUiSettingsPageProjection = {
         id: `settingsPage:${pluginId}:${pageId}`,
         pluginId,
+        occurrenceId: `${pluginId}-occurrence-4`,
         contributionKind: 'settingsPage',
         descriptorId: pageId,
         page: {
@@ -188,23 +181,58 @@ function settingsPage(input: Readonly<{
         binding,
         renderer: { kind: 'declarative' },
         availability: { state: 'available', reason: 'available', diagnostics: [] },
-        hostOrigin: {
-            machineId: 'machine-1',
-            serverId: 'server-1',
-            generation: 4,
-            phase: 'current',
-            interactionEnabled: true,
-            executionOrigin: {
-                serverIdentityId: 'srv_account_a',
-                materializationRef: {
-                    pluginId,
-                    machineId: 'machine-1',
-                    materializationId: `${pluginId}-current`,
-                },
-            },
-        },
     };
+    const projected = composeSettingsProjection({ ...EMPTY_PLUGIN_UI_PROJECTION, settingsPagesById: { [page.id]: page } });
+    const admitted = projected?.settingsPagesById[page.id];
+    if (!admitted) throw new Error('Settings fixture must have a canonically admitted destination');
+    return admitted;
 }
+
+installDisconnectedServerSocketBoundary();
+let settingsConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
+
+function composeSettingsProjection(raw: PluginUiProjectionModel | null,
+    phase = appShellState.phase, interactionEnabled = appShellState.interactionEnabled) {
+    if (!raw) return null;
+    const packages = Object.fromEntries(Object.values(raw.settingsPagesById).map(page => [page.pluginId, {
+        id: page.pluginId, displayName: page.pluginId, version: '1.0.0', enabled: true,
+        source: { kind: 'bundled' as const, locator: page.pluginId }, occurrenceId: `${page.pluginId}-occurrence-4`,
+        sourceCustody: { kind: 'bundled_first_party' as const,
+            packagedRuntime: { kind: 'cli_version_root' as const, versionRootId: 'settings-page-fixture-root' } },
+    }]));
+    return unionPluginUiProjections([{ machineId: 'machine-1', serverId: 'server-1', serverIdentityId: 'srv_account_a',
+        phase, interactionEnabled,
+        projection: { ...raw, generation: 4, installedPackagesById: packages } }]).pluginUiProjection;
+}
+
+function SettingsProjectionFixture({ children }: React.PropsWithChildren) {
+    const raw = appShellState.projection;
+    const projection = React.useMemo(() => composeSettingsProjection(raw), [raw, appShellState.phase, appShellState.interactionEnabled]);
+    return <AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection: projection,
+        pluginBrowserProjection: null, phase: appShellState.phase, hasEstablishingMembers: appShellState.hasEstablishingMembers,
+        interactionEnabled: appShellState.interactionEnabled, machineId: 'machine-1', serverId: 'server-1', platform: 'web',
+        accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' },
+        reloadClientExecutables() {}, reloadConnectedAccountProjection() {},
+    }}>{children}</AppShellPluginUiProjectionValueProvider>;
+}
+
+function renderScreen(element: React.ReactElement) {
+    return renderScreenWithProviders(element, { wrapper: SettingsProjectionFixture });
+}
+
+beforeEach(async () => {
+    settingsConnection = await restoreServerAccountForTest({ serverUrl: 'https://server-1',
+        serverIdentityId: 'srv_account_a', accountId: 'settings-account', request: async url => {
+            if (new URL(String(url)).pathname === '/health') return Response.json({ status: 'ok' });
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        } });
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime || settingsConnection.home.id !== 'server-1') throw new Error('Settings fixture must have its actual applied Home');
+    const machine = createMachineFixture({ id: 'machine-1', active: true, activeAt: 0 });
+    storage.setState({ profileScope: lifetime.scope, settingsScope: lifetime.scope, endpointStatus: 'online', isDataReady: true,
+        machines: { 'machine-1': machine }, machineListByServerId: { 'server-1': [machine] },
+        machineListStatusByServerId: { 'server-1': 'idle' } });
+});
 
 function replacePageLocationRequest(
     payload: Readonly<{ subPath: string; backLocation: string }>,
@@ -258,10 +286,13 @@ function latestHostProps(): SettingsPageHostProps {
     return hostSpy.mock.calls.at(-1)?.[0] as SettingsPageHostProps;
 }
 
-afterEach(() => {
-    standardCleanup();
+afterEach(async () => {
+    await standardCleanup();
+    await settingsConnection?.dispose();
+    settingsConnection = null;
     appShellState.projection = null;
     appShellState.phase = 'current';
+    appShellState.hasEstablishingMembers = false;
     appShellState.interactionEnabled = true;
     routeFocusState.value = true;
     daemonTargetSelectionState.value = {
@@ -377,8 +408,9 @@ describe('PluginSettingsPageScreen', () => {
 
     it('keeps a restored Settings destination pending until the app projection has described it', async () => {
         appShellState.projection = null;
-        appShellState.phase = 'establishing';
-        appShellState.interactionEnabled = false;
+        appShellState.phase = 'current';
+        appShellState.hasEstablishingMembers = true;
+        appShellState.interactionEnabled = true;
         const { PluginSettingsPageScreen } = await import('./PluginSettingsPageScreen');
 
         await renderScreen(
@@ -725,19 +757,20 @@ function PluginSettingsPageHostFocusProbe(props: Readonly<{ props: unknown }>): 
 
 /** Mirrors the app-shell's one target binding for route-level navigation tests. */
 function SettingsTargetNavigationScope(props: React.PropsWithChildren): React.ReactElement {
+    const projection = useAppShellPluginUiProjection().pluginUiProjection;
     const binding = usePluginSurfaceDestinationNavigationBindingForScope({
-        placements: appShellState.projection
-            ? Object.values(appShellState.projection.surfacePlacementsById).filter(
+        placements: projection
+            ? Object.values(projection.surfacePlacementsById).filter(
                 (placement): placement is PluginUiSurfacePlacementProjection => placement.binding.kind === 'destination',
             )
             : [],
-        settingsPages: appShellState.projection
-            ? Object.values(appShellState.projection.settingsPagesById)
+        settingsPages: projection
+            ? Object.values(projection.settingsPagesById)
             : [],
         targetKind: 'app',
     });
     const openSettingsPage = usePluginSettingsPageDestinationHandler({
-        projection: appShellState.projection,
+        projection,
     });
     const settingsOwner = React.useMemo(() => ({
         container: 'settingsPage' as const,

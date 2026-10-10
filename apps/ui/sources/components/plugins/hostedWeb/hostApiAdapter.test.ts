@@ -113,14 +113,14 @@ describe('hosted web plugin host API adapter', () => {
         await handler(createEnvelope('ready', { ready: true }));
         const negotiated = await handler(createEnvelope('hostApi', { wireVersion: 1, kind: 'negotiate', identity: canonicalIdentity, apiRange: '^1.0.0' }));
         expect(negotiated).toMatchObject({ kind: 'result', payload: { kind: 'negotiated', methods: ['context'] } });
-        const payload = { area: 'pinned', operation: { actionId: 'widgets.instance.list' } };
+        const payload = { area: 'pinned', operation: { actionId: 'widgets.item.list' } };
         const request = (body: PluginUiJsonValueV1, requestId: string) => handler(createEnvelope('hostApi', {
             wireVersion: 1, kind: 'request', identity: canonicalIdentity, requestId, method: 'widgetArea', payload: body }));
         await expect(request(payload, 'area-list')).resolves.toMatchObject({
             kind: 'result', payload: { kind: 'error', error: { code: 'unsupported_method' } } });
         await expect(request({ ...payload, accountId: 'other' }, 'area-forged')).resolves.toMatchObject({
             kind: 'result', payload: { kind: 'error', error: { code: 'unsupported_method' } } });
-        await expect(request({ area: 'pinned', operation: { actionId: 'widgets.instance.remove', instanceId: 'copy' } }, 'area-remove'))
+        await expect(request({ area: 'pinned', operation: { actionId: 'widgets.item.remove', instanceId: 'copy' } }, 'area-remove'))
             .resolves.toMatchObject({ kind: 'result', payload: { kind: 'error', error: { code: 'unsupported_method' } } });
         expect(reads).toBe(0);
     });

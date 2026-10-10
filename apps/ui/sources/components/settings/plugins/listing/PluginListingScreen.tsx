@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 import { Platform, View } from 'react-native';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierBreadcrumb, joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
@@ -52,8 +52,8 @@ function platformLabels(entry: PluginMarketplaceCatalogEntry): readonly string[]
 }
 
 /** A fact value from lower-case catalog fragments ("background service · app"). */
-function joinFacts(values: readonly string[]): string {
-    const joined = values.join(' · ');
+function describeCatalogFacts(values: readonly string[]): string {
+    const joined = joinHappierFacts(...values);
     if (!joined) return t('settingsPlugins.installReviewSections.none');
     return joined.charAt(0).toLocaleUpperCase() + joined.slice(1);
 }
@@ -109,6 +109,7 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
     listingRequested?: boolean;
 }>) {
     const router = useRouter();
+    const { theme } = useUnistyles();
     // The crumbs lead back within the host this listing is shown in (Settings or the app page).
     const host = usePluginsSurfaceHost();
     const styles = stylesheet;
@@ -131,17 +132,21 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
 
     return (
         <ItemList style={{ paddingTop: 0 }} testID="settings.plugins.listing">
-            {pane ? null : <View style={[styles.crumbs, maxWidthStyle]} accessibilityRole="toolbar">
-                {/* Back within the history when the home is there; a deep link replaces the listing. */}
-                <Crumb label={t(pluginsHomeTitleKey(host))} onPress={() => router.dismissTo(buildPluginsHomeRoute(host))} testID="settings.plugins.listing.crumb.plugins" />
-                <Icon name="caret-right" size={12} color={styles.crumbSeparator.color} />
-                <Crumb label={t('settingsPlugins.catalog.browse')} onPress={() => router.dismissTo(buildPluginsHomeRoute(host, { view: 'browse' }))} testID="settings.plugins.listing.crumb.browse" />
-            </View>}
+            {pane ? null : <HappierBreadcrumb style={[styles.crumbs, maxWidthStyle]} accessibilityRole="toolbar"
+                separator={<Icon name="caret-right" size={12} color={styles.crumbSeparator.color} />}
+                colors={{ focus: theme.colors.border.focus, hover: theme.colors.surface.pressed }}
+                items={[
+                    { key: 'plugins', label: t(pluginsHomeTitleKey(host)), onPress: () => router.dismissTo(buildPluginsHomeRoute(host)), testID: 'settings.plugins.listing.crumb.plugins' },
+                    { key: 'browse', label: t('settingsPlugins.catalog.browse'), onPress: () => router.dismissTo(buildPluginsHomeRoute(host, { view: 'browse' })), testID: 'settings.plugins.listing.crumb.browse' },
+                ]}
+                renderLabel={(item) => <Text style={styles.crumb}>{item.label}</Text>}
+            />}
             <PageHeader
                 testID="settings.plugins.listing.header"
                 alwaysShowTitle
                 title={title}
-                leading={<PluginMark title={title} iconAgentId={state.pluginProjectionById[props.pluginId]?.iconAgentId ?? null} size="page" />}
+                leading={<PluginMark title={title} pluginId={props.pluginId} iconAgentId={state.pluginProjectionById[props.pluginId]?.iconAgentId ?? null} size="page"
+                    installedPackage={state.pluginProjectionById[props.pluginId]?.installedPackage} machineId={state.executionMachineId} serverId={state.executionServerId} />}
                 meta={entry ? [
                     { key: 'publisher', text: entry.publisher.displayName },
                     { key: 'review', text: catalogReviewStatusLabel(entry), testID: 'settings.plugins.listing.reviewStatus' },
@@ -237,16 +242,6 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
     );
 });
 
-function Crumb(props: Readonly<{ label: string; onPress: () => void; testID: string }>) {
-    return (
-        <HappierPressable testID={props.testID} accessibilityRole="link" onPress={props.onPress} hitSlop={6}>
-            {({ hovered }) => (
-                <Text style={[stylesheet.crumb, hovered ? stylesheet.crumbPressed : null]}>{props.label}</Text>
-            )}
-        </HappierPressable>
-    );
-}
-
 function ListingActionCard(props: Readonly<{
     entry: PluginMarketplaceCatalogEntry;
     installed: boolean;
@@ -296,8 +291,8 @@ function ListingFacts(props: Readonly<{ entry: PluginMarketplaceCatalogEntry }>)
     return (
         <>
             <ItemGroup title={t('common.details')}>
-                <Item title={t('settingsPlugins.surfaces.listingRunsIn')} detail={joinFacts(realmLabels(entry))} mode="info" showChevron={false} />
-                <Item title={t('settingsPlugins.surfaces.listingPlatforms')} detail={joinFacts(platformLabels(entry))} mode="info" showChevron={false} />
+                <Item title={t('settingsPlugins.surfaces.listingRunsIn')} detail={describeCatalogFacts(realmLabels(entry))} mode="info" showChevron={false} />
+                <Item title={t('settingsPlugins.surfaces.listingPlatforms')} detail={describeCatalogFacts(platformLabels(entry))} mode="info" showChevron={false} />
                 <Item title={t('settingsPlugins.surfaces.listingSource')} detail={entry.sourceTitle} mode="info" showChevron={false} />
                 {entry.categories.length > 0 ? (
                     <Item title={t('settingsPlugins.surfaces.listingCategories')} detail={entry.categories.join(', ')} mode="info" showChevron={false} />
@@ -337,9 +332,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 13,
         lineHeight: 18,
         color: theme.colors.text.secondary,
-    },
-    crumbPressed: {
-        color: theme.colors.text.primary,
     },
     crumbSeparator: {
         color: theme.colors.text.tertiary,

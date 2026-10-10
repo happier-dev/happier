@@ -47,6 +47,8 @@ const EXPECTED_PRIVATE_ICON_NAMES: Readonly<Record<string, IconName>> = Object.f
     assigned: 'crosshair',
     new: 'sparkle',
     waiting: 'clock',
+    list: 'list',
+    board: 'kanban',
 });
 
 describe('resolvePluginUiIconToken', () => {

@@ -38,7 +38,8 @@ export function DeclarativeWidgetArea(props: Readonly<{
     const port = React.useMemo<PluginUiWidgetAreaPortV1>(() => ({
         execute: async (operation, context, options) => {
             if (!dispatch) return UNAVAILABLE;
-            const result = PluginUiWidgetAreaResultV1Schema.safeParse(await dispatch({ area: props.area, operation, ...(context ? { context } : {}) },
+            const result = PluginUiWidgetAreaResultV1Schema.safeParse(await dispatch({ area: props.area, operation,
+                ...(options?.layoutId === undefined ? {} : { layoutId: options.layoutId }), ...(context ? { context } : {}) },
                 options?.signal ? { signal: options.signal } : undefined));
             return result.success ? result.data : UNAVAILABLE;
         },

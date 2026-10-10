@@ -23,7 +23,9 @@ export function resolvePluginsCollectionState(params: Readonly<{
     filtering: boolean;
 }>): PluginsCollectionState {
     if (params.noTarget) return 'noTarget';
-    if (params.noticeReason === 'disconnected') return 'offline';
+    if (params.noticeReason === 'disconnected') {
+        return params.itemCount > 0 && params.filtering && params.visibleCount === 0 ? 'noMatch' : 'offline';
+    }
     if (params.itemCount > 0) return params.filtering && params.visibleCount === 0 ? 'noMatch' : 'ready';
     if (!params.listRead) {
         return params.noticeReason === 'installationUnavailable' || params.noticeReason === 'projectionUnavailable'

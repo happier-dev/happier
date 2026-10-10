@@ -30,17 +30,23 @@ export async function launchPluginSurfaceAction(
 ): Promise<PluginSurfaceActionLaunchOutcome> {
     const { operationOrigin, ...dispatchInput } = input;
     const requestId = dispatchInput.actionRequestId ?? randomUUID();
-    const targetServerId = dispatchInput.contributedAction?.serverId
+    const contributedAccountLifetime = dispatchInput.contributedAction?.accountLifetime;
+    // Exact contributed surfaces carry their admitted Account authority. Only
+    // unscoped legacy launches borrow the incumbent focused profile.
+    const operationAccountScope = contributedAccountLifetime === undefined
+        ? getStorage().getState().profileScope
+        : contributedAccountLifetime?.scope ?? null;
+    const targetServerId = contributedAccountLifetime?.scope.serverId
+        ?? dispatchInput.contributedAction?.serverId
         ?? dispatchInput.hostAction?.context?.serverId
         ?? null;
-    const profileScope = getStorage().getState().profileScope;
     const outcome = await dispatchPluginSurfaceAction({
         ...dispatchInput,
         actionRequestId: requestId,
         onDaemonActionOperationAdmitted: (operation) => {
             actionOperationPresentationCoordinator.register({
                 serverId: targetServerId,
-                accountId: profileScope?.serverId === targetServerId ? profileScope.accountId : '',
+                accountId: operationAccountScope?.serverId === targetServerId ? operationAccountScope.accountId : '',
                 requestId,
                 onStart: operation.presentation.onStart,
                 ...(operationOrigin ? { origin: operationOrigin } : {}),

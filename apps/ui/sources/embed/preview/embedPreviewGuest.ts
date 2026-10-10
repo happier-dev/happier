@@ -42,11 +42,12 @@ export function startEmbedPreviewGuest(input: Readonly<{
     window: EmbedPreviewWindow;
     identity: FrameBridgeIdentityV1;
     onConfigure: (configure: EmbedConfigureV1) => void;
-}>): Readonly<{ refused: boolean; dispose: () => void }> {
+}>): Readonly<{ refused: boolean; admitted: boolean; dispose: () => void }> {
     const ownOrigin = input.window.location.origin;
     const ancestors = input.window.location.ancestorOrigins;
     const refused = ancestors !== undefined && ancestors.length > 0 && ancestors[0] !== ownOrigin;
     const nativeWebView = input.window.ReactNativeWebView;
+    let admitted = false;
     let lastSequence = -1;
     const onMessage = (event: MessageEvent) => {
         // The WebView engine delivers host messages as an injected event with no source window and the
@@ -59,6 +60,7 @@ export function startEmbedPreviewGuest(input: Readonly<{
         if (!envelope.success || envelope.data.payload.kind !== 'configure') return;
         if (!wireIdentitiesEqual(envelope.data.identity, input.identity) || envelope.data.sequence <= lastSequence) return;
         lastSequence = envelope.data.sequence;
+        admitted = true;
         input.onConfigure(envelope.data.payload);
     };
     if (!refused) {
@@ -69,6 +71,7 @@ export function startEmbedPreviewGuest(input: Readonly<{
     }
     return {
         refused,
+        get admitted() { return admitted; },
         dispose: () => input.window.removeEventListener('message', onMessage),
     };
 }

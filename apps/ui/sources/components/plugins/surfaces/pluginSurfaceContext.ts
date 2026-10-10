@@ -62,6 +62,7 @@ export type PluginSurfaceTargetFacts = Readonly<{
     targetKind: PluginSurfaceTargetKind | null;
     sessionId?: string | null;
     agentId?: string | null;
+    /** Exact WorkspaceRef.id for checkout grants, never the stable presentation projectKey. */
     projectId?: string | null;
     browserTarget?: BrowserViewTargetV1 | null;
 }>;
@@ -256,7 +257,7 @@ export function createPluginSurfaceContext(input: Readonly<{
     environment: PluginSurfaceEnvironment;
     translations: Readonly<Record<string, string>>;
     /** Exact target-scoped snapshot; an admitted empty `points` array is valid. */
-    targetedContributions: SurfaceContext['targetedContributions'];
+    targetedContributions?: SurfaceContext['targetedContributions'];
 }>): SurfaceContext {
     return Object.freeze({
         mount: input.mount,
@@ -276,7 +277,7 @@ export function createPluginSurfaceContext(input: Readonly<{
         safeAreaInsets: input.environment.safeAreaInsets,
         theme: input.environment.theme,
         translations: input.translations,
-        targetedContributions: input.targetedContributions,
+        ...(input.targetedContributions ? { targetedContributions: input.targetedContributions } : {}),
     });
 }
 

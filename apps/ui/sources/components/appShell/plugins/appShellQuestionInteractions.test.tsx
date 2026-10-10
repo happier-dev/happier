@@ -13,7 +13,6 @@ import {
     createAppShellTransientInteractions,
     presentAppShellTransientInteraction,
 } from './appShellQuestionInteractions';
-import { PLUGIN_PRESENT_USER_INTERACTION_DEADLINE_MS } from '@/components/plugins/hostApi/interactionLifetime';
 
 function questionRequest(): Extract<InteractionTransientRequestV1, Readonly<{ kind: 'questions' }>> {
     return {
@@ -393,9 +392,10 @@ describe('app-shell transient interaction presenter', () => {
         }
     });
 
-    it('uses the host invocation deadline for present-user questions and never manufactures a Session', async () => {
+    it('keeps present-user questions available beyond the former deadline and never manufactures a Session', async () => {
         vi.useFakeTimers();
         try {
+            const harness = createModalHarness();
             const interactions = createAppShellTransientInteractions({
                 requester: {
                     pluginId: 'acme.voice',
@@ -405,17 +405,20 @@ describe('app-shell transient interaction presenter', () => {
                 },
                 signal: new AbortController().signal,
                 isCurrent: () => true,
-                modal: createModalHarness().modal,
+                modal: harness.modal,
             });
             const pending = interactions.askQuestions({
                 kind: 'questions',
                 questions: [{ id: 'mode', prompt: 'Which mode?', type: 'text' }],
             });
 
-            await vi.advanceTimersByTimeAsync(PLUGIN_PRESENT_USER_INTERACTION_DEADLINE_MS);
+            await vi.advanceTimersByTimeAsync(31_000);
+            expect(harness.modal.hide).not.toHaveBeenCalled();
+            harness.readConfig().props.onAnswer({ mode: { kind: 'text', value: 'slow answer' } });
             await expect(pending).resolves.toEqual(expect.objectContaining({
                 kind: 'questions',
-                status: 'timedOut',
+                status: 'answered',
+                answers: { mode: { kind: 'text', value: 'slow answer' } },
             }));
         } finally {
             vi.useRealTimers();
