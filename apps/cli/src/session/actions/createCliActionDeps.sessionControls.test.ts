@@ -2528,22 +2528,29 @@ describe('createCliActionDeps session controls', () => {
     }));
   });
   it.each([
-    { active: true, machineId: 'machine-local' },
-    { active: false, machineId: 'machine-local' },
-    { active: true, machineId: 'machine-remote' },
-  ])('routes an owned CLI check to its daemon ($active, $machineId)', async ({ active, machineId }) => {
+    { active: true, machineId: 'machine-local', metadataMachineId: 'machine-local' },
+    { active: false, machineId: 'machine-local', metadataMachineId: 'machine-local' },
+    { active: true, machineId: 'machine-remote', metadataMachineId: 'machine-remote' },
+    { active: true, machineId: 'machine-local', metadataMachineId: 'machine-other' },
+  ])('checks daemon ownership before routing an owned CLI check ($active, $machineId, $metadataMachineId)', async ({ active, machineId, metadataMachineId }) => {
     const recovery = { v: 1, status: 'waiting', issueFingerprint: 'attempt',
       runtimeAuthRecoveryAttemptId: 'attempt', armedAtMs: 1, resetAtMs: 2, nextCheckAtMs: 2,
       attemptCount: 0, maxAttempts: 3, lastProbeError: null, resumePromptMode: 'standard',
       selectedAuth: { kind: 'profile', serviceId: 'claude-subscription', profileId: 'work' } };
     mocks.resolveSessionTransportContext.mockResolvedValue({ ok: true, sessionId: 'sess_1',
-      rawSession: { active, machineId, metadata: { machineId,
+      rawSession: { active, machineId, metadata: { machineId: metadataMachineId,
         agentRuntimeDescriptorV1: { v: 1, providerId: 'claude' }, sessionUsageLimitRecoveryV1: recovery } },
       ctx: { encryptionKey: new Uint8Array(32).fill(3), encryptionVariant: 'legacy' }, mode: 'plain' });
     mocks.callMachineRpc.mockResolvedValue({ ok: true, status: 'waiting', sessionId: 'sess_1' });
     const deps = createCliActionDeps({ token: 'token', credentials: createCredentials(), sessionId: 'sess_1',
       ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy' }, mode: 'plain', rawSession: { metadata: {} } });
     const result = await deps.sessionUsageLimitCheckNow?.({ sessionId: 'sess_1', resumePromptMode: 'custom' });
+    if (metadataMachineId !== machineId) {
+      expect(result).toMatchObject({ ok: false, errorCode: 'session_usage_limit_recovery_control_remote_unavailable' });
+      expect(mocks.callMachineRpc).not.toHaveBeenCalled();
+      expect(mocks.callSessionRpc).not.toHaveBeenCalled();
+      return;
+    }
     expect(result).toMatchObject({ ok: true, status: 'waiting' });
     expect(mocks.callMachineRpc).toHaveBeenCalledWith(expect.objectContaining({
       machineId, method: RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CHECK_NOW,

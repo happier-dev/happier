@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildConnectedServiceCredentialRecord, V2SessionRecordSchema, type SessionRuntimeIssueV1, type SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
+import { createPiUsageLimitRecoveryControlAdapter } from '@/backends/pi/connectedServices/piUsageLimitRecoveryControlAdapter';
+import { createOpenCodeUsageLimitRecoveryControlAdapter } from '@/backends/opencode/connectedServices/openCodeUsageLimitRecoveryControlAdapter';
 import type { Credentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { mergeUsageLimitRecoveryExplicitRearm } from '@/session/usageLimitRecoveryControls/mergeUsageLimitRecoveryIntent';
@@ -345,4 +347,29 @@ describe('continueSessionAfterUsageLimitReset', () => {
     metadata.connectedServices.bindingsByServiceId['claude-subscription'].groupId = 'group-2';
     expect(await continueSessionAfterUsageLimitReset({ ...input, recovery: groupRecovery, metadata })).toEqual({ status: 'superseded' });
   });
+
+  it.each(['pi', 'opencode'] as const)('continues a provider-less %s issue and suppresses replacement provider evidence', async (provider) => {
+    const nativeIssue: SessionRuntimeIssueV1 = { ...issue, provider: undefined,
+      usageLimit: { ...issue.usageLimit!, connectedService: null } };
+    const input = fixture({ active: false, lastRuntimeIssue: nativeIssue });
+    const metadata = { agentRuntimeDescriptorV1: { v: 1, providerId: provider } };
+    const adapter = provider === 'pi' ? createPiUsageLimitRecoveryControlAdapter({ nowMs: () => 200 })
+      : createOpenCodeUsageLimitRecoveryControlAdapter({ nowMs: () => 200 });
+    const ready = await adapter.checkNow!({ credentials, token: 'token', sessionId,
+      rawSession: input.rawSession, metadata, currentMachineId: null, sessionMachineId: null, cwd: null,
+      ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy' }, mode: 'plain', resumePromptMode: 'standard' }) as { ok: boolean; status: string; metadata: Record<string, unknown> };
+    expect(ready).toMatchObject({ ok: true, status: 'ready' });
+    const nativeRecovery = ready.metadata.sessionUsageLimitRecoveryV1 as SessionUsageLimitRecoveryV1;
+    expect(nativeRecovery.issueFingerprint).toBe(`usage-limit:${provider}:interrupted-turn:100:200`);
+    input.rawSession.metadata = JSON.stringify(ready.metadata);
+    expect(await continueSessionAfterUsageLimitReset({ ...input, metadata: ready.metadata, recovery: nativeRecovery }))
+      .toEqual({ status: 'continued' });
+    expect(transport.enqueuePendingQueueV2MessageViaHttp).toHaveBeenCalledOnce();
+    transport.fetchSessionById.mockResolvedValue({ ...input.rawSession,
+      lastRuntimeIssue: { ...nativeIssue, provider: 'claude' } });
+    expect(await continueSessionAfterUsageLimitReset({ ...input, metadata: ready.metadata, recovery: nativeRecovery }))
+      .toEqual({ status: 'suppressed' });
+    expect(transport.enqueuePendingQueueV2MessageViaHttp).toHaveBeenCalledOnce();
+  });
+
 });

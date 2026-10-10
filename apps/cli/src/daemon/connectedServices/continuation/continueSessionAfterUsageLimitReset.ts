@@ -86,7 +86,10 @@ export async function continueSessionAfterUsageLimitReset(input: Readonly<{
   const failedAuth = resolveUsageLimitRecoverySelectedAuthFromIssue({ issue, connectedServices: input.metadata.connectedServices ?? null });
   if (!failedAuth || !matchesAuth(failedAuth, recovery.selectedAuth)) return { status: 'superseded' };
 
-  const fingerprint = buildUsageLimitIssueFingerprint(issue);
+  // Backoff adapters persist their provider when the runtime issue omits it.
+  const fallbackProviderId = recovery.issueFingerprint.startsWith('usage-limit:')
+    ? recovery.issueFingerprint.split(':', 3)[1] : undefined;
+  const fingerprint = buildUsageLimitIssueFingerprint(issue, fallbackProviderId);
   const owned = Boolean(recovery.runtimeAuthRecoveryAttemptId);
   // Rearming allocates a new lifecycle epoch; the fingerprint still identifies the failed issue.
   if (issue.occurredAt > recovery.armedAtMs || (!owned && fingerprint !== recovery.issueFingerprint)) return { status: 'superseded' };
@@ -114,7 +117,7 @@ export async function continueSessionAfterUsageLimitReset(input: Readonly<{
       if (!(await input.isCurrent()) || rawSession.latestTurnStatus !== 'failed' || rawSession.archivedAt != null || !metadata
         || rawSession.latestTurnId !== input.rawSession.latestTurnId) return false;
       const freshIssue = readLatestUsageLimitFailureIssue(rawSession);
-      if (!freshIssue || buildUsageLimitIssueFingerprint(freshIssue) !== fingerprint || !matchesCurrentBinding(metadata, recovery.selectedAuth)) return false;
+      if (!freshIssue || buildUsageLimitIssueFingerprint(freshIssue, fallbackProviderId) !== fingerprint || !matchesCurrentBinding(metadata, recovery.selectedAuth)) return false;
       const source = issue.usageLimit?.connectedService;
       const freshSource = freshIssue.usageLimit?.connectedService;
       if (source?.serviceId !== freshSource?.serviceId || source?.profileId !== freshSource?.profileId
