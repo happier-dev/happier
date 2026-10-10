@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 const FORBIDDEN_DESCRIPTOR_VALUE_KEYS = new Set([
@@ -40,13 +41,13 @@ function rejectSecretValueKeys(value: unknown, ctx: z.RefinementCtx, path: reado
   }
 }
 
-export const PluginDescriptorClearWhenEmptyV1Schema = z.enum(['omit', 'persist']);
+export const PluginDescriptorClearWhenEmptyV1Schema = lazyZodSchema(() => z.enum(['omit', 'persist']));
 export type PluginDescriptorClearWhenEmptyV1 = z.infer<typeof PluginDescriptorClearWhenEmptyV1Schema>;
 
-export const PluginDescriptorRedactionV1Schema = z.enum(['none', 'masked', 'secret']);
+export const PluginDescriptorRedactionV1Schema = lazyZodSchema(() => z.enum(['none', 'masked', 'secret']));
 export type PluginDescriptorRedactionV1 = z.infer<typeof PluginDescriptorRedactionV1Schema>;
 
-export const PluginDescriptorBaseV1Schema = z.object({
+export const PluginDescriptorBaseV1Schema = lazyZodSchema(() => z.object({
   id: z.string().trim().min(1),
   kind: z.string().trim().min(1),
   version: z.string().trim().min(1),
@@ -62,5 +63,5 @@ export const PluginDescriptorBaseV1Schema = z.object({
   clearWhenEmpty: PluginDescriptorClearWhenEmptyV1Schema.optional(),
 }).passthrough().superRefine((value, ctx) => {
   rejectSecretValueKeys(value, ctx);
-});
+}));
 export type PluginDescriptorBaseV1 = z.infer<typeof PluginDescriptorBaseV1Schema>;

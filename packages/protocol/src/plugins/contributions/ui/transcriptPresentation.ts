@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 import { isPluginDeclarativeDataNodeV1 } from './declarativeDataV1.js';
 
@@ -92,7 +93,7 @@ function isPluginTranscriptPresentationNodeV1(
  * node cannot reach persistence until the explicit closure checks above are
  * updated.
  */
-export const PluginTranscriptPresentationNodeV1Schema = PluginDeclarativeNodeV2Schema.transform((node, ctx) => {
+export const PluginTranscriptPresentationNodeV1Schema = lazyZodSchema(() => PluginDeclarativeNodeV2Schema.transform((node, ctx) => {
   if (isPluginTranscriptPresentationNodeV1(node)) return node;
 
   ctx.addIssue({
@@ -101,4 +102,4 @@ export const PluginTranscriptPresentationNodeV1Schema = PluginDeclarativeNodeV2S
     message: 'Plugin transcript presentations cannot contain live controls, targeted contributors, Composer mutations, or Account Collection data.',
   });
   return z.NEVER;
-});
+}));

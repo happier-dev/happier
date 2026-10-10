@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -72,52 +73,52 @@ function isCanonicalBase64WithinOpenableContentHardLimit(value: string): boolean
   }
 }
 
-export const OpenableContentRefV1Schema = z.object({
+export const OpenableContentRefV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('workspaceFile'),
   handle: z.string().min(1).max(256).regex(
     OPAQUE_WORKSPACE_FILE_HANDLE,
     'Openable workspace-file handles must be opaque URL-safe tokens.',
   ),
-}).strict();
+}).strict());
 export type OpenableContentRefV1 = z.infer<typeof OpenableContentRefV1Schema>;
 
 /** Public stat input for one exact opaque openable-content reference. */
-export const OpenableContentStatRequestV1Schema = z.object({
+export const OpenableContentStatRequestV1Schema = lazyZodSchema(() => z.object({
   ref: OpenableContentRefV1Schema,
-}).strict();
+}).strict());
 export type OpenableContentStatRequestV1 = z.infer<typeof OpenableContentStatRequestV1Schema>;
 
 /** Canonical host-observed revision, never a filesystem path or editor hash. */
-export const OpenableContentRevisionV1Schema = z.string().trim().min(1).max(MAX_OPENABLE_CONTENT_REVISION_LENGTH_V1);
+export const OpenableContentRevisionV1Schema = lazyZodSchema(() => z.string().trim().min(1).max(MAX_OPENABLE_CONTENT_REVISION_LENGTH_V1));
 export type OpenableContentRevisionV1 = z.infer<typeof OpenableContentRevisionV1Schema>;
 
 /** Normalized, exact MIME metadata returned only by the host workspace owner. */
-export const OpenableContentMimeTypeV1Schema = z.string().min(1).max(256).transform((value, context) => (
+export const OpenableContentMimeTypeV1Schema = lazyZodSchema(() => z.string().min(1).max(256).transform((value, context) => (
   normalizeWithSchemaError(
     value,
     context,
     normalizedExactMimeType,
     'Openable content MIME metadata must be a normalized exact MIME type.',
   )
-));
+)));
 export type OpenableContentMimeTypeV1 = z.output<typeof OpenableContentMimeTypeV1Schema>;
 
 /** Normalized filename extension metadata; it is never a path segment. */
-export const OpenableContentExtensionV1Schema = z.string().min(1).max(256).transform((value, context) => (
+export const OpenableContentExtensionV1Schema = lazyZodSchema(() => z.string().min(1).max(256).transform((value, context) => (
   normalizeWithSchemaError(
     value,
     context,
     normalizedExtension,
     'Openable content extension metadata must be a normalized extension.',
   )
-));
+)));
 export type OpenableContentExtensionV1 = z.output<typeof OpenableContentExtensionV1Schema>;
 
 /**
  * The only JSON-safe content representations. Byte arrays intentionally never
  * cross this public UI host boundary.
  */
-export const OpenableContentBodyV1Schema = z.discriminatedUnion('kind', [
+export const OpenableContentBodyV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('utf8'),
     text: z.string().superRefine((value, context) => {
@@ -136,14 +137,14 @@ export const OpenableContentBodyV1Schema = z.discriminatedUnion('kind', [
       'Openable binary content must be canonical base64 within the hard byte limit.',
     ),
   }).strict(),
-]);
+]));
 export type OpenableContentBodyV1 = z.infer<typeof OpenableContentBodyV1Schema>;
 
 /**
  * Public read input. `maxBytes` defaults at the canonical owner, then remains
  * bounded by the immutable hard ceiling; mounted viewers cannot increase it.
  */
-export const OpenableContentReadRequestV1Schema = z.object({
+export const OpenableContentReadRequestV1Schema = lazyZodSchema(() => z.object({
   ref: OpenableContentRefV1Schema,
   expectedRevision: OpenableContentRevisionV1Schema,
   maxBytes: z.number()
@@ -151,11 +152,11 @@ export const OpenableContentReadRequestV1Schema = z.object({
     .min(1)
     .max(HARD_OPENABLE_CONTENT_MAX_BYTES_V1)
     .default(DEFAULT_OPENABLE_CONTENT_MAX_BYTES_V1),
-}).strict();
+}).strict());
 export type OpenableContentReadRequestV1 = z.output<typeof OpenableContentReadRequestV1Schema>;
 export type OpenableContentReadRequestInputV1 = z.input<typeof OpenableContentReadRequestV1Schema>;
 
-export const OpenableContentStatResultV1Schema = z.discriminatedUnion('status', [
+export const OpenableContentStatResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('ready'),
     mimeType: OpenableContentMimeTypeV1Schema,
@@ -165,11 +166,11 @@ export const OpenableContentStatResultV1Schema = z.discriminatedUnion('status', 
     revision: OpenableContentRevisionV1Schema,
   }).strict(),
   z.object({ status: z.enum(['unavailable', 'unsupported', 'cancelled']) }).strict(),
-]);
+]));
 export type OpenableContentStatResultV1 = z.infer<typeof OpenableContentStatResultV1Schema>;
 export type OpenableContentStatReadyV1 = Extract<OpenableContentStatResultV1, { status: 'ready' }>;
 
-export const OpenableContentReadResultV1Schema = z.discriminatedUnion('status', [
+export const OpenableContentReadResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('ready'),
     content: OpenableContentBodyV1Schema,
@@ -180,6 +181,6 @@ export const OpenableContentReadResultV1Schema = z.discriminatedUnion('status', 
     sizeBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   }).strict(),
   z.object({ status: z.enum(['unavailable', 'changed', 'unsupported', 'cancelled']) }).strict(),
-]);
+]));
 export type OpenableContentReadResultV1 = z.infer<typeof OpenableContentReadResultV1Schema>;
 export type OpenableContentReadReadyV1 = Extract<OpenableContentReadResultV1, { status: 'ready' }>;

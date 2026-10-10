@@ -1,24 +1,25 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { BrowserProfileStorageModeV1Schema } from '../profile/v1.js';
 import { BrowserViewTargetKindV1Schema } from '../target/v1.js';
 import { BrowserHttpOriginV1Schema } from '../url.js';
 
-const IdSchema = z.string().trim().min(1).max(256);
+const IdSchema = lazyZodSchema(() => z.string().trim().min(1).max(256));
 
-export const BrowserStoragePersistenceV1Schema = z.enum(['ephemeral', 'session', 'persistent', 'plugin']);
+export const BrowserStoragePersistenceV1Schema = lazyZodSchema(() => z.enum(['ephemeral', 'session', 'persistent', 'plugin']));
 export type BrowserStoragePersistenceV1 = z.infer<typeof BrowserStoragePersistenceV1Schema>;
 
-export const BrowserStoragePartitionStateV1Schema = z.enum(['active', 'purging', 'unusable']);
+export const BrowserStoragePartitionStateV1Schema = lazyZodSchema(() => z.enum(['active', 'purging', 'unusable']));
 export type BrowserStoragePartitionStateV1 = z.infer<typeof BrowserStoragePartitionStateV1Schema>;
 
-export const BrowserStorageAccessPolicyV1Schema = z.enum(['deny', 'metadataOnly', 'allow']);
+export const BrowserStorageAccessPolicyV1Schema = lazyZodSchema(() => z.enum(['deny', 'metadataOnly', 'allow']));
 export type BrowserStorageAccessPolicyV1 = z.infer<typeof BrowserStorageAccessPolicyV1Schema>;
 
-export const BrowserCookiePolicyV1Schema = z.enum(['deny', 'session', 'persist']);
+export const BrowserCookiePolicyV1Schema = lazyZodSchema(() => z.enum(['deny', 'session', 'persist']));
 export type BrowserCookiePolicyV1 = z.infer<typeof BrowserCookiePolicyV1Schema>;
 
-export const BrowserStoragePartitionV1Schema = z
+export const BrowserStoragePartitionV1Schema = lazyZodSchema(() => z
   .object({
     partitionId: IdSchema,
     profileId: IdSchema,
@@ -40,10 +41,10 @@ export const BrowserStoragePartitionV1Schema = z
         message: 'Unusable browser storage partitions require at least one disabled reason.',
       });
     }
-  });
+  }));
 export type BrowserStoragePartitionV1 = z.infer<typeof BrowserStoragePartitionV1Schema>;
 
-export const BrowserStoragePolicyV1Schema = z
+export const BrowserStoragePolicyV1Schema = lazyZodSchema(() => z
   .object({
     mode: BrowserProfileStorageModeV1Schema,
     clearOnClose: z.boolean().default(true),
@@ -55,5 +56,5 @@ export const BrowserStoragePolicyV1Schema = z
     cacheStorage: BrowserStorageAccessPolicyV1Schema.optional().default('metadataOnly'),
     downloadsPersistence: z.enum(['deny', 'prompt', 'persist']).default('prompt'),
   })
-  .strict();
+  .strict());
 export type BrowserStoragePolicyV1 = z.infer<typeof BrowserStoragePolicyV1Schema>;

@@ -1,32 +1,33 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import type { CapabilityId } from '../capabilities/index.js';
 import { PluginDescriptorBaseV1Schema } from '../plugins/contributions/_descriptors.js';
 import { InstallableSourceSchema } from './sourceKind.js';
 
-export const InstallableAutoUpdateModeSchema = z.enum(['off', 'notify', 'auto']);
+export const InstallableAutoUpdateModeSchema = lazyZodSchema(() => z.enum(['off', 'notify', 'auto']));
 export type InstallableAutoUpdateMode = z.infer<typeof InstallableAutoUpdateModeSchema>;
 
-export const InstallableDefaultPolicySchema = z.object({
+export const InstallableDefaultPolicySchema = lazyZodSchema(() => z.object({
   autoInstallWhenNeeded: z.boolean(),
   autoUpdateMode: InstallableAutoUpdateModeSchema,
-}).strict();
+}).strict());
 export type InstallableDefaultPolicy = z.infer<typeof InstallableDefaultPolicySchema>;
 
-export const InstallableConsentModeSchema = z.enum(['not_required', 'required']);
+export const InstallableConsentModeSchema = lazyZodSchema(() => z.enum(['not_required', 'required']));
 export type InstallableConsentMode = z.infer<typeof InstallableConsentModeSchema>;
 
-const InstallableCapabilityIdSchema = z.custom<Extract<CapabilityId, `dep.${string}`>>(
+const InstallableCapabilityIdSchema = lazyZodSchema(() => z.custom<Extract<CapabilityId, `dep.${string}`>>(
   (value) => typeof value === 'string' && /^dep\.[A-Za-z0-9._-]+$/.test(value),
   'Installable capabilityId must use dep.* syntax',
-);
+));
 
 // Inherits `id`, `version`, gates, redaction, ordering, hidden, defaultValue, clearWhenEmpty
 // from PluginDescriptorBaseV1Schema. Only declare fields specific to dependency installables here;
 // repeating base fields creates a divergence risk if the base ever tightens (e.g. semver constraints).
 // `kind` is restated as a literal narrowing so `InstallableDependencyDescriptor['kind']` resolves to
 // the discriminator at the type level — the runtime constraint is still validated by the base.
-const InstallableDependencyDescriptorFieldsSchema = z.object({
+const InstallableDependencyDescriptorFieldsSchema = lazyZodSchema(() => z.object({
   key: z.string().trim().min(1),
   kind: z.literal('dep'),
   capabilityId: InstallableCapabilityIdSchema,
@@ -57,9 +58,9 @@ const InstallableDependencyDescriptorFieldsSchema = z.object({
     experimental: z.boolean().default(false),
     supported: z.boolean().default(true),
   }).strict().default({ experimental: false, supported: true }),
-}).strict();
+}).strict());
 
-export const InstallableDependencyDescriptorSchema = PluginDescriptorBaseV1Schema
+export const InstallableDependencyDescriptorSchema = lazyZodSchema(() => PluginDescriptorBaseV1Schema
   .and(InstallableDependencyDescriptorFieldsSchema)
   .superRefine((value, ctx) => {
     if (value.id !== value.key) {
@@ -76,7 +77,7 @@ export const InstallableDependencyDescriptorSchema = PluginDescriptorBaseV1Schem
         message: 'Vendor recipe installables require explicit install consent',
       });
     }
-  });
+  }));
 export type InstallableDependencyDescriptor = z.infer<typeof InstallableDependencyDescriptorSchema>;
 
 export type InstallableKind = InstallableDependencyDescriptor['kind'];

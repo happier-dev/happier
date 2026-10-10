@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -28,7 +29,7 @@ export const MACHINE_POOL_ACTION_IDS_V1 = [
 
 export type MachinePoolActionIdV1 = typeof MACHINE_POOL_ACTION_IDS_V1[number];
 
-export const MachinePoolActionIdV1Schema = z.enum(MACHINE_POOL_ACTION_IDS_V1);
+export const MachinePoolActionIdV1Schema = lazyZodSchema(() => z.enum(MACHINE_POOL_ACTION_IDS_V1));
 
 export const MachinePoolActionInputSchemasV1 = {
   'machines.pools.list': MachinePoolListInputV1Schema,

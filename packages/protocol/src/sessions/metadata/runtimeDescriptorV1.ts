@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import {
   PluginContributionIdentityV1Schema,
@@ -133,7 +134,7 @@ export const RuntimeDescriptorV1Schema = createRuntimeDescriptorV1Schema(z);
  * Provider Session ids, host paths/endpoints, runtime handles and unknown fields
  * are therefore rejected at this boundary.
  */
-export const PortableRuntimeDescriptorV1Schema = z.object({
+export const PortableRuntimeDescriptorV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   agentId: z.string().trim().min(1),
   agent: z.object({
@@ -143,7 +144,7 @@ export const PortableRuntimeDescriptorV1Schema = z.object({
     connectedServiceProfileId: z.string().trim().min(1).optional(),
     connectedServiceGroupId: z.string().trim().min(1).optional(),
   }).strict(),
-}).strict();
+}).strict());
 export type PortableRuntimeDescriptorV1 = z.infer<typeof PortableRuntimeDescriptorV1Schema>;
 
 export function readRuntimeDescriptorV1(value: unknown): RuntimeDescriptorV1 | null {

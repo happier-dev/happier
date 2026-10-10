@@ -1,12 +1,13 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import type { AccountEncryptionMode } from '../features/payload/capabilities/encryptionCapabilities.js';
 import type { SessionEncryptionMode } from './storagePolicyDecisions.js';
 
-export const ClientEncryptionRequirementSchema = z
+export const ClientEncryptionRequirementSchema = lazyZodSchema(() => z
   .enum(['follow_account', 'require_e2ee'])
   .catch('follow_account')
-  .default('follow_account');
+  .default('follow_account'));
 
 export type ClientEncryptionRequirement = z.infer<typeof ClientEncryptionRequirementSchema>;
 

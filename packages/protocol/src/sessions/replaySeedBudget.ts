@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -6,7 +7,7 @@ import { z } from 'zod';
  * total; the machine's operator cap and containing transport admission still
  * apply. A recent-message count bounds the aggregate dialog, not one page.
  */
-const PositiveReplayBudgetSchema = z.number().int().positive();
+const PositiveReplayBudgetSchema = lazyZodSchema(() => z.number().int().positive());
 
 export const HappierReplayWritableMaxSeedCharsSchema = PositiveReplayBudgetSchema;
 export const HappierReplayWireMaxSeedCharsSchema = PositiveReplayBudgetSchema;

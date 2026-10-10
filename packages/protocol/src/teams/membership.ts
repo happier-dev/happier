@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { AccountDisplayProfileV1Schema } from '../account/accountDisplayProfileV1.js';
@@ -46,17 +47,17 @@ export type TeamRole = TeamRoleV1;
  * Absence of a row means removal, so no `invited`, `disabled`, or `deleted` member
  * state exists here. Account lifecycle keeps its own separate meaning.
  */
-export const TeamMembershipStatusSchema = z.enum(['active', 'suspended']);
+export const TeamMembershipStatusSchema = lazyZodSchema(() => z.enum(['active', 'suspended']));
 export type TeamMembershipStatus = z.infer<typeof TeamMembershipStatusSchema>;
 
-export const TeamIdSchema = z.string().min(1);
-export const TeamGroupIdSchema = z.string().min(1);
+export const TeamIdSchema = lazyZodSchema(() => z.string().min(1));
+export const TeamGroupIdSchema = lazyZodSchema(() => z.string().min(1));
 
 /**
  * One immutable membership lifetime. Removal ends it; rejoining mints a new one,
  * so downstream member-lifetime grants cannot be resurrected by re-adding a person.
  */
-export const TeamMembershipIdSchema = z.string().min(1);
+export const TeamMembershipIdSchema = lazyZodSchema(() => z.string().min(1));
 
 /**
  * The public address of a person's Group membership.
@@ -66,11 +67,11 @@ export const TeamMembershipIdSchema = z.string().min(1);
  * transaction. This keeps Group rows attached across provider Account replacement
  * and leaves exactly one resolution owner.
  */
-export const TeamGroupMemberAddressV1Schema = z.object({
+export const TeamGroupMemberAddressV1Schema = lazyZodSchema(() => z.object({
   teamId: TeamIdSchema,
   groupId: TeamGroupIdSchema,
   accountId: z.string().min(1),
-}).strict();
+}).strict());
 export type TeamGroupMemberAddressV1 = z.infer<typeof TeamGroupMemberAddressV1Schema>;
 
 /**
@@ -80,7 +81,7 @@ export type TeamGroupMemberAddressV1 = z.infer<typeof TeamGroupMemberAddressV1Sc
  * promotion remains an explicit post-membership governance operation with
  * last-owner enforcement, so no admission input can mint one.
  */
-export const TeamAdmissibleRoleV1Schema = z.enum(['admin', 'member', 'guest']);
+export const TeamAdmissibleRoleV1Schema = lazyZodSchema(() => z.enum(['admin', 'member', 'guest']));
 export type TeamAdmissibleRoleV1 = z.infer<typeof TeamAdmissibleRoleV1Schema>;
 
 /**
@@ -104,13 +105,13 @@ export type TeamAdmissibleRoleV1 = z.infer<typeof TeamAdmissibleRoleV1Schema>;
  * an outcome discriminator the surface would have to translate. A re-add never
  * resets an existing role, status, or history horizon.
  */
-export const TeamMemberAddInputV1Schema = z.object({
+export const TeamMemberAddInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   teamId: TeamIdSchema,
   accountId: z.string().min(1),
   role: TeamAdmissibleRoleV1Schema,
   historyAccess: SessionHistoryAccessSchema,
-}).strict();
+}).strict());
 export type TeamMemberAddInputV1 = z.infer<typeof TeamMemberAddInputV1Schema>;
 
 /**
@@ -128,7 +129,7 @@ export type TeamMemberAddInputV1 = z.infer<typeof TeamMemberAddInputV1Schema>;
  * resource authorization — the directory destination re-checks its own
  * capability before it shows anything.
  */
-export const TeamMembershipManagementV1Schema = z.discriminatedUnion('kind', [
+export const TeamMembershipManagementV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('native') }).strict(),
   z.object({
     kind: z.literal('directory_source'),
@@ -140,7 +141,7 @@ export const TeamMembershipManagementV1Schema = z.discriminatedUnion('kind', [
     identityConnectionId: z.string().min(1),
     label: z.string(),
   }).strict(),
-]);
+]));
 export type TeamMembershipManagementV1 = z.infer<typeof TeamMembershipManagementV1Schema>;
 
 /**
@@ -155,14 +156,14 @@ export type TeamMembershipManagementV1 = z.infer<typeof TeamMembershipManagement
  * Like every projection this renders and prechecks; the mutation's own
  * transaction remains decisive.
  */
-export const TeamMembershipCapabilitiesV1Schema = z.object({
+export const TeamMembershipCapabilitiesV1Schema = lazyZodSchema(() => z.object({
   setRole: z.boolean(),
   assignableRoles: z.array(TeamRoleV1Schema),
   suspend: z.boolean(),
   reactivate: z.boolean(),
   remove: z.boolean(),
   setManagement: z.boolean(),
-}).strict();
+}).strict());
 export type TeamMembershipCapabilitiesV1 = z.infer<typeof TeamMembershipCapabilitiesV1Schema>;
 
 export const NO_TEAM_MEMBERSHIP_CAPABILITIES_V1: TeamMembershipCapabilitiesV1 = Object.freeze({
@@ -183,7 +184,7 @@ export const NO_TEAM_MEMBERSHIP_CAPABILITIES_V1: TeamMembershipCapabilitiesV1 = 
  * decision. The row also carries no email, external identifier, identity claim,
  * or cryptographic material.
  */
-export const TeamMembershipV1Schema = z.object({
+export const TeamMembershipV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   id: TeamMembershipIdSchema,
   teamId: TeamIdSchema,
@@ -195,7 +196,7 @@ export const TeamMembershipV1Schema = z.object({
   management: TeamMembershipManagementV1Schema,
   capabilities: TeamMembershipCapabilitiesV1Schema,
   joinedAt: z.number().int().min(0),
-}).strict();
+}).strict());
 export type TeamMembershipV1 = z.infer<typeof TeamMembershipV1Schema>;
 
 /**
@@ -204,19 +205,19 @@ export type TeamMembershipV1 = z.infer<typeof TeamMembershipV1Schema>;
  * explicitly out of scope. Looking one person up is the separate bounded
  * `query` below, not another filter value.
  */
-export const TeamMembersListFilterV1Schema = z.enum([
+export const TeamMembersListFilterV1Schema = lazyZodSchema(() => z.enum([
   'all',
   'owners_admins',
   'members',
   'guests',
   'suspended',
-]);
+]));
 export type TeamMembersListFilterV1 = z.infer<typeof TeamMembersListFilterV1Schema>;
 
 export const TEAM_MEMBERS_PAGE_LIMIT_MAX_V1 = 100;
 export const TEAM_MEMBERS_PAGE_LIMIT_DEFAULT_V1 = 50;
 
-export const TeamMembersListInputV1Schema = z.object({
+export const TeamMembersListInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   teamId: TeamIdSchema,
   filter: TeamMembersListFilterV1Schema,
@@ -229,21 +230,21 @@ export const TeamMembersListInputV1Schema = z.object({
    * question instead. Paging is unchanged: a query names its own sequence.
    */
   query: z.string().max(256).optional(),
-}).strict();
+}).strict());
 export type TeamMembersListInputV1 = z.infer<typeof TeamMembersListInputV1Schema>;
 
-export const TeamMembersPageV1Schema = z.object({
+export const TeamMembersPageV1Schema = lazyZodSchema(() => z.object({
   items: z.array(TeamMembershipV1Schema),
   nextCursor: z.string().nullable(),
-}).strict();
+}).strict());
 export type TeamMembersPageV1 = z.infer<typeof TeamMembersPageV1Schema>;
 
 /** `teams.members.get`, `suspend`, `reactivate`, `remove`. */
-export const TeamMemberRefInputV1Schema = z.object({
+export const TeamMemberRefInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   teamId: TeamIdSchema,
   membershipId: TeamMembershipIdSchema,
-}).strict();
+}).strict());
 export type TeamMemberRefInputV1 = z.infer<typeof TeamMemberRefInputV1Schema>;
 
 /**
@@ -251,12 +252,12 @@ export type TeamMemberRefInputV1 = z.infer<typeof TeamMemberRefInputV1Schema>;
  * additionally requires `manageOwners` whenever the current or resulting role is
  * owner, and refuses to strand the final active owner.
  */
-export const TeamMemberRoleSetInputV1Schema = z.object({
+export const TeamMemberRoleSetInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   teamId: TeamIdSchema,
   membershipId: TeamMembershipIdSchema,
   role: TeamRoleSchema,
-}).strict();
+}).strict());
 export type TeamMemberRoleSetInputV1 = z.infer<typeof TeamMemberRoleSetInputV1Schema>;
 
 /**
@@ -271,18 +272,18 @@ export type TeamMemberRoleSetInputV1 = z.infer<typeof TeamMemberRoleSetInputV1Sc
  * exist. Accepting it here would mean either a dormant input the server always
  * refuses, or a second binding invented outside its owner.
  */
-export const TeamMemberManagementTargetV1Schema = z.discriminatedUnion('kind', [
+export const TeamMemberManagementTargetV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('native') }).strict(),
   z.object({ kind: z.literal('directory_source'), directorySourceId: z.string().min(1) }).strict(),
-]);
+]));
 export type TeamMemberManagementTargetV1 = z.infer<typeof TeamMemberManagementTargetV1Schema>;
 
-export const TeamMemberManagementSetInputV1Schema = z.object({
+export const TeamMemberManagementSetInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   teamId: TeamIdSchema,
   membershipId: TeamMembershipIdSchema,
   management: TeamMemberManagementTargetV1Schema,
-}).strict();
+}).strict());
 export type TeamMemberManagementSetInputV1 = z.infer<typeof TeamMemberManagementSetInputV1Schema>;
 
 /**
@@ -290,10 +291,10 @@ export type TeamMemberManagementSetInputV1 = z.infer<typeof TeamMemberManagement
  * is `unchanged`, not a 404, so a retried confirmation cannot read as a failure.
  * The server still rechecks authorization before answering `unchanged`.
  */
-export const TeamMemberRemoveResultV1Schema = z.discriminatedUnion('status', [
+export const TeamMemberRemoveResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('removed'), membershipId: TeamMembershipIdSchema }).strict(),
   z.object({ status: z.literal('unchanged') }).strict(),
-]);
+]));
 export type TeamMemberRemoveResultV1 = z.infer<typeof TeamMemberRemoveResultV1Schema>;
 
 /**

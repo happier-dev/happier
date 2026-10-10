@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -49,7 +50,7 @@ export function normalizePluginUiSubPathV1(value: string): string | null {
 }
 
 /** A canonical plugin-local sub-path. Parsing normalizes; it never truncates. */
-export const PluginUiSubPathV1Schema = z.string().transform((value, ctx) => {
+export const PluginUiSubPathV1Schema = lazyZodSchema(() => z.string().transform((value, ctx) => {
   const normalized = normalizePluginUiSubPathV1(value);
   if (normalized === null) {
     ctx.addIssue({
@@ -59,7 +60,7 @@ export const PluginUiSubPathV1Schema = z.string().transform((value, ctx) => {
     return z.NEVER;
   }
   return normalized;
-});
+}));
 export type PluginUiSubPathV1 = string;
 
 /** Instance identity is bounded and opaque to the host's route/pane owner. */
@@ -146,13 +147,13 @@ export function definePluginUiSemanticCommandProtocolSchemaV1(
  * The bare id widens to `executeAction` here, at the one owner, so nothing
  * downstream sees two shapes.
  */
-export const PluginUiSemanticActionDeclarationV1Schema = z.union([
+export const PluginUiSemanticActionDeclarationV1Schema = lazyZodSchema(() => z.union([
   PluginContributionLocalIdZodSchema.transform((action): PluginUiSemanticCommandV1 => ({
     kind: 'executeAction' as const,
     action,
   })),
   PluginUiSemanticCommandV1Schema,
-]);
+]));
 export type PluginUiSemanticActionDeclarationV1Input =
   z.input<typeof PluginUiSemanticActionDeclarationV1Schema>;
 
@@ -163,28 +164,28 @@ export type PluginUiSemanticActionDeclarationV1Input =
  * must accept only this qualified form so no UI reader recreates local-id
  * qualification or a parallel command parser.
  */
-export const PluginUiResolvedSemanticExecuteActionCommandV1Schema = z.object({
+export const PluginUiResolvedSemanticExecuteActionCommandV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('executeAction'),
   action: PluginContributionIdentityV1ZodSchema,
   input: PluginUiLaunchInputV1Schema.optional(),
-}).strict();
+}).strict());
 export type PluginUiResolvedSemanticExecuteActionCommandV1 =
   Readonly<z.infer<typeof PluginUiResolvedSemanticExecuteActionCommandV1Schema>>;
 
-export const PluginUiResolvedSemanticOpenSurfaceCommandV1Schema = z.object({
+export const PluginUiResolvedSemanticOpenSurfaceCommandV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('openSurface'),
   destination: PluginContributionIdentityV1ZodSchema,
   input: PluginUiLaunchInputV1Schema.optional(),
   subPath: PluginUiSubPathV1Schema.optional(),
   instanceKey: PluginUiInstanceKeyV1Schema.optional(),
-}).strict();
+}).strict());
 export type PluginUiResolvedSemanticOpenSurfaceCommandV1 =
   Readonly<z.infer<typeof PluginUiResolvedSemanticOpenSurfaceCommandV1Schema>>;
 
-export const PluginUiResolvedSemanticCommandV1Schema = z.discriminatedUnion('kind', [
+export const PluginUiResolvedSemanticCommandV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   PluginUiResolvedSemanticExecuteActionCommandV1Schema,
   PluginUiResolvedSemanticOpenSurfaceCommandV1Schema,
-]);
+]));
 export type PluginUiResolvedSemanticCommandV1 =
   Readonly<z.infer<typeof PluginUiResolvedSemanticCommandV1Schema>>;
 

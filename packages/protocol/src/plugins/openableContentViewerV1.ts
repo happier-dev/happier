@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { asProtocolZod } from "./actions/internalProtocolZodAdapter.js";
 
@@ -46,10 +47,10 @@ function uniqueNormalizedEntries(
   return Object.freeze(entries);
 }
 
-export const OpenableContentClassV1Schema = z.enum(['text', 'image', 'binary']);
+export const OpenableContentClassV1Schema = lazyZodSchema(() => z.enum(['text', 'image', 'binary']));
 export type OpenableContentClassV1 = z.infer<typeof OpenableContentClassV1Schema>;
 
-export const OpenableContentViewerSelectorV1Schema = z.object({
+export const OpenableContentViewerSelectorV1Schema = lazyZodSchema(() => z.object({
   contentClasses: z.array(OpenableContentClassV1Schema).min(1).max(8),
   mimeTypes: z.array(z.string().min(1).max(256)).max(64).optional(),
   extensions: z.array(z.string().min(1).max(256)).max(64).optional(),
@@ -79,10 +80,10 @@ export const OpenableContentViewerSelectorV1Schema = z.object({
     });
     return z.NEVER;
   }
-});
+}));
 export type OpenableContentViewerSelectorV1 = z.output<typeof OpenableContentViewerSelectorV1Schema>;
 
-export const PluginOpenableContentViewerContributionV1Schema = z.object({
+export const PluginOpenableContentViewerContributionV1Schema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   /** Same-plugin direct V2 UI view which owns the viewer presentation. */
   destination: asProtocolZod(PluginContributionLocalIdSchema),
@@ -103,7 +104,7 @@ export const PluginOpenableContentViewerContributionV1Schema = z.object({
     return z.NEVER;
   }
   return { id: value.id, destination: value.destination, ...normalized.data };
-});
+}));
 export type PluginOpenableContentViewerContributionV1 = z.output<
   typeof PluginOpenableContentViewerContributionV1Schema
 >;
@@ -119,18 +120,18 @@ export function normalizeOpenableContentViewerSelectorV1(
   return OpenableContentViewerSelectorV1Schema.parse(input);
 }
 
-const OpenableContentPreferenceSelectorInputV1Schema = z.discriminatedUnion('kind', [
+const OpenableContentPreferenceSelectorInputV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('mime'), value: z.string().min(1).max(256) }).strict(),
   z.object({ kind: z.literal('extension'), value: z.string().min(1).max(256) }).strict(),
   z.object({ kind: z.literal('class'), value: OpenableContentClassV1Schema }).strict(),
-]);
+]));
 
 /**
  * The compact persisted selector vocabulary. It is deliberately separate from
  * a viewer declaration's arrays: Account preference data chooses one matching
  * key, while declarations may advertise many keys.
  */
-export const OpenableContentPreferenceSelectorV1Schema = z.unknown().transform((value, context) => {
+export const OpenableContentPreferenceSelectorV1Schema = lazyZodSchema(() => z.unknown().transform((value, context) => {
   const parsed = OpenableContentPreferenceSelectorInputV1Schema.safeParse(value);
   if (!parsed.success) {
     parsed.error.issues.forEach((issue) => context.addIssue({
@@ -155,7 +156,7 @@ export const OpenableContentPreferenceSelectorV1Schema = z.unknown().transform((
     });
     return z.NEVER;
   }
-});
+}));
 export type OpenableContentPreferenceSelectorV1 = z.output<
   typeof OpenableContentPreferenceSelectorV1Schema
 >;

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -9,7 +10,7 @@ import { z } from 'zod';
  * those readers must not acquire the full Automation API and execution graph
  * merely to validate one state value.
  */
-export const AutomationRunStateV3Schema = z.enum([
+export const AutomationRunStateV3Schema = lazyZodSchema(() => z.enum([
   'queued',
   'claimed',
   'running',
@@ -21,7 +22,7 @@ export const AutomationRunStateV3Schema = z.enum([
   'skipped',
   'missed',
   'outcome_uncertain',
-]);
+]));
 export type AutomationRunStateV3 = z.infer<typeof AutomationRunStateV3Schema>;
 
 /** States whose lifecycle is complete and therefore cannot hold Run capacity. */

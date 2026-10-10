@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
@@ -68,7 +69,7 @@ function addUtf8LimitIssue(params: Readonly<{
  * Run. Execution-target facts belong to the target arm rather than this
  * program, so a rendered prompt cannot rewrite target authority.
  */
-export const AutomationRunTemplateV1Schema = z.object({
+export const AutomationRunTemplateV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   prompt: z.string().superRefine((value, context) => {
     addUtf8LimitIssue({
@@ -86,7 +87,7 @@ export const AutomationRunTemplateV1Schema = z.object({
    * provider context — that is still reconstructed at dispatch (D-3/INV-9).
    */
   mentions: z.array(MentionRefV1Schema).max(MENTION_BOUNDS.maxPerMessage).optional(),
-}).strict();
+}).strict());
 export type AutomationRunTemplateV1 = z.infer<typeof AutomationRunTemplateV1Schema>;
 export const AutomationRunTemplateV1ReadSchema = createStoredReadSchema(AutomationRunTemplateV1Schema);
 
@@ -96,7 +97,7 @@ export const AutomationRunTemplateV1ReadSchema = createStoredReadSchema(Automati
  * bounded before a repeated template token can expand it.
  */
 export const AutomationRunPluginEventTriggerEvidenceV1Schema =
-  AutomationPluginEventOccurrenceEvidenceV1Schema.extend({
+  lazyZodSchema(() => AutomationPluginEventOccurrenceEvidenceV1Schema.extend({
     payload: asProtocolZod(AutomationEventPayloadV1Schema),
     sourceInstanceId: AutomationEventSourceInstanceIdV1Schema,
     sourceContractVersion: AutomationEventPositiveSafeIntegerV1Schema,
@@ -105,23 +106,23 @@ export const AutomationRunPluginEventTriggerEvidenceV1Schema =
       version: z.literal(1).nullable(),
       result: z.literal('matched'),
     }).strict(),
-  }).strict();
+  }).strict());
 export type AutomationRunPluginEventTriggerEvidenceV1 = z.infer<
   typeof AutomationRunPluginEventTriggerEvidenceV1Schema
 >;
 
 export const AutomationRunConversationTriggerEvidenceV1Schema =
-  AutomationConversationOccurrenceEvidenceV1Schema.extend({
+  lazyZodSchema(() => AutomationConversationOccurrenceEvidenceV1Schema.extend({
     observationReceivedAt: z.number().int().nonnegative().safe(),
-  }).strict();
+  }).strict());
 export type AutomationRunConversationTriggerEvidenceV1 = z.infer<
   typeof AutomationRunConversationTriggerEvidenceV1Schema
 >;
 
-export const AutomationRunTriggerEvidenceV1Schema = z.discriminatedUnion('kind', [
+export const AutomationRunTriggerEvidenceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   AutomationRunPluginEventTriggerEvidenceV1Schema,
   AutomationRunConversationTriggerEvidenceV1Schema,
-]);
+]));
 export type AutomationRunTriggerEvidenceV1 = z.infer<
   typeof AutomationRunTriggerEvidenceV1Schema
 >;
@@ -290,7 +291,7 @@ export function materializeAutomationRunPromptV1(params: Readonly<{
   };
 }
 
-export const AutomationRunExecutionTargetV1Schema = z.discriminatedUnion('kind', [
+export const AutomationRunExecutionTargetV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('existingSession'),
     sessionId: asProtocolZod(SessionIdSchema),
@@ -303,7 +304,7 @@ export const AutomationRunExecutionTargetV1Schema = z.discriminatedUnion('kind',
     kind: z.literal('executionRun'),
     request: ExecutionRunDetachedStartRequestV1Schema,
   }).strict(),
-]);
+]));
 export type AutomationRunExecutionTargetV1 = z.infer<typeof AutomationRunExecutionTargetV1Schema>;
 
 /**
@@ -731,10 +732,10 @@ export type AutomationRunOpenedExecutionRecipeContentV1 = Readonly<{
   triggerEvidence: unknown | null;
 }>;
 
-const AutomationRunOpenedExecutionRecipeContentV1Schema = z.object({
+const AutomationRunOpenedExecutionRecipeContentV1Schema = lazyZodSchema(() => z.object({
   template: z.unknown(),
   triggerEvidence: z.unknown().nullable(),
-}).strict();
+}).strict());
 
 type ReadRecipeContentResult =
   | Readonly<{ kind: 'available'; content: AutomationRunOpenedExecutionRecipeContentV1 }>

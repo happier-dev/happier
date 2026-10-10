@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -14,20 +15,20 @@ export const SessionIdSchema = defineProtocolString({
 });
 export type SessionId = ReturnType<typeof SessionIdSchema.parse>;
 
-export const SubagentIdSchema = z.string().trim().min(1);
+export const SubagentIdSchema = lazyZodSchema(() => z.string().trim().min(1));
 export type SubagentId = z.infer<typeof SubagentIdSchema>;
 
-export const SidechainIdSchema = z.string().trim().min(1).max(SessionIndexedIdentifierMaxLengthV1);
+export const SidechainIdSchema = lazyZodSchema(() => z.string().trim().min(1).max(SessionIndexedIdentifierMaxLengthV1));
 export type SidechainId = z.infer<typeof SidechainIdSchema>;
 
-export const ExecutionRunIdSchema = z.string().trim().min(1).max(SessionIndexedIdentifierMaxLengthV1);
+export const ExecutionRunIdSchema = lazyZodSchema(() => z.string().trim().min(1).max(SessionIndexedIdentifierMaxLengthV1));
 export type ExecutionRunId = z.infer<typeof ExecutionRunIdSchema>;
 
-export const SessionDiscussionIdSchema = z.string().trim().min(1).max(SessionIndexedIdentifierMaxLengthV1);
+export const SessionDiscussionIdSchema = lazyZodSchema(() => z.string().trim().min(1).max(SessionIndexedIdentifierMaxLengthV1));
 export type SessionDiscussionId = z.infer<typeof SessionDiscussionIdSchema>;
 
-export const TurnIdSchema = z.string()
+export const TurnIdSchema = lazyZodSchema(() => z.string()
   .min(1)
   .max(SessionIndexedIdentifierMaxLengthV1)
-  .regex(NO_OUTER_WHITESPACE_PATTERN);
+  .regex(NO_OUTER_WHITESPACE_PATTERN));
 export type TurnId = z.infer<typeof TurnIdSchema>;

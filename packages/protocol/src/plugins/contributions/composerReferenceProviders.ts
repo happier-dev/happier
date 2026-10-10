@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
@@ -24,7 +25,7 @@ export const MAX_COMPOSER_REFERENCE_PAGE_JSON_BYTES_V1 = 64 * 1024;
 export const MAX_COMPOSER_REFERENCE_RESOLUTION_JSON_BYTES_V1 = 16 * 1024;
 export const MAX_COMPOSER_REFERENCE_TRIGGERS_V1 = 3;
 export const COMPOSER_REFERENCE_TRIGGER_CHARACTERS_V1 = ['@', '$', '/'] as const;
-export const ComposerReferenceTriggerV1Schema = z.enum(COMPOSER_REFERENCE_TRIGGER_CHARACTERS_V1);
+export const ComposerReferenceTriggerV1Schema = lazyZodSchema(() => z.enum(COMPOSER_REFERENCE_TRIGGER_CHARACTERS_V1));
 export type ComposerReferenceTriggerV1 = z.infer<typeof ComposerReferenceTriggerV1Schema>;
 /**
  * Resolve context is model-visible text, not a capability envelope. Keeping it
@@ -66,7 +67,7 @@ function jsonByteLength(value: unknown): number {
  * deliberately absent: a provider must be manifest-declared before activation
  * can bind its `search` and `resolve` functions.
  */
-export const PluginComposerReferenceProviderPresentationV1Schema = z.object({
+export const PluginComposerReferenceProviderPresentationV1Schema = lazyZodSchema(() => z.object({
   title: PluginLocalizedStringV2Schema,
   description: PluginLocalizedStringV2Schema.optional(),
   icon: PluginUiIconTokenV1Schema,
@@ -87,15 +88,15 @@ export const PluginComposerReferenceProviderPresentationV1Schema = z.object({
       });
     })
     .default(['@']),
-}).strict();
+}).strict());
 export type PluginComposerReferenceProviderPresentationV1 = z.infer<
   typeof PluginComposerReferenceProviderPresentationV1Schema
 >;
 
 export const PluginComposerReferenceProviderContributionV1Schema =
-  PluginComposerReferenceProviderPresentationV1Schema.extend({
+  lazyZodSchema(() => PluginComposerReferenceProviderPresentationV1Schema.extend({
     id: asProtocolZod(PluginContributionLocalIdSchema),
-  }).strict();
+  }).strict());
 export type PluginComposerReferenceProviderContributionV1 = z.infer<
   typeof PluginComposerReferenceProviderContributionV1Schema
 >;
@@ -115,14 +116,14 @@ export const ComposerReferenceContextV1Schema = boundedUtf8String(
   `Composer reference context must be at most ${MAX_COMPOSER_REFERENCE_CONTEXT_UTF8_BYTES_V1} UTF-8 bytes.`,
 );
 
-export const ComposerReferenceCandidateV1Schema = z.object({
+export const ComposerReferenceCandidateV1Schema = lazyZodSchema(() => z.object({
   id: ComposerReferenceCandidateIdV1Schema,
   label: ComposerReferenceCandidateLabelV1Schema,
   description: ComposerReferenceCandidateDescriptionV1Schema.optional(),
-}).strict();
+}).strict());
 export type ComposerReferenceCandidateV1 = z.infer<typeof ComposerReferenceCandidateV1Schema>;
 
-export const ComposerReferenceCandidatePageV1Schema = z.array(ComposerReferenceCandidateV1Schema)
+export const ComposerReferenceCandidatePageV1Schema = lazyZodSchema(() => z.array(ComposerReferenceCandidateV1Schema)
   .max(MAX_COMPOSER_REFERENCE_CANDIDATES_V1)
   .superRefine((candidates, context) => {
     const ids = new Set<string>();
@@ -142,10 +143,10 @@ export const ComposerReferenceCandidatePageV1Schema = z.array(ComposerReferenceC
         message: `Composer reference candidate pages must be at most ${MAX_COMPOSER_REFERENCE_PAGE_JSON_BYTES_V1} JSON bytes.`,
       });
     }
-  });
+  }));
 export type ComposerReferenceCandidatePageV1 = z.infer<typeof ComposerReferenceCandidatePageV1Schema>;
 
-export const ComposerReferenceResolutionV1Schema = ComposerReferenceCandidateV1Schema.extend({
+export const ComposerReferenceResolutionV1Schema = lazyZodSchema(() => ComposerReferenceCandidateV1Schema.extend({
   context: ComposerReferenceContextV1Schema,
 }).strict().superRefine((resolution, context) => {
   if (jsonByteLength(resolution) > MAX_COMPOSER_REFERENCE_RESOLUTION_JSON_BYTES_V1) {
@@ -154,7 +155,7 @@ export const ComposerReferenceResolutionV1Schema = ComposerReferenceCandidateV1S
       message: `Composer reference resolutions must be at most ${MAX_COMPOSER_REFERENCE_RESOLUTION_JSON_BYTES_V1} JSON bytes.`,
     });
   }
-});
+}));
 export type ComposerReferenceResolutionV1 = Readonly<{
   id: string;
   label: string;

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { hasLegacyCustomAcpConcreteBackendId } from './compat/customAcp.js';
 
@@ -7,10 +8,10 @@ import { hasLegacyCustomAcpConcreteBackendId } from './compat/customAcp.js';
  * Canonical active protocol/backend-target truth is `BackendTargetRefV2` under `backendTargetRefV2.ts`.
  * This file remains only as an explicit bounded compatibility seam for older callers and payloads.
  */
-export const LegacyBackendTargetKindSchema = z.enum(['builtInAgent', 'configuredAcpBackend']);
+export const LegacyBackendTargetKindSchema = lazyZodSchema(() => z.enum(['builtInAgent', 'configuredAcpBackend']));
 export type LegacyBackendTargetKind = z.infer<typeof LegacyBackendTargetKindSchema>;
 
-const LegacyBuiltInAgentTargetSchema = z.object({
+const LegacyBuiltInAgentTargetSchema = lazyZodSchema(() => z.object({
   kind: z.literal('builtInAgent'),
   agentId: z.string().min(1),
 }).superRefine((value, ctx) => {
@@ -23,9 +24,9 @@ const LegacyBuiltInAgentTargetSchema = z.object({
     path: ['agentId'],
     message: 'backendTarget must identify a concrete backend',
   });
-});
+}));
 
-const LegacyConfiguredAcpBackendTargetSchema = z.object({
+const LegacyConfiguredAcpBackendTargetSchema = lazyZodSchema(() => z.object({
   kind: z.literal('configuredAcpBackend'),
   backendId: z.string().min(1),
 }).superRefine((value, ctx) => {
@@ -38,15 +39,15 @@ const LegacyConfiguredAcpBackendTargetSchema = z.object({
     path: ['backendId'],
     message: 'backendTarget must identify a concrete backend',
   });
-});
+}));
 
-export const LegacyBackendTargetRefSchema = z.union([
+export const LegacyBackendTargetRefSchema = lazyZodSchema(() => z.union([
   LegacyBuiltInAgentTargetSchema,
   LegacyConfiguredAcpBackendTargetSchema,
-]);
+]));
 export type LegacyBackendTargetRefV1 = z.infer<typeof LegacyBackendTargetRefSchema>;
 
-export const LegacyBackendTargetKeySchema = z
+export const LegacyBackendTargetKeySchema = lazyZodSchema(() => z
   .string()
   .regex(/^(agent|acpBackend):.+$/, 'Invalid backend target key')
   .superRefine((value, ctx) => {
@@ -65,7 +66,7 @@ export const LegacyBackendTargetKeySchema = z
       code: z.ZodIssueCode.custom,
       message: 'backendTarget must identify a concrete backend',
     });
-  });
+  }));
 export type LegacyBackendTargetKey = z.infer<typeof LegacyBackendTargetKeySchema>;
 
 export function buildLegacyBackendTargetKey(target: LegacyBackendTargetRefV1): LegacyBackendTargetKey {

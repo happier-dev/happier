@@ -1,10 +1,11 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { BrowserHttpOriginV1Schema } from '../url.js';
 
-const IdSchema = z.string().trim().min(1).max(256);
+const IdSchema = lazyZodSchema(() => z.string().trim().min(1).max(256));
 
-export const BrowserPermissionKindV1Schema = z.enum([
+export const BrowserPermissionKindV1Schema = lazyZodSchema(() => z.enum([
   'origin',
   'downloads',
   'uploads',
@@ -14,16 +15,16 @@ export const BrowserPermissionKindV1Schema = z.enum([
   'fileAccess',
   'popups',
   'browserUse',
-]);
+]));
 export type BrowserPermissionKindV1 = z.infer<typeof BrowserPermissionKindV1Schema>;
 
-export const BrowserPermissionStateV1Schema = z.enum(['allowed', 'denied', 'prompt']);
+export const BrowserPermissionStateV1Schema = lazyZodSchema(() => z.enum(['allowed', 'denied', 'prompt']));
 export type BrowserPermissionStateV1 = z.infer<typeof BrowserPermissionStateV1Schema>;
 
-export const BrowserPermissionScopeV1Schema = z.enum(['profile', 'session', 'target']);
+export const BrowserPermissionScopeV1Schema = lazyZodSchema(() => z.enum(['profile', 'session', 'target']));
 export type BrowserPermissionScopeV1 = z.infer<typeof BrowserPermissionScopeV1Schema>;
 
-export const BrowserPermissionGrantV1Schema = z
+export const BrowserPermissionGrantV1Schema = lazyZodSchema(() => z
   .object({
     id: IdSchema,
     profileId: IdSchema.optional(),
@@ -59,5 +60,5 @@ export const BrowserPermissionGrantV1Schema = z
         message: 'Session-scoped browser permission grants require a browserSessionId.',
       });
     }
-  });
+  }));
 export type BrowserPermissionGrantV1 = z.infer<typeof BrowserPermissionGrantV1Schema>;

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 export const DEFAULT_WINDOWS_TERMINAL_WINDOW_NAME = 'happier';
@@ -15,6 +16,6 @@ export function normalizeWindowsTerminalWindowName(value: unknown): string {
   return trimmed;
 }
 
-export const WindowsTerminalWindowNameSchema = z
+export const WindowsTerminalWindowNameSchema = lazyZodSchema(() => z
   .string()
-  .transform((value) => normalizeWindowsTerminalWindowName(value));
+  .transform((value) => normalizeWindowsTerminalWindowName(value)));

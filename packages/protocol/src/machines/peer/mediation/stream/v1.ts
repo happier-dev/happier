@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { readCanonicalPaddedBase64DecodedLength } from '../../../../crypto/base64.js';
@@ -10,16 +11,16 @@ export { getMachineLiveStreamPayloadDecodedByteLength } from './codecsV1.js';
 export const MACHINE_LIVE_STREAM_SOCKET_EVENT = 'machines.liveStream.v1' as const;
 export const MACHINE_LIVE_STREAM_RELAY_AUTHORIZATION_AUDIENCE_V1 = 'happier-live-stream-relay-authorization' as const;
 
-const PositiveIntSchema = z.number().int().positive();
-const NonNegativeIntSchema = z.number().int().nonnegative();
-const Base64Schema = z.string().superRefine((value, context) => {
+const PositiveIntSchema = lazyZodSchema(() => z.number().int().positive());
+const NonNegativeIntSchema = lazyZodSchema(() => z.number().int().nonnegative());
+const Base64Schema = lazyZodSchema(() => z.string().superRefine((value, context) => {
   if (readCanonicalPaddedBase64DecodedLength(value) !== null) return;
   context.addIssue({
     code: z.ZodIssueCode.custom,
     message: 'Invalid base64 payload',
   });
-});
-const Base64UrlSchema = z.string().regex(/^[A-Za-z0-9_-]+$/);
+}));
+const Base64UrlSchema = lazyZodSchema(() => z.string().regex(/^[A-Za-z0-9_-]+$/));
 
 const MachineLiveStreamCapsV1Shape = {
   maxBitrateBps: PositiveIntSchema.optional(),
@@ -29,21 +30,21 @@ const MachineLiveStreamCapsV1Shape = {
   maxTotalBytes: PositiveIntSchema.optional(),
 } as const;
 
-export const MachineLiveStreamCapsV1Schema = z.object(MachineLiveStreamCapsV1Shape).passthrough();
+export const MachineLiveStreamCapsV1Schema = lazyZodSchema(() => z.object(MachineLiveStreamCapsV1Shape).passthrough());
 
-export const MachineLiveStreamRelayCapsV1Schema = z
+export const MachineLiveStreamRelayCapsV1Schema = lazyZodSchema(() => z
   .object({
     ...MachineLiveStreamCapsV1Shape,
     maxConcurrentStreamsPerAccount: PositiveIntSchema.optional(),
     maxConcurrentStreamsPerSocket: PositiveIntSchema.optional(),
     maxConcurrentStreamsPerMachine: PositiveIntSchema.optional(),
   })
-  .passthrough();
+  .passthrough());
 
-export const MachineLiveStreamRouteKindV1Schema = z.enum(['loopback_direct', 'server_relay']);
-export const MachineLiveStreamPayloadKindV1Schema = z.enum(['image_delta', 'image_keyframe', 'metadata']);
+export const MachineLiveStreamRouteKindV1Schema = lazyZodSchema(() => z.enum(['loopback_direct', 'server_relay']));
+export const MachineLiveStreamPayloadKindV1Schema = lazyZodSchema(() => z.enum(['image_delta', 'image_keyframe', 'metadata']));
 
-export const MachineLiveStreamRelayAuthorizationPayloadV1Schema = z
+export const MachineLiveStreamRelayAuthorizationPayloadV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     grantId: z.string().min(1),
@@ -78,20 +79,20 @@ export const MachineLiveStreamRelayAuthorizationPayloadV1Schema = z
         message: 'Live-stream relay authorization must expire after issuance',
       });
     }
-  });
+  }));
 
-export const MachineLiveStreamRelayAuthorizationSignatureV1Schema = z.object({
+export const MachineLiveStreamRelayAuthorizationSignatureV1Schema = lazyZodSchema(() => z.object({
   keyId: z.string().min(1),
   alg: z.literal('Ed25519'),
   valueBase64Url: Base64UrlSchema,
-});
+}));
 
-export const MachineLiveStreamRelayAuthorizationV1Schema = z
+export const MachineLiveStreamRelayAuthorizationV1Schema = lazyZodSchema(() => z
   .object({
     payload: MachineLiveStreamRelayAuthorizationPayloadV1Schema,
     signature: MachineLiveStreamRelayAuthorizationSignatureV1Schema,
   })
-  .passthrough();
+  .passthrough());
 
 export function createMachineLiveStreamRelayAuthorizationSigningInputV1(
   payload: MachineLiveStreamRelayAuthorizationPayloadV1,
@@ -99,7 +100,7 @@ export function createMachineLiveStreamRelayAuthorizationSigningInputV1(
   return createCanonicalJsonSigningInput(MachineLiveStreamRelayAuthorizationPayloadV1Schema.parse(payload));
 }
 
-export const MachineLiveStreamStartRequestV1Schema = z
+export const MachineLiveStreamStartRequestV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     streamId: z.string().min(1),
@@ -169,9 +170,9 @@ export const MachineLiveStreamStartRequestV1Schema = z
         message: 'Live-stream relay authorization must match the start request',
       });
     }
-  });
+  }));
 
-export const MachineLiveStreamStartResponseV1Schema = z.discriminatedUnion('accepted', [
+export const MachineLiveStreamStartResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('accepted', [
   z
     .object({
       v: z.literal(1),
@@ -191,9 +192,9 @@ export const MachineLiveStreamStartResponseV1Schema = z.discriminatedUnion('acce
       disabledReason: z.string().min(1),
     })
     .passthrough(),
-]);
+]));
 
-export const MachineLiveStreamFrameV1Schema = z
+export const MachineLiveStreamFrameV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     streamId: z.string().min(1),
@@ -214,7 +215,7 @@ export const MachineLiveStreamFrameV1Schema = z
       path: ['payloadSizeBytes'],
       message: 'Live-stream frame advisory size must match decoded payload bytes',
     });
-  });
+  }));
 
 const UNSAFE_STREAM_DETAIL_KEYS = new Set([
   'payload',
@@ -238,7 +239,7 @@ function rejectUnsafeStreamDetailKeys(value: Record<string, unknown>, ctx: z.Ref
   }
 }
 
-export const MachineLiveStreamMeteringV1Schema = z
+export const MachineLiveStreamMeteringV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     streamId: z.string().min(1),
@@ -259,14 +260,14 @@ export const MachineLiveStreamMeteringV1Schema = z
     maxTotalBytes: PositiveIntSchema.optional(),
   })
   .passthrough()
-  .superRefine(rejectUnsafeStreamDetailKeys);
+  .superRefine(rejectUnsafeStreamDetailKeys));
 
-const BaseControlSchema = z.object({
+const BaseControlSchema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   streamId: z.string().min(1),
-});
+}));
 
-export const MachineLiveStreamControlV1Schema = z.discriminatedUnion('kind', [
+export const MachineLiveStreamControlV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   BaseControlSchema.extend({
     kind: z.literal('pause'),
     reasonCode: z.string().min(1),
@@ -302,7 +303,7 @@ export const MachineLiveStreamControlV1Schema = z.discriminatedUnion('kind', [
     kind: z.literal('keyframe_required'),
     reasonCode: z.string().min(1),
   }).passthrough(),
-]);
+]));
 
 const MachineLiveStreamPublicMessageSchemas = [
   z.object({ kind: z.literal('start'), startRequest: MachineLiveStreamStartRequestV1Schema }).passthrough(),
@@ -314,7 +315,7 @@ const MachineLiveStreamPublicMessageSchemas = [
 ] as const;
 
 // Decoded process-local content. Never emit this schema's frame/input shapes on the socket.
-export const MachineLiveStreamDecodedEnvelopeV1Schema = z
+export const MachineLiveStreamDecodedEnvelopeV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     sourceMachineId: z.string().min(1),
@@ -329,10 +330,10 @@ export const MachineLiveStreamDecodedEnvelopeV1Schema = z
       z.object({ kind: z.literal('sideband_control'), control: MachineLiveStreamControlSidebandV1Schema }).strict(),
     ]),
   })
-  .strict();
+  .strict());
 
-const EncryptedStreamPayloadSchema = z.object({ t: z.literal('encrypted'), c: Base64Schema }).strict();
-export const MachineLiveStreamWireFrameV1Schema = z.object({
+const EncryptedStreamPayloadSchema = lazyZodSchema(() => z.object({ t: z.literal('encrypted'), c: Base64Schema }).strict());
+export const MachineLiveStreamWireFrameV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   streamId: z.string().min(1),
   sequence: PositiveIntSchema,
@@ -350,10 +351,10 @@ export const MachineLiveStreamWireFrameV1Schema = z.object({
   if (getMachineLiveStreamPayloadDecodedByteLength(encoded) === frame.payloadSizeBytes) return;
   ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['payloadSizeBytes'],
     message: 'Live-stream transport size must match payload bytes' });
-});
+}));
 
 // The relay can inspect routing/metering headers, never decoded input or E2EE pixels.
-export const MachineLiveStreamRelayEnvelopeV1Schema = MachineLiveStreamDecodedEnvelopeV1Schema.extend({
+export const MachineLiveStreamRelayEnvelopeV1Schema = lazyZodSchema(() => MachineLiveStreamDecodedEnvelopeV1Schema.extend({
   message: z.discriminatedUnion('kind', [
     ...MachineLiveStreamPublicMessageSchemas,
     z.object({ kind: z.literal('frame'), frame: MachineLiveStreamWireFrameV1Schema }).strict(),
@@ -365,7 +366,7 @@ export const MachineLiveStreamRelayEnvelopeV1Schema = MachineLiveStreamDecodedEn
       ]),
     }).strict() }).strict(),
   ]),
-}).strict();
+}).strict());
 
 export type MachineLiveStreamCapsV1 = z.infer<typeof MachineLiveStreamCapsV1Schema>;
 export type MachineLiveStreamRouteKindV1 = z.infer<typeof MachineLiveStreamRouteKindV1Schema>;

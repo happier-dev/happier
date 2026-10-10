@@ -1,13 +1,14 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
-const NonEmptyStringSchema = z.string().trim().min(1);
+const NonEmptyStringSchema = lazyZodSchema(() => z.string().trim().min(1));
 
 /**
  * Sanitized evidence from one non-mutating identity test, shown to the administrator
  * who started it. It reports whether a claim was present and how the configured rules
  * decided, never the subject, login, email, or external group values themselves.
  */
-export const IdentityConnectionTestDiagnosticsV1Schema = z.object({
+export const IdentityConnectionTestDiagnosticsV1Schema = lazyZodSchema(() => z.object({
   subjectPresent: z.boolean(),
   loginAvailable: z.boolean(),
   emailAvailable: z.boolean(),
@@ -36,5 +37,5 @@ export const IdentityConnectionTestDiagnosticsV1Schema = z.object({
     id: NonEmptyStringSchema,
     name: NonEmptyStringSchema,
   }).strict()),
-}).strict();
+}).strict());
 export type IdentityConnectionTestDiagnosticsV1 = z.infer<typeof IdentityConnectionTestDiagnosticsV1Schema>;

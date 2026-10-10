@@ -1,9 +1,10 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { CapabilitySupportSchema } from '../providers/capabilities/v1.js';
 import { ProviderModelIdSchema } from '../providers/ids.js';
 
-export const AgentModelOptionValueIdSchema = z.string().trim().min(1).max(256);
+export const AgentModelOptionValueIdSchema = lazyZodSchema(() => z.string().trim().min(1).max(256));
 export type AgentModelOptionValueId = string;
 
 /**

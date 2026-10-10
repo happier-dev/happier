@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
@@ -7,14 +8,14 @@ import {
   type SessionUserActionRequiredRequestKindV1,
 } from '../sessions/userActionRequiredOccurrenceV1.js';
 
-export const AutomationSessionLifecycleEventSchema = z.enum([
+export const AutomationSessionLifecycleEventSchema = lazyZodSchema(() => z.enum([
   'parentTurnCompleted',
   'parentTurnFailed',
   'parentTurnCancelled',
   'userActionRequired',
   'sessionStarted',
   'sessionArchived',
-]);
+]));
 export type AutomationSessionLifecycleEvent = z.infer<
   typeof AutomationSessionLifecycleEventSchema
 >;
@@ -26,22 +27,22 @@ export type AutomationSessionLifecycleRequestKind =
 
 export const AUTOMATION_SESSION_LIFECYCLE_MAX_MATCH_COUNT = 2_147_483_647;
 
-const AutomationSessionLifecycleNextMatchesPolicySchema = z.object({
+const AutomationSessionLifecycleNextMatchesPolicySchema = lazyZodSchema(() => z.object({
   kind: z.literal('nextMatches'),
   count: z.number().int().positive().max(AUTOMATION_SESSION_LIFECYCLE_MAX_MATCH_COUNT),
-}).strict();
+}).strict());
 
-export const AutomationSessionLifecyclePolicySnapshotSchema = z.discriminatedUnion('kind', [
+export const AutomationSessionLifecyclePolicySnapshotSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('currentTurn') }).strict(),
   z.object({ kind: z.literal('firstMatch') }).strict(),
   AutomationSessionLifecycleNextMatchesPolicySchema,
   z.object({ kind: z.literal('everyMatch') }).strict(),
-]);
+]));
 export type AutomationSessionLifecyclePolicySnapshot = z.infer<
   typeof AutomationSessionLifecyclePolicySnapshotSchema
 >;
 
-export const AutomationSessionLifecyclePolicySchema = z.discriminatedUnion('kind', [
+export const AutomationSessionLifecyclePolicySchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('currentTurn'),
     sourceTurnId: TurnIdSchema,
@@ -49,12 +50,12 @@ export const AutomationSessionLifecyclePolicySchema = z.discriminatedUnion('kind
   z.object({ kind: z.literal('firstMatch') }).strict(),
   AutomationSessionLifecycleNextMatchesPolicySchema,
   z.object({ kind: z.literal('everyMatch') }).strict(),
-]);
+]));
 export type AutomationSessionLifecyclePolicy = z.infer<
   typeof AutomationSessionLifecyclePolicySchema
 >;
 
-export const AutomationSessionLifecycleEventsSchema = z.array(
+export const AutomationSessionLifecycleEventsSchema = lazyZodSchema(() => z.array(
   AutomationSessionLifecycleEventSchema,
 ).min(1).superRefine((events, context) => {
   if (new Set(events).size !== events.length) {
@@ -63,7 +64,7 @@ export const AutomationSessionLifecycleEventsSchema = z.array(
       message: 'Session lifecycle Events must be unique',
     });
   }
-});
+}));
 
 /**
  * A selected Event set is a set: only its membership decides admission. Authors
@@ -80,11 +81,11 @@ export function canonicalizeAutomationSessionLifecycleEvents(
   );
 }
 
-export const AutomationSessionLifecycleConfigurationSchema = z.object({
+export const AutomationSessionLifecycleConfigurationSchema = lazyZodSchema(() => z.object({
   sourceSessionId: asProtocolZod(SessionIdSchema),
   events: AutomationSessionLifecycleEventsSchema,
   policy: AutomationSessionLifecyclePolicySchema,
-}).strict();
+}).strict());
 export type AutomationSessionLifecycleConfiguration = z.infer<
   typeof AutomationSessionLifecycleConfigurationSchema
 >;

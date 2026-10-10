@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { ExecutionRunIdSchema } from '../../sessions/idsV1.js';
 
@@ -26,11 +27,11 @@ const teamBroadcastRecipient = z.object({
     teamId: z.string().min(1),
   });
 
-export const ParticipantRecipientV1Schema = z.discriminatedUnion('kind', [
+export const ParticipantRecipientV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   executionRunRecipient.passthrough(),
   teamMemberRecipient.passthrough(),
   teamBroadcastRecipient.passthrough(),
-]);
+]));
 export type ParticipantRecipientV1 = z.infer<typeof ParticipantRecipientV1Schema>;
 
 export const ParticipantExecutionRunRecipientRoutingIdentityV1Schema = executionRunRecipient
@@ -38,18 +39,18 @@ export const ParticipantExecutionRunRecipientRoutingIdentityV1Schema = execution
 export type ParticipantExecutionRunRecipientRoutingIdentityV1 = z.infer<
   typeof ParticipantExecutionRunRecipientRoutingIdentityV1Schema
 >;
-export const ParticipantRecipientRoutingIdentityV1Schema = z.discriminatedUnion('kind', [
+export const ParticipantRecipientRoutingIdentityV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   ParticipantExecutionRunRecipientRoutingIdentityV1Schema,
   teamMemberRecipient.omit({ memberLabel: true }).extend({
     teamId: z.string().trim().min(1), memberId: z.string().trim().min(1),
   }).strict(),
   teamBroadcastRecipient.extend({ teamId: z.string().trim().min(1) }).strict(),
-]);
+]));
 export type ParticipantRecipientRoutingIdentityV1 = z.infer<typeof ParticipantRecipientRoutingIdentityV1Schema>;
 
-const authoredRecipientSchema = z.discriminatedUnion('kind', [
+const authoredRecipientSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   executionRunRecipient.strict(), teamMemberRecipient.strict(), teamBroadcastRecipient.strict(),
-]);
+]));
 
 /** Known display labels may be consumed at authoring, but never enter operational routing. */
 export function normalizeParticipantRecipientRoutingIdentityV1(input: unknown): ParticipantRecipientRoutingIdentityV1 {
@@ -101,9 +102,9 @@ export function readParticipantRecipientRoutingIdentityV1(meta: unknown): Partic
   return parsed.success ? parsed.data.payload.recipient : null;
 }
 
-export const ParticipantMessageV1Schema = z.object({
+export const ParticipantMessageV1Schema = lazyZodSchema(() => z.object({
   recipient: ParticipantRecipientV1Schema,
-}).passthrough();
+}).passthrough());
 export type ParticipantMessageV1 = z.infer<typeof ParticipantMessageV1Schema>;
 
 export function parseParticipantMessageV1(input: unknown): ParticipantMessageV1 | null {

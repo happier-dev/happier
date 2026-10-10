@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ProviderCatalogProbeV1Schema } from '../catalog/descriptorV1.js';
@@ -9,17 +10,17 @@ function isLiteralCommandToken(value: string): boolean {
     && !/^[A-Za-z_][A-Za-z0-9_]*=/u.test(value);
 }
 
-const BoundedTokenSchema = z.string().trim().min(1).max(256).refine(
+const BoundedTokenSchema = lazyZodSchema(() => z.string().trim().min(1).max(256).refine(
   isLiteralCommandToken,
   'Command token must be literal and control/operator free',
-);
-const ExecutableLookupNameSchema = z.string().trim().min(1).max(256).refine(
+));
+const ExecutableLookupNameSchema = lazyZodSchema(() => z.string().trim().min(1).max(256).refine(
   (value) => value !== '.' && value !== '..' && !value.includes('/') && !value.includes('\\')
     && isLiteralCommandToken(value),
   'Executable lookup names must be PATH/application basenames, not paths',
-);
-const LookupNamesSchema = z.array(ExecutableLookupNameSchema).min(1).max(16);
-const EnvironmentVariableNameSchema = z.string().min(1).max(128).regex(/^[A-Za-z_][A-Za-z0-9_]*$/u);
+));
+const LookupNamesSchema = lazyZodSchema(() => z.array(ExecutableLookupNameSchema).min(1).max(16));
+const EnvironmentVariableNameSchema = lazyZodSchema(() => z.string().min(1).max(128).regex(/^[A-Za-z_][A-Za-z0-9_]*$/u));
 
 /**
  * The command-output catalog formats Happier bundles an implementation for.
@@ -33,9 +34,9 @@ export const BUNDLED_PROVIDER_COMMAND_CATALOG_PARSERS_V1 = Object.freeze([
   'ollama-list-table',
 ] as const);
 
-export const BundledProviderCommandCatalogParserV1Schema = z.enum(
+export const BundledProviderCommandCatalogParserV1Schema = lazyZodSchema(() => z.enum(
   BUNDLED_PROVIDER_COMMAND_CATALOG_PARSERS_V1,
-);
+));
 export type BundledProviderCommandCatalogParserV1 = z.infer<
   typeof BundledProviderCommandCatalogParserV1Schema
 >;
@@ -80,16 +81,16 @@ export function readBundledProviderCommandCatalogParserFactV1<T>(
   return isBundledProviderCommandCatalogParserV1(parser) ? factsByParser[parser] : null;
 }
 
-export const ProviderCatalogCommandFallbackV1Schema = z.object({
+export const ProviderCatalogCommandFallbackV1Schema = lazyZodSchema(() => z.object({
   endpointTemplateId: ProviderLocalIdSchema,
   lookupNames: LookupNamesSchema,
   fixedArgs: z.array(BoundedTokenSchema).max(32),
   parser: ProviderCommandCatalogParserV1Schema,
   endpointEnvName: EnvironmentVariableNameSchema.optional(),
-}).strict();
+}).strict());
 export type ProviderCatalogCommandFallbackV1 = z.infer<typeof ProviderCatalogCommandFallbackV1Schema>;
 
-export const ProviderDetectionDescriptorV1Schema = z.object({
+export const ProviderDetectionDescriptorV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   listener: z.object({
     executableBasenames: z.array(z.string().trim().min(1).max(128).regex(/^[^/\\\u0000-\u001f]+$/u)).min(1).max(32),
@@ -125,5 +126,5 @@ export const ProviderDetectionDescriptorV1Schema = z.object({
   if (new Set(value.listener.defaultPorts).size !== value.listener.defaultPorts.length) {
     ctx.addIssue({ code: 'custom', path: ['listener', 'defaultPorts'], message: 'Default ports must be unique' });
   }
-});
+}));
 export type ProviderDetectionDescriptorV1 = z.infer<typeof ProviderDetectionDescriptorV1Schema>;

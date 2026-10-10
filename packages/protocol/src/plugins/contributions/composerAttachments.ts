@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
@@ -27,7 +28,7 @@ export const COMPOSER_ATTACHMENT_RUNTIME_REGISTRATION_FIELDS_V1 = Object.freeze(
 export type ComposerAttachmentRuntimeRegistrationFieldV1 =
   typeof COMPOSER_ATTACHMENT_RUNTIME_REGISTRATION_FIELDS_V1[number];
 
-export const PluginComposerAttachmentRuntimeDescriptorV1Schema = z.object({
+export const PluginComposerAttachmentRuntimeDescriptorV1Schema = lazyZodSchema(() => z.object({
   prepareForSend: z.literal(true).optional(),
   resolveForDispatch: z.literal(true).optional(),
   resolveForDispatchV2: z.literal(true).optional(),
@@ -38,7 +39,7 @@ export const PluginComposerAttachmentRuntimeDescriptorV1Schema = z.object({
     code: z.ZodIssueCode.custom,
     message: 'An attachment runtime descriptor must declare at least one lifecycle role',
   });
-});
+}));
 export type PluginComposerAttachmentRuntimeDescriptorV1 = z.infer<
   typeof PluginComposerAttachmentRuntimeDescriptorV1Schema
 >;
@@ -57,7 +58,7 @@ export function readComposerAttachmentRuntimeRegistrationFieldsV1(
     : Object.freeze([]);
 }
 
-export const ComposerAttachmentDisplayV1Schema = z.discriminatedUnion('kind', [
+export const ComposerAttachmentDisplayV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('badge') }).strict(),
   z.object({
     kind: z.literal('media'),
@@ -68,10 +69,10 @@ export const ComposerAttachmentDisplayV1Schema = z.discriminatedUnion('kind', [
     renderer: PluginUiRendererChainBindingV1Schema,
     sizing: z.enum(['compact', 'content']),
   }).strict(),
-]);
+]));
 export type ComposerAttachmentDisplayV1 = z.infer<typeof ComposerAttachmentDisplayV1Schema>;
 
-export const ComposerAttachmentPreviewV1Schema = z.discriminatedUnion('kind', [
+export const ComposerAttachmentPreviewV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('host'),
     presentation: z.enum(['image', 'video']),
@@ -81,7 +82,7 @@ export const ComposerAttachmentPreviewV1Schema = z.discriminatedUnion('kind', [
     renderer: PluginUiRendererChainBindingV1Schema,
     presentation: z.enum(['auto', 'popover', 'dialog']),
   }).strict(),
-]);
+]));
 export type ComposerAttachmentPreviewV1 = z.infer<typeof ComposerAttachmentPreviewV1Schema>;
 
 /**
@@ -89,7 +90,7 @@ export type ComposerAttachmentPreviewV1 = z.infer<typeof ComposerAttachmentPrevi
  * are deliberately absent: activation binds them only after this declaration
  * has been admitted for the current plugin generation.
  */
-export const PluginComposerAttachmentContributionV1Schema = z.object({
+export const PluginComposerAttachmentContributionV1Schema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
   description: PluginLocalizedStringV2Schema.optional(),
@@ -110,7 +111,7 @@ export const PluginComposerAttachmentContributionV1Schema = z.object({
     path: ['preparedValueSchema'],
     message: 'A distinct preparedValueSchema requires runtime.prepareForSend',
   });
-});
+}));
 export type PluginComposerAttachmentContributionV1 = z.infer<
   typeof PluginComposerAttachmentContributionV1Schema
 >;

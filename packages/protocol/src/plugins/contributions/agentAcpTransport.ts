@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { PluginContributionReferenceV2Schema } from './publicTypes.js';
@@ -9,10 +10,10 @@ type DeepReadonly<T> = T extends readonly (infer TItem)[]
     ? { readonly [TKey in keyof T]: DeepReadonly<T[TKey]> }
     : T;
 
-const ProcessStringSchema = z.string()
-  .refine((value) => !value.includes('\0'), 'Process values cannot contain null bytes');
+const ProcessStringSchema = lazyZodSchema(() => z.string()
+  .refine((value) => !value.includes('\0'), 'Process values cannot contain null bytes'));
 
-export const PluginDeclaredExecutableRefSchema = z.discriminatedUnion('kind', [
+export const PluginDeclaredExecutableRefSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('managedDependency'),
     id: asProtocolZod(PluginContributionReferenceV2Schema),
@@ -21,49 +22,49 @@ export const PluginDeclaredExecutableRefSchema = z.discriminatedUnion('kind', [
     kind: z.literal('systemTool'),
     id: asProtocolZod(PluginContributionReferenceV2Schema),
   }).strict(),
-]);
+]));
 
-const PackagedRuntimePathSegmentSchema = z.string()
-  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u);
+const PackagedRuntimePathSegmentSchema = lazyZodSchema(() => z.string()
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u));
 
-export const PackagedRuntimeBinaryExecutableRefSchema = z.object({
+export const PackagedRuntimeBinaryExecutableRefSchema = lazyZodSchema(() => z.object({
   kind: z.literal('packaged-runtime-binary'),
   directorySegments: z.array(PackagedRuntimePathSegmentSchema).min(1).max(8).readonly(),
   executableBaseName: PackagedRuntimePathSegmentSchema,
-}).strict();
+}).strict());
 
-export const ManagedExecutableRefSchema = z.discriminatedUnion('kind', [
+export const ManagedExecutableRefSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   ...PluginDeclaredExecutableRefSchema.options,
   PackagedRuntimeBinaryExecutableRefSchema,
-]);
+]));
 export type ManagedExecutableRef = DeepReadonly<z.infer<typeof ManagedExecutableRefSchema>>;
 
-const PluginAgentAcpTimeoutMsSchema = z.number()
+const PluginAgentAcpTimeoutMsSchema = lazyZodSchema(() => z.number()
   .int()
   .min(1)
-  .max(2_147_483_647);
+  .max(2_147_483_647));
 
-export const PluginAgentAcpTimeoutsSchema = z.object({
+export const PluginAgentAcpTimeoutsSchema = lazyZodSchema(() => z.object({
   initializeMs: PluginAgentAcpTimeoutMsSchema.optional(),
   idleMs: PluginAgentAcpTimeoutMsSchema.optional(),
   toolCallMs: PluginAgentAcpTimeoutMsSchema.optional(),
-}).strict();
+}).strict());
 export type PluginAgentAcpTimeouts = DeepReadonly<z.infer<typeof PluginAgentAcpTimeoutsSchema>>;
 
-const PluginAgentAcpEnvironmentSchema = z.record(
+const PluginAgentAcpEnvironmentSchema = lazyZodSchema(() => z.record(
   ProcessStringSchema
     .min(1)
     .refine((value) => value === value.trim(), 'Environment keys cannot have surrounding whitespace'),
   ProcessStringSchema,
-);
+));
 
-const HttpHeaderNameSchema = z.string()
-  .regex(/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/, 'Invalid HTTP header name');
-const HttpHeaderValueSchema = z.string()
-  .refine((value) => !/[\0\r\n]/u.test(value), 'Invalid HTTP header value');
-const PluginAgentAcpHeadersSchema = z.record(HttpHeaderNameSchema, HttpHeaderValueSchema);
+const HttpHeaderNameSchema = lazyZodSchema(() => z.string()
+  .regex(/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/, 'Invalid HTTP header name'));
+const HttpHeaderValueSchema = lazyZodSchema(() => z.string()
+  .refine((value) => !/[\0\r\n]/u.test(value), 'Invalid HTTP header value'));
+const PluginAgentAcpHeadersSchema = lazyZodSchema(() => z.record(HttpHeaderNameSchema, HttpHeaderValueSchema));
 
-const PluginAgentAcpWebSocketUrlSchema = z.string()
+const PluginAgentAcpWebSocketUrlSchema = lazyZodSchema(() => z.string()
   .trim()
   .min(1)
   .refine((value) => {
@@ -73,9 +74,9 @@ const PluginAgentAcpWebSocketUrlSchema = z.string()
     } catch {
       return false;
     }
-  }, 'ACP WebSocket transport URL must use ws:// or wss://');
+  }, 'ACP WebSocket transport URL must use ws:// or wss://'));
 
-export const PluginAgentAcpTransportSchema = z.discriminatedUnion('kind', [
+export const PluginAgentAcpTransportSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('stdio'),
     executable: PluginDeclaredExecutableRefSchema,
@@ -96,5 +97,5 @@ export const PluginAgentAcpTransportSchema = z.discriminatedUnion('kind', [
     port: z.number().int().min(1).max(65_535),
     timeouts: PluginAgentAcpTimeoutsSchema.optional(),
   }).strict(),
-]);
+]));
 export type PluginAgentAcpTransport = DeepReadonly<z.infer<typeof PluginAgentAcpTransportSchema>>;

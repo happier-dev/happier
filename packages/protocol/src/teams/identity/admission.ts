@@ -1,10 +1,11 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from "zod";
 
-const AvailableAdmissionModeV1Schema = z.object({
+const AvailableAdmissionModeV1Schema = lazyZodSchema(() => z.object({
   status: z.literal("available"),
-}).strict();
+}).strict());
 
-const UnavailableProvisionedAdmissionModeV1Schema = z.object({
+const UnavailableProvisionedAdmissionModeV1Schema = lazyZodSchema(() => z.object({
   status: z.literal("unavailable"),
   reason: z.enum([
     "home_policy_unavailable",
@@ -13,9 +14,9 @@ const UnavailableProvisionedAdmissionModeV1Schema = z.object({
     "directory_projection_required",
     "team_connection_unavailable",
   ]),
-}).strict();
+}).strict());
 
-const UnavailableJitAdmissionModeV1Schema = z.object({
+const UnavailableJitAdmissionModeV1Schema = lazyZodSchema(() => z.object({
   status: z.literal("unavailable"),
   reason: z.enum([
     "home_policy_unavailable",
@@ -23,9 +24,9 @@ const UnavailableJitAdmissionModeV1Schema = z.object({
     "team_connection_required",
     "team_connection_unavailable",
   ]),
-}).strict();
+}).strict());
 
-export const TeamAdmissionModeApplicabilityV1Schema = z.object({
+export const TeamAdmissionModeApplicabilityV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   modes: z.object({
     invite_only: AvailableAdmissionModeV1Schema,
@@ -38,5 +39,5 @@ export const TeamAdmissionModeApplicabilityV1Schema = z.object({
       UnavailableJitAdmissionModeV1Schema,
     ]),
   }).strict(),
-}).strict();
+}).strict());
 export type TeamAdmissionModeApplicabilityV1 = z.infer<typeof TeamAdmissionModeApplicabilityV1Schema>;

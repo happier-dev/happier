@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
@@ -40,13 +41,13 @@ export const AUTOMATION_TRIGGER_DEFINITION_ACCOUNT_SCOPED_BLOB_KIND_V1 =
  * AutomationTrigger row; PR selectors need only the common identity tuple. This
  * prevents private content replay onto another trigger kind, definition or revision.
  */
-const AutomationTriggerDefinitionBindingBaseV1Schema = z.object({
+const AutomationTriggerDefinitionBindingBaseV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   automationId: z.string().min(1).max(256),
   triggerId: AutomationTriggerIdSchema,
   triggerRevision: AutomationTriggerRevisionSchema,
-}).strict();
-export const AutomationTriggerDefinitionBindingV1Schema = z.discriminatedUnion('triggerKind', [
+}).strict());
+export const AutomationTriggerDefinitionBindingV1Schema = lazyZodSchema(() => z.discriminatedUnion('triggerKind', [
   AutomationTriggerDefinitionBindingBaseV1Schema.extend({
     triggerKind: z.literal('pluginEvent'),
     eventRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema),
@@ -54,7 +55,7 @@ export const AutomationTriggerDefinitionBindingV1Schema = z.discriminatedUnion('
   }).strict(),
   AutomationTriggerDefinitionBindingBaseV1Schema.extend({ triggerKind: z.literal('prComment') }).strict(),
   AutomationTriggerDefinitionBindingBaseV1Schema.extend({ triggerKind: z.literal('ciFailed') }).strict(),
-]);
+]));
 export type AutomationTriggerDefinitionBindingV1 = z.infer<
   typeof AutomationTriggerDefinitionBindingV1Schema
 >;
@@ -95,11 +96,11 @@ export function sealAutomationPluginEventTriggerInputV1(params: Readonly<{
  * The outer stored-content envelope stays canonical. Its plain or encrypted
  * payload is this strict binding wrapper, never a second envelope format.
  */
-export const AutomationTriggerDefinitionStoredPayloadV1Schema = z.object({
+export const AutomationTriggerDefinitionStoredPayloadV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   binding: AutomationTriggerDefinitionBindingV1Schema,
   definition: PluginJsonValueV2Schema,
-}).strict();
+}).strict());
 export type AutomationTriggerDefinitionStoredPayloadV1 = z.infer<
   typeof AutomationTriggerDefinitionStoredPayloadV1Schema
 >;

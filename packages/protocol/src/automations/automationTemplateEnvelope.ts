@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
@@ -23,9 +24,9 @@ export const AUTOMATION_TEMPLATE_PAYLOAD_PLAINTEXT_MAX_CHARS = 200_000;
  */
 export const AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS = 220_000;
 
-const ExistingSessionIdSchema = z.string().trim().min(1).max(128);
+const ExistingSessionIdSchema = lazyZodSchema(() => z.string().trim().min(1).max(128));
 
-export const EncryptedAutomationTemplateEnvelopeSchema = z
+export const EncryptedAutomationTemplateEnvelopeSchema = lazyZodSchema(() => z
   .object({
     kind: z.literal(AUTOMATION_TEMPLATE_ENCRYPTED_V1_KIND),
     payloadCiphertext: z
@@ -34,17 +35,17 @@ export const EncryptedAutomationTemplateEnvelopeSchema = z
       .min(1)
       .max(AUTOMATION_TEMPLATE_PAYLOAD_CIPHERTEXT_MAX_CHARS),
   })
-  .strict();
+  .strict());
 export type EncryptedAutomationTemplateEnvelope = z.infer<
   typeof EncryptedAutomationTemplateEnvelopeSchema
 >;
 
-const PlainAutomationTemplateEnvelopeBaseSchema = z
+const PlainAutomationTemplateEnvelopeBaseSchema = lazyZodSchema(() => z
   .object({
     kind: z.literal(AUTOMATION_TEMPLATE_PLAIN_V1_KIND),
     payload: z.unknown(),
   })
-  .strict();
+  .strict());
 
 function withPlainPayloadValidation<T extends z.ZodTypeAny>(schema: T): T {
   return schema.superRefine((value, context) => {
@@ -83,10 +84,10 @@ export type PlainAutomationTemplateEnvelope = z.infer<
   typeof PlainAutomationTemplateEnvelopeSchema
 >;
 
-export const AutomationTemplateEnvelopeSchema = z.discriminatedUnion('kind', [
+export const AutomationTemplateEnvelopeSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   EncryptedAutomationTemplateEnvelopeSchema,
   PlainAutomationTemplateEnvelopeSchema,
-]);
+]));
 export type AutomationTemplateEnvelope = z.infer<
   typeof AutomationTemplateEnvelopeSchema
 >;
@@ -98,9 +99,9 @@ export type AutomationTemplateEnvelope = z.infer<
  * persisted rows can retain the former outer field.
  */
 export const LegacyEncryptedAutomationTemplateEnvelopeSchema =
-  EncryptedAutomationTemplateEnvelopeSchema.extend({
+  lazyZodSchema(() => EncryptedAutomationTemplateEnvelopeSchema.extend({
     existingSessionId: ExistingSessionIdSchema.optional(),
-  });
+  }));
 export type LegacyEncryptedAutomationTemplateEnvelope = z.infer<
   typeof LegacyEncryptedAutomationTemplateEnvelopeSchema
 >;
@@ -115,13 +116,13 @@ export type LegacyPlainAutomationTemplateEnvelope = z.infer<
   typeof LegacyPlainAutomationTemplateEnvelopeSchema
 >;
 
-export const LegacyAutomationTemplateEnvelopeSchema = z.discriminatedUnion(
+export const LegacyAutomationTemplateEnvelopeSchema = lazyZodSchema(() => z.discriminatedUnion(
   'kind',
   [
     LegacyEncryptedAutomationTemplateEnvelopeSchema,
     LegacyPlainAutomationTemplateEnvelopeSchema,
   ],
-);
+));
 export type LegacyAutomationTemplateEnvelope = z.infer<
   typeof LegacyAutomationTemplateEnvelopeSchema
 >;

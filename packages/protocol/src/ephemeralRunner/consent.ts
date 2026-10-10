@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
@@ -7,20 +8,20 @@ import { decodeCanonicalBase64UrlFixedLength } from '../machines/peer/mediation/
 import { RunnerSha256CommitmentSchema, RunnerSignatureSchema } from './activation.js';
 import { RunnerClaimPayloadV1Schema, verifyRunnerClaimV1 } from './endpoint.js';
 
-export const RunnerConsentPayloadV1Schema = z.object({
+export const RunnerConsentPayloadV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   purpose: z.literal('happier.ephemeral-session-runner.consent'),
   allow: z.literal(true),
   claim: RunnerClaimPayloadV1Schema,
   launchManifestCommitment: RunnerSha256CommitmentSchema,
-}).strict();
+}).strict());
 export type RunnerConsentPayloadV1 = z.infer<typeof RunnerConsentPayloadV1Schema>;
 
-export const RunnerConsentV1Schema = z.object({
+export const RunnerConsentV1Schema = lazyZodSchema(() => z.object({
   payload: RunnerConsentPayloadV1Schema,
   activationSignature: RunnerSignatureSchema,
   installationSignature: RunnerSignatureSchema,
-}).strict();
+}).strict());
 export type RunnerConsentV1 = z.infer<typeof RunnerConsentV1Schema>;
 
 export function signRunnerConsentV1(params: Readonly<{

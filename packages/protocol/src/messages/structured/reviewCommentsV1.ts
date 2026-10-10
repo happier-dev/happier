@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -11,7 +12,7 @@ import {
  * Canonical draft shape carried by the ordinary `review_comments.v1` message
  * envelope and by any pre-Session authoring custody that must reproduce it.
  */
-export const ReviewCommentDraftMessageV1Schema = z.object({
+export const ReviewCommentDraftMessageV1Schema = lazyZodSchema(() => z.object({
   id: z.string().min(1),
   filePath: z.string().min(1),
   source: WorkspaceAnchorSourceV1Schema,
@@ -21,14 +22,13 @@ export const ReviewCommentDraftMessageV1Schema = z.object({
   body: z.string(),
   includeInPrompt: z.boolean().optional(),
   createdAt: z.number(),
-}).strict();
+}).strict());
 
 export type ReviewCommentDraftMessageV1 = z.infer<typeof ReviewCommentDraftMessageV1Schema>;
 
-export const ReviewCommentsV1Schema = z.object({
+export const ReviewCommentsV1Schema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1),
   comments: z.array(ReviewCommentDraftMessageV1Schema),
-}).strict();
+}).strict());
 
 export type ReviewCommentsV1 = z.infer<typeof ReviewCommentsV1Schema>;
-

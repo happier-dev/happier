@@ -1,13 +1,14 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
 /** Serializable migration identity. Executable migration callbacks remain candidate code. */
-export const PluginDaemonDatabaseMigrationDeclarationV1Schema = z.object({
+export const PluginDaemonDatabaseMigrationDeclarationV1Schema = lazyZodSchema(() => z.object({
   version: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
   id: asProtocolZod(PluginContributionLocalIdSchema),
-}).strict();
+}).strict());
 export type PluginDaemonDatabaseMigrationDeclarationV1 =
   z.infer<typeof PluginDaemonDatabaseMigrationDeclarationV1Schema>;
 
@@ -17,7 +18,7 @@ export type PluginDaemonDatabaseMigrationDeclarationV1 =
  * Runtime migrations and the incumbent fixture are deliberately not part of this
  * serialized contract. Candidate activation binds their exact identities later.
  */
-export const PluginDaemonDatabaseContributionV1Schema = z.object({
+export const PluginDaemonDatabaseContributionV1Schema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   migrations: z.array(PluginDaemonDatabaseMigrationDeclarationV1Schema),
   incumbentQueryFixtureId: asProtocolZod(PluginContributionLocalIdSchema),
@@ -44,5 +45,5 @@ export const PluginDaemonDatabaseContributionV1Schema = z.object({
     }
     migrationIds.add(migration.id);
   });
-});
+}));
 export type PluginDaemonDatabaseContributionV1 = z.infer<typeof PluginDaemonDatabaseContributionV1Schema>;

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -78,7 +79,7 @@ function serializedJsonUtf8ByteLength(value: PluginJsonValueV2): number | null {
  * intentionally generic JSON at outer-only readers; only the target-side open
  * path is allowed to parse the inner Session V2 request.
  */
-export const AutomationSessionStartRequestEnvelopeV1Schema = z.discriminatedUnion('t', [
+export const AutomationSessionStartRequestEnvelopeV1Schema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.object({
     t: z.literal('plain'),
     v: PluginJsonValueV2Schema,
@@ -110,7 +111,7 @@ export const AutomationSessionStartRequestEnvelopeV1Schema = z.discriminatedUnio
       message: 'Automation Session-start plaintext exceeds the maximum request size',
     });
   }
-});
+}));
 export type AutomationSessionStartRequestEnvelopeV1 = z.infer<
   typeof AutomationSessionStartRequestEnvelopeV1Schema
 >;

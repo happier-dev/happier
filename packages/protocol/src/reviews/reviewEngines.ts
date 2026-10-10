@@ -1,8 +1,9 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
-export const ReviewEngineCapabilitiesSchema = z.object({
+export const ReviewEngineCapabilitiesSchema = lazyZodSchema(() => z.object({
   structuredNarration: z.boolean(),
-}).strict();
+}).strict());
 export type ReviewEngineCapabilities = z.infer<typeof ReviewEngineCapabilitiesSchema>;
 
 export type ReviewNarratorEngineOption = Readonly<{

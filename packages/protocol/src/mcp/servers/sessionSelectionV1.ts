@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 function dedupeStrings(values: ReadonlyArray<string>): string[] {
@@ -32,15 +33,15 @@ function normalizeSessionMcpSelectionV1(value: {
 }
 
 /** Closed current authoring/executable-declaration input. */
-export const SessionMcpSelectionAuthoringV1Schema = z
+export const SessionMcpSelectionAuthoringV1Schema = lazyZodSchema(() => z
   .object(SESSION_MCP_SELECTION_V1_FIELDS)
   .strict()
-  .transform(normalizeSessionMcpSelectionV1);
+  .transform(normalizeSessionMcpSelectionV1));
 
 export type SessionMcpSelectionAuthoringV1 = z.infer<typeof SessionMcpSelectionAuthoringV1Schema>;
 
 /** Permissive legacy Session ingress retained for supported stored/session inputs. */
-export const SessionMcpSelectionV1Schema = z
+export const SessionMcpSelectionV1Schema = lazyZodSchema(() => z
   .preprocess(
     (raw) => {
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
@@ -48,14 +49,14 @@ export const SessionMcpSelectionV1Schema = z
     },
     z.object(SESSION_MCP_SELECTION_V1_FIELDS),
   )
-  .transform(normalizeSessionMcpSelectionV1);
+  .transform(normalizeSessionMcpSelectionV1));
 
 export type SessionMcpSelectionV1 = z.infer<typeof SessionMcpSelectionV1Schema>;
 
-export const SessionMcpSelectionRestartRequiredV1Schema = z.object({
+export const SessionMcpSelectionRestartRequiredV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   appliedSelection: SessionMcpSelectionV1Schema,
-});
+}));
 
 export type SessionMcpSelectionRestartRequiredV1 = z.infer<typeof SessionMcpSelectionRestartRequiredV1Schema>;
 

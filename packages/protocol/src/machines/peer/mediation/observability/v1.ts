@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { PeerFlowKindV1Schema } from '../flowKind.js';
@@ -10,10 +11,10 @@ export const PEER_MEDIATION_OBSERVABILITY_DELTA_SOCKET_EVENT = 'peer:observabili
 export const PEER_MEDIATION_OBSERVABILITY_SUBSCRIBE_SOCKET_EVENT = 'peer:observability:subscribe:v1' as const;
 export const PEER_MEDIATION_OBSERVABILITY_UNSUBSCRIBE_SOCKET_EVENT = 'peer:observability:unsubscribe:v1' as const;
 
-const IdSchema = z.string().trim().min(1).max(256);
-const NonNegativeIntSchema = z.number().int().nonnegative();
+const IdSchema = lazyZodSchema(() => z.string().trim().min(1).max(256));
+const NonNegativeIntSchema = lazyZodSchema(() => z.number().int().nonnegative());
 
-export const PeerMediationObservabilityEventKindV1Schema = z.enum([
+export const PeerMediationObservabilityEventKindV1Schema = lazyZodSchema(() => z.enum([
   'flow.started',
   'flow.ready',
   'flow.denied',
@@ -36,12 +37,12 @@ export const PeerMediationObservabilityEventKindV1Schema = z.enum([
   'websocket.errored',
   'cap.exceeded',
   'policy.denied',
-]);
+]));
 export type PeerMediationObservabilityEventKindV1 = z.infer<
   typeof PeerMediationObservabilityEventKindV1Schema
 >;
 
-export const PeerMediationObservabilityDeniedReasonV1Schema = z.enum([
+export const PeerMediationObservabilityDeniedReasonV1Schema = lazyZodSchema(() => z.enum([
   'observability_unavailable',
   'feature_disabled',
   'scope_unauthorized',
@@ -51,12 +52,12 @@ export const PeerMediationObservabilityDeniedReasonV1Schema = z.enum([
   'plugin_scope_mismatch',
   'public_scope_limited',
   'policy_denied',
-]);
+]));
 export type PeerMediationObservabilityDeniedReasonV1 = z.infer<
   typeof PeerMediationObservabilityDeniedReasonV1Schema
 >;
 
-export const PeerMediationObservabilityScopeV1Schema = z.discriminatedUnion('kind', [
+export const PeerMediationObservabilityScopeV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z
     .object({
       kind: z.literal('account'),
@@ -91,19 +92,19 @@ export const PeerMediationObservabilityScopeV1Schema = z.discriminatedUnion('kin
       surfaceId: IdSchema,
     })
     .strict(),
-]);
+]));
 export type PeerMediationObservabilityScopeV1 = z.infer<typeof PeerMediationObservabilityScopeV1Schema>;
 
-export const PeerMediationProductRefV1Schema = z.discriminatedUnion('kind', [
+export const PeerMediationProductRefV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('preview'), id: IdSchema, redacted: z.boolean().default(false) }).strict(),
   z.object({ kind: z.literal('publicExposure'), id: IdSchema, redacted: z.boolean().default(false) }).strict(),
   z.object({ kind: z.literal('browserView'), id: IdSchema, redacted: z.boolean().default(false) }).strict(),
   z.object({ kind: z.literal('simulatorSource'), id: IdSchema, redacted: z.boolean().default(false) }).strict(),
   z.object({ kind: z.literal('pluginSurface'), id: IdSchema, redacted: z.boolean().default(false) }).strict(),
-]);
+]));
 export type PeerMediationProductRefV1 = z.infer<typeof PeerMediationProductRefV1Schema>;
 
-export const PeerMediationObservabilityFlowRefV1Schema = z
+export const PeerMediationObservabilityFlowRefV1Schema = lazyZodSchema(() => z
   .object({
     flowId: IdSchema,
     flowKind: PeerFlowKindV1Schema,
@@ -130,26 +131,26 @@ export const PeerMediationObservabilityFlowRefV1Schema = z
         message: 'Live stream observability flows require streamId.',
       });
     }
-  });
+  }));
 export type PeerMediationObservabilityFlowRefV1 = z.infer<
   typeof PeerMediationObservabilityFlowRefV1Schema
 >;
 
-export const PeerMediationObservabilityRedactionV1Schema = z
+export const PeerMediationObservabilityRedactionV1Schema = lazyZodSchema(() => z
   .object({
     level: z.enum(['metadataOnly', 'valuesRedacted', 'redactedRef', 'unavailable']),
     queryRedacted: z.boolean().optional().default(true),
     headersRedacted: z.boolean().optional().default(true),
     truncated: z.boolean().optional().default(false),
   })
-  .strict();
+  .strict());
 export type PeerMediationObservabilityRedactionV1 = z.infer<
   typeof PeerMediationObservabilityRedactionV1Schema
 >;
 
-const ObservabilityDataSchema = z
+const ObservabilityDataSchema = lazyZodSchema(() => z
   .record(z.string(), z.unknown())
-  .superRefine(rejectUnsafePeerMediationObservabilityDataKeys);
+  .superRefine(rejectUnsafePeerMediationObservabilityDataKeys));
 
 function refinePublicAndPluginFlowReferences(
   event: {
@@ -191,7 +192,7 @@ function refinePublicAndPluginFlowReferences(
   }
 }
 
-export const PeerMediationObservabilityEventV1Schema = z
+export const PeerMediationObservabilityEventV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     eventId: IdSchema,
@@ -205,10 +206,10 @@ export const PeerMediationObservabilityEventV1Schema = z
     deniedReason: PeerMediationObservabilityDeniedReasonV1Schema.optional(),
   })
   .strict()
-  .superRefine(refinePublicAndPluginFlowReferences);
+  .superRefine(refinePublicAndPluginFlowReferences));
 export type PeerMediationObservabilityEventV1 = z.infer<typeof PeerMediationObservabilityEventV1Schema>;
 
-export const PeerMediationObservabilityLifecycleStateV1Schema = z.enum([
+export const PeerMediationObservabilityLifecycleStateV1Schema = lazyZodSchema(() => z.enum([
   'starting',
   'ready',
   'active',
@@ -216,12 +217,12 @@ export const PeerMediationObservabilityLifecycleStateV1Schema = z.enum([
   'aborted',
   'errored',
   'denied',
-]);
+]));
 export type PeerMediationObservabilityLifecycleStateV1 = z.infer<
   typeof PeerMediationObservabilityLifecycleStateV1Schema
 >;
 
-export const PeerMediationObservabilityFlowSnapshotV1Schema = z
+export const PeerMediationObservabilityFlowSnapshotV1Schema = lazyZodSchema(() => z
   .object({
     flow: PeerMediationObservabilityFlowRefV1Schema,
     lifecycleState: PeerMediationObservabilityLifecycleStateV1Schema,
@@ -245,12 +246,12 @@ export const PeerMediationObservabilityFlowSnapshotV1Schema = z
     http: ObservabilityDataSchema.optional(),
     websocket: ObservabilityDataSchema.optional(),
   })
-  .strict();
+  .strict());
 export type PeerMediationObservabilityFlowSnapshotV1 = z.infer<
   typeof PeerMediationObservabilityFlowSnapshotV1Schema
 >;
 
-export const PeerMediationObservabilitySnapshotV1Schema = z
+export const PeerMediationObservabilitySnapshotV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     scope: PeerMediationObservabilityScopeV1Schema,
@@ -258,12 +259,12 @@ export const PeerMediationObservabilitySnapshotV1Schema = z
     capturedAtMs: NonNegativeIntSchema,
     flows: z.array(PeerMediationObservabilityFlowSnapshotV1Schema).optional().default([]),
   })
-  .strict();
+  .strict());
 export type PeerMediationObservabilitySnapshotV1 = z.infer<
   typeof PeerMediationObservabilitySnapshotV1Schema
 >;
 
-export const PeerMediationObservabilityDeltaV1Schema = z
+export const PeerMediationObservabilityDeltaV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     scope: PeerMediationObservabilityScopeV1Schema,
@@ -280,23 +281,23 @@ export const PeerMediationObservabilityDeltaV1Schema = z
         message: 'Peer mediation observability delta event scope must match delta scope.',
       });
     });
-  });
+  }));
 export type PeerMediationObservabilityDeltaV1 = z.infer<typeof PeerMediationObservabilityDeltaV1Schema>;
 
-export const PeerMediationObservabilitySubscribeRequestV1Schema = z
+export const PeerMediationObservabilitySubscribeRequestV1Schema = lazyZodSchema(() => z
   .object({
     scope: PeerMediationObservabilityScopeV1Schema,
   })
-  .strict();
+  .strict());
 export type PeerMediationObservabilitySubscribeRequestV1 = z.infer<
   typeof PeerMediationObservabilitySubscribeRequestV1Schema
 >;
 
-export const PeerMediationObservabilityUnsubscribeRequestV1Schema = z
+export const PeerMediationObservabilityUnsubscribeRequestV1Schema = lazyZodSchema(() => z
   .object({
     scope: PeerMediationObservabilityScopeV1Schema.optional(),
   })
-  .strict();
+  .strict());
 export type PeerMediationObservabilityUnsubscribeRequestV1 = z.infer<
   typeof PeerMediationObservabilityUnsubscribeRequestV1Schema
 >;

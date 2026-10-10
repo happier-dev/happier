@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -18,24 +19,24 @@ const AUTOMATION_SOURCE_SELECTOR_ID_V1_PATTERN = '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9
 export const AutomationSourceSelectorIdV1ProtocolSchema = defineProtocolString({
   pattern: AUTOMATION_SOURCE_SELECTOR_ID_V1_PATTERN,
 });
-export const AutomationSourceSelectorIdV1Schema = z.string().regex(
+export const AutomationSourceSelectorIdV1Schema = lazyZodSchema(() => z.string().regex(
   new RegExp(AUTOMATION_SOURCE_SELECTOR_ID_V1_PATTERN, 'u'),
   'Source selectors must be canonical lowercase RFC 4122 UUID-v4 values',
-).brand<'AutomationSourceSelectorIdV1'>();
+).brand<'AutomationSourceSelectorIdV1'>());
 export type AutomationSourceSelectorIdV1 = z.infer<typeof AutomationSourceSelectorIdV1Schema>;
 export const AutomationSourceSelectorIdV1JsonSchema =
   AutomationSourceSelectorIdV1ProtocolSchema.jsonSchema;
 
 const UTF8_ENCODER = new TextEncoder();
 
-export const AutomationEventSourceOrOccurrenceIdV1Schema = z.string().min(1).superRefine((value, context) => {
+export const AutomationEventSourceOrOccurrenceIdV1Schema = lazyZodSchema(() => z.string().min(1).superRefine((value, context) => {
   if (value !== value.normalize('NFC')) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'Value must be NFC-normalized' });
   }
   if (UTF8_ENCODER.encode(value).byteLength > MAX_AUTOMATION_SOURCE_OR_OCCURRENCE_ID_UTF8_BYTES) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'Value exceeds the 512-byte limit' });
   }
-});
+}));
 
 /**
  * Canonical bounded source-instance scalar. Run recipes reuse this exact
@@ -43,14 +44,14 @@ export const AutomationEventSourceOrOccurrenceIdV1Schema = z.string().min(1).sup
  */
 export const AutomationEventSourceInstanceIdV1Schema = AutomationEventSourceOrOccurrenceIdV1Schema;
 
-export const AutomationEventSourceDisplayLabelV1Schema = z.string().min(1).superRefine((value, context) => {
+export const AutomationEventSourceDisplayLabelV1Schema = lazyZodSchema(() => z.string().min(1).superRefine((value, context) => {
   if (value !== value.normalize('NFC')) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'Display labels must be NFC-normalized' });
   }
   if (Array.from(value).length > MAX_AUTOMATION_SOURCE_DISPLAY_LABEL_CODE_POINTS) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'Display labels exceed the code-point limit' });
   }
-});
+}));
 
 export function boundedAutomationEventJsonValueV1(maxSerializedUtf8Bytes: number) {
   return defineProtocolJsonValue<PluginJsonValueV2>({ maxSerializedUtf8Bytes });

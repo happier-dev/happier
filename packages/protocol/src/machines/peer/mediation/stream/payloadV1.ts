@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../../lazyZodSchema.js';
 import { z } from 'zod';
 import { createCanonicalJsonSigningInput } from '../../../../crypto/canonicalJson.js';
 import {
@@ -25,9 +26,9 @@ export class MachineLiveStreamPayloadErrorV1 extends Error {
   constructor(readonly code: MachineLiveStreamPayloadErrorCodeV1) { super(code); }
 }
 type Result<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; code: MachineLiveStreamPayloadErrorCodeV1 }>;
-const AuthenticatedContentSchema = z.object({
+const AuthenticatedContentSchema = lazyZodSchema(() => z.object({
   purpose: z.literal('machine_live_stream_v1'), envelope: MachineLiveStreamDecodedEnvelopeV1Schema,
-}).strict();
+}).strict());
 
 export function hasMachineLiveStreamSensitiveContentV1(envelope: MachineLiveStreamRelayEnvelopeV1 | MachineLiveStreamWireEnvelopeV1): boolean {
   return envelope.message.kind === 'frame' || envelope.message.kind === 'sideband_control';

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
@@ -24,14 +25,14 @@ function utf8ByteLength(value: string): number {
 }
 
 /** A stable Data row identity shared by direct and UI-query wire contracts. */
-export const PluginCollectionRowIdV1Schema = z.string().min(1).superRefine((value, context) => {
+export const PluginCollectionRowIdV1Schema = lazyZodSchema(() => z.string().min(1).superRefine((value, context) => {
   if (value.includes('\u0000')) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'Row ID must not contain NUL.' });
   }
   if (utf8ByteLength(value) > MAX_COLLECTION_ROW_ID_UTF8_BYTES) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'Row ID exceeds the 256-byte limit.' });
   }
-});
+}));
 export type PluginCollectionRowIdV1 = z.infer<typeof PluginCollectionRowIdV1Schema>;
 
 export { PluginCollectionOpaqueCursorV1Schema };
@@ -41,7 +42,7 @@ export { PluginCollectionOpaqueCursorV1Schema };
  * Account qualification, contract admission, and private cursor ownership stay
  * with the direct Data client that consumes them.
  */
-export const PluginCollectionUiQueryInputV1Schema = z.object({
+export const PluginCollectionUiQueryInputV1Schema = lazyZodSchema(() => z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   collectionId: asProtocolZod(PluginContributionLocalIdSchema),
   uiQueryId: PluginCollectionMemberNameV1Schema,
@@ -50,12 +51,12 @@ export const PluginCollectionUiQueryInputV1Schema = z.object({
     z.union([z.string(), PluginCollectionFiniteNumberV1Schema, z.boolean()]),
   ).default({}),
   cursor: asProtocolZod(PluginCollectionOpaqueCursorV1Schema).optional(),
-}).strict();
+}).strict());
 export type PluginCollectionUiQueryInputV1 = z.infer<typeof PluginCollectionUiQueryInputV1Schema>;
 
-export const PluginCollectionUiQueryRequestV1Schema = PluginCollectionUiQueryInputV1Schema.extend({
+export const PluginCollectionUiQueryRequestV1Schema = lazyZodSchema(() => PluginCollectionUiQueryInputV1Schema.extend({
   readerContext: PluginCollectionContractRefV1Schema,
-}).strict();
+}).strict());
 export type PluginCollectionUiQueryRequestV1 = z.infer<typeof PluginCollectionUiQueryRequestV1Schema>;
 
 /**
@@ -64,7 +65,7 @@ export type PluginCollectionUiQueryRequestV1 = z.infer<typeof PluginCollectionUi
  * result avoids pulling the host-only Collection encryption codec into public
  * declarative Action consumers.
  */
-export const NormalizedPluginCollectionUiQueryDescriptorV1Schema = z.object({
+export const NormalizedPluginCollectionUiQueryDescriptorV1Schema = lazyZodSchema(() => z.object({
   collection: z.object({
     pluginId: asProtocolZod(PluginIdSchema),
     collectionId: asProtocolZod(PluginContributionLocalIdSchema),
@@ -88,7 +89,7 @@ export const NormalizedPluginCollectionUiQueryDescriptorV1Schema = z.object({
       message: 'Projected fields must be unique.',
     });
   }
-});
+}));
 export type NormalizedPluginCollectionUiQueryDescriptorV1 = z.infer<
   typeof NormalizedPluginCollectionUiQueryDescriptorV1Schema
 >;
@@ -124,50 +125,50 @@ export function validatePluginCollectionUiQueryParametersV1(
   }
 }
 
-export const PluginCollectionUiRowContextV1Schema = z.object({
+export const PluginCollectionUiRowContextV1Schema = lazyZodSchema(() => z.object({
   collection: z.object({
     pluginId: asProtocolZod(PluginIdSchema),
     collectionId: asProtocolZod(PluginContributionLocalIdSchema),
   }).strict(),
   rowId: PluginCollectionRowIdV1Schema,
   revision: z.number().int().positive(),
-}).strict();
+}).strict());
 export type PluginCollectionUiRowContextV1 = z.infer<typeof PluginCollectionUiRowContextV1Schema>;
 
-const PluginCollectionUiRowFieldsV1Schema = z.record(
+const PluginCollectionUiRowFieldsV1Schema = lazyZodSchema(() => z.record(
   PluginCollectionMemberNameV1Schema,
   PluginCollectionProjectedScalarValueV1Schema,
 ).superRefine((value, context) => {
   if (Object.keys(value).length > 16) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'A UI query row has too many projected fields.' });
   }
-});
+}));
 
-export const PluginCollectionUiRowV1Schema = z.object({
+export const PluginCollectionUiRowV1Schema = lazyZodSchema(() => z.object({
   context: PluginCollectionUiRowContextV1Schema,
   fields: PluginCollectionUiRowFieldsV1Schema,
-}).strict();
+}).strict());
 export type PluginCollectionUiRowV1 = z.infer<typeof PluginCollectionUiRowV1Schema>;
 
-export const PluginCollectionUiQueryResultV1Schema = z.object({
+export const PluginCollectionUiQueryResultV1Schema = lazyZodSchema(() => z.object({
   rows: z.array(PluginCollectionUiRowV1Schema).max(200),
   nextCursor: asProtocolZod(PluginCollectionOpaqueCursorV1Schema).optional(),
   changeCursor: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 export type PluginCollectionUiQueryResultV1 = z.infer<typeof PluginCollectionUiQueryResultV1Schema>;
 
 /** Typed terminal outcomes for the one authenticated static UI-query operation. */
-export const PluginCollectionUiQueryErrorCodeV1Schema = z.enum([
+export const PluginCollectionUiQueryErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'collection_query_invalid',
   'collection_cursor_invalid',
   'collection_unavailable',
   'collection_index_not_ready',
   'collection_content_mode_mismatch',
   'collection_contract_inconsistent',
-]);
+]));
 export type PluginCollectionUiQueryErrorCodeV1 = z.infer<typeof PluginCollectionUiQueryErrorCodeV1Schema>;
 
-export const PluginCollectionUiQueryErrorV1Schema = z.object({
+export const PluginCollectionUiQueryErrorV1Schema = lazyZodSchema(() => z.object({
   error: PluginCollectionUiQueryErrorCodeV1Schema,
-}).strict();
+}).strict());
 export type PluginCollectionUiQueryErrorV1 = z.infer<typeof PluginCollectionUiQueryErrorV1Schema>;

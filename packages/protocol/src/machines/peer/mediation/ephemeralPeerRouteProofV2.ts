@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { sha256 } from '@noble/hashes/sha2';
 import tweetnacl from 'tweetnacl';
 import { z } from 'zod';
@@ -24,7 +25,7 @@ function fixedBase64UrlSchema(decodedLength: number): z.ZodString {
   );
 }
 
-export const PeerRouteEphemeralProofV2Schema = z
+export const PeerRouteEphemeralProofV2Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(2),
     kind: z.literal(PEER_ROUTE_EPHEMERAL_ED25519_KIND_V2),
@@ -32,7 +33,7 @@ export const PeerRouteEphemeralProofV2Schema = z
     nonceBase64Url: fixedBase64UrlSchema(PEER_ROUTE_PROOF_NONCE_BYTES_V2),
     signatureBase64Url: fixedBase64UrlSchema(PEER_ROUTE_PROOF_SIGNATURE_BYTES_V2),
   })
-  .strict();
+  .strict());
 
 export type PeerRouteEphemeralProofV2 = z.infer<typeof PeerRouteEphemeralProofV2Schema>;
 

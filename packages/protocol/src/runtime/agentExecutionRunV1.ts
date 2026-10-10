@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 as LIMITS } from './agentSessionLimitsV1.js';
@@ -6,14 +7,14 @@ import {
   type AgentRuntimeDiagnosticDataV1,
 } from './agentRuntimeDiagnosticV1.js';
 
-const SafeIntegerSchema = z.number().int().nonnegative().max(LIMITS.safeIntegerMax);
-const RunIdSchema = z.string()
+const SafeIntegerSchema = lazyZodSchema(() => z.number().int().nonnegative().max(LIMITS.safeIntegerMax));
+const RunIdSchema = lazyZodSchema(() => z.string()
   .min(1)
-  .refine((value) => value === value.trim(), 'Identifiers must not contain leading or trailing whitespace');
-const CheckpointIdSchema = z.string()
+  .refine((value) => value === value.trim(), 'Identifiers must not contain leading or trailing whitespace'));
+const CheckpointIdSchema = lazyZodSchema(() => z.string()
   .min(1)
   .max(LIMITS.providerIdMaxCodeUnits)
-  .refine((value) => value === value.trim(), 'Identifiers must not contain leading or trailing whitespace');
+  .refine((value) => value === value.trim(), 'Identifiers must not contain leading or trailing whitespace'));
 const BaseShape = {
   sequence: SafeIntegerSchema,
   runId: RunIdSchema,
@@ -56,7 +57,7 @@ export type AgentExecutionRunEventV1 =
       diagnostic?: AgentRuntimeDiagnosticDataV1;
     }>;
 
-const AgentExecutionRunEventCoreV1Schema: z.ZodType<AgentExecutionRunEventV1> = z.discriminatedUnion('kind', [
+const AgentExecutionRunEventCoreV1Schema: z.ZodType<AgentExecutionRunEventV1> = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ ...BaseShape, kind: z.literal('run-start') }).strict(),
   z.object({ ...BaseShape, kind: z.literal('run-progress') }).strict(),
   z.object({
@@ -81,18 +82,18 @@ const AgentExecutionRunEventCoreV1Schema: z.ZodType<AgentExecutionRunEventV1> = 
     kind: z.literal('run-cancelled'),
     diagnostic: AgentRuntimeDiagnosticDataV1Schema.optional(),
   }).strict(),
-]);
+]));
 
 function jsonByteLength(value: unknown): number {
   return new TextEncoder().encode(JSON.stringify(value)).byteLength;
 }
 
 /** Strict closed runtime boundary for finite Agent execution events. */
-export const AgentExecutionRunEventV1Schema = AgentExecutionRunEventCoreV1Schema.superRefine(
+export const AgentExecutionRunEventV1Schema = lazyZodSchema(() => AgentExecutionRunEventCoreV1Schema.superRefine(
   (value, context) => {
     if (jsonByteLength(value) > LIMITS.p0MeasuredCandidates.eventMaxJsonBytes) {
       context.addIssue({ code: 'custom', message: 'Agent execution run event exceeds the runtime event byte bound' });
     }
   },
-);
+));
 export const AgentExecutionRunEventSchema = AgentExecutionRunEventV1Schema;

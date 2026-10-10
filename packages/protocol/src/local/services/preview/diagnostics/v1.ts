@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { isUnsafeTelemetryDataKey } from '../../../../common/sensitiveKeys.js';
@@ -6,9 +7,9 @@ import {
   redactDiagnosticsUrl,
 } from '../../../../browser/diagnostics/egress/headers.js';
 
-const IdSchema = z.string().trim().min(1).max(256);
+const IdSchema = lazyZodSchema(() => z.string().trim().min(1).max(256));
 
-export const LocalServicePreviewDiagnosticReasonCodeV1Schema = z.enum([
+export const LocalServicePreviewDiagnosticReasonCodeV1Schema = lazyZodSchema(() => z.enum([
   'invalid_preview_resource',
   'preview_registration_failed',
   'preview_token_secret_missing',
@@ -46,21 +47,21 @@ export const LocalServicePreviewDiagnosticReasonCodeV1Schema = z.enum([
   'public_preview_expired',
   'public_preview_rate_limited',
   'public_preview_revoked',
-]);
+]));
 export type LocalServicePreviewDiagnosticReasonCodeV1 = z.infer<
   typeof LocalServicePreviewDiagnosticReasonCodeV1Schema
 >;
 
-export const LocalServicePreviewDiagnosticSeverityV1Schema = z.enum(['info', 'warning', 'error']);
+export const LocalServicePreviewDiagnosticSeverityV1Schema = lazyZodSchema(() => z.enum(['info', 'warning', 'error']));
 export type LocalServicePreviewDiagnosticSeverityV1 = z.infer<
   typeof LocalServicePreviewDiagnosticSeverityV1Schema
 >;
 
-export const LocalServicePreviewDiagnosticScopeV1Schema = z.enum([
+export const LocalServicePreviewDiagnosticScopeV1Schema = lazyZodSchema(() => z.enum([
   'privatePreview',
   'publicPreview',
   'previewProxy',
-]);
+]));
 export type LocalServicePreviewDiagnosticScopeV1 = z.infer<
   typeof LocalServicePreviewDiagnosticScopeV1Schema
 >;
@@ -93,14 +94,14 @@ function rejectUnsafeDiagnosticDetails(
   }
 }
 
-export const LocalServicePreviewDiagnosticDetailsV1Schema = z
+export const LocalServicePreviewDiagnosticDetailsV1Schema = lazyZodSchema(() => z
   .record(z.string(), z.unknown())
-  .superRefine(rejectUnsafeDiagnosticDetails);
+  .superRefine(rejectUnsafeDiagnosticDetails));
 export type LocalServicePreviewDiagnosticDetailsV1 = z.infer<
   typeof LocalServicePreviewDiagnosticDetailsV1Schema
 >;
 
-export const LocalServicePreviewDiagnosticV1Schema = z
+export const LocalServicePreviewDiagnosticV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     code: LocalServicePreviewDiagnosticReasonCodeV1Schema,
@@ -111,10 +112,10 @@ export const LocalServicePreviewDiagnosticV1Schema = z
     emittedAtMs: z.number().int().nonnegative().optional(),
     details: LocalServicePreviewDiagnosticDetailsV1Schema.optional().default({}),
   })
-  .strict();
+  .strict());
 export type LocalServicePreviewDiagnosticV1 = z.infer<typeof LocalServicePreviewDiagnosticV1Schema>;
 
-export const LocalServicePreviewDiagnosticsV1Schema = z.array(LocalServicePreviewDiagnosticV1Schema);
+export const LocalServicePreviewDiagnosticsV1Schema = lazyZodSchema(() => z.array(LocalServicePreviewDiagnosticV1Schema));
 export type LocalServicePreviewDiagnosticsV1 = z.infer<typeof LocalServicePreviewDiagnosticsV1Schema>;
 
 function diagnosticHeaderNames(value: unknown): readonly string[] {

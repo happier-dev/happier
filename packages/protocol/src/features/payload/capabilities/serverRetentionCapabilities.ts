@@ -1,31 +1,32 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
-const KeepForeverRetentionPolicySchema = z.strictObject({
+const KeepForeverRetentionPolicySchema = lazyZodSchema(() => z.strictObject({
   mode: z.literal('keep_forever'),
-});
+}));
 
-const DeleteOlderThanRetentionPolicySchema = z.strictObject({
+const DeleteOlderThanRetentionPolicySchema = lazyZodSchema(() => z.strictObject({
   mode: z.literal('delete_older_than'),
   days: z.number().int().min(1),
-});
+}));
 
-const DeleteInactiveSessionsRetentionPolicySchema = z.strictObject({
+const DeleteInactiveSessionsRetentionPolicySchema = lazyZodSchema(() => z.strictObject({
   mode: z.literal('delete_inactive'),
   inactivityDays: z.number().int().min(1),
   requires: z.tuple([z.literal('updatedAt'), z.literal('lastActiveAt')]),
-});
+}));
 
-export const AgeBasedRetentionPolicySchema = z.discriminatedUnion('mode', [
+export const AgeBasedRetentionPolicySchema = lazyZodSchema(() => z.discriminatedUnion('mode', [
   KeepForeverRetentionPolicySchema,
   DeleteOlderThanRetentionPolicySchema,
-]);
+]));
 
-export const SessionRetentionPolicySchema = z.discriminatedUnion('mode', [
+export const SessionRetentionPolicySchema = lazyZodSchema(() => z.discriminatedUnion('mode', [
   KeepForeverRetentionPolicySchema,
   DeleteInactiveSessionsRetentionPolicySchema,
-]);
+]));
 
-export const ServerRetentionCapabilitiesSchema = z.strictObject({
+export const ServerRetentionCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
   policyVersion: z.literal(1),
   enabled: z.boolean(),
   sessions: SessionRetentionPolicySchema,
@@ -43,7 +44,7 @@ export const ServerRetentionCapabilitiesSchema = z.strictObject({
   globalLocks: AgeBasedRetentionPolicySchema,
   automationRuns: AgeBasedRetentionPolicySchema,
   automationRunEvents: AgeBasedRetentionPolicySchema,
-});
+}));
 
 export type AgeBasedRetentionPolicy = z.infer<typeof AgeBasedRetentionPolicySchema>;
 export type SessionRetentionPolicy = z.infer<typeof SessionRetentionPolicySchema>;

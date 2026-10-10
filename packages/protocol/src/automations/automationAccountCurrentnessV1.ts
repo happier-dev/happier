@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { AccountEncryptionModeSchema } from '../features/payload/capabilities/encryptionCapabilities.js';
@@ -15,7 +16,7 @@ import { AutomationNonnegativeSafeIntegerV1Schema } from './automationResultDeli
  * host binds it to private Automation content; plugin Action input never
  * supplies it.
  */
-export const AutomationAccountCurrentnessWitnessV1Schema = z.object({
+export const AutomationAccountCurrentnessWitnessV1Schema = lazyZodSchema(() => z.object({
   mode: AccountEncryptionModeSchema,
   version: AutomationNonnegativeSafeIntegerV1Schema,
   contentKeyFingerprint: z.string().min(1).max(256).nullable(),
@@ -30,7 +31,7 @@ export const AutomationAccountCurrentnessWitnessV1Schema = z.object({
       message: 'Account currentness mode and content-key fingerprint must agree',
     });
   }
-});
+}));
 export type AutomationAccountCurrentnessWitnessV1 = z.infer<
   typeof AutomationAccountCurrentnessWitnessV1Schema
 >;

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { AccountDisplayProfileV1Schema } from '../../account/accountDisplayProfileV1.js';
@@ -16,12 +17,12 @@ import { SessionAccessAccountSummaryV1Schema } from './sessionAccessPrincipalV1.
  * identity/authority boundary where an unknown field is a bug, not an additive
  * extension.
  */
-export const SetSessionResponsibilityRequestSchema = z
+export const SetSessionResponsibilityRequestSchema = lazyZodSchema(() => z
   .object({
     sessionId: z.string().min(1),
     responsibleAccountId: z.string().min(1).nullable(),
   })
-  .strict();
+  .strict());
 export type SetSessionResponsibilityRequest = z.infer<typeof SetSessionResponsibilityRequestSchema>;
 
 /**
@@ -36,7 +37,7 @@ export type SetSessionResponsibilityRequest = z.infer<typeof SetSessionResponsib
  * `autoFollowed` is the transient result of this exact committed assignment;
  * it is never persisted as assignment origin or inferred by a client.
  */
-export const SetSessionResponsibilityResponseSchema = z
+export const SetSessionResponsibilityResponseSchema = lazyZodSchema(() => z
   .object({
     changed: z.boolean(),
     responsibleAccountId: z.string().min(1).nullable(),
@@ -61,7 +62,7 @@ export const SetSessionResponsibilityResponseSchema = z
     ) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'assigned responsibility must project the matching summary', path: ['responsibleAccount'] });
     }
-  });
+  }));
 export type SetSessionResponsibilityResponse = z.infer<typeof SetSessionResponsibilityResponseSchema>;
 
 /**
@@ -71,11 +72,11 @@ export type SetSessionResponsibilityResponse = z.infer<typeof SetSessionResponsi
  * reuses the same bounded audience projection for discussion editors without
  * exposing assignment-only access hints.
  */
-export const SessionResponsibilityCandidatePurposeV1Schema = z.enum(['assignment', 'mention']);
+export const SessionResponsibilityCandidatePurposeV1Schema = lazyZodSchema(() => z.enum(['assignment', 'mention']));
 export type SessionResponsibilityCandidatePurposeV1 =
   z.infer<typeof SessionResponsibilityCandidatePurposeV1Schema>;
 
-export const SessionResponsibilityCandidatesRequestSchema = z
+export const SessionResponsibilityCandidatesRequestSchema = lazyZodSchema(() => z
   .object({
     sessionId: z.string().min(1),
     purpose: SessionResponsibilityCandidatePurposeV1Schema,
@@ -83,7 +84,7 @@ export const SessionResponsibilityCandidatesRequestSchema = z
     cursor: z.string().min(1).max(HOME_ACCOUNT_PAGE_CURSOR_MAX_LENGTH_V1).optional(),
     limit: z.number().int().min(1).max(HOME_ACCOUNT_PAGE_LIMIT_MAX_V1).optional(),
   })
-  .strict();
+  .strict());
 export type SessionResponsibilityCandidatesRequest =
   z.infer<typeof SessionResponsibilityCandidatesRequestSchema>;
 
@@ -92,30 +93,30 @@ export type SessionResponsibilityCandidatesRequest =
  * the acting Account is already authorized to see about this Session, and never
  * the grant topology that produced it.
  */
-export const SessionResponsibilityCandidateAccessHintV1Schema = z.enum([
+export const SessionResponsibilityCandidateAccessHintV1Schema = lazyZodSchema(() => z.enum([
   'view',
   'edit',
   'admin',
   'owner',
-]);
+]));
 export type SessionResponsibilityCandidateAccessHintV1 =
   z.infer<typeof SessionResponsibilityCandidateAccessHintV1Schema>;
 
-export const SessionResponsibilityCandidateV1Schema = z
+export const SessionResponsibilityCandidateV1Schema = lazyZodSchema(() => z
   .object({
     accountId: z.string().min(1),
     profile: AccountDisplayProfileV1Schema,
     accessHint: SessionResponsibilityCandidateAccessHintV1Schema.optional(),
   })
-  .strict();
+  .strict());
 export type SessionResponsibilityCandidateV1 = z.infer<typeof SessionResponsibilityCandidateV1Schema>;
 
-export const SessionResponsibilityCandidatesResponseSchema = z
+export const SessionResponsibilityCandidatesResponseSchema = lazyZodSchema(() => z
   .object({
     candidates: z.array(SessionResponsibilityCandidateV1Schema),
     nextCursor: z.string().min(1).max(HOME_ACCOUNT_PAGE_CURSOR_MAX_LENGTH_V1).nullable(),
   })
-  .strict();
+  .strict());
 export type SessionResponsibilityCandidatesResponse =
   z.infer<typeof SessionResponsibilityCandidatesResponseSchema>;
 

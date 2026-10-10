@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { defineProtocolString } from '../../plugins/actions/protocolComposableSchema.js';
@@ -36,8 +37,8 @@ export function readPendingLocalId(value: unknown): string | null {
   return isPendingLocalId(value) ? value : null;
 }
 
-export const PendingLocalIdSchema = z.string().refine(isPendingLocalId, {
+export const PendingLocalIdSchema = lazyZodSchema(() => z.string().refine(isPendingLocalId, {
   message: 'Pending localId must not be blank',
-});
+}));
 
 export type PendingLocalId = z.infer<typeof PendingLocalIdSchema>;

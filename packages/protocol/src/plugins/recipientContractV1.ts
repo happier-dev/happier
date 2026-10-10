@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { bytesToHex } from '@noble/hashes/utils';
 import { asProtocolZod } from "./actions/internalProtocolZodAdapter.js";
 import { sha256 } from '@noble/hashes/sha2';
@@ -15,38 +16,38 @@ import {
   isValidPluginJsonSchemaValue,
 } from './actions/jsonSchemaValidation.js';
 
-const RecipientContractDigestV1Schema = z.string().regex(/^sha256:[a-f0-9]{64}$/u);
+const RecipientContractDigestV1Schema = lazyZodSchema(() => z.string().regex(/^sha256:[a-f0-9]{64}$/u));
 export type RecipientContractDigestV1 = z.infer<typeof RecipientContractDigestV1Schema>;
 
-const RecipientPackageSourceV1Schema = z.object({
+const RecipientPackageSourceV1Schema = lazyZodSchema(() => z.object({
   kind: z.enum(['bundled', 'path', 'marketplace', 'package', 'archive']),
   locator: z.string().trim().min(1).max(2_048),
-}).strict();
+}).strict());
 
-const RecipientPackageIdentityV1Schema = z.object({
+const RecipientPackageIdentityV1Schema = lazyZodSchema(() => z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   source: RecipientPackageSourceV1Schema,
-}).strict();
+}).strict());
 
-const RecipientPublisherIdentityV1Schema = z.object({
+const RecipientPublisherIdentityV1Schema = lazyZodSchema(() => z.object({
   trust: z.enum(['bundled', 'verified']),
   identity: z.string().trim().min(1).max(2_048),
-}).strict();
+}).strict());
 
-const RecipientCredentialSlotV1Schema = z.object({
+const RecipientCredentialSlotV1Schema = lazyZodSchema(() => z.object({
   id: z.string().trim().min(1).max(128),
   scope: z.literal('account'),
-}).strict();
+}).strict());
 
 const RecipientOperationIdV1Schema = PluginContributionLocalIdSchema;
 const RecipientOperationIdV1ZodSchema = asProtocolZod(RecipientOperationIdV1Schema);
-const RecipientPurposeIdV1Schema = z.string()
+const RecipientPurposeIdV1Schema = lazyZodSchema(() => z.string()
   .trim()
   .min(1)
   .max(128)
-  .regex(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u);
+  .regex(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u));
 
-const CanonicalHttpsOriginSchema = z.string().trim().max(2_048).superRefine((value, context) => {
+const CanonicalHttpsOriginSchema = lazyZodSchema(() => z.string().trim().max(2_048).superRefine((value, context) => {
   try {
     const url = new URL(value);
     if (
@@ -63,39 +64,39 @@ const CanonicalHttpsOriginSchema = z.string().trim().max(2_048).superRefine((val
   } catch {
     context.addIssue({ code: 'custom', message: 'Expected an exact canonical HTTPS origin' });
   }
-});
+}));
 
-const HeaderNameSchema = z.string()
+const HeaderNameSchema = lazyZodSchema(() => z.string()
   .trim()
   .min(1)
   .max(128)
   .regex(/^[a-z0-9!#$%&'*+.^_`|~-]+$/u)
-  .transform((value) => value.toLowerCase());
+  .transform((value) => value.toLowerCase()));
 
-const ContentTypeSchema = z.string()
+const ContentTypeSchema = lazyZodSchema(() => z.string()
   .trim()
   .min(3)
   .max(128)
   .regex(/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/u)
-  .transform((value) => value.toLowerCase());
+  .transform((value) => value.toLowerCase()));
 
-const RecipientStaticTemplateEntryV1Schema = z.object({
+const RecipientStaticTemplateEntryV1Schema = lazyZodSchema(() => z.object({
   name: z.string().trim().min(1).max(256),
   value: z.string().max(16_384),
-}).strict();
+}).strict());
 
-const RecipientBodyTemplateV1Schema = z.discriminatedUnion('kind', [
+const RecipientBodyTemplateV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('none') }).strict(),
   z.object({ kind: z.literal('json'), value: PluginJsonValueV2Schema }).strict(),
-]);
+]));
 
-const RecipientCredentialPlacementV1Schema = z.object({
+const RecipientCredentialPlacementV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('httpHeader'),
   name: HeaderNameSchema,
   format: z.enum(['raw', 'bearer']),
-}).strict();
+}).strict());
 
-const RecipientParameterMappingTargetV1Schema = z.discriminatedUnion('kind', [
+const RecipientParameterMappingTargetV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('path'),
     placeholder: z.string().trim().min(1).max(128),
@@ -113,14 +114,14 @@ const RecipientParameterMappingTargetV1Schema = z.discriminatedUnion('kind', [
     kind: z.literal('body'),
     pointer: z.string().max(1_024).regex(/^(?:\/(?:[^~/]|~0|~1)*)*$/u),
   }).strict(),
-]);
+]));
 
-const RecipientParameterMappingV1Schema = z.object({
+const RecipientParameterMappingV1Schema = lazyZodSchema(() => z.object({
   parameter: z.string().trim().min(1).max(128),
   target: RecipientParameterMappingTargetV1Schema,
-}).strict();
+}).strict());
 
-export const RecipientOperationV1Schema = z.object({
+export const RecipientOperationV1Schema = lazyZodSchema(() => z.object({
   id: RecipientOperationIdV1ZodSchema,
   purpose: RecipientPurposeIdV1Schema,
   credentialSlotId: z.string().trim().min(1).max(128),
@@ -270,9 +271,9 @@ export const RecipientOperationV1Schema = z.object({
       message: 'GET recipient operations cannot declare a body',
     });
   }
-});
+}));
 
-export const RecipientContractV1Schema = z.object({
+export const RecipientContractV1Schema = lazyZodSchema(() => z.object({
   version: z.literal(1),
   package: RecipientPackageIdentityV1Schema,
   publisher: RecipientPublisherIdentityV1Schema,
@@ -317,7 +318,7 @@ export const RecipientContractV1Schema = z.object({
     operationIds.add(operation.id);
     purposes.add(operation.purpose);
   });
-});
+}));
 
 export type RecipientContractV1 = Readonly<z.infer<typeof RecipientContractV1Schema>>;
 export type RecipientOperationV1 = Readonly<z.infer<typeof RecipientOperationV1Schema>>;

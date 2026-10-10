@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -43,12 +44,12 @@ const PluginEventAutomationHistoryGapResetActionResultV1Contract = defineProtoco
  * outside the Action surface.
  */
 export const PluginEventAutomationHistoryGapResetActionInputV1Schema =
-  z.object({
+  lazyZodSchema(() => z.object({
     automationId: asProtocolZod(AutomationIdV1Schema),
     triggerId: AutomationTriggerIdSchema,
     triggerRevision: AutomationTriggerRevisionSchema,
     sourceSelectorId: AutomationSourceSelectorIdV1Schema,
-  }).strict();
+  }).strict());
 export type PluginEventAutomationHistoryGapResetActionInputV1 = z.infer<
   typeof PluginEventAutomationHistoryGapResetActionInputV1Schema
 >;

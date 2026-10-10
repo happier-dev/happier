@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { PluginContributionLocalIdSchema } from '../../plugins/contributionIdentity.js';
@@ -8,16 +9,16 @@ import {
 } from '../../runtime/input/composerAttachmentV1.js';
 
 /** One attachment draft authored by the authenticated plugin caller. */
-export const PluginSessionInputAttachmentV1Schema = z.object({
+export const PluginSessionInputAttachmentV1Schema = lazyZodSchema(() => z.object({
   attachmentLocalId: asProtocolZod(PluginContributionLocalIdSchema),
   value: ComposerAttachmentAuthorValueV1Schema,
-}).strict();
+}).strict());
 export type PluginSessionInputAttachmentV1 = z.infer<typeof PluginSessionInputAttachmentV1Schema>;
 
 /** The one attachment-list boundary shared by every Session-input surface. */
-export const PluginSessionInputAttachmentsV1Schema = z.array(PluginSessionInputAttachmentV1Schema)
+export const PluginSessionInputAttachmentsV1Schema = lazyZodSchema(() => z.array(PluginSessionInputAttachmentV1Schema)
   .min(1)
-  .max(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1);
+  .max(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1));
 
 /** Text or at least one attachment is content; whitespace alone is not. */
 export function hasSessionInputContentV1(input: Readonly<{

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 export const PET_CANONICAL_SPRITESHEET_ASSET_FORMATS_V1 = [
@@ -51,10 +52,10 @@ export function isCanonicalPetSpritesheetMediaTypePairV1(value: {
   return getCanonicalPetSpritesheetMediaTypeV1(value.spritesheetPath) === value.mediaType;
 }
 
-export const PetCanonicalSpritesheetMediaTypeV1Schema = z.enum(PET_CANONICAL_SPRITESHEET_MEDIA_TYPES_V1);
-export const PetCanonicalSpritesheetPathV1Schema = z.enum(PET_CANONICAL_SPRITESHEET_PATHS_V1);
+export const PetCanonicalSpritesheetMediaTypeV1Schema = lazyZodSchema(() => z.enum(PET_CANONICAL_SPRITESHEET_MEDIA_TYPES_V1));
+export const PetCanonicalSpritesheetPathV1Schema = lazyZodSchema(() => z.enum(PET_CANONICAL_SPRITESHEET_PATHS_V1));
 
-export const PetCanonicalSpritesheetAssetV1Schema = z
+export const PetCanonicalSpritesheetAssetV1Schema = lazyZodSchema(() => z
   .object({
     spritesheetPath: PetCanonicalSpritesheetPathV1Schema,
     mediaType: PetCanonicalSpritesheetMediaTypeV1Schema,
@@ -66,7 +67,7 @@ export const PetCanonicalSpritesheetAssetV1Schema = z
       spritesheetPath: value.spritesheetPath,
       mediaType: value.mediaType,
     });
-  });
+  }));
 
 export function appendCanonicalPetSpritesheetMediaTypeIssueV1({
   ctx,

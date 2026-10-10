@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -9,7 +10,7 @@ import {
   type LiveActivityRemoteUpdateEvent,
 } from './remoteUpdates.js';
 
-const LiveActivityRemoteUpdateCapabilityReasonSchema = z.enum([
+const LiveActivityRemoteUpdateCapabilityReasonSchema = lazyZodSchema(() => z.enum([
   'expo_widgets_push_notifications_disabled',
   'hosted_relay_not_allowed',
   'hosted_relay_provider_blocked',
@@ -18,17 +19,17 @@ const LiveActivityRemoteUpdateCapabilityReasonSchema = z.enum([
   'background_wake_disabled',
   'not_in_phase_9_5',
   'private_per_session_surface_not_broadcast',
-]);
+]));
 
-const LiveActivityDirectApnsConfigurationDiagnosticSchema = z.enum([
+const LiveActivityDirectApnsConfigurationDiagnosticSchema = lazyZodSchema(() => z.enum([
   'apns_team_id_missing',
   'apns_key_id_missing',
   'apns_private_key_missing',
   'apns_private_key_must_be_p8_token_key',
   'apns_bundle_id_allowlist_missing',
-]);
+]));
 
-export const LiveActivityRemoteUpdateModeDiagnosticSchema = z
+export const LiveActivityRemoteUpdateModeDiagnosticSchema = lazyZodSchema(() => z
   .object({
     available: z.boolean(),
     reasons: z.array(LiveActivityRemoteUpdateCapabilityReasonSchema),
@@ -37,9 +38,9 @@ export const LiveActivityRemoteUpdateModeDiagnosticSchema = z
       .optional()
       .default([]),
   })
-  .strict();
+  .strict());
 
-const LiveActivityPerActivityUpdateCapabilityDiagnosticSchema = z
+const LiveActivityPerActivityUpdateCapabilityDiagnosticSchema = lazyZodSchema(() => z
   .object({
     id: z.literal('per_activity_update'),
     status: z.enum(['supported_when_configured', 'future_unsupported']),
@@ -48,9 +49,9 @@ const LiveActivityPerActivityUpdateCapabilityDiagnosticSchema = z
     availableModes: z.array(LiveActivityRemoteTransportModeSchema),
     reasons: z.array(LiveActivityRemoteUpdateCapabilityReasonSchema),
   })
-  .strict();
+  .strict());
 
-const LiveActivityPushToStartCapabilityDiagnosticSchema = z
+const LiveActivityPushToStartCapabilityDiagnosticSchema = lazyZodSchema(() => z
   .object({
     id: z.literal('push_to_start'),
     status: z.enum(['supported_when_configured', 'future_unsupported']),
@@ -59,9 +60,9 @@ const LiveActivityPushToStartCapabilityDiagnosticSchema = z
     availableModes: z.array(LiveActivityRemoteTransportModeSchema),
     reasons: z.array(LiveActivityRemoteUpdateCapabilityReasonSchema),
   })
-  .strict();
+  .strict());
 
-const LiveActivityBroadcastChannelCapabilityDiagnosticSchema = z
+const LiveActivityBroadcastChannelCapabilityDiagnosticSchema = lazyZodSchema(() => z
   .object({
     id: z.literal('broadcast_channel'),
     status: z.enum(['supported_when_configured', 'future_unsupported']),
@@ -70,9 +71,9 @@ const LiveActivityBroadcastChannelCapabilityDiagnosticSchema = z
     availableModes: z.array(LiveActivityRemoteTransportModeSchema),
     reasons: z.array(LiveActivityRemoteUpdateCapabilityReasonSchema),
   })
-  .strict();
+  .strict());
 
-export const LiveActivityRemoteUpdateCapabilityDiagnosticsSchema = z
+export const LiveActivityRemoteUpdateCapabilityDiagnosticsSchema = lazyZodSchema(() => z
   .object({
     modes: z
       .object({
@@ -89,7 +90,7 @@ export const LiveActivityRemoteUpdateCapabilityDiagnosticsSchema = z
       })
       .strict(),
   })
-  .strict();
+  .strict());
 
 export const DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS =
   buildLiveActivityRemoteUpdateCapabilityDiagnostics({

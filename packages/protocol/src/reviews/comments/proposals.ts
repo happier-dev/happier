@@ -1,12 +1,13 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
-const WorkspaceRelativeReviewPathV1Schema = z.string().trim().min(1).max(4096).refine((value) => {
+const WorkspaceRelativeReviewPathV1Schema = lazyZodSchema(() => z.string().trim().min(1).max(4096).refine((value) => {
   const normalized = value.replaceAll('\\', '/');
   if (normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized)) return false;
   return !normalized.split('/').some((segment) => segment === '..');
-}, 'Review comment anchor paths must be workspace-relative and may not traverse parent directories');
+}, 'Review comment anchor paths must be workspace-relative and may not traverse parent directories'));
 
-const ReviewCommentProposalAnchorV1Schema = z.discriminatedUnion('kind', [
+const ReviewCommentProposalAnchorV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('file'), filePath: WorkspaceRelativeReviewPathV1Schema }).strict(),
   z.object({
     kind: z.literal('line'),
@@ -24,17 +25,17 @@ const ReviewCommentProposalAnchorV1Schema = z.discriminatedUnion('kind', [
     path: ['endLine'],
     message: 'endLine must be greater than or equal to startLine',
   }),
-]);
+]));
 
-export const ReviewCommentProposalV1Schema = z.object({
+export const ReviewCommentProposalV1Schema = lazyZodSchema(() => z.object({
   findingId: z.string().trim().min(1).max(512).optional(),
   body: z.string().trim().min(1).max(65_536),
   anchor: ReviewCommentProposalAnchorV1Schema,
   severity: z.enum(['info', 'warning', 'error', 'critical']).optional(),
   taxonomyIds: z.array(z.string().trim().min(1).max(512)).max(32).optional(),
   tags: z.array(z.string().trim().min(1).max(256)).max(32).optional(),
-}).strict();
+}).strict());
 export type ReviewCommentProposalV1 = z.infer<typeof ReviewCommentProposalV1Schema>;
 
-export const ReviewCommentProposalsV1Schema = z.array(ReviewCommentProposalV1Schema);
+export const ReviewCommentProposalsV1Schema = lazyZodSchema(() => z.array(ReviewCommentProposalV1Schema));
 export type ReviewCommentProposalsV1 = z.infer<typeof ReviewCommentProposalsV1Schema>;

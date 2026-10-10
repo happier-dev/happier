@@ -1,17 +1,18 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { SessionProviderBindingSecurityChangeConfirmationV1Schema } from '../../providers/sessions/bindingMetadataV1.js';
 import { SessionRunnerProcessIdentityV2Schema } from './sessionRunnerRuntimeV2.js';
 
-const SessionRunnerSessionIdV2Schema = z.string().trim().min(1);
-const SessionRunnerIdentityV2Schema = z.string().trim().min(1);
-const SessionRunnerPidV2Schema = z.number().int().positive();
+const SessionRunnerSessionIdV2Schema = lazyZodSchema(() => z.string().trim().min(1));
+const SessionRunnerIdentityV2Schema = lazyZodSchema(() => z.string().trim().min(1));
+const SessionRunnerPidV2Schema = lazyZodSchema(() => z.number().int().positive());
 
 /**
  * Additive, recovery-only restart contract. V1 remains the predecessor-exact
  * ordinary restart wire and must not gain these fields or reason values.
  */
-export const RestartSessionRunnerRequestV2Schema = z
+export const RestartSessionRunnerRequestV2Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(2),
     sessionId: SessionRunnerSessionIdV2Schema,
@@ -41,5 +42,5 @@ export const RestartSessionRunnerRequestV2Schema = z
         message: 'Provider binding confirmation must target the restarted session',
       });
     }
-  });
+  }));
 export type RestartSessionRunnerRequestV2 = z.infer<typeof RestartSessionRunnerRequestV2Schema>;

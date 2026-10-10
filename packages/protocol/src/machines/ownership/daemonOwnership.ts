@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import {
     MachineInstallationProofV1Schema,
@@ -14,9 +15,9 @@ export const MACHINE_DAEMON_STARTUP_SOURCE_VALUES = [
     'unknown',
 ] as const;
 
-export const MachineDaemonStartupSourceSchema = z.enum(MACHINE_DAEMON_STARTUP_SOURCE_VALUES);
+export const MachineDaemonStartupSourceSchema = lazyZodSchema(() => z.enum(MACHINE_DAEMON_STARTUP_SOURCE_VALUES));
 
-export const MachineDaemonOwnershipMetadataSchema = z.object({
+export const MachineDaemonOwnershipMetadataSchema = lazyZodSchema(() => z.object({
     runtimeId: z.string().trim().min(1).optional(),
     cliVersion: z.string().trim().min(1).optional(),
     publicReleaseChannel: z.string().trim().min(1).optional(),
@@ -26,21 +27,21 @@ export const MachineDaemonOwnershipMetadataSchema = z.object({
     installationId: z.string().trim().min(1).optional(),
     installationPublicKey: MachineInstallationPublicKeySchema.optional(),
     installationProof: MachineInstallationProofV1Schema.optional(),
-});
+}));
 
 export type MachineDaemonOwnershipMetadata = z.infer<typeof MachineDaemonOwnershipMetadataSchema>;
 
-export const MachineOwnerConflictMetadataSchema = MachineDaemonOwnershipMetadataSchema.omit({
+export const MachineOwnerConflictMetadataSchema = lazyZodSchema(() => MachineDaemonOwnershipMetadataSchema.omit({
     runtimeId: true,
-});
+}));
 
 export type MachineOwnerConflictMetadata = z.infer<typeof MachineOwnerConflictMetadataSchema>;
 
-export const MachineOwnerConflictSocketPayloadSchema = z.object({
+export const MachineOwnerConflictSocketPayloadSchema = lazyZodSchema(() => z.object({
     error: z.literal(MACHINE_OWNER_CONFLICT_ERROR),
     statusCode: z.literal(409),
     owner: MachineOwnerConflictMetadataSchema,
-});
+}));
 
 export type MachineOwnerConflictSocketPayload = z.infer<typeof MachineOwnerConflictSocketPayloadSchema>;
 

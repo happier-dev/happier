@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { StrictJsonValueSchema, type JsonValue } from '../json/strictJsonValue.js';
@@ -26,13 +27,13 @@ export const WorkflowBlockIdSchema = asProtocolZod(WorkflowBlockIdProtocolSchema
  */
 
 /** Declared workflow input names use identifier syntax so they can be named in evidence bindings. */
-export const WorkflowInputNameSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9_]*$/);
+export const WorkflowInputNameSchema = lazyZodSchema(() => z.string().regex(/^[A-Za-z][A-Za-z0-9_]*$/));
 
-export const WorkflowReferenceScopeSchema = z.discriminatedUnion('kind', [
+export const WorkflowReferenceScopeSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('current') }).strict(),
   z.object({ kind: z.literal('previous_iteration'), loopBlockId: WorkflowBlockIdSchema }).strict(),
   z.object({ kind: z.literal('outer'), levels: z.number().int().positive().safe() }).strict(),
-]);
+]));
 export type WorkflowReferenceScope = z.infer<typeof WorkflowReferenceScopeSchema>;
 
 /** Lexical block lists, rooted at the enclosing Workflow frame. */
@@ -78,22 +79,22 @@ export function selectWorkflowLexicalScope(
  * it names the authored block plus the scope that selects which occurrence of
  * that block the consumer means.
  */
-export const WorkflowAuthoredProducerRefSchema = z.object({
+export const WorkflowAuthoredProducerRefSchema = lazyZodSchema(() => z.object({
   blockId: WorkflowBlockIdSchema,
   scope: WorkflowReferenceScopeSchema.default({ kind: 'current' }),
-}).strict();
+}).strict());
 export type WorkflowAuthoredProducerRef = z.infer<typeof WorkflowAuthoredProducerRefSchema>;
 
-export const WorkflowResultPathSchema = z
+export const WorkflowResultPathSchema = lazyZodSchema(() => z
   .array(z.union([z.string(), z.number().int().nonnegative().safe()]))
-  .default([]);
+  .default([]));
 
-export const WorkflowAuthoredResultReferenceSchema = z.object({
+export const WorkflowAuthoredResultReferenceSchema = lazyZodSchema(() => z.object({
   kind: z.literal('result'),
   producer: WorkflowAuthoredProducerRefSchema,
   path: WorkflowResultPathSchema,
   optional: z.literal(true).optional(),
-}).strict();
+}).strict());
 export type WorkflowAuthoredResultReference = z.infer<typeof WorkflowAuthoredResultReferenceSchema>;
 
 /**
@@ -101,20 +102,20 @@ export type WorkflowAuthoredResultReference = z.infer<typeof WorkflowAuthoredRes
  * The definition keeps the scoped producer reference; runtime resolves that
  * reference to the private row-local descriptor before materializing input.
  */
-export const WorkflowAuthoredWorkspaceReferenceSchema = z.object({
+export const WorkflowAuthoredWorkspaceReferenceSchema = lazyZodSchema(() => z.object({
   kind: z.literal('workspace'),
   producer: WorkflowAuthoredProducerRefSchema,
   field: z.enum(['directory', 'checkoutRootPath']),
-}).strict();
+}).strict());
 export type WorkflowAuthoredWorkspaceReference = z.infer<typeof WorkflowAuthoredWorkspaceReferenceSchema>;
 
 /** Count consecutive matching results in the nearest loop's committed history. */
-export const WorkflowLoopTrailingCountReferenceSchema = z.object({
+export const WorkflowLoopTrailingCountReferenceSchema = lazyZodSchema(() => z.object({
   kind: z.literal('loop_trailing_count'),
   producer: WorkflowAuthoredProducerRefSchema,
   path: WorkflowResultPathSchema,
   equals: StrictJsonValueSchema,
-}).strict();
+}).strict());
 export type WorkflowLoopTrailingCountReference = z.infer<typeof WorkflowLoopTrailingCountReferenceSchema>;
 
 export type WorkflowValueReference =
@@ -257,7 +258,7 @@ export const WorkflowConditionSchema = defineStoredReadProjection(createWorkflow
  * from dataflow: reusing a conversation never implies reusing a workspace, and
  * sharing a workspace never implies sharing history.
  */
-export const WorkflowConversationSelectionSchema = z.discriminatedUnion('kind', [
+export const WorkflowConversationSelectionSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('shared_run') }).strict(),
   z.object({ kind: z.literal('fresh') }).strict(),
   z.object({ kind: z.literal('origin_session') }).strict(),
@@ -267,7 +268,7 @@ export const WorkflowConversationSelectionSchema = z.discriminatedUnion('kind', 
     sessionId: z.string().min(1),
     machineId: z.string().min(1),
   }).strict(),
-]);
+]));
 export type WorkflowConversationSelection = z.infer<typeof WorkflowConversationSelectionSchema>;
 
 /** Every reference kind that names another block, so scope validation has one walker. */

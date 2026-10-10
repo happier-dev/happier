@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ProviderCompatibilityCapabilitiesV1Schema, ProviderWireProtocolSchema } from '../capabilities/v1.js';
@@ -12,22 +13,22 @@ import { ProviderEndpointUrlSyntaxSchema } from '../endpointUrlSchema.js';
 import { ProviderHttpsUrlSchema } from '../httpsUrlSchema.js';
 import { ProviderPublicHeadersV1Schema } from '../publicHeadersSchema.js';
 
-const UnknownCapabilitiesSchema = ProviderCompatibilityCapabilitiesV1Schema.superRefine((value, ctx) => {
+const UnknownCapabilitiesSchema = lazyZodSchema(() => ProviderCompatibilityCapabilitiesV1Schema.superRefine((value, ctx) => {
   for (const [key, support] of Object.entries(value)) {
     if (support !== 'unknown') ctx.addIssue({ code: 'custom', path: [key], message: 'Custom provider capabilities must remain unknown' });
   }
-});
+}));
 
-export const CustomProviderEndpointTemplateV1Schema = z.object({
+export const CustomProviderEndpointTemplateV1Schema = lazyZodSchema(() => z.object({
   id: ProviderLocalIdSchema,
   protocol: ProviderWireProtocolSchema,
   baseUrl: ProviderEndpointUrlSyntaxSchema,
   publicHeaders: ProviderPublicHeadersV1Schema.optional(),
   capabilities: UnknownCapabilitiesSchema,
-}).strict();
+}).strict());
 export type CustomProviderEndpointTemplateV1 = z.infer<typeof CustomProviderEndpointTemplateV1Schema>;
 
-export const CustomProviderCredentialTransportV1Schema = ProviderCredentialTransportV1Schema.safeExtend({
+export const CustomProviderCredentialTransportV1Schema = lazyZodSchema(() => ProviderCredentialTransportV1Schema.safeExtend({
   uses: z.array(z.enum(['probe', 'runtime'])).min(1).max(2),
   destination: z.object({
     kind: z.literal('httpHeader'),
@@ -39,10 +40,10 @@ export const CustomProviderCredentialTransportV1Schema = ProviderCredentialTrans
     }),
     format: z.enum(['raw', 'bearer']),
   }).strict(),
-}).strict();
+}).strict());
 export type CustomProviderCredentialTransportV1 = z.infer<typeof CustomProviderCredentialTransportV1Schema>;
 
-export const CustomProviderApiKeyCredentialRequirementV1Schema = z.object({
+export const CustomProviderApiKeyCredentialRequirementV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('apiKey'),
   slotId: z.literal('apiKey').default('apiKey'),
   required: z.boolean().default(true),
@@ -50,18 +51,18 @@ export const CustomProviderApiKeyCredentialRequirementV1Schema = z.object({
   transports: z.array(CustomProviderCredentialTransportV1Schema).min(1).max(8),
 }).strict().superRefine((value, ctx) => {
   addProviderCredentialTransportIssues(value.transports, ctx);
-});
+}));
 
-export const CustomProviderCatalogDeclarationV1Schema = z.discriminatedUnion('source', [
+export const CustomProviderCatalogDeclarationV1Schema = lazyZodSchema(() => z.discriminatedUnion('source', [
   z.object({ source: z.literal('manual'), manualModelPolicy: z.literal('allowed') }).strict(),
   z.object({
     source: z.literal('probe'),
     manualModelPolicy: z.enum(['allowed', 'catalog-only']),
     probes: z.array(ProviderCatalogProbeV1Schema).min(1).max(3),
   }).strict(),
-]);
+]));
 
-export const CustomProviderTemplateV1Schema = z.object({
+export const CustomProviderTemplateV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   name: z.string().trim().min(1).max(128),
   endpointTemplates: z.array(CustomProviderEndpointTemplateV1Schema).min(1).max(4),
@@ -86,5 +87,5 @@ export const CustomProviderTemplateV1Schema = z.object({
       if (!endpointIds.has(probe.endpointTemplateId)) ctx.addIssue({ code: 'custom', path: ['catalog', 'probes', index, 'endpointTemplateId'], message: 'Catalog probe endpoint is not declared' });
     });
   }
-});
+}));
 export type CustomProviderTemplateV1 = z.infer<typeof CustomProviderTemplateV1Schema>;

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -69,7 +70,7 @@ export const PLUGIN_UI_HOST_METHODS_V1 = Object.freeze([
   'watchEntityDragDrop',
   'widgetArea',
 ] as const);
-export const PluginUiHostMethodV1Schema = z.enum(PLUGIN_UI_HOST_METHODS_V1);
+export const PluginUiHostMethodV1Schema = lazyZodSchema(() => z.enum(PLUGIN_UI_HOST_METHODS_V1));
 export type PluginUiHostMethodV1 = z.infer<typeof PluginUiHostMethodV1Schema>;
 
 /**
@@ -96,9 +97,9 @@ export const PLUGIN_UI_CALLER_HOSTED_HTML_HOST_METHODS_V1 = Object.freeze([
   'executeAction',
   'notify',
 ] as const satisfies readonly PluginUiHostMethodV1[]);
-export const PluginUiCallerHostedHtmlHostMethodV1Schema = z.enum(
+export const PluginUiCallerHostedHtmlHostMethodV1Schema = lazyZodSchema(() => z.enum(
   PLUGIN_UI_CALLER_HOSTED_HTML_HOST_METHODS_V1,
-);
+));
 export type PluginUiCallerHostedHtmlHostMethodV1 =
   z.infer<typeof PluginUiCallerHostedHtmlHostMethodV1Schema>;
 
@@ -114,10 +115,10 @@ export type PluginUiHostTransportOperationV1 =
   (typeof PLUGIN_UI_HOST_TRANSPORT_OPERATIONS_V1)[number];
 
 /** Every host method plus the transport-only operations, derived once. */
-export const PluginUiHostApiRequestMethodV1Schema = z.enum([
+export const PluginUiHostApiRequestMethodV1Schema = lazyZodSchema(() => z.enum([
   ...PLUGIN_UI_HOST_METHODS_V1,
   ...PLUGIN_UI_HOST_TRANSPORT_OPERATIONS_V1,
-]);
+]));
 export type PluginUiHostApiRequestMethodV1 =
   z.infer<typeof PluginUiHostApiRequestMethodV1Schema>;
 
@@ -131,8 +132,8 @@ export const PLUGIN_UI_HOST_SUBSCRIPTION_METHODS_V1 = Object.freeze([
   'watchSession',
   'watchLiveStream',
 ] as const satisfies readonly PluginUiHostMethodV1[]);
-export const PluginUiHostSubscriptionMethodV1Schema = z.enum(
+export const PluginUiHostSubscriptionMethodV1Schema = lazyZodSchema(() => z.enum(
   PLUGIN_UI_HOST_SUBSCRIPTION_METHODS_V1,
-);
+));
 export type PluginUiHostSubscriptionMethodV1 =
   z.infer<typeof PluginUiHostSubscriptionMethodV1Schema>;

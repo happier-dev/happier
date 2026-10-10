@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 export const DIRECT_ROUTE_GRANT_TTL_MS = Object.freeze({
@@ -17,10 +18,10 @@ export const DIRECT_ROUTE_GRANT_TTL_MS = Object.freeze({
   serverRelayedLiveStream: 5 * 60_000,
 } as const);
 
-export const DirectRouteGrantCachePolicyV1Schema = z.object({
+export const DirectRouteGrantCachePolicyV1Schema = lazyZodSchema(() => z.object({
   ttlMs: z.number().int().positive(),
   renewable: z.boolean().default(false),
-});
+}));
 
 export type DirectRouteGrantCachePolicyV1 = z.infer<typeof DirectRouteGrantCachePolicyV1Schema>;
 

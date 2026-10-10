@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import type { FeaturesResponse } from '../featuresResponseSchema.js';
@@ -26,12 +27,12 @@ export function normalizeMachineTransferServerRoutedMaxBytes(raw: unknown): numb
   return normalized > 0 ? normalized : null;
 }
 
-export const MachineTransferServerRoutedCapabilitiesSchema = z.object({
+export const MachineTransferServerRoutedCapabilitiesSchema = lazyZodSchema(() => z.object({
   maxBytes: z
     .preprocess((raw) => normalizeMachineTransferServerRoutedMaxBytes(raw), z.number().int().positive().nullable())
     .optional()
     .default(null),
-});
+}));
 
 export type MachineTransferServerRoutedCapabilities = z.infer<typeof MachineTransferServerRoutedCapabilitiesSchema>;
 
@@ -39,11 +40,11 @@ export const DEFAULT_MACHINE_TRANSFER_SERVER_ROUTED_CAPABILITIES: MachineTransfe
   maxBytes: null,
 };
 
-export const MachineTransferCapabilitiesSchema = z.object({
+export const MachineTransferCapabilitiesSchema = lazyZodSchema(() => z.object({
   serverRouted: MachineTransferServerRoutedCapabilitiesSchema.optional().default(
     DEFAULT_MACHINE_TRANSFER_SERVER_ROUTED_CAPABILITIES,
   ),
-});
+}));
 
 export type MachineTransferCapabilities = z.infer<typeof MachineTransferCapabilitiesSchema>;
 

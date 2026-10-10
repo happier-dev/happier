@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -16,7 +17,7 @@ import { SESSION_WORKFLOW_RUN_RECORD_REVISION_PATTERN } from './sessionWorkflowR
  * trees, previews, metrics, and raw payloads live only in the `activity/workflow_run.v1`
  * system record — never here.
  */
-export const SessionWorkflowRunHeadlineV1Schema = z
+export const SessionWorkflowRunHeadlineV1Schema = lazyZodSchema(() => z
   .object({
     runId: z.string().trim().min(1),
     title: z.string().trim().min(1).max(SESSION_WORKFLOW_RUN_SNAPSHOT_TITLE_MAX),
@@ -33,18 +34,18 @@ export const SessionWorkflowRunHeadlineV1Schema = z
   })
   // Strip unknown keys (Zod default): the headline is a count-only pointer, so any leaked
   // phase/agent/preview detail is dropped on parse. Forward-compat fields are added explicitly.
-  .strip();
+  .strip());
 export type SessionWorkflowRunHeadlineV1 = z.infer<typeof SessionWorkflowRunHeadlineV1Schema>;
 
-export const SessionWorkflowActivityHeadlineTruncationV1Schema = z
+export const SessionWorkflowActivityHeadlineTruncationV1Schema = lazyZodSchema(() => z
   .object({
     reason: z.literal('run_limit'),
     omittedCount: z.number().int().nonnegative(),
   })
-  .strip();
+  .strip());
 export type SessionWorkflowActivityHeadlineTruncationV1 = z.infer<typeof SessionWorkflowActivityHeadlineTruncationV1Schema>;
 
-export const SessionWorkflowActivityHeadlineV1Schema = z
+export const SessionWorkflowActivityHeadlineV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     backendId: z.string().trim().min(1),
@@ -55,5 +56,5 @@ export const SessionWorkflowActivityHeadlineV1Schema = z
     recentRuns: z.array(SessionWorkflowRunHeadlineV1Schema).optional(),
     truncated: SessionWorkflowActivityHeadlineTruncationV1Schema.optional(),
   })
-  .strip();
+  .strip());
 export type SessionWorkflowActivityHeadlineV1 = z.infer<typeof SessionWorkflowActivityHeadlineV1Schema>;

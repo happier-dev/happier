@@ -1,6 +1,7 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
-const PageLimitSchema = z.coerce.number().int().min(1).max(100);
+const PageLimitSchema = lazyZodSchema(() => z.coerce.number().int().min(1).max(100));
 
 /**
  * Discussion pages reuse the Session listing/transcript query-budget
@@ -10,14 +11,14 @@ const PageLimitSchema = z.coerce.number().int().min(1).max(100);
 export const SESSION_DISCUSSION_DEFAULT_PAGE_SIZE_V1 = 30;
 export const SESSION_DISCUSSION_MAX_PAGE_SIZE_V1 = 100;
 
-export const SessionDiscussionListQueryV1Schema = z.object({
+export const SessionDiscussionListQueryV1Schema = lazyZodSchema(() => z.object({
   state: z.enum(['active', 'archived']).optional(),
   cursor: z.string().min(1).max(512).optional(),
   limit: PageLimitSchema.optional(),
-}).strict();
+}).strict());
 export type SessionDiscussionListQueryV1 = z.infer<typeof SessionDiscussionListQueryV1Schema>;
 
-export const SessionDiscussionMessagesQueryV1Schema = z.object({
+export const SessionDiscussionMessagesQueryV1Schema = lazyZodSchema(() => z.object({
   beforeSeq: z.coerce.number().int().min(1).optional(),
   afterSeq: z.coerce.number().int().min(0).optional(),
   limit: PageLimitSchema.optional(),
@@ -29,5 +30,5 @@ export const SessionDiscussionMessagesQueryV1Schema = z.object({
       message: 'beforeSeq and afterSeq are mutually exclusive',
     });
   }
-});
+}));
 export type SessionDiscussionMessagesQueryV1 = z.infer<typeof SessionDiscussionMessagesQueryV1Schema>;

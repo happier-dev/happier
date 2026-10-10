@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -93,16 +94,16 @@ function addIssue(context: z.RefinementCtx, message: string, path?: (string | nu
   });
 }
 
-const PluginAccountSettingsValuesV1RawSchema = z.object({
+const PluginAccountSettingsValuesV1RawSchema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   values: z.record(PluginSettingFieldIdV2Schema, z.unknown()),
-}).strict();
+}).strict());
 
 /**
  * The persisted payload carries values only. The reserved UserKV row version
  * is the single Account Settings CAS revision and is never duplicated here.
  */
-export const PluginAccountSettingsValuesV1Schema = PluginAccountSettingsValuesV1RawSchema.transform((input, context) => {
+export const PluginAccountSettingsValuesV1Schema = lazyZodSchema(() => PluginAccountSettingsValuesV1RawSchema.transform((input, context) => {
   const entries = Object.entries(input.values);
   if (entries.length > PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1.maximumFields) {
     addIssue(context, `Plugin Account Settings may contain at most ${PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1.maximumFields} fields`, ['values']);
@@ -128,10 +129,10 @@ export const PluginAccountSettingsValuesV1Schema = PluginAccountSettingsValuesV1
     addIssue(context, error instanceof Error ? error.message : 'Plugin Account Settings value is invalid', ['values']);
     return z.NEVER;
   }
-});
+}));
 export type PluginAccountSettingsValuesV1 = z.infer<typeof PluginAccountSettingsValuesV1Schema>;
 
-const PluginAccountSettingsEncryptedCiphertextWriteV1Schema = z.string().min(1).superRefine(
+const PluginAccountSettingsEncryptedCiphertextWriteV1Schema = lazyZodSchema(() => z.string().min(1).superRefine(
   (ciphertext, context) => {
     if (
       textEncoder.encode(ciphertext).byteLength
@@ -144,10 +145,10 @@ const PluginAccountSettingsEncryptedCiphertextWriteV1Schema = z.string().min(1).
       );
     }
   },
-);
+));
 
 /** Server storage is envelope-only: it never opens or interprets E2EE values. */
-export const PluginAccountSettingsContentV1Schema = z.discriminatedUnion('t', [
+export const PluginAccountSettingsContentV1Schema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.object({
     t: z.literal('plain'),
     v: PluginAccountSettingsValuesV1Schema,
@@ -156,14 +157,14 @@ export const PluginAccountSettingsContentV1Schema = z.discriminatedUnion('t', [
     t: z.literal('encrypted'),
     c: z.string().min(1),
   }).strict(),
-]);
+]));
 export type PluginAccountSettingsContentV1 = z.infer<typeof PluginAccountSettingsContentV1Schema>;
 
 /**
  * Current writers use the cipher-derived bound while the broad reader above
  * preserves an oversized predecessor envelope for recovery.
  */
-const PluginAccountSettingsContentV1WriteSchema = z.discriminatedUnion('t', [
+const PluginAccountSettingsContentV1WriteSchema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.object({
     t: z.literal('plain'),
     v: PluginAccountSettingsValuesV1Schema,
@@ -172,7 +173,7 @@ const PluginAccountSettingsContentV1WriteSchema = z.discriminatedUnion('t', [
     t: z.literal('encrypted'),
     c: PluginAccountSettingsEncryptedCiphertextWriteV1Schema,
   }).strict(),
-]);
+]));
 
 /**
  * Declarative Settings has its own Account-scoped cipher domain. It remains
@@ -215,9 +216,9 @@ export function assertPluginAccountSettingsContentForModeV1(
   return content;
 }
 
-const PluginAccountSettingsRevisionV1Schema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+const PluginAccountSettingsRevisionV1Schema = lazyZodSchema(() => z.number().int().min(0).max(Number.MAX_SAFE_INTEGER));
 
-export const PluginAccountSettingsReadResponseV1Schema = z.discriminatedUnion('status', [
+export const PluginAccountSettingsReadResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('present'),
     revision: PluginAccountSettingsRevisionV1Schema,
@@ -228,19 +229,19 @@ export const PluginAccountSettingsReadResponseV1Schema = z.discriminatedUnion('s
     status: z.literal('deleted'),
     revision: PluginAccountSettingsRevisionV1Schema,
   }).strict(),
-]);
+]));
 export type PluginAccountSettingsReadResponseV1 = z.infer<typeof PluginAccountSettingsReadResponseV1Schema>;
 
-export const PluginAccountSettingsMutationRequestV1Schema = z.object({
+export const PluginAccountSettingsMutationRequestV1Schema = lazyZodSchema(() => z.object({
   expectedRevision: z.union([
     PluginAccountSettingsRevisionV1Schema,
     z.literal('absent'),
   ]),
   content: PluginAccountSettingsContentV1WriteSchema.nullable(),
-}).strict();
+}).strict());
 export type PluginAccountSettingsMutationRequestV1 = z.infer<typeof PluginAccountSettingsMutationRequestV1Schema>;
 
-export const PluginAccountSettingsMutationResponseV1Schema = z.discriminatedUnion('status', [
+export const PluginAccountSettingsMutationResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('updated'),
     revision: PluginAccountSettingsRevisionV1Schema,
@@ -249,9 +250,9 @@ export const PluginAccountSettingsMutationResponseV1Schema = z.discriminatedUnio
     status: z.literal('conflict'),
     revision: PluginAccountSettingsRevisionV1Schema,
   }).strict(),
-]);
+]));
 export type PluginAccountSettingsMutationResponseV1 = z.infer<typeof PluginAccountSettingsMutationResponseV1Schema>;
 
-export const PluginAccountSettingsStorageUnavailableV1Schema = z.object({
+export const PluginAccountSettingsStorageUnavailableV1Schema = lazyZodSchema(() => z.object({
   error: z.literal('plugin_account_settings_storage_unavailable'),
-}).strict();
+}).strict());

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ProviderHttpsUrlSchema } from '../httpsUrlSchema.js';
@@ -21,7 +22,7 @@ export const BUNDLED_PROVIDER_WIRE_PROTOCOLS_V1 = Object.freeze([
   'ollama-native',
 ] as const);
 
-export const BundledProviderWireProtocolSchema = z.enum(BUNDLED_PROVIDER_WIRE_PROTOCOLS_V1);
+export const BundledProviderWireProtocolSchema = lazyZodSchema(() => z.enum(BUNDLED_PROVIDER_WIRE_PROTOCOLS_V1));
 export type BundledProviderWireProtocol = z.infer<typeof BundledProviderWireProtocolSchema>;
 
 /**
@@ -80,15 +81,15 @@ export const PROVIDER_WIRE_PROTOCOL_LIMITS_V1 = Object.freeze({
   maxProtocolsPerDeclaration: 16,
 } as const);
 
-export const CapabilitySupportSchema = z.enum(['supported', 'unsupported', 'unknown']);
+export const CapabilitySupportSchema = lazyZodSchema(() => z.enum(['supported', 'unsupported', 'unknown']));
 export type CapabilitySupport = z.infer<typeof CapabilitySupportSchema>;
 
-export const ProviderCompatibilityCapabilitiesV1Schema = z.object({
+export const ProviderCompatibilityCapabilitiesV1Schema = lazyZodSchema(() => z.object({
   streaming: CapabilitySupportSchema,
   toolRoundTrips: CapabilitySupportSchema,
   statefulResponses: CapabilitySupportSchema,
   reasoningControls: CapabilitySupportSchema,
-}).strict();
+}).strict());
 export type ProviderCompatibilityCapabilitiesV1 = z.infer<typeof ProviderCompatibilityCapabilitiesV1Schema>;
 
 export const PROVIDER_CAPABILITY_KEYS = [
@@ -98,16 +99,16 @@ export const PROVIDER_CAPABILITY_KEYS = [
   'reasoningControls',
 ] as const satisfies readonly (keyof ProviderCompatibilityCapabilitiesV1)[];
 
-export const ProviderCompatibilityEvidenceV1Schema = z.object({
+export const ProviderCompatibilityEvidenceV1Schema = lazyZodSchema(() => z.object({
   sourceUrls: z.array(ProviderHttpsUrlSchema).min(1).max(16),
   verifiedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u),
   providerVersion: z.string().trim().min(1).max(128).optional(),
   agentVersion: z.string().trim().min(1).max(128).optional(),
   testIds: z.array(z.string().trim().min(1).max(256)).max(64).optional(),
-}).strict();
+}).strict());
 export type ProviderCompatibilityEvidenceV1 = z.infer<typeof ProviderCompatibilityEvidenceV1Schema>;
 
-export const ProviderCompatibilityOverrideV1Schema = z.object({
+export const ProviderCompatibilityOverrideV1Schema = lazyZodSchema(() => z.object({
   agentTargetKey: ProviderAgentTargetKeySchema,
   protocol: ProviderWireProtocolSchema,
   status: z.enum(['verified', 'experimental', 'incompatible']),
@@ -117,10 +118,10 @@ export const ProviderCompatibilityOverrideV1Schema = z.object({
   if (value.status === 'verified' && !value.evidence) {
     ctx.addIssue({ code: 'custom', path: ['evidence'], message: 'Verified compatibility requires evidence' });
   }
-});
+}));
 export type ProviderCompatibilityOverrideV1 = z.infer<typeof ProviderCompatibilityOverrideV1Schema>;
 
-export const ProviderCompatibilityOverridesV1Schema = z.array(ProviderCompatibilityOverrideV1Schema)
+export const ProviderCompatibilityOverridesV1Schema = lazyZodSchema(() => z.array(ProviderCompatibilityOverrideV1Schema)
   .max(128)
   .superRefine((overrides, ctx) => {
     const keys = new Set<string>();
@@ -135,4 +136,4 @@ export const ProviderCompatibilityOverridesV1Schema = z.array(ProviderCompatibil
       }
       keys.add(key);
     });
-  });
+  }));

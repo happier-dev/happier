@@ -1,56 +1,57 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { VoiceAssistantActionSchema, type VoiceAssistantAction } from './actions.js';
 import { resolveVoiceSpeechSegmentLength, speechTextEndAtOrBefore } from './speechText.js';
 
-const VoiceOutputIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
+const VoiceOutputIdSchema = lazyZodSchema(() => z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/));
 const VoiceOutputTurnIdSchema = VoiceOutputIdSchema;
-const VoiceOutputSequenceSchema = z.number().int().min(0).max(4_095);
+const VoiceOutputSequenceSchema = lazyZodSchema(() => z.number().int().min(0).max(4_095));
 const MAX_SPEECH_SEGMENT_CHARACTERS = 16_384;
-const VoiceSpeechTextSchema = z.string().min(1).max(MAX_SPEECH_SEGMENT_CHARACTERS);
-const VoiceStatusTextSchema = z.string().min(1).max(1_024);
-const VoiceFinalTextSchema = z.string().max(65_536);
+const VoiceSpeechTextSchema = lazyZodSchema(() => z.string().min(1).max(MAX_SPEECH_SEGMENT_CHARACTERS));
+const VoiceStatusTextSchema = lazyZodSchema(() => z.string().min(1).max(1_024));
+const VoiceFinalTextSchema = lazyZodSchema(() => z.string().max(65_536));
 
-const VoiceAgentOutputBaseV1Schema = z.object({
+const VoiceAgentOutputBaseV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   turnId: VoiceOutputTurnIdSchema,
   seq: VoiceOutputSequenceSchema,
-}).strict();
+}).strict());
 
-export const VoiceAgentSpeechSegmentEventV1Schema = VoiceAgentOutputBaseV1Schema.extend({
+export const VoiceAgentSpeechSegmentEventV1Schema = lazyZodSchema(() => VoiceAgentOutputBaseV1Schema.extend({
   kind: z.literal('speech_segment'),
   segmentId: VoiceOutputIdSchema,
   text: VoiceSpeechTextSchema,
-}).strict();
+}).strict());
 
-export const VoiceAgentDisplayStatusEventV1Schema = VoiceAgentOutputBaseV1Schema.extend({
+export const VoiceAgentDisplayStatusEventV1Schema = lazyZodSchema(() => VoiceAgentOutputBaseV1Schema.extend({
   kind: z.literal('display_status'),
   statusId: VoiceOutputIdSchema,
   text: VoiceStatusTextSchema,
-}).strict();
+}).strict());
 
-export const VoiceAgentSideEffectEventV1Schema = VoiceAgentOutputBaseV1Schema.extend({
+export const VoiceAgentSideEffectEventV1Schema = lazyZodSchema(() => VoiceAgentOutputBaseV1Schema.extend({
   kind: z.literal('side_effect'),
   effectId: VoiceOutputIdSchema,
   action: VoiceAssistantActionSchema,
-}).strict();
+}).strict());
 
-export const VoiceAgentTurnFinalEventV1Schema = VoiceAgentOutputBaseV1Schema.extend({
+export const VoiceAgentTurnFinalEventV1Schema = lazyZodSchema(() => VoiceAgentOutputBaseV1Schema.extend({
   kind: z.literal('turn_final'),
   text: VoiceFinalTextSchema,
-}).strict();
+}).strict());
 
-export const VoiceAgentTurnCancelledEventV1Schema = VoiceAgentOutputBaseV1Schema.extend({
+export const VoiceAgentTurnCancelledEventV1Schema = lazyZodSchema(() => VoiceAgentOutputBaseV1Schema.extend({
   kind: z.literal('turn_cancelled'),
-}).strict();
+}).strict());
 
-export const VoiceAgentOutputEventV1Schema = z.discriminatedUnion('kind', [
+export const VoiceAgentOutputEventV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   VoiceAgentSpeechSegmentEventV1Schema,
   VoiceAgentDisplayStatusEventV1Schema,
   VoiceAgentSideEffectEventV1Schema,
   VoiceAgentTurnFinalEventV1Schema,
   VoiceAgentTurnCancelledEventV1Schema,
-]);
+]));
 
 export type VoiceAgentOutputEventV1 = z.infer<typeof VoiceAgentOutputEventV1Schema>;
 

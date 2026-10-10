@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { AutomationRunStateV3Schema } from '../../automations/automationRunStateV3.js';
@@ -53,7 +54,7 @@ export function isAuthoritativeAutomationRunCancellationCauseV1(
     || cause === AUTOMATION_RUN_CANCELLED_WHILE_RUNNING_CAUSE_V1;
 }
 
-export const AutomationRunStateChangedHostEventV1Schema = z.object({
+export const AutomationRunStateChangedHostEventV1Schema = lazyZodSchema(() => z.object({
   runId: z.string().min(1),
   automationId: z.string().min(1),
   runCause: AutomationRunCauseSchema,
@@ -85,7 +86,7 @@ export const AutomationRunStateChangedHostEventV1Schema = z.object({
       message: 'currentState must differ from previousState',
     });
   }
-});
+}));
 export type AutomationRunStateChangedHostEventV1 = z.infer<
   typeof AutomationRunStateChangedHostEventV1Schema
 >;
@@ -116,44 +117,44 @@ export function isRuntimeHostEventIdV1(value: string): value is RuntimeHostEvent
   return RUNTIME_HOST_EVENT_ID_SET_V1.has(value);
 }
 
-export const HostEventIdV1Schema = z.string().refine(
+export const HostEventIdV1Schema = lazyZodSchema(() => z.string().refine(
   isHostEventIdV1,
   'Unknown Host Event id',
-);
+));
 
-export const RuntimeHostEventIdV1Schema = z.string().refine(
+export const RuntimeHostEventIdV1Schema = lazyZodSchema(() => z.string().refine(
   isRuntimeHostEventIdV1,
   'Unknown runtime Host Event id',
-);
+));
 
-export const HostEventScopeV1Schema = z.discriminatedUnion('kind', [
+export const HostEventScopeV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('current-session') }).strict(),
   z.object({ kind: z.literal('session'), sessionId: asProtocolZod(SessionIdSchema) }).strict(),
-]);
+]));
 
-export const AutomationHostEventScopeV1Schema = z.object({
+export const AutomationHostEventScopeV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('account'),
-}).strict();
+}).strict());
 
 /**
  * Portable subscription-target validation. Payload parsing remains in
  * `hostV1`; manifest ingestion needs only the closed Event id/scope pairing
  * and must not acquire the Agent runtime payload graph.
  */
-export const RuntimeHostEventTargetV1Schema = z.object({
+export const RuntimeHostEventTargetV1Schema = lazyZodSchema(() => z.object({
   eventId: RuntimeHostEventIdV1Schema,
   scope: HostEventScopeV1Schema,
-}).strict();
+}).strict());
 
-export const AutomationHostEventTargetV1Schema = z.object({
+export const AutomationHostEventTargetV1Schema = lazyZodSchema(() => z.object({
   eventId: z.literal(HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1),
   scope: AutomationHostEventScopeV1Schema,
-}).strict();
+}).strict());
 
-export const HostEventTargetV1Schema = z.union([
+export const HostEventTargetV1Schema = lazyZodSchema(() => z.union([
   RuntimeHostEventTargetV1Schema,
   AutomationHostEventTargetV1Schema,
-]);
+]));
 
 export type RuntimeHostEventCatalogEntryV1 = Readonly<{
   id: RuntimeHostEventIdV1;

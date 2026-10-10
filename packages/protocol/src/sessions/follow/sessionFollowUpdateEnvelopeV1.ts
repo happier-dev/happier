@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
@@ -8,17 +9,17 @@ import { SessionMessageProvenanceV1Schema } from '../messages/sessionInputAdmiss
 import { SessionTranscriptObservationAckV1Schema } from '../messages/transcriptObservationV1.js';
 import { SessionFollowFrontierV1Schema } from './sessionFollowFrontierV1.js';
 
-export const SessionFollowMessageSummaryV1Schema = z.object({
+export const SessionFollowMessageSummaryV1Schema = lazyZodSchema(() => z.object({
   messageId: SessionTranscriptObservationAckV1Schema.options[0].shape.id,
   seq: SessionTranscriptObservationAckV1Schema.options[0].shape.seq,
   text: z.string(),
   /** Sanitized display label; protected provenance remains the authority for origin. */
   authorLabel: z.string().trim().min(1).max(191).regex(/^[^\u0000-\u001f\u007f]+$/u).optional(),
   provenance: SessionMessageProvenanceV1Schema.nullable(),
-}).strict();
+}).strict());
 export type SessionFollowMessageSummaryV1 = z.infer<typeof SessionFollowMessageSummaryV1Schema>;
 
-export const SessionFollowUpdateEnvelopeV1Schema = z.object({
+export const SessionFollowUpdateEnvelopeV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   kind: z.literal('session_follow_update'),
   edge: z.object({
@@ -56,7 +57,7 @@ export const SessionFollowUpdateEnvelopeV1Schema = z.object({
       }
     }
   }
-});
+}));
 export type SessionFollowUpdateEnvelopeV1 = z.infer<typeof SessionFollowUpdateEnvelopeV1Schema>;
 
 /**

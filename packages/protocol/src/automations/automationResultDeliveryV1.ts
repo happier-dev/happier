@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import type { PluginJsonSchemaV2 } from '../plugins/contributions/publicTypes.js';
@@ -43,11 +44,11 @@ const UTF8_ENCODER = new TextEncoder();
 /** Shared bounded integer grammar for Automation source and result contracts. */
 export const AutomationNonnegativeSafeIntegerV1Schema = z.number().int().nonnegative().safe();
 
-export const AutomationRunResultV1Schema = z.object({
+export const AutomationRunResultV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   kind: z.literal('text'),
   text: z.string(),
-}).strict();
+}).strict());
 export type AutomationRunResultV1 = z.infer<typeof AutomationRunResultV1Schema>;
 
 /**
@@ -55,13 +56,13 @@ export type AutomationRunResultV1 = z.infer<typeof AutomationRunResultV1Schema>;
  * daemon and into the receiving plugin's custody owner. Correspondence stays separate
  * so the server can route without opening the sealed source payload.
  */
-export const AutomationResultDeliverySourceV1Schema = z.object({
+export const AutomationResultDeliverySourceV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('automationResult'),
   automationRunId: asProtocolZod(AutomationIdV1Schema),
   resultId: asProtocolZod(AutomationIdV1Schema),
   automationId: asProtocolZod(AutomationIdV1Schema),
   resultDelivery: z.literal('finalResult'),
-}).strict();
+}).strict());
 export type AutomationResultDeliverySourceV1 = z.infer<typeof AutomationResultDeliverySourceV1Schema>;
 
 /**
@@ -84,14 +85,14 @@ export type AutomationResultDeliveryActionRefV1 = PluginContributionIdentityV1;
 export const AutomationResultDeliveryActionRefV1JsonSchema: PluginJsonSchemaV2 =
   PluginContributionIdentityV1JsonSchema;
 
-export const AutomationConversationResultDeliveryV1Schema = z.discriminatedUnion('kind', [
+export const AutomationConversationResultDeliveryV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('none') }).strict(),
   z.object({
     kind: z.literal('finalResult'),
     actionRef: AutomationResultDeliveryActionRefV1Schema,
     opaqueContext: asProtocolZod(AutomationEventReplyContextV1Schema),
   }).strict(),
-]);
+]));
 export type AutomationConversationResultDeliveryV1 = z.infer<
   typeof AutomationConversationResultDeliveryV1Schema
 >;
@@ -113,22 +114,22 @@ export function isAutomationConversationResultDeliveryOwnedByCallerV1(params: Re
 }
 
 /** Host-side scoped correspondence, including the private PR selector. */
-export const AutomationConversationScopedTriggerRefV1Schema = z.object({
+export const AutomationConversationScopedTriggerRefV1Schema = lazyZodSchema(() => z.object({
   sessionId: asProtocolZod(SessionIdSchema),
   triggerId: AutomationTriggerIdSchema,
   triggerRevision: AutomationTriggerRevisionSchema,
   triggerKind: z.enum(['prComment', 'ciFailed']),
   pullRequest: AutomationPullRequestTriggerSchema.shape.pullRequest,
-}).strict();
-export const AutomationConversationScopedTriggerEvidenceV1Schema = AutomationConversationScopedTriggerRefV1Schema.extend({
+}).strict());
+export const AutomationConversationScopedTriggerEvidenceV1Schema = lazyZodSchema(() => AutomationConversationScopedTriggerRefV1Schema.extend({
   bindingId: asProtocolZod(AutomationIdV1Schema),
   observationActorPrincipalId: z.string().min(1),
   actor: z.object({ principalId: z.string().min(1), repositoryWriteAccess: z.boolean().nullable() }).strict(),
-}).strict();
+}).strict());
 export type AutomationConversationScopedTriggerEvidenceV1 = z.infer<typeof AutomationConversationScopedTriggerEvidenceV1Schema>;
 export type AutomationConversationScopedTriggerRefV1 = z.infer<typeof AutomationConversationScopedTriggerRefV1Schema>;
 
-export const AutomationConversationAdmitInputV1Schema = z.object({
+export const AutomationConversationAdmitInputV1Schema = lazyZodSchema(() => z.object({
   automationId: asProtocolZod(AutomationIdV1Schema),
   bindingId: asProtocolZod(AutomationIdV1Schema),
   occurrenceId: AutomationEventSourceOrOccurrenceIdV1Schema,
@@ -143,7 +144,7 @@ export const AutomationConversationAdmitInputV1Schema = z.object({
   }),
   resultDelivery: AutomationConversationResultDeliveryV1Schema,
   hostEvidence: AutomationConversationScopedTriggerEvidenceV1Schema.optional(),
-}).strict();
+}).strict());
 export type AutomationConversationAdmitInputV1 = z.infer<typeof AutomationConversationAdmitInputV1Schema>;
 
 /** Binds scoped permission evidence to the same semantic sender and binding. */
@@ -160,7 +161,7 @@ export function isAutomationConversationAdmitScopedCorrespondenceV1(
     && sender.principalId === evidence.observationActorPrincipalId;
 }
 
-export const AutomationConversationAdmitResultV1Schema = z.discriminatedUnion('kind', [
+export const AutomationConversationAdmitResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('refused'),
     reason: z.enum(['repositoryWriteAccessUnknown', 'repositoryWriteAccessDenied', 'scopedTriggerIdentityMismatch']),
@@ -179,10 +180,10 @@ export const AutomationConversationAdmitResultV1Schema = z.discriminatedUnion('k
     ]),
     checkpointSafe: z.literal(false),
   }).strict(),
-]);
+]));
 export type AutomationConversationAdmitResultV1 = z.infer<typeof AutomationConversationAdmitResultV1Schema>;
 
-export const AutomationResultDeliveryInputV1Schema = z.object({
+export const AutomationResultDeliveryInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   handoffId: asProtocolZod(AutomationIdV1Schema),
   runId: asProtocolZod(AutomationIdV1Schema),
@@ -190,10 +191,10 @@ export const AutomationResultDeliveryInputV1Schema = z.object({
   source: AutomationResultDeliverySourceV1Schema,
   result: AutomationRunResultV1Schema,
   opaqueContext: asProtocolZod(AutomationEventReplyContextV1Schema),
-}).strict();
+}).strict());
 export type AutomationResultDeliveryInputV1 = z.infer<typeof AutomationResultDeliveryInputV1Schema>;
 
-export const AutomationResultDeliveryResultV1Schema = z.discriminatedUnion('kind', [
+export const AutomationResultDeliveryResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('accepted'), custodyId: asProtocolZod(AutomationIdV1Schema) }).strict(),
   z.object({ kind: z.literal('retired') }).strict(),
   z.object({ kind: z.literal('suppressed'), reason: z.enum(['bindingDisabled', 'bindingDeleted', 'audienceRevoked']) }).strict(),
@@ -203,7 +204,7 @@ export const AutomationResultDeliveryResultV1Schema = z.discriminatedUnion('kind
     code: z.enum(['temporarilyUnavailable', 'outcomeUnknown']),
   }).strict(),
   z.object({ kind: z.literal('blocked'), code: z.enum(['contractIncompatible', 'invalidCustodyRequest', 'unauthorizedCaller']) }).strict(),
-]);
+]));
 export type AutomationResultDeliveryResultV1 = z.infer<typeof AutomationResultDeliveryResultV1Schema>;
 
 /**

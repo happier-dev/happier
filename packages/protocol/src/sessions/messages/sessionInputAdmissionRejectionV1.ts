@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -21,9 +22,9 @@ export const SESSION_INPUT_ADMISSION_REJECTION_CODES_V1 = [
   'session_input_encryption_mode_mismatch',
 ] as const;
 
-export const SessionInputAdmissionRejectionCodeV1Schema = z.enum(
+export const SessionInputAdmissionRejectionCodeV1Schema = lazyZodSchema(() => z.enum(
   SESSION_INPUT_ADMISSION_REJECTION_CODES_V1,
-);
+));
 export type SessionInputAdmissionRejectionCodeV1 = z.infer<
   typeof SessionInputAdmissionRejectionCodeV1Schema
 >;

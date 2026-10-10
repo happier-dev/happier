@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 export const SESSION_SYSTEM_RECORD_MEMORY_NAMESPACE = 'memory' as const;
@@ -7,5 +8,5 @@ export const MEMORY_SESSION_SYSTEM_RECORD_KINDS = [
   'synopsis.v1',
 ] as const;
 
-export const MemorySessionSystemRecordKindSchema = z.enum(MEMORY_SESSION_SYSTEM_RECORD_KINDS);
+export const MemorySessionSystemRecordKindSchema = lazyZodSchema(() => z.enum(MEMORY_SESSION_SYSTEM_RECORD_KINDS));
 export type MemorySessionSystemRecordKind = z.infer<typeof MemorySessionSystemRecordKindSchema>;

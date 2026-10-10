@@ -1,13 +1,14 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { IdentityConnectionTestDiagnosticsV1Schema } from './testDiagnostics.js';
 
-const ProviderIdSchema = z.string().trim().min(1);
-const NonEmptyStringSchema = z.string().trim().min(1);
-const ProviderDisplayNameSchema = z.string().trim().min(1).max(256);
+const ProviderIdSchema = lazyZodSchema(() => z.string().trim().min(1));
+const NonEmptyStringSchema = lazyZodSchema(() => z.string().trim().min(1));
+const ProviderDisplayNameSchema = lazyZodSchema(() => z.string().trim().min(1).max(256));
 
 /** Exact Team identity binding visible only in authorized owner administration. */
-export const ManagedIdentityProviderTeamConsumerV1Schema = z.object({
+export const ManagedIdentityProviderTeamConsumerV1Schema = lazyZodSchema(() => z.object({
   team: z.object({
     id: NonEmptyStringSchema,
     name: z.string(),
@@ -17,16 +18,16 @@ export const ManagedIdentityProviderTeamConsumerV1Schema = z.object({
     id: NonEmptyStringSchema,
     enabled: z.boolean(),
   }).strict(),
-}).strict();
+}).strict());
 export type ManagedIdentityProviderTeamConsumerV1 = z.infer<typeof ManagedIdentityProviderTeamConsumerV1Schema>;
 
-export const ManagedIdentityProviderOwnerV1Schema = z.discriminatedUnion('kind', [
+export const ManagedIdentityProviderOwnerV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('home') }).strict(),
   z.object({ kind: z.literal('team'), teamId: NonEmptyStringSchema }).strict(),
-]);
+]));
 export type ManagedIdentityProviderOwnerV1 = z.infer<typeof ManagedIdentityProviderOwnerV1Schema>;
-const ManagedIdentityProviderOwnerInputV1Schema = ManagedIdentityProviderOwnerV1Schema
-  .default({ kind: 'home' });
+const ManagedIdentityProviderOwnerInputV1Schema = lazyZodSchema(() => ManagedIdentityProviderOwnerV1Schema
+  .default({ kind: 'home' }));
 
 const ManagedOidcProviderConfigFieldsV1 = {
   v: z.literal(1),
@@ -59,18 +60,18 @@ const ManagedOidcProviderConfigFieldsV1 = {
 } as const;
 
 /** Canonical current provider document. Security-effective choices are always explicit. */
-export const ManagedOidcProviderConfigV1Schema = z.object(ManagedOidcProviderConfigFieldsV1).strict();
+export const ManagedOidcProviderConfigV1Schema = lazyZodSchema(() => z.object(ManagedOidcProviderConfigFieldsV1).strict());
 export type ManagedOidcProviderConfigV1 = z.infer<typeof ManagedOidcProviderConfigV1Schema>;
 
 /**
  * Creation is the only wire boundary that accepts the predecessor omission. It
  * immediately materializes the explicit current value before persistence.
  */
-const ManagedOidcProviderCreateConfigV1Schema = z.object({
+const ManagedOidcProviderCreateConfigV1Schema = lazyZodSchema(() => z.object({
   ...ManagedOidcProviderConfigFieldsV1,
   clientAuthenticationMethod: ManagedOidcProviderConfigFieldsV1.clientAuthenticationMethod
     .default('client_secret_post'),
-}).strict();
+}).strict());
 
 const ManagedIdentityProviderCommonFieldsV1 = {
   v: z.literal(1),
@@ -98,10 +99,10 @@ const ManagedIdentityProviderCommonFieldsV1 = {
   callbackUrl: z.string().url().optional(),
 } as const;
 
-export const ManagedGitHubIdentityProviderConfigV1Schema = z.object({
+export const ManagedGitHubIdentityProviderConfigV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   kind: z.literal('github_app_identity'),
-}).strict();
+}).strict());
 export type ManagedGitHubIdentityProviderConfigV1 = z.infer<typeof ManagedGitHubIdentityProviderConfigV1Schema>;
 
 /**
@@ -109,7 +110,7 @@ export type ManagedGitHubIdentityProviderConfigV1 = z.infer<typeof ManagedGitHub
  * remain OIDC-specific; the GitHub arm exposes only the existing installation
  * reference needed to administer that explicit identity consumer.
  */
-export const ManagedOidcIdentityProviderV1Schema = z.object({
+export const ManagedOidcIdentityProviderV1Schema = lazyZodSchema(() => z.object({
   ...ManagedIdentityProviderCommonFieldsV1,
   kind: z.literal('oidc'),
   config: ManagedOidcProviderConfigV1Schema,
@@ -117,10 +118,10 @@ export const ManagedOidcIdentityProviderV1Schema = z.object({
     configured: z.boolean(),
     health: z.enum(['configured', 'missing', 'unreadable']),
   }).strict(),
-}).strict();
+}).strict());
 export type ManagedOidcIdentityProviderV1 = z.infer<typeof ManagedOidcIdentityProviderV1Schema>;
 
-export const ManagedIdentityProviderV1Schema = z.discriminatedUnion('kind', [
+export const ManagedIdentityProviderV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   ManagedOidcIdentityProviderV1Schema,
   z.object({
     ...ManagedIdentityProviderCommonFieldsV1,
@@ -128,25 +129,25 @@ export const ManagedIdentityProviderV1Schema = z.discriminatedUnion('kind', [
     config: ManagedGitHubIdentityProviderConfigV1Schema,
     githubAppInstallationId: ProviderIdSchema,
   }).strict(),
-]);
+]));
 export type ManagedIdentityProviderV1 = z.infer<typeof ManagedIdentityProviderV1Schema>;
 
-export const ManagedIdentityProvidersListInputV1Schema = z.object({
+export const ManagedIdentityProvidersListInputV1Schema = lazyZodSchema(() => z.object({
   owner: ManagedIdentityProviderOwnerInputV1Schema,
-}).strict();
-export const ManagedIdentityProvidersListResultV1Schema = z.object({
+}).strict());
+export const ManagedIdentityProvidersListResultV1Schema = lazyZodSchema(() => z.object({
   items: z.array(ManagedIdentityProviderV1Schema),
   unreadableCount: z.number().int().min(0),
-}).strict();
+}).strict());
 
-export const ManagedIdentityProviderCreateInputV1Schema = z.object({
+export const ManagedIdentityProviderCreateInputV1Schema = lazyZodSchema(() => z.object({
   owner: ManagedIdentityProviderOwnerInputV1Schema,
   displayName: ProviderDisplayNameSchema,
   config: ManagedOidcProviderCreateConfigV1Schema,
   clientSecret: z.string().min(1),
-}).strict();
+}).strict());
 
-export const ManagedIdentityProviderUpdateInputV1Schema = z.object({
+export const ManagedIdentityProviderUpdateInputV1Schema = lazyZodSchema(() => z.object({
   owner: ManagedIdentityProviderOwnerInputV1Schema,
   id: ProviderIdSchema,
   expectedRevision: z.number().int().positive(),
@@ -155,48 +156,48 @@ export const ManagedIdentityProviderUpdateInputV1Schema = z.object({
 }).strict().refine(
   (value) => value.displayName !== undefined || value.config !== undefined,
   'A provider update must change displayName or config',
-);
+));
 
-export const ManagedIdentityProviderSecretReplaceInputV1Schema = z.object({
+export const ManagedIdentityProviderSecretReplaceInputV1Schema = lazyZodSchema(() => z.object({
   owner: ManagedIdentityProviderOwnerInputV1Schema,
   id: ProviderIdSchema,
   expectedRevision: z.number().int().positive(),
   clientSecret: z.string().min(1),
-}).strict();
+}).strict());
 
-export const ManagedIdentityProviderLifecycleInputV1Schema = z.object({
+export const ManagedIdentityProviderLifecycleInputV1Schema = lazyZodSchema(() => z.object({
   owner: ManagedIdentityProviderOwnerInputV1Schema,
   id: ProviderIdSchema,
   expectedRevision: z.number().int().positive(),
   expectedSecurityRevision: z.number().int().positive(),
-}).strict();
+}).strict());
 
 export const ManagedIdentityProviderTestStartInputV1Schema = ManagedIdentityProviderLifecycleInputV1Schema;
-export const ManagedIdentityProviderTestStartResultV1Schema = z.object({
+export const ManagedIdentityProviderTestStartResultV1Schema = lazyZodSchema(() => z.object({
   authorizeUrl: z.url(),
   attemptId: NonEmptyStringSchema,
-}).strict();
+}).strict());
 
-export const ManagedIdentityProviderTestConsumeInputV1Schema = z.object({
+export const ManagedIdentityProviderTestConsumeInputV1Schema = lazyZodSchema(() => z.object({
   owner: ManagedIdentityProviderOwnerInputV1Schema,
   id: ProviderIdSchema,
   resultHandle: NonEmptyStringSchema,
-}).strict();
-export const ManagedIdentityProviderTestConsumeResultV1Schema = z.object({
+}).strict());
+export const ManagedIdentityProviderTestConsumeResultV1Schema = lazyZodSchema(() => z.object({
   provider: ManagedOidcIdentityProviderV1Schema,
   testedAt: z.number().int(),
   subjectPresent: z.literal(true),
   /** Absent when the tested provider produced no sanitized diagnostics. */
   diagnostics: IdentityConnectionTestDiagnosticsV1Schema.optional(),
-}).strict();
+}).strict());
 
-export const ManagedIdentityProviderRemovePreflightInputV1Schema = z.object({
+export const ManagedIdentityProviderRemovePreflightInputV1Schema = lazyZodSchema(() => z.object({
   owner: ManagedIdentityProviderOwnerInputV1Schema,
   id: ProviderIdSchema,
   expectedRevision: z.number().int().positive(),
-}).strict();
+}).strict());
 
-export const ManagedIdentityProviderRemovePreflightResultV1Schema = z.object({
+export const ManagedIdentityProviderRemovePreflightResultV1Schema = lazyZodSchema(() => z.object({
   provider: ManagedIdentityProviderV1Schema,
   canRemove: z.boolean(),
   blockers: z.object({
@@ -204,13 +205,13 @@ export const ManagedIdentityProviderRemovePreflightResultV1Schema = z.object({
     connectionCount: z.number().int().min(0),
     affectedAccountIds: z.array(z.string().min(1)),
   }).strict(),
-}).strict();
+}).strict());
 
-export const ManagedIdentityProviderRemoveResultV1Schema = z.object({
+export const ManagedIdentityProviderRemoveResultV1Schema = lazyZodSchema(() => z.object({
   outcome: z.literal('removed'),
-}).strict();
+}).strict());
 
-export const ManagedIdentityProviderErrorCodeV1Schema = z.enum([
+export const ManagedIdentityProviderErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'identity_provider_forbidden',
   'identity_provider_not_found',
   'identity_provider_unreadable',
@@ -222,17 +223,17 @@ export const ManagedIdentityProviderErrorCodeV1Schema = z.enum([
   'oidc_discovery_failed',
   'oidc_issuer_mismatch',
   'oidc_endpoint_forbidden',
-]);
+]));
 export type ManagedIdentityProviderErrorCodeV1 = z.infer<typeof ManagedIdentityProviderErrorCodeV1Schema>;
 
-export const ManagedIdentityProviderErrorV1Schema = z.object({
+export const ManagedIdentityProviderErrorV1Schema = lazyZodSchema(() => z.object({
   error: ManagedIdentityProviderErrorCodeV1Schema,
   current: ManagedIdentityProviderV1Schema.nullable().optional(),
   blockers: z.object({
     identityCount: z.number().int().min(0),
     connectionCount: z.number().int().min(0),
   }).strict().optional(),
-}).strict();
+}).strict());
 
 export const MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1 = [
   'identity.providers.list',
@@ -248,7 +249,7 @@ export const MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1 = [
   'identity.providers.remove',
 ] as const;
 export type ManagedIdentityProviderActionIdV1 = typeof MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1[number];
-export const ManagedIdentityProviderActionIdV1Schema = z.enum(MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1);
+export const ManagedIdentityProviderActionIdV1Schema = lazyZodSchema(() => z.enum(MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1));
 
 export const MANAGED_IDENTITY_PROVIDER_ACTION_PATHS_V1 = Object.freeze({
   'identity.providers.list': '/v1/identity/providers/list',

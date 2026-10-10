@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -15,9 +16,9 @@ import { FEATURES_RESPONSE_MAX_UTF8_BYTES_V1 } from './responseLimits.js';
 
 export { FEATURES_RESPONSE_MAX_UTF8_BYTES_V1 } from './responseLimits.js';
 
-const ServerIdentityIdSchema = z.string().trim().regex(SERVER_IDENTITY_ID_PATTERN);
+const ServerIdentityIdSchema = lazyZodSchema(() => z.string().trim().regex(SERVER_IDENTITY_ID_PATTERN));
 
-export const HomeSignInServicePolicyV1Schema = z.discriminatedUnion('mode', [
+export const HomeSignInServicePolicyV1Schema = lazyZodSchema(() => z.discriminatedUnion('mode', [
   z.object({ v: z.literal(1), mode: z.literal('disabled') }).strict(),
   z.object({ v: z.literal(1), mode: z.literal('self') }).strict(),
   z.object({
@@ -26,10 +27,10 @@ export const HomeSignInServicePolicyV1Schema = z.discriminatedUnion('mode', [
     endpoint: HomeApplicationOriginV1Schema,
     expectedServerIdentityId: ServerIdentityIdSchema.optional(),
   }).strict(),
-]);
+]));
 export type HomeSignInServicePolicyV1 = z.infer<typeof HomeSignInServicePolicyV1Schema>;
 
-export const AccountServicePresentationV1Schema = z.object({
+export const AccountServicePresentationV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   displayName: z.string().trim().min(1).superRefine((value, context) => {
     if (/\p{Cc}/u.test(value)) {
@@ -39,20 +40,20 @@ export const AccountServicePresentationV1Schema = z.object({
       context.addIssue({ code: z.ZodIssueCode.custom, message: 'Display name exceeds its UTF-8 byte limit' });
     }
   }),
-}).strict();
+}).strict());
 export type AccountServicePresentationV1 = z.infer<typeof AccountServicePresentationV1Schema>;
 
-export const HomePresentationV1Schema = z.object({
+export const HomePresentationV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   displayName: z.string().trim().min(1).superRefine((value, context) => {
     if (/\p{Cc}/u.test(value) || new TextEncoder().encode(value).byteLength > ACCOUNT_DIRECTORY_MAX_LABEL_UTF8_BYTES) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: 'Invalid Home display name' });
     }
   }),
-}).strict();
+}).strict());
 export type HomePresentationV1 = z.infer<typeof HomePresentationV1Schema>;
 
-export const HomeHostFactSchema = z.discriminatedUnion('kind', [
+export const HomeHostFactSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('known'),
     machineName: z.string().trim().min(1).refine((value) => !/\p{Cc}/u.test(value)),
@@ -60,7 +61,7 @@ export const HomeHostFactSchema = z.discriminatedUnion('kind', [
     mobility: z.enum(['portable', 'stationary']),
   }).strict(),
   z.object({ kind: z.literal('unknown') }).strict(),
-]);
+]));
 export type HomeHostFact = z.infer<typeof HomeHostFactSchema>;
 
 function coerceFeaturesResponsePayload(raw: unknown): unknown {
@@ -116,7 +117,7 @@ function coerceFeaturesResponsePayload(raw: unknown): unknown {
   };
 }
 
-export const FeaturesResponseSchema = z.preprocess(
+export const FeaturesResponseSchema = lazyZodSchema(() => z.preprocess(
   coerceFeaturesResponsePayload,
   z.object({
     features: FeatureGatesSchema,
@@ -130,7 +131,7 @@ export const FeaturesResponseSchema = z.preprocess(
     homePresentation: HomePresentationV1Schema.optional(),
     homeHostFact: HomeHostFactSchema.optional(),
   }),
-);
+));
 
 export type FeaturesResponse = Readonly<{
   features: FeatureGates;

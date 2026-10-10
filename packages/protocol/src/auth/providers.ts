@@ -1,6 +1,7 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
-export const AuthProviderIdSchema = z.string().min(1);
+export const AuthProviderIdSchema = lazyZodSchema(() => z.string().min(1));
 export type AuthProviderId = z.infer<typeof AuthProviderIdSchema>;
 
 /**

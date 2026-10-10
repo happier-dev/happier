@@ -1,6 +1,7 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
-export const PluginUiFallbackRefV1Schema = z.discriminatedUnion('kind', [
+export const PluginUiFallbackRefV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('descriptor'),
     descriptorId: z.string().trim().min(1),
@@ -19,7 +20,7 @@ export const PluginUiFallbackRefV1Schema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('none'),
   }).strict(),
-]);
+]));
 export type PluginUiFallbackRefV1 = z.infer<typeof PluginUiFallbackRefV1Schema>;
 
 export function isExecutablePluginUiFallbackRefV1(

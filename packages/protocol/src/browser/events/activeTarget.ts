@@ -1,13 +1,14 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { BROWSER_AUTOMATION_TARGET_LABEL_MAX_LENGTH, redactBrowserAutomationTargetLabel } from '../automation/redaction.js';
 
 /** Visible element rectangle in page-viewport coordinates; x/y are its centre. */
-export const BrowserActiveTargetV1Schema = z.object({
+export const BrowserActiveTargetV1Schema = lazyZodSchema(() => z.object({
   x: z.number().min(0).max(1), y: z.number().min(0).max(1),
   width: z.number().min(0).max(1), height: z.number().min(0).max(1),
   /** Accessible name or visible non-editable text; never field values or typed input. */
   label: z.string().max(BROWSER_AUTOMATION_TARGET_LABEL_MAX_LENGTH).transform(redactBrowserAutomationTargetLabel).optional(),
-}).strict();
+}).strict());
 export type BrowserActiveTargetV1 = z.infer<typeof BrowserActiveTargetV1Schema>;
 
 /** Self-contained for CDP and the installed collector; redaction runs at schema admission. */

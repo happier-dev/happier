@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 
@@ -32,13 +33,13 @@ export function createPluginEventAutomationSetupResultV1JsonSchema(
   };
 }
 
-export const PluginEventAutomationSetupResultV1Schema = z.object({
+export const PluginEventAutomationSetupResultV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   sourceInstanceId: AutomationEventSourceInstanceIdV1Schema,
   sourceContractVersion: AutomationEventPositiveSafeIntegerV1Schema,
   sourceConfig: asProtocolZod(AutomationEventSourceConfigV1Schema),
   displayLabel: AutomationEventSourceDisplayLabelV1Schema,
-}).strict();
+}).strict());
 export type PluginEventAutomationSetupResultV1 = z.infer<
   typeof PluginEventAutomationSetupResultV1Schema
 >;

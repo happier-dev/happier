@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z, type ZodRawShape, type ZodType, type ZodTypeAny } from 'zod';
 
 import { AgentIdV1Schema } from '../../agents/agentIdV1.js';
@@ -228,13 +229,13 @@ export const EXTERNAL_SESSIONS_AGENT_IDS = Object.freeze(
 export const ExternalSessionAgentIdSchema = AgentIdV1Schema;
 export type ExternalSessionAgentId = z.infer<typeof ExternalSessionAgentIdSchema>;
 
-export const ExternalSessionSourceIdSchema = z.string()
+export const ExternalSessionSourceIdSchema = lazyZodSchema(() => z.string()
   .min(1)
   .max(2_000)
   .refine(
     (value) => value === value.trim(),
     'External-session source id must already be trimmed.',
-  );
+  ));
 export type ExternalSessionSourceId = z.infer<typeof ExternalSessionSourceIdSchema>;
 
 /**
@@ -243,13 +244,13 @@ export type ExternalSessionSourceId = z.infer<typeof ExternalSessionSourceIdSche
  * bound is measured on the preserved bytes rather than on a trimmed
  * projection of them.
  */
-const ExternalSessionRemoteSessionIdSchema = NonBlankOpaqueIdentifierSchema.max(2_000);
+const ExternalSessionRemoteSessionIdSchema = lazyZodSchema(() => NonBlankOpaqueIdentifierSchema.max(2_000));
 
-export const ExternalSessionRefSchema = z.object({
+export const ExternalSessionRefSchema = lazyZodSchema(() => z.object({
   agentId: ExternalSessionAgentIdSchema,
   sourceId: ExternalSessionSourceIdSchema,
   remoteSessionId: ExternalSessionRemoteSessionIdSchema,
-}).strict();
+}).strict());
 export type ExternalSessionRef = z.infer<typeof ExternalSessionRefSchema>;
 
 export const ExternalSessionsAgentIdSchema = ExternalSessionAgentIdSchema;

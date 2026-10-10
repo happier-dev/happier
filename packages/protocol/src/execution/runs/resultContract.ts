@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -11,10 +12,10 @@ import { StrictJsonValueSchema, type JsonValue } from '../../json/strictJsonValu
 import type { PluginJsonSchemaV2 } from '../../plugins/contributions/jsonSchema.js';
 import type { ExecutionRunResultContractV1 } from './resultContractV1.js';
 
-const DecisionResultSchema = z.union([
+const DecisionResultSchema = lazyZodSchema(() => z.union([
   z.string(),
   z.object({ decision: z.string(), reason: z.string().optional() }).strict(),
-]);
+]));
 
 export type ExecutionRunProfileResultContract =
   | ExecutionRunResultContractV1

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -46,12 +47,12 @@ export type AgentSessionAuthRefreshRecoveryV1 = z.infer<
   typeof AgentSessionAuthRefreshRecoveryV1Schema
 >;
 
-export const AgentSessionAuthRefreshErrorV1Schema = z.object({
+export const AgentSessionAuthRefreshErrorV1Schema = lazyZodSchema(() => z.object({
   name: z.string().trim().min(1).max(AUTH_REFRESH_NAME_MAX).optional(),
   message: z.string().trim().min(1).max(AUTH_REFRESH_MESSAGE_MAX),
   code: z.string().trim().min(1).max(AUTH_REFRESH_CODE_MAX).optional(),
   details: StrictJsonValueSchema.optional(),
-}).strict();
+}).strict());
 export type AgentSessionAuthRefreshErrorV1 = z.infer<
   typeof AgentSessionAuthRefreshErrorV1Schema
 >;
@@ -76,10 +77,10 @@ export function normalizeAgentSessionAuthRefreshErrorV1(
   return { message: 'Runtime authentication refresh failed' };
 }
 
-export const ProviderTranscriptDispatchRequestV1Schema = z.object({
+export const ProviderTranscriptDispatchRequestV1Schema = lazyZodSchema(() => z.object({
   body: StrictJsonValueSchema,
   meta: z.record(z.string(), StrictJsonValueSchema).optional(),
-}).strict();
+}).strict());
 export type ProviderTranscriptDispatchRequestV1 = z.infer<
   typeof ProviderTranscriptDispatchRequestV1Schema
 >;

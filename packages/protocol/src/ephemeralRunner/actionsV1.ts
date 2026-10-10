@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { RunnerActivationCreateRequestV1Schema } from './activation.js';
@@ -6,17 +7,17 @@ import { EPHEMERAL_RUNNER_ACTIVATIONS_PATH_V1 } from './routes.js';
 import { EPHEMERAL_RUNNER_ACTION_IDS_V1, type EphemeralRunnerActionIdV1 } from './actionIdsV1.js';
 export { EPHEMERAL_RUNNER_ACTION_IDS_V1, EphemeralRunnerActionIdV1Schema, type EphemeralRunnerActionIdV1 } from './actionIdsV1.js';
 
-const ActivationIdentityInputV1Schema = z.object({ activationId: z.string().uuid() }).strict();
+const ActivationIdentityInputV1Schema = lazyZodSchema(() => z.object({ activationId: z.string().uuid() }).strict());
 export const EphemeralRunnerActionInputSchemasV1 = {
   'sessions.runner.activation.create': RunnerActivationCreateRequestV1Schema,
   'sessions.runner.activation.get': ActivationIdentityInputV1Schema,
   'sessions.runner.activation.cancel': ActivationIdentityInputV1Schema,
 } as const satisfies Readonly<Record<EphemeralRunnerActionIdV1, z.ZodTypeAny>>;
 
-export const EphemeralRunnerActivationCancelResultV1Schema = z.object({
+export const EphemeralRunnerActivationCancelResultV1Schema = lazyZodSchema(() => z.object({
   activationId: z.string().uuid(),
   closed: z.literal(true),
-}).strict();
+}).strict());
 export const EphemeralRunnerActionOutputSchemasV1 = {
   'sessions.runner.activation.create': RunnerActivationProjectionV1Schema,
   'sessions.runner.activation.get': RunnerActivationProjectionV1Schema,

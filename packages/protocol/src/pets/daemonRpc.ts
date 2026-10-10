@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { AccountPetCreateResponseV1Schema, PetAssetMediaTypeV1Schema } from './accountLibrary.js';
@@ -15,29 +16,29 @@ export const PET_DAEMON_RPC_METHODS = Object.freeze({
   READ_PREVIEW_ASSET: 'pets.readPreviewAsset',
 });
 
-export const PetDiscoveryDiagnosticCodeV1Schema = z.enum([
+export const PetDiscoveryDiagnosticCodeV1Schema = lazyZodSchema(() => z.enum([
   'root_not_found',
   'root_unreadable',
   'pet_limit_exceeded',
   'root_limit_exceeded',
   'time_budget_exceeded',
   'invalid_package',
-]);
+]));
 
 export type PetDiscoveryDiagnosticCodeV1 = z.infer<typeof PetDiscoveryDiagnosticCodeV1Schema>;
 
-export const PetDiscoveryDiagnosticV1Schema = z
+export const PetDiscoveryDiagnosticV1Schema = lazyZodSchema(() => z
   .object({
     code: PetDiscoveryDiagnosticCodeV1Schema,
     message: z.string().min(1),
     rootPath: z.string().min(1).max(10_000).optional(),
     packagePath: z.string().min(1).max(10_000).optional(),
   })
-  .passthrough();
+  .passthrough());
 
 export type PetDiscoveryDiagnosticV1 = z.infer<typeof PetDiscoveryDiagnosticV1Schema>;
 
-export const DiscoveredPetPackageV1Schema = z
+export const DiscoveredPetPackageV1Schema = lazyZodSchema(() => z
   .object({
     sourceKey: z.string().min(1).max(500),
     petId: z.string().min(1).max(200),
@@ -58,11 +59,11 @@ export const DiscoveredPetPackageV1Schema = z
       spritesheetPath: value.manifest.spritesheetPath,
       mediaType: value.mediaType,
     });
-  });
+  }));
 
 export type DiscoveredPetPackageV1 = z.infer<typeof DiscoveredPetPackageV1Schema>;
 
-export const DaemonPetDiscoverRequestV1Schema = z
+export const DaemonPetDiscoverRequestV1Schema = lazyZodSchema(() => z
   .object({
     includeDetectedCodexHomes: z.boolean().optional(),
     includeUserCodexHome: z.boolean().optional().default(true),
@@ -72,11 +73,11 @@ export const DaemonPetDiscoverRequestV1Schema = z
     maxRoots: z.number().int().min(1).max(1000).optional(),
     maxDiscoveryWallClockMs: z.number().int().min(1).max(60_000).optional(),
   })
-  .passthrough();
+  .passthrough());
 
 export type DaemonPetDiscoverRequestV1 = z.infer<typeof DaemonPetDiscoverRequestV1Schema>;
 
-export const DaemonPetDiscoverResponseV1Schema = z.union([
+export const DaemonPetDiscoverResponseV1Schema = lazyZodSchema(() => z.union([
   z
     .object({
       ok: z.literal(true),
@@ -86,11 +87,11 @@ export const DaemonPetDiscoverResponseV1Schema = z.union([
     })
     .passthrough(),
   z.object({ ok: z.literal(false), errorCode: z.enum(['invalid_request', 'feature_disabled', 'rate_limited', 'internal_error']), error: z.string().min(1) }).passthrough(),
-]);
+]));
 
 export type DaemonPetDiscoverResponseV1 = z.infer<typeof DaemonPetDiscoverResponseV1Schema>;
 
-export const PetPackageValidationIssueCodeV1Schema = z.enum([
+export const PetPackageValidationIssueCodeV1Schema = lazyZodSchema(() => z.enum([
   'manifest_missing',
   'manifest_too_large',
   'manifest_invalid_json',
@@ -104,21 +105,21 @@ export const PetPackageValidationIssueCodeV1Schema = z.enum([
   'package_path_unsafe',
   'symlink_escape',
   'internal_error',
-]);
+]));
 
 export type PetPackageValidationIssueCodeV1 = z.infer<typeof PetPackageValidationIssueCodeV1Schema>;
 
-export const PetPackageValidationIssueV1Schema = z
+export const PetPackageValidationIssueV1Schema = lazyZodSchema(() => z
   .object({
     code: PetPackageValidationIssueCodeV1Schema,
     message: z.string().min(1),
     path: z.string().min(1).max(10_000).optional(),
   })
-  .passthrough();
+  .passthrough());
 
 export type PetPackageValidationIssueV1 = z.infer<typeof PetPackageValidationIssueV1Schema>;
 
-export const PetPackageValidationResultV1Schema = z.union([
+export const PetPackageValidationResultV1Schema = lazyZodSchema(() => z.union([
   z
     .object({
       ok: z.literal(true),
@@ -140,40 +141,40 @@ export const PetPackageValidationResultV1Schema = z.union([
       });
     }),
   z.object({ ok: z.literal(false), issues: z.array(PetPackageValidationIssueV1Schema).min(1) }).passthrough(),
-]);
+]));
 
 export type PetPackageValidationResultV1 = z.infer<typeof PetPackageValidationResultV1Schema>;
 
-export const DaemonPetValidatePackageRequestV1Schema = z
+export const DaemonPetValidatePackageRequestV1Schema = lazyZodSchema(() => z
   .object({
     packagePath: z.string().min(1).max(10_000),
     strict: z.boolean().optional().default(false),
     maxManifestBytes: z.number().int().min(1).optional(),
     maxSpritesheetBytes: z.number().int().min(1).optional(),
   })
-  .passthrough();
+  .passthrough());
 
 export type DaemonPetValidatePackageRequestV1 = z.infer<typeof DaemonPetValidatePackageRequestV1Schema>;
 
-export const DaemonPetValidatePackageResponseV1Schema = z.union([
+export const DaemonPetValidatePackageResponseV1Schema = lazyZodSchema(() => z.union([
   z.object({ ok: z.literal(true), validation: PetPackageValidationResultV1Schema }).passthrough(),
   z.object({ ok: z.literal(false), errorCode: z.enum(['invalid_request', 'feature_disabled', 'rate_limited', 'internal_error']), error: z.string().min(1) }).passthrough(),
-]);
+]));
 
 export type DaemonPetValidatePackageResponseV1 = z.infer<typeof DaemonPetValidatePackageResponseV1Schema>;
 
-export const DaemonPetImportLocalPackageRequestV1Schema = z
+export const DaemonPetImportLocalPackageRequestV1Schema = lazyZodSchema(() => z
   .object({
     sourceKey: z.string().min(1).max(500).optional(),
     packagePath: z.string().min(1).max(10_000).optional(),
   })
   .refine((value) => Boolean(value.sourceKey || value.packagePath), {
     message: 'sourceKey or packagePath is required',
-  });
+  }));
 
 export type DaemonPetImportLocalPackageRequestV1 = z.infer<typeof DaemonPetImportLocalPackageRequestV1Schema>;
 
-export const ImportedLocalPetPackageV1Schema = z
+export const ImportedLocalPetPackageV1Schema = lazyZodSchema(() => z
   .object({
     sourceKey: z.string().min(1).max(500),
     petId: z.string().min(1).max(200),
@@ -191,11 +192,11 @@ export const ImportedLocalPetPackageV1Schema = z
       spritesheetPath: value.manifest.spritesheetPath,
       mediaType: value.mediaType,
     });
-  });
+  }));
 
 export type ImportedLocalPetPackageV1 = z.infer<typeof ImportedLocalPetPackageV1Schema>;
 
-export const DaemonPetImportLocalPackageResponseV1Schema = z.union([
+export const DaemonPetImportLocalPackageResponseV1Schema = lazyZodSchema(() => z.union([
   z
     .object({
       importedPet: ImportedLocalPetPackageV1Schema,
@@ -209,11 +210,11 @@ export const DaemonPetImportLocalPackageResponseV1Schema = z.union([
       validation: PetPackageValidationResultV1Schema.optional(),
     })
     .passthrough(),
-]);
+]));
 
 export type DaemonPetImportLocalPackageResponseV1 = z.infer<typeof DaemonPetImportLocalPackageResponseV1Schema>;
 
-export const DaemonPetImportAccountPackageRequestV1Schema = z
+export const DaemonPetImportAccountPackageRequestV1Schema = lazyZodSchema(() => z
   .object({
     sourceKey: z.string().min(1).max(500).optional(),
     packagePath: z.string().min(1).max(10_000).optional(),
@@ -221,19 +222,19 @@ export const DaemonPetImportAccountPackageRequestV1Schema = z
   })
   .refine((value) => Boolean(value.sourceKey || value.packagePath), {
     message: 'sourceKey or packagePath is required',
-  });
+  }));
 
 export type DaemonPetImportAccountPackageRequestV1 = z.infer<typeof DaemonPetImportAccountPackageRequestV1Schema>;
 
-export const DaemonPetForgetLocalPackageRequestV1Schema = z
+export const DaemonPetForgetLocalPackageRequestV1Schema = lazyZodSchema(() => z
   .object({
     sourceKey: z.string().min(1).max(500),
   })
-  .passthrough();
+  .passthrough());
 
 export type DaemonPetForgetLocalPackageRequestV1 = z.infer<typeof DaemonPetForgetLocalPackageRequestV1Schema>;
 
-export const DaemonPetForgetLocalPackageResponseV1Schema = z.union([
+export const DaemonPetForgetLocalPackageResponseV1Schema = lazyZodSchema(() => z.union([
   z
     .object({
       ok: z.literal(true),
@@ -247,22 +248,22 @@ export const DaemonPetForgetLocalPackageResponseV1Schema = z.union([
       error: z.string().min(1),
     })
     .passthrough(),
-]);
+]));
 
 export type DaemonPetForgetLocalPackageResponseV1 = z.infer<typeof DaemonPetForgetLocalPackageResponseV1Schema>;
 
-export const DaemonPetImportRequestV1Schema = z
+export const DaemonPetImportRequestV1Schema = lazyZodSchema(() => z
   .object({
     target: z.enum(['local', 'account']),
     packagePath: z.string().min(1).max(10_000),
     source: PetPackageSourceV1Schema.optional(),
     petsSyncEnabled: z.boolean().optional().default(false),
   })
-  .passthrough();
+  .passthrough());
 
 export type DaemonPetImportRequestV1 = z.infer<typeof DaemonPetImportRequestV1Schema>;
 
-export const DaemonPetImportResponseV1Schema = z.union([
+export const DaemonPetImportResponseV1Schema = lazyZodSchema(() => z.union([
   z
     .object({
       ok: z.literal(true),
@@ -298,19 +299,19 @@ export const DaemonPetImportResponseV1Schema = z.union([
       validation: PetPackageValidationResultV1Schema.optional(),
     })
     .passthrough(),
-]);
+]));
 
 export type DaemonPetImportResponseV1 = z.infer<typeof DaemonPetImportResponseV1Schema>;
 
-export const DaemonPetReadPreviewAssetRequestV1Schema = z
+export const DaemonPetReadPreviewAssetRequestV1Schema = lazyZodSchema(() => z
   .object({
     sourceKey: z.string().min(1).max(500),
     maxBytes: z.number().int().min(1).max(50 * 1024 * 1024).optional(),
-  });
+  }));
 
 export type DaemonPetReadPreviewAssetRequestV1 = z.infer<typeof DaemonPetReadPreviewAssetRequestV1Schema>;
 
-export const DaemonPetReadPreviewAssetResponseV1Schema = z.union([
+export const DaemonPetReadPreviewAssetResponseV1Schema = lazyZodSchema(() => z.union([
   z
     .object({
       sourceKey: z.string().min(1).max(500),
@@ -327,6 +328,6 @@ export const DaemonPetReadPreviewAssetResponseV1Schema = z.union([
       error: z.string().min(1),
     })
     .passthrough(),
-]);
+]));
 
 export type DaemonPetReadPreviewAssetResponseV1 = z.infer<typeof DaemonPetReadPreviewAssetResponseV1Schema>;

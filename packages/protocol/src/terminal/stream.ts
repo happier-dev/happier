@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { fromByteArray, toByteArray } from 'base64-js';
 import { z } from 'zod';
 
@@ -9,7 +10,7 @@ export const TERMINAL_STREAM_MAX_FRAMES = 2048;
 export const TERMINAL_STREAM_MAX_ENCODED_BYTES =
   Math.ceil(TERMINAL_STREAM_MAX_FRAME_DECODED_BYTES / 3) * 4;
 
-export const TerminalStreamBytesEncodingSchema = z.literal('base64');
+export const TerminalStreamBytesEncodingSchema = lazyZodSchema(() => z.literal('base64'));
 export type TerminalStreamBytesEncoding = z.infer<typeof TerminalStreamBytesEncodingSchema>;
 
 function readStrictBase64DecodedLength(input: string): number | null {
@@ -27,11 +28,11 @@ export function encodeTerminalStreamBytes(bytes: Uint8Array): string {
   return fromByteArray(bytes);
 }
 
-const TerminalIdSchema = z.string().min(1).max(2000);
-const ByteOffsetSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
-const ByteLengthSchema = z.number().int().min(0).max(TERMINAL_STREAM_MAX_FRAME_DECODED_BYTES);
+const TerminalIdSchema = lazyZodSchema(() => z.string().min(1).max(2000));
+const ByteOffsetSchema = lazyZodSchema(() => z.number().int().min(0).max(Number.MAX_SAFE_INTEGER));
+const ByteLengthSchema = lazyZodSchema(() => z.number().int().min(0).max(TERMINAL_STREAM_MAX_FRAME_DECODED_BYTES));
 
-export const TerminalStreamBytesFrameSchema = z
+export const TerminalStreamBytesFrameSchema = lazyZodSchema(() => z
   .object({
     t: z.literal('bytes'),
     terminalId: TerminalIdSchema,
@@ -59,7 +60,7 @@ export const TerminalStreamBytesFrameSchema = z
         message: 'byteLength must match decoded data length',
       });
     }
-  });
+  }));
 export type TerminalStreamBytesFrame = z.infer<typeof TerminalStreamBytesFrameSchema>;
 
 export function decodeTerminalStreamBytesFrame(frame: TerminalStreamBytesFrame): Uint8Array {
@@ -67,7 +68,7 @@ export function decodeTerminalStreamBytesFrame(frame: TerminalStreamBytesFrame):
   return decodeStrictBase64(parsed.data);
 }
 
-export const TerminalStreamControlFrameSchema = z
+export const TerminalStreamControlFrameSchema = lazyZodSchema(() => z
   .discriminatedUnion('t', [
     z.object({
       t: z.literal('gap'),
@@ -106,16 +107,16 @@ export const TerminalStreamControlFrameSchema = z
         message: 'nextAvailableByteOffset must be greater than or equal to droppedBeforeByteOffset',
       });
     }
-  });
+  }));
 export type TerminalStreamControlFrame = z.infer<typeof TerminalStreamControlFrameSchema>;
 
-export const TerminalStreamFrameSchema = z.union([
+export const TerminalStreamFrameSchema = lazyZodSchema(() => z.union([
   TerminalStreamBytesFrameSchema,
   TerminalStreamControlFrameSchema,
-]);
+]));
 export type TerminalStreamFrame = z.infer<typeof TerminalStreamFrameSchema>;
 
-export const TerminalStreamReadRequestSchema = z
+export const TerminalStreamReadRequestSchema = lazyZodSchema(() => z
   .object({
     terminalId: TerminalIdSchema,
     byteOffset: ByteOffsetSchema,
@@ -136,10 +137,10 @@ export const TerminalStreamReadRequestSchema = z
         message: 'ackedByteOffset must not be greater than byteOffset',
       });
     }
-  });
+  }));
 export type TerminalStreamReadRequest = z.infer<typeof TerminalStreamReadRequestSchema>;
 
-export const TerminalStreamReadOkResponseSchema = z
+export const TerminalStreamReadOkResponseSchema = lazyZodSchema(() => z
   .object({
     ok: z.literal(true),
     terminalId: TerminalIdSchema,
@@ -231,31 +232,31 @@ export const TerminalStreamReadOkResponseSchema = z
         message: 'decoded bytes in response must not exceed max read bytes',
       });
     }
-  });
+  }));
 
-export const TerminalStreamUnavailableResponseSchema = z.object({
+export const TerminalStreamUnavailableResponseSchema = lazyZodSchema(() => z.object({
   ok: z.literal(false),
   code: z.string().min(1).max(200),
   message: z.string().min(1).max(2000),
-}).strict();
+}).strict());
 
-export const TerminalStreamReadResponseSchema = z.union([
+export const TerminalStreamReadResponseSchema = lazyZodSchema(() => z.union([
   TerminalStreamReadOkResponseSchema,
   TerminalStreamUnavailableResponseSchema,
-]);
+]));
 export type TerminalStreamReadResponse = z.infer<typeof TerminalStreamReadResponseSchema>;
 
-export const TerminalStreamAckRequestSchema = z.object({
+export const TerminalStreamAckRequestSchema = lazyZodSchema(() => z.object({
   terminalId: TerminalIdSchema,
   ackedByteOffset: ByteOffsetSchema,
   rendererId: z.string().min(1).max(200).optional(),
   surfaceEpoch: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
   creditBytes: z.number().int().min(0).max(TERMINAL_STREAM_MAX_READ_BYTES).optional(),
-}).strict();
+}).strict());
 export type TerminalStreamAckRequest = z.infer<typeof TerminalStreamAckRequestSchema>;
 
-export const TerminalStreamAckResponseSchema = z.union([
+export const TerminalStreamAckResponseSchema = lazyZodSchema(() => z.union([
   z.object({ ok: z.literal(true) }).strict(),
   TerminalStreamUnavailableResponseSchema,
-]);
+]));
 export type TerminalStreamAckResponse = z.infer<typeof TerminalStreamAckResponseSchema>;

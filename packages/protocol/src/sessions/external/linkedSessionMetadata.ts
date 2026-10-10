@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { NonBlankOpaqueIdentifierSchema, readNonBlankOpaqueIdentifier } from '../../strings/opaqueIdentifier.js';
 import { z } from 'zod';
 
@@ -19,43 +20,43 @@ export type ExternalSessionFollowPolicyV1 = Readonly<{
   updatedAtMs?: number;
 }>;
 
-const ExternalSessionFollowPolicyV1Schema = z.object({
+const ExternalSessionFollowPolicyV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   policy: z.enum(['attached_only', 'background_follow']),
   updatedAtMs: z.number().finite().nonnegative()
     .transform((value) => Math.trunc(value)).optional(),
-}).strict();
+}).strict());
 
-export const ExternalSessionFollowStatusValueV1Schema = z.enum([
+export const ExternalSessionFollowStatusValueV1Schema = lazyZodSchema(() => z.enum([
   'disabled',
   'paused',
   'reacquiring',
   'active',
   'error',
-]);
+]));
 
 export type ExternalSessionFollowStatusValueV1 = z.infer<
   typeof ExternalSessionFollowStatusValueV1Schema
 >;
 
-export const ExternalSessionFollowStatusV1Schema = z.object({
+export const ExternalSessionFollowStatusV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   status: ExternalSessionFollowStatusValueV1Schema,
   reason: z.string().trim().min(1).max(256).optional(),
   updatedAtMs: z.number().int().min(0),
-}).strict();
+}).strict());
 
 export type ExternalSessionFollowStatusV1 = z.infer<
   typeof ExternalSessionFollowStatusV1Schema
 >;
 
-export const ExternalSessionFollowIssueV1Schema = z.object({
+export const ExternalSessionFollowIssueV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   code: z.string().trim().min(1).max(256),
   message: z.string().trim().min(1).max(2_000).optional(),
   retryable: z.boolean().optional(),
   observedAtMs: z.number().int().min(0),
-}).strict();
+}).strict());
 
 export type ExternalSessionFollowIssueV1 = z.infer<
   typeof ExternalSessionFollowIssueV1Schema
@@ -73,14 +74,14 @@ export type ExternalSessionObservedProgress = Readonly<{
   atMs: number;
 }>;
 
-export const LinkedExternalSessionQualifiedIdentityV1Schema = z.object({
+export const LinkedExternalSessionQualifiedIdentityV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   agent: asProtocolZod(PluginContributionIdentityV1Schema),
   source: z.object({
     kind: z.string().trim().min(1).max(256),
     contractVersion: z.literal(1),
   }).strict(),
-}).strict();
+}).strict());
 
 export type LinkedExternalSessionQualifiedIdentityV1 = z.infer<
   typeof LinkedExternalSessionQualifiedIdentityV1Schema
@@ -167,7 +168,7 @@ function normalizeReleasedLinkedExternalSessionRuntime(value: unknown): unknown 
   };
 }
 
-const LinkedExternalSessionV1Schema = z
+const LinkedExternalSessionV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     agentId: ExternalSessionsAgentIdSchema,
@@ -198,30 +199,30 @@ const LinkedExternalSessionV1Schema = z
         message: 'Qualified external-session source kind must match the linked source.',
       });
     }
-  });
+  }));
 
-const ReleasedLinkedExternalSessionV1Schema = z.preprocess(
+const ReleasedLinkedExternalSessionV1Schema = lazyZodSchema(() => z.preprocess(
   (value) => normalizeReleasedLinkedExternalSessionRuntime(
     normalizeLegacyLinkedExternalSessionIdentity(value),
   ),
   LinkedExternalSessionV1Schema,
-);
+));
 
-const CompatibleLinkedExternalSessionV1Schema = z.preprocess(
+const CompatibleLinkedExternalSessionV1Schema = lazyZodSchema(() => z.preprocess(
   normalizeReleasedLinkedExternalSessionRuntime,
   LinkedExternalSessionV1Schema,
-);
+));
 
 export type LinkedExternalSessionV1 = z.infer<typeof LinkedExternalSessionV1Schema>;
 
-export const ExternalHistoryImportV1Schema = z.object({
+export const ExternalHistoryImportV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   agentId: ExternalSessionsAgentIdSchema,
   remoteSessionId: NonBlankOpaqueIdentifierSchema.max(2_000),
   importedAtMs: z.number().int().min(0),
   source: ExternalSessionsSourceSchema,
   linkData: PluginAgentExternalSessionLinkDataSchema.optional(),
-}).strict();
+}).strict());
 
 export type ExternalHistoryImportV1 = z.infer<typeof ExternalHistoryImportV1Schema>;
 

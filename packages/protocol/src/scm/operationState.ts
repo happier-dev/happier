@@ -1,12 +1,13 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
-export const ScmBranchIntegrationOperationSchema = z.enum(['merge', 'rebase']);
+export const ScmBranchIntegrationOperationSchema = lazyZodSchema(() => z.enum(['merge', 'rebase']));
 export type ScmBranchIntegrationOperation = z.infer<typeof ScmBranchIntegrationOperationSchema>;
 
-export const ScmRepositoryOperationKindSchema = z.enum(['merge', 'rebase', 'revert', 'cherry_pick']);
+export const ScmRepositoryOperationKindSchema = lazyZodSchema(() => z.enum(['merge', 'rebase', 'revert', 'cherry_pick']));
 export type ScmRepositoryOperationKind = z.infer<typeof ScmRepositoryOperationKindSchema>;
 
-export const ScmOperationStateSchema = z.object({
+export const ScmOperationStateSchema = lazyZodSchema(() => z.object({
   kind: ScmRepositoryOperationKindSchema,
   sourceRef: z.string().nullable().optional(),
   replayCommit: z.string().optional(),
@@ -23,5 +24,5 @@ export const ScmOperationStateSchema = z.object({
   canSkip: z.boolean().optional(),
 }).strict().refine((state) => !state.canContinue || !state.unresolvedCount, {
   message: 'Unresolved conflicts prevent continuation', path: ['canContinue'],
-});
+}));
 export type ScmOperationState = z.infer<typeof ScmOperationStateSchema>;

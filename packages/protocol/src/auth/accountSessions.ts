@@ -1,17 +1,18 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
  * A present-user Action can revoke only the authenticated Account's signed
  * sessions. The Account is always derived below the Action boundary.
  */
-export const AccountSessionsSignOutEverywhereActionInputV1Schema = z.object({}).strict();
+export const AccountSessionsSignOutEverywhereActionInputV1Schema = lazyZodSchema(() => z.object({}).strict());
 export type AccountSessionsSignOutEverywhereActionInputV1 = z.infer<
   typeof AccountSessionsSignOutEverywhereActionInputV1Schema
 >;
 
-export const AccountSessionsSignOutEverywhereActionOutputV1Schema = z.object({
+export const AccountSessionsSignOutEverywhereActionOutputV1Schema = lazyZodSchema(() => z.object({
   status: z.literal('signed_out'),
-}).strict();
+}).strict());
 export type AccountSessionsSignOutEverywhereActionOutputV1 = z.infer<
   typeof AccountSessionsSignOutEverywhereActionOutputV1Schema
 >;
@@ -26,9 +27,9 @@ export type AccountSessionsSignOutEverywhereServerOutputV1 = z.infer<
   typeof AccountSessionsSignOutEverywhereServerOutputV1Schema
 >;
 
-export const AccountSessionsSignOutEverywhereServerErrorV1Schema = z.object({
+export const AccountSessionsSignOutEverywhereServerErrorV1Schema = lazyZodSchema(() => z.object({
   error: z.enum(['invalid_request', 'present_user_required']),
-}).strict();
+}).strict());
 export type AccountSessionsSignOutEverywhereServerErrorV1 = z.infer<
   typeof AccountSessionsSignOutEverywhereServerErrorV1Schema
 >;

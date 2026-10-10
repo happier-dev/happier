@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -8,7 +9,7 @@ import { z } from 'zod';
  * Team existence cannot be probed by an unauthorized caller. `team_forbidden`
  * is reserved for a Team the viewer may already see but may not mutate.
  */
-export const TeamErrorCodeV1Schema = z.enum([
+export const TeamErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'invalid_team_input',
   'invalid_team_cursor',
   'invalid_team_authentication_policy',
@@ -67,12 +68,12 @@ export const TeamErrorCodeV1Schema = z.enum([
   'account_not_found',
   /** The target Account is not active and cannot hold Team membership. */
   'account_ineligible',
-]);
+]));
 export type TeamErrorCodeV1 = z.infer<typeof TeamErrorCodeV1Schema>;
 
-export const TeamAuthenticationPolicyUnavailableDetailsV1Schema = z.object({
+export const TeamAuthenticationPolicyUnavailableDetailsV1Schema = lazyZodSchema(() => z.object({
   reason: z.literal('provider_test_required'),
-}).strict();
+}).strict());
 export type TeamAuthenticationPolicyUnavailableDetailsV1 = z.infer<
   typeof TeamAuthenticationPolicyUnavailableDetailsV1Schema
 >;
@@ -82,7 +83,7 @@ export type TeamAuthenticationPolicyUnavailableDetailsV1 = z.infer<
  * invented its own envelope would make the same domain result unreadable
  * depending on which path produced it.
  */
-export const TeamErrorV1Schema = z.object({
+export const TeamErrorV1Schema = lazyZodSchema(() => z.object({
   error: TeamErrorCodeV1Schema,
   details: TeamAuthenticationPolicyUnavailableDetailsV1Schema.optional(),
 }).strict().superRefine((value, context) => {
@@ -93,7 +94,7 @@ export const TeamErrorV1Schema = z.object({
       message: 'Team authentication-policy details require the matching unavailable error',
     });
   }
-});
+}));
 export type TeamErrorV1 = z.infer<typeof TeamErrorV1Schema>;
 
 /**

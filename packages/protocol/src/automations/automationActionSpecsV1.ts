@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
@@ -54,7 +55,7 @@ import { UNSIGNED_DECIMAL_BIGINT_SCHEMA, AutomationEventSourceStatusStateV1Schem
 export { UNSIGNED_DECIMAL_BIGINT_SCHEMA, AutomationEventSourceStatusStateV1Schema, AutomationEventSourceStatusCodeV1Schema, AutomationEventSourceCatalogStatusStateV1Schema } from './automationEventSourceStatusV1.js';
 export type { AutomationEventSourceStatusStateV1, AutomationEventSourceStatusCodeV1, AutomationEventSourceCatalogStatusStateV1 } from './automationEventSourceStatusV1.js';
 
-export const AutomationEventSourceObservationTransportV1Schema = z.discriminatedUnion('kind', [
+export const AutomationEventSourceObservationTransportV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('checkpointedPull'),
     watcherMaterializationRef: PluginMachineMaterializationRefV1Schema,
@@ -69,12 +70,12 @@ export const AutomationEventSourceObservationTransportV1Schema = z.discriminated
     endpointMaterializationRef: PluginMachineMaterializationRefV1Schema,
     observationStartsAt: NONNEGATIVE_SAFE_INTEGER_SCHEMA,
   }).strict(),
-]);
+]));
 export type AutomationEventSourceObservationTransportV1 = z.infer<
   typeof AutomationEventSourceObservationTransportV1Schema
 >;
 
-export const AutomationEventSourceDefinitionV1Schema = z.object({
+export const AutomationEventSourceDefinitionV1Schema = lazyZodSchema(() => z.object({
   automationId: asProtocolZod(AutomationIdV1Schema),
   triggerId: AutomationTriggerIdSchema,
   triggerRevision: AutomationTriggerRevisionSchema,
@@ -86,23 +87,23 @@ export const AutomationEventSourceDefinitionV1Schema = z.object({
   observationTransport: AutomationEventSourceObservationTransportV1Schema,
   filter: AutomationEventFilterV1Schema.nullable(),
   maximumObservationAgeMs: NONNEGATIVE_SAFE_INTEGER_SCHEMA.nullable(),
-}).strict();
+}).strict());
 export type AutomationEventSourceDefinitionV1 = z.infer<typeof AutomationEventSourceDefinitionV1Schema>;
 
-export const AutomationEventSourcesListTransportV1Schema = z.discriminatedUnion('kind', [
+export const AutomationEventSourcesListTransportV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('checkpointedPull') }).strict(),
   z.object({ kind: z.literal('socket') }).strict(),
   z.object({ kind: z.literal('durablePush') }).strict(),
-]);
+]));
 export type AutomationEventSourcesListTransportV1 = z.infer<
   typeof AutomationEventSourcesListTransportV1Schema
 >;
 
-export const AutomationEventSourceCatalogScopeV1Schema = z.discriminatedUnion('kind', [
+export const AutomationEventSourceCatalogScopeV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('checkpointedPull') }).strict(),
   z.object({ kind: z.literal('socket') }).strict(),
   z.object({ kind: z.literal('durablePush'), webhookEndpointId: PluginWebhookEndpointIdV1Schema }).strict(),
-]);
+]));
 export type AutomationEventSourceCatalogScopeV1 = z.infer<
   typeof AutomationEventSourceCatalogScopeV1Schema
 >;
@@ -127,7 +128,7 @@ export function automationEventSourceCatalogScopeKeyV1(
  * A stored scope key is valid exactly when it names one canonical scope, so
  * the key grammar is read back through the same union rather than restated.
  */
-export const AutomationEventSourceCatalogScopeKeyV1Schema = z.string().superRefine((value, context) => {
+export const AutomationEventSourceCatalogScopeKeyV1Schema = lazyZodSchema(() => z.string().superRefine((value, context) => {
   const durablePushEndpointId = value.startsWith(AUTOMATION_EVENT_DURABLE_PUSH_CATALOG_SCOPE_KEY_PREFIX)
     ? value.slice(AUTOMATION_EVENT_DURABLE_PUSH_CATALOG_SCOPE_KEY_PREFIX.length)
     : null;
@@ -139,7 +140,7 @@ export const AutomationEventSourceCatalogScopeKeyV1Schema = z.string().superRefi
   if (!scope.success) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'Unknown Automation source catalog scope' });
   }
-});
+}));
 export type AutomationEventSourceCatalogScopeKeyV1 = z.infer<
   typeof AutomationEventSourceCatalogScopeKeyV1Schema
 >;
@@ -149,14 +150,14 @@ export type AutomationEventSourceCatalogScopeKeyV1 = z.infer<
  * it has completed a source scan. The catalog owner alone decides whether the
  * checkpoint is now retired; the provider keeps its incumbent row-level CAS.
  */
-export const AutomationEventCheckpointRetirementCandidateV1Schema = z.object({
+export const AutomationEventCheckpointRetirementCandidateV1Schema = lazyZodSchema(() => z.object({
   automationId: asProtocolZod(AutomationIdV1Schema),
   triggerId: AutomationTriggerIdSchema,
   triggerRevision: AutomationTriggerRevisionSchema,
   eventRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema),
   sourceSelectorId: AutomationSourceSelectorIdV1Schema,
   sourceContractVersion: POSITIVE_SAFE_INTEGER_SCHEMA,
-}).strict();
+}).strict());
 export type AutomationEventCheckpointRetirementCandidateV1 = z.infer<
   typeof AutomationEventCheckpointRetirementCandidateV1Schema
 >;
@@ -184,16 +185,16 @@ function addDuplicateCheckpointRetirementCandidateIssues(
   });
 }
 
-export const AutomationEventCheckpointRetirementsV1Schema = z.array(
+export const AutomationEventCheckpointRetirementsV1Schema = lazyZodSchema(() => z.array(
   AutomationEventCheckpointRetirementCandidateV1Schema,
 )
   .max(MAX_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_PAGE)
-  .superRefine(addDuplicateCheckpointRetirementCandidateIssues);
+  .superRefine(addDuplicateCheckpointRetirementCandidateIssues));
 export type AutomationEventCheckpointRetirementsV1 = z.infer<
   typeof AutomationEventCheckpointRetirementsV1Schema
 >;
 
-export const AutomationEventSourcesListInputV1Schema = z.object({
+export const AutomationEventSourcesListInputV1Schema = lazyZodSchema(() => z.object({
   transport: AutomationEventSourcesListTransportV1Schema,
   pageSize: z.number().int().min(1).max(MAX_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_PAGE).default(
     MAX_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_PAGE,
@@ -235,10 +236,10 @@ export const AutomationEventSourcesListInputV1Schema = z.object({
       message: 'Checkpoint retirement classification requires a complete no-cursor catalog read',
     });
   }
-});
+}));
 export type AutomationEventSourcesListInputV1 = z.infer<typeof AutomationEventSourcesListInputV1Schema>;
 
-export const AutomationEventSourcesListResultV1Schema = z.discriminatedUnion('kind', [
+export const AutomationEventSourcesListResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('page'),
     revision: UNSIGNED_DECIMAL_BIGINT_SCHEMA,
@@ -252,7 +253,7 @@ export const AutomationEventSourcesListResultV1Schema = z.discriminatedUnion('ki
     checkpointRetirements: AutomationEventCheckpointRetirementsV1Schema.optional(),
   }).strict(),
   z.object({ kind: z.literal('cursorStale'), currentRevision: UNSIGNED_DECIMAL_BIGINT_SCHEMA }).strict(),
-]);
+]));
 export type AutomationEventSourcesListResultV1 = z.infer<typeof AutomationEventSourcesListResultV1Schema>;
 
 /**
@@ -276,12 +277,12 @@ export function isAutomationEventSourcesListPageProgressingV1(
     || result.definitions.length > 0;
 }
 
-export const AutomationEventAdmitDefinitionSelectorV1Schema = z.object({
+export const AutomationEventAdmitDefinitionSelectorV1Schema = lazyZodSchema(() => z.object({
   automationId: asProtocolZod(AutomationIdV1Schema),
   triggerId: AutomationTriggerIdSchema,
   triggerRevision: AutomationTriggerRevisionSchema,
   sourceSelectorId: AutomationSourceSelectorIdV1Schema,
-}).strict();
+}).strict());
 export type AutomationEventAdmitDefinitionSelectorV1 = z.infer<
   typeof AutomationEventAdmitDefinitionSelectorV1Schema
 >;
@@ -294,11 +295,11 @@ const AutomationEventAdmitInputFieldsV1 = {
   payload: asProtocolZod(AutomationEventPayloadV1Schema),
 } as const;
 
-export const AutomationEventAdmitInputV1Schema = z.object({
+export const AutomationEventAdmitInputV1Schema = lazyZodSchema(() => z.object({
   ...AutomationEventAdmitInputFieldsV1,
   definitions: z.array(AutomationEventAdmitDefinitionSelectorV1Schema)
     .min(1),
-}).strict();
+}).strict());
 export type AutomationEventAdmitInputV1 = z.infer<typeof AutomationEventAdmitInputV1Schema>;
 
 /**
@@ -307,11 +308,11 @@ export type AutomationEventAdmitInputV1 = z.infer<typeof AutomationEventAdmitInp
  * Every definition stays individually bounded; the request body itself is
  * bounded by the owning server transport limit, not by a Protocol count.
  */
-export const AutomationEventAdmitHttpInputV1Schema = z.object({
+export const AutomationEventAdmitHttpInputV1Schema = lazyZodSchema(() => z.object({
   ...AutomationEventAdmitInputFieldsV1,
   definitions: z.array(AutomationEventAdmitDefinitionSelectorV1Schema)
     .min(1),
-}).strict();
+}).strict());
 export type AutomationEventAdmitHttpInputV1 = z.infer<typeof AutomationEventAdmitHttpInputV1Schema>;
 
 export {
@@ -319,7 +320,7 @@ export {
   type AutomationEventAdmitUnresolvedStatusV1,
 };
 
-export const AutomationEventAdmitItemResultV1Schema = z.discriminatedUnion('kind', [
+export const AutomationEventAdmitItemResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('admitted'), runId: asProtocolZod(HostIdentifierV1Schema), checkpointSafe: z.literal(true) }).strict(),
   z.object({ kind: z.literal('rejoined'), runId: asProtocolZod(HostIdentifierV1Schema), checkpointSafe: z.literal(true) }).strict(),
   z.object({
@@ -333,16 +334,16 @@ export const AutomationEventAdmitItemResultV1Schema = z.discriminatedUnion('kind
   AutomationEventBlockedStatusV1Schema.extend({
     checkpointSafe: z.literal(false),
   }),
-]);
+]));
 export type AutomationEventAdmitItemResultV1 = z.infer<typeof AutomationEventAdmitItemResultV1Schema>;
 
-export const AutomationEventAdmitResultV1Schema = z.object({
+export const AutomationEventAdmitResultV1Schema = lazyZodSchema(() => z.object({
   results: z.array(AutomationEventAdmitItemResultV1Schema),
-}).strict();
+}).strict());
 export type AutomationEventAdmitResultV1 = z.infer<typeof AutomationEventAdmitResultV1Schema>;
 
 /** The server-owned continuation of one bounded private admission request. */
-export const AutomationEventAdmitContinuationV1Schema = z.discriminatedUnion('kind', [
+export const AutomationEventAdmitContinuationV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('ready'),
     accountCurrentness: AutomationAccountCurrentnessWitnessV1Schema,
@@ -351,16 +352,16 @@ export const AutomationEventAdmitContinuationV1Schema = z.discriminatedUnion('ki
     kind: z.literal('stopped'),
     reason: z.enum(['accountCurrentnessMoved', 'accountUnavailable']),
   }).strict(),
-]);
+]));
 export type AutomationEventAdmitContinuationV1 = z.infer<
   typeof AutomationEventAdmitContinuationV1Schema
 >;
 
 /** Private response sibling for exactly one complete HTTP admission request. */
-export const AutomationEventAdmitHttpResultV1Schema = z.object({
+export const AutomationEventAdmitHttpResultV1Schema = lazyZodSchema(() => z.object({
   results: z.array(AutomationEventAdmitItemResultV1Schema),
   continuation: AutomationEventAdmitContinuationV1Schema,
-}).strict();
+}).strict());
 export type AutomationEventAdmitHttpResultV1 = z.infer<typeof AutomationEventAdmitHttpResultV1Schema>;
 
 /**
@@ -369,7 +370,7 @@ export type AutomationEventAdmitHttpResultV1 = z.infer<typeof AutomationEventAdm
  * or Run Now operation. Verification therefore asks only whether the caller is
  * naming a current target, and several bindings may name the same one.
  */
-export const AutomationConversationTargetVerifyInputV1Schema = z.object({
+export const AutomationConversationTargetVerifyInputV1Schema = lazyZodSchema(() => z.object({
   automationId: asProtocolZod(AutomationIdV1Schema),
   scopedTrigger: AutomationConversationScopedTriggerRefV1Schema.optional(),
   /**
@@ -377,12 +378,12 @@ export const AutomationConversationTargetVerifyInputV1Schema = z.object({
    * capability against the current target; ordinary delivery omits it.
    */
   resultDelivery: z.literal('finalResult').optional(),
-}).strict();
+}).strict());
 export type AutomationConversationTargetVerifyInputV1 = z.infer<
   typeof AutomationConversationTargetVerifyInputV1Schema
 >;
 
-export const AutomationConversationTargetVerifyResultV1Schema = z.discriminatedUnion('kind', [
+export const AutomationConversationTargetVerifyResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('verified') }).strict(),
   z.object({
     kind: z.literal('notVerified'),
@@ -392,15 +393,15 @@ export const AutomationConversationTargetVerifyResultV1Schema = z.discriminatedU
       'scopedTriggerIdentityMismatch',
     ]),
   }).strict(),
-]);
+]));
 export type AutomationConversationTargetVerifyResultV1 = z.infer<
   typeof AutomationConversationTargetVerifyResultV1Schema
 >;
 
-export const AutomationConversationTargetsListInputV1Schema = z.object({
+export const AutomationConversationTargetsListInputV1Schema = lazyZodSchema(() => z.object({
   limit: z.number().int().min(1).max(100).optional(),
   cursor: asProtocolZod(AutomationIdV1Schema).nullable().optional(),
-}).strict();
+}).strict());
 export type AutomationConversationTargetsListInputV1 = z.infer<typeof AutomationConversationTargetsListInputV1Schema>;
 
 /**
@@ -410,25 +411,25 @@ export type AutomationConversationTargetsListInputV1 = z.infer<typeof Automation
  * Account-owned columns; no prompt, recipe, secret, or template content is
  * projected, and nothing here is readable only in plain mode.
  */
-export const AutomationConversationTargetExecutionV1Schema = z.object({
+export const AutomationConversationTargetExecutionV1Schema = lazyZodSchema(() => z.object({
   targetType: z.enum(['new_session', 'existing_session', 'execution_run']).nullable(),
   enabled: z.boolean(),
-}).strict();
+}).strict());
 export type AutomationConversationTargetExecutionV1 = z.infer<
   typeof AutomationConversationTargetExecutionV1Schema
 >;
 
-export const AutomationConversationTargetsListItemV1Schema = z.object({
+export const AutomationConversationTargetsListItemV1Schema = lazyZodSchema(() => z.object({
   automationId: asProtocolZod(AutomationIdV1Schema),
   label: z.string().min(1).max(256),
   execution: AutomationConversationTargetExecutionV1Schema,
-}).strict();
+}).strict());
 export type AutomationConversationTargetsListItemV1 = z.infer<typeof AutomationConversationTargetsListItemV1Schema>;
 
-export const AutomationConversationTargetsListResultV1Schema = z.object({
+export const AutomationConversationTargetsListResultV1Schema = lazyZodSchema(() => z.object({
   items: z.array(AutomationConversationTargetsListItemV1Schema).max(100),
   nextCursor: asProtocolZod(AutomationIdV1Schema).nullable(),
-}).strict();
+}).strict());
 export type AutomationConversationTargetsListResultV1 = z.infer<typeof AutomationConversationTargetsListResultV1Schema>;
 
 
@@ -440,7 +441,7 @@ function compareUnsignedDecimalStrings(left: string, right: string): number {
   return 0;
 }
 
-export const AutomationEventSourceStatusReportV1Schema = z.discriminatedUnion('kind', [
+export const AutomationEventSourceStatusReportV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('source'),
     automationId: asProtocolZod(AutomationIdV1Schema),
@@ -496,18 +497,18 @@ export const AutomationEventSourceStatusReportV1Schema = z.discriminatedUnion('k
       });
     }
   }),
-]);
+]));
 export type AutomationEventSourceStatusReportV1 = z.infer<
   typeof AutomationEventSourceStatusReportV1Schema
 >;
 
-export const AutomationEventSourceStatusReportResultV1Schema = z.object({}).strict();
+export const AutomationEventSourceStatusReportResultV1Schema = lazyZodSchema(() => z.object({}).strict());
 export type AutomationEventSourceStatusReportResultV1 = z.infer<
   typeof AutomationEventSourceStatusReportResultV1Schema
 >;
 
 export const AUTOMATION_EVENT_ACTION_IDS_V1 = ACTION_ID_FAMILIES_V1.automation_events;
-export const AutomationEventActionIdV1Schema = z.enum(AUTOMATION_EVENT_ACTION_IDS_V1);
+export const AutomationEventActionIdV1Schema = lazyZodSchema(() => z.enum(AUTOMATION_EVENT_ACTION_IDS_V1));
 export type AutomationEventActionIdV1 = z.infer<typeof AutomationEventActionIdV1Schema>;
 
 export const AutomationEventActionInputSchemasV1 = Object.freeze({
@@ -523,7 +524,7 @@ export const AutomationEventActionOutputSchemasV1 = Object.freeze({
 } as const satisfies Readonly<Record<AutomationEventActionIdV1, z.ZodTypeAny>>);
 
 export const AUTOMATION_CONVERSATION_ACTION_IDS_V1 = ACTION_ID_FAMILIES_V1.automation_conversation;
-export const AutomationConversationActionIdV1Schema = z.enum(AUTOMATION_CONVERSATION_ACTION_IDS_V1);
+export const AutomationConversationActionIdV1Schema = lazyZodSchema(() => z.enum(AUTOMATION_CONVERSATION_ACTION_IDS_V1));
 export type AutomationConversationActionIdV1 = z.infer<typeof AutomationConversationActionIdV1Schema>;
 
 export const AutomationConversationActionInputSchemasV1 = Object.freeze({

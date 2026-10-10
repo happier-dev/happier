@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { StrictSessionStoredMessageContentEnvelopeSchema } from '../messages/sessionStoredMessageContent.js';
@@ -16,17 +17,17 @@ import { refineDiscussionAccountActor } from './accountActorConsistency.js';
  * UI and routes never reconstruct these from share levels, Team roles, or
  * authorship.
  */
-export const SessionDiscussionCapabilitiesV1Schema = z.object({
+export const SessionDiscussionCapabilitiesV1Schema = lazyZodSchema(() => z.object({
   postMessages: z.boolean(),
   rename: z.boolean(),
   archive: z.boolean(),
   restore: z.boolean(),
   askAgent: z.boolean(),
   sendToSession: z.boolean(),
-}).strict();
+}).strict());
 export type SessionDiscussionCapabilitiesV1 = z.infer<typeof SessionDiscussionCapabilitiesV1Schema>;
 
-const SequenceSchema = z.number().int().min(0);
+const SequenceSchema = lazyZodSchema(() => z.number().int().min(0));
 
 /**
  * How many latest distinct message authors a discussion summary carries.
@@ -37,7 +38,7 @@ const SequenceSchema = z.number().int().min(0);
  */
 export const SESSION_DISCUSSION_RECENT_AUTHOR_AVATAR_STACK_V1 = 3;
 
-export const SessionDiscussionLatestMessageV1Schema = z.object({
+export const SessionDiscussionLatestMessageV1Schema = lazyZodSchema(() => z.object({
   id: SessionDiscussionMessageIdSchema,
   localId: SessionDiscussionLocalIdSchema.nullable(),
   seq: z.number().int().min(1),
@@ -46,10 +47,10 @@ export const SessionDiscussionLatestMessageV1Schema = z.object({
   accountActor: SessionMessageAccountActorV1Schema.nullable(),
   producerV1: SessionDiscussionProducerV1Schema.nullable(),
   createdAt: z.number().int(),
-}).strict().superRefine(refineDiscussionAccountActor);
+}).strict().superRefine(refineDiscussionAccountActor));
 export type SessionDiscussionLatestMessageV1 = z.infer<typeof SessionDiscussionLatestMessageV1Schema>;
 
-export const SessionDiscussionSummaryV1Schema = z.object({
+export const SessionDiscussionSummaryV1Schema = lazyZodSchema(() => z.object({
   id: SessionDiscussionIdSchema,
   sessionId: SessionDiscussionIdSchema,
   /** Projected only to the creating Account; other viewers receive null. */
@@ -65,10 +66,10 @@ export const SessionDiscussionSummaryV1Schema = z.object({
     .max(SESSION_DISCUSSION_RECENT_AUTHOR_AVATAR_STACK_V1),
   archivedAt: z.number().int().nullable(),
   capabilities: SessionDiscussionCapabilitiesV1Schema,
-}).strict();
+}).strict());
 export type SessionDiscussionSummaryV1 = z.infer<typeof SessionDiscussionSummaryV1Schema>;
 
-export const SessionDiscussionMessageV1Schema = z.object({
+export const SessionDiscussionMessageV1Schema = lazyZodSchema(() => z.object({
   id: SessionDiscussionMessageIdSchema,
   discussionId: SessionDiscussionIdSchema,
   /** Projected only to the authoring Account; other viewers receive null. */
@@ -81,7 +82,7 @@ export const SessionDiscussionMessageV1Schema = z.object({
   content: StrictSessionStoredMessageContentEnvelopeSchema,
   mentionedAccountIds: z.array(SessionDiscussionAccountIdSchema),
   createdAt: z.number().int(),
-}).strict().superRefine(refineDiscussionAccountActor);
+}).strict().superRefine(refineDiscussionAccountActor));
 export type SessionDiscussionMessageV1 = z.infer<typeof SessionDiscussionMessageV1Schema>;
 
 /**
@@ -89,16 +90,16 @@ export type SessionDiscussionMessageV1 = z.infer<typeof SessionDiscussionMessage
  * into Session list/detail. It contains no title, message body, another
  * Account's cursor, or access topology.
  */
-export const SessionDiscussionAttentionFactsV1Schema = z.object({
+export const SessionDiscussionAttentionFactsV1Schema = lazyZodSchema(() => z.object({
   unreadConversationCount: SequenceSchema,
   unreadMentionCount: SequenceSchema,
   latestActivityAt: z.number().int().nullable(),
-}).strict();
+}).strict());
 export type SessionDiscussionAttentionFactsV1 = z.infer<typeof SessionDiscussionAttentionFactsV1Schema>;
 
-export const SessionDiscussionReadCursorV1Schema = z.object({
+export const SessionDiscussionReadCursorV1Schema = lazyZodSchema(() => z.object({
   discussionId: SessionDiscussionIdSchema,
   lastReadSeq: SequenceSchema,
   didChange: z.boolean(),
-}).strict();
+}).strict());
 export type SessionDiscussionReadCursorV1 = z.infer<typeof SessionDiscussionReadCursorV1Schema>;

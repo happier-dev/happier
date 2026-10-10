@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import type { ProviderModelDescriptorV1 } from '../../models/descriptor.js';
@@ -26,8 +27,8 @@ export const ProviderCatalogProbeModelV1Schema = z.object({
   capabilities: ProviderModelDescriptorV1Schema.shape.capabilities,
 }).strict() satisfies z.ZodType<ProviderCatalogProbeModelV1>;
 
-const ProviderRuntimeTimestampV1Schema = z.number().finite().nonnegative();
-export const ProviderCatalogProbeModelsV1Schema = z.array(ProviderCatalogProbeModelV1Schema)
+const ProviderRuntimeTimestampV1Schema = lazyZodSchema(() => z.number().finite().nonnegative());
+export const ProviderCatalogProbeModelsV1Schema = lazyZodSchema(() => z.array(ProviderCatalogProbeModelV1Schema)
   .max(PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection)
   .superRefine((models, ctx) => {
     const ids = new Set<string>();
@@ -37,9 +38,9 @@ export const ProviderCatalogProbeModelsV1Schema = z.array(ProviderCatalogProbeMo
       }
       ids.add(model.id);
     });
-  });
+  }));
 
-export const ProviderCatalogSnapshotV1Schema = z.discriminatedUnion('stale', [
+export const ProviderCatalogSnapshotV1Schema = lazyZodSchema(() => z.discriminatedUnion('stale', [
   z.object({
     models: ProviderCatalogProbeModelsV1Schema,
     observedAt: ProviderRuntimeTimestampV1Schema,
@@ -55,10 +56,10 @@ export const ProviderCatalogSnapshotV1Schema = z.discriminatedUnion('stale', [
       ctx.addIssue({ code: 'custom', path: ['staleAt'], message: 'Catalog stale time cannot precede observation time' });
     }
   }),
-]);
+]));
 export type ProviderCatalogSnapshotV1 = z.infer<typeof ProviderCatalogSnapshotV1Schema>;
 
-export const ProviderCatalogTransitionStateV1Schema = z.object({
+export const ProviderCatalogTransitionStateV1Schema = lazyZodSchema(() => z.object({
   snapshot: ProviderCatalogSnapshotV1Schema.nullable(),
   staleProbeModels: z.array(ProviderCatalogProbeModelV1Schema)
     .max(PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection),
@@ -77,7 +78,7 @@ export const ProviderCatalogTransitionStateV1Schema = z.object({
     }
     staleIds.add(model.id);
   });
-});
+}));
 export type ProviderCatalogTransitionStateV1 = z.infer<typeof ProviderCatalogTransitionStateV1Schema>;
 
 export type ProviderCatalogRefreshV1 =

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -28,34 +29,34 @@ import {
  * listener URL is resolved by the managed runtime rather than authorized at
  * bind time; such a deployment always mints its own runtime credential.
  */
-export const AgentSessionProviderBindingUpstreamV1Schema = z.object({
+export const AgentSessionProviderBindingUpstreamV1Schema = lazyZodSchema(() => z.object({
   protocol: ProviderWireProtocolSchema,
   normalizedUrl: ProviderEndpointUrlSyntaxSchema.nullable(),
   credential: z.enum(['none', 'apiKey']),
-}).strict();
+}).strict());
 
-const AgentSessionProviderBindingCommonV1Schema = z.object({
+const AgentSessionProviderBindingCommonV1Schema = lazyZodSchema(() => z.object({
   model: ProviderModelDescriptorV1Schema,
   upstream: AgentSessionProviderBindingUpstreamV1Schema,
   materialization: AgentProviderBindingLaunchMaterializationV1Schema,
-});
+}));
 
 const AgentSessionAccountProviderBindingV1Schema = AgentSessionProviderBindingCommonV1Schema.extend({
   connectionId: ProviderConnectionIdSchema,
 }).strict() satisfies z.ZodType<AgentSessionProviderBindingV1>;
 
-export const AgentSessionTeamProviderBindingV1Schema = AgentSessionProviderBindingCommonV1Schema.extend({
+export const AgentSessionTeamProviderBindingV1Schema = lazyZodSchema(() => AgentSessionProviderBindingCommonV1Schema.extend({
   source: z.object({
     kind: z.literal('team_resource'),
     resourceId: z.string().trim().min(1).max(256),
     resourceRevision: z.number().int().nonnegative(),
   }).strict(),
-}).strict();
+}).strict());
 
-export const AgentSessionProviderBindingV1Schema = z.union([
+export const AgentSessionProviderBindingV1Schema = lazyZodSchema(() => z.union([
   AgentSessionAccountProviderBindingV1Schema,
   AgentSessionTeamProviderBindingV1Schema,
-]);
+]));
 
 export type AgentSessionProviderBindingUpstream = Readonly<{
   protocol: ProviderWireProtocol;

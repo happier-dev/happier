@@ -1,19 +1,20 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { normalizeSimulatorDeviceResourceVisibleCapabilitiesV1, SimulatorDeviceResourceV1Schema, SimulatorPlatformV1Schema } from '../../../devices/simulator/v1.js';
 import { normalizeBackedSimulatorSidebandKindsV1 } from '../../../devices/simulator/actionBuilders.js';
 
-const BackedSimulatorSidebandKindsV1Schema = z
+const BackedSimulatorSidebandKindsV1Schema = lazyZodSchema(() => z
   .array(z.unknown())
   .optional()
   .default([])
-  .transform((kinds) => normalizeBackedSimulatorSidebandKindsV1(kinds));
+  .transform((kinds) => normalizeBackedSimulatorSidebandKindsV1(kinds)));
 
-const VisibleSimulatorDeviceResourceV1Schema = SimulatorDeviceResourceV1Schema.transform(
+const VisibleSimulatorDeviceResourceV1Schema = lazyZodSchema(() => SimulatorDeviceResourceV1Schema.transform(
   (resource) => normalizeSimulatorDeviceResourceVisibleCapabilitiesV1(resource),
-);
+));
 
-export const DeviceSimulatorPreviewCapabilitiesSchema = z
+export const DeviceSimulatorPreviewCapabilitiesSchema = lazyZodSchema(() => z
   .object({
     enabled: z.boolean().optional().default(false),
     available: z.boolean().optional().default(false),
@@ -24,7 +25,7 @@ export const DeviceSimulatorPreviewCapabilitiesSchema = z
     sidebandKinds: BackedSimulatorSidebandKindsV1Schema,
     disabledReasons: z.array(z.string().trim().min(1)).optional().default([]),
   })
-  .strict();
+  .strict());
 
 export type DeviceSimulatorPreviewCapabilities = z.infer<typeof DeviceSimulatorPreviewCapabilitiesSchema>;
 
@@ -39,13 +40,13 @@ export const DEFAULT_DEVICE_SIMULATOR_PREVIEW_CAPABILITIES: DeviceSimulatorPrevi
   disabledReasons: [],
 };
 
-export const DeviceCapabilitiesSchema = z
+export const DeviceCapabilitiesSchema = lazyZodSchema(() => z
   .object({
     simulatorPreview: DeviceSimulatorPreviewCapabilitiesSchema.optional().default(
       DEFAULT_DEVICE_SIMULATOR_PREVIEW_CAPABILITIES,
     ),
   })
-  .strict();
+  .strict());
 
 export type DeviceCapabilities = z.infer<typeof DeviceCapabilitiesSchema>;
 

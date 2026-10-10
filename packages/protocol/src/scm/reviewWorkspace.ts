@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ScmOperationErrorCodeSchema } from './operationError.js';
@@ -12,7 +13,7 @@ import { ScmHostingProviderKindSchema } from './pullRequests.js';
  * matching remote, fetch the exact ref, and resolve currentness from local
  * Git state.
  */
-export const ScmReviewWorkspaceSourceTipSchema = z.object({
+export const ScmReviewWorkspaceSourceTipSchema = lazyZodSchema(() => z.object({
   repository: z.object({
     kind: ScmHostingProviderKindSchema,
     deployment: z.string().min(1),
@@ -22,7 +23,7 @@ export const ScmReviewWorkspaceSourceTipSchema = z.object({
   branch: z.string().min(1),
   sourceHeadSha: z.string().regex(/^[0-9a-fA-F]{7,64}$/),
   fetchRef: z.string().min(1),
-}).strict();
+}).strict());
 export type ScmReviewWorkspaceSourceTip = z.infer<typeof ScmReviewWorkspaceSourceTipSchema>;
 
 /**
@@ -31,7 +32,7 @@ export type ScmReviewWorkspaceSourceTip = z.infer<typeof ScmReviewWorkspaceSourc
  * project this result without asking Triage to derive a second currentness
  * rule from a path or a successful fetch.
  */
-export const ScmReviewWorkspaceCurrentnessSchema = z.discriminatedUnion('kind', [
+export const ScmReviewWorkspaceCurrentnessSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('currentAtObservedHead'),
   }).strict(),
@@ -47,7 +48,7 @@ export const ScmReviewWorkspaceCurrentnessSchema = z.discriminatedUnion('kind', 
     observedHeadSha: z.string().regex(/^[0-9a-fA-F]{7,64}$/),
     reason: z.enum(['localCommits', 'dirtyWorktree', 'unresolvedHead']),
   }).strict(),
-]);
+]));
 export type ScmReviewWorkspaceCurrentness = z.infer<typeof ScmReviewWorkspaceCurrentnessSchema>;
 
 /**
@@ -55,7 +56,7 @@ export type ScmReviewWorkspaceCurrentness = z.infer<typeof ScmReviewWorkspaceCur
  * workspace. Provider/account/ref authority stays with the source plugin; this
  * owner receives only the exact root and prepared checkout facts.
  */
-export const ScmReviewWorkspaceMaterializePreparedRequestSchema = z.object({
+export const ScmReviewWorkspaceMaterializePreparedRequestSchema = lazyZodSchema(() => z.object({
   cwd: z.string().min(1),
   displayName: z.string().min(1),
   sourceTip: ScmReviewWorkspaceSourceTipSchema,
@@ -67,12 +68,12 @@ export const ScmReviewWorkspaceMaterializePreparedRequestSchema = z.object({
   verification: z.object({
     targetPath: z.string().min(1),
   }).strict().optional(),
-}).strict();
+}).strict());
 export type ScmReviewWorkspaceMaterializePreparedRequest = z.infer<
   typeof ScmReviewWorkspaceMaterializePreparedRequestSchema
 >;
 
-export const ScmReviewWorkspaceMaterializePreparedResponseSchema = z.union([
+export const ScmReviewWorkspaceMaterializePreparedResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     success: z.literal(true),
     targetPath: z.string().min(1),
@@ -92,7 +93,7 @@ export const ScmReviewWorkspaceMaterializePreparedResponseSchema = z.union([
     error: z.string().min(1),
     errorCode: ScmOperationErrorCodeSchema,
   }).strict(),
-]);
+]));
 export type ScmReviewWorkspaceMaterializePreparedResponse = z.infer<
   typeof ScmReviewWorkspaceMaterializePreparedResponseSchema
 >;

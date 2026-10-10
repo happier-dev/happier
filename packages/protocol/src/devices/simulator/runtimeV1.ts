@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -10,10 +11,10 @@ import {
 import { SimulatorDeviceResourceV1Schema } from './v1.js';
 import { SimulatorSidebandKindV1Schema, SimulatorSidebandMessageV1Schema } from './sidebandV1.js';
 
-const NonNegativeIntSchema = z.number().int().nonnegative();
-const NonEmptyStringSchema = z.string().trim().min(1).max(256);
+const NonNegativeIntSchema = lazyZodSchema(() => z.number().int().nonnegative());
+const NonEmptyStringSchema = lazyZodSchema(() => z.string().trim().min(1).max(256));
 
-export const SimulatorPreviewSnapshotV1Schema = z
+export const SimulatorPreviewSnapshotV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     machineId: NonEmptyStringSchema,
@@ -22,10 +23,10 @@ export const SimulatorPreviewSnapshotV1Schema = z
     resources: z.array(SimulatorDeviceResourceV1Schema),
     diagnostics: z.array(z.record(z.string(), z.unknown())).default([]),
   })
-  .strict();
+  .strict());
 export type SimulatorPreviewSnapshotV1 = z.infer<typeof SimulatorPreviewSnapshotV1Schema>;
 
-export const SimulatorPreviewActionTypeV1Schema = z.enum([
+export const SimulatorPreviewActionTypeV1Schema = lazyZodSchema(() => z.enum([
   'simulator.devices.list',
   'simulator.stream.open',
   'simulator.stream.close',
@@ -37,12 +38,12 @@ export const SimulatorPreviewActionTypeV1Schema = z.enum([
   'simulator.quality.set',
   'simulator.keyframe.request',
   'simulator.snapshot.request',
-]);
+]));
 export type SimulatorPreviewActionTypeV1 = z.infer<typeof SimulatorPreviewActionTypeV1Schema>;
 
-const BaseSimulatorActionWithSimulatorV1Schema = z.object({
+const BaseSimulatorActionWithSimulatorV1Schema = lazyZodSchema(() => z.object({
   simulatorId: NonEmptyStringSchema,
-});
+}));
 
 function controlMatchesRequestedStreamAndSource(input: Readonly<{
   streamId: string;
@@ -52,7 +53,7 @@ function controlMatchesRequestedStreamAndSource(input: Readonly<{
   return input.streamId === input.control.streamId && input.sourceId === input.control.sourceId;
 }
 
-export const SimulatorPreviewActionV1Schema = z.discriminatedUnion('type', [
+export const SimulatorPreviewActionV1Schema = lazyZodSchema(() => z.discriminatedUnion('type', [
   z.object({ type: z.literal('simulator.devices.list') }).strict(),
   BaseSimulatorActionWithSimulatorV1Schema.extend({
     type: z.literal('simulator.stream.open'),
@@ -117,16 +118,16 @@ export const SimulatorPreviewActionV1Schema = z.discriminatedUnion('type', [
     sourceId: NonEmptyStringSchema,
     eventId: NonEmptyStringSchema,
   }).strict(),
-]);
+]));
 export type SimulatorPreviewActionV1 = z.infer<typeof SimulatorPreviewActionV1Schema>;
 
-const BaseSimulatorPreviewActionResultV1Schema = z.object({
+const BaseSimulatorPreviewActionResultV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   eventType: SimulatorPreviewActionTypeV1Schema,
   diagnostics: z.array(z.record(z.string(), z.unknown())).default([]),
-});
+}));
 
-export const SimulatorPreviewStreamBindingV1Schema = z
+export const SimulatorPreviewStreamBindingV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     streamId: NonEmptyStringSchema,
@@ -137,10 +138,10 @@ export const SimulatorPreviewStreamBindingV1Schema = z
     targetMachineId: NonEmptyStringSchema,
     expiresAtMs: NonNegativeIntSchema.optional(),
   })
-  .strict();
+  .strict());
 export type SimulatorPreviewStreamBindingV1 = z.infer<typeof SimulatorPreviewStreamBindingV1Schema>;
 
-export const SimulatorPreviewActionResultV1Schema = z.discriminatedUnion('status', [
+export const SimulatorPreviewActionResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   BaseSimulatorPreviewActionResultV1Schema.extend({
     status: z.literal('accepted'),
     lease: MachineLiveStreamControlLeaseV1Schema.optional(),
@@ -155,45 +156,45 @@ export const SimulatorPreviewActionResultV1Schema = z.discriminatedUnion('status
     status: z.literal('unavailable'),
     reasonCode: NonEmptyStringSchema,
   }).strict(),
-]);
+]));
 export type SimulatorPreviewActionResultV1 = z.infer<typeof SimulatorPreviewActionResultV1Schema>;
 
-export const DaemonSimulatorPreviewSnapshotRequestV1Schema = z
+export const DaemonSimulatorPreviewSnapshotRequestV1Schema = lazyZodSchema(() => z
   .object({
     machineId: NonEmptyStringSchema,
   })
-  .strict();
+  .strict());
 export type DaemonSimulatorPreviewSnapshotRequestV1 = z.infer<
   typeof DaemonSimulatorPreviewSnapshotRequestV1Schema
 >;
 
-export const DaemonSimulatorPreviewSnapshotResponseV1Schema = z
+export const DaemonSimulatorPreviewSnapshotResponseV1Schema = lazyZodSchema(() => z
   .object({
     protocolVersion: z.literal(1),
     snapshot: SimulatorPreviewSnapshotV1Schema,
   })
-  .strict();
+  .strict());
 export type DaemonSimulatorPreviewSnapshotResponseV1 = z.infer<
   typeof DaemonSimulatorPreviewSnapshotResponseV1Schema
 >;
 
-export const DaemonSimulatorPreviewActionRequestV1Schema = z
+export const DaemonSimulatorPreviewActionRequestV1Schema = lazyZodSchema(() => z
   .object({
     protocolVersion: z.literal(1),
     machineId: NonEmptyStringSchema,
     event: SimulatorPreviewActionV1Schema,
   })
-  .strict();
+  .strict());
 export type DaemonSimulatorPreviewActionRequestV1 = z.infer<
   typeof DaemonSimulatorPreviewActionRequestV1Schema
 >;
 
-export const DaemonSimulatorPreviewActionResponseV1Schema = z
+export const DaemonSimulatorPreviewActionResponseV1Schema = lazyZodSchema(() => z
   .object({
     protocolVersion: z.literal(1),
     result: SimulatorPreviewActionResultV1Schema,
   })
-  .strict();
+  .strict());
 export type DaemonSimulatorPreviewActionResponseV1 = z.infer<
   typeof DaemonSimulatorPreviewActionResponseV1Schema
 >;

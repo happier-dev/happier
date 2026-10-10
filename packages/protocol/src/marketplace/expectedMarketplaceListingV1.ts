@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { NpmRegistryProfileIdV1Schema } from '../rpc/npmRegistryProfiles.js';
@@ -37,18 +38,18 @@ const ExpectedMarketplaceListingBaseShape = {
   manifestDigest: entry.manifestDigest,
 } as const;
 
-const ApprovedListingReviewV1Schema = z.object({
+const ApprovedListingReviewV1Schema = lazyZodSchema(() => z.object({
   status: z.literal('approved'),
   reviewedAt: z.string().datetime(),
   reason: entry.review.shape.reason,
-}).strict();
+}).strict());
 
-const UnreviewedListingReviewV1Schema = z.object({
+const UnreviewedListingReviewV1Schema = lazyZodSchema(() => z.object({
   status: z.literal('unreviewed'),
   reviewedAt: z.null(),
-}).strict();
+}).strict());
 
-export const ExpectedMarketplaceListingV1Schema = z.union([
+export const ExpectedMarketplaceListingV1Schema = lazyZodSchema(() => z.union([
   z.object({
     source: z.object({
       id: source.id,
@@ -83,7 +84,7 @@ export const ExpectedMarketplaceListingV1Schema = z.union([
     review: UnreviewedListingReviewV1Schema,
     updatePolicy: PluginUpdatePolicyV1Schema,
   }).strict(),
-]);
+]));
 export type ExpectedMarketplaceListingV1 = z.infer<typeof ExpectedMarketplaceListingV1Schema>;
 
 /**

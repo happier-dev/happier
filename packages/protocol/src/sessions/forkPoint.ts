@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -16,7 +17,7 @@ import { z } from 'zod';
  *
  * Do NOT introduce a second cutoff field (for example `throughSeqInclusive`).
  */
-export const SessionForkPointSchema = z.discriminatedUnion('type', [
+export const SessionForkPointSchema = lazyZodSchema(() => z.discriminatedUnion('type', [
   z.object({ type: z.literal('latest') }).strict(),
   z
     .object({
@@ -24,5 +25,5 @@ export const SessionForkPointSchema = z.discriminatedUnion('type', [
       upToSeqInclusive: z.number().int().nonnegative(),
     })
     .strict(),
-]);
+]));
 export type SessionForkPoint = z.infer<typeof SessionForkPointSchema>;

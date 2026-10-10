@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { HomeConnectionDescriptorV1Schema } from '../auth/accountDirectory.js';
@@ -32,9 +33,9 @@ export const RunnerBoxPublicKeySchema = encodedBytes(32).refine(
 
 // Activation bindings carry existing persisted Account/Session/Machine ids;
 // the supported MySQL string identity columns are bounded to 191 characters.
-export const RunnerResourceIdSchema = z.string().min(1).max(191).refine((value) => value.trim() === value);
+export const RunnerResourceIdSchema = lazyZodSchema(() => z.string().min(1).max(191).refine((value) => value.trim() === value));
 
-export const RunnerEndpointFactsRecipientV1Schema = z.discriminatedUnion('mode', [
+export const RunnerEndpointFactsRecipientV1Schema = lazyZodSchema(() => z.discriminatedUnion('mode', [
   z.object({ mode: z.literal('plain'), creatorAccountId: RunnerResourceIdSchema }).strict(),
   z.object({
     mode: z.literal('e2ee'),
@@ -55,15 +56,15 @@ export const RunnerEndpointFactsRecipientV1Schema = z.discriminatedUnion('mode',
   if (!verified || verified.contentPublicKeyFingerprint !== recipient.contentPublicKeyFingerprint) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Invalid Account content-key binding' });
   }
-});
+}));
 export type RunnerEndpointFactsRecipientV1 = z.infer<typeof RunnerEndpointFactsRecipientV1Schema>;
 
-const CanonicalHomeIdentitySchema = z.string().refine((value) => {
+const CanonicalHomeIdentitySchema = lazyZodSchema(() => z.string().refine((value) => {
   const parsed = HomeConnectionDescriptorV1Schema.shape.homeServerIdentityId.safeParse(value);
   return parsed.success && parsed.data === value;
-});
+}));
 
-const RunnerActivationBindingFieldsV1Schema = z.object({
+const RunnerActivationBindingFieldsV1Schema = lazyZodSchema(() => z.object({
   activationId: z.string().uuid(),
   homeServerIdentityId: CanonicalHomeIdentitySchema,
   creatorAccountId: RunnerResourceIdSchema,
@@ -76,15 +77,15 @@ const RunnerActivationBindingFieldsV1Schema = z.object({
   authoringCommitment: RunnerSha256CommitmentSchema,
   artifact: RunnerArtifactIdentityV1Schema,
   endpointFactsRecipient: RunnerEndpointFactsRecipientV1Schema,
-}).strict();
+}).strict());
 
-export const RunnerActivationBindingV1Schema = RunnerActivationBindingFieldsV1Schema.refine(
+export const RunnerActivationBindingV1Schema = lazyZodSchema(() => RunnerActivationBindingFieldsV1Schema.refine(
   (binding) => binding.creatorAccountId === binding.endpointFactsRecipient.creatorAccountId,
   'Recipient must belong to the authenticated creator',
-);
+));
 export type RunnerActivationBindingV1 = z.infer<typeof RunnerActivationBindingV1Schema>;
 
-export const RunnerActivationCreateRequestV1Schema = z.object({
+export const RunnerActivationCreateRequestV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   activationId: z.string().uuid(),
   draftId: RunnerResourceIdSchema,
@@ -97,9 +98,9 @@ export const RunnerActivationCreateRequestV1Schema = z.object({
   authoringCommitment: RunnerSha256CommitmentSchema,
   artifact: RunnerArtifactIdentityV1Schema,
   endpointFactsRecipient: RunnerEndpointFactsRecipientV1Schema,
-}).strict();
+}).strict());
 export type RunnerActivationCreateRequestV1 = z.infer<typeof RunnerActivationCreateRequestV1Schema>;
 
-export const RunnerActivationStateV1Schema = z.enum(['pending', 'claimed', 'consented', 'materialized', 'closed']);
+export const RunnerActivationStateV1Schema = lazyZodSchema(() => z.enum(['pending', 'claimed', 'consented', 'materialized', 'closed']));
 
-export const RunnerActivationCloseReasonV1Schema = z.enum(['canceled', 'declined', 'expired', 'revoked', 'failed']);
+export const RunnerActivationCloseReasonV1Schema = lazyZodSchema(() => z.enum(['canceled', 'declined', 'expired', 'revoked', 'failed']));

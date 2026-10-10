@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { BrowserContextMessagePayloadV1Schema, type BrowserContextMessagePayloadV1 } from '../../browser/context/v1.js';
 
@@ -25,10 +26,10 @@ import {
 const MAX_CONTEXT_VALUE_CODE_POINTS = 128;
 const MAX_CONTEXT_BLOCK_CODE_POINTS = 1_024;
 
-export const SessionInputPromptProvenanceV1Schema = z.union([
+export const SessionInputPromptProvenanceV1Schema = lazyZodSchema(() => z.union([
   SessionMessageProvenanceSchema,
   z.object({ v: z.literal(1), kind: z.literal('legacyUnknown') }).strict(),
-]);
+]));
 export type SessionInputPromptProvenanceV1 = z.infer<typeof SessionInputPromptProvenanceV1Schema>;
 
 /** Prompt-only classification; it grants no persisted provenance or input authority. */
@@ -43,11 +44,11 @@ export const SESSION_RUN_PROMPT_READ_ACTION_IDS_V1 = Object.freeze([
   'session.discussion.get',
   'session.discussion.read',
 ] as const);
-export const SessionRunPromptReadActionIdV1Schema = z.enum(SESSION_RUN_PROMPT_READ_ACTION_IDS_V1);
+export const SessionRunPromptReadActionIdV1Schema = lazyZodSchema(() => z.enum(SESSION_RUN_PROMPT_READ_ACTION_IDS_V1));
 export type SessionRunPromptReadActionIdV1 = z.infer<typeof SessionRunPromptReadActionIdV1Schema>;
 
 /** Host-authored description only; neither origin nor advertised tools grant authority. */
-export const SessionRunPromptContextV1Schema = z.object({
+export const SessionRunPromptContextV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('happier_session_run'),
   // Keep SessionId validation owned by the canonical composable schema while
   // spelling out its string projection for Zod's declaration inference.
@@ -60,7 +61,7 @@ export const SessionRunPromptContextV1Schema = z.object({
     messageIds: SessionDiscussionSelectionSourceV1Schema.shape.messageIds.readonly(),
   }).readonly().optional(),
   supportedReadActions: z.array(SessionRunPromptReadActionIdV1Schema).readonly(),
-}).strict().readonly();
+}).strict().readonly());
 export type SessionRunPromptContextV1 = z.infer<typeof SessionRunPromptContextV1Schema>;
 
 function normalizeBoundedContextValue(value: string): string {

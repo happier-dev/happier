@@ -1,6 +1,7 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
-export const PetPackageSourceV1Schema = z.discriminatedUnion('kind', [
+export const PetPackageSourceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z
     .object({
       kind: z.literal('builtIn'),
@@ -30,15 +31,15 @@ export const PetPackageSourceV1Schema = z.discriminatedUnion('kind', [
       sourceKey: z.string().min(1).max(500),
     })
     .passthrough(),
-]);
+]));
 
 export type PetPackageSourceV1 = z.infer<typeof PetPackageSourceV1Schema>;
 
-export const PetPackageSelectionV1Schema = z
+export const PetPackageSelectionV1Schema = lazyZodSchema(() => z
   .object({
     source: PetPackageSourceV1Schema,
     selectedAtMs: z.number().int().min(0),
   })
-  .passthrough();
+  .passthrough());
 
 export type PetPackageSelectionV1 = z.infer<typeof PetPackageSelectionV1Schema>;

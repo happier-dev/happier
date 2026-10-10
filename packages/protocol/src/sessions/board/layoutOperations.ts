@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { getWidgetSizeFootprintV1, WIDGET_SIZE_POLICY_V1 } from '../../widgets/widgetPresentationV1.js';
 
@@ -21,22 +22,22 @@ export const SESSION_BOARD_DEFAULT_ITEM_WIDTH_V1: SessionBoardItemWidth = Sessio
   getWidgetSizeFootprintV1('sessionBoard', WIDGET_SIZE_POLICY_V1.sessionBoard.defaultSize)!.width,
 );
 
-const SessionBoardTabAnchorV1Schema = z.object({
+const SessionBoardTabAnchorV1Schema = lazyZodSchema(() => z.object({
   side: z.enum(['before', 'after']),
   tabId: SessionBoardTabIdSchema,
-}).strict();
+}).strict());
 
-const SessionBoardItemAnchorV1Schema = z.object({
+const SessionBoardItemAnchorV1Schema = lazyZodSchema(() => z.object({
   side: z.enum(['before', 'after']),
   itemId: SessionSurfaceItemIdSchema,
-}).strict();
+}).strict());
 
 /**
  * The closed set of Board organization edits. Positions are expressed only as
  * stable sibling anchors: an index would silently retarget when a concurrent
  * editor reordered the same view between the read and the write.
  */
-export const SessionBoardLayoutOperationV1Schema = z.discriminatedUnion('op', [
+export const SessionBoardLayoutOperationV1Schema = lazyZodSchema(() => z.discriminatedUnion('op', [
   z.object({
     op: z.literal('tab.create'),
     tabId: SessionBoardTabIdSchema,
@@ -99,17 +100,17 @@ export const SessionBoardLayoutOperationV1Schema = z.discriminatedUnion('op', [
     tabId: SessionBoardTabIdSchema,
     frameStyle: SessionBoardItemFrameStyleSchema.nullable(),
   }).strict(),
-]);
+]));
 export type SessionBoardLayoutOperationV1 = z.infer<typeof SessionBoardLayoutOperationV1Schema>;
 
 /** The optional placement an item upsert may carry; see Plan 04 §3.2. */
-export const SessionBoardItemPlacementV1Schema = z.object({
+export const SessionBoardItemPlacementV1Schema = lazyZodSchema(() => z.object({
   tabId: SessionBoardTabIdSchema.optional(),
   tabTitle: z.string().trim().optional(),
   width: SessionBoardItemWidthSchema.optional(),
   frameStyle: SessionBoardItemFrameStyleSchema.optional(),
   anchor: SessionBoardItemAnchorV1Schema.optional(),
-}).strict();
+}).strict());
 export type SessionBoardItemPlacementV1 = z.infer<typeof SessionBoardItemPlacementV1Schema>;
 
 export type SessionBoardLayoutEditResultV1 =

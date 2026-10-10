@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { FeatureGateSchema, type FeatureGate } from './featureGate.js';
@@ -5,12 +6,12 @@ import { FeatureGateSchema, type FeatureGate } from './featureGate.js';
 const DEFAULT_GATE_DISABLED: FeatureGate = { enabled: false };
 const DEFAULT_GATE_ENABLED: FeatureGate = { enabled: true };
 
-const VoiceGateSchema = z.object({
+const VoiceGateSchema = lazyZodSchema(() => z.object({
   enabled: z.boolean(),
   happierVoice: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
-});
+}));
 
-export const FeatureGatesSchema = z.object({
+export const FeatureGatesSchema = lazyZodSchema(() => z.object({
   teams: FeatureGateSchema.extend({
     credentialResources: FeatureGateSchema.extend({
       externalApi: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
@@ -442,6 +443,6 @@ export const FeatureGatesSchema = z.object({
       pairing: { desktopQrMobileScan: DEFAULT_GATE_DISABLED, boundQrV2: DEFAULT_GATE_DISABLED },
       ui: { recoveryKeyReminder: DEFAULT_GATE_DISABLED },
     }),
-});
+}));
 
 export type FeatureGates = z.infer<typeof FeatureGatesSchema>;

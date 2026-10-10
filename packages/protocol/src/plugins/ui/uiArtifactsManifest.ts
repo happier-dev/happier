@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { createPortablePathCollisionRegistry } from '../../filesystem/portablePathSegment.js';
@@ -7,11 +8,11 @@ import { PluginUiArtifactDigestV1Schema } from './artifactIntegrity.js';
 /** Canonical universal CommonJS executable / hosted-static artifact grammar. */
 export const PLUGIN_UI_ARTIFACT_GRAMMAR_VERSION_V2 = 2 as const;
 
-export const PluginUiArtifactIdV2Schema = z.string().trim().min(1).regex(
+export const PluginUiArtifactIdV2Schema = lazyZodSchema(() => z.string().trim().min(1).regex(
   /^[A-Za-z0-9][A-Za-z0-9._-]*$/u,
   'Plugin UI artifact ids must be portable path segments',
-);
-const PluginUiExecutableExportsV2Schema = z.array(z.string().trim().min(1)).min(1)
+));
+const PluginUiExecutableExportsV2Schema = lazyZodSchema(() => z.array(z.string().trim().min(1)).min(1)
   .superRefine((exports, ctx) => {
     if (new Set(exports).size !== exports.length) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Executable exports must be unique' });
@@ -20,9 +21,9 @@ const PluginUiExecutableExportsV2Schema = z.array(z.string().trim().min(1)).min(
     if (exports.some((name, index) => name !== sorted[index])) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Executable exports must be sorted' });
     }
-  });
+  }));
 
-export const PluginUiExecutableArtifactV2Schema = z.object({
+export const PluginUiExecutableArtifactV2Schema = lazyZodSchema(() => z.object({
   artifactId: PluginUiArtifactIdV2Schema,
   tier: z.literal('reactNative'),
   entry: PluginUiArtifactRelativePathV1Schema,
@@ -39,10 +40,10 @@ export const PluginUiExecutableArtifactV2Schema = z.object({
   if (value.files[0]?.relativePath !== value.entry) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['files', 0, 'relativePath'], message: 'Executable artifact file must be its declared entry' });
   }
-});
+}));
 export type PluginUiExecutableArtifactV2 = z.infer<typeof PluginUiExecutableArtifactV2Schema>;
 
-export const PluginUiHostedStaticArtifactV2Schema = z.object({
+export const PluginUiHostedStaticArtifactV2Schema = lazyZodSchema(() => z.object({
   artifactId: PluginUiArtifactIdV2Schema,
   tier: z.literal('hostedWeb'),
   entry: PluginUiArtifactRelativePathV1Schema,
@@ -58,16 +59,16 @@ export const PluginUiHostedStaticArtifactV2Schema = z.object({
   if (!value.files.some((file) => file.relativePath === value.entry)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['files'], message: 'Hosted-static artifact files must contain their root index.html' });
   }
-});
+}));
 export type PluginUiHostedStaticArtifactV2 = z.infer<typeof PluginUiHostedStaticArtifactV2Schema>;
 
-export const PluginUiArtifactsManifestEntryV2Schema = z.discriminatedUnion('tier', [
+export const PluginUiArtifactsManifestEntryV2Schema = lazyZodSchema(() => z.discriminatedUnion('tier', [
   PluginUiExecutableArtifactV2Schema,
   PluginUiHostedStaticArtifactV2Schema,
-]);
+]));
 export type PluginUiArtifactsManifestEntryV2 = z.infer<typeof PluginUiArtifactsManifestEntryV2Schema>;
 
-export const PluginUiArtifactsManifestV2Schema = z.object({
+export const PluginUiArtifactsManifestV2Schema = lazyZodSchema(() => z.object({
   version: z.literal(PLUGIN_UI_ARTIFACT_GRAMMAR_VERSION_V2),
   entries: z.array(PluginUiArtifactsManifestEntryV2Schema).default([]),
 }).strict().superRefine((value, ctx) => {
@@ -85,5 +86,5 @@ export const PluginUiArtifactsManifestV2Schema = z.object({
       }
     });
   });
-});
+}));
 export type PluginUiArtifactsManifestV2 = z.infer<typeof PluginUiArtifactsManifestV2Schema>;

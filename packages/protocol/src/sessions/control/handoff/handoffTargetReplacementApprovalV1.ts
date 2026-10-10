@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 const boundedId = z.string().trim().min(1).max(512);
@@ -20,7 +21,7 @@ export type HandoffTargetApprovalConsequenceV1 = typeof HANDOFF_TARGET_APPROVAL_
  * once. It is durable only as approval subject data and is never
  * caller-supplied Action/SDK input.
  */
-export const HandoffTargetReplacementApprovalV1Schema = z.object({
+export const HandoffTargetReplacementApprovalV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   consequences: z.array(z.enum(HANDOFF_TARGET_APPROVAL_CONSEQUENCES_V1))
     .min(1)
@@ -35,7 +36,7 @@ export const HandoffTargetReplacementApprovalV1Schema = z.object({
   canonicalRoot: z.string().min(1).max(4096),
   rootFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
   operationId: boundedId,
-}).strict();
+}).strict());
 
 export type HandoffTargetReplacementApprovalV1 = z.infer<
   typeof HandoffTargetReplacementApprovalV1Schema

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { asProtocolZod } from '../../actions/internalProtocolZodAdapter.js';
@@ -15,26 +16,26 @@ const PluginContributionLocalIdZodSchema = asProtocolZod(PluginContributionLocal
 const PluginIdZodSchema = asProtocolZod(PluginIdSchema);
 
 /** Presentation metadata shared by Session and app-page header actions. */
-export const PluginUiHeaderActionPresentationV1Schema = z.object({
+export const PluginUiHeaderActionPresentationV1Schema = lazyZodSchema(() => z.object({
   id: PluginContributionLocalIdZodSchema,
   title: PluginLocalizedStringV2Schema,
   description: PluginLocalizedStringV2Schema.optional(),
   icon: PluginUiIconTokenV1Schema.optional(),
   order: z.number().int().optional(),
-}).strict();
+}).strict());
 
 /** A static app-page header action; dynamic status remains host-owned. */
-export const PluginUiPageHeaderActionV1Schema = PluginUiHeaderActionPresentationV1Schema.extend({
+export const PluginUiPageHeaderActionV1Schema = lazyZodSchema(() => PluginUiHeaderActionPresentationV1Schema.extend({
   command: PluginUiSemanticActionDeclarationV1Schema,
-}).strict();
+}).strict());
 export type PluginUiPageHeaderActionV1 = z.infer<typeof PluginUiPageHeaderActionV1Schema>;
 /** Author input: `command` also admits the bare same-plugin Action local id. */
 export type PluginUiPageHeaderActionV1Input = z.input<typeof PluginUiPageHeaderActionV1Schema>;
 
-export const PluginSessionHeaderActionDescriptorV1Schema = PluginUiHeaderActionPresentationV1Schema.extend({
+export const PluginSessionHeaderActionDescriptorV1Schema = lazyZodSchema(() => PluginUiHeaderActionPresentationV1Schema.extend({
   command: PluginUiSemanticActionDeclarationV1Schema,
   availability: PluginAvailabilityDescriptorV2Schema.optional(),
-}).strict();
+}).strict());
 export type PluginSessionHeaderActionDescriptorV1 = z.infer<typeof PluginSessionHeaderActionDescriptorV1Schema>;
 export type PluginSessionHeaderActionDescriptor = z.infer<typeof PluginSessionHeaderActionDescriptorV1Schema>;
 export type PluginSessionHeaderActionDescriptorInput = z.input<typeof PluginSessionHeaderActionDescriptorV1Schema>;

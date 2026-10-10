@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -32,7 +33,7 @@ export type VoiceAgentRunMetadataV1 = Readonly<{
   welcomedEpoch?: number;
 }>;
 
-const NonNegativeIntSchema = z.number().int().nonnegative();
+const NonNegativeIntSchema = lazyZodSchema(() => z.number().int().nonnegative());
 
 /**
  * Resume handle parsing stays tolerant: a structurally invalid handle must not
@@ -40,33 +41,33 @@ const NonNegativeIntSchema = z.number().int().nonnegative();
  * supported predecessor shapes and drop an invalid hint instead of exposing
  * unvalidated data as a typed execution-run handle.
  */
-const TolerantResumeHandleSchema = z
+const TolerantResumeHandleSchema = lazyZodSchema(() => z
   .unknown()
   .transform((value) => {
     if (value == null) return null;
     const parsed = ExecutionRunResumeHandleSchema.safeParse(value);
     return parsed.success ? parsed.data : null;
-  });
+  }));
 
 /**
  * Backend target parsing stays tolerant: an invalid stored target is dropped
  * (callers fall back to the load-bearing `backendId`) rather than invalidating
  * the whole record.
  */
-const TolerantBackendTargetSchema = z
+const TolerantBackendTargetSchema = lazyZodSchema(() => z
   .unknown()
   .optional()
   .transform((value) => {
     if (value == null) return undefined;
     const parsed = BackendTargetRefSchema.safeParse(value);
     return parsed.success ? parsed.data : undefined;
-  });
+  }));
 
 /**
  * Tolerant parse schema. Accepts legacy/extra fields (including `streamId`) but only
  * surfaces canonical write fields. `streamId` is intentionally absent from the output.
  */
-const VoiceAgentRunMetadataV1ParseSchema = z
+const VoiceAgentRunMetadataV1ParseSchema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     runId: z.string().trim().min(1),
@@ -77,7 +78,7 @@ const VoiceAgentRunMetadataV1ParseSchema = z
     transcriptContractVersion: NonNegativeIntSchema.optional(),
     welcomedEpoch: NonNegativeIntSchema.optional(),
   })
-  .passthrough();
+  .passthrough());
 
 function toCanonical(parsed: z.infer<typeof VoiceAgentRunMetadataV1ParseSchema>): VoiceAgentRunMetadataV1 {
   return {

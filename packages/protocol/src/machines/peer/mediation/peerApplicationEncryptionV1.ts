@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { sha256 } from '@noble/hashes/sha2';
 import { z } from 'zod';
 
@@ -15,8 +16,8 @@ export const PEER_APPLICATION_ENCRYPTION_CIPHERTEXT_MAX_BYTES_V1 = 512 * 1024;
 export const PEER_APPLICATION_ENCRYPTION_INSTALL_PROOF_V1 = 'happier.peer-application.install.v1' as const;
 export const PEER_APPLICATION_ENCRYPTION_INSTALL_CONFIRMATION_V1 = 'happier.peer-application.confirmed.v1' as const;
 
-const Sha256DigestSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
-const SafeSequenceSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const Sha256DigestSchema = lazyZodSchema(() => z.string().regex(/^sha256:[0-9a-f]{64}$/u));
+const SafeSequenceSchema = lazyZodSchema(() => z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER));
 
 function canonicalBase64UrlBytesSchema(minBytes: number, maxBytes: number): z.ZodString {
   return z.string().regex(/^[A-Za-z0-9_-]+$/u).refine((value) => {
@@ -28,7 +29,7 @@ function canonicalBase64UrlBytesSchema(minBytes: number, maxBytes: number): z.Zo
   });
 }
 
-export const PeerApplicationEncryptionAuthorityBindingV1Schema = z.object({
+export const PeerApplicationEncryptionAuthorityBindingV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(PEER_APPLICATION_ENCRYPTION_VERSION_V1),
   suite: z.literal(PEER_APPLICATION_ENCRYPTION_SUITE_V1),
   flowKind: z.literal('voice_media'),
@@ -40,21 +41,21 @@ export const PeerApplicationEncryptionAuthorityBindingV1Schema = z.object({
   applicationKind: VoiceMediaApplicationKindV1Schema,
   applicationAttemptId: z.string().min(1).max(256),
   applicationAuthorityDigest: Sha256DigestSchema,
-}).strict();
+}).strict());
 export type PeerApplicationEncryptionAuthorityBindingV1 = z.infer<
   typeof PeerApplicationEncryptionAuthorityBindingV1Schema
 >;
 
-export const PeerApplicationEncryptionStartResponseV1Schema = z.object({
+export const PeerApplicationEncryptionStartResponseV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(PEER_APPLICATION_ENCRYPTION_VERSION_V1),
   suite: z.literal(PEER_APPLICATION_ENCRYPTION_SUITE_V1),
   recipientPublicKeyBase64Url: canonicalBase64UrlBytesSchema(32, 32),
-}).strict();
+}).strict());
 export type PeerApplicationEncryptionStartResponseV1 = z.infer<
   typeof PeerApplicationEncryptionStartResponseV1Schema
 >;
 
-const PeerApplicationEncryptedFrameBaseV1Schema = z.object({
+const PeerApplicationEncryptedFrameBaseV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(PEER_APPLICATION_ENCRYPTION_VERSION_V1),
   nonceBase64Url: canonicalBase64UrlBytesSchema(
     PEER_APPLICATION_ENCRYPTION_NONCE_BYTES_V1,
@@ -64,9 +65,9 @@ const PeerApplicationEncryptedFrameBaseV1Schema = z.object({
     PEER_APPLICATION_ENCRYPTION_AUTH_TAG_BYTES_V1,
     PEER_APPLICATION_ENCRYPTION_CIPHERTEXT_MAX_BYTES_V1,
   ),
-});
+}));
 
-export const PeerApplicationEncryptedFrameV1Schema = z.discriminatedUnion('kind', [
+export const PeerApplicationEncryptedFrameV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   PeerApplicationEncryptedFrameBaseV1Schema.extend({
     kind: z.literal('install'),
     encryptedDataKeyEnvelopeBase64Url: canonicalBase64UrlBytesSchema(
@@ -80,11 +81,11 @@ export const PeerApplicationEncryptedFrameV1Schema = z.discriminatedUnion('kind'
   PeerApplicationEncryptedFrameBaseV1Schema.extend({
     kind: z.literal('finish'),
   }).strict(),
-]);
+]));
 export type PeerApplicationEncryptedFrameV1 = z.infer<typeof PeerApplicationEncryptedFrameV1Schema>;
 export type PeerApplicationEncryptionPhaseV1 = PeerApplicationEncryptedFrameV1['kind'];
 
-const PeerApplicationEncryptionAadBaseV1Schema = z.object({
+const PeerApplicationEncryptionAadBaseV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(PEER_APPLICATION_ENCRYPTION_VERSION_V1),
   domain: z.literal('happier.peer-application.aead'),
   suite: z.literal(PEER_APPLICATION_ENCRYPTION_SUITE_V1),
@@ -99,13 +100,13 @@ const PeerApplicationEncryptionAadBaseV1Schema = z.object({
   substreamId: z.string().min(1),
   sequence: SafeSequenceSchema,
   phase: z.enum(['install', 'data', 'finish']),
-});
+}));
 
-export const PeerApplicationEncryptionAadV1Schema = PeerApplicationEncryptionAadBaseV1Schema.extend({
+export const PeerApplicationEncryptionAadV1Schema = lazyZodSchema(() => PeerApplicationEncryptionAadBaseV1Schema.extend({
   applicationKind: z.literal('speech_transcription'),
   streamId: z.string().min(1),
   generation: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 export type PeerApplicationEncryptionAadV1 = z.infer<typeof PeerApplicationEncryptionAadV1Schema>;
 
 function bytesToHex(bytes: Uint8Array): string {

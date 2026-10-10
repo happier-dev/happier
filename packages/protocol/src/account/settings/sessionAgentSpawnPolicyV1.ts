@@ -1,14 +1,15 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { SESSION_PERMISSION_MODES } from '../../sessions/metadata/sessionPermissionModes.js';
 
-const SessionAgentSpawnPermissionCeilingV1Schema = z
+const SessionAgentSpawnPermissionCeilingV1Schema = lazyZodSchema(() => z
   .enum(SESSION_PERMISSION_MODES)
   .nullable()
-  .default(null);
+  .default(null));
 
 // The V1 durable shape is also read by released 0.2 strict readers.
-export const SessionAgentSpawnPolicyV1StrictSchema = z.object({
+export const SessionAgentSpawnPolicyV1StrictSchema = lazyZodSchema(() => z.object({
   v: z.literal(1).default(1),
   allowCustomDirectory: z.boolean().default(true),
   allowCrossMachine: z.boolean().default(true),
@@ -23,17 +24,17 @@ export const SessionAgentSpawnPolicyV1StrictSchema = z.object({
   allowMcpSelectionOverride: z.boolean().default(true),
   allowTranscriptStorageOverride: z.boolean().default(true),
   permissionCeiling: SessionAgentSpawnPermissionCeilingV1Schema,
-}).strict();
+}).strict());
 
 // Recover each malformed field through its own default; never erase other
 // restrictions because one field is invalid or a newer writer added a key.
-export const SessionAgentSpawnPolicyV1Schema = z.preprocess((raw) => {
+export const SessionAgentSpawnPolicyV1Schema = lazyZodSchema(() => z.preprocess((raw) => {
   const record = raw && typeof raw === 'object' && !Array.isArray(raw)
     ? raw as Record<string, unknown> : {};
   return Object.fromEntries(Object.entries(SessionAgentSpawnPolicyV1StrictSchema.shape).map(([key, schema]) => [
     key, schema.safeParse(record[key]).success ? record[key] : undefined,
   ]));
-}, SessionAgentSpawnPolicyV1StrictSchema.strip());
+}, SessionAgentSpawnPolicyV1StrictSchema.strip()));
 
 export type SessionAgentSpawnPolicyV1 = z.infer<typeof SessionAgentSpawnPolicyV1Schema>;
 

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
@@ -30,7 +31,7 @@ export function addAutomationStoredEnvelopeUtf8LimitIssue(
   }
 }
 
-export const AutomationStoredContentEnvelopeV1Schema = z.discriminatedUnion('t', [
+export const AutomationStoredContentEnvelopeV1Schema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.object({ t: z.literal('plain'), v: PluginJsonValueV2Schema }).strict(),
   ENCRYPTED_STORED_CONTENT_SCHEMA,
 ]).superRefine((value, context) => {
@@ -39,6 +40,6 @@ export const AutomationStoredContentEnvelopeV1Schema = z.discriminatedUnion('t',
     context,
     'Stored Automation envelope exceeds its UTF-8 byte limit',
   );
-});
+}));
 export type AutomationStoredContentEnvelopeV1 = z.infer<typeof AutomationStoredContentEnvelopeV1Schema>;
 export const AutomationStoredContentEnvelopeV1ReadSchema = createStoredReadSchema(AutomationStoredContentEnvelopeV1Schema);

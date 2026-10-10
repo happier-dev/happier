@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -31,7 +32,7 @@ export const IROH_MACHINE_CARRIER_FLOWS_V1 = [
   'tcp_tunnel',
 ] as const;
 
-export const IrohMachineCarrierFlowV1Schema = z.enum(IROH_MACHINE_CARRIER_FLOWS_V1);
+export const IrohMachineCarrierFlowV1Schema = lazyZodSchema(() => z.enum(IROH_MACHINE_CARRIER_FLOWS_V1));
 
 function equalInitiator(left: IrohPeerInitiatorV2, right: IrohPeerInitiatorV2): boolean {
   return left.kind === right.kind
@@ -39,16 +40,16 @@ function equalInitiator(left: IrohPeerInitiatorV2, right: IrohPeerInitiatorV2): 
     && (left.kind !== 'machine' || (right.kind === 'machine' && left.machineId === right.machineId));
 }
 
-const IrohMachineHandshakeCommonV1Schema = z.object({
+const IrohMachineHandshakeCommonV1Schema = lazyZodSchema(() => z.object({
     v: z.literal(IROH_MACHINE_HANDSHAKE_VERSION_V1),
     accountId: z.string().min(1),
     initiator: IrohPeerInitiatorV2Schema,
     target: IrohPeerTargetV2Schema,
     grant: SignedDirectRouteGrantV2Schema,
     proof: PeerRouteEphemeralProofV2Schema,
-  }).strict();
+  }).strict());
 
-export const IrohMachineHandshakeV1Schema = z
+export const IrohMachineHandshakeV1Schema = lazyZodSchema(() => z
   .discriminatedUnion('flow', [
     IrohMachineHandshakeCommonV1Schema.extend({
       flow: z.literal('finite_transfer'),
@@ -98,7 +99,7 @@ export const IrohMachineHandshakeV1Schema = z
         message: 'Machine/1 operationId must equal the signed single-operation grant scope id',
       });
     }
-  });
+  }));
 
 export type IrohMachineCarrierFlowV1 = z.infer<typeof IrohMachineCarrierFlowV1Schema>;
 export type IrohMachineHandshakeV1 = z.infer<typeof IrohMachineHandshakeV1Schema>;

@@ -1,19 +1,20 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 import { sameStrictJsonValue } from '../../../json/strictJsonValue.js';
 import { SessionSurfaceDeclarativeDocumentV1Schema } from './authoring.js';
 import { freezePluginDeclarativeDataNodeV1, isPluginDeclarativeDataNodeV1, type PluginDeclarativeDataNodeV1 } from '../../../plugins/contributions/ui/declarativeDataV1.js';
 import type { PluginDeclarativeDocumentV1 } from '../../../plugins/contributions/ui/declarativeDocumentAuthoringV1.js';
 
-export const WidgetSnapshotMetadataV1Schema = z.object({
+export const WidgetSnapshotMetadataV1Schema = lazyZodSchema(() => z.object({
   asOf: z.iso.datetime(),
   provenance: z.array(z.object({ label: z.string().trim().min(1), digest: z.string().trim().min(1).optional() }).strict()),
-}).strict();
+}).strict());
 export type WidgetSnapshotMetadataV1 = z.infer<typeof WidgetSnapshotMetadataV1Schema>;
 
 const SNAPSHOT_INERT_NODE_KINDS = new Set(['text', 'status', 'stack', 'group', 'list', 'section', 'item', 'metadata', 'state']);
 
 /** A frozen publication has no Action, plugin binding, Markdown fetch, or hidden data. */
-export const WidgetSnapshotDocumentV1Schema = SessionSurfaceDeclarativeDocumentV1Schema.superRefine((document, context) => {
+export const WidgetSnapshotDocumentV1Schema = lazyZodSchema(() => SessionSurfaceDeclarativeDocumentV1Schema.superRefine((document, context) => {
   const pending = [document.root];
   while (pending.length > 0) {
     const node = pending.pop()!;
@@ -29,11 +30,11 @@ export const WidgetSnapshotDocumentV1Schema = SessionSurfaceDeclarativeDocumentV
     }
     if ('children' in node) pending.push(...node.children);
   }
-});
+}));
 export type WidgetSnapshotDocumentV1 = z.infer<typeof WidgetSnapshotDocumentV1Schema>;
 
-export const WidgetSnapshotPreviewV1Schema = z.object({ v: z.literal(1), document: WidgetSnapshotDocumentV1Schema,
-  ...WidgetSnapshotMetadataV1Schema.shape }).strict();
+export const WidgetSnapshotPreviewV1Schema = lazyZodSchema(() => z.object({ v: z.literal(1), document: WidgetSnapshotDocumentV1Schema,
+  ...WidgetSnapshotMetadataV1Schema.shape }).strict());
 export type WidgetSnapshotPreviewV1 = z.infer<typeof WidgetSnapshotPreviewV1Schema>;
 
 /**

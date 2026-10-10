@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import type { ViewerReadStateV1 } from './readState.js';
@@ -24,7 +25,7 @@ export function isPendingRequestAnswerableV1(
  * is the canonical priority ladder: `reasons` keeps every concurrent fact and
  * `primary` only says which one wins one row of compact space.
  */
-export const SessionPersonalAttentionReasonV1Schema = z.enum([
+export const SessionPersonalAttentionReasonV1Schema = lazyZodSchema(() => z.enum([
   'failed',
   'permission_required',
   'user_action_required',
@@ -35,12 +36,12 @@ export const SessionPersonalAttentionReasonV1Schema = z.enum([
   'ready_after_read',
   'reminder_due',
   'manual',
-]);
+]));
 export type SessionPersonalAttentionReasonV1 = z.infer<
   typeof SessionPersonalAttentionReasonV1Schema
 >;
 
-export const SessionPersonalAttentionProjectionV1Schema = z
+export const SessionPersonalAttentionProjectionV1Schema = lazyZodSchema(() => z
   .object({
     needsAttention: z.boolean(),
     reasons: z.array(SessionPersonalAttentionReasonV1Schema).readonly(),
@@ -48,7 +49,7 @@ export const SessionPersonalAttentionProjectionV1Schema = z
     /** `status_only` when the viewer cannot open the content (locked E2EE). */
     presentation: z.enum(['full', 'status_only']),
   })
-  .strict();
+  .strict());
 export type SessionPersonalAttentionProjectionV1 = Readonly<{
   needsAttention: boolean;
   reasons: readonly SessionPersonalAttentionReasonV1[];

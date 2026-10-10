@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { AgentIdV1Schema } from '../../agents/agentIdV1.js';
@@ -11,7 +12,7 @@ import { McpServerBindingV1Schema, McpServerCatalogEntryTransportV1Schema, McpSe
 export const McpDetectedProviderV1Schema = AgentIdV1Schema;
 export type McpDetectedProviderV1 = z.infer<typeof McpDetectedProviderV1Schema>;
 
-export const DetectedMcpServerV1Schema = z
+export const DetectedMcpServerV1Schema = lazyZodSchema(() => z
   .object({
     provider: McpDetectedProviderV1Schema,
     name: z.string().min(1),
@@ -52,7 +53,7 @@ export const DetectedMcpServerV1Schema = z
     if (!value.remote) {
       ctx.addIssue({ code: 'custom', message: 'Missing remote config', path: ['remote'] });
     }
-  });
+  }));
 
 export type DetectedMcpServerV1 = z.infer<typeof DetectedMcpServerV1Schema>;
 
@@ -62,25 +63,25 @@ export type DetectedMcpServerV1 = z.infer<typeof DetectedMcpServerV1Schema>;
  * detection request naming one. Such a source must stay visible as an
  * explicit incompleteness rather than collapsing into an empty result.
  */
-export const DaemonMcpServersDetectWarningV1Schema = z.object({
+export const DaemonMcpServersDetectWarningV1Schema = lazyZodSchema(() => z.object({
   provider: McpDetectedProviderV1Schema.optional(),
   code: z.enum(['read_failed', 'parse_failed', 'unsupported']),
   path: z.string().min(1).optional(),
   detail: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough());
 export type DaemonMcpServersDetectWarningV1 = z.infer<typeof DaemonMcpServersDetectWarningV1Schema>;
 
-export const DaemonMcpServersDetectRequestSchema = z
+export const DaemonMcpServersDetectRequestSchema = lazyZodSchema(() => z
   .object({
     machineId: z.string().min(1),
     directory: z.string().min(1).max(10_000).optional(),
     providers: z.array(McpDetectedProviderV1Schema).optional(),
   })
-  .passthrough();
+  .passthrough());
 
 export type DaemonMcpServersDetectRequest = z.infer<typeof DaemonMcpServersDetectRequestSchema>;
 
-export const DaemonMcpServersDetectResponseSchema = z.union([
+export const DaemonMcpServersDetectResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     ok: z.literal(true),
     servers: z.array(DetectedMcpServerV1Schema),
@@ -91,10 +92,10 @@ export const DaemonMcpServersDetectResponseSchema = z.union([
     errorCode: z.enum(['invalid_request', 'internal_error']),
     error: z.string().min(1),
   }).passthrough(),
-]);
+]));
 export type DaemonMcpServersDetectResponse = z.infer<typeof DaemonMcpServersDetectResponseSchema>;
 
-export const DaemonMcpServersTestErrorCodeSchema = z.enum([
+export const DaemonMcpServersTestErrorCodeSchema = lazyZodSchema(() => z.enum([
   'invalid_request',
   'missing_credentials',
   'server_not_found',
@@ -103,10 +104,10 @@ export const DaemonMcpServersTestErrorCodeSchema = z.enum([
   'materialization_failed',
   'mcp_connect_failed',
   'mcp_list_tools_failed',
-]);
+]));
 export type DaemonMcpServersTestErrorCode = z.infer<typeof DaemonMcpServersTestErrorCodeSchema>;
 
-export const DaemonMcpServersTestRequestSchema = z.discriminatedUnion('t', [
+export const DaemonMcpServersTestRequestSchema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.object({
     t: z.literal('draft'),
     machineId: z.string().min(1),
@@ -121,10 +122,10 @@ export const DaemonMcpServersTestRequestSchema = z.discriminatedUnion('t', [
     serverId: z.string().min(1),
     bindingId: z.string().min(1).optional(),
   }).passthrough(),
-]);
+]));
 export type DaemonMcpServersTestRequest = z.infer<typeof DaemonMcpServersTestRequestSchema>;
 
-export const DaemonMcpServersTestResponseSchema = z.union([
+export const DaemonMcpServersTestResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     ok: z.literal(true),
     toolCount: z.number().int().min(0),
@@ -137,5 +138,5 @@ export const DaemonMcpServersTestResponseSchema = z.union([
     error: z.string().min(1),
     durationMs: z.number().int().min(0),
   }).passthrough(),
-]);
+]));
 export type DaemonMcpServersTestResponse = z.infer<typeof DaemonMcpServersTestResponseSchema>;

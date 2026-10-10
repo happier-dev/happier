@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { AutomationEventAdmitUnresolvedStatusV1Schema } from '../../automations/automationEventAdmitStatusV1.js';
@@ -12,10 +13,10 @@ import {
 } from './endpointV1.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
-const TimestampSchema = z.number().int().nonnegative().safe();
-const RevisionSchema = z.number().int().positive().safe();
-const CountSchema = z.number().int().nonnegative();
-const DeliveryIdSchema = z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/u);
+const TimestampSchema = lazyZodSchema(() => z.number().int().nonnegative().safe());
+const RevisionSchema = lazyZodSchema(() => z.number().int().positive().safe());
+const CountSchema = lazyZodSchema(() => z.number().int().nonnegative());
+const DeliveryIdSchema = lazyZodSchema(() => z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/u));
 
 export const PLUGIN_WEBHOOK_AUTOMATION_ADMISSION_UNRESOLVED_MAX_TOTAL_COUNT_V1 = 10_000;
 export const PLUGIN_WEBHOOK_AUTOMATION_ADMISSION_UNRESOLVED_MAX_ENTRIES_V1 = 100;
@@ -30,13 +31,13 @@ export const PLUGIN_WEBHOOK_ACCOUNT_STATUS_HTTP_PATH_V1 = '/v1/plugins/webhooks/
 export const PLUGIN_WEBHOOK_DELIVERY_REPLAY_HTTP_PATH_V1 = '/v1/plugins/webhooks/deliveries/replay';
 export const PLUGIN_WEBHOOK_DELIVERY_DISCARD_HTTP_PATH_V1 = '/v1/plugins/webhooks/deliveries/discard';
 
-export const PluginWebhookAccountStatusRequestV1Schema = z.object({
+export const PluginWebhookAccountStatusRequestV1Schema = lazyZodSchema(() => z.object({
   endpointCursor: PluginWebhookEndpointIdV1Schema.optional(),
   pageSize: z.number().int().min(1).max(100).default(50),
   deadLetterPageSize: z.number().int().min(0).max(100).default(50),
-}).strict();
+}).strict());
 
-export const PluginWebhookEndpointStatusV1Schema = z.object({
+export const PluginWebhookEndpointStatusV1Schema = lazyZodSchema(() => z.object({
   webhookEndpointId: PluginWebhookEndpointIdV1Schema,
   revision: RevisionSchema,
   contribution: asProtocolZod(PluginContributionIdentityV1Schema),
@@ -68,18 +69,18 @@ export const PluginWebhookEndpointStatusV1Schema = z.object({
     previousCredentialVersionId: z.string().trim().min(1).max(128),
     previousAcceptUntilMs: TimestampSchema,
   }).strict().optional(),
-}).strict();
+}).strict());
 
-const PluginWebhookAutomationAdmissionUnresolvedEntryV1Schema = z.object({
+const PluginWebhookAutomationAdmissionUnresolvedEntryV1Schema = lazyZodSchema(() => z.object({
   automationId: asProtocolZod(AutomationIdV1Schema),
   status: AutomationEventAdmitUnresolvedStatusV1Schema,
-}).strict();
+}).strict());
 
 /**
  * Host-derived diagnostic retained only with an exhausted Webhook delivery.
  * It is deliberately not part of the plugin-authored Action result contract.
  */
-export const PluginWebhookAutomationAdmissionUnresolvedV1Schema = z.object({
+export const PluginWebhookAutomationAdmissionUnresolvedV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   kind: z.literal('automationAdmissionUnresolved'),
   totalCount: z.number().int().min(1).max(PLUGIN_WEBHOOK_AUTOMATION_ADMISSION_UNRESOLVED_MAX_TOTAL_COUNT_V1),
@@ -120,9 +121,9 @@ export const PluginWebhookAutomationAdmissionUnresolvedV1Schema = z.object({
       message: 'Unresolved Automation summary exceeds the V1 canonical JSON byte limit',
     });
   }
-});
+}));
 
-export const PluginWebhookDeadLetterStatusV1Schema = z.object({
+export const PluginWebhookDeadLetterStatusV1Schema = lazyZodSchema(() => z.object({
   deliveryId: DeliveryIdSchema,
   webhookEndpointId: PluginWebhookEndpointIdV1Schema,
   revision: z.number().int().nonnegative().safe(),
@@ -134,9 +135,9 @@ export const PluginWebhookDeadLetterStatusV1Schema = z.object({
   deadLetteredAtMs: TimestampSchema,
   targetMaterialization: PluginMachineMaterializationRefV1Schema,
   automationAdmissionUnresolved: PluginWebhookAutomationAdmissionUnresolvedV1Schema.nullable(),
-}).strict();
+}).strict());
 
-export const PluginWebhookAccountStatusResultV1Schema = z.object({
+export const PluginWebhookAccountStatusResultV1Schema = lazyZodSchema(() => z.object({
   endpoints: z.array(PluginWebhookEndpointStatusV1Schema).max(100),
   nextEndpointCursor: PluginWebhookEndpointIdV1Schema.nullable(),
   deadLetters: z.array(PluginWebhookDeadLetterStatusV1Schema).max(100),
@@ -147,22 +148,22 @@ export const PluginWebhookAccountStatusResultV1Schema = z.object({
       message: 'Plugin webhook Account status exceeds the V1 canonical JSON byte limit',
     });
   }
-});
+}));
 
-export const PluginWebhookDeliveryReplayInputV1Schema = z.object({
+export const PluginWebhookDeliveryReplayInputV1Schema = lazyZodSchema(() => z.object({
   deliveryId: DeliveryIdSchema,
   expectedRevision: z.number().int().nonnegative().safe(),
-}).strict();
-export const PluginWebhookDeliveryReplayResultV1Schema = z.union([
+}).strict());
+export const PluginWebhookDeliveryReplayResultV1Schema = lazyZodSchema(() => z.union([
   z.object({ kind: z.literal('requeued'), revision: z.number().int().nonnegative().safe() }).strict(),
   z.object({ kind: z.enum(['revisionConflict', 'unavailable', 'replayLimit']) }).strict(),
-]);
+]));
 
 export const PluginWebhookDeliveryDiscardInputV1Schema = PluginWebhookDeliveryReplayInputV1Schema;
-export const PluginWebhookDeliveryDiscardResultV1Schema = z.union([
+export const PluginWebhookDeliveryDiscardResultV1Schema = lazyZodSchema(() => z.union([
   z.object({ kind: z.literal('discarded'), revision: z.number().int().nonnegative().safe() }).strict(),
   z.object({ kind: z.enum(['revisionConflict', 'unavailable']) }).strict(),
-]);
+]));
 
 export type PluginWebhookAccountStatusRequestV1 = z.infer<typeof PluginWebhookAccountStatusRequestV1Schema>;
 export type PluginWebhookAccountStatusResultV1 = z.infer<typeof PluginWebhookAccountStatusResultV1Schema>;

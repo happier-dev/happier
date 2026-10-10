@@ -1,13 +1,14 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
-const NonNegativeIntSchema = z.number().int().nonnegative();
+const NonNegativeIntSchema = lazyZodSchema(() => z.number().int().nonnegative());
 
 // Sideband payloads cross a JSON transport. Zod's native JSON schema models
 // that recursive wire contract directly and can be faithfully advertised to
 // Action-catalog consumers.
-const SimulatorJsonValueSchema = z.json();
+const SimulatorJsonValueSchema = lazyZodSchema(() => z.json());
 
-export const SimulatorSidebandKindV1Schema = z.enum([
+export const SimulatorSidebandKindV1Schema = lazyZodSchema(() => z.enum([
   'accessibility_tree',
   'logs',
   'device_config',
@@ -15,15 +16,15 @@ export const SimulatorSidebandKindV1Schema = z.enum([
   'network_diagnostics',
   'route',
   'capture_health',
-]);
+]));
 
-const BaseSimulatorSidebandMessageV1Schema = z.object({
+const BaseSimulatorSidebandMessageV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   simulatorId: z.string().min(1),
   emittedAtMs: NonNegativeIntSchema,
-});
+}));
 
-export const SimulatorSidebandMessageV1Schema = z.discriminatedUnion('kind', [
+export const SimulatorSidebandMessageV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   BaseSimulatorSidebandMessageV1Schema.extend({
     kind: z.literal('accessibility_tree'),
     tree: SimulatorJsonValueSchema,
@@ -54,7 +55,7 @@ export const SimulatorSidebandMessageV1Schema = z.discriminatedUnion('kind', [
     status: z.enum(['available', 'starting', 'degraded', 'unavailable']),
     reasonCode: z.string().min(1).optional(),
   }).strict(),
-]);
+]));
 
 export type SimulatorSidebandKindV1 = z.infer<typeof SimulatorSidebandKindV1Schema>;
 export type SimulatorSidebandMessageV1 = z.infer<typeof SimulatorSidebandMessageV1Schema>;

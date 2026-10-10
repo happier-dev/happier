@@ -1,9 +1,10 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 import { decodeBase64, encodeBase64 } from '../../../crypto/base64.js';
 
 export const SESSION_SYSTEM_RECORD_VERSION_MAX = 2_147_483_647;
 
-export const SessionSystemRecordRevisionSchema = z.string()
+export const SessionSystemRecordRevisionSchema = lazyZodSchema(() => z.string()
   .max(1_024)
   .refine((value) => value === value.trim(), 'Revision must already be trimmed')
   .regex(/^ssr1\.[A-Za-z0-9_-]+$/)
@@ -21,6 +22,6 @@ export const SessionSystemRecordRevisionSchema = z.string()
     } catch {
       return false;
     }
-  }, 'Invalid session system record revision');
+  }, 'Invalid session system record revision'));
 
 export type SessionSystemRecordRevision = z.infer<typeof SessionSystemRecordRevisionSchema>;

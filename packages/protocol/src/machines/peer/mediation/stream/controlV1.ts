@@ -1,11 +1,12 @@
+import { lazyZodSchema } from '../../../../lazyZodSchema.js';
 import { z } from 'zod';
 import type { MachineLiveStreamCaptureSourceKindV1 } from './captureV1.js';
 
-const PositiveIntSchema = z.number().int().positive();
-const NonNegativeIntSchema = z.number().int().nonnegative();
-const NormalizedCoordinateSchema = z.number().min(0).max(1);
+const PositiveIntSchema = lazyZodSchema(() => z.number().int().positive());
+const NonNegativeIntSchema = lazyZodSchema(() => z.number().int().nonnegative());
+const NormalizedCoordinateSchema = lazyZodSchema(() => z.number().min(0).max(1));
 
-export const MachineLiveStreamInputModeV1Schema = z.enum(['none', 'shared', 'exclusive']);
+export const MachineLiveStreamInputModeV1Schema = lazyZodSchema(() => z.enum(['none', 'shared', 'exclusive']));
 export const MACHINE_LIVE_STREAM_INPUT_CONTROL_KINDS_V1 = [
   'tap',
   'long_press',
@@ -18,9 +19,9 @@ export const MACHINE_LIVE_STREAM_INPUT_CONTROL_KINDS_V1 = [
   'hardware_button',
   'orientation',
 ] as const;
-export const MachineLiveStreamInputControlKindV1Schema = z.enum(MACHINE_LIVE_STREAM_INPUT_CONTROL_KINDS_V1);
+export const MachineLiveStreamInputControlKindV1Schema = lazyZodSchema(() => z.enum(MACHINE_LIVE_STREAM_INPUT_CONTROL_KINDS_V1));
 
-export const MachineLiveStreamControlLeaseV1Schema = z
+export const MachineLiveStreamControlLeaseV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     leaseId: z.string().min(1),
@@ -31,17 +32,17 @@ export const MachineLiveStreamControlLeaseV1Schema = z
     acquiredAtMs: NonNegativeIntSchema,
     expiresAtMs: PositiveIntSchema,
   })
-  .passthrough();
+  .passthrough());
 
-const BaseSidebandControlSchema = z.object({
+const BaseSidebandControlSchema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   streamId: z.string().min(1),
   sourceId: z.string().min(1),
   eventId: z.string().min(1),
   leaseId: z.string().min(1).optional(),
-});
+}));
 
-export const MachineLiveStreamControlSidebandV1Schema = z.discriminatedUnion('kind', [
+export const MachineLiveStreamControlSidebandV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   BaseSidebandControlSchema.extend({
     kind: z.literal('tap'),
     x: NormalizedCoordinateSchema,
@@ -120,14 +121,14 @@ export const MachineLiveStreamControlSidebandV1Schema = z.discriminatedUnion('ki
   BaseSidebandControlSchema.extend({
     kind: z.literal('resume_capture'),
   }).strict(),
-]);
+]));
 
-export const MachineLiveStreamControlSourceV1Schema = z
+export const MachineLiveStreamControlSourceV1Schema = lazyZodSchema(() => z
   .object({
     sourceId: z.string().min(1),
     inputMode: MachineLiveStreamInputModeV1Schema,
   })
-  .passthrough();
+  .passthrough());
 
 export type MachineLiveStreamInputModeV1 = z.infer<typeof MachineLiveStreamInputModeV1Schema>;
 export type MachineLiveStreamInputControlKindV1 = z.infer<typeof MachineLiveStreamInputControlKindV1Schema>;

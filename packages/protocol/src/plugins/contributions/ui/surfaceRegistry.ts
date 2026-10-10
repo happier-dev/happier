@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -21,13 +22,13 @@ import { asProtocolZod } from "../../actions/internalProtocolZodAdapter.js";
  * name a container and target directly; this module admits that pair and
  * produces the sole normalized binding consumed by projection and hosts.
  */
-export const PluginUiTargetKindV1Schema = z.enum([
+export const PluginUiTargetKindV1Schema = lazyZodSchema(() => z.enum([
   'app',
   'session',
   'project',
   'browser',
   'services',
-]);
+]));
 export type PluginUiTargetKindV1 = z.infer<typeof PluginUiTargetKindV1Schema>;
 
 export type PluginUiInlineSurfacePresentationV1 = 'content' | 'fill';
@@ -93,7 +94,7 @@ const PLUGIN_UI_INLINE_SURFACE_ROLE_IDS_V1 = Object.freeze(
     ...PluginUiInlineSurfaceRoleV1[],
   ],
 );
-export const PluginUiInlineSurfaceRoleV1Schema = z.enum(PLUGIN_UI_INLINE_SURFACE_ROLE_IDS_V1);
+export const PluginUiInlineSurfaceRoleV1Schema = lazyZodSchema(() => z.enum(PLUGIN_UI_INLINE_SURFACE_ROLE_IDS_V1));
 
 /**
  * Physical host vocabulary. This is intentionally broader than destinations:
@@ -101,7 +102,7 @@ export const PluginUiInlineSurfaceRoleV1Schema = z.enum(PLUGIN_UI_INLINE_SURFACE
  * containers. Consumers that make a destination decision must use
  * `PluginUiDestinationContainerV1` instead.
  */
-export const PluginUiContainerV1Schema = z.enum([
+export const PluginUiContainerV1Schema = lazyZodSchema(() => z.enum([
   'appPage',
   'settingsPage',
   'rightSidebarTab',
@@ -112,12 +113,12 @@ export const PluginUiContainerV1Schema = z.enum([
   'browserPanel',
   'servicesPanel',
   ...PLUGIN_UI_INLINE_SURFACE_ROLE_IDS_V1,
-]);
+]));
 export type PluginUiContainerV1 = z.infer<typeof PluginUiContainerV1Schema>;
 
-export const PluginUiDestinationContainerV1Schema = PluginUiContainerV1Schema.exclude(
+export const PluginUiDestinationContainerV1Schema = lazyZodSchema(() => PluginUiContainerV1Schema.exclude(
   PLUGIN_UI_INLINE_SURFACE_ROLE_IDS_V1,
-);
+));
 export type PluginUiDestinationContainerV1 = z.infer<
   typeof PluginUiDestinationContainerV1Schema
 >;
@@ -151,10 +152,10 @@ const PLUGIN_UI_NON_AUTHORED_VIEW_INLINE_SURFACE_ROLE_IDS_V1 = Object.freeze(
  * views. Its parsed binding arm, rather than this input vocabulary, decides
  * whether a view is navigable.
  */
-export const PluginUiViewContainerV1Schema = PluginUiContainerV1Schema.exclude([
+export const PluginUiViewContainerV1Schema = lazyZodSchema(() => PluginUiContainerV1Schema.exclude([
   'settingsPage' as const,
   ...PLUGIN_UI_NON_AUTHORED_VIEW_INLINE_SURFACE_ROLE_IDS_V1,
-]);
+]));
 export type PluginUiViewContainerV1 = z.infer<typeof PluginUiViewContainerV1Schema>;
 
 /**
@@ -212,10 +213,10 @@ export function resolvePluginUiInlineSurfaceSlotV1(
   });
 }
 
-export const PluginUiDestinationInstancePolicyV1Schema = z.enum([
+export const PluginUiDestinationInstancePolicyV1Schema = lazyZodSchema(() => z.enum([
   'singleton',
   'multiple',
-]);
+]));
 export type PluginUiDestinationInstancePolicyV1 =
   z.infer<typeof PluginUiDestinationInstancePolicyV1Schema>;
 
@@ -227,11 +228,11 @@ export type PluginUiDestinationCollisionDomainV1<
   targetKind: TTargetKind;
 }>;
 
-export const PluginUiRightSidebarScopeV1Schema = z.enum([
+export const PluginUiRightSidebarScopeV1Schema = lazyZodSchema(() => z.enum([
   'app',
   'session',
   'project',
-]);
+]));
 export type PluginUiRightSidebarScopeV1 = z.infer<typeof PluginUiRightSidebarScopeV1Schema>;
 
 export type PluginUiDestinationBindingSlotV1<
@@ -470,7 +471,7 @@ export function resolvePluginUiDestinationBindingSlotV1(
   ) ?? null;
 }
 
-export const PluginUiDestinationBindingInputV1Schema = z.object({
+export const PluginUiDestinationBindingInputV1Schema = lazyZodSchema(() => z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   destinationId: asProtocolZod(PluginContributionLocalIdSchema),
   rendererId: asProtocolZod(PluginContributionLocalIdSchema),
@@ -484,7 +485,7 @@ export const PluginUiDestinationBindingInputV1Schema = z.object({
   container: PluginUiDestinationContainerV1Schema,
   target: PluginSurfaceTargetV1Schema,
   instancePolicy: PluginUiDestinationInstancePolicyV1Schema.default('singleton'),
-}).strict();
+}).strict());
 export type PluginUiDestinationBindingInputV1 =
   z.input<typeof PluginUiDestinationBindingInputV1Schema>;
 
@@ -654,7 +655,7 @@ export function normalizePluginUiDestinationBindingV1(
  * slot. Platform and method lists may be conservative predecessor subsets, but
  * can never advertise a value outside the current registry slot.
  */
-export const PluginUiDestinationBindingV1Schema = z.object({
+export const PluginUiDestinationBindingV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('destination'),
   destination: asProtocolZod(PluginContributionIdentityV1Schema),
   rendererChain: z.array(asProtocolZod(PluginContributionIdentityV1Schema)).min(1),
@@ -750,14 +751,14 @@ export const PluginUiDestinationBindingV1Schema = z.object({
       message: 'Plugin UI binding platforms must be a unique registry-admitted subset.',
     });
   }
-});
+}));
 
 /**
  * Inline bindings are physical mounts, not destinations. In particular they
  * carry a qualified surface identity and exact role but no destination,
  * collision domain, instance policy, pane state, or restoration identity.
  */
-export const PluginUiInlineSurfaceBindingInputV1Schema = z.object({
+export const PluginUiInlineSurfaceBindingInputV1Schema = lazyZodSchema(() => z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   surfaceId: asProtocolZod(PluginContributionLocalIdSchema),
   rendererId: asProtocolZod(PluginContributionLocalIdSchema),
@@ -765,7 +766,7 @@ export const PluginUiInlineSurfaceBindingInputV1Schema = z.object({
   availableRendererIds: z.array(asProtocolZod(PluginContributionLocalIdSchema)).optional(),
   role: PluginUiInlineSurfaceRoleV1Schema,
   target: PluginSurfaceTargetV1Schema,
-}).strict();
+}).strict());
 export type PluginUiInlineSurfaceBindingInputV1 = z.input<
   typeof PluginUiInlineSurfaceBindingInputV1Schema
 >;
@@ -813,7 +814,7 @@ export function normalizePluginUiInlineSurfaceBindingV1(
   });
 }
 
-export const PluginUiInlineSurfaceBindingV1Schema = z.object({
+export const PluginUiInlineSurfaceBindingV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('inline'),
   surface: asProtocolZod(PluginContributionIdentityV1Schema),
   role: PluginUiInlineSurfaceRoleV1Schema,
@@ -884,13 +885,13 @@ export const PluginUiInlineSurfaceBindingV1Schema = z.object({
       message: 'Plugin inline surface platforms must be a unique registry-admitted subset.',
     });
   }
-});
+}));
 
 /** One physical-host binding grammar; its `kind` closes the two ownership arms. */
-export const PluginUiSurfaceBindingV1Schema = z.discriminatedUnion('kind', [
+export const PluginUiSurfaceBindingV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   PluginUiDestinationBindingV1Schema,
   PluginUiInlineSurfaceBindingV1Schema,
-]);
+]));
 export type PluginUiSurfaceBindingV1 =
   | PluginUiDestinationBindingV1
   | PluginUiInlineSurfaceBindingV1;
@@ -912,12 +913,12 @@ export function isPluginUiInlineSurfaceBindingForSurfaceV1(
  * projected renderer. It accepts no legacy placement name and does not infer
  * either identity from an id prefix.
  */
-export const PluginUiDestinationBindingSelectorV1Schema = z.object({
+export const PluginUiDestinationBindingSelectorV1Schema = lazyZodSchema(() => z.object({
   container: PluginUiDestinationContainerV1Schema,
   targetKind: PluginUiTargetKindV1Schema,
   pluginId: asProtocolZod(PluginIdSchema),
   rendererId: asProtocolZod(PluginContributionLocalIdSchema),
-}).strict();
+}).strict());
 export type PluginUiDestinationBindingSelectorV1 =
   z.infer<typeof PluginUiDestinationBindingSelectorV1Schema>;
 
@@ -1014,11 +1015,11 @@ export function selectPluginUiInlineSurfaceBindingRendererV1(
  * container. Keep that fixed target/container composition at the registry
  * boundary so Settings catalog code cannot invent a second binding normalizer.
  */
-export const PluginUiSettingsPageBindingInputV1Schema = z.object({
+export const PluginUiSettingsPageBindingInputV1Schema = lazyZodSchema(() => z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   pageId: asProtocolZod(PluginContributionLocalIdSchema),
   rendererId: asProtocolZod(PluginContributionLocalIdSchema),
-}).strict();
+}).strict());
 export type PluginUiSettingsPageBindingInputV1 =
   z.input<typeof PluginUiSettingsPageBindingInputV1Schema>;
 

@@ -1,17 +1,18 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ExternalSessionsRpcErrorCodeSchema } from './rpcErrorCodes.js';
 
-export const ExternalSessionTakeoverRequestSchema = z
+export const ExternalSessionTakeoverRequestSchema = lazyZodSchema(() => z
   .object({
     machineId: z.string().min(1),
     sessionId: z.string().min(1),
     forceStop: z.boolean().optional(),
   })
-  .passthrough();
+  .passthrough());
 export type ExternalSessionTakeoverRequest = z.infer<typeof ExternalSessionTakeoverRequestSchema>;
 
-export const ExternalSessionTakeoverResponseSchema = z.union([
+export const ExternalSessionTakeoverResponseSchema = lazyZodSchema(() => z.union([
   z.object({ ok: z.literal(true) }).passthrough(),
   z
     .object({
@@ -20,19 +21,19 @@ export const ExternalSessionTakeoverResponseSchema = z.union([
       error: z.string().min(1),
     })
     .passthrough(),
-]);
+]));
 export type ExternalSessionTakeoverResponse = z.infer<typeof ExternalSessionTakeoverResponseSchema>;
 
-export const ExternalSessionTakeoverPersistRequestSchema = z
+export const ExternalSessionTakeoverPersistRequestSchema = lazyZodSchema(() => z
   .object({
     machineId: z.string().min(1),
     sessionId: z.string().min(1),
     forceStop: z.boolean().optional(),
   })
-  .passthrough();
+  .passthrough());
 export type ExternalSessionTakeoverPersistRequest = z.infer<typeof ExternalSessionTakeoverPersistRequestSchema>;
 
-export const ExternalSessionTakeoverPersistResponseSchema = z.union([
+export const ExternalSessionTakeoverPersistResponseSchema = lazyZodSchema(() => z.union([
   z.object({ ok: z.literal(true), converted: z.boolean().optional() }).passthrough(),
   z
     .object({
@@ -41,5 +42,5 @@ export const ExternalSessionTakeoverPersistResponseSchema = z.union([
       error: z.string().min(1),
     })
     .passthrough(),
-]);
+]));
 export type ExternalSessionTakeoverPersistResponse = z.infer<typeof ExternalSessionTakeoverPersistResponseSchema>;

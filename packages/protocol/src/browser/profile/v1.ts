@@ -1,34 +1,35 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
-export const BrowserProfileStorageModeV1Schema = z.enum(['ephemeral', 'session', 'user', 'plugin']);
+export const BrowserProfileStorageModeV1Schema = lazyZodSchema(() => z.enum(['ephemeral', 'session', 'user', 'plugin']));
 export type BrowserProfileStorageModeV1 = z.infer<typeof BrowserProfileStorageModeV1Schema>;
 
-const IdSchema = z.string().trim().min(1).max(256);
+const IdSchema = lazyZodSchema(() => z.string().trim().min(1).max(256));
 
-export const BrowserProfileLifecycleStateV1Schema = z.enum(['active', 'purging', 'unusable']);
+export const BrowserProfileLifecycleStateV1Schema = lazyZodSchema(() => z.enum(['active', 'purging', 'unusable']));
 export type BrowserProfileLifecycleStateV1 = z.infer<typeof BrowserProfileLifecycleStateV1Schema>;
 
-export const BrowserProfilePurgeFailureReasonCodeV1Schema = z.enum([
+export const BrowserProfilePurgeFailureReasonCodeV1Schema = lazyZodSchema(() => z.enum([
   'disk_purge_failed',
   'permission_denied',
   'profile_in_use',
   'storage_owner_unavailable',
   'unknown',
-]);
+]));
 export type BrowserProfilePurgeFailureReasonCodeV1 = z.infer<
   typeof BrowserProfilePurgeFailureReasonCodeV1Schema
 >;
 
-export const BrowserProfilePurgeFailureV1Schema = z
+export const BrowserProfilePurgeFailureV1Schema = lazyZodSchema(() => z
   .object({
     reasonCode: BrowserProfilePurgeFailureReasonCodeV1Schema,
     message: z.string().trim().min(1).max(512).optional(),
     occurredAt: z.number().int().nonnegative(),
   })
-  .strict();
+  .strict());
 export type BrowserProfilePurgeFailureV1 = z.infer<typeof BrowserProfilePurgeFailureV1Schema>;
 
-export const BrowserProfileOwnerV1Schema = z.discriminatedUnion('kind', [
+export const BrowserProfileOwnerV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('session'), id: IdSchema }).strict(),
   z.object({ kind: z.literal('user'), id: IdSchema }).strict(),
   z.object({
@@ -36,10 +37,10 @@ export const BrowserProfileOwnerV1Schema = z.discriminatedUnion('kind', [
     id: IdSchema,
     contributionId: IdSchema.optional(),
   }).strict(),
-]);
+]));
 export type BrowserProfileOwnerV1 = z.infer<typeof BrowserProfileOwnerV1Schema>;
 
-export const BrowserProfileV1Schema = z
+export const BrowserProfileV1Schema = lazyZodSchema(() => z
   .object({
     profileId: IdSchema,
     storageMode: BrowserProfileStorageModeV1Schema,
@@ -68,5 +69,5 @@ export const BrowserProfileV1Schema = z
         message: 'Unusable browser profiles require at least one disabled reason.',
       });
     }
-  });
+  }));
 export type BrowserProfileV1 = z.infer<typeof BrowserProfileV1Schema>;

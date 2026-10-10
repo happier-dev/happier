@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 
@@ -9,15 +10,15 @@ import { readRpcErrorCode, RPC_ERROR_CODES } from '../../rpc/errors.js';
 
 const SessionIdZodSchema = asProtocolZod(SessionIdSchema);
 
-const SourceDataEncryptionKeyBase64Schema = z.string().refine((value) => (
+const SourceDataEncryptionKeyBase64Schema = lazyZodSchema(() => z.string().refine((value) => (
   readCanonicalPaddedBase64DecodedLength(value) === ENCRYPTED_DATA_KEY_V1_BYTES
   && encodeBase64(decodeBase64(value, 'base64')) === value
-), { message: `Expected canonical Base64 of exactly ${ENCRYPTED_DATA_KEY_V1_BYTES} bytes` });
+), { message: `Expected canonical Base64 of exactly ${ENCRYPTED_DATA_KEY_V1_BYTES} bytes` }));
 
 export const SESSION_FOLLOW_SOURCE_KEY_PREPARE_AUTHORIZATION_KIND_V1 = 'session.follow.sourceKey.prepare' as const;
 export const SESSION_FOLLOW_SOURCE_KEY_PREPARATION_REJECTION_CODE_V1 = 'SESSION_FOLLOW_SOURCE_KEY_PREPARATION_REJECTED' as const;
 
-export const SessionFollowSourceKeyPrepareAuthorizationV1Schema = z.object({
+export const SessionFollowSourceKeyPrepareAuthorizationV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal(SESSION_FOLLOW_SOURCE_KEY_PREPARE_AUTHORIZATION_KIND_V1),
   sourceSessionId: SessionIdZodSchema,
   destinationSessionId: SessionIdZodSchema,
@@ -25,10 +26,10 @@ export const SessionFollowSourceKeyPrepareAuthorizationV1Schema = z.object({
   if (value.sourceSessionId === value.destinationSessionId) {
     context.addIssue({ code: 'custom', path: ['sourceSessionId'], message: 'Follow requires distinct Sessions' });
   }
-});
+}));
 export type SessionFollowSourceKeyPrepareAuthorizationV1 = z.infer<typeof SessionFollowSourceKeyPrepareAuthorizationV1Schema>;
 
-export const SessionFollowSourceKeyPrepareRequestV1Schema = z.object({
+export const SessionFollowSourceKeyPrepareRequestV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   sourceSessionId: SessionIdZodSchema,
   destinationSessionId: SessionIdZodSchema,
@@ -37,7 +38,7 @@ export const SessionFollowSourceKeyPrepareRequestV1Schema = z.object({
   if (value.sourceSessionId === value.destinationSessionId) {
     context.addIssue({ code: 'custom', path: ['sourceSessionId'], message: 'Follow requires distinct Sessions' });
   }
-});
+}));
 export type SessionFollowSourceKeyPrepareRequestV1 = z.infer<typeof SessionFollowSourceKeyPrepareRequestV1Schema>;
 
 /**
@@ -71,10 +72,10 @@ export function buildSessionFollowSourceKeyPrepareRequestV1(params: Readonly<{
   };
 }
 
-export const SessionFollowSourceKeyPrepareResponseV1Schema = z.object({
+export const SessionFollowSourceKeyPrepareResponseV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   outcome: z.literal('installed'),
-}).strict();
+}).strict());
 export type SessionFollowSourceKeyPrepareResponseV1 = z.infer<typeof SessionFollowSourceKeyPrepareResponseV1Schema>;
 
 export const SESSION_FOLLOW_SOURCE_KEY_PREPARATION_WAITING_REASONS_V1 = Object.freeze([
@@ -83,22 +84,22 @@ export const SESSION_FOLLOW_SOURCE_KEY_PREPARATION_WAITING_REASONS_V1 = Object.f
   'runner_key_unavailable',
   'unsupported',
 ] as const);
-export const SessionFollowSourceKeyPreparationWaitingReasonV1Schema = z.enum(
+export const SessionFollowSourceKeyPreparationWaitingReasonV1Schema = lazyZodSchema(() => z.enum(
   SESSION_FOLLOW_SOURCE_KEY_PREPARATION_WAITING_REASONS_V1,
-);
+));
 export type SessionFollowSourceKeyPreparationWaitingReasonV1 = z.infer<
   typeof SessionFollowSourceKeyPreparationWaitingReasonV1Schema
 >;
 
 /** Host-visible outcome after the durable Follow edge has already committed. */
-export const SessionFollowSourceKeyPreparationResultV1Schema = z.discriminatedUnion('kind', [
+export const SessionFollowSourceKeyPreparationResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('not_needed') }).strict(),
   z.object({ kind: z.literal('prepared') }).strict(),
   z.object({
     kind: z.literal('waiting'),
     reason: SessionFollowSourceKeyPreparationWaitingReasonV1Schema,
   }).strict(),
-]);
+]));
 export type SessionFollowSourceKeyPreparationResultV1 = z.infer<
   typeof SessionFollowSourceKeyPreparationResultV1Schema
 >;

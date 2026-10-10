@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 
@@ -17,13 +18,13 @@ export { SidechainIdSchema };
  */
 export const MAX_EXTERNAL_SESSION_TRANSCRIPT_ITEM_ID_CODE_UNITS = 2_000;
 
-export const ExternalSessionTranscriptItemIdV1Schema = z.string()
+export const ExternalSessionTranscriptItemIdV1Schema = lazyZodSchema(() => z.string()
   .min(1)
   .max(MAX_EXTERNAL_SESSION_TRANSCRIPT_ITEM_ID_CODE_UNITS)
   .refine(
     (value) => value === value.trim(),
     'External Session transcript item id must already be trimmed.',
-  );
+  ));
 export type ExternalSessionTranscriptItemIdV1 = z.infer<
   typeof ExternalSessionTranscriptItemIdV1Schema
 >;
@@ -33,10 +34,10 @@ export type ExternalSessionTranscriptItemIdV1 = z.infer<
  * nonnegative integer in milliseconds. Admission boundaries consume this
  * instead of restating a numeric predicate that then differs by placement.
  */
-export const ExternalSessionTranscriptSourceTimestampV1Schema = z.number()
+export const ExternalSessionTranscriptSourceTimestampV1Schema = lazyZodSchema(() => z.number()
   .int()
   .nonnegative()
-  .max(Number.MAX_SAFE_INTEGER);
+  .max(Number.MAX_SAFE_INTEGER));
 
 /**
  * Canonical known-field owner for one Agent-produced External Session source
@@ -62,11 +63,11 @@ export function createExternalSessionTranscriptSourceItemV1Schema<
 }
 
 /** Nonvisual native evidence admitted only by an ordered terminal source follow. */
-export const ExternalSessionTerminalSourceObservationV1Schema = z.object({
+export const ExternalSessionTerminalSourceObservationV1Schema = lazyZodSchema(() => z.object({
   id: ExternalSessionTranscriptItemIdV1Schema,
   createdAtMs: ExternalSessionTranscriptSourceTimestampV1Schema,
   raw: z.object({
     role: z.literal('source_observation'),
     content: StrictJsonValueSchema,
   }).strict(),
-}).strict();
+}).strict());

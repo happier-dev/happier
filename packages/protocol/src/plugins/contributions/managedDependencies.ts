@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -9,7 +10,7 @@ import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginJsonValueV2Schema, PluginLocalizedStringV2Schema } from './publicTypes.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
-const PluginManagedPypiWheelAssetSourceV2Schema = ManagedPypiWheelAssetInstallableSourceSchema
+const PluginManagedPypiWheelAssetSourceV2Schema = lazyZodSchema(() => ManagedPypiWheelAssetInstallableSourceSchema
   .omit({
     kind: true,
     maxWheelSizeBytes: true,
@@ -19,17 +20,17 @@ const PluginManagedPypiWheelAssetSourceV2Schema = ManagedPypiWheelAssetInstallab
     kind: z.literal('managedPypiWheelAsset'),
     installId: z.string().trim().regex(/^dep\.[A-Za-z0-9._-]+$/),
   })
-  .strict();
+  .strict());
 
-const PluginPinnedArchiveSourceV2Schema = PinnedArchiveInstallableSourceSchema
+const PluginPinnedArchiveSourceV2Schema = lazyZodSchema(() => PinnedArchiveInstallableSourceSchema
   .omit({ kind: true })
   .extend({
     kind: z.literal('pinnedArchive'),
     installId: z.string().trim().regex(/^dep\.[A-Za-z0-9._-]+$/),
   })
-  .strict();
+  .strict());
 
-const PluginManagedDependencySourceV2Schema = z.discriminatedUnion('kind', [
+const PluginManagedDependencySourceV2Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   GitHubReleaseBinaryInstallableSourceSchema.omit({ kind: true }).extend({
     kind: z.literal('githubReleaseBinary'),
     installId: z.string().trim().regex(/^dep\.[A-Za-z0-9._-]+$/),
@@ -39,8 +40,8 @@ const PluginManagedDependencySourceV2Schema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('system'), executableNames: z.array(z.string().trim().min(1)).min(1), versionArguments: z.array(z.string()).optional() }).strict(),
   z.object({ kind: z.literal('vendorRecipe'), recipeId: z.string().trim().min(1) }).strict(),
   z.object({ kind: z.literal('manual'), instructions: PluginLocalizedStringV2Schema }).strict(),
-]);
-export const PluginManagedDependencyContributionV2Schema = z.object({
+]));
+export const PluginManagedDependencyContributionV2Schema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
   description: PluginLocalizedStringV2Schema.optional(),
@@ -58,5 +59,5 @@ export const PluginManagedDependencyContributionV2Schema = z.object({
       message: 'Managed executable dependencies require an executable',
     });
   }
-});
+}));
 export type PluginManagedDependencyContributionV2 = z.infer<typeof PluginManagedDependencyContributionV2Schema>;

@@ -1,6 +1,7 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
-export const PluginHostedWebRuntimeModeV1Schema = z.discriminatedUnion('kind', [
+export const PluginHostedWebRuntimeModeV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('installedStaticAssets'),
     artifactId: z.string().trim().min(1),
@@ -10,7 +11,7 @@ export const PluginHostedWebRuntimeModeV1Schema = z.discriminatedUnion('kind', [
     kind: z.literal('registeredSessionEndpoint'),
     endpointIdPath: z.string().trim().min(1),
   }).strict(),
-]);
+]));
 export type PluginHostedWebRuntimeModeV1 =
   z.infer<typeof PluginHostedWebRuntimeModeV1Schema>;
 

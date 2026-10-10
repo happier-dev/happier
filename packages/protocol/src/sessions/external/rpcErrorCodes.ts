@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -8,12 +9,12 @@ import { z } from 'zod';
  * `agent_error` means it answered with a fault (for example session data it
  * could not read, or a process that failed to start).
  */
-export const ExternalSessionsRpcErrorCodeSchema = z.enum([
+export const ExternalSessionsRpcErrorCodeSchema = lazyZodSchema(() => z.enum([
   'invalid_request',
   'machine_offline',
   'agent_unavailable',
   'agent_timeout',
   'agent_error',
   'internal_error',
-]);
+]));
 export type ExternalSessionsRpcErrorCode = z.infer<typeof ExternalSessionsRpcErrorCodeSchema>;

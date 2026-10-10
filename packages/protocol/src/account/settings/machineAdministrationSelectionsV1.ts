@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { SERVER_IDENTITY_ID_PATTERN } from '../../features/payload/capabilities/serverIdentityCapabilities.js';
@@ -6,15 +7,15 @@ import { PluginMachineExecutionOriginV1Schema } from '../../machines/administrat
 export const MACHINE_ADMINISTRATION_SELECTION_KEY_MAX_LENGTH_V1 = 200;
 export const MACHINE_ADMINISTRATION_SELECTION_MAX_ENTRIES_V1 = 256;
 
-const MachineAdministrationSelectionKeyV1Schema = z.string()
+const MachineAdministrationSelectionKeyV1Schema = lazyZodSchema(() => z.string()
   .trim()
   .min(1)
-  .max(MACHINE_ADMINISTRATION_SELECTION_KEY_MAX_LENGTH_V1);
+  .max(MACHINE_ADMINISTRATION_SELECTION_KEY_MAX_LENGTH_V1));
 
-export const MachineAdministrationTargetV1Schema = z.object({
+export const MachineAdministrationTargetV1Schema = lazyZodSchema(() => z.object({
   serverIdentityId: z.string().trim().regex(SERVER_IDENTITY_ID_PATTERN),
   machineId: z.string().trim().min(1).max(256),
-}).strict();
+}).strict());
 
 export type MachineAdministrationTargetV1 = z.infer<typeof MachineAdministrationTargetV1Schema>;
 
@@ -34,10 +35,10 @@ export const MachineAdministrationTargetsV1Schema = boundedRecord(MachineAdminis
 export type MachineAdministrationTargetsV1 = z.infer<typeof MachineAdministrationTargetsV1Schema>;
 
 /** Portable execution-origin policy, distinct from device target memory. */
-export const MachineAdministrationSelectionsV1Schema = z.object({
+export const MachineAdministrationSelectionsV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1).default(1),
   pluginExecutionOriginsByPluginId: boundedRecord(PluginMachineExecutionOriginV1Schema).default({}),
-}).strict();
+}).strict());
 
 export type MachineAdministrationSelectionsV1 = z.infer<typeof MachineAdministrationSelectionsV1Schema>;
 

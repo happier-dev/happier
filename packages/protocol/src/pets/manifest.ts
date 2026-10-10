@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -14,15 +15,15 @@ export function isCanonicalPetSpritesheetPathV1(value: unknown): value is PetMan
     && (PET_MANIFEST_SPRITESHEET_PATHS_V1 as readonly string[]).includes(value);
 }
 
-export const PetManifestSpritesheetPathV1Schema = z.enum(PET_MANIFEST_SPRITESHEET_PATHS_V1);
+export const PetManifestSpritesheetPathV1Schema = lazyZodSchema(() => z.enum(PET_MANIFEST_SPRITESHEET_PATHS_V1));
 
-export const PetPackageManifestV1Schema = z
+export const PetPackageManifestV1Schema = lazyZodSchema(() => z
   .object({
     id: z.string().min(1).max(200),
     displayName: z.string().min(1).max(200),
     description: z.string().min(1).max(2000),
     spritesheetPath: PetManifestSpritesheetPathV1Schema,
   })
-  .passthrough();
+  .passthrough());
 
 export type PetPackageManifestV1 = z.infer<typeof PetPackageManifestV1Schema>;

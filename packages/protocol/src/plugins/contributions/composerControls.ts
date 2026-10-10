@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { MAX_INTERACTION_TRANSIENT_CHOICES_V1 } from '../interactions/transientV1.js';
@@ -16,12 +17,12 @@ import { PluginUiRendererChainBindingV1Schema } from './ui/rendererChainBinding.
 import { PluginUiIconTokenV1Schema } from './ui/tokens.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
-export const ComposerControlStateBindingV1Schema = z.object({
+export const ComposerControlStateBindingV1Schema = lazyZodSchema(() => z.object({
   resource: asProtocolZod(PluginContributionLocalIdSchema),
-}).strict();
+}).strict());
 export type ComposerControlStateBindingV1 = z.infer<typeof ComposerControlStateBindingV1Schema>;
 
-export const ComposerControlChoiceEffectV1Schema = z.discriminatedUnion('kind', [
+export const ComposerControlChoiceEffectV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('action'),
     action: asProtocolZod(PluginContributionReferenceV2Schema),
@@ -31,20 +32,20 @@ export const ComposerControlChoiceEffectV1Schema = z.discriminatedUnion('kind', 
     kind: z.literal('composerApply'),
     operations: z.array(ComposerOperationV1Schema).min(1).max(MAX_INTERACTION_TRANSIENT_CHOICES_V1),
   }).strict(),
-]);
+]));
 export type ComposerControlChoiceEffectV1 = z.infer<typeof ComposerControlChoiceEffectV1Schema>;
 
-export const ComposerControlChoiceV1Schema = z.object({
+export const ComposerControlChoiceV1Schema = lazyZodSchema(() => z.object({
   id: ComposerControlChoiceIdV1Schema,
   label: PluginLocalizedStringV2Schema,
   description: PluginLocalizedStringV2Schema.optional(),
   icon: PluginUiIconTokenV1Schema.optional(),
   disabled: z.boolean().optional(),
   effect: ComposerControlChoiceEffectV1Schema,
-}).strict();
+}).strict());
 export type ComposerControlChoiceV1 = z.infer<typeof ComposerControlChoiceV1Schema>;
 
-const ComposerControlChoicesInteractionV1Schema = z.object({
+const ComposerControlChoicesInteractionV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('choices'),
   selection: z.enum(['single', 'multiple']),
   options: z.array(ComposerControlChoiceV1Schema)
@@ -63,9 +64,9 @@ const ComposerControlChoicesInteractionV1Schema = z.object({
         seen.add(option.id);
       });
     }),
-}).strict();
+}).strict());
 
-export const ComposerControlInteractionV1Schema = z.discriminatedUnion('kind', [
+export const ComposerControlInteractionV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('action'),
     action: asProtocolZod(PluginContributionReferenceV2Schema),
@@ -87,10 +88,10 @@ export const ComposerControlInteractionV1Schema = z.discriminatedUnion('kind', [
     kind: z.literal('destination'),
     destination: asProtocolZod(PluginContributionReferenceV2Schema),
   }).strict(),
-]);
+]));
 export type ComposerControlInteractionV1 = z.infer<typeof ComposerControlInteractionV1Schema>;
 
-export const ComposerControlOverflowFallbackV1Schema = z.object({
+export const ComposerControlOverflowFallbackV1Schema = lazyZodSchema(() => z.object({
   label: PluginLocalizedStringV2Schema,
   icon: PluginUiIconTokenV1Schema,
   accessibilityLabel: PluginLocalizedStringV2Schema.optional(),
@@ -98,11 +99,11 @@ export const ComposerControlOverflowFallbackV1Schema = z.object({
     presentation: z.enum(['popover', 'dialog']),
     layout: z.enum(['content', 'list', 'split']).optional(),
   }).strict().optional(),
-}).strict();
+}).strict());
 export type ComposerControlOverflowFallbackV1 = z.infer<typeof ComposerControlOverflowFallbackV1Schema>;
 
 /** Static manifest facts for one independent composer control. */
-export const PluginComposerControlContributionV1Schema = z.object({
+export const PluginComposerControlContributionV1Schema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   label: PluginLocalizedStringV2Schema,
   icon: PluginUiIconTokenV1Schema,
@@ -121,7 +122,7 @@ export const PluginComposerControlContributionV1Schema = z.object({
       message: 'Composer controls with compactRenderer require an overflow fallback.',
     });
   }
-});
+}));
 export type PluginComposerControlContributionV1 = z.infer<
   typeof PluginComposerControlContributionV1Schema
 >;

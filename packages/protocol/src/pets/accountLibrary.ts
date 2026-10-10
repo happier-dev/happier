@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -10,26 +11,26 @@ import { PetPackageManifestV1Schema } from './manifest.js';
 export const PetAssetMediaTypeV1Schema = PetCanonicalSpritesheetMediaTypeV1Schema;
 export type PetAssetMediaTypeV1 = z.infer<typeof PetAssetMediaTypeV1Schema>;
 
-export const AccountPetAssetRefV1Schema = z
+export const AccountPetAssetRefV1Schema = lazyZodSchema(() => z
   .object({
     assetId: z.string().min(1).max(500),
     mediaType: PetAssetMediaTypeV1Schema,
     digest: z.string().min(1).max(500),
     sizeBytes: z.number().int().min(0),
   })
-  .passthrough();
+  .passthrough());
 
 export type AccountPetAssetRefV1 = z.infer<typeof AccountPetAssetRefV1Schema>;
 
-export const AccountPetOriginV1Schema = z.discriminatedUnion('kind', [
+export const AccountPetOriginV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('builtInImport'), petId: z.string().min(1).max(200) }).passthrough(),
   z.object({ kind: z.literal('detectedCodexHome'), homeKind: z.enum(['user', 'connectedService']) }).passthrough(),
   z.object({ kind: z.literal('manualImport') }).passthrough(),
-]);
+]));
 
 export type AccountPetOriginV1 = z.infer<typeof AccountPetOriginV1Schema>;
 
-export const AccountPetLibraryEntryV1Schema = z
+export const AccountPetLibraryEntryV1Schema = lazyZodSchema(() => z
   .object({
     accountPetId: z.string().min(1).max(500),
     packageFormat: z.literal(PET_PACKAGE_FORMAT_CODEX_ATLAS_V1),
@@ -49,11 +50,11 @@ export const AccountPetLibraryEntryV1Schema = z
       mediaType: value.spritesheetAssetRef.mediaType,
       mediaTypePath: ['spritesheetAssetRef', 'mediaType'],
     });
-  });
+  }));
 
 export type AccountPetLibraryEntryV1 = z.infer<typeof AccountPetLibraryEntryV1Schema>;
 
-export const AccountPetCreateRequestV1Schema = z
+export const AccountPetCreateRequestV1Schema = lazyZodSchema(() => z
   .object({
     manifest: PetPackageManifestV1Schema,
     spritesheet: z.object({
@@ -73,11 +74,11 @@ export const AccountPetCreateRequestV1Schema = z
       mediaType: value.spritesheet.mediaType,
       mediaTypePath: ['spritesheet', 'mediaType'],
     });
-  });
+  }));
 
 export type AccountPetCreateRequestV1 = z.infer<typeof AccountPetCreateRequestV1Schema>;
 
-export const AccountPetCreateResponseV1Schema = z.union([
+export const AccountPetCreateResponseV1Schema = lazyZodSchema(() => z.union([
   z.object({ ok: z.literal(true), pet: AccountPetLibraryEntryV1Schema }).passthrough(),
   z
     .object({
@@ -92,23 +93,23 @@ export const AccountPetCreateResponseV1Schema = z.union([
       error: z.string().min(1),
     })
     .passthrough(),
-]);
+]));
 
 export type AccountPetCreateResponseV1 = z.infer<typeof AccountPetCreateResponseV1Schema>;
 
 export const ACCOUNT_PET_SYNC_UNAVAILABLE_ERROR_CODE_V1 = 'custom_pet_sync_unavailable' as const;
 
-export const AccountPetSyncUnavailableResponseV1Schema = z
+export const AccountPetSyncUnavailableResponseV1Schema = lazyZodSchema(() => z
   .object({
     ok: z.literal(false),
     errorCode: z.literal(ACCOUNT_PET_SYNC_UNAVAILABLE_ERROR_CODE_V1),
     error: z.string().min(1),
   })
-  .passthrough();
+  .passthrough());
 
 export type AccountPetSyncUnavailableResponseV1 = z.infer<typeof AccountPetSyncUnavailableResponseV1Schema>;
 
-export const AccountPetListResponseV1Schema = z.union([
+export const AccountPetListResponseV1Schema = lazyZodSchema(() => z.union([
   z.object({ ok: z.literal(true), pets: z.array(AccountPetLibraryEntryV1Schema) }).passthrough(),
   z
     .object({
@@ -117,19 +118,19 @@ export const AccountPetListResponseV1Schema = z.union([
       error: z.string().min(1),
     })
     .passthrough(),
-]);
+]));
 
 export type AccountPetListResponseV1 = z.infer<typeof AccountPetListResponseV1Schema>;
 
-export const AccountPetDeleteRequestV1Schema = z
+export const AccountPetDeleteRequestV1Schema = lazyZodSchema(() => z
   .object({
     accountPetId: z.string().min(1).max(500),
   })
-  .strict();
+  .strict());
 
 export type AccountPetDeleteRequestV1 = z.infer<typeof AccountPetDeleteRequestV1Schema>;
 
-export const AccountPetDeleteResponseV1Schema = z.union([
+export const AccountPetDeleteResponseV1Schema = lazyZodSchema(() => z.union([
   z
     .object({
       ok: z.literal(true),
@@ -144,11 +145,11 @@ export const AccountPetDeleteResponseV1Schema = z.union([
       error: z.string().min(1),
     })
     .passthrough(),
-]);
+]));
 
 export type AccountPetDeleteResponseV1 = z.infer<typeof AccountPetDeleteResponseV1Schema>;
 
-export const AccountPetChangeHintV1Schema = z
+export const AccountPetChangeHintV1Schema = lazyZodSchema(() => z
   .object({
     domain: z.literal('accountPet'),
     action: z.enum(['create', 'update', 'delete']),
@@ -157,11 +158,11 @@ export const AccountPetChangeHintV1Schema = z
     digest: z.string().min(1).max(500).optional(),
     version: z.number().int().min(0).optional(),
   })
-  .strict();
+  .strict());
 
 export type AccountPetChangeHintV1 = z.infer<typeof AccountPetChangeHintV1Schema>;
 
-export const AccountPetAssetReadResponseV1Schema = z.union([
+export const AccountPetAssetReadResponseV1Schema = lazyZodSchema(() => z.union([
   z
     .object({
       ok: z.literal(true),
@@ -186,6 +187,6 @@ export const AccountPetAssetReadResponseV1Schema = z.union([
       error: z.string().min(1),
     })
     .passthrough(),
-]);
+]));
 
 export type AccountPetAssetReadResponseV1 = z.infer<typeof AccountPetAssetReadResponseV1Schema>;

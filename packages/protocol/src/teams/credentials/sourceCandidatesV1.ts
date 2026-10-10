@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { TeamCredentialSourceBindingV1Schema } from './sourceBindingV1.js';
@@ -21,7 +22,7 @@ import { ProviderConnectionIdSchema } from '../../providers/ids.js';
  * deliberately absent: they decide whether a resource is usable, not which
  * source-detail surface owns its withdrawal controls.
  */
-export const TeamCredentialSourceLocatorV1Schema = z.discriminatedUnion('kind', [
+export const TeamCredentialSourceLocatorV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     v: z.literal(1),
     kind: z.literal('connected_account'),
@@ -37,14 +38,14 @@ export const TeamCredentialSourceLocatorV1Schema = z.discriminatedUnion('kind', 
     kind: z.literal('provider_connection'),
     connectionId: ProviderConnectionIdSchema,
   }).strict(),
-]);
+]));
 export type TeamCredentialSourceLocatorV1 = z.infer<typeof TeamCredentialSourceLocatorV1Schema>;
 
-export const TeamCredentialSourceResourceListInputV1Schema = z.object({
+export const TeamCredentialSourceResourceListInputV1Schema = lazyZodSchema(() => z.object({
   source: TeamCredentialSourceLocatorV1Schema,
   cursor: z.string().min(1).max(512).optional(),
   limit: z.number().int().min(1).max(100).default(50),
-}).strict();
+}).strict());
 export type TeamCredentialSourceResourceListInputV1 = z.infer<
   typeof TeamCredentialSourceResourceListInputV1Schema
 >;
@@ -53,7 +54,7 @@ export type TeamCredentialSourceResourceListInputV1 = z.infer<
  * Least-privilege source-detail administration row. Team directory, audience,
  * policy, limits, source binding, and custodian identity never cross this seam.
  */
-export const TeamCredentialSourceResourceAdministrationV1Schema = z.object({
+export const TeamCredentialSourceResourceAdministrationV1Schema = lazyZodSchema(() => z.object({
   id: z.string().min(1).max(256),
   displayName: z.string().trim().min(1).max(120),
   enabled: z.boolean(),
@@ -66,15 +67,15 @@ export const TeamCredentialSourceResourceAdministrationV1Schema = z.object({
   capabilities: TeamCredentialResourceAdministrationCapabilitiesV1Schema,
   createdAt: z.string(),
   updatedAt: z.string(),
-}).strict();
+}).strict());
 export type TeamCredentialSourceResourceAdministrationV1 = z.infer<
   typeof TeamCredentialSourceResourceAdministrationV1Schema
 >;
 
-export const TeamCredentialSourceResourceListOutputV1Schema = z.object({
+export const TeamCredentialSourceResourceListOutputV1Schema = lazyZodSchema(() => z.object({
   resources: z.array(TeamCredentialSourceResourceAdministrationV1Schema).max(100),
   nextCursor: z.string().min(1).max(512).nullable().default(null),
-}).strict();
+}).strict());
 export type TeamCredentialSourceResourceListOutputV1 = z.infer<
   typeof TeamCredentialSourceResourceListOutputV1Schema
 >;
@@ -122,7 +123,7 @@ export function teamCredentialSourceLocatorKeyV1(source: TeamCredentialSourceLoc
  * already the requesting Account's own, because only a source's own custodian
  * may offer it.
  */
-export const TeamCredentialSourceCandidateV1Schema = z.object({
+export const TeamCredentialSourceCandidateV1Schema = lazyZodSchema(() => z.object({
   /**
    * The exact binding the create intent sends back unchanged. The client never
    * assembles one: assembling it is what would let a stale or invented pin
@@ -159,13 +160,13 @@ export const TeamCredentialSourceCandidateV1Schema = z.object({
    * again.
    */
   offeredByResourceId: z.string().min(1).nullable(),
-}).strict();
+}).strict());
 
 export type TeamCredentialSourceCandidateV1 = z.infer<typeof TeamCredentialSourceCandidateV1Schema>;
 
-export const TeamCredentialSourceCandidateListInputV1Schema = z.object({
+export const TeamCredentialSourceCandidateListInputV1Schema = lazyZodSchema(() => z.object({
   teamId: z.string().min(1),
-}).strict();
+}).strict());
 
 export type TeamCredentialSourceCandidateListInputV1 = z.infer<
   typeof TeamCredentialSourceCandidateListInputV1Schema
@@ -179,7 +180,7 @@ export type TeamCredentialSourceCandidateListInputV1 = z.infer<
  * cannot offer these yet" rather than as "you own none", which are different
  * answers and imply different next actions.
  */
-export const TeamCredentialSourceCandidateListOutputV1Schema = z.object({
+export const TeamCredentialSourceCandidateListOutputV1Schema = lazyZodSchema(() => z.object({
   candidates: z.array(TeamCredentialSourceCandidateV1Schema),
   supportedKinds: z.array(z.enum(['connected_account', 'connected_pool', 'provider_connection'])),
   brokerPresentation: TeamCredentialBrokerPresentationV1Schema.default({
@@ -188,7 +189,7 @@ export const TeamCredentialSourceCandidateListOutputV1Schema = z.object({
     selectedPool: null,
     eligiblePools: [],
   }),
-}).strict();
+}).strict());
 
 export type TeamCredentialSourceCandidateListOutputV1 = z.infer<
   typeof TeamCredentialSourceCandidateListOutputV1Schema

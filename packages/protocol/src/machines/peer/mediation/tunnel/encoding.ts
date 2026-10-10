@@ -1,8 +1,9 @@
+import { lazyZodSchema } from '../../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 export const PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2 = 'binary_frame_v2' as const;
 
-export const PeerTcpTunnelEncodingSchema = z.literal(PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2);
+export const PeerTcpTunnelEncodingSchema = lazyZodSchema(() => z.literal(PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2));
 export type PeerTcpTunnelEncoding = z.infer<typeof PeerTcpTunnelEncodingSchema>;
 
 export type NegotiatePeerTcpTunnelEncodingResult =

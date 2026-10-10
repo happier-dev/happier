@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -8,7 +9,7 @@ import { z } from 'zod';
  * new prompt. `recoverable_with_input` is the bounded counterpart: recovery
  * must be coupled to the next input so it cannot create an idle bounded Run.
  */
-export const ExecutionRunLifecycleV1Schema = z.object({
+export const ExecutionRunLifecycleV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   state: z.enum([
     'current',
@@ -17,6 +18,6 @@ export const ExecutionRunLifecycleV1Schema = z.object({
     'recoverable_with_input',
     'unavailable',
   ]),
-}).strict();
+}).strict());
 
 export type ExecutionRunLifecycleV1 = z.infer<typeof ExecutionRunLifecycleV1Schema>;

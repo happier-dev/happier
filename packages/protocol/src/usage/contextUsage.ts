@@ -1,8 +1,9 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
-const NonNegativeTokenCountSchema = z.number().finite().min(0);
+const NonNegativeTokenCountSchema = lazyZodSchema(() => z.number().finite().min(0));
 
-export const SessionContextUsageSnapshotV1Schema = z.object({
+export const SessionContextUsageSnapshotV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   modelId: z.string().trim().min(1).nullable(),
   usedTokens: NonNegativeTokenCountSchema,
@@ -17,7 +18,7 @@ export const SessionContextUsageSnapshotV1Schema = z.object({
   }).strict()).nullable(),
   observedAtMs: z.number().int().min(0),
   source: z.enum(['provider_live', 'provider_turn', 'derived_estimate']),
-}).strict();
+}).strict());
 
 export type SessionContextUsageSnapshotV1 = z.infer<typeof SessionContextUsageSnapshotV1Schema>;
 

@@ -1,19 +1,20 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ReviewFindingSeveritySchema, ReviewFindingCategorySchema } from './reviewFindingClassification.js';
 import { ReviewCommentScopeV1Schema, ReviewCommentStateV1Schema, validateReviewCommentScopeV1 } from './comments/v1.js';
 export { ReviewFindingSeveritySchema, ReviewFindingCategorySchema, type ReviewFindingSeverity, type ReviewFindingCategory } from './reviewFindingClassification.js';
 
-export const ReviewFindingCommentReferenceV1Schema = z.object({
+export const ReviewFindingCommentReferenceV1Schema = lazyZodSchema(() => z.object({
   id: z.string().min(1),
   state: ReviewCommentStateV1Schema,
   serverRevision: z.number().int().positive(),
   ...ReviewCommentScopeV1Schema.shape,
   sessionId: z.string().min(1).optional(),
   runId: z.string().min(1).optional(),
-}).strict().superRefine(validateReviewCommentScopeV1);
+}).strict().superRefine(validateReviewCommentScopeV1));
 
-export const ReviewFindingSchema = z.object({
+export const ReviewFindingSchema = lazyZodSchema(() => z.object({
   id: z.string().min(1),
   title: z.string().min(1),
   severity: ReviewFindingSeveritySchema,
@@ -29,7 +30,7 @@ export const ReviewFindingSchema = z.object({
   patch: z.string().min(1).optional(),
   comment: ReviewFindingCommentReferenceV1Schema.optional(),
   attributionConfidence: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough());
 
 export type ReviewFinding = z.infer<typeof ReviewFindingSchema>;
 export type ReviewFindingId = string;

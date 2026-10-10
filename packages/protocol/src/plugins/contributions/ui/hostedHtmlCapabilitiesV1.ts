@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ActionIdSchema } from '../../../actions/actionIds.js';
@@ -38,7 +39,7 @@ import {
 const UI_SURFACE_HTTPS_ORIGIN_PATTERN_V1 =
   /^https:\/\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*(?::\d{1,5})?$/u;
 
-export const UiSurfaceNetworkOriginV1Schema = z.string().superRefine((value, ctx) => {
+export const UiSurfaceNetworkOriginV1Schema = lazyZodSchema(() => z.string().superRefine((value, ctx) => {
   if (
     !UI_SURFACE_HTTPS_ORIGIN_PATTERN_V1.test(value)
     || !CanonicalHttpOriginSchema.safeParse(value).success
@@ -48,7 +49,7 @@ export const UiSurfaceNetworkOriginV1Schema = z.string().superRefine((value, ctx
       message: 'Expected an exact canonical HTTPS origin without path, query, or credentials.',
     });
   }
-});
+}));
 export type UiSurfaceNetworkOriginV1 = z.infer<typeof UiSurfaceNetworkOriginV1Schema>;
 
 /** Resources are always the canonical qualified contribution identity. */
@@ -61,20 +62,20 @@ export type UiSurfaceResourceRequestV1 = PluginContributionIdentityV1;
  * classifies a reference. A by-value document has no declaring plugin, so a
  * bare contributed local id is deliberately not admissible here.
  */
-export const UiSurfaceActionRequestV1Schema = z.union([
+export const UiSurfaceActionRequestV1Schema = lazyZodSchema(() => z.union([
   ActionIdSchema,
   asProtocolZod(PluginContributionIdentityV1Schema),
-]);
+]));
 export type UiSurfaceActionRequestV1 = z.infer<typeof UiSurfaceActionRequestV1Schema>;
 
-export const UiSurfaceCapabilityRequestV1Schema = z.object({
+export const UiSurfaceCapabilityRequestV1Schema = lazyZodSchema(() => z.object({
   hostMethods: z.array(PluginUiHostMethodV1Schema)
     .max(PluginUiHostMethodV1Schema.options.length)
     .optional(),
   resources: z.array(UiSurfaceResourceRequestV1Schema).optional(),
   actions: z.array(UiSurfaceActionRequestV1Schema).optional(),
   networkOrigins: z.array(UiSurfaceNetworkOriginV1Schema).optional(),
-}).strict();
+}).strict());
 export type UiSurfaceCapabilityRequestV1 = z.infer<typeof UiSurfaceCapabilityRequestV1Schema>;
 
 /**
@@ -85,9 +86,9 @@ export type UiSurfaceCapabilityRequestV1 = z.infer<typeof UiSurfaceCapabilityReq
  * does not own. Two host-method declarations on one renderer would be two
  * decision-makers for the same fact.
  */
-export const PluginUiHostedHtmlRequestedCapabilitiesV1Schema = UiSurfaceCapabilityRequestV1Schema
+export const PluginUiHostedHtmlRequestedCapabilitiesV1Schema = lazyZodSchema(() => UiSurfaceCapabilityRequestV1Schema
   .omit({ hostMethods: true })
-  .strict();
+  .strict());
 export type PluginUiHostedHtmlRequestedCapabilitiesV1 =
   z.infer<typeof PluginUiHostedHtmlRequestedCapabilitiesV1Schema>;
 

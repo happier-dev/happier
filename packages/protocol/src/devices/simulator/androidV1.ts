@@ -1,12 +1,13 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { MachineLiveStreamCodecIdV1Schema } from '../../machines/peer/mediation/stream/codecsV1.js';
 import { MachineLiveStreamInputControlKindV1Schema } from '../../machines/peer/mediation/stream/controlV1.js';
 
-const NonEmptyStringSchema = z.string().trim().min(1).max(512);
-const DiagnosticRecordSchema = z.record(z.string(), z.unknown());
+const NonEmptyStringSchema = lazyZodSchema(() => z.string().trim().min(1).max(512));
+const DiagnosticRecordSchema = lazyZodSchema(() => z.record(z.string(), z.unknown()));
 
-export const AndroidSimulatorAdapterUnavailableReasonV1Schema = z.enum([
+export const AndroidSimulatorAdapterUnavailableReasonV1Schema = lazyZodSchema(() => z.enum([
   'adb_unavailable',
   'android_emulator_unavailable',
   'android_device_unauthorized',
@@ -20,12 +21,12 @@ export const AndroidSimulatorAdapterUnavailableReasonV1Schema = z.enum([
   'control_disabled',
   'clipboard_disabled',
   'android_emulator_bridge_unavailable',
-]);
+]));
 export type AndroidSimulatorAdapterUnavailableReasonV1 = z.infer<
   typeof AndroidSimulatorAdapterUnavailableReasonV1Schema
 >;
 
-export const AndroidSimulatorAdapterCapabilitiesV1Schema = z
+export const AndroidSimulatorAdapterCapabilitiesV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     platform: z.literal('android'),
@@ -38,12 +39,12 @@ export const AndroidSimulatorAdapterCapabilitiesV1Schema = z
     scrcpyServerVersion: NonEmptyStringSchema.optional(),
     scrcpyServerDigest: NonEmptyStringSchema.optional(),
   })
-  .strict();
+  .strict());
 export type AndroidSimulatorAdapterCapabilitiesV1 = z.infer<
   typeof AndroidSimulatorAdapterCapabilitiesV1Schema
 >;
 
-export const AndroidSimulatorAdapterHealthV1Schema = z.discriminatedUnion('status', [
+export const AndroidSimulatorAdapterHealthV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   AndroidSimulatorAdapterCapabilitiesV1Schema.extend({
     status: z.literal('available'),
   }).strict(),
@@ -56,5 +57,5 @@ export const AndroidSimulatorAdapterHealthV1Schema = z.discriminatedUnion('statu
       diagnostics: z.array(DiagnosticRecordSchema).default([]),
     })
     .strict(),
-]);
+]));
 export type AndroidSimulatorAdapterHealthV1 = z.infer<typeof AndroidSimulatorAdapterHealthV1Schema>;

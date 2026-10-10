@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
@@ -78,10 +79,10 @@ export const MAX_PLUGIN_SEARCH_ITEM_COMMAND_UTF8_BYTES_V1 =
  * declaring plugin's section execute a contribution it does not own, and the
  * eligibility rules below are checked against the declaring manifest.
  */
-export const PluginSearchProviderContributionV1Schema = z.object({
+export const PluginSearchProviderContributionV1Schema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   action: asProtocolZod(PluginContributionLocalIdSchema),
-}).strict();
+}).strict());
 export type PluginSearchProviderContributionV1 = z.infer<
   typeof PluginSearchProviderContributionV1Schema
 >;

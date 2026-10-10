@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
@@ -5,33 +6,33 @@ import { SessionIdSchema } from '../idsV1.js';
 import { SessionFollowFrontierV1Schema } from './sessionFollowFrontierV1.js';
 
 const SessionIdZodSchema = asProtocolZod(SessionIdSchema);
-const PublisherGenerationV1Schema = z.string().regex(/^(?:0|[1-9]\d{0,18})$/u)
-  .refine((value) => BigInt(value) <= 9_223_372_036_854_775_807n);
-const AcceptanceSchema = z.object({
+const PublisherGenerationV1Schema = lazyZodSchema(() => z.string().regex(/^(?:0|[1-9]\d{0,18})$/u)
+  .refine((value) => BigInt(value) <= 9_223_372_036_854_775_807n));
+const AcceptanceSchema = lazyZodSchema(() => z.object({
   localInputId: z.string().trim().min(1),
   userMessageSeq: z.number().int().nonnegative().nullable(),
-}).strict();
-const ExecutionRunIdSchema = z.string().trim().min(1).max(512);
-const ExecutionRunOccurrenceIdSchema = z.string().trim().min(1).max(512);
+}).strict());
+const ExecutionRunIdSchema = lazyZodSchema(() => z.string().trim().min(1).max(512));
+const ExecutionRunOccurrenceIdSchema = lazyZodSchema(() => z.string().trim().min(1).max(512));
 
 export const ACCOUNT_VOICE_FOLLOW_OBSERVE_PENDING_EVENT_V1 = 'account-voice-follow-observe-pending-v1' as const;
 export const ACCOUNT_VOICE_FOLLOW_ACKNOWLEDGE_EVENT_V1 = 'account-voice-follow-acknowledge-v1' as const;
 
-export const AccountVoiceFollowPendingObservationV1Schema = z.object({
+export const AccountVoiceFollowPendingObservationV1Schema = lazyZodSchema(() => z.object({
   sourceSessionId: SessionIdZodSchema,
   voiceSessionId: SessionIdZodSchema,
   expected: SessionFollowFrontierV1Schema.nullable(),
   observed: SessionFollowFrontierV1Schema,
-}).strict();
+}).strict());
 export type AccountVoiceFollowPendingObservationV1 = z.infer<typeof AccountVoiceFollowPendingObservationV1Schema>;
 
-export const AccountVoiceFollowObservePendingRequestV1Schema = z.object({
+export const AccountVoiceFollowObservePendingRequestV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   voiceSessionId: SessionIdZodSchema,
   executionRunId: ExecutionRunIdSchema,
-}).strict();
+}).strict());
 
-export const AccountVoiceFollowObservePendingResponseV1Schema = z.discriminatedUnion('ok', [
+export const AccountVoiceFollowObservePendingResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),
     v: z.literal(1),
@@ -45,10 +46,10 @@ export const AccountVoiceFollowObservePendingResponseV1Schema = z.discriminatedU
     v: z.literal(1),
     error: z.enum(['invalid_request', 'forbidden', 'unsupported', 'internal']),
   }).strict(),
-]);
+]));
 export type AccountVoiceFollowObservePendingResponseV1 = z.infer<typeof AccountVoiceFollowObservePendingResponseV1Schema>;
 
-export const AccountVoiceFollowAcknowledgeRequestV1Schema = z.object({
+export const AccountVoiceFollowAcknowledgeRequestV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   voiceSessionId: SessionIdZodSchema,
   executionRunId: ExecutionRunIdSchema,
@@ -63,10 +64,10 @@ export const AccountVoiceFollowAcknowledgeRequestV1Schema = z.object({
   if (value.sourceSessionId === value.voiceSessionId) {
     context.addIssue({ code: 'custom', path: ['sourceSessionId'], message: 'Voice Follow requires distinct Sessions' });
   }
-});
+}));
 export type AccountVoiceFollowAcknowledgeRequestV1 = z.infer<typeof AccountVoiceFollowAcknowledgeRequestV1Schema>;
 
-export const AccountVoiceFollowAcknowledgeResponseV1Schema = z.discriminatedUnion('ok', [
+export const AccountVoiceFollowAcknowledgeResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),
     v: z.literal(1),
@@ -84,5 +85,5 @@ export const AccountVoiceFollowAcknowledgeResponseV1Schema = z.discriminatedUnio
       'source_forbidden', 'unsupported', 'internal',
     ]),
   }).strict(),
-]);
+]));
 export type AccountVoiceFollowAcknowledgeResponseV1 = z.infer<typeof AccountVoiceFollowAcknowledgeResponseV1Schema>;

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -7,16 +8,16 @@ import {
 import type { FeaturesResponse } from '../featuresResponseSchema.js';
 import { isRecord } from '../isRecord.js';
 
-export const MachineLiveStreamRelayDisabledReasonSchema = z.enum([
+export const MachineLiveStreamRelayDisabledReasonSchema = lazyZodSchema(() => z.enum([
   'relay_not_enabled',
   'relay_caps_missing',
   'server_routed_live_stream_disabled',
   'cap_exceeded',
-]);
+]));
 
 export type MachineLiveStreamRelayDisabledReason = z.infer<typeof MachineLiveStreamRelayDisabledReasonSchema>;
 
-export const MachineLiveStreamServerRoutedCapabilitiesSchema = z
+export const MachineLiveStreamServerRoutedCapabilitiesSchema = lazyZodSchema(() => z
   .object({
     caps: MachineLiveStreamRelayCapsV1Schema.nullable().optional().default(null),
     disabledReason: MachineLiveStreamRelayDisabledReasonSchema.nullable().optional().default('relay_not_enabled'),
@@ -24,7 +25,7 @@ export const MachineLiveStreamServerRoutedCapabilitiesSchema = z
   .passthrough()
   // Optional relay diagnostics cannot invalidate Home identity or unrelated features.
   // Drop malformed policy rather than treating it as an uncapped relay.
-  .catch({ caps: null, disabledReason: 'relay_caps_missing' });
+  .catch({ caps: null, disabledReason: 'relay_caps_missing' }));
 
 export type MachineLiveStreamServerRoutedCapabilities = z.infer<
   typeof MachineLiveStreamServerRoutedCapabilitiesSchema
@@ -35,11 +36,11 @@ export const DEFAULT_MACHINE_LIVE_STREAM_SERVER_ROUTED_CAPABILITIES: MachineLive
   disabledReason: 'relay_not_enabled',
 };
 
-export const MachineLiveStreamCapabilitiesSchema = z.object({
+export const MachineLiveStreamCapabilitiesSchema = lazyZodSchema(() => z.object({
   serverRouted: MachineLiveStreamServerRoutedCapabilitiesSchema.optional().default(
     DEFAULT_MACHINE_LIVE_STREAM_SERVER_ROUTED_CAPABILITIES,
   ),
-});
+}));
 
 export type MachineLiveStreamCapabilities = z.infer<typeof MachineLiveStreamCapabilitiesSchema>;
 

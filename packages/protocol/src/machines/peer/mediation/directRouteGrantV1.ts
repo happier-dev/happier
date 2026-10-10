@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { DirectRouteGrantScopeV1Schema } from './directRouteGrantScopesV1.js';
@@ -7,11 +8,11 @@ import { createCanonicalJsonSigningInput } from '../../../crypto/canonicalJson.j
 
 export { createCanonicalJsonSigningInput } from '../../../crypto/canonicalJson.js';
 
-const Base64UrlSchema = z.string().regex(/^[A-Za-z0-9_-]+$/);
+const Base64UrlSchema = lazyZodSchema(() => z.string().regex(/^[A-Za-z0-9_-]+$/));
 
 export const DIRECT_ROUTE_GRANT_AUDIENCE_V1 = 'happier-daemon-route-grant' as const;
 
-export const DirectRouteGrantPayloadV1Schema = z
+export const DirectRouteGrantPayloadV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     grantId: z.string().min(1),
@@ -49,18 +50,18 @@ export const DirectRouteGrantPayloadV1Schema = z
         message: 'The happier/machine/1 carrier requires a V2 ephemeral-proof grant',
       });
     }
-  });
+  }));
 
-export const DirectRouteGrantSignatureV1Schema = z.object({
+export const DirectRouteGrantSignatureV1Schema = lazyZodSchema(() => z.object({
   keyId: z.string().min(1),
   alg: z.literal('Ed25519'),
   valueBase64Url: Base64UrlSchema,
-}).strict();
+}).strict());
 
-export const SignedDirectRouteGrantV1Schema = z.object({
+export const SignedDirectRouteGrantV1Schema = lazyZodSchema(() => z.object({
   payload: DirectRouteGrantPayloadV1Schema,
   signature: DirectRouteGrantSignatureV1Schema,
-}).strict();
+}).strict());
 
 export type DirectRouteGrantPayloadV1 = z.infer<typeof DirectRouteGrantPayloadV1Schema>;
 export type DirectRouteGrantSignatureV1 = z.infer<typeof DirectRouteGrantSignatureV1Schema>;

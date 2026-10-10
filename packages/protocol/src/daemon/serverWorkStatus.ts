@@ -1,6 +1,7 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
-export const DaemonServerWorkCountersV1Schema = z
+export const DaemonServerWorkCountersV1Schema = lazyZodSchema(() => z
   .object({
     accepted: z.number().int().nonnegative().default(0),
     coalesced: z.number().int().nonnegative().default(0),
@@ -10,26 +11,26 @@ export const DaemonServerWorkCountersV1Schema = z
     deferred: z.number().int().nonnegative().default(0),
     retried: z.number().int().nonnegative().default(0),
   })
-  .passthrough();
+  .passthrough());
 export type DaemonServerWorkCountersV1 = z.infer<typeof DaemonServerWorkCountersV1Schema>;
 
-export const DaemonServerWorkPurposeStatusV1Schema = z
+export const DaemonServerWorkPurposeStatusV1Schema = lazyZodSchema(() => z
   .object({
     counters: DaemonServerWorkCountersV1Schema,
   })
-  .passthrough();
+  .passthrough());
 export type DaemonServerWorkPurposeStatusV1 = z.infer<typeof DaemonServerWorkPurposeStatusV1Schema>;
 
-export const DaemonServerWorkKeyStatusV1Schema = z
+export const DaemonServerWorkKeyStatusV1Schema = lazyZodSchema(() => z
   .object({
     timeSinceLastSuccessMs: z.number().int().nonnegative().nullable(),
     backoffReason: z.string().min(1).nullable(),
     nextEligibleAt: z.number().int().nonnegative().nullable(),
   })
-  .passthrough();
+  .passthrough());
 export type DaemonServerWorkKeyStatusV1 = z.infer<typeof DaemonServerWorkKeyStatusV1Schema>;
 
-export const DaemonServerWorkStatusV1Schema = z
+export const DaemonServerWorkStatusV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     pendingKeyCount: z.number().int().nonnegative(),
@@ -37,5 +38,5 @@ export const DaemonServerWorkStatusV1Schema = z
     purposes: z.record(z.string().min(1), DaemonServerWorkPurposeStatusV1Schema).default({}),
     keys: z.record(z.string().min(1), DaemonServerWorkKeyStatusV1Schema).default({}),
   })
-  .passthrough();
+  .passthrough());
 export type DaemonServerWorkStatusV1 = z.infer<typeof DaemonServerWorkStatusV1Schema>;

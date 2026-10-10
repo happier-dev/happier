@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -26,28 +27,28 @@ import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
  */
 export const PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1 = 'accountData' as const;
 
-export const OpaqueHostedWebAccountDataQueryIdV1Schema = z.string()
+export const OpaqueHostedWebAccountDataQueryIdV1Schema = lazyZodSchema(() => z.string()
   .min(1)
   .max(128)
-  .regex(/^[A-Za-z0-9_-]+$/u);
+  .regex(/^[A-Za-z0-9_-]+$/u));
 
 const PluginHostedWebAccountDataDefinitionV1Schema = PluginAccountCollectionContributionV1Schema;
 
-const AccountDataExpectedRevisionV1Schema = z.union([z.number().int().nonnegative(), z.literal('absent')]);
-const AccountDataExpectedVersionV1Schema = z.union([z.number().int().nonnegative(), z.literal('absent')]);
-const AccountDataCollectionValueV1Schema = z.record(
+const AccountDataExpectedRevisionV1Schema = lazyZodSchema(() => z.union([z.number().int().nonnegative(), z.literal('absent')]));
+const AccountDataExpectedVersionV1Schema = lazyZodSchema(() => z.union([z.number().int().nonnegative(), z.literal('absent')]));
+const AccountDataCollectionValueV1Schema = lazyZodSchema(() => z.record(
   PluginCollectionMemberNameV1Schema,
   PluginUiJsonValueV1Schema,
 ).superRefine((value, context) => {
   if (Object.keys(value).length === 0) context.addIssue({ code: 'custom', message: 'Collection values must contain at least one field.' });
-});
-const AccountDataCollectionScalarV1Schema = z.union([
+}));
+const AccountDataCollectionScalarV1Schema = lazyZodSchema(() => z.union([
   z.null(),
   z.boolean(),
   z.string(),
   PluginCollectionFiniteNumberV1Schema,
-]);
-const AccountDataCollectionQueryV1Schema = z.object({
+]));
+const AccountDataCollectionQueryV1Schema = lazyZodSchema(() => z.object({
   index: PluginCollectionMemberNameV1Schema,
   prefix: z.array(AccountDataCollectionScalarV1Schema).max(4).default([]),
   range: z.object({
@@ -57,8 +58,8 @@ const AccountDataCollectionQueryV1Schema = z.object({
   order: z.enum(['asc', 'desc']),
   cursor: asProtocolZod(PluginCollectionOpaqueCursorV1Schema).optional(),
   limit: z.number().int().min(1).max(200).default(50),
-}).strict();
-const AccountDataCollectionMutationV1Schema = z.discriminatedUnion('kind', [
+}).strict());
+const AccountDataCollectionMutationV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('put'),
     value: AccountDataCollectionValueV1Schema,
@@ -74,15 +75,15 @@ const AccountDataCollectionMutationV1Schema = z.discriminatedUnion('kind', [
     rowId: z.string().min(1),
     expectedRevision: z.number().int().positive(),
   }).strict(),
-]);
-const AccountDataCollectionMutationListV1Schema = z.array(AccountDataCollectionMutationV1Schema).min(1).max(100);
-const AccountDataExpectedRevisionOptionsV1Schema = z.object({ expectedRevision: AccountDataExpectedRevisionV1Schema }).strict();
-const AccountDataExpectedVersionOptionsV1Schema = z.object({ expectedVersion: AccountDataExpectedVersionV1Schema }).strict();
-const AccountDataExpectedDeleteVersionOptionsV1Schema = z.object({ expectedVersion: z.number().int().nonnegative() }).strict();
-const AccountDataListOptionsV1Schema = z.object({ cursor: z.string().min(1).optional(), limit: z.number().int().min(1).max(1000).optional(), prefix: z.string().optional() }).strict();
-const AccountDataIdentityTagV1Schema = z.object({ field: PluginCollectionMemberNameV1Schema, components: z.array(z.string()).min(1).max(16) }).strict();
+]));
+const AccountDataCollectionMutationListV1Schema = lazyZodSchema(() => z.array(AccountDataCollectionMutationV1Schema).min(1).max(100));
+const AccountDataExpectedRevisionOptionsV1Schema = lazyZodSchema(() => z.object({ expectedRevision: AccountDataExpectedRevisionV1Schema }).strict());
+const AccountDataExpectedVersionOptionsV1Schema = lazyZodSchema(() => z.object({ expectedVersion: AccountDataExpectedVersionV1Schema }).strict());
+const AccountDataExpectedDeleteVersionOptionsV1Schema = lazyZodSchema(() => z.object({ expectedVersion: z.number().int().nonnegative() }).strict());
+const AccountDataListOptionsV1Schema = lazyZodSchema(() => z.object({ cursor: z.string().min(1).optional(), limit: z.number().int().min(1).max(1000).optional(), prefix: z.string().optional() }).strict());
+const AccountDataIdentityTagV1Schema = lazyZodSchema(() => z.object({ field: PluginCollectionMemberNameV1Schema, components: z.array(z.string()).min(1).max(16) }).strict());
 
-const PluginHostedWebAccountDataCollectionOperationV1Schema = z.discriminatedUnion('operation', [
+const PluginHostedWebAccountDataCollectionOperationV1Schema = lazyZodSchema(() => z.discriminatedUnion('operation', [
   z.object({
     kind: z.literal('data'),
     operation: z.literal('collection.identityTag'),
@@ -137,9 +138,9 @@ const PluginHostedWebAccountDataCollectionOperationV1Schema = z.discriminatedUni
     definition: PluginHostedWebAccountDataDefinitionV1Schema,
     arguments: z.tuple([AccountDataCollectionMutationListV1Schema]),
   }).strict(),
-]);
+]));
 
-const PluginHostedWebAccountDataStorageOperationV1Schema = z.discriminatedUnion('operation', [
+const PluginHostedWebAccountDataStorageOperationV1Schema = lazyZodSchema(() => z.discriminatedUnion('operation', [
   z.object({ kind: z.literal('data'), operation: z.literal('accountKv.get'), arguments: z.tuple([PluginAccountStorageLogicalKeyV1Schema]) }).strict(),
   z.object({ kind: z.literal('data'), operation: z.literal('accountKv.set'), arguments: z.tuple([PluginAccountStorageLogicalKeyV1Schema, PluginAccountStorageJsonValueV1Schema, AccountDataExpectedVersionOptionsV1Schema]) }).strict(),
   z.object({ kind: z.literal('data'), operation: z.literal('accountKv.delete'), arguments: z.tuple([PluginAccountStorageLogicalKeyV1Schema, AccountDataExpectedDeleteVersionOptionsV1Schema]) }).strict(),
@@ -150,7 +151,7 @@ const PluginHostedWebAccountDataStorageOperationV1Schema = z.discriminatedUnion(
   z.object({ kind: z.literal('data'), operation: z.literal('accountKv.transaction.delete'), arguments: z.tuple([z.string().min(1), PluginAccountStorageLogicalKeyV1Schema, AccountDataExpectedDeleteVersionOptionsV1Schema]) }).strict(),
   z.object({ kind: z.literal('data'), operation: z.literal('accountKv.transaction.commit'), arguments: z.tuple([z.string().min(1)]) }).strict(),
   z.object({ kind: z.literal('data'), operation: z.literal('accountKv.transaction.rollback'), arguments: z.tuple([z.string().min(1)]) }).strict(),
-]);
+]));
 
 /**
  * The complete Account Data operation grammar. Each method has one named,
@@ -159,12 +160,12 @@ const PluginHostedWebAccountDataStorageOperationV1Schema = z.discriminatedUnion(
  * definitions remain present only on Collection arms; Account KV and Settings
  * cannot smuggle a definition across their ownership boundary.
  */
-const PluginHostedWebAccountDataOperationV1Schema = z.union([
+const PluginHostedWebAccountDataOperationV1Schema = lazyZodSchema(() => z.union([
   PluginHostedWebAccountDataCollectionOperationV1Schema,
   PluginHostedWebAccountDataStorageOperationV1Schema,
-]);
+]));
 
-export const PluginHostedWebAccountDataBridgeOperationV1Schema = z.union([
+export const PluginHostedWebAccountDataBridgeOperationV1Schema = lazyZodSchema(() => z.union([
   PluginCollectionUiQueryRequestV1Schema.pick({
     collectionId: true,
     uiQueryId: true,
@@ -179,7 +180,7 @@ export const PluginHostedWebAccountDataBridgeOperationV1Schema = z.union([
     queryId: OpaqueHostedWebAccountDataQueryIdV1Schema,
   }).strict(),
   PluginHostedWebAccountDataOperationV1Schema,
-]);
+]));
 export type PluginHostedWebAccountDataBridgeOperationV1 = z.infer<
   typeof PluginHostedWebAccountDataBridgeOperationV1Schema
 >;
@@ -189,7 +190,7 @@ export type PluginHostedWebAccountDataBridgeOperationV1 = z.infer<
  * transport owns the outer sequence and therefore owns cancellation; no guest
  * request id becomes a second correlation authority.
  */
-export const PluginHostedWebAccountDataBridgeRequestV1Schema = z.discriminatedUnion('kind', [
+export const PluginHostedWebAccountDataBridgeRequestV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('request'),
     operation: PluginHostedWebAccountDataBridgeOperationV1Schema,
@@ -198,20 +199,20 @@ export const PluginHostedWebAccountDataBridgeRequestV1Schema = z.discriminatedUn
     kind: z.literal('cancel'),
     requestSequence: z.number().int().nonnegative(),
   }).strict(),
-]);
+]));
 export type PluginHostedWebAccountDataBridgeRequestV1 = z.infer<
   typeof PluginHostedWebAccountDataBridgeRequestV1Schema
 >;
 
-const PluginHostedWebAccountDataBridgeRowsV1Schema = z.array(
+const PluginHostedWebAccountDataBridgeRowsV1Schema = lazyZodSchema(() => z.array(
   PluginCollectionUiRowV1Schema,
-).max(200);
+).max(200));
 
 /**
  * A bounded public pager snapshot. The Data owner never exposes its opaque
  * continuation, Account scope, credentials, contract ref, or raw envelope.
  */
-export const PluginHostedWebAccountDataBridgeSnapshotV1Schema = z.discriminatedUnion('status', [
+export const PluginHostedWebAccountDataBridgeSnapshotV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('idle'),
     rows: PluginHostedWebAccountDataBridgeRowsV1Schema,
@@ -238,13 +239,13 @@ export const PluginHostedWebAccountDataBridgeSnapshotV1Schema = z.discriminatedU
     hasMore: z.boolean(),
     error: PluginCollectionUiQueryErrorV1Schema.optional(),
   }).strict(),
-]);
+]));
 export type PluginHostedWebAccountDataBridgeSnapshotV1 = z.infer<
   typeof PluginHostedWebAccountDataBridgeSnapshotV1Schema
 >;
 
 /** Responses remain on the bridge's existing request-sequence correlation path. */
-export const PluginHostedWebAccountDataBridgeResponseV1Schema = z.discriminatedUnion('kind', [
+export const PluginHostedWebAccountDataBridgeResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('snapshot'),
     queryId: OpaqueHostedWebAccountDataQueryIdV1Schema,
@@ -267,7 +268,7 @@ export const PluginHostedWebAccountDataBridgeResponseV1Schema = z.discriminatedU
       details: PluginUiJsonValueV1Schema.optional(),
     }).strict(),
   }).strict(),
-]);
+]));
 export type PluginHostedWebAccountDataBridgeResponseV1 = z.infer<
   typeof PluginHostedWebAccountDataBridgeResponseV1Schema
 >;
@@ -277,10 +278,10 @@ export type PluginHostedWebAccountDataBridgeResponseV1 = z.infer<
  * bridge preserves that boundary: a guest receives only its opaque query
  * correlation and reopens through the Data-owned static query operation.
  */
-export const PluginHostedWebAccountDataBridgeChangeV1Schema = z.object({
+export const PluginHostedWebAccountDataBridgeChangeV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('change'),
   queryId: OpaqueHostedWebAccountDataQueryIdV1Schema,
-}).strict();
+}).strict());
 export type PluginHostedWebAccountDataBridgeChangeV1 = z.infer<
   typeof PluginHostedWebAccountDataBridgeChangeV1Schema
 >;

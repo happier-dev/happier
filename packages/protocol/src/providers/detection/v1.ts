@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ProviderEndpointUrlSyntaxSchema } from '../endpointUrlSchema.js';
@@ -24,23 +25,23 @@ export {
   type ProviderDetectionDescriptorV1,
 } from './descriptorV1.js';
 
-export const ProviderDiscoveryCandidateEvidenceV1Schema = z.discriminatedUnion('kind', [
+export const ProviderDiscoveryCandidateEvidenceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('attributed_listener') }).strict(),
   z.object({ kind: z.literal('default_port_hint') }).strict(),
-]);
+]));
 export type ProviderDiscoveryCandidateEvidenceV1 = z.infer<typeof ProviderDiscoveryCandidateEvidenceV1Schema>;
 
-export const ManagedProviderProcessOwnershipSchema = z.enum(['owned', 'adopted']);
+export const ManagedProviderProcessOwnershipSchema = lazyZodSchema(() => z.enum(['owned', 'adopted']));
 export type ManagedProviderProcessOwnership = z.infer<typeof ManagedProviderProcessOwnershipSchema>;
 
-const ProviderDiscoveryCandidateConnectionV1Schema = z.discriminatedUnion('status', [
+const ProviderDiscoveryCandidateConnectionV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('matched'), connectionId: ProviderConnectionIdSchema }).strict(),
   z.object({ status: z.literal('enable_default') }).strict(),
   z.object({ status: z.literal('requires_named_connection') }).strict(),
-]);
+]));
 
-export const ProviderDiscoveryCandidateIdV1Schema = z.string().trim().min(1).max(256)
-  .startsWith('discovery-candidate:v1:');
+export const ProviderDiscoveryCandidateIdV1Schema = lazyZodSchema(() => z.string().trim().min(1).max(256)
+  .startsWith('discovery-candidate:v1:'));
 export type ProviderDiscoveryCandidateIdV1 = z.infer<typeof ProviderDiscoveryCandidateIdV1Schema>;
 
 export function createProviderDiscoveryCandidateIdV1(input: Readonly<{
@@ -64,7 +65,7 @@ export function createProviderDiscoveryCandidateIdV1(input: Readonly<{
  * A candidate is not endpoint availability and deliberately carries no process facts,
  * model count, credential state, or implicit connection identity.
  */
-export const ProviderDiscoveryCandidateV1Schema = z.object({
+export const ProviderDiscoveryCandidateV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   machineId: ProviderMachineIdSchema,
   contributionKey: ProviderContributionKeySchema,
@@ -77,16 +78,16 @@ export const ProviderDiscoveryCandidateV1Schema = z.object({
   evidence: ProviderDiscoveryCandidateEvidenceV1Schema,
   ownership: ManagedProviderProcessOwnershipSchema,
   connection: ProviderDiscoveryCandidateConnectionV1Schema,
-}).strict();
+}).strict());
 export type ProviderDiscoveryCandidateV1 = z.infer<typeof ProviderDiscoveryCandidateV1Schema>;
 
 /** Local binary/application presence when no listening candidate exists. */
-export const ProviderLocalInstallationSummaryV1Schema = z.object({
+export const ProviderLocalInstallationSummaryV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   machineId: ProviderMachineIdSchema,
   contributionKey: ProviderContributionKeySchema,
   providerName: z.string().trim().min(1).max(128),
   status: z.enum(['installed_not_running', 'app_running_server_off']),
   managedStartAvailable: z.boolean(),
-}).strict();
+}).strict());
 export type ProviderLocalInstallationSummaryV1 = z.infer<typeof ProviderLocalInstallationSummaryV1Schema>;

@@ -1,10 +1,11 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 const LINE_CONTENT_HASH_PREFIX = 'lh1:';
-const LineContentHashV1Schema = z.templateLiteral([
+const LineContentHashV1Schema = lazyZodSchema(() => z.templateLiteral([
   LINE_CONTENT_HASH_PREFIX,
   z.string().regex(/^[0-9a-f]{16}$/),
-]);
+]));
 const FNV_OFFSET_BASIS = 0x811c9dc5;
 const FNV_PRIME = 0x01000193;
 
@@ -36,7 +37,7 @@ export function computeLineContentHashV1(line: string): LineContentHashV1 {
   return `${LINE_CONTENT_HASH_PREFIX}${toHex32(first)}${toHex32(second)}`;
 }
 
-export const WorkspaceAnchorV1Schema = z.union([
+export const WorkspaceAnchorV1Schema = lazyZodSchema(() => z.union([
   z.object({
     kind: z.literal('fileLine'),
     startLine: z.number().int().positive(),
@@ -70,21 +71,21 @@ export const WorkspaceAnchorV1Schema = z.union([
     message: 'endLine must be greater than or equal to startLine',
     path: ['endLine'],
   }),
-]);
+]));
 
 export type WorkspaceAnchorV1 = z.infer<typeof WorkspaceAnchorV1Schema>;
 
-export const WorkspaceAnchorSourceV1Schema = z.enum(['file', 'diff']);
+export const WorkspaceAnchorSourceV1Schema = lazyZodSchema(() => z.enum(['file', 'diff']));
 export type WorkspaceAnchorSourceV1 = z.infer<typeof WorkspaceAnchorSourceV1Schema>;
 
-export const WorkspaceAnchorSnapshotV1Schema = z.object({
+export const WorkspaceAnchorSnapshotV1Schema = lazyZodSchema(() => z.object({
   selectedLines: z.array(z.string()),
   beforeContext: z.array(z.string()),
   afterContext: z.array(z.string()),
-});
+}));
 export type WorkspaceAnchorSnapshotV1 = z.infer<typeof WorkspaceAnchorSnapshotV1Schema>;
 
-export const WorkspaceAnchorsResolveRequestV1Schema = z.object({
+export const WorkspaceAnchorsResolveRequestV1Schema = lazyZodSchema(() => z.object({
   workspacePath: z.string().min(1),
   comments: z.array(z.object({
     id: z.string().optional(),
@@ -93,10 +94,10 @@ export const WorkspaceAnchorsResolveRequestV1Schema = z.object({
     anchor: WorkspaceAnchorV1Schema,
     snapshot: WorkspaceAnchorSnapshotV1Schema.optional(),
   })),
-});
+}));
 export type WorkspaceAnchorsResolveRequestV1 = z.infer<typeof WorkspaceAnchorsResolveRequestV1Schema>;
 
-export const WorkspaceAnchorResolutionStatusV1Schema = z.enum([
+export const WorkspaceAnchorResolutionStatusV1Schema = lazyZodSchema(() => z.enum([
   'exact',
   'hash',
   'context',
@@ -104,10 +105,10 @@ export const WorkspaceAnchorResolutionStatusV1Schema = z.enum([
   'stale',
   'missing',
   'unsupported',
-]);
+]));
 export type WorkspaceAnchorResolutionStatusV1 = z.infer<typeof WorkspaceAnchorResolutionStatusV1Schema>;
 
-export const WorkspaceAnchorResolutionV1Schema = z.object({
+export const WorkspaceAnchorResolutionV1Schema = lazyZodSchema(() => z.object({
   id: z.string().optional(),
   filePath: z.string(),
   originalAnchor: WorkspaceAnchorV1Schema,
@@ -116,10 +117,10 @@ export const WorkspaceAnchorResolutionV1Schema = z.object({
   confidence: z.number().min(0).max(1),
   reason: z.string().optional(),
   preview: WorkspaceAnchorSnapshotV1Schema.optional(),
-});
+}));
 export type WorkspaceAnchorResolutionV1 = z.infer<typeof WorkspaceAnchorResolutionV1Schema>;
 
-export const WorkspaceAnchorsResolveResponseV1Schema = z.discriminatedUnion('success', [
+export const WorkspaceAnchorsResolveResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('success', [
   z.object({
     success: z.literal(true),
     resolutions: z.array(WorkspaceAnchorResolutionV1Schema),
@@ -129,5 +130,5 @@ export const WorkspaceAnchorsResolveResponseV1Schema = z.discriminatedUnion('suc
     errorCode: z.string(),
     error: z.string(),
   }),
-]);
+]));
 export type WorkspaceAnchorsResolveResponseV1 = z.infer<typeof WorkspaceAnchorsResolveResponseV1Schema>;

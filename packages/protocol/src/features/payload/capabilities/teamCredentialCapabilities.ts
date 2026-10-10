@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -9,16 +10,16 @@ import { readServerEnabledBit } from '../../serverEnabledBit.js';
 import type { FeatureId } from '../../catalog.js';
 import type { FeaturesResponse } from '../../../features.js';
 
-export const TeamCredentialExternalApiUnavailableReasonV1Schema = z.enum([
+export const TeamCredentialExternalApiUnavailableReasonV1Schema = lazyZodSchema(() => z.enum([
   'feature_disabled',
   'home_not_public_https',
   'deployment_readiness_unavailable',
-]);
+]));
 export type TeamCredentialExternalApiUnavailableReasonV1 = z.infer<
   typeof TeamCredentialExternalApiUnavailableReasonV1Schema
 >;
 
-const ExternalProviderApiBaseUrlV1Schema = z.string().trim().min(1).superRefine((value, context) => {
+const ExternalProviderApiBaseUrlV1Schema = lazyZodSchema(() => z.string().trim().min(1).superRefine((value, context) => {
   let parsed: URL;
   try {
     parsed = new URL(value);
@@ -32,9 +33,9 @@ const ExternalProviderApiBaseUrlV1Schema = z.string().trim().min(1).superRefine(
   if (!parsed.pathname.endsWith(TEAM_CREDENTIAL_EXTERNAL_PROVIDER_API_BASE_PATH_V1)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'External Provider API base URL has the wrong route.' });
   }
-});
+}));
 
-export const TeamCredentialExternalApiAvailabilityV1Schema = z.discriminatedUnion('available', [
+export const TeamCredentialExternalApiAvailabilityV1Schema = lazyZodSchema(() => z.discriminatedUnion('available', [
   z.object({
     available: z.literal(true),
     baseUrl: ExternalProviderApiBaseUrlV1Schema,
@@ -50,16 +51,16 @@ export const TeamCredentialExternalApiAvailabilityV1Schema = z.discriminatedUnio
     available: z.literal(false),
     reason: TeamCredentialExternalApiUnavailableReasonV1Schema,
   }).strict(),
-]);
+]));
 export type TeamCredentialExternalApiAvailabilityV1 = z.infer<
   typeof TeamCredentialExternalApiAvailabilityV1Schema
 >;
 
-export const TeamCredentialCapabilitiesSchema = z.object({
+export const TeamCredentialCapabilitiesSchema = lazyZodSchema(() => z.object({
   credentialResources: z.object({
     externalApi: TeamCredentialExternalApiAvailabilityV1Schema,
   }).strict(),
-}).strict();
+}).strict());
 export type TeamCredentialCapabilities = z.infer<typeof TeamCredentialCapabilitiesSchema>;
 
 const UNAVAILABLE_DEPLOYMENT_READINESS = Object.freeze({

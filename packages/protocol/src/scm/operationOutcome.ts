@@ -1,25 +1,26 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { ScmOperationErrorCodeSchema, type ScmOperationErrorCode } from './operationError.js';
 import { ScmOperationStateSchema } from './operationState.js';
 import type { ScmCommitPublication } from './commitPublication.js';
 
-export const ScmOperationRepositoryStateSchema = z.object({
+export const ScmOperationRepositoryStateSchema = lazyZodSchema(() => z.object({
   headOid: z.string().optional(),
   hasConflicts: z.boolean(),
   operation: ScmOperationStateSchema.nullable(),
-}).strict();
+}).strict());
 export type ScmOperationRepositoryState = z.infer<typeof ScmOperationRepositoryStateSchema>;
 
-export const ScmOperationEffectSchema = z.discriminatedUnion('kind', [
+export const ScmOperationEffectSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('commit'), commitSha: z.string().min(1) }).strict(),
   z.object({ kind: z.literal('stash'), stashOid: z.string().min(1), stashRef: z.string().optional() }).strict(),
   z.object({ kind: z.literal('pull_request'), url: z.string().min(1), number: z.number().int().positive().optional() }).strict(),
   z.object({ kind: z.literal('branch'), name: z.string().min(1), headOid: z.string().optional() }).strict(),
   z.object({ kind: z.literal('remote'), remote: z.string().min(1), branch: z.string().optional(), remoteOid: z.string().optional() }).strict(),
-]);
+]));
 export type ScmOperationEffect = z.infer<typeof ScmOperationEffectSchema>;
 
-export const ScmOperationReconciliationSchema = z.discriminatedUnion('kind', [
+export const ScmOperationReconciliationSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('repository_status'), cwd: z.string().optional() }).strict(),
   z.object({ kind: z.literal('commit'), commitSha: z.string().min(1) }).strict(),
   // A creation message is a read-only query when the creating process lost its result;
@@ -27,13 +28,13 @@ export const ScmOperationReconciliationSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('stash'), stashOid: z.string().optional(), message: z.string().optional() }).strict(),
   z.object({ kind: z.literal('remote_ref'), remote: z.string().min(1), branch: z.string().optional(), expectedOid: z.string().optional() }).strict(),
   z.object({ kind: z.literal('pull_request'), head: z.string().min(1), base: z.string().optional(), providerId: z.string().optional(), repository: z.string().optional(), url: z.string().optional() }).strict(),
-]);
+]));
 export type ScmOperationReconciliation = z.infer<typeof ScmOperationReconciliationSchema>;
 
-export const ScmOperationNextActionSchema = z.union([
+export const ScmOperationNextActionSchema = lazyZodSchema(() => z.union([
   z.object({ kind: z.enum(['refresh', 'retry', 'resolve_conflicts', 'continue', 'skip', 'abort', 'reconcile_index', 'choose_dirty_policy', 'choose_reconcile', 'configure_upstream', 'authenticate']) }).strict(),
   z.object({ kind: z.literal('open_url'), url: z.string().min(1) }).strict(),
-]);
+]));
 export type ScmOperationNextAction = z.infer<typeof ScmOperationNextActionSchema>;
 
 const common = {
@@ -43,7 +44,7 @@ const common = {
   recoveryStash: z.object({ stashOid: z.string().min(1), stashRef: z.string().optional() }).strict().optional(),
 };
 const repositoryState = ScmOperationRepositoryStateSchema.optional();
-export const ScmOperationOutcomeSchema = z.discriminatedUnion('kind', [
+export const ScmOperationOutcomeSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ ...common, kind: z.literal('succeeded'), effect: ScmOperationEffectSchema.optional(), repositoryState }).strict(),
   z.object({ ...common, kind: z.literal('needs_input'), errorCode: ScmOperationErrorCodeSchema, repositoryState }).strict(),
   z.object({ ...common, kind: z.literal('conflicted'), errorCode: ScmOperationErrorCodeSchema, repositoryState: ScmOperationRepositoryStateSchema }).strict(),
@@ -51,7 +52,7 @@ export const ScmOperationOutcomeSchema = z.discriminatedUnion('kind', [
   z.object({ ...common, kind: z.literal('failed'), errorCode: ScmOperationErrorCodeSchema, repositoryState }).strict(),
   z.object({ ...common, kind: z.literal('cancelled'), errorCode: ScmOperationErrorCodeSchema.optional(), repositoryState: ScmOperationRepositoryStateSchema }).strict(),
   z.object({ ...common, kind: z.literal('outcome_unknown'), errorCode: ScmOperationErrorCodeSchema, reconciliation: ScmOperationReconciliationSchema, repositoryState }).strict(),
-]);
+]));
 export type ScmOperationOutcome = z.infer<typeof ScmOperationOutcomeSchema>;
 
 /** A missing mutation result permits reconciliation, never an automatic replay. */

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
 
@@ -6,8 +7,8 @@ export type WorkflowDefinitionRefV1 =
   | Readonly<{ kind: 'builtin'; id: string }>
   | Readonly<{ kind: 'plugin'; contribution: PluginContributionIdentityV1 }>;
 
-const ArtifactIdSchema = z.string().uuid();
-const BuiltinIdSchema = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$(?![\s\S])/u);
+const ArtifactIdSchema = lazyZodSchema(() => z.string().uuid());
+const BuiltinIdSchema = lazyZodSchema(() => z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$(?![\s\S])/u));
 
 /** Routing identities are canonical, never trimmed or repaired. Catalog availability is separate. */
 export function parseWorkflowDefinitionRefV1(value: unknown): WorkflowDefinitionRefV1 | null {
@@ -31,8 +32,8 @@ export function formatWorkflowDefinitionRefV1(ref: WorkflowDefinitionRefV1): str
   return value;
 }
 
-export const WorkflowDefinitionRefV1StringSchema = z.string().refine(
+export const WorkflowDefinitionRefV1StringSchema = lazyZodSchema(() => z.string().refine(
   (value) => parseWorkflowDefinitionRefV1(value) !== null,
   'Invalid canonical Workflow reference',
-);
+));
 export type WorkflowDefinitionRefV1String = z.infer<typeof WorkflowDefinitionRefV1StringSchema>;

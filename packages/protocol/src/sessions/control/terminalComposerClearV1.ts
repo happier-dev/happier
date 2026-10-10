@@ -1,6 +1,7 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
-const SessionTerminalComposerClearSessionIdSchema = z.string().trim().min(1);
+const SessionTerminalComposerClearSessionIdSchema = lazyZodSchema(() => z.string().trim().min(1));
 
 export const SESSION_TERMINAL_COMPOSER_CLEAR_SUCCESS_STATUSES = [
   'cleared',
@@ -31,13 +32,13 @@ export const SESSION_TERMINAL_COMPOSER_CLEAR_STATUSES = [
 export type SessionTerminalComposerClearStatusV1 =
   typeof SESSION_TERMINAL_COMPOSER_CLEAR_STATUSES[number];
 
-export const SessionTerminalComposerClearRequestV1Schema = z.object({
+export const SessionTerminalComposerClearRequestV1Schema = lazyZodSchema(() => z.object({
   sessionId: SessionTerminalComposerClearSessionIdSchema,
   expectedStateAtMs: z.number().int().nonnegative().optional(),
-}).passthrough();
+}).passthrough());
 export type SessionTerminalComposerClearRequestV1 = z.infer<typeof SessionTerminalComposerClearRequestV1Schema>;
 
-export const SessionTerminalComposerClearResultV1Schema = z.discriminatedUnion('ok', [
+export const SessionTerminalComposerClearResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),
     status: z.enum(SESSION_TERMINAL_COMPOSER_CLEAR_SUCCESS_STATUSES),
@@ -50,7 +51,7 @@ export const SessionTerminalComposerClearResultV1Schema = z.discriminatedUnion('
     errorCode: z.string().min(1).optional(),
     error: z.string().min(1).optional(),
   }).passthrough(),
-]);
+]));
 export type SessionTerminalComposerClearResultV1 = z.infer<typeof SessionTerminalComposerClearResultV1Schema>;
 
 export function buildUnsupportedSessionTerminalComposerClearResult(

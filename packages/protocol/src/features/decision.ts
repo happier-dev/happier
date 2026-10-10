@@ -1,13 +1,14 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { FEATURE_ID_ENUM } from './featureIds.js';
 
-export const FeatureStateSchema = z.enum(['enabled', 'disabled', 'unsupported', 'unknown']);
+export const FeatureStateSchema = lazyZodSchema(() => z.enum(['enabled', 'disabled', 'unsupported', 'unknown']));
 export type FeatureState = z.infer<typeof FeatureStateSchema>;
 
-export const FeatureAxisSchema = z.enum(['client', 'build_policy', 'local_policy', 'server', 'daemon', 'scope', 'dependency']);
+export const FeatureAxisSchema = lazyZodSchema(() => z.enum(['client', 'build_policy', 'local_policy', 'server', 'daemon', 'scope', 'dependency']));
 export type FeatureAxis = z.infer<typeof FeatureAxisSchema>;
 
-export const FeatureBlockerCodeSchema = z.enum([
+export const FeatureBlockerCodeSchema = lazyZodSchema(() => z.enum([
   'none',
   'not_implemented',
   'build_disabled',
@@ -20,17 +21,17 @@ export const FeatureBlockerCodeSchema = z.enum([
   'misconfigured',
   'dependency_disabled',
   'dependency_unknown',
-]);
+]));
 export type FeatureBlockerCode = z.infer<typeof FeatureBlockerCodeSchema>;
 
-export const FeatureDecisionScopeSchema = z.object({
+export const FeatureDecisionScopeSchema = lazyZodSchema(() => z.object({
   scopeKind: z.enum(['runtime', 'main_selection', 'spawn']),
   serverId: z.string().min(1).optional(),
   machineId: z.string().min(1).optional(),
-});
+}));
 export type FeatureDecisionScope = z.infer<typeof FeatureDecisionScopeSchema>;
 
-export const FeatureDecisionSchema = z
+export const FeatureDecisionSchema = lazyZodSchema(() => z
   .object({
     featureId: z.enum(FEATURE_ID_ENUM),
     state: FeatureStateSchema,
@@ -70,7 +71,7 @@ export const FeatureDecisionSchema = z
         });
       }
     }
-  });
+  }));
 
 export type FeatureDecision = z.infer<typeof FeatureDecisionSchema>;
 

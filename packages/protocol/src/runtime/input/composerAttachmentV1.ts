@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 import { defineProtocolString } from '../../plugins/actions/protocolComposableSchema.js';
@@ -84,12 +85,12 @@ export {
 } from './composerInstanceId.js';
 
 /** Host-created opaque identity for one attachment instance in one composer. */
-export const ComposerInstanceIdSchema = z.string()
+export const ComposerInstanceIdSchema = lazyZodSchema(() => z.string()
   .min(1)
   .max(MAX_COMPOSER_INSTANCE_ID_CODE_POINTS_V1)
   .refine((value) => ComposerInstanceIdProtocolSchema.safeParse(value).success, {
     message: 'Composer instance ids must not have surrounding whitespace.',
-  });
+  }));
 export type ComposerInstanceId = z.infer<typeof ComposerInstanceIdSchema>;
 export const ComposerAttachmentInstanceIdV1Schema = ComposerInstanceIdSchema;
 export type ComposerAttachmentInstanceIdV1 = ComposerInstanceId;
@@ -108,7 +109,7 @@ export const ComposerAttachmentKeyV1Schema = boundedText(
 );
 export type ComposerAttachmentKeyV1 = z.infer<typeof ComposerAttachmentKeyV1Schema>;
 
-export const ComposerAttachmentAuthorPresentationV1Schema = z.object({
+export const ComposerAttachmentAuthorPresentationV1Schema = lazyZodSchema(() => z.object({
   label: boundedText(
     MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1,
     `Composer attachment labels must be at most ${MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1} code points.`,
@@ -119,12 +120,12 @@ export const ComposerAttachmentAuthorPresentationV1Schema = z.object({
   ).optional(),
   icon: PluginUiIconTokenV1Schema.optional(),
   tone: PluginUiToneV1Schema.exclude(['accent']).optional(),
-}).strict();
+}).strict());
 export type ComposerAttachmentAuthorPresentationV1 = DeepReadonly<
   z.infer<typeof ComposerAttachmentAuthorPresentationV1Schema>
 >;
 
-export const ComposerAttachmentPresentationV1Schema = ComposerAttachmentAuthorPresentationV1Schema.extend({
+export const ComposerAttachmentPresentationV1Schema = lazyZodSchema(() => ComposerAttachmentAuthorPresentationV1Schema.extend({
   typeLabel: boundedText(
     MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1,
     `Composer attachment type labels must be at most ${MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1} code points.`,
@@ -133,29 +134,29 @@ export const ComposerAttachmentPresentationV1Schema = ComposerAttachmentAuthorPr
 // retain the known immutable fallback while dropping an unknown future display
 // field. Identity, routing, values, content, and every enclosing record remain
 // closed schemas.
-}).strip();
+}).strip());
 export type ComposerAttachmentPresentationV1 = DeepReadonly<
   z.infer<typeof ComposerAttachmentPresentationV1Schema>
 >;
 
-export const ComposerAttachmentValueV1Schema = PluginJsonValueV2Schema.superRefine((value, context) => {
+export const ComposerAttachmentValueV1Schema = lazyZodSchema(() => PluginJsonValueV2Schema.superRefine((value, context) => {
   rejectOversizedCanonicalJson(
     value,
     context,
     MAX_COMPOSER_ATTACHMENT_VALUE_JSON_BYTES_V1,
     'Composer attachment values',
   );
-});
+}));
 export type ComposerAttachmentValueV1 = DeepReadonly<z.infer<typeof ComposerAttachmentValueV1Schema>>;
 
-const ComposerAttachmentRecordBaseV1Schema = z.object({
+const ComposerAttachmentRecordBaseV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   instanceId: ComposerAttachmentInstanceIdV1Schema,
   attachment: asProtocolZod(PluginContributionIdentityV1Schema),
   key: ComposerAttachmentKeyV1Schema,
   value: ComposerAttachmentValueV1Schema,
   presentation: ComposerAttachmentPresentationV1Schema,
-}).strict();
+}).strict());
 
 function withComposerAttachmentRecordSizeLimit<TSchema extends z.ZodTypeAny>(schema: TSchema): TSchema {
   return schema.superRefine((value, context) => {
@@ -202,7 +203,7 @@ export type ComposerAttachmentInputV1 = DeepReadonly<z.infer<typeof ComposerAtta
  * the prepared value plus optional fresh provider-neutral data; model-visible
  * context remains in the one host-rendered context block.
  */
-export const ResolvedComposerAttachmentDispatchV1Schema = ComposerAttachmentRecordBaseV1Schema.extend({
+export const ResolvedComposerAttachmentDispatchV1Schema = lazyZodSchema(() => ComposerAttachmentRecordBaseV1Schema.extend({
   data: ComposerAttachmentValueV1Schema.optional(),
 }).strict().superRefine((value, context) => {
   rejectOversizedCanonicalJson(
@@ -211,41 +212,41 @@ export const ResolvedComposerAttachmentDispatchV1Schema = ComposerAttachmentReco
     MAX_COMPOSER_ATTACHMENT_RECORD_JSON_BYTES_V1,
     'Resolved composer attachment dispatch records',
   );
-});
+}));
 export type ResolvedComposerAttachmentDispatchV1 = DeepReadonly<z.infer<
   typeof ResolvedComposerAttachmentDispatchV1Schema
 >>;
 
-export const ComposerAttachmentAuthorValueV1Schema = z.object({
+export const ComposerAttachmentAuthorValueV1Schema = lazyZodSchema(() => z.object({
   key: ComposerAttachmentKeyV1Schema,
   value: ComposerAttachmentValueV1Schema,
   presentation: ComposerAttachmentAuthorPresentationV1Schema,
-}).strict();
+}).strict());
 export type ComposerAttachmentAuthorValueV1 = DeepReadonly<
   z.infer<typeof ComposerAttachmentAuthorValueV1Schema>
 >;
 
-export const ComposerAttachmentUpdateV1Schema = z.object({
+export const ComposerAttachmentUpdateV1Schema = lazyZodSchema(() => z.object({
   value: ComposerAttachmentValueV1Schema,
   presentation: ComposerAttachmentAuthorPresentationV1Schema.optional(),
-}).strict();
+}).strict());
 export type ComposerAttachmentUpdateV1 = DeepReadonly<z.infer<typeof ComposerAttachmentUpdateV1Schema>>;
 
-export const ComposerAttachmentAvailabilityV1Schema = z.discriminatedUnion('status', [
+export const ComposerAttachmentAvailabilityV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('ready') }).strict(),
   z.object({
     status: z.enum(['unavailable', 'invalid']),
     reason: boundedText(512, 'Composer attachment availability reasons must be at most 512 code points.').optional(),
   }).strict(),
-]);
+]));
 export type ComposerAttachmentAvailabilityV1 = DeepReadonly<
   z.infer<typeof ComposerAttachmentAvailabilityV1Schema>
 >;
 
-export const ComposerAttachmentViewV1Schema = ComposerAttachmentRecordBaseV1Schema.extend({
+export const ComposerAttachmentViewV1Schema = lazyZodSchema(() => ComposerAttachmentRecordBaseV1Schema.extend({
   availability: ComposerAttachmentAvailabilityV1Schema,
   // A draft snapshot may expose only the opaque stage; durable SessionMedia
   // references begin at canonical admission and never re-enter Composer UI.
   content: ComposerStagedMediaContentV1Schema.optional(),
-}).strict();
+}).strict());
 export type ComposerAttachmentViewV1 = DeepReadonly<z.infer<typeof ComposerAttachmentViewV1Schema>>;

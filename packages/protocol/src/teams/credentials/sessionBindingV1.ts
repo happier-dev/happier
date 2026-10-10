@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { SessionMetadataOwnerPatchV1Schema } from '../../sessions/metadata/sessionMetadataSchemasV1.js';
 import { SessionMetadataInactiveModelIntentExpectationV1Schema } from '../../sessions/metadata/sessionMetadataSchemasV1.js';
@@ -7,10 +8,10 @@ import {
 
 export * from './sessionBindingIntentV1.js';
 
-export const SessionTeamCredentialBindingMutationOperationV1Schema = z.enum([
+export const SessionTeamCredentialBindingMutationOperationV1Schema = lazyZodSchema(() => z.enum([
   'session.model.set',
   'session.connected_service.switch',
-]);
+]));
 export type SessionTeamCredentialBindingMutationOperationV1 = z.infer<
   typeof SessionTeamCredentialBindingMutationOperationV1Schema
 >;
@@ -21,7 +22,7 @@ export type SessionTeamCredentialBindingMutationOperationV1 = z.infer<
  * witness-only operation.
  */
 export const SessionTeamCredentialBindingMetadataPatchV1Schema =
-  SessionMetadataOwnerPatchV1Schema.omit({ publisherPrecondition: true, activitySummaryV1: true }).extend({
+  lazyZodSchema(() => SessionMetadataOwnerPatchV1Schema.omit({ publisherPrecondition: true, activitySummaryV1: true }).extend({
     mode: z.literal('owner_team_credential_binding'),
     operation: SessionTeamCredentialBindingMutationOperationV1Schema,
     teamCredentialBindings: SessionTeamCredentialBindingIntentsV1Schema.min(1),
@@ -57,12 +58,12 @@ export const SessionTeamCredentialBindingMetadataPatchV1Schema =
         message: 'Inactive model currentness applies only to Session model selection.',
       });
     }
-  });
+  }));
 export type SessionTeamCredentialBindingMetadataPatchV1 = z.infer<
   typeof SessionTeamCredentialBindingMetadataPatchV1Schema
 >;
 
-export const SessionTeamCredentialBindingRejectionV1Schema = z.enum([
+export const SessionTeamCredentialBindingRejectionV1Schema = lazyZodSchema(() => z.enum([
   'invalid_input',
   'feature_disabled',
   'session_missing',
@@ -80,12 +81,12 @@ export const SessionTeamCredentialBindingRejectionV1Schema = z.enum([
   'update_required',
   'authentication_required',
   'authentication_unavailable',
-]);
+]));
 export type SessionTeamCredentialBindingRejectionV1 = z.infer<
   typeof SessionTeamCredentialBindingRejectionV1Schema
 >;
 
-export const SessionTeamCredentialBindingMutationRejectionV1Schema = z.object({
+export const SessionTeamCredentialBindingMutationRejectionV1Schema = lazyZodSchema(() => z.object({
   code: z.literal('session_team_credential_binding_rejected'),
   reason: SessionTeamCredentialBindingRejectionV1Schema,
-}).strict();
+}).strict());

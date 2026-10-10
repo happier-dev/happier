@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { VoiceTrackedSessionAddressV1Schema } from '../sessions/follow/voiceTrackedTargetsCompatibilityV1.js';
 import { WidgetDefinitionDraftV1Schema, WidgetDefinitionPatchV1Schema, WidgetDefinitionV1Schema, type WidgetDefinitionDraftV1 } from './widgetDefinitionV1.js';
@@ -10,7 +11,7 @@ export { WIDGET_DEFINITION_ACTION_IDS_V1, WidgetDefinitionActionIdV1Schema } fro
 export type { WidgetDefinitionActionIdV1 } from './definitionActionIdsV1.js';
 
 const id = z.string().trim().min(1);
-export const WidgetDefinitionAccountV1Schema = z.object({ serverId: id, accountId: id }).strict();
+export const WidgetDefinitionAccountV1Schema = lazyZodSchema(() => z.object({ serverId: id, accountId: id }).strict());
 const account = z.object({ account: WidgetDefinitionAccountV1Schema }).strict();
 const reference = account.extend({ artifactId: id }).strict();
 export const WidgetDefinitionActionInputSchemasV1 = {
@@ -22,7 +23,7 @@ export const WidgetDefinitionActionInputSchemasV1 = {
     'widgets.definition.delete': reference,
     'widgets.definition.saveFromSession': account.extend({ session: VoiceTrackedSessionAddressV1Schema, itemId: id, artifactId: id, name: id.optional() }).strict(),
 } as const;
-export const WidgetDefinitionPlacementSummaryV1Schema = z.object({ placements: z.array(WidgetInstanceRefV1Schema), unavailableScopes: z.array(id) }).strict();
+export const WidgetDefinitionPlacementSummaryV1Schema = lazyZodSchema(() => z.object({ placements: z.array(WidgetInstanceRefV1Schema), unavailableScopes: z.array(id) }).strict());
 const result = z.object({ definition: WidgetDefinitionV1Schema }).strict();
 export const WidgetDefinitionActionOutputSchemasV1 = {
     'widgets.definition.list': z.object({ definitions: z.array(WidgetDefinitionSummaryV1Schema) }).strict(),

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 export const AGENT_SESSION_STARTUP_INSTRUCTIONS_V1_MAX_ID_CODE_UNITS = 128;
@@ -17,18 +18,18 @@ function isUnicodeScalarString(value: string): boolean {
   return true;
 }
 
-export const AgentSessionStartupInstructionsIdV1Schema = z.string()
+export const AgentSessionStartupInstructionsIdV1Schema = lazyZodSchema(() => z.string()
   .min(1)
   .max(AGENT_SESSION_STARTUP_INSTRUCTIONS_V1_MAX_ID_CODE_UNITS)
-  .regex(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u);
+  .regex(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u));
 
-export const AgentSessionStartupInstructionsTextV1Schema = z.string()
+export const AgentSessionStartupInstructionsTextV1Schema = lazyZodSchema(() => z.string()
   .refine((value) => value.trim().length > 0, 'Instructions must be nonempty')
   .refine(isUnicodeScalarString, 'Instructions must contain valid Unicode')
   .refine(
     (value) => value.normalize('NFC') === value,
     'Instructions must be NFC-normalized',
-  );
+  ));
 
 const AgentSessionStartupInstructionsMarkerV1Shape = {
   v: z.literal(1),
@@ -39,18 +40,18 @@ const AgentSessionStartupInstructionsMarkerV1Shape = {
     .max(AGENT_SESSION_STARTUP_INSTRUCTIONS_V1_MAX_REVISION),
 } as const;
 
-export const AgentSessionStartupInstructionsMarkerV1Schema = z.object(
+export const AgentSessionStartupInstructionsMarkerV1Schema = lazyZodSchema(() => z.object(
   AgentSessionStartupInstructionsMarkerV1Shape,
-).strict().readonly();
+).strict().readonly());
 
 export type AgentSessionStartupInstructionsMarkerV1 = z.infer<
   typeof AgentSessionStartupInstructionsMarkerV1Schema
 >;
 
-export const AgentSessionStartupInstructionsV1Schema = z.object({
+export const AgentSessionStartupInstructionsV1Schema = lazyZodSchema(() => z.object({
   ...AgentSessionStartupInstructionsMarkerV1Shape,
   instructions: AgentSessionStartupInstructionsTextV1Schema,
-}).strict().readonly();
+}).strict().readonly());
 
 export type AgentSessionStartupInstructionsV1 = z.infer<
   typeof AgentSessionStartupInstructionsV1Schema

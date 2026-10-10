@@ -1,13 +1,14 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
-export const ExecutionRunCancelTurnRequestSchema = z.object({
+export const ExecutionRunCancelTurnRequestSchema = lazyZodSchema(() => z.object({
   runId: z.string().min(1),
   occurrenceId: z.string().min(1),
   turnId: z.string().min(1),
-}).strict();
+}).strict());
 export type ExecutionRunCancelTurnRequest = z.infer<typeof ExecutionRunCancelTurnRequestSchema>;
 
-export const ExecutionRunCancelTurnResponseSchema = z.union([
+export const ExecutionRunCancelTurnResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     ok: z.literal(true),
     status: z.enum(['requested', 'already_requested']),
@@ -26,5 +27,5 @@ export const ExecutionRunCancelTurnResponseSchema = z.union([
       'execution_run_cancel_failed',
     ]),
   }).strict(),
-]);
+]));
 export type ExecutionRunCancelTurnResponse = z.infer<typeof ExecutionRunCancelTurnResponseSchema>;

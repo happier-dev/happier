@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { PluginInvocableActionIdSchema } from '../../actions/pluginActionSurface.js';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '../actions/jsonSchemaValidation.js';
@@ -8,10 +9,10 @@ import { PluginClientExecutionPlatformsV1Schema, PluginClientExecutionReferenceV
 import { PluginContributionReferenceV2Schema, PluginJsonSchemaV2Schema, PluginLocalizedStringV2Schema } from './publicTypes.js';
 import { isEntityDragKindV1, type EntityDragKindV1 } from '../ui/entityDragDrop.js';
 
-export const PluginEntityDragKindV1Schema = z.custom<EntityDragKindV1>(isEntityDragKindV1);
+export const PluginEntityDragKindV1Schema = lazyZodSchema(() => z.custom<EntityDragKindV1>(isEntityDragKindV1));
 
 const clientFields = { client: PluginClientExecutionReferenceV1Schema, platforms: PluginClientExecutionPlatformsV1Schema };
-export const PluginDragSourceContributionV1Schema = z.object({
+export const PluginDragSourceContributionV1Schema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
   preview: z.object({ subtitle: PluginLocalizedStringV2Schema.optional() }).strict().optional(),
@@ -22,19 +23,19 @@ export const PluginDragSourceContributionV1Schema = z.object({
     catch (error) { ctx.addIssue({ code: z.ZodIssueCode.custom, message: error instanceof Error ? error.message : 'Invalid reference schema' }); return z.NEVER; }
   }),
   ...clientFields,
-}).strict();
+}).strict());
 export type PluginDragSourceContributionV1 = z.infer<typeof PluginDragSourceContributionV1Schema>;
 
-export const PluginEntityDropActionReferenceV1Schema = z.discriminatedUnion('kind', [
+export const PluginEntityDropActionReferenceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('host'), actionId: z.lazy(() => PluginInvocableActionIdSchema) }).strict(),
   z.object({ kind: z.literal('plugin'), action: asProtocolZod(PluginContributionReferenceV2Schema) }).strict(),
-]);
-export const PluginDropTargetContributionV1Schema = z.object({
+]));
+export const PluginDropTargetContributionV1Schema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema), title: PluginLocalizedStringV2Schema,
   acceptedKinds: z.array(PluginEntityDragKindV1Schema).min(1),
   actions: z.array(PluginEntityDropActionReferenceV1Schema).min(1),
   ...clientFields,
-}).strict();
+}).strict());
 export type PluginDropTargetContributionV1 = z.infer<typeof PluginDropTargetContributionV1Schema>;
 
 /** Schema admission reuses the incumbent compiler, never a feature-local validator. */

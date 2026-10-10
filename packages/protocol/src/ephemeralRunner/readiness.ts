@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1.js';
@@ -11,15 +12,15 @@ import { verifyRunnerClaimV1 } from './endpoint.js';
 import { RunnerCredentialSelectionBindingV1Schema } from './review.js';
 import { RunnerBrokerReadinessRequestV1Schema } from './brokerReadinessRequestV1.js';
 
-export const RunnerManagedAgentInstallationV1Schema = z.object({
+export const RunnerManagedAgentInstallationV1Schema = lazyZodSchema(() => z.object({
   agentTarget: AgentExecutionTargetV1Schema,
   // Canonical Agent runtime descriptor, not an installer-issued attestation.
   agentRuntimeId: RunnerResourceIdSchema,
   executablePath: z.string().min(1).max(16 * 1024),
   authoritativeVersion: z.string().min(1).max(512).nullable(),
-}).strict();
+}).strict());
 
-export const RunnerReadinessPayloadV1Schema = z.object({
+export const RunnerReadinessPayloadV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   purpose: z.literal('happier.ephemeral-session-runner.readiness'),
   claim: RunnerClaimPayloadV1Schema,
@@ -27,14 +28,14 @@ export const RunnerReadinessPayloadV1Schema = z.object({
   installation: RunnerManagedAgentInstallationV1Schema,
   credentialSelectionBinding: RunnerCredentialSelectionBindingV1Schema,
   brokerReadinessRequest: RunnerBrokerReadinessRequestV1Schema,
-}).strict();
+}).strict());
 export type RunnerReadinessPayloadV1 = z.infer<typeof RunnerReadinessPayloadV1Schema>;
 
-export const RunnerReadinessV1Schema = z.object({
+export const RunnerReadinessV1Schema = lazyZodSchema(() => z.object({
   payload: RunnerReadinessPayloadV1Schema,
   activationSignature: RunnerSignatureSchema,
   installationSignature: RunnerSignatureSchema,
-}).strict();
+}).strict());
 export type RunnerReadinessV1 = z.infer<typeof RunnerReadinessV1Schema>;
 
 export function signRunnerReadinessV1(params: Readonly<{ payload: RunnerReadinessPayloadV1; activationSecretKey: Uint8Array; installationSecretKey: Uint8Array }>): RunnerReadinessV1 {

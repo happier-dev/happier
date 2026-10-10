@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { LlmTaskRunnerConfigV1Schema } from '../llm/tasks/llmTaskRunnerConfigV1.js';
@@ -29,16 +30,16 @@ export { SessionForkPointSchema, type SessionForkPoint };
  * point and excludes Provider-bound Sessions, whose fork lifecycle refuses every
  * non-replay strategy.
  */
-export const SessionForkStrategySchema = z.enum([
+export const SessionForkStrategySchema = lazyZodSchema(() => z.enum([
   'auto',
   'native',
   'provider_native',
   'acp_fork_latest',
   'replay',
-]);
+]));
 export type SessionForkStrategy = z.infer<typeof SessionForkStrategySchema>;
 
-export const SessionForkRpcParamsSchema = z
+export const SessionForkRpcParamsSchema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     parentSessionId: z.string().min(1),
@@ -59,11 +60,11 @@ export const SessionForkRpcParamsSchema = z
      */
     requestId: z.string().min(1).max(128).refine((value) => value.trim().length > 0).optional(),
   })
-  .strict();
+  .strict());
 export type SessionForkRpcParams = z.infer<typeof SessionForkRpcParamsSchema>;
 
-export const SessionForkRpcResultSchema = z.union([
+export const SessionForkRpcResultSchema = lazyZodSchema(() => z.union([
   z.object({ ok: z.literal(true), childSessionId: z.string().min(1) }).strict(),
   z.object({ ok: z.literal(false), errorCode: z.string().min(1), errorMessage: z.string().min(1) }).strict(),
-]);
+]));
 export type SessionForkRpcResult = z.infer<typeof SessionForkRpcResultSchema>;

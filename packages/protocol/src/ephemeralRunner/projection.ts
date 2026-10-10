@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import {
   RunnerActivationBindingV1Schema,
@@ -13,12 +14,12 @@ import { RunnerReadinessV1Schema } from './readiness.js';
 import { RunnerActivationReviewV1Schema } from './review.js';
 import { RunnerActivationProgressPhaseV1Schema } from './progress.js';
 
-export const RunnerEndpointFactsProjectionV1Schema = z.discriminatedUnion('status', [
+export const RunnerEndpointFactsProjectionV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('available'), facts: RunnerEndpointFactsV1Schema }).strict(),
   z.object({ status: z.literal('unavailable'), reason: z.enum(['creator_unavailable', 'recipient_mismatch', 'invalid_content']) }).strict(),
-]);
+]));
 
-export const RunnerActivationProjectionV1Schema = RunnerActivationBindingV1Schema.safeExtend({
+export const RunnerActivationProjectionV1Schema = lazyZodSchema(() => RunnerActivationBindingV1Schema.safeExtend({
   draftId: RunnerResourceIdSchema,
   state: RunnerActivationStateV1Schema,
   closeReason: RunnerActivationCloseReasonV1Schema.nullable(),
@@ -44,7 +45,7 @@ export const RunnerActivationProjectionV1Schema = RunnerActivationBindingV1Schem
 ).refine(
   (activation) => activation.state !== 'materialized' || (activation.readiness !== null && activation.materialization !== null),
   'Materialized activations retain readiness and final identity projection',
-);
+));
 export type RunnerActivationProjectionV1 = z.infer<typeof RunnerActivationProjectionV1Schema>;
 
 /** Extract only the immutable binding; callers still verify it against local creating-device custody. */

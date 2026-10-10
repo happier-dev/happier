@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { OperationUpdateRequiredV1Schema } from '../../compat/operationUpdateRequiredV1.js';
 import { ProviderErrorV1Schema } from '../../providers/errors.js';
@@ -20,7 +21,7 @@ import {
  * Creation-time Account organization intent. Existing Session organization
  * edits are a separate domain and must not be inferred from this snapshot.
  */
-export const SessionOrganizationPlacementV1Schema = z.object({
+export const SessionOrganizationPlacementV1Schema = lazyZodSchema(() => z.object({
   folderId: SessionCreationOpaqueIdV1Schema.nullable(),
   tagIds: z.array(SessionCreationOpaqueIdV1Schema)
     .max(SESSION_ORGANIZATION_MAX_ASSIGNMENTS_PER_MUTATION),
@@ -36,10 +37,10 @@ export const SessionOrganizationPlacementV1Schema = z.object({
     }
     seen.add(tagId);
   }
-});
+}));
 export type SessionOrganizationPlacementV1 = z.infer<typeof SessionOrganizationPlacementV1Schema>;
 
-export const SessionSpawnNewInitialInputDispositionV1Schema = z.discriminatedUnion('status', [
+export const SessionSpawnNewInitialInputDispositionV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('notRequested') }).strict(),
   z.object({
     status: z.literal('accepted'),
@@ -58,16 +59,16 @@ export const SessionSpawnNewInitialInputDispositionV1Schema = z.discriminatedUni
     localId: PendingLocalIdSchema,
     code: z.string().trim().min(1).max(128),
   }).strict(),
-]);
+]));
 export type SessionSpawnNewInitialInputDispositionV1 = z.infer<
   typeof SessionSpawnNewInitialInputDispositionV1Schema
 >;
 
 /** A cross-machine fork starts empty rather than implying its source files travelled. */
-export const SessionForkFilesNotCopiedV1Schema = z.object({ reason: z.literal('cross_machine') }).strict();
+export const SessionForkFilesNotCopiedV1Schema = lazyZodSchema(() => z.object({ reason: z.literal('cross_machine') }).strict());
 export type SessionForkFilesNotCopiedV1 = z.infer<typeof SessionForkFilesNotCopiedV1Schema>;
 
-const SessionSpawnNewErrorCodeV1Schema = z.union([
+const SessionSpawnNewErrorCodeV1Schema = lazyZodSchema(() => z.union([
   z.enum([
     'invalid_input',
     'target_required',
@@ -86,7 +87,7 @@ const SessionSpawnNewErrorCodeV1Schema = z.union([
     'agent_signed_out',
   ]),
   SessionAccessErrorCodeV1Schema,
-]);
+]));
 export type SessionSpawnNewErrorCodeV1 = z.infer<typeof SessionSpawnNewErrorCodeV1Schema>;
 
 /**
@@ -94,7 +95,7 @@ export type SessionSpawnNewErrorCodeV1 = z.infer<typeof SessionSpawnNewErrorCode
  * initial-input admission stays nested so callers cannot mistake a rejected
  * input for a failed Session create.
  */
-export const SessionSpawnNewResultV1Schema = z.union([
+export const SessionSpawnNewResultV1Schema = lazyZodSchema(() => z.union([
   z.object({
     type: z.literal('success'),
     disposition: z.enum(['created', 'rejoined']),
@@ -160,5 +161,5 @@ export const SessionSpawnNewResultV1Schema = z.union([
     retryable: z.literal(false),
     details: OperationUpdateRequiredV1Schema,
   }).strict(),
-]);
+]));
 export type SessionSpawnNewResultV1 = z.infer<typeof SessionSpawnNewResultV1Schema>;

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -27,7 +28,7 @@ export const CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES = {
   claudeSubscriptionSetupTokenNotSupportedForUnified: 'claude_subscription_setup_token_not_supported_for_unified',
 } as const;
 
-export const ConnectedServiceUxDiagnosticCodeV1Schema = z.enum([
+export const ConnectedServiceUxDiagnosticCodeV1Schema = lazyZodSchema(() => z.enum([
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerSessionStateUnavailableForResume,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceMaterializationIdentityMissing,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.resumeReachabilityInputsMissing,
@@ -42,11 +43,11 @@ export const ConnectedServiceUxDiagnosticCodeV1Schema = z.enum([
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.claudeSubscriptionMissingClaudeCodeScope,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.claudeSubscriptionNativeAuthMaterializationFailed,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.claudeSubscriptionSetupTokenNotSupportedForUnified,
-]);
+]));
 
 export type ConnectedServiceUxDiagnosticCodeV1 = z.infer<typeof ConnectedServiceUxDiagnosticCodeV1Schema>;
 
-export const ConnectedServiceUxDiagnosticFailurePhaseV1Schema = z.enum([
+export const ConnectedServiceUxDiagnosticFailurePhaseV1Schema = lazyZodSchema(() => z.enum([
   'session_lookup',
   'agent_validation',
   'normalization',
@@ -59,12 +60,12 @@ export const ConnectedServiceUxDiagnosticFailurePhaseV1Schema = z.enum([
   'post_switch_recovery',
   'post_switch_verification',
   'runtime_auth_recovery',
-]);
+]));
 
 export type ConnectedServiceUxDiagnosticFailurePhaseV1 =
   z.infer<typeof ConnectedServiceUxDiagnosticFailurePhaseV1Schema>;
 
-export const ConnectedServiceUxDiagnosticSourceV1Schema = z.enum([
+export const ConnectedServiceUxDiagnosticSourceV1Schema = lazyZodSchema(() => z.enum([
   'spawn_resume',
   'new_session',
   'inactive_resume',
@@ -73,7 +74,7 @@ export const ConnectedServiceUxDiagnosticSourceV1Schema = z.enum([
   'usage_limit_recovery',
   'transcript_switch_attempt',
   'session_view',
-]);
+]));
 
 export type ConnectedServiceUxDiagnosticSourceV1 =
   z.infer<typeof ConnectedServiceUxDiagnosticSourceV1Schema>;
@@ -90,7 +91,7 @@ export const CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS = {
   dismiss: 'dismiss',
 } as const;
 
-export const ConnectedServiceUxDiagnosticSuggestedActionV1Schema = z.enum([
+export const ConnectedServiceUxDiagnosticSuggestedActionV1Schema = lazyZodSchema(() => z.enum([
   CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.retry,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.startFreshUnderSelectedAccount,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.resumeCurrentAccount,
@@ -100,7 +101,7 @@ export const ConnectedServiceUxDiagnosticSuggestedActionV1Schema = z.enum([
   CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.viewLatestFork,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.viewNativeFork,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.dismiss,
-]);
+]));
 
 export type ConnectedServiceUxDiagnosticSuggestedActionV1 =
   z.infer<typeof ConnectedServiceUxDiagnosticSuggestedActionV1Schema>;
@@ -125,7 +126,7 @@ function isConnectedServiceUxDiagnosticCredentialKey(key: string): boolean {
   return CONNECTED_SERVICE_UX_DIAGNOSTIC_CREDENTIAL_SUFFIXES.has(segments.at(-1) ?? '');
 }
 
-const ConnectedServiceUxDiagnosticKeyV1Schema = z
+const ConnectedServiceUxDiagnosticKeyV1Schema = lazyZodSchema(() => z
   .string()
   .trim()
   .min(1)
@@ -133,28 +134,28 @@ const ConnectedServiceUxDiagnosticKeyV1Schema = z
   .refine(
     (key) => !isConnectedServiceUxDiagnosticCredentialKey(key),
     'diagnostic keys must not identify secrets or tokens',
-  );
+  ));
 
-const ConnectedServiceUxDiagnosticScalarV1Schema = z.union([
+const ConnectedServiceUxDiagnosticScalarV1Schema = lazyZodSchema(() => z.union([
   z.string().max(CONNECTED_SERVICE_UX_DIAGNOSTIC_MAX_STRING_LENGTH),
   z.number().finite(),
   z.boolean(),
   z.null(),
-]);
+]));
 
-const ConnectedServiceUxDiagnosticDiagnosticsV1Schema = z
+const ConnectedServiceUxDiagnosticDiagnosticsV1Schema = lazyZodSchema(() => z
   .record(ConnectedServiceUxDiagnosticKeyV1Schema, ConnectedServiceUxDiagnosticScalarV1Schema)
   .refine(
     (diagnostics) => Object.keys(diagnostics).length <= CONNECTED_SERVICE_UX_DIAGNOSTIC_MAX_DIAGNOSTIC_KEYS,
     `diagnostics must include at most ${CONNECTED_SERVICE_UX_DIAGNOSTIC_MAX_DIAGNOSTIC_KEYS} keys`,
-  );
+  ));
 
 // R.17 classification (2026-07-10): the former `providerId` field carried
 // `ConnectedServiceStateSharingDescriptor.providerId` values, which are typed
 // `CatalogAgentId` (agent-meaning, e.g. 'codex') — NOT connected-service ids
 // (those travel in `serviceId`). It was merged into `agentId`; legacy persisted
 // diagnostics are normalized below.
-const ConnectedServiceUxDiagnosticV1ObjectSchema = z.object({
+const ConnectedServiceUxDiagnosticV1ObjectSchema = lazyZodSchema(() => z.object({
   code: ConnectedServiceUxDiagnosticCodeV1Schema,
   failurePhase: ConnectedServiceUxDiagnosticFailurePhaseV1Schema,
   source: ConnectedServiceUxDiagnosticSourceV1Schema,
@@ -165,7 +166,7 @@ const ConnectedServiceUxDiagnosticV1ObjectSchema = z.object({
   retryable: z.boolean(),
   suggestedActions: z.array(ConnectedServiceUxDiagnosticSuggestedActionV1Schema).default([]),
   diagnostics: ConnectedServiceUxDiagnosticDiagnosticsV1Schema.optional(),
-}).strict();
+}).strict());
 
 // legacy `providerId` read-compat (pre-rename persisted diagnostics in transcripts)
 function normalizeLegacyConnectedServiceUxDiagnosticAgentId(value: unknown): unknown {
@@ -179,10 +180,10 @@ function normalizeLegacyConnectedServiceUxDiagnosticAgentId(value: unknown): unk
     : rest;
 }
 
-export const ConnectedServiceUxDiagnosticV1Schema = z.preprocess(
+export const ConnectedServiceUxDiagnosticV1Schema = lazyZodSchema(() => z.preprocess(
   normalizeLegacyConnectedServiceUxDiagnosticAgentId,
   ConnectedServiceUxDiagnosticV1ObjectSchema,
-);
+));
 
 export type ConnectedServiceUxDiagnosticV1 = z.infer<typeof ConnectedServiceUxDiagnosticV1ObjectSchema>;
 

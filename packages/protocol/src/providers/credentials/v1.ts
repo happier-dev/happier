@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ProviderLocalIdSchema } from '../ids.js';
@@ -5,7 +6,7 @@ import { PROVIDER_WIRE_PROTOCOL_LIMITS_V1, ProviderWireProtocolSchema } from '..
 import { normalizeProviderCredentialHeaderName, normalizeProviderQueryParameterName } from '../safety/headers.js';
 import { ProviderHttpsUrlSchema } from '../httpsUrlSchema.js';
 
-export const ProviderCredentialFormatV1Schema = z.union([
+export const ProviderCredentialFormatV1Schema = lazyZodSchema(() => z.union([
   z.literal('raw'),
   z.literal('bearer'),
   z.object({ template: z.string().min(1).max(256) }).strict().superRefine((value, ctx) => {
@@ -13,25 +14,25 @@ export const ProviderCredentialFormatV1Schema = z.union([
       ctx.addIssue({ code: 'custom', path: ['template'], message: 'Credential template must contain exactly one {secret} placeholder and no controls' });
     }
   }),
-]);
+]));
 export type ProviderCredentialFormatV1 = z.infer<typeof ProviderCredentialFormatV1Schema>;
-export const ProviderCredentialFormatKindV1Schema = z.enum(['raw', 'bearer', 'template']);
+export const ProviderCredentialFormatKindV1Schema = lazyZodSchema(() => z.enum(['raw', 'bearer', 'template']));
 export type ProviderCredentialFormatKindV1 = z.infer<typeof ProviderCredentialFormatKindV1Schema>;
 
-const CredentialHeaderNameSchema = z.string().transform((value, ctx) => {
+const CredentialHeaderNameSchema = lazyZodSchema(() => z.string().transform((value, ctx) => {
   try { return normalizeProviderCredentialHeaderName(value); } catch (error) {
     ctx.addIssue({ code: 'custom', message: error instanceof Error ? error.message : 'Invalid credential header name' });
     return z.NEVER;
   }
-});
-const CredentialQueryNameSchema = z.string().transform((value, ctx) => {
+}));
+const CredentialQueryNameSchema = lazyZodSchema(() => z.string().transform((value, ctx) => {
   try { return normalizeProviderQueryParameterName(value); } catch (error) {
     ctx.addIssue({ code: 'custom', message: error instanceof Error ? error.message : 'Invalid credential query name' });
     return z.NEVER;
   }
-});
+}));
 
-export const ProviderCredentialDestinationV1Schema = z.discriminatedUnion('kind', [
+export const ProviderCredentialDestinationV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('httpHeader'),
     name: CredentialHeaderNameSchema,
@@ -42,10 +43,10 @@ export const ProviderCredentialDestinationV1Schema = z.discriminatedUnion('kind'
     name: CredentialQueryNameSchema,
     format: ProviderCredentialFormatV1Schema,
   }).strict(),
-]);
+]));
 export type ProviderCredentialDestinationV1 = z.infer<typeof ProviderCredentialDestinationV1Schema>;
 
-export const ProviderCredentialTransportV1Schema = z.object({
+export const ProviderCredentialTransportV1Schema = lazyZodSchema(() => z.object({
   id: ProviderLocalIdSchema,
   protocols: z.array(ProviderWireProtocolSchema).min(1).max(PROVIDER_WIRE_PROTOCOL_LIMITS_V1.maxProtocolsPerDeclaration),
   uses: z.array(z.enum(['probe', 'runtime', 'management'])).min(1).max(3),
@@ -57,7 +58,7 @@ export const ProviderCredentialTransportV1Schema = z.object({
   if (new Set(value.uses).size !== value.uses.length) {
     ctx.addIssue({ code: 'custom', path: ['uses'], message: 'Credential transport uses must be unique' });
   }
-});
+}));
 export type ProviderCredentialTransport = z.infer<typeof ProviderCredentialTransportV1Schema>;
 export type ProviderCredentialTransportV1 = ProviderCredentialTransport;
 
@@ -85,7 +86,7 @@ export function addProviderCredentialTransportIssues(
   });
 }
 
-export const ProviderApiKeyCredentialRequirementV1Schema = z.object({
+export const ProviderApiKeyCredentialRequirementV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('apiKey'),
   slotId: z.literal('apiKey').default('apiKey'),
   required: z.boolean().default(true),
@@ -93,7 +94,7 @@ export const ProviderApiKeyCredentialRequirementV1Schema = z.object({
   transports: z.array(ProviderCredentialTransportV1Schema).min(1).max(16),
 }).strict().superRefine((value, ctx) => {
   addProviderCredentialTransportIssues(value.transports, ctx);
-});
+}));
 export type ProviderApiKeyCredentialRequirementV1 = z.infer<typeof ProviderApiKeyCredentialRequirementV1Schema>;
 
 export function providerCredentialFormatKind(format: ProviderCredentialFormatV1): ProviderCredentialFormatKindV1 {

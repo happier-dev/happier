@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { PluginJsonSchemaV2Schema } from '../../plugins/contributions/publicTypes.js';
@@ -6,7 +7,7 @@ import { PluginJsonSchemaV2Schema } from '../../plugins/contributions/publicType
  * Exact result requested for one native Agent turn. This is an observation
  * contract only: it neither owns Run lifecycle nor changes prompt custody.
  */
-export const ExecutionRunResultContractV1Schema = z.discriminatedUnion('kind', [
+export const ExecutionRunResultContractV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('text') }).strict(),
   z.object({
     kind: z.literal('json'),
@@ -24,5 +25,5 @@ export const ExecutionRunResultContractV1Schema = z.discriminatedUnion('kind', [
       });
     }
   }),
-]);
+]));
 export type ExecutionRunResultContractV1 = z.infer<typeof ExecutionRunResultContractV1Schema>;

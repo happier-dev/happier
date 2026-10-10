@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -11,22 +12,22 @@ import {
   HappierReplayWireMaxSeedCharsSchema,
 } from './replaySeedBudget.js';
 
-export const HappierReplayStrategySchema = z.enum(['recent_messages', 'summary_plus_recent']);
+export const HappierReplayStrategySchema = lazyZodSchema(() => z.enum(['recent_messages', 'summary_plus_recent']));
 export type HappierReplayStrategy = z.infer<typeof HappierReplayStrategySchema>;
 
-export const HappierReplayDialogItemSchema = z
+export const HappierReplayDialogItemSchema = lazyZodSchema(() => z
   .object({
     role: z.enum(['User', 'Assistant']),
     createdAt: z.number().finite(),
     text: z.string().min(1).max(50_000),
   })
-  .strict();
+  .strict());
 export type HappierReplayDialogItem = z.infer<typeof HappierReplayDialogItemSchema>;
 
-export const HappierReplaySeedModeSchema = z.enum(['draft', 'daemon_initial_prompt']);
+export const HappierReplaySeedModeSchema = lazyZodSchema(() => z.enum(['draft', 'daemon_initial_prompt']));
 export type HappierReplaySeedMode = z.infer<typeof HappierReplaySeedModeSchema>;
 
-export const SessionContinueWithReplayRequestSchema = z
+export const SessionContinueWithReplayRequestSchema = lazyZodSchema(() => z
   .object({
     previousSessionId: z.string().min(1),
     strategy: HappierReplayStrategySchema.optional(),
@@ -35,10 +36,10 @@ export const SessionContinueWithReplayRequestSchema = z
     seedMode: HappierReplaySeedModeSchema.optional(),
     summaryRunner: LlmTaskRunnerConfigV1Schema.optional(),
   })
-  .strict();
+  .strict());
 export type SessionContinueWithReplayRequest = z.infer<typeof SessionContinueWithReplayRequestSchema>;
 
-export const SessionContinueWithReplayRpcParamsSchema = z
+export const SessionContinueWithReplayRpcParamsSchema = lazyZodSchema(() => z
   .object({
     directory: z.string().min(1),
     backendTarget: z.preprocess(normalizeBackendTargetRefV2InputToV2, BackendTargetRefV2Schema),
@@ -57,12 +58,12 @@ export const SessionContinueWithReplayRpcParamsSchema = z
         path: ['agent'],
       });
     }
-  });
+  }));
 export type SessionContinueWithReplayRpcParams = z.infer<typeof SessionContinueWithReplayRpcParamsSchema>;
 
-export const SessionContinueWithReplayRpcResultSchema = z.union([
+export const SessionContinueWithReplayRpcResultSchema = lazyZodSchema(() => z.union([
   z.object({ type: z.literal('success'), sessionId: z.string().min(1) }).passthrough(),
   z.object({ type: z.literal('requestToApproveDirectoryCreation'), directory: z.string().min(1) }).passthrough(),
   z.object({ type: z.literal('error'), errorCode: z.string().min(1), errorMessage: z.string().min(1) }).passthrough(),
-]);
+]));
 export type SessionContinueWithReplayRpcResult = z.infer<typeof SessionContinueWithReplayRpcResultSchema>;

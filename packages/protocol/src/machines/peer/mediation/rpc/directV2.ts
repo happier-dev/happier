@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { SignedDirectRouteGrantV2Schema } from '../directRouteGrantV2.js';
@@ -9,7 +10,7 @@ import { PeerMachineRpcDirectFallbackReasonCodeV1Schema } from './directV1.js';
 
 export const PEER_MACHINE_RPC_DIRECT_PATH_V2 = '/peer-mediation/v2/rpc' as const;
 
-export const PeerMachineRpcDirectRequestV2Schema = z.object({
+export const PeerMachineRpcDirectRequestV2Schema = lazyZodSchema(() => z.object({
   v: z.literal(2),
   requestId: z.string().min(1),
   method: z.string().min(1),
@@ -20,9 +21,9 @@ export const PeerMachineRpcDirectRequestV2Schema = z.object({
   flowKind: z.literal('machine_rpc'),
   endpointFingerprint: z.string().min(1),
   commandReceipt: PeerMachineRpcCommandReceiptRequestV1Schema.optional(),
-}).strict();
+}).strict());
 
-export const PeerMachineRpcDirectResponseV2Schema = z.discriminatedUnion('ok', [
+export const PeerMachineRpcDirectResponseV2Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
   z.object({
     v: z.literal(2),
     ok: z.literal(true),
@@ -44,7 +45,7 @@ export const PeerMachineRpcDirectResponseV2Schema = z.discriminatedUnion('ok', [
     method: z.string().min(1),
     reasonCode: PeerMachineRpcDirectFallbackReasonCodeV1Schema,
   }).strict(),
-]);
+]));
 
 export type PeerMachineRpcDirectRequestV2 = z.infer<typeof PeerMachineRpcDirectRequestV2Schema>;
 export type PeerMachineRpcDirectResponseV2 = z.infer<typeof PeerMachineRpcDirectResponseV2Schema>;

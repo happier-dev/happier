@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 
@@ -12,23 +13,23 @@ import { AgentIdV1Schema } from '../../agents/agentIdV1.js';
 import { ExecutionRunIdSchema } from '../idsV1.js';
 import { SessionWorkDepthV1Schema } from '../creation/sessionCreateOriginV1.js';
 
-export const SessionTurnInitiatorV1Schema = z.enum(['user', 'agent_session', 'host', 'workflow']);
-export const SessionTurnWorkflowInvocationV1Schema = z.object({
+export const SessionTurnInitiatorV1Schema = lazyZodSchema(() => z.enum(['user', 'agent_session', 'host', 'workflow']));
+export const SessionTurnWorkflowInvocationV1Schema = lazyZodSchema(() => z.object({
   runId: ExecutionRunIdSchema,
   invocationRecordId: z.string().min(1).max(SessionIndexedIdentifierMaxLengthV1),
-}).strict();
-export const SessionTurnFactsV1Schema = z.object({
+}).strict());
+export const SessionTurnFactsV1Schema = lazyZodSchema(() => z.object({
   initiator: SessionTurnInitiatorV1Schema,
   workDepth: SessionWorkDepthV1Schema,
   workflowInvocation: SessionTurnWorkflowInvocationV1Schema.optional(),
-}).strict();
+}).strict());
 export type SessionTurnFactsV1 = z.infer<typeof SessionTurnFactsV1Schema>;
 
-const SessionTurnMutationIdV1Schema = z.string().trim().min(1).max(SessionIndexedIdentifierMaxLengthV1);
+const SessionTurnMutationIdV1Schema = lazyZodSchema(() => z.string().trim().min(1).max(SessionIndexedIdentifierMaxLengthV1));
 const SessionTurnAgentIdV1Schema = AgentIdV1Schema;
-const SessionTurnAgentTurnIdV1Schema = z.string().trim().min(1).max(SessionIndexedIdentifierMaxLengthV1);
-const SessionTurnObservedAtV1Schema = z.number().int().nonnegative();
-const SessionTurnReasonV1Schema = z.string().trim().min(1).max(256);
+const SessionTurnAgentTurnIdV1Schema = lazyZodSchema(() => z.string().trim().min(1).max(SessionIndexedIdentifierMaxLengthV1));
+const SessionTurnObservedAtV1Schema = lazyZodSchema(() => z.number().int().nonnegative());
+const SessionTurnReasonV1Schema = lazyZodSchema(() => z.string().trim().min(1).max(256));
 export const SessionTurnProviderCheckpointMaxJsonBytesV1 =
   AgentSessionProviderCheckpointMaxJsonBytesV1;
 export const SessionTurnProviderCheckpointV1Schema =
@@ -37,22 +38,22 @@ export type SessionTurnProviderCheckpointV1 = z.infer<
   typeof SessionTurnProviderCheckpointV1Schema
 >;
 
-export const SessionTurnLifecycleStatusV1Schema = z.enum([
+export const SessionTurnLifecycleStatusV1Schema = lazyZodSchema(() => z.enum([
   'in_progress',
   'completed',
   'cancelled',
   'failed',
-]);
+]));
 export type SessionTurnLifecycleStatusV1 = z.infer<typeof SessionTurnLifecycleStatusV1Schema>;
 
-export const SessionTurnRollbackStateV1Schema = z.enum([
+export const SessionTurnRollbackStateV1Schema = lazyZodSchema(() => z.enum([
   'not_eligible',
   'eligible',
   'rolled_back',
-]);
+]));
 export type SessionTurnRollbackStateV1 = z.infer<typeof SessionTurnRollbackStateV1Schema>;
 
-export const SessionTurnTranscriptAnchorsV1Schema = z
+export const SessionTurnTranscriptAnchorsV1Schema = lazyZodSchema(() => z
   .object({
     startUserMessageSeq: z.number().int().nonnegative().optional(),
     userMessageSeqs: z.array(z.number().int().nonnegative()).readonly().optional(),
@@ -62,10 +63,10 @@ export const SessionTurnTranscriptAnchorsV1Schema = z
     providerCheckpoint: SessionTurnProviderCheckpointV1Schema.optional(),
   })
   .passthrough()
-  .readonly();
+  .readonly());
 export type SessionTurnTranscriptAnchorsV1 = z.infer<typeof SessionTurnTranscriptAnchorsV1Schema>;
 
-export const SessionTurnMutationActionV1Schema = z.enum([
+export const SessionTurnMutationActionV1Schema = lazyZodSchema(() => z.enum([
   'begin',
   'touch_active',
   'attach_agent_turn_id',
@@ -76,10 +77,10 @@ export const SessionTurnMutationActionV1Schema = z.enum([
   'end_session',
   'mark_rollback_eligible',
   'mark_rolled_back',
-]);
+]));
 export type SessionTurnMutationActionV1 = z.infer<typeof SessionTurnMutationActionV1Schema>;
 
-const SessionTurnMutationBaseV1Schema = z
+const SessionTurnMutationBaseV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     sessionId: asProtocolZod(SessionIdSchema),
@@ -87,14 +88,14 @@ const SessionTurnMutationBaseV1Schema = z
     observedAt: SessionTurnObservedAtV1Schema,
     agentId: SessionTurnAgentIdV1Schema.optional(),
   })
-  .strict();
+  .strict());
 
-const ExactSessionTurnMutationBaseV1Schema = SessionTurnMutationBaseV1Schema.omit({ agentId: true });
+const ExactSessionTurnMutationBaseV1Schema = lazyZodSchema(() => SessionTurnMutationBaseV1Schema.omit({ agentId: true }));
 
-export const ExactSessionTurnEndMutationV1Schema = ExactSessionTurnMutationBaseV1Schema.extend({
+export const ExactSessionTurnEndMutationV1Schema = lazyZodSchema(() => ExactSessionTurnMutationBaseV1Schema.extend({
   action: z.literal('end_session'),
   turnId: TurnIdSchema,
-}).strict().readonly();
+}).strict().readonly());
 export type ExactSessionTurnEndMutationV1 = z.infer<typeof ExactSessionTurnEndMutationV1Schema>;
 
 export function isExactSessionTurnEndMutationV1(
@@ -103,12 +104,12 @@ export function isExactSessionTurnEndMutationV1(
   return ExactSessionTurnEndMutationV1Schema.safeParse(value).success;
 }
 
-const TurnScopedMutationBaseV1Schema = SessionTurnMutationBaseV1Schema.extend({
+const TurnScopedMutationBaseV1Schema = lazyZodSchema(() => SessionTurnMutationBaseV1Schema.extend({
   turnId: TurnIdSchema,
   agentTurnId: SessionTurnAgentTurnIdV1Schema.optional(),
-});
+}));
 
-const CanonicalSessionTurnMutationV1Schema = z.discriminatedUnion('action', [
+const CanonicalSessionTurnMutationV1Schema = lazyZodSchema(() => z.discriminatedUnion('action', [
   TurnScopedMutationBaseV1Schema.extend({
     action: z.literal('begin'),
     initiator: SessionTurnInitiatorV1Schema.optional(),
@@ -164,25 +165,25 @@ const CanonicalSessionTurnMutationV1Schema = z.discriminatedUnion('action', [
       message: 'Exact session end cannot author agent metadata',
     });
   }
-});
+}));
 
-export const SessionTurnMutationV1Schema = z.preprocess(
+export const SessionTurnMutationV1Schema = lazyZodSchema(() => z.preprocess(
   normalizeLegacySessionTurnAgentIdentity,
   CanonicalSessionTurnMutationV1Schema,
-);
+));
 export type SessionTurnMutationV1 = z.infer<typeof SessionTurnMutationV1Schema>;
 
-export const SessionTurnMutationDecisionV1Schema = z.enum([
+export const SessionTurnMutationDecisionV1Schema = lazyZodSchema(() => z.enum([
   'applied',
   'duplicate-mutation',
   'duplicate-terminal',
   'missing-turn',
   'stale-in-progress',
   'stale-terminal',
-]);
+]));
 export type SessionTurnMutationDecisionV1 = z.infer<typeof SessionTurnMutationDecisionV1Schema>;
 
-export const SessionTurnMutationReceiptV1Schema = z
+export const SessionTurnMutationReceiptV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     sessionId: asProtocolZod(SessionIdSchema),
@@ -194,10 +195,10 @@ export const SessionTurnMutationReceiptV1Schema = z
     appliedAt: SessionTurnObservedAtV1Schema,
   })
   .passthrough()
-  .readonly();
+  .readonly());
 export type SessionTurnMutationReceiptV1 = z.infer<typeof SessionTurnMutationReceiptV1Schema>;
 
-export const ExactSessionTurnMutationPositiveReceiptV1Schema = z
+export const ExactSessionTurnMutationPositiveReceiptV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     sessionId: asProtocolZod(SessionIdSchema),
@@ -209,7 +210,7 @@ export const ExactSessionTurnMutationPositiveReceiptV1Schema = z
     appliedAt: SessionTurnObservedAtV1Schema,
   })
   .passthrough()
-  .readonly();
+  .readonly());
 export type ExactSessionTurnMutationPositiveReceiptV1 = z.infer<
   typeof ExactSessionTurnMutationPositiveReceiptV1Schema
 >;

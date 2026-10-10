@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { ExecutionRunStructuredRunRefSchema } from './executionRunStructuredRunRef.js';
 
@@ -10,19 +11,19 @@ import { ExecutionRunStructuredRunRefSchema } from './executionRunStructuredRunR
  *   so the card renders on the tool-call line in the transcript.
  */
 
-export const PlanOutputSectionV1Schema = z.object({
+export const PlanOutputSectionV1Schema = lazyZodSchema(() => z.object({
   title: z.string().min(1).max(200),
   items: z.array(z.string().min(1).max(2_000)).max(50),
-}).passthrough();
+}).passthrough());
 export type PlanOutputSectionV1 = z.infer<typeof PlanOutputSectionV1Schema>;
 
-export const PlanOutputMilestoneV1Schema = z.object({
+export const PlanOutputMilestoneV1Schema = lazyZodSchema(() => z.object({
   title: z.string().min(1).max(200),
   details: z.string().max(2_000).optional(),
-}).passthrough();
+}).passthrough());
 export type PlanOutputMilestoneV1 = z.infer<typeof PlanOutputMilestoneV1Schema>;
 
-export const PlanOutputV1Schema = z.object({
+export const PlanOutputV1Schema = lazyZodSchema(() => z.object({
   runRef: ExecutionRunStructuredRunRefSchema,
   summary: z.string().min(1).max(20_000),
   sections: z.array(PlanOutputSectionV1Schema).max(20),
@@ -30,7 +31,7 @@ export const PlanOutputV1Schema = z.object({
   milestones: z.array(PlanOutputMilestoneV1Schema).max(30).optional(),
   recommendedBackendId: z.string().min(1).max(200).optional(),
   generatedAtMs: z.number().int().nonnegative(),
-}).passthrough();
+}).passthrough());
 export type PlanOutputV1 = z.infer<typeof PlanOutputV1Schema>;
 
 export function parsePlanOutputV1(input: unknown): PlanOutputV1 | null {

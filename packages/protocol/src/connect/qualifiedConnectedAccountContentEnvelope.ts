@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -42,7 +43,7 @@ function isStrictCredentialValues(
   return true;
 }
 
-const QualifiedConnectedAccountCredentialValuesV1Schema = z
+const QualifiedConnectedAccountCredentialValuesV1Schema = lazyZodSchema(() => z
   .custom<Readonly<Record<string, string>>>(isStrictCredentialValues, {
     message: 'Qualified Connected Account credentials must be strict plain string data',
   })
@@ -68,12 +69,12 @@ const QualifiedConnectedAccountCredentialValuesV1Schema = z
         message: 'Qualified Connected Account credentials exceed the total size limit',
       });
     }
-  });
+  }));
 
-export const QualifiedConnectedAccountCredentialPayloadV1Schema = z.object({
+export const QualifiedConnectedAccountCredentialPayloadV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   values: QualifiedConnectedAccountCredentialValuesV1Schema,
-}).strict();
+}).strict());
 
 export type QualifiedConnectedAccountCredentialPayloadV1 = z.infer<
   typeof QualifiedConnectedAccountCredentialPayloadV1Schema

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -7,7 +8,7 @@ import { z } from 'zod';
  * The UI voice sidebar uses these entries to hydrate the local voice activity feed without needing
  * to render special transcript cards in the main session timeline.
  */
-export const VoiceAgentTurnV1Schema = z.object({
+export const VoiceAgentTurnV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   epoch: z.number().int().min(0),
   role: z.enum(['user', 'assistant']),
@@ -16,6 +17,6 @@ export const VoiceAgentTurnV1Schema = z.object({
   streamId: z.string().min(1).optional(),
   requestId: z.string().min(1).optional(),
   ts: z.number().int().min(0),
-}).passthrough();
+}).passthrough());
 
 export type VoiceAgentTurnV1 = z.infer<typeof VoiceAgentTurnV1Schema>;

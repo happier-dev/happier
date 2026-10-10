@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import {
@@ -19,24 +20,24 @@ export const TARGET_ACTION_APPROVAL_LIMITS_V1 = Object.freeze({
 
 const boundedId = z.string().min(1).max(TARGET_ACTION_APPROVAL_LIMITS_V1.idUtf16Units);
 
-const TargetActionApprovalStatusV1Schema = z.enum([
+const TargetActionApprovalStatusV1Schema = lazyZodSchema(() => z.enum([
   'open', 'approved', 'executing', 'rejected', 'executed', 'failed', 'canceled',
-]);
+]));
 
 /**
  * Host-stamped routing evidence for a deferred API Action approval. It is
  * durable approval subject data, never caller-supplied Action input.
  */
-export const TargetActionApprovalReplayPlacementV1Schema = z.object({
+export const TargetActionApprovalReplayPlacementV1Schema = lazyZodSchema(() => z.object({
   serverId: boundedId,
   machineId: boundedId,
   defaultSessionId: boundedId.optional(),
-}).strict();
+}).strict());
 export type TargetActionApprovalReplayPlacementV1 = z.infer<
   typeof TargetActionApprovalReplayPlacementV1Schema
 >;
 
-export const TargetActionApprovalRequestV1Schema = z.object({
+export const TargetActionApprovalRequestV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1), kind: z.literal('plugin_target_action'), status: TargetActionApprovalStatusV1Schema,
   createdAtMs: z.number().int().min(0), updatedAtMs: z.number().int().min(0),
   createdBy: ApprovalRequestCreatedBySchema,
@@ -84,6 +85,6 @@ export const TargetActionApprovalRequestV1Schema = z.object({
   } else if (new TextEncoder().encode(JSON.stringify(strictJson.data)).byteLength > TARGET_ACTION_APPROVAL_LIMITS_V1.artifactJsonBytes) {
     ctx.addIssue({ code: 'custom', message: 'target-action approval artifact byte limit exceeded' });
   }
-});
+}));
 export type TargetActionApprovalRequestV1 = z.infer<typeof TargetActionApprovalRequestV1Schema>;
 export const StoredTargetActionApprovalRequestV1Schema = createStoredReadSchema(TargetActionApprovalRequestV1Schema);

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
 import { encodeCanonicalLengthDelimited } from '../crypto/canonicalDigest.js';
@@ -127,7 +128,7 @@ export const PASSWORD_SCRYPT_MAX_PARALLELISM_V1 = 5;
 export const PASSWORD_SCRYPT_MAX_FOOTPRINT_BYTES_V1 =
     128 * PASSWORD_SCRYPT_MAX_COST_V1 * PASSWORD_SCRYPT_BLOCK_SIZE_V1;
 
-export const PasswordScryptParametersV1Schema = z.object({
+export const PasswordScryptParametersV1Schema = lazyZodSchema(() => z.object({
     n: z.number().int().min(PASSWORD_SCRYPT_MIN_COST_V1).max(PASSWORD_SCRYPT_MAX_COST_V1)
         .refine((value) => (value & (value - 1)) === 0, { message: 'scrypt cost must be a power of two' }),
     r: z.literal(PASSWORD_SCRYPT_BLOCK_SIZE_V1),
@@ -136,7 +137,7 @@ export const PasswordScryptParametersV1Schema = z.object({
 }).strict().refine(
     ({ n, p }) => p >= (n >= 2 ** 17 ? 1 : n >= 2 ** 16 ? 2 : n >= 2 ** 15 ? 3 : 5),
     { message: 'scrypt parallelism is below the minimum for this memory cost', path: ['p'] },
-);
+));
 export type PasswordScryptParametersV1 = z.infer<typeof PasswordScryptParametersV1Schema>;
 
 /** Working-set bytes for a validated parameter set. */
@@ -150,13 +151,13 @@ export function passwordScryptFootprintBytesV1(parameters: PasswordScryptParamet
  * Both go through the same server verifier module, so there is exactly one
  * password-hash format in the system.
  */
-export const PasswordMaterialHashV1Schema = z.object({
+export const PasswordMaterialHashV1Schema = lazyZodSchema(() => z.object({
     v: z.literal(1),
     algorithm: z.literal('scrypt'),
     parameters: PasswordScryptParametersV1Schema,
     salt: base64UrlOfExactBytes(PASSWORD_SCRYPT_SALT_BYTES_V1),
     digest: base64UrlOfExactBytes(PASSWORD_SCRYPT_KEY_BYTES_V1),
-}).strict();
+}).strict());
 export type PasswordMaterialHashV1 = z.infer<typeof PasswordMaterialHashV1Schema>;
 
 /** 02.04 §2 vocabulary for the Plain branch of the same record. */
@@ -174,10 +175,10 @@ export type PasswordAuthenticationMaterialHashV1 = PasswordMaterialHashV1;
 /** The domain-separated `authKey` the client proves at the unlock boundary. */
 export const PASSWORD_DERIVED_AUTH_KEY_BYTES_V1 = 32;
 
-export const PasswordDerivedAuthenticationVerifierV1Schema = z.object({
+export const PasswordDerivedAuthenticationVerifierV1Schema = lazyZodSchema(() => z.object({
     v: z.literal(1),
     hash: PasswordAuthenticationMaterialHashV1Schema,
-}).strict();
+}).strict());
 export type PasswordDerivedAuthenticationVerifierV1 = z.infer<typeof PasswordDerivedAuthenticationVerifierV1Schema>;
 
 // ---------------------------------------------------------------------------
@@ -218,7 +219,7 @@ export const PASSWORD_ENVELOPE_MAX_MEM_LIMIT_BYTES_V1 = Math.max(
  * The bounded KDF facts. Public prelogin returns exactly this and nothing else
  * for the E2EE branch: no ciphertext, signing key, verifier or Account ID.
  */
-export const PasswordEnvelopeKdfV1Schema = z.object({
+export const PasswordEnvelopeKdfV1Schema = lazyZodSchema(() => z.object({
     algorithm: z.literal('argon2id13'),
     salt: base64UrlOfExactBytes(PASSWORD_ENVELOPE_KDF_SALT_BYTES_V1),
     opsLimit: z.number().int().min(PASSWORD_ENVELOPE_MIN_OPS_LIMIT_V1).max(PASSWORD_ENVELOPE_MAX_OPS_LIMIT_V1),
@@ -234,7 +235,7 @@ export const PasswordEnvelopeKdfV1Schema = z.object({
             && profile.memLimitBytes === memLimitBytes
             && profile.outputBytes === outputBytes),
     { message: 'unsupported password-envelope writer profile' },
-);
+));
 export type PasswordEnvelopeKdfV1 = z.infer<typeof PasswordEnvelopeKdfV1Schema>;
 
 /**
@@ -272,7 +273,7 @@ export function selectPasswordEnvelopeWriterProfileV1(
     return profiles[Math.abs(Math.trunc(selector)) % profiles.length]!;
 }
 
-export const PasswordWrappedRecoverySecretV1Schema = z.object({
+export const PasswordWrappedRecoverySecretV1Schema = lazyZodSchema(() => z.object({
     v: z.literal(1),
     accountSigningPublicKey: base64UrlOfExactBytes(PASSWORD_ENVELOPE_SIGNING_PUBLIC_KEY_BYTES_V1),
     kdf: PasswordEnvelopeKdfV1Schema,
@@ -281,7 +282,7 @@ export const PasswordWrappedRecoverySecretV1Schema = z.object({
         nonce: base64UrlOfExactBytes(PASSWORD_ENVELOPE_NONCE_BYTES_V1),
         ciphertext: base64UrlOfExactBytes(PASSWORD_ENVELOPE_CIPHERTEXT_BYTES_V1),
     }).strict(),
-}).strict();
+}).strict());
 export type PasswordWrappedRecoverySecretV1 = z.infer<typeof PasswordWrappedRecoverySecretV1Schema>;
 
 export const PASSWORD_ENVELOPE_AAD_DOMAIN_V1 = 'happier.password-wrapped-recovery-secret.v1';
@@ -316,25 +317,25 @@ export function createPasswordEnvelopeAadV1(
 // Closed mode-qualified credential union
 // ---------------------------------------------------------------------------
 
-export const PlainAccountPasswordCredentialV1Schema = z.object({
+export const PlainAccountPasswordCredentialV1Schema = lazyZodSchema(() => z.object({
     v: z.literal(1),
     kind: z.literal('plain_password_hash'),
     hash: PlainPasswordHashV1Schema,
-}).strict();
+}).strict());
 export type PlainAccountPasswordCredentialV1 = z.infer<typeof PlainAccountPasswordCredentialV1Schema>;
 
-export const E2eeAccountPasswordCredentialV1Schema = z.object({
+export const E2eeAccountPasswordCredentialV1Schema = lazyZodSchema(() => z.object({
     v: z.literal(1),
     kind: z.literal('e2ee_password_envelope'),
     envelope: PasswordWrappedRecoverySecretV1Schema,
     authVerifier: PasswordDerivedAuthenticationVerifierV1Schema,
-}).strict();
+}).strict());
 export type E2eeAccountPasswordCredentialV1 = z.infer<typeof E2eeAccountPasswordCredentialV1Schema>;
 
-export const AccountPasswordCredentialV1Schema = z.discriminatedUnion('kind', [
+export const AccountPasswordCredentialV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
     PlainAccountPasswordCredentialV1Schema,
     E2eeAccountPasswordCredentialV1Schema,
-]);
+]));
 export type AccountPasswordCredentialV1 = z.infer<typeof AccountPasswordCredentialV1Schema>;
 
 export type AccountPasswordCredentialParseV1 =

@@ -1,11 +1,12 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 /** The exact Resource media type that can carry a V1 declarative document. */
 export const PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1 =
   'application/vnd.happier.declarative-document+json;version=1';
-export const PluginDeclarativeDocumentContentTypeV1Schema = z.literal(
+export const PluginDeclarativeDocumentContentTypeV1Schema = lazyZodSchema(() => z.literal(
   PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
-);
+));
 export type PluginDeclarativeDocumentContentTypeV1 = z.infer<
   typeof PluginDeclarativeDocumentContentTypeV1Schema
 >;

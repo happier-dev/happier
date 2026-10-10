@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { MemoryIndexPolicyV1Schema } from '../../memory/memorySettings.js';
 
@@ -9,7 +10,7 @@ import { MemoryIndexPolicyV1Schema } from '../../memory/memorySettings.js';
  * This payload is intentionally self-contained so the daemon can rebuild local indexes
  * from transcript history without re-running the summarizer.
  */
-export const SessionSummaryShardV1Schema = z.object({
+export const SessionSummaryShardV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   seqFrom: z.number().int().min(0),
   seqTo: z.number().int().min(0),
@@ -35,6 +36,6 @@ export const SessionSummaryShardV1Schema = z.object({
       path: ['createdAtFromMs'],
     });
   }
-});
+}));
 
 export type SessionSummaryShardV1 = z.infer<typeof SessionSummaryShardV1Schema>;

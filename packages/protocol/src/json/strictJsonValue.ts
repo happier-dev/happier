@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { cloneNativeJsonValueForTransport, cloneStrictPluginJsonValue } from '../plugins/contributions/strictJsonValue.js';
@@ -69,7 +70,7 @@ export function sameStrictJsonValue(left: unknown, right: unknown): boolean {
   return true;
 }
 
-export const StrictJsonValueSchema = z.unknown().transform((value, context): JsonValue => {
+export const StrictJsonValueSchema = lazyZodSchema(() => z.unknown().transform((value, context): JsonValue => {
   try {
     return normalizeStrictJsonValue(value);
   } catch (error) {
@@ -79,4 +80,4 @@ export const StrictJsonValueSchema = z.unknown().transform((value, context): Jso
     });
     return z.NEVER;
   }
-});
+}));

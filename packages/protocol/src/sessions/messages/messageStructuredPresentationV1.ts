@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 
@@ -16,18 +17,18 @@ export const MESSAGE_STRUCTURED_PRESENTATION_V1_MAX_ENCODED_BYTES = 256 * 1024;
 
 const textEncoder = new TextEncoder();
 
-export const MessageStructuredPresentationOwnerV1Schema = z.object({
+export const MessageStructuredPresentationOwnerV1Schema = lazyZodSchema(() => z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   contributionLocalId: asProtocolZod(PluginContributionLocalIdSchema),
-}).strict();
+}).strict());
 export type MessageStructuredPresentationOwnerV1 = z.infer<
   typeof MessageStructuredPresentationOwnerV1Schema
 >;
 
-const QualifiedActionReferenceV1Schema = z.object({
+const QualifiedActionReferenceV1Schema = lazyZodSchema(() => z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   localId: asProtocolZod(PluginContributionLocalIdSchema),
-}).strict();
+}).strict());
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -82,7 +83,7 @@ function inspectSnapshot(
  * the transcript-node grammar; Message owns its persistence-only closure,
  * including qualified Action references and bounded serialized storage.
  */
-export const MessageStructuredPresentationV1Schema = z.object({
+export const MessageStructuredPresentationV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   profile: z.literal('pluginTranscriptV1'),
   owner: MessageStructuredPresentationOwnerV1Schema,
@@ -116,7 +117,7 @@ export const MessageStructuredPresentationV1Schema = z.object({
       message: `Structured presentation exceeds ${MESSAGE_STRUCTURED_PRESENTATION_V1_MAX_ENCODED_BYTES} encoded bytes.`,
     });
   }
-});
+}));
 export type MessageStructuredPresentationV1 = z.infer<typeof MessageStructuredPresentationV1Schema>;
 
 function qualifyLocalActionReferences(

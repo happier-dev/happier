@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { PluginJsonValueV2Schema } from '../plugins/contributions/publicTypes.js';
@@ -8,9 +9,9 @@ import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdent
 import { PluginIdSchema } from '../plugins/pluginId.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
-export const PluginDiagnosticTextV1Schema = z.string().trim().min(1);
+export const PluginDiagnosticTextV1Schema = lazyZodSchema(() => z.string().trim().min(1));
 
-export const PluginDiagnosticRemediationV1Schema = z.discriminatedUnion('kind', [
+export const PluginDiagnosticRemediationV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('retry') }).strict(),
   z.object({ kind: z.literal('openSettings'), path: z.string().trim().min(1) }).strict(),
   z.object({
@@ -19,24 +20,24 @@ export const PluginDiagnosticRemediationV1Schema = z.discriminatedUnion('kind', 
   }).strict(),
   z.object({ kind: z.literal('installDependency'), dependencyId: z.string().trim().min(1) }).strict(),
   z.object({ kind: z.literal('openUrl'), url: z.string().url() }).strict(),
-]);
+]));
 export type PluginDiagnosticRemediationV1 = z.infer<typeof PluginDiagnosticRemediationV1Schema>;
 
-export const PluginDiagnosticDataV1Schema = z.object({
+export const PluginDiagnosticDataV1Schema = lazyZodSchema(() => z.object({
   code: z.string().trim().min(1),
   severity: z.enum(['info', 'warning', 'error']),
   message: PluginDiagnosticTextV1Schema.optional(),
   details: PluginJsonValueV2Schema.optional(),
   remediation: PluginDiagnosticRemediationV1Schema.optional(),
-}).strict();
+}).strict());
 export type PluginDiagnosticDataV1 = z.infer<typeof PluginDiagnosticDataV1Schema>;
 
-const PluginContributionIntrospectionIdentityBaseV1Schema = z.object({
+const PluginContributionIntrospectionIdentityBaseV1Schema = lazyZodSchema(() => z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   family: z.string().trim().min(1),
   qualifiedId: z.string().trim().min(1),
-});
-export const PluginContributionIntrospectionIdentityV1Schema = z.discriminatedUnion('kind', [
+}));
+export const PluginContributionIntrospectionIdentityV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   PluginContributionIntrospectionIdentityBaseV1Schema.extend({
     kind: z.literal('localId'),
     localId: z.string().trim().min(1),
@@ -51,12 +52,12 @@ export const PluginContributionIntrospectionIdentityV1Schema = z.discriminatedUn
     family: z.literal('providers'),
     domainId: z.string().trim().min(1),
   }).strict(),
-]);
+]));
 export type PluginContributionIntrospectionIdentityV1 = z.infer<
   typeof PluginContributionIntrospectionIdentityV1Schema
 >;
 
-export const PluginDiagnosticStageV1Schema = z.enum([
+export const PluginDiagnosticStageV1Schema = lazyZodSchema(() => z.enum([
   'discovery',
   'normalization',
   'installation',
@@ -65,20 +66,20 @@ export const PluginDiagnosticStageV1Schema = z.enum([
   'runtime',
   'ui',
   'recovery',
-]);
+]));
 export type PluginDiagnosticStageV1 = z.infer<typeof PluginDiagnosticStageV1Schema>;
 
-export const PluginDiagnosticHostV1Schema = z.enum([
+export const PluginDiagnosticHostV1Schema = lazyZodSchema(() => z.enum([
   'daemon',
   'cli',
   'web',
   'ios',
   'android',
   'desktop',
-]);
+]));
 export type PluginDiagnosticHostV1 = z.infer<typeof PluginDiagnosticHostV1Schema>;
 
-export const PluginDiagnosticRecordV1Schema = z.object({
+export const PluginDiagnosticRecordV1Schema = lazyZodSchema(() => z.object({
   version: z.literal(1),
   id: z.string().trim().min(1),
   data: PluginDiagnosticDataV1Schema,
@@ -98,7 +99,7 @@ export const PluginDiagnosticRecordV1Schema = z.object({
     z.object({ state: z.literal('current') }).strict(),
     z.object({ state: z.literal('resolved'), resolvedAtMs: z.number().int().nonnegative() }).strict(),
   ]),
-}).strict();
+}).strict());
 export type PluginDiagnosticRecordV1 = z.infer<typeof PluginDiagnosticRecordV1Schema>;
 
 /**
@@ -106,14 +107,14 @@ export type PluginDiagnosticRecordV1 = z.infer<typeof PluginDiagnosticRecordV1Sc
  * only for the contribution family whose manifest owns these facts.
  */
 export const PluginContributionIntrospectionPresentationV1Schema =
-  PluginComposerReferenceProviderPresentationV1Schema.extend({
+  lazyZodSchema(() => PluginComposerReferenceProviderPresentationV1Schema.extend({
     kind: z.literal('composerReference'),
-  }).strict();
+  }).strict());
 export type PluginContributionIntrospectionPresentationV1 = z.infer<
   typeof PluginContributionIntrospectionPresentationV1Schema
 >;
 
-export const PluginContributionLifecycleRecordV1Schema = z.object({
+export const PluginContributionLifecycleRecordV1Schema = lazyZodSchema(() => z.object({
   version: z.literal(1),
   contribution: PluginContributionIntrospectionIdentityV1Schema,
   occurrenceId: z.string().trim().min(1).optional(),
@@ -186,17 +187,17 @@ export const PluginContributionLifecycleRecordV1Schema = z.object({
       message: 'composer reference presentation is valid only for composer reference contributions',
     });
   }
-});
+}));
 export type PluginContributionLifecycleRecordV1 = z.infer<
   typeof PluginContributionLifecycleRecordV1Schema
 >;
 
-export const PluginContributionIntrospectionProjectionV1Schema = z.object({
+export const PluginContributionIntrospectionProjectionV1Schema = lazyZodSchema(() => z.object({
   version: z.literal(1),
   generation: z.number().int().nonnegative(),
   contributions: z.array(PluginContributionLifecycleRecordV1Schema),
   diagnostics: z.array(PluginDiagnosticRecordV1Schema),
-}).strict();
+}).strict());
 export type PluginContributionIntrospectionProjectionV1 = z.infer<
   typeof PluginContributionIntrospectionProjectionV1Schema
 >;

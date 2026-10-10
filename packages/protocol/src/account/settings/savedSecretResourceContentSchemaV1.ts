@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
@@ -47,7 +48,7 @@ export const SAVED_SECRET_RESOURCE_MAX_CIPHERTEXT_BASE64_LENGTH_V1 = 4 * Math.ce
   SAVED_SECRET_RESOURCE_MAX_CIPHERTEXT_BYTES_V1
 ) / 3);
 
-export const SavedSecretResourceContentV1Schema = z.object({
+export const SavedSecretResourceContentV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   name: SavedSecretSchema.shape.name,
   kind: SavedSecretSchema.shape.kind.removeDefault(),
@@ -58,13 +59,13 @@ export const SavedSecretResourceContentV1Schema = z.object({
     SAVED_SECRET_RESOURCE_MAX_CONTENT_JSON_UTF8_BYTES_V1,
   );
   if (issue) context.addIssue({ code: z.ZodIssueCode.custom, message: issue.message });
-});
+}));
 
 export type SavedSecretResourceContentV1 = Readonly<
   z.infer<typeof SavedSecretResourceContentV1Schema>
 >;
 
-const CanonicalPaddedBase64Schema = z.string().min(1).max(
+const CanonicalPaddedBase64Schema = lazyZodSchema(() => z.string().min(1).max(
   SAVED_SECRET_RESOURCE_MAX_CIPHERTEXT_BASE64_LENGTH_V1,
 ).refine((value) => {
   try {
@@ -76,9 +77,9 @@ const CanonicalPaddedBase64Schema = z.string().min(1).max(
   } catch {
     return false;
   }
-}, 'Expected canonical padded base64');
+}, 'Expected canonical padded base64'));
 
-export const SavedSecretResourceStoredContentV1Schema = z.discriminatedUnion('t', [
+export const SavedSecretResourceStoredContentV1Schema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.object({
     t: z.literal('plain'),
     v: SavedSecretResourceContentV1Schema,
@@ -87,7 +88,7 @@ export const SavedSecretResourceStoredContentV1Schema = z.discriminatedUnion('t'
     t: z.literal('encrypted'),
     c: CanonicalPaddedBase64Schema,
   }).strict(),
-]);
+]));
 
 export type SavedSecretResourceStoredContentV1 = Readonly<
   z.infer<typeof SavedSecretResourceStoredContentV1Schema>

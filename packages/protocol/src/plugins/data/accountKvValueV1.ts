@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -44,7 +45,7 @@ export function normalizePluginAccountStorageJsonValueV1(input: unknown): JsonVa
   return normalized;
 }
 
-export const PluginAccountStorageJsonValueV1Schema = z.unknown().transform((value, context): JsonValue => {
+export const PluginAccountStorageJsonValueV1Schema = lazyZodSchema(() => z.unknown().transform((value, context): JsonValue => {
   try {
     return normalizePluginAccountStorageJsonValueV1(value);
   } catch (error) {
@@ -54,15 +55,15 @@ export const PluginAccountStorageJsonValueV1Schema = z.unknown().transform((valu
     );
     return z.NEVER;
   }
-});
+}));
 export type PluginAccountStorageJsonValueV1 = z.infer<typeof PluginAccountStorageJsonValueV1Schema>;
 
-export const PluginAccountStorageLogicalKeyV1Schema = z.string().min(1).superRefine((key, context) => {
+export const PluginAccountStorageLogicalKeyV1Schema = lazyZodSchema(() => z.string().min(1).superRefine((key, context) => {
   if (key.startsWith(RESERVED_LOGICAL_KEY_PREFIX)) {
     addPluginAccountStorageCustomIssueV1(context, 'Plugin Account KV logical keys cannot use the @happier/ namespace');
   }
   if (pluginAccountStorageUtf8ByteLengthV1(key) > PLUGIN_ACCOUNT_STORAGE_BROWSER_NEUTRAL_LIMITS_V1.maximumLogicalKeyUtf8Bytes) {
     addPluginAccountStorageCustomIssueV1(context, 'Plugin Account KV logical keys must be at most 256 UTF-8 bytes');
   }
-});
+}));
 export type PluginAccountStorageLogicalKeyV1 = z.infer<typeof PluginAccountStorageLogicalKeyV1Schema>;

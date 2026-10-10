@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 export const ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION_V1 = 1 as const;
@@ -70,18 +71,18 @@ export const ACCOUNT_STORED_CONTENT_ACCOUNT_ENCRYPTION_TRANSITION_PROTOCOL_VERSI
 export const CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION_PROTOCOL_VERSION =
   ACCOUNT_STORED_CONTENT_SESSION_ACCESS_WITNESS_PROTOCOL_VERSION;
 
-export const AccountStoredContentProtocolVersionSchema = z
+export const AccountStoredContentProtocolVersionSchema = lazyZodSchema(() => z
   .number()
   .int()
   .min(ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION_V1)
-  .max(Number.MAX_SAFE_INTEGER);
+  .max(Number.MAX_SAFE_INTEGER));
 
-export const AccountStoredContentCompatibilityDeclarationV1Schema = z
+export const AccountStoredContentCompatibilityDeclarationV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     protocolVersion: AccountStoredContentProtocolVersionSchema,
   })
-  .strict();
+  .strict());
 
 export type AccountStoredContentCompatibilityDeclarationV1 = z.infer<
   typeof AccountStoredContentCompatibilityDeclarationV1Schema
@@ -156,12 +157,12 @@ export function parseAccountStoredContentCompatibilityHttpHeadersV1(
     : { status: 'malformed' };
 }
 
-export const AccountStoredContentCompatibilitySocketAuthV1Schema = z
+export const AccountStoredContentCompatibilitySocketAuthV1Schema = lazyZodSchema(() => z
   .object({
     accountStoredContentCompatibility:
       AccountStoredContentCompatibilityDeclarationV1Schema,
   })
-  .passthrough();
+  .passthrough());
 
 export type AccountStoredContentCompatibilitySocketAuthV1 = Readonly<{
   accountStoredContentCompatibility:
@@ -200,14 +201,14 @@ export function parseAccountStoredContentCompatibilitySocketAuthV1(
     : { status: 'malformed' };
 }
 
-export const AccountStoredContentCompatibilityServerRequirementsV1Schema = z
+export const AccountStoredContentCompatibilityServerRequirementsV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     minimumProtocolVersion: AccountStoredContentProtocolVersionSchema,
     currentProtocolVersion: AccountStoredContentProtocolVersionSchema,
     declarationTransport: z.literal('http-header-and-socket-auth-v1'),
   })
-  .strict();
+  .strict());
 
 export type AccountStoredContentCompatibilityServerRequirementsV1 = z.infer<
   typeof AccountStoredContentCompatibilityServerRequirementsV1Schema

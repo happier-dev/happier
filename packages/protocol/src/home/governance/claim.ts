@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -57,15 +58,15 @@ export function formatHomeClaimCodeV1(code: string): string {
   return groups.join('-');
 }
 
-export const HomeGovernanceClaimInputV1Schema = z.object({
+export const HomeGovernanceClaimInputV1Schema = lazyZodSchema(() => z.object({
   /** As typed or pasted; the server normalizes it. Bounded so a paste cannot be arbitrarily large. */
   code: z.string().min(1).max(256),
-}).strict();
+}).strict());
 export type HomeGovernanceClaimInputV1 = z.infer<typeof HomeGovernanceClaimInputV1Schema>;
 
-export const HomeGovernanceClaimResultV1Schema = z.object({
+export const HomeGovernanceClaimResultV1Schema = lazyZodSchema(() => z.object({
   status: z.literal('claimed'),
-}).strict();
+}).strict());
 export type HomeGovernanceClaimResultV1 = z.infer<typeof HomeGovernanceClaimResultV1Schema>;
 
 /**
@@ -76,14 +77,14 @@ export type HomeGovernanceClaimResultV1 = z.infer<typeof HomeGovernanceClaimResu
 export const HOME_OWNER_CLAIM_COMMAND_ARGUMENT_V1 = '--claim-home-owner';
 
 /** Account ids are bounded like every other protocol Account id. */
-export const HomeOwnerClaimAccountIdV1Schema = z.string().trim().min(1).max(256);
+export const HomeOwnerClaimAccountIdV1Schema = lazyZodSchema(() => z.string().trim().min(1).max(256));
 
-export const HomeOwnerClaimResultV1Schema = z.discriminatedUnion('status', [
+export const HomeOwnerClaimResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('claimed'), ownerAccountId: z.string().min(1) }),
   z.object({ status: z.literal('already_owned'), activeOwnerCount: z.number().int().min(1) }),
   z.object({ status: z.literal('target_inactive') }),
   z.object({ status: z.literal('target_not_found') }),
-]);
+]));
 export type HomeOwnerClaimResultV1 = z.infer<typeof HomeOwnerClaimResultV1Schema>;
 
 /**
@@ -91,12 +92,12 @@ export type HomeOwnerClaimResultV1 = z.infer<typeof HomeOwnerClaimResultV1Schema
  * the command exits nonzero for every status except `claimed` and still prints
  * this exact shape. `homeServerIdentityId` names the Home that was changed.
  */
-export const HomeOwnerClaimCommandOutputV1Schema = z.object({
+export const HomeOwnerClaimCommandOutputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   command: z.literal('claim-home-owner'),
   intent: z.enum(['initial_claim', 'lost_owner_recovery']),
   homeServerIdentityId: z.string().min(1).nullable(),
   targetAccountId: z.string().min(1),
   result: HomeOwnerClaimResultV1Schema,
-});
+}));
 export type HomeOwnerClaimCommandOutputV1 = z.infer<typeof HomeOwnerClaimCommandOutputV1Schema>;

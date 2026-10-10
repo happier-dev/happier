@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { hmac } from '@noble/hashes/hmac';
 import { sha256 } from '@noble/hashes/sha2';
@@ -41,30 +42,30 @@ export {
  */
 export const TEAM_INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-export const TeamInvitationIdSchema = z.string().min(1);
+export const TeamInvitationIdSchema = lazyZodSchema(() => z.string().min(1));
 
 /**
  * Owner is absent by construction: owner promotion stays an explicit post-membership
  * governance operation with last-owner enforcement, so no link can mint one.
  */
-export const TeamInvitationAdmissibleRoleV1Schema = z.enum(['admin', 'member', 'guest']);
+export const TeamInvitationAdmissibleRoleV1Schema = lazyZodSchema(() => z.enum(['admin', 'member', 'guest']));
 export type TeamInvitationAdmissibleRoleV1 = z.infer<typeof TeamInvitationAdmissibleRoleV1Schema>;
 
 /** State is derived from timestamps; no second stored status machine exists. */
-export const TeamInvitationStateV1Schema = z.enum(['active', 'accepted', 'revoked', 'expired']);
+export const TeamInvitationStateV1Schema = lazyZodSchema(() => z.enum(['active', 'accepted', 'revoked', 'expired']));
 export type TeamInvitationStateV1 = z.infer<typeof TeamInvitationStateV1Schema>;
 
-export const TeamInvitationEmailDeliveryStatusV1Schema = z.enum(['sent', 'failed']);
+export const TeamInvitationEmailDeliveryStatusV1Schema = lazyZodSchema(() => z.enum(['sent', 'failed']));
 
 /**
  * The entire reloadable delivery history. `null` means no attempt result was
  * recorded and, after a crash, does not prove that no provider received the mail.
  * `sent` means the mail boundary accepted submission, never inbox delivery.
  */
-export const TeamInvitationEmailDeliveryV1Schema = z.object({
+export const TeamInvitationEmailDeliveryV1Schema = lazyZodSchema(() => z.object({
   status: TeamInvitationEmailDeliveryStatusV1Schema,
   attemptedAt: z.number().int(),
-}).strict();
+}).strict());
 export type TeamInvitationEmailDeliveryV1 = z.infer<typeof TeamInvitationEmailDeliveryV1Schema>;
 
 export type TeamInvitationTimestampsV1 = Readonly<{
@@ -108,7 +109,7 @@ export function maskTeamInvitationRecipientEmail(normalizedEmail: string | null)
  * The manager-visible invitation row. It is closed and carries no bearer field, so a
  * lost create response can never be answered by replaying a stored plaintext token.
  */
-export const TeamInvitationRowV1Schema = z.object({
+export const TeamInvitationRowV1Schema = lazyZodSchema(() => z.object({
   id: TeamInvitationIdSchema,
   teamId: TeamIdSchema,
   state: TeamInvitationStateV1Schema,
@@ -120,7 +121,7 @@ export const TeamInvitationRowV1Schema = z.object({
   createdByAccountId: z.string().nullable(),
   acceptedByAccountId: z.string().nullable(),
   lastEmailDelivery: TeamInvitationEmailDeliveryV1Schema.nullable(),
-}).strict();
+}).strict());
 export type TeamInvitationRowV1 = z.infer<typeof TeamInvitationRowV1Schema>;
 
 /**
@@ -129,7 +130,7 @@ export type TeamInvitationRowV1 = z.infer<typeof TeamInvitationRowV1Schema>;
  * provider bindings, the raw or digested token, and every actor identifier. Preview
  * never consumes anything.
  */
-export const TeamInvitationPreviewV1Schema = z.object({
+export const TeamInvitationPreviewV1Schema = lazyZodSchema(() => z.object({
   home: z.object({
     serverId: z.string().min(1),
     /**
@@ -181,18 +182,18 @@ export const TeamInvitationPreviewV1Schema = z.object({
    * same "says nothing" answer.
    */
   inviterLabel: z.string().min(1).nullable().optional().default(null),
-}).strict();
+}).strict());
 export type TeamInvitationPreviewV1 = z.infer<typeof TeamInvitationPreviewV1Schema>;
 
 /** Bounded so an oversized address cannot become an unbounded lookup or log line. */
-const RecipientEmailInputSchema = z.string().min(3).max(320).nullable();
+const RecipientEmailInputSchema = lazyZodSchema(() => z.string().min(3).max(320).nullable());
 
 /**
  * `requestKey` reuses the existing domain idempotency composition: a retried create
  * returns the committed invitation's safe metadata rather than minting a second live
  * bearer. A reused key with different intent conflicts.
  */
-export const TeamInvitationCreateInputV1Schema = z.object({
+export const TeamInvitationCreateInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   teamId: TeamIdSchema,
   role: TeamInvitationAdmissibleRoleV1Schema,
@@ -207,17 +208,17 @@ export const TeamInvitationCreateInputV1Schema = z.object({
       message: 'Guest invitations begin at membership time',
     });
   }
-});
+}));
 export type TeamInvitationCreateInputV1 = z.infer<typeof TeamInvitationCreateInputV1Schema>;
 
-export const TeamInvitationListInputV1Schema = z.object({
+export const TeamInvitationListInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   teamId: TeamIdSchema,
   /** Absent means every retained state, including terminal governance provenance. */
   state: TeamInvitationStateV1Schema.nullable(),
   cursor: z.string().min(1).nullable(),
   limit: z.number().int().min(1).max(100),
-}).strict();
+}).strict());
 export type TeamInvitationListInputV1 = z.infer<typeof TeamInvitationListInputV1Schema>;
 
 /**
@@ -251,11 +252,11 @@ export function decodeTeamInvitationsCursorV1(value: string, queryKey: string): 
   return { status: 'ok', cursor: { createdAt, id } };
 }
 
-export const TeamInvitationRevokeInputV1Schema = z.object({
+export const TeamInvitationRevokeInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   teamId: TeamIdSchema,
   invitationId: TeamInvitationIdSchema,
-}).strict();
+}).strict());
 export type TeamInvitationRevokeInputV1 = z.infer<typeof TeamInvitationRevokeInputV1Schema>;
 
 /**
@@ -263,7 +264,7 @@ export type TeamInvitationRevokeInputV1 = z.infer<typeof TeamInvitationRevokeInp
  * with copied intent in the same transaction, optionally replacing the recipient
  * constraint. Retry and Change email are the same operation with different inputs.
  */
-export const TeamInvitationReissueInputV1Schema = z.object({
+export const TeamInvitationReissueInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   teamId: TeamIdSchema,
   invitationId: TeamInvitationIdSchema,
@@ -275,32 +276,32 @@ export const TeamInvitationReissueInputV1Schema = z.object({
    */
   recipientEmail: RecipientEmailInputSchema,
   requestKey: z.string().min(1).max(200),
-}).strict();
+}).strict());
 export type TeamInvitationReissueInputV1 = z.infer<typeof TeamInvitationReissueInputV1Schema>;
 
 /** Preview and accept receive the bearer in a strict versioned body, never in a URL. */
-export const TeamInvitationPreviewInputV1Schema = z.object({
+export const TeamInvitationPreviewInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   token: TeamInvitationTokenV1Schema,
-}).strict();
+}).strict());
 
-export const TeamInvitationPostAuthContinuationV1Schema = z.object({
+export const TeamInvitationPostAuthContinuationV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   kind: z.literal('post_auth_invitation'),
   reference: z.string().trim().min(8).max(256),
   teamId: TeamIdSchema,
-}).strict();
+}).strict());
 export type TeamInvitationPostAuthContinuationV1 = z.infer<
   typeof TeamInvitationPostAuthContinuationV1Schema
 >;
 
-export const TeamInvitationAcceptInputV1Schema = z.union([
+export const TeamInvitationAcceptInputV1Schema = lazyZodSchema(() => z.union([
   z.object({ v: z.literal(1), token: TeamInvitationTokenV1Schema }).strict(),
   z.object({
     v: z.literal(1),
     continuation: TeamInvitationPostAuthContinuationV1Schema,
   }).strict(),
-]);
+]));
 
 /**
  * Host-internal preparation for a deferred invitation acceptance.
@@ -311,14 +312,14 @@ export const TeamInvitationAcceptInputV1Schema = z.union([
  * public preview; it never returns the bearer or its digest.
  */
 export const TeamInvitationAcceptApprovalPrepareInputV1Schema = TeamInvitationPreviewInputV1Schema;
-export const TeamInvitationAcceptApprovalPrepareResultV1Schema = z.discriminatedUnion('outcome', [
+export const TeamInvitationAcceptApprovalPrepareResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('outcome', [
   z.object({
     outcome: z.literal('ok'),
     continuation: TeamInvitationPostAuthContinuationV1Schema,
     preview: TeamInvitationPreviewV1Schema,
   }).strict(),
   z.object({ outcome: z.literal('unavailable') }).strict(),
-]);
+]));
 export type TeamInvitationAcceptApprovalPrepareResultV1 = z.infer<
   typeof TeamInvitationAcceptApprovalPrepareResultV1Schema
 >;
@@ -329,10 +330,10 @@ export type TeamInvitationAcceptApprovalPrepareResultV1 = z.infer<
  * only the mail boundary, and for any egress-restricted automated caller. It is
  * required rather than optional so omission is a deliberate, visible decision.
  */
-export const TeamInvitationCreateResultV1Schema = z.object({
+export const TeamInvitationCreateResultV1Schema = lazyZodSchema(() => z.object({
   invitation: TeamInvitationRowV1Schema,
   joinUrl: z.string().min(1).nullable(),
-}).strict();
+}).strict());
 export type TeamInvitationCreateResultV1 = z.infer<typeof TeamInvitationCreateResultV1Schema>;
 
 /**
@@ -353,10 +354,10 @@ export type TeamInvitationCreateResultV1 = z.infer<typeof TeamInvitationCreateRe
  * transactions recheck it and refuse an undeliverable email-bound invitation
  * regardless of what any client rendered.
  */
-export const TeamInvitationEmailDeliveryAvailabilityV1Schema = z.enum([
+export const TeamInvitationEmailDeliveryAvailabilityV1Schema = lazyZodSchema(() => z.enum([
   'available',
   'unavailable',
-]);
+]));
 export type TeamInvitationEmailDeliveryAvailabilityV1 =
   z.infer<typeof TeamInvitationEmailDeliveryAvailabilityV1Schema>;
 
@@ -378,12 +379,12 @@ export type TeamInvitationEmailDeliveryAvailabilityV1 =
  * state in which a created invitation has no way to reach anyone, which is why
  * the surface must be able to say so instead of offering a link to reissue.
  */
-export const TeamInvitationsPageV1Schema = z.object({
+export const TeamInvitationsPageV1Schema = lazyZodSchema(() => z.object({
   items: z.array(TeamInvitationRowV1Schema),
   nextCursor: z.string().nullable(),
   emailDelivery: TeamInvitationEmailDeliveryAvailabilityV1Schema,
   linkDelivery: TeamInvitationEmailDeliveryAvailabilityV1Schema,
-}).strict();
+}).strict());
 export type TeamInvitationsPageV1 = z.infer<typeof TeamInvitationsPageV1Schema>;
 
 /**
@@ -400,14 +401,14 @@ export type TeamInvitationRevokeResultV1 = z.infer<typeof TeamInvitationRevokeRe
  * and the fresh one that replaced it. `joinUrl` follows the same confined-bearer
  * rule as creation and is `null` for an email-bound or egress-restricted caller.
  */
-export const TeamInvitationReissueResultV1Schema = z.object({
+export const TeamInvitationReissueResultV1Schema = lazyZodSchema(() => z.object({
   previous: TeamInvitationRowV1Schema,
   replacement: TeamInvitationRowV1Schema,
   joinUrl: z.string().min(1).nullable(),
-}).strict();
+}).strict());
 export type TeamInvitationReissueResultV1 = z.infer<typeof TeamInvitationReissueResultV1Schema>;
 
-export const TeamInvitationAcceptResultV1Schema = z.discriminatedUnion('outcome', [
+export const TeamInvitationAcceptResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('outcome', [
   z.object({ outcome: z.literal('joined'), teamId: TeamIdSchema }).strict(),
   z.object({ outcome: z.literal('already_member'), teamId: TeamIdSchema }).strict(),
   z.object({ outcome: z.literal('not_found') }).strict(),
@@ -418,18 +419,18 @@ export const TeamInvitationAcceptResultV1Schema = z.discriminatedUnion('outcome'
   z.object({ outcome: z.literal('account_inactive') }).strict(),
   z.object({ outcome: z.literal('email_mismatch') }).strict(),
   z.object({ outcome: z.literal('feature_unavailable') }).strict(),
-]);
+]));
 export type TeamInvitationAcceptResultV1 = z.infer<typeof TeamInvitationAcceptResultV1Schema>;
 
 /**
  * The unauthenticated preview may intentionally collapse unknown and terminal states
  * when enumeration analysis requires it, so it has its own narrower result.
  */
-export const TeamInvitationPreviewResultV1Schema = z.discriminatedUnion('outcome', [
+export const TeamInvitationPreviewResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('outcome', [
   z.object({ outcome: z.literal('ok'), preview: TeamInvitationPreviewV1Schema }).strict(),
   z.object({ outcome: z.literal('unavailable') }).strict(),
   z.object({ outcome: z.literal('feature_unavailable') }).strict(),
-]);
+]));
 export type TeamInvitationPreviewResultV1 = z.infer<typeof TeamInvitationPreviewResultV1Schema>;
 
 const TEAM_INVITATION_TARGET_BINDING_DOMAIN_V1 = new TextEncoder().encode(
@@ -437,10 +438,10 @@ const TEAM_INVITATION_TARGET_BINDING_DOMAIN_V1 = new TextEncoder().encode(
 );
 const TEAM_INVITATION_TARGET_BINDING_BYTES_V1 = 32;
 
-export const TeamInvitationTargetBindingV1Schema = z.string().regex(
+export const TeamInvitationTargetBindingV1Schema = lazyZodSchema(() => z.string().regex(
   /^[A-Za-z0-9_-]{43}$/u,
   'Expected an unpadded base64url SHA-256 binding',
-);
+));
 export type TeamInvitationTargetBindingV1 = z.infer<typeof TeamInvitationTargetBindingV1Schema>;
 
 function deriveTeamInvitationTargetBindingKeyV1(token: TeamInvitationTokenV1): Uint8Array {

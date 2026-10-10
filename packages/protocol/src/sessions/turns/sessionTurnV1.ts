@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { SessionRuntimeIssueV1Schema } from '../control/runtimeIssueV1.js';
@@ -11,11 +12,11 @@ import {
 import { normalizeLegacySessionTurnAgentIdentity } from './compat/agentIdentity.js';
 import { AgentIdV1Schema } from '../../agents/agentIdV1.js';
 
-const SessionTurnIdentifierV1Schema = z.string().trim().min(1).max(SessionIndexedIdentifierMaxLengthV1);
+const SessionTurnIdentifierV1Schema = lazyZodSchema(() => z.string().trim().min(1).max(SessionIndexedIdentifierMaxLengthV1));
 const SessionTurnAgentIdV1Schema = AgentIdV1Schema;
-const SessionTurnTimestampV1Schema = z.number().int().nonnegative();
+const SessionTurnTimestampV1Schema = lazyZodSchema(() => z.number().int().nonnegative());
 
-export const SessionTurnRollbackV1Schema = z
+export const SessionTurnRollbackV1Schema = lazyZodSchema(() => z
   .object({
     state: SessionTurnRollbackStateV1Schema,
     reason: z.string().trim().min(1).optional(),
@@ -24,10 +25,10 @@ export const SessionTurnRollbackV1Schema = z
     updatedAt: SessionTurnTimestampV1Schema,
   })
   .passthrough()
-  .readonly();
+  .readonly());
 export type SessionTurnRollbackV1 = z.infer<typeof SessionTurnRollbackV1Schema>;
 
-export const SessionTurnV1Schema = z.preprocess(
+export const SessionTurnV1Schema = lazyZodSchema(() => z.preprocess(
   normalizeLegacySessionTurnAgentIdentity,
   z.object({
     turnId: SessionTurnIdentifierV1Schema,
@@ -42,10 +43,10 @@ export const SessionTurnV1Schema = z.preprocess(
     rollback: SessionTurnRollbackV1Schema.optional(),
     lastMutationId: SessionTurnIdentifierV1Schema.optional(),
   }).passthrough().readonly(),
-);
+));
 export type SessionTurnV1 = z.infer<typeof SessionTurnV1Schema>;
 
-export const SessionTurnsProjectionV1Schema = z
+export const SessionTurnsProjectionV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     sessionId: SessionTurnIdentifierV1Schema,
@@ -54,7 +55,7 @@ export const SessionTurnsProjectionV1Schema = z
     turns: z.array(SessionTurnV1Schema).readonly(),
   })
   .passthrough()
-  .readonly();
+  .readonly());
 export type SessionTurnsProjectionV1 = z.infer<typeof SessionTurnsProjectionV1Schema>;
 
 export function buildSessionTurnV1(params: Readonly<SessionTurnV1 & Record<string, unknown>>): SessionTurnV1 {

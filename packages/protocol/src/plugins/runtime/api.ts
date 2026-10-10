@@ -1,6 +1,7 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
-export const PluginRuntimeCapabilityFamilyV1Schema = z.enum([
+export const PluginRuntimeCapabilityFamilyV1Schema = lazyZodSchema(() => z.enum([
   'agents',
   'actions',
   'tools',
@@ -19,5 +20,5 @@ export const PluginRuntimeCapabilityFamilyV1Schema = z.enum([
   'terminalHost',
   'lifecycle',
   'reload',
-]);
+]));
 export type PluginRuntimeCapabilityFamilyV1 = z.infer<typeof PluginRuntimeCapabilityFamilyV1Schema>;

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 
@@ -6,7 +7,7 @@ export const MAX_AUTOMATION_EVENT_FILTER_IN_VALUES = 64;
 export const MAX_AUTOMATION_EVENT_FILTER_VALUE_CODE_POINTS = 256;
 const MAX_AUTOMATION_EVENT_FILTER_POINTER_DEPTH = 32;
 
-const AutomationJsonScalarV1Schema = z.union([
+const AutomationJsonScalarV1Schema = lazyZodSchema(() => z.union([
   z.null(),
   z.boolean(),
   z.number().finite(),
@@ -18,20 +19,20 @@ const AutomationJsonScalarV1Schema = z.union([
       context.addIssue({ code: z.ZodIssueCode.custom, message: 'Filter strings exceed the code-point limit' });
     }
   }),
-]);
+]));
 export type AutomationJsonScalarV1 = z.infer<typeof AutomationJsonScalarV1Schema>;
 
-export const AutomationJsonPointerV1Schema = z.string().min(1).max(1024)
+export const AutomationJsonPointerV1Schema = lazyZodSchema(() => z.string().min(1).max(1024)
   .regex(/^\/(?:[^~]|~[01])*$/u, 'Expected one RFC 6901 JSON pointer')
   .superRefine((value, context) => {
     const segments = value.slice(1).split('/');
     if (segments.length > MAX_AUTOMATION_EVENT_FILTER_POINTER_DEPTH || segments.some((segment) => segment === '-')) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: 'Filter pointers must address one bounded scalar leaf' });
     }
-  });
+  }));
 export type AutomationJsonPointerV1 = z.infer<typeof AutomationJsonPointerV1Schema>;
 
-const AutomationEventFilterClauseV1Schema = z.discriminatedUnion('op', [
+const AutomationEventFilterClauseV1Schema = lazyZodSchema(() => z.discriminatedUnion('op', [
   z.object({
     op: z.literal('eq'),
     field: AutomationJsonPointerV1Schema,
@@ -50,13 +51,13 @@ const AutomationEventFilterClauseV1Schema = z.discriminatedUnion('op', [
         }
       }),
   }).strict(),
-]);
+]));
 export type AutomationEventFilterClauseV1 = z.infer<typeof AutomationEventFilterClauseV1Schema>;
 
-export const AutomationEventFilterV1Schema = z.object({
+export const AutomationEventFilterV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   all: z.array(AutomationEventFilterClauseV1Schema)
     .min(1)
     .max(MAX_AUTOMATION_EVENT_FILTER_CLAUSES),
-}).strict();
+}).strict());
 export type AutomationEventFilterV1 = z.infer<typeof AutomationEventFilterV1Schema>;

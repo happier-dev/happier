@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -6,7 +7,7 @@ import { z } from 'zod';
  */
 export const SESSION_TRANSCRIPT_SOURCE_TIMESTAMP_MAX_MS = 8_640_000_000_000_000;
 
-export const SessionTranscriptSourceTimestampMsSchema = z.number()
+export const SessionTranscriptSourceTimestampMsSchema = lazyZodSchema(() => z.number()
   .int()
   .min(0)
-  .max(SESSION_TRANSCRIPT_SOURCE_TIMESTAMP_MAX_MS);
+  .max(SESSION_TRANSCRIPT_SOURCE_TIMESTAMP_MAX_MS));

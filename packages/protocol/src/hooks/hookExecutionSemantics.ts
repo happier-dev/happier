@@ -1,9 +1,10 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { HookCategoryV1Schema, type HookCategoryV1 } from './hookCategories.js';
 
 export const HOOK_EXECUTION_KIND_V1_VALUES = ['integrate', 'observe', 'augment', 'decide'] as const;
 
-export const HookExecutionKindV1Schema = z.enum(HOOK_EXECUTION_KIND_V1_VALUES);
+export const HookExecutionKindV1Schema = lazyZodSchema(() => z.enum(HOOK_EXECUTION_KIND_V1_VALUES));
 export type HookExecutionKindV1 = z.infer<typeof HookExecutionKindV1Schema>;
 
 export const HOOK_CATEGORY_TO_EXECUTION_KIND_V1: Readonly<Record<HookCategoryV1, HookExecutionKindV1>> = {

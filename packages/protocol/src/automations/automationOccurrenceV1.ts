@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { hmac } from '@noble/hashes/hmac';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 import { sha256 } from '@noble/hashes/sha2';
@@ -96,11 +97,11 @@ export const AutomationConversationBindingIdV1Schema = boundedNfcString(
  * Materialization and generation are intentionally excluded: they are
  * currentness facts at admission, not rejoin identity across a rollover.
  */
-export const AutomationConversationAdmissionCallerIdentityV1Schema = z.object({
+export const AutomationConversationAdmissionCallerIdentityV1Schema = lazyZodSchema(() => z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   contributionLocalId: asProtocolZod(PluginContributionLocalIdSchema),
   machineId: PluginMachineMaterializationMachineIdV1Schema,
-}).strict();
+}).strict());
 export type AutomationConversationAdmissionCallerIdentityV1 = z.infer<
   typeof AutomationConversationAdmissionCallerIdentityV1Schema
 >;
@@ -150,7 +151,7 @@ export type AutomationOccurrenceEvidenceEqualityTagV1 = z.infer<
   typeof AutomationOccurrenceEvidenceEqualityTagV1Schema
 >;
 
-export const AutomationPluginEventOccurrenceEvidenceV1Schema = z.object({
+export const AutomationPluginEventOccurrenceEvidenceV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   kind: z.literal('pluginEvent'),
   eventRef: asProtocolZod(PluginContributionIdentityV1Schema),
@@ -158,17 +159,17 @@ export const AutomationPluginEventOccurrenceEvidenceV1Schema = z.object({
   occurrenceId: OCCURRENCE_ID_SCHEMA,
   occurredAt: AutomationOccurredAtV1Schema,
   payload: asProtocolZod(AutomationEventPayloadV1Schema),
-}).strict();
+}).strict());
 export type AutomationPluginEventOccurrenceEvidenceV1 = z.infer<
   typeof AutomationPluginEventOccurrenceEvidenceV1Schema
 >;
 
 /** Exact due instant for one independently scheduled trigger occurrence. */
-export const AutomationScheduleOccurrenceEvidenceV1Schema = z.object({
+export const AutomationScheduleOccurrenceEvidenceV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   kind: z.literal('schedule'),
   scheduledFor: AutomationOccurredAtV1Schema,
-}).strict();
+}).strict());
 export type AutomationScheduleOccurrenceEvidenceV1 = z.infer<
   typeof AutomationScheduleOccurrenceEvidenceV1Schema
 >;
@@ -180,7 +181,7 @@ const SESSION_LIFECYCLE_OCCURRENCE_SHAPE = {
   sourceSessionId: boundedNfcString(256, 'Source Session identifiers'),
   occurredAt: AutomationOccurredAtV1Schema,
 } as const;
-export const AutomationSessionLifecycleOccurrenceEvidenceV1Schema = z.discriminatedUnion('event', [
+export const AutomationSessionLifecycleOccurrenceEvidenceV1Schema = lazyZodSchema(() => z.discriminatedUnion('event', [
   z.object({
     ...SESSION_LIFECYCLE_OCCURRENCE_SHAPE,
     event: AutomationSessionLifecycleEventSchema.exclude(['userActionRequired', 'sessionStarted', 'sessionArchived']),
@@ -197,17 +198,17 @@ export const AutomationSessionLifecycleOccurrenceEvidenceV1Schema = z.discrimina
     ...SESSION_LIFECYCLE_OCCURRENCE_SHAPE,
     event: z.enum(['sessionStarted', 'sessionArchived']),
   }).strict(),
-]);
+]));
 export type AutomationSessionLifecycleOccurrenceEvidenceV1 = z.infer<
   typeof AutomationSessionLifecycleOccurrenceEvidenceV1Schema
 >;
 
-export const AutomationTriggerOccurrenceEvidenceV1Schema = z.discriminatedUnion('kind', [
+export const AutomationTriggerOccurrenceEvidenceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   AutomationScheduleOccurrenceEvidenceV1Schema,
   AutomationPluginEventOccurrenceEvidenceV1Schema,
   AutomationSessionLifecycleOccurrenceEvidenceV1Schema,
   AutomationRunLifecycleOccurrenceEvidenceV1Schema,
-]);
+]));
 export type AutomationTriggerOccurrenceEvidenceV1 = z.infer<
   typeof AutomationTriggerOccurrenceEvidenceV1Schema
 >;
@@ -231,7 +232,7 @@ export function buildAutomationPluginEventOccurrenceEvidenceV1(params: Readonly<
   });
 }
 
-export const AutomationConversationOccurrenceEvidenceV1Schema = z.object({
+export const AutomationConversationOccurrenceEvidenceV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   kind: z.literal('conversation'),
   bindingId: AutomationConversationBindingIdV1Schema,
@@ -241,7 +242,7 @@ export const AutomationConversationOccurrenceEvidenceV1Schema = z.object({
   input: PluginJsonValueV2Schema,
   replyContextIdentity: boundedNfcString(512, 'Reply-context identities'),
   hostEvidence: AutomationConversationScopedTriggerEvidenceV1Schema.optional(),
-}).strict();
+}).strict());
 export type AutomationConversationOccurrenceEvidenceV1 = z.infer<
   typeof AutomationConversationOccurrenceEvidenceV1Schema
 >;
@@ -305,19 +306,19 @@ export function buildAutomationConversationOccurrenceEvidenceV1(params: Readonly
   });
 }
 
-export const AutomationOccurrenceEvidenceV1Schema = z.discriminatedUnion('kind', [
+export const AutomationOccurrenceEvidenceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   AutomationScheduleOccurrenceEvidenceV1Schema,
   AutomationPluginEventOccurrenceEvidenceV1Schema,
   AutomationSessionLifecycleOccurrenceEvidenceV1Schema,
   AutomationRunLifecycleOccurrenceEvidenceV1Schema,
   AutomationConversationOccurrenceEvidenceV1Schema,
-]);
+]));
 export type AutomationOccurrenceEvidenceV1 = z.infer<
   typeof AutomationOccurrenceEvidenceV1Schema
 >;
 export const AutomationOccurrenceEvidenceV1ReadSchema = createStoredReadSchema(AutomationOccurrenceEvidenceV1Schema);
 
-const AutomationOccurrenceEvidenceEqualityInputV1Schema = z.union([
+const AutomationOccurrenceEvidenceEqualityInputV1Schema = lazyZodSchema(() => z.union([
   z.object({
     accountId: asProtocolZod(AutomationHostIdentifierV1Schema),
     automationId: asProtocolZod(AutomationIdV1Schema),
@@ -331,7 +332,7 @@ const AutomationOccurrenceEvidenceEqualityInputV1Schema = z.union([
     occurrenceKey: AutomationOccurrenceKeyV1Schema,
     evidence: AutomationConversationOccurrenceEvidenceV1Schema,
   }).strict(),
-]);
+]));
 
 function occurrenceKeyParts(input:
   | Readonly<{ triggerId: AutomationTriggerId; evidence: AutomationTriggerOccurrenceEvidenceV1 }>

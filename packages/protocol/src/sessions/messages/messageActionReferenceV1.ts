@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { SessionMessageRoleSchema, type SessionMessageRole } from './sessionMessageRole.js';
@@ -22,26 +23,26 @@ function boundedDisclosureText(maxUtf8Bytes: number, label: string) {
   );
 }
 
-export const MessageActionReferenceV1Schema = z.object({
+export const MessageActionReferenceV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   sessionId: strictNonBlankString(512, 'sessionId'),
   messageId: strictNonBlankString(512, 'messageId'),
   observedRevision: strictNonBlankString(512, 'observedRevision'),
-}).strict();
+}).strict());
 
 export type MessageActionReferenceV1 = z.infer<typeof MessageActionReferenceV1Schema>;
 
-export const MessageActionContentCategoryV1Schema = z.enum([
+export const MessageActionContentCategoryV1Schema = lazyZodSchema(() => z.enum([
   'text',
   'structured',
-]);
+]));
 export type MessageActionContentCategoryV1 = z.infer<typeof MessageActionContentCategoryV1Schema>;
 
 /**
  * This is intentionally only a least-disclosure category. It is not a plugin,
  * Account, connection, provider, or source-reference identity.
  */
-export const MessageActionProvenanceCategoryV1Schema = z.enum([
+export const MessageActionProvenanceCategoryV1Schema = lazyZodSchema(() => z.enum([
   'owner',
   'collaborator',
   'plugin',
@@ -51,7 +52,7 @@ export const MessageActionProvenanceCategoryV1Schema = z.enum([
   'terminal',
   'recovered_history',
   'unknown',
-]);
+]));
 export type MessageActionProvenanceCategoryV1 = z.infer<typeof MessageActionProvenanceCategoryV1Schema>;
 
 /**
@@ -101,7 +102,7 @@ export function projectMessageActionProvenanceCategoryV1(
   }
 }
 
-export const MessageActionAvailableSnapshotV1Schema = z.object({
+export const MessageActionAvailableSnapshotV1Schema = lazyZodSchema(() => z.object({
   sessionId: strictNonBlankString(512, 'sessionId'),
   messageId: strictNonBlankString(512, 'messageId'),
   observedRevision: strictNonBlankString(512, 'observedRevision'),
@@ -117,11 +118,11 @@ export const MessageActionAvailableSnapshotV1Schema = z.object({
     'structuredPresentationSummary',
   ).nullable(),
   provenanceCategory: MessageActionProvenanceCategoryV1Schema,
-}).strict();
+}).strict());
 
 export type MessageActionAvailableSnapshotV1 = z.infer<typeof MessageActionAvailableSnapshotV1Schema>;
 
-export const MessageActionResolutionV1Schema = z.discriminatedUnion('status', [
+export const MessageActionResolutionV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('available'),
     snapshot: MessageActionAvailableSnapshotV1Schema,
@@ -131,7 +132,7 @@ export const MessageActionResolutionV1Schema = z.discriminatedUnion('status', [
   z.object({ status: z.literal('compacted') }).strict(),
   z.object({ status: z.literal('ineligible') }).strict(),
   z.object({ status: z.literal('unavailable') }).strict(),
-]);
+]));
 
 export type MessageActionResolutionV1 = z.infer<typeof MessageActionResolutionV1Schema>;
 
@@ -141,7 +142,7 @@ export type MessageActionResolutionV1 = z.infer<typeof MessageActionResolutionV1
  * from `MessageActionResolutionV1`: the server never receives or returns
  * decrypted text, structured presentation data, or current SDK policy facts.
  */
-export const MessageActionDurableResolutionV1Schema = z.discriminatedUnion('status', [
+export const MessageActionDurableResolutionV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('available'),
     message: z.object({
@@ -156,7 +157,7 @@ export const MessageActionDurableResolutionV1Schema = z.discriminatedUnion('stat
   z.object({ status: z.literal('deleted') }).strict(),
   z.object({ status: z.literal('compacted') }).strict(),
   z.object({ status: z.literal('unavailable') }).strict(),
-]);
+]));
 export type MessageActionDurableResolutionV1 = z.infer<typeof MessageActionDurableResolutionV1Schema>;
 
 export type MessageActionCurrentStateV1 = 'available' | 'deleted' | 'compacted';

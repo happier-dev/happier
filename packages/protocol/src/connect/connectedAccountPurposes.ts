@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
@@ -16,16 +17,16 @@ export {
   type QualifiedConnectedAccountPurposeV1,
 } from './connectedAccountPurposeIdentity.js';
 
-export const PluginConnectedAccountMaterializationKindSchema = z.enum([
+export const PluginConnectedAccountMaterializationKindSchema = lazyZodSchema(() => z.enum([
   'httpHeaders',
   'environment',
   'files',
-]);
+]));
 export type PluginConnectedAccountMaterializationKind = z.infer<
   typeof PluginConnectedAccountMaterializationKindSchema
 >;
 
-const ConnectedAccountMaterializationDestinationsSchema = z.array(
+const ConnectedAccountMaterializationDestinationsSchema = lazyZodSchema(() => z.array(
   canonicalBoundedRecordKeySchema(128),
 ).min(1).max(32).superRefine((destinations, context) => {
   if (new Set(destinations).size !== destinations.length) {
@@ -34,12 +35,12 @@ const ConnectedAccountMaterializationDestinationsSchema = z.array(
       message: 'Connected Account materialization destinations must be unique.',
     });
   }
-}).readonly();
+}).readonly());
 
-const ConnectedAccountHttpHeaderNameSchema = z.string().trim().min(1).max(128)
+const ConnectedAccountHttpHeaderNameSchema = lazyZodSchema(() => z.string().trim().min(1).max(128)
   .regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u)
-  .transform((value) => value.toLowerCase());
-const ConnectedAccountHttpHeaderNamesSchema = z.array(
+  .transform((value) => value.toLowerCase()));
+const ConnectedAccountHttpHeaderNamesSchema = lazyZodSchema(() => z.array(
   ConnectedAccountHttpHeaderNameSchema,
 ).min(1).max(32).superRefine((headerNames, context) => {
   if (new Set(headerNames).size !== headerNames.length) {
@@ -48,9 +49,9 @@ const ConnectedAccountHttpHeaderNamesSchema = z.array(
       message: 'Connected Account materialization header names must be unique.',
     });
   }
-}).readonly();
+}).readonly());
 
-const ConnectedAccountHttpsOriginSchema = z.string().trim().max(2_048)
+const ConnectedAccountHttpsOriginSchema = lazyZodSchema(() => z.string().trim().max(2_048)
   .superRefine((value, context) => {
     try {
       const url = new URL(value);
@@ -74,18 +75,18 @@ const ConnectedAccountHttpsOriginSchema = z.string().trim().max(2_048)
         message: 'Connected Account materialization origins must be canonical HTTPS origins.',
       });
     }
-  });
+  }));
 
-export const ConnectedAccountHttpHeadersRequestSchema = z.object({
+export const ConnectedAccountHttpHeadersRequestSchema = lazyZodSchema(() => z.object({
   kind: z.literal('httpHeaders'),
   origin: ConnectedAccountHttpsOriginSchema,
   headerNames: ConnectedAccountHttpHeaderNamesSchema,
-}).strict();
+}).strict());
 export type ConnectedAccountHttpHeadersRequest = z.infer<
   typeof ConnectedAccountHttpHeadersRequestSchema
 >;
 
-export const ConnectedAccountMaterializationRequestSchema = z.discriminatedUnion('kind', [
+export const ConnectedAccountMaterializationRequestSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   ConnectedAccountHttpHeadersRequestSchema,
   z.object({
     kind: z.literal('environment'),
@@ -95,12 +96,12 @@ export const ConnectedAccountMaterializationRequestSchema = z.discriminatedUnion
     kind: z.literal('files'),
     fileIds: ConnectedAccountMaterializationDestinationsSchema,
   }).strict(),
-]);
+]));
 export type ConnectedAccountMaterializationRequest = z.infer<
   typeof ConnectedAccountMaterializationRequestSchema
 >;
 
-export const PluginConnectedAccountMaterializationKindsSchema = z.array(
+export const PluginConnectedAccountMaterializationKindsSchema = lazyZodSchema(() => z.array(
   PluginConnectedAccountMaterializationKindSchema,
 ).min(1).max(PluginConnectedAccountMaterializationKindSchema.options.length)
   .meta({ uniqueItems: true })
@@ -116,9 +117,9 @@ export const PluginConnectedAccountMaterializationKindsSchema = z.array(
       }
       seen.add(kind);
     }
-  });
+  }));
 
-export const ConnectedAccountPurposeDeclarationV1Schema = z.object({
+export const ConnectedAccountPurposeDeclarationV1Schema = lazyZodSchema(() => z.object({
   purpose: ConnectedAccountPurposeIdSchema,
   service: asProtocolZod(PluginContributionReferenceV2Schema),
   /** Optional human-facing presentation; purpose remains the machine identifier. */
@@ -139,12 +140,12 @@ export const ConnectedAccountPurposeDeclarationV1Schema = z.object({
       }
     })
     .optional(),
-}).strict();
+}).strict());
 export type ConnectedAccountPurposeDeclarationV1 = z.infer<
   typeof ConnectedAccountPurposeDeclarationV1Schema
 >;
 
-export const ConnectedAccountPurposeDeclarationsV1Schema = z.array(
+export const ConnectedAccountPurposeDeclarationsV1Schema = lazyZodSchema(() => z.array(
   ConnectedAccountPurposeDeclarationV1Schema,
 ).max(32).superRefine((declarations, context) => {
   const seenPurposes = new Set<string>();
@@ -158,7 +159,7 @@ export const ConnectedAccountPurposeDeclarationsV1Schema = z.array(
     }
     seenPurposes.add(declaration.purpose);
   }
-});
+}));
 export type ConnectedAccountPurposeDeclarationsV1 = z.infer<
   typeof ConnectedAccountPurposeDeclarationsV1Schema
 >;

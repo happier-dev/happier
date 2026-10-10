@@ -1,6 +1,7 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
-export const VoiceProviderOperationErrorCodeSchema = z.enum([
+export const VoiceProviderOperationErrorCodeSchema = lazyZodSchema(() => z.enum([
   'invalid_parameters',
   'credential_unavailable',
   'provider_unavailable',
@@ -10,13 +11,13 @@ export const VoiceProviderOperationErrorCodeSchema = z.enum([
   'cancelled',
   'provider_response_invalid',
   'internal_error',
-]);
+]));
 export type VoiceProviderOperationErrorCode = z.infer<typeof VoiceProviderOperationErrorCodeSchema>;
 
-export const VoiceProviderCredentialRemediationCodeSchema = z.enum([
+export const VoiceProviderCredentialRemediationCodeSchema = lazyZodSchema(() => z.enum([
   'credential_unavailable',
   'credential_access_review_required',
-]);
+]));
 export type VoiceProviderCredentialRemediationCode = z.infer<
   typeof VoiceProviderCredentialRemediationCodeSchema
 >;
@@ -40,30 +41,30 @@ export function readVoiceProviderCredentialRemediationCode(
   return parsed.success ? parsed.data : null;
 }
 
-export const VoiceProviderOperationErrorSchema = z.object({
+export const VoiceProviderOperationErrorSchema = lazyZodSchema(() => z.object({
   ok: z.literal(false),
   errorCode: VoiceProviderOperationErrorCodeSchema,
   error: VoiceProviderOperationErrorCodeSchema,
   retryable: z.boolean(),
-}).strict();
+}).strict());
 
-export const VoiceClientAuthArtifactSchema = z.discriminatedUnion('kind', [
+export const VoiceClientAuthArtifactSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('sdk_token'), value: z.string().min(1).max(16_384), expiresAtMs: z.number().int().positive(), placement: z.literal('provider_sdk_parameter') }).strict(),
   z.object({ kind: z.literal('subprotocol_token'), value: z.string().min(1).max(16_384), expiresAtMs: z.number().int().positive(), placement: z.literal('websocket_subprotocol') }).strict(),
   z.object({ kind: z.literal('bearer_token'), value: z.string().min(1).max(16_384), expiresAtMs: z.number().int().positive(), placement: z.literal('authorization_header') }).strict(),
   z.object({ kind: z.literal('signed_url'), value: z.string().url().max(16_384), expiresAtMs: z.number().int().positive(), placement: z.literal('request_url') }).strict(),
-]);
+]));
 export type VoiceClientAuthArtifact = z.infer<typeof VoiceClientAuthArtifactSchema>;
 
-const CatalogMetadataValueSchema = z.union([z.string().max(512), z.number().finite(), z.boolean(), z.null()]);
-export const VoiceProviderCatalogItemSchema = z.object({
+const CatalogMetadataValueSchema = lazyZodSchema(() => z.union([z.string().max(512), z.number().finite(), z.boolean(), z.null()]));
+export const VoiceProviderCatalogItemSchema = lazyZodSchema(() => z.object({
   id: z.string().trim().min(1).max(256),
   name: z.string().trim().min(1).max(256),
   metadata: z.record(z.string().max(64), CatalogMetadataValueSchema).default({}),
-}).strict();
+}).strict());
 export type VoiceProviderCatalogItem = z.infer<typeof VoiceProviderCatalogItemSchema>;
-export const VoiceProviderCatalogResponseSchema = z.union([
+export const VoiceProviderCatalogResponseSchema = lazyZodSchema(() => z.union([
   z.object({ ok: z.literal(true), items: z.array(VoiceProviderCatalogItemSchema).max(500) }).strict(),
   VoiceProviderOperationErrorSchema,
-]);
+]));
 export type VoiceProviderCatalogResponse = z.infer<typeof VoiceProviderCatalogResponseSchema>;

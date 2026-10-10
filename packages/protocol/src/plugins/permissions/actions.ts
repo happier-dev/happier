@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -21,7 +22,7 @@ export const PLUGIN_PERMISSION_GRANT_ACTION_IDS_V1 = Object.freeze([
   'plugins.permissions.grants.dismissRequest',
 ] as const);
 
-export const PluginPermissionGrantActionIdV1Schema = z.enum(PLUGIN_PERMISSION_GRANT_ACTION_IDS_V1);
+export const PluginPermissionGrantActionIdV1Schema = lazyZodSchema(() => z.enum(PLUGIN_PERMISSION_GRANT_ACTION_IDS_V1));
 export type PluginPermissionGrantActionIdV1 = z.infer<typeof PluginPermissionGrantActionIdV1Schema>;
 
 export const PluginPermissionGrantActionInputSchemasV1 = Object.freeze({

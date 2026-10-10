@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
@@ -6,21 +7,21 @@ import { createStoredReadSchema } from '../json/storedReadSchema.js';
  * Keep this union deliberately finite: a new kind must receive an explicit
  * route-admission decision before it can authorize anything.
  */
-export const AuthTokenKindSchema = z.enum([
+export const AuthTokenKindSchema = lazyZodSchema(() => z.enum([
   'account',
   'account_directory',
   'terminal',
   'api_token',
   'ephemeral_session_runner',
-]);
+]));
 export type AuthTokenKind = z.infer<typeof AuthTokenKindSchema>;
 
 /** Server-verified authority carried by the signed token provenance marker. */
-export const AuthTokenAuthoritySchema = z.enum([
+export const AuthTokenAuthoritySchema = lazyZodSchema(() => z.enum([
   'present_user',
   'account_automation',
   'session_runtime',
-]);
+]));
 export type AuthTokenAuthority = z.infer<typeof AuthTokenAuthoritySchema>;
 
 const AuthTokenEvidenceString = z.string().trim().min(1).max(512);
@@ -30,7 +31,7 @@ const AuthTokenEvidenceString = z.string().trim().min(1).max(512);
  * It identifies the exact method or provider identity that authenticated the
  * credential; it carries no Team role, grant, profile, token, or client input.
  */
-export const AuthTokenAuthenticationEvidenceV1Schema = z.discriminatedUnion('kind', [
+export const AuthTokenAuthenticationEvidenceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('home_method'),
     methodId: AuthTokenEvidenceString,
@@ -42,7 +43,7 @@ export const AuthTokenAuthenticationEvidenceV1Schema = z.discriminatedUnion('kin
     runtimeFingerprint: AuthTokenEvidenceString,
     teamConnectionId: AuthTokenEvidenceString.optional(),
   }).strict(),
-]);
+]));
 export type AuthTokenAuthenticationEvidenceV1 = z.infer<typeof AuthTokenAuthenticationEvidenceV1Schema>;
 
 export const AUTH_TOKEN_AUTHENTICATION_EVIDENCE_MAX_ITEMS = 32;
@@ -54,7 +55,7 @@ export function authTokenAuthenticationEvidenceIdentityV1(value: AuthTokenAuthen
     : `provider:${value.providerId.toLowerCase()}:${value.identityId}:${value.teamConnectionId ?? ''}:${value.runtimeFingerprint}`;
 }
 
-const AuthTokenAuthenticationEvidenceSetV1Schema = z.array(AuthTokenAuthenticationEvidenceV1Schema)
+const AuthTokenAuthenticationEvidenceSetV1Schema = lazyZodSchema(() => z.array(AuthTokenAuthenticationEvidenceV1Schema)
   .min(1)
   .max(AUTH_TOKEN_AUTHENTICATION_EVIDENCE_MAX_ITEMS)
   .superRefine((value, ctx) => {
@@ -64,13 +65,13 @@ const AuthTokenAuthenticationEvidenceSetV1Schema = z.array(AuthTokenAuthenticati
       if (seen.has(key)) ctx.addIssue({ code: 'custom', message: 'authentication evidence must be deduplicated' });
       seen.add(key);
     }
-  });
+  }));
 
 /** Closed persisted snapshot used when an existing unattended credential is explicitly authorized. */
-export const AuthTokenAuthenticationEvidenceSnapshotV1Schema = z.object({
+export const AuthTokenAuthenticationEvidenceSnapshotV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   evidence: AuthTokenAuthenticationEvidenceSetV1Schema,
-}).strict();
+}).strict());
 export type AuthTokenAuthenticationEvidenceSnapshotV1 = z.infer<
   typeof AuthTokenAuthenticationEvidenceSnapshotV1Schema
 >;
@@ -95,7 +96,7 @@ export const AUTH_TOKEN_KIND_AUTHORITIES: Readonly<Record<AuthTokenKind, AuthTok
  * full Account credential, and so a kind can never travel with a
  * non-canonical authority.
  */
-export const AuthTokenProvenanceSchema = z.object({
+export const AuthTokenProvenanceSchema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   kind: AuthTokenKindSchema,
   authority: AuthTokenAuthoritySchema,
@@ -107,11 +108,11 @@ export const AuthTokenProvenanceSchema = z.object({
       message: `authority "${value.authority}" is not canonical for token kind "${value.kind}"`,
     });
   }
-});
+}));
 export type AuthTokenProvenance = z.infer<typeof AuthTokenProvenanceSchema>;
 
 /** Current additive provenance marker for credentials with authentication facts. */
-export const AuthTokenProvenanceV2Schema = z.object({
+export const AuthTokenProvenanceV2Schema = lazyZodSchema(() => z.object({
   v: z.literal(2),
   kind: AuthTokenKindSchema,
   authority: AuthTokenAuthoritySchema,
@@ -124,13 +125,13 @@ export const AuthTokenProvenanceV2Schema = z.object({
       message: `authority "${value.authority}" is not canonical for token kind "${value.kind}"`,
     });
   }
-});
+}));
 export type AuthTokenProvenanceV2 = z.infer<typeof AuthTokenProvenanceV2Schema>;
 
-export const AuthTokenProvenanceAnySchema = z.union([
+export const AuthTokenProvenanceAnySchema = lazyZodSchema(() => z.union([
   AuthTokenProvenanceSchema,
   AuthTokenProvenanceV2Schema,
-]);
+]));
 export type AuthTokenProvenanceAny = z.infer<typeof AuthTokenProvenanceAnySchema>;
 
 /**

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { isSessionPersonallyTrackedForViewerV1 } from '../personal/tracking.js';
@@ -6,11 +7,11 @@ import { isSessionPersonallyTrackedForViewerV1 } from '../personal/tracking.js';
  * The one Follow notification vocabulary. It is closed on purpose: schemas,
  * persisted values, predicates and prose all use these three values.
  */
-export const SessionFollowNotificationLevelSchema = z.enum([
+export const SessionFollowNotificationLevelSchema = lazyZodSchema(() => z.enum([
   'none',
   'important',
   'all_messages',
-]);
+]));
 export type SessionFollowNotificationLevel = z.infer<typeof SessionFollowNotificationLevelSchema>;
 
 /**
@@ -20,14 +21,14 @@ export type SessionFollowNotificationLevel = z.infer<typeof SessionFollowNotific
  * runtime diagnostics are deliberately absent: a human client only needs the
  * preference it can edit.
  */
-export const AccountSessionFollowV1Schema = z
+export const AccountSessionFollowV1Schema = lazyZodSchema(() => z
   .object({
     sessionId: z.string().trim().min(1),
     following: z.boolean(),
     notificationLevel: SessionFollowNotificationLevelSchema,
     includeInVoice: z.boolean(),
   })
-  .strict();
+  .strict());
 export type AccountSessionFollowV1 = z.infer<typeof AccountSessionFollowV1Schema>;
 
 /**
@@ -36,11 +37,11 @@ export type AccountSessionFollowV1 = z.infer<typeof AccountSessionFollowV1Schema
  * current-Account ownership, so a second `view` bit would encode one decision
  * twice.
  */
-export const AccountSessionFollowCapabilitiesV1Schema = z
+export const AccountSessionFollowCapabilitiesV1Schema = lazyZodSchema(() => z
   .object({
     manageFollow: z.boolean(),
   })
-  .strict();
+  .strict());
 export type AccountSessionFollowCapabilitiesV1 = z.infer<
   typeof AccountSessionFollowCapabilitiesV1Schema
 >;
@@ -50,14 +51,14 @@ export type AccountSessionFollowCapabilitiesV1 = z.infer<
  * policy the Home must be able to apply while the recipient has no connected
  * device, not a mirror of the encrypted Account notification settings.
  */
-export const SessionAutoFollowPreferencesV1Schema = z
+export const SessionAutoFollowPreferencesV1Schema = lazyZodSchema(() => z
   .object({
     assigned: z.boolean(),
     direct: z.boolean(),
     team: z.boolean(),
     group: z.boolean(),
   })
-  .strict();
+  .strict());
 export type SessionAutoFollowPreferencesV1 = z.infer<typeof SessionAutoFollowPreferencesV1Schema>;
 
 export const DEFAULT_SESSION_AUTO_FOLLOW_PREFERENCES_V1: SessionAutoFollowPreferencesV1 =
@@ -91,7 +92,7 @@ export type SessionAutoFollowTriggerV1 = typeof SESSION_AUTO_FOLLOW_TRIGGERS_V1[
  * - explicit unfollow → `{ follows: false, notificationLevel: 'none', includeInVoice?: false }`
  * - absent row        → `{ follows: false, notificationLevel: null }`
  */
-export const SessionFollowFactsV1Schema = z
+export const SessionFollowFactsV1Schema = lazyZodSchema(() => z
   .object({
     follows: z.boolean(),
     notificationLevel: SessionFollowNotificationLevelSchema.nullable(),
@@ -102,7 +103,7 @@ export const SessionFollowFactsV1Schema = z
      */
     includeInVoice: z.boolean().optional(),
   })
-  .strict();
+  .strict());
 export type SessionFollowFactsV1 = z.infer<typeof SessionFollowFactsV1Schema>;
 
 export const ABSENT_SESSION_FOLLOW_FACTS_V1: SessionFollowFactsV1 = Object.freeze({

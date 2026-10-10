@@ -1,9 +1,10 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
-const TerminalIdSchema = z.string().min(1).max(2000);
-const TerminalModifierSchema = z.enum(['shift', 'ctrl', 'alt', 'meta']);
+const TerminalIdSchema = lazyZodSchema(() => z.string().min(1).max(2000));
+const TerminalModifierSchema = lazyZodSchema(() => z.enum(['shift', 'ctrl', 'alt', 'meta']));
 
-export const TerminalInputEventSchema = z.discriminatedUnion('t', [
+export const TerminalInputEventSchema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.object({
     t: z.literal('text'),
     text: z.string().max(100_000),
@@ -36,21 +37,21 @@ export const TerminalInputEventSchema = z.discriminatedUnion('t', [
     cols: z.number().int().min(2).max(500),
     rows: z.number().int().min(2).max(500),
   }).strict(),
-]);
+]));
 export type TerminalInputEvent = z.infer<typeof TerminalInputEventSchema>;
 
-export const TerminalStreamInputRequestSchema = z.object({
+export const TerminalStreamInputRequestSchema = lazyZodSchema(() => z.object({
   terminalId: TerminalIdSchema,
   event: TerminalInputEventSchema,
-}).strict();
+}).strict());
 export type TerminalStreamInputRequest = z.infer<typeof TerminalStreamInputRequestSchema>;
 
-export const TerminalStreamInputResponseSchema = z.union([
+export const TerminalStreamInputResponseSchema = lazyZodSchema(() => z.union([
   z.object({ ok: z.literal(true) }).strict(),
   z.object({
     ok: z.literal(false),
     code: z.string().min(1).max(200),
     message: z.string().min(1).max(2000),
   }).strict(),
-]);
+]));
 export type TerminalStreamInputResponse = z.infer<typeof TerminalStreamInputResponseSchema>;

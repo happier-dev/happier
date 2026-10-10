@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -8,24 +9,24 @@ import { ScmOperationOutcomeSchema } from './operationOutcome.js';
 
 export const SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN = 'remove-worktree' as const;
 
-export const ScmWorktreeCommandResponseSchema = z.object({
+export const ScmWorktreeCommandResponseSchema = lazyZodSchema(() => z.object({
   success: z.boolean(),
   outcome: ScmOperationOutcomeSchema.optional(),
   stdout: z.string().optional(),
   stderr: z.string().optional(),
   error: z.string().optional(),
   errorCode: ScmOperationErrorCodeSchema.optional(),
-});
+}));
 export type ScmWorktreeCommandResponse = z.infer<typeof ScmWorktreeCommandResponseSchema>;
 
-export const ScmWorktreeCreateRequestSchema = ScmRequestBaseSchema.extend({
+export const ScmWorktreeCreateRequestSchema = lazyZodSchema(() => ScmRequestBaseSchema.extend({
   displayName: z.string().min(1).optional(),
   baseRef: z.string().min(1).optional(),
   branchMode: z.enum(['new', 'existing']).optional(),
-});
+}));
 export type ScmWorktreeCreateRequest = z.infer<typeof ScmWorktreeCreateRequestSchema>;
 
-export const ScmWorktreeCreateResponseSchema = z.discriminatedUnion('success', [z.object({
+export const ScmWorktreeCreateResponseSchema = lazyZodSchema(() => z.discriminatedUnion('success', [z.object({
   success: z.literal(true),
   outcome: ScmOperationOutcomeSchema.optional(),
   worktreePath: z.string(),
@@ -39,14 +40,14 @@ export const ScmWorktreeCreateResponseSchema = z.discriminatedUnion('success', [
   outcome: ScmOperationOutcomeSchema.optional(),
   error: z.string().optional(),
   errorCode: ScmOperationErrorCodeSchema.optional(),
-})]);
+})]));
 export type ScmWorktreeCreateResponse = z.infer<typeof ScmWorktreeCreateResponseSchema>;
 
-export const ScmWorktreeRemoveRequestSchema = ScmRequestBaseSchema.extend({
+export const ScmWorktreeRemoveRequestSchema = lazyZodSchema(() => ScmRequestBaseSchema.extend({
   worktreePath: z.string().min(1),
   confirmed: z.literal(true),
   authorizationToken: z.literal(SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN),
-});
+}));
 export type ScmWorktreeRemoveRequest = z.infer<typeof ScmWorktreeRemoveRequestSchema>;
 
 export const ScmWorktreeRemoveResponseSchema = ScmWorktreeCommandResponseSchema;

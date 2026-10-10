@@ -1,12 +1,13 @@
+import { lazyZodSchema } from '../../../../lazyZodSchema.js';
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 import { z } from 'zod';
 
 import { createCanonicalJsonSigningInput } from '../../../../crypto/canonicalJson.js';
 
-export const PeerMachineRpcCommandReceiptIssuerV1Schema = z.enum(['ui', 'daemon']);
+export const PeerMachineRpcCommandReceiptIssuerV1Schema = lazyZodSchema(() => z.enum(['ui', 'daemon']));
 
-export const PeerMachineRpcCommandReceiptRequestV1Schema = z
+export const PeerMachineRpcCommandReceiptRequestV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     issuer: PeerMachineRpcCommandReceiptIssuerV1Schema,
@@ -15,12 +16,12 @@ export const PeerMachineRpcCommandReceiptRequestV1Schema = z
     replayKey: z.string().min(1),
     resultHash: z.string().regex(/^sha256:[0-9a-f]{64}$/).optional(),
   })
-  .strict();
+  .strict());
 
-export const PeerMachineRpcCommandReceiptSuccessV1Schema = PeerMachineRpcCommandReceiptRequestV1Schema.extend({
+export const PeerMachineRpcCommandReceiptSuccessV1Schema = lazyZodSchema(() => PeerMachineRpcCommandReceiptRequestV1Schema.extend({
   issuer: z.literal('daemon'),
   resultHash: z.string().regex(/^sha256:[0-9a-f]{64}$/),
-}).strict();
+}).strict());
 
 export type PeerMachineRpcCommandReceiptIssuerV1 = z.infer<typeof PeerMachineRpcCommandReceiptIssuerV1Schema>;
 export type PeerMachineRpcCommandReceiptRequestV1 = z.infer<typeof PeerMachineRpcCommandReceiptRequestV1Schema>;

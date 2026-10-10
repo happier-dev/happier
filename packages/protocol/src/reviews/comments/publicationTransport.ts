@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -23,7 +24,7 @@ import {
 } from './actions.js';
 
 const identity = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
-const outcomeSchema = z.object({
+const outcomeSchema = lazyZodSchema(() => z.object({
   kind: z.enum(['published', 'failed', 'uncertain', 'skippedPriorFailure']),
   externalRefTag: identity.optional(),
   content: StoredJsonContentEnvelopeSchema.optional(),
@@ -32,19 +33,19 @@ const outcomeSchema = z.object({
     && outcome.content === undefined) {
     ctx.addIssue({ code: 'custom', message: 'review_comment_publication_outcome_content_required' });
   }
-});
-export const ReviewCommentPublicationTransportResultV1Schema = z.object({
+}));
+export const ReviewCommentPublicationTransportResultV1Schema = lazyZodSchema(() => z.object({
   publicationPlanId: identity,
   entries: z.array(ReviewCommentPublicationCorrelationV1Schema.extend({ outcome: outcomeSchema })),
   verdict: z.union([
     z.object({ kind: z.literal('notRequested') }).strict(),
     z.object({ publicationCorrelationId: identity, outcome: outcomeSchema }).strict(),
   ]),
-}).strict();
+}).strict());
 export type ReviewCommentPublicationTransportResultV1 = z.infer<typeof ReviewCommentPublicationTransportResultV1Schema>;
 
 /** Server-readable admission/effect state only. The frozen provider plan never leaves the host. */
-export const ReviewCommentPublicationTransportRequestV1Schema = z.object({
+export const ReviewCommentPublicationTransportRequestV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   mode: z.enum(['plain', 'e2ee']),
   contentPublicKeyFingerprint: z.string().min(1).nullable(),
@@ -80,10 +81,10 @@ export const ReviewCommentPublicationTransportRequestV1Schema = z.object({
       ctx.addIssue({ code: 'custom', message: 'review_comment_encryption_mode_mismatch' });
     }
   }
-});
+}));
 export type ReviewCommentPublicationTransportRequestV1 = z.infer<typeof ReviewCommentPublicationTransportRequestV1Schema>;
 
-export const ReviewCommentPublicationTransportResponseV1Schema = z.object({
+export const ReviewCommentPublicationTransportResponseV1Schema = lazyZodSchema(() => z.object({
   disposition: z.enum(['dispatch', 'reconcile']),
   dispatchToken: z.string().min(1).nullable(),
   publicationPlanId: identity,
@@ -91,7 +92,7 @@ export const ReviewCommentPublicationTransportResponseV1Schema = z.object({
   verdict: z.object({ publicationCorrelationId: identity }).strict().nullable(),
   instructions: z.object({ entries: z.array(ReviewCommentPublicationDispatchInstructionV1Schema), verdict: ReviewCommentPublicationDispatchInstructionV1Schema.nullable() }).strict(),
   priorResult: ReviewCommentPublicationTransportResultV1Schema.nullable(),
-}).strict();
+}).strict());
 export type ReviewCommentPublicationTransportResponseV1 = z.infer<typeof ReviewCommentPublicationTransportResponseV1Schema>;
 
 export type ReviewCommentPublicationCryptoContextV1 = Readonly<{
@@ -115,11 +116,11 @@ function binding(plan: ReviewCommentPublicationPlanV1, context: ReviewCommentPub
   };
 }
 
-const privateOutcomeSchema = z.object({
+const privateOutcomeSchema = lazyZodSchema(() => z.object({
   v: z.literal(1), purpose: z.literal('publicationOutcome'), accountId: z.string(),
   publicationPlanId: identity, publicationCorrelationId: identity,
   outcome: ReviewCommentPublicationVerdictEffectOutcomeV1Schema,
-}).strict();
+}).strict());
 
 export function buildReviewCommentPublicationTransportRequestV1(params: Readonly<{
   input: ReviewCommentClaimPublicationDispatchRequestV1;

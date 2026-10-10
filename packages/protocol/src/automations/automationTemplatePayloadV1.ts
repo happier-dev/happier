@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { AcpConfigOptionOverridesV1Schema, normalizeCodexBackendMode } from '../sessions/metadata/metadataOverridesV1.js';
@@ -13,7 +14,7 @@ import { WindowsRemoteSessionLaunchModeSchema } from '../sessions/metadata/windo
 import { WindowsTerminalWindowNameSchema } from '../sessions/metadata/windowsTerminalWindowName.js';
 
 /** The released Account Automation payload codec; hosts add execution-boundary validation. */
-export const AutomationTemplatePayloadV1Schema = z.object({
+export const AutomationTemplatePayloadV1Schema = lazyZodSchema(() => z.object({
     executionTarget: SessionExecutionTargetV1Schema.optional(),
     directory: z.string().trim().min(1),
     checkoutCreationDraft: SessionAuthoringCheckoutCreationDraftV1Schema.optional(),
@@ -53,11 +54,11 @@ export const AutomationTemplatePayloadV1Schema = z.object({
     sessionEncryptionMode: z.enum(['e2ee', 'plain']).optional(),
     sessionEncryptionKeyBase64: z.string().optional(),
     sessionEncryptionVariant: z.literal('dataKey').optional(),
-}).strict();
+}).strict());
 export type AutomationTemplatePayloadV1 = z.infer<typeof AutomationTemplatePayloadV1Schema>;
 type AutomationTemplate = AutomationTemplatePayloadV1;
 
-const AutomationTemplateSchema = AutomationTemplatePayloadV1Schema.transform(({ experimentalCodexAcp: _experimentalCodexAcp, codexBackendMode, ...template }) => {
+const AutomationTemplateSchema = lazyZodSchema(() => AutomationTemplatePayloadV1Schema.transform(({ experimentalCodexAcp: _experimentalCodexAcp, codexBackendMode, ...template }) => {
     const normalizedCodexBackendMode = normalizeCodexBackendMode(codexBackendMode);
     const legacyRuntimeDescriptorV1 = normalizedCodexBackendMode || _experimentalCodexAcp === true
         ? readRuntimeDescriptorV1({
@@ -79,7 +80,7 @@ const AutomationTemplateSchema = AutomationTemplatePayloadV1Schema.transform(({ 
             ? { runtimeDescriptorV1: template.runtimeDescriptorV1 ?? legacyRuntimeDescriptorV1 }
             : {}),
     };
-});
+}));
 
 function normalizeOptionalString(value: string | null | undefined): string | undefined {
     if (typeof value !== 'string') return undefined;

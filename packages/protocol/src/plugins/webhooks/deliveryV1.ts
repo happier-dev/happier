@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
@@ -39,19 +40,19 @@ function isCanonicalPaddedBase64(value: string, expectedBytes?: number): boolean
   return true;
 }
 
-const PluginWebhookSelectedHeaderV1Schema = z.object({
+const PluginWebhookSelectedHeaderV1Schema = lazyZodSchema(() => z.object({
   name: z.literal('x-github-event'),
   value: GITHUB_EVENT_SCHEMA,
-}).strict().readonly();
+}).strict().readonly());
 
-const PluginWebhookVerifiedContentV1Schema = z.object({
+const PluginWebhookVerifiedContentV1Schema = lazyZodSchema(() => z.object({
   verifier: z.literal('github_hmac_sha256_v1'),
   providerDeliveryId: ASCII_TOKEN_128_SCHEMA,
   eventType: GITHUB_EVENT_SCHEMA.optional(),
   credentialVersionId: ASCII_TOKEN_128_SCHEMA,
-}).strict().readonly();
+}).strict().readonly());
 
-export const PluginWebhookDeliveryContentV1Schema = z.object({
+export const PluginWebhookDeliveryContentV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   receivedAtMs: z.number().int().nonnegative().safe(),
   contentType: CONTENT_TYPE_SCHEMA.nullable(),
@@ -67,9 +68,9 @@ export const PluginWebhookDeliveryContentV1Schema = z.object({
   if (eventHeader !== value.verified.eventType) {
     context.addIssue({ code: 'custom', path: ['verified', 'eventType'], message: 'Verified event type must match the selected GitHub event header' });
   }
-}).readonly();
+}).readonly());
 
-const PluginWebhookEncryptedContentV1Schema = z.object({
+const PluginWebhookEncryptedContentV1Schema = lazyZodSchema(() => z.object({
   t: z.literal('encrypted'),
   c: z.string().max(48_933_644),
 }).strict().superRefine((value, context) => {
@@ -77,19 +78,19 @@ const PluginWebhookEncryptedContentV1Schema = z.object({
   if (!isCanonicalPaddedBase64(value.c) || decodedLength === null || decodedLength > PLUGIN_WEBHOOK_MAX_ENCRYPTED_BUNDLE_BYTES_V1) {
     context.addIssue({ code: 'custom', path: ['c'], message: 'Encrypted content must be a bounded canonical padded base64 bundle' });
   }
-});
+}));
 
-export const StoredPluginWebhookDeliveryContentV1Schema = z.discriminatedUnion('t', [
+export const StoredPluginWebhookDeliveryContentV1Schema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.object({ t: z.literal('plain'), v: PluginWebhookDeliveryContentV1Schema }).strict(),
   PluginWebhookEncryptedContentV1Schema,
-]).readonly();
+]).readonly());
 
-const QualifiedWebhookContributionRefV1Schema = z.object({
+const QualifiedWebhookContributionRefV1Schema = lazyZodSchema(() => z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   localId: asProtocolZod(PluginContributionLocalIdSchema),
-}).strict();
+}).strict());
 
-export const PluginWebhookActionInputV1Schema = z.object({
+export const PluginWebhookActionInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   endpoint: z.object({
     webhookContribution: QualifiedWebhookContributionRefV1Schema,
@@ -119,63 +120,63 @@ export const PluginWebhookActionInputV1Schema = z.object({
   if (value.request.headers[0]?.value !== value.verified.eventType) {
     context.addIssue({ code: 'custom', path: ['verified', 'eventType'], message: 'Verified event type must match the selected GitHub event header' });
   }
-}).readonly();
+}).readonly());
 
-export const PluginWebhookActionResultV1Schema = z.discriminatedUnion('kind', [
+export const PluginWebhookActionResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('settled'), disposition: z.enum(['accepted', 'ignored']) }).strict(),
   z.object({ kind: z.literal('retry'), code: DIAGNOSTIC_CODE_SCHEMA }).strict(),
   z.object({ kind: z.literal('deadLetter'), code: DIAGNOSTIC_CODE_SCHEMA }).strict(),
-]).readonly();
+]).readonly());
 
-const PluginWebhookClaimTargetV1Schema = z.object({
+const PluginWebhookClaimTargetV1Schema = lazyZodSchema(() => z.object({
   materialization: PluginMachineMaterializationRefV1Schema,
   machineInstallationId: z.string().min(1).max(256).refine((value) => value === value.trim()),
-}).strict().readonly();
+}).strict().readonly());
 
 /**
  * Claim authority is the authenticated Account/machine installation pair. The
  * server selects the one currently eligible exact materialization target; only
  * renew/complete/fail address work by exact target.
  */
-export const PluginWebhookMachineInstallationV1Schema = z.object({
+export const PluginWebhookMachineInstallationV1Schema = lazyZodSchema(() => z.object({
   machineId: z.string().min(1).max(256).refine((value) => value === value.trim()),
   machineInstallationId: z.string().min(1).max(256).refine((value) => value === value.trim()),
-}).strict().readonly();
+}).strict().readonly());
 
 const PluginWebhookLeaseIdentityV1Shape = {
   leaseId: ASCII_TOKEN_128_SCHEMA,
   revision: z.number().int().nonnegative().safe(),
 };
 
-const PluginWebhookLeaseIdentityV1Schema = z.object(PluginWebhookLeaseIdentityV1Shape).strict().readonly();
+const PluginWebhookLeaseIdentityV1Schema = lazyZodSchema(() => z.object(PluginWebhookLeaseIdentityV1Shape).strict().readonly());
 
-const PluginWebhookClaimedEndpointV1Schema = z.object({
+const PluginWebhookClaimedEndpointV1Schema = lazyZodSchema(() => z.object({
   webhookEndpointId: PluginWebhookEndpointIdV1Schema,
   revision: ENDPOINT_REVISION_SCHEMA,
   webhookContribution: QualifiedWebhookContributionRefV1Schema,
   handlerActionLocalId: asProtocolZod(PluginContributionLocalIdSchema),
   sourceInstanceId: ASCII_TOKEN_128_SCHEMA,
-}).strict().readonly();
+}).strict().readonly());
 
 /**
  * Host-only proof that an Event operation originates inside the currently
  * claimed Webhook Action. This is never exposed through plugin Action input.
  */
-export const PluginWebhookInvocationReferenceV1Schema = z.object({
+export const PluginWebhookInvocationReferenceV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   deliveryId: ASCII_TOKEN_128_SCHEMA,
   endpoint: PluginWebhookClaimedEndpointV1Schema,
   target: PluginWebhookClaimTargetV1Schema,
   lease: PluginWebhookLeaseIdentityV1Schema,
-}).strict().readonly();
+}).strict().readonly());
 
-export const PluginWebhookClaimRequestV1Schema = z.object({
+export const PluginWebhookClaimRequestV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   policyVersion: z.literal(1),
   machine: PluginWebhookMachineInstallationV1Schema,
-}).strict().readonly();
+}).strict().readonly());
 
-export const PluginWebhookClaimResultV1Schema = z.discriminatedUnion('kind', [
+export const PluginWebhookClaimResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('none'),
     retryAfterMs: z.number().int().min(1).max(60_000),
@@ -200,16 +201,16 @@ export const PluginWebhookClaimResultV1Schema = z.discriminatedUnion('kind', [
       maxClaimUntilMs: z.number().int().nonnegative().safe(),
     }).strict().readonly(),
   }).strict(),
-]).readonly();
+]).readonly());
 
-export const PluginWebhookRenewRequestV1Schema = z.object({
+export const PluginWebhookRenewRequestV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   target: PluginWebhookClaimTargetV1Schema,
   lease: PluginWebhookLeaseIdentityV1Schema,
   transition: z.enum(['renew', 'executionStarted']),
-}).strict().readonly();
+}).strict().readonly());
 
-export const PluginWebhookRenewResultV1Schema = z.discriminatedUnion('kind', [
+export const PluginWebhookRenewResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('renewed'),
     revision: z.number().int().nonnegative().safe(),
@@ -217,7 +218,7 @@ export const PluginWebhookRenewResultV1Schema = z.discriminatedUnion('kind', [
   }).strict(),
   z.object({ kind: z.literal('leaseLost') }).strict(),
   z.object({ kind: z.literal('unavailable'), code: DIAGNOSTIC_CODE_SCHEMA }).strict(),
-]).readonly();
+]).readonly());
 
 const PluginWebhookSettleBaseV1Shape = {
   v: z.literal(1),
@@ -225,15 +226,15 @@ const PluginWebhookSettleBaseV1Shape = {
   lease: PluginWebhookLeaseIdentityV1Schema,
 };
 
-export const PluginWebhookCompleteRequestV1Schema = z.object({
+export const PluginWebhookCompleteRequestV1Schema = lazyZodSchema(() => z.object({
   ...PluginWebhookSettleBaseV1Shape,
   result: z.object({
     kind: z.literal('settled'),
     disposition: z.enum(['accepted', 'ignored']),
   }).strict().readonly(),
-}).strict().readonly();
+}).strict().readonly());
 
-export const PluginWebhookFailRequestV1Schema = z.object({
+export const PluginWebhookFailRequestV1Schema = lazyZodSchema(() => z.object({
   ...PluginWebhookSettleBaseV1Shape,
   result: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('retry'), code: DIAGNOSTIC_CODE_SCHEMA }).strict(),
@@ -250,13 +251,13 @@ export const PluginWebhookFailRequestV1Schema = z.object({
       message: 'Unresolved Automation diagnostics are valid only for a retry failure',
     });
   }
-}).readonly();
+}).readonly());
 
-export const PluginWebhookSettleResultV1Schema = z.discriminatedUnion('kind', [
+export const PluginWebhookSettleResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('settled'), state: z.enum(['queued', 'succeeded', 'dead_letter']) }).strict(),
   z.object({ kind: z.literal('leaseLost') }).strict(),
   z.object({ kind: z.literal('unavailable'), code: DIAGNOSTIC_CODE_SCHEMA }).strict(),
-]).readonly();
+]).readonly());
 
 export type PluginWebhookDeliveryContentV1 = z.infer<typeof PluginWebhookDeliveryContentV1Schema>;
 export type StoredPluginWebhookDeliveryContentV1 = z.infer<typeof StoredPluginWebhookDeliveryContentV1Schema>;

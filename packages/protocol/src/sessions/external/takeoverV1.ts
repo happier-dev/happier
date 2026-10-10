@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { SessionIdSchema } from '../idsV1.js';
@@ -6,48 +7,48 @@ import { HappierManagedSessionRuntimeModeV1Schema } from '../runtimeModeV1.js';
 import { LinkedExternalSessionQualifiedIdentityV1Schema } from './linkedSessionMetadata.js';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 
-export const ExternalSessionTakeoverStorageModeV1Schema = z.enum(['external-linked', 'persisted']);
+export const ExternalSessionTakeoverStorageModeV1Schema = lazyZodSchema(() => z.enum(['external-linked', 'persisted']));
 export type ExternalSessionTakeoverStorageModeV1 = z.infer<typeof ExternalSessionTakeoverStorageModeV1Schema>;
 
-export const ExternalSessionTakeoverInputV1Schema = z.object({
+export const ExternalSessionTakeoverInputV1Schema = lazyZodSchema(() => z.object({
   linkedSessionId: asProtocolZod(SessionIdSchema),
   machineId: z.string().trim().min(1).max(2_000).optional(),
   targetRuntimeMode: HappierManagedSessionRuntimeModeV1Schema,
   storageMode: ExternalSessionTakeoverStorageModeV1Schema,
-}).strict();
+}).strict());
 export type ExternalSessionTakeoverInputV1 = z.infer<typeof ExternalSessionTakeoverInputV1Schema>;
 
-export const ExternalSessionDestructiveQuiescenceStatusV1Schema = z.enum([
+export const ExternalSessionDestructiveQuiescenceStatusV1Schema = lazyZodSchema(() => z.enum([
   'verified_running',
   'verified_stopped',
   'unknown',
-]);
+]));
 export type ExternalSessionDestructiveQuiescenceStatusV1 = z.infer<
   typeof ExternalSessionDestructiveQuiescenceStatusV1Schema
 >;
 
-export const ExternalSessionDestructiveSourceIdentityV1Schema = z.object({
+export const ExternalSessionDestructiveSourceIdentityV1Schema = lazyZodSchema(() => z.object({
   machineId: z.string().trim().min(1).max(2_000),
   linkedSessionId: asProtocolZod(SessionIdSchema),
   remoteSessionId: NonBlankOpaqueIdentifierSchema.max(2_000),
   linkGeneration: z.string().trim().min(1).max(2_000),
   sourceKey: z.string().trim().min(1).max(10_000),
   qualifiedIdentity: LinkedExternalSessionQualifiedIdentityV1Schema,
-}).strict();
+}).strict());
 export type ExternalSessionDestructiveSourceIdentityV1 = z.infer<
   typeof ExternalSessionDestructiveSourceIdentityV1Schema
 >;
 
-export const ExternalSessionDestructiveProcessIdentityV1Schema = z.object({
+export const ExternalSessionDestructiveProcessIdentityV1Schema = lazyZodSchema(() => z.object({
   machineId: z.string().trim().min(1).max(2_000),
   pid: z.number().int().positive(),
   startedAtMs: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 export type ExternalSessionDestructiveProcessIdentityV1 = z.infer<
   typeof ExternalSessionDestructiveProcessIdentityV1Schema
 >;
 
-export const ExternalSessionDestructiveQuiescenceEvidenceV1Schema = z.object({
+export const ExternalSessionDestructiveQuiescenceEvidenceV1Schema = lazyZodSchema(() => z.object({
   kind: z.enum([
     'happier_managed_process_state',
     'agent_native_process_state',
@@ -57,7 +58,7 @@ export const ExternalSessionDestructiveQuiescenceEvidenceV1Schema = z.object({
   observedAtMs: z.number().int().nonnegative(),
   sourceIdentity: ExternalSessionDestructiveSourceIdentityV1Schema,
   processIdentity: ExternalSessionDestructiveProcessIdentityV1Schema,
-}).strict();
+}).strict());
 export type ExternalSessionDestructiveQuiescenceEvidenceV1 = z.infer<
   typeof ExternalSessionDestructiveQuiescenceEvidenceV1Schema
 >;
@@ -86,7 +87,7 @@ function hasSameDestructiveProcessIdentity(
     && left.startedAtMs === right.startedAtMs;
 }
 
-export const ExternalSessionDestructiveQuiescenceResultV1Schema = z.object({
+export const ExternalSessionDestructiveQuiescenceResultV1Schema = lazyZodSchema(() => z.object({
   status: ExternalSessionDestructiveQuiescenceStatusV1Schema,
   sourceIdentity: ExternalSessionDestructiveSourceIdentityV1Schema,
   processIdentity: ExternalSessionDestructiveProcessIdentityV1Schema,
@@ -120,7 +121,7 @@ export const ExternalSessionDestructiveQuiescenceResultV1Schema = z.object({
       message: 'Destructive quiescence evidence must match the exact process identity.',
     });
   }
-});
+}));
 export type ExternalSessionDestructiveQuiescenceResultV1 = z.infer<
   typeof ExternalSessionDestructiveQuiescenceResultV1Schema
 >;
@@ -131,7 +132,7 @@ export function doesExternalSessionDestructiveQuiescencePermitAdmissionV1(
   return result.status === 'verified_stopped';
 }
 
-const ExternalSessionTakeoverExistingErrorCodeV1Schema = z.enum([
+const ExternalSessionTakeoverExistingErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'machine_offline',
   'session_not_found',
   'invalid_external_source',
@@ -141,24 +142,24 @@ const ExternalSessionTakeoverExistingErrorCodeV1Schema = z.enum([
   'spawn_failed',
   'capability_unsupported',
   'upgrade_required',
-]);
+]));
 
-export const ExternalSessionTakeoverSafetyErrorCodeV1Schema = z.enum([
+export const ExternalSessionTakeoverSafetyErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'external_process_active',
   'external_process_unknown',
   'external_writer_conflict',
-]);
+]));
 export type ExternalSessionTakeoverSafetyErrorCodeV1 = z.infer<
   typeof ExternalSessionTakeoverSafetyErrorCodeV1Schema
 >;
 
-export const ExternalSessionTakeoverErrorCodeV1Schema = z.union([
+export const ExternalSessionTakeoverErrorCodeV1Schema = lazyZodSchema(() => z.union([
   ExternalSessionTakeoverExistingErrorCodeV1Schema,
   ExternalSessionTakeoverSafetyErrorCodeV1Schema,
-]);
+]));
 export type ExternalSessionTakeoverErrorCodeV1 = z.infer<typeof ExternalSessionTakeoverErrorCodeV1Schema>;
 
-export const ExternalSessionTakeoverFailureDetailsV1Schema = z.object({
+export const ExternalSessionTakeoverFailureDetailsV1Schema = lazyZodSchema(() => z.object({
   machineId: z.string().trim().min(1).max(2_000),
   observedAtMs: z.number().int().nonnegative(),
   evidenceKind: ExternalSessionDestructiveQuiescenceEvidenceV1Schema.shape.kind,
@@ -172,12 +173,12 @@ export const ExternalSessionTakeoverFailureDetailsV1Schema = z.object({
       message: 'Portable takeover process details must match the reported machine.',
     });
   }
-});
+}));
 export type ExternalSessionTakeoverFailureDetailsV1 = z.infer<
   typeof ExternalSessionTakeoverFailureDetailsV1Schema
 >;
 
-export const ExternalSessionTakeoverResultV1Schema = z.union([
+export const ExternalSessionTakeoverResultV1Schema = lazyZodSchema(() => z.union([
   z.object({
     ok: z.literal(true),
     sessionId: asProtocolZod(SessionIdSchema),
@@ -198,5 +199,5 @@ export const ExternalSessionTakeoverResultV1Schema = z.union([
     error: z.string().trim().min(1).max(2_000),
     trustedPid: z.number().int().positive().optional(),
   }).passthrough(),
-]);
+]));
 export type ExternalSessionTakeoverResultV1 = z.infer<typeof ExternalSessionTakeoverResultV1Schema>;

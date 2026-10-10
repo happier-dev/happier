@@ -1,19 +1,20 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
-const AuthMethodActionSchema = z.object({
+const AuthMethodActionSchema = lazyZodSchema(() => z.object({
   id: z.enum(['login', 'provision', 'connect']),
   enabled: z.boolean(),
   mode: z.enum(['keyed', 'keyless', 'either']),
-});
+}));
 
-const KeyChallengeCapabilitiesSchema = z.object({
+const KeyChallengeCapabilitiesSchema = lazyZodSchema(() => z.object({
   v2: z.boolean(),
-});
+}));
 const DEFAULT_KEY_CHALLENGE_CAPABILITIES = {
   v2: false,
 } as const;
 
-export const AuthMethodSchema = z.object({
+export const AuthMethodSchema = lazyZodSchema(() => z.object({
   id: z.string(),
   actions: z.array(AuthMethodActionSchema),
   ui: z
@@ -22,9 +23,9 @@ export const AuthMethodSchema = z.object({
       iconHint: z.string().nullable().optional(),
     })
     .optional(),
-});
+}));
 
-export const AuthCapabilitiesSchema = z.object({
+export const AuthCapabilitiesSchema = lazyZodSchema(() => z.object({
   methods: z.array(AuthMethodSchema).optional(),
   keyChallenge: KeyChallengeCapabilitiesSchema.optional().default(
     DEFAULT_KEY_CHALLENGE_CAPABILITIES,
@@ -113,7 +114,7 @@ export const AuthCapabilitiesSchema = z.object({
         emailDomainAllowlist: { enabled: false, count: 0 },
       },
     }),
-});
+}));
 
 export type AuthCapabilities = z.infer<typeof AuthCapabilitiesSchema>;
 

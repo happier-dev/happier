@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { SessionIndexedIdentifierMaxLengthV1 } from '../idsV1.js';
@@ -9,10 +10,10 @@ const NO_OUTER_WHITESPACE_PATTERN = /^(?!\s)[\s\S]*\S$(?![\s\S])/u;
  * because they are stored in the same indexed string columns. This is the
  * existing persistence bound, not a new product limit.
  */
-export const SessionDiscussionIdSchema = z.string()
+export const SessionDiscussionIdSchema = lazyZodSchema(() => z.string()
   .min(1)
   .max(SessionIndexedIdentifierMaxLengthV1)
-  .regex(NO_OUTER_WHITESPACE_PATTERN);
+  .regex(NO_OUTER_WHITESPACE_PATTERN));
 export type SessionDiscussionId = z.infer<typeof SessionDiscussionIdSchema>;
 
 export const SessionDiscussionMessageIdSchema = SessionDiscussionIdSchema;
@@ -35,19 +36,19 @@ function nfcString() {
   );
 }
 
-export const SessionDiscussionTitleV1Schema = z.object({
+export const SessionDiscussionTitleV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   title: nfcString().refine(
     (value) => value.trim().length > 0,
     'A discussion title must not be blank',
   ),
-}).strict();
+}).strict());
 export type SessionDiscussionTitleV1 = z.infer<typeof SessionDiscussionTitleV1Schema>;
 
-export const SessionDiscussionMessagePartV1Schema = z.discriminatedUnion('t', [
+export const SessionDiscussionMessagePartV1Schema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.object({ t: z.literal('text'), text: nfcString() }).strict(),
   z.object({ t: z.literal('mention'), accountId: SessionDiscussionAccountIdSchema }).strict(),
-]);
+]));
 export type SessionDiscussionMessagePartV1 = z.infer<typeof SessionDiscussionMessagePartV1Schema>;
 
 /**
@@ -56,7 +57,7 @@ export type SessionDiscussionMessagePartV1 = z.infer<typeof SessionDiscussionMes
  * two clients cannot produce different bytes for the same visible message and
  * then disagree about request equality.
  */
-export const SessionDiscussionMessageContentV1Schema = z.object({
+export const SessionDiscussionMessageContentV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   parts: z.array(SessionDiscussionMessagePartV1Schema).min(1),
 }).strict().superRefine((value, context) => {
@@ -87,7 +88,7 @@ export const SessionDiscussionMessageContentV1Schema = z.object({
       message: 'Discussion content must contain at least one mention or non-blank text run',
     });
   }
-});
+}));
 export type SessionDiscussionMessageContentV1 = z.infer<typeof SessionDiscussionMessageContentV1Schema>;
 
 /**
@@ -95,7 +96,7 @@ export type SessionDiscussionMessageContentV1 = z.infer<typeof SessionDiscussion
  * interactive-run launch and Send selected to Session. It carries no plaintext,
  * no access authority, and no instruction to fetch discussion context.
  */
-export const SessionDiscussionSelectionSourceV1Schema = z.object({
+export const SessionDiscussionSelectionSourceV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('session_discussion'),
   sessionId: SessionDiscussionIdSchema,
   discussionId: SessionDiscussionIdSchema,
@@ -104,7 +105,7 @@ export const SessionDiscussionSelectionSourceV1Schema = z.object({
     'Selected discussion message ids must be deduplicated',
   ),
   draftCorrelationId: SessionDiscussionIdSchema.optional(),
-}).strict();
+}).strict());
 export type SessionDiscussionSelectionSourceV1 = z.infer<typeof SessionDiscussionSelectionSourceV1Schema>;
 
 /**
@@ -112,11 +113,11 @@ export type SessionDiscussionSelectionSourceV1 = z.infer<typeof SessionDiscussio
  * on behalf of its authenticated execution Account. It is descriptive display
  * metadata: the authenticated principal, never this field, is authority.
  */
-export const SessionDiscussionProducerV1Schema = z.object({
+export const SessionDiscussionProducerV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   kind: z.literal('agent'),
   sessionId: SessionDiscussionIdSchema,
   runId: SessionDiscussionIdSchema.optional(),
   toolCallId: SessionDiscussionIdSchema.optional(),
-}).strict();
+}).strict());
 export type SessionDiscussionProducerV1 = z.infer<typeof SessionDiscussionProducerV1Schema>;

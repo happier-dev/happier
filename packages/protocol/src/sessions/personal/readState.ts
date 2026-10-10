@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -8,7 +9,7 @@ import { z } from 'zod';
  * this is a union instead of a nullable number — a nullable scalar forced every
  * consumer to re-decide what `null` meant, and they disagreed.
  */
-export const ViewerReadStateV1Schema = z.discriminatedUnion('state', [
+export const ViewerReadStateV1Schema = lazyZodSchema(() => z.discriminatedUnion('state', [
   z.object({ state: z.literal('not_started') }).strict(),
   z
     .object({
@@ -18,7 +19,7 @@ export const ViewerReadStateV1Schema = z.discriminatedUnion('state', [
       unreadSince: z.number().int().nonnegative().nullable(),
     })
     .strict(),
-]);
+]));
 export type ViewerReadStateV1 = z.infer<typeof ViewerReadStateV1Schema>;
 
 export const NOT_STARTED_VIEWER_READ_STATE_V1: ViewerReadStateV1 = Object.freeze({

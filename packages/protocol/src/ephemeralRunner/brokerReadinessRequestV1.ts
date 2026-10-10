@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { IrohEndpointIdV1Schema } from '../connectivity/iroh/endpointDescriptorV1.js';
@@ -10,7 +11,7 @@ import { ProviderAgentTargetKeySchema, ProviderModelIdSchema } from '../provider
 import { RunnerResourceIdSchema, RunnerSha256CommitmentSchema, RunnerSignatureSchema } from './activation.js';
 import { RunnerClaimV1Schema, verifyRunnerClaimV1 } from './endpoint.js';
 
-export const RunnerBrokerReadinessFactsV1Schema = z.object({
+export const RunnerBrokerReadinessFactsV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   kind: z.literal('provider_broker_readiness'),
   homeServerIdentityId: RunnerResourceIdSchema,
@@ -28,13 +29,13 @@ export const RunnerBrokerReadinessFactsV1Schema = z.object({
     machineId: RunnerResourceIdSchema,
     endpointId: IrohEndpointIdV1Schema,
   }).strict(),
-}).strict();
+}).strict());
 export type RunnerBrokerReadinessFactsV1 = z.infer<typeof RunnerBrokerReadinessFactsV1Schema>;
 
-export const RunnerBrokerReadinessRequestV1Schema = RunnerBrokerReadinessFactsV1Schema.extend({
+export const RunnerBrokerReadinessRequestV1Schema = lazyZodSchema(() => RunnerBrokerReadinessFactsV1Schema.extend({
   activationSignature: RunnerSignatureSchema,
   installationSignature: RunnerSignatureSchema,
-}).strict();
+}).strict());
 export type RunnerBrokerReadinessRequestV1 = z.infer<typeof RunnerBrokerReadinessRequestV1Schema>;
 
 export const IrohRunnerBrokerReadinessHandshakeV1Schema = RunnerBrokerReadinessRequestV1Schema;

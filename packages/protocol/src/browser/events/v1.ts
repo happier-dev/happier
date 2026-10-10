@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { BrowserAdapterCapabilitiesV1Schema } from '../adapters/v1.js';
@@ -10,23 +11,23 @@ import { BrowserPlatformV1Schema } from '../view/v1.js';
 import { BrowserViewTargetV1Schema } from '../target/v1.js';
 import { BrowserAutomationControllerStateV1Schema } from '../automation/v1.js';
 
-const BrowserEventBaseV1Schema = z
+const BrowserEventBaseV1Schema = lazyZodSchema(() => z
   .object({
     eventId: z.string().trim().min(1).max(256),
     browserSessionId: z.string().trim().min(1).max(256),
     occurredAt: z.number().int().nonnegative(),
   })
-  .strict();
+  .strict());
 
-const BrowserViewEventBaseV1Schema = BrowserEventBaseV1Schema.extend({
+const BrowserViewEventBaseV1Schema = lazyZodSchema(() => BrowserEventBaseV1Schema.extend({
   viewId: z.string().trim().min(1).max(256),
   navigationGeneration: z.number().int().nonnegative().optional(),
-});
+}));
 
-export const BrowserNavigationLoadingStateV1Schema = z.enum(['idle', 'loading', 'ready', 'failed']);
+export const BrowserNavigationLoadingStateV1Schema = lazyZodSchema(() => z.enum(['idle', 'loading', 'ready', 'failed']));
 export type BrowserNavigationLoadingStateV1 = z.infer<typeof BrowserNavigationLoadingStateV1Schema>;
 
-export const BrowserEventKindV1Schema = z.enum([
+export const BrowserEventKindV1Schema = lazyZodSchema(() => z.enum([
   'sessionCreated',
   'sessionClosed',
   'viewOpened',
@@ -48,20 +49,20 @@ export const BrowserEventKindV1Schema = z.enum([
   'externalOpenRequested',
   'viewCrashed',
   'adapterUnavailable',
-]);
+]));
 export type BrowserEventKindV1 = z.infer<typeof BrowserEventKindV1Schema>;
 
-export const BrowserSessionCreatedEventV1Schema = BrowserEventBaseV1Schema.extend({
+export const BrowserSessionCreatedEventV1Schema = lazyZodSchema(() => BrowserEventBaseV1Schema.extend({
   kind: z.literal('sessionCreated'),
   profileId: z.string().trim().min(1).max(256),
-});
+}));
 
-export const BrowserSessionClosedEventV1Schema = BrowserEventBaseV1Schema.extend({
+export const BrowserSessionClosedEventV1Schema = lazyZodSchema(() => BrowserEventBaseV1Schema.extend({
   kind: z.literal('sessionClosed'),
   reasonCode: z.string().trim().min(1).max(128).optional(),
-});
+}));
 
-export const BrowserViewOpenedEventV1Schema = BrowserViewEventBaseV1Schema.extend({
+export const BrowserViewOpenedEventV1Schema = lazyZodSchema(() => BrowserViewEventBaseV1Schema.extend({
   kind: z.literal('viewOpened'),
   target: BrowserViewTargetV1Schema,
   platform: BrowserPlatformV1Schema,
@@ -71,46 +72,46 @@ export const BrowserViewOpenedEventV1Schema = BrowserViewEventBaseV1Schema.exten
   engineKind: BrowserRenderEngineKindV1Schema.exclude(['unavailable']),
   adapterCapabilities: BrowserAdapterCapabilitiesV1Schema,
   openerViewId: z.string().trim().min(1).max(256).optional(),
-});
+}));
 
-export const BrowserViewClosedEventV1Schema = BrowserViewEventBaseV1Schema.extend({
+export const BrowserViewClosedEventV1Schema = lazyZodSchema(() => BrowserViewEventBaseV1Schema.extend({
   kind: z.literal('viewClosed'),
   reasonCode: z.string().trim().min(1).max(128).optional(),
-});
+}));
 
-export const BrowserViewFocusedEventV1Schema = BrowserViewEventBaseV1Schema.extend({
+export const BrowserViewFocusedEventV1Schema = lazyZodSchema(() => BrowserViewEventBaseV1Schema.extend({
   kind: z.literal('viewFocused'),
-});
+}));
 
-export const BrowserTargetChangedEventV1Schema = BrowserViewEventBaseV1Schema.extend({
+export const BrowserTargetChangedEventV1Schema = lazyZodSchema(() => BrowserViewEventBaseV1Schema.extend({
   kind: z.literal('targetChanged'),
   target: BrowserViewTargetV1Schema,
   currentUrl: BrowserHttpUrlV1Schema.optional(),
-});
+}));
 
-export const BrowserNavigationStartedEventV1Schema = BrowserViewEventBaseV1Schema.extend({
+export const BrowserNavigationStartedEventV1Schema = lazyZodSchema(() => BrowserViewEventBaseV1Schema.extend({
   kind: z.literal('navigationStarted'),
   pendingUrl: BrowserHttpUrlV1Schema,
-});
+}));
 
-export const BrowserNavigationCommittedEventV1Schema = BrowserViewEventBaseV1Schema.extend({
+export const BrowserNavigationCommittedEventV1Schema = lazyZodSchema(() => BrowserViewEventBaseV1Schema.extend({
   kind: z.literal('navigationCommitted'),
   currentUrl: BrowserHttpUrlV1Schema,
   securityOrigin: BrowserHttpOriginV1Schema.optional(),
-});
+}));
 
-export const BrowserNavigationFinishedEventV1Schema = BrowserViewEventBaseV1Schema.extend({
+export const BrowserNavigationFinishedEventV1Schema = lazyZodSchema(() => BrowserViewEventBaseV1Schema.extend({
   kind: z.literal('navigationFinished'),
   currentUrl: BrowserHttpUrlV1Schema.optional(),
-});
+}));
 
-export const BrowserNavigationFailedEventV1Schema = BrowserViewEventBaseV1Schema.extend({
+export const BrowserNavigationFailedEventV1Schema = lazyZodSchema(() => BrowserViewEventBaseV1Schema.extend({
   kind: z.literal('navigationFailed'),
   failedUrl: BrowserHttpUrlV1Schema.optional(),
   errorCode: z.string().trim().min(1).max(128),
-});
+}));
 
-export const BrowserNavigationStateChangedEventV1Schema = BrowserViewEventBaseV1Schema.extend({
+export const BrowserNavigationStateChangedEventV1Schema = lazyZodSchema(() => BrowserViewEventBaseV1Schema.extend({
   kind: z.literal('navigationStateChanged'),
   currentUrl: BrowserHttpUrlV1Schema.optional(),
   pendingUrl: BrowserHttpUrlV1Schema.optional(),
@@ -122,65 +123,65 @@ export const BrowserNavigationStateChangedEventV1Schema = BrowserViewEventBaseV1
   canGoForward: z.boolean(),
   securityOrigin: BrowserHttpOriginV1Schema.optional(),
   lastError: z.string().trim().min(1).max(128).optional(),
-});
+}));
 
-export const BrowserTitleChangedEventV1Schema = BrowserViewEventBaseV1Schema.extend({
+export const BrowserTitleChangedEventV1Schema = lazyZodSchema(() => BrowserViewEventBaseV1Schema.extend({
   kind: z.literal('titleChanged'),
   title: z.string().trim().max(512),
-});
+}));
 
-export const BrowserControllerChangedEventV1Schema = BrowserViewEventBaseV1Schema.extend({
+export const BrowserControllerChangedEventV1Schema = lazyZodSchema(() => BrowserViewEventBaseV1Schema.extend({
   kind: z.literal('controllerChanged'),
   state: BrowserAutomationControllerStateV1Schema,
-});
+}));
 
-export const BrowserFaviconChangedEventV1Schema = BrowserViewEventBaseV1Schema.extend({
+export const BrowserFaviconChangedEventV1Schema = lazyZodSchema(() => BrowserViewEventBaseV1Schema.extend({
   kind: z.literal('faviconChanged'),
   faviconUrl: BrowserHttpUrlV1Schema.optional(),
-});
+}));
 
-export const BrowserLoadingProgressChangedEventV1Schema = BrowserViewEventBaseV1Schema.extend({
+export const BrowserLoadingProgressChangedEventV1Schema = lazyZodSchema(() => BrowserViewEventBaseV1Schema.extend({
   kind: z.literal('loadingProgressChanged'),
   loadingProgress: z.number().min(0).max(1),
-});
+}));
 
-export const BrowserPermissionRequestedEventV1Schema = BrowserViewEventBaseV1Schema.extend({
+export const BrowserPermissionRequestedEventV1Schema = lazyZodSchema(() => BrowserViewEventBaseV1Schema.extend({
   kind: z.literal('permissionRequested'),
   permissionRequestId: z.string().trim().min(1).max(256),
   permissionKind: z.string().trim().min(1).max(128),
   origin: BrowserHttpOriginV1Schema.optional(),
-});
+}));
 
-export const BrowserDownloadRequestedEventV1Schema = BrowserViewEventBaseV1Schema.extend({
+export const BrowserDownloadRequestedEventV1Schema = lazyZodSchema(() => BrowserViewEventBaseV1Schema.extend({
   kind: z.literal('downloadRequested'),
   downloadRequestId: z.string().trim().min(1).max(256),
   url: BrowserHttpUrlV1Schema,
-});
+}));
 
-export const BrowserPopupRequestedEventV1Schema = BrowserViewEventBaseV1Schema.extend({
+export const BrowserPopupRequestedEventV1Schema = lazyZodSchema(() => BrowserViewEventBaseV1Schema.extend({
   kind: z.literal('popupRequested'),
   popupRequestId: z.string().trim().min(1).max(256),
   url: BrowserHttpUrlV1Schema,
-});
+}));
 
-export const BrowserExternalOpenRequestedEventV1Schema = BrowserViewEventBaseV1Schema.extend({
+export const BrowserExternalOpenRequestedEventV1Schema = lazyZodSchema(() => BrowserViewEventBaseV1Schema.extend({
   kind: z.literal('externalOpenRequested'),
   url: z.string().trim().min(1).max(4096),
-});
+}));
 
-export const BrowserViewCrashedEventV1Schema = BrowserViewEventBaseV1Schema.extend({
+export const BrowserViewCrashedEventV1Schema = lazyZodSchema(() => BrowserViewEventBaseV1Schema.extend({
   kind: z.literal('viewCrashed'),
   reasonCode: z.string().trim().min(1).max(128),
   autoReloadAttempted: z.boolean().optional().default(false),
-});
+}));
 
-export const BrowserAdapterUnavailableEventV1Schema = BrowserViewEventBaseV1Schema.extend({
+export const BrowserAdapterUnavailableEventV1Schema = lazyZodSchema(() => BrowserViewEventBaseV1Schema.extend({
   kind: z.literal('adapterUnavailable'),
   adapterKind: BrowserSemanticAdapterKindV1Schema,
   reasonCode: z.string().trim().min(1).max(128),
-});
+}));
 
-export const BrowserEventV1Schema = z.discriminatedUnion('kind', [
+export const BrowserEventV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   BrowserSessionCreatedEventV1Schema,
   BrowserSessionClosedEventV1Schema,
   BrowserViewOpenedEventV1Schema,
@@ -202,8 +203,8 @@ export const BrowserEventV1Schema = z.discriminatedUnion('kind', [
   BrowserExternalOpenRequestedEventV1Schema,
   BrowserViewCrashedEventV1Schema,
   BrowserAdapterUnavailableEventV1Schema,
-]);
+]));
 export type BrowserEventV1 = z.infer<typeof BrowserEventV1Schema>;
 
 /** One metadata observation includes both authorities so stream startup can retain just the latest. */
-export const BrowserEventBatchV1Schema = z.object({ v: z.literal(1), events: z.array(BrowserEventV1Schema) }).strict();
+export const BrowserEventBatchV1Schema = lazyZodSchema(() => z.object({ v: z.literal(1), events: z.array(BrowserEventV1Schema) }).strict());

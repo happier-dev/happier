@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex } from '@noble/hashes/utils';
@@ -37,16 +38,16 @@ export type ScmComparisonSource = ProtocolSchemaOutput<typeof ScmComparisonSourc
 export const ScmComparisonSourceSchema: z.ZodType<ScmComparisonSource, ProtocolSchemaInput<typeof ScmComparisonSourceProtocolSchema>> = asProtocolZod(ScmComparisonSourceProtocolSchema);
 
 const range = z.object({ startLine: z.number().int().nonnegative(), lineCount: z.number().int().nonnegative() }).strict();
-export const ScmChangeOccurrenceSchema = z.object({
+export const ScmChangeOccurrenceSchema = lazyZodSchema(() => z.object({
   id: identity, alias: identity, path: identity, previousPath: identity.optional(),
   beforeBlobId: identity.optional(), afterBlobId: identity.optional(),
   before: range, after: range, position: z.number().int().nonnegative(),
   layer: z.enum(['staged', 'unstaged', 'untracked', 'combined']).optional(),
   evidence: textEvidence.optional(),
-}).strict();
+}).strict());
 export type ScmChangeOccurrence = z.infer<typeof ScmChangeOccurrenceSchema>;
 
-export const ScmComparisonFileSchema = z.object({
+export const ScmComparisonFileSchema = lazyZodSchema(() => z.object({
   path: identity, previousPath: identity.optional(), changeKind: identity,
   beforeBlobId: identity.optional(), afterBlobId: identity.optional(),
   binary: z.boolean().nullable(), generated: z.boolean(), lockfile: z.boolean(),
@@ -55,10 +56,10 @@ export const ScmComparisonFileSchema = z.object({
     z.object({ state: z.literal('unavailable'), reason: identity, unifiedDiff: z.string().optional() }).strict(),
   ]),
   occurrences: z.array(ScmChangeOccurrenceSchema),
-}).strict();
+}).strict());
 export type ScmComparisonFile = z.infer<typeof ScmComparisonFileSchema>;
 
-export const ScmComparisonSchema = z.object({
+export const ScmComparisonSchema = lazyZodSchema(() => z.object({
   id: identity, source: ScmComparisonSourceSchema,
   repository: z.object({ rootPath: identity }).strict(),
   endpoints: z.object({ before: identity.optional(), after: identity.optional() }).strict(),
@@ -86,7 +87,7 @@ export const ScmComparisonSchema = z.object({
   if (value.inventory.state !== 'complete' && value.inventory.reasons.length === 0) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['inventory', 'reasons'], message: 'Missing source coverage requires an explicit reason' });
   }
-});
+}));
 export type ScmComparison = z.infer<typeof ScmComparisonSchema>;
 
 const GENERATED_PATH = /(?:^|\/)generated(?:\/|\.)|\.generated\./i;

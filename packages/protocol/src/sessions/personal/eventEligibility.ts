@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -13,7 +14,7 @@ import {
  * this owner only decides recipient candidacy (L09B-R6/R7). Device policy,
  * quiet hours, previews, sound and channel remain the existing delivery owner's.
  */
-export const SessionPersonalEventKindV1Schema = z.enum([
+export const SessionPersonalEventKindV1Schema = lazyZodSchema(() => z.enum([
   'assigned',
   'directly_shared',
   'discussion_mention',
@@ -25,10 +26,10 @@ export const SessionPersonalEventKindV1Schema = z.enum([
   'human_message',
   'message',
   'source_unavailable',
-]);
+]));
 export type SessionPersonalEventKindV1 = z.infer<typeof SessionPersonalEventKindV1Schema>;
 
-export const SessionPersonalEventEligibilityReasonV1Schema = z.enum([
+export const SessionPersonalEventEligibilityReasonV1Schema = lazyZodSchema(() => z.enum([
   'assignment_target',
   'direct_share_target',
   'discussion_mention_target',
@@ -36,28 +37,28 @@ export const SessionPersonalEventEligibilityReasonV1Schema = z.enum([
   'targeted_capable_action',
   'follow_important',
   'follow_all_messages',
-]);
+]));
 export type SessionPersonalEventEligibilityReasonV1 = z.infer<
   typeof SessionPersonalEventEligibilityReasonV1Schema
 >;
 
-export const SessionPersonalEventEligibilityV1Schema = z
+export const SessionPersonalEventEligibilityV1Schema = lazyZodSchema(() => z
   .object({
     eligible: z.boolean(),
     reason: SessionPersonalEventEligibilityReasonV1Schema.optional(),
   })
-  .strict();
+  .strict());
 export type SessionPersonalEventEligibilityV1 = Readonly<{
   eligible: boolean;
   reason?: SessionPersonalEventEligibilityReasonV1;
 }>;
 
-export const SessionEffectiveNotificationV1Schema = z
+export const SessionEffectiveNotificationV1Schema = lazyZodSchema(() => z
   .object({
     level: SessionFollowNotificationLevelSchema,
     source: z.enum(['preference', 'owner', 'none']),
   })
-  .strict();
+  .strict());
 export type SessionEffectiveNotificationV1 = Readonly<{
   level: SessionFollowNotificationLevel;
   source: 'preference' | 'owner' | 'none';

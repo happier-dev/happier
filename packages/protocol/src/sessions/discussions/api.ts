@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -49,7 +50,7 @@ export const SESSION_DISCUSSION_ERROR_CODES_V1 = [
   'session_discussion_read_cursor_invalid',
 ] as const;
 
-export const SessionDiscussionErrorCodeV1Schema = z.enum(SESSION_DISCUSSION_ERROR_CODES_V1);
+export const SessionDiscussionErrorCodeV1Schema = lazyZodSchema(() => z.enum(SESSION_DISCUSSION_ERROR_CODES_V1));
 export type SessionDiscussionErrorCodeV1 = z.infer<typeof SessionDiscussionErrorCodeV1Schema>;
 
 /**
@@ -59,12 +60,12 @@ export type SessionDiscussionErrorCodeV1 = z.infer<typeof SessionDiscussionError
  */
 export const SESSION_DISCUSSION_NOT_TRACKED_CODE_V1 = 'session_not_tracked' as const;
 
-export const SessionDiscussionErrorResponseV1Schema = z.object({
+export const SessionDiscussionErrorResponseV1Schema = lazyZodSchema(() => z.object({
   error: z.union([
     SessionDiscussionErrorCodeV1Schema,
     z.literal(SESSION_DISCUSSION_NOT_TRACKED_CODE_V1),
   ]),
-}).strict();
+}).strict());
 export type SessionDiscussionErrorResponseV1 = z.infer<typeof SessionDiscussionErrorResponseV1Schema>;
 
 /**
@@ -81,23 +82,23 @@ export const SESSION_DISCUSSION_HTTP_PATHS_V1 = Object.freeze({
   read: '/v2/sessions/:sessionId/discussions/:discussionId/read',
 } as const);
 
-export const SessionDiscussionListResponseV1Schema = z.object({
+export const SessionDiscussionListResponseV1Schema = lazyZodSchema(() => z.object({
   discussions: z.array(SessionDiscussionSummaryV1Schema),
   nextCursor: z.string().nullable(),
-}).strict();
+}).strict());
 export type SessionDiscussionListResponseV1 = z.infer<typeof SessionDiscussionListResponseV1Schema>;
 
-export const SessionDiscussionMessagesResponseV1Schema = z.object({
+export const SessionDiscussionMessagesResponseV1Schema = lazyZodSchema(() => z.object({
   messages: z.array(SessionDiscussionMessageV1Schema),
   hasMoreOlder: z.boolean(),
   messageSeq: z.number().int().min(0),
-}).strict();
+}).strict());
 export type SessionDiscussionMessagesResponseV1 = z.infer<typeof SessionDiscussionMessagesResponseV1Schema>;
 
-const MentionedAccountIdsSchema = z.array(SessionDiscussionAccountIdSchema).refine(
+const MentionedAccountIdsSchema = lazyZodSchema(() => z.array(SessionDiscussionAccountIdSchema).refine(
   (value) => new Set(value).size === value.length,
   'Mentioned Account ids must be deduplicated',
-);
+));
 
 /**
  * One sealed message write. Encrypted content must carry a client-derived
@@ -105,7 +106,7 @@ const MentionedAccountIdsSchema = z.array(SessionDiscussionAccountIdSchema).refi
  * plaintext. Plain content must not carry client-asserted equality at all —
  * the server derives that digest from the normalized semantic request.
  */
-export const SessionDiscussionMessageWriteV1Schema = z.object({
+export const SessionDiscussionMessageWriteV1Schema = lazyZodSchema(() => z.object({
   localId: SessionDiscussionLocalIdSchema,
   requestEqualityEvidenceV1: SessionMutationEqualityEvidenceV1Schema.optional(),
   content: StrictSessionStoredMessageContentEnvelopeSchema,
@@ -117,7 +118,7 @@ export const SessionDiscussionMessageWriteV1Schema = z.object({
     context,
     ['requestEqualityEvidenceV1'],
   );
-});
+}));
 export type SessionDiscussionMessageWriteV1 = z.infer<typeof SessionDiscussionMessageWriteV1Schema>;
 
 function refineEqualityEvidenceForEnvelope(
@@ -145,7 +146,7 @@ function refineEqualityEvidenceForEnvelope(
   }
 }
 
-export const SessionDiscussionCreateRequestV1Schema = z.object({
+export const SessionDiscussionCreateRequestV1Schema = lazyZodSchema(() => z.object({
   creationLocalId: SessionDiscussionLocalIdSchema,
   creationEqualityEvidenceV1: SessionMutationEqualityEvidenceV1Schema.optional(),
   titleContent: StrictSessionStoredMessageContentEnvelopeSchema,
@@ -171,7 +172,7 @@ export const SessionDiscussionCreateRequestV1Schema = z.object({
       message: 'A discussion title and its first message must use the same Session storage mode',
     });
   }
-});
+}));
 export type SessionDiscussionCreateRequestV1 = z.infer<typeof SessionDiscussionCreateRequestV1Schema>;
 
 export const SessionDiscussionPostRequestV1Schema = SessionDiscussionMessageWriteV1Schema;
@@ -186,19 +187,19 @@ export type SessionDiscussionPostRequestV1 = z.infer<typeof SessionDiscussionPos
  */
 export const SESSION_DISCUSSION_AGENT_POST_EVENT_V1 = 'session-discussion-agent-post-v1' as const;
 
-export const SessionDiscussionAgentPostRequestV1Schema = z.object({
+export const SessionDiscussionAgentPostRequestV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   sessionId: SessionDiscussionIdSchema,
   discussionId: SessionDiscussionIdSchema,
   request: SessionDiscussionPostRequestV1Schema,
   runId: SessionDiscussionIdSchema.optional(),
   toolCallId: SessionDiscussionIdSchema.optional(),
-}).strict();
+}).strict());
 export type SessionDiscussionAgentPostRequestV1 = z.infer<typeof SessionDiscussionAgentPostRequestV1Schema>;
 
-export const SessionDiscussionRenameRequestV1Schema = z.object({
+export const SessionDiscussionRenameRequestV1Schema = lazyZodSchema(() => z.object({
   titleContent: StrictSessionStoredMessageContentEnvelopeSchema,
-}).strict();
+}).strict());
 export type SessionDiscussionRenameRequestV1 = z.infer<typeof SessionDiscussionRenameRequestV1Schema>;
 
 type SessionDiscussionE2eeEqualityEvidenceV1 = Extract<
@@ -287,29 +288,29 @@ export function buildSessionDiscussionMutationRequestBodyV1(
   });
 }
 
-export const SessionDiscussionReadRequestV1Schema = z.object({
+export const SessionDiscussionReadRequestV1Schema = lazyZodSchema(() => z.object({
   lastReadSeq: z.number().int().min(0),
-}).strict();
+}).strict());
 export type SessionDiscussionReadRequestV1 = z.infer<typeof SessionDiscussionReadRequestV1Schema>;
 
-export const SessionDiscussionDetailsResponseV1Schema = z.object({
+export const SessionDiscussionDetailsResponseV1Schema = lazyZodSchema(() => z.object({
   discussion: SessionDiscussionSummaryV1Schema,
-}).strict();
+}).strict());
 export type SessionDiscussionDetailsResponseV1 = z.infer<typeof SessionDiscussionDetailsResponseV1Schema>;
 
-export const SessionDiscussionCreateResponseV1Schema = z.object({
+export const SessionDiscussionCreateResponseV1Schema = lazyZodSchema(() => z.object({
   discussion: SessionDiscussionSummaryV1Schema,
   firstMessage: SessionDiscussionMessageV1Schema,
-}).strict();
+}).strict());
 export type SessionDiscussionCreateResponseV1 = z.infer<typeof SessionDiscussionCreateResponseV1Schema>;
 
-export const SessionDiscussionPostResponseV1Schema = z.object({
+export const SessionDiscussionPostResponseV1Schema = lazyZodSchema(() => z.object({
   message: SessionDiscussionMessageV1Schema,
   messageSeq: z.number().int().min(1),
-}).strict();
+}).strict());
 export type SessionDiscussionPostResponseV1 = z.infer<typeof SessionDiscussionPostResponseV1Schema>;
 
-export const SessionDiscussionAgentPostResponseV1Schema = z.discriminatedUnion('ok', [
+export const SessionDiscussionAgentPostResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),
     v: z.literal(1),
@@ -320,7 +321,7 @@ export const SessionDiscussionAgentPostResponseV1Schema = z.discriminatedUnion('
     v: z.literal(1),
     error: SessionDiscussionErrorCodeV1Schema,
   }).strict(),
-]);
+]));
 export type SessionDiscussionAgentPostResponseV1 = z.infer<typeof SessionDiscussionAgentPostResponseV1Schema>;
 
 export const SessionDiscussionReadResponseV1Schema = SessionDiscussionReadCursorV1Schema;
@@ -349,11 +350,11 @@ export function isSessionDiscussionRequestWithinTransportBudgetV1(body: unknown)
  */
 export const SESSION_DISCUSSION_REQUEST_MAX_UTF8_BYTES_V1 = SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1;
 
-export const SessionDiscussionRouteParamsV1Schema = z.object({
+export const SessionDiscussionRouteParamsV1Schema = lazyZodSchema(() => z.object({
   sessionId: SessionDiscussionIdSchema,
-}).strict();
+}).strict());
 
-export const SessionDiscussionRouteDiscussionParamsV1Schema = z.object({
+export const SessionDiscussionRouteDiscussionParamsV1Schema = lazyZodSchema(() => z.object({
   sessionId: SessionDiscussionIdSchema,
   discussionId: SessionDiscussionIdSchema,
-}).strict();
+}).strict());

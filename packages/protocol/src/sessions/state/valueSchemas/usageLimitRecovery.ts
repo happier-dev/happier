@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -10,54 +11,54 @@ import { ConnectedAccountServiceKeyIngressSchema } from '../../../connect/connec
 export const SESSION_USAGE_LIMIT_RECOVERY_STATE_FIELD_ID = 'runtime.usageLimitRecovery' as const;
 export const SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY = 'sessionUsageLimitRecoveryV1' as const;
 
-const SessionUsageLimitRecoveryNativeAuthSelectionV1Schema = z
+const SessionUsageLimitRecoveryNativeAuthSelectionV1Schema = lazyZodSchema(() => z
   .object({
     kind: z.literal('native'),
     serviceId: ConnectedAccountServiceKeyIngressSchema.nullable().optional(),
   })
-  .strict();
+  .strict());
 
-const SessionUsageLimitRecoveryProfileAuthSelectionV1Schema = z
+const SessionUsageLimitRecoveryProfileAuthSelectionV1Schema = lazyZodSchema(() => z
   .object({
     kind: z.literal('profile'),
     serviceId: ConnectedAccountServiceKeyIngressSchema,
     profileId: ConnectedServiceProfileIdSchema,
   })
-  .strict();
+  .strict());
 
-const SessionUsageLimitRecoveryGroupAuthSelectionV1Schema = z
+const SessionUsageLimitRecoveryGroupAuthSelectionV1Schema = lazyZodSchema(() => z
   .object({
     kind: z.literal('group'),
     serviceId: ConnectedAccountServiceKeyIngressSchema,
     groupId: ConnectedServiceAuthGroupIdSchema,
     profileId: ConnectedServiceProfileIdSchema.nullable(),
   })
-  .strict();
+  .strict());
 
-export const SessionUsageLimitRecoveryAuthSelectionV1Schema = z.discriminatedUnion('kind', [
+export const SessionUsageLimitRecoveryAuthSelectionV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   SessionUsageLimitRecoveryNativeAuthSelectionV1Schema,
   SessionUsageLimitRecoveryProfileAuthSelectionV1Schema,
   SessionUsageLimitRecoveryGroupAuthSelectionV1Schema,
-]);
+]));
 export type SessionUsageLimitRecoveryAuthSelectionV1 = z.infer<
   typeof SessionUsageLimitRecoveryAuthSelectionV1Schema
 >;
 
-export const SessionUsageLimitRecoveryStatusV1Schema = z.enum([
+export const SessionUsageLimitRecoveryStatusV1Schema = lazyZodSchema(() => z.enum([
   'armed',
   'waiting',
   'checking',
   'paused',
   'exhausted',
   'cancelled',
-]);
+]));
 export type SessionUsageLimitRecoveryStatusV1 = z.infer<typeof SessionUsageLimitRecoveryStatusV1Schema>;
 
-export const SessionUsageLimitRecoveryResumePromptModeV1Schema = z.enum(['standard', 'off', 'custom']);
+export const SessionUsageLimitRecoveryResumePromptModeV1Schema = lazyZodSchema(() => z.enum(['standard', 'off', 'custom']));
 export type SessionUsageLimitRecoveryResumePromptModeV1 =
   z.infer<typeof SessionUsageLimitRecoveryResumePromptModeV1Schema>;
 
-export const SessionUsageLimitRecoveryV1Schema = z
+export const SessionUsageLimitRecoveryV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     status: SessionUsageLimitRecoveryStatusV1Schema,
@@ -73,7 +74,7 @@ export const SessionUsageLimitRecoveryV1Schema = z
     selectedAuth: SessionUsageLimitRecoveryAuthSelectionV1Schema,
     recoveryCredits: ConnectedServiceQuotaRecoveryCreditsV1Schema.optional(),
   })
-  .strict();
+  .strict());
 export type SessionUsageLimitRecoveryV1 = z.infer<typeof SessionUsageLimitRecoveryV1Schema>;
 
 export const SessionStateUsageLimitRecoveryValueSchema = SessionUsageLimitRecoveryV1Schema;

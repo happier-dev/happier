@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { hmac } from '@noble/hashes/hmac';
 import { sha256 } from '@noble/hashes/sha2';
@@ -79,7 +80,7 @@ const HomeQrInviteV2CommonShape = {
   }).optional(),
 } as const;
 
-const HomeQrRequesterPublicKeyBase64UrlV2Schema = z.string()
+const HomeQrRequesterPublicKeyBase64UrlV2Schema = lazyZodSchema(() => z.string()
   .regex(/^[A-Za-z0-9_-]+$/u)
   .max(64)
   .superRefine((value, context) => {
@@ -93,9 +94,9 @@ const HomeQrRequesterPublicKeyBase64UrlV2Schema = z.string()
     } catch {
       context.addIssue({ code: z.ZodIssueCode.custom, message: 'Invalid requester public key' });
     }
-  });
+  }));
 
-export const HomeQrInviteV2Schema = z.discriminatedUnion('direction', [
+export const HomeQrInviteV2Schema = lazyZodSchema(() => z.discriminatedUnion('direction', [
   z.object({
     ...HomeQrInviteV2CommonShape,
     direction: z.literal('trusted_home_displays'),
@@ -121,7 +122,7 @@ export const HomeQrInviteV2Schema = z.discriminatedUnion('direction', [
   } else if (value.expiresAtMs - value.issuedAtMs > HOME_QR_INVITE_V2_MAX_TTL_MS) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'Invite TTL exceeds the pairing maximum' });
   }
-});
+}));
 export type HomeQrInviteV2 = z.infer<typeof HomeQrInviteV2Schema>;
 
 export type HomeQrBindingContextV2 = Readonly<{
@@ -136,14 +137,14 @@ export type HomeQrBindingParamsV2 = Readonly<HomeQrBindingContextV2 & {
   qrSecret: Uint8Array;
 }>;
 
-const CanonicalHomeQrPairingExpiryV2Schema = z.string().superRefine((value, context) => {
+const CanonicalHomeQrPairingExpiryV2Schema = lazyZodSchema(() => z.string().superRefine((value, context) => {
   const timestamp = Date.parse(value);
   if (!Number.isSafeInteger(timestamp) || new Date(timestamp).toISOString() !== value) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'Pairing expiry must be a canonical ISO timestamp' });
   }
-});
+}));
 
-const CanonicalHomeQrRequesterPublicKeyV2Schema = z.string().superRefine((value, context) => {
+const CanonicalHomeQrRequesterPublicKeyV2Schema = lazyZodSchema(() => z.string().superRefine((value, context) => {
   try {
     const bytes = decodeBase64(value, 'base64');
     if (bytes.length !== HOME_QR_REQUESTER_PUBLIC_KEY_V2_BYTES || encodeBase64(bytes, 'base64') !== value) {
@@ -152,9 +153,9 @@ const CanonicalHomeQrRequesterPublicKeyV2Schema = z.string().superRefine((value,
   } catch {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'Invalid requester public key' });
   }
-});
+}));
 
-const CanonicalHomeQrBindingProofV2Schema = z.string().superRefine((value, context) => {
+const CanonicalHomeQrBindingProofV2Schema = lazyZodSchema(() => z.string().superRefine((value, context) => {
   if (!/^[A-Za-z0-9_-]+$/u.test(value)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'Invalid binding proof' });
     return;
@@ -167,15 +168,15 @@ const CanonicalHomeQrBindingProofV2Schema = z.string().superRefine((value, conte
   } catch {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'Invalid binding proof' });
   }
-});
+}));
 
-const HomeQrPairingStatusPairIdV2Schema = z.string().min(1).max(128).superRefine((value, context) => {
+const HomeQrPairingStatusPairIdV2Schema = lazyZodSchema(() => z.string().min(1).max(128).superRefine((value, context) => {
   if (UTF8_ENCODER.encode(value).byteLength > 128) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'Pair ID exceeds its UTF-8 byte limit' });
   }
-});
+}));
 
-export const HomeQrPairingStatusV2Schema = z.discriminatedUnion('state', [
+export const HomeQrPairingStatusV2Schema = lazyZodSchema(() => z.discriminatedUnion('state', [
   z.object({
     state: z.literal('pending'),
     pairId: HomeQrPairingStatusPairIdV2Schema,
@@ -190,7 +191,7 @@ export const HomeQrPairingStatusV2Schema = z.discriminatedUnion('state', [
     bindingProof: CanonicalHomeQrBindingProofV2Schema,
     homeServerIdentityId: z.string().min(1).max(256),
   }).strict(),
-]);
+]));
 export type HomeQrPairingStatusV2 = z.infer<typeof HomeQrPairingStatusV2Schema>;
 
 /** Strict normalizer for the existing direct-Home pairing status response. */

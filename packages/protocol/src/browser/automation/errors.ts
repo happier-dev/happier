@@ -1,6 +1,7 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
-export const BrowserAutomationErrorCodeV1Schema = z.enum([
+export const BrowserAutomationErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   /**
    * A mutating automation action is already in flight for this view. This is the single-flight
    * denial and the only concurrency arbitration in the corridor; it replaced the `lease_*` codes
@@ -24,5 +25,5 @@ export const BrowserAutomationErrorCodeV1Schema = z.enum([
   'unsupported_action',
   'user_canceled',
   'view_closed',
-]);
+]));
 export type BrowserAutomationErrorCodeV1 = z.infer<typeof BrowserAutomationErrorCodeV1Schema>;

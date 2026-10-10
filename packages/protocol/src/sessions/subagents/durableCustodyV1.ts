@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 import { z } from 'zod';
@@ -19,18 +20,18 @@ export const MAX_SESSION_SUBAGENT_CUSTODY_RECEIPTS = 4_096;
 export const MAX_SESSION_SUBAGENT_CUSTODY_RETIRED_GENERATIONS = 4_096;
 export const MAX_SESSION_SUBAGENT_CUSTODY_ENCRYPTED_CONTENT_CODE_UNITS = 1_500_000;
 export const SESSION_SUBAGENT_CUSTODY_RECEIPT_RETENTION_MS = 24 * 60 * 60 * 1_000;
-const IndexedKeySchema = z.string().min(1).max(191).refine((value) => value.trim().length > 0, 'must not be blank');
-const CustodyKeySchema = z.string().regex(/^sha256:[a-f0-9]{64}$/u);
-const PublicSubagentIdSchema = z.string().min(1).max(4_096).refine((value) => value.trim().length > 0, 'must not be blank');
-const PublicGroupIdSchema = z.string().max(4_096);
-const RevisionSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-const SessionSubagentCustodyContentFingerprintV1Schema = z.union([
+const IndexedKeySchema = lazyZodSchema(() => z.string().min(1).max(191).refine((value) => value.trim().length > 0, 'must not be blank'));
+const CustodyKeySchema = lazyZodSchema(() => z.string().regex(/^sha256:[a-f0-9]{64}$/u));
+const PublicSubagentIdSchema = lazyZodSchema(() => z.string().min(1).max(4_096).refine((value) => value.trim().length > 0, 'must not be blank'));
+const PublicGroupIdSchema = lazyZodSchema(() => z.string().max(4_096));
+const RevisionSchema = lazyZodSchema(() => z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER));
+const SessionSubagentCustodyContentFingerprintV1Schema = lazyZodSchema(() => z.union([
   z.string().regex(/^sha256:[a-f0-9]{64}$/u),
   z.string().regex(/^hmac-sha256:[a-f0-9]{64}$/u),
-]);
+]));
 export type SessionSubagentCustodyContentFingerprintV1 = z.infer<typeof SessionSubagentCustodyContentFingerprintV1Schema>;
 
-const SessionSubagentCustodyContentEnvelopeSchema = z.discriminatedUnion('t', [
+const SessionSubagentCustodyContentEnvelopeSchema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.object({
     t: z.literal('encrypted'),
     c: z.string()
@@ -39,23 +40,23 @@ const SessionSubagentCustodyContentEnvelopeSchema = z.discriminatedUnion('t', [
       .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u),
   }).strict(),
   z.object({ t: z.literal('plain'), v: AgentRuntimeJsonValueV1Schema }).strict(),
-]);
-export const SessionSubagentCustodyContentV1Schema = z.preprocess((value) => {
+]));
+export const SessionSubagentCustodyContentV1Schema = lazyZodSchema(() => z.preprocess((value) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) return null;
   const descriptors = Object.getOwnPropertyDescriptors(value);
   if (Object.values(descriptors).some((descriptor) => !('value' in descriptor))) return null;
   return value;
-}, SessionSubagentCustodyContentEnvelopeSchema);
+}, SessionSubagentCustodyContentEnvelopeSchema));
 export type SessionSubagentCustodyContentV1 = z.infer<typeof SessionSubagentCustodyContentV1Schema>;
 export type SessionSubagentCustodyDetailV1 = Extract<SessionSubagentCustodyContentV1, { t: 'plain' }>['v'];
 
-export const SessionSubagentCustodyScopeV1Schema = z.object({
+export const SessionSubagentCustodyScopeV1Schema = lazyZodSchema(() => z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   contributionId: asProtocolZod(PluginContributionLocalIdSchema),
   sourceCustody: PluginSourceCustodyV1Schema,
-}).strict();
+}).strict());
 export type SessionSubagentCustodyScopeV1 = z.infer<typeof SessionSubagentCustodyScopeV1Schema>;
 
 const SESSION_SUBAGENT_CUSTODY_KEY_DOMAIN_V1 = 'happier:session-subagent-custody-key:v1\0';
@@ -141,16 +142,16 @@ export function serializeSessionSubagentCustodyEncryptedFingerprintInputV1(param
   ])}`;
 }
 
-export const SessionSubagentCustodyRecordV1Schema = z.object({
+export const SessionSubagentCustodyRecordV1Schema = lazyZodSchema(() => z.object({
   subagentId: PublicSubagentIdSchema,
   groupId: PublicGroupIdSchema.nullable(),
   status: SubagentStatusV1Schema,
   revision: RevisionSchema,
   updatedAt: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 export type SessionSubagentCustodyRecordV1 = z.infer<typeof SessionSubagentCustodyRecordV1Schema>;
 
-export const SessionSubagentCustodyMutationRequestV1Schema = z.object({
+export const SessionSubagentCustodyMutationRequestV1Schema = lazyZodSchema(() => z.object({
   operationId: IndexedKeySchema,
   scope: SessionSubagentCustodyScopeV1Schema,
   custodyKey: CustodyKeySchema,
@@ -169,16 +170,16 @@ export const SessionSubagentCustodyMutationRequestV1Schema = z.object({
       message: 'Content fingerprint algorithm must match the content envelope',
     });
   }
-});
+}));
 export type SessionSubagentCustodyMutationRequestV1 = z.infer<typeof SessionSubagentCustodyMutationRequestV1Schema>;
 
-export const SessionSubagentCustodyMutationResponseV1Schema = z.object({
+export const SessionSubagentCustodyMutationResponseV1Schema = lazyZodSchema(() => z.object({
   record: SessionSubagentCustodyRecordV1Schema,
   replayed: z.boolean(),
-}).strict();
+}).strict());
 export type SessionSubagentCustodyMutationResponseV1 = z.infer<typeof SessionSubagentCustodyMutationResponseV1Schema>;
 
-export const SessionSubagentCustodyListQueryV1Schema = z.object({
+export const SessionSubagentCustodyListQueryV1Schema = lazyZodSchema(() => z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   contributionId: asProtocolZod(PluginContributionLocalIdSchema),
   sourceCustody: z.preprocess((value) => {
@@ -186,31 +187,31 @@ export const SessionSubagentCustodyListQueryV1Schema = z.object({
     try { return JSON.parse(value) as unknown; } catch { return null; }
   }, PluginSourceCustodyV1Schema),
   custodyKey: CustodyKeySchema,
-}).strict();
+}).strict());
 export type SessionSubagentCustodyListQueryV1 = z.infer<typeof SessionSubagentCustodyListQueryV1Schema>;
 
-export const SessionSubagentCustodyPageV1Schema = z.object({
+export const SessionSubagentCustodyPageV1Schema = lazyZodSchema(() => z.object({
   records: z.array(SessionSubagentCustodyRecordV1Schema).max(MAX_SESSION_SUBAGENT_CUSTODY_RECORDS),
-}).strict();
+}).strict());
 export type SessionSubagentCustodyPageV1 = z.infer<typeof SessionSubagentCustodyPageV1Schema>;
 
-export const SessionSubagentCustodyRetirementRequestV1Schema = z.object({
+export const SessionSubagentCustodyRetirementRequestV1Schema = lazyZodSchema(() => z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   sourceCustody: PluginSourceCustodyV1Schema,
-}).strict();
+}).strict());
 export type SessionSubagentCustodyRetirementRequestV1 = z.infer<typeof SessionSubagentCustodyRetirementRequestV1Schema>;
 
-export const SessionSubagentCustodyRetirementResponseV1Schema = z.object({
+export const SessionSubagentCustodyRetirementResponseV1Schema = lazyZodSchema(() => z.object({
   retired: z.literal(true),
-}).strict();
+}).strict());
 export type SessionSubagentCustodyRetirementResponseV1 = z.infer<typeof SessionSubagentCustodyRetirementResponseV1Schema>;
 
-export const SessionSubagentCustodyCapabilityV1Schema = z.object({
+export const SessionSubagentCustodyCapabilityV1Schema = lazyZodSchema(() => z.object({
   capability: z.literal(SESSION_SUBAGENT_CUSTODY_CAPABILITY_V1),
   maxRecords: z.literal(MAX_SESSION_SUBAGENT_CUSTODY_RECORDS),
   maxReceipts: z.literal(MAX_SESSION_SUBAGENT_CUSTODY_RECEIPTS),
   receiptRetentionMs: z.literal(SESSION_SUBAGENT_CUSTODY_RECEIPT_RETENTION_MS),
-}).strict();
+}).strict());
 export type SessionSubagentCustodyCapabilityV1 = z.infer<typeof SessionSubagentCustodyCapabilityV1Schema>;
 
 export function isSessionSubagentStatusTransitionAllowed(current: string, next: string): boolean {

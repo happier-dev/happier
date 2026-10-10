@@ -1,17 +1,18 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { TEAM_DIRECTORY_ACTION_IDS_V1, type TeamDirectoryActionIdV1 } from './actionIds.js';
 
 import { TeamIdSchema, TeamMembershipIdSchema } from '../membership.js';
 
-const DirectoryIdSchema = z.string().min(1).max(256);
-const DirectoryLabelSchema = z.string().min(1).max(256);
-const DirectoryTimestampSchema = z.iso.datetime({ offset: true });
+const DirectoryIdSchema = lazyZodSchema(() => z.string().min(1).max(256));
+const DirectoryLabelSchema = lazyZodSchema(() => z.string().min(1).max(256));
+const DirectoryTimestampSchema = lazyZodSchema(() => z.iso.datetime({ offset: true }));
 
 export const TEAM_DIRECTORY_SOURCE_PAGE_LIMIT_DEFAULT_V1 = 50;
 export const TEAM_DIRECTORY_SOURCE_PAGE_LIMIT_MAX_V1 = 100;
 
-export const TeamDirectorySafeErrorCodeV1Schema = z.enum([
+export const TeamDirectorySafeErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'directory_sync_unavailable',
   'directory_source_not_found',
   'directory_source_removed',
@@ -24,23 +25,23 @@ export const TeamDirectorySafeErrorCodeV1Schema = z.enum([
   'directory_group_mapping_invalid',
   'directory_group_already_bound',
   'directory_sync_needs_attention',
-]);
+]));
 export type TeamDirectorySafeErrorCodeV1 = z.infer<typeof TeamDirectorySafeErrorCodeV1Schema>;
 
-export const TeamDirectoryErrorV1Schema = z.object({
+export const TeamDirectoryErrorV1Schema = lazyZodSchema(() => z.object({
   error: TeamDirectorySafeErrorCodeV1Schema,
-}).strict();
+}).strict());
 export type TeamDirectoryErrorV1 = z.infer<typeof TeamDirectoryErrorV1Schema>;
 
-export const TeamDirectorySourceAllowedActionV1Schema = z.enum([
+export const TeamDirectorySourceAllowedActionV1Schema = lazyZodSchema(() => z.enum([
   'teams.directory.sources.sync',
   'teams.directory.sources.pause',
   'teams.directory.sources.resume',
   'teams.directory.sources.remove',
-]);
+]));
 export type TeamDirectorySourceAllowedActionV1 = z.infer<typeof TeamDirectorySourceAllowedActionV1Schema>;
 
-export const TeamDirectorySourceSummaryV1Schema = z.object({
+export const TeamDirectorySourceSummaryV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   id: DirectoryIdSchema,
   teamId: TeamIdSchema,
@@ -63,16 +64,16 @@ export const TeamDirectorySourceSummaryV1Schema = z.object({
     code: TeamDirectorySafeErrorCodeV1Schema,
     retryable: z.boolean(),
   }).strict().nullable(),
-}).strict();
+}).strict());
 export type TeamDirectorySourceSummaryV1 = z.infer<typeof TeamDirectorySourceSummaryV1Schema>;
 
-export const TeamDirectorySourcePageV1Schema = z.object({
+export const TeamDirectorySourcePageV1Schema = lazyZodSchema(() => z.object({
   items: z.array(TeamDirectorySourceSummaryV1Schema),
   nextCursor: z.string().nullable(),
-}).strict();
+}).strict());
 export type TeamDirectorySourcePageV1 = z.infer<typeof TeamDirectorySourcePageV1Schema>;
 
-export const TeamDirectorySourceSetupOptionV1Schema = z.discriminatedUnion('kind', [
+export const TeamDirectorySourceSetupOptionV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('workos_directory'),
     displayName: DirectoryLabelSchema,
@@ -84,27 +85,27 @@ export const TeamDirectorySourceSetupOptionV1Schema = z.discriminatedUnion('kind
     displayName: DirectoryLabelSchema,
     githubAppInstallationId: DirectoryIdSchema,
   }).strict(),
-]);
+]));
 export type TeamDirectorySourceSetupOptionV1 = z.infer<typeof TeamDirectorySourceSetupOptionV1Schema>;
 
-export const TeamDirectorySourceSetupOptionsV1Schema = z.object({
+export const TeamDirectorySourceSetupOptionsV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   items: z.array(TeamDirectorySourceSetupOptionV1Schema).max(TEAM_DIRECTORY_SOURCE_PAGE_LIMIT_MAX_V1),
   nextCursor: z.string().nullable(),
   complete: z.boolean(),
-}).strict();
+}).strict());
 export type TeamDirectorySourceSetupOptionsV1 = z.infer<typeof TeamDirectorySourceSetupOptionsV1Schema>;
 
-const TeamDirectoryAccountBindingV1Schema = z.discriminatedUnion('state', [
+const TeamDirectoryAccountBindingV1Schema = lazyZodSchema(() => z.discriminatedUnion('state', [
   z.object({ state: z.literal('unbound') }).strict(),
   z.object({
     state: z.literal('bound'),
     accountId: DirectoryIdSchema,
     teamMembershipId: TeamMembershipIdSchema.nullable(),
   }).strict(),
-]);
+]));
 
-export const TeamDirectoryPersonV1Schema = z.object({
+export const TeamDirectoryPersonV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   id: DirectoryIdSchema,
   sourceId: DirectoryIdSchema,
@@ -115,16 +116,16 @@ export const TeamDirectoryPersonV1Schema = z.object({
   state: z.enum(['active', 'suspended', 'deleted']),
   accountBinding: TeamDirectoryAccountBindingV1Schema,
   sourceLabel: DirectoryLabelSchema,
-}).strict();
+}).strict());
 export type TeamDirectoryPersonV1 = z.infer<typeof TeamDirectoryPersonV1Schema>;
 
-export const TeamDirectoryPeoplePageV1Schema = z.object({
+export const TeamDirectoryPeoplePageV1Schema = lazyZodSchema(() => z.object({
   items: z.array(TeamDirectoryPersonV1Schema),
   nextCursor: z.string().nullable(),
-}).strict();
+}).strict());
 export type TeamDirectoryPeoplePageV1 = z.infer<typeof TeamDirectoryPeoplePageV1Schema>;
 
-const TeamDirectoryGroupMappingV1Schema = z.discriminatedUnion('state', [
+const TeamDirectoryGroupMappingV1Schema = lazyZodSchema(() => z.discriminatedUnion('state', [
   z.object({ state: z.literal('unbound') }).strict(),
   z.object({
     state: z.literal('bound'),
@@ -132,9 +133,9 @@ const TeamDirectoryGroupMappingV1Schema = z.discriminatedUnion('state', [
     mode: z.enum(['directory_created', 'native_target']),
     teamGroupId: DirectoryIdSchema,
   }).strict(),
-]);
+]));
 
-export const TeamDirectoryGroupV1Schema = z.object({
+export const TeamDirectoryGroupV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   id: DirectoryIdSchema,
   sourceId: DirectoryIdSchema,
@@ -149,37 +150,37 @@ export const TeamDirectoryGroupV1Schema = z.object({
   mapping: TeamDirectoryGroupMappingV1Schema,
   lastCompleteObservationAt: DirectoryTimestampSchema.nullable(),
   sourceLabel: DirectoryLabelSchema,
-}).strict();
+}).strict());
 export type TeamDirectoryGroupV1 = z.infer<typeof TeamDirectoryGroupV1Schema>;
 
-export const TeamDirectoryGroupPageV1Schema = z.object({
+export const TeamDirectoryGroupPageV1Schema = lazyZodSchema(() => z.object({
   items: z.array(TeamDirectoryGroupV1Schema),
   nextCursor: z.string().nullable(),
-}).strict();
+}).strict());
 export type TeamDirectoryGroupPageV1 = z.infer<typeof TeamDirectoryGroupPageV1Schema>;
 
-export const TeamDirectorySourcesListInputV1Schema = z.object({
+export const TeamDirectorySourcesListInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   teamId: TeamIdSchema,
   limit: z.number().int().min(1).max(TEAM_DIRECTORY_SOURCE_PAGE_LIMIT_MAX_V1).optional(),
   cursor: z.string().min(1).max(512).nullable().optional(),
-}).strict();
+}).strict());
 export type TeamDirectorySourcesListInputV1 = z.infer<typeof TeamDirectorySourcesListInputV1Schema>;
 
-export const TeamDirectorySourceSetupListInputV1Schema = z.object({
+export const TeamDirectorySourceSetupListInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   teamId: TeamIdSchema,
   limit: z.number().int().min(1).max(TEAM_DIRECTORY_SOURCE_PAGE_LIMIT_MAX_V1).optional(),
   cursor: z.string().min(1).max(512).nullable().optional(),
   query: z.string().max(256).optional(),
-}).strict();
+}).strict());
 export type TeamDirectorySourceSetupListInputV1 = z.infer<typeof TeamDirectorySourceSetupListInputV1Schema>;
 
-export const TeamDirectorySourceRefInputV1Schema = z.object({
+export const TeamDirectorySourceRefInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   teamId: TeamIdSchema,
   sourceId: DirectoryIdSchema,
-}).strict();
+}).strict());
 export type TeamDirectorySourceRefInputV1 = z.infer<typeof TeamDirectorySourceRefInputV1Schema>;
 
 const TeamDirectoryPageInputFieldsV1 = {
@@ -190,13 +191,13 @@ const TeamDirectoryPageInputFieldsV1 = {
   cursor: z.string().min(1).max(512).nullable().optional(),
 } as const;
 
-export const TeamDirectoryPeopleListInputV1Schema = z.object(TeamDirectoryPageInputFieldsV1).strict();
+export const TeamDirectoryPeopleListInputV1Schema = lazyZodSchema(() => z.object(TeamDirectoryPageInputFieldsV1).strict());
 export type TeamDirectoryPeopleListInputV1 = z.infer<typeof TeamDirectoryPeopleListInputV1Schema>;
 
-export const TeamDirectoryGroupsListInputV1Schema = z.object({
+export const TeamDirectoryGroupsListInputV1Schema = lazyZodSchema(() => z.object({
   ...TeamDirectoryPageInputFieldsV1,
   query: z.string().max(256).optional(),
-}).strict();
+}).strict());
 export type TeamDirectoryGroupsListInputV1 = z.infer<typeof TeamDirectoryGroupsListInputV1Schema>;
 
 const TeamDirectorySourceCreateBaseV1 = {
@@ -205,7 +206,7 @@ const TeamDirectorySourceCreateBaseV1 = {
   displayName: DirectoryLabelSchema,
 } as const;
 
-export const TeamDirectorySourceCreateInputV1Schema = z.discriminatedUnion('kind', [
+export const TeamDirectorySourceCreateInputV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     ...TeamDirectorySourceCreateBaseV1,
     kind: z.literal('workos_directory'),
@@ -217,64 +218,64 @@ export const TeamDirectorySourceCreateInputV1Schema = z.discriminatedUnion('kind
     kind: z.literal('github_organization'),
     githubAppInstallationId: DirectoryIdSchema,
   }).strict(),
-]);
+]));
 export type TeamDirectorySourceCreateInputV1 = z.infer<typeof TeamDirectorySourceCreateInputV1Schema>;
 
-export const TeamDirectorySourceSyncResultV1Schema = z.object({
+export const TeamDirectorySourceSyncResultV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   status: z.enum(['requested', 'coalesced']),
   source: TeamDirectorySourceSummaryV1Schema,
-}).strict();
+}).strict());
 export type TeamDirectorySourceSyncResultV1 = z.infer<typeof TeamDirectorySourceSyncResultV1Schema>;
 
-export const TeamDirectorySourceRemovalImpactV1Schema = z.object({
+export const TeamDirectorySourceRemovalImpactV1Schema = lazyZodSchema(() => z.object({
   teamMembershipsRemoved: z.number().int().min(0),
   groupMembershipsRemoved: z.number().int().min(0),
   groupContributionsRemoved: z.number().int().min(0),
   directoryCreatedGroupsRetained: z.number().int().min(0),
   nativeMembershipsPreserved: z.number().int().min(0),
   nativeGroupContributionsPreserved: z.number().int().min(0),
-}).strict();
+}).strict());
 export type TeamDirectorySourceRemovalImpactV1 = z.infer<typeof TeamDirectorySourceRemovalImpactV1Schema>;
 
-export const TeamDirectorySourceRemovalPreflightV1Schema = z.object({
+export const TeamDirectorySourceRemovalPreflightV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   status: z.literal('allowed'),
   sourceId: DirectoryIdSchema,
   sourceLabel: DirectoryLabelSchema,
   impact: TeamDirectorySourceRemovalImpactV1Schema,
-}).strict();
+}).strict());
 export type TeamDirectorySourceRemovalPreflightV1 = z.infer<typeof TeamDirectorySourceRemovalPreflightV1Schema>;
 
-export const TeamDirectorySourceRemoveResultV1Schema = z.object({
+export const TeamDirectorySourceRemoveResultV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   status: z.enum(['removed', 'already_absent']),
   impact: TeamDirectorySourceRemovalImpactV1Schema,
-}).strict();
+}).strict());
 export type TeamDirectorySourceRemoveResultV1 = z.infer<typeof TeamDirectorySourceRemoveResultV1Schema>;
 
 /** HTTP path/query/body codecs consumed by the REST adapter for these Actions. */
-export const TeamDirectoryTeamParamsV1Schema = z.object({ teamId: TeamIdSchema }).strict();
-export const TeamDirectorySourceParamsV1Schema = z.object({
+export const TeamDirectoryTeamParamsV1Schema = lazyZodSchema(() => z.object({ teamId: TeamIdSchema }).strict());
+export const TeamDirectorySourceParamsV1Schema = lazyZodSchema(() => z.object({
   teamId: TeamIdSchema,
   sourceId: DirectoryIdSchema,
-}).strict();
-export const TeamDirectorySourceListQueryV1Schema = z.object({
+}).strict());
+export const TeamDirectorySourceListQueryV1Schema = lazyZodSchema(() => z.object({
   limit: z.coerce.number().int().min(1).max(TEAM_DIRECTORY_SOURCE_PAGE_LIMIT_MAX_V1).optional(),
   cursor: z.string().min(1).max(512).optional(),
-}).strict();
-export const TeamDirectorySourceSetupListQueryV1Schema = z.object({
+}).strict());
+export const TeamDirectorySourceSetupListQueryV1Schema = lazyZodSchema(() => z.object({
   limit: z.coerce.number().int().min(1).max(TEAM_DIRECTORY_SOURCE_PAGE_LIMIT_MAX_V1).optional(),
   cursor: z.string().min(1).max(512).optional(),
   query: z.string().max(256).optional(),
-}).strict();
+}).strict());
 export const TeamDirectoryPeopleListQueryV1Schema = TeamDirectorySourceListQueryV1Schema;
-export const TeamDirectoryGroupsListQueryV1Schema = z.object({
+export const TeamDirectoryGroupsListQueryV1Schema = lazyZodSchema(() => z.object({
   limit: z.coerce.number().int().min(1).max(TEAM_DIRECTORY_SOURCE_PAGE_LIMIT_MAX_V1).optional(),
   cursor: z.string().min(1).max(512).optional(),
   query: z.string().max(256).optional(),
-}).strict();
-export const TeamDirectorySourceCreateBodyV1Schema = z.discriminatedUnion('kind', [
+}).strict());
+export const TeamDirectorySourceCreateBodyV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     v: z.literal(1),
     kind: z.literal('workos_directory'),
@@ -288,13 +289,13 @@ export const TeamDirectorySourceCreateBodyV1Schema = z.discriminatedUnion('kind'
     displayName: DirectoryLabelSchema,
     githubAppInstallationId: DirectoryIdSchema,
   }).strict(),
-]);
-export const TeamDirectoryLifecycleBodyV1Schema = z.object({ v: z.literal(1) }).strict();
+]));
+export const TeamDirectoryLifecycleBodyV1Schema = lazyZodSchema(() => z.object({ v: z.literal(1) }).strict());
 
 // The ids are declared in the dependency-free id module; re-exported here so
 // this module's existing public surface is unchanged.
 export { TEAM_DIRECTORY_ACTION_IDS_V1, type TeamDirectoryActionIdV1 } from './actionIds.js';
-export const TeamDirectoryActionIdV1Schema = z.enum(TEAM_DIRECTORY_ACTION_IDS_V1);
+export const TeamDirectoryActionIdV1Schema = lazyZodSchema(() => z.enum(TEAM_DIRECTORY_ACTION_IDS_V1));
 
 export const TEAM_DIRECTORY_ACTION_PATHS_V1: Readonly<Record<TeamDirectoryActionIdV1, string>> = Object.freeze({
   'teams.directory.sourceSetup.list': '/v1/teams/:teamId/directory-source-setup-options',

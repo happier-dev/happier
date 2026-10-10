@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { PeerRouteNonceProofV1Schema } from '../directRouteGrantNonceV1.js';
@@ -8,7 +9,7 @@ import { PeerMachineRpcCommandReceiptRequestV1Schema, PeerMachineRpcCommandRecei
 
 export const PEER_MACHINE_RPC_DIRECT_PATH_V1 = '/peer-mediation/v1/rpc' as const;
 
-export const PeerMachineRpcDirectFallbackReasonCodeV1Schema = z.enum([
+export const PeerMachineRpcDirectFallbackReasonCodeV1Schema = lazyZodSchema(() => z.enum([
   'invalid_request',
   'server_required',
   'policy_denied',
@@ -33,9 +34,9 @@ export const PeerMachineRpcDirectFallbackReasonCodeV1Schema = z.enum([
   'quarantined',
   'direct_call_limit_exceeded',
   'handler_unavailable',
-]);
+]));
 
-export const PeerMachineRpcDirectRequestV1Schema = z
+export const PeerMachineRpcDirectRequestV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     requestId: z.string().min(1),
@@ -48,9 +49,9 @@ export const PeerMachineRpcDirectRequestV1Schema = z
     endpointFingerprint: z.string().min(1),
     commandReceipt: PeerMachineRpcCommandReceiptRequestV1Schema.optional(),
   })
-  .passthrough();
+  .passthrough());
 
-export const PeerMachineRpcDirectResponseV1Schema = z.discriminatedUnion('ok', [
+export const PeerMachineRpcDirectResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
   z
     .object({
       v: z.literal(1),
@@ -76,7 +77,7 @@ export const PeerMachineRpcDirectResponseV1Schema = z.discriminatedUnion('ok', [
       reasonCode: PeerMachineRpcDirectFallbackReasonCodeV1Schema,
     })
     .passthrough(),
-]);
+]));
 
 export type PeerMachineRpcDirectFallbackReasonCodeV1 = z.infer<typeof PeerMachineRpcDirectFallbackReasonCodeV1Schema>;
 export type PeerMachineRpcDirectRequestV1 = z.infer<typeof PeerMachineRpcDirectRequestV1Schema>;

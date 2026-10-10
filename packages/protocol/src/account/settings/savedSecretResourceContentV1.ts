@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import tweetnacl from 'tweetnacl';
 import { z } from 'zod';
 
@@ -29,12 +30,12 @@ export type {
   SavedSecretResourceStoredContentV1,
 };
 
-const EncryptedSavedSecretResourcePayloadV1Schema = z.object({
+const EncryptedSavedSecretResourcePayloadV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   resourceId: z.string(),
   mode: z.literal('e2ee'),
   content: SavedSecretResourceContentV1Schema,
-}).strict();
+}).strict());
 
 type SealSavedSecretResourceStoredContentV1Params =
   | Readonly<{

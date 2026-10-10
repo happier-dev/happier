@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
@@ -12,22 +13,22 @@ import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
  * contribution catalog. `v2.ts` re-exports this exact schema; there is no second
  * capability vocabulary.
  */
-const PluginAgentGoalSetCapabilityV2Schema = z.object({
+const PluginAgentGoalSetCapabilityV2Schema = lazyZodSchema(() => z.object({
   fields: z.array(z.enum(['objective', 'status', 'tokenBudget'])).min(1).refine((values) => new Set(values).size === values.length, 'Entries must be unique.'),
   writableStatuses: z.array(z.enum(['active', 'paused', 'complete'])).min(1).refine((values) => new Set(values).size === values.length, 'Entries must be unique.').optional(),
-}).strict();
-const PluginAgentGoalControlModeV2Schema = z.object({
+}).strict());
+const PluginAgentGoalControlModeV2Schema = lazyZodSchema(() => z.object({
   get: z.literal(true).optional(), clear: z.literal(true).optional(), set: PluginAgentGoalSetCapabilityV2Schema.optional(),
-}).strict().refine((value) => value.get || value.clear || value.set, 'At least one goal control capability is required.');
+}).strict().refine((value) => value.get || value.clear || value.set, 'At least one goal control capability is required.'));
 const activity = <T extends z.ZodTypeAny>(schema: T) => z.object({ active: schema.optional(), inactive: schema.optional() }).strict()
   .refine((value) => value.active !== undefined || value.inactive !== undefined, 'At least one activity capability is required.');
-const PluginAgentGoalsV2Schema = z.object({
+const PluginAgentGoalsV2Schema = lazyZodSchema(() => z.object({
   active: PluginAgentGoalControlModeV2Schema.optional(),
   inactive: PluginAgentGoalControlModeV2Schema.optional(),
   source: z.string().trim().min(1),
-}).strict().refine((value) => value.active !== undefined || value.inactive !== undefined, 'At least one activity capability is required.');
+}).strict().refine((value) => value.active !== undefined || value.inactive !== undefined, 'At least one activity capability is required.'));
 
-export const PluginAgentSessionCapabilitiesV2Schema = z.object({
+export const PluginAgentSessionCapabilitiesV2Schema = lazyZodSchema(() => z.object({
   open: z.array(z.enum(['create', 'resume', 'fork'])).min(1).refine((values) => new Set(values).size === values.length, 'Entries must be unique.'),
   delivery: z.array(z.enum(['newTurn', 'steer', 'followUp'])).min(1).refine((values) => new Set(values).size === values.length, 'Entries must be unique.'),
   cancel: z.boolean(), configuration: z.boolean().optional(),
@@ -52,5 +53,5 @@ export const PluginAgentSessionCapabilitiesV2Schema = z.object({
   executionRunContext: z.object({
     versions: z.tuple([z.literal(1)]),
   }).strict().optional(),
-}).strict();
+}).strict());
 export type PluginAgentSessionCapabilitiesV2 = z.infer<typeof PluginAgentSessionCapabilitiesV2Schema>;

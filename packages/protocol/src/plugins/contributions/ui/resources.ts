@@ -1,6 +1,7 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
-export const PluginSessionResourceTargetV1Schema = z.discriminatedUnion('kind', [
+export const PluginSessionResourceTargetV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('session'),
     idPath: z.string().trim().min(1).optional(),
@@ -39,5 +40,5 @@ export const PluginSessionResourceTargetV1Schema = z.discriminatedUnion('kind', 
     kind: z.literal('pluginState'),
     keyPath: z.string().trim().min(1),
   }).strict(),
-]);
+]));
 export type PluginSessionResourceTargetV1 = z.infer<typeof PluginSessionResourceTargetV1Schema>;

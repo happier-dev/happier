@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -6,7 +7,7 @@ import { z } from 'zod';
  * Roles are a fixed, scope-specific enum — there is no role inheritance,
  * polymorphic role table, or role authority carried in a bearer token.
  */
-export const HomeRoleV1Schema = z.enum(['owner', 'admin', 'member']);
+export const HomeRoleV1Schema = lazyZodSchema(() => z.enum(['owner', 'admin', 'member']));
 export type HomeRoleV1 = z.infer<typeof HomeRoleV1Schema>;
 
 /**
@@ -14,7 +15,7 @@ export type HomeRoleV1 = z.infer<typeof HomeRoleV1Schema>;
  * hold shown as **Disabled**; `disabled` is the terminal state shown as
  * **Retired** and is never re-enabled through ordinary Home administration.
  */
-export const AccountStatusV1Schema = z.enum(['active', 'suspended', 'disabled']);
+export const AccountStatusV1Schema = lazyZodSchema(() => z.enum(['active', 'suspended', 'disabled']));
 export type AccountStatusV1 = z.infer<typeof AccountStatusV1Schema>;
 
 /**

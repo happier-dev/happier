@@ -1,16 +1,17 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
-const SessionRunnerSessionIdV1Schema = z.string().trim().min(1);
-const SessionRunnerIdentityV1Schema = z.string().trim().min(1);
-const SessionRunnerPidV1Schema = z.number().int().positive();
-const SessionRunnerDiagnosticsV1Schema = z.record(z.string().trim().min(1), z.unknown());
-const NullableIdentityFieldV1Schema = SessionRunnerIdentityV1Schema.nullable().optional();
+const SessionRunnerSessionIdV1Schema = lazyZodSchema(() => z.string().trim().min(1));
+const SessionRunnerIdentityV1Schema = lazyZodSchema(() => z.string().trim().min(1));
+const SessionRunnerPidV1Schema = lazyZodSchema(() => z.number().int().positive());
+const SessionRunnerDiagnosticsV1Schema = lazyZodSchema(() => z.record(z.string().trim().min(1), z.unknown()));
+const NullableIdentityFieldV1Schema = lazyZodSchema(() => SessionRunnerIdentityV1Schema.nullable().optional());
 
 export const SESSION_RUNNER_RESTART_MODES_V1 = [
   'if_stale',
   'force_current_cli',
 ] as const;
-export const SessionRunnerRestartModeV1Schema = z.enum(SESSION_RUNNER_RESTART_MODES_V1);
+export const SessionRunnerRestartModeV1Schema = lazyZodSchema(() => z.enum(SESSION_RUNNER_RESTART_MODES_V1));
 export type SessionRunnerRestartModeV1 = z.infer<typeof SessionRunnerRestartModeV1Schema>;
 
 export const SESSION_RUNNER_RESTART_REASONS_V1 = [
@@ -22,7 +23,7 @@ export const SESSION_RUNNER_RESTART_REASONS_V1 = [
   'restart_session_runners_on_update_config',
   'daemon_dist_generation_rollout',
 ] as const;
-export const SessionRunnerRestartReasonV1Schema = z.enum(SESSION_RUNNER_RESTART_REASONS_V1);
+export const SessionRunnerRestartReasonV1Schema = lazyZodSchema(() => z.enum(SESSION_RUNNER_RESTART_REASONS_V1));
 export type SessionRunnerRestartReasonV1 = z.infer<typeof SessionRunnerRestartReasonV1Schema>;
 
 export const SESSION_RUNNER_RESTART_DISABLED_REASONS = [
@@ -46,7 +47,7 @@ export const SESSION_RUNNER_RESTART_DISABLED_REASONS = [
   'runner_generation_unattested',
   'unsupported_daemon_version',
 ] as const;
-export const SessionRunnerRestartDisabledReasonSchema = z.enum(SESSION_RUNNER_RESTART_DISABLED_REASONS);
+export const SessionRunnerRestartDisabledReasonSchema = lazyZodSchema(() => z.enum(SESSION_RUNNER_RESTART_DISABLED_REASONS));
 export type SessionRunnerRestartDisabledReason =
   z.infer<typeof SessionRunnerRestartDisabledReasonSchema>;
 
@@ -69,10 +70,10 @@ export const SESSION_RUNNER_RESTART_STATUSES_V1 = [
   'spawn_failed',
   'partial_failure',
 ] as const;
-export const RestartSessionRunnerStatusV1Schema = z.enum(SESSION_RUNNER_RESTART_STATUSES_V1);
+export const RestartSessionRunnerStatusV1Schema = lazyZodSchema(() => z.enum(SESSION_RUNNER_RESTART_STATUSES_V1));
 export type RestartSessionRunnerStatusV1 = z.infer<typeof RestartSessionRunnerStatusV1Schema>;
 
-export const RestartSessionRunnerRequestV1Schema = z
+export const RestartSessionRunnerRequestV1Schema = lazyZodSchema(() => z
   .object({
     sessionId: SessionRunnerSessionIdV1Schema,
     mode: SessionRunnerRestartModeV1Schema.optional(),
@@ -82,19 +83,19 @@ export const RestartSessionRunnerRequestV1Schema = z
     expectedProcessCommandHash: NullableIdentityFieldV1Schema,
     expectedRunnerEntrypointIdentity: NullableIdentityFieldV1Schema,
   })
-  .strict();
+  .strict());
 export type RestartSessionRunnerRequestV1 = z.infer<typeof RestartSessionRunnerRequestV1Schema>;
 
-const RestartSessionRunnerEndpointSummaryV1Schema = z
+const RestartSessionRunnerEndpointSummaryV1Schema = lazyZodSchema(() => z
   .object({
     pid: SessionRunnerPidV1Schema.nullable().optional(),
     cliVersion: NullableIdentityFieldV1Schema,
     entrypointVersion: NullableIdentityFieldV1Schema,
     processCommandHash: NullableIdentityFieldV1Schema,
   })
-  .strict();
+  .strict());
 
-export const RestartSessionRunnerResultV1Schema = z
+export const RestartSessionRunnerResultV1Schema = lazyZodSchema(() => z
   .object({
     ok: z.boolean(),
     status: RestartSessionRunnerStatusV1Schema,
@@ -104,20 +105,20 @@ export const RestartSessionRunnerResultV1Schema = z
     reasonCode: SessionRunnerRestartDisabledReasonSchema.nullable().optional(),
     diagnostics: SessionRunnerDiagnosticsV1Schema.optional(),
   })
-  .strict();
+  .strict());
 export type RestartSessionRunnerResultV1 = z.infer<typeof RestartSessionRunnerResultV1Schema>;
 
-export const RestartAllSessionRunnersRequestV1Schema = z
+export const RestartAllSessionRunnersRequestV1Schema = lazyZodSchema(() => z
   .object({
     mode: SessionRunnerRestartModeV1Schema,
     dryRun: z.boolean().optional(),
     reason: SessionRunnerRestartReasonV1Schema,
   })
-  .strict();
+  .strict());
 export type RestartAllSessionRunnersRequestV1 =
   z.infer<typeof RestartAllSessionRunnersRequestV1Schema>;
 
-export const RestartAllSessionRunnersResultV1Schema = z
+export const RestartAllSessionRunnersResultV1Schema = lazyZodSchema(() => z
   .object({
     ok: z.boolean(),
     mode: SessionRunnerRestartModeV1Schema,
@@ -143,6 +144,6 @@ export const RestartAllSessionRunnersResultV1Schema = z
         message: 'restart result counts must sum to requestedCount',
       });
     }
-  });
+  }));
 export type RestartAllSessionRunnersResultV1 =
   z.infer<typeof RestartAllSessionRunnersResultV1Schema>;

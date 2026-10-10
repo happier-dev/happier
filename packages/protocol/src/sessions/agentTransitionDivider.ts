@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { AgentIdV1Schema } from '../agents/agentIdV1.js';
@@ -38,7 +39,7 @@ export const SESSION_AGENT_TRANSITION_DIVIDER_MESSAGE = 'Continued with another 
  */
 export const SESSION_AGENT_TRANSITION_DIVIDER_LOCAL_ID_PREFIX = 'agent-transition:';
 
-export const SessionAgentTransitionDividerV1Schema = z
+export const SessionAgentTransitionDividerV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     fromAgentId: AgentIdV1Schema,
@@ -86,7 +87,7 @@ export const SessionAgentTransitionDividerV1Schema = z
      */
     returningAgentLastSeenSeqInclusive: z.number().int().nonnegative().optional(),
   })
-  .strict();
+  .strict());
 export type SessionAgentTransitionDividerV1 = z.infer<typeof SessionAgentTransitionDividerV1Schema>;
 
 /**

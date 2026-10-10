@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { PeerRouteNonceProofV1Schema } from './directRouteGrantNonceV1.js';
@@ -8,7 +9,7 @@ import { isLiteralLoopbackHostname } from '../../../server/urls/loopbackHostname
 
 const MAX_LOOPBACK_ENDPOINT_URL_LENGTH = 2048;
 
-export const PeerLoopbackEndpointCandidateV1Schema = z
+export const PeerLoopbackEndpointCandidateV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     routeKind: z.literal('loopback_direct'),
@@ -58,17 +59,17 @@ export const PeerLoopbackEndpointCandidateV1Schema = z
       });
     }
   })
-  .strict();
+  .strict());
 
-export const PeerLoopbackProbeRequestV1Schema = z
+export const PeerLoopbackProbeRequestV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     grant: SignedDirectRouteGrantV1Schema,
     nonceProof: PeerRouteNonceProofV1Schema,
   })
-  .strict();
+  .strict());
 
-export const PeerLoopbackProbeFallbackReasonCodeV1Schema = z.enum([
+export const PeerLoopbackProbeFallbackReasonCodeV1Schema = lazyZodSchema(() => z.enum([
   'grant_invalid',
   'grant_unknown_key',
   'grant_bad_signature',
@@ -83,9 +84,9 @@ export const PeerLoopbackProbeFallbackReasonCodeV1Schema = z.enum([
   'nonce_invalid',
   'nonce_binding_mismatch',
   'nonce_bad_signature',
-]);
+]));
 
-export const PeerLoopbackProbeResponseV1Schema = z.discriminatedUnion('ok', [
+export const PeerLoopbackProbeResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
   z
     .object({
       v: z.literal(1),
@@ -104,7 +105,7 @@ export const PeerLoopbackProbeResponseV1Schema = z.discriminatedUnion('ok', [
       reasonCode: PeerLoopbackProbeFallbackReasonCodeV1Schema,
     })
     .strict(),
-]);
+]));
 
 export type PeerLoopbackEndpointCandidateV1 = z.output<typeof PeerLoopbackEndpointCandidateV1Schema>;
 export type PeerLoopbackProbeRequestV1 = z.infer<typeof PeerLoopbackProbeRequestV1Schema>;

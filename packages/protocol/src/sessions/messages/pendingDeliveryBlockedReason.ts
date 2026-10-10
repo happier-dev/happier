@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import type { PendingProviderAction } from '../pending/pendingProviderAction.js';
@@ -28,7 +29,7 @@ export const PENDING_DELIVERY_BLOCKED_REASONS = [
   'unknown',
 ] as const;
 
-export const PendingDeliveryBlockedReasonSchema = z.enum(PENDING_DELIVERY_BLOCKED_REASONS);
+export const PendingDeliveryBlockedReasonSchema = lazyZodSchema(() => z.enum(PENDING_DELIVERY_BLOCKED_REASONS));
 
 export type PendingDeliveryBlockedReason = z.infer<typeof PendingDeliveryBlockedReasonSchema>;
 

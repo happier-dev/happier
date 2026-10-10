@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -38,7 +39,7 @@ export const MAX_COMPOSER_INPUT_LOCK_REASONS_V1 = 16;
 // Text length belongs to the mounted product Composer/submission owner. An
 // SDK-only ceiling would accept a host draft and then reject that same draft
 // when a plugin reads it back.
-const ComposerTextV1Schema = z.string();
+const ComposerTextV1Schema = lazyZodSchema(() => z.string());
 const ComposerRefV1ZodSchema = asProtocolZod(ComposerRefV1Schema);
 /**
  * The composer-scope grammar lives in its own leaf because it is the one
@@ -53,39 +54,39 @@ export {
 } from './composerRef.js';
 export type { ComposerRefV1 } from './composerRef.js';
 
-export const ComposerScopeKindV1Schema = z.enum([
+export const ComposerScopeKindV1Schema = lazyZodSchema(() => z.enum([
   'session',
   'newSession',
   'pendingMessage',
   'participantMessage',
   'automationAuthoring',
   'workflowAuthoring',
-]);
+]));
 export type ComposerScopeKindV1 = z.infer<typeof ComposerScopeKindV1Schema>;
 
-export const ComposerTextPositionV1Schema = z.object({
+export const ComposerTextPositionV1Schema = lazyZodSchema(() => z.object({
   offset: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 export type ComposerTextPositionV1 = DeepReadonly<z.infer<typeof ComposerTextPositionV1Schema>>;
 
-export const ComposerTextRangeV1Schema = z.object({
+export const ComposerTextRangeV1Schema = lazyZodSchema(() => z.object({
   start: z.number().int().nonnegative(),
   end: z.number().int().nonnegative(),
 }).strict().refine((range) => range.start <= range.end, {
   path: ['end'],
   message: 'Composer range end must be at or after its start.',
-});
+}));
 export type ComposerTextRangeV1 = DeepReadonly<z.infer<typeof ComposerTextRangeV1Schema>>;
 
 /** Exact reference selector; no synthetic reference instance identity exists. */
-export const ComposerReferenceSelectorV1Schema = z.object({
+export const ComposerReferenceSelectorV1Schema = lazyZodSchema(() => z.object({
   ref: z.string().min(1),
   start: z.number().int().nonnegative(),
   end: z.number().int().positive(),
 }).strict().refine((selector) => selector.start < selector.end, {
   path: ['end'],
   message: 'Composer reference selector end must be after its start.',
-});
+}));
 export type ComposerReferenceSelectorV1 = DeepReadonly<z.infer<typeof ComposerReferenceSelectorV1Schema>>;
 
 /**
@@ -94,41 +95,41 @@ export type ComposerReferenceSelectorV1 = DeepReadonly<z.infer<typeof ComposerRe
  * their submitted text can be transformed after composition, so their canonical
  * runtime owner validates identity and token only.
  */
-const ComposerMentionRefV1Schema = MentionRefV1Schema.extend({
+const ComposerMentionRefV1Schema = lazyZodSchema(() => MentionRefV1Schema.extend({
   start: z.number().int().nonnegative(),
   end: z.number().int().positive(),
   composerReference: asProtocolZod(PluginContributionIdentityV1Schema).optional(),
 }).strict().refine((reference) => reference.start < reference.end, {
   path: ['end'],
   message: 'Composer reference end must be after its start.',
-});
+}));
 
-export const ComposerCapabilitiesV1Schema = z.object({
+export const ComposerCapabilitiesV1Schema = lazyZodSchema(() => z.object({
   text: z.literal(true),
   references: z.boolean(),
   attachments: z.boolean(),
   submit: z.boolean(),
-}).strict();
+}).strict());
 export type ComposerCapabilitiesV1 = DeepReadonly<z.infer<typeof ComposerCapabilitiesV1Schema>>;
 
-export const ComposerInputLockSnapshotV1Schema = z.object({
+export const ComposerInputLockSnapshotV1Schema = lazyZodSchema(() => z.object({
   mode: z.enum(['submit', 'editAndSubmit']),
   reasons: z.array(z.string().min(1).max(512)).max(MAX_COMPOSER_INPUT_LOCK_REASONS_V1),
-}).strict();
+}).strict());
 export type ComposerInputLockSnapshotV1 = DeepReadonly<z.infer<typeof ComposerInputLockSnapshotV1Schema>>;
 
-export const ComposerSnapshotStateV1Schema = z.object({
+export const ComposerSnapshotStateV1Schema = lazyZodSchema(() => z.object({
   focused: z.boolean(),
   editable: z.boolean(),
   submittable: z.boolean(),
   submitting: z.boolean(),
   running: z.boolean(),
   inputLock: ComposerInputLockSnapshotV1Schema.optional(),
-}).strict();
+}).strict());
 export type ComposerSnapshotStateV1 = DeepReadonly<z.infer<typeof ComposerSnapshotStateV1Schema>>;
 
 /** Immutable semantic snapshot produced by the one Composer document owner. */
-export const ComposerSnapshotV1Schema = z.object({
+export const ComposerSnapshotV1Schema = lazyZodSchema(() => z.object({
   revision: z.number().int().nonnegative(),
   ref: ComposerRefV1ZodSchema,
   text: ComposerTextV1Schema,
@@ -138,10 +139,10 @@ export const ComposerSnapshotV1Schema = z.object({
   layout: z.enum(['wrap', 'scroll', 'collapsed']),
   capabilities: ComposerCapabilitiesV1Schema,
   state: ComposerSnapshotStateV1Schema,
-}).strict();
+}).strict());
 export type ComposerSnapshotV1 = DeepReadonly<z.infer<typeof ComposerSnapshotV1Schema>>;
 
-export const ComposerOperationV1Schema = z.discriminatedUnion('kind', [
+export const ComposerOperationV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('text.set'), text: ComposerTextV1Schema }).strict(),
   z.object({
     kind: z.literal('text.insert'),
@@ -175,16 +176,16 @@ export const ComposerOperationV1Schema = z.discriminatedUnion('kind', [
     kind: z.literal('attachment.remove'),
     instanceId: ComposerInstanceIdSchema,
   }).strict(),
-]);
+]));
 export type ComposerOperationV1 = DeepReadonly<z.infer<typeof ComposerOperationV1Schema>>;
 
-export const ComposerTransactionV1Schema = z.object({
+export const ComposerTransactionV1Schema = lazyZodSchema(() => z.object({
   expectedRevision: z.number().int().nonnegative(),
   operations: z.array(ComposerOperationV1Schema).min(1),
-}).strict();
+}).strict());
 export type ComposerTransactionV1 = DeepReadonly<z.infer<typeof ComposerTransactionV1Schema>>;
 
-export const ComposerTransactionResultV1Schema = z.discriminatedUnion('status', [
+export const ComposerTransactionResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('applied'),
     revision: z.number().int().nonnegative(),
@@ -208,69 +209,69 @@ export const ComposerTransactionResultV1Schema = z.discriminatedUnion('status', 
     maximum: z.number().int().nonnegative(),
     actual: z.number().int().nonnegative(),
   }).strict(),
-]);
+]));
 export type ComposerTransactionResultV1 = DeepReadonly<z.infer<typeof ComposerTransactionResultV1Schema>>;
 
-export const ComposerUnavailableReasonV1Schema = z.enum(['notFound', 'scopeClosed', 'staleGeneration']);
+export const ComposerUnavailableReasonV1Schema = lazyZodSchema(() => z.enum(['notFound', 'scopeClosed', 'staleGeneration']));
 export type ComposerUnavailableReasonV1 = z.infer<typeof ComposerUnavailableReasonV1Schema>;
 
-export const ComposerReadResultV1Schema = z.discriminatedUnion('status', [
+export const ComposerReadResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('ready'), snapshot: ComposerSnapshotV1Schema }).strict(),
   z.object({ status: z.literal('unavailable'), reason: ComposerUnavailableReasonV1Schema }).strict(),
-]);
+]));
 export type ComposerReadResultV1 = DeepReadonly<z.infer<typeof ComposerReadResultV1Schema>>;
 
-export const ComposerFocusResultV1Schema = z.discriminatedUnion('status', [
+export const ComposerFocusResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('focused') }).strict(),
   z.object({ status: z.literal('notEditable') }).strict(),
   z.object({ status: z.literal('unavailable'), reason: ComposerUnavailableReasonV1Schema }).strict(),
-]);
+]));
 export type ComposerFocusResultV1 = DeepReadonly<z.infer<typeof ComposerFocusResultV1Schema>>;
 
-export const ComposerDecorationTreatmentV1Schema = z.union([
+export const ComposerDecorationTreatmentV1Schema = lazyZodSchema(() => z.union([
   z.enum(['highlight', 'muted', 'warning', 'success', 'code']),
   z.object({ kind: z.literal('link'), url: z.string().url() }).strict(),
-]);
+]));
 export type ComposerDecorationTreatmentV1 = DeepReadonly<z.infer<typeof ComposerDecorationTreatmentV1Schema>>;
 
-export const ComposerDecorationSetV1Schema = z.object({
+export const ComposerDecorationSetV1Schema = lazyZodSchema(() => z.object({
   revision: z.number().int().nonnegative(),
   ranges: z.array(z.object({
     range: ComposerTextRangeV1Schema,
     treatment: ComposerDecorationTreatmentV1Schema,
     label: z.string().min(1).max(512).optional(),
   }).strict()).max(MAX_COMPOSER_DECORATIONS_V1),
-}).strict();
+}).strict());
 export type ComposerDecorationSetV1 = DeepReadonly<z.infer<typeof ComposerDecorationSetV1Schema>>;
 
-export const ComposerDecorationResultV1Schema = z.discriminatedUnion('status', [
+export const ComposerDecorationResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('set') }).strict(),
   z.object({ status: z.literal('cleared') }).strict(),
   z.object({ status: z.literal('staleRevision'), currentRevision: z.number().int().nonnegative() }).strict(),
   z.object({ status: z.literal('invalid') }).strict(),
   z.object({ status: z.literal('unavailable'), reason: ComposerUnavailableReasonV1Schema }).strict(),
-]);
+]));
 export type ComposerDecorationResultV1 = DeepReadonly<z.infer<typeof ComposerDecorationResultV1Schema>>;
 
-export const ComposerInputLockRequestV1Schema = z.object({
+export const ComposerInputLockRequestV1Schema = lazyZodSchema(() => z.object({
   reason: z.string().min(1).max(512),
   mode: z.enum(['submit', 'editAndSubmit']),
-}).strict();
+}).strict());
 export type ComposerInputLockRequestV1 = DeepReadonly<z.infer<typeof ComposerInputLockRequestV1Schema>>;
 
 /** Dynamic state decoded from the incumbent contextual Resource owner. */
-export const ComposerControlChoiceIdV1Schema = z.string().min(1).max(256).refine(
+export const ComposerControlChoiceIdV1Schema = lazyZodSchema(() => z.string().min(1).max(256).refine(
   (value) => value === value.trim(),
   { message: 'Composer control choice ids must not have surrounding whitespace.' },
-);
+));
 export type ComposerControlChoiceIdV1 = z.infer<typeof ComposerControlChoiceIdV1Schema>;
 
 /** The exact Resource media type that can carry a V1 Composer control state. */
 export const COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1 =
   'application/vnd.happier.composer-control-state+json;v=1';
-export const ComposerControlStateContentTypeV1Schema = z.literal(
+export const ComposerControlStateContentTypeV1Schema = lazyZodSchema(() => z.literal(
   COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1,
-);
+));
 export type ComposerControlStateContentTypeV1 = z.infer<
   typeof ComposerControlStateContentTypeV1Schema
 >;
@@ -294,7 +295,7 @@ export function isComposerControlStateContentTypeV1(
   return ComposerControlStateContentTypeV1Schema.safeParse(contentType).success;
 }
 
-export const ComposerControlStateV1Schema = z.object({
+export const ComposerControlStateV1Schema = lazyZodSchema(() => z.object({
   visible: z.boolean().optional(),
   enabled: z.boolean().optional(),
   label: z.string().min(1).max(256).optional(),
@@ -304,57 +305,57 @@ export const ComposerControlStateV1Schema = z.object({
   selectedChoiceIds: z.array(ComposerControlChoiceIdV1Schema).max(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1).optional(),
   accessibilityLabel: z.string().min(1).max(512).optional(),
   unavailableReason: z.string().min(1).max(512).optional(),
-}).strict();
+}).strict());
 export type ComposerControlStateV1 = DeepReadonly<z.infer<typeof ComposerControlStateV1Schema>>;
 
-export const ComposerSurfaceRoleV1Schema = z.enum([
+export const ComposerSurfaceRoleV1Schema = lazyZodSchema(() => z.enum([
   'controlCompact',
   'controlInteraction',
   'attachmentPicker',
   'attachmentDisplay',
   'attachmentPreview',
   'region',
-]);
+]));
 export type ComposerSurfaceRoleV1 = z.infer<typeof ComposerSurfaceRoleV1Schema>;
 
-const ComposerControlSurfaceInputV1Schema = z.object({
+const ComposerControlSurfaceInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   role: z.enum(['controlCompact', 'controlInteraction']),
   composer: ComposerRefV1ZodSchema,
   controlLocalId: asProtocolZod(PluginContributionLocalIdSchema),
   state: ComposerControlStateV1Schema,
-}).strict();
+}).strict());
 
-const ComposerAttachmentPickerSurfaceInputV1Schema = z.object({
+const ComposerAttachmentPickerSurfaceInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   role: z.literal('attachmentPicker'),
   composer: ComposerRefV1ZodSchema,
   attachmentLocalId: asProtocolZod(PluginContributionLocalIdSchema),
   instances: z.array(ComposerAttachmentViewV1Schema).max(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1),
-}).strict();
+}).strict());
 
-const ComposerAttachmentDisplaySurfaceInputV1Schema = z.object({
+const ComposerAttachmentDisplaySurfaceInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   role: z.enum(['attachmentDisplay', 'attachmentPreview']),
   composer: ComposerRefV1ZodSchema,
   attachmentLocalId: asProtocolZod(PluginContributionLocalIdSchema),
   instance: ComposerAttachmentViewV1Schema,
-}).strict();
+}).strict());
 
-const ComposerRegionSurfaceInputV1Schema = z.object({
+const ComposerRegionSurfaceInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   role: z.literal('region'),
   composer: ComposerRefV1ZodSchema,
   regionLocalId: asProtocolZod(PluginContributionLocalIdSchema),
-}).strict();
+}).strict());
 
 /** Closed host-stamped launch input for a composer-mounted renderer. */
-export const ComposerSurfaceInputV1Schema = z.discriminatedUnion('role', [
+export const ComposerSurfaceInputV1Schema = lazyZodSchema(() => z.discriminatedUnion('role', [
   ComposerControlSurfaceInputV1Schema,
   ComposerAttachmentPickerSurfaceInputV1Schema,
   ComposerAttachmentDisplaySurfaceInputV1Schema,
   ComposerRegionSurfaceInputV1Schema,
-]);
+]));
 export type ComposerSurfaceInputV1 = DeepReadonly<z.infer<typeof ComposerSurfaceInputV1Schema>>;
 
 function sameContributionIdentityV1(
@@ -368,7 +369,7 @@ function sameContributionIdentityV1(
  * One host-produced composer mount. It carries the current contributor and
  * projection fences but no persisted draft/message state or destination shell.
  */
-export const ComposerSurfaceMountBindingV1Schema = z.object({
+export const ComposerSurfaceMountBindingV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('composer'),
   contribution: asProtocolZod(PluginContributionIdentityV1Schema),
   occurrenceId: asProtocolZod(PluginUiRuntimeOccurrenceIdV1Schema),
@@ -458,5 +459,5 @@ export const ComposerSurfaceMountBindingV1Schema = z.object({
       }
       break;
   }
-});
+}));
 export type ComposerSurfaceMountBindingV1 = DeepReadonly<z.infer<typeof ComposerSurfaceMountBindingV1Schema>>;

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -11,12 +12,12 @@ import { z } from 'zod';
  * The schema is strict because identity presentation is security-sensitive: an
  * unknown field is a disclosure bug, not an additive extension.
  */
-export const AccountDisplayProfileV1Schema = z.object({
+export const AccountDisplayProfileV1Schema = lazyZodSchema(() => z.object({
   firstName: z.string().nullable(),
   lastName: z.string().nullable(),
   username: z.string().nullable(),
   avatarUrl: z.string().nullable(),
-}).strict();
+}).strict());
 
 export type AccountDisplayProfileV1 = z.infer<typeof AccountDisplayProfileV1Schema>;
 

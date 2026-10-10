@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { NonBlankOpaqueIdentifierSchema } from '../../strings/opaqueIdentifier.js';
@@ -9,28 +10,28 @@ import { NonBlankOpaqueIdentifierSchema } from '../../strings/opaqueIdentifier.j
  * readers do not initialize the current authoring catalog and its dependencies.
  * `opaqueIdentifier.js` is a zod-only leaf and keeps that property.
  */
-const ReleasedBackendTargetRefV1Schema = z.union([
+const ReleasedBackendTargetRefV1Schema = lazyZodSchema(() => z.union([
   z.object({ kind: z.literal('builtInAgent'), agentId: z.string().min(1) }),
   z.object({ kind: z.literal('configuredAcpBackend'), backendId: z.string().min(1) }),
-]);
-const ReleasedConnectedServiceProfileIdV1Schema = z.string()
+]));
+const ReleasedConnectedServiceProfileIdV1Schema = lazyZodSchema(() => z.string()
   .min(1)
   .max(64)
-  .regex(/^[a-zA-Z0-9][a-zA-Z0-9_:-]{0,63}$/);
-const ReleasedConnectedServiceAuthGroupIdV1Schema = z.string()
+  .regex(/^[a-zA-Z0-9][a-zA-Z0-9_:-]{0,63}$/));
+const ReleasedConnectedServiceAuthGroupIdV1Schema = lazyZodSchema(() => z.string()
   .trim()
   .min(1)
   .max(64)
-  .regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/);
-const ReleasedConnectedServiceIdV1Schema = z.enum([
+  .regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/));
+const ReleasedConnectedServiceIdV1Schema = lazyZodSchema(() => z.enum([
   'openai-codex',
   'openai',
   'anthropic',
   'claude-subscription',
   'gemini',
   'github',
-]);
-const ReleasedConnectedServiceBindingV1Schema = z.union([
+]));
+const ReleasedConnectedServiceBindingV1Schema = lazyZodSchema(() => z.union([
   z.object({ source: z.literal('native') }).strict(),
   z.object({
     source: z.literal('connected'),
@@ -43,21 +44,21 @@ const ReleasedConnectedServiceBindingV1Schema = z.union([
     groupId: ReleasedConnectedServiceAuthGroupIdV1Schema,
     profileId: ReleasedConnectedServiceProfileIdV1Schema.optional(),
   }).strict(),
-]);
-const ReleasedConnectedServiceBindingsV1Schema = z.object({
+]));
+const ReleasedConnectedServiceBindingsV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   bindingsByServiceId: z.partialRecord(
     ReleasedConnectedServiceIdV1Schema,
     ReleasedConnectedServiceBindingV1Schema,
   ).default({}),
-}).strict();
-const ReleasedSessionAuthoringCheckoutCreationDraftV1Schema = z.object({
+}).strict());
+const ReleasedSessionAuthoringCheckoutCreationDraftV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('git_worktree'),
   displayName: z.string().trim().min(1),
   baseRef: z.string().trim().min(1).nullable(),
   branchMode: z.enum(['new', 'existing']).optional(),
-}).strict();
-const ReleasedSessionMcpSelectionV1Schema = z.preprocess(
+}).strict());
+const ReleasedSessionMcpSelectionV1Schema = lazyZodSchema(() => z.preprocess(
   (raw) => (!raw || typeof raw !== 'object' || Array.isArray(raw) ? {} : raw),
   z.object({
     v: z.literal(1).default(1),
@@ -69,15 +70,15 @@ const ReleasedSessionMcpSelectionV1Schema = z.preprocess(
   ...value,
   forceIncludeServerIds: [...new Set(value.forceIncludeServerIds)],
   forceExcludeServerIds: [...new Set(value.forceExcludeServerIds)],
-}));
-const ReleasedSyncedSessionAuthoringTerminalV1Schema = z.object({
+})));
+const ReleasedSyncedSessionAuthoringTerminalV1Schema = lazyZodSchema(() => z.object({
   mode: z.enum(['integrated', 'plain', 'tmux', 'windows_terminal', 'windows_console']).optional(),
   tmux: z.object({
     sessionName: z.string().optional(),
     isolated: z.boolean().optional(),
   }).strict().optional(),
-}).strict();
-const ReleasedSessionAuthoringAutomationV1Schema = z.object({
+}).strict());
+const ReleasedSessionAuthoringAutomationV1Schema = lazyZodSchema(() => z.object({
   enabled: z.boolean(),
   name: z.string(),
   description: z.string(),
@@ -85,9 +86,9 @@ const ReleasedSessionAuthoringAutomationV1Schema = z.object({
   everyMinutes: z.number().int().min(1).max(24 * 60),
   cronExpr: z.string(),
   timezone: z.string().nullable(),
-}).strict();
+}).strict());
 
-export const SyncedSessionAuthoringValueV1Schema = z.object({
+export const SyncedSessionAuthoringValueV1Schema = lazyZodSchema(() => z.object({
   machineId: z.string().trim().min(1).nullable().optional(),
   serverId: z.string().trim().min(1).nullable().optional(),
   targetType: z.enum(['new_session', 'existing_session']),
@@ -115,13 +116,13 @@ export const SyncedSessionAuthoringValueV1Schema = z.object({
   codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).nullable(),
   acpSessionModeId: z.string().trim().min(1).nullable(),
   automation: ReleasedSessionAuthoringAutomationV1Schema.nullable(),
-}).strict();
+}).strict());
 
 export const SYNCED_SESSION_AUTHORING_FIELD_IDS_V1 = Object.freeze(
   Object.keys(SyncedSessionAuthoringValueV1Schema.shape) as Array<keyof typeof SyncedSessionAuthoringValueV1Schema.shape>,
 );
 export type SyncedSessionAuthoringFieldIdV1 = (typeof SYNCED_SESSION_AUTHORING_FIELD_IDS_V1)[number];
-export const SyncedSessionAuthoringFieldIdV1Schema = z.enum(
+export const SyncedSessionAuthoringFieldIdV1Schema = lazyZodSchema(() => z.enum(
   SYNCED_SESSION_AUTHORING_FIELD_IDS_V1 as [SyncedSessionAuthoringFieldIdV1, ...SyncedSessionAuthoringFieldIdV1[]],
-);
+));
 export type SyncedSessionAuthoringValueV1 = typeof SyncedSessionAuthoringValueV1Schema['_output'];

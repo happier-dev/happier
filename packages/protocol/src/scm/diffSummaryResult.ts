@@ -37,11 +37,11 @@ export const ScmDiffSummaryResultSchema = lazyZodSchema(() => z.object({
   'Result projection must identify its current revision'));
 export type ScmDiffSummaryResult = z.infer<typeof ScmDiffSummaryResultSchema>;
 
-export const ScmDiffSummaryResultReadInputSchema = z.object({ cwd: z.string().min(1), resultId: z.string().min(1) }).strict();
+export const ScmDiffSummaryResultReadInputSchema = lazyZodSchema(() => z.object({ cwd: z.string().min(1), resultId: z.string().min(1) }).strict());
 export type ScmDiffSummaryResultReadInput = z.infer<typeof ScmDiffSummaryResultReadInputSchema>;
-export const ScmDiffSummaryResultRevisionInputSchema = ScmDiffSummaryResultReadInputSchema.extend({
+export const ScmDiffSummaryResultRevisionInputSchema = lazyZodSchema(() => ScmDiffSummaryResultReadInputSchema.extend({
   expectedRevision: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 export type ScmDiffSummaryResultRevisionInput = z.infer<typeof ScmDiffSummaryResultRevisionInputSchema>;
 
 const ids = z.array(z.string().min(1)).min(1).refine((values) => new Set(values).size === values.length, 'Ids must be unique');
@@ -51,7 +51,7 @@ const commitGroupTarget = lazyZodSchema(() => z.discriminatedUnion('kind', [
     message: z.string().trim().min(1), rationale: z.string() }).strict() }).strict(),
   z.object({ kind: z.literal('leftOut') }).strict(),
 ]));
-export const ScmDiffSummaryResultEditSchema = z.discriminatedUnion('kind', [
+export const ScmDiffSummaryResultEditSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('renameWalkthrough'), title: z.string().trim().min(1) }).strict(),
   z.object({ kind: z.literal('renameStop'), stopId: z.string().min(1), title: z.string().trim().min(1) }).strict(),
   z.object({ kind: z.literal('editStop'), stopId: z.string().min(1), explanationMarkdown: z.string().trim().min(1) }).strict(),
@@ -70,18 +70,18 @@ export const ScmDiffSummaryResultEditSchema = z.discriminatedUnion('kind', [
   /** Discards one output (for example a commit proposal) while the result keeps its others; Undo restores it. */
   z.object({ kind: z.literal('removeOutput'), output: ScmDiffSummaryOutputKindSchema }).strict(),
 ]).refine((edit) => edit.kind !== 'editCommitGroup' || edit.message !== undefined || edit.rationale !== undefined,
-  'A commit group edit must change its message or rationale');
+  'A commit group edit must change its message or rationale'));
 export type ScmDiffSummaryResultEdit = z.infer<typeof ScmDiffSummaryResultEditSchema>;
 export const ScmDiffSummaryResultEditInputSchema = lazyZodSchema(() => ScmDiffSummaryResultRevisionInputSchema.extend({ edit: ScmDiffSummaryResultEditSchema }).strict());
 export type ScmDiffSummaryResultEditInput = z.infer<typeof ScmDiffSummaryResultEditInputSchema>;
-export const ScmDiffSummaryRefineInputSchema = ScmDiffSummaryResultRevisionInputSchema.extend({
+export const ScmDiffSummaryRefineInputSchema = lazyZodSchema(() => ScmDiffSummaryResultRevisionInputSchema.extend({
   output: ScmDiffSummaryOutputKindSchema, instructions: z.string().trim().min(1), stopIds: ids.optional(),
   reviewExplanation: z.object({ targets: ScmReviewExplanationTargetsSchema }).strict().optional(),
 }).strict().refine((value) => !value.stopIds || value.output === 'walkthrough', 'Stop targeting requires walkthrough output')
   .refine(value => !value.reviewExplanation || (value.output === 'walkthrough' && value.stopIds
     && value.stopIds.length === value.reviewExplanation.targets.length
     && value.reviewExplanation.targets.every(target => value.stopIds!.includes(target.stopId))),
-  'Finding explanations require exactly their selected walkthrough stops');
+  'Finding explanations require exactly their selected walkthrough stops'));
 export type ScmDiffSummaryRefineInput = z.infer<typeof ScmDiffSummaryRefineInputSchema>;
 export const ScmDiffSummaryAddOutputsInputSchema = lazyZodSchema(() => ScmDiffSummaryResultRevisionInputSchema.extend({
   outputs: z.array(ScmDiffSummaryOutputKindSchema).min(1)

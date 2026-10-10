@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ConnectedServiceUxDiagnosticV1Schema } from '../../connect/connectedServiceUxDiagnostics.js';
@@ -27,43 +28,43 @@ export const SESSION_USAGE_LIMIT_RECOVERY_OPERATION_RESULT_ERROR_STATUSES_V1 = [
   'not_found',
 ] as const;
 
-export const SessionUsageLimitRecoveryOperationResultOkStatusV1Schema = z.enum(
+export const SessionUsageLimitRecoveryOperationResultOkStatusV1Schema = lazyZodSchema(() => z.enum(
   SESSION_USAGE_LIMIT_RECOVERY_OPERATION_RESULT_OK_STATUSES_V1,
-);
+));
 export type SessionUsageLimitRecoveryOperationResultOkStatusV1 =
   z.infer<typeof SessionUsageLimitRecoveryOperationResultOkStatusV1Schema>;
 
-export const SessionUsageLimitRecoveryOperationResultErrorStatusV1Schema = z.enum(
+export const SessionUsageLimitRecoveryOperationResultErrorStatusV1Schema = lazyZodSchema(() => z.enum(
   SESSION_USAGE_LIMIT_RECOVERY_OPERATION_RESULT_ERROR_STATUSES_V1,
-);
+));
 export type SessionUsageLimitRecoveryOperationResultErrorStatusV1 =
   z.infer<typeof SessionUsageLimitRecoveryOperationResultErrorStatusV1Schema>;
 
-const OperationResultSessionIdSchema = z.string().trim().min(1);
-const OperationResultIssueFingerprintSchema = z.string().trim().min(1);
-const OperationResultErrorCodeSchema = z.string().trim().min(1);
-const OperationResultRetryAfterMsSchema = z
+const OperationResultSessionIdSchema = lazyZodSchema(() => z.string().trim().min(1));
+const OperationResultIssueFingerprintSchema = lazyZodSchema(() => z.string().trim().min(1));
+const OperationResultErrorCodeSchema = lazyZodSchema(() => z.string().trim().min(1));
+const OperationResultRetryAfterMsSchema = lazyZodSchema(() => z
   .number()
   .finite()
   .nonnegative()
-  .transform((value) => Math.trunc(value));
-const OperationResultResumePromptModeSchema = z.enum(['standard', 'off', 'custom']);
+  .transform((value) => Math.trunc(value)));
+const OperationResultResumePromptModeSchema = lazyZodSchema(() => z.enum(['standard', 'off', 'custom']));
 type OperationResultResumePromptMode = z.infer<typeof OperationResultResumePromptModeSchema>;
 const INVALID_RESUME_PROMPT_MODE = Symbol('invalid resume prompt mode');
 
-const OperationResultDiagnosticScalarV1Schema = z.union([
+const OperationResultDiagnosticScalarV1Schema = lazyZodSchema(() => z.union([
   z.string(),
   z.number().finite(),
   z.boolean(),
   z.null(),
-]);
+]));
 
-const OperationResultDiagnosticsV1Schema = z.record(
+const OperationResultDiagnosticsV1Schema = lazyZodSchema(() => z.record(
   z.string().trim().min(1),
   OperationResultDiagnosticScalarV1Schema,
-);
+));
 
-export const SessionUsageLimitRecoveryOperationResultV1Schema = z.discriminatedUnion('ok', [
+export const SessionUsageLimitRecoveryOperationResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
   z
     .object({
       ok: z.literal(true),
@@ -89,7 +90,7 @@ export const SessionUsageLimitRecoveryOperationResultV1Schema = z.discriminatedU
       diagnostics: OperationResultDiagnosticsV1Schema.optional(),
     })
     .strict(),
-]);
+]));
 
 export type SessionUsageLimitRecoveryOperationResultV1 =
   z.infer<typeof SessionUsageLimitRecoveryOperationResultV1Schema>;

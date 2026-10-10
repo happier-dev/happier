@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { MessageActionReferenceV1Schema } from './messageActionReferenceV1.js';
 import { SessionMessageAccountActorV1Schema } from './sessionMessageAccountActorV1.js';
@@ -13,7 +14,7 @@ import {
 } from './sessionExternalShareableTranscriptV1.js';
 
 /** Additive reader projection; unknown presentation fields are dropped, never trusted. */
-export const SessionMessageV1Schema = z.object({
+export const SessionMessageV1Schema = lazyZodSchema(() => z.object({
   id: z.string().min(1), seq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), localId: z.string().nullish(),
   sidechainId: z.string().nullable().optional(),
   messageRole: SessionMessageRoleSchema.nullish(),
@@ -27,16 +28,16 @@ export const SessionMessageV1Schema = z.object({
   messageActionReference: MessageActionReferenceV1Schema.optional(),
   accountActor: SessionMessageAccountActorV1Schema.nullable().optional(),
   inputAdmissionReceipt: SessionInputAdmissionReceiptV1Schema.optional(),
-});
+}));
 export type SessionMessageV1 = z.infer<typeof SessionMessageV1Schema>;
-export const SessionMessagesPageV1Schema = z.object({
+export const SessionMessagesPageV1Schema = lazyZodSchema(() => z.object({
   messages: z.array(SessionMessageV1Schema), hasMore: z.boolean().optional(),
   nextBeforeSeq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable().optional(), nextAfterSeq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
-});
+}));
 export type SessionMessagesPageV1 = z.infer<typeof SessionMessagesPageV1Schema>;
 // An external publication row may be an opaque cursor witness. Invalid content
 // and coarse actors are omitted; Account identity never crosses this projection.
-export const SessionExternalShareableMessagesPageV1Schema = SessionMessagesPageV1Schema.extend({
+export const SessionExternalShareableMessagesPageV1Schema = lazyZodSchema(() => SessionMessagesPageV1Schema.extend({
   messages: z.array(SessionMessageV1Schema.omit({ content: true, accountActor: true, inputAdmissionReceipt: true }).extend({
     content: z.unknown().transform((input) => {
       const parsed = SessionStoredMessageContentSchema.safeParse(input);
@@ -49,7 +50,7 @@ export const SessionExternalShareableMessagesPageV1Schema = SessionMessagesPageV
   })),
   publicationBlocked: z.boolean().optional(),
   externalShareableSnapshot: ExternalShareableTranscriptSnapshotV1Schema.optional(),
-});
+}));
 export type SessionMessagesPageScope = 'main' | 'sidechain' | 'all';
 export type BuildSessionMessagesPathParams = Readonly<{
   sessionId: string; scope: SessionMessagesPageScope; sidechainId?: string | null;

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -81,19 +82,19 @@ export function normalizeMachineTunnelPreferredEncoding(
   return supportedEncodings[0] ?? PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2;
 }
 
-export const MachineTunnelDirectPeerCapabilitiesSchema = z.object({
+export const MachineTunnelDirectPeerCapabilitiesSchema = lazyZodSchema(() => z.object({
   allowedPorts: z
     .preprocess((raw) => [...normalizeMachineTunnelAllowedPorts(raw)], z.array(z.number().int().min(1).max(65_535)))
     .optional()
     .default([...DEFAULT_MACHINE_TUNNEL_DIRECT_ALLOWED_PORTS]),
-});
+}));
 export type MachineTunnelDirectPeerCapabilities = z.infer<typeof MachineTunnelDirectPeerCapabilitiesSchema>;
 
 export const DEFAULT_MACHINE_TUNNEL_DIRECT_PEER_CAPABILITIES: MachineTunnelDirectPeerCapabilities = {
   allowedPorts: [...DEFAULT_MACHINE_TUNNEL_DIRECT_ALLOWED_PORTS],
 };
 
-export const MachineTunnelSubstreamCapabilitiesSchema = z.object({
+export const MachineTunnelSubstreamCapabilitiesSchema = lazyZodSchema(() => z.object({
   maxConcurrentSubstreams: z
     .preprocess(
       (raw) => normalizeMachineTunnelPositiveInt(
@@ -105,14 +106,14 @@ export const MachineTunnelSubstreamCapabilitiesSchema = z.object({
     )
     .optional()
     .default(DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_CONCURRENT_SUBSTREAMS),
-});
+}));
 export type MachineTunnelSubstreamCapabilities = z.infer<typeof MachineTunnelSubstreamCapabilitiesSchema>;
 
 export const DEFAULT_MACHINE_TUNNEL_SUBSTREAM_CAPABILITIES: MachineTunnelSubstreamCapabilities = {
   maxConcurrentSubstreams: DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_CONCURRENT_SUBSTREAMS,
 };
 
-export const MachineTunnelServerRoutedCapabilitiesSchema = z.object({
+export const MachineTunnelServerRoutedCapabilitiesSchema = lazyZodSchema(() => z.object({
   maxActiveTunnelsPerSocket: z
     .preprocess(
       (raw) => normalizeMachineTunnelPositiveInt(raw, DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_ACTIVE_TUNNELS_PER_SOCKET, {
@@ -168,7 +169,7 @@ export const MachineTunnelServerRoutedCapabilitiesSchema = z.object({
     .default(DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_FRAMED_MESSAGE_BYTES),
   substreams: MachineTunnelSubstreamCapabilitiesSchema.optional().default(DEFAULT_MACHINE_TUNNEL_SUBSTREAM_CAPABILITIES),
   disabledReason: z.string().min(1).optional().default('relay_disabled_by_server_policy'),
-});
+}));
 export type MachineTunnelServerRoutedCapabilities = z.infer<typeof MachineTunnelServerRoutedCapabilitiesSchema>;
 
 export const DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_CAPABILITIES: MachineTunnelServerRoutedCapabilities = {
@@ -183,10 +184,10 @@ export const DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_CAPABILITIES: MachineTunnelSer
   disabledReason: 'relay_disabled_by_server_policy',
 };
 
-export const MachineTunnelCapabilitiesSchema = z.object({
+export const MachineTunnelCapabilitiesSchema = lazyZodSchema(() => z.object({
   directPeer: MachineTunnelDirectPeerCapabilitiesSchema.optional().default(DEFAULT_MACHINE_TUNNEL_DIRECT_PEER_CAPABILITIES),
   serverRouted: MachineTunnelServerRoutedCapabilitiesSchema.optional().default(DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_CAPABILITIES),
-});
+}));
 export type MachineTunnelCapabilities = z.infer<typeof MachineTunnelCapabilitiesSchema>;
 
 export const DEFAULT_MACHINE_TUNNEL_CAPABILITIES: MachineTunnelCapabilities = {

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { PluginDiagnosticDataV1Schema } from '../../daemon/pluginContributionIntrospection.js';
@@ -19,20 +20,20 @@ export const PLUGIN_SESSION_HOOK_STATUS_INVENTORY_MAX_DIAGNOSTICS = 32;
 export const PLUGIN_SESSION_HOOK_STATUS_INVENTORY_MAX_SERIALIZED_BYTES = 4 * 1024 * 1024;
 
 const textEncoder = new TextEncoder();
-const BoundedIdSchema = z.string().trim().min(1).max(512);
-const PreviewIdSchema = z.string().regex(
+const BoundedIdSchema = lazyZodSchema(() => z.string().trim().min(1).max(512));
+const PreviewIdSchema = lazyZodSchema(() => z.string().regex(
   /^hook-install-preview:v1:[0-9a-f]{64}$/u,
-);
-const PreviewBoundedIdSchema = z.string()
+));
+const PreviewBoundedIdSchema = lazyZodSchema(() => z.string()
   .trim()
   .min(1)
   .max(512)
-  .refine((value) => !value.includes('\u0000'), 'must be NUL-free');
-const PreviewNativeEventNameSchema = z.string()
+  .refine((value) => !value.includes('\u0000'), 'must be NUL-free'));
+const PreviewNativeEventNameSchema = lazyZodSchema(() => z.string()
   .min(1)
   .max(128)
-  .refine((value) => !value.includes('\u0000'), 'must be NUL-free');
-const PreviewAbsolutePathSchema = z.string()
+  .refine((value) => !value.includes('\u0000'), 'must be NUL-free'));
+const PreviewAbsolutePathSchema = lazyZodSchema(() => z.string()
   .min(1)
   .refine((value) => !value.includes('\u0000'), 'must be NUL-free')
   .refine(
@@ -46,18 +47,18 @@ const PreviewAbsolutePathSchema = z.string()
       || /^(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+/u.test(value)
     ),
     'must be an absolute POSIX, drive, or UNC path',
-  );
-const PreviewCommandSchema = z.string()
+  ));
+const PreviewCommandSchema = lazyZodSchema(() => z.string()
   .min(1)
   .max(PLUGIN_SESSION_HOOK_INSTALL_PREVIEW_MAX_SERIALIZED_BYTES)
-  .refine((value) => !value.includes('\u0000'), 'must be NUL-free');
-const PreviewMatcherSchema = z.string()
+  .refine((value) => !value.includes('\u0000'), 'must be NUL-free'));
+const PreviewMatcherSchema = lazyZodSchema(() => z.string()
   .trim()
   .min(1)
   .max(512)
-  .refine((value) => !value.includes('\u0000'), 'must be NUL-free');
+  .refine((value) => !value.includes('\u0000'), 'must be NUL-free'));
 
-const PluginSessionHookInstallPreviewChangeV1Schema = z.object({
+const PluginSessionHookInstallPreviewChangeV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('append_json_array_entry'),
   collectionId: PreviewBoundedIdSchema,
   eventId: PreviewBoundedIdSchema,
@@ -72,18 +73,18 @@ const PluginSessionHookInstallPreviewChangeV1Schema = z.object({
       }).strict().readonly(),
     ]).readonly(),
   }).strict().readonly(),
-}).strict().readonly();
+}).strict().readonly());
 
-const PluginSessionHookInstallPreviewTargetV1Schema = z.object({
+const PluginSessionHookInstallPreviewTargetV1Schema = lazyZodSchema(() => z.object({
   targetId: PreviewBoundedIdSchema,
   absolutePath: PreviewAbsolutePathSchema,
   changes: z.array(PluginSessionHookInstallPreviewChangeV1Schema)
     .min(1)
     .max(PLUGIN_SESSION_HOOK_INSTALL_PREVIEW_MAX_CHANGES)
     .readonly(),
-}).strict().readonly();
+}).strict().readonly());
 
-export const PluginSessionHookInstallPreviewV1Schema = z.object({
+export const PluginSessionHookInstallPreviewV1Schema = lazyZodSchema(() => z.object({
   previewId: PreviewIdSchema,
   targets: z.array(PluginSessionHookInstallPreviewTargetV1Schema)
     .min(1)
@@ -146,7 +147,7 @@ export const PluginSessionHookInstallPreviewV1Schema = z.object({
         + `${PLUGIN_SESSION_HOOK_INSTALL_PREVIEW_MAX_SERIALIZED_BYTES} serialized UTF-8 bytes`,
     });
   }
-}).readonly();
+}).readonly());
 export type PluginSessionHookInstallPreviewV1 = z.infer<
   typeof PluginSessionHookInstallPreviewV1Schema
 >;
@@ -185,7 +186,7 @@ const PluginSessionHookStatusPaginationFieldsV1 = {
     .default(PLUGIN_SESSION_HOOK_STATUS_INVENTORY_DEFAULT_LIMIT),
 } as const;
 
-export const PluginSessionHookStatusInputV1Schema = z.discriminatedUnion(
+export const PluginSessionHookStatusInputV1Schema = lazyZodSchema(() => z.discriminatedUnion(
   'intent',
   [
     z.object({
@@ -205,21 +206,21 @@ export const PluginSessionHookStatusInputV1Schema = z.discriminatedUnion(
       installationId: BoundedIdSchema,
     }).strict(),
   ],
-);
+));
 export type PluginSessionHookStatusInputV1 = z.input<typeof PluginSessionHookStatusInputV1Schema>;
 
-export const PluginSessionHookInstallInputV1Schema = z.object(
+export const PluginSessionHookInstallInputV1Schema = lazyZodSchema(() => z.object(
   {
     ...PluginSessionHookContributionTargetFieldsV1,
     expectedPreviewId: PreviewIdSchema,
   },
-).strict();
+).strict());
 export type PluginSessionHookInstallInputV1 = z.infer<typeof PluginSessionHookInstallInputV1Schema>;
 
-export const PluginSessionHookInstallationMutationInputV1Schema = z.object({
+export const PluginSessionHookInstallationMutationInputV1Schema = lazyZodSchema(() => z.object({
   ...PluginSessionHookContributionTargetFieldsV1,
   installationId: BoundedIdSchema,
-}).strict();
+}).strict());
 export type PluginSessionHookInstallationMutationInputV1 = z.infer<
   typeof PluginSessionHookInstallationMutationInputV1Schema
 >;
@@ -232,7 +233,7 @@ const PluginSessionHookSemanticTargetFieldsV1 = {
  * Canonical Action input. Machine routing is host authority and is present only
  * on the released daemon RPC carrier above.
  */
-export const PluginSessionHookStatusActionInputV1Schema = z.discriminatedUnion(
+export const PluginSessionHookStatusActionInputV1Schema = lazyZodSchema(() => z.discriminatedUnion(
   'intent',
   [
     z.object({
@@ -255,105 +256,105 @@ export const PluginSessionHookStatusActionInputV1Schema = z.discriminatedUnion(
       installationId: BoundedIdSchema,
     }).strict(),
   ],
-);
+));
 export type PluginSessionHookStatusActionInputV1 = z.input<
   typeof PluginSessionHookStatusActionInputV1Schema
 >;
 
-export const PluginSessionHookInstallActionInputV1Schema = z.object({
+export const PluginSessionHookInstallActionInputV1Schema = lazyZodSchema(() => z.object({
   ...PluginSessionHookSemanticTargetFieldsV1,
   expectedPreviewId: PreviewIdSchema,
-}).strict();
+}).strict());
 export type PluginSessionHookInstallActionInputV1 = z.infer<
   typeof PluginSessionHookInstallActionInputV1Schema
 >;
 
-export const PluginSessionHookInstallationMutationActionInputV1Schema = z.object({
+export const PluginSessionHookInstallationMutationActionInputV1Schema = lazyZodSchema(() => z.object({
   ...PluginSessionHookSemanticTargetFieldsV1,
   installationId: BoundedIdSchema,
-}).strict();
+}).strict());
 export type PluginSessionHookInstallationMutationActionInputV1 = z.infer<
   typeof PluginSessionHookInstallationMutationActionInputV1Schema
 >;
 
-const PluginSessionHookNotInstalledStatusV1Schema = z.object({
+const PluginSessionHookNotInstalledStatusV1Schema = lazyZodSchema(() => z.object({
   state: z.literal('not_installed'),
   installPreview: PluginSessionHookInstallPreviewV1Schema.optional(),
-}).strict();
+}).strict());
 
-const PluginSessionHookMutationNotInstalledStatusV1Schema = z.object({
+const PluginSessionHookMutationNotInstalledStatusV1Schema = lazyZodSchema(() => z.object({
   state: z.literal('not_installed'),
-}).strict();
+}).strict());
 
-const PluginSessionHookInstalledEnabledStatusV1Schema = z.object({
+const PluginSessionHookInstalledEnabledStatusV1Schema = lazyZodSchema(() => z.object({
   state: z.literal('installed_enabled'),
   installationId: BoundedIdSchema,
-}).strict();
+}).strict());
 
-const PluginSessionHookInstalledDisabledStatusV1Schema = z.object({
+const PluginSessionHookInstalledDisabledStatusV1Schema = lazyZodSchema(() => z.object({
   state: z.literal('installed_disabled'),
   installationId: BoundedIdSchema,
-}).strict();
+}).strict());
 
-const PluginSessionHookNeedsAttentionStatusV1Schema = z.object({
+const PluginSessionHookNeedsAttentionStatusV1Schema = lazyZodSchema(() => z.object({
   state: z.literal('needs_attention'),
   installationId: BoundedIdSchema.optional(),
   diagnostic: PluginDiagnosticDataV1Schema,
-}).strict();
+}).strict());
 
 const PluginSessionHookInstalledNeedsAttentionStatusV1Schema =
-  PluginSessionHookNeedsAttentionStatusV1Schema.extend({
+  lazyZodSchema(() => PluginSessionHookNeedsAttentionStatusV1Schema.extend({
     installationId: BoundedIdSchema,
-  }).strict();
+  }).strict());
 
-const PluginSessionHookInstalledStatusV1Schema = z.discriminatedUnion('state', [
+const PluginSessionHookInstalledStatusV1Schema = lazyZodSchema(() => z.discriminatedUnion('state', [
   PluginSessionHookInstalledEnabledStatusV1Schema,
   PluginSessionHookInstalledDisabledStatusV1Schema,
   PluginSessionHookInstalledNeedsAttentionStatusV1Schema,
-]);
+]));
 
-const PluginSessionHookUnsupportedStatusV1Schema = z.object({
+const PluginSessionHookUnsupportedStatusV1Schema = lazyZodSchema(() => z.object({
   state: z.literal('unsupported'),
   reason: z.enum(['version_unsupported', 'installation_unsupported']),
-}).strict();
+}).strict());
 
-const PluginSessionHookUnavailableStatusV1Schema = z.object({
+const PluginSessionHookUnavailableStatusV1Schema = lazyZodSchema(() => z.object({
   state: z.literal('unavailable'),
   installationId: BoundedIdSchema,
-}).strict();
+}).strict());
 
-export const PluginSessionHookInstallationStatusV1Schema = z.discriminatedUnion('state', [
+export const PluginSessionHookInstallationStatusV1Schema = lazyZodSchema(() => z.discriminatedUnion('state', [
   PluginSessionHookNotInstalledStatusV1Schema,
   PluginSessionHookInstalledEnabledStatusV1Schema,
   PluginSessionHookInstalledDisabledStatusV1Schema,
   PluginSessionHookNeedsAttentionStatusV1Schema,
   PluginSessionHookUnsupportedStatusV1Schema,
   PluginSessionHookUnavailableStatusV1Schema,
-]);
+]));
 export type PluginSessionHookInstallationStatusV1 = z.infer<
   typeof PluginSessionHookInstallationStatusV1Schema
 >;
 
-export const PluginSessionHookStatusInventoryRowV1Schema = z.object({
+export const PluginSessionHookStatusInventoryRowV1Schema = lazyZodSchema(() => z.object({
   agent: BoundedPluginContributionIdentityV1Schema,
   status: PluginSessionHookInstallationStatusV1Schema,
-}).strict();
+}).strict());
 export type PluginSessionHookStatusInventoryRowV1 = z.infer<
   typeof PluginSessionHookStatusInventoryRowV1Schema
 >;
 
-export const PluginSessionHookStatusInventoryDiagnosticV1Schema = z.object({
+export const PluginSessionHookStatusInventoryDiagnosticV1Schema = lazyZodSchema(() => z.object({
   code: z.enum([
     'installation_record_invalid',
     'installation_record_read_failed',
   ]),
   retryable: z.boolean(),
-}).strict();
+}).strict());
 export type PluginSessionHookStatusInventoryDiagnosticV1 = z.infer<
   typeof PluginSessionHookStatusInventoryDiagnosticV1Schema
 >;
 
-export const PluginSessionHookManagementDiagnosticV1Schema = z.object({
+export const PluginSessionHookManagementDiagnosticV1Schema = lazyZodSchema(() => z.object({
   code: z.enum([
     'feature_disabled',
     'agent_unavailable',
@@ -367,17 +368,17 @@ export const PluginSessionHookManagementDiagnosticV1Schema = z.object({
     'operation_failed',
   ]),
   retryable: z.boolean(),
-}).strict();
+}).strict());
 export type PluginSessionHookManagementDiagnosticV1 = z.infer<
   typeof PluginSessionHookManagementDiagnosticV1Schema
 >;
 
-const PluginSessionHookManagementFailureV1Schema = z.object({
+const PluginSessionHookManagementFailureV1Schema = lazyZodSchema(() => z.object({
   ok: z.literal(false),
   diagnostic: PluginSessionHookManagementDiagnosticV1Schema,
-}).strict();
+}).strict());
 
-export const PluginSessionHookStatusResponseV1Schema = z.discriminatedUnion('ok', [
+export const PluginSessionHookStatusResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),
     rows: z.array(PluginSessionHookStatusInventoryRowV1Schema)
@@ -397,36 +398,36 @@ export const PluginSessionHookStatusResponseV1Schema = z.discriminatedUnion('ok'
         + `${PLUGIN_SESSION_HOOK_STATUS_INVENTORY_MAX_SERIALIZED_BYTES} serialized UTF-8 bytes`,
     });
   }
-});
+}));
 export type PluginSessionHookStatusResponseV1 = z.infer<typeof PluginSessionHookStatusResponseV1Schema>;
 
-export const PluginSessionHookInstallResponseV1Schema = z.discriminatedUnion('ok', [
+export const PluginSessionHookInstallResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),
     status: PluginSessionHookInstalledStatusV1Schema,
   }).strict(),
   PluginSessionHookManagementFailureV1Schema,
-]);
+]));
 export type PluginSessionHookInstallResponseV1 = z.infer<
   typeof PluginSessionHookInstallResponseV1Schema
 >;
 
-export const PluginSessionHookToggleResponseV1Schema = z.discriminatedUnion('ok', [
+export const PluginSessionHookToggleResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),
     status: PluginSessionHookInstalledStatusV1Schema,
   }).strict(),
   PluginSessionHookManagementFailureV1Schema,
-]);
+]));
 export type PluginSessionHookToggleResponseV1 = z.infer<typeof PluginSessionHookToggleResponseV1Schema>;
 
-export const PluginSessionHookUninstallResponseV1Schema = z.discriminatedUnion('ok', [
+export const PluginSessionHookUninstallResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),
     status: PluginSessionHookMutationNotInstalledStatusV1Schema,
   }).strict(),
   PluginSessionHookManagementFailureV1Schema,
-]);
+]));
 export type PluginSessionHookUninstallResponseV1 = z.infer<
   typeof PluginSessionHookUninstallResponseV1Schema
 >;

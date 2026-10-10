@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -9,10 +10,10 @@ import { ProviderConnectionSecurityFingerprintV1Schema } from '../../providers/f
 import { ProviderConnectionIdSchema, ProviderLocalIdSchema } from '../../providers/ids.js';
 
 /** One owning ServiceAccountToken row pins a qualified credential lifetime. */
-export const TeamCredentialSourceCredentialIncarnationV1Schema = z.string().min(1);
+export const TeamCredentialSourceCredentialIncarnationV1Schema = lazyZodSchema(() => z.string().min(1));
 
 /** Canonical closed source identity shared by resource and broker schemas. */
-export const TeamCredentialSourceBindingV1Schema = z.discriminatedUnion('kind', [
+export const TeamCredentialSourceBindingV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     v: z.literal(1),
     kind: z.literal('connected_account'),
@@ -32,7 +33,7 @@ export const TeamCredentialSourceBindingV1Schema = z.discriminatedUnion('kind', 
     connectionSecurityFingerprint: ProviderConnectionSecurityFingerprintV1Schema,
     credentialSlotId: ProviderLocalIdSchema,
   }).strict(),
-]);
+]));
 
 export type TeamCredentialSourceCredentialIncarnationV1 = z.infer<
   typeof TeamCredentialSourceCredentialIncarnationV1Schema

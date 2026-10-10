@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginMachineMaterializationRefV1Schema } from '../plugins/availability/materializationRefV1.js';
@@ -15,16 +16,16 @@ export const UNSIGNED_DECIMAL_BIGINT_SCHEMA = z.string()
     value.length < MAX_SIGNED_BIGINT_DECIMAL.length || value <= MAX_SIGNED_BIGINT_DECIMAL
   ));
 
-export const AutomationEventSourceStatusStateV1Schema = z.enum([
+export const AutomationEventSourceStatusStateV1Schema = lazyZodSchema(() => z.enum([
   'uninitialized',
   'baselined',
   'observing',
   'backingOff',
   'attention',
-]);
+]));
 export type AutomationEventSourceStatusStateV1 = z.infer<typeof AutomationEventSourceStatusStateV1Schema>;
 
-export const AutomationEventSourceStatusCodeV1Schema = z.enum([
+export const AutomationEventSourceStatusCodeV1Schema = lazyZodSchema(() => z.enum([
   'none',
   'credentialMissing',
   'credentialRevoked',
@@ -34,21 +35,21 @@ export const AutomationEventSourceStatusCodeV1Schema = z.enum([
   'definitionStale',
   'sourceContractIncompatible',
   'admissionUnavailable',
-]);
+]));
 export type AutomationEventSourceStatusCodeV1 = z.infer<
   typeof AutomationEventSourceStatusCodeV1Schema
 >;
 
-export const AutomationEventSourceCatalogStatusStateV1Schema = z.enum([
+export const AutomationEventSourceCatalogStatusStateV1Schema = lazyZodSchema(() => z.enum([
   'current',
   'reconciling',
   'reconciliationLate',
-]);
+]));
 export type AutomationEventSourceCatalogStatusStateV1 = z.infer<
   typeof AutomationEventSourceCatalogStatusStateV1Schema
 >;
 
-export const AutomationEventSourceStatusV1Schema = z.object({
+export const AutomationEventSourceStatusV1Schema = lazyZodSchema(() => z.object({
   automationId: asProtocolZod(AutomationIdV1Schema),
   triggerId: AutomationTriggerIdSchema,
   triggerRevision: AutomationTriggerRevisionSchema,
@@ -65,5 +66,5 @@ export const AutomationEventSourceStatusV1Schema = z.object({
   admittedCount: NONNEGATIVE_SAFE_INTEGER_SCHEMA,
   skippedCount: NONNEGATIVE_SAFE_INTEGER_SCHEMA,
   revision: NONNEGATIVE_SAFE_INTEGER_SCHEMA,
-}).strict();
+}).strict());
 export type AutomationEventSourceStatusV1 = z.infer<typeof AutomationEventSourceStatusV1Schema>;

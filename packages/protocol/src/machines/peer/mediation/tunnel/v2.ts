@@ -1,10 +1,11 @@
+import { lazyZodSchema } from '../../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { PeerTcpTunnelDirectionV1Schema } from './v1.js';
 
-const BinaryFrameKindV2Schema = z.enum(['open', 'data', 'ack', 'close', 'abort']);
+const BinaryFrameKindV2Schema = lazyZodSchema(() => z.enum(['open', 'data', 'ack', 'close', 'abort']));
 
-export const PeerTcpTunnelBinaryFrameHeaderV2Schema = z
+export const PeerTcpTunnelBinaryFrameHeaderV2Schema = lazyZodSchema(() => z
   .object({
     version: z.literal(2),
     kind: BinaryFrameKindV2Schema,
@@ -20,7 +21,7 @@ export const PeerTcpTunnelBinaryFrameHeaderV2Schema = z
     payloadLength: z.number().int().nonnegative(),
     receiptId: z.string().min(1).optional(),
   })
-  .strict();
+  .strict());
 export type PeerTcpTunnelBinaryFrameHeaderV2 = z.infer<typeof PeerTcpTunnelBinaryFrameHeaderV2Schema>;
 
 /**

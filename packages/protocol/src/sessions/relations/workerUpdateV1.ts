@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { EXECUTION_RUN_COMPLETION_SUMMARY_MAX_LENGTH, ExecutionRunCompletionV1Schema } from '../../execution/runs/completionInputV1.js';
@@ -13,7 +14,7 @@ import { ExecutionRunIdSchema, SessionIdSchema } from '../idsV1.js';
 const WorkerUpdateSessionIdV1Schema = asProtocolZod<string, string>(SessionIdSchema);
 
 /** Paths are portable workspace-relative wire paths, not arbitrary machine paths. */
-export const WorkerDeliverableReferenceV1Schema = z.discriminatedUnion('kind', [
+export const WorkerDeliverableReferenceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('workspace_file'),
     sessionId: WorkerUpdateSessionIdV1Schema,
@@ -23,13 +24,13 @@ export const WorkerDeliverableReferenceV1Schema = z.discriminatedUnion('kind', [
   }).strict(),
   // The containing report supplies the Home. A ref cannot select a foreign Account.
   z.object({ kind: z.literal('artifact'), artifactId: z.string().min(1) }).strict(),
-]);
+]));
 export type WorkerDeliverableReferenceV1 = z.infer<typeof WorkerDeliverableReferenceV1Schema>;
 export function workerDeliverablesBelongToSessionV1(deliverables: readonly WorkerDeliverableReferenceV1[] | undefined, sessionId: string | null | undefined): boolean {
   return !deliverables?.some(ref => ref.kind === 'workspace_file' && ref.sessionId !== sessionId);
 }
-const WorkerDeliverablesV1Schema = z.array(WorkerDeliverableReferenceV1Schema)
-  .refine(refs => JSON.stringify(refs).length <= EXECUTION_RUN_COMPLETION_SUMMARY_MAX_LENGTH);
+const WorkerDeliverablesV1Schema = lazyZodSchema(() => z.array(WorkerDeliverableReferenceV1Schema)
+  .refine(refs => JSON.stringify(refs).length <= EXECUTION_RUN_COMPLETION_SUMMARY_MAX_LENGTH));
 
 /** References share the existing result budget; no second retained payload. */
 export function workerDeliverableResultMaxLengthV1(deliverables?: readonly WorkerDeliverableReferenceV1[]): number {
@@ -40,19 +41,19 @@ export function refineWorkerDeliverableResultV1(result: string | undefined, deli
     context.addIssue({ code: z.ZodIssueCode.custom, path: [path], message: 'Worker result and references exceed the completion result bound' });
   }
 }
-export const SessionWorkerPublishInputV1Schema = z.object({
+export const SessionWorkerPublishInputV1Schema = lazyZodSchema(() => z.object({
   summary: ExecutionRunCompletionV1Schema.shape.summary.unwrap(),
   deliverables: WorkerDeliverablesV1Schema.optional(),
-}).strict().superRefine((report, context) => refineWorkerDeliverableResultV1(report.summary, report.deliverables, context, 'summary'));
+}).strict().superRefine((report, context) => refineWorkerDeliverableResultV1(report.summary, report.deliverables, context, 'summary')));
 export type SessionWorkerPublishInputV1 = z.infer<typeof SessionWorkerPublishInputV1Schema>;
-export const SessionWorkerPublishOutputV1Schema = z.object({
+export const SessionWorkerPublishOutputV1Schema = lazyZodSchema(() => z.object({
   sessionId: WorkerUpdateSessionIdV1Schema,
   leadSessionId: WorkerUpdateSessionIdV1Schema,
   localId: z.string().min(1),
-}).strict();
+}).strict());
 
 /** Epoch 1: the envelope and every nested identity/engine object are closed. */
-export const WorkerUpdateTranscriptPointerV1Schema = z.discriminatedUnion('kind', [
+export const WorkerUpdateTranscriptPointerV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('session'),
     sessionId: WorkerUpdateSessionIdV1Schema,
@@ -68,10 +69,10 @@ export const WorkerUpdateTranscriptPointerV1Schema = z.discriminatedUnion('kind'
     runId: WorkflowRunIdV1Schema,
     invocationRecordId: WorkflowInvocationRecordIdSchema.optional(),
   }).strict(),
-]);
+]));
 export type WorkerUpdateTranscriptPointerV1 = z.infer<typeof WorkerUpdateTranscriptPointerV1Schema>;
 
-const WorkerUpdateFieldsV1Schema = z.object({
+const WorkerUpdateFieldsV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   wake: z.enum(['finished', 'needs_you', 'stalled', 'published']),
   engine: z.object({
@@ -86,9 +87,9 @@ const WorkerUpdateFieldsV1Schema = z.object({
   truncated: z.boolean().optional(),
   transcriptPointer: WorkerUpdateTranscriptPointerV1Schema.optional(),
   canInspect: z.boolean(),
-}).strict();
+}).strict());
 
-export const WorkerUpdateV1Schema = z.discriminatedUnion('workerKind', [
+export const WorkerUpdateV1Schema = lazyZodSchema(() => z.discriminatedUnion('workerKind', [
   WorkerUpdateFieldsV1Schema.extend({
     workerKind: z.literal('session'),
     workerId: WorkerUpdateSessionIdV1Schema,
@@ -118,5 +119,5 @@ export const WorkerUpdateV1Schema = z.discriminatedUnion('workerKind', [
       message: 'A truncated worker update requires a transcript pointer',
     });
   }
-});
+}));
 export type WorkerUpdateV1 = z.infer<typeof WorkerUpdateV1Schema>;

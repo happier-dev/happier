@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -8,5 +9,5 @@ import { z } from 'zod';
  * reports only the AI-access check, which happens strictly between consent and
  * readiness and changes no durable column.
  */
-export const RunnerActivationProgressPhaseV1Schema = z.enum(['checking_ai_access']);
+export const RunnerActivationProgressPhaseV1Schema = lazyZodSchema(() => z.enum(['checking_ai_access']));
 export type RunnerActivationProgressPhaseV1 = z.infer<typeof RunnerActivationProgressPhaseV1Schema>;

@@ -1,72 +1,73 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { assertManifestPathsSafe, assertModelPackFilePathPortable } from './pathSafety.js';
 
-const ArtifactPathV1Schema = z.string().min(1).max(512).superRefine((path, ctx) => {
+const ArtifactPathV1Schema = lazyZodSchema(() => z.string().min(1).max(512).superRefine((path, ctx) => {
   try {
     assertModelPackFilePathPortable(path);
   } catch {
     ctx.addIssue({ code: 'custom', message: 'Artifact paths must be canonical portable relative POSIX paths.' });
   }
-});
+}));
 
-export const VoiceModelPackFileArtifactV1Schema = z.object({
+export const VoiceModelPackFileArtifactV1Schema = lazyZodSchema(() => z.object({
   type: z.literal('file'),
   path: ArtifactPathV1Schema,
-}).strict();
+}).strict());
 export type VoiceModelPackFileArtifactV1 = z.infer<typeof VoiceModelPackFileArtifactV1Schema>;
 
-export const VoiceModelPackDirectoryArtifactV1Schema = z.object({
+export const VoiceModelPackDirectoryArtifactV1Schema = lazyZodSchema(() => z.object({
   type: z.literal('directory_prefix'),
   path: ArtifactPathV1Schema,
-}).strict();
+}).strict());
 export type VoiceModelPackDirectoryArtifactV1 = z.infer<typeof VoiceModelPackDirectoryArtifactV1Schema>;
 
-export const VoiceModelPackSupportArtifactKindV1Schema = z.enum([
+export const VoiceModelPackSupportArtifactKindV1Schema = lazyZodSchema(() => z.enum([
   'license',
   'notice',
   'provenance',
-]);
+]));
 export type VoiceModelPackSupportArtifactKindV1 = z.infer<typeof VoiceModelPackSupportArtifactKindV1Schema>;
 
 /** Exact non-runtime bytes retained with an installed model pack. */
-export const VoiceModelPackSupportArtifactV1Schema = z.object({
+export const VoiceModelPackSupportArtifactV1Schema = lazyZodSchema(() => z.object({
   type: z.literal('file'),
   kind: VoiceModelPackSupportArtifactKindV1Schema,
   path: ArtifactPathV1Schema,
-}).strict();
+}).strict());
 export type VoiceModelPackSupportArtifactV1 = z.infer<typeof VoiceModelPackSupportArtifactV1Schema>;
 
-export const VoiceModelPackTransducerArtifactsV1Schema = z.object({
+export const VoiceModelPackTransducerArtifactsV1Schema = lazyZodSchema(() => z.object({
   encoder: VoiceModelPackFileArtifactV1Schema,
   decoder: VoiceModelPackFileArtifactV1Schema,
   joiner: VoiceModelPackFileArtifactV1Schema,
   tokens: VoiceModelPackFileArtifactV1Schema,
-}).strict();
+}).strict());
 export type VoiceModelPackTransducerArtifactsV1 = z.infer<typeof VoiceModelPackTransducerArtifactsV1Schema>;
 
-export const VoiceModelPackKokoroArtifactsV1Schema = z.object({
+export const VoiceModelPackKokoroArtifactsV1Schema = lazyZodSchema(() => z.object({
   model: VoiceModelPackFileArtifactV1Schema,
   voices: VoiceModelPackFileArtifactV1Schema,
   tokens: VoiceModelPackFileArtifactV1Schema,
   data: VoiceModelPackDirectoryArtifactV1Schema,
-}).strict();
+}).strict());
 export type VoiceModelPackKokoroArtifactsV1 = z.infer<typeof VoiceModelPackKokoroArtifactsV1Schema>;
 
-export const VoiceModelPackTransducerArtifactContractV1Schema = z.object({
+export const VoiceModelPackTransducerArtifactContractV1Schema = lazyZodSchema(() => z.object({
   family: z.enum(['sherpa_zipformer_streaming', 'sherpa_parakeet_offline']),
   artifacts: VoiceModelPackTransducerArtifactsV1Schema,
-}).strict();
+}).strict());
 
-export const VoiceModelPackKokoroArtifactContractV1Schema = z.object({
+export const VoiceModelPackKokoroArtifactContractV1Schema = lazyZodSchema(() => z.object({
   family: z.literal('sherpa_kokoro_offline'),
   artifacts: VoiceModelPackKokoroArtifactsV1Schema,
-}).strict();
+}).strict());
 
-export const VoiceModelPackArtifactContractV1Schema = z.discriminatedUnion('family', [
+export const VoiceModelPackArtifactContractV1Schema = lazyZodSchema(() => z.discriminatedUnion('family', [
   VoiceModelPackTransducerArtifactContractV1Schema,
   VoiceModelPackKokoroArtifactContractV1Schema,
-]);
+]));
 
 export type VoiceModelPackArtifactContractV1 = z.infer<typeof VoiceModelPackArtifactContractV1Schema>;
 

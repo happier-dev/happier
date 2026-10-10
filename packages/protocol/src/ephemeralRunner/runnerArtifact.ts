@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -20,10 +21,10 @@ export const RUNNER_ARTIFACT_TARGETS = [
   'windows-x64',
 ] as const;
 
-export const RunnerArtifactTargetSchema = z.enum(RUNNER_ARTIFACT_TARGETS);
+export const RunnerArtifactTargetSchema = lazyZodSchema(() => z.enum(RUNNER_ARTIFACT_TARGETS));
 export type RunnerArtifactTarget = z.infer<typeof RunnerArtifactTargetSchema>;
 
-export const RunnerArtifactIdentityV1Schema = z
+export const RunnerArtifactIdentityV1Schema = lazyZodSchema(() => z
   .object({
     product: z.literal(RUNNER_ARTIFACT_PRODUCT),
     version: z.string().min(1),
@@ -32,10 +33,10 @@ export const RunnerArtifactIdentityV1Schema = z
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
   })
   .strict()
-  .readonly();
+  .readonly());
 export type RunnerArtifactIdentityV1 = z.infer<typeof RunnerArtifactIdentityV1Schema>;
 
-export const RunnerArtifactArchiveEntryV1Schema = z.object({
+export const RunnerArtifactArchiveEntryV1Schema = lazyZodSchema(() => z.object({
   path: z.string().min(1),
   kind: z.enum(['file', 'directory', 'symlink']),
   sizeBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
@@ -45,16 +46,16 @@ export const RunnerArtifactArchiveEntryV1Schema = z.object({
   if ((entry.kind === 'symlink') !== (entry.linkTarget !== undefined)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'linkTarget must be present only for symlinks' });
   }
-}).readonly();
+}).readonly());
 export type RunnerArtifactArchiveEntryV1 = z.infer<typeof RunnerArtifactArchiveEntryV1Schema>;
 
-const RunnerArtifactArchiveSizeBytesV1Schema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
-const RunnerArtifactArchiveEntriesV1Schema = z.array(RunnerArtifactArchiveEntryV1Schema).min(1).readonly();
+const RunnerArtifactArchiveSizeBytesV1Schema = lazyZodSchema(() => z.number().int().positive().max(Number.MAX_SAFE_INTEGER));
+const RunnerArtifactArchiveEntriesV1Schema = lazyZodSchema(() => z.array(RunnerArtifactArchiveEntryV1Schema).min(1).readonly());
 
-const RunnerArtifactArchiveMetadataV1ObjectSchema = z.object({
+const RunnerArtifactArchiveMetadataV1ObjectSchema = lazyZodSchema(() => z.object({
   sizeBytes: RunnerArtifactArchiveSizeBytesV1Schema,
   entries: RunnerArtifactArchiveEntriesV1Schema,
-}).strict();
+}).strict());
 
 function validateRunnerArtifactArchiveMetadataV1(
   metadata: Readonly<{ entries: readonly Readonly<{ path: string }>[] }>,
@@ -68,25 +69,25 @@ function validateRunnerArtifactArchiveMetadataV1(
   }
 }
 
-export const RunnerArtifactArchiveMetadataV1Schema = RunnerArtifactArchiveMetadataV1ObjectSchema
+export const RunnerArtifactArchiveMetadataV1Schema = lazyZodSchema(() => RunnerArtifactArchiveMetadataV1ObjectSchema
   .superRefine(validateRunnerArtifactArchiveMetadataV1)
-  .readonly();
+  .readonly());
 export type RunnerArtifactArchiveMetadataV1 = z.infer<typeof RunnerArtifactArchiveMetadataV1Schema>;
 
-export const VerifiedRunnerArtifactV1Schema = z.object({
+export const VerifiedRunnerArtifactV1Schema = lazyZodSchema(() => z.object({
   identity: RunnerArtifactIdentityV1Schema,
   channel: z.string().min(1),
   url: z.string().url(),
   checksumsUrl: z.string().url(),
   checksumsSignatureUrl: z.string().url(),
   ...RunnerArtifactArchiveMetadataV1ObjectSchema.shape,
-}).strict().superRefine(validateRunnerArtifactArchiveMetadataV1).readonly();
+}).strict().superRefine(validateRunnerArtifactArchiveMetadataV1).readonly());
 export type VerifiedRunnerArtifactV1 = z.infer<typeof VerifiedRunnerArtifactV1Schema>;
 
-export const RunnerArtifactAvailabilityProjectionV1Schema = z.object({
+export const RunnerArtifactAvailabilityProjectionV1Schema = lazyZodSchema(() => z.object({
   status: z.literal('available'),
   artifacts: z.array(VerifiedRunnerArtifactV1Schema).readonly(),
-}).strict().readonly();
+}).strict().readonly());
 export type RunnerArtifactAvailabilityProjectionV1 = z.infer<typeof RunnerArtifactAvailabilityProjectionV1Schema>;
 
 /**

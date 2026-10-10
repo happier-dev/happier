@@ -1,11 +1,12 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginContributionReferenceV2Schema, PluginJsonValueV2Schema, PluginLocalizedStringV2Schema } from './publicTypes.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
-export const PluginScmOperationV2Schema = z.enum(['detect', 'clone', 'fetch', 'status', 'diff', 'commit', 'push', 'pullRequest']);
-export const PluginScmOperationsV2Schema = z.array(PluginScmOperationV2Schema)
+export const PluginScmOperationV2Schema = lazyZodSchema(() => z.enum(['detect', 'clone', 'fetch', 'status', 'diff', 'commit', 'push', 'pullRequest']));
+export const PluginScmOperationsV2Schema = lazyZodSchema(() => z.array(PluginScmOperationV2Schema)
   .min(1, 'SCM contributions must declare at least one operation.')
   .superRefine((operations, ctx) => {
     const seen = new Set<string>();
@@ -19,8 +20,8 @@ export const PluginScmOperationsV2Schema = z.array(PluginScmOperationV2Schema)
       }
       seen.add(operation);
     });
-  });
-export const ScmHostingProviderContributionSchema = z.object({
+  }));
+export const ScmHostingProviderContributionSchema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
   description: PluginLocalizedStringV2Schema.optional(),
@@ -28,5 +29,5 @@ export const ScmHostingProviderContributionSchema = z.object({
   capabilities: PluginScmOperationsV2Schema,
   authService: asProtocolZod(PluginContributionReferenceV2Schema).optional(),
   metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
-}).strict();
+}).strict());
 export type ScmHostingProviderContribution = z.infer<typeof ScmHostingProviderContributionSchema>;

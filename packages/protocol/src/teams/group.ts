@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { AccountDisplayProfileV1Schema } from '../account/accountDisplayProfileV1.js';
@@ -79,7 +80,7 @@ export function teamGroupNameKeyV1(raw: string): string {
  * members. `bindingId` is opaque and supports the management link to the exact
  * source settings — it is navigation, never resource authorization.
  */
-export const TeamGroupManagementV1Schema = z.discriminatedUnion('kind', [
+export const TeamGroupManagementV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('native') }).strict(),
   z.object({
     kind: z.literal('directory_created'),
@@ -87,7 +88,7 @@ export const TeamGroupManagementV1Schema = z.discriminatedUnion('kind', [
     label: z.string(),
     owner: TeamExternalGroupBindingOwnerV1Schema,
   }).strict(),
-]);
+]));
 export type TeamGroupManagementV1 = z.infer<typeof TeamGroupManagementV1Schema>;
 
 /**
@@ -96,12 +97,12 @@ export type TeamGroupManagementV1 = z.infer<typeof TeamGroupManagementV1Schema>;
  * lifecycle follows the source disposition contract. A client cannot derive that
  * split from `management` alone without becoming a second authority for it.
  */
-export const TeamGroupCapabilitiesV1Schema = z.object({
+export const TeamGroupCapabilitiesV1Schema = lazyZodSchema(() => z.object({
   updateMetadata: z.boolean(),
   archive: z.boolean(),
   restore: z.boolean(),
   manageNativeMembers: z.boolean(),
-}).strict();
+}).strict());
 export type TeamGroupCapabilitiesV1 = z.infer<typeof TeamGroupCapabilitiesV1Schema>;
 
 export const NO_TEAM_GROUP_CAPABILITIES_V1: TeamGroupCapabilitiesV1 = Object.freeze({
@@ -119,7 +120,7 @@ export const NO_TEAM_GROUP_CAPABILITIES_V1: TeamGroupCapabilitiesV1 = Object.fre
  * The stored `nameKey` is absent by design — it is an internal uniqueness key,
  * and publishing it would invite a client to compute collisions locally.
  */
-export const TeamGroupV1Schema = z.object({
+export const TeamGroupV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   id: TeamGroupIdSchema,
   teamId: TeamIdSchema,
@@ -129,7 +130,7 @@ export const TeamGroupV1Schema = z.object({
   memberCount: z.number().int().min(0),
   management: TeamGroupManagementV1Schema,
   capabilities: TeamGroupCapabilitiesV1Schema,
-}).strict();
+}).strict());
 export type TeamGroupV1 = z.infer<typeof TeamGroupV1Schema>;
 
 /**
@@ -141,14 +142,14 @@ export type TeamGroupV1 = z.infer<typeof TeamGroupV1Schema>;
  * directory still contributes, and to link to the exact source that owns that
  * contribution.
  */
-export const TeamGroupMemberContributionsV1Schema = z.object({
+export const TeamGroupMemberContributionsV1Schema = lazyZodSchema(() => z.object({
   native: z.boolean(),
   external: z.array(z.object({
     bindingId: z.string().min(1),
     label: z.string(),
     owner: TeamExternalGroupBindingOwnerV1Schema,
   }).strict()),
-}).strict();
+}).strict());
 export type TeamGroupMemberContributionsV1 = z.infer<typeof TeamGroupMemberContributionsV1Schema>;
 
 /**
@@ -157,17 +158,17 @@ export type TeamGroupMemberContributionsV1 = z.infer<typeof TeamGroupMemberContr
  * is minted anywhere, which is what keeps Group rows attached through provider
  * Account replacement.
  */
-export const TeamGroupMemberV1Schema = z.object({
+export const TeamGroupMemberV1Schema = lazyZodSchema(() => z.object({
   accountId: z.string().min(1),
   membershipId: TeamMembershipIdSchema,
   account: AccountDisplayProfileV1Schema,
   historyAccess: SessionHistoryAccessSchema,
   contributions: TeamGroupMemberContributionsV1Schema,
-}).strict();
+}).strict());
 export type TeamGroupMemberV1 = z.infer<typeof TeamGroupMemberV1Schema>;
 
-const TeamGroupNameInputV1Schema = z.string().min(1).max(TEAM_GROUP_NAME_MAX_LENGTH_V1 * 4);
-const TeamGroupDescriptionInputV1Schema = z.string().max(TEAM_GROUP_DESCRIPTION_MAX_LENGTH_V1 * 4);
+const TeamGroupNameInputV1Schema = lazyZodSchema(() => z.string().min(1).max(TEAM_GROUP_NAME_MAX_LENGTH_V1 * 4));
+const TeamGroupDescriptionInputV1Schema = lazyZodSchema(() => z.string().max(TEAM_GROUP_DESCRIPTION_MAX_LENGTH_V1 * 4));
 
 export const TEAM_GROUPS_PAGE_LIMIT_MAX_V1 = 100;
 export const TEAM_GROUPS_PAGE_LIMIT_DEFAULT_V1 = 50;
@@ -179,27 +180,27 @@ export const TEAM_GROUP_MEMBERS_PAGE_LIMIT_DEFAULT_V1 = 50;
  * restrained "Archived Groups" section rather than a mixed flag that would make
  * one page sequence hold two orderings.
  */
-export const TeamGroupsListInputV1Schema = z.object({
+export const TeamGroupsListInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   teamId: TeamIdSchema,
   archived: z.enum(['active', 'archived']),
   limit: z.number().int().min(1).max(TEAM_GROUPS_PAGE_LIMIT_MAX_V1).optional(),
   cursor: z.string().min(1).nullable().optional(),
-}).strict();
+}).strict());
 export type TeamGroupsListInputV1 = z.infer<typeof TeamGroupsListInputV1Schema>;
 
-export const TeamGroupsPageV1Schema = z.object({
+export const TeamGroupsPageV1Schema = lazyZodSchema(() => z.object({
   items: z.array(TeamGroupV1Schema),
   nextCursor: z.string().nullable(),
-}).strict();
+}).strict());
 export type TeamGroupsPageV1 = z.infer<typeof TeamGroupsPageV1Schema>;
 
 /** `teams.groups.get`, `archive`, `restore`. */
-export const TeamGroupRefInputV1Schema = z.object({
+export const TeamGroupRefInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   teamId: TeamIdSchema,
   groupId: TeamGroupIdSchema,
-}).strict();
+}).strict());
 export type TeamGroupRefInputV1 = z.infer<typeof TeamGroupRefInputV1Schema>;
 
 /**
@@ -207,17 +208,17 @@ export type TeamGroupRefInputV1 = z.infer<typeof TeamGroupRefInputV1Schema>;
  * response cannot create two Groups; it is scoped to actor, Team, and payload at
  * the creating transaction, not a generic Action ledger.
  */
-export const TeamGroupCreateInputV1Schema = z.object({
+export const TeamGroupCreateInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   teamId: TeamIdSchema,
   name: TeamGroupNameInputV1Schema,
   description: TeamGroupDescriptionInputV1Schema.nullable().optional(),
   requestKey: z.string().min(1).max(128),
-}).strict();
+}).strict());
 export type TeamGroupCreateInputV1 = z.infer<typeof TeamGroupCreateInputV1Schema>;
 
 /** `teams.groups.update`. Omitted is unchanged; an explicit null clears. */
-export const TeamGroupUpdateInputV1Schema = z.object({
+export const TeamGroupUpdateInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   teamId: TeamIdSchema,
   groupId: TeamGroupIdSchema,
@@ -226,7 +227,7 @@ export const TeamGroupUpdateInputV1Schema = z.object({
 }).strict().refine(
   (input) => input.name !== undefined || input.description !== undefined,
   { message: 'Group metadata patch changes nothing' },
-);
+));
 export type TeamGroupUpdateInputV1 = z.infer<typeof TeamGroupUpdateInputV1Schema>;
 
 /**
@@ -244,13 +245,13 @@ export type TeamGroupUpdateInputV1 = z.infer<typeof TeamGroupUpdateInputV1Schema
  * member detail must be able to explain, and each row carries its own
  * `archivedAt` for the reader.
  */
-export const TeamMemberGroupsListInputV1Schema = z.object({
+export const TeamMemberGroupsListInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   teamId: TeamIdSchema,
   membershipId: TeamMembershipIdSchema,
   limit: z.number().int().min(1).max(TEAM_GROUPS_PAGE_LIMIT_MAX_V1).optional(),
   cursor: z.string().min(1).nullable().optional(),
-}).strict();
+}).strict());
 export type TeamMemberGroupsListInputV1 = z.infer<typeof TeamMemberGroupsListInputV1Schema>;
 
 /**
@@ -263,19 +264,19 @@ export function teamMemberGroupsQueryKeyV1(
   return `v1:member-groups:${input.teamId}:${input.membershipId}`;
 }
 
-export const TeamGroupMembersListInputV1Schema = z.object({
+export const TeamGroupMembersListInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   teamId: TeamIdSchema,
   groupId: TeamGroupIdSchema,
   limit: z.number().int().min(1).max(TEAM_GROUP_MEMBERS_PAGE_LIMIT_MAX_V1).optional(),
   cursor: z.string().min(1).nullable().optional(),
-}).strict();
+}).strict());
 export type TeamGroupMembersListInputV1 = z.infer<typeof TeamGroupMembersListInputV1Schema>;
 
-export const TeamGroupMembersPageV1Schema = z.object({
+export const TeamGroupMembersPageV1Schema = lazyZodSchema(() => z.object({
   items: z.array(TeamGroupMemberV1Schema),
   nextCursor: z.string().nullable(),
-}).strict();
+}).strict());
 export type TeamGroupMembersPageV1 = z.infer<typeof TeamGroupMembersPageV1Schema>;
 
 /**
@@ -284,22 +285,22 @@ export type TeamGroupMembersPageV1 = z.infer<typeof TeamGroupMembersPageV1Schema
  * membership's first contribution mints the horizon, and never widens a retained
  * one when a second contribution arrives.
  */
-export const TeamGroupMemberAddInputV1Schema = z.object({
+export const TeamGroupMemberAddInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   teamId: TeamIdSchema,
   groupId: TeamGroupIdSchema,
   accountId: z.string().min(1),
   historyAccess: SessionHistoryAccessSchema,
-}).strict();
+}).strict());
 export type TeamGroupMemberAddInputV1 = z.infer<typeof TeamGroupMemberAddInputV1Schema>;
 
 /** `teams.groups.members.remove` — clears only the native contribution. */
-export const TeamGroupMemberRemoveInputV1Schema = z.object({
+export const TeamGroupMemberRemoveInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   teamId: TeamIdSchema,
   groupId: TeamGroupIdSchema,
   accountId: z.string().min(1),
-}).strict();
+}).strict());
 export type TeamGroupMemberRemoveInputV1 = z.infer<typeof TeamGroupMemberRemoveInputV1Schema>;
 
 /**
@@ -309,13 +310,13 @@ export type TeamGroupMemberRemoveInputV1 = z.infer<typeof TeamGroupMemberRemoveI
  * the person keeps Group access and the UI must say so instead of reporting a
  * removal that did not happen.
  */
-export const TeamGroupMemberMutationResultV1Schema = z.discriminatedUnion('status', [
+export const TeamGroupMemberMutationResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('added'), member: TeamGroupMemberV1Schema }).strict(),
   z.object({ status: z.literal('contribution_added'), member: TeamGroupMemberV1Schema }).strict(),
   z.object({ status: z.literal('unchanged'), member: TeamGroupMemberV1Schema.optional() }).strict(),
   z.object({ status: z.literal('contribution_removed'), member: TeamGroupMemberV1Schema }).strict(),
   z.object({ status: z.literal('removed') }).strict(),
-]);
+]));
 export type TeamGroupMemberMutationResultV1 = z.infer<typeof TeamGroupMemberMutationResultV1Schema>;
 
 /**

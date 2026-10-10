@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import tweetnacl from 'tweetnacl';
 import { decodeBase64, encodeBase64, readCanonicalPaddedBase64DecodedLength } from '../crypto/base64.js';
@@ -21,58 +22,58 @@ import {
 } from './workflowProgressV1.js';
 
 const WorkflowAccountIdV1Schema = preservedBoundedNfcString(191, 'Account ids');
-const WorkflowStoredBindingBaseV1Schema = z.object({
+const WorkflowStoredBindingBaseV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   accountId: WorkflowAccountIdV1Schema,
   runId: WorkflowRunIdV1Schema,
-});
+}));
 
-export const WorkflowAcceptedSnapshotStoredBindingV1Schema = WorkflowStoredBindingBaseV1Schema.extend({
+export const WorkflowAcceptedSnapshotStoredBindingV1Schema = lazyZodSchema(() => WorkflowStoredBindingBaseV1Schema.extend({
   purpose: z.literal('accepted_snapshot'),
-}).strict();
-export const WorkflowInvocationProgressStoredBindingV1Schema = WorkflowStoredBindingBaseV1Schema.extend({
+}).strict());
+export const WorkflowInvocationProgressStoredBindingV1Schema = lazyZodSchema(() => WorkflowStoredBindingBaseV1Schema.extend({
   purpose: z.literal('invocation_progress'),
   recordId: WorkflowInvocationRecordIdSchema,
   sequence: WorkflowDecimalV1Schema,
   parentRecordId: WorkflowInvocationRecordIdSchema.nullable(),
   memberOrdinal: WorkflowDecimalV1Schema,
   attempt: WorkflowDecimalV1Schema,
-}).strict();
-export const WorkflowCheckpointStoredBindingV1Schema = WorkflowStoredBindingBaseV1Schema.extend({
+}).strict());
+export const WorkflowCheckpointStoredBindingV1Schema = lazyZodSchema(() => WorkflowStoredBindingBaseV1Schema.extend({
   purpose: z.literal('checkpoint'),
-}).strict();
-export const WorkflowFinalResultStoredBindingV1Schema = WorkflowStoredBindingBaseV1Schema.extend({
+}).strict());
+export const WorkflowFinalResultStoredBindingV1Schema = lazyZodSchema(() => WorkflowStoredBindingBaseV1Schema.extend({
   purpose: z.literal('final_result'),
-}).strict();
+}).strict());
 
-export const WorkflowStoredContentBindingV1Schema = z.discriminatedUnion('purpose', [
+export const WorkflowStoredContentBindingV1Schema = lazyZodSchema(() => z.discriminatedUnion('purpose', [
   WorkflowAcceptedSnapshotStoredBindingV1Schema,
   WorkflowInvocationProgressStoredBindingV1Schema,
   WorkflowCheckpointStoredBindingV1Schema,
   WorkflowFinalResultStoredBindingV1Schema,
-]);
+]));
 export type WorkflowStoredContentBindingV1 = z.infer<typeof WorkflowStoredContentBindingV1Schema>;
 export type WorkflowAcceptedSnapshotStoredBindingV1 = z.infer<typeof WorkflowAcceptedSnapshotStoredBindingV1Schema>;
 export type WorkflowInvocationProgressStoredBindingV1 = z.infer<typeof WorkflowInvocationProgressStoredBindingV1Schema>;
 export type WorkflowCheckpointStoredBindingV1 = z.infer<typeof WorkflowCheckpointStoredBindingV1Schema>;
 export type WorkflowFinalResultStoredBindingV1 = z.infer<typeof WorkflowFinalResultStoredBindingV1Schema>;
 
-const WorkflowAcceptedSnapshotStoredPayloadV1Schema = z.object({
+const WorkflowAcceptedSnapshotStoredPayloadV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(2), binding: WorkflowAcceptedSnapshotStoredBindingV1Schema,
   content: WorkflowAcceptedSnapshotV1Schema,
-}).strict();
-const WorkflowInvocationProgressStoredPayloadV1Schema = z.object({
+}).strict());
+const WorkflowInvocationProgressStoredPayloadV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(2), binding: WorkflowInvocationProgressStoredBindingV1Schema,
   content: WorkflowProgressEnvelopeV1Schema,
-}).strict();
-const WorkflowCheckpointStoredPayloadV1Schema = z.object({
+}).strict());
+const WorkflowCheckpointStoredPayloadV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(2), binding: WorkflowCheckpointStoredBindingV1Schema,
   content: WorkflowCheckpointEnvelopeV1Schema,
-}).strict();
-const WorkflowFinalResultStoredPayloadV1Schema = z.object({
+}).strict());
+const WorkflowFinalResultStoredPayloadV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(2), binding: WorkflowFinalResultStoredBindingV1Schema,
   content: WorkflowFinalResultV1Schema,
-}).strict();
+}).strict());
 
 export const WorkflowStoredContentEnvelopeV1Schema = AutomationStoredContentEnvelopeV1Schema;
 export type WorkflowStoredContentEnvelopeV1 = AutomationStoredContentEnvelopeV1;

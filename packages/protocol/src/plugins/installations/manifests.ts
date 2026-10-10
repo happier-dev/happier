@@ -1,8 +1,9 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 export const PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 = 'x-happier-plugin-installation-manifest-publisher' as const;
 
-export const PluginInstallationManifestPublisherProofV1Schema = z.object({
+export const PluginInstallationManifestPublisherProofV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   alg: z.literal('ed25519-machine-installation-v1'),
   machineId: z.string().trim().min(1),
@@ -13,12 +14,12 @@ export const PluginInstallationManifestPublisherProofV1Schema = z.object({
   path: z.string().trim().min(1),
   bodySha256Base64Url: z.string().trim().min(1),
   signatureBase64Url: z.string().trim().min(1),
-}).strict();
+}).strict());
 export type PluginInstallationManifestPublisherProofV1 = z.infer<typeof PluginInstallationManifestPublisherProofV1Schema>;
 
-export const PluginInstallationManifestPublisherHeaderV1Schema = z.object({
+export const PluginInstallationManifestPublisherHeaderV1Schema = lazyZodSchema(() => z.object({
   proof: PluginInstallationManifestPublisherProofV1Schema,
-}).strict();
+}).strict());
 export type PluginInstallationManifestPublisherHeaderV1 = z.infer<typeof PluginInstallationManifestPublisherHeaderV1Schema>;
 
 function normalizeCanonicalJsonValue(value: unknown): unknown {

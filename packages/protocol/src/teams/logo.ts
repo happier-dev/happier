@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { decodeBase64, readCanonicalPaddedBase64DecodedLength } from '../crypto/base64.js';
@@ -22,7 +23,7 @@ import { decodeBase64, readCanonicalPaddedBase64DecodedLength } from '../crypto/
  * than promising the native picker's full output.
  */
 export const TEAM_LOGO_ACCEPTED_MIME_TYPES_V1 = ['image/png', 'image/jpeg'] as const;
-export const TeamLogoMimeTypeV1Schema = z.enum(TEAM_LOGO_ACCEPTED_MIME_TYPES_V1);
+export const TeamLogoMimeTypeV1Schema = lazyZodSchema(() => z.enum(TEAM_LOGO_ACCEPTED_MIME_TYPES_V1));
 export type TeamLogoMimeTypeV1 = z.infer<typeof TeamLogoMimeTypeV1Schema>;
 
 /**
@@ -64,18 +65,18 @@ export const TEAM_LOGO_MAX_SOURCE_BASE64_LENGTH_V1 = Math.ceil(TEAM_LOGO_MAX_SOU
  */
 export const TEAM_LOGO_REQUEST_MAX_BODY_BYTES_V1 = TEAM_LOGO_MAX_SOURCE_BASE64_LENGTH_V1 + 4096;
 
-export const TeamLogoSourceV1Schema = z.object({
+export const TeamLogoSourceV1Schema = lazyZodSchema(() => z.object({
   mimeType: TeamLogoMimeTypeV1Schema,
   dataBase64: z.string().min(1).max(TEAM_LOGO_MAX_SOURCE_BASE64_LENGTH_V1),
-}).strict();
+}).strict());
 export type TeamLogoSourceV1 = z.infer<typeof TeamLogoSourceV1Schema>;
 
 /** `teams.logo.set`. The UI picker and the CLI file adapter produce this same input. */
-export const TeamLogoSetInputV1Schema = z.object({
+export const TeamLogoSetInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   teamId: z.string().min(1).max(64),
   image: TeamLogoSourceV1Schema,
-}).strict();
+}).strict());
 export type TeamLogoSetInputV1 = z.infer<typeof TeamLogoSetInputV1Schema>;
 
 export type TeamLogoSourceDecodeV1 =

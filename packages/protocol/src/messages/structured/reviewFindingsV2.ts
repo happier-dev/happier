@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ReviewAssumptionSchema } from '../../reviews/ReviewAssumption.js';
@@ -7,17 +8,17 @@ import { ReviewTriageOverlaySchema } from './reviewFindingsV1.js';
 import { ExecutionRunStructuredRunRefSchema } from './executionRunStructuredRunRef.js';
 import { ReviewCommentProposalsV1Schema } from '../../reviews/comments/proposals.js';
 
-export const ReviewPublicationOverlaySchema = z.object({
+export const ReviewPublicationOverlaySchema = lazyZodSchema(() => z.object({
   findings: z.array(z.object({
     id: z.string().min(1),
     published: z.boolean(),
     publishedAtMs: z.number().int().nonnegative().optional(),
     publishedMessageRef: z.string().min(1).optional(),
   }).passthrough()),
-}).passthrough();
+}).passthrough());
 export type ReviewPublicationOverlay = z.infer<typeof ReviewPublicationOverlaySchema>;
 
-export const ReviewFindingsV2Schema = z.object({
+export const ReviewFindingsV2Schema = lazyZodSchema(() => z.object({
   runRef: ExecutionRunStructuredRunRefSchema,
   comparisonId: z.string().min(1).optional(),
   /** Number of files in the host's verified captured comparison inventory, when known. */
@@ -36,7 +37,7 @@ export const ReviewFindingsV2Schema = z.object({
     patchesTruncated: z.boolean().optional(),
   }).passthrough().optional(),
   generatedAtMs: z.number().int().nonnegative(),
-}).passthrough();
+}).passthrough());
 
 export type ReviewFindingsV2 = z.infer<typeof ReviewFindingsV2Schema>;
 

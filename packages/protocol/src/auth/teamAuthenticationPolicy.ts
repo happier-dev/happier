@@ -1,16 +1,17 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { TeamIdentityConnectionIdSchema } from '../teams/identity/ids.js';
 import { AuthEntryMethodIdV1Schema } from './methodId.js';
 import { normalizeAuthMethodId } from './providers.js';
 
-export const TeamAcceptedAuthenticationV1Schema = z.discriminatedUnion('kind', [
+export const TeamAcceptedAuthenticationV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('home_method'), methodId: AuthEntryMethodIdV1Schema }).strict(),
   z.object({ kind: z.literal('team_connection'), connectionId: TeamIdentityConnectionIdSchema }).strict(),
-]);
+]));
 export type TeamAcceptedAuthenticationV1 = z.infer<typeof TeamAcceptedAuthenticationV1Schema>;
 
-export const TeamRestrictedAuthenticationPolicyV1Schema = z.object({
+export const TeamRestrictedAuthenticationPolicyV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   mode: z.literal('restricted'),
   accepted: z.array(TeamAcceptedAuthenticationV1Schema).min(1).superRefine((accepted, context) => {
@@ -30,13 +31,13 @@ export const TeamRestrictedAuthenticationPolicyV1Schema = z.object({
       seen.add(key);
     }
   }),
-}).strict();
+}).strict());
 export type TeamRestrictedAuthenticationPolicyV1 = z.infer<typeof TeamRestrictedAuthenticationPolicyV1Schema>;
 
-export const TeamAuthenticationPolicyV1Schema = z.discriminatedUnion('mode', [
+export const TeamAuthenticationPolicyV1Schema = lazyZodSchema(() => z.discriminatedUnion('mode', [
   z.object({ v: z.literal(1), mode: z.literal('inherit') }).strict(),
   TeamRestrictedAuthenticationPolicyV1Schema,
-]);
+]));
 export type TeamAuthenticationPolicyV1 = z.infer<typeof TeamAuthenticationPolicyV1Schema>;
 
 /** The persistence owner stores inherit as null and restricted references in stable tagged-id order. */

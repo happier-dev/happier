@@ -1,6 +1,7 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
-export const SessionStoredMessageContentEnvelopeSchema = z.discriminatedUnion('t', [
+export const SessionStoredMessageContentEnvelopeSchema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.object({
     t: z.literal('encrypted'),
     c: z.string().min(1),
@@ -9,9 +10,9 @@ export const SessionStoredMessageContentEnvelopeSchema = z.discriminatedUnion('t
     t: z.literal('plain'),
     v: z.unknown(),
   }),
-]);
+]));
 
-export const StrictSessionStoredMessageContentEnvelopeSchema = z.discriminatedUnion('t', [
+export const StrictSessionStoredMessageContentEnvelopeSchema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.object({
     t: z.literal('encrypted'),
     c: z.string().min(1),
@@ -20,9 +21,9 @@ export const StrictSessionStoredMessageContentEnvelopeSchema = z.discriminatedUn
     t: z.literal('plain'),
     v: z.unknown().refine((value) => value !== undefined, { message: 'Plain envelope value is required' }),
   }).strict(),
-]);
+]));
 
-export const SessionStoredMessageContentSchema = z.preprocess((value) => {
+export const SessionStoredMessageContentSchema = lazyZodSchema(() => z.preprocess((value) => {
   // Backwards compatibility: older clients/servers stored message content as a bare ciphertext string.
   if (typeof value === 'string') {
     const ciphertext = value.trim();
@@ -37,7 +38,7 @@ export const SessionStoredMessageContentSchema = z.preprocess((value) => {
     }
   }
   return value;
-}, SessionStoredMessageContentEnvelopeSchema);
+}, SessionStoredMessageContentEnvelopeSchema));
 
 export type SessionStoredMessageContent = z.infer<typeof SessionStoredMessageContentSchema>;
 export type SessionStoredMessageContentEnvelope = z.infer<

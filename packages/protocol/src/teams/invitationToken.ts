@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -6,7 +7,7 @@ import { z } from 'zod';
  * email-bound invitations, so there is one codec and one digest rule.
  */
 export const TEAM_INVITATION_TOKEN_LENGTH = 43;
-export const TeamInvitationTokenV1Schema = z
+export const TeamInvitationTokenV1Schema = lazyZodSchema(() => z
   .string()
-  .regex(new RegExp(`^[A-Za-z0-9]{${TEAM_INVITATION_TOKEN_LENGTH}}$`));
+  .regex(new RegExp(`^[A-Za-z0-9]{${TEAM_INVITATION_TOKEN_LENGTH}}$`)));
 export type TeamInvitationTokenV1 = z.infer<typeof TeamInvitationTokenV1Schema>;

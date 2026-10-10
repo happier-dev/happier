@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -10,18 +11,18 @@ export const SESSION_RUNTIME_ACTIVITY_CLOSE_EVENT = 'session-runtime-activity-cl
 export const SESSION_PUBLISHER_AUTHORITY_CHECK_EVENT =
   'session-publisher-authority-check';
 
-export const SessionRuntimeActivitySnapshotRequestSchema = z.object({
+export const SessionRuntimeActivitySnapshotRequestSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().trim().min(1),
   mutationId: z.string().trim().min(1),
   snapshot: SessionRuntimeActivitySnapshotSchema,
-}).strict();
+}).strict());
 
-const SessionRuntimeActivityTransportIdentitySchema = z.object({
+const SessionRuntimeActivityTransportIdentitySchema = lazyZodSchema(() => z.object({
   sessionId: z.string().trim().min(1),
   mutationId: z.string().trim().min(1),
-}).strict();
+}).strict());
 
-export const SessionRuntimeActivitySnapshotAckSchema = z.union([
+export const SessionRuntimeActivitySnapshotAckSchema = lazyZodSchema(() => z.union([
   SessionRuntimeActivityTransportIdentitySchema.extend({
     status: z.literal('applied'),
     projection: SessionRuntimeActivityProjectionSchema,
@@ -42,13 +43,13 @@ export const SessionRuntimeActivitySnapshotAckSchema = z.union([
     status: z.literal('retryable'),
     reason: z.literal('internal'),
   }).strict(),
-]);
+]));
 
-export const SessionRuntimeActivityCloseRequestSchema = z.object({
+export const SessionRuntimeActivityCloseRequestSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().trim().min(1),
-}).strict();
+}).strict());
 
-export const SessionRuntimeActivityCloseAckSchema = z.union([
+export const SessionRuntimeActivityCloseAckSchema = lazyZodSchema(() => z.union([
   z.object({ status: z.literal('closed'), sessionId: z.string().trim().min(1) }).strict(),
   z.object({ status: z.literal('already_inactive'), sessionId: z.string().trim().min(1) }).strict(),
   z.object({
@@ -62,13 +63,13 @@ export const SessionRuntimeActivityCloseAckSchema = z.union([
     reason: z.literal('internal'),
   }).strict(),
   z.object({ status: z.literal('rejected'), reason: z.literal('invalid_request') }).strict(),
-]);
+]));
 
-export const SessionPublisherAuthorityCheckRequestSchema = z.object({
+export const SessionPublisherAuthorityCheckRequestSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().trim().min(1),
-}).strict();
+}).strict());
 
-export const SessionPublisherAuthorityCheckAckSchema = z.union([
+export const SessionPublisherAuthorityCheckAckSchema = lazyZodSchema(() => z.union([
   z.object({
     status: z.literal('current'),
     sessionId: z.string().trim().min(1),
@@ -91,7 +92,7 @@ export const SessionPublisherAuthorityCheckAckSchema = z.union([
     sessionId: z.string().trim().min(1),
     reason: z.literal('internal'),
   }).strict(),
-]);
+]));
 
 export type SessionRuntimeActivitySnapshotRequest = z.infer<typeof SessionRuntimeActivitySnapshotRequestSchema>;
 export type SessionRuntimeActivitySnapshotAck = z.infer<typeof SessionRuntimeActivitySnapshotAckSchema>;

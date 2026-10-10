@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ImageRefSchema } from '../common/imageRef.js';
@@ -16,7 +17,7 @@ import {
 import { TeamIdSchema } from '../teams/membership.js';
 import { TEAM_NAME_MAX_LENGTH_V1 } from '../teams/team.js';
 
-const ConnectedServiceV2ProfileSchema = z.object({
+const ConnectedServiceV2ProfileSchema = lazyZodSchema(() => z.object({
   profileId: z.string().min(1),
   status: z.enum(['connected', 'refreshing', 'needs_reauth', 'refresh_failed_retryable']),
   kind: z.enum(['oauth', 'token']).nullable().optional().default(null),
@@ -25,52 +26,52 @@ const ConnectedServiceV2ProfileSchema = z.object({
   expiresAt: z.number().int().nonnegative().nullable().optional().default(null),
   lastUsedAt: z.number().int().nonnegative().nullable().optional().default(null),
   health: ConnectedServiceCredentialHealthV1Schema.nullable().optional().default(null),
-}).strict();
+}).strict());
 
-const ConnectedServiceV2GroupSchema = z.object({
+const ConnectedServiceV2GroupSchema = lazyZodSchema(() => z.object({
   groupId: ConnectedServiceAuthGroupIdSchema,
   displayName: z.string().min(1).nullable().optional().default(null),
   activeProfileId: ConnectedServiceProfileIdSchema.nullable().optional().default(null),
   generation: z.number().int().nonnegative().optional().default(0),
   memberProfileIds: z.array(ConnectedServiceProfileIdSchema).default([]),
-}).strict();
+}).strict());
 
-const ConnectedServiceV2ServiceSchema = z.object({
+const ConnectedServiceV2ServiceSchema = lazyZodSchema(() => z.object({
   serviceId: ConnectedServiceIdSchema,
   profiles: z.array(ConnectedServiceV2ProfileSchema).default([]),
   groups: z.array(ConnectedServiceV2GroupSchema).default([]),
-}).strict();
+}).strict());
 
-const ConnectedServiceCredentialRevisionProjectionV1Schema = z.object({
+const ConnectedServiceCredentialRevisionProjectionV1Schema = lazyZodSchema(() => z.object({
   serviceId: ConnectedServiceIdSchema,
   profileId: ConnectedServiceProfileIdSchema,
   credentialRevision: ConnectedServiceCredentialRevisionV1Schema,
-}).strict();
+}).strict());
 
-export const LinkedProviderSchema = z.object({
+export const LinkedProviderSchema = lazyZodSchema(() => z.object({
   id: z.string(),
   login: z.string().nullable(),
   displayName: z.string().nullable(),
   avatarUrl: z.string().nullable(),
   profileUrl: z.string().nullable(),
   showOnProfile: z.boolean(),
-}).strict();
+}).strict());
 
 export type LinkedProvider = z.infer<typeof LinkedProviderSchema>;
 
-const LinkedIdentityTeamPresentationV1Schema = z.object({
+const LinkedIdentityTeamPresentationV1Schema = lazyZodSchema(() => z.object({
   id: TeamIdSchema,
   name: z.string().trim().min(1).max(TEAM_NAME_MAX_LENGTH_V1),
-}).strict();
+}).strict());
 
-export const LinkedIdentityManagementReasonV1Schema = z.enum([
+export const LinkedIdentityManagementReasonV1Schema = lazyZodSchema(() => z.enum([
   'required_by_team',
   'last_login_method',
   'management_unavailable',
-]);
+]));
 export type LinkedIdentityManagementReasonV1 = z.infer<typeof LinkedIdentityManagementReasonV1Schema>;
 
-export const LinkedIdentityManagementV1Schema = z.object({
+export const LinkedIdentityManagementV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   providerId: z.string().trim().min(1).max(512),
   descriptor: z.object({
@@ -97,10 +98,10 @@ export const LinkedIdentityManagementV1Schema = z.object({
   if (value.descriptor.source !== 'managed' && value.managedBy !== null) {
     context.addIssue({ code: 'custom', message: 'Only managed providers can identify a management owner' });
   }
-});
+}));
 export type LinkedIdentityManagementV1 = z.infer<typeof LinkedIdentityManagementV1Schema>;
 
-export const AccountProfileSchema = z.object({
+export const AccountProfileSchema = lazyZodSchema(() => z.object({
   id: z.string(),
   timestamp: z.number().int().min(0).optional().default(0),
   firstName: z.string().nullable().optional().default(null),
@@ -114,7 +115,7 @@ export const AccountProfileSchema = z.object({
   connectedServiceCredentialRevisionsV1: z.array(ConnectedServiceCredentialRevisionProjectionV1Schema).default([]),
   connectedAccountsV4: z.array(QualifiedConnectedAccountProfileV4Schema).default([]),
   connectedAccountGroupsV4: z.array(QualifiedConnectedAccountGroupV4Schema).default([]),
-}).passthrough();
+}).passthrough());
 
 export type AccountProfile = z.infer<typeof AccountProfileSchema>;
 

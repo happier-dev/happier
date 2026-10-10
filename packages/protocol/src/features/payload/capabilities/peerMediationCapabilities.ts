@@ -1,17 +1,18 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { PeerMediationObservabilityEventKindV1Schema } from '../../../machines/peer/mediation/observability/v1.js';
 import { PeerFlowKindV1Schema } from '../../../machines/peer/mediation/flowKind.js';
 
-export const PeerMediationGrantSigningKeyCapabilitySchema = z.object({
+export const PeerMediationGrantSigningKeyCapabilitySchema = lazyZodSchema(() => z.object({
   keyId: z.string().min(1),
   publicKey: z.string().min(1),
   expiresAt: z.number().int().positive().nullable().optional().default(null),
-});
+}));
 
 export type PeerMediationGrantSigningKeyCapability = z.infer<typeof PeerMediationGrantSigningKeyCapabilitySchema>;
 
-const CaptureAvailabilitySchema = z.enum(['unavailable', 'off', 'metadataOnly']);
+const CaptureAvailabilitySchema = lazyZodSchema(() => z.enum(['unavailable', 'off', 'metadataOnly']));
 
 export const PEER_MEDIATION_OBSERVABILITY_RETENTION_CAPS = {
   perFlowEvents: 512,
@@ -22,7 +23,7 @@ export const PEER_MEDIATION_OBSERVABILITY_RETENTION_CAPS = {
   maxCounterSampleHz: 2,
 } as const;
 
-export const PeerMediationObservabilityRetentionCapabilitiesSchema = z
+export const PeerMediationObservabilityRetentionCapabilitiesSchema = lazyZodSchema(() => z
   .object({
     perFlowEvents: z.number().int().positive().max(PEER_MEDIATION_OBSERVABILITY_RETENTION_CAPS.perFlowEvents).optional().default(PEER_MEDIATION_OBSERVABILITY_RETENTION_CAPS.perFlowEvents),
     perMachineEvents: z.number().int().positive().max(PEER_MEDIATION_OBSERVABILITY_RETENTION_CAPS.perMachineEvents).optional().default(PEER_MEDIATION_OBSERVABILITY_RETENTION_CAPS.perMachineEvents),
@@ -31,7 +32,7 @@ export const PeerMediationObservabilityRetentionCapabilitiesSchema = z
     uiStoreMaxBytesPerMachine: z.number().int().positive().max(PEER_MEDIATION_OBSERVABILITY_RETENTION_CAPS.uiStoreMaxBytesPerMachine).optional().default(PEER_MEDIATION_OBSERVABILITY_RETENTION_CAPS.uiStoreMaxBytesPerMachine),
     maxCounterSampleHz: z.number().positive().max(PEER_MEDIATION_OBSERVABILITY_RETENTION_CAPS.maxCounterSampleHz).optional().default(PEER_MEDIATION_OBSERVABILITY_RETENTION_CAPS.maxCounterSampleHz),
   })
-  .strict();
+  .strict());
 export type PeerMediationObservabilityRetentionCapabilities = z.infer<
   typeof PeerMediationObservabilityRetentionCapabilitiesSchema
 >;
@@ -45,12 +46,12 @@ export const DEFAULT_PEER_MEDIATION_OBSERVABILITY_RETENTION_CAPABILITIES: PeerMe
   maxCounterSampleHz: PEER_MEDIATION_OBSERVABILITY_RETENTION_CAPS.maxCounterSampleHz,
 };
 
-export const PeerMediationObservabilitySamplingCapabilitiesSchema = z
+export const PeerMediationObservabilitySamplingCapabilitiesSchema = lazyZodSchema(() => z
   .object({
     counterSampleHz: z.number().positive().max(PEER_MEDIATION_OBSERVABILITY_RETENTION_CAPS.maxCounterSampleHz).optional().default(PEER_MEDIATION_OBSERVABILITY_RETENTION_CAPS.maxCounterSampleHz),
     throughputWindowMs: z.number().int().positive().optional().default(1000),
   })
-  .strict();
+  .strict());
 export type PeerMediationObservabilitySamplingCapabilities = z.infer<
   typeof PeerMediationObservabilitySamplingCapabilitiesSchema
 >;
@@ -60,7 +61,7 @@ export const DEFAULT_PEER_MEDIATION_OBSERVABILITY_SAMPLING_CAPABILITIES: PeerMed
   throughputWindowMs: 1000,
 };
 
-export const PeerMediationObservabilityCapabilitiesSchema = z
+export const PeerMediationObservabilityCapabilitiesSchema = lazyZodSchema(() => z
   .object({
     enabled: z.boolean().optional().default(false),
     available: z.boolean().optional().default(false),
@@ -77,7 +78,7 @@ export const PeerMediationObservabilityCapabilitiesSchema = z
     disabledReasons: z.array(z.string().trim().min(1)).optional().default([]),
     publicPreviewScopedSummaries: z.boolean().optional().default(false),
   })
-  .strict();
+  .strict());
 export type PeerMediationObservabilityCapabilities = z.infer<
   typeof PeerMediationObservabilityCapabilitiesSchema
 >;
@@ -95,13 +96,13 @@ export const DEFAULT_PEER_MEDIATION_OBSERVABILITY_CAPABILITIES: PeerMediationObs
   publicPreviewScopedSummaries: false,
 };
 
-export const PeerMediationCapabilitiesSchema = z.object({
+export const PeerMediationCapabilitiesSchema = lazyZodSchema(() => z.object({
   grantSigningKeys: z.array(PeerMediationGrantSigningKeyCapabilitySchema).optional().default([]),
   tcpTunnelRelayAuthorizationMintVersions: z.array(z.literal(2)).max(1).optional().default([]),
   observability: PeerMediationObservabilityCapabilitiesSchema.optional().default(
     DEFAULT_PEER_MEDIATION_OBSERVABILITY_CAPABILITIES,
   ),
-});
+}));
 
 export type PeerMediationCapabilities = z.infer<typeof PeerMediationCapabilitiesSchema>;
 

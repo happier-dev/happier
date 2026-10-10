@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 import { asProtocolZod } from '../../actions/internalProtocolZodAdapter.js';
 
@@ -13,21 +14,21 @@ const DisplayShape = {
   availability: PluginAvailabilityDescriptorV2Schema.optional(),
   metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
 };
-export const PluginBrowserTargetContributionV1Schema = z.object({
+export const PluginBrowserTargetContributionV1Schema = lazyZodSchema(() => z.object({
   ...DisplayShape,
   url: BrowserHttpUrlV1Schema,
   launch: z.enum(['newView', 'currentView']).default('newView'),
   profile: BrowserProfileStorageModeV1Schema.default('user'),
-}).strict();
+}).strict());
 export type PluginBrowserTargetContributionInputV1 = z.input<typeof PluginBrowserTargetContributionV1Schema>;
 export type PluginBrowserTargetContributionV1 = z.infer<typeof PluginBrowserTargetContributionV1Schema>;
-export const PluginBrowserActionContributionV1Schema = z.object({
+export const PluginBrowserActionContributionV1Schema = lazyZodSchema(() => z.object({
   ...DisplayShape,
   action: asProtocolZod(PluginContributionReferenceV2Schema),
   target: asProtocolZod(PluginContributionReferenceV2Schema),
   placement: z.enum(['toolbar', 'detailsPanel', 'contextMenu']).default('toolbar'),
   icon: z.string().trim().regex(/^[a-z][a-z0-9.-]*$/i).optional(),
   order: z.number().int().optional(),
-}).strict();
+}).strict());
 export type PluginBrowserActionContributionInputV1 = z.input<typeof PluginBrowserActionContributionV1Schema>;
 export type PluginBrowserActionContributionV1 = z.infer<typeof PluginBrowserActionContributionV1Schema>;

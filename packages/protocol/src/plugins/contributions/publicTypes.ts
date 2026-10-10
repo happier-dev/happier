@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -20,19 +21,19 @@ export {
   type PluginJsonValueV2,
 } from './jsonSchema.js';
 
-export const PluginLocalizedStringV2Schema = z.union([
+export const PluginLocalizedStringV2Schema = lazyZodSchema(() => z.union([
   z.string().trim().min(1),
   z.object({ key: z.string().trim().min(1), fallback: z.string().trim().min(1) }).strict(),
-]);
+]));
 export type PluginLocalizedStringV2 = z.infer<typeof PluginLocalizedStringV2Schema>;
 
 // Markdown indentation and trailing spaces carry formatting semantics. Keep the
 // existing nonblank admission rule without transforming the authored content.
-const PluginMarkdownTextV2Schema = z.string().refine((value) => value.trim().length > 0);
-export const PluginLocalizedMarkdownV2Schema = z.union([
+const PluginMarkdownTextV2Schema = lazyZodSchema(() => z.string().refine((value) => value.trim().length > 0));
+export const PluginLocalizedMarkdownV2Schema = lazyZodSchema(() => z.union([
   PluginMarkdownTextV2Schema,
   z.object({ key: z.string().trim().min(1), fallback: PluginMarkdownTextV2Schema }).strict(),
-]);
+]));
 
 export const PluginContributionReferenceV2Schema = defineProtocolUnion([
   PluginContributionLocalIdSchema,
@@ -106,8 +107,8 @@ export function evaluatePluginPolicyExpressionV2(
   return null;
 }
 
-export const PluginAvailabilityDescriptorV2Schema = z.union([
+export const PluginAvailabilityDescriptorV2Schema = lazyZodSchema(() => z.union([
   z.object({ when: PluginPolicyExpressionV2Schema.optional(), disabledWhen: z.never().optional(), disabledReason: z.never().optional() }).strict(),
   z.object({ when: PluginPolicyExpressionV2Schema.optional(), disabledWhen: PluginPolicyExpressionV2Schema, disabledReason: PluginLocalizedStringV2Schema }).strict(),
-]);
+]));
 export type PluginAvailabilityDescriptorV2 = z.infer<typeof PluginAvailabilityDescriptorV2Schema>;

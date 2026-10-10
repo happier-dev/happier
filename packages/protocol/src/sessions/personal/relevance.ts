@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -8,7 +9,7 @@ import { z } from 'zod';
  *
  * Declaration order is the canonical projection order.
  */
-export const SessionPersonalRelevanceReasonV1Schema = z.enum([
+export const SessionPersonalRelevanceReasonV1Schema = lazyZodSchema(() => z.enum([
   'owned_by_me',
   'responsible_for_me',
   'shared_directly_with_me',
@@ -17,17 +18,17 @@ export const SessionPersonalRelevanceReasonV1Schema = z.enum([
   'followed_by_me',
   'pinned_by_me',
   'explicit_attention',
-]);
+]));
 export type SessionPersonalRelevanceReasonV1 = z.infer<
   typeof SessionPersonalRelevanceReasonV1Schema
 >;
 
-export const SessionPersonalRelevanceV1Schema = z
+export const SessionPersonalRelevanceV1Schema = lazyZodSchema(() => z
   .object({
     relevant: z.boolean(),
     reasons: z.array(SessionPersonalRelevanceReasonV1Schema).readonly(),
   })
-  .strict();
+  .strict());
 export type SessionPersonalRelevanceV1 = Readonly<{
   relevant: boolean;
   reasons: readonly SessionPersonalRelevanceReasonV1[];

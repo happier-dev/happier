@@ -1,26 +1,27 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
-export const SessionRollbackCodeModeSchema = z.enum([
+export const SessionRollbackCodeModeSchema = lazyZodSchema(() => z.enum([
   'conversation_only',
   'conversation_and_code_with_stash',
   'conversation_and_code_without_stash',
   'code_only_with_stash',
   'code_only_without_stash',
-]);
+]));
 export type SessionRollbackCodeMode = z.infer<typeof SessionRollbackCodeModeSchema>;
 
-export const CheckpointCodeRollbackBackupModeSchema = z.enum([
+export const CheckpointCodeRollbackBackupModeSchema = lazyZodSchema(() => z.enum([
   'happier_checkpoint_only',
   'happier_checkpoint_and_git_stash',
-]);
+]));
 export type CheckpointCodeRollbackBackupMode = z.infer<typeof CheckpointCodeRollbackBackupModeSchema>;
 
-export const CheckpointCodeRollbackReceiptIdSchema = z.enum([
+export const CheckpointCodeRollbackReceiptIdSchema = lazyZodSchema(() => z.enum([
   'checkpoint.rollback_backup_captured',
   'checkpoint.rollback_applied',
   'checkpoint.rollback_conflict',
   'checkpoint.rollback_aborted',
-]);
+]));
 export type CheckpointCodeRollbackReceiptId = z.infer<typeof CheckpointCodeRollbackReceiptIdSchema>;
 
 export const CHECKPOINT_CODE_ROLLBACK_RECEIPT_IDS = {
@@ -30,7 +31,7 @@ export const CHECKPOINT_CODE_ROLLBACK_RECEIPT_IDS = {
   aborted: 'checkpoint.rollback_aborted',
 } as const satisfies Record<string, CheckpointCodeRollbackReceiptId>;
 
-export const CheckpointCodeRollbackRequestSchema = z
+export const CheckpointCodeRollbackRequestSchema = lazyZodSchema(() => z
   .object({
     v: z.literal(1).default(1),
     sessionId: z.string().trim().min(1),
@@ -62,10 +63,10 @@ export const CheckpointCodeRollbackRequestSchema = z
         message: 'Code-only checkpoint rollback requires explicit transcript divergence confirmation',
       });
     }
-  });
+  }));
 export type CheckpointCodeRollbackRequest = z.infer<typeof CheckpointCodeRollbackRequestSchema>;
 
-export const CheckpointCodeRollbackActionRequestSchema = CheckpointCodeRollbackRequestSchema.superRefine((value, ctx) => {
+export const CheckpointCodeRollbackActionRequestSchema = lazyZodSchema(() => CheckpointCodeRollbackRequestSchema.superRefine((value, ctx) => {
   if (value.codeMode !== 'code_only_with_stash' && value.codeMode !== 'code_only_without_stash') {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -73,10 +74,10 @@ export const CheckpointCodeRollbackActionRequestSchema = CheckpointCodeRollbackR
       message: 'Checkpoint code rollback RPC only owns code-only modes; compose conversation rollback separately',
     });
   }
-});
+}));
 export type CheckpointCodeRollbackActionRequest = z.infer<typeof CheckpointCodeRollbackActionRequestSchema>;
 
-export const CheckpointCodeRollbackResultSchema = z
+export const CheckpointCodeRollbackResultSchema = lazyZodSchema(() => z
   .object({
     status: z.enum(['conversation_only', 'applied', 'conflict', 'unavailable', 'aborted']),
     backupCheckpointRef: z.string().min(1).optional(),
@@ -86,5 +87,5 @@ export const CheckpointCodeRollbackResultSchema = z
     receipts: z.array(CheckpointCodeRollbackReceiptIdSchema).readonly(),
     diagnostics: z.array(z.string().min(1)).readonly(),
   })
-  .strict();
+  .strict());
 export type CheckpointCodeRollbackResult = z.infer<typeof CheckpointCodeRollbackResultSchema>;

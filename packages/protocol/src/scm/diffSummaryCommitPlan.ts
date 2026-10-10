@@ -1,30 +1,31 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { ScmDiffSummaryCommitPlanSchema } from './diffSummary.js';
 import { ScmCommitOidSchema, ScmCommitExpectedRefSchema, ScmCommitPublicationSchema, ScmCommitHookContentChangesSchema } from './commitPublication.js';
 
 /** Host-checked acceptance, never a model-authored authorization. All nested authority is closed. */
-export const ScmCommitPlanAcceptanceSchema = ScmDiffSummaryCommitPlanSchema.extend({
+export const ScmCommitPlanAcceptanceSchema = lazyZodSchema(() => ScmDiffSummaryCommitPlanSchema.extend({
   comparisonId: z.string().min(1), repositoryRootPath: z.string().min(1),
   expectedHeadOid: ScmCommitOidSchema.nullable(), expectedRef: ScmCommitExpectedRefSchema,
-}).strict();
+}).strict());
 export type ScmCommitPlanAcceptance = z.infer<typeof ScmCommitPlanAcceptanceSchema>;
-export const ScmCommitPlanStepSchema = z.object({
+export const ScmCommitPlanStepSchema = lazyZodSchema(() => z.object({
   groupId: z.string().min(1), state: z.enum(['pending', 'writing', 'published', 'not_published', 'unknown']),
   targetTreeOid: ScmCommitOidSchema.optional(), expectedHeadOid: ScmCommitOidSchema.nullable().optional(),
   commitSha: ScmCommitOidSchema.optional(), actualMessage: z.string().optional(),
   publication: ScmCommitPublicationSchema.optional(), hookContentChanges: ScmCommitHookContentChangesSchema.optional(),
   errorCode: z.string().min(1).optional(), error: z.string().optional(),
   acceptedHookTreeOid: ScmCommitOidSchema.optional(),
-}).strict();
+}).strict());
 export type ScmCommitPlanStep = z.infer<typeof ScmCommitPlanStepSchema>;
-export const ScmCommitPlanApplicationSchema = z.object({
+export const ScmCommitPlanApplicationSchema = lazyZodSchema(() => z.object({
   acceptedRevision: z.number().int().nonnegative(), acceptance: ScmCommitPlanAcceptanceSchema,
   status: z.enum(['applying', 'paused', 'failed', 'unknown', 'stopped', 'complete']),
   steps: z.array(ScmCommitPlanStepSchema), nextGroupIndex: z.number().int().nonnegative(),
   stopAfterCurrent: z.boolean(),
   reason: z.enum(['hook_content_changed', 'hook_failed', 'signing_failed', 'head_moved', 'source_changed',
     'staging_conflict', 'selection_conflict', 'writer_failed', 'publication_warning', 'outcome_unknown', 'cancelled', 'stopped']).optional(),
-}).strict();
+}).strict());
 export type ScmCommitPlanApplication = z.infer<typeof ScmCommitPlanApplicationSchema>;
 
 const base = z.object({ cwd: z.string().min(1), resultId: z.string().min(1),

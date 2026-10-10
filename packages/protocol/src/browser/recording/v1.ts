@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -7,38 +8,38 @@ import {
 import { BrowserDiagnosticFidelityV1Schema } from '../diagnostics/v1.js';
 import { BrowserViewTargetKindV1Schema } from '../target/v1.js';
 
-const IdSchema = z.string().trim().min(1).max(256);
-const NonNegativeIntSchema = z.number().int().nonnegative();
-const PositiveIntSchema = z.number().int().positive();
+const IdSchema = lazyZodSchema(() => z.string().trim().min(1).max(256));
+const NonNegativeIntSchema = lazyZodSchema(() => z.number().int().nonnegative());
+const PositiveIntSchema = lazyZodSchema(() => z.number().int().positive());
 
-export const BrowserRecordingCaptureKindV1Schema = z.enum([
+export const BrowserRecordingCaptureKindV1Schema = lazyZodSchema(() => z.enum([
   'cdpScreencast',
   'webContentsCapture',
   'nativeViewCapture',
   'streamFrameCapture',
   'mediaRecorder',
   'unavailable',
-]);
+]));
 export type BrowserRecordingCaptureKindV1 = z.infer<typeof BrowserRecordingCaptureKindV1Schema>;
 
-export const BrowserRecordingRetentionClassV1Schema = z.enum([
+export const BrowserRecordingRetentionClassV1Schema = lazyZodSchema(() => z.enum([
   'preSend',
   'attached',
   'clearOnClose',
   'clearOnSend',
   'diagnosticsOnly',
-]);
+]));
 export type BrowserRecordingRetentionClassV1 = z.infer<typeof BrowserRecordingRetentionClassV1Schema>;
 
-export const BrowserRecordingRedactionLevelV1Schema = z.enum([
+export const BrowserRecordingRedactionLevelV1Schema = lazyZodSchema(() => z.enum([
   'none',
   'metadataOnly',
   'redacted',
   'blocked',
-]);
+]));
 export type BrowserRecordingRedactionLevelV1 = z.infer<typeof BrowserRecordingRedactionLevelV1Schema>;
 
-export const BrowserRecordingPolicyStateV1Schema = z.enum([
+export const BrowserRecordingPolicyStateV1Schema = lazyZodSchema(() => z.enum([
   'allowed',
   'permissionDenied',
   'policyDenied',
@@ -47,10 +48,10 @@ export const BrowserRecordingPolicyStateV1Schema = z.enum([
   'ephemeralOnly',
   'captureUnavailable',
   'retentionLimited',
-]);
+]));
 export type BrowserRecordingPolicyStateV1 = z.infer<typeof BrowserRecordingPolicyStateV1Schema>;
 
-export const BrowserRecordingStatusV1Schema = z.enum([
+export const BrowserRecordingStatusV1Schema = lazyZodSchema(() => z.enum([
   'starting',
   'recording',
   'paused',
@@ -61,10 +62,10 @@ export const BrowserRecordingStatusV1Schema = z.enum([
   'canceled',
   'discarded',
   'expired',
-]);
+]));
 export type BrowserRecordingStatusV1 = z.infer<typeof BrowserRecordingStatusV1Schema>;
 
-export const BrowserRecordingOutcomeReasonV1Schema = z.enum([
+export const BrowserRecordingOutcomeReasonV1Schema = lazyZodSchema(() => z.enum([
   'user_stopped',
   'user_canceled',
   'user_discarded',
@@ -85,10 +86,10 @@ export const BrowserRecordingOutcomeReasonV1Schema = z.enum([
   'unsupported',
   'retention_limit',
   'expired',
-]);
+]));
 export type BrowserRecordingOutcomeReasonV1 = z.infer<typeof BrowserRecordingOutcomeReasonV1Schema>;
 
-export const BrowserEvidenceSessionMediaReferenceV1Schema = z
+export const BrowserEvidenceSessionMediaReferenceV1Schema = lazyZodSchema(() => z
   .object({
     refKind: z.literal('sessionMedia'),
     mediaId: IdSchema,
@@ -96,22 +97,22 @@ export const BrowserEvidenceSessionMediaReferenceV1Schema = z
     mimeType: z.string().trim().min(1).max(128),
     sizeBytes: PositiveIntSchema,
   })
-  .strict();
+  .strict());
 export type BrowserEvidenceSessionMediaReferenceV1 = z.infer<
   typeof BrowserEvidenceSessionMediaReferenceV1Schema
 >;
 
-export const BrowserRecordingSessionMediaTargetV1Schema = z
+export const BrowserRecordingSessionMediaTargetV1Schema = lazyZodSchema(() => z
   .object({
     sessionId: IdSchema,
     messageLocalId: IdSchema,
   })
-  .strict();
+  .strict());
 export type BrowserRecordingSessionMediaTargetV1 = z.infer<
   typeof BrowserRecordingSessionMediaTargetV1Schema
 >;
 
-export const BrowserRecordingMachineLiveStreamCaptureSourceV1Schema = z
+export const BrowserRecordingMachineLiveStreamCaptureSourceV1Schema = lazyZodSchema(() => z
   .object({
     kind: z.literal('machineLiveStream'),
     streamFamily: IdSchema,
@@ -119,17 +120,17 @@ export const BrowserRecordingMachineLiveStreamCaptureSourceV1Schema = z
     sourceMachineId: IdSchema.optional(),
     targetMachineId: IdSchema.optional(),
   })
-  .strict();
+  .strict());
 export type BrowserRecordingMachineLiveStreamCaptureSourceV1 = z.infer<
   typeof BrowserRecordingMachineLiveStreamCaptureSourceV1Schema
 >;
 
-export const BrowserRecordingCaptureSourceV1Schema = z.discriminatedUnion('kind', [
+export const BrowserRecordingCaptureSourceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   BrowserRecordingMachineLiveStreamCaptureSourceV1Schema,
-]);
+]));
 export type BrowserRecordingCaptureSourceV1 = z.infer<typeof BrowserRecordingCaptureSourceV1Schema>;
 
-export const BrowserEvidenceStructuredReferenceV1Schema = z.discriminatedUnion('refKind', [
+export const BrowserEvidenceStructuredReferenceV1Schema = lazyZodSchema(() => z.discriminatedUnion('refKind', [
   z
     .object({
       refKind: z.literal('browserContextScreenshot'),
@@ -150,18 +151,18 @@ export const BrowserEvidenceStructuredReferenceV1Schema = z.discriminatedUnion('
       actionIds: z.array(IdSchema).optional().default([]),
     })
     .strict(),
-]);
+]));
 export type BrowserEvidenceStructuredReferenceV1 = z.infer<
   typeof BrowserEvidenceStructuredReferenceV1Schema
 >;
 
-export const BrowserEvidenceReferenceV1Schema = z.discriminatedUnion('refKind', [
+export const BrowserEvidenceReferenceV1Schema = lazyZodSchema(() => z.discriminatedUnion('refKind', [
   BrowserEvidenceSessionMediaReferenceV1Schema,
   ...BrowserEvidenceStructuredReferenceV1Schema.options,
-]);
+]));
 export type BrowserEvidenceReferenceV1 = z.infer<typeof BrowserEvidenceReferenceV1Schema>;
 
-export const BrowserRecordingActionChapterV1Schema = z
+export const BrowserRecordingActionChapterV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     chapterId: IdSchema,
@@ -184,10 +185,10 @@ export const BrowserRecordingActionChapterV1Schema = z
         message: 'Browser recording action chapter endOffsetMs must not be before startOffsetMs.',
       });
     }
-  });
+  }));
 export type BrowserRecordingActionChapterV1 = z.infer<typeof BrowserRecordingActionChapterV1Schema>;
 
-export const BrowserRecordingSessionV1Schema = z
+export const BrowserRecordingSessionV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     recordingId: IdSchema,
@@ -263,18 +264,18 @@ export const BrowserRecordingSessionV1Schema = z
         message: 'Discarded or expired browser recordings must not retain media references.',
       });
     }
-  });
+  }));
 export type BrowserRecordingSessionV1 = z.infer<typeof BrowserRecordingSessionV1Schema>;
 
-export const BrowserEvidenceArtifactKindV1Schema = z.enum([
+export const BrowserEvidenceArtifactKindV1Schema = lazyZodSchema(() => z.enum([
   'recording',
   'screenshot',
   'actionTimeline',
   'diagnosticsBundle',
-]);
+]));
 export type BrowserEvidenceArtifactKindV1 = z.infer<typeof BrowserEvidenceArtifactKindV1Schema>;
 
-export const BrowserEvidenceArtifactV1Schema = z
+export const BrowserEvidenceArtifactV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     artifactId: IdSchema,
@@ -327,20 +328,20 @@ export const BrowserEvidenceArtifactV1Schema = z
         message: 'Structured evidence artifacts require a structured reference.',
       });
     }
-  });
+  }));
 export type BrowserEvidenceArtifactV1 = z.infer<typeof BrowserEvidenceArtifactV1Schema>;
 
-export const DaemonBrowserRecordingUnavailableReasonV1Schema = z
+export const DaemonBrowserRecordingUnavailableReasonV1Schema = lazyZodSchema(() => z
   .object({
     code: z.string().trim().min(1).max(128),
     message: z.string().trim().min(1).max(512),
   })
-  .strict();
+  .strict());
 export type DaemonBrowserRecordingUnavailableReasonV1 = z.infer<
   typeof DaemonBrowserRecordingUnavailableReasonV1Schema
 >;
 
-export const DaemonBrowserRecordingStartInputV1Schema = z
+export const DaemonBrowserRecordingStartInputV1Schema = lazyZodSchema(() => z
   .object({
     browserSessionId: IdSchema,
     viewId: IdSchema,
@@ -359,12 +360,12 @@ export const DaemonBrowserRecordingStartInputV1Schema = z
     startedAtMs: NonNegativeIntSchema.optional(),
     recordingId: IdSchema.optional(),
   })
-  .strict();
+  .strict());
 export type DaemonBrowserRecordingStartInputV1 = z.infer<
   typeof DaemonBrowserRecordingStartInputV1Schema
 >;
 
-export const DaemonBrowserRecordingStartResultV1Schema = z.discriminatedUnion('status', [
+export const DaemonBrowserRecordingStartResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z
     .object({
       status: z.literal('started'),
@@ -377,24 +378,24 @@ export const DaemonBrowserRecordingStartResultV1Schema = z.discriminatedUnion('s
       reason: DaemonBrowserRecordingUnavailableReasonV1Schema,
     })
     .strict(),
-]);
+]));
 export type DaemonBrowserRecordingStartResultV1 = z.infer<
   typeof DaemonBrowserRecordingStartResultV1Schema
 >;
 
-export const DaemonBrowserRecordingStopInputV1Schema = z
+export const DaemonBrowserRecordingStopInputV1Schema = lazyZodSchema(() => z
   .object({
     recordingId: IdSchema,
     stoppedAtMs: NonNegativeIntSchema.optional(),
     navigationGenerationEnd: NonNegativeIntSchema,
     expiresAtMs: NonNegativeIntSchema.optional(),
   })
-  .strict();
+  .strict());
 export type DaemonBrowserRecordingStopInputV1 = z.infer<
   typeof DaemonBrowserRecordingStopInputV1Schema
 >;
 
-export const DaemonBrowserRecordingStopResultV1Schema = z.discriminatedUnion('status', [
+export const DaemonBrowserRecordingStopResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z
     .object({
       status: z.literal('finalized'),
@@ -414,23 +415,23 @@ export const DaemonBrowserRecordingStopResultV1Schema = z.discriminatedUnion('st
       reason: DaemonBrowserRecordingUnavailableReasonV1Schema,
     })
     .strict(),
-]);
+]));
 export type DaemonBrowserRecordingStopResultV1 = z.infer<
   typeof DaemonBrowserRecordingStopResultV1Schema
 >;
 
-export const DaemonBrowserRecordingCancelInputV1Schema = z
+export const DaemonBrowserRecordingCancelInputV1Schema = lazyZodSchema(() => z
   .object({
     recordingId: IdSchema,
     atMs: NonNegativeIntSchema.optional(),
     reason: z.enum(['user_canceled', 'user_discarded', 'session_closed', 'logout']),
   })
-  .strict();
+  .strict());
 export type DaemonBrowserRecordingCancelInputV1 = z.infer<
   typeof DaemonBrowserRecordingCancelInputV1Schema
 >;
 
-export const DaemonBrowserRecordingTerminalResultV1Schema = z.discriminatedUnion('status', [
+export const DaemonBrowserRecordingTerminalResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z
     .object({
       status: z.enum(['paused', 'failed', 'canceled', 'discarded']),
@@ -443,70 +444,70 @@ export const DaemonBrowserRecordingTerminalResultV1Schema = z.discriminatedUnion
       reason: DaemonBrowserRecordingUnavailableReasonV1Schema,
     })
     .strict(),
-]);
+]));
 export type DaemonBrowserRecordingTerminalResultV1 = z.infer<
   typeof DaemonBrowserRecordingTerminalResultV1Schema
 >;
 
-export const DaemonBrowserRecordingStatusInputV1Schema = z
+export const DaemonBrowserRecordingStatusInputV1Schema = lazyZodSchema(() => z
   .object({
     recordingId: IdSchema,
   })
-  .strict();
+  .strict());
 export type DaemonBrowserRecordingStatusInputV1 = z.infer<
   typeof DaemonBrowserRecordingStatusInputV1Schema
 >;
 
-export const DaemonBrowserRecordingListInputV1Schema = z
+export const DaemonBrowserRecordingListInputV1Schema = lazyZodSchema(() => z
   .object({
     viewId: IdSchema,
   })
-  .strict();
+  .strict());
 export type DaemonBrowserRecordingListInputV1 = z.infer<
   typeof DaemonBrowserRecordingListInputV1Schema
 >;
 
-export const DaemonBrowserRecordingCleanupInputV1Schema = z
+export const DaemonBrowserRecordingCleanupInputV1Schema = lazyZodSchema(() => z
   .object({
     nowMs: NonNegativeIntSchema.optional(),
   })
-  .strict();
+  .strict());
 export type DaemonBrowserRecordingCleanupInputV1 = z.infer<
   typeof DaemonBrowserRecordingCleanupInputV1Schema
 >;
 
-export const DaemonBrowserRecordingCleanupResultV1Schema = z
+export const DaemonBrowserRecordingCleanupResultV1Schema = lazyZodSchema(() => z
   .object({
     discardedRecordingIds: z.array(IdSchema),
     failedRecordingIds: z.array(IdSchema),
   })
-  .strict();
+  .strict());
 export type DaemonBrowserRecordingCleanupResultV1 = z.infer<
   typeof DaemonBrowserRecordingCleanupResultV1Schema
 >;
 
-export const DaemonBrowserRecordingStartRequestV1Schema = z
+export const DaemonBrowserRecordingStartRequestV1Schema = lazyZodSchema(() => z
   .object({
     protocolVersion: z.literal(1),
     machineId: IdSchema,
     input: DaemonBrowserRecordingStartInputV1Schema,
   })
-  .strict();
+  .strict());
 export type DaemonBrowserRecordingStartRequestV1 = z.infer<
   typeof DaemonBrowserRecordingStartRequestV1Schema
 >;
 
-export const DaemonBrowserRecordingStartResponseV1Schema = z
+export const DaemonBrowserRecordingStartResponseV1Schema = lazyZodSchema(() => z
   .object({
     protocolVersion: z.literal(1),
     result: DaemonBrowserRecordingStartResultV1Schema,
   })
-  .strict();
+  .strict());
 export type DaemonBrowserRecordingStartResponseV1 = z.infer<
   typeof DaemonBrowserRecordingStartResponseV1Schema
 >;
 
-export const DaemonBrowserRecordingStopRequestV1Schema = z
+export const DaemonBrowserRecordingStopRequestV1Schema = lazyZodSchema(() => z
   .object({
     protocolVersion: z.literal(1),
     machineId: IdSchema,
@@ -515,22 +516,22 @@ export const DaemonBrowserRecordingStopRequestV1Schema = z
     navigationGenerationEnd: NonNegativeIntSchema,
     expiresAtMs: NonNegativeIntSchema.optional(),
   })
-  .strict();
+  .strict());
 export type DaemonBrowserRecordingStopRequestV1 = z.infer<
   typeof DaemonBrowserRecordingStopRequestV1Schema
 >;
 
-export const DaemonBrowserRecordingStopResponseV1Schema = z
+export const DaemonBrowserRecordingStopResponseV1Schema = lazyZodSchema(() => z
   .object({
     protocolVersion: z.literal(1),
     result: DaemonBrowserRecordingStopResultV1Schema,
   })
-  .strict();
+  .strict());
 export type DaemonBrowserRecordingStopResponseV1 = z.infer<
   typeof DaemonBrowserRecordingStopResponseV1Schema
 >;
 
-export const DaemonBrowserRecordingCancelRequestV1Schema = z
+export const DaemonBrowserRecordingCancelRequestV1Schema = lazyZodSchema(() => z
   .object({
     protocolVersion: z.literal(1),
     machineId: IdSchema,
@@ -538,80 +539,80 @@ export const DaemonBrowserRecordingCancelRequestV1Schema = z
     atMs: NonNegativeIntSchema.optional(),
     reason: z.enum(['user_canceled', 'user_discarded', 'session_closed', 'logout']),
   })
-  .strict();
+  .strict());
 export type DaemonBrowserRecordingCancelRequestV1 = z.infer<
   typeof DaemonBrowserRecordingCancelRequestV1Schema
 >;
 
-export const DaemonBrowserRecordingCancelResponseV1Schema = z
+export const DaemonBrowserRecordingCancelResponseV1Schema = lazyZodSchema(() => z
   .object({
     protocolVersion: z.literal(1),
     result: DaemonBrowserRecordingTerminalResultV1Schema,
   })
-  .strict();
+  .strict());
 export type DaemonBrowserRecordingCancelResponseV1 = z.infer<
   typeof DaemonBrowserRecordingCancelResponseV1Schema
 >;
 
-export const DaemonBrowserRecordingStatusRequestV1Schema = z
+export const DaemonBrowserRecordingStatusRequestV1Schema = lazyZodSchema(() => z
   .object({
     protocolVersion: z.literal(1),
     machineId: IdSchema,
     recordingId: IdSchema,
   })
-  .strict();
+  .strict());
 export type DaemonBrowserRecordingStatusRequestV1 = z.infer<
   typeof DaemonBrowserRecordingStatusRequestV1Schema
 >;
 
-export const DaemonBrowserRecordingStatusResponseV1Schema = z
+export const DaemonBrowserRecordingStatusResponseV1Schema = lazyZodSchema(() => z
   .object({
     protocolVersion: z.literal(1),
     recording: BrowserRecordingSessionV1Schema.nullable(),
   })
-  .strict();
+  .strict());
 export type DaemonBrowserRecordingStatusResponseV1 = z.infer<
   typeof DaemonBrowserRecordingStatusResponseV1Schema
 >;
 
-export const DaemonBrowserRecordingListRequestV1Schema = z
+export const DaemonBrowserRecordingListRequestV1Schema = lazyZodSchema(() => z
   .object({
     protocolVersion: z.literal(1),
     machineId: IdSchema,
     viewId: IdSchema,
   })
-  .strict();
+  .strict());
 export type DaemonBrowserRecordingListRequestV1 = z.infer<
   typeof DaemonBrowserRecordingListRequestV1Schema
 >;
 
-export const DaemonBrowserRecordingListResponseV1Schema = z
+export const DaemonBrowserRecordingListResponseV1Schema = lazyZodSchema(() => z
   .object({
     protocolVersion: z.literal(1),
     recordings: z.array(BrowserRecordingSessionV1Schema),
   })
-  .strict();
+  .strict());
 export type DaemonBrowserRecordingListResponseV1 = z.infer<
   typeof DaemonBrowserRecordingListResponseV1Schema
 >;
 
-export const DaemonBrowserRecordingCleanupRequestV1Schema = z
+export const DaemonBrowserRecordingCleanupRequestV1Schema = lazyZodSchema(() => z
   .object({
     protocolVersion: z.literal(1),
     machineId: IdSchema,
     nowMs: NonNegativeIntSchema.optional(),
   })
-  .strict();
+  .strict());
 export type DaemonBrowserRecordingCleanupRequestV1 = z.infer<
   typeof DaemonBrowserRecordingCleanupRequestV1Schema
 >;
 
-export const DaemonBrowserRecordingCleanupResponseV1Schema = z
+export const DaemonBrowserRecordingCleanupResponseV1Schema = lazyZodSchema(() => z
   .object({
     protocolVersion: z.literal(1),
     result: DaemonBrowserRecordingCleanupResultV1Schema,
   })
-  .strict();
+  .strict());
 export type DaemonBrowserRecordingCleanupResponseV1 = z.infer<
   typeof DaemonBrowserRecordingCleanupResponseV1Schema
 >;

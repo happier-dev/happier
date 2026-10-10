@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -21,11 +22,11 @@ export const SESSION_FOLLOW_ERROR_CODES_V1 = Object.freeze([
 ] as const);
 export type SessionFollowErrorCodeV1 = typeof SESSION_FOLLOW_ERROR_CODES_V1[number];
 
-export const SessionFollowErrorCodeV1Schema = z.enum(SESSION_FOLLOW_ERROR_CODES_V1);
+export const SessionFollowErrorCodeV1Schema = lazyZodSchema(() => z.enum(SESSION_FOLLOW_ERROR_CODES_V1));
 
-export const SessionFollowErrorResponseSchema = z
+export const SessionFollowErrorResponseSchema = lazyZodSchema(() => z
   .object({ error: SessionFollowErrorCodeV1Schema })
-  .strict();
+  .strict());
 export type SessionFollowErrorResponse = z.infer<typeof SessionFollowErrorResponseSchema>;
 
 /**
@@ -41,14 +42,14 @@ export type SessionFollowErrorResponse = z.infer<typeof SessionFollowErrorRespon
  * neither the persisted frontier nor acknowledgement authority; it only lets a
  * refreshed editor stop claiming that the initial current snapshot is pending.
  */
-export const GetSessionFollowResponseSchema = z
+export const GetSessionFollowResponseSchema = lazyZodSchema(() => z
   .object({
     follow: AccountSessionFollowV1Schema.nullable(),
     isSessionOwner: z.boolean(),
     capabilities: AccountSessionFollowCapabilitiesV1Schema,
     voiceInitialSnapshotPending: z.boolean(),
   })
-  .strict();
+  .strict());
 export type GetSessionFollowResponse = z.infer<typeof GetSessionFollowResponseSchema>;
 
 /**
@@ -57,46 +58,46 @@ export type GetSessionFollowResponse = z.infer<typeof GetSessionFollowResponseSc
  * replacement, not a hidden read-modify-write, and `following` is never a
  * client-supplied field: `DELETE` is the explicit Unfollow.
  */
-export const SetSessionFollowRequestSchema = z
+export const SetSessionFollowRequestSchema = lazyZodSchema(() => z
   .object({
     notificationLevel: SessionFollowNotificationLevelSchema,
     includeInVoice: z.boolean(),
   })
-  .strict();
+  .strict());
 export type SetSessionFollowRequest = z.infer<typeof SetSessionFollowRequestSchema>;
 
-export const SetSessionFollowResponseSchema = z
+export const SetSessionFollowResponseSchema = lazyZodSchema(() => z
   .object({
     changed: z.boolean(),
     follow: AccountSessionFollowV1Schema,
     voiceInitialSnapshotPending: z.boolean(),
   })
-  .strict();
+  .strict());
 export type SetSessionFollowResponse = z.infer<typeof SetSessionFollowResponseSchema>;
 
 /**
  * `DELETE /v2/sessions/:sessionId/follow` records an explicit Unfollow rather
  * than erasing the only evidence that suppresses future automatic following.
  */
-export const RemoveSessionFollowResponseSchema = z
+export const RemoveSessionFollowResponseSchema = lazyZodSchema(() => z
   .object({ changed: z.boolean() })
-  .strict();
+  .strict());
 export type RemoveSessionFollowResponse = z.infer<typeof RemoveSessionFollowResponseSchema>;
 
 /** Exact-Home replacement of the authenticated Account's Include in Voice set. */
-export const ReplaceSessionVoiceInclusionsRequestSchema = z.object({
+export const ReplaceSessionVoiceInclusionsRequestSchema = lazyZodSchema(() => z.object({
   sessionIds: z.array(z.string().trim().min(1)),
-}).strict();
+}).strict());
 export type ReplaceSessionVoiceInclusionsRequest = z.infer<typeof ReplaceSessionVoiceInclusionsRequestSchema>;
 
-export const ReplaceSessionVoiceInclusionsResponseSchema = z.object({
+export const ReplaceSessionVoiceInclusionsResponseSchema = lazyZodSchema(() => z.object({
   changed: z.boolean(),
   sessionIds: z.array(z.string().min(1)),
-}).strict();
+}).strict());
 export type ReplaceSessionVoiceInclusionsResponse = z.infer<typeof ReplaceSessionVoiceInclusionsResponseSchema>;
 
 /** `GET /v2/account/session-follow-preferences` takes no input. */
-export const GetSessionAutoFollowPreferencesRequestSchema = z.object({}).strict();
+export const GetSessionAutoFollowPreferencesRequestSchema = lazyZodSchema(() => z.object({}).strict());
 export type GetSessionAutoFollowPreferencesRequest = z.infer<
   typeof GetSessionAutoFollowPreferencesRequestSchema
 >;

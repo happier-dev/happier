@@ -1,14 +1,15 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
-const NonEmptyStringSchema = z.string().trim().min(1);
-const UniqueNonEmptyStringsSchema = z.array(NonEmptyStringSchema)
+const NonEmptyStringSchema = lazyZodSchema(() => z.string().trim().min(1));
+const UniqueNonEmptyStringsSchema = lazyZodSchema(() => z.array(NonEmptyStringSchema)
   .min(1)
-  .refine((values) => new Set(values).size === values.length, 'Entries must be unique.');
+  .refine((values) => new Set(values).size === values.length, 'Entries must be unique.'));
 
-export const PluginAgentCliSourcePreferenceSchema = z.enum(['system-first', 'managed-first']);
+export const PluginAgentCliSourcePreferenceSchema = lazyZodSchema(() => z.enum(['system-first', 'managed-first']));
 export type PluginAgentCliSourcePreference = z.infer<typeof PluginAgentCliSourcePreferenceSchema>;
 
-export const PluginAgentCliExecutableMetadataSchema = z.object({
+export const PluginAgentCliExecutableMetadataSchema = lazyZodSchema(() => z.object({
   binaryName: NonEmptyStringSchema,
   alternativeBinaryNames: UniqueNonEmptyStringsSchema.optional(),
   alternativeBinaryFallbackEnabledEnvVar: NonEmptyStringSchema.optional(),
@@ -28,30 +29,30 @@ export const PluginAgentCliExecutableMetadataSchema = z.object({
       message: 'Alternative binary names must not duplicate the primary binary name.',
     });
   }
-});
+}));
 export type PluginAgentCliExecutableMetadata = z.infer<typeof PluginAgentCliExecutableMetadataSchema>;
 
-export const PluginAgentCliInstallCommandSchema = z.object({
+export const PluginAgentCliInstallCommandSchema = lazyZodSchema(() => z.object({
   cmd: NonEmptyStringSchema,
   args: z.array(z.string()),
   requiresAdmin: z.boolean().optional(),
   note: NonEmptyStringSchema.nullable().optional(),
-}).strict();
+}).strict());
 export type PluginAgentCliInstallCommand = z.infer<typeof PluginAgentCliInstallCommandSchema>;
 
-export const PluginAgentCliManualInstallRecipesSchema = z.object({
+export const PluginAgentCliManualInstallRecipesSchema = lazyZodSchema(() => z.object({
   darwin: z.array(PluginAgentCliInstallCommandSchema).min(1).optional(),
   linux: z.array(PluginAgentCliInstallCommandSchema).min(1).optional(),
   win32: z.array(PluginAgentCliInstallCommandSchema).min(1).optional(),
 }).strict().refine(
   (value) => value.darwin !== undefined || value.linux !== undefined || value.win32 !== undefined,
   'At least one platform recipe is required.',
-);
+));
 export type PluginAgentCliManualInstallRecipes = z.infer<typeof PluginAgentCliManualInstallRecipesSchema>;
 
 const MAX_PLUGIN_ARCHIVE_EXTRACTION_BYTES = 512 * 1024 * 1024;
 
-export const PluginAgentCliArchiveExtractionLimitsSchema = z.object({
+export const PluginAgentCliArchiveExtractionLimitsSchema = lazyZodSchema(() => z.object({
   maxFileBytes: z.number().int().positive().max(MAX_PLUGIN_ARCHIVE_EXTRACTION_BYTES),
   maxExpandedBytes: z.number().int().positive().max(MAX_PLUGIN_ARCHIVE_EXTRACTION_BYTES),
 }).strict().superRefine((value, ctx) => {
@@ -62,33 +63,33 @@ export const PluginAgentCliArchiveExtractionLimitsSchema = z.object({
       message: 'Per-file extraction limit must not exceed the cumulative expanded-byte limit.',
     });
   }
-});
+}));
 export type PluginAgentCliArchiveExtractionLimits = z.infer<typeof PluginAgentCliArchiveExtractionLimitsSchema>;
 
-export const PluginAgentCliManagedArchiveEntrySchema = z.object({
+export const PluginAgentCliManagedArchiveEntrySchema = lazyZodSchema(() => z.object({
   archivePath: NonEmptyStringSchema,
   destinationPath: NonEmptyStringSchema,
-}).strict();
+}).strict());
 export type PluginAgentCliManagedArchiveEntry = z.infer<typeof PluginAgentCliManagedArchiveEntrySchema>;
 
-const PluginAgentCliAssetNameByArchSchema = z.object({
+const PluginAgentCliAssetNameByArchSchema = lazyZodSchema(() => z.object({
   arm64: NonEmptyStringSchema,
   x64: NonEmptyStringSchema,
-}).strict();
+}).strict());
 
-const PluginAgentCliAssetNameByPlatformSchema = z.object({
+const PluginAgentCliAssetNameByPlatformSchema = lazyZodSchema(() => z.object({
   darwin: PluginAgentCliAssetNameByArchSchema,
   linux: PluginAgentCliAssetNameByArchSchema,
   win32: PluginAgentCliAssetNameByArchSchema,
-}).strict();
+}).strict());
 
-const PluginAgentCliArchiveEntriesByPlatformSchema = z.object({
+const PluginAgentCliArchiveEntriesByPlatformSchema = lazyZodSchema(() => z.object({
   darwin: z.array(PluginAgentCliManagedArchiveEntrySchema).min(1),
   linux: z.array(PluginAgentCliManagedArchiveEntrySchema).min(1),
   win32: z.array(PluginAgentCliManagedArchiveEntrySchema).min(1),
-}).strict();
+}).strict());
 
-export const PluginAgentCliManagedInstallSchema = z.discriminatedUnion('kind', [
+export const PluginAgentCliManagedInstallSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('github_release_binary'),
     githubRepo: NonEmptyStringSchema,
@@ -103,7 +104,7 @@ export const PluginAgentCliManagedInstallSchema = z.discriminatedUnion('kind', [
     binaryName: NonEmptyStringSchema,
     packageBinarySetup: z.object({ kind: z.literal('opencode_platform_binary') }).strict().nullable().optional(),
   }).strict(),
-]);
+]));
 export type PluginAgentCliManagedInstall = z.infer<typeof PluginAgentCliManagedInstallSchema>;
 
 /**
@@ -112,13 +113,13 @@ export type PluginAgentCliManagedInstall = z.infer<typeof PluginAgentCliManagedI
  * of `installPaths` (home-relative, `/`-separated), so a vendor updater is never asked to replace
  * an install a package manager owns. It never names a command: the host owns executable resolution.
  */
-export const PluginAgentCliNativeUpdateSchema = z.object({
+export const PluginAgentCliNativeUpdateSchema = lazyZodSchema(() => z.object({
   args: z.array(NonEmptyStringSchema).min(1),
   installPaths: UniqueNonEmptyStringsSchema,
-}).strict();
+}).strict());
 export type PluginAgentCliNativeUpdate = z.infer<typeof PluginAgentCliNativeUpdateSchema>;
 
-export const PluginAgentCliInstallMetadataSchema = z.object({
+export const PluginAgentCliInstallMetadataSchema = lazyZodSchema(() => z.object({
   managed: PluginAgentCliManagedInstallSchema.nullable().optional(),
   /**
    * The vendor's npm package when the CLI is also published there and it is not already the
@@ -136,10 +137,10 @@ export const PluginAgentCliInstallMetadataSchema = z.object({
   recommendationOrder: z.number().int().nonnegative().max(1_000_000).optional(),
   guideUrl: z.url().nullable().optional(),
   docsUrl: z.url().nullable().optional(),
-}).strict();
+}).strict());
 export type PluginAgentCliInstallMetadata = z.infer<typeof PluginAgentCliInstallMetadataSchema>;
 
-export const PluginAgentCliLoginLaunchSchema = z.object({
+export const PluginAgentCliLoginLaunchSchema = lazyZodSchema(() => z.object({
   kind: z.enum(['primary', 'device_code']),
   target: z.enum(['provider_cli', 'agent_acp']).optional(),
   args: z.array(z.string()),
@@ -152,10 +153,10 @@ export const PluginAgentCliLoginLaunchSchema = z.object({
       message: 'ACP login arguments are host-owned.',
     });
   }
-});
+}));
 export type PluginAgentCliLoginLaunch = z.infer<typeof PluginAgentCliLoginLaunchSchema>;
 
-export const PluginAgentCliAuthMetadataSchema = z.object({
+export const PluginAgentCliAuthMetadataSchema = lazyZodSchema(() => z.object({
   support: z.enum(['login_terminal', 'status_only', 'manual_only', 'unsupported']),
   machineLoginKey: NonEmptyStringSchema.optional(),
   /**
@@ -196,7 +197,7 @@ export const PluginAgentCliAuthMetadataSchema = z.object({
       message: 'Only login-terminal support may declare login launches.',
     });
   }
-});
+}));
 export type PluginAgentCliAuthMetadata = z.infer<typeof PluginAgentCliAuthMetadataSchema>;
 
 /**
@@ -222,10 +223,10 @@ export function isPluginAgentCliAuthBackgroundCheckSafe(
     || cli.auth.nonInteractiveStatusProbe === true;
 }
 
-export const PluginAgentCliMetadataSchema = z.object({
+export const PluginAgentCliMetadataSchema = lazyZodSchema(() => z.object({
   displayName: NonEmptyStringSchema.optional(),
   executable: PluginAgentCliExecutableMetadataSchema,
   install: PluginAgentCliInstallMetadataSchema,
   auth: PluginAgentCliAuthMetadataSchema,
-}).strict();
+}).strict());
 export type PluginAgentCliMetadata = z.infer<typeof PluginAgentCliMetadataSchema>;

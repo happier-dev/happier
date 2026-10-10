@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { MessageActionReferenceV1Schema } from '../../sessions/messages/messageActionReferenceV1.js';
@@ -19,26 +20,26 @@ const PluginRuntimeOccurrenceIdSchema = asProtocolZod(PluginUiRuntimeOccurrenceI
  * daemon matches it against the exact current registry lease, then derives the
  * invocation caller itself.
  */
-export const DaemonPluginStructuredMessageActionMountedBindingSchema = z.object({
+export const DaemonPluginStructuredMessageActionMountedBindingSchema = lazyZodSchema(() => z.object({
   pluginId: PluginIdWireSchema,
   contributionLocalId: PluginContributionLocalIdSchema,
   occurrenceId: PluginRuntimeOccurrenceIdSchema,
   materializationRef: PluginMachineMaterializationRefV1Schema.optional(),
-}).strict();
+}).strict());
 export type DaemonPluginStructuredMessageActionMountedBinding = z.infer<
   typeof DaemonPluginStructuredMessageActionMountedBindingSchema
 >;
 
-export const DaemonPluginHostPresentedComposerCurrentIntentV1Schema = z.object({
+export const DaemonPluginHostPresentedComposerCurrentIntentV1Schema = lazyZodSchema(() => z.object({
   composer: asProtocolZod(ComposerRefV1Schema),
   revision: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 export type DaemonPluginHostPresentedComposerCurrentIntentV1 = z.infer<
   typeof DaemonPluginHostPresentedComposerCurrentIntentV1Schema
 >;
 
 /** Closed provenance carrier; the daemon derives any caller after revalidation. */
-export const DaemonPluginStructuredMessageActionInvocationV1Schema = z.discriminatedUnion('kind', [
+export const DaemonPluginStructuredMessageActionInvocationV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('hostPresentedComposer'),
     currentComposerIntent: DaemonPluginHostPresentedComposerCurrentIntentV1Schema,
@@ -55,7 +56,7 @@ export const DaemonPluginStructuredMessageActionInvocationV1Schema = z.discrimin
     kind: z.literal('clientPluginAction'),
     clientActionBinding: DaemonPluginStructuredMessageActionMountedBindingSchema,
   }).strict(),
-]);
+]));
 export type DaemonPluginStructuredMessageActionInvocationV1 = z.infer<
   typeof DaemonPluginStructuredMessageActionInvocationV1Schema
 >;
@@ -91,9 +92,9 @@ const PluginActionDaemonInvocationV1Shape = {
   messageActionReference: MessageActionReferenceV1Schema.optional(),
 } as const;
 
-const PluginActionDaemonInvocationV1Schema = z.object(
+const PluginActionDaemonInvocationV1Schema = lazyZodSchema(() => z.object(
   PluginActionDaemonInvocationV1Shape,
-).strict();
+).strict());
 
 type PluginActionDaemonDispatchValidationInput = z.infer<
   typeof PluginActionDaemonInvocationV1Schema
@@ -185,7 +186,7 @@ function validatePluginActionDaemonDispatch(
   }
 }
 
-export const DaemonPluginStructuredMessageActionExecuteRequestSchema = z.object({
+export const DaemonPluginStructuredMessageActionExecuteRequestSchema = lazyZodSchema(() => z.object({
   machineId: z.string().trim().min(1),
   requestId: z.string().trim().min(1).max(2_000).optional(),
   qualifiedActionId: z.string().trim().min(1),
@@ -219,7 +220,7 @@ export const DaemonPluginStructuredMessageActionExecuteRequestSchema = z.object(
       message: 'A present-user intent requires a UI or Voice origin or a bound client Action.',
     });
   }
-});
+}));
 export type DaemonPluginStructuredMessageActionExecuteRequest = z.infer<
   typeof DaemonPluginStructuredMessageActionExecuteRequestSchema
 >;

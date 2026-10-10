@@ -1,8 +1,9 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
 import { z } from 'zod';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
-const ArtifactStoredJsonContentEnvelopeSchema = z.discriminatedUnion('t', [
+const ArtifactStoredJsonContentEnvelopeSchema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.object({
     t: z.literal('plain'),
     v: z.json(),
@@ -11,7 +12,7 @@ const ArtifactStoredJsonContentEnvelopeSchema = z.discriminatedUnion('t', [
     t: z.literal('encrypted'),
     c: z.string().min(1),
   }).strict(),
-]);
+]));
 type ArtifactStoredJsonContentEnvelope = z.infer<typeof ArtifactStoredJsonContentEnvelopeSchema>;
 
 function encodeStoredJsonContentEnvelope(value: unknown): string {

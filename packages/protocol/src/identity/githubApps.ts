@@ -1,14 +1,15 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
-export const ManagedGitHubAppOwnerV1Schema = z.discriminatedUnion('kind', [
+export const ManagedGitHubAppOwnerV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('home') }).strict(),
   z.object({ kind: z.literal('team'), teamId: z.string().trim().min(1) }).strict(),
-]);
+]));
 export type ManagedGitHubAppOwnerV1 = z.infer<typeof ManagedGitHubAppOwnerV1Schema>;
 
-const PositiveDecimalIdSchema = z.string().regex(/^[1-9][0-9]*$/u);
-const GitHubTextSchema = z.string().trim().min(1).max(256);
-export const CanonicalGitHubHostV1Schema = z.string().max(512).url().superRefine((value, ctx) => {
+const PositiveDecimalIdSchema = lazyZodSchema(() => z.string().regex(/^[1-9][0-9]*$/u));
+const GitHubTextSchema = lazyZodSchema(() => z.string().trim().min(1).max(256));
+export const CanonicalGitHubHostV1Schema = lazyZodSchema(() => z.string().max(512).url().superRefine((value, ctx) => {
   try {
     const parsed = new URL(value);
     if (
@@ -25,16 +26,16 @@ export const CanonicalGitHubHostV1Schema = z.string().max(512).url().superRefine
   } catch {
     ctx.addIssue({ code: 'custom', message: 'GitHub hosts must be valid URLs' });
   }
-});
+}));
 
-export const ManagedGitHubAppSecretHealthV1Schema = z.object({
+export const ManagedGitHubAppSecretHealthV1Schema = lazyZodSchema(() => z.object({
   clientSecretConfigured: z.boolean(),
   privateKeyConfigured: z.boolean(),
   webhookSecretConfigured: z.boolean(),
-}).strict();
+}).strict());
 
 /** Exact Team consumer relation for one verified installation. */
-export const ManagedGitHubAppTeamConsumerV1Schema = z.object({
+export const ManagedGitHubAppTeamConsumerV1Schema = lazyZodSchema(() => z.object({
   team: z.object({
     id: z.string().min(1),
     name: z.string(),
@@ -52,10 +53,10 @@ export const ManagedGitHubAppTeamConsumerV1Schema = z.object({
       state: z.enum(['initializing', 'active', 'paused', 'needs_attention']),
     }).strict(),
   ]),
-}).strict();
+}).strict());
 export type ManagedGitHubAppTeamConsumerV1 = z.infer<typeof ManagedGitHubAppTeamConsumerV1Schema>;
 
-export const ManagedGitHubAppRegistrationV1Schema = z.object({
+export const ManagedGitHubAppRegistrationV1Schema = lazyZodSchema(() => z.object({
   id: z.string().min(1),
   owner: ManagedGitHubAppOwnerV1Schema,
   githubHost: CanonicalGitHubHostV1Schema,
@@ -77,7 +78,7 @@ export const ManagedGitHubAppRegistrationV1Schema = z.object({
    * Home has no public server URL configured.
    */
   callbackUrl: z.string().url().optional(),
-}).strict();
+}).strict());
 export type ManagedGitHubAppRegistrationV1 = z.infer<typeof ManagedGitHubAppRegistrationV1Schema>;
 
 /**
@@ -86,7 +87,7 @@ export type ManagedGitHubAppRegistrationV1 = z.infer<typeof ManagedGitHubAppRegi
  * requirement table its readiness checks enforce, so an administrator repairing
  * least privilege reads the Home's own rule rather than a hand-kept list.
  */
-export const ManagedGitHubAppRequirementsV1Schema = z.object({
+export const ManagedGitHubAppRequirementsV1Schema = lazyZodSchema(() => z.object({
   permissions: z.record(z.string(), z.enum(['read', 'write'])),
   events: z.array(z.string().min(1)),
   missingPermissions: z.array(z.object({
@@ -94,10 +95,10 @@ export const ManagedGitHubAppRequirementsV1Schema = z.object({
     required: z.enum(['read', 'write']),
   }).strict()),
   missingEvents: z.array(z.string().min(1)),
-}).strict();
+}).strict());
 export type ManagedGitHubAppRequirementsV1 = z.infer<typeof ManagedGitHubAppRequirementsV1Schema>;
 
-export const ManagedGitHubAppInstallationV1Schema = z.object({
+export const ManagedGitHubAppInstallationV1Schema = lazyZodSchema(() => z.object({
   id: z.string().min(1),
   registrationId: z.string().min(1),
   githubInstallationId: PositiveDecimalIdSchema,
@@ -115,18 +116,18 @@ export const ManagedGitHubAppInstallationV1Schema = z.object({
   requirements: ManagedGitHubAppRequirementsV1Schema.optional(),
   /** Setup/repair preview for all configured consumers, including disabled or paused ones. */
   prospectiveRequirements: ManagedGitHubAppRequirementsV1Schema.optional(),
-}).strict();
+}).strict());
 export type ManagedGitHubAppInstallationV1 = z.infer<typeof ManagedGitHubAppInstallationV1Schema>;
 
-export const ManagedGitHubAppsListInputV1Schema = z.object({
+export const ManagedGitHubAppsListInputV1Schema = lazyZodSchema(() => z.object({
   owner: ManagedGitHubAppOwnerV1Schema,
-}).strict();
-export const ManagedGitHubAppsListOutputV1Schema = z.object({
+}).strict());
+export const ManagedGitHubAppsListOutputV1Schema = lazyZodSchema(() => z.object({
   registrations: z.array(ManagedGitHubAppRegistrationV1Schema),
   installations: z.array(ManagedGitHubAppInstallationV1Schema),
-}).strict();
+}).strict());
 
-export const ManagedGitHubAppCreateInputV1Schema = z.object({
+export const ManagedGitHubAppCreateInputV1Schema = lazyZodSchema(() => z.object({
   owner: ManagedGitHubAppOwnerV1Schema,
   githubHost: CanonicalGitHubHostV1Schema,
   githubAppId: PositiveDecimalIdSchema,
@@ -139,30 +140,30 @@ export const ManagedGitHubAppCreateInputV1Schema = z.object({
     privateKey: z.string().min(1),
     webhookSecret: z.string().min(1).optional(),
   }).strict(),
-}).strict();
-export const ManagedGitHubAppCreateOutputV1Schema = z.object({
+}).strict());
+export const ManagedGitHubAppCreateOutputV1Schema = lazyZodSchema(() => z.object({
   registration: ManagedGitHubAppRegistrationV1Schema,
-}).strict();
+}).strict());
 
-export const ManagedGitHubAppManifestSetupStartInputV1Schema = z.object({
+export const ManagedGitHubAppManifestSetupStartInputV1Schema = lazyZodSchema(() => z.object({
   owner: ManagedGitHubAppOwnerV1Schema,
   appName: z.string().trim().min(1).max(100),
   githubOwner: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('account') }).strict(),
     z.object({ kind: z.literal('organization'), login: z.string().trim().min(1).max(100) }).strict(),
   ]),
-}).strict();
-export const ManagedGitHubAppManifestSetupStartOutputV1Schema = z.object({
+}).strict());
+export const ManagedGitHubAppManifestSetupStartOutputV1Schema = lazyZodSchema(() => z.object({
   authorizeUrl: z.url(),
-}).strict();
+}).strict());
 
-const ManagedGitHubAppSecretReplacementV1Schema = z.object({
+const ManagedGitHubAppSecretReplacementV1Schema = lazyZodSchema(() => z.object({
   clientSecret: z.string().min(1).nullable().optional(),
   privateKey: z.string().min(1).nullable().optional(),
   webhookSecret: z.string().min(1).nullable().optional(),
-}).strict();
+}).strict());
 
-export const ManagedGitHubAppUpdateInputV1Schema = z.object({
+export const ManagedGitHubAppUpdateInputV1Schema = lazyZodSchema(() => z.object({
   owner: ManagedGitHubAppOwnerV1Schema,
   registrationId: z.string().min(1),
   expectedRevision: z.number().int().positive(),
@@ -172,32 +173,32 @@ export const ManagedGitHubAppUpdateInputV1Schema = z.object({
     githubOwnerLogin: GitHubTextSchema.nullable().optional(),
     secrets: ManagedGitHubAppSecretReplacementV1Schema.optional(),
   }).strict(),
-}).strict();
-export const ManagedGitHubAppUpdateOutputV1Schema = z.object({
+}).strict());
+export const ManagedGitHubAppUpdateOutputV1Schema = lazyZodSchema(() => z.object({
   registration: ManagedGitHubAppRegistrationV1Schema,
-}).strict();
+}).strict());
 
-export const ManagedGitHubAppVerifyInstallationInputV1Schema = z.object({
+export const ManagedGitHubAppVerifyInstallationInputV1Schema = lazyZodSchema(() => z.object({
   owner: ManagedGitHubAppOwnerV1Schema,
   registrationId: z.string().min(1),
   expectedRegistrationRevision: z.number().int().positive(),
   expectedInstallationRevision: z.number().int().min(0),
   githubInstallationId: PositiveDecimalIdSchema,
   githubOrganizationId: PositiveDecimalIdSchema,
-}).strict();
-export const ManagedGitHubAppVerifyInstallationOutputV1Schema = z.object({
+}).strict());
+export const ManagedGitHubAppVerifyInstallationOutputV1Schema = lazyZodSchema(() => z.object({
   authorizeUrl: z.url(),
   attemptId: z.string().min(1),
-}).strict();
+}).strict());
 
-export const ManagedGitHubAppRemoveInputV1Schema = z.object({
+export const ManagedGitHubAppRemoveInputV1Schema = lazyZodSchema(() => z.object({
   owner: ManagedGitHubAppOwnerV1Schema,
   installationId: z.string().min(1),
   expectedRevision: z.number().int().positive(),
-}).strict();
-export const ManagedGitHubAppRemoveOutputV1Schema = z.object({ removed: z.literal(true) }).strict();
+}).strict());
+export const ManagedGitHubAppRemoveOutputV1Schema = lazyZodSchema(() => z.object({ removed: z.literal(true) }).strict());
 
-export const ManagedGitHubAppErrorCodeV1Schema = z.enum([
+export const ManagedGitHubAppErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'github_app_forbidden',
   'github_app_not_found',
   'github_app_revision_conflict',
@@ -216,16 +217,16 @@ export const ManagedGitHubAppErrorCodeV1Schema = z.enum([
   'github_administrator_evidence_unavailable',
   'github_network_policy_changed',
   'github_installation_in_use',
-]);
+]));
 export type ManagedGitHubAppErrorCodeV1 = z.infer<typeof ManagedGitHubAppErrorCodeV1Schema>;
-export const ManagedGitHubAppErrorV1Schema = z.object({
+export const ManagedGitHubAppErrorV1Schema = lazyZodSchema(() => z.object({
   error: ManagedGitHubAppErrorCodeV1Schema,
   currentRevision: z.number().int().positive().nullable().optional(),
   blockers: z.object({
     identityProviderInstances: z.number().int().min(0),
     directorySources: z.number().int().min(0),
   }).strict().optional(),
-}).strict();
+}).strict());
 
 export const MANAGED_GITHUB_APP_ACTION_IDS_V1 = [
   'identity.githubApps.list',
@@ -236,7 +237,7 @@ export const MANAGED_GITHUB_APP_ACTION_IDS_V1 = [
   'identity.githubApps.remove',
 ] as const;
 export type ManagedGitHubAppActionIdV1 = typeof MANAGED_GITHUB_APP_ACTION_IDS_V1[number];
-export const ManagedGitHubAppActionIdV1Schema = z.enum(MANAGED_GITHUB_APP_ACTION_IDS_V1);
+export const ManagedGitHubAppActionIdV1Schema = lazyZodSchema(() => z.enum(MANAGED_GITHUB_APP_ACTION_IDS_V1));
 
 export const MANAGED_GITHUB_APP_ACTION_PATHS_V1 = Object.freeze({
   'identity.githubApps.list': '/v1/identity/github-apps/list',

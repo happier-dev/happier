@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { SessionForkPointSchema } from '../forkPoint.js';
@@ -16,12 +17,12 @@ import { SessionForkPointSchema } from '../forkPoint.js';
  * - failure leaves the authoring draft/chip intact and creates no child;
  * - the resolved cutoff becomes immutable child lineage.
  */
-export const SessionSpawnSourceContextV1Schema = z
+export const SessionSpawnSourceContextV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     kind: z.literal('session_replay'),
     sourceSessionId: z.string().trim().min(1),
     forkPoint: SessionForkPointSchema,
   })
-  .strict();
+  .strict());
 export type SessionSpawnSourceContextV1 = z.infer<typeof SessionSpawnSourceContextV1Schema>;

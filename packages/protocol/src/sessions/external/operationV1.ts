@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { SessionIdSchema } from '../idsV1.js';
@@ -17,29 +18,29 @@ import {
 } from '../../plugins/contributionIdentity.js';
 import { PluginSourceCustodyV1Schema } from '../../plugins/runtime/sourceCustody.js';
 
-const OperationIdSchema = z.string().trim().min(1).max(256);
-const OperationReferenceIdSchema = z.string().trim().min(1).max(512);
-const OperationSourceCursorEvidenceSchema = z.string().trim().min(1).max(4_096);
-const OperationGenerationSchema = z.string().trim().min(1).max(256);
-const OperationTimestampSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-const OperationRevisionSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-const OperationCountSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-const OperationServerSequenceSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const OperationIdSchema = lazyZodSchema(() => z.string().trim().min(1).max(256));
+const OperationReferenceIdSchema = lazyZodSchema(() => z.string().trim().min(1).max(512));
+const OperationSourceCursorEvidenceSchema = lazyZodSchema(() => z.string().trim().min(1).max(4_096));
+const OperationGenerationSchema = lazyZodSchema(() => z.string().trim().min(1).max(256));
+const OperationTimestampSchema = lazyZodSchema(() => z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER));
+const OperationRevisionSchema = lazyZodSchema(() => z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER));
+const OperationCountSchema = lazyZodSchema(() => z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER));
+const OperationServerSequenceSchema = lazyZodSchema(() => z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER));
 
 /**
  * The local working directory selected on the linked owner machine before a
  * takeover is admitted. It is retained in semantic operation state and the
  * owner-only operation progress, never in the shared recipient presentation.
  */
-export const ExternalSessionTakeoverTargetDirectoryV1Schema = z.string()
+export const ExternalSessionTakeoverTargetDirectoryV1Schema = lazyZodSchema(() => z.string()
   .min(1)
   .max(10_000)
   .refine(
     (value) => AbsoluteWorkspacePathSchema.safeParse(value).success,
     'takeover target directory must be an absolute workspace path',
-  );
+  ));
 
-export const ExternalSessionOperationAuthorIntentV1Schema = z.discriminatedUnion('kind', [
+export const ExternalSessionOperationAuthorIntentV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     v: z.literal(1),
     surface: z.literal('plugin'),
@@ -56,17 +57,17 @@ export const ExternalSessionOperationAuthorIntentV1Schema = z.discriminatedUnion
     sessionId: asProtocolZod(SessionIdSchema),
     targetStorageMode: z.literal('external-linked'),
   }).strict(),
-]);
+]));
 export type ExternalSessionOperationAuthorIntentV1 = z.infer<
   typeof ExternalSessionOperationAuthorIntentV1Schema
 >;
 
-export const ExternalSessionOperationPlanV1Schema = z.enum(['materialize', 'takeover']);
+export const ExternalSessionOperationPlanV1Schema = lazyZodSchema(() => z.enum(['materialize', 'takeover']));
 export type ExternalSessionOperationPlanV1 = z.infer<
   typeof ExternalSessionOperationPlanV1Schema
 >;
 
-export const ExternalSessionOperationPhaseV1Schema = z.enum([
+export const ExternalSessionOperationPhaseV1Schema = lazyZodSchema(() => z.enum([
   'validating',
   'quiescing',
   'staging',
@@ -76,12 +77,12 @@ export const ExternalSessionOperationPhaseV1Schema = z.enum([
   'spawning',
   'finalizing',
   'publishing',
-]);
+]));
 export type ExternalSessionOperationPhaseV1 = z.infer<
   typeof ExternalSessionOperationPhaseV1Schema
 >;
 
-export const ExternalSessionOperationStatusV1Schema = z.enum([
+export const ExternalSessionOperationStatusV1Schema = lazyZodSchema(() => z.enum([
   'running',
   'awaiting_user_resume',
   'cancel_requested',
@@ -90,32 +91,32 @@ export const ExternalSessionOperationStatusV1Schema = z.enum([
   'reconciliation_required',
   'completed',
   'discarded',
-]);
+]));
 export type ExternalSessionOperationStatusV1 = z.infer<
   typeof ExternalSessionOperationStatusV1Schema
 >;
 
-export const ExternalSessionStorageStateV1Schema = z.enum([
+export const ExternalSessionStorageStateV1Schema = lazyZodSchema(() => z.enum([
   'machine_only',
   'server_partial',
   'snapshot_complete',
   'hosted',
   'legacy_external_unknown',
-]);
+]));
 export type ExternalSessionStorageStateV1 = z.infer<
   typeof ExternalSessionStorageStateV1Schema
 >;
 
-const ExternalSessionOperationSourceBindingV1Schema = z.object({
+const ExternalSessionOperationSourceBindingV1Schema = lazyZodSchema(() => z.object({
   machineId: OperationIdSchema,
   remoteSessionId: NonBlankOpaqueIdentifierSchema.max(2_000),
   qualifiedIdentity: LinkedExternalSessionQualifiedIdentityV1Schema,
   linkGeneration: OperationGenerationSchema,
   sourceGeneration: OperationGenerationSchema,
   sourceCustody: PluginSourceCustodyV1Schema,
-}).strict();
+}).strict());
 
-const ExternalSessionMaterializeRequestV1Schema = z.object({
+const ExternalSessionMaterializeRequestV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   idempotencyKey: OperationIdSchema,
   sessionId: asProtocolZod(SessionIdSchema),
@@ -123,9 +124,9 @@ const ExternalSessionMaterializeRequestV1Schema = z.object({
   plan: z.literal('materialize'),
   targetStorageMode: z.literal('external-linked'),
   targetRuntimeMode: z.null(),
-}).strict();
+}).strict());
 
-const ExternalSessionTakeoverRequestV1Schema = z.object({
+const ExternalSessionTakeoverRequestV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   idempotencyKey: OperationIdSchema,
   sessionId: asProtocolZod(SessionIdSchema),
@@ -136,17 +137,17 @@ const ExternalSessionTakeoverRequestV1Schema = z.object({
   // Remote takeover is explicitly outside ES-EXTERNAL-SESSIONS-v1.
   targetRuntimeMode: z.literal('terminal'),
   terminal: SpawnSessionTerminalSchema.optional(),
-}).strict();
+}).strict());
 
 /**
  * Immutable identity used by the narrow operation owner for idempotency.
  * The complete source/plan/target request is retained so equality never relies
  * on a content-derived digest or a caller-supplied semantic hash.
  */
-export const ExternalSessionOperationSemanticRequestV1Schema = z.discriminatedUnion('plan', [
+export const ExternalSessionOperationSemanticRequestV1Schema = lazyZodSchema(() => z.discriminatedUnion('plan', [
   ExternalSessionMaterializeRequestV1Schema,
   ExternalSessionTakeoverRequestV1Schema,
-]);
+]));
 export type ExternalSessionOperationSemanticRequestV1 = z.infer<
   typeof ExternalSessionOperationSemanticRequestV1Schema
 >;
@@ -213,16 +214,16 @@ export function resolveExternalSessionOperationTimelineV1(
   return resolveTimelineFromPlanTarget(request);
 }
 
-export const ExternalSessionMaterializationPublicationV1Schema = z.object({
+export const ExternalSessionMaterializationPublicationV1Schema = lazyZodSchema(() => z.object({
   materializationPublicationId: OperationIdSchema,
   materializedThroughSourceAt: OperationTimestampSchema,
   publishedThroughServerSeq: OperationServerSequenceSchema,
-}).strict();
+}).strict());
 export type ExternalSessionMaterializationPublicationV1 = z.infer<
   typeof ExternalSessionMaterializationPublicationV1Schema
 >;
 
-export const ExternalSessionPriorStableStorageV1Schema = z.discriminatedUnion('state', [
+export const ExternalSessionPriorStableStorageV1Schema = lazyZodSchema(() => z.discriminatedUnion('state', [
   z.object({
     state: z.literal('machine_only'),
   }).strict(),
@@ -230,24 +231,24 @@ export const ExternalSessionPriorStableStorageV1Schema = z.discriminatedUnion('s
     state: z.literal('snapshot_complete'),
     publication: ExternalSessionMaterializationPublicationV1Schema,
   }).strict(),
-]);
+]));
 export type ExternalSessionPriorStableStorageV1 = z.infer<
   typeof ExternalSessionPriorStableStorageV1Schema
 >;
 
 export const EXTERNAL_SESSION_REQUIRED_ITEM_DIAGNOSTIC_CAP_V1 = 32;
 
-export const ExternalSessionRequiredItemDiagnosticV1Schema = z.object({
+export const ExternalSessionRequiredItemDiagnosticV1Schema = lazyZodSchema(() => z.object({
   category: z.enum(['record', 'media', 'conversion']),
   sourceGeneration: OperationGenerationSchema,
   sourcePageIndex: OperationCountSchema,
   sourceItemIndex: OperationCountSchema,
-}).strict();
+}).strict());
 export type ExternalSessionRequiredItemDiagnosticV1 = z.infer<
   typeof ExternalSessionRequiredItemDiagnosticV1Schema
 >;
 
-export const ExternalSessionRequiredItemFailuresV1Schema = z.object({
+export const ExternalSessionRequiredItemFailuresV1Schema = lazyZodSchema(() => z.object({
   total: OperationCountSchema,
   record: OperationCountSchema,
   media: OperationCountSchema,
@@ -289,12 +290,12 @@ export const ExternalSessionRequiredItemFailuresV1Schema = z.object({
       });
     }
   }
-});
+}));
 export type ExternalSessionRequiredItemFailuresV1 = z.infer<
   typeof ExternalSessionRequiredItemFailuresV1Schema
 >;
 
-export const ExternalSessionOperationCheckpointV1Schema = z.object({
+export const ExternalSessionOperationCheckpointV1Schema = lazyZodSchema(() => z.object({
   sourcePagesRead: OperationCountSchema,
   stagedItemCount: OperationCountSchema,
   importedItemCount: OperationCountSchema,
@@ -327,7 +328,7 @@ export const ExternalSessionOperationCheckpointV1Schema = z.object({
       message: 'An accepted server sequence and acknowledged batch id must be recorded together.',
     });
   }
-});
+}));
 export type ExternalSessionOperationCheckpointV1 = z.infer<
   typeof ExternalSessionOperationCheckpointV1Schema
 >;
@@ -336,17 +337,17 @@ export type ExternalSessionOperationCheckpointV1 = z.infer<
  * References to canonical owners. These ids let recovery reread their current
  * facts; their presence never grants, transfers, or rolls back authority.
  */
-export const ExternalSessionOperationBindingsV1Schema = z.object({
+export const ExternalSessionOperationBindingsV1Schema = lazyZodSchema(() => z.object({
   operationClaimId: OperationReferenceIdSchema,
   historicalImportJobId: OperationReferenceIdSchema.optional(),
   privateStagingId: OperationReferenceIdSchema.optional(),
   targetRuntimeAttemptId: OperationReferenceIdSchema.optional(),
-}).strict();
+}).strict());
 export type ExternalSessionOperationBindingsV1 = z.infer<
   typeof ExternalSessionOperationBindingsV1Schema
 >;
 
-export const ExternalSessionCanonicalOwnerDisagreementV1Schema = z.object({
+export const ExternalSessionCanonicalOwnerDisagreementV1Schema = lazyZodSchema(() => z.object({
   owner: z.enum([
     'linked_session',
     'runtime_control',
@@ -355,7 +356,7 @@ export const ExternalSessionCanonicalOwnerDisagreementV1Schema = z.object({
   ]),
   expectedRevision: OperationRevisionSchema,
   observedRevision: OperationRevisionSchema,
-}).strict();
+}).strict());
 export type ExternalSessionCanonicalOwnerDisagreementV1 = z.infer<
   typeof ExternalSessionCanonicalOwnerDisagreementV1Schema
 >;
@@ -367,18 +368,18 @@ export type ExternalSessionCanonicalOwnerDisagreementV1 = z.infer<
  * runtime-control proof. Reintroduce a field here only together with the
  * writer that captures the real owner revision.
  */
-export const ExternalSessionCanonicalOwnerEvidenceV1Schema = z.object({
+export const ExternalSessionCanonicalOwnerEvidenceV1Schema = lazyZodSchema(() => z.object({
   linkedSessionRevision: OperationRevisionSchema,
   destructiveQuiescence: ExternalSessionDestructiveQuiescenceResultV1Schema.optional(),
   sourceSnapshotEvidenceRef: OperationSourceCursorEvidenceSchema.optional(),
   transcriptAuthorityRevision: OperationRevisionSchema.optional(),
   disagreement: ExternalSessionCanonicalOwnerDisagreementV1Schema.optional(),
-}).strict();
+}).strict());
 export type ExternalSessionCanonicalOwnerEvidenceV1 = z.infer<
   typeof ExternalSessionCanonicalOwnerEvidenceV1Schema
 >;
 
-export const ExternalSessionOperationFenceV1Schema = z.discriminatedUnion('kind', [
+export const ExternalSessionOperationFenceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('none'),
   }).strict(),
@@ -390,12 +391,12 @@ export const ExternalSessionOperationFenceV1Schema = z.discriminatedUnion('kind'
     kind: z.literal('incomplete_update'),
     publication: ExternalSessionMaterializationPublicationV1Schema,
   }).strict(),
-]);
+]));
 export type ExternalSessionOperationFenceV1 = z.infer<
   typeof ExternalSessionOperationFenceV1Schema
 >;
 
-export const ExternalSessionOperationErrorCodeV1Schema = z.enum([
+export const ExternalSessionOperationErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'source_unavailable',
   'source_changed',
   'staging_capacity_exceeded',
@@ -407,37 +408,37 @@ export const ExternalSessionOperationErrorCodeV1Schema = z.enum([
   'external_writer_conflict',
   'reconciliation_required',
   'internal_error',
-]);
+]));
 export type ExternalSessionOperationErrorCodeV1 = z.infer<
   typeof ExternalSessionOperationErrorCodeV1Schema
 >;
 
-export const ExternalSessionOperationErrorV1Schema = z.object({
+export const ExternalSessionOperationErrorV1Schema = lazyZodSchema(() => z.object({
   code: ExternalSessionOperationErrorCodeV1Schema,
   message: z.string().trim().min(1).max(2_000),
   retryable: z.boolean(),
   occurredAtMs: OperationTimestampSchema,
-}).strict();
+}).strict());
 export type ExternalSessionOperationErrorV1 = z.infer<
   typeof ExternalSessionOperationErrorV1Schema
 >;
 
-const ExternalSessionOperationCancellationV1Schema = z.object({
+const ExternalSessionOperationCancellationV1Schema = lazyZodSchema(() => z.object({
   requestedAtMs: OperationTimestampSchema,
   requestedAtRevision: OperationRevisionSchema,
-}).strict();
+}).strict());
 
-const ExternalSessionOperationTerminalResultV1Schema = z.discriminatedUnion('kind', [
+const ExternalSessionOperationTerminalResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('completed') }).strict(),
   z.object({ kind: z.literal('cancelled') }).strict(),
   z.object({ kind: z.literal('discarded') }).strict(),
-]);
+]));
 
-const ExternalSessionOperationTimelineV1Schema = z
+const ExternalSessionOperationTimelineV1Schema = lazyZodSchema(() => z
   .array(ExternalSessionOperationPhaseV1Schema)
   .min(1)
   .max(9)
-  .readonly();
+  .readonly());
 
 const OPERATION_ERROR_PHASES: Readonly<
   Partial<Record<ExternalSessionOperationErrorCodeV1, readonly ExternalSessionOperationPhaseV1[]>>
@@ -785,7 +786,7 @@ export function isRetryableExternalLinkedAdmissionAcknowledgementReconciliationV
     && operation.canonicalOwnerEvidence.disagreement === undefined;
 }
 
-export const ExternalSessionOperationRecordV1Schema = z.object({
+export const ExternalSessionOperationRecordV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   operationId: OperationIdSchema,
   revision: OperationRevisionSchema,
@@ -988,12 +989,12 @@ export const ExternalSessionOperationRecordV1Schema = z.object({
       'A nonterminal update cannot advance the prior complete publication.',
     );
   }
-});
+}));
 export type ExternalSessionOperationRecordV1 = z.infer<
   typeof ExternalSessionOperationRecordV1Schema
 >;
 
-const ExternalSessionOperationProgressRequestV1Schema = z.discriminatedUnion('plan', [
+const ExternalSessionOperationProgressRequestV1Schema = lazyZodSchema(() => z.discriminatedUnion('plan', [
   z.object({
     plan: z.literal('materialize'),
     targetStorageMode: z.literal('external-linked'),
@@ -1007,9 +1008,9 @@ const ExternalSessionOperationProgressRequestV1Schema = z.discriminatedUnion('pl
     targetDirectory: ExternalSessionTakeoverTargetDirectoryV1Schema.optional(),
     targetRuntimeMode: z.literal('terminal'),
   }).strict(),
-]);
+]));
 
-const ExternalSessionOperationPublicRequiredItemFailuresV1Schema = z.object({
+const ExternalSessionOperationPublicRequiredItemFailuresV1Schema = lazyZodSchema(() => z.object({
   total: OperationCountSchema,
   record: OperationCountSchema,
   media: OperationCountSchema,
@@ -1023,9 +1024,9 @@ const ExternalSessionOperationPublicRequiredItemFailuresV1Schema = z.object({
       message: 'Required-item failure total must equal the categorized failure counts.',
     });
   }
-});
+}));
 
-const ExternalSessionOperationPublicCheckpointV1Schema = z.object({
+const ExternalSessionOperationPublicCheckpointV1Schema = lazyZodSchema(() => z.object({
   sourcePagesRead: OperationCountSchema,
   stagedItemCount: OperationCountSchema,
   importedItemCount: OperationCountSchema,
@@ -1043,13 +1044,13 @@ const ExternalSessionOperationPublicCheckpointV1Schema = z.object({
       message: 'Imported item count cannot exceed the current total estimate.',
     });
   }
-});
+}));
 
-const ExternalSessionOperationPublicErrorV1Schema = z.object({
+const ExternalSessionOperationPublicErrorV1Schema = lazyZodSchema(() => z.object({
   code: ExternalSessionOperationErrorCodeV1Schema,
   retryable: z.boolean(),
   occurredAtMs: OperationTimestampSchema,
-}).strict();
+}).strict());
 
 /**
  * Owner-only operation progress. Private source evidence, staging ids, owner
@@ -1058,7 +1059,7 @@ const ExternalSessionOperationPublicErrorV1Schema = z.object({
  * host-selected target directory remains visible here; the separate shared
  * presentation intentionally omits it.
  */
-export const ExternalSessionOperationProgressV1Schema = z.object({
+export const ExternalSessionOperationProgressV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   operationId: OperationIdSchema,
   revision: OperationRevisionSchema,
@@ -1084,12 +1085,12 @@ export const ExternalSessionOperationProgressV1Schema = z.object({
     ...progress,
     request: progress.request,
   }, context);
-});
+}));
 export type ExternalSessionOperationProgressV1 = z.infer<
   typeof ExternalSessionOperationProgressV1Schema
 >;
 
-export const ExternalSessionOperationSharedPresentationV1Schema = z.object({
+export const ExternalSessionOperationSharedPresentationV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   operationId: OperationIdSchema,
   revision: OperationRevisionSchema,
@@ -1100,7 +1101,7 @@ export const ExternalSessionOperationSharedPresentationV1Schema = z.object({
   ]),
   status: ExternalSessionOperationStatusV1Schema,
   phase: ExternalSessionOperationPhaseV1Schema,
-}).strict();
+}).strict());
 export type ExternalSessionOperationSharedPresentationV1 = z.infer<
   typeof ExternalSessionOperationSharedPresentationV1Schema
 >;
@@ -1110,10 +1111,10 @@ export const EXTERNAL_SESSION_OPERATION_METADATA_KEY =
 export const EXTERNAL_SESSION_OPERATION_PRESENTATION_METADATA_KEY =
   'externalSessionOperationPresentationV1' as const;
 
-export const ExternalSessionOperationStateV1Schema = z.object({
+export const ExternalSessionOperationStateV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   progress: ExternalSessionOperationProgressV1Schema,
-}).strict();
+}).strict());
 export type ExternalSessionOperationStateV1 = z.infer<
   typeof ExternalSessionOperationStateV1Schema
 >;

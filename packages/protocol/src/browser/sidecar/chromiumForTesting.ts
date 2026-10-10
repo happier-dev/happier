@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -28,23 +29,23 @@ import { z } from 'zod';
  * was SHA256-verified on 2026-10-01 and matched upstream MD5 JiZ0GcpjMyhPJGtzqSN8/g==.
  */
 
-export const ChromiumForTestingPlatformSchema = z.enum([
+export const ChromiumForTestingPlatformSchema = lazyZodSchema(() => z.enum([
   'darwin-arm64',
   'darwin-x64',
   'linux-x64',
   'linux-arm64',
   'win32-x64',
-]);
+]));
 export type ChromiumForTestingPlatform = z.infer<typeof ChromiumForTestingPlatformSchema>;
 
-const CfTVersionSchema = z.string().trim().regex(/^[0-9]+(?:\.[0-9]+){3}$/, 'CfT version must be an exact x.y.z.w build');
+const CfTVersionSchema = lazyZodSchema(() => z.string().trim().regex(/^[0-9]+(?:\.[0-9]+){3}$/, 'CfT version must be an exact x.y.z.w build'));
 
-const Sha256DigestSchema = z
+const Sha256DigestSchema = lazyZodSchema(() => z
   .string()
   .trim()
-  .regex(/^sha256:[0-9a-f]{64}$/, 'Integrity digest must be a lowercase sha256:<hex64> string');
+  .regex(/^sha256:[0-9a-f]{64}$/, 'Integrity digest must be a lowercase sha256:<hex64> string'));
 
-export const ChromiumForTestingPlatformAssetSchema = z
+export const ChromiumForTestingPlatformAssetSchema = lazyZodSchema(() => z
   .object({
     /** Exact platform build when upstream did not publish this platform at the default version. */
     pinnedVersion: CfTVersionSchema.optional(),
@@ -62,10 +63,10 @@ export const ChromiumForTestingPlatformAssetSchema = z
       return !value.split(/[\\/]+/).some((segment) => segment === '' || segment === '.' || segment === '..');
     }, 'Executable subpath must be a relative, traversal-free path'),
   })
-  .strict();
+  .strict());
 export type ChromiumForTestingPlatformAsset = z.infer<typeof ChromiumForTestingPlatformAssetSchema>;
 
-export const ChromiumForTestingProductSourceV1Schema = z
+export const ChromiumForTestingProductSourceV1Schema = lazyZodSchema(() => z
   .object({
     /** Stable managed-tools key; also the managed install dir under `<happyHomeDir>/tools/<key>`. */
     key: z.literal('browser-chromium'),
@@ -75,7 +76,7 @@ export const ChromiumForTestingProductSourceV1Schema = z
     license: z.string().trim().min(1),
     assetsByPlatform: z.record(ChromiumForTestingPlatformSchema, ChromiumForTestingPlatformAssetSchema),
   })
-  .strict();
+  .strict());
 export type ChromiumForTestingProductSourceV1 = z.infer<typeof ChromiumForTestingProductSourceV1Schema>;
 
 /**

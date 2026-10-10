@@ -1,16 +1,17 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
-const SessionIdSchema = z.string().trim().min(1);
-const LocalIdSchema = z.string().trim().min(1);
+const SessionIdSchema = lazyZodSchema(() => z.string().trim().min(1));
+const LocalIdSchema = lazyZodSchema(() => z.string().trim().min(1));
 
-export const SessionInputCancelExactTurnRequestV1Schema = z.object({
+export const SessionInputCancelExactTurnRequestV1Schema = lazyZodSchema(() => z.object({
   sessionId: SessionIdSchema,
   localId: LocalIdSchema,
-}).strict();
+}).strict());
 export type SessionInputCancelExactTurnRequestV1 =
   z.infer<typeof SessionInputCancelExactTurnRequestV1Schema>;
 
-export const SessionInputCancelExactTurnResultV1Schema = z.discriminatedUnion('ok', [
+export const SessionInputCancelExactTurnResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),
     status: z.literal('cancelled'),
@@ -25,7 +26,7 @@ export const SessionInputCancelExactTurnResultV1Schema = z.discriminatedUnion('o
     errorCode: z.string().min(1).optional(),
     error: z.string().min(1).optional(),
   }).strict(),
-]);
+]));
 export type SessionInputCancelExactTurnResultV1 =
   z.infer<typeof SessionInputCancelExactTurnResultV1Schema>;
 

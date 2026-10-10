@@ -1,17 +1,18 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { assertModelPackFilePathPortable } from './pathSafety.js';
 
-const Sha256HexSchema = z.string().regex(/^[0-9a-f]{64}$/i);
+const Sha256HexSchema = lazyZodSchema(() => z.string().regex(/^[0-9a-f]{64}$/i));
 
-export const ModelPackVoiceCatalogEntrySchema = z.object({
+export const ModelPackVoiceCatalogEntrySchema = lazyZodSchema(() => z.object({
   id: z.string().min(1),
   title: z.string().min(1),
   subtitle: z.string().min(1).optional(),
   sid: z.number().int().min(0).optional(),
-});
+}));
 export type ModelPackVoiceCatalogEntry = z.infer<typeof ModelPackVoiceCatalogEntrySchema>;
 
-export const ModelPackKindSchema = z.enum(['tts_sherpa', 'stt_sherpa']);
+export const ModelPackKindSchema = lazyZodSchema(() => z.enum(['tts_sherpa', 'stt_sherpa']));
 export type ModelPackKind = z.infer<typeof ModelPackKindSchema>;
 
 /**
@@ -19,15 +20,15 @@ export type ModelPackKind = z.infer<typeof ModelPackKindSchema>;
  * identifiers only; each execution host independently reports which families
  * it can actually run.
  */
-export const ModelPackRuntimeFamilySchema = z.enum([
+export const ModelPackRuntimeFamilySchema = lazyZodSchema(() => z.enum([
   'sherpa_kokoro_offline',
   'sherpa_zipformer_streaming',
   'sherpa_parakeet_offline',
   'sherpa_moonshine_offline',
-]);
+]));
 export type ModelPackRuntimeFamily = z.infer<typeof ModelPackRuntimeFamilySchema>;
 
-export const ModelPackManifestSchema = z.object({
+export const ModelPackManifestSchema = lazyZodSchema(() => z.object({
   packId: z.string().min(1),
   kind: ModelPackKindSchema,
   model: z.string().min(1),
@@ -75,7 +76,7 @@ export const ModelPackManifestSchema = z.object({
       message: 'The default voice must identify a declared voice.',
     });
   }
-});
+}));
 export type ModelPackManifest = z.infer<typeof ModelPackManifestSchema>;
 
 export function parseModelPackManifest(input: unknown): ModelPackManifest {

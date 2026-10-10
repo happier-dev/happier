@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
@@ -11,14 +12,14 @@ import {
 } from './accountPasswordCredential.js';
 
 export const PASSWORD_CREDENTIAL_MUTATION_OPERATION_V1 = 'password_credential_mutation_v1' as const;
-export const PasswordCredentialMutationDigestV1Schema = z.string().length(43).refine((value) =>
+export const PasswordCredentialMutationDigestV1Schema = lazyZodSchema(() => z.string().length(43).refine((value) =>
   encodeBase64(decodeBase64(value, 'base64url'), 'base64url') === value,
-);
-const AccountIdSchema = z.string().min(1).max(256);
+));
+const AccountIdSchema = lazyZodSchema(() => z.string().min(1).max(256));
 
 // All objects at this authority-bearing V1 boundary are closed. These schemas
 // are a new operation and do not extend the incumbent login wire or its bytes.
-export const PasswordCredentialMutationV1Schema = z.object({
+export const PasswordCredentialMutationV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   action: z.enum(['connect', 'change', 'remove', 'recover']),
   accountId: AccountIdSchema,
@@ -27,7 +28,7 @@ export const PasswordCredentialMutationV1Schema = z.object({
     normalizeVerifiedEmail(value)?.normalizedEmail === value,
   ).nullable(),
   newCredentialDigest: PasswordCredentialMutationDigestV1Schema.nullable(),
-}).strict();
+}).strict());
 export type PasswordCredentialMutationV1 = z.infer<typeof PasswordCredentialMutationV1Schema>;
 
 export function createPasswordCredentialMutationDigestV1(value: PasswordCredentialMutationV1): string {
@@ -57,12 +58,12 @@ export function createPasswordCredentialTargetDigestV1(
   ]);
 }
 
-export const PasswordMutationChallengeIssueRequestV1Schema = z.object({
+export const PasswordMutationChallengeIssueRequestV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   mutation: PasswordCredentialMutationV1Schema,
-}).strict();
+}).strict());
 
-export const PasswordMutationChallengeV1Schema = KeyChallengeV2IssueResponseSchema.extend({
+export const PasswordMutationChallengeV1Schema = lazyZodSchema(() => KeyChallengeV2IssueResponseSchema.extend({
   v: z.literal(1),
   audience: KeyChallengeV2AudienceSchema.extend({
     serverIdentityId: z.string().regex(SERVER_IDENTITY_ID_PATTERN),
@@ -70,14 +71,14 @@ export const PasswordMutationChallengeV1Schema = KeyChallengeV2IssueResponseSche
   expectedAccountId: AccountIdSchema,
   operationKind: z.literal(PASSWORD_CREDENTIAL_MUTATION_OPERATION_V1),
   operationDigest: PasswordCredentialMutationDigestV1Schema,
-}).strict();
+}).strict());
 export type PasswordMutationChallengeV1 = z.infer<typeof PasswordMutationChallengeV1Schema>;
 
-export const PasswordMutationChallengeProofV1Schema = z.object({
+export const PasswordMutationChallengeProofV1Schema = lazyZodSchema(() => z.object({
   challengeId: KeyChallengeV2IssueResponseSchema.shape.challengeId,
   publicKey: z.string().max(512),
   signature: z.string().max(4096),
-}).strict();
+}).strict());
 export type PasswordMutationChallengeProofV1 = z.infer<typeof PasswordMutationChallengeProofV1Schema>;
 
 export function createPasswordMutationChallengeSigningInputV1(value: PasswordMutationChallengeV1): Uint8Array {

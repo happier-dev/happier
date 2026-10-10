@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { SessionAuthoringCheckoutCreationDraftV1Schema } from '../authoring/creationFieldsV1.js';
@@ -11,25 +12,25 @@ import { SessionCreationTagV1Schema } from './sessionCreationIdentityV1.js';
  * never accepted from the public Session-spawn input, and is discarded once
  * the daemon has consumed it to materialize the directory.
  */
-export const SessionCreationDirectoryApprovalV1Schema = z.object({
+export const SessionCreationDirectoryApprovalV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   executionTarget: SessionExecutionTargetV1Schema,
   directory: z.string().trim().min(1),
-}).strict();
+}).strict());
 export type SessionCreationDirectoryApprovalV1 = z.infer<
   typeof SessionCreationDirectoryApprovalV1Schema
 >;
 
-export const SessionCreationTargetPreparationRequestV1Schema = z.object({
+export const SessionCreationTargetPreparationRequestV1Schema = lazyZodSchema(() => z.object({
   directory: SessionDirectoryIntentV1Schema,
   sessionCreationTag: SessionCreationTagV1Schema.optional(),
   checkoutCreationDraft: SessionAuthoringCheckoutCreationDraftV1Schema.nullable().optional(),
-}).strict().superRefine(refineSessionDirectoryIntentCheckoutV1);
+}).strict().superRefine(refineSessionDirectoryIntentCheckoutV1));
 export type SessionCreationTargetPreparationRequestV1 = z.infer<
   typeof SessionCreationTargetPreparationRequestV1Schema
 >;
 
-export const SessionCreationPreparedCheckoutV1Schema = z.object({
+export const SessionCreationPreparedCheckoutV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('git_worktree'),
   finalDirectory: z.string().trim().min(1),
   baseRef: z.string().trim().min(1).nullable(),
@@ -40,12 +41,12 @@ export const SessionCreationPreparedCheckoutV1Schema = z.object({
    * Older targets omit it and are therefore never cleaned up speculatively.
    */
   created: z.boolean().optional(),
-}).strict();
+}).strict());
 export type SessionCreationPreparedCheckoutV1 = z.infer<
   typeof SessionCreationPreparedCheckoutV1Schema
 >;
 
-export const SessionCreationTargetPreparationResultV1Schema = z.discriminatedUnion('ok', [
+export const SessionCreationTargetPreparationResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),
     directory: z.string().trim().min(1),
@@ -62,7 +63,7 @@ export const SessionCreationTargetPreparationResultV1Schema = z.discriminatedUni
       'checkout_failed',
     ]),
   }).strict(),
-]);
+]));
 export type SessionCreationTargetPreparationResultV1 = z.infer<
   typeof SessionCreationTargetPreparationResultV1Schema
 >;

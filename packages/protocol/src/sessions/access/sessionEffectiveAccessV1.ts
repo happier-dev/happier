@@ -1,7 +1,8 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 /** A server decision projected for presentation; mutation authority is always rechecked. */
-export const SessionAccessCapabilitiesV1Schema = z.object({
+export const SessionAccessCapabilitiesV1Schema = lazyZodSchema(() => z.object({
   readTranscript: z.boolean(),
   submitAgentInput: z.boolean(),
   editSessionRecords: z.boolean(),
@@ -14,25 +15,25 @@ export const SessionAccessCapabilitiesV1Schema = z.object({
   assignResponsibility: z.boolean(),
   stopSession: z.boolean(),
   deleteSession: z.boolean(),
-}).strict();
+}).strict());
 export type SessionAccessCapabilitiesV1 = z.infer<typeof SessionAccessCapabilitiesV1Schema>;
 
-export const SessionAccessSourceV1Schema = z.discriminatedUnion('kind', [
+export const SessionAccessSourceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('owner') }).strict(),
   z.object({ kind: z.literal('direct'), shareId: z.string().min(1) }).strict(),
   z.object({ kind: z.literal('team'), teamId: z.string().min(1), requiredByTeamPolicy: z.boolean() }).strict(),
   z.object({ kind: z.literal('group'), teamId: z.string().min(1), groupId: z.string().min(1) }).strict(),
-]);
+]));
 export type SessionAccessSourceV1 = z.infer<typeof SessionAccessSourceV1Schema>;
 
 /** One safe display identity, not the complete audience or an authorization input. */
-export const SessionAudienceContextV1Schema = z.discriminatedUnion('kind', [
+export const SessionAudienceContextV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('team'), teamId: z.string().min(1) }).strict(),
   z.object({ kind: z.literal('group'), teamId: z.string().min(1), groupId: z.string().min(1) }).strict(),
-]);
+]));
 export type SessionAudienceContextV1 = z.infer<typeof SessionAudienceContextV1Schema>;
 
-export const SessionEffectiveAccessV1Schema = z.object({
+export const SessionEffectiveAccessV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   level: z.enum(['view', 'edit', 'admin', 'owner']),
   sources: z.array(SessionAccessSourceV1Schema),
@@ -40,7 +41,7 @@ export const SessionEffectiveAccessV1Schema = z.object({
   audienceContext: SessionAudienceContextV1Schema.nullable().optional(),
   /** Authored organizational context never establishes a grant or audience match. */
   primaryTeamId: z.string().min(1).nullable().optional(),
-}).strict();
+}).strict());
 export type SessionEffectiveAccessV1 = z.infer<typeof SessionEffectiveAccessV1Schema>;
 
 export type EffectiveSessionAccessLevelV1 = SessionEffectiveAccessV1['level'];

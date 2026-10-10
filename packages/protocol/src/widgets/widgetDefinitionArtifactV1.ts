@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import type { WorkBoardArtifactTransportV1, WorkBoardArtifactV1 } from '../boards/workBoardArtifactV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { z } from 'zod';
@@ -15,14 +16,14 @@ export type WidgetDefinitionArtifactTransportV1 = Pick<WorkBoardArtifactTranspor
         nextCursor?: string;
     }>>;
 }>;
-export const WidgetDefinitionSummaryV1Schema = WidgetDefinitionDraftV1Schema.pick({ name: true, description: true, inputs: true,
+export const WidgetDefinitionSummaryV1Schema = lazyZodSchema(() => WidgetDefinitionDraftV1Schema.pick({ name: true, description: true, inputs: true,
     inputSchema: true, sessionInputPath: true, connectedAccountPurposeBindings: true, sizeDeclaration: true }).extend({
     artifactId: z.string().trim().min(1), bodyKind: z.enum(['installed', 'declarative']),
     /** Provenance people read in the Add surface ("made by your agent on Oct 3"), from the definition itself. */
     author: WidgetDefinitionAuthorV1Schema.optional(), createdAt: z.number().int().nonnegative().optional(),
     resources: z.array(asProtocolZod(PluginContributionIdentityV1Schema)),
     sourceDefinition: WidgetDefinitionBodyV1Schema.options[1].optional(),
-}).strict();
+}).strict());
 export type WidgetDefinitionSummaryV1 = z.infer<typeof WidgetDefinitionSummaryV1Schema>;
 export const WidgetDefinitionSummaryV1StoredSchema = createStoredReadSchema(WidgetDefinitionSummaryV1Schema);
 export type WidgetDefinitionArtifactPortV1 = Readonly<{

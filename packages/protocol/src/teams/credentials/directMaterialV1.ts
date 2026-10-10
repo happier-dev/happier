@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -44,17 +45,17 @@ export type {
 } from './directMaterialCensusV1.js';
 
 const BoundedIdentitySchema = TeamCredentialDirectMaterialIdentityV1Schema;
-const SourceVersionSchema = z.string().min(1).max(256);
+const SourceVersionSchema = lazyZodSchema(() => z.string().min(1).max(256));
 const MAX_DIRECT_MATERIAL_PLAINTEXT_BYTES = 4_000_000;
-const RecipientContentPublicKeySchema = z.string().min(1).max(512).refine((value) => {
+const RecipientContentPublicKeySchema = lazyZodSchema(() => z.string().min(1).max(512).refine((value) => {
   try {
     const bytes = decodeBase64(value, 'base64');
     return bytes.byteLength === 32 && encodeBase64(bytes, 'base64') === value;
   } catch {
     return false;
   }
-}, 'Expected a canonical base64 X25519 public key');
-const DirectMaterialUnavailableReasonSchema = z.enum([
+}, 'Expected a canonical base64 X25519 public key'));
+const DirectMaterialUnavailableReasonSchema = lazyZodSchema(() => z.enum([
   'preparing',
   'source_changed',
   'recipient_binding_changed',
@@ -64,12 +65,12 @@ const DirectMaterialUnavailableReasonSchema = z.enum([
   'unsupported_direct_source',
   'invalid_material',
   'resource_corrupt',
-]);
+]));
 
 // Use a regular union here because PluginContributionIdentityV1Schema is a
 // protocol-composable schema whose internal definition is intentionally not
 // exposed as a Zod discriminant to callers.
-export const TeamCredentialSourceMemberV1Schema = z.union([
+export const TeamCredentialSourceMemberV1Schema = lazyZodSchema(() => z.union([
   z.object({
     kind: z.literal('connected_account'),
     service: asProtocolZod(PluginContributionIdentityV1Schema),
@@ -80,7 +81,7 @@ export const TeamCredentialSourceMemberV1Schema = z.union([
     connectionId: ProviderConnectionIdSchema,
     credentialSlotId: ProviderLocalIdSchema,
   }).strict(),
-]);
+]));
 export type TeamCredentialSourceMemberV1 = z.infer<typeof TeamCredentialSourceMemberV1Schema>;
 
 /**
@@ -88,7 +89,7 @@ export type TeamCredentialSourceMemberV1 = z.infer<typeof TeamCredentialSourceMe
  * Saved Secret ids or Account-scoped ciphertext, so a recipient cannot turn a
  * direct material row into a source configuration writer.
  */
-export const TeamCredentialDirectConnectedAccountConfigurationV1Schema = z.object({
+export const TeamCredentialDirectConnectedAccountConfigurationV1Schema = lazyZodSchema(() => z.object({
   values: z.record(BoundedIdentitySchema, StrictJsonValueSchema).superRefine((values, context) => {
     if (Object.keys(values).length > 64) {
       context.addIssue({ code: 'custom', message: 'Connected-account configuration values exceed the field limit' });
@@ -99,19 +100,19 @@ export const TeamCredentialDirectConnectedAccountConfigurationV1Schema = z.objec
       context.addIssue({ code: 'custom', message: 'Connected-account configuration secrets exceed the field limit' });
     }
   }),
-}).strict();
+}).strict());
 export type TeamCredentialDirectConnectedAccountConfigurationV1 = z.infer<
   typeof TeamCredentialDirectConnectedAccountConfigurationV1Schema
 >;
 
-const ConnectedAccountMaterialSchema = z.object({
+const ConnectedAccountMaterialSchema = lazyZodSchema(() => z.object({
   kind: z.literal('qualified_connected_account'),
   credential: QualifiedConnectedAccountCredentialPayloadV1Schema,
   configuration: TeamCredentialDirectConnectedAccountConfigurationV1Schema.nullable(),
   authenticationModeId: BoundedIdentitySchema,
-}).strict();
+}).strict());
 
-const ProviderMaterialSchema = z.object({
+const ProviderMaterialSchema = lazyZodSchema(() => z.object({
   kind: z.literal('provider_api_key'),
   value: z.string().min(1).superRefine((value, context) => {
     if (new TextEncoder().encode(value).byteLength > ACCOUNT_SETTINGS_MAX_SAVED_SECRETS_BYTES) {
@@ -131,9 +132,9 @@ const ProviderMaterialSchema = z.object({
     }).strict(),
     credentialTransport: ProviderCredentialTransportV1Schema,
   }).strict(),
-}).strict();
+}).strict());
 
-export const TeamCredentialDirectMaterialPayloadV1Schema = z.object({
+export const TeamCredentialDirectMaterialPayloadV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   domain: z.literal('happier.team-credential-direct-material'),
   homeServerIdentityId: BoundedIdentitySchema,
@@ -144,10 +145,10 @@ export const TeamCredentialDirectMaterialPayloadV1Schema = z.object({
   sourceMember: TeamCredentialSourceMemberV1Schema,
   sourceVersion: SourceVersionSchema,
   material: z.union([ConnectedAccountMaterialSchema, ProviderMaterialSchema]),
-}).strict();
+}).strict());
 export type TeamCredentialDirectMaterialPayloadV1 = z.infer<typeof TeamCredentialDirectMaterialPayloadV1Schema>;
 
-export const TeamCredentialDirectMaterialStoredV1Schema = z.discriminatedUnion('t', [
+export const TeamCredentialDirectMaterialStoredV1Schema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.object({
     t: z.literal('plain'),
     v: TeamCredentialDirectMaterialPayloadV1Schema,
@@ -165,15 +166,15 @@ export const TeamCredentialDirectMaterialStoredV1Schema = z.discriminatedUnion('
       }
     }, 'Expected canonical padded base64 box bundle'),
   }).strict(),
-]);
+]));
 export type TeamCredentialDirectMaterialStoredV1 = z.infer<typeof TeamCredentialDirectMaterialStoredV1Schema>;
 
-export const TeamCredentialDirectMaterialRouteParamsV1Schema = z.object({
+export const TeamCredentialDirectMaterialRouteParamsV1Schema = lazyZodSchema(() => z.object({
   teamId: BoundedIdentitySchema,
   resourceId: BoundedIdentitySchema,
-}).strict();
+}).strict());
 
-export const TeamCredentialDirectMaterialReadQueryV1Schema = z.discriminatedUnion('view', [
+export const TeamCredentialDirectMaterialReadQueryV1Schema = lazyZodSchema(() => z.discriminatedUnion('view', [
   z.object({
     view: z.literal('preparation'),
     sourceMemberKey: SourceVersionSchema,
@@ -183,54 +184,54 @@ export const TeamCredentialDirectMaterialReadQueryV1Schema = z.discriminatedUnio
     view: z.literal('census'),
     cursor: z.string().trim().min(1).max(512).optional(),
   }).strict(),
-]);
+]));
 
-export const TeamCredentialDirectMaterialConsumerV1Schema = z.discriminatedUnion('kind', [
+export const TeamCredentialDirectMaterialConsumerV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('session'), sessionId: BoundedIdentitySchema }).strict(),
   z.object({
     kind: z.literal('execution_run'),
     executionRunId: BoundedIdentitySchema,
     workerMachineId: BoundedIdentitySchema,
   }).strict(),
-]);
+]));
 export type TeamCredentialDirectMaterialConsumerV1 = z.infer<
   typeof TeamCredentialDirectMaterialConsumerV1Schema
 >;
 
-const TeamCredentialProviderModelDirectMaterialUseV1Schema = z.object({
+const TeamCredentialProviderModelDirectMaterialUseV1Schema = lazyZodSchema(() => z.object({
     resourceId: BoundedIdentitySchema,
     slot: z.object({ kind: z.literal('provider_model') }).strict(),
     sourceMemberKey: SourceVersionSchema,
-  }).strict();
-const TeamCredentialConnectedServiceDirectMaterialUseV1Schema = z.object({
+  }).strict());
+const TeamCredentialConnectedServiceDirectMaterialUseV1Schema = lazyZodSchema(() => z.object({
     resourceId: BoundedIdentitySchema,
     slot: z.object({
       kind: z.literal('connected_service_purpose'),
       purpose: QualifiedConnectedAccountPurposeV1Schema,
     }).strict(),
     disclosedMember: asProtocolZod(QualifiedConnectedAccountRefSchema),
-  }).strict();
-export const TeamCredentialDirectMaterialUseV1Schema = z.union([
+  }).strict());
+export const TeamCredentialDirectMaterialUseV1Schema = lazyZodSchema(() => z.union([
   TeamCredentialProviderModelDirectMaterialUseV1Schema,
   TeamCredentialConnectedServiceDirectMaterialUseV1Schema,
-]);
+]));
 export type TeamCredentialDirectMaterialUseV1 = z.infer<
   typeof TeamCredentialDirectMaterialUseV1Schema
 >;
 
-export const TeamCredentialDirectMaterialOpenRequestV1Schema = z.union([
+export const TeamCredentialDirectMaterialOpenRequestV1Schema = lazyZodSchema(() => z.union([
   TeamCredentialProviderModelDirectMaterialUseV1Schema.extend({
     consumer: TeamCredentialDirectMaterialConsumerV1Schema,
   }).strict(),
   TeamCredentialConnectedServiceDirectMaterialUseV1Schema.extend({
     consumer: TeamCredentialDirectMaterialConsumerV1Schema,
   }).strict(),
-]);
+]));
 export type TeamCredentialDirectMaterialOpenRequestV1 = z.infer<
   typeof TeamCredentialDirectMaterialOpenRequestV1Schema
 >;
 
-const TeamCredentialDirectMaterialExpectedV1Schema = z.object({
+const TeamCredentialDirectMaterialExpectedV1Schema = lazyZodSchema(() => z.object({
   homeServerIdentityId: BoundedIdentitySchema,
   teamId: BoundedIdentitySchema,
   resourceId: BoundedIdentitySchema,
@@ -238,9 +239,9 @@ const TeamCredentialDirectMaterialExpectedV1Schema = z.object({
   recipientAccountId: BoundedIdentitySchema,
   sourceMemberKey: SourceVersionSchema,
   sourceVersion: SourceVersionSchema,
-}).strict();
+}).strict());
 
-export const TeamCredentialDirectMaterialMineResponseV1Schema = z.discriminatedUnion('status', [
+export const TeamCredentialDirectMaterialMineResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('ready'),
     recipientMode: z.enum(['plain', 'e2ee']),
@@ -251,12 +252,12 @@ export const TeamCredentialDirectMaterialMineResponseV1Schema = z.discriminatedU
     status: z.literal('unavailable'),
     reason: DirectMaterialUnavailableReasonSchema,
   }).strict(),
-]);
+]));
 export type TeamCredentialDirectMaterialMineResponseV1 = z.infer<
   typeof TeamCredentialDirectMaterialMineResponseV1Schema
 >;
 
-export const TeamCredentialDirectMaterialPreparationRecipientV1Schema = z.object({
+export const TeamCredentialDirectMaterialPreparationRecipientV1Schema = lazyZodSchema(() => z.object({
   recipientAccountId: BoundedIdentitySchema,
   recipientMode: z.enum(['plain', 'e2ee']),
   recipientContentPublicKeyFingerprint: SourceVersionSchema.nullable(),
@@ -269,9 +270,9 @@ export const TeamCredentialDirectMaterialPreparationRecipientV1Schema = z.object
    * prepares a recipient only when this is false or the version changed.
    */
   storedTupleCurrent: z.boolean(),
-}).strict();
+}).strict());
 
-export const TeamCredentialDirectMaterialPreparationResponseV1Schema = z.object({
+export const TeamCredentialDirectMaterialPreparationResponseV1Schema = lazyZodSchema(() => z.object({
   homeServerIdentityId: BoundedIdentitySchema,
   teamId: BoundedIdentitySchema,
   resourceId: BoundedIdentitySchema,
@@ -283,12 +284,12 @@ export const TeamCredentialDirectMaterialPreparationResponseV1Schema = z.object(
   publishedSourceVersion: SourceVersionSchema.nullable(),
   recipients: z.array(TeamCredentialDirectMaterialPreparationRecipientV1Schema).max(100),
   nextCursor: z.string().trim().min(1).max(512).nullable(),
-}).strict();
+}).strict());
 export type TeamCredentialDirectMaterialPreparationResponseV1 = z.infer<
   typeof TeamCredentialDirectMaterialPreparationResponseV1Schema
 >;
 
-export const TeamCredentialDirectMaterialUpsertRequestV1Schema = z.object({
+export const TeamCredentialDirectMaterialUpsertRequestV1Schema = lazyZodSchema(() => z.object({
   items: z.array(z.object({
     recipientAccountId: BoundedIdentitySchema,
     sourceMemberKey: SourceVersionSchema,
@@ -300,27 +301,27 @@ export const TeamCredentialDirectMaterialUpsertRequestV1Schema = z.object({
     expectedResourceRevision: z.number().int().nonnegative(),
     expectedStoredSourceVersion: SourceVersionSchema.nullable(),
   }).strict()).min(1).max(100),
-}).strict();
+}).strict());
 export type TeamCredentialDirectMaterialUpsertRequestV1 = z.infer<
   typeof TeamCredentialDirectMaterialUpsertRequestV1Schema
 >;
 
-export const TeamCredentialDirectMaterialWithdrawRequestV1Schema = z.object({
+export const TeamCredentialDirectMaterialWithdrawRequestV1Schema = lazyZodSchema(() => z.object({
   sourceMemberKey: SourceVersionSchema,
   expectedResourceRevision: z.number().int().nonnegative(),
   expectedPublishedSourceVersion: SourceVersionSchema,
-}).strict();
+}).strict());
 export type TeamCredentialDirectMaterialWithdrawRequestV1 = z.infer<
   typeof TeamCredentialDirectMaterialWithdrawRequestV1Schema
 >;
-export const TeamCredentialDirectMaterialWithdrawResponseV1Schema = z.object({
+export const TeamCredentialDirectMaterialWithdrawResponseV1Schema = lazyZodSchema(() => z.object({
   status: z.literal('withdrawn'),
-}).strict();
+}).strict());
 export type TeamCredentialDirectMaterialWithdrawResponseV1 = z.infer<
   typeof TeamCredentialDirectMaterialWithdrawResponseV1Schema
 >;
 
-export const TeamCredentialDirectMaterialUpsertResponseV1Schema = z.object({
+export const TeamCredentialDirectMaterialUpsertResponseV1Schema = lazyZodSchema(() => z.object({
   results: z.array(z.discriminatedUnion('status', [
     z.object({
       status: z.literal('stored'),
@@ -335,7 +336,7 @@ export const TeamCredentialDirectMaterialUpsertResponseV1Schema = z.object({
       reason: DirectMaterialUnavailableReasonSchema,
     }).strict(),
   ])).max(100),
-}).strict();
+}).strict());
 export type TeamCredentialDirectMaterialUpsertResponseV1 = z.infer<
   typeof TeamCredentialDirectMaterialUpsertResponseV1Schema
 >;
@@ -382,7 +383,7 @@ export function computeTeamCredentialSourceMemberKeyV1(member: TeamCredentialSou
 }
 
 const CompoundSourceVersionPrefix = 'v1:';
-const CompoundSourceVersionPartsSchema = z.tuple([SourceVersionSchema, SourceVersionSchema]);
+const CompoundSourceVersionPartsSchema = lazyZodSchema(() => z.tuple([SourceVersionSchema, SourceVersionSchema]));
 
 /** Home verifies the basis; only the source materializer can verify private configuration. */
 export function composeTeamCredentialSourceVersionV1(input: Readonly<{

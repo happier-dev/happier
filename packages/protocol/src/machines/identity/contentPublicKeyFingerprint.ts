@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex } from '@noble/hashes/utils';
 import { z } from 'zod';
@@ -7,8 +8,8 @@ import { decodeBase64 } from '../../crypto/base64.js';
 const CONTENT_PUBLIC_KEY_FINGERPRINT_PREFIX = 'content-public-key-sha256:' as const;
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/u;
 
-export const ContentPublicKeyFingerprintSchema = z.string()
-  .regex(new RegExp(`^${CONTENT_PUBLIC_KEY_FINGERPRINT_PREFIX}[a-f0-9]{64}$`, 'u'));
+export const ContentPublicKeyFingerprintSchema = lazyZodSchema(() => z.string()
+  .regex(new RegExp(`^${CONTENT_PUBLIC_KEY_FINGERPRINT_PREFIX}[a-f0-9]{64}$`, 'u')));
 
 export type ContentPublicKeyFingerprint = z.infer<typeof ContentPublicKeyFingerprintSchema>;
 

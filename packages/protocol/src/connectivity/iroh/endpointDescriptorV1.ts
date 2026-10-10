@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -112,7 +113,7 @@ function isValidIpSocketAddress(value: string): boolean {
 }
 
 /** Absolute HTTP(S) URL without credentials, query material, or a fragment. */
-const IrohDescriptorUrlSchema = z.string()
+const IrohDescriptorUrlSchema = lazyZodSchema(() => z.string()
   .trim()
   .min(1)
   .max(IROH_DESCRIPTOR_MAX_URL_UTF8_BYTES)
@@ -131,10 +132,10 @@ const IrohDescriptorUrlSchema = z.string()
     } catch {
       context.addIssue({ code: z.ZodIssueCode.custom, message: 'URL must be absolute' });
     }
-  });
+  }));
 
 /** Exact transport identifier; its 52/64-character grammar is already its complete bound. */
-export const IrohEndpointIdV1Schema = z.string()
+export const IrohEndpointIdV1Schema = lazyZodSchema(() => z.string()
   .trim()
   .min(1)
   .superRefine((value, context) => {
@@ -144,7 +145,7 @@ export const IrohEndpointIdV1Schema = z.string()
         message: 'EndpointId must be 64 lowercase hex or 52 lowercase RFC4648 base32 characters',
       });
     }
-  });
+  }));
 
 /**
  * Canonical relay-URL equivalence. Two spellings that parse to the same URL are
@@ -188,7 +189,7 @@ function IrohHintListSchema(
   });
 }
 
-export const IrohEndpointDescriptorV1Schema = z.object({
+export const IrohEndpointDescriptorV1Schema = lazyZodSchema(() => z.object({
   endpointId: IrohEndpointIdV1Schema,
   relayUrls: IrohHintListSchema(
     IrohDescriptorUrlSchema,
@@ -204,7 +205,7 @@ export const IrohEndpointDescriptorV1Schema = z.object({
       }
     }),
   ).optional(),
-}).strict();
+}).strict());
 
 export type IrohEndpointDescriptorV1 = z.infer<typeof IrohEndpointDescriptorV1Schema>;
 

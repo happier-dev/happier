@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
@@ -15,7 +16,7 @@ export const EXECUTION_RUN_HOST_ACTION_APPROVAL_LIMITS_V1 = Object.freeze({
 
 const boundedId = z.string().trim().min(1).max(EXECUTION_RUN_HOST_ACTION_APPROVAL_LIMITS_V1.idUtf16Units);
 
-const ExecutionRunHostActionProposalPreviewV1Schema = z.object({
+const ExecutionRunHostActionProposalPreviewV1Schema = lazyZodSchema(() => z.object({
   findingId: boundedId.optional(),
   pathLabel: z.string().trim().min(1).max(512),
   pathSha256: z.string().regex(/^[a-f0-9]{64}$/),
@@ -31,9 +32,9 @@ const ExecutionRunHostActionProposalPreviewV1Schema = z.object({
   if (value.startLine !== undefined && value.endLine !== undefined && value.endLine < value.startLine) {
     ctx.addIssue({ code: 'custom', message: 'proposal preview endLine must be greater than or equal to startLine' });
   }
-});
+}));
 
-export const ExecutionRunHostActionApprovalRequestV1Schema = z.object({
+export const ExecutionRunHostActionApprovalRequestV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   kind: z.literal('execution_run_host_action'),
   status: ApprovalRequestStatusSchema,
@@ -76,7 +77,7 @@ export const ExecutionRunHostActionApprovalRequestV1Schema = z.object({
   if (encodedBytes > EXECUTION_RUN_HOST_ACTION_APPROVAL_LIMITS_V1.artifactJsonBytes) {
     ctx.addIssue({ code: 'custom', message: 'execution-run host-action approval artifact byte limit exceeded' });
   }
-});
+}));
 
 export type ExecutionRunHostActionApprovalRequestV1 = z.infer<typeof ExecutionRunHostActionApprovalRequestV1Schema>;
 export const StoredExecutionRunHostActionApprovalRequestV1Schema = createStoredReadSchema(ExecutionRunHostActionApprovalRequestV1Schema);

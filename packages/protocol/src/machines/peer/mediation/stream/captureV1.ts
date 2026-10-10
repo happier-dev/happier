@@ -1,20 +1,21 @@
+import { lazyZodSchema } from '../../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { MachineLiveStreamCodecIdV1Schema } from './codecsV1.js';
 import { MachineLiveStreamInputModeV1Schema } from './controlV1.js';
 
-const PositiveIntSchema = z.number().int().positive();
-const NonNegativeIntSchema = z.number().int().nonnegative();
+const PositiveIntSchema = lazyZodSchema(() => z.number().int().positive());
+const NonNegativeIntSchema = lazyZodSchema(() => z.number().int().nonnegative());
 
-export const MachineLiveStreamCaptureSourceKindV1Schema = z.enum([
+export const MachineLiveStreamCaptureSourceKindV1Schema = lazyZodSchema(() => z.enum([
   'screen',
   'browser',
   'simulator',
   'device',
   'plugin',
-]);
+]));
 
-export const MachineLiveStreamCaptureSidebandKindV1Schema = z.enum([
+export const MachineLiveStreamCaptureSidebandKindV1Schema = lazyZodSchema(() => z.enum([
   'accessibility_tree',
   'logs',
   'device_config',
@@ -22,18 +23,18 @@ export const MachineLiveStreamCaptureSidebandKindV1Schema = z.enum([
   'network_diagnostics',
   'route',
   'capture_health',
-]);
+]));
 
-export const MachineLiveStreamCaptureHealthV1Schema = z
+export const MachineLiveStreamCaptureHealthV1Schema = lazyZodSchema(() => z
   .object({
     status: z.enum(['available', 'starting', 'degraded', 'unavailable']),
     reasonCode: z.string().min(1).optional(),
     droppedFrames: NonNegativeIntSchema.optional(),
     lastFrameAtMs: NonNegativeIntSchema.optional(),
   })
-  .strict();
+  .strict());
 
-export const MachineLiveStreamCaptureSourceV1Schema = z
+export const MachineLiveStreamCaptureSourceV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     sourceId: z.string().min(1),
@@ -47,16 +48,16 @@ export const MachineLiveStreamCaptureSourceV1Schema = z
     sidebands: z.array(MachineLiveStreamCaptureSidebandKindV1Schema).default([]),
     health: MachineLiveStreamCaptureHealthV1Schema,
   })
-  .passthrough();
+  .passthrough());
 
-export const MachineLiveStreamCaptureUnavailableV1Schema = z
+export const MachineLiveStreamCaptureUnavailableV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     sourceId: z.string().min(1).optional(),
     reasonCode: z.string().min(1),
     sourceKind: MachineLiveStreamCaptureSourceKindV1Schema.optional(),
   })
-  .strict();
+  .strict());
 
 export type MachineLiveStreamCaptureSourceKindV1 = z.infer<
   typeof MachineLiveStreamCaptureSourceKindV1Schema

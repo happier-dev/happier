@@ -1,8 +1,9 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { NonBlankOpaqueIdentifierSchema, readNonBlankOpaqueIdentifier } from '../../strings/opaqueIdentifier.js';
 
-const NonEmptyStringSchema = z.string().trim().min(1);
+const NonEmptyStringSchema = lazyZodSchema(() => z.string().trim().min(1));
 
 const legacyVendorSkillBackends = {
   codex_native: 'codex',
@@ -140,10 +141,10 @@ export function resolveSkillCatalogItemIdentityV1(value: unknown): SkillCatalogI
   };
 }
 
-export const SkillCatalogOriginV1Schema = z.enum(['vendor', 'happier']);
+export const SkillCatalogOriginV1Schema = lazyZodSchema(() => z.enum(['vendor', 'happier']));
 export type SkillCatalogOriginV1 = z.infer<typeof SkillCatalogOriginV1Schema>;
 
-export const SkillCatalogItemV1Schema = z.preprocess(
+export const SkillCatalogItemV1Schema = lazyZodSchema(() => z.preprocess(
   normalizeSkillCatalogItemInput,
   z
     .object({
@@ -162,10 +163,10 @@ export const SkillCatalogItemV1Schema = z.preprocess(
       updatedAt: z.number().finite().optional(),
     })
     .passthrough(),
-);
+));
 export type SkillCatalogItemV1 = z.output<typeof SkillCatalogItemV1Schema>;
 
-export const SkillCatalogV1Schema = z
+export const SkillCatalogV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     backendId: NonEmptyStringSchema.optional(),
@@ -173,5 +174,5 @@ export const SkillCatalogV1Schema = z
     updatedAt: z.number().finite(),
     items: z.array(SkillCatalogItemV1Schema).readonly(),
   })
-  .passthrough();
+  .passthrough());
 export type SkillCatalogV1 = z.output<typeof SkillCatalogV1Schema>;

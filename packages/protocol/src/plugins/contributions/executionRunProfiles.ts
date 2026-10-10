@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
@@ -10,7 +11,7 @@ import {
   PluginLocalizedStringV2Schema,
 } from './publicTypes.js';
 
-export const PluginExecutionRunProfileActionReferenceV2Schema = z.discriminatedUnion('kind', [
+export const PluginExecutionRunProfileActionReferenceV2Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('contributionAction'),
     action: asProtocolZod(PluginContributionReferenceV2Schema),
@@ -19,10 +20,10 @@ export const PluginExecutionRunProfileActionReferenceV2Schema = z.discriminatedU
     kind: z.literal('hostAction'),
     actionId: z.literal('reviews.comments.create'),
   }).strict(),
-]);
+]));
 export type PluginExecutionRunProfileActionReferenceV2 = z.infer<typeof PluginExecutionRunProfileActionReferenceV2Schema>;
 
-export const PluginExecutionRunProfileContributionV2Schema = z.object({
+export const PluginExecutionRunProfileContributionV2Schema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   intent: ExecutionRunIntentSchema,
   title: PluginLocalizedStringV2Schema,
@@ -37,5 +38,5 @@ export const PluginExecutionRunProfileContributionV2Schema = z.object({
   actions: z.array(PluginExecutionRunProfileActionReferenceV2Schema).optional(),
   availability: PluginAvailabilityDescriptorV2Schema.optional(),
   metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
-}).strict();
+}).strict());
 export type PluginExecutionRunProfileContributionV2 = z.infer<typeof PluginExecutionRunProfileContributionV2Schema>;

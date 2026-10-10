@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -27,12 +28,12 @@ export const AutomationTriggerRevisionSchema = asProtocolZod(
 );
 export type AutomationTriggerRevision = z.infer<typeof AutomationTriggerRevisionSchema>;
 
-export const AutomationTriggerKindSchema = z.enum([
+export const AutomationTriggerKindSchema = lazyZodSchema(() => z.enum([
   'schedule',
   'pluginEvent',
   'sessionLifecycle',
   'runLifecycle',
   'prComment',
   'ciFailed',
-]);
+]));
 export type AutomationTriggerKind = z.infer<typeof AutomationTriggerKindSchema>;

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -9,7 +10,7 @@ import { z } from 'zod';
  * semantic contexts remain owned by their contribution families; no legacy
  * surface-id parser participates in either path.
  */
-export const PluginUiSurfacePlacementV1Schema = z.enum([
+export const PluginUiSurfacePlacementV1Schema = lazyZodSchema(() => z.enum([
   'structuredMessage',
   'sessionPane',
   'sessionHeaderAction',
@@ -21,5 +22,5 @@ export const PluginUiSurfacePlacementV1Schema = z.enum([
   'composerSurface',
   'ephemeralSurface',
   'unknown',
-]);
+]));
 export type PluginUiSurfacePlacementV1 = z.infer<typeof PluginUiSurfacePlacementV1Schema>;

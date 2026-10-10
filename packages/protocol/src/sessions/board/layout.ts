@@ -1,11 +1,12 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { SessionBoardTabIdSchema, SessionSurfaceItemIdSchema } from './ids.js';
 import { WidgetSessionBoardWidthV1Schema } from '../../widgets/widgetPresentationV1.js';
 
 export const SessionBoardItemWidthSchema = WidgetSessionBoardWidthV1Schema;
-export const SessionBoardItemFrameStyleSchema = z.enum(['card', 'plain']);
-export const SessionBoardLayoutV1Schema = z.object({
+export const SessionBoardItemFrameStyleSchema = lazyZodSchema(() => z.enum(['card', 'plain']));
+export const SessionBoardLayoutV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   tabs: z.array(z.object({
     id: SessionBoardTabIdSchema,
@@ -27,7 +28,7 @@ export const SessionBoardLayoutV1Schema = z.object({
       items.add(item.itemId);
     });
   });
-});
+}));
 export type SessionBoardItemWidth = z.infer<typeof SessionBoardItemWidthSchema>;
 /** Persisted layout normalizes additive fields; mutations still use the closed schema. */
 export const SessionBoardLayoutV1StoredSchema = createStoredReadSchema(SessionBoardLayoutV1Schema);

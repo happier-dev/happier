@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { SessionMessageAccountActorV1Schema } from '../messages/sessionMessageAccountActorV1.js';
 import { refineDiscussionAccountActor } from './accountActorConsistency.js';
@@ -30,7 +31,7 @@ import {
  * Optional only because the executor's existing contextual rule stamps the
  * current Session, exactly as the Board family does.
  */
-const SessionDiscussionActionSessionIdSchema = SessionDiscussionIdSchema.optional();
+const SessionDiscussionActionSessionIdSchema = lazyZodSchema(() => SessionDiscussionIdSchema.optional());
 
 /**
  * A caller-chosen retry identity. It stays optional because most tool callers
@@ -39,14 +40,14 @@ const SessionDiscussionActionSessionIdSchema = SessionDiscussionIdSchema.optiona
  * author, so it can reconcile a lost response but can never adopt another
  * Account's result.
  */
-const SessionDiscussionActionLocalIdSchema = SessionDiscussionLocalIdSchema.optional();
+const SessionDiscussionActionLocalIdSchema = lazyZodSchema(() => SessionDiscussionLocalIdSchema.optional());
 
-const MentionedAccountIdsSchema = z.array(SessionDiscussionAccountIdSchema).refine(
+const MentionedAccountIdsSchema = lazyZodSchema(() => z.array(SessionDiscussionAccountIdSchema).refine(
   (value) => new Set(value).size === value.length,
   'Mentioned Account ids must be deduplicated',
-);
+));
 
-const SequenceSchema = z.number().int().min(0);
+const SequenceSchema = lazyZodSchema(() => z.number().int().min(0));
 
 /**
  * The authored title as plaintext. Action inputs carry strict semantic
@@ -60,21 +61,21 @@ const SessionDiscussionActionTitleSchema = SessionDiscussionTitleV1Schema.shape.
 // Inputs
 // ---------------------------------------------------------------------------
 
-export const SessionDiscussionListInputV1Schema = z.object({
+export const SessionDiscussionListInputV1Schema = lazyZodSchema(() => z.object({
   sessionId: SessionDiscussionActionSessionIdSchema,
   state: SessionDiscussionListQueryV1Schema.shape.state,
   cursor: SessionDiscussionListQueryV1Schema.shape.cursor,
   limit: z.number().int().min(1).max(SESSION_DISCUSSION_MAX_PAGE_SIZE_V1).optional(),
-}).strict();
+}).strict());
 export type SessionDiscussionListInputV1 = z.infer<typeof SessionDiscussionListInputV1Schema>;
 
-export const SessionDiscussionGetInputV1Schema = z.object({
+export const SessionDiscussionGetInputV1Schema = lazyZodSchema(() => z.object({
   sessionId: SessionDiscussionActionSessionIdSchema,
   discussionId: SessionDiscussionIdSchema,
-}).strict();
+}).strict());
 export type SessionDiscussionGetInputV1 = z.infer<typeof SessionDiscussionGetInputV1Schema>;
 
-export const SessionDiscussionReadInputV1Schema = z.object({
+export const SessionDiscussionReadInputV1Schema = lazyZodSchema(() => z.object({
   sessionId: SessionDiscussionActionSessionIdSchema,
   discussionId: SessionDiscussionIdSchema,
   beforeSeq: z.number().int().min(1).optional(),
@@ -88,10 +89,10 @@ export const SessionDiscussionReadInputV1Schema = z.object({
       message: 'beforeSeq and afterSeq are mutually exclusive',
     });
   }
-});
+}));
 export type SessionDiscussionReadInputV1 = z.infer<typeof SessionDiscussionReadInputV1Schema>;
 
-export const SessionDiscussionCreateInputV1Schema = z.object({
+export const SessionDiscussionCreateInputV1Schema = lazyZodSchema(() => z.object({
   sessionId: SessionDiscussionActionSessionIdSchema,
   creationLocalId: SessionDiscussionActionLocalIdSchema,
   title: SessionDiscussionActionTitleSchema,
@@ -100,36 +101,36 @@ export const SessionDiscussionCreateInputV1Schema = z.object({
     content: SessionDiscussionMessageContentV1Schema,
     mentionedAccountIds: MentionedAccountIdsSchema.optional(),
   }).strict(),
-}).strict();
+}).strict());
 export type SessionDiscussionCreateInputV1 = z.infer<typeof SessionDiscussionCreateInputV1Schema>;
 
-export const SessionDiscussionPostInputV1Schema = z.object({
+export const SessionDiscussionPostInputV1Schema = lazyZodSchema(() => z.object({
   sessionId: SessionDiscussionActionSessionIdSchema,
   discussionId: SessionDiscussionIdSchema,
   localId: SessionDiscussionActionLocalIdSchema,
   content: SessionDiscussionMessageContentV1Schema,
   mentionedAccountIds: MentionedAccountIdsSchema.optional(),
-}).strict();
+}).strict());
 export type SessionDiscussionPostInputV1 = z.infer<typeof SessionDiscussionPostInputV1Schema>;
 
-export const SessionDiscussionRenameInputV1Schema = z.object({
+export const SessionDiscussionRenameInputV1Schema = lazyZodSchema(() => z.object({
   sessionId: SessionDiscussionActionSessionIdSchema,
   discussionId: SessionDiscussionIdSchema,
   title: SessionDiscussionActionTitleSchema,
-}).strict();
+}).strict());
 export type SessionDiscussionRenameInputV1 = z.infer<typeof SessionDiscussionRenameInputV1Schema>;
 
-export const SessionDiscussionLifecycleInputV1Schema = z.object({
+export const SessionDiscussionLifecycleInputV1Schema = lazyZodSchema(() => z.object({
   sessionId: SessionDiscussionActionSessionIdSchema,
   discussionId: SessionDiscussionIdSchema,
-}).strict();
+}).strict());
 export type SessionDiscussionLifecycleInputV1 = z.infer<typeof SessionDiscussionLifecycleInputV1Schema>;
 
-export const SessionDiscussionReadStateSetInputV1Schema = z.object({
+export const SessionDiscussionReadStateSetInputV1Schema = lazyZodSchema(() => z.object({
   sessionId: SessionDiscussionActionSessionIdSchema,
   discussionId: SessionDiscussionIdSchema,
   lastReadSeq: SequenceSchema,
-}).strict();
+}).strict());
 export type SessionDiscussionReadStateSetInputV1 = z.infer<typeof SessionDiscussionReadStateSetInputV1Schema>;
 
 // ---------------------------------------------------------------------------
@@ -143,7 +144,7 @@ export type SessionDiscussionReadStateSetInputV1 = z.infer<typeof SessionDiscuss
  * the executor reports the row and marks the page `incomplete` rather than
  * interpreting ciphertext as plaintext or silently dropping the discussion.
  */
-export const SessionDiscussionOpenedSummaryV1Schema = z.object({
+export const SessionDiscussionOpenedSummaryV1Schema = lazyZodSchema(() => z.object({
   id: SessionDiscussionIdSchema,
   sessionId: SessionDiscussionIdSchema,
   creationLocalId: SessionDiscussionLocalIdSchema.nullable(),
@@ -157,10 +158,10 @@ export const SessionDiscussionOpenedSummaryV1Schema = z.object({
     .max(SESSION_DISCUSSION_RECENT_AUTHOR_AVATAR_STACK_V1),
   archivedAt: z.number().int().nullable(),
   capabilities: SessionDiscussionCapabilitiesV1Schema,
-}).strict();
+}).strict());
 export type SessionDiscussionOpenedSummaryV1 = z.infer<typeof SessionDiscussionOpenedSummaryV1Schema>;
 
-export const SessionDiscussionOpenedMessageV1Schema = z.object({
+export const SessionDiscussionOpenedMessageV1Schema = lazyZodSchema(() => z.object({
   id: SessionDiscussionMessageIdSchema,
   discussionId: SessionDiscussionIdSchema,
   localId: SessionDiscussionLocalIdSchema.nullable(),
@@ -172,7 +173,7 @@ export const SessionDiscussionOpenedMessageV1Schema = z.object({
   content: SessionDiscussionMessageContentV1Schema.nullable(),
   mentionedAccountIds: z.array(SessionDiscussionAccountIdSchema),
   createdAt: z.number().int(),
-}).strict().superRefine(refineDiscussionAccountActor);
+}).strict().superRefine(refineDiscussionAccountActor));
 export type SessionDiscussionOpenedMessageV1 = z.infer<typeof SessionDiscussionOpenedMessageV1Schema>;
 
 // ---------------------------------------------------------------------------
@@ -185,49 +186,49 @@ const ResultEnvelopeShape = {
   sessionId: SessionDiscussionIdSchema,
 } as const;
 
-export const SessionDiscussionListResultV1Schema = z.object({
+export const SessionDiscussionListResultV1Schema = lazyZodSchema(() => z.object({
   ...ResultEnvelopeShape,
   discussions: z.array(SessionDiscussionOpenedSummaryV1Schema),
   nextCursor: z.string().nullable(),
   /** At least one row on this page could not be opened for the caller. */
   incomplete: z.boolean(),
-}).strict();
+}).strict());
 export type SessionDiscussionListResultV1 = z.infer<typeof SessionDiscussionListResultV1Schema>;
 
-export const SessionDiscussionDetailsResultV1Schema = z.object({
+export const SessionDiscussionDetailsResultV1Schema = lazyZodSchema(() => z.object({
   ...ResultEnvelopeShape,
   discussion: SessionDiscussionOpenedSummaryV1Schema,
-}).strict();
+}).strict());
 export type SessionDiscussionDetailsResultV1 = z.infer<typeof SessionDiscussionDetailsResultV1Schema>;
 
-export const SessionDiscussionReadResultV1Schema = z.object({
+export const SessionDiscussionReadResultV1Schema = lazyZodSchema(() => z.object({
   ...ResultEnvelopeShape,
   discussionId: SessionDiscussionIdSchema,
   messages: z.array(SessionDiscussionOpenedMessageV1Schema),
   hasMoreOlder: z.boolean(),
   messageSeq: SequenceSchema,
   incomplete: z.boolean(),
-}).strict();
+}).strict());
 export type SessionDiscussionReadResultV1 = z.infer<typeof SessionDiscussionReadResultV1Schema>;
 
-export const SessionDiscussionCreateResultV1Schema = z.object({
+export const SessionDiscussionCreateResultV1Schema = lazyZodSchema(() => z.object({
   ...ResultEnvelopeShape,
   discussion: SessionDiscussionOpenedSummaryV1Schema,
   firstMessage: SessionDiscussionOpenedMessageV1Schema,
-}).strict();
+}).strict());
 export type SessionDiscussionCreateResultV1 = z.infer<typeof SessionDiscussionCreateResultV1Schema>;
 
-export const SessionDiscussionPostResultV1Schema = z.object({
+export const SessionDiscussionPostResultV1Schema = lazyZodSchema(() => z.object({
   ...ResultEnvelopeShape,
   message: SessionDiscussionOpenedMessageV1Schema,
   messageSeq: z.number().int().min(1),
-}).strict();
+}).strict());
 export type SessionDiscussionPostResultV1 = z.infer<typeof SessionDiscussionPostResultV1Schema>;
 
-export const SessionDiscussionReadStateResultV1Schema = z.object({
+export const SessionDiscussionReadStateResultV1Schema = lazyZodSchema(() => z.object({
   ...ResultEnvelopeShape,
   cursor: SessionDiscussionReadCursorV1Schema,
-}).strict();
+}).strict());
 export type SessionDiscussionReadStateResultV1 = z.infer<typeof SessionDiscussionReadStateResultV1Schema>;
 
 export const SESSION_DISCUSSION_ACTION_INPUT_SCHEMAS_V1 = Object.freeze({

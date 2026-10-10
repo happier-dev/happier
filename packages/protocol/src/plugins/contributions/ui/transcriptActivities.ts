@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { PluginContributionLocalIdSchema } from '../../contributionIdentity.js';
@@ -6,9 +7,9 @@ import { asProtocolZod } from "../../actions/internalProtocolZodAdapter.js";
 /** The only dynamic Resource media type the transcript tail accepts. */
 export const PLUGIN_TRANSCRIPT_ACTIVITY_CONTENT_TYPE_V1 =
   'application/vnd.happier.transcript-activity+json;v=1';
-export const PluginTranscriptActivityContentTypeV1Schema = z.literal(
+export const PluginTranscriptActivityContentTypeV1Schema = lazyZodSchema(() => z.literal(
   PLUGIN_TRANSCRIPT_ACTIVITY_CONTENT_TYPE_V1,
-);
+));
 export type PluginTranscriptActivityContentTypeV1 = z.infer<
   typeof PluginTranscriptActivityContentTypeV1Schema
 >;
@@ -36,7 +37,7 @@ function boundedText(label: string) {
  * One static profile binds one same-plugin dynamic Resource and a closed Action
  * allowlist. The host owns all live tail placement and lifecycle.
  */
-export const PluginTranscriptActivityContributionV1Schema = z.object({
+export const PluginTranscriptActivityContributionV1Schema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   resourceId: asProtocolZod(PluginContributionLocalIdSchema),
   actions: z.array(asProtocolZod(PluginContributionLocalIdSchema))
@@ -47,23 +48,23 @@ export const PluginTranscriptActivityContributionV1Schema = z.object({
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Transcript activity actions must be unique.' });
       }
     }),
-}).strict();
+}).strict());
 export type PluginTranscriptActivityContributionV1 = z.infer<
   typeof PluginTranscriptActivityContributionV1Schema
 >;
 
-const PluginTranscriptActivityChecklistItemV1Schema = z.object({
+const PluginTranscriptActivityChecklistItemV1Schema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   label: boundedText('Transcript activity checklist label'),
   state: z.enum(['pending', 'active', 'complete', 'failed']),
-}).strict();
+}).strict());
 
-const PluginTranscriptActivityActionSnapshotV1Schema = z.object({
+const PluginTranscriptActivityActionSnapshotV1Schema = lazyZodSchema(() => z.object({
   actionId: asProtocolZod(PluginContributionLocalIdSchema),
   label: boundedText('Transcript activity action label').optional(),
-}).strict();
+}).strict());
 
-export const PluginTranscriptActivitySnapshotV1Schema = z.object({
+export const PluginTranscriptActivitySnapshotV1Schema = lazyZodSchema(() => z.object({
   localActivityId: asProtocolZod(PluginContributionLocalIdSchema),
   title: boundedText('Transcript activity title'),
   phase: z.enum(['running', 'succeeded', 'failed', 'cancelled']),
@@ -111,12 +112,12 @@ export const PluginTranscriptActivitySnapshotV1Schema = z.object({
       }
       actionIds.add(action.actionId);
     });
-});
+}));
 export type PluginTranscriptActivitySnapshotV1 = z.infer<
   typeof PluginTranscriptActivitySnapshotV1Schema
 >;
 
-export const PluginTranscriptActivityResourceSnapshotV1Schema = z.object({
+export const PluginTranscriptActivityResourceSnapshotV1Schema = lazyZodSchema(() => z.object({
   version: z.literal(1),
   activities: z.array(PluginTranscriptActivitySnapshotV1Schema)
     .max(MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_RESOURCE_V1)
@@ -133,7 +134,7 @@ export const PluginTranscriptActivityResourceSnapshotV1Schema = z.object({
         ids.add(activity.localActivityId);
       });
     }),
-}).strict();
+}).strict());
 export type PluginTranscriptActivityResourceSnapshotV1 = z.infer<
   typeof PluginTranscriptActivityResourceSnapshotV1Schema
 >;

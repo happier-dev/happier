@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -37,7 +38,7 @@ export const AGENT_ACTIVITY_STATUSES_V1 = [
   'unknown',
 ] as const;
 
-export const AgentActivityStatusV1Schema = z.enum(AGENT_ACTIVITY_STATUSES_V1);
+export const AgentActivityStatusV1Schema = lazyZodSchema(() => z.enum(AGENT_ACTIVITY_STATUSES_V1));
 export type AgentActivityStatusV1 = z.infer<typeof AgentActivityStatusV1Schema>;
 
 /**

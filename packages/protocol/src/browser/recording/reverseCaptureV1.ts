@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -13,16 +14,16 @@ import { z } from 'zod';
  * The raw pixel buffer never crosses the RPC boundary in either direction.
  */
 
-const IdSchema = z.string().trim().min(1).max(256);
-const NonNegativeIntSchema = z.number().int().nonnegative();
-const PositiveIntSchema = z.number().int().positive();
+const IdSchema = lazyZodSchema(() => z.string().trim().min(1).max(256));
+const NonNegativeIntSchema = lazyZodSchema(() => z.number().int().nonnegative());
+const PositiveIntSchema = lazyZodSchema(() => z.number().int().positive());
 
 /**
  * Request the daemon sends the connected desktop UI to capture one recording frame. Mirrors the
  * daemon-facing `DesktopBrowserRecordingFrameCaptureRequest` so the UI handler can forward it
  * straight to the A2-registered `desktop_browser_capture_recording_frame` Tauri command.
  */
-export const UiBrowserRecordingCaptureFrameRequestV1Schema = z
+export const UiBrowserRecordingCaptureFrameRequestV1Schema = lazyZodSchema(() => z
   .object({
     protocolVersion: z.literal(1),
     browserSessionId: IdSchema,
@@ -34,7 +35,7 @@ export const UiBrowserRecordingCaptureFrameRequestV1Schema = z
     /** Recording byte cap; the native side rejects a capture larger than this. */
     maxBytes: PositiveIntSchema,
   })
-  .strict();
+  .strict());
 export type UiBrowserRecordingCaptureFrameRequestV1 = z.infer<
   typeof UiBrowserRecordingCaptureFrameRequestV1Schema
 >;
@@ -43,7 +44,7 @@ export type UiBrowserRecordingCaptureFrameRequestV1 = z.infer<
  * Reference-only frame the UI returns: a local file path the native side wrote + metadata. No inline
  * bytes — the daemon resolves the artifact from `path` under the recording working directory.
  */
-export const UiBrowserRecordingCaptureFrameResultV1Schema = z.discriminatedUnion('ok', [
+export const UiBrowserRecordingCaptureFrameResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
   z
     .object({
       ok: z.literal(true),
@@ -65,17 +66,17 @@ export const UiBrowserRecordingCaptureFrameResultV1Schema = z.discriminatedUnion
       errorCode: IdSchema,
     })
     .strict(),
-]);
+]));
 export type UiBrowserRecordingCaptureFrameResultV1 = z.infer<
   typeof UiBrowserRecordingCaptureFrameResultV1Schema
 >;
 
-export const UiBrowserRecordingCaptureFrameResponseV1Schema = z
+export const UiBrowserRecordingCaptureFrameResponseV1Schema = lazyZodSchema(() => z
   .object({
     protocolVersion: z.literal(1),
     result: UiBrowserRecordingCaptureFrameResultV1Schema,
   })
-  .strict();
+  .strict());
 export type UiBrowserRecordingCaptureFrameResponseV1 = z.infer<
   typeof UiBrowserRecordingCaptureFrameResponseV1Schema
 >;

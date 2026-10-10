@@ -1,19 +1,20 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import type { FeatureDecision } from '../../features/decision.js';
 import { OperationUpdateRequiredV1Schema } from '../../compat/operationUpdateRequiredV1.js';
 import { SessionSystemRecordRevisionSchema } from '../system/records/sessionSystemRecordRevision.js';
 import type { SessionBoardActionIdV1 } from './actionIds.js';
 
-export const SessionBoardErrorCodeSchema = z.enum([
+export const SessionBoardErrorCodeSchema = lazyZodSchema(() => z.enum([
   'session_board_invalid',
   'session_board_item_not_found',
   'session_board_forbidden',
   'session_board_storage_mode_mismatch',
   'session_board_source_conflict',
   'session_board_revision_conflict',
-]);
+]));
 export type SessionBoardErrorCode = z.infer<typeof SessionBoardErrorCodeSchema>;
-export const SessionBoardErrorV1Schema = z.discriminatedUnion('error', [
+export const SessionBoardErrorV1Schema = lazyZodSchema(() => z.discriminatedUnion('error', [
   z.object({ error: z.literal('session_board_invalid') }).strict(),
   z.object({ error: z.literal('session_board_item_not_found') }).strict(),
   z.object({ error: z.literal('session_board_forbidden') }).strict(),
@@ -24,13 +25,13 @@ export const SessionBoardErrorV1Schema = z.discriminatedUnion('error', [
     currentItemRevision: SessionSystemRecordRevisionSchema.nullable().optional(),
     currentLayoutRevision: SessionSystemRecordRevisionSchema.nullable().optional(),
   }).strict(),
-]);
+]));
 export type SessionBoardErrorV1 = z.infer<typeof SessionBoardErrorV1Schema>;
 
 /** The incumbent server feature-admission response for a hidden Board route. */
-export const SessionBoardFeatureGateErrorV1Schema = z.object({
+export const SessionBoardFeatureGateErrorV1Schema = lazyZodSchema(() => z.object({
   error: z.literal('not_found'),
-}).strict();
+}).strict());
 
 export type SessionBoardFeatureDecisionActionFailureV1 =
   | Readonly<{

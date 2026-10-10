@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
@@ -23,19 +24,19 @@ export const AUTOMATION_RUN_FAILURE_DETAIL_ACCOUNT_SCOPED_BLOB_KIND_V1 =
 /** Structural error codes remain public; this bounded string is Run-private. */
 export const MAX_AUTOMATION_RUN_FAILURE_DETAIL_CODE_UNITS_V1 = 4_000;
 
-export const AutomationRunFailureDetailCorrespondenceV1Schema = z.object({
+export const AutomationRunFailureDetailCorrespondenceV1Schema = lazyZodSchema(() => z.object({
   automationId: asProtocolZod(AutomationIdV1Schema),
   runId: asProtocolZod(AutomationHostIdentifierV1Schema),
-}).strict();
+}).strict());
 export type AutomationRunFailureDetailCorrespondenceV1 = z.infer<
   typeof AutomationRunFailureDetailCorrespondenceV1Schema
 >;
 
-export const AutomationRunFailureDetailStoredPayloadV1Schema = z.object({
+export const AutomationRunFailureDetailStoredPayloadV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   correspondence: AutomationRunFailureDetailCorrespondenceV1Schema,
   detail: z.string().min(1).max(MAX_AUTOMATION_RUN_FAILURE_DETAIL_CODE_UNITS_V1),
-}).strict();
+}).strict());
 export type AutomationRunFailureDetailStoredPayloadV1 = z.infer<
   typeof AutomationRunFailureDetailStoredPayloadV1Schema
 >;
@@ -50,7 +51,7 @@ export const AUTOMATION_RUN_FAILURE_DETAIL_MAX_ENCRYPTED_CIPHERTEXT_UTF8_BYTES_V
  * validates known outer fields and purpose on read; a device with Account
  * material alone opens its detail and verifies its Run correspondence.
  */
-export const AutomationRunFailureDetailStoredEnvelopeV1Schema = z.discriminatedUnion('t', [
+export const AutomationRunFailureDetailStoredEnvelopeV1Schema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.object({
     t: z.literal('plain'),
     v: AutomationRunFailureDetailStoredPayloadV1Schema,
@@ -90,7 +91,7 @@ export const AutomationRunFailureDetailStoredEnvelopeV1Schema = z.discriminatedU
       message: 'Automation Run failure detail is not serializable',
     });
   }
-});
+}));
 export type AutomationRunFailureDetailStoredEnvelopeV1 = z.infer<
   typeof AutomationRunFailureDetailStoredEnvelopeV1Schema
 >;

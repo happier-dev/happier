@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { HookCategoryV1Schema } from '../../hooks/hookCategories.js';
@@ -5,7 +6,7 @@ import { HookIdV1Schema } from '../../hooks/hookIds.js';
 import { HookScopeV1Schema } from '../../hooks/hookScopes.js';
 import { NonBlankOpaqueIdentifierSchema } from '../../strings/opaqueIdentifier.js';
 
-export const HookEventEnvelopeV1Schema = z.object({
+export const HookEventEnvelopeV1Schema = lazyZodSchema(() => z.object({
   hookVersion: z.literal(1).default(1),
   eventId: HookIdV1Schema,
   category: HookCategoryV1Schema,
@@ -21,7 +22,7 @@ export const HookEventEnvelopeV1Schema = z.object({
   toolCallId: z.string().trim().min(1).optional(),
   timestampMs: z.number().int().nonnegative(),
   payload: z.record(z.string(), z.unknown()).default({}),
-}).strict();
+}).strict());
 export type HookEventEnvelopeV1 = z.infer<typeof HookEventEnvelopeV1Schema>;
 
 export function readHookEventEnvelopeV1(value: unknown): HookEventEnvelopeV1 | null {

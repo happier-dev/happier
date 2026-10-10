@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 
@@ -37,17 +38,17 @@ export type AutomationQualifiedPluginContributionRefV1 = PluginContributionIdent
  * observation with no ordered pull checkpoint and no provider checkpoint
  * cursor; `durablePush` is the webhook-delivered transport.
  */
-export const AutomationObservationTransportKindV1Schema = z.enum([
+export const AutomationObservationTransportKindV1Schema = lazyZodSchema(() => z.enum([
   'checkpointedPull',
   'durablePush',
   'socket',
-]);
+]));
 export type AutomationObservationTransportKindV1 = z.infer<
   typeof AutomationObservationTransportKindV1Schema
 >;
 
 /** Descriptor-only eligibility on the canonical Event contribution. */
-export const PluginEventAutomationDeclarationV1Schema = z.object({
+export const PluginEventAutomationDeclarationV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   eligible: z.literal(true),
   source: z.object({
@@ -113,7 +114,7 @@ export const PluginEventAutomationDeclarationV1Schema = z.object({
       message: 'Connected Account source bindings must target one exact qualified credential-ref source-config leaf in every declared input arm.',
     });
   }
-});
+}));
 export type PluginEventAutomationDeclarationV1 = z.infer<
   typeof PluginEventAutomationDeclarationV1Schema
 >;

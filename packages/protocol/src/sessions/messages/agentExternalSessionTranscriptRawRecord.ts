@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import type { JsonValue } from '../../json/strictJsonValue.js';
@@ -38,15 +39,15 @@ function snapshotStructuralDto(
 const USER_CONTENT_KEYS = new Set(['type', 'text']);
 const RAW_RECORD_KEYS = new Set(['role', 'content']);
 
-const AgentExternalSessionUserContentSchema = z.preprocess(
+const AgentExternalSessionUserContentSchema = lazyZodSchema(() => z.preprocess(
   (value, context) => snapshotStructuralDto(value, USER_CONTENT_KEYS, context),
   z.object({
     type: z.literal('text'),
     text: z.string(),
   }).strict(),
-);
+));
 
-const AgentExternalSessionAgentContentSchema = AgentRuntimeJsonValueV1Schema.superRefine(
+const AgentExternalSessionAgentContentSchema = lazyZodSchema(() => AgentRuntimeJsonValueV1Schema.superRefine(
   (content, context) => {
     if (!content || typeof content !== 'object' || Array.isArray(content)) {
       context.addIssue({
@@ -93,7 +94,7 @@ const AgentExternalSessionAgentContentSchema = AgentRuntimeJsonValueV1Schema.sup
       });
     }
   },
-);
+));
 
 /**
  * Producer-supplied classification for a current user transcript row. The
@@ -101,11 +102,11 @@ const AgentExternalSessionAgentContentSchema = AgentRuntimeJsonValueV1Schema.sup
  * fact needed by terminal follow to decide whether that row is eligible in a
  * given phase.
  */
-export const ExternalSessionUserProjectionSchema = z.enum([
+export const ExternalSessionUserProjectionSchema = lazyZodSchema(() => z.enum([
   'source_fact',
   'terminal_origin',
   'host_prompt_echo',
-]);
+]));
 export type ExternalSessionUserProjection = z.infer<typeof ExternalSessionUserProjectionSchema>;
 
 /**
@@ -124,7 +125,7 @@ export type AgentExternalSessionTranscriptRawRecord =
       content: JsonValue;
     }>;
 
-const AgentExternalSessionTranscriptRawRecordUnionSchema = z.discriminatedUnion(
+const AgentExternalSessionTranscriptRawRecordUnionSchema = lazyZodSchema(() => z.discriminatedUnion(
   'role',
   [
     z.object({
@@ -136,12 +137,12 @@ const AgentExternalSessionTranscriptRawRecordUnionSchema = z.discriminatedUnion(
       content: AgentExternalSessionAgentContentSchema,
     }).strict(),
   ],
-);
+));
 
 export const AgentExternalSessionTranscriptRawRecordSchema: z.ZodType<
   AgentExternalSessionTranscriptRawRecord,
   unknown
-> = z.preprocess(
+> = lazyZodSchema(() => z.preprocess(
   (value, context) => snapshotStructuralDto(value, RAW_RECORD_KEYS, context),
   AgentExternalSessionTranscriptRawRecordUnionSchema,
-);
+));

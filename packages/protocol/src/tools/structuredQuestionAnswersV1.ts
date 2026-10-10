@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 const STRUCTURED_QUESTION_ANSWERS_V1_LIMITS = Object.freeze({
@@ -13,7 +14,7 @@ export type StructuredQuestionAnswersV1 = Readonly<Record<string, ReadonlyArray<
  * Exact structured-question answer carrier. Each question owns an ordered array,
  * including text and single-choice questions whose arrays contain one value.
  */
-export const StructuredQuestionAnswersV1Schema = z
+export const StructuredQuestionAnswersV1Schema = lazyZodSchema(() => z
   .unknown()
   .superRefine((input, ctx) => {
     if (!input || typeof input !== 'object' || Array.isArray(input)) {
@@ -61,4 +62,4 @@ export const StructuredQuestionAnswersV1Schema = z
       normalized[question] = Object.freeze([...(values as string[])]);
     }
     return Object.freeze(normalized) as StructuredQuestionAnswersV1;
-  });
+  }));

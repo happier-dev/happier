@@ -1,19 +1,20 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
-const NonEmptyVersionSchema = z.string().trim().min(1);
-const AuthoringDependencySchema = z.object({
+const NonEmptyVersionSchema = lazyZodSchema(() => z.string().trim().min(1));
+const AuthoringDependencySchema = lazyZodSchema(() => z.object({
   packageName: z.string().trim().min(1),
   /** The exact package.json spec emitted for an external author project. */
   dependencySpec: NonEmptyVersionSchema,
   /** The exact resolved package version that the source candidate verified. */
   resolvedVersion: NonEmptyVersionSchema,
-}).strict();
+}).strict());
 
 /**
  * The generated public authoring packet. It intentionally carries exact
  * release/runtime values, not semver ranges copied into templates.
  */
-export const PublicToolchainCompatibilityV1Schema = z.object({
+export const PublicToolchainCompatibilityV1Schema = lazyZodSchema(() => z.object({
   schemaVersion: z.literal(1),
   host: z.object({
     /** Exact source/build provenance; it is not a compatibility range. */
@@ -57,7 +58,7 @@ export const PublicToolchainCompatibilityV1Schema = z.object({
     typescript: AuthoringDependencySchema,
     typescriptNative: AuthoringDependencySchema,
   }).strict(),
-}).strict();
+}).strict());
 export type PublicToolchainCompatibilityV1 = z.infer<typeof PublicToolchainCompatibilityV1Schema>;
 
 /**

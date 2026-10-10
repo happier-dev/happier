@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -11,7 +12,7 @@ import { z } from 'zod';
  * absent — search is authorized per exact scope, not as an Account-wide
  * boolean derived from managing any Team.
  */
-export const HomeCapabilitiesV1Schema = z.object({
+export const HomeCapabilitiesV1Schema = lazyZodSchema(() => z.object({
   viewAdministration: z.boolean(),
   manageAccounts: z.boolean(),
   manageHomeRoles: z.boolean(),
@@ -22,7 +23,7 @@ export const HomeCapabilitiesV1Schema = z.object({
   eraseAccounts: z.boolean(),
   createTeam: z.boolean(),
   manageAllTeams: z.boolean(),
-}).strict();
+}).strict());
 
 export type HomeCapabilitiesV1 = z.infer<typeof HomeCapabilitiesV1Schema>;
 

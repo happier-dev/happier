@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ProviderLocalIdSchema } from '../ids.js';
@@ -19,9 +20,9 @@ export const BUNDLED_PROVIDER_CATALOG_PARSERS_V1 = Object.freeze([
   'lmstudio-native-models',
 ] as const);
 
-export const BundledProviderCatalogParserV1Schema = z.enum(
+export const BundledProviderCatalogParserV1Schema = lazyZodSchema(() => z.enum(
   BUNDLED_PROVIDER_CATALOG_PARSERS_V1,
-);
+));
 export type BundledProviderCatalogParserV1 = z.infer<
   typeof BundledProviderCatalogParserV1Schema
 >;
@@ -73,7 +74,7 @@ const BUNDLED_PROVIDER_CATALOG_PARSER_REPORTS_MODEL_LOAD_STATE_V1 = Object.freez
   'lmstudio-native-models': true,
 } as const satisfies Record<BundledProviderCatalogParserV1, boolean>);
 
-export const ProviderCatalogProbeV1Schema = z.object({
+export const ProviderCatalogProbeV1Schema = lazyZodSchema(() => z.object({
   endpointTemplateId: ProviderLocalIdSchema,
   path: ProviderOriginRelativePathSchema,
   parser: ProviderCatalogParserV1Schema,
@@ -84,7 +85,7 @@ export const ProviderCatalogProbeV1Schema = z.object({
    * whether the host happens to bundle it.
    */
   reportsModelLoadState: z.boolean().optional(),
-}).strict();
+}).strict());
 export type ProviderCatalogProbeV1 = z.infer<typeof ProviderCatalogProbeV1Schema>;
 
 /**
@@ -93,9 +94,9 @@ export type ProviderCatalogProbeV1 = z.infer<typeof ProviderCatalogProbeV1Schema
  * generated adapter can produce different model rows, not on process restart,
  * credential refresh, or plugin reload.
  */
-export const ProviderCatalogSourceRegistryVersionV1Schema = z.string()
+export const ProviderCatalogSourceRegistryVersionV1Schema = lazyZodSchema(() => z.string()
   .trim()
-  .min(1);
+  .min(1));
 export type ProviderCatalogSourceRegistryVersionV1 = z.infer<
   typeof ProviderCatalogSourceRegistryVersionV1Schema
 >;
@@ -116,39 +117,39 @@ export function providerCatalogProbeReportsModelLoadStateV1(
     ?? false;
 }
 
-export const ProviderCatalogMembershipPolicyV1Schema = z.enum([
+export const ProviderCatalogMembershipPolicyV1Schema = lazyZodSchema(() => z.enum([
   'augment',
   'probe-authoritative',
-]);
+]));
 export type ProviderCatalogMembershipPolicyV1 = z.infer<
   typeof ProviderCatalogMembershipPolicyV1Schema
 >;
 
-const ManualCatalogSchema = z.object({
+const ManualCatalogSchema = lazyZodSchema(() => z.object({
   source: z.literal('manual'),
   manualModelPolicy: z.literal('allowed'),
-}).strict();
-const StaticCatalogSchema = z.object({
+}).strict());
+const StaticCatalogSchema = lazyZodSchema(() => z.object({
   source: z.literal('static'),
   manualModelPolicy: z.enum(['allowed', 'catalog-only']),
   staticModels: z.array(ProviderModelDescriptorV1Schema).min(1).max(PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection),
-}).strict();
-const ProbeCatalogSchema = z.object({
+}).strict());
+const ProbeCatalogSchema = lazyZodSchema(() => z.object({
   source: z.literal('probe'),
   manualModelPolicy: z.enum(['allowed', 'catalog-only']),
   probes: z.array(ProviderCatalogProbeV1Schema).min(1).max(PROVIDER_CATALOG_LIMITS_V1.maxCatalogProbes),
   sourceRegistryVersion: ProviderCatalogSourceRegistryVersionV1Schema.optional(),
-}).strict();
-const StaticProbeCatalogSchema = z.object({
+}).strict());
+const StaticProbeCatalogSchema = lazyZodSchema(() => z.object({
   source: z.literal('static+probe'),
   manualModelPolicy: z.enum(['allowed', 'catalog-only']),
   membershipPolicy: ProviderCatalogMembershipPolicyV1Schema.optional(),
   staticModels: z.array(ProviderModelDescriptorV1Schema).min(1).max(PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection),
   probes: z.array(ProviderCatalogProbeV1Schema).min(1).max(PROVIDER_CATALOG_LIMITS_V1.maxCatalogProbes),
   sourceRegistryVersion: ProviderCatalogSourceRegistryVersionV1Schema.optional(),
-}).strict();
+}).strict());
 
-export const ProviderCatalogDeclarationV1Schema = z.discriminatedUnion('source', [
+export const ProviderCatalogDeclarationV1Schema = lazyZodSchema(() => z.discriminatedUnion('source', [
   ManualCatalogSchema,
   StaticCatalogSchema,
   ProbeCatalogSchema,
@@ -160,5 +161,5 @@ export const ProviderCatalogDeclarationV1Schema = z.discriminatedUnion('source',
     if (ids.has(model.id)) ctx.addIssue({ code: 'custom', path: ['staticModels', index, 'id'], message: 'Duplicate static model id' });
     ids.add(model.id);
   });
-});
+}));
 export type ProviderCatalogDeclarationV1 = z.infer<typeof ProviderCatalogDeclarationV1Schema>;

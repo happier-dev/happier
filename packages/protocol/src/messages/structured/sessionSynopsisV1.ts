@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -8,12 +9,11 @@ import { z } from 'zod';
  * This is intentionally short and frequently updated so UIs and agents can quickly
  * understand session context without fetching large transcript windows.
  */
-export const SessionSynopsisV1Schema = z.object({
+export const SessionSynopsisV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   seqTo: z.number().int().min(0),
   updatedAtMs: z.number().int().min(0),
   synopsis: z.string().min(1),
-}).passthrough();
+}).passthrough());
 
 export type SessionSynopsisV1 = z.infer<typeof SessionSynopsisV1Schema>;
-

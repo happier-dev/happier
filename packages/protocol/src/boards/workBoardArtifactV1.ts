@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { WidgetGridSizeV1Schema, WidgetSizeFootprintV1Schema, getWidgetSizeFootprintV1 } from '../widgets/widgetPresentationV1.js';
 import {
     applyWorkBoardIntentV1, DEFAULT_WORK_BOARDS_V1, WorkBoardV1Schema,
@@ -12,13 +13,13 @@ import type { ArtifactCallerAccessV1 } from '../artifacts/artifactAccessV1.js';
 
 export const WORK_BOARD_ARTIFACT_KIND_V1 = 'work-board.v1';
 /** Saved structure only: no resolved memberships, widget inputs or runtime counts. */
-export const WorkBoardPreviewLayoutV1Schema = createStoredReadSchema(z.object({
+export const WorkBoardPreviewLayoutV1Schema = createStoredReadSchema(lazyZodSchema(() => z.object({
     mode: z.enum(WORK_BOARD_MODES_V1),
     source: z.object({ sections: z.array(z.enum(WORK_BOARD_SECTIONS_V1)), hasFilter: z.boolean(), pickedCount: z.number().int().nonnegative() }).strict(),
     widgets: z.array(z.object({ title: z.string().nullable(), size: WidgetGridSizeV1Schema,
         footprint: WidgetSizeFootprintV1Schema.pick({ columns: true, columnSpan: true, rowSpan: true }),
         position: WorkBoardPositionV1Schema.optional() }).strict()),
-}).strict());
+}).strict()));
 export type WorkBoardPreviewLayoutV1 = z.infer<typeof WorkBoardPreviewLayoutV1Schema>;
 
 export function buildWorkBoardPreviewLayoutV1(board: WorkBoardV1): WorkBoardPreviewLayoutV1 {

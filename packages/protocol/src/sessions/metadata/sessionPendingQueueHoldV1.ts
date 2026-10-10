@@ -1,10 +1,11 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { PendingLocalIdSchema, readPendingLocalId } from '../pending/pendingLocalId.js';
 
 export const SESSION_PENDING_QUEUE_HOLD_METADATA_KEY = 'sessionPendingQueueHoldV1' as const;
 export const SESSION_PENDING_QUEUE_HOLD_MAX_TTL_MS = 5 * 60_000;
 
-export const SessionPendingQueueHoldEntryV1Schema = z
+export const SessionPendingQueueHoldEntryV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     holdId: z.string().trim().min(1),
@@ -13,15 +14,15 @@ export const SessionPendingQueueHoldEntryV1Schema = z
     updatedAtMs: z.number().int().nonnegative(),
     expiresAtMs: z.number().int().nonnegative(),
   })
-  .strict();
+  .strict());
 export type SessionPendingQueueHoldEntryV1 = z.infer<typeof SessionPendingQueueHoldEntryV1Schema>;
 
-export const SessionPendingQueueHoldV1Schema = z
+export const SessionPendingQueueHoldV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     holdsById: z.record(z.string().trim().min(1), SessionPendingQueueHoldEntryV1Schema),
   })
-  .strict();
+  .strict());
 export type SessionPendingQueueHoldV1 = z.infer<typeof SessionPendingQueueHoldV1Schema>;
 
 export type WriteSessionPendingQueueHoldV1Input = Readonly<{

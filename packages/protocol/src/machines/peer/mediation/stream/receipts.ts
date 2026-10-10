@@ -1,10 +1,11 @@
+import { lazyZodSchema } from '../../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { PEER_MEDIATION_RECEIPTS } from '../receipts.js';
 import { MachineLiveStreamRouteKindV1Schema } from './v1.js';
 
-const NonNegativeIntSchema = z.number().int().nonnegative();
-const PositiveIntSchema = z.number().int().positive();
+const NonNegativeIntSchema = lazyZodSchema(() => z.number().int().nonnegative());
+const PositiveIntSchema = lazyZodSchema(() => z.number().int().positive());
 const UNSAFE_RECEIPT_KEYS = new Set([
   'payload',
   'payloadBase64',
@@ -16,7 +17,7 @@ const UNSAFE_RECEIPT_KEYS = new Set([
   'endpointUrlWithToken',
 ]);
 
-export const MachineLiveStreamReceiptV1Schema = z
+export const MachineLiveStreamReceiptV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     id: z.enum([
@@ -52,7 +53,7 @@ export const MachineLiveStreamReceiptV1Schema = z
         message: 'Live-stream receipts must not contain payload, grant, token, or nonce material',
       });
     }
-  });
+  }));
 export type MachineLiveStreamReceiptV1 = z.infer<typeof MachineLiveStreamReceiptV1Schema>;
 
 export function isMachineLiveStreamTerminalReceiptV1(receipt: MachineLiveStreamReceiptV1): boolean {

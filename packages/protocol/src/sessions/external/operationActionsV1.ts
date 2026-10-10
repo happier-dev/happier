@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { sha256 } from '@noble/hashes/sha256';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
@@ -51,23 +52,23 @@ export {
   type ExternalSessionTakeoverStartInputV1,
 } from './operationActionSchemasV1.js';
 
-const OperationReferenceIdSchema = z.string().trim().min(1).max(512);
-const OperationIdSchema = z.string().trim().min(1).max(256);
-const TranscriptItemIdSchema = z.string().trim().min(1).max(2_000);
-const OperationRevisionSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-const OperationSequenceSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-const OperationTimestampSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-const OperationCountSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-const PositiveBoundSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+const OperationReferenceIdSchema = lazyZodSchema(() => z.string().trim().min(1).max(512));
+const OperationIdSchema = lazyZodSchema(() => z.string().trim().min(1).max(256));
+const TranscriptItemIdSchema = lazyZodSchema(() => z.string().trim().min(1).max(2_000));
+const OperationRevisionSchema = lazyZodSchema(() => z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER));
+const OperationSequenceSchema = lazyZodSchema(() => z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER));
+const OperationTimestampSchema = lazyZodSchema(() => z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER));
+const OperationCountSchema = lazyZodSchema(() => z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER));
+const PositiveBoundSchema = lazyZodSchema(() => z.number().int().positive().max(Number.MAX_SAFE_INTEGER));
 export const EXTERNAL_SESSION_OPERATION_SOCKET_MAX_BATCH_ITEMS_V1 = 200;
 const EXTERNAL_SESSION_HISTORICAL_IMPORT_BATCH_ID_PREFIX_V1 =
   'historical-import-batch:v1:';
 const EXTERNAL_SESSION_HISTORICAL_IMPORT_BATCH_ID_DOMAIN_V1 =
   'happier.external-session-historical-import.batch-id.v1:';
 
-export const ExternalSessionHistoricalImportBatchIdV1Schema = z.string().regex(
+export const ExternalSessionHistoricalImportBatchIdV1Schema = lazyZodSchema(() => z.string().regex(
   /^historical-import-batch:v1:[0-9a-f]{64}$/,
-);
+));
 export type ExternalSessionHistoricalImportBatchIdV1 = z.infer<
   typeof ExternalSessionHistoricalImportBatchIdV1Schema
 >;
@@ -94,11 +95,11 @@ export function makeExternalSessionHistoricalImportBatchIdV1(
  * Machine identity is authenticated by the transport and checked against the
  * durable claim binding by the socket handler.
  */
-export const ExternalSessionOperationClaimV1Schema = z.object({
+export const ExternalSessionOperationClaimV1Schema = lazyZodSchema(() => z.object({
   sessionId: asProtocolZod(SessionIdSchema),
   operationId: OperationIdSchema,
   operationClaimId: OperationReferenceIdSchema,
-}).strict();
+}).strict());
 export type ExternalSessionOperationClaimV1 = z.infer<
   typeof ExternalSessionOperationClaimV1Schema
 >;
@@ -106,13 +107,13 @@ export type ExternalSessionOperationClaimV1 = z.infer<
 export const EXTERNAL_SESSION_OPERATION_SOCKET_EVENT_V1 =
   'externalSessions.operation.v1' as const;
 
-const ExternalSessionOperationSocketCommandBaseV1Schema = z.object({
+const ExternalSessionOperationSocketCommandBaseV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   claim: ExternalSessionOperationClaimV1Schema,
   expectedRevision: OperationRevisionSchema,
-});
+}));
 
-export const ExternalSessionOperationSocketBatchItemV1Schema = z.object({
+export const ExternalSessionOperationSocketBatchItemV1Schema = lazyZodSchema(() => z.object({
   localId: TranscriptItemIdSchema,
   sidechainId: SidechainIdSchema.nullable(),
   messageRole: SessionMessageRoleSchema.nullable(),
@@ -131,13 +132,13 @@ export const ExternalSessionOperationSocketBatchItemV1Schema = z.object({
       message: 'Source update time cannot precede source creation time.',
     });
   }
-});
+}));
 export type ExternalSessionOperationSocketBatchItemV1 = z.infer<
   typeof ExternalSessionOperationSocketBatchItemV1Schema
 >;
 
 const ExternalSessionTakeoverAdmissionCommandV1Schema =
-  z.discriminatedUnion('mode', [
+  lazyZodSchema(() => z.discriminatedUnion('mode', [
     ExternalSessionOperationSocketCommandBaseV1Schema.extend({
       kind: z.literal('admit_persisted_takeover'),
       mode: z.literal('persisted'),
@@ -161,10 +162,10 @@ const ExternalSessionTakeoverAdmissionCommandV1Schema =
       expectedSessionSeq: OperationSequenceSchema,
       expectedPriorStableStorage: ExternalSessionPriorStableStorageV1Schema,
     }).strict(),
-  ]);
+  ]));
 
 export const ExternalSessionOperationSocketCommandV1Schema =
-  z.union([
+  lazyZodSchema(() => z.union([
     ExternalSessionOperationSocketCommandBaseV1Schema.extend({
       kind: z.literal('inspect'),
     }).strict(),
@@ -191,20 +192,20 @@ export const ExternalSessionOperationSocketCommandV1Schema =
     ExternalSessionOperationSocketCommandBaseV1Schema.extend({
       kind: z.literal('discard'),
     }).strict(),
-  ]);
+  ]));
 export type ExternalSessionOperationSocketCommandV1 = z.infer<
   typeof ExternalSessionOperationSocketCommandV1Schema
 >;
 
-export const ExternalSessionOperationSocketBatchLimitsV1Schema = z.object({
+export const ExternalSessionOperationSocketBatchLimitsV1Schema = lazyZodSchema(() => z.object({
   maxItems: PositiveBoundSchema,
   maxSerializedBytes: PositiveBoundSchema,
-}).strict();
+}).strict());
 export type ExternalSessionOperationSocketBatchLimitsV1 = z.infer<
   typeof ExternalSessionOperationSocketBatchLimitsV1Schema
 >;
 
-export const ExternalSessionOperationSocketResponseErrorCodeV1Schema = z.enum([
+export const ExternalSessionOperationSocketResponseErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'upgrade_required',
   'wrong_machine_socket',
   'wrong_session',
@@ -218,23 +219,23 @@ export const ExternalSessionOperationSocketResponseErrorCodeV1Schema = z.enum([
   'batch_conflict',
   'storage_mode_conflict',
   'internal_error',
-]);
+]));
 export type ExternalSessionOperationSocketResponseErrorCodeV1 = z.infer<
   typeof ExternalSessionOperationSocketResponseErrorCodeV1Schema
 >;
 
-const ExternalSessionOperationSocketResponseBaseV1Schema = z.object({
+const ExternalSessionOperationSocketResponseBaseV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   claim: ExternalSessionOperationClaimV1Schema,
   revision: OperationRevisionSchema,
-});
+}));
 
 /**
  * Begin and Resume share the ready response, so both always return the
  * effective per-connection limits chosen below the live Socket.IO ceiling.
  */
 export const ExternalSessionOperationSocketResponseV1Schema =
-  z.discriminatedUnion('kind', [
+  lazyZodSchema(() => z.discriminatedUnion('kind', [
     ExternalSessionOperationSocketResponseBaseV1Schema.extend({
       kind: z.literal('authority'),
       priorStableStorage: ExternalSessionPriorStableStorageV1Schema,
@@ -270,7 +271,7 @@ export const ExternalSessionOperationSocketResponseV1Schema =
       errorCode: ExternalSessionOperationSocketResponseErrorCodeV1Schema,
       message: z.string().trim().min(1).max(2_000),
     }).strict(),
-  ]);
+  ]));
 export type ExternalSessionOperationSocketResponseV1 = z.infer<
   typeof ExternalSessionOperationSocketResponseV1Schema
 >;

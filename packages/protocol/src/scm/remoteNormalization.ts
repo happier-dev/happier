@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { ScmRemotePolicyFields, validateScmRemoteLeaseAuthority, type ScmRemotePolicy } from './remotePolicy.js';
 
@@ -156,12 +157,12 @@ export const ScmRemoteNameSchema = createNormalizedStringSchema((value) => {
 });
 export type ScmRemoteName = z.infer<typeof ScmRemoteNameSchema>;
 
-export const ScmOptionalRemoteNameSchema = z.preprocess((value) => {
+export const ScmOptionalRemoteNameSchema = lazyZodSchema(() => z.preprocess((value) => {
   if (typeof value !== 'string') {
     return value;
   }
   return value.trim() ? value : undefined;
-}, ScmRemoteNameSchema.optional());
+}, ScmRemoteNameSchema.optional()));
 export type ScmOptionalRemoteName = z.infer<typeof ScmOptionalRemoteNameSchema>;
 
 export const ScmRemoteManagementNameSchema = createNormalizedStringSchema((value) => {
@@ -170,12 +171,12 @@ export const ScmRemoteManagementNameSchema = createNormalizedStringSchema((value
     ? { ok: true, value: normalized.name }
     : normalized;
 });
-export const ScmOptionalRemoteManagementNameSchema = z.preprocess((value) => {
+export const ScmOptionalRemoteManagementNameSchema = lazyZodSchema(() => z.preprocess((value) => {
   if (typeof value !== 'string') {
     return value;
   }
   return value.trim() ? value : undefined;
-}, ScmRemoteManagementNameSchema.optional());
+}, ScmRemoteManagementNameSchema.optional()));
 
 export const ScmRemoteUrlSchema = createNormalizedStringSchema((value) => {
   const normalized = normalizeScmRemoteUrl(value);
@@ -193,12 +194,12 @@ export const ScmBranchSourceRefSchema = createNormalizedStringSchema((value) => 
 });
 export type ScmBranchSourceRef = z.infer<typeof ScmBranchSourceRefSchema>;
 
-export const ScmOptionalBranchSourceRefSchema = z.preprocess((value) => {
+export const ScmOptionalBranchSourceRefSchema = lazyZodSchema(() => z.preprocess((value) => {
   if (typeof value !== 'string') {
     return value;
   }
   return value.trim() ? value : undefined;
-}, ScmBranchSourceRefSchema.optional()).optional();
+}, ScmBranchSourceRefSchema.optional()).optional());
 export type ScmOptionalBranchSourceRef = z.infer<typeof ScmOptionalBranchSourceRefSchema>;
 
 export function normalizeScmRemoteRequest(

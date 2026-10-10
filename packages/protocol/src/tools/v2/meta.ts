@@ -1,9 +1,10 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
-export const ToolNormalizationProtocolSchema = z.enum(['acp', 'codex', 'claude']);
+export const ToolNormalizationProtocolSchema = lazyZodSchema(() => z.enum(['acp', 'codex', 'claude']));
 export type ToolNormalizationProtocol = z.infer<typeof ToolNormalizationProtocolSchema>;
 
-export const ToolHappierMetaV2Schema = z.object({
+export const ToolHappierMetaV2Schema = lazyZodSchema(() => z.object({
   v: z.literal(2),
   protocol: ToolNormalizationProtocolSchema,
   provider: z.string(),
@@ -12,7 +13,7 @@ export const ToolHappierMetaV2Schema = z.object({
   // before the protocol package is updated. Keep this permissive and validate
   // against KnownCanonicalToolNameV2Schema only where needed (e.g. renderer registry).
   canonicalToolName: z.string().min(1),
-}).passthrough();
+}).passthrough());
 
 export type ToolHappierMetaV2 = z.infer<typeof ToolHappierMetaV2Schema>;
 
@@ -20,10 +21,10 @@ export type ToolHappierMetaV2 = z.infer<typeof ToolHappierMetaV2Schema>;
 export const ToolHappyMetaV2Schema = ToolHappierMetaV2Schema;
 export type ToolHappyMetaV2 = ToolHappierMetaV2;
 
-export const ToolEnvelopeMetaContainerV2Schema = z.object({
+export const ToolEnvelopeMetaContainerV2Schema = lazyZodSchema(() => z.object({
   _happier: ToolHappierMetaV2Schema.optional(),
   _happy: ToolHappyMetaV2Schema.optional(),
-}).passthrough();
+}).passthrough());
 
 export function resolveToolEnvelopeMetaV2(value: unknown): ToolHappierMetaV2 | null {
   const parsed = ToolEnvelopeMetaContainerV2Schema.safeParse(value);

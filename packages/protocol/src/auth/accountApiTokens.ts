@@ -1,17 +1,18 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { ApiTokenGrantV1Schema } from './apiTokenGrant.js';
 import { EmbedConfigV1Schema } from '../embed/embedConfigV1.js';
 import { decodeBase64, encodeBase64, type Base64Variant } from '../crypto/base64.js';
 import { SERVER_IDENTITY_ID_PATTERN } from '../features/payload/capabilities/serverIdentityCapabilities.js';
 
-const AccountApiTokenIdV1Schema = z.string().uuid();
-const AccountApiTokenInstantV1Schema = z.string().datetime({ offset: true }).max(64);
-const AccountApiTokenDisplayPrefixV1Schema = z.string().regex(/^hap_v1_[0-9a-f]{8}$/u);
+const AccountApiTokenIdV1Schema = lazyZodSchema(() => z.string().uuid());
+const AccountApiTokenInstantV1Schema = lazyZodSchema(() => z.string().datetime({ offset: true }).max(64));
+const AccountApiTokenDisplayPrefixV1Schema = lazyZodSchema(() => z.string().regex(/^hap_v1_[0-9a-f]{8}$/u));
 const ACCOUNT_API_TOKEN_BEARER_V1_PATTERN =
   /^hap_v1_([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})_([A-Za-z0-9_-]{43})$/u;
-export const AccountApiTokenBearerV1Schema = z.string().regex(
+export const AccountApiTokenBearerV1Schema = lazyZodSchema(() => z.string().regex(
   ACCOUNT_API_TOKEN_BEARER_V1_PATTERN,
-);
+));
 
 export type ParsedAccountApiTokenBearerV1 = Readonly<{
   tokenId: string;
@@ -36,26 +37,26 @@ function canonicalBytes(length: number, variant: Base64Variant) {
   });
 }
 
-const ApiTokenHomeIdentitySchema = z.string().regex(SERVER_IDENTITY_ID_PATTERN);
+const ApiTokenHomeIdentitySchema = lazyZodSchema(() => z.string().regex(SERVER_IDENTITY_ID_PATTERN));
 const ApiTokenContentPublicKeySchema = canonicalBytes(32, 'base64');
-const ApiTokenUuidV4Schema = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
+const ApiTokenUuidV4Schema = lazyZodSchema(() => z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u));
 
 /** Opaque sealed content material. No recovery, content or wrapping secret is transported. */
-export const AccountApiTokenEncryptionAccessV1Schema = z.object({
+export const AccountApiTokenEncryptionAccessV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   serverIdentityId: ApiTokenHomeIdentitySchema,
   contentPublicKey: ApiTokenContentPublicKeySchema,
   wrappedContentPrivateKey: canonicalBytes(72, 'base64url'),
-}).strict();
+}).strict());
 export type AccountApiTokenEncryptionAccessV1 = z.infer<typeof AccountApiTokenEncryptionAccessV1Schema>;
 
-export const AccountApiTokenCreateEncryptionV1Schema = z.object({
+export const AccountApiTokenCreateEncryptionV1Schema = lazyZodSchema(() => z.object({
   access: AccountApiTokenEncryptionAccessV1Schema,
-}).strict();
+}).strict());
 export type AccountApiTokenCreateEncryptionV1 = z.infer<typeof AccountApiTokenCreateEncryptionV1Schema>;
 
 /** A non-secret, Account-scoped token projection suitable for Settings lists. */
-export const AccountApiTokenSummaryV1Schema = z.object({
+export const AccountApiTokenSummaryV1Schema = lazyZodSchema(() => z.object({
   tokenId: AccountApiTokenIdV1Schema,
   label: z.string().trim().min(1).max(256),
   displayPrefix: AccountApiTokenDisplayPrefixV1Schema,
@@ -68,11 +69,11 @@ export const AccountApiTokenSummaryV1Schema = z.object({
   parentTokenId: AccountApiTokenIdV1Schema.nullable(),
   activeChildCount: z.number().int().nonnegative(),
   embedConfig: EmbedConfigV1Schema.nullable(),
-}).strict();
+}).strict());
 export type AccountApiTokenSummaryV1 = z.infer<typeof AccountApiTokenSummaryV1Schema>;
 
 /** The Account is derived from verified credential provenance, never this input. */
-export const AccountApiTokensCreateActionInputV1Schema = z.object({
+export const AccountApiTokensCreateActionInputV1Schema = lazyZodSchema(() => z.object({
   tokenId: ApiTokenUuidV4Schema,
   label: z.string().trim().min(1).max(256),
   expiresAt: AccountApiTokenInstantV1Schema.nullable().optional(),
@@ -80,30 +81,30 @@ export const AccountApiTokensCreateActionInputV1Schema = z.object({
   authorizeUnattendedTeamAccess: z.boolean().optional(),
   grant: ApiTokenGrantV1Schema.optional(),
   embedConfig: EmbedConfigV1Schema.optional(),
-}).strict();
+}).strict());
 export type AccountApiTokensCreateActionInputV1 = z.infer<typeof AccountApiTokensCreateActionInputV1Schema>;
 
-export const AccountApiTokensUpdateActionInputV1Schema = z.object({
+export const AccountApiTokensUpdateActionInputV1Schema = lazyZodSchema(() => z.object({
   tokenId: AccountApiTokenIdV1Schema,
   label: z.string().trim().min(1).max(256).optional(),
   grant: ApiTokenGrantV1Schema.optional(),
   embedConfig: EmbedConfigV1Schema.nullable().optional(),
-}).strict().refine((value) => value.label !== undefined || value.grant !== undefined || value.embedConfig !== undefined, 'An update must contain at least one change.');
+}).strict().refine((value) => value.label !== undefined || value.grant !== undefined || value.embedConfig !== undefined, 'An update must contain at least one change.'));
 export type AccountApiTokensUpdateActionInputV1 = z.infer<typeof AccountApiTokensUpdateActionInputV1Schema>;
-export const AccountApiTokensUpdateActionOutputV1Schema = z.object({ apiToken: AccountApiTokenSummaryV1Schema }).strict();
+export const AccountApiTokensUpdateActionOutputV1Schema = lazyZodSchema(() => z.object({ apiToken: AccountApiTokenSummaryV1Schema }).strict());
 export type AccountApiTokensUpdateActionOutputV1 = z.infer<typeof AccountApiTokensUpdateActionOutputV1Schema>;
 
-export const AccountApiTokenChildCreateRequestV1Schema = z.object({
+export const AccountApiTokenChildCreateRequestV1Schema = lazyZodSchema(() => z.object({
   tokenId: ApiTokenUuidV4Schema,
   label: z.string().trim().min(1).max(256),
   expiresAt: AccountApiTokenInstantV1Schema,
   grant: ApiTokenGrantV1Schema,
   requireCreatedByChildTokenId: AccountApiTokenIdV1Schema.optional(),
-}).strict();
+}).strict());
 export type AccountApiTokenChildCreateRequestV1 = z.infer<typeof AccountApiTokenChildCreateRequestV1Schema>;
-export const AccountApiTokenChildRevokeRequestV1Schema = z.object({ tokenId: AccountApiTokenIdV1Schema }).strict();
+export const AccountApiTokenChildRevokeRequestV1Schema = lazyZodSchema(() => z.object({ tokenId: AccountApiTokenIdV1Schema }).strict());
 export type AccountApiTokenChildRevokeRequestV1 = z.infer<typeof AccountApiTokenChildRevokeRequestV1Schema>;
-export const AccountApiTokenSelfV1Schema = z.object({
+export const AccountApiTokenSelfV1Schema = lazyZodSchema(() => z.object({
   accountId: z.string().min(1),
   accountEncryptionMode: z.enum(['plain', 'e2ee']),
   credentialId: AccountApiTokenIdV1Schema,
@@ -111,14 +112,14 @@ export const AccountApiTokenSelfV1Schema = z.object({
   expiresAt: AccountApiTokenInstantV1Schema.nullable(),
   grant: ApiTokenGrantV1Schema,
   embedConfig: EmbedConfigV1Schema.nullable(),
-}).strict();
+}).strict());
 export type AccountApiTokenSelfV1 = z.infer<typeof AccountApiTokenSelfV1Schema>;
 
 /**
  * `token` is the sole plaintext bearer disclosure. The strict nested summary
  * intentionally makes later read/revoke results unable to carry a secret.
  */
-export const AccountApiTokensCreateActionOutputV1Schema = z.object({
+export const AccountApiTokensCreateActionOutputV1Schema = lazyZodSchema(() => z.object({
   token: AccountApiTokenBearerV1Schema,
   apiToken: AccountApiTokenSummaryV1Schema,
 }).strict().superRefine((value, context) => {
@@ -129,7 +130,7 @@ export const AccountApiTokensCreateActionOutputV1Schema = z.object({
       message: 'The one-time bearer must match the returned API-token summary.',
     });
   }
-});
+}));
 export type AccountApiTokensCreateActionOutputV1 = z.infer<typeof AccountApiTokensCreateActionOutputV1Schema>;
 
 /** Observers receive the existing non-secret summary, never the one-time bearer. */
@@ -141,31 +142,31 @@ export function projectAccountApiTokenCreationObservation(value: unknown): Reado
     : AccountApiTokensUpdateActionOutputV1Schema.parse(value);
 }
 
-export const AccountApiTokensListActionInputV1Schema = z.object({}).strict();
+export const AccountApiTokensListActionInputV1Schema = lazyZodSchema(() => z.object({}).strict());
 export type AccountApiTokensListActionInputV1 = z.infer<typeof AccountApiTokensListActionInputV1Schema>;
 
 /** List projections are summaries only and can never re-disclose a bearer. */
-export const AccountApiTokensListActionOutputV1Schema = z.object({
+export const AccountApiTokensListActionOutputV1Schema = lazyZodSchema(() => z.object({
   tokens: z.array(AccountApiTokenSummaryV1Schema),
-}).strict();
+}).strict());
 export type AccountApiTokensListActionOutputV1 = z.infer<typeof AccountApiTokensListActionOutputV1Schema>;
 
-export const AccountApiTokensRevokeActionInputV1Schema = z.object({
+export const AccountApiTokensRevokeActionInputV1Schema = lazyZodSchema(() => z.object({
   tokenId: AccountApiTokenIdV1Schema,
-}).strict();
+}).strict());
 export type AccountApiTokensRevokeActionInputV1 = z.infer<typeof AccountApiTokensRevokeActionInputV1Schema>;
 
-export const AccountApiTokensRevokeActionOutputV1Schema = z.object({
+export const AccountApiTokensRevokeActionOutputV1Schema = lazyZodSchema(() => z.object({
   revoked: z.boolean(),
-}).strict();
+}).strict());
 export type AccountApiTokensRevokeActionOutputV1 = z.infer<typeof AccountApiTokensRevokeActionOutputV1Schema>;
 
-export const AccountApiTokensRevokeAllActionInputV1Schema = z.object({}).strict();
+export const AccountApiTokensRevokeAllActionInputV1Schema = lazyZodSchema(() => z.object({}).strict());
 export type AccountApiTokensRevokeAllActionInputV1 = z.infer<typeof AccountApiTokensRevokeAllActionInputV1Schema>;
 
-export const AccountApiTokensRevokeAllActionOutputV1Schema = z.object({
+export const AccountApiTokensRevokeAllActionOutputV1Schema = lazyZodSchema(() => z.object({
   revokedCount: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 export type AccountApiTokensRevokeAllActionOutputV1 = z.infer<typeof AccountApiTokensRevokeAllActionOutputV1Schema>;
 
 /** Authenticated endpoints below the Action boundary; the Account is never a URL or body selector. */
@@ -188,13 +189,13 @@ export const SESSION_CREATION_AUTHORIZATION_HEADER_V1 = 'x-happier-session-creat
 export const ACCOUNT_API_TOKEN_INTROSPECTION_MAX_BODY_BYTES_V1 = 1_024;
 
 /** The PAT is a subject credential; the authenticated daemon Account is transport provenance. */
-export const AccountApiTokenIntrospectionRequestV1Schema = z.object({
+export const AccountApiTokenIntrospectionRequestV1Schema = lazyZodSchema(() => z.object({
   token: AccountApiTokenBearerV1Schema,
-}).strict();
+}).strict());
 export type AccountApiTokenIntrospectionRequestV1 = z.infer<typeof AccountApiTokenIntrospectionRequestV1Schema>;
 
 /** Minimal PAT principal returned only after authenticated Account-bound introspection. */
-export const AccountApiTokenIntrospectionSuccessV1Schema = z.object({
+export const AccountApiTokenIntrospectionSuccessV1Schema = lazyZodSchema(() => z.object({
   accountId: z.string().min(1),
   principalId: z.string().min(1),
   credentialId: AccountApiTokenIdV1Schema,
@@ -211,26 +212,26 @@ export const AccountApiTokenIntrospectionSuccessV1Schema = z.object({
       message: 'The introspected principal must be bound to its Account.',
     });
   }
-});
+}));
 export type AccountApiTokenIntrospectionSuccessV1 = z.infer<typeof AccountApiTokenIntrospectionSuccessV1Schema>;
 
 /** Opaque PAT-subject rejection emitted only after the daemon connection is authenticated. */
-export const AccountApiTokenIntrospectionSubjectFailureV1Schema = z.object({
+export const AccountApiTokenIntrospectionSubjectFailureV1Schema = lazyZodSchema(() => z.object({
   error: z.literal('invalid_token'),
-}).strict();
+}).strict());
 export type AccountApiTokenIntrospectionSubjectFailureV1 = z.infer<
   typeof AccountApiTokenIntrospectionSubjectFailureV1Schema
 >;
 
 /** Closed connection-authentication failures emitted before the PAT body is admitted. */
-export const AccountApiTokenIntrospectionConnectionFailureV1Schema = z.object({
+export const AccountApiTokenIntrospectionConnectionFailureV1Schema = lazyZodSchema(() => z.object({
   error: z.enum(['Missing authorization header', 'authentication_failed', 'Authentication failed']),
-}).strict();
+}).strict());
 export type AccountApiTokenIntrospectionConnectionFailureV1 = z.infer<
   typeof AccountApiTokenIntrospectionConnectionFailureV1Schema
 >;
 
-export const AccountApiTokensServerErrorV1Schema = z.object({
+export const AccountApiTokensServerErrorV1Schema = lazyZodSchema(() => z.object({
   error: z.enum([
     'invalid_request', 'present_user_required', 'account-disabled',
     'api_token_required', 'api_token_id_conflict',
@@ -241,10 +242,10 @@ export const AccountApiTokensServerErrorV1Schema = z.object({
     'credential_authentication_evidence_limit',
     'credential_authentication_evidence_unavailable',
   ]),
-}).strict();
+}).strict());
 export type AccountApiTokensServerErrorV1 = z.infer<typeof AccountApiTokensServerErrorV1Schema>;
 
-export const AccountApiTokenCredentialV1Schema = z.object({
+export const AccountApiTokenCredentialV1Schema = lazyZodSchema(() => z.object({
   bearer: AccountApiTokenBearerV1Schema.refine((value) => {
     const parsed = parseAccountApiTokenBearerV1(value);
     return parsed !== null && canonicalBytes(32, 'base64url').safeParse(parsed.secret).success;
@@ -253,7 +254,7 @@ export const AccountApiTokenCredentialV1Schema = z.object({
   serverIdentityId: ApiTokenHomeIdentitySchema,
   accountId: z.string().min(1),
   contentPublicKey: ApiTokenContentPublicKeySchema,
-}).strict();
+}).strict());
 export type AccountApiTokenCredentialV1 = z.infer<typeof AccountApiTokenCredentialV1Schema>;
 
 /** Invocation-local encoding. It must never be used as an HTTP bearer. */
@@ -275,10 +276,10 @@ export function parseAccountApiTokenCredentialV1(value: string): AccountApiToken
   }
 }
 
-export const AccountApiTokenEncryptionAccessRequestV1Schema = z.object({}).strict();
-export const AccountApiTokenEncryptionAccessResponseV1Schema = z.object({
+export const AccountApiTokenEncryptionAccessRequestV1Schema = lazyZodSchema(() => z.object({}).strict());
+export const AccountApiTokenEncryptionAccessResponseV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1), accountId: z.string().min(1), tokenId: ApiTokenUuidV4Schema,
   encryptionAccess: AccountApiTokenEncryptionAccessV1Schema,
-}).strict();
+}).strict());
 export type AccountApiTokenEncryptionAccessResponseV1 = z.infer<typeof AccountApiTokenEncryptionAccessResponseV1Schema>;
 export const ACCOUNT_API_TOKEN_ENCRYPTION_ACCESS_HTTP_PATH_V1 = '/v1/auth/api-tokens/encryption-access';

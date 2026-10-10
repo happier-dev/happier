@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -6,7 +7,7 @@ import {
 } from './connectedServiceBindings.js';
 import { SessionTeamCredentialBindingIntentsV1Schema } from '../teams/credentials/sessionBindingIntentV1.js';
 
-export const SessionConnectedServiceAuthSwitchRpcParamsSchema = z.object({
+export const SessionConnectedServiceAuthSwitchRpcParamsSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().trim().min(1),
   agentId: z.string().trim().min(1),
   // Current callers write V2. Released V1 callers remain a required
@@ -24,7 +25,7 @@ export const SessionConnectedServiceAuthSwitchRpcParamsSchema = z.object({
   previousTeamCredentialBindings: SessionTeamCredentialBindingIntentsV1Schema.min(1).optional(),
   teamVisibilityGrantConsent: z.object({ teamId: z.string().min(1) }).strict().optional(),
   accountSettingsVersionHint: z.number().int().nonnegative().optional(),
-}).strict();
+}).strict());
 
 export type SessionConnectedServiceAuthSwitchRpcParams = z.infer<
   typeof SessionConnectedServiceAuthSwitchRpcParamsSchema

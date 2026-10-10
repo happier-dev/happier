@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { PluginAgentSessionCapabilitiesV2Schema } from '../../plugins/contributions/agentSessionCapabilities.js';
@@ -12,8 +13,8 @@ import { PluginAgentSessionCapabilitiesV2Schema } from '../../plugins/contributi
  * reconstructed projection must never synthesize it, and clients must not infer
  * interaction from status, intent, run class, Agent id, or method presence.
  */
-export const ExecutionRunInteractionV1Schema = z.object({
+export const ExecutionRunInteractionV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('retained_agent_session.v1'),
   capabilities: PluginAgentSessionCapabilitiesV2Schema,
-}).strict();
+}).strict());
 export type ExecutionRunInteractionV1 = z.infer<typeof ExecutionRunInteractionV1Schema>;

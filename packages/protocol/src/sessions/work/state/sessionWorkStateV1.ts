@@ -1,6 +1,7 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
-export const SessionWorkStateStatusV1Schema = z.enum([
+export const SessionWorkStateStatusV1Schema = lazyZodSchema(() => z.enum([
   'pending',
   'active',
   'paused',
@@ -8,37 +9,37 @@ export const SessionWorkStateStatusV1Schema = z.enum([
   'complete',
   'cancelled',
   'unknown',
-]);
+]));
 export type SessionWorkStateStatusV1 = z.infer<typeof SessionWorkStateStatusV1Schema>;
 
-export const SessionWorkStateStatusReasonV1Schema = z.enum([
+export const SessionWorkStateStatusReasonV1Schema = lazyZodSchema(() => z.enum([
   'blocked',
   'usageLimited',
   'budgetLimited',
   'interrupted',
-]);
+]));
 export type SessionWorkStateStatusReasonV1 = z.infer<typeof SessionWorkStateStatusReasonV1Schema>;
 
-export const SessionWorkStateItemKindV1Schema = z.enum(['goal', 'task', 'todo']);
+export const SessionWorkStateItemKindV1Schema = lazyZodSchema(() => z.enum(['goal', 'task', 'todo']));
 export type SessionWorkStateItemKindV1 = z.infer<typeof SessionWorkStateItemKindV1Schema>;
 
-export const SessionWorkStateItemOriginV1Schema = z.enum(['vendor', 'happier', 'derived']);
+export const SessionWorkStateItemOriginV1Schema = lazyZodSchema(() => z.enum(['vendor', 'happier', 'derived']));
 export type SessionWorkStateItemOriginV1 = z.infer<typeof SessionWorkStateItemOriginV1Schema>;
 
 // Provider-derived goal capabilities. The owning provider computes these from its own signals
 // (Codex from app-server goal mode; Claude from observed `goal_status` + native `/goal` support) so
 // generic UI gating stays capability-driven instead of branching on provider id. All members
 // optional + passthrough so the projection is additive and forward-compatible.
-export const SessionWorkStateGoalCapabilitiesV1Schema = z
+export const SessionWorkStateGoalCapabilitiesV1Schema = lazyZodSchema(() => z
   .object({
     canEdit: z.boolean().optional(),
     canStop: z.boolean().optional(),
     canClear: z.boolean().optional(),
   })
-  .passthrough();
+  .passthrough());
 export type SessionWorkStateGoalCapabilitiesV1 = z.infer<typeof SessionWorkStateGoalCapabilitiesV1Schema>;
 
-export const SessionWorkStateItemV1Schema = z
+export const SessionWorkStateItemV1Schema = lazyZodSchema(() => z
   .object({
     id: z.string().min(1),
     kind: SessionWorkStateItemKindV1Schema,
@@ -63,18 +64,18 @@ export const SessionWorkStateItemV1Schema = z
     completedAt: z.number().int().nonnegative().optional(),
     updatedAt: z.number().int().nonnegative(),
   })
-  .passthrough();
+  .passthrough());
 export type SessionWorkStateItemV1 = z.infer<typeof SessionWorkStateItemV1Schema>;
 
-export const SessionWorkStateTruncationV1Schema = z
+export const SessionWorkStateTruncationV1Schema = lazyZodSchema(() => z
   .object({
     reason: z.enum(['item_limit', 'provider_limit']),
     omittedCount: z.number().int().nonnegative().optional(),
   })
-  .passthrough();
+  .passthrough());
 export type SessionWorkStateTruncationV1 = z.infer<typeof SessionWorkStateTruncationV1Schema>;
 
-export const SessionWorkStateV1Schema = z
+export const SessionWorkStateV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     backendId: z.string().min(1),
@@ -84,7 +85,7 @@ export const SessionWorkStateV1Schema = z
     primaryItemId: z.string().min(1).nullable().optional(),
     truncated: SessionWorkStateTruncationV1Schema.optional(),
   })
-  .passthrough();
+  .passthrough());
 export type SessionWorkStateV1 = z.infer<typeof SessionWorkStateV1Schema>;
 
 export type SessionWorkStateUnknownItemV1 = Readonly<Record<string, unknown>>;

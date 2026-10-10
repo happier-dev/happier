@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { SessionEnvOverlayEntryV1Schema } from '../../spawn/envOverlay.js';
@@ -28,11 +29,11 @@ function isPlainDataObject(value: unknown): value is Readonly<Record<string, unk
     && hasOnlyDataProperties(value);
 }
 
-const PlainDataObjectV1Schema = z.unknown().superRefine((value, ctx) => {
+const PlainDataObjectV1Schema = lazyZodSchema(() => z.unknown().superRefine((value, ctx) => {
   if (!isPlainDataObject(value)) {
     ctx.addIssue({ code: 'custom', message: 'Provider materialization values must be plain data objects' });
   }
-});
+}));
 
 function boundedArrayPreflight(maxItems: number, label: string) {
   return z.unknown().superRefine((value, ctx) => {
@@ -59,11 +60,11 @@ function boundedArrayPreflight(maxItems: number, label: string) {
   });
 }
 
-const ProviderEnvEntryV1Schema = z.unknown().superRefine((value, ctx) => {
+const ProviderEnvEntryV1Schema = lazyZodSchema(() => z.unknown().superRefine((value, ctx) => {
   if (!isPlainDataObject(value)) {
     ctx.addIssue({ code: 'custom', message: 'Provider environment entries must be plain data objects' });
   }
-}).pipe(SessionEnvOverlayEntryV1Schema.extend({ source: z.literal('provider') }).strict());
+}).pipe(SessionEnvOverlayEntryV1Schema.extend({ source: z.literal('provider') }).strict()));
 
 export const ProviderBindingEnvOverlayV1Schema = boundedArrayPreflight(
   PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1.env.maxRows,
@@ -216,11 +217,11 @@ function validateCanonicalJsonObject(
   return valid;
 }
 
-export const ProviderBindingCanonicalJsonObjectV1Schema = z.unknown().superRefine((value, ctx) => {
+export const ProviderBindingCanonicalJsonObjectV1Schema = lazyZodSchema(() => z.unknown().superRefine((value, ctx) => {
   validateCanonicalJsonObject(value, ctx);
-}).transform((value) => value as ProviderBindingCanonicalJsonObject);
+}).transform((value) => value as ProviderBindingCanonicalJsonObject));
 
-const ProviderBindingRelativePathV1Schema = z.string().min(1).superRefine((value, ctx) => {
+const ProviderBindingRelativePathV1Schema = lazyZodSchema(() => z.string().min(1).superRefine((value, ctx) => {
   if (utf8Bytes(value) > PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1.files.maxPathBytes
     || /[\u0000-\u001f\u007f]/u.test(value)
     || /^[\\/]/u.test(value)
@@ -232,12 +233,12 @@ const ProviderBindingRelativePathV1Schema = z.string().min(1).superRefine((value
   if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) {
     ctx.addIssue({ code: 'custom', message: 'Provider file path contains an unsafe segment' });
   }
-});
+}));
 
-const ProviderBindingFileV1Schema = PlainDataObjectV1Schema.pipe(z.object({
+const ProviderBindingFileV1Schema = lazyZodSchema(() => PlainDataObjectV1Schema.pipe(z.object({
   relativePath: ProviderBindingRelativePathV1Schema,
   utf8: z.string(),
-}).strict());
+}).strict()));
 
 const ProviderBindingFilesV1Schema = boundedArrayPreflight(
   PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1.files.maxFiles,
@@ -271,7 +272,7 @@ const commonMaterializationShape = {
   additionalRedactionValues: SupplementalRedactionValuesV1Schema.optional(),
 };
 
-const AgentProviderBindingMaterializationDataV1Schema = z.discriminatedUnion('kind', [
+const AgentProviderBindingMaterializationDataV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ ...commonMaterializationShape, kind: z.literal('spawnEnv') }).strict(),
   z.object({
     ...commonMaterializationShape,
@@ -279,13 +280,13 @@ const AgentProviderBindingMaterializationDataV1Schema = z.discriminatedUnion('ki
     engineConfig: ProviderBindingCanonicalJsonObjectV1Schema,
   }).strict(),
   z.object({ ...commonMaterializationShape, kind: z.literal('configFile'), files: ProviderBindingFilesV1Schema }).strict(),
-]);
-export const AgentProviderBindingMaterializationV1Schema = PlainDataObjectV1Schema
-  .pipe(AgentProviderBindingMaterializationDataV1Schema);
+]));
+export const AgentProviderBindingMaterializationV1Schema = lazyZodSchema(() => PlainDataObjectV1Schema
+  .pipe(AgentProviderBindingMaterializationDataV1Schema));
 export type AgentProviderBindingMaterialization = z.infer<typeof AgentProviderBindingMaterializationV1Schema>;
 export type AgentProviderBindingMaterializationV1 = AgentProviderBindingMaterialization;
 
-const HostMaterializedRootPathV1Schema = z.string().min(1).superRefine((value, ctx) => {
+const HostMaterializedRootPathV1Schema = lazyZodSchema(() => z.string().min(1).superRefine((value, ctx) => {
   const isAbsolute = value.startsWith('/')
     || /^[A-Za-z]:[\\/]/u.test(value)
     || /^[/\\]{2}[^/\\]+[/\\][^/\\]+/u.test(value);
@@ -296,7 +297,7 @@ const HostMaterializedRootPathV1Schema = z.string().min(1).superRefine((value, c
     || segments.some((segment) => segment === '.' || segment === '..')) {
     ctx.addIssue({ code: 'custom', message: 'Materialized provider root path is unsafe or too large' });
   }
-});
+}));
 
 const ProviderBindingLaunchRelativePathsV1Schema = boundedArrayPreflight(
   PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1.files.maxFiles,
@@ -315,7 +316,7 @@ const ProviderBindingLaunchRelativePathsV1Schema = boundedArrayPreflight(
     });
   }));
 
-const AgentProviderBindingLaunchMaterializationDataV1Schema = z.discriminatedUnion('kind', [
+const AgentProviderBindingLaunchMaterializationDataV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ v: z.literal(1), kind: z.literal('spawnEnv') }).strict(),
   z.object({
     v: z.literal(1),
@@ -328,7 +329,7 @@ const AgentProviderBindingLaunchMaterializationDataV1Schema = z.discriminatedUni
     rootPath: HostMaterializedRootPathV1Schema,
     relativePaths: ProviderBindingLaunchRelativePathsV1Schema,
   }).strict(),
-]);
+]));
 export type AgentProviderBindingLaunchMaterialization =
   | Readonly<{ v: 1; kind: 'spawnEnv' }>
   | Readonly<{

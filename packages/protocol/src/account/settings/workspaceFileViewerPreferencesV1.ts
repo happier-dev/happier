@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 
@@ -16,27 +17,27 @@ export const WORKSPACE_FILE_VIEWER_PREFERENCES_V1_MAX_ENCODED_BYTES = 64 * 1024;
 const MAX_SERIALIZED_SELECTOR_LENGTH = 512;
 const textEncoder = new TextEncoder();
 
-export const WorkspaceFileViewerIdentityV1Schema = z.discriminatedUnion('kind', [
+export const WorkspaceFileViewerIdentityV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('builtin') }).strict(),
   z.object({
     kind: z.literal('plugin'),
     pluginId: asProtocolZod(PluginIdSchema),
     contributionLocalId: asProtocolZod(PluginContributionLocalIdSchema),
   }).strict(),
-]);
+]));
 export type WorkspaceFileViewerIdentityV1 = z.infer<typeof WorkspaceFileViewerIdentityV1Schema>;
 
-const WorkspaceFileViewerSelectionsV1Schema = z.record(
+const WorkspaceFileViewerSelectionsV1Schema = lazyZodSchema(() => z.record(
   z.string().min(1).max(MAX_SERIALIZED_SELECTOR_LENGTH),
   WorkspaceFileViewerIdentityV1Schema,
-);
+));
 
 /**
  * Account-owned durable intent from one SDK-normalized selector to one
  * qualified viewer identity. SDK owns selector semantics; Settings owns only
  * its bounded persistence shape and preserves unavailable identities verbatim.
  */
-export const WorkspaceFileViewerPreferencesV1Schema = z.object({
+export const WorkspaceFileViewerPreferencesV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   selections: WorkspaceFileViewerSelectionsV1Schema,
 }).strict().superRefine((value, context) => {
@@ -86,7 +87,7 @@ export const WorkspaceFileViewerPreferencesV1Schema = z.object({
       message: `Viewer preferences exceed ${WORKSPACE_FILE_VIEWER_PREFERENCES_V1_MAX_ENCODED_BYTES} encoded bytes.`,
     });
   }
-});
+}));
 export type WorkspaceFileViewerPreferencesV1 = z.infer<typeof WorkspaceFileViewerPreferencesV1Schema>;
 
 export const DEFAULT_WORKSPACE_FILE_VIEWER_PREFERENCES_V1: WorkspaceFileViewerPreferencesV1 = Object.freeze({

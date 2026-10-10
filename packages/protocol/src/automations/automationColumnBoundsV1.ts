@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -20,5 +21,5 @@ export const AUTOMATION_INT_COLUMN_MAX = 2_147_483_647;
  * lets portable schemas consume it without importing the full Event
  * declaration graph.
  */
-export const AutomationEventPositiveSafeIntegerV1Schema = z.number().int().positive()
-  .max(AUTOMATION_INT_COLUMN_MAX);
+export const AutomationEventPositiveSafeIntegerV1Schema = lazyZodSchema(() => z.number().int().positive()
+  .max(AUTOMATION_INT_COLUMN_MAX));

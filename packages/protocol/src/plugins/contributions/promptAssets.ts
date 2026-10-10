@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
@@ -9,7 +10,7 @@ import {
   PluginJsonValueV2Schema,
 } from './publicTypes.js';
 
-export const PluginPromptAssetContributionV1Schema = z.object({
+export const PluginPromptAssetContributionV1Schema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   kind: z.enum(['systemPrompt', 'context', 'guidelines']),
   resource: asProtocolZod(PluginContributionReferenceV2Schema),
@@ -18,5 +19,5 @@ export const PluginPromptAssetContributionV1Schema = z.object({
   adapterDescriptor: PromptAssetTypeDescriptorV1Schema.optional(),
   availability: PluginAvailabilityDescriptorV2Schema.optional(),
   metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
-}).strict();
+}).strict());
 export type PluginPromptAssetContributionV1 = z.infer<typeof PluginPromptAssetContributionV1Schema>;

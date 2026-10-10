@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
@@ -14,10 +15,10 @@ const SessionIdZodSchema = asProtocolZod(SessionIdSchema);
  * The `sessionId` path parameter is lifted into the URL by the shared
  * `bindActionHttpRequest` helper; only `{ state }` travels as JSON body.
  */
-export const SessionReadStateSetInputV1Schema = z.object({
+export const SessionReadStateSetInputV1Schema = lazyZodSchema(() => z.object({
   sessionId: SessionIdZodSchema,
   state: z.enum(['read', 'unread']),
-}).strict();
+}).strict());
 export type SessionReadStateSetInputV1 = z.infer<typeof SessionReadStateSetInputV1Schema>;
 
 /**
@@ -29,12 +30,12 @@ export type SessionReadStateSetInputV1 = z.infer<typeof SessionReadStateSetInput
  * private viewer facts immediately while the ordinary Session-list refresh
  * converges every other projection.
  */
-export const SessionReadStateSetResultV1Schema = z.object({
+export const SessionReadStateSetResultV1Schema = lazyZodSchema(() => z.object({
   state: z.enum(['read', 'unread', 'empty']),
   lastViewedSessionSeq: z.number().int().min(0).nullable(),
   didChange: z.boolean(),
   viewer: SessionViewerProjectionV1Schema.optional(),
-}).strict();
+}).strict());
 export type SessionReadStateSetResultV1 = z.infer<typeof SessionReadStateSetResultV1Schema>;
 
 export const SESSION_READ_STATE_ACTION_INPUT_SCHEMAS_V1 = Object.freeze({

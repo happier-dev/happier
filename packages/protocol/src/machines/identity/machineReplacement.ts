@@ -1,17 +1,18 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
-export const MachineReplacementReasonSchema = z.string()
+export const MachineReplacementReasonSchema = lazyZodSchema(() => z.string()
     .trim()
     .min(1)
     .max(128)
-    .regex(/^[a-z][a-z0-9_:-]*$/u);
+    .regex(/^[a-z][a-z0-9_:-]*$/u));
 
 export type MachineReplacementReason = z.infer<typeof MachineReplacementReasonSchema>;
 
-export const MachineReplacementFieldsSchema = z.object({
+export const MachineReplacementFieldsSchema = lazyZodSchema(() => z.object({
     replacesMachineId: z.string().trim().min(1).optional(),
     replacementReason: MachineReplacementReasonSchema.optional(),
-});
+}));
 
 export type MachineReplacementFields = z.infer<typeof MachineReplacementFieldsSchema>;
 

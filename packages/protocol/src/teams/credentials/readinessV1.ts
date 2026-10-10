@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { IrohEndpointDescriptorV1Schema } from '../../connectivity/iroh/endpointDescriptorV1.js';
@@ -24,13 +25,13 @@ import {
   type RunnerBrokerReadinessRequestV1 as RunnerBrokerReadinessRequest,
 } from '../../ephemeralRunner/brokerReadinessRequestV1.js';
 
-export const RunnerBrokerProviderPresentationV1Schema = z.object({
+export const RunnerBrokerProviderPresentationV1Schema = lazyZodSchema(() => z.object({
   identity: asProtocolZod(PluginContributionIdentityV1Schema),
   definitionRevision: z.literal(1),
-}).strict();
+}).strict());
 
 /** Safe, content-free readiness reported by the credential-resource owner. */
-export const TeamCredentialResourceReadinessV1Schema = z.discriminatedUnion('kind', [
+export const TeamCredentialResourceReadinessV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('available') }).strict(),
   z.object({ kind: z.literal('resource_corrupt') }).strict(),
   z.object({ kind: z.literal('resource_unavailable') }).strict(),
@@ -46,15 +47,15 @@ export const TeamCredentialResourceReadinessV1Schema = z.discriminatedUnion('kin
     metric: TeamCredentialUsageLimitMetricV1Schema,
     resetsAtUtc: z.string().datetime(),
   }).strict(),
-]);
+]));
 export type TeamCredentialResourceReadinessV1 = z.infer<typeof TeamCredentialResourceReadinessV1Schema>;
 
-const RunnerBrokerReadinessResponseBindingV1Schema = RunnerBrokerReadinessFactsV1Schema.omit({
+const RunnerBrokerReadinessResponseBindingV1Schema = lazyZodSchema(() => RunnerBrokerReadinessFactsV1Schema.omit({
   v: true,
   kind: true,
-});
+}));
 
-export const RunnerBrokerReadinessResponseV1Schema = z.object({
+export const RunnerBrokerReadinessResponseV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   binding: RunnerBrokerReadinessResponseBindingV1Schema,
   credentialSelectionBinding: RunnerCredentialSelectionBindingV1Schema,
@@ -71,7 +72,7 @@ export const RunnerBrokerReadinessResponseV1Schema = z.object({
     path: ['credentialSelectionBinding'],
     message: 'Reviewed credential selection must match readiness facts',
   });
-});
+}));
 export type RunnerBrokerReadinessResponseV1 = z.infer<typeof RunnerBrokerReadinessResponseV1Schema>;
 
 /**
@@ -99,10 +100,10 @@ export function doesRunnerBrokerReadinessResponseMatchRequestV1(
 }
 
 /** Exact content-free broker projection returned only to the proof-bound endpoint. */
-export const RunnerBrokerReadinessProjectionV1Schema = z.object({
+export const RunnerBrokerReadinessProjectionV1Schema = lazyZodSchema(() => z.object({
   credentialSelectionBinding: RunnerCredentialSelectionBindingV1Schema,
   target: IrohEndpointDescriptorV1Schema,
   provider: RunnerBrokerProviderPresentationV1Schema.nullable(),
   readiness: TeamCredentialResourceReadinessV1Schema,
-}).strict();
+}).strict());
 export type RunnerBrokerReadinessProjectionV1 = z.infer<typeof RunnerBrokerReadinessProjectionV1Schema>;

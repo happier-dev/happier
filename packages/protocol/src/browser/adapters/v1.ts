@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { BrowserAutomationActionCapabilityMapV1Schema } from '../automation/v1.js';
@@ -15,7 +16,7 @@ export {
   type BrowserSemanticAdapterKindV1,
 } from './kinds.js';
 
-export const BrowserAdapterNavigationCapabilitiesV1Schema = z
+export const BrowserAdapterNavigationCapabilitiesV1Schema = lazyZodSchema(() => z
   .object({
     canNavigate: z.boolean().optional().default(false),
     canGoBack: z.boolean().optional().default(false),
@@ -23,15 +24,15 @@ export const BrowserAdapterNavigationCapabilitiesV1Schema = z
     canReload: z.boolean().optional().default(false),
     canStop: z.boolean().optional().default(false),
   })
-  .strict();
+  .strict());
 export type BrowserAdapterNavigationCapabilitiesV1 = z.infer<
   typeof BrowserAdapterNavigationCapabilitiesV1Schema
 >;
 
-export const BrowserAdapterInputRoutingV1Schema = z.enum(['none', 'native', 'pmsControlSideband']);
+export const BrowserAdapterInputRoutingV1Schema = lazyZodSchema(() => z.enum(['none', 'native', 'pmsControlSideband']));
 export type BrowserAdapterInputRoutingV1 = z.infer<typeof BrowserAdapterInputRoutingV1Schema>;
 
-const DiagnosticsFidelityByFamilySchema = z
+const DiagnosticsFidelityByFamilySchema = lazyZodSchema(() => z
   .object({
     console: BrowserDiagnosticFidelityV1Schema.optional(),
     pageError: BrowserDiagnosticFidelityV1Schema.optional(),
@@ -44,7 +45,7 @@ const DiagnosticsFidelityByFamilySchema = z
     screenshot: BrowserDiagnosticFidelityV1Schema.optional(),
     proxyTunnel: BrowserDiagnosticFidelityV1Schema.optional(),
   })
-  .strict();
+  .strict());
 
 const DEFAULT_BROWSER_ADAPTER_NAVIGATION_CAPABILITIES: BrowserAdapterNavigationCapabilitiesV1 = {
   canNavigate: false,
@@ -54,7 +55,7 @@ const DEFAULT_BROWSER_ADAPTER_NAVIGATION_CAPABILITIES: BrowserAdapterNavigationC
   canStop: false,
 };
 
-export const BrowserAdapterCapabilitiesV1Schema = z
+export const BrowserAdapterCapabilitiesV1Schema = lazyZodSchema(() => z
   .object({
     adapterKind: BrowserSemanticAdapterKindV1Schema,
     supportedTargetKinds: z.array(BrowserViewTargetKindV1Schema).optional().default([]),
@@ -73,7 +74,7 @@ export const BrowserAdapterCapabilitiesV1Schema = z
     supportsStreamingDisplay: z.boolean().optional().default(false),
     disabledReasons: z.array(z.string().trim().min(1)).optional().default([]),
   })
-  .strict();
+  .strict());
 // NOTE: external URLs ARE rendered best-effort in the web `webIframe` engine (with the always-present
 // open-in-system-browser escape for non-framable sites), so `externalUrl` legitimately advertises
 // `webIframe`. The earlier guard rejecting that pairing contradicted the shipped iframe feature and

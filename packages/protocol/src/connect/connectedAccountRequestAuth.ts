@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ProviderAccountUsageQuotaScopeV1Schema } from './providerAccountUsageQuotaScopeV1.js';
@@ -29,12 +30,12 @@ export const CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH =
  * daemon may classify internal service failures more finely, but none of that
  * internal detail crosses this capability-scoped boundary.
  */
-export const ConnectedAccountRequestAuthErrorCodeV1Schema = z.enum([
+export const ConnectedAccountRequestAuthErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'request_auth_unauthorized',
   'request_auth_purpose_forbidden',
   'request_auth_not_active',
   'request_auth_unavailable',
-]);
+]));
 export type ConnectedAccountRequestAuthErrorCodeV1 = z.infer<
   typeof ConnectedAccountRequestAuthErrorCodeV1Schema
 >;
@@ -55,12 +56,12 @@ export function getConnectedAccountRequestAuthErrorHttpStatusV1(
   return CONNECTED_ACCOUNT_REQUEST_AUTH_ERROR_HTTP_STATUS_V1[code];
 }
 
-export const ConnectedAccountRequestAuthErrorResponseV1Schema = z.object({
+export const ConnectedAccountRequestAuthErrorResponseV1Schema = lazyZodSchema(() => z.object({
   ok: z.literal(false),
   error: z.object({
     code: ConnectedAccountRequestAuthErrorCodeV1Schema,
   }).strict(),
-}).strict();
+}).strict());
 
 export const PI_REQUEST_AUTH_PINNED_TERMINAL_PRODUCER_VERSIONS_V1 = [
   '0.81.0',
@@ -154,16 +155,16 @@ export const PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURES_V1 = Object.freeze([
   })),
 ] as const);
 
-const RequestAuthAccessTokenSchema = z.string().min(1).max(128 * 1024);
-const RequestAuthHeaderNameSchema = z.string()
+const RequestAuthAccessTokenSchema = lazyZodSchema(() => z.string().min(1).max(128 * 1024));
+const RequestAuthHeaderNameSchema = lazyZodSchema(() => z.string()
   .min(1)
   .max(128)
-  .regex(/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u);
-const RequestAuthHeaderValueSchema = z.string()
+  .regex(/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u));
+const RequestAuthHeaderValueSchema = lazyZodSchema(() => z.string()
   .max(16 * 1024)
-  .refine((value) => !/[\r\n]/u.test(value), 'Header values cannot contain line breaks.');
+  .refine((value) => !/[\r\n]/u.test(value), 'Header values cannot contain line breaks.'));
 
-const ConnectedAccountRequestAuthCanonicalHttpsOriginV1Schema = z.string()
+const ConnectedAccountRequestAuthCanonicalHttpsOriginV1Schema = lazyZodSchema(() => z.string()
   .min(1)
   .max(2_048)
   .superRefine((value, context) => {
@@ -191,12 +192,12 @@ const ConnectedAccountRequestAuthCanonicalHttpsOriginV1Schema = z.string()
         message: 'Request-auth origin must be an exact canonical HTTPS origin.',
       });
     }
-  });
+  }));
 
-const ConnectedAccountRequestAuthHeaderNameV1Schema = RequestAuthHeaderNameSchema
-  .regex(/^[a-z0-9!#$%&'*+\-.^_`|~]+$/u);
+const ConnectedAccountRequestAuthHeaderNameV1Schema = lazyZodSchema(() => RequestAuthHeaderNameSchema
+  .regex(/^[a-z0-9!#$%&'*+\-.^_`|~]+$/u));
 
-export const ConnectedAccountRequestAuthMaterializationV1Schema = z.object({
+export const ConnectedAccountRequestAuthMaterializationV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('httpHeaders'),
   origin: ConnectedAccountRequestAuthCanonicalHttpsOriginV1Schema,
   headerNames: z.array(ConnectedAccountRequestAuthHeaderNameV1Schema)
@@ -222,14 +223,14 @@ export const ConnectedAccountRequestAuthMaterializationV1Schema = z.object({
       message: 'Request-auth materialization must request authorization.',
     });
   }
-});
+}));
 
-export const ConnectedAccountRequestAuthUseV1Schema = z.object({
+export const ConnectedAccountRequestAuthUseV1Schema = lazyZodSchema(() => z.object({
   purpose: ConnectedAccountPurposeIdSchema,
   materialization: ConnectedAccountRequestAuthMaterializationV1Schema,
-}).strict();
+}).strict());
 
-export const ConnectedAccountRequestAuthUsesV1Schema = z.array(
+export const ConnectedAccountRequestAuthUsesV1Schema = lazyZodSchema(() => z.array(
   ConnectedAccountRequestAuthUseV1Schema,
 ).max(32).superRefine((uses, context) => {
   const seenPurposes = new Set<string>();
@@ -243,14 +244,14 @@ export const ConnectedAccountRequestAuthUsesV1Schema = z.array(
     }
     seenPurposes.add(use.purpose);
   }
-});
+}));
 
-export const QualifiedConnectedAccountRequestAuthUseV1Schema = z.object({
+export const QualifiedConnectedAccountRequestAuthUseV1Schema = lazyZodSchema(() => z.object({
   purpose: QualifiedConnectedAccountPurposeV1Schema,
   materialization: ConnectedAccountRequestAuthMaterializationV1Schema,
-}).strict();
+}).strict());
 
-export const QualifiedConnectedAccountRequestAuthUsesV1Schema = z.array(
+export const QualifiedConnectedAccountRequestAuthUsesV1Schema = lazyZodSchema(() => z.array(
   QualifiedConnectedAccountRequestAuthUseV1Schema,
 ).max(32).superRefine((uses, context) => {
   const seenPurposes = new Set<string>();
@@ -269,9 +270,9 @@ export const QualifiedConnectedAccountRequestAuthUsesV1Schema = z.array(
     }
     seenPurposes.add(purposeKey);
   }
-});
+}));
 
-export const RequestAuthRequiredHeadersV1Schema = z.record(
+export const RequestAuthRequiredHeadersV1Schema = lazyZodSchema(() => z.record(
   RequestAuthHeaderNameSchema,
   RequestAuthHeaderValueSchema,
 ).superRefine((headers, context) => {
@@ -301,12 +302,12 @@ export const RequestAuthRequiredHeadersV1Schema = z.record(
     }
     seen.add(normalized);
   }
-});
+}));
 
-const RequestAuthTokenFingerprintV1Schema = z.string()
-  .regex(/^sha256:[a-f0-9]{64}$/u);
+const RequestAuthTokenFingerprintV1Schema = lazyZodSchema(() => z.string()
+  .regex(/^sha256:[a-f0-9]{64}$/u));
 
-export const RequestAuthCredentialContextV1Schema = z.object({
+export const RequestAuthCredentialContextV1Schema = lazyZodSchema(() => z.object({
   account: asProtocolZod(QualifiedConnectedAccountRefSchema),
   group: z.object({
     groupId: ConnectedServiceAuthGroupIdSchema,
@@ -314,21 +315,21 @@ export const RequestAuthCredentialContextV1Schema = z.object({
   }).strict().optional(),
   credentialRevision: ConnectedServiceCredentialRevisionV1Schema,
   failingAccessTokenFingerprint: RequestAuthTokenFingerprintV1Schema.optional(),
-}).strict();
+}).strict());
 
-export const OAuthBearerLeaseV1Schema = z.object({
+export const OAuthBearerLeaseV1Schema = lazyZodSchema(() => z.object({
   accessToken: RequestAuthAccessTokenSchema,
   requiredHeaders: RequestAuthRequiredHeadersV1Schema.optional(),
   expiresAt: z.number().int().nonnegative().optional(),
   credentialContext: RequestAuthCredentialContextV1Schema,
-}).strict();
+}).strict());
 
-export const ConnectedAccountRequestAuthLookupRequestV1Schema = z.object({
+export const ConnectedAccountRequestAuthLookupRequestV1Schema = lazyZodSchema(() => z.object({
   purpose: QualifiedConnectedAccountPurposeV1Schema,
-}).strict();
+}).strict());
 
 
-export const ProviderFailureEvidenceSourceV1Schema = z.discriminatedUnion('kind', [
+export const ProviderFailureEvidenceSourceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('structured'),
   }).strict(),
@@ -349,9 +350,9 @@ export const ProviderFailureEvidenceSourceV1Schema = z.discriminatedUnion('kind'
       PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1.anthropicApiError504,
     ]),
   }).strict(),
-]);
+]));
 
-export const BoundedProviderFailureEvidenceV1Schema = z.object({
+export const BoundedProviderFailureEvidenceV1Schema = lazyZodSchema(() => z.object({
   httpStatus: z.number().int().min(100).max(599).optional(),
   providerCode: z.string().trim().min(1).max(128).optional(),
   retryAfterMs: z.number().int().nonnegative().max(7 * 24 * 60 * 60 * 1000).optional(),
@@ -381,66 +382,66 @@ export const BoundedProviderFailureEvidenceV1Schema = z.object({
       message: 'Pinned Provider terminal evidence must match the retained Pi signature frontier.',
     });
   }
-});
+}));
 
-const ConnectedAccountAuthenticationFailureV1Schema = z.object({
+const ConnectedAccountAuthenticationFailureV1Schema = lazyZodSchema(() => z.object({
   class: z.literal('authentication'),
   evidence: BoundedProviderFailureEvidenceV1Schema.refine(
     (evidence) => evidence.limitCategory === 'auth_invalid',
     'Authentication failures require the auth_invalid category.',
   ),
-}).strict();
+}).strict());
 
-const ConnectedAccountQuotaFailureV1Schema = z.object({
+const ConnectedAccountQuotaFailureV1Schema = lazyZodSchema(() => z.object({
   class: z.literal('quota'),
   evidence: BoundedProviderFailureEvidenceV1Schema.refine(
     (evidence) => evidence.limitCategory !== 'auth_invalid',
     'Quota failures cannot carry the auth_invalid category.',
   ),
-}).strict();
+}).strict());
 
-const ConnectedAccountOtherFailureV1Schema = z.object({
+const ConnectedAccountOtherFailureV1Schema = lazyZodSchema(() => z.object({
   class: z.literal('other'),
   evidence: BoundedProviderFailureEvidenceV1Schema.refine(
     (evidence) => evidence.limitCategory !== 'auth_invalid',
     'Other failures cannot carry the auth_invalid category.',
   ),
-}).strict();
+}).strict());
 
-export const ConnectedAccountConsumerFailureV1Schema = z.union([
+export const ConnectedAccountConsumerFailureV1Schema = lazyZodSchema(() => z.union([
   ConnectedAccountAuthenticationFailureV1Schema,
   ConnectedAccountQuotaFailureV1Schema,
   ConnectedAccountOtherFailureV1Schema,
-]);
+]));
 
-export const ConnectedAccountAuthFailureRequestV1Schema = z.object({
+export const ConnectedAccountAuthFailureRequestV1Schema = lazyZodSchema(() => z.object({
   credentialContext: RequestAuthCredentialContextV1Schema,
   normalizedFailure: ConnectedAccountAuthenticationFailureV1Schema,
-}).strict();
+}).strict());
 
-export const ConnectedAccountQuotaFailureRequestV1Schema = z.object({
+export const ConnectedAccountQuotaFailureRequestV1Schema = lazyZodSchema(() => z.object({
   credentialContext: RequestAuthCredentialContextV1Schema,
   normalizedFailure: ConnectedAccountQuotaFailureV1Schema,
-}).strict();
+}).strict());
 
-export const RequestAuthFailureOutcomeV1Schema = z.object({
+export const RequestAuthFailureOutcomeV1Schema = lazyZodSchema(() => z.object({
   status: z.enum([
     'stale_context',
     'current_unchanged',
     'current_changed',
     'denied',
   ]),
-}).strict();
+}).strict());
 
-export const ConnectedAccountRequestAuthLookupSuccessResponseV1Schema = z.object({
+export const ConnectedAccountRequestAuthLookupSuccessResponseV1Schema = lazyZodSchema(() => z.object({
   ok: z.literal(true),
   value: OAuthBearerLeaseV1Schema,
-}).strict();
+}).strict());
 
-export const ConnectedAccountRequestAuthFailureSuccessResponseV1Schema = z.object({
+export const ConnectedAccountRequestAuthFailureSuccessResponseV1Schema = lazyZodSchema(() => z.object({
   ok: z.literal(true),
   value: RequestAuthFailureOutcomeV1Schema,
-}).strict();
+}).strict());
 
 export type RequestAuthRequiredHeadersV1 = z.infer<typeof RequestAuthRequiredHeadersV1Schema>;
 export type ConnectedAccountRequestAuthMaterializationV1 = Readonly<{

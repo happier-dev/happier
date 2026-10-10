@@ -1,34 +1,35 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
-const NonEmptyStringSchema = z.string().trim().min(1);
+const NonEmptyStringSchema = lazyZodSchema(() => z.string().trim().min(1));
 
-export const CheckpointRestoreScopeV1Schema = z.enum(['conversation', 'workspace']);
+export const CheckpointRestoreScopeV1Schema = lazyZodSchema(() => z.enum(['conversation', 'workspace']));
 export type CheckpointRestoreScopeV1 = z.infer<typeof CheckpointRestoreScopeV1Schema>;
 
-export const CheckpointTimingV1Schema = z.enum(['idle', 'activeTurn']);
+export const CheckpointTimingV1Schema = lazyZodSchema(() => z.enum(['idle', 'activeTurn']));
 export type CheckpointTimingV1 = z.infer<typeof CheckpointTimingV1Schema>;
 
-export const CheckpointRestoreSourceV1Schema = z.enum(['provider', 'happier_scm', 'composed']);
+export const CheckpointRestoreSourceV1Schema = lazyZodSchema(() => z.enum(['provider', 'happier_scm', 'composed']));
 export type CheckpointRestoreSourceV1 = z.infer<typeof CheckpointRestoreSourceV1Schema>;
 
-export const CheckpointRestoreAnchorEvidenceV1Schema = z.object({
+export const CheckpointRestoreAnchorEvidenceV1Schema = lazyZodSchema(() => z.object({
   turnId: NonEmptyStringSchema.optional(),
   messageSeq: z.number().int().nonnegative().optional(),
   seqRange: z.object({
     startSeqInclusive: z.number().int().nonnegative(),
     endSeqInclusive: z.number().int().nonnegative(),
   }).strict().optional(),
-}).strict();
+}).strict());
 export type CheckpointRestoreAnchorEvidenceV1 = z.infer<typeof CheckpointRestoreAnchorEvidenceV1Schema>;
 
-export const CheckpointRestoreAnchorV1Schema = z.object({
+export const CheckpointRestoreAnchorV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('before_user_message'),
   messageId: NonEmptyStringSchema,
   evidence: CheckpointRestoreAnchorEvidenceV1Schema.optional(),
-}).strict();
+}).strict());
 export type CheckpointRestoreAnchorV1 = z.infer<typeof CheckpointRestoreAnchorV1Schema>;
 
-export const CheckpointProviderTargetRefV1Schema = z.discriminatedUnion('kind', [
+export const CheckpointProviderTargetRefV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('provider_checkpoint'),
     checkpointId: NonEmptyStringSchema,
@@ -45,10 +46,10 @@ export const CheckpointProviderTargetRefV1Schema = z.discriminatedUnion('kind', 
     kind: z.literal('provider_restore_token'),
     token: NonEmptyStringSchema,
   }).strict(),
-]);
+]));
 export type CheckpointProviderTargetRefV1 = z.infer<typeof CheckpointProviderTargetRefV1Schema>;
 
-export const SanitizedCheckpointProviderTargetRefV1Schema = z.discriminatedUnion('kind', [
+export const SanitizedCheckpointProviderTargetRefV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('provider_checkpoint'),
     checkpointId: NonEmptyStringSchema,
@@ -65,10 +66,10 @@ export const SanitizedCheckpointProviderTargetRefV1Schema = z.discriminatedUnion
     kind: z.literal('provider_restore_token'),
     redacted: z.literal(true),
   }).strict(),
-]);
+]));
 export type SanitizedCheckpointProviderTargetRefV1 = z.infer<typeof SanitizedCheckpointProviderTargetRefV1Schema>;
 
-const CheckpointScopesSchema = z.array(CheckpointRestoreScopeV1Schema).nonempty().superRefine((scopes, ctx) => {
+const CheckpointScopesSchema = lazyZodSchema(() => z.array(CheckpointRestoreScopeV1Schema).nonempty().superRefine((scopes, ctx) => {
   const seen = new Set<CheckpointRestoreScopeV1>();
   scopes.forEach((scope, index) => {
     if (seen.has(scope)) {
@@ -81,7 +82,7 @@ const CheckpointScopesSchema = z.array(CheckpointRestoreScopeV1Schema).nonempty(
     }
     seen.add(scope);
   });
-});
+}));
 
 function sameScopeSet(
   left: readonly CheckpointRestoreScopeV1[],
@@ -109,14 +110,14 @@ function exactlyPartitionsScopes(
   return partScopes.length === requestedScopes.length && sameScopeSet(requestedScopes, partScopes);
 }
 
-const CheckpointProviderCandidateRefV1BaseSchema = z.object({
+const CheckpointProviderCandidateRefV1BaseSchema = lazyZodSchema(() => z.object({
   source: z.literal('provider'),
   backendId: NonEmptyStringSchema,
   anchor: CheckpointRestoreAnchorV1Schema.optional(),
   target: CheckpointProviderTargetRefV1Schema.optional(),
-}).strict();
+}).strict());
 
-export const CheckpointProviderCandidateRefV1Schema = CheckpointProviderCandidateRefV1BaseSchema.superRefine((candidate, ctx) => {
+export const CheckpointProviderCandidateRefV1Schema = lazyZodSchema(() => CheckpointProviderCandidateRefV1BaseSchema.superRefine((candidate, ctx) => {
   const sourceCount = Number(candidate.anchor !== undefined) + Number(candidate.target !== undefined);
   if (sourceCount !== 1) {
     ctx.addIssue({
@@ -125,49 +126,49 @@ export const CheckpointProviderCandidateRefV1Schema = CheckpointProviderCandidat
       path: ['anchor'],
     });
   }
-});
+}));
 export type CheckpointProviderCandidateRefV1 = z.infer<typeof CheckpointProviderCandidateRefV1Schema>;
 
-export const CheckpointScmCandidateRefV1Schema = z.object({
+export const CheckpointScmCandidateRefV1Schema = lazyZodSchema(() => z.object({
   source: z.literal('happier_scm'),
   checkpointRef: NonEmptyStringSchema,
   turnId: NonEmptyStringSchema.optional(),
-}).strict();
+}).strict());
 export type CheckpointScmCandidateRefV1 = z.infer<typeof CheckpointScmCandidateRefV1Schema>;
 
-export const CheckpointAtomicCandidateRefV1Schema = z.union([
+export const CheckpointAtomicCandidateRefV1Schema = lazyZodSchema(() => z.union([
   CheckpointProviderCandidateRefV1Schema,
   CheckpointScmCandidateRefV1Schema,
-]);
+]));
 export type CheckpointAtomicCandidateRefV1 = z.infer<typeof CheckpointAtomicCandidateRefV1Schema>;
 
-export const CheckpointSelectedAtomicCandidatePartV1Schema = z.object({
+export const CheckpointSelectedAtomicCandidatePartV1Schema = lazyZodSchema(() => z.object({
   scopes: CheckpointScopesSchema,
   candidate: CheckpointAtomicCandidateRefV1Schema,
-}).strict();
+}).strict());
 export type CheckpointSelectedAtomicCandidatePartV1 = z.infer<typeof CheckpointSelectedAtomicCandidatePartV1Schema>;
 
-export const CheckpointComposedCandidateRefV1Schema = z.object({
+export const CheckpointComposedCandidateRefV1Schema = lazyZodSchema(() => z.object({
   source: z.literal('composed'),
   parts: z.array(CheckpointSelectedAtomicCandidatePartV1Schema).nonempty(),
-}).strict();
+}).strict());
 export type CheckpointComposedCandidateRefV1 = z.infer<typeof CheckpointComposedCandidateRefV1Schema>;
 
-export const CheckpointCandidateRefV1Schema = z.union([
+export const CheckpointCandidateRefV1Schema = lazyZodSchema(() => z.union([
   CheckpointProviderCandidateRefV1Schema,
   CheckpointScmCandidateRefV1Schema,
   CheckpointComposedCandidateRefV1Schema,
-]);
+]));
 export type CheckpointCandidateRefV1 = z.infer<typeof CheckpointCandidateRefV1Schema>;
 
-const SanitizedCheckpointProviderCandidateRefV1BaseSchema = z.object({
+const SanitizedCheckpointProviderCandidateRefV1BaseSchema = lazyZodSchema(() => z.object({
   source: z.literal('provider'),
   backendId: NonEmptyStringSchema,
   anchor: CheckpointRestoreAnchorV1Schema.optional(),
   target: SanitizedCheckpointProviderTargetRefV1Schema.optional(),
-}).strict();
+}).strict());
 
-const SanitizedCheckpointProviderCandidateRefV1Schema = SanitizedCheckpointProviderCandidateRefV1BaseSchema.superRefine((candidate, ctx) => {
+const SanitizedCheckpointProviderCandidateRefV1Schema = lazyZodSchema(() => SanitizedCheckpointProviderCandidateRefV1BaseSchema.superRefine((candidate, ctx) => {
   const sourceCount = Number(candidate.anchor !== undefined) + Number(candidate.target !== undefined);
   if (sourceCount !== 1) {
     ctx.addIssue({
@@ -176,31 +177,31 @@ const SanitizedCheckpointProviderCandidateRefV1Schema = SanitizedCheckpointProvi
       path: ['anchor'],
     });
   }
-});
+}));
 
-const SanitizedCheckpointAtomicCandidateRefV1Schema = z.union([
+const SanitizedCheckpointAtomicCandidateRefV1Schema = lazyZodSchema(() => z.union([
   SanitizedCheckpointProviderCandidateRefV1Schema,
   CheckpointScmCandidateRefV1Schema,
-]);
+]));
 
-const SanitizedCheckpointSelectedAtomicCandidatePartV1Schema = z.object({
+const SanitizedCheckpointSelectedAtomicCandidatePartV1Schema = lazyZodSchema(() => z.object({
   scopes: CheckpointScopesSchema,
   candidate: SanitizedCheckpointAtomicCandidateRefV1Schema,
-}).strict();
+}).strict());
 
-export const SanitizedCheckpointComposedCandidateRefV1Schema = z.object({
+export const SanitizedCheckpointComposedCandidateRefV1Schema = lazyZodSchema(() => z.object({
   source: z.literal('composed'),
   parts: z.array(SanitizedCheckpointSelectedAtomicCandidatePartV1Schema).nonempty(),
-}).strict();
+}).strict());
 
-export const SanitizedCheckpointCandidateRefV1Schema = z.union([
+export const SanitizedCheckpointCandidateRefV1Schema = lazyZodSchema(() => z.union([
   SanitizedCheckpointProviderCandidateRefV1Schema,
   CheckpointScmCandidateRefV1Schema,
   SanitizedCheckpointComposedCandidateRefV1Schema,
-]);
+]));
 export type SanitizedCheckpointCandidateRefV1 = z.infer<typeof SanitizedCheckpointCandidateRefV1Schema>;
 
-const CheckpointRestoreCandidateV1BaseSchema = z.object({
+const CheckpointRestoreCandidateV1BaseSchema = lazyZodSchema(() => z.object({
   id: NonEmptyStringSchema,
   source: CheckpointRestoreSourceV1Schema,
   scopes: CheckpointScopesSchema,
@@ -212,9 +213,9 @@ const CheckpointRestoreCandidateV1BaseSchema = z.object({
     code: NonEmptyStringSchema,
     message: NonEmptyStringSchema.optional(),
   }).strict()).optional(),
-}).strict();
+}).strict());
 
-export const CheckpointRestoreCandidateV1Schema = CheckpointRestoreCandidateV1BaseSchema.superRefine((candidate, ctx) => {
+export const CheckpointRestoreCandidateV1Schema = lazyZodSchema(() => CheckpointRestoreCandidateV1BaseSchema.superRefine((candidate, ctx) => {
   if (candidate.source !== candidate.candidate.source) {
     ctx.addIssue({
       code: 'custom',
@@ -229,10 +230,10 @@ export const CheckpointRestoreCandidateV1Schema = CheckpointRestoreCandidateV1Ba
       path: ['candidate', 'parts'],
     });
   }
-});
+}));
 export type CheckpointRestoreCandidateV1 = z.infer<typeof CheckpointRestoreCandidateV1Schema>;
 
-export const SanitizedCheckpointRestoreCandidateV1Schema = CheckpointRestoreCandidateV1BaseSchema.extend({
+export const SanitizedCheckpointRestoreCandidateV1Schema = lazyZodSchema(() => CheckpointRestoreCandidateV1BaseSchema.extend({
   candidate: SanitizedCheckpointCandidateRefV1Schema,
 }).superRefine((candidate, ctx) => {
   if (candidate.source !== candidate.candidate.source) {
@@ -249,46 +250,46 @@ export const SanitizedCheckpointRestoreCandidateV1Schema = CheckpointRestoreCand
       path: ['candidate', 'parts'],
     });
   }
-});
+}));
 export type SanitizedCheckpointRestoreCandidateV1 = z.infer<typeof SanitizedCheckpointRestoreCandidateV1Schema>;
 
-export const CheckpointProviderCreationCandidateRefV1Schema = z.object({
+export const CheckpointProviderCreationCandidateRefV1Schema = lazyZodSchema(() => z.object({
   source: z.literal('provider'),
   backendId: NonEmptyStringSchema,
-}).strict();
+}).strict());
 export type CheckpointProviderCreationCandidateRefV1 = z.infer<typeof CheckpointProviderCreationCandidateRefV1Schema>;
 
-export const CheckpointScmCreationCandidateRefV1Schema = z.object({
+export const CheckpointScmCreationCandidateRefV1Schema = lazyZodSchema(() => z.object({
   source: z.literal('happier_scm'),
-}).strict();
+}).strict());
 export type CheckpointScmCreationCandidateRefV1 = z.infer<typeof CheckpointScmCreationCandidateRefV1Schema>;
 
-export const CheckpointAtomicCreationCandidateRefV1Schema = z.union([
+export const CheckpointAtomicCreationCandidateRefV1Schema = lazyZodSchema(() => z.union([
   CheckpointProviderCreationCandidateRefV1Schema,
   CheckpointScmCreationCandidateRefV1Schema,
-]);
+]));
 export type CheckpointAtomicCreationCandidateRefV1 = z.infer<typeof CheckpointAtomicCreationCandidateRefV1Schema>;
 
-export const CheckpointSelectedAtomicCreationCandidatePartV1Schema = z.object({
+export const CheckpointSelectedAtomicCreationCandidatePartV1Schema = lazyZodSchema(() => z.object({
   scopes: CheckpointScopesSchema,
   candidate: CheckpointAtomicCreationCandidateRefV1Schema,
-}).strict();
+}).strict());
 export type CheckpointSelectedAtomicCreationCandidatePartV1 = z.infer<typeof CheckpointSelectedAtomicCreationCandidatePartV1Schema>;
 
-export const CheckpointComposedCreationCandidateRefV1Schema = z.object({
+export const CheckpointComposedCreationCandidateRefV1Schema = lazyZodSchema(() => z.object({
   source: z.literal('composed'),
   parts: z.array(CheckpointSelectedAtomicCreationCandidatePartV1Schema).nonempty(),
-}).strict();
+}).strict());
 export type CheckpointComposedCreationCandidateRefV1 = z.infer<typeof CheckpointComposedCreationCandidateRefV1Schema>;
 
-export const CheckpointCreationCandidateRefV1Schema = z.union([
+export const CheckpointCreationCandidateRefV1Schema = lazyZodSchema(() => z.union([
   CheckpointProviderCreationCandidateRefV1Schema,
   CheckpointScmCreationCandidateRefV1Schema,
   CheckpointComposedCreationCandidateRefV1Schema,
-]);
+]));
 export type CheckpointCreationCandidateRefV1 = z.infer<typeof CheckpointCreationCandidateRefV1Schema>;
 
-const CheckpointCreationCandidateV1BaseSchema = z.object({
+const CheckpointCreationCandidateV1BaseSchema = lazyZodSchema(() => z.object({
   id: NonEmptyStringSchema,
   source: CheckpointRestoreSourceV1Schema,
   scopes: CheckpointScopesSchema,
@@ -300,9 +301,9 @@ const CheckpointCreationCandidateV1BaseSchema = z.object({
     code: NonEmptyStringSchema,
     message: NonEmptyStringSchema.optional(),
   }).strict()).optional(),
-}).strict();
+}).strict());
 
-export const CheckpointCreationCandidateV1Schema = CheckpointCreationCandidateV1BaseSchema.superRefine((candidate, ctx) => {
+export const CheckpointCreationCandidateV1Schema = lazyZodSchema(() => CheckpointCreationCandidateV1BaseSchema.superRefine((candidate, ctx) => {
   if (candidate.source !== candidate.candidate.source) {
     ctx.addIssue({
       code: 'custom',
@@ -317,7 +318,7 @@ export const CheckpointCreationCandidateV1Schema = CheckpointCreationCandidateV1
       path: ['candidate', 'parts'],
     });
   }
-});
+}));
 export type CheckpointCreationCandidateV1 = z.infer<typeof CheckpointCreationCandidateV1Schema>;
 
 export const SanitizedCheckpointCreationCandidateRefV1Schema = CheckpointCreationCandidateRefV1Schema;
@@ -326,12 +327,12 @@ export type SanitizedCheckpointCreationCandidateRefV1 = z.infer<typeof Sanitized
 export const SanitizedCheckpointCreationCandidateV1Schema = CheckpointCreationCandidateV1Schema;
 export type SanitizedCheckpointCreationCandidateV1 = z.infer<typeof SanitizedCheckpointCreationCandidateV1Schema>;
 
-export const CheckpointRestoreConfirmationV1Schema = z.object({
+export const CheckpointRestoreConfirmationV1Schema = lazyZodSchema(() => z.object({
   sourceChoiceConfirmed: z.boolean().optional(),
-}).strict();
+}).strict());
 export type CheckpointRestoreConfirmationV1 = z.infer<typeof CheckpointRestoreConfirmationV1Schema>;
 
-export const SessionCheckpointRequestV1Schema = z.object({
+export const SessionCheckpointRequestV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   sessionId: NonEmptyStringSchema,
   scopes: CheckpointScopesSchema,
@@ -347,10 +348,10 @@ export const SessionCheckpointRequestV1Schema = z.object({
       path: ['candidate', 'parts'],
     });
   }
-});
+}));
 export type SessionCheckpointRequestV1 = z.infer<typeof SessionCheckpointRequestV1Schema>;
 
-export const SessionRestoreRequestV1Schema = z.object({
+export const SessionRestoreRequestV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   sessionId: NonEmptyStringSchema,
   scopes: CheckpointScopesSchema,
@@ -373,17 +374,17 @@ export const SessionRestoreRequestV1Schema = z.object({
       path: ['candidate', 'parts'],
     });
   }
-});
+}));
 export type SessionRestoreRequestV1 = z.infer<typeof SessionRestoreRequestV1Schema>;
 
-export const CheckpointFailedScopeV1Schema = z.object({
+export const CheckpointFailedScopeV1Schema = lazyZodSchema(() => z.object({
   scope: CheckpointRestoreScopeV1Schema,
   code: NonEmptyStringSchema,
   message: NonEmptyStringSchema.optional(),
-}).strict();
+}).strict());
 export type CheckpointFailedScopeV1 = z.infer<typeof CheckpointFailedScopeV1Schema>;
 
-export const CheckpointOperationReceiptV1Schema = z.object({
+export const CheckpointOperationReceiptV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   operation: z.enum(['checkpoint', 'restore']),
   phase: z.enum(['started', 'succeeded', 'partially_succeeded', 'failed']),
@@ -393,10 +394,10 @@ export const CheckpointOperationReceiptV1Schema = z.object({
   candidate: SanitizedCheckpointCandidateRefV1Schema.optional(),
   restoredScopes: CheckpointScopesSchema.optional(),
   failedScopes: z.array(CheckpointFailedScopeV1Schema).optional(),
-}).strict();
+}).strict());
 export type CheckpointOperationReceiptV1 = z.infer<typeof CheckpointOperationReceiptV1Schema>;
 
-export const SessionCheckpointResultV1Schema = z.discriminatedUnion('ok', [
+export const SessionCheckpointResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),
     status: z.enum(['succeeded', 'partially_succeeded']),
@@ -418,10 +419,10 @@ export const SessionCheckpointResultV1Schema = z.discriminatedUnion('ok', [
     candidates: z.array(SanitizedCheckpointCreationCandidateV1Schema).optional(),
     receipts: z.array(CheckpointOperationReceiptV1Schema).optional(),
   }).strict(),
-]);
+]));
 export type SessionCheckpointResultV1 = z.infer<typeof SessionCheckpointResultV1Schema>;
 
-export const SessionRestoreResultV1Schema = z.discriminatedUnion('ok', [
+export const SessionRestoreResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),
     status: z.enum(['succeeded', 'partially_succeeded']),
@@ -448,7 +449,7 @@ export const SessionRestoreResultV1Schema = z.discriminatedUnion('ok', [
     candidates: z.array(SanitizedCheckpointRestoreCandidateV1Schema).optional(),
     receipts: z.array(CheckpointOperationReceiptV1Schema).optional(),
   }).strict(),
-]);
+]));
 export type SessionRestoreResultV1 = z.infer<typeof SessionRestoreResultV1Schema>;
 
 export function sanitizeCheckpointProviderTargetRefV1(

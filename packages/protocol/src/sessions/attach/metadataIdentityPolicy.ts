@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 export const SESSION_ATTACH_METADATA_IDENTITY_POLICIES = [
@@ -8,6 +9,6 @@ export const SESSION_ATTACH_METADATA_IDENTITY_POLICIES = [
 export type SessionAttachMetadataIdentityPolicy =
     (typeof SESSION_ATTACH_METADATA_IDENTITY_POLICIES)[number];
 
-export const SessionAttachMetadataIdentityPolicySchema = z.enum(
+export const SessionAttachMetadataIdentityPolicySchema = lazyZodSchema(() => z.enum(
     SESSION_ATTACH_METADATA_IDENTITY_POLICIES,
-);
+));

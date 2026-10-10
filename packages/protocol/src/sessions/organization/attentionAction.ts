@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { SESSION_ORGANIZATION_MAX_ID_LENGTH } from './constants.js';
@@ -22,11 +23,11 @@ export const SESSION_ATTENTION_STANDING_HTTP_PATH_V1 = '/v2/session-organization
  * The route body plus the exact Session. Exactly one of `standing` / `remindAt` is required; the
  * executor refuses anything else before the port runs, matching the route's own refinement.
  */
-export const SessionAttentionSetInputV1Schema = z.object({
+export const SessionAttentionSetInputV1Schema = lazyZodSchema(() => z.object({
   sessionId: z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_ID_LENGTH),
   standing: z.boolean().nullable().optional(),
   remindAt: z.number().int().nonnegative().nullable().optional(),
-}).strict();
+}).strict());
 export type SessionAttentionSetInputV1 = z.infer<typeof SessionAttentionSetInputV1Schema>;
 
 export const SessionAttentionSetResultV1Schema = SetSessionAttentionStandingResponseSchema;

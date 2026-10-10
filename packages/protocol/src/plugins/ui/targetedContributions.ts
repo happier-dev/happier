@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
@@ -135,18 +136,18 @@ const PluginContributionLocalIdZodSchema = asProtocolZod(PluginContributionLocal
  * mounted target snapshot before opening a no-invoke form, then preserves the
  * same expected contributor generation for the canonical Action dispatcher.
  */
-export const PluginUiTargetedContributionOperationV1Schema = z.object({
+export const PluginUiTargetedContributionOperationV1Schema = lazyZodSchema(() => z.object({
   point: PluginUiTargetedContributionPointRefV1ZodSchema,
   contributor: PluginUiTargetedContributionContributorV1ZodSchema,
   role: PluginContributionOperationRoleV1Schema,
   action: PluginContributionIdentityV1ZodSchema,
-}).strict();
+}).strict());
 export type PluginUiTargetedContributionOperationV1 = z.infer<
   typeof PluginUiTargetedContributionOperationV1Schema
 >;
 
 /** The target-owned non-navigable presentation contract of one admitted Surface role. */
-export const PluginUiTargetedContributionSurfacePresentationV1Schema = z.enum(['content', 'fill']);
+export const PluginUiTargetedContributionSurfacePresentationV1Schema = lazyZodSchema(() => z.enum(['content', 'fill']));
 export type PluginUiTargetedContributionSurfacePresentationV1 = z.infer<
   typeof PluginUiTargetedContributionSurfacePresentationV1Schema
 >;
@@ -155,12 +156,12 @@ export type PluginUiTargetedContributionSurfacePresentationV1 = z.infer<
  * One exact admitted embedded Surface handle projected to the mounted target.
  * It is data-only: role input schema and renderer selection stay host-private.
  */
-export const PluginUiTargetedContributionSurfaceV1Schema = z.object({
+export const PluginUiTargetedContributionSurfaceV1Schema = lazyZodSchema(() => z.object({
   point: PluginUiTargetedContributionPointRefV1ZodSchema,
   contributor: PluginUiTargetedContributionContributorV1ZodSchema,
   role: PluginContributionLocalIdZodSchema,
   presentation: PluginUiTargetedContributionSurfacePresentationV1Schema,
-}).strict();
+}).strict());
 export type PluginUiTargetedContributionSurfaceV1 = z.infer<
   typeof PluginUiTargetedContributionSurfaceV1Schema
 >;
@@ -197,7 +198,7 @@ export function derivePluginUiTargetedSurfaceMountInstanceKeyV1(
   return `targeted-surface:v1:${bytesToHex(sha256(utf8ToBytes(namespace)))}`;
 }
 
-export const PluginUiTargetedContributionV1Schema = z.object({
+export const PluginUiTargetedContributionV1Schema = lazyZodSchema(() => z.object({
   contributor: PluginUiTargetedContributionContributorV1ZodSchema,
   protocol: PluginUiTargetedContributionProtocolV1ZodSchema,
   /** Normalized target-owned descriptor, present only when its protocol declares one. */
@@ -271,7 +272,7 @@ export const PluginUiTargetedContributionV1Schema = z.object({
       });
     }
   });
-});
+}));
 export type PluginUiTargetedContributionV1 = z.infer<
   typeof PluginUiTargetedContributionV1Schema
 >;
@@ -300,7 +301,7 @@ function sameProtocol(
  * point. A contributor cannot appear through a different protocol than this
  * exact accepted epoch.
  */
-export const PluginUiTargetedContributionProtocolSnapshotV1Schema = z.object({
+export const PluginUiTargetedContributionProtocolSnapshotV1Schema = lazyZodSchema(() => z.object({
   protocol: PluginUiTargetedContributionProtocolV1ZodSchema,
   contributions: z.array(PluginUiTargetedContributionV1Schema)
     .max(PLUGIN_UI_TARGETED_CONTRIBUTIONS_MAX_V1),
@@ -328,7 +329,7 @@ export const PluginUiTargetedContributionProtocolSnapshotV1Schema = z.object({
     }
     previousContributorKey = key;
   });
-});
+}));
 export type PluginUiTargetedContributionProtocolSnapshotV1 = z.infer<
   typeof PluginUiTargetedContributionProtocolSnapshotV1Schema
 >;
@@ -337,7 +338,7 @@ export type PluginUiTargetedContributionProtocolSnapshotV1 = z.infer<
  * One target-declared point and all of its accepted protocol epochs. Grouping
  * prevents a point's version bound from silently consuming the point bound.
  */
-export const PluginUiTargetedContributionPointSnapshotV1Schema = z.object({
+export const PluginUiTargetedContributionPointSnapshotV1Schema = lazyZodSchema(() => z.object({
   pointId: PluginContributionLocalIdZodSchema,
   protocols: z.array(PluginUiTargetedContributionProtocolSnapshotV1Schema)
     .min(1)
@@ -389,7 +390,7 @@ export const PluginUiTargetedContributionPointSnapshotV1Schema = z.object({
       message: 'A targeted point cannot expose more than the aggregate contributor ceiling.',
     });
   }
-});
+}));
 export type PluginUiTargetedContributionPointSnapshotV1 = z.infer<
   typeof PluginUiTargetedContributionPointSnapshotV1Schema
 >;
@@ -402,7 +403,7 @@ export type PluginUiTargetedContributionPointSnapshotV1 = z.infer<
  * may cross only on its owning admitted contribution; renderer and input-schema
  * facts remain host-private.
  */
-export const PluginUiTargetedContributionsV1Schema = z.object({
+export const PluginUiTargetedContributionsV1Schema = lazyZodSchema(() => z.object({
   target: PluginUiTargetedContributionTargetV1ZodSchema,
   points: z.array(PluginUiTargetedContributionPointSnapshotV1Schema)
     .max(PLUGIN_UI_TARGETED_CONTRIBUTION_POINTS_MAX_V1),
@@ -418,7 +419,7 @@ export const PluginUiTargetedContributionsV1Schema = z.object({
     }
     previousPointId = point.pointId;
   });
-});
+}));
 export type PluginUiTargetedContributionsV1 = z.infer<
   typeof PluginUiTargetedContributionsV1Schema
 >;

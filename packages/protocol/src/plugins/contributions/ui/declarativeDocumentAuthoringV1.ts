@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 import { isPluginDeclarativeDataNodeV1, validatePluginDeclarativeDataNodeV1, type PluginDeclarativeDataSourceV1 } from './declarativeDataV1.js';
 
@@ -22,7 +23,7 @@ export type PluginDeclarativeDocumentV1 = Readonly<{
   root: PluginDeclarativeNodeV2;
 }>;
 
-export const PluginDeclarativeDocumentV1Schema: z.ZodType<PluginDeclarativeDocumentV1> = z.object({
+export const PluginDeclarativeDocumentV1Schema: z.ZodType<PluginDeclarativeDocumentV1> = lazyZodSchema(() => z.object({
   version: z.literal(1),
   // UI contribution schemas consume this document while their Action grammar
   // is still initializing. Defer the reverse edge until a document is parsed.
@@ -37,7 +38,7 @@ export const PluginDeclarativeDocumentV1Schema: z.ZodType<PluginDeclarativeDocum
     }
     if ('children' in node) pending.push(...node.children);
   }
-});
+}));
 
 /** Presentation tree traversal only; actual read admission remains Resource-owned. */
 export function readPluginDeclarativeDataSourcesV1(document: PluginDeclarativeDocumentV1): readonly PluginDeclarativeDataSourceV1[] {

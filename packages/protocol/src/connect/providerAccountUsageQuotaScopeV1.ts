@@ -1,6 +1,7 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
-export const ProviderAccountUsageQuotaScopeV1Schema = z.enum([
+export const ProviderAccountUsageQuotaScopeV1Schema = lazyZodSchema(() => z.enum([
   'account',
   'workspace',
   'organization',
@@ -8,7 +9,7 @@ export const ProviderAccountUsageQuotaScopeV1Schema = z.enum([
   'model',
   'provider',
   'unknown',
-]);
+]));
 
 export type ProviderAccountUsageQuotaScopeV1 = z.infer<
   typeof ProviderAccountUsageQuotaScopeV1Schema

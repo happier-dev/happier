@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
@@ -17,12 +18,12 @@ const PLUGIN_COLLECTION_MEMBER_NAME_V1_PATTERN = /^[a-z][A-Za-z0-9]*(?:-[A-Za-z0
  * stay on `PluginContributionLocalIdSchema`; this only names members within a
  * declared Collection contract.
  */
-export const PluginCollectionMemberNameV1Schema = z.string()
+export const PluginCollectionMemberNameV1Schema = lazyZodSchema(() => z.string()
   .max(MAX_PLUGIN_IDENTIFIER_BYTES)
   .regex(
     PLUGIN_COLLECTION_MEMBER_NAME_V1_PATTERN,
     'Collection member names must start lower-case, use ASCII alphanumerics, and use only single internal hyphens.',
-  );
+  ));
 export type PluginCollectionMemberNameV1 = z.infer<typeof PluginCollectionMemberNameV1Schema>;
 
 /**
@@ -30,11 +31,11 @@ export type PluginCollectionMemberNameV1 = z.infer<typeof PluginCollectionMember
  * chain. The executable callback is candidate code and is deliberately not a
  * Protocol or manifest field.
  */
-export const PluginCollectionMigrationDeclarationV1Schema = z.object({
+export const PluginCollectionMigrationDeclarationV1Schema = lazyZodSchema(() => z.object({
   id: PluginCollectionMemberNameV1Schema,
   fromSchemaVersion: z.number().int().min(1),
   toSchemaVersion: z.number().int().min(1),
-}).strict();
+}).strict());
 export type PluginCollectionMigrationDeclarationV1 = z.infer<
   typeof PluginCollectionMigrationDeclarationV1Schema
 >;
@@ -45,10 +46,10 @@ export type PluginCollectionMigrationDeclarationV1 = z.infer<
  * contribution family; a renderer or another executable family naming the
  * same export does not become a Collection migration owner.
  */
-export const PluginCollectionMigrationArtifactReferenceV1Schema = z.object({
+export const PluginCollectionMigrationArtifactReferenceV1Schema = lazyZodSchema(() => z.object({
   artifactId: asProtocolZod(PluginContributionLocalIdSchema),
   exportName: z.literal('collectionMigrations'),
-}).strict();
+}).strict());
 export type PluginCollectionMigrationArtifactReferenceV1 = z.infer<
   typeof PluginCollectionMigrationArtifactReferenceV1Schema
 >;
@@ -87,7 +88,7 @@ export function resolvePluginCollectionMigrationChainV1(input: Readonly<{
  * Collection field references are root-object members. Keep their grammar on
  * the schema owner so author input and persisted reconstruction cannot drift.
  */
-export const PluginCollectionSchemaV1Schema: z.ZodType<PluginJsonSchemaV2> = PluginJsonSchemaV2Schema.superRefine(
+export const PluginCollectionSchemaV1Schema: z.ZodType<PluginJsonSchemaV2> = lazyZodSchema(() => PluginJsonSchemaV2Schema.superRefine(
   (schema, context) => {
     for (const field of Object.keys(schema.properties ?? {})) {
       if (!PluginCollectionMemberNameV1Schema.safeParse(field).success) {
@@ -108,32 +109,32 @@ export const PluginCollectionSchemaV1Schema: z.ZodType<PluginJsonSchemaV2> = Plu
       }
     }
   },
-);
+));
 
-export const PluginCollectionScalarKindV1Schema = z.enum(['string', 'finiteNumber', 'boolean', 'instant']);
+export const PluginCollectionScalarKindV1Schema = lazyZodSchema(() => z.enum(['string', 'finiteNumber', 'boolean', 'instant']));
 export type PluginCollectionScalarKindV1 = z.infer<typeof PluginCollectionScalarKindV1Schema>;
 
-export const PluginCollectionFiniteNumberV1Schema = z.number().finite();
+export const PluginCollectionFiniteNumberV1Schema = lazyZodSchema(() => z.number().finite());
 const MAX_COLLECTION_PROJECTED_STRING_UTF8_BYTES = 4 * 1024;
 
 function utf8ByteLength(value: string): number {
   return new TextEncoder().encode(value).length;
 }
 
-export const PluginCollectionProjectedStringV1Schema = z.string().superRefine((value, context) => {
+export const PluginCollectionProjectedStringV1Schema = lazyZodSchema(() => z.string().superRefine((value, context) => {
   if (utf8ByteLength(value) > MAX_COLLECTION_PROJECTED_STRING_UTF8_BYTES) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'Projected string exceeds the 4 KiB limit.' });
   }
-});
+}));
 
-export const PluginCollectionProjectedScalarValueV1Schema = z.union([
+export const PluginCollectionProjectedScalarValueV1Schema = lazyZodSchema(() => z.union([
   z.null(),
   z.boolean(),
   PluginCollectionProjectedStringV1Schema,
   PluginCollectionFiniteNumberV1Schema,
-]);
+]));
 
-const StringParameterSchema = z.object({
+const StringParameterSchema = lazyZodSchema(() => z.object({
   kind: z.literal('string'),
   maxUtf8Bytes: z.number().int().min(1).max(256),
   enum: z.array(z.string().min(1).max(256)).min(1).max(64).optional(),
@@ -141,8 +142,8 @@ const StringParameterSchema = z.object({
   if (value.enum && new Set(value.enum).size !== value.enum.length) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['enum'], message: 'String enum values must be unique.' });
   }
-});
-const FiniteNumberParameterSchema = z.object({
+}));
+const FiniteNumberParameterSchema = lazyZodSchema(() => z.object({
   kind: z.literal('finiteNumber'),
   minimum: PluginCollectionFiniteNumberV1Schema.optional(),
   maximum: PluginCollectionFiniteNumberV1Schema.optional(),
@@ -150,44 +151,44 @@ const FiniteNumberParameterSchema = z.object({
   if (value.minimum !== undefined && value.maximum !== undefined && value.minimum > value.maximum) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['maximum'], message: 'maximum must not be below minimum.' });
   }
-});
-const BooleanParameterSchema = z.object({ kind: z.literal('boolean') }).strict();
-const InstantParameterSchema = z.object({ kind: z.literal('instant') }).strict();
+}));
+const BooleanParameterSchema = lazyZodSchema(() => z.object({ kind: z.literal('boolean') }).strict());
+const InstantParameterSchema = lazyZodSchema(() => z.object({ kind: z.literal('instant') }).strict());
 
-export const PluginCollectionUiQueryParameterV1Schema = z.discriminatedUnion('kind', [
+export const PluginCollectionUiQueryParameterV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   StringParameterSchema,
   FiniteNumberParameterSchema,
   BooleanParameterSchema,
   InstantParameterSchema,
-]);
+]));
 export type PluginCollectionUiQueryParameterV1 = z.infer<typeof PluginCollectionUiQueryParameterV1Schema>;
 
-export const PluginCollectionUiQueryValueV1Schema = z.union([
+export const PluginCollectionUiQueryValueV1Schema = lazyZodSchema(() => z.union([
   z.object({
     kind: z.literal('literal'),
     value: z.union([z.null(), z.boolean(), z.string(), PluginCollectionFiniteNumberV1Schema]),
   }).strict(),
   z.object({ kind: z.literal('parameter'), parameterId: PluginCollectionMemberNameV1Schema }).strict(),
-]);
+]));
 export type PluginCollectionUiQueryValueV1 = z.infer<typeof PluginCollectionUiQueryValueV1Schema>;
 
-export const PluginCollectionIndexFieldV1Schema = z.object({
+export const PluginCollectionIndexFieldV1Schema = lazyZodSchema(() => z.object({
   field: PluginCollectionMemberNameV1Schema,
   direction: z.enum(['asc', 'desc']).default('asc'),
-}).strict();
+}).strict());
 export type PluginCollectionIndexFieldV1 = z.infer<typeof PluginCollectionIndexFieldV1Schema>;
 
-export const PluginCollectionIndexV1Schema = z.object({
+export const PluginCollectionIndexV1Schema = lazyZodSchema(() => z.object({
   id: PluginCollectionMemberNameV1Schema,
   fields: z.array(PluginCollectionIndexFieldV1Schema).min(1).max(4),
 }).strict().superRefine((value, context) => {
   if (new Set(value.fields.map((field) => field.field)).size !== value.fields.length) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['fields'], message: 'Index fields must be unique.' });
   }
-});
+}));
 export type PluginCollectionIndexV1 = z.infer<typeof PluginCollectionIndexV1Schema>;
 
-export const PluginCollectionUiQueryDescriptorV1Schema = z.object({
+export const PluginCollectionUiQueryDescriptorV1Schema = lazyZodSchema(() => z.object({
   id: PluginCollectionMemberNameV1Schema,
   indexId: PluginCollectionMemberNameV1Schema,
   parameters: z.record(PluginCollectionMemberNameV1Schema, PluginCollectionUiQueryParameterV1Schema).default({}),
@@ -206,10 +207,10 @@ export const PluginCollectionUiQueryDescriptorV1Schema = z.object({
   if (new Set(value.projectedFields).size !== value.projectedFields.length) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['projectedFields'], message: 'Projected fields must be unique.' });
   }
-});
+}));
 export type PluginCollectionUiQueryDescriptorV1 = z.infer<typeof PluginCollectionUiQueryDescriptorV1Schema>;
 
-const PluginCollectionSamePluginRelationV1Schema = z.object({
+const PluginCollectionSamePluginRelationV1Schema = lazyZodSchema(() => z.object({
   id: PluginCollectionMemberNameV1Schema,
   kind: z.literal('collection'),
   field: PluginCollectionMemberNameV1Schema,
@@ -225,27 +226,27 @@ const PluginCollectionSamePluginRelationV1Schema = z.object({
       message: 'Required collection relations cannot nullify.',
     });
   }
-});
-const PluginCollectionHostRelationV1Schema = z.object({
+}));
+const PluginCollectionHostRelationV1Schema = lazyZodSchema(() => z.object({
   id: PluginCollectionMemberNameV1Schema,
   kind: z.literal('host'),
   field: PluginCollectionMemberNameV1Schema,
   hostKind: z.enum(['account', 'machine', 'session', 'message', 'artifact', 'connectedAccount']),
-}).strict();
-export const PluginCollectionRelationV1Schema = z.discriminatedUnion('kind', [
+}).strict());
+export const PluginCollectionRelationV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   PluginCollectionSamePluginRelationV1Schema,
   PluginCollectionHostRelationV1Schema,
-]);
+]));
 export type PluginCollectionRelationV1 = z.infer<typeof PluginCollectionRelationV1Schema>;
 
-export const PluginCollectionIndexPrefixQuotaV1Schema = z.object({
+export const PluginCollectionIndexPrefixQuotaV1Schema = lazyZodSchema(() => z.object({
   indexId: PluginCollectionMemberNameV1Schema,
   prefix: z.array(PluginCollectionProjectedScalarValueV1Schema).min(1).max(4),
   maxRows: z.number().int().positive().max(PLUGIN_COLLECTION_LIMITS_V1.maximumAccountRows),
-}).strict();
+}).strict());
 export type PluginCollectionIndexPrefixQuotaV1 = z.infer<typeof PluginCollectionIndexPrefixQuotaV1Schema>;
 
-export const PluginCollectionQuotaRequestV1Schema = z.object({
+export const PluginCollectionQuotaRequestV1Schema = lazyZodSchema(() => z.object({
   maxRows: z.number().int().positive().max(PLUGIN_COLLECTION_LIMITS_V1.maximumAccountRows).optional(),
   maxCollectionEncodedBytes: z.number().int().positive().max(PLUGIN_COLLECTION_LIMITS_V1.maximumAccountEncodedBytes).optional(),
   maxRowEncodedBytes: z.number().int().positive().max(PLUGIN_COLLECTION_LIMITS_V1.maximumStoredRowEncodedBytes).optional(),
@@ -256,13 +257,13 @@ export const PluginCollectionQuotaRequestV1Schema = z.object({
     || value.maxRowEncodedBytes !== undefined
     || value.maxRowsByIndexPrefix !== undefined,
   'A collection quota request must name at least one limit.',
-);
+));
 export type PluginCollectionQuotaRequestV1 = z.infer<typeof PluginCollectionQuotaRequestV1Schema>;
 
-export const PluginCollectionProjectedScalarFieldRefV1Schema = z.object({
+export const PluginCollectionProjectedScalarFieldRefV1Schema = lazyZodSchema(() => z.object({
   field: PluginCollectionMemberNameV1Schema,
   kind: PluginCollectionScalarKindV1Schema,
-}).strict();
+}).strict());
 export type PluginCollectionProjectedScalarFieldRefV1 = z.infer<
   typeof PluginCollectionProjectedScalarFieldRefV1Schema
 >;
@@ -276,7 +277,7 @@ export type PluginCollectionProjectedScalarFieldRefV1 = z.infer<
 export { PluginCollectionSchemaVersionV1Schema, type PluginCollectionSchemaVersionV1 } from './collectionContractRefV1.js';
 
 /** Static, descriptor-only contribution. Runtime collection registration is intentionally absent. */
-export const PluginAccountCollectionContributionV1Schema = z.object({
+export const PluginAccountCollectionContributionV1Schema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   schemaVersion: PluginCollectionSchemaVersionV1Schema,
   schema: PluginCollectionSchemaV1Schema,
@@ -390,7 +391,7 @@ export const PluginAccountCollectionContributionV1Schema = z.object({
       message: 'A Collection without migrations must not declare a migration Artifact.',
     });
   }
-});
+}));
 export type PluginAccountCollectionContributionV1 = z.infer<
   typeof PluginAccountCollectionContributionV1Schema
 >;

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ModelOverrideV1Schema } from '../../metadata/metadataOverridesV1.js';
@@ -11,10 +12,10 @@ export const SessionStateModelWriteValueSchema = SessionModelSelectionIntentV1Sc
  * It is intentionally not a normalized model selection because the generic state layer
  * does not know the session's canonical agent target.
  */
-export const SessionStateModelReadCompatValueSchema = z.union([
+export const SessionStateModelReadCompatValueSchema = lazyZodSchema(() => z.union([
   SessionModelSelectionIntentV1Schema,
   ModelOverrideV1Schema,
-]);
+]));
 
 // Existing generic session-state ingress is a read/replay boundary. Keep its public name,
 // while new TypeScript publishers are restricted by SessionStateFieldWriteValue.

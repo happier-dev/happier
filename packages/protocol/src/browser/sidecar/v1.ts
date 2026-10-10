@@ -1,11 +1,12 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { BrowserProfileStorageModeV1Schema } from '../profile/v1.js';
 
-const IdSchema = z.string().trim().min(1).max(256);
-const NonNegativeIntSchema = z.number().int().nonnegative();
+const IdSchema = lazyZodSchema(() => z.string().trim().min(1).max(256));
+const NonNegativeIntSchema = lazyZodSchema(() => z.number().int().nonnegative());
 
-export const BrowserSidecarRuntimeStateV1Schema = z.enum([
+export const BrowserSidecarRuntimeStateV1Schema = lazyZodSchema(() => z.enum([
   'unavailable',
   'installing',
   'ready',
@@ -13,23 +14,23 @@ export const BrowserSidecarRuntimeStateV1Schema = z.enum([
   'running',
   'stopping',
   'crashed',
-]);
+]));
 export type BrowserSidecarRuntimeStateV1 = z.infer<typeof BrowserSidecarRuntimeStateV1Schema>;
 
-export const BrowserSidecarBinarySourceV1Schema = z.enum([
+export const BrowserSidecarBinarySourceV1Schema = lazyZodSchema(() => z.enum([
   'managedBrowserPackage',
   'chromeForTesting',
   'playwrightChromium',
   'systemChrome',
   'electronChromium',
   'unsupported',
-]);
+]));
 export type BrowserSidecarBinarySourceV1 = z.infer<typeof BrowserSidecarBinarySourceV1Schema>;
 
-const Sha256IntegrityDigestSchema = z
+const Sha256IntegrityDigestSchema = lazyZodSchema(() => z
   .string()
   .trim()
-  .regex(/^sha256:[0-9a-f]{64}$/, 'Integrity digest must be a lowercase sha256:<hex64> string');
+  .regex(/^sha256:[0-9a-f]{64}$/, 'Integrity digest must be a lowercase sha256:<hex64> string'));
 
 /**
  * Provenance metadata for a managed Browser sidecar binary. This is the BRW-7 acceptance shape:
@@ -38,7 +39,7 @@ const Sha256IntegrityDigestSchema = z
  * descriptor — it never trusts a caller-asserted `verifiedDigest`/signature (see FP-BRW-SOURCE-1
  * §7). A source that cannot present pinned-version + verified digest must fail closed.
  */
-export const BrowserSidecarBinaryProvenanceV1Schema = z
+export const BrowserSidecarBinaryProvenanceV1Schema = lazyZodSchema(() => z
   .object({
     /** Where the artifact provenance originates. Only managed_package is product-eligible. */
     origin: z.enum(['managed_package']),
@@ -53,13 +54,13 @@ export const BrowserSidecarBinaryProvenanceV1Schema = z
     /** SPDX-style license identifier of the managed distribution. */
     license: z.string().trim().min(1).max(128),
   })
-  .strict();
+  .strict());
 export type BrowserSidecarBinaryProvenanceV1 = z.infer<typeof BrowserSidecarBinaryProvenanceV1Schema>;
 
 // `browser_policy_denied` was retired with the `browserUseAllowed` chain (E2-F1): it was a second
 // decision-maker for a question the `browser.sidecar` feature bit already owns, so a policy denial
 // is reported as `feature_disabled` from the one fail-close point in `createSidecarLaunchPlan`.
-export const BrowserSidecarErrorCodeV1Schema = z.enum([
+export const BrowserSidecarErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'feature_disabled',
   'managed_package_missing',
   'unsupported_platform',
@@ -74,28 +75,28 @@ export const BrowserSidecarErrorCodeV1Schema = z.enum([
   'capture_unavailable',
   'cdp_unavailable',
   'sandbox_unavailable',
-]);
+]));
 export type BrowserSidecarErrorCodeV1 = z.infer<typeof BrowserSidecarErrorCodeV1Schema>;
 
-export const BrowserSidecarProfileBindingV1Schema = z
+export const BrowserSidecarProfileBindingV1Schema = lazyZodSchema(() => z
   .object({
     profileId: IdSchema,
     storageMode: BrowserProfileStorageModeV1Schema,
     ownerKind: z.enum(['session', 'user', 'plugin']),
     ownerId: IdSchema,
   })
-  .strict();
+  .strict());
 export type BrowserSidecarProfileBindingV1 = z.infer<typeof BrowserSidecarProfileBindingV1Schema>;
 
-export const BrowserSidecarResourcePressureV1Schema = z
+export const BrowserSidecarResourcePressureV1Schema = lazyZodSchema(() => z
   .object({
     memoryRssBytes: NonNegativeIntSchema.optional(),
     cpuPercent: z.number().min(0).max(100).optional(),
   })
-  .strict();
+  .strict());
 export type BrowserSidecarResourcePressureV1 = z.infer<typeof BrowserSidecarResourcePressureV1Schema>;
 
-export const BrowserSidecarRuntimeStatusV1Schema = z
+export const BrowserSidecarRuntimeStatusV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     sidecarId: IdSchema,
@@ -107,10 +108,10 @@ export const BrowserSidecarRuntimeStatusV1Schema = z
     errorCode: BrowserSidecarErrorCodeV1Schema.optional(),
     updatedAtMs: NonNegativeIntSchema,
   })
-  .strict();
+  .strict());
 export type BrowserSidecarRuntimeStatusV1 = z.infer<typeof BrowserSidecarRuntimeStatusV1Schema>;
 
-export const BrowserSidecarLaunchResultV1Schema = z.discriminatedUnion('accepted', [
+export const BrowserSidecarLaunchResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('accepted', [
   z
     .object({
       v: z.literal(1),
@@ -129,5 +130,5 @@ export const BrowserSidecarLaunchResultV1Schema = z.discriminatedUnion('accepted
       disabledReason: z.string().trim().min(1).max(512),
     })
     .strict(),
-]);
+]));
 export type BrowserSidecarLaunchResultV1 = z.infer<typeof BrowserSidecarLaunchResultV1Schema>;

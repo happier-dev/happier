@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { AgentActivityStatusV1Schema } from '../agentActivity/agentActivityStatusV1.js';
@@ -40,7 +41,7 @@ export const BACKGROUND_TASK_KINDS_V1 = [
   'unknown',
 ] as const;
 
-export const BackgroundTaskKindV1Schema = z.enum(BACKGROUND_TASK_KINDS_V1);
+export const BackgroundTaskKindV1Schema = lazyZodSchema(() => z.enum(BACKGROUND_TASK_KINDS_V1));
 export type BackgroundTaskKindV1 = z.infer<typeof BackgroundTaskKindV1Schema>;
 
 /**
@@ -67,7 +68,7 @@ export type BackgroundTaskKindV1 = z.infer<typeof BackgroundTaskKindV1Schema>;
  * this record is the one place a redaction bug could persist a raw command, so the schema is a
  * chokepoint that drops anything the contract does not name instead of forwarding it.
  */
-export const SessionBackgroundTaskRecordV1Schema = z
+export const SessionBackgroundTaskRecordV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     /** Provider task id. Also the record's local-id component, so it is the join key. */
@@ -108,5 +109,5 @@ export const SessionBackgroundTaskRecordV1Schema = z
     /** Epoch ms of the most recent evidence about this task. */
     updatedAt: z.number().int().nonnegative(),
   })
-  .strip();
+  .strip());
 export type SessionBackgroundTaskRecordV1 = z.infer<typeof SessionBackgroundTaskRecordV1Schema>;

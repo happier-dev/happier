@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { SessionSystemRecordKindSchema } from './sessionSystemRecordKind.js';
@@ -24,7 +25,7 @@ export const SessionSystemRecordLocalIdSchema = boundedUtf8(256)
   .refine((value) => value === value.trim(), 'Value must already be trimmed')
   .refine((value) => !/[\u0000-\u001f\u007f]/.test(value), 'Control characters are forbidden');
 
-export const SessionSystemRecordAddressSchema = z.discriminatedUnion('owner', [
+export const SessionSystemRecordAddressSchema = lazyZodSchema(() => z.discriminatedUnion('owner', [
   z.object({
     owner: z.literal('plugin'),
     namespace: SessionSystemRecordNamespaceLocalIdSchema,
@@ -37,7 +38,7 @@ export const SessionSystemRecordAddressSchema = z.discriminatedUnion('owner', [
     kind: SessionSystemRecordKindSchema,
     localId: SessionSystemRecordLocalIdSchema,
   }).strict(),
-]);
+]));
 
 export type SessionSystemRecordNamespaceLocalId = z.infer<typeof SessionSystemRecordNamespaceLocalIdSchema>;
 export type SessionSystemRecordKindLocalId = z.infer<typeof SessionSystemRecordKindLocalIdSchema>;

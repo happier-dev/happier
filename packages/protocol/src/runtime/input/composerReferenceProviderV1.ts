@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 
@@ -98,7 +99,7 @@ export function readComposerReferenceMentionV1(value: unknown): Readonly<{
   };
 }
 
-export const ComposerReferenceContextBlockEntryV1Schema = z.object({
+export const ComposerReferenceContextBlockEntryV1Schema = lazyZodSchema(() => z.object({
   reference: asProtocolZod(PluginContributionIdentityV1Schema),
   candidateId: ComposerReferenceCandidateIdV1Schema,
   resolution: ComposerReferenceResolutionV1Schema,
@@ -110,17 +111,17 @@ export const ComposerReferenceContextBlockEntryV1Schema = z.object({
       message: 'Composer reference resolution must match the requested candidate id.',
     });
   }
-});
+}));
 export type ComposerReferenceContextBlockEntryV1 = Readonly<{
   reference: PluginContributionIdentityV1;
   candidateId: string;
   resolution: ComposerReferenceResolutionV1;
 }>;
 
-export const ComposerAttachmentContextBlockEntryV1Schema = z.object({
+export const ComposerAttachmentContextBlockEntryV1Schema = lazyZodSchema(() => z.object({
   attachment: ResolvedComposerAttachmentDispatchV1Schema,
   context: ComposerReferenceContextV1Schema.optional(),
-}).strict();
+}).strict());
 export type ComposerAttachmentContextBlockEntryV1 = Readonly<{
   attachment: ResolvedComposerAttachmentDispatchV1;
   context?: string;

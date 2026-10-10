@@ -1,10 +1,11 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { sanitizeBugReportUrl } from '../bugs/reports/sanitize.js';
 
 const NonEmptyString = z.string().trim().min(1);
-const PublicReleaseChannelLabelSchema = z.enum(['stable', 'preview', 'dev']);
-const HappierInstallationSourceSchema = z.enum([
+const PublicReleaseChannelLabelSchema = lazyZodSchema(() => z.enum(['stable', 'preview', 'dev']));
+const HappierInstallationSourceSchema = lazyZodSchema(() => z.enum([
   'firstPartyManaged',
   'selfHostManaged',
   'stackManaged',
@@ -12,28 +13,28 @@ const HappierInstallationSourceSchema = z.enum([
   'npmGlobal',
   'pathBinary',
   'unknown',
-]);
-const HappierServicePlatformSchema = z.enum(['darwin', 'linux', 'win32']);
-const HappierServiceBackendSchema = z.enum([
+]));
+const HappierServicePlatformSchema = lazyZodSchema(() => z.enum(['darwin', 'linux', 'win32']));
+const HappierServiceBackendSchema = lazyZodSchema(() => z.enum([
   'launchd',
   'systemd-user',
   'systemd-system',
   'schtasks-user',
   'schtasks-system',
-]);
-const HappierServiceVerificationSchema = z.enum(['verified', 'candidate']);
-const HappierServiceTargetModeSchema = z.enum(['pinned', 'default-following']);
-const DoctorSnapshotAutomaticStartupTargetModeSchema = z.enum(['pinned', 'default-following', 'legacy-pinned']);
-const HappierWarningSeveritySchema = z.enum(['info', 'warning', 'error']);
+]));
+const HappierServiceVerificationSchema = lazyZodSchema(() => z.enum(['verified', 'candidate']));
+const HappierServiceTargetModeSchema = lazyZodSchema(() => z.enum(['pinned', 'default-following']));
+const DoctorSnapshotAutomaticStartupTargetModeSchema = lazyZodSchema(() => z.enum(['pinned', 'default-following', 'legacy-pinned']));
+const HappierWarningSeveritySchema = lazyZodSchema(() => z.enum(['info', 'warning', 'error']));
 const NonNegativeInteger = z.number().int().nonnegative();
 
-const DoctorSnapshotTransportObservationSchema = z.object({
+const DoctorSnapshotTransportObservationSchema = lazyZodSchema(() => z.object({
   carrier: z.enum(['https', 'iroh']).optional(),
   /** Omitted when native reports `unknown`; diagnostics never infer a path. */
   observedPath: z.enum(['direct', 'relay']).optional(),
-});
+}));
 
-export const DoctorSnapshotHomeTransportDiagnosticsSchema = z.object({
+export const DoctorSnapshotHomeTransportDiagnosticsSchema = lazyZodSchema(() => z.object({
   homeServerIdentityId: NonEmptyString,
   /** Remote Home transport identity; public diagnostic metadata, never a key. */
   remoteEndpointId: NonEmptyString.max(256).optional(),
@@ -58,7 +59,7 @@ export const DoctorSnapshotHomeTransportDiagnosticsSchema = z.object({
     message: NonEmptyString.max(1_024).optional(),
     atMs: z.number().int().nonnegative(),
   }).optional(),
-});
+}));
 
 export type DoctorSnapshotHomeTransportDiagnostics = z.infer<typeof DoctorSnapshotHomeTransportDiagnosticsSchema>;
 
@@ -115,7 +116,7 @@ export function sanitizeDoctorDiagnosticErrorMessage(message: string): string {
     || 'Unknown transport error';
 }
 
-export const DoctorSnapshotServerProfileSchema = z.object({
+export const DoctorSnapshotServerProfileSchema = lazyZodSchema(() => z.object({
   id: NonEmptyString,
   name: NonEmptyString,
   serverUrl: NonEmptyString,
@@ -124,11 +125,11 @@ export const DoctorSnapshotServerProfileSchema = z.object({
   createdAt: z.number(),
   updatedAt: z.number(),
   lastUsedAt: z.number(),
-});
+}));
 
 export type DoctorSnapshotServerProfile = z.infer<typeof DoctorSnapshotServerProfileSchema>;
 
-export const DoctorSnapshotDaemonStatusSchema = z.object({
+export const DoctorSnapshotDaemonStatusSchema = lazyZodSchema(() => z.object({
   server: z.object({
     activeServerId: NonEmptyString,
     serverUrl: NonEmptyString,
@@ -178,20 +179,20 @@ export const DoctorSnapshotDaemonStatusSchema = z.object({
     /** Readable label of the validated account (username, else display name); never an email. */
     accountLabel: NonEmptyString.nullable().optional(),
   }),
-});
+}));
 
 export type DoctorSnapshotDaemonStatus = z.infer<typeof DoctorSnapshotDaemonStatusSchema>;
 
-export const HappierDoctorActiveInvocationSchema = z.object({
+export const HappierDoctorActiveInvocationSchema = lazyZodSchema(() => z.object({
   path: NonEmptyString,
   realPath: NonEmptyString.nullable(),
   invokerName: NonEmptyString.nullable(),
   ring: PublicReleaseChannelLabelSchema.nullable(),
   version: NonEmptyString.nullable(),
   installationId: NonEmptyString.nullable(),
-});
+}));
 
-export const HappierDoctorInstallationSchema = z.object({
+export const HappierDoctorInstallationSchema = lazyZodSchema(() => z.object({
   id: NonEmptyString,
   source: HappierInstallationSourceSchema,
   components: z.array(NonEmptyString).min(1),
@@ -202,14 +203,14 @@ export const HappierDoctorInstallationSchema = z.object({
   shimName: NonEmptyString.nullable(),
   onPath: z.boolean(),
   managedRoot: NonEmptyString.nullable(),
-});
+}));
 
-export const HappierDoctorInstallationInventorySchema = z.object({
+export const HappierDoctorInstallationInventorySchema = lazyZodSchema(() => z.object({
   activeInvocation: HappierDoctorActiveInvocationSchema.nullable(),
   installations: z.array(HappierDoctorInstallationSchema),
-});
+}));
 
-export const HappierDoctorServiceSchema = z.object({
+export const HappierDoctorServiceSchema = lazyZodSchema(() => z.object({
   id: NonEmptyString,
   serviceType: NonEmptyString,
   platform: HappierServicePlatformSchema,
@@ -226,13 +227,13 @@ export const HappierDoctorServiceSchema = z.object({
   publicServerUrl: NonEmptyString.nullable().optional(),
   installed: z.boolean(),
   running: z.boolean(),
-});
+}));
 
-export const HappierDoctorServiceInventorySchema = z.object({
+export const HappierDoctorServiceInventorySchema = lazyZodSchema(() => z.object({
   services: z.array(HappierDoctorServiceSchema),
-});
+}));
 
-export const DoctorSnapshotRepairSummarySchema = z.object({
+export const DoctorSnapshotRepairSummarySchema = lazyZodSchema(() => z.object({
   schemaVersion: z.number().int().positive().optional(),
   status: z.enum(['ok', 'needs_attention', 'blocked', 'unknown']).optional(),
   findingCounts: z.object({
@@ -245,9 +246,9 @@ export const DoctorSnapshotRepairSummarySchema = z.object({
   }).optional(),
   findingKinds: z.array(NonEmptyString).optional(),
   generatedAt: NonEmptyString.optional(),
-}).passthrough();
+}).passthrough());
 
-export const DoctorSnapshotLocalRelaySchema = z.object({
+export const DoctorSnapshotLocalRelaySchema = lazyZodSchema(() => z.object({
   id: NonEmptyString,
   releaseChannel: PublicReleaseChannelLabelSchema,
   relayUrl: NonEmptyString.nullable(),
@@ -258,13 +259,13 @@ export const DoctorSnapshotLocalRelaySchema = z.object({
   serviceEnabled: z.boolean().nullable().optional(),
   port: z.number().int().positive().nullable().optional(),
   installRoot: NonEmptyString.nullable().optional(),
-}).passthrough();
+}).passthrough());
 
-export const DoctorSnapshotLocalRelayInventorySchema = z.object({
+export const DoctorSnapshotLocalRelayInventorySchema = lazyZodSchema(() => z.object({
   relays: z.array(DoctorSnapshotLocalRelaySchema),
-}).passthrough();
+}).passthrough());
 
-export const DoctorSnapshotAutomaticStartupEntrySchema = z.object({
+export const DoctorSnapshotAutomaticStartupEntrySchema = lazyZodSchema(() => z.object({
   id: NonEmptyString,
   label: NonEmptyString,
   releaseChannel: PublicReleaseChannelLabelSchema.nullable().optional(),
@@ -274,24 +275,24 @@ export const DoctorSnapshotAutomaticStartupEntrySchema = z.object({
   running: z.boolean().nullable(),
   definitionPath: NonEmptyString.nullable().optional(),
   relayUrl: NonEmptyString.nullable().optional(),
-}).passthrough();
+}).passthrough());
 
-export const DoctorSnapshotAutomaticStartupSummarySchema = z.object({
+export const DoctorSnapshotAutomaticStartupSummarySchema = lazyZodSchema(() => z.object({
   entries: z.array(DoctorSnapshotAutomaticStartupEntrySchema),
   defaultFollowingCount: NonNegativeInteger.optional(),
   pinnedCount: NonNegativeInteger.optional(),
-}).passthrough();
+}).passthrough());
 
-export const DoctorSnapshotActiveStackSummarySchema = z.object({
+export const DoctorSnapshotActiveStackSummarySchema = lazyZodSchema(() => z.object({
   activeServerId: NonEmptyString,
   releaseChannel: PublicReleaseChannelLabelSchema.nullable().optional(),
   relayUrl: NonEmptyString,
   publicRelayUrl: NonEmptyString.optional(),
   localRelayUrl: NonEmptyString.nullable().optional(),
   source: NonEmptyString.optional(),
-}).passthrough();
+}).passthrough());
 
-export const DoctorSnapshotServiceHealthSchema = z.object({
+export const DoctorSnapshotServiceHealthSchema = lazyZodSchema(() => z.object({
   backgroundService: z.object({
     installed: z.boolean(),
     running: z.boolean(),
@@ -300,16 +301,16 @@ export const DoctorSnapshotServiceHealthSchema = z.object({
     releaseChannel: PublicReleaseChannelLabelSchema.nullable().optional(),
     relayUrl: NonEmptyString.nullable().optional(),
   }).passthrough().optional(),
-}).passthrough();
+}).passthrough());
 
-export const HappierDoctorWarningSchema = z.object({
+export const HappierDoctorWarningSchema = lazyZodSchema(() => z.object({
   code: NonEmptyString,
   severity: HappierWarningSeveritySchema,
   message: NonEmptyString,
   repairCommands: z.array(NonEmptyString),
-});
+}));
 
-export const DoctorSnapshotSchema = z.object({
+export const DoctorSnapshotSchema = lazyZodSchema(() => z.object({
   capturedAt: NonEmptyString,
   server: z.object({
     activeServerId: NonEmptyString,
@@ -337,7 +338,7 @@ export const DoctorSnapshotSchema = z.object({
   serviceHealth: DoctorSnapshotServiceHealthSchema.optional(),
   homeTransports: z.array(DoctorSnapshotHomeTransportDiagnosticsSchema).optional(),
   warnings: z.array(HappierDoctorWarningSchema).optional(),
-});
+}));
 
 export type DoctorSnapshot = z.infer<typeof DoctorSnapshotSchema>;
 

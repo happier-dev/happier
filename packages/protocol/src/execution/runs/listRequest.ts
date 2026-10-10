@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -5,16 +6,16 @@ import {
   normalizeBackendTargetRefV2InputToV2,
 } from '../../backends/targets/backendTargetRefV2.js';
 
-export const ExecutionRunStatusSchema = z.enum([
+export const ExecutionRunStatusSchema = lazyZodSchema(() => z.enum([
   'running',
   'succeeded',
   'failed',
   'cancelled',
   'timeout',
-]);
+]));
 export type ExecutionRunStatus = z.infer<typeof ExecutionRunStatusSchema>;
 
-export const ExecutionRunListRequestSchema = z.object({
+export const ExecutionRunListRequestSchema = lazyZodSchema(() => z.object({
   backendId: z.string().trim().min(1).optional(),
   // Canonical backend target values are V2; V1 remains accepted through the
   // shared preprocess so mixed-version components can keep exchanging list
@@ -22,5 +23,5 @@ export const ExecutionRunListRequestSchema = z.object({
   backendTarget: z.preprocess(normalizeBackendTargetRefV2InputToV2, BackendTargetRefV2Schema.optional()),
   status: ExecutionRunStatusSchema.optional(),
   limit: z.number().int().min(1).max(200).optional(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunListRequest = z.infer<typeof ExecutionRunListRequestSchema>;

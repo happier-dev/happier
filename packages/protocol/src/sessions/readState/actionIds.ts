@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -14,7 +15,7 @@ export const SESSION_READ_STATE_ACTION_IDS_V1 = [
   'session.read_state.set',
 ] as const;
 
-export const SessionReadStateActionIdV1Schema = z.enum(SESSION_READ_STATE_ACTION_IDS_V1);
+export const SessionReadStateActionIdV1Schema = lazyZodSchema(() => z.enum(SESSION_READ_STATE_ACTION_IDS_V1));
 export type SessionReadStateActionIdV1 = z.infer<typeof SessionReadStateActionIdV1Schema>;
 
 const SESSION_READ_STATE_ACTION_ID_SET: ReadonlySet<string> = new Set(SESSION_READ_STATE_ACTION_IDS_V1);

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -5,21 +6,21 @@ import { z } from 'zod';
  * contribution operations. Keep these values in the Action domain without
  * requiring consumers to load the full Action declaration grammar.
  */
-export const PluginActionSurfaceV2Schema = z.enum([
+export const PluginActionSurfaceV2Schema = lazyZodSchema(() => z.enum([
   'cli',
   'mcp',
   'agent',
   'ui',
   'plugin',
   'voice',
-]);
+]));
 export type PluginActionSurfaceV2 = z.infer<typeof PluginActionSurfaceV2Schema>;
 
-export const PluginActionDangerLevelV2Schema = z.enum([
+export const PluginActionDangerLevelV2Schema = lazyZodSchema(() => z.enum([
   'safe',
   'writesLocal',
   'writesRemote',
   'externalSideEffect',
   'destructive',
-]);
+]));
 export type PluginActionDangerLevelV2 = z.infer<typeof PluginActionDangerLevelV2Schema>;

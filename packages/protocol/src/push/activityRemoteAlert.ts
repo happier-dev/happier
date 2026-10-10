@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -22,7 +23,7 @@ import {
  * other categories are current-state facts whose exact occurrence the native
  * consumer rechecks.
  */
-export const ActivityRemoteAlertEventV1Schema = z.discriminatedUnion('type', [
+export const ActivityRemoteAlertEventV1Schema = lazyZodSchema(() => z.discriminatedUnion('type', [
   z.object({
     type: z.literal('ready'),
     messageSeq: z.number().int().positive().max(2_147_483_647),
@@ -36,33 +37,33 @@ export const ActivityRemoteAlertEventV1Schema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('message'), messageSeq: z.number().int().positive().max(2_147_483_647) }).strict(),
   z.object({ type: z.literal('discussion_mention'), messageSeq: z.number().int().positive().max(2_147_483_647) }).strict(),
   z.object({ type: z.literal('source_unavailable') }).strict(),
-]);
+]));
 export type ActivityRemoteAlertEventV1 = z.infer<typeof ActivityRemoteAlertEventV1Schema>;
 
-export const ActivityRemoteAlertSequenceDomainV2Schema = z.enum([
+export const ActivityRemoteAlertSequenceDomainV2Schema = lazyZodSchema(() => z.enum([
   'session_transcript',
   'discussion',
-]);
+]));
 export type ActivityRemoteAlertSequenceDomainV2 = z.infer<typeof ActivityRemoteAlertSequenceDomainV2Schema>;
 
 /** The Agent-allocated identity of one committed permission/user-action request. */
-const ActivityRequestIdSchema = z.string().trim().min(1).max(191);
+const ActivityRequestIdSchema = lazyZodSchema(() => z.string().trim().min(1).max(191));
 
-const SessionTranscriptSequenceV2Schema = z.object({
+const SessionTranscriptSequenceV2Schema = lazyZodSchema(() => z.object({
   sequenceDomain: z.literal('session_transcript'),
   messageSeq: z.number().int().positive().max(2_147_483_647),
-});
-const DiscussionSequenceV2Schema = z.object({
+}));
+const DiscussionSequenceV2Schema = lazyZodSchema(() => z.object({
   sequenceDomain: z.literal('discussion'),
   discussionId: SessionDiscussionIdSchema,
   messageSeq: z.number().int().positive().max(2_147_483_647),
-});
+}));
 
 /** Content-free committed message reference shared by Activity transports. */
-export const ActivityMessageReferenceV2Schema = z.discriminatedUnion('sequenceDomain', [
+export const ActivityMessageReferenceV2Schema = lazyZodSchema(() => z.discriminatedUnion('sequenceDomain', [
   SessionTranscriptSequenceV2Schema.strict(),
   DiscussionSequenceV2Schema.strict(),
-]);
+]));
 
 /**
  * Current closed event epoch.
@@ -73,7 +74,7 @@ export const ActivityMessageReferenceV2Schema = z.discriminatedUnion('sequenceDo
  * never collide with another Discussion or authorize selection from the main
  * Session transcript.
  */
-export const ActivityRemoteAlertEventV2Schema = z.union([
+export const ActivityRemoteAlertEventV2Schema = lazyZodSchema(() => z.union([
   SessionTranscriptSequenceV2Schema.extend({ type: z.literal('ready') }).strict(),
   z.union([
     SessionTranscriptSequenceV2Schema.extend({ type: z.literal('human_message') }).strict(),
@@ -93,7 +94,7 @@ export const ActivityRemoteAlertEventV2Schema = z.union([
   z.object({ type: z.literal('failed'), turnId: z.string().trim().min(1) }).strict(),
   z.object({ type: z.literal('cancelled'), turnId: z.string().trim().min(1) }).strict(),
   z.object({ type: z.literal('source_unavailable') }).strict(),
-]);
+]));
 export type ActivityRemoteAlertEventV2 = z.infer<typeof ActivityRemoteAlertEventV2Schema>;
 
 /**
@@ -107,7 +108,7 @@ export const ACTIVITY_REMOTE_ALERT_EVENT_TYPES_V1: readonly ActivityRemoteAlertE
   ActivityRemoteAlertEventV1Schema.options.map((option) => option.shape.type.value);
 
 /** The reference is the committed ready SessionMessage, never a delivery receipt. */
-export const ActivityRemoteAlertV1Schema = z.object({
+export const ActivityRemoteAlertV1Schema = lazyZodSchema(() => z.object({
   type: z.literal('activity_alert'),
   v: z.literal(1),
   serverId: z.string().trim().min(1),
@@ -115,11 +116,11 @@ export const ActivityRemoteAlertV1Schema = z.object({
   accountId: z.string().trim().min(1),
   event: ActivityRemoteAlertEventV1Schema,
   previewBehavior: AttentionPreviewBehaviorSchema,
-}).strict();
+}).strict());
 
 export type ActivityRemoteAlertV1 = z.infer<typeof ActivityRemoteAlertV1Schema>;
 
-export const ActivityRemoteAlertV2Schema = z.object({
+export const ActivityRemoteAlertV2Schema = lazyZodSchema(() => z.object({
   type: z.literal('activity_alert'),
   v: z.literal(2),
   serverId: z.string().trim().min(1),
@@ -127,17 +128,17 @@ export const ActivityRemoteAlertV2Schema = z.object({
   accountId: z.string().trim().min(1),
   event: ActivityRemoteAlertEventV2Schema,
   previewBehavior: AttentionPreviewBehaviorSchema,
-}).strict();
+}).strict());
 export type ActivityRemoteAlertV2 = z.infer<typeof ActivityRemoteAlertV2Schema>;
 
 /**
  * Supported reader epochs. V1 is retained only as a released compatibility
  * input; consumers must not use its ambiguous sequence to fetch preview text.
  */
-export const ActivityRemoteAlertSchema = z.discriminatedUnion('v', [
+export const ActivityRemoteAlertSchema = lazyZodSchema(() => z.discriminatedUnion('v', [
   ActivityRemoteAlertV1Schema,
   ActivityRemoteAlertV2Schema,
-]);
+]));
 export type ActivityRemoteAlert = z.infer<typeof ActivityRemoteAlertSchema>;
 
 /**

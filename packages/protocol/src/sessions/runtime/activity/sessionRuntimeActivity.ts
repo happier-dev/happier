@@ -1,15 +1,16 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 export const SESSION_RUNTIME_ACTIVITY_ACTIVE_COUNT_MAX = 2_147_483_647;
 
-export const SessionRuntimeActivityStateSchema = z.enum([
+export const SessionRuntimeActivityStateSchema = lazyZodSchema(() => z.enum([
   'active',
   'idle',
   'unknown',
-]);
+]));
 export type SessionRuntimeActivityState = z.infer<typeof SessionRuntimeActivityStateSchema>;
 
-const SessionRuntimeActivityTupleSchema = z.object({
+const SessionRuntimeActivityTupleSchema = lazyZodSchema(() => z.object({
   state: SessionRuntimeActivityStateSchema,
   activeCount: z.number().int().nonnegative().max(SESSION_RUNTIME_ACTIVITY_ACTIVE_COUNT_MAX),
 }).strict().superRefine((value, context) => {
@@ -21,12 +22,12 @@ const SessionRuntimeActivityTupleSchema = z.object({
       message: 'Runtime Activity state and active count disagree',
     });
   }
-});
+}));
 
 export const SessionRuntimeActivitySnapshotSchema = SessionRuntimeActivityTupleSchema;
 export type SessionRuntimeActivitySnapshot = z.infer<typeof SessionRuntimeActivitySnapshotSchema>;
 
-export const SessionRuntimeActivityProjectionSchema = z.object({
+export const SessionRuntimeActivityProjectionSchema = lazyZodSchema(() => z.object({
   state: SessionRuntimeActivityStateSchema,
   activeCount: z.number().int().nonnegative().max(SESSION_RUNTIME_ACTIVITY_ACTIVE_COUNT_MAX),
   observedAt: z.number().int().nonnegative().safe().nullable(),
@@ -55,7 +56,7 @@ export const SessionRuntimeActivityProjectionSchema = z.object({
       message: 'Only the unknown migration sentinel may omit observedAt at a positive revision',
     });
   }
-});
+}));
 export type SessionRuntimeActivityProjection = z.infer<typeof SessionRuntimeActivityProjectionSchema>;
 
 export const SESSION_RUNTIME_ACTIVITY_PROJECTION_FIELD_NAMES = [

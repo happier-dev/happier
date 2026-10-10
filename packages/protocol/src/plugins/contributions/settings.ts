@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
@@ -32,21 +33,21 @@ export const PluginSettingFieldSchemaV2Schema: z.ZodType<PluginSettingFieldSchem
   anyOf: z.array(PluginSettingFieldSchemaV2Schema).optional(), oneOf: z.array(PluginSettingFieldSchemaV2Schema).optional(), allOf: z.array(PluginSettingFieldSchemaV2Schema).optional(),
 }).strict());
 
-export const PluginSettingFieldIdV2Schema = z.string()
+export const PluginSettingFieldIdV2Schema = lazyZodSchema(() => z.string()
   .trim()
   .min(1)
   .max(128)
   .regex(
     /^[A-Za-z][A-Za-z0-9_./-]*$/,
     'Setting field ids must start with a letter and contain only letters, digits, underscores, dots, slashes, or hyphens.',
-  );
+  ));
 export type PluginSettingFieldIdV2 = z.infer<typeof PluginSettingFieldIdV2Schema>;
 
 /**
  * Secret custody is independent from the Settings model that presents a field.
  * A declaration is the only way a plugin can select its own secret owner.
  */
-export const PluginSecretCustodyV1Schema = z.enum(['account', 'daemon']);
+export const PluginSecretCustodyV1Schema = lazyZodSchema(() => z.enum(['account', 'daemon']));
 export type PluginSecretCustody = z.infer<typeof PluginSecretCustodyV1Schema>;
 
 /**
@@ -54,21 +55,21 @@ export type PluginSecretCustody = z.infer<typeof PluginSecretCustodyV1Schema>;
  * one visible Account endpoint field. The relation is declarative metadata:
  * it never makes the secret an Account-record value.
  */
-export const PluginSettingManagedServiceOriginV1Schema = z.object({
+export const PluginSettingManagedServiceOriginV1Schema = lazyZodSchema(() => z.object({
   endpointSettingId: PluginSettingFieldIdV2Schema,
-}).strict();
+}).strict());
 export type PluginSettingManagedServiceOriginV1 = z.infer<
   typeof PluginSettingManagedServiceOriginV1Schema
 >;
 
 /** The only persistence partitions available to declarative plugin Settings. */
-export const PluginSettingsScopeV1Schema = z.enum(['account', 'daemon']);
+export const PluginSettingsScopeV1Schema = lazyZodSchema(() => z.enum(['account', 'daemon']));
 export type PluginSettingsScopeV1 = z.infer<typeof PluginSettingsScopeV1Schema>;
 
 /** A Settings operation must name its one record; there is no merged scope. */
-export const PluginSettingsScopeRefV1Schema = z.object({
+export const PluginSettingsScopeRefV1Schema = lazyZodSchema(() => z.object({
   kind: PluginSettingsScopeV1Schema,
-}).strict();
+}).strict());
 export type PluginSettingsScopeRefV1 = z.infer<typeof PluginSettingsScopeRefV1Schema>;
 
 /**
@@ -100,35 +101,35 @@ export function readPluginSettingManagedServiceOrigin(
   return parsed.success ? parsed.data : null;
 }
 
-export const PluginSettingSecretDeclarationSchema = z.union([
+export const PluginSettingSecretDeclarationSchema = lazyZodSchema(() => z.union([
   z.literal(true),
   z.object({
     custody: PluginSecretCustodyV1Schema,
     managedServiceOrigin: PluginSettingManagedServiceOriginV1Schema.optional(),
   }).strict(),
-]);
+]));
 export type PluginSettingSecretDeclaration =
   z.input<typeof PluginSettingSecretDeclarationSchema>;
 export type ParsedPluginSettingSecretDeclaration =
   z.output<typeof PluginSettingSecretDeclarationSchema>;
 
 /** A non-Settings declared secret. Omitted custody normalizes to Account. */
-export const PluginDirectSecretDeclarationV1Schema = z.object({
+export const PluginDirectSecretDeclarationV1Schema = lazyZodSchema(() => z.object({
   id: PluginSettingFieldIdV2Schema,
   custody: PluginSecretCustodyV1Schema.default('account'),
-}).strict();
+}).strict());
 export type PluginDirectSecretDeclarationV1 =
   z.input<typeof PluginDirectSecretDeclarationV1Schema>;
 export type ParsedPluginDirectSecretDeclarationV1 =
   z.output<typeof PluginDirectSecretDeclarationV1Schema>;
 
-export const PluginSettingOptionV2Schema = z.object({
+export const PluginSettingOptionV2Schema = lazyZodSchema(() => z.object({
   value: PluginJsonValueV2Schema,
   title: PluginLocalizedStringV2Schema,
   description: PluginLocalizedStringV2Schema.optional(),
-}).strict();
+}).strict());
 
-export const PluginSettingFieldBindingV2Schema = z.union([
+export const PluginSettingFieldBindingV2Schema = lazyZodSchema(() => z.union([
   z.object({
     kind: z.literal('direct'),
     settingId: PluginSettingFieldIdV2Schema.optional(),
@@ -138,7 +139,7 @@ export const PluginSettingFieldBindingV2Schema = z.union([
     fallbackSettingId: PluginSettingFieldIdV2Schema,
     byServerIdSettingId: PluginSettingFieldIdV2Schema,
   }).strict(),
-]);
+]));
 
 /**
  * `perActiveServer` is one Account-record binding, not an unbounded cache of
@@ -261,7 +262,7 @@ function haveEquivalentSettingValueSchemas(
   );
 }
 
-export const PluginSettingFieldPresentationV2Schema = z.object({
+export const PluginSettingFieldPresentationV2Schema = lazyZodSchema(() => z.object({
   control: z.enum(['auto', 'text', 'textarea', 'switch', 'select', 'multiSelect', 'number', 'json']).optional(),
   placeholder: PluginLocalizedStringV2Schema.optional(),
   options: z.array(PluginSettingOptionV2Schema).optional(),
@@ -269,18 +270,18 @@ export const PluginSettingFieldPresentationV2Schema = z.object({
   binding: PluginSettingFieldBindingV2Schema.optional(),
   hidden: z.boolean().optional(),
   order: z.number().int().optional(),
-}).strict();
+}).strict());
 
-export const PluginSettingAnalyticsV2Schema = z.object({
+export const PluginSettingAnalyticsV2Schema = lazyZodSchema(() => z.object({
   trackCurrentState: z.boolean().optional(),
   trackChanges: z.boolean().optional(),
   valueKind: z.enum(['boolean', 'enum', 'bucket', 'count', 'presence']),
   privacy: z.enum(['safe', 'bucketed', 'count_only', 'presence_only', 'forbidden']),
   identityScope: z.enum(['person', 'device_user']),
   serializeCurrentRule: z.enum(['orderedEnumArrayJoin', 'jsonObjectStringPresence']).optional(),
-}).strict();
+}).strict());
 
-const PluginSettingFieldBaseV2Schema = z.object({
+const PluginSettingFieldBaseV2Schema = lazyZodSchema(() => z.object({
   id: PluginSettingFieldIdV2Schema,
   title: PluginLocalizedStringV2Schema,
   description: PluginLocalizedStringV2Schema.optional(),
@@ -288,36 +289,36 @@ const PluginSettingFieldBaseV2Schema = z.object({
   availability: PluginAvailabilityDescriptorV2Schema.optional(),
   presentation: PluginSettingFieldPresentationV2Schema.optional(),
   analytics: PluginSettingAnalyticsV2Schema.optional(),
-});
-export const PluginSettingFieldV2Schema = z.union([
+}));
+export const PluginSettingFieldV2Schema = lazyZodSchema(() => z.union([
   PluginSettingFieldBaseV2Schema.extend({
     secret: PluginSettingSecretDeclarationSchema,
     default: z.never().optional(),
   }).strict(),
   PluginSettingFieldBaseV2Schema.extend({ secret: z.literal(false).optional(), default: PluginJsonValueV2Schema.optional() }).strict(),
-]);
+]));
 export type PluginSettingFieldV2 = z.infer<typeof PluginSettingFieldV2Schema>;
-export const PluginConfigurationSettingFieldV2Schema = z.union([
+export const PluginConfigurationSettingFieldV2Schema = lazyZodSchema(() => z.union([
   PluginSettingFieldBaseV2Schema.extend({ secret: z.literal(true), default: z.never().optional(), required: z.boolean().optional() }).strict(),
   PluginSettingFieldBaseV2Schema.extend({ secret: z.literal(false).optional(), default: PluginJsonValueV2Schema.optional(), required: z.boolean().optional() }).strict(),
-]);
+]));
 export type PluginConfigurationSettingFieldV2 =
   z.infer<typeof PluginConfigurationSettingFieldV2Schema>;
 
-export const PluginSettingsIconV2Schema = z.object({
+export const PluginSettingsIconV2Schema = lazyZodSchema(() => z.object({
   ionName: z.string().trim().min(1),
   color: z.object({
     kind: z.literal('theme'),
     token: z.string().trim().min(1),
   }).strict(),
-}).strict();
+}).strict());
 
-export const PluginSettingsSectionV2Schema = z.object({
+export const PluginSettingsSectionV2Schema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
   description: PluginLocalizedStringV2Schema.optional(),
   fields: z.array(PluginSettingFieldIdV2Schema).min(1),
-}).strict();
+}).strict());
 
 /**
  * A labelled cross-link from the host Sub-agents screen into the agent settings
@@ -329,27 +330,27 @@ export const PluginSettingsSectionV2Schema = z.object({
  * screen is reached. An item declared by a `target: { kind: 'plugin' }`
  * contribution therefore has no destination and is not presented.
  */
-export const PluginSettingsSubagentItemV2Schema = z.object({
+export const PluginSettingsSubagentItemV2Schema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
   description: PluginLocalizedStringV2Schema.optional(),
   iconIonName: z.string().trim().min(1).optional(),
-}).strict();
+}).strict());
 
-export const PluginSettingsSubagentSectionV2Schema = z.object({
+export const PluginSettingsSubagentSectionV2Schema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
   description: PluginLocalizedStringV2Schema.optional(),
   items: z.array(PluginSettingsSubagentItemV2Schema),
-}).strict();
+}).strict());
 
-export const PluginSettingsPresentationV2Schema = z.object({
+export const PluginSettingsPresentationV2Schema = lazyZodSchema(() => z.object({
   icon: PluginSettingsIconV2Schema.optional(),
   sections: z.array(PluginSettingsSectionV2Schema).default([]),
   subagentSections: z.array(PluginSettingsSubagentSectionV2Schema).default([]),
-}).strict();
+}).strict());
 
-export const PluginSettingsActionDeclarationV2Schema = z.object({
+export const PluginSettingsActionDeclarationV2Schema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
   placement: z.union([
@@ -370,10 +371,10 @@ export const PluginSettingsActionDeclarationV2Schema = z.object({
   ]),
   patchFieldIds: z.array(PluginSettingFieldIdV2Schema).min(1).max(16)
     .refine((ids) => new Set(ids).size === ids.length, 'Settings action patch field ids must be unique.'),
-}).strict();
+}).strict());
 export type PluginSettingsActionDeclarationV2 = z.infer<typeof PluginSettingsActionDeclarationV2Schema>;
 
-export const PluginSettingsContributionV2Schema = z.object({
+export const PluginSettingsContributionV2Schema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   version: z.literal(1).default(1),
   title: PluginLocalizedStringV2Schema,
@@ -565,7 +566,7 @@ export const PluginSettingsContributionV2Schema = z.object({
       }
     }
   });
-});
+}));
 export type ParsedPluginSettingsContributionV2 = z.infer<typeof PluginSettingsContributionV2Schema>;
 /** Author declarations may omit actions; canonical parsing materializes the empty list. */
 export type PluginSettingsContributionV2 = Omit<ParsedPluginSettingsContributionV2, 'actions'> & Readonly<{

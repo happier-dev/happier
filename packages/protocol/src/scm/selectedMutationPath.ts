@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 function isRootOrUnsafeSelectedMutationPath(rawPath: string): boolean {
@@ -14,12 +15,12 @@ function isRootOrUnsafeSelectedMutationPath(rawPath: string): boolean {
   return parts.some((part) => !part || part === '..');
 }
 
-export const ScmSelectedMutationPathSchema = z.string().superRefine((value, ctx) => {
+export const ScmSelectedMutationPathSchema = lazyZodSchema(() => z.string().superRefine((value, ctx) => {
   if (!isRootOrUnsafeSelectedMutationPath(value)) return;
   ctx.addIssue({
     code: z.ZodIssueCode.custom,
     message: 'Selected mutation path must identify a file or subdirectory inside the repository',
   });
-});
+}));
 
 export type ScmSelectedMutationPath = z.infer<typeof ScmSelectedMutationPathSchema>;

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -15,14 +16,14 @@ import { SessionOrganizationPinSchema } from './pins.js';
 import { SessionAttentionStandingSchema } from './standings.js';
 import { SessionOrganizationTagSchema, SessionTagAssignmentSchema } from './tags.js';
 
-const SessionOrganizationScopedIdSchema = z.string().trim().min(1).max(10_000);
+const SessionOrganizationScopedIdSchema = lazyZodSchema(() => z.string().trim().min(1).max(10_000));
 
-const SessionOrganizationOrderScopeRequestSchema = SessionOrganizationOrderEntrySchema.pick({
+const SessionOrganizationOrderScopeRequestSchema = lazyZodSchema(() => SessionOrganizationOrderEntrySchema.pick({
   scopeKind: true,
   scopeKey: true,
-});
+}));
 
-export const SessionOrganizationSnapshotRequestSchema = z
+export const SessionOrganizationSnapshotRequestSchema = lazyZodSchema(() => z
   .object({
     projectionVersion: z.literal(SESSION_ORGANIZATION_CURRENT_PROJECTION_VERSION).optional(),
     includeFolders: z.boolean().default(true),
@@ -37,10 +38,10 @@ export const SessionOrganizationSnapshotRequestSchema = z
     includeAttentionStandings: z.boolean().default(false),
     includeAttentionReminderTimes: z.boolean().default(false),
   })
-  .strict();
+  .strict());
 export type SessionOrganizationSnapshotRequest = z.infer<typeof SessionOrganizationSnapshotRequestSchema>;
 
-export const SessionOrganizationSnapshotSchema = z
+export const SessionOrganizationSnapshotSchema = lazyZodSchema(() => z
   .object({
     schemaVersion: z.literal(SESSION_ORGANIZATION_SNAPSHOT_VERSION),
     version: z.number().int().nonnegative(),
@@ -53,12 +54,12 @@ export const SessionOrganizationSnapshotSchema = z
     labels: z.array(SessionOrganizationLabelSchema).max(SESSION_ORGANIZATION_MAX_LABELS),
     attentionStandings: z.array(SessionAttentionStandingSchema).optional(),
   })
-  .strict();
+  .strict());
 export type SessionOrganizationSnapshot = z.infer<typeof SessionOrganizationSnapshotSchema>;
 
-export const SessionOrganizationSnapshotResponseSchema = z
+export const SessionOrganizationSnapshotResponseSchema = lazyZodSchema(() => z
   .object({
     snapshot: SessionOrganizationSnapshotSchema,
   })
-  .strict();
+  .strict());
 export type SessionOrganizationSnapshotResponse = z.infer<typeof SessionOrganizationSnapshotResponseSchema>;

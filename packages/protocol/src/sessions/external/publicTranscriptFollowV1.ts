@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { measureSerializedValidatedStrictPluginJsonUtf8Bytes } from '../../plugins/contributions/strictJsonValue.js';
@@ -54,12 +55,12 @@ export type ExternalSessionTranscriptFollowCodeV1 = z.infer<
  * Public Author projection of one External Session transcript item. Producer
  * routing and raw-record fields intentionally do not cross this boundary.
  */
-export const ExternalSessionTranscriptItemV1Schema = z.object({
+export const ExternalSessionTranscriptItemV1Schema = lazyZodSchema(() => z.object({
   id: ExternalSessionTranscriptItemIdV1Schema,
   timestampMs: ExternalSessionTranscriptSourceTimestampV1Schema.optional(),
   kind: z.enum(['user', 'agent', 'system', 'event']),
   data: AgentRuntimeJsonValueV1Schema,
-}).strict();
+}).strict());
 export type ExternalSessionTranscriptItemV1 = z.infer<
   typeof ExternalSessionTranscriptItemV1Schema
 >;
@@ -67,7 +68,7 @@ export type ExternalSessionTranscriptItemV1 = z.infer<
 const ExternalSessionTranscriptFollowEventTooLargeIssueMessage =
   'External Session transcript follow event exceeds the serialized-byte limit.';
 
-export const ExternalSessionTranscriptFollowEventV1Schema = z.discriminatedUnion('kind', [
+export const ExternalSessionTranscriptFollowEventV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('data'),
     // Count is intentionally unbounded. The event byte ceiling below is the
@@ -107,7 +108,7 @@ export const ExternalSessionTranscriptFollowEventV1Schema = z.discriminatedUnion
         : 'External Session transcript follow event must contain strict JSON data.',
     });
   }
-});
+}));
 export type ExternalSessionTranscriptFollowEventV1 = z.infer<
   typeof ExternalSessionTranscriptFollowEventV1Schema
 >;

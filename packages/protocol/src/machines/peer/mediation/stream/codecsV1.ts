@@ -1,26 +1,27 @@
+import { lazyZodSchema } from '../../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { readCanonicalPaddedBase64DecodedLength } from '../../../../crypto/base64.js';
 
-const PositiveIntSchema = z.number().int().positive();
-const NonNegativeIntSchema = z.number().int().nonnegative();
-const Base64Schema = z.string().superRefine((value, context) => {
+const PositiveIntSchema = lazyZodSchema(() => z.number().int().positive());
+const NonNegativeIntSchema = lazyZodSchema(() => z.number().int().nonnegative());
+const Base64Schema = lazyZodSchema(() => z.string().superRefine((value, context) => {
   if (readCanonicalPaddedBase64DecodedLength(value) !== null) return;
   context.addIssue({
     code: z.ZodIssueCode.custom,
     message: 'Invalid base64 payload',
   });
-});
+}));
 
 export function getMachineLiveStreamPayloadDecodedByteLength(payloadBase64: string): number {
   return readCanonicalPaddedBase64DecodedLength(payloadBase64) ?? 0;
 }
 
-export const MachineLiveStreamCodecIdV1Schema = z.enum([
+export const MachineLiveStreamCodecIdV1Schema = lazyZodSchema(() => z.enum([
   'image.frame.v1',
   'image.mjpeg',
   'h264.avcc',
-]);
+]));
 
 export const MACHINE_LIVE_STREAM_BASELINE_CODEC_V1 = 'image.mjpeg' as const;
 
@@ -33,7 +34,7 @@ export const MACHINE_LIVE_STREAM_AVCC_ENVELOPE_TAGS_V1 = {
 
 export type MachineLiveStreamAvccChunkTypeV1 = keyof typeof MACHINE_LIVE_STREAM_AVCC_ENVELOPE_TAGS_V1;
 
-export const MachineLiveStreamCodecNegotiationRequestV1Schema = z
+export const MachineLiveStreamCodecNegotiationRequestV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     streamId: z.string().min(1),
@@ -44,9 +45,9 @@ export const MachineLiveStreamCodecNegotiationRequestV1Schema = z
     maxHeight: PositiveIntSchema.optional(),
     maxFramesPerSecond: PositiveIntSchema.optional(),
   })
-  .passthrough();
+  .passthrough());
 
-export const MachineLiveStreamCodecNegotiationResultV1Schema = z.discriminatedUnion('ok', [
+export const MachineLiveStreamCodecNegotiationResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
   z
     .object({
       ok: z.literal(true),
@@ -60,9 +61,9 @@ export const MachineLiveStreamCodecNegotiationResultV1Schema = z.discriminatedUn
       reasonCode: z.enum(['no_common_codec', 'invalid_codec_request']),
     })
     .passthrough(),
-]);
+]));
 
-export const MachineLiveStreamPayloadV2Schema = z
+export const MachineLiveStreamPayloadV2Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     streamId: z.string().min(1),
@@ -105,7 +106,7 @@ export const MachineLiveStreamPayloadV2Schema = z
         message: 'h264_avcc payloads require h264.avcc codec',
       });
     }
-  });
+  }));
 
 export type MachineLiveStreamCodecIdV1 = z.infer<typeof MachineLiveStreamCodecIdV1Schema>;
 export type MachineLiveStreamCodecNegotiationRequestV1 = z.infer<

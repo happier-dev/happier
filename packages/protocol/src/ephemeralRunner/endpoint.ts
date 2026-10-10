@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
@@ -17,7 +18,7 @@ import {
   RunnerSignatureSchema,
 } from './activation.js';
 
-export const RunnerClaimPayloadV1Schema = z.object({
+export const RunnerClaimPayloadV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   purpose: z.literal('happier.ephemeral-session-runner.claim'),
   binding: RunnerActivationBindingV1Schema,
@@ -28,13 +29,13 @@ export const RunnerClaimPayloadV1Schema = z.object({
     proof: MachineInstallationProofV1Schema.extend({ signature: RunnerSignatureSchema }).strict(),
   }).strict(),
   protocolEpoch: z.literal(1),
-}).strict();
+}).strict());
 export type RunnerClaimPayloadV1 = z.infer<typeof RunnerClaimPayloadV1Schema>;
 
-export const RunnerClaimV1Schema = z.object({
+export const RunnerClaimV1Schema = lazyZodSchema(() => z.object({
   payload: RunnerClaimPayloadV1Schema,
   signature: RunnerSignatureSchema,
-}).strict();
+}).strict());
 export type RunnerClaimV1 = z.infer<typeof RunnerClaimV1Schema>;
 
 export function signRunnerClaimV1(params: Readonly<{
@@ -87,21 +88,21 @@ export function verifyRunnerClaimV1(params: Readonly<{
 // the signed envelope but never supplies replacement metadata.
 const RUNNER_ENDPOINT_HOST_MAX_LENGTH = 255;
 const RUNNER_ENDPOINT_CLI_VERSION_MAX_LENGTH = 191;
-export const RunnerEndpointMachineFactsV1Schema = z.object({
+export const RunnerEndpointMachineFactsV1Schema = lazyZodSchema(() => z.object({
   host: z.string().min(1).max(RUNNER_ENDPOINT_HOST_MAX_LENGTH),
   platform: z.enum(['darwin', 'linux', 'win32']),
   happyCliVersion: z.string().min(1).max(RUNNER_ENDPOINT_CLI_VERSION_MAX_LENGTH)
     .refine((value) => value.trim() === value),
   happyHomeDir: AbsoluteWorkspacePathSchema,
   homeDir: AbsoluteWorkspacePathSchema,
-}).strict();
+}).strict());
 export type RunnerEndpointMachineFactsV1 = z.infer<typeof RunnerEndpointMachineFactsV1Schema>;
 
-export const RunnerEndpointFactsContentV1Schema = z.object({
+export const RunnerEndpointFactsContentV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   directory: AbsoluteWorkspacePathSchema,
   machine: RunnerEndpointMachineFactsV1Schema,
-}).strict();
+}).strict());
 export type RunnerEndpointFactsContentV1 = z.infer<typeof RunnerEndpointFactsContentV1Schema>;
 
 // Encrypted facts contain compact UTF-8 JSON. A UTF-16 string unit needs at
@@ -118,7 +119,7 @@ const ENDPOINT_FACTS_MAX_JSON_BYTES = JSON.stringify({
 ) * 6;
 const ENDPOINT_FACTS_MAX_CIPHER_CHARACTERS = Math.ceil((ENDPOINT_FACTS_MAX_JSON_BYTES + BOX_BUNDLE_MIN_BYTES) * 8 / 6);
 
-export const RunnerEndpointFactsStoredContentV1Schema = z.discriminatedUnion('t', [
+export const RunnerEndpointFactsStoredContentV1Schema = lazyZodSchema(() => z.discriminatedUnion('t', [
   StoredJsonContentEnvelopeSchema.options[0].extend({ v: RunnerEndpointFactsContentV1Schema }).strict(),
   StoredJsonContentEnvelopeSchema.options[1].extend({
     // The pipe stops oversized input before base64 decoding and key validation.
@@ -128,21 +129,21 @@ export const RunnerEndpointFactsStoredContentV1Schema = z.discriminatedUnion('t'
         && isValidBoxBundlePublicKey(bytes.subarray(0, BOX_BUNDLE_PUBLIC_KEY_BYTES));
     }, 'Endpoint facts must use a canonical sealed box bundle')),
   }).strict(),
-]);
+]));
 
-export const RunnerEndpointFactsPayloadV1Schema = z.object({
+export const RunnerEndpointFactsPayloadV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   purpose: z.literal('happier.ephemeral-session-runner.endpoint-facts'),
   claim: RunnerClaimPayloadV1Schema,
   content: RunnerEndpointFactsStoredContentV1Schema,
-}).strict();
+}).strict());
 export type RunnerEndpointFactsPayloadV1 = z.infer<typeof RunnerEndpointFactsPayloadV1Schema>;
 
-export const RunnerEndpointFactsV1Schema = z.object({
+export const RunnerEndpointFactsV1Schema = lazyZodSchema(() => z.object({
   payload: RunnerEndpointFactsPayloadV1Schema,
   activationSignature: RunnerSignatureSchema,
   installationSignature: RunnerSignatureSchema,
-}).strict();
+}).strict());
 export type RunnerEndpointFactsV1 = z.infer<typeof RunnerEndpointFactsV1Schema>;
 
 export function signRunnerEndpointFactsV1(params: Readonly<{

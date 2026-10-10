@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -11,10 +12,10 @@ import { z } from 'zod';
  * canonical authority-delta classifier, never by this eligibility setting.
  * There are no aliases and no surface-local variants.
  */
-export const PluginUpdatePolicyV1Schema = z.enum([
+export const PluginUpdatePolicyV1Schema = lazyZodSchema(() => z.enum([
   'allowed',
   'pinned',
-]);
+]));
 export type PluginUpdatePolicyV1 = z.infer<typeof PluginUpdatePolicyV1Schema>;
 
 /**
@@ -29,9 +30,9 @@ export type PluginUpdatePolicyV1 = z.infer<typeof PluginUpdatePolicyV1Schema>;
  * development plugins never ask on change, in either mode. The per-plugin
  * `allowed | pinned` eligibility above is independent of this preference.
  */
-export const PluginUpdateReviewModeV1Schema = z.enum([
+export const PluginUpdateReviewModeV1Schema = lazyZodSchema(() => z.enum([
   'confirmAccessChanges',
   'autoApply',
-]);
+]));
 export type PluginUpdateReviewModeV1 = z.infer<typeof PluginUpdateReviewModeV1Schema>;
 export const DEFAULT_PLUGIN_UPDATE_REVIEW_MODE_V1: PluginUpdateReviewModeV1 = 'confirmAccessChanges';

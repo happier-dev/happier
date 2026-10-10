@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 const REALTIME_ID_MAX_LENGTH = 256;
@@ -56,12 +57,12 @@ function containsOnlyUnicodeScalarValues(value: string): boolean {
   return true;
 }
 
-export const VoiceRealtimeStableIdSchema = z.string()
+export const VoiceRealtimeStableIdSchema = lazyZodSchema(() => z.string()
   .min(1)
   .max(REALTIME_ID_MAX_LENGTH)
   .refine((value) => value.trim() === value, { message: 'opaque identifiers must not be normalized' })
-  .refine(containsOnlyUnicodeScalarValues, { message: 'opaque identifiers must contain only Unicode scalar values' });
-const TranscriptBaseSchema = z.object({
+  .refine(containsOnlyUnicodeScalarValues, { message: 'opaque identifiers must contain only Unicode scalar values' }));
+const TranscriptBaseSchema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   epoch: z.number().int().nonnegative(),
   sequence: z.number().int().nonnegative(),
@@ -71,36 +72,36 @@ const TranscriptBaseSchema = z.object({
   role: z.enum(['user', 'assistant']),
   text: z.string().max(TRANSCRIPT_TEXT_MAX_LENGTH),
   provenance: z.enum(['live', 'replay']),
-}).strict();
+}).strict());
 
-export const VoiceTranscriptCanonicalEventV1Schema = z.discriminatedUnion('type', [
+export const VoiceTranscriptCanonicalEventV1Schema = lazyZodSchema(() => z.discriminatedUnion('type', [
   TranscriptBaseSchema.extend({ type: z.literal('voice.transcript.updated') }).strict(),
   TranscriptBaseSchema.extend({ type: z.literal('voice.transcript.delta') }).strict(),
   TranscriptBaseSchema.extend({ type: z.literal('voice.transcript.final') }).strict(),
   TranscriptBaseSchema.extend({ type: z.literal('voice.transcript.corrected') }).strict(),
-]);
+]));
 export type VoiceTranscriptCanonicalEventV1 = z.infer<typeof VoiceTranscriptCanonicalEventV1Schema>;
 
-export const VoiceRealtimeToolCallV1Schema = z.object({
+export const VoiceRealtimeToolCallV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   responseId: VoiceRealtimeStableIdSchema,
   callId: VoiceRealtimeStableIdSchema,
   toolName: z.string().trim().min(1).max(TOOL_NAME_MAX_LENGTH),
   order: z.number().int().nonnegative(),
   arguments: VoiceRealtimeJsonValueSchema,
-}).strict();
+}).strict());
 export type VoiceRealtimeToolCallV1 = z.infer<typeof VoiceRealtimeToolCallV1Schema>;
 
-export const VoiceRealtimeToolResultStatusSchema = z.enum([
+export const VoiceRealtimeToolResultStatusSchema = lazyZodSchema(() => z.enum([
   'success',
   'denied',
   'error',
   'cancelled',
   'timeout',
-]);
+]));
 export type VoiceRealtimeToolResultStatus = z.infer<typeof VoiceRealtimeToolResultStatusSchema>;
 
-export const VoiceRealtimeToolResultV1Schema = z.object({
+export const VoiceRealtimeToolResultV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   responseId: VoiceRealtimeStableIdSchema,
   callId: VoiceRealtimeStableIdSchema,
@@ -125,5 +126,5 @@ export const VoiceRealtimeToolResultV1Schema = z.object({
   if (value.errorCode === undefined) {
     ctx.addIssue({ code: 'custom', path: ['errorCode'], message: 'non-success results require errorCode' });
   }
-});
+}));
 export type VoiceRealtimeToolResultV1 = z.infer<typeof VoiceRealtimeToolResultV1Schema>;

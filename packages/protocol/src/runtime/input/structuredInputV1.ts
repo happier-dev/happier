@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { BrowserContextMessageMetaV1Schema, BrowserContextMessagePayloadV1Schema } from '../../browser/context/v1.js';
 
@@ -371,7 +372,7 @@ function rejectOversizedComposerAttachmentEnvelope(
   }
 }
 
-const HappierStructuredInputV1ObjectSchema = z.object({
+const HappierStructuredInputV1ObjectSchema = lazyZodSchema(() => z.object({
   v: z.literal(1).default(1),
   /**
    * The open, additive reference list (R-4). It carries every composer reference kind,
@@ -388,10 +389,10 @@ const HappierStructuredInputV1ObjectSchema = z.object({
   sessionDiscussionSelectionSourceV1: SessionDiscussionSelectionSourceV1Schema
     .omit({ draftCorrelationId: true })
     .optional(),
-}).passthrough();
+}).passthrough());
 
-export const HappierStructuredInputV1Schema = HappierStructuredInputV1ObjectSchema
-  .superRefine(rejectOversizedComposerAttachmentEnvelope);
+export const HappierStructuredInputV1Schema = lazyZodSchema(() => HappierStructuredInputV1ObjectSchema
+  .superRefine(rejectOversizedComposerAttachmentEnvelope));
 
 export type HappierStructuredInputV1 = z.infer<typeof HappierStructuredInputV1Schema>;
 
@@ -405,14 +406,14 @@ export type HappierStructuredInputV1 = z.infer<typeof HappierStructuredInputV1Sc
  * the aggregate encoded attachment budget are the same refinement, so ingress
  * cannot bypass the bound the persisted envelope enforces.
  */
-export const RawIngressStructuredInputV1Schema = HappierStructuredInputV1ObjectSchema
+export const RawIngressStructuredInputV1Schema = lazyZodSchema(() => HappierStructuredInputV1ObjectSchema
   .omit({ composerAttachments: true })
   .extend({
     composerAttachments: z.array(ComposerAttachmentDraftV1Schema)
       .max(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1)
       .optional(),
   })
-  .superRefine(rejectOversizedComposerAttachmentEnvelope);
+  .superRefine(rejectOversizedComposerAttachmentEnvelope));
 export type RawIngressStructuredInputV1 = Readonly<
   Omit<HappierStructuredInputV1, 'composerAttachments'> & Readonly<{
     composerAttachments?: readonly ComposerAttachmentDraftV1[];
@@ -460,7 +461,7 @@ export function readAdmittedHappierStructuredInputV1FromMeta(
  * composer attachments are intentionally rejected here, even though the
  * generic envelope keeps its additive-preserve behavior for Message ingress.
  */
-export const AgentDispatchStructuredInputV1Schema = HappierStructuredInputV1ObjectSchema
+export const AgentDispatchStructuredInputV1Schema = lazyZodSchema(() => HappierStructuredInputV1ObjectSchema
   .omit({ composerAttachments: true })
   .extend({
     resolvedComposerAttachments: z.array(ResolvedComposerAttachmentDispatchV1Schema)
@@ -476,7 +477,7 @@ export const AgentDispatchStructuredInputV1Schema = HappierStructuredInputV1Obje
         message: 'Agent dispatch structured input must not contain raw composer attachments.',
       });
     }
-  });
+  }));
 export type AgentDispatchStructuredInputV1 = Readonly<
   Omit<HappierStructuredInputV1, 'composerAttachments'> & Readonly<{
     resolvedComposerAttachments?: readonly ResolvedComposerAttachmentDispatchV1[];

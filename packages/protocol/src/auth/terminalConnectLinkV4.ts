@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
@@ -19,14 +20,14 @@ function canonicalBase64UrlBytesSchema(expectedBytes: number): z.ZodType<string>
   }, `must be canonical base64url encoding of ${expectedBytes} bytes`);
 }
 
-const TimestampMsSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const TimestampMsSchema = lazyZodSchema(() => z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER));
 
 /**
  * The pairing context remains V3: V4 versions only the authority-bearing link
  * envelope. Its Home identity is the credential destination and must match the
  * strict connection descriptor below.
  */
-export const TerminalConnectPairingContextV3Schema = z.object({
+export const TerminalConnectPairingContextV3Schema = lazyZodSchema(() => z.object({
   v: z.literal(3),
   secretB64Url: canonicalBase64UrlBytesSchema(32),
   createdAtMs: TimestampMsSchema,
@@ -41,10 +42,10 @@ export const TerminalConnectPairingContextV3Schema = z.object({
       message: 'Pairing expiry must be after creation',
     });
   }
-});
+}));
 export type TerminalConnectPairingContextV3 = z.infer<typeof TerminalConnectPairingContextV3Schema>;
 
-export const TerminalConnectLinkV4EnvelopeSchema = z.object({
+export const TerminalConnectLinkV4EnvelopeSchema = lazyZodSchema(() => z.object({
   v: z.literal(TERMINAL_CONNECT_LINK_WIRE_VERSION_V4),
   publicKeyB64Url: canonicalBase64UrlBytesSchema(32),
   pairing: TerminalConnectPairingContextV3Schema,
@@ -57,7 +58,7 @@ export const TerminalConnectLinkV4EnvelopeSchema = z.object({
       message: 'V3 pairing credential destination must match the Home descriptor identity',
     });
   }
-});
+}));
 export type TerminalConnectLinkV4Envelope = z.infer<typeof TerminalConnectLinkV4EnvelopeSchema>;
 
 export type TerminalConnectLinkV4CredentialDestination = Readonly<{
