@@ -129,6 +129,13 @@ export const externalAuthoringPlugin = definePlugin({
     },
   },
   ui: {
+    views: [{
+      id: 'external-authoring-semantic',
+      title: 'External authoring semantics',
+      container: 'appPage',
+      target: { kind: 'app' },
+      renderer: 'external-authoring-semantic-renderer',
+    }],
     renderers: [{
       id: 'external-authoring-composer-renderer',
       kind: 'declarative',
@@ -139,6 +146,18 @@ export const externalAuthoringPlugin = definePlugin({
           fallback: 'External authoring Composer surface',
         },
       },
+    }, {
+      id: 'external-authoring-semantic-renderer',
+      kind: 'reactNative',
+      artifact: 'semantic-surface',
+      requiredHostMethods: [
+        'context',
+        'executeAction',
+        'readComposer',
+        'watchComposer',
+        'applyComposer',
+        'setComposerDecorations',
+      ],
     }],
     translations: [{
       locale: 'en',

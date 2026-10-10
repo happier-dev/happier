@@ -40,6 +40,9 @@ const consumerReactNativeWebEntry = resolve(consumerNodeModulesRoot, 'react-nati
 const packedExternalAuthoringSemanticSurfaceEntry = requireFromPackedHost.resolve(
   '@happier-fixture/external-authoring/semantic-surface',
 );
+const packedExternalAuthoringPluginEntry = requireFromPackedHost.resolve(
+  '@happier-fixture/external-authoring',
+);
 
 export default defineConfig({
   // The external fixture compiles author TSX with `jsx: "react-jsx"`.
@@ -65,6 +68,10 @@ export default defineConfig({
       {
         find: '@external-authoring/semantic-surface',
         replacement: packedExternalAuthoringSemanticSurfaceEntry,
+      },
+      {
+        find: '@external-authoring/plugin',
+        replacement: packedExternalAuthoringPluginEntry,
       },
       {
         find: '@external-authoring/targeted-surface',

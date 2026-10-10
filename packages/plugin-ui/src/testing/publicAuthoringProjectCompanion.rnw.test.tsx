@@ -4,24 +4,66 @@ import {
   createPluginTestkit,
 } from '@happier-dev/plugin-sdk/testing';
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import type { RenderSurface } from '@happier-dev/plugin-sdk/ui';
 import { invokeInputTypePicker, readInputTypeOptions, type InputTypePickerHostV1, type ResolvedInputTypeV1 } from '@happier-dev/protocol/inputs/runtime';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { renderSurface } from '../../../plugin-sdk/examples/public-authoring/ui/reviewPanel.native.tsx';
 import { publicAuthoringDefinition } from '../../../plugin-sdk/examples/public-authoring/definition.ts';
 import { repositoryInputTypes, repositoryResources, repositoryInputTypeRef } from '../../../plugin-sdk/examples/public-authoring/inputTypes.ts';
-import { renderExternalAuthoringSemanticSurface } from '../../fixtures/external-authoring/src/semanticSurface.tsx';
+import { externalAuthoringPlugin } from '../../fixtures/external-authoring/src/index.ts';
 
 const REVIEW_STATUS_DIGEST = `sha256:${'a'.repeat(64)}`;
+const EXTERNAL_SEMANTIC_VIEW_ID = 'external-authoring-semantic';
+
+function selectExternalAuthoringSemanticRendererArtifact(
+  ui: typeof externalAuthoringPlugin.manifest.contributes.ui,
+): string {
+  const view = ui.views?.find(candidate => candidate.id === EXTERNAL_SEMANTIC_VIEW_ID);
+  if (!view) throw new Error('Expected the loaded external authoring semantic view');
+  const renderer = ui.renderers?.find(candidate => candidate.id === view.renderer);
+  if (renderer?.kind !== 'reactNative') {
+    throw new Error('Expected the loaded external authoring semantic React Native renderer');
+  }
+  return renderer.artifact;
+}
+
+async function loadExternalAuthoringSemanticSurface(): Promise<RenderSurface> {
+  const artifact = selectExternalAuthoringSemanticRendererArtifact(
+    externalAuthoringPlugin.manifest.contributes.ui,
+  );
+  if (artifact !== 'semantic-surface') {
+    throw new Error(`Unsupported external authoring semantic artifact: ${artifact}`);
+  }
+  const module = await import('../../fixtures/external-authoring/src/semanticSurface.tsx');
+  return module.renderExternalAuthoringSemanticSurface;
+}
 
 describe('public authoring Project Companion activity surface', () => {
+  let externalAuthoringSemanticSurface: RenderSurface;
+
+  beforeAll(async () => {
+    externalAuthoringSemanticSurface = await loadExternalAuthoringSemanticSurface();
+  });
+
+  it('requires the semantic surface to be declared by the loaded author contribution', () => {
+    const ui = externalAuthoringPlugin.manifest.contributes.ui;
+    expect(() => selectExternalAuthoringSemanticRendererArtifact({
+      ...ui,
+      views: ui.views?.filter(view => view.id !== EXTERNAL_SEMANTIC_VIEW_ID),
+    })).toThrow('Expected the loaded external authoring semantic view');
+  });
+
   it.each(['opened', 'client_unavailable'] as const)('presents the external authoring Action outcome %s without requesting Send', async (outcome) => {
     const calls: Array<Readonly<{ action: unknown; input: unknown }>> = [];
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'external-authoring-open', mountNonce: 'external-authoring-open-mount' },
-      authorPlugin: { id: 'example.external-semantic', version: '1.0.0' },
-      surface: renderExternalAuthoringSemanticSurface,
+      authorPlugin: {
+        id: externalAuthoringPlugin.manifest.id,
+        version: externalAuthoringPlugin.manifest.version,
+      },
+      surface: externalAuthoringSemanticSurface,
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       // Actions leave the external author's process. Keep the public SDK transport and surface real.
@@ -46,8 +88,11 @@ describe('public authoring Project Companion activity surface', () => {
   it('mounts the external author’s controlled choice and retains it through local widget disclosure', async () => {
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'fixture-m2-source', mountNonce: 'fixture-m2-source-mount' },
-      authorPlugin: { id: 'example.external-semantic', version: '1.0.0' },
-      surface: renderExternalAuthoringSemanticSurface,
+      authorPlugin: {
+        id: externalAuthoringPlugin.manifest.id,
+        version: externalAuthoringPlugin.manifest.version,
+      },
+      surface: externalAuthoringSemanticSurface,
       surfaceContext: createSurfaceContextFixture({ locale: 'en-GB' }),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       handlers: { executeAction: async () => null },
