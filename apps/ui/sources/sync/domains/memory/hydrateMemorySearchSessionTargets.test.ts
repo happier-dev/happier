@@ -46,6 +46,22 @@ function createRequestAuthority(
 }
 
 describe('hydrateMemorySearchSessionTargets', () => {
+    it('keeps daemon-authorized document hits outside Session visibility hydration', async () => {
+        const document = {
+            type: 'artifact' as const, ref: { kind: 'doc' as const, serverId: 'server-a', artifactId: 'doc-1' },
+            revision: { headerVersion: 1, bodyVersion: 1 }, location: 'document' as const,
+            summary: 'Current instruction', score: 0.8,
+        };
+        const read = vi.fn(async () => ({ ok: false }));
+        const result = await authorizeMemorySearchResult({
+            result: { v: 1, ok: true, hits: [document] }, serverId: 'server-a', accountId: 'account-a',
+            authority: { scope: { serverId: 'server-a', accountId: 'account-a' } },
+            accountLifetime: { isCurrent: () => true, onRetire: () => ({ dispose: () => undefined }) },
+            readSessionForServerScope: read, concurrencyLimit: 2,
+        });
+        expect(result).toEqual({ v: 1, ok: true, hits: [document] });
+        expect(read).not.toHaveBeenCalled();
+    });
     it('rejects a memory window for a revoked Session before daemon access', async () => {
         await expect(authorizeMemorySessionRange({
             target: TARGETS[0],

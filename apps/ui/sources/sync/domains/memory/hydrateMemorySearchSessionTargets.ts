@@ -6,7 +6,7 @@ import {
 import { areServerAccountScopesEqual, createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { serverFetch } from '@/sync/http/client';
 import { runTasksWithLimit } from '@/sync/runtime/orchestration/runTasksWithLimit';
-import type { MemorySearchResultV1 } from '@happier-dev/protocol';
+import { isMemorySessionSearchHitV1, type MemorySearchResultV1 } from '@happier-dev/protocol/memory/memorySearch';
 import { fetchSessionByIdWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/fetchSessionByIdWithServerScope';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
@@ -131,7 +131,9 @@ export async function authorizeMemorySearchResult<TAuthority>(params: Readonly<{
     signal?: AbortSignal;
 }>): Promise<MemorySearchResultV1> {
     if (!params.result.ok) return params.result;
-    const targets = [...new Set(params.result.hits.map((hit) => hit.sessionId))].map((sessionId) => ({
+    const targets = [...new Set(params.result.hits.flatMap((hit) =>
+        isMemorySessionSearchHitV1(hit) ? [hit.sessionId] : [],
+    ))].map((sessionId) => ({
         sessionKey: `${params.accountId}:${params.serverId}:${sessionId}`,
         serverId: params.serverId,
         accountId: params.accountId,
@@ -163,6 +165,11 @@ export async function authorizeMemorySearchResult<TAuthority>(params: Readonly<{
     return {
         ...params.result,
         hits: params.result.hits.filter((hit) => {
+            if (!isMemorySessionSearchHitV1(hit)) {
+                // Artifact currentness/access has already been qualified by the
+                // daemon. Preserve the same captured Account lifetime here.
+                return params.accountLifetime.isCurrent() && !params.signal?.aborted;
+            }
             const visibleThroughSeq = visibleThroughSeqBySessionId.get(hit.sessionId);
             return authorizedSessionIds.has(hit.sessionId)
                 && visibleThroughSeq !== undefined

@@ -15,11 +15,10 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
+import { publishPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
-import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { Modal } from '@/modal';
 import { useSessionSelector } from '@/sync/domains/state/storage';
 import {
   memoryDocumentActions,
@@ -36,18 +35,10 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { memoryDocumentHref } from './memoryDocumentRoutes';
 import type { MemoryDocumentSource } from './useMemoryDocument';
 
-/** How long "Forgot 1 fact · Undo" stays. Presentation only: the fact is already in the archive topic. */
-const FORGET_UNDO_VISIBLE_MS = 5_000;
 /** A fact this fresh reads "Just now" rather than today's date. */
 const JUST_NOW_MS = 60_000;
-/** Forces the row's actions into the one "⋯" menu (one control per row). */
-const OVERFLOW_ONLY_WIDTH_PX = 1;
 
-type Notice = 'pending' | 'conflict' | null;
-type Forgotten = Readonly<{
-  factId: string;
-  topic?: string;
-}>;
+type Notice = 'pending' | 'conflict' | 'refused' | null;
 
 export function formatMemoryDate(ms: number): string {
   return formatWithCachedDateTimeFormatter(ms, getPreferredLanguage(), {
@@ -81,6 +72,11 @@ export type MemoryDocumentBodyProps = Readonly<{
   scopeTarget?: MemoryScopeTargetV1;
   onCreatedMemory?: (receipt: MemoryCreationReceipt) => void;
   emptyText: string;
+  /**
+   * How the host says "nothing remembered yet" in its own empty treatment (the Work pane's one quiet
+   * line). Omitted, the document's pages draw it as an information row.
+   */
+  renderEmpty?: (line: Readonly<{ testID: string; text: string }>) => React.ReactNode;
   /** Opens the Session a fact came from, through the host's Session navigation owner. */
   onOpenSession?: (ref: Readonly<{ serverId: string; sessionId: string }>) => void;
 }>;
@@ -109,14 +105,7 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [draft, setDraft] = React.useState('');
   const [draftTopic, setDraftTopic] = React.useState('');
-  const [forgotten, setForgotten] = React.useState<Forgotten | null>(null);
   const draftRef = React.useRef<React.ElementRef<typeof FieldTextInput>>(null);
-
-  React.useEffect(() => {
-    if (!forgotten) return;
-    const timer = setTimeout(() => setForgotten(null), FORGET_UNDO_VISIBLE_MS);
-    return () => clearTimeout(timer);
-  }, [forgotten]);
 
   const refresh = source.refresh;
   const settle = React.useCallback(
@@ -127,12 +116,8 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
         const result = await run();
         const outcome = readMemoryActionOutcome(result);
         const receipt = readMemoryCreationReceipt(result);
-        if (outcome === 'refused')
-          Modal.alert(
-            t('memoryContext.memory.title'),
-            t('memoryContext.memory.refused'),
-          );
-        if (outcome === 'pending' || outcome === 'conflict') setNotice(outcome);
+        // A refusal is said in place, beside what it did not change, until the next attempt.
+        if (outcome === 'pending' || outcome === 'conflict' || outcome === 'refused') setNotice(outcome);
         // An attachment conflict still saved this fact. Keep the exact document reachable,
         // and close its draft so retrying cannot create a second copy of that fact.
         if (receipt) onCreatedMemory?.(receipt);
@@ -140,10 +125,7 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
         if (outcome !== 'refused') await refresh();
         return outcome === 'applied' || receipt !== null;
       } catch {
-        Modal.alert(
-          t('memoryContext.memory.title'),
-          t('memoryContext.memory.refused'),
-        );
+        setNotice('refused');
         return false;
       } finally {
         setBusy(false);
@@ -219,32 +201,32 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
           const applied = await settle(() =>
             memoryDocumentActions.forget(target, fact.id),
           );
-          if (applied) {
-            setForgotten({
-              factId: fact.id,
-              ...(topic ? { topic: topic.title } : {}),
-            });
-          }
+          if (!applied) return;
+          // The fact is already in the archive topic; Undo is offered on the app's one notice owner
+          // (its lifetime, its place) and restores this exact fact to where it was.
+          const key = `memory-forget:${fact.id}`;
+          const restoreTopic = topic?.title;
+          publishPresentationNotice({
+            key,
+            severity: 'info',
+            message: t('memoryContext.memory.forgot'),
+            undo: {
+              label: t('memoryContext.memory.undo'),
+              run: () => {
+                retirePresentationNotice(key);
+                fireAndForget(
+                  settle(() => memoryDocumentActions.restore(target, fact.id, restoreTopic)),
+                  { tag: 'MemoryDocumentBody.undoForget' },
+                );
+              },
+            },
+          });
         })(),
         { tag: 'MemoryDocumentBody.forget' },
       );
     },
     [settle, target, topic],
   );
-
-  const undoForget = React.useCallback(() => {
-    const restored = forgotten;
-    if (!restored || !target) return;
-    fireAndForget(
-      (async () => {
-        const applied = await settle(() =>
-          memoryDocumentActions.restore(target, restored.factId, restored.topic),
-        );
-        if (applied) setForgotten(null);
-      })(),
-      { tag: 'MemoryDocumentBody.undoForget' },
-    );
-  }, [forgotten, settle, target]);
 
   const startEdit = React.useCallback(
     (fact: MemoryFactV1) => {
@@ -259,26 +241,17 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
     (title: string) => {
       if (!view) return;
       router.push(
-        memoryDocumentHref(
-          {
-            artifactId: view.artifactId,
-            serverId: target?.serverId ?? serverId,
-          },
-          { topic: title },
-        ) as never,
+        memoryDocumentHref(view.ref, { topic: title }) as never,
       );
     },
-    [router, serverId, target?.serverId, view],
+    [router, view],
   );
   const openAll = React.useCallback(() => {
     if (!view) return;
     router.push(
-      memoryDocumentHref({
-        artifactId: view.artifactId,
-        serverId: target?.serverId ?? serverId,
-      }) as never,
+      memoryDocumentHref(view.ref) as never,
     );
-  }, [router, serverId, target?.serverId, view]);
+  }, [router, view]);
 
   const status = source.status;
   const facts = view?.facts ?? [];
@@ -343,6 +316,12 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
           testID={`${testID}.conflict`}
           tone="warning"
           reason={t('memoryContext.memory.conflict')}
+        />
+      ) : notice === 'refused' ? (
+        <SurfaceFreshnessLine
+          testID={`${testID}.refused`}
+          tone="warning"
+          reason={t('memoryContext.memory.refused')}
         />
       ) : status === 'unavailable' ? (
         <SurfaceFreshnessLine
@@ -417,7 +396,10 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
         />
       ) : null}
       {view && facts.length === 0 && !props.composing ? (
-        <Item
+        props.renderEmpty ? props.renderEmpty({
+          testID: `${testID}.empty`,
+          text: topic ? t('memoryContext.memory.topicEmpty') : props.emptyText,
+        }) : <Item
           testID={`${testID}.empty`}
           mode="info"
           showChevron={false}
@@ -430,15 +412,7 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
         <Item
           key={entry.title}
           testID={`${testID}.topic.${entry.title}`}
-          icon={
-            <Icon
-              name={
-                entry.title === MEMORY_ARCHIVE_TOPIC_TITLE_V1
-                  ? 'archive'
-                  : 'tag'
-              }
-            />
-          }
+          // No leading glyph: facts and topics share one text edge, and the chevron says a topic opens.
           title={memoryTopicLabel(entry.title)}
           subtitle={
             entry.title === MEMORY_ARCHIVE_TOPIC_TITLE_V1
@@ -450,7 +424,7 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
         />
       ))}
       {!view && status === 'none' ? (
-        props.composing && writable && canCreate ? null : (
+        props.composing && writable && canCreate ? null : props.renderEmpty ? props.renderEmpty({ testID: `${testID}.none`, text: props.emptyText }) : (
           <Item
             testID={`${testID}.none`}
             mode="info"
@@ -476,19 +450,6 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
                 ? t('memoryContext.memory.missing')
                 : t('memoryContext.memory.invalid')
           }
-        />
-      ) : null}
-      {forgotten ? (
-        <SurfaceStateCard
-          testID={`${testID}.forgot`}
-          size="line"
-          kind="success"
-          title={t('memoryContext.memory.forgot')}
-          accessibilitySemantics="status"
-          action={{
-            label: t('memoryContext.memory.undo'),
-            onPress: undoForget,
-          }}
         />
       ) : null}
       {view && props.footer ? (
@@ -538,7 +499,7 @@ const MemoryFactRow = React.memo(function MemoryFactRow(
   );
   const now = Date.now();
   const expired = fact.expiresAtMs !== undefined && fact.expiresAtMs <= now;
-  const meta = [
+  const facts = [
     now - fact.createdAtMs < JUST_NOW_MS
       ? t('memoryContext.memory.justNow')
       : formatMemoryDate(fact.createdAtMs),
@@ -551,10 +512,14 @@ const MemoryFactRow = React.memo(function MemoryFactRow(
         : t('memoryContext.memory.until', {
             date: formatMemoryDate(fact.expiresAtMs),
           }),
-    sourceName ?? (source ? null : t('memoryContext.memory.addedByYou')),
+    source ? null : t('memoryContext.memory.addedByYou'),
   ]
     .filter((part): part is string => Boolean(part))
     .join(' · ');
+  // The Session a fact came from is a link at the end of its line (lab `c-mem`), when this client
+  // can name it and the host can open it; otherwise its name is plain text.
+  const sourceLink = source && sourceName && onOpenSession ? () => onOpenSession(source) : null;
+  const meta = sourceLink || !sourceName ? facts : `${facts} · ${sourceName}`;
   const actions = React.useMemo((): ItemAction[] => {
     const list: ItemAction[] = [];
     if (props.writable) {
@@ -564,14 +529,6 @@ const MemoryFactRow = React.memo(function MemoryFactRow(
         icon: 'pencil',
         disabled: props.disabled,
         onPress: () => onEdit(fact),
-      });
-    }
-    if (source && sourceName && onOpenSession) {
-      list.push({
-        id: 'source',
-        title: t('memoryContext.memory.openSource'),
-        icon: 'arrow-square-out',
-        onPress: () => onOpenSession(source),
       });
     }
     if (props.writable) {
@@ -585,16 +542,7 @@ const MemoryFactRow = React.memo(function MemoryFactRow(
       });
     }
     return list;
-  }, [
-    fact,
-    onOpenSession,
-    onEdit,
-    onForget,
-    props.disabled,
-    props.writable,
-    source,
-    sourceName,
-  ]);
+  }, [fact, onEdit, onForget, props.disabled, props.writable]);
   return (
     <Item
       testID={props.testID}
@@ -602,7 +550,20 @@ const MemoryFactRow = React.memo(function MemoryFactRow(
       title={fact.text}
       titleLines={props.archived ? undefined : 2}
       titleStyle={props.archived || expired ? styles.retired : undefined}
-      subtitle={meta}
+      subtitle={sourceLink && sourceName ? (
+        <Text numberOfLines={1} style={styles.factMeta}>
+          {`${meta} · `}
+          <Text
+            testID={`${props.testID}.source`}
+            accessibilityRole="link"
+            accessibilityLabel={t('memoryContext.memory.openSource')}
+            style={styles.factSource}
+            onPress={sourceLink}
+          >
+            {sourceName}
+          </Text>
+        </Text>
+      ) : meta}
       subtitleLines={1}
       showChevron={false}
       rightElement={
@@ -610,7 +571,7 @@ const MemoryFactRow = React.memo(function MemoryFactRow(
           <ItemRowActions
             title={fact.text}
             actions={actions}
-            layoutWidthPx={OVERFLOW_ONLY_WIDTH_PX}
+            overflowOnly
             overflowTriggerTestID={`${props.testID}.more`}
           />
         ) : undefined
@@ -648,6 +609,15 @@ const stylesheet = StyleSheet.create((theme) => ({
   retired: {
     color: theme.colors.text.tertiary,
     textDecorationLine: 'line-through',
+  },
+  factMeta: {
+    ...Typography.default(),
+    ...happierPageTextMetrics('meta'),
+    color: theme.colors.text.tertiary,
+    fontVariant: ['tabular-nums'],
+  },
+  factSource: {
+    color: theme.colors.text.secondary,
   },
   topicField: {
     marginTop: 8,

@@ -18,6 +18,8 @@ export type DaemonMemorySettingsFetchResult = Readonly<
 export async function fetchDaemonMemorySettings(args: Readonly<{
     serverId: string | null | undefined;
     machineId: string | null | undefined;
+    accountId?: string;
+    signal?: AbortSignal;
 }>): Promise<DaemonMemorySettingsFetchResult> {
     const serverId = typeof args.serverId === 'string' ? args.serverId.trim() : '';
     const machineId = typeof args.machineId === 'string' ? args.machineId.trim() : '';
@@ -32,6 +34,8 @@ export async function fetchDaemonMemorySettings(args: Readonly<{
         const raw = await machineRpcWithServerScope<unknown, unknown>({
             machineId,
             serverId,
+            ...(args.accountId ? { accountId: args.accountId, preferScoped: true } : {}),
+            ...(args.signal ? { signal: args.signal } : {}),
             method: RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET,
             payload: {},
         });

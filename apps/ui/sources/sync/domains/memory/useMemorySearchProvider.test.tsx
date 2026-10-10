@@ -72,6 +72,15 @@ async function renderScopedProviderHook(target:
 }
 
 describe('useMemorySearchProvider', () => {
+    it('keeps ready Home Sessions and daemon native corpora available together for unified search', async () => {
+        setReadyHomeCapability({ enabled: true });
+        const { useMemorySearchProvider } = await import('./useMemorySearchProvider');
+        const hook = await renderHook(() => useMemorySearchProvider({ kind: 'exact', serverId: 'srv_home' }, {
+            conversationSearch: true, corpora: ['sessions', 'external_transcripts', 'documents'],
+        }));
+        expect(hook.getCurrent().conversation).toEqual({ homeSessions: true, daemonEnabled: true });
+        expect(hook.getCurrent().homeServerId).toBe('srv_home');
+    });
     it('keeps Home Session search available for mixed corpora when no eligible daemon can answer', async () => {
         setReadyHomeCapability({ enabled: true });
         daemonTargetState.target = null;

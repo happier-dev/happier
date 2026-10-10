@@ -51,6 +51,11 @@ vi.mock('@/auth/encryption/createEncryptionFromAuthCredentials', () => ({
 import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 
 import { searchHomeMemory } from './searchHomeMemory';
+import { searchConversations, mergeConversationSearchHits } from '../search/searchConversations';
+import { DEFAULT_MEMORY_SETTINGS } from '@happier-dev/protocol/memory/memorySettings';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+const machineRpc = vi.hoisted(() => vi.fn());
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: machineRpc }));
 
 function tokenForSub(sub: string): string {
     const payload = globalThis.btoa(JSON.stringify({ sub }))
@@ -97,6 +102,33 @@ function mockScopedHomeResponse(response: Response): void {
 }
 
 describe('searchHomeMemory', () => {
+    it('deduplicates Home and daemon Session hits at the fan-out owner without comparing their scores', async () => {
+        const home = await activateHome('Home', 'https://dedupe-home.test');
+        mockScopedHomeResponse(new Response(JSON.stringify({ v: 1, ok: true,
+            hits: [createHomeSearchHit('same', 'Home match', 1)] }), { status: 200 }));
+        machineRpc.mockImplementation(async call => call.method === RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET
+            ? { ...DEFAULT_MEMORY_SETTINGS, enabled: true, conversationSearch: { ...DEFAULT_MEMORY_SETTINGS.conversationSearch,
+                indexExternal: { ...DEFAULT_MEMORY_SETTINGS.conversationSearch.indexExternal, enabled: true, agents: ['pi'] } } }
+            : call.method === RPC_METHODS.DAEMON_MEMORY_STATUS ? { v: 1, enabled: true, indexMode: 'deep', hintsIndexReady: true,
+                deepIndexReady: true, activeIndexReady: true, activeIndexSearchable: true, embeddingsEnabled: false,
+                embeddingsMode: 'disabled', embeddingsPresetId: null, embeddingsProviderKind: null, embeddingsModelId: null,
+                embeddingsRuntimeState: 'unavailable', embeddingsUsingFallback: false,
+                tier1DbPath: null, deepDbPath: null, tier1DbBytes: null, deepDbBytes: null }
+                : { v: 1, ok: true, hits: [{ ...createHomeSearchHit('same', 'Daemon match', 0.1), createdAtToMs: 30 }] });
+        const result = await searchConversations({ serverId: home, accountId: 'account', machines: [{ id: 'one', online: true }],
+            concurrencyLimit: 2, homeSessions: true, mode: 'indexed',
+            query: { v: 1, query: 'quartz', scope: { type: 'global' }, mode: 'auto' } });
+        expect(result.hits).toHaveLength(1);
+        expect(result.hits[0]).toMatchObject({ machineId: null, hit: { sessionId: 'same', summary: 'Home match' } });
+        const daemon = await searchConversations({ serverId: home, accountId: 'account', machines: [{ id: 'one', online: true }],
+            concurrencyLimit: 2, homeSessions: false, mode: 'indexed',
+            query: { v: 1, query: 'quartz', scope: { type: 'global' }, mode: 'auto', corpora: ['sessions'] } });
+        const merged = mergeConversationSearchHits([...result.hits, ...daemon.hits]);
+        expect(merged).toHaveLength(1);
+        expect(merged[0]).toMatchObject({ machineId: 'one', hit: { sessionId: 'same', summary: 'Daemon match' } });
+        expect(runtimeFetchMock.mock.calls.some(([input]) => String(input.url).includes('/v1/home/search'))).toBe(true);
+    });
+
     it('posts the shared MemorySearchQueryV1 to /v1/home/search for the focused Home target and parses the shared result', async () => {
         const homeA = await activateHome('Home A', 'https://home-a.example');
         mockScopedHomeResponse(new Response(JSON.stringify({

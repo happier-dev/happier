@@ -1,4 +1,4 @@
-import { AuthoringMemoryValueV1Schema, AuthoringMemoryPrivatePayloadV1Schema, StoredAuthoringMemoryPrivatePayloadV1Schema, assertAuthoringMemoryContentForModeV1, AUTHORING_MEMORY_ACCOUNT_SCOPED_BLOB_KIND_V1, type AuthoringMemoryContentV1, type AuthoringMemoryValueV1 } from '@happier-dev/protocol/account/authoringMemory';
+import { assertAuthoringMemoryValueForKeyV1, AuthoringMemoryPrivatePayloadV1Schema, StoredAuthoringMemoryPrivatePayloadV1Schema, assertAuthoringMemoryContentForModeV1, AUTHORING_MEMORY_ACCOUNT_SCOPED_BLOB_KIND_V1, type AuthoringMemoryContentV1, type AuthoringMemoryValueV1 } from '@happier-dev/protocol/account/authoringMemory';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 
 export type AuthoringMemoryCipher = Readonly<{
@@ -23,7 +23,7 @@ export function createAuthoringMemoryCipher(options: Readonly<{
     }
     return {
         seal: (key, value) => options.mode === 'plain'
-            ? { t: 'plain', v: AuthoringMemoryValueV1Schema.parse(value) }
+            ? { t: 'plain', v: assertAuthoringMemoryValueForKeyV1(key, value) }
             : { t: 'encrypted', c: sealAccountScopedBlobCiphertext({
                 kind: AUTHORING_MEMORY_ACCOUNT_SCOPED_BLOB_KIND_V1,
                 material: material(),
@@ -31,7 +31,7 @@ export function createAuthoringMemoryCipher(options: Readonly<{
                 randomBytes: options.randomBytes,
             }) },
         open: (key, envelope) => {
-            const content = assertAuthoringMemoryContentForModeV1(envelope, options.mode);
+            const content = assertAuthoringMemoryContentForModeV1(envelope, options.mode, key);
             if (content.t === 'plain') return content.v;
             const opened = openAccountScopedBlobCiphertext({
                 kind: AUTHORING_MEMORY_ACCOUNT_SCOPED_BLOB_KIND_V1,

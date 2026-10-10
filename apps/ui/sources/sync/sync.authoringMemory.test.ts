@@ -3,6 +3,7 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
     AccountSettingsV2UpdateRequestSchema,
     AuthoringMemoryMutationRequestV1Schema,
+    buildProjectLastOpenedMemoryKeyV1,
     LegacyLastUsedProfileSchema,
     openAccountScopedBlobCiphertext,
     sealAccountScopedBlobCiphertext,
@@ -14,6 +15,7 @@ import { loadAuthoringMemoryProjection, saveAuthoringMemoryProjection } from './
 import { getPersistenceStorage } from './domains/state/persistenceStorage';
 import { createAccountSettingsScope, type AccountSettingsScope } from './domains/settings/scope/accountSettingsScope';
 import type { Settings } from './domains/settings/settings';
+import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 
 // MMKV/native SDK and the prepared HTTP adapter are the real system boundaries.
 vi.mock('react-native-mmkv', () => {
@@ -47,15 +49,17 @@ import './syncEngine';
 import { sync, type SyncServerTarget } from './sync';
 import { storage } from './domains/state/storage';
 import { Encryption } from './encryption/encryption';
-import { StaleServerGenerationError } from './http/client';
+import { StaleServerGenerationError, ServerFetchAbortedForServerSwitchError } from './http/client';
 
 // Initialize incumbent owner state, without replacing any internal operation.
 type AuthoringRuntimeTestAccess = {
+    bootstrapSync: () => Promise<void>;
     credentials: AuthCredentials | undefined;
     pendingSettingsScope: AccountSettingsScope | null;
     pendingSettings: Partial<Settings>;
     appliedServerTarget: SyncServerTarget | null;
     authoringMemoryRuntime: unknown;
+    projectAccountRowsRuntime: unknown;
     encryption: Encryption | null;
     settingsSecretsKey: Uint8Array | null;
     settingsSecretsReadKeys: ReadonlyArray<Uint8Array>;
@@ -64,21 +68,119 @@ const owner = sync as unknown as AuthoringRuntimeTestAccess;
 const original = { credentials: owner.credentials, pendingSettingsScope: owner.pendingSettingsScope,
     pendingSettings: owner.pendingSettings,
     appliedServerTarget: owner.appliedServerTarget, authoringMemoryRuntime: owner.authoringMemoryRuntime,
+    projectAccountRowsRuntime: owner.projectAccountRowsRuntime,
     encryption: owner.encryption, settingsSecretsKey: owner.settingsSecretsKey,
     settingsSecretsReadKeys: owner.settingsSecretsReadKeys };
 const originalSettings = { settings: storage.getState().settings, settingsVersion: storage.getState().settingsVersion,
-    settingsScope: storage.getState().settingsScope };
+    settingsScope: storage.getState().settingsScope, profileScope: storage.getState().profileScope,
+    projectAccountRows: storage.getState().projectAccountRows, isDataReady: storage.getState().isDataReady };
 
 afterEach(() => {
     Object.assign(owner, original);
     storage.getState().resetAuthoringMemory();
     storage.setState(originalSettings);
     network.request.mockReset();
+    vi.unstubAllGlobals();
     if (vi.isMockFunction(console.error)) vi.mocked(console.error).mockRestore();
 });
 
 describe('Sync authoring-memory runtime', () => {
-    it('retires a cancelled bootstrap quietly and bootstraps the current Home on the next settings refresh', async () => {
+    it('starts independent Account projection reads while Settings is pending, keeping Sessions and readiness behind Settings', async () => {
+        // A configured single-slot limiter intentionally serializes requests;
+        // this scheduling regression exercises the incumbent multi-slot budget.
+        expect(sync.getSyncTuning().bootstrapConcurrencyLimit).toBeGreaterThan(1);
+        // Capability HTTP reads are outside the prepared Account adapter. An
+        // unsupported endpoint disables optional projections without live I/O.
+        vi.stubGlobal('fetch', async () => Response.json({}, { status: 404 }));
+        owner.credentials = { token: 'bootstrap-independent-account' };
+        owner.encryption = null;
+        owner.settingsSecretsKey = null;
+        owner.settingsSecretsReadKeys = [];
+        owner.pendingSettings = {};
+        owner.appliedServerTarget = { serverId: 'https://bootstrap-independent.test', serverUrl: 'https://bootstrap-independent.test', generation: 1 };
+        const scope = createAccountSettingsScope(owner.appliedServerTarget.serverId, 'bootstrap-independent-account');
+        if (!scope) throw new Error('Expected valid Account/Home scope');
+        owner.pendingSettingsScope = scope;
+        owner.authoringMemoryRuntime = null;
+        owner.projectAccountRowsRuntime = null;
+        await storage.getState().activateSettingsScope(scope);
+        storage.setState({ profileScope: scope, isDataReady: false });
+        const requests: string[] = [];
+        let releaseSettings!: () => void;
+        const settingsResponse = new Promise<void>(resolve => { releaseSettings = resolve; });
+        network.request.mockImplementation(async (path, init) => {
+            requests.push(path);
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/account/authoring-memory') return Response.json({ rows: [] });
+            if (path === '/v1/account/project-rows/list') return Response.json(createPlainProjectAccountRowListFixture());
+            if (path === '/v2/account/settings' && init?.method !== 'POST') {
+                await settingsResponse;
+                return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            }
+            if (/^\/v2\/sessions(?:\/active)?(?:\?|$)/.test(path)) {
+                return Response.json({ sessions: [], nextCursor: null, hasNext: false });
+            }
+            // Refused optional reads settle at the genuine HTTP boundary; all Sync
+            // orchestration, queues, parsing, and state owners remain real.
+            return Response.json({ error: 'not_authorized' }, { status: 401 });
+        });
+
+        const bootstrap = owner.bootstrapSync();
+        try {
+            await vi.waitFor(() => expect(requests).toContain('/v2/account/settings'));
+            await vi.waitFor(() => expect(requests).toContain('/v1/account/profile'));
+            expect(requests.some(path => /^\/v[12]\/sessions(?:\/active)?(?:\?|$)/.test(path))).toBe(false);
+            expect(storage.getState().isDataReady).toBe(false);
+        } finally {
+            releaseSettings();
+            await bootstrap;
+        }
+        expect(requests.some(path => /^\/v[12]\/sessions(?:\?|$)/.test(path))).toBe(true);
+        expect(storage.getState().isDataReady).toBe(true);
+    });
+
+    it('loads accepted Project rows when optional authoring-memory storage returns 404, while memory writes still fail', async () => {
+        const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {});
+        owner.credentials = { token: 'project-independent-account' };
+        owner.encryption = null;
+        owner.settingsSecretsKey = null;
+        owner.settingsSecretsReadKeys = [];
+        owner.pendingSettings = {};
+        owner.appliedServerTarget = { serverId: 'https://project-independent.test', serverUrl: 'https://project-independent.test', generation: 1 };
+        const scope = createAccountSettingsScope(owner.appliedServerTarget.serverId, 'project-independent-account');
+        if (!scope) throw new Error('Expected valid Account/Home scope');
+        owner.pendingSettingsScope = scope;
+        owner.authoringMemoryRuntime = null;
+        owner.projectAccountRowsRuntime = null;
+        await storage.getState().activateSettingsScope(scope);
+        storage.setState({ profileScope: scope, projectAccountRows: null });
+        const ref = { id: 'accepted', serverId: scope.serverId, machineId: 'm1', rootPath: '/repo', createdAtMs: 1 };
+        let memoryAvailable = false;
+        network.request.mockImplementation(async (path, init) => {
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/account/authoring-memory') return memoryAvailable ? Response.json({ rows: [{
+                key: buildProjectLastOpenedMemoryKeyV1({ serverId: scope.serverId, projectKey: ref.id }),
+                revision: 1, content: { t: 'plain', v: 42 },
+            }] }) : Response.json({}, { status: 404 });
+            if (path === '/v1/account/project-rows/list') return Response.json(createPlainProjectAccountRowListFixture({ workspaceRefs: [ref] }));
+            if (path === '/v2/account/settings' && init?.method !== 'POST') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (path === '/v1/push-tokens?projectionVersion=2') return Response.json({}, { status: 404 });
+            throw new Error(`Unexpected independent Project request: ${path}`);
+        });
+
+        await sync.refreshAccountSettingsFromServer(1, scope);
+        await vi.waitFor(() => expect(storage.getState().projectAccountRows?.status).toBe('ready'));
+        expect(storage.getState().projectAccountRows?.workspaceRefs).toEqual([ref]);
+        await expect(sync.applyAuthoringMemoryDelta({ lastUsedProfile: 'must-not-write' })).rejects.toThrow();
+        expect(storage.getState().projectAccountRows?.workspaceRefs).toEqual([ref]);
+        expect(storage.getState().authoringMemory.lastUsedProfile).toBeNull();
+        expect(diagnostics.mock.calls.some(call => String(call[0]).includes('Sync.projectAccountRows.bootstrap'))).toBe(false);
+        memoryAvailable = true;
+        await sync.refreshAccountSettingsFromServer(1, scope);
+        await vi.waitFor(() => expect(storage.getState().projectAccountRows?.workspaceRefs).toEqual([{ ...ref, lastOpenedAtMs: 42 }]));
+    });
+
+    it.each([StaleServerGenerationError, ServerFetchAbortedForServerSwitchError])('retires a failed bootstrap quietly and recovers on the next settings refresh: %s', async (Failure) => {
         const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {});
         owner.credentials = { token: 'authoring-cancelled-account' };
         owner.encryption = null;
@@ -97,7 +199,7 @@ describe('Sync authoring-memory runtime', () => {
                 return Response.json({ mode: 'plain', updatedAt: 1 });
             }
             if (path === '/v1/account/authoring-memory') {
-                if (cancelled) throw new StaleServerGenerationError();
+                if (cancelled) throw new Failure();
                 return Response.json({ rows: [
                     { key: 'lastUsedProfile', revision: 1, content: { t: 'plain', v: 'current-profile' } },
                 ] });
@@ -106,6 +208,7 @@ describe('Sync authoring-memory runtime', () => {
                 return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
             }
             if (path === '/v1/push-tokens?projectionVersion=2') return Response.json({}, { status: 404 });
+            if (path === '/v1/account/project-rows/list') return Response.json(createPlainProjectAccountRowListFixture());
             throw new Error(`Unexpected bootstrap request: ${path}`);
         });
 
@@ -120,7 +223,7 @@ describe('Sync authoring-memory runtime', () => {
         await vi.waitFor(() => expect(storage.getState().authoringMemory.lastUsedProfile).toBe('current-profile'));
     });
 
-    it('refreshes ordinary Account Settings when authoring-memory storage is unavailable', async () => {
+    it('refreshes ordinary Account Settings quietly when authoring-memory storage is unavailable and retries the next refresh', async () => {
         const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {});
         owner.credentials = { token: 'settings-independent-account' };
         owner.encryption = null;
@@ -133,13 +236,17 @@ describe('Sync authoring-memory runtime', () => {
         owner.pendingSettingsScope = scope;
         owner.authoringMemoryRuntime = null;
         await storage.getState().activateSettingsScope(scope);
+        let unavailable = true;
         network.request.mockImplementation(async (path, init) => {
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
-            if (path === '/v1/account/authoring-memory') return Response.json({ error: 'authoring_memory_storage_unavailable' }, { status: 503 });
+            if (path === '/v1/account/authoring-memory') return unavailable
+                ? Response.json({ error: 'authoring_memory_storage_unavailable' }, { status: 503 })
+                : Response.json({ rows: [{ key: 'lastUsedProfile', revision: 1, content: { t: 'plain', v: 'recovered-profile' } }] });
             if (path === '/v2/account/settings' && init?.method !== 'POST') {
                 return Response.json({ content: { t: 'plain', v: { analyticsOptOut: true } }, version: 1 });
             }
             if (path === '/v1/push-tokens?projectionVersion=2') return Response.json({}, { status: 404 });
+            if (path === '/v1/account/project-rows/list') return Response.json(createPlainProjectAccountRowListFixture());
             throw new Error(`Unexpected independent Settings request: ${path}`);
         });
 
@@ -149,7 +256,11 @@ describe('Sync authoring-memory runtime', () => {
         expect(storage.getState().settings.analyticsOptOut).toBe(true);
         await expect(sync.applyAuthoringMemoryDelta({ lastUsedProfile: 'must-not-write' })).rejects.toThrow();
         expect(storage.getState().authoringMemory.lastUsedProfile).toBeNull();
-        expect(diagnostics).toHaveBeenCalledWith('[fireAndForget] Sync.authoringMemory.bootstrap', expect.any(Error));
+        expect(diagnostics).not.toHaveBeenCalled();
+
+        unavailable = false;
+        await sync.refreshAccountSettingsFromServer(1, scope);
+        await vi.waitFor(() => expect(storage.getState().authoringMemory.lastUsedProfile).toBe('recovered-profile'));
     });
 
     it('retires only the transferred legacy key and preserves an unrelated raw SecretString sibling exactly under E2EE', async () => {

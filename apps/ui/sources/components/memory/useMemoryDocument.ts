@@ -3,10 +3,8 @@ import type {
   MemoryTopicV1,
 } from '@happier-dev/protocol/prompts/library/memoryDocV1';
 import type { PromptDocArtifactRefV1 } from '@happier-dev/protocol/prompts/library/promptArtifactRefsV1';
-import {
-  MemoryDocFailureV1,
-  readMemoryDocInLibrary,
-} from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
+import type { ArtifactCallerAccessV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { MemoryDocReadResultV1Schema } from '@happier-dev/protocol/prompts/library/memoryActionsV1';
 import * as React from 'react';
 
 import type {
@@ -14,7 +12,11 @@ import type {
   MemoryDocumentTarget,
 } from '@/sync/ops/promptLibrary/memoryDocuments';
 import { withUiPromptLibraryArtifactReader } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
-import { useArtifact } from '@/sync/domains/state/storage';
+import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { useArtifact, useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { captureActiveServerAccountScopeCurrentness, captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
 export type MemoryDocumentStatus =
   | 'none'
@@ -29,6 +31,9 @@ export type MemoryDocumentStatus =
 /** What one read of a memory document shows: its always-loaded index, or one named topic. */
 export type MemoryDocumentView = Readonly<{
   artifactId: string;
+  /** The admitted readable address survives refresh without retaining write authority. */
+  ref: PromptDocArtifactRefV1;
+  access: ArtifactCallerAccessV1 | null;
   title: string;
   revision: MemoryDocumentRevision;
   /** The facts of this page: the index's key facts, or the open topic's facts. */
@@ -50,6 +55,9 @@ export type MemoryDocumentSource = Readonly<{
 
 type Loaded = Readonly<{
   key: string;
+  identity: string;
+  accountId: string | null;
+  isCurrent: () => boolean;
   status: MemoryDocumentStatus;
   view: MemoryDocumentView | null;
   stale: boolean;
@@ -65,8 +73,8 @@ const LOCKED_CODES = new Set([
 ]);
 
 /**
- * Display read of one `memory_doc.v1` document through the canonical qualified reader
- * (`readMemoryDocInLibrary`): the index first, or one topic when `topic` is given (D48: topics load
+ * Display read of one `memory_doc.v1` document through the canonical `memory.read` Action:
+ * the index first, or one topic when `topic` is given (D48: topics load
  * on demand). It keeps the last version while a newer one loads, re-reads when the Home's Artifact
  * row moves, and never writes; edits go through the `memory.*` Actions against `target`.
  */
@@ -83,8 +91,12 @@ export function useMemoryDocument(
   const enabled = params.enabled !== false && ref !== null && serverId !== null;
   const artifactId = ref?.artifactId ?? '';
   const homeId = ref?.serverId ?? serverId ?? '';
+  const accountScope = useActiveServerAccountScope();
+  const activeLifetime = captureActiveServerAccountScopeLifetime();
+  const identity = JSON.stringify([homeId, accountScope?.serverId, accountScope?.accountId, artifactId, topic ?? null]);
   // The active Home's Artifact row is the change signal; another Home's document re-reads on demand.
-  const row = useArtifact(artifactId);
+  const activeRow = useArtifact(artifactId);
+  const row = accountScope && areServerProfileIdentifiersEquivalent(accountScope.serverId, homeId) ? activeRow : null;
   const key = JSON.stringify([
     homeId,
     artifactId,
@@ -93,6 +105,8 @@ export function useMemoryDocument(
     row?.bodyVersion ?? null,
   ]);
   const [loaded, setLoaded] = React.useState<Loaded | null>(null);
+  // Keep the canonical captured Home Account alive while its content is displayed.
+  const displayedAccount = React.useRef<LazyActionAccountContext | null>(null);
   const pending = React.useRef<Readonly<{
     key: string;
     controller: AbortController;
@@ -103,41 +117,46 @@ export function useMemoryDocument(
     if (!enabled || !artifactId) return Promise.resolve();
     pending.current?.controller.abort();
     const controller = new AbortController();
-    setLoaded((previous) => ({
-      key,
-      status:
-        previous?.view?.artifactId === artifactId ? 'refreshing' : 'loading',
-      view:
-        previous?.view?.artifactId === artifactId &&
-        (previous.view.topic?.title ?? null) === (topic ?? null)
-          ? previous.view
-          : null,
-      stale: false,
-    }));
+    const currentness = captureActiveServerAccountScopeCurrentness();
+    setLoaded((previous) => {
+      const view = previous?.identity === identity && previous.isCurrent() ? previous.view : null;
+      return {
+        key,
+        identity,
+        accountId: view ? previous?.accountId ?? null : null,
+        isCurrent: view && previous ? previous.isCurrent : currentness.isCurrent,
+        status: view ? 'refreshing' : 'loading',
+        view,
+        stale: false,
+      };
+    });
     const promise = (async () => {
+      let account: LazyActionAccountContext | null = null;
       try {
-        const read = await withUiPromptLibraryArtifactReader(
-          (reader) =>
-            readMemoryDocInLibrary({
-              artifactId,
-              store: {
-                read: () =>
-                  reader.readArtifact({
-                    kind: 'doc',
-                    artifactId,
-                    serverId: homeId,
-                  }),
-              },
-              ...(topic === undefined ? {} : { topic }),
-              signal: controller.signal,
-            }),
-          { serverId: homeId, signal: controller.signal },
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        account = await captureLazyActionAccountContext(homeId, controller.signal);
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const result = await createDefaultActionExecutor().execute('memory.read', {
+          ref: { kind: 'doc', artifactId, serverId: homeId },
+          ...(topic === undefined ? {} : { topic }),
+        }, { surface: 'ui', authority: 'present_user', serverId: homeId,
+          expectedAccountId: account.accountId, signal: controller.signal });
+        if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+        const read = MemoryDocReadResultV1Schema.parse(result.result);
+        const access = await withUiPromptLibraryArtifactReader(
+          async (reader) => {
+            const artifact = await reader.readArtifactHeader({ kind: 'doc', artifactId, serverId: homeId });
+            return artifact?.access ?? null;
+          },
+          { serverId: homeId, signal: controller.signal, accountContext: account },
         );
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || !currentness.isCurrent()) return;
         const view: MemoryDocumentView =
           'topic' in read
             ? {
                 artifactId,
+                ref: { kind: 'doc', artifactId, serverId: homeId },
+                access,
                 title: read.header.title,
                 revision: read.revision,
                 facts: read.topic.facts,
@@ -146,46 +165,76 @@ export function useMemoryDocument(
               }
             : {
                 artifactId,
+                ref: { kind: 'doc', artifactId, serverId: homeId },
+                access,
                 title: read.header.title,
                 revision: read.revision,
                 facts: read.body.index,
                 topics: read.body.topics,
                 topic: null,
               };
-        setLoaded({ key, status: 'ready', view, stale: false });
+        const capturedLifetime = account.accountOnlyLifetime;
+        displayedAccount.current?.dispose();
+        displayedAccount.current = account;
+        setLoaded({ key, identity, accountId: account.accountId,
+          isCurrent: () => currentness.isCurrent() && capturedLifetime.isCurrent(),
+          status: 'ready', view, stale: false });
       } catch (error) {
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || !currentness.isCurrent()) return;
+        const failure = (status: MemoryDocumentStatus): Loaded => ({ key, identity, accountId: null,
+          isCurrent: currentness.isCurrent, status, view: null, stale: false });
         const code: unknown =
-          error instanceof MemoryDocFailureV1
-            ? error.code
-            : error && typeof error === 'object'
+          error && typeof error === 'object'
               ? Reflect.get(error, 'code')
               : undefined;
         if (
           code === 'memory_doc_not_found' ||
           code === 'memory_topic_not_found'
         ) {
-          setLoaded({ key, status: 'not_found', view: null, stale: false });
+          setLoaded(failure('not_found'));
         } else if (code === 'memory_doc_invalid') {
-          setLoaded({ key, status: 'invalid', view: null, stale: false });
+          setLoaded(failure('invalid'));
         } else if (typeof code === 'string' && LOCKED_CODES.has(code)) {
-          setLoaded({ key, status: 'locked', view: null, stale: false });
+          setLoaded(failure('locked'));
         } else {
           // Offline keeps the last version, marked as such.
-          setLoaded((previous) => ({
-            key,
-            status: 'unavailable',
-            view: previous?.view ?? null,
-            stale: Boolean(previous?.view),
-          }));
+          setLoaded((previous) => {
+            const view = previous?.identity === identity && previous.isCurrent() ? previous.view : null;
+            return { ...failure('unavailable'), view, stale: Boolean(view),
+              accountId: view ? previous?.accountId ?? null : null,
+              isCurrent: view && previous ? previous.isCurrent : currentness.isCurrent };
+          });
         }
       } finally {
+        if (account && displayedAccount.current !== account) account.dispose();
         if (pending.current?.controller === controller) pending.current = null;
       }
     })();
     pending.current = { key, controller, promise };
     return promise;
-  }, [artifactId, enabled, homeId, key, topic]);
+  }, [activeLifetime, artifactId, enabled, homeId, identity, key, topic]);
+
+  React.useEffect(() => {
+    const retirement = activeLifetime?.onRetire(() => {
+      pending.current?.controller.abort();
+      setLoaded(null);
+    });
+    return () => retirement?.dispose();
+  }, [activeLifetime]);
+
+  React.useEffect(() => subscribeHomeCredentialChange((event) => {
+    if (!areServerProfileIdentifiersEquivalent(event.serverId, homeId)) return;
+    pending.current?.controller.abort();
+    displayedAccount.current?.dispose();
+    displayedAccount.current = null;
+    setLoaded(null);
+    if (enabled) void refresh();
+  }), [enabled, homeId, refresh]);
+
+  React.useEffect(() => () => {
+    displayedAccount.current?.dispose();
+    displayedAccount.current = null;
+  }, []);
 
   React.useEffect(() => {
     if (enabled) void refresh();
@@ -204,7 +253,7 @@ export function useMemoryDocument(
         target: null,
         refresh: NO_REFRESH,
       };
-    const current = loaded ?? {
+    const current = loaded?.identity === identity && loaded.isCurrent() ? loaded : {
       key,
       status: 'loading' as const,
       view: null,
@@ -216,7 +265,7 @@ export function useMemoryDocument(
       view,
       stale: current.stale,
       target:
-        view && current.status === 'ready'
+        view && view.access !== null && view.access !== 'view' && current.status === 'ready' && current.key === key
           ? {
               ref,
               serverId: homeId,
@@ -226,5 +275,5 @@ export function useMemoryDocument(
           : null,
       refresh,
     };
-  }, [enabled, homeId, key, loaded, ref, refresh, serverId, topic]);
+  }, [activeLifetime, enabled, homeId, identity, key, loaded, ref, refresh, serverId, topic]);
 }

@@ -13,8 +13,11 @@ import { StyleSheet } from 'react-native-unistyles';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { Icon } from '@/components/ui/icons/Icon';
+import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import { Item } from '@/components/ui/lists/Item';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
+import { queryRanges } from '@/components/ui/text/queryRanges';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
@@ -143,7 +146,7 @@ export const MemorySearchPanel = React.memo(function MemorySearchPanel(props: Re
             ) : null}
             {results && results.documents.length > 0 ? (
                 <>
-                    <GroupLabel label={t('memoryContext.memory.remembered')} count={results.documents.length} />
+                    <CollectionListGroupLabel title={t('memoryContext.memory.remembered')} count={results.documents.length} first />
                     {results.documents.map((hit, index) => {
                         const where = typeof hit.location === 'object' ? memoryTopicLabel(hit.location.title)
                             : hit.location === 'archive' ? t('memoryContext.memory.archive') : null;
@@ -151,9 +154,13 @@ export const MemorySearchPanel = React.memo(function MemorySearchPanel(props: Re
                             <Item
                                 key={`${hit.ref.artifactId}:${hit.factId ?? index}`}
                                 testID={`${testID}.remembered.${index}`}
-                                title={hit.summary}
-                                titleLines={2}
-                                titleStyle={hit.location === 'archive' ? styles.retired : undefined}
+                                // The words that matched are marked in the fact (the Find surfaces' own marks).
+                                title={(
+                                    <Text numberOfLines={2} style={[styles.hitTitle, hit.location === 'archive' ? styles.retired : null]}>
+                                        <FindHighlightedText text={hit.summary} ranges={queryRanges(hit.summary, results.query)} />
+                                    </Text>
+                                )}
+                                accessibilityLabel={hit.summary}
                                 subtitle={where ?? undefined}
                                 showChevron={false}
                                 onPress={() => openDocument(hit)}
@@ -164,12 +171,13 @@ export const MemorySearchPanel = React.memo(function MemorySearchPanel(props: Re
             ) : null}
             {results && results.sessions.length > 0 ? (
                 <>
-                    <GroupLabel label={t('memoryContext.memory.pastSessions')} count={results.sessions.length} />
+                    <CollectionListGroupLabel title={t('memoryContext.memory.pastSessions')} count={results.sessions.length} first={results.documents.length === 0} />
                     {results.sessions.map((hit, index) => (
                         <SessionHitRow
                             key={`${hit.sessionId}:${hit.seqFrom}`}
                             testID={`${testID}.session.${index}`}
                             hit={hit}
+                            query={results.query}
                             serverId={serverId}
                             onOpen={openSession}
                         />
@@ -178,29 +186,19 @@ export const MemorySearchPanel = React.memo(function MemorySearchPanel(props: Re
             ) : null}
             {results?.status === 'ready' && results.documentsCoverage?.state === 'ready' && count === 0 ? (
                 <Text testID={`${testID}.empty`} style={styles.hint}>{t('memoryContext.memory.noResults', { query: results.query })}</Text>
-            ) : results === null && target !== null ? (
-                <Text style={styles.hint}>{t('memoryContext.memory.searchHint')}</Text>
             ) : null}
         </View>
     );
 });
 
-function GroupLabel(props: Readonly<{ label: string; count: number }>) {
-    const styles = stylesheet;
-    return (
-        <Text style={styles.group} accessibilityRole="header">
-            {props.label}
-            <Text style={styles.groupCount}>{`  ${props.count}`}</Text>
-        </Text>
-    );
-}
-
 const SessionHitRow = React.memo(function SessionHitRow(props: Readonly<{
     testID: string;
     hit: MemorySearchHitV1;
+    query: string;
     serverId: string;
     onOpen: (hit: MemorySearchHitV1) => void;
 }>) {
+    const styles = stylesheet;
     const { hit, onOpen } = props;
     // Row-local: the hit's own Session title only.
     const name = useSessionSelector(hit.sessionId, props.serverId, (session) => (session ? getSessionName(session, props.serverId) : null));
@@ -209,8 +207,12 @@ const SessionHitRow = React.memo(function SessionHitRow(props: Readonly<{
             testID={props.testID}
             icon={<Icon name="chat-circle" />}
             title={name ?? hit.summary}
-            subtitle={name ? hit.summary : undefined}
-            subtitleLines={2}
+            // The excerpt carries the match; the Session's name is its title when it is loaded here.
+            subtitle={name ? (
+                <Text numberOfLines={2} style={styles.hitExcerpt}>
+                    <FindHighlightedText text={hit.summary} ranges={queryRanges(hit.summary, props.query)} />
+                </Text>
+            ) : undefined}
             detail={formatMemoryDate(hit.createdAtToMs)}
             showChevron={false}
             onPress={() => onOpen(hit)}
@@ -229,18 +231,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.tertiary,
         fontVariant: ['tabular-nums'],
     },
-    group: {
-        ...Typography.default('semiBold'),
-        ...happierPageTextMetrics('meta'),
-        color: theme.colors.text.secondary,
-        paddingHorizontal: HAPPIER_WORK_PANE_METRICS.rowInsetPx,
-        paddingTop: 10,
-        paddingBottom: 2,
+    hitTitle: {
+        ...Typography.rowTitle(),
+        color: theme.colors.text.primary,
     },
-    groupCount: {
-        ...Typography.default(),
-        color: theme.colors.text.tertiary,
-        fontVariant: ['tabular-nums'],
+    hitExcerpt: {
+        ...Typography.rowMeta(),
+        color: theme.colors.text.secondary,
     },
     hint: {
         ...Typography.default(),

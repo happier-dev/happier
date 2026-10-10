@@ -246,6 +246,47 @@ afterEach(() => {
 });
 
 describe('MemorySettingsView', () => {
+    it('keeps default keyword settings keyless when another indexing preference is saved', async () => {
+        installMemoryRpc({
+            settingsGet: () => ({ v: 1 }),
+            settingsSet: (params) => params.payload,
+            status: () => createReadyMemoryStatus({
+                indexMode: 'deep',
+                hintsIndexReady: false,
+                hintsIndexHasContent: false,
+                deepIndexReady: true,
+                deepIndexHasContent: true,
+            }),
+        });
+
+        const screen = await renderSettledMemorySettingsView();
+        expect(screen.findByProps({ title: 'memorySearchSettings.enabled.title' }).props.rightElement.props.value).toBe(true);
+        expect(findSegmentedChoice(screen, 'deep')?.props.rightElement.props.activeTabId).toBe('deep');
+        await chooseSegment(screen, 'all_history');
+
+        const saved = machineRpcSpy.mock.calls.find((call) => call[0]?.method === 'daemon.memory.settings.set')?.[0]?.payload;
+        expect(saved).toMatchObject({
+            enabled: true,
+            indexMode: 'deep',
+            backfillPolicy: 'all_history',
+            hints: { enabled: false },
+            embeddings: { mode: 'disabled' },
+        });
+    });
+
+    it('opts into model hints when the person selects hints indexing', async () => {
+        installMemoryRpc({
+            settingsGet: () => ({ v: 1, indexMode: 'deep', hints: { enabled: false } }),
+            settingsSet: (params) => params.payload,
+        });
+
+        const screen = await renderSettledMemorySettingsView();
+        await chooseSegment(screen, 'hints');
+
+        const saved = machineRpcSpy.mock.calls.find((call) => call[0]?.method === 'daemon.memory.settings.set')?.[0]?.payload;
+        expect(saved).toMatchObject({ indexMode: 'hints', hints: { enabled: true } });
+    });
+
     it('does not mislabel a transient status failure as an unsupported old daemon', async () => {
         installMemoryRpc({
             settingsGet: () => ({
@@ -702,9 +743,9 @@ describe('MemorySettingsView', () => {
         const call = machineRpcSpy.mock.calls.find((c) => c?.[0]?.method === 'daemon.memory.settings.set');
         expect(call?.[0]?.payload?.budgets?.maxDiskMbLight).toBe(123);
     });
-    it('writes indexMode changes from the always-visible mode choice', async () => {
+    it.each([false, true])('keeps hints opt-in %s when selecting keyword mode', async (hintsEnabled) => {
         installMemoryRpc({
-            settingsGet: () => ({ v: 1, enabled: true, indexMode: 'hints' }),
+            settingsGet: () => ({ v: 1, enabled: true, indexMode: 'hints', hints: { enabled: hintsEnabled } }),
             settingsSet: (params: any) => params.payload,
         });
 
@@ -713,6 +754,7 @@ describe('MemorySettingsView', () => {
 
         const call = machineRpcSpy.mock.calls.find((c) => c?.[0]?.method === 'daemon.memory.settings.set');
         expect(call?.[0]?.payload?.indexMode).toBe('deep');
+        expect(call?.[0]?.payload?.hints?.enabled).toBe(hintsEnabled);
     });
 
     it('asks for a machine instead of showing machine settings when none is selected', async () => {

@@ -1,9 +1,10 @@
-import { MemorySearchResultV1Schema, type MemorySearchMode, type MemorySearchResultV1, type MemorySearchScope } from '@happier-dev/protocol/memory/memorySearch';
+import { negotiateMemorySearchV1, type MemorySearchCorpusV1, type MemorySearchMode, type MemorySearchResultV1, type MemorySearchScope } from '@happier-dev/protocol/memory/memorySearch';
 import { RPC_ERROR_CODES, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { applyMemorySearchSessionEligibility } from './applyMemorySearchSessionEligibility';
+import { fetchDaemonMemoryStatus } from './fetchDaemonMemoryStatus';
 
 export async function searchDaemonMemory(args: Readonly<{
     serverId: string | null | undefined;
@@ -12,9 +13,14 @@ export async function searchDaemonMemory(args: Readonly<{
     query: string;
     scope: MemorySearchScope;
     mode: MemorySearchMode;
+    corpora?: readonly MemorySearchCorpusV1[];
     eligibleSessionIds?: readonly string[];
+    externalSource?: Readonly<{ agentId: string; sourceKey: string }>;
     maxResults?: number;
     minScore?: number;
+    cursor?: string;
+    createdAfterMs?: number;
+    createdBeforeMs?: number;
     timeoutMs?: number;
     /**
      * Caller cancellation. It is handed to the incumbent machine-RPC
@@ -43,26 +49,37 @@ export async function searchDaemonMemory(args: Readonly<{
     }
 
     try {
-        const raw = await machineRpcWithServerScope<unknown, unknown>({
-            machineId,
-            serverId,
-            accountId,
-            preferScoped: true,
-            method: RPC_METHODS.DAEMON_MEMORY_SEARCH,
-            payload: {
+        const result = await negotiateMemorySearchV1({
+            query: {
                 v: 1,
                 query,
                 scope: args.scope,
                 mode: args.mode,
-                ...(args.eligibleSessionIds !== undefined ? { eligibleSessionIds: args.eligibleSessionIds } : {}),
+                ...(args.corpora !== undefined ? { corpora: [...args.corpora] } : {}),
+                ...(args.eligibleSessionIds !== undefined ? { eligibleSessionIds: [...args.eligibleSessionIds] } : {}),
+                ...(args.externalSource ? { externalSource: args.externalSource } : {}),
                 ...(typeof args.maxResults === 'number' ? { maxResults: args.maxResults } : {}),
                 ...(typeof args.minScore === 'number' ? { minScore: args.minScore } : {}),
+                ...(args.cursor ? { cursor: args.cursor } : {}),
+                ...(args.createdAfterMs !== undefined ? { createdAfterMs: args.createdAfterMs } : {}),
+                ...(args.createdBeforeMs !== undefined ? { createdBeforeMs: args.createdBeforeMs } : {}),
             },
-            ...(typeof args.timeoutMs === 'number' ? { timeoutMs: args.timeoutMs } : {}),
+            readDocumentSearchSupport: async () => (await fetchDaemonMemoryStatus({
+                machineId, serverId, accountId,
+                ...(typeof args.timeoutMs === 'number' ? { timeoutMs: args.timeoutMs } : {}),
+                ...(args.signal ? { signal: args.signal } : {}),
+            }))?.documentSearchSupported === true,
+            search: async (payload) => await machineRpcWithServerScope<unknown, unknown>({
+                machineId, serverId, accountId, preferScoped: true,
+                method: RPC_METHODS.DAEMON_MEMORY_SEARCH,
+                payload,
+                ...(typeof args.timeoutMs === 'number' ? { timeoutMs: args.timeoutMs } : {}),
+                ...(args.signal ? { signal: args.signal } : {}),
+            }),
             ...(args.signal ? { signal: args.signal } : {}),
         });
         return applyMemorySearchSessionEligibility(
-            MemorySearchResultV1Schema.parse(raw),
+            result,
             args.eligibleSessionIds,
         );
     } catch (error) {

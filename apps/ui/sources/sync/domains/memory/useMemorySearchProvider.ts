@@ -47,6 +47,8 @@ export type MemorySearchUnavailableReason =
     | 'documents_unavailable';
 
 export type MemorySearchProvider = Readonly<{
+    /** Unified conversations preserve Home Session ownership while querying machine corpora. */
+    conversation?: Readonly<{ homeSessions: boolean; daemonEnabled: boolean }>;
     /** `null` when neither transcript provider is admitted for the current context. */
     provider: MemorySearchProviderId | null;
     /** Exact Home target for a `home` provider decision; requests and results key to it. */
@@ -90,13 +92,23 @@ export function resolveHomeMemorySearchReadiness(capability: unknown): HomeMemor
     return 'unknown';
 }
 
+/** Shared by the hook and mounted Action: capability alone never admits Home search. */
+export function resolveConversationSearchProviders(input: Readonly<{
+    homeSearchEnabled: boolean; homeCapability: unknown; daemonEnabled: boolean;
+}>): Readonly<{ homeSessions: boolean; daemonEnabled: boolean }> {
+    return { homeSessions: input.homeSearchEnabled && resolveHomeMemorySearchReadiness(input.homeCapability) === 'ready',
+        daemonEnabled: input.daemonEnabled };
+}
+
 /**
- * One exclusive, contextual transcript-provider decision shared by every search
+ * One contextual transcript-provider decision shared by every search
  * consumer. Home plaintext search is admitted by the server-represented `search`
  * feature plus the Home's own readiness capability; daemon-local memory search is
  * admitted by `memory.search` plus the explicitly selected usable machine. The
  * capability is diagnostic only — it never authorizes a provider on its own — and
- * the two providers are never queried together for one target.
+ * ordinary Session-only callers retain their exclusive provider decision.
+ * Unified conversation callers instead receive Home Session and daemon corpus
+ * policies together; the fan-out owner keeps those corpora disjoint.
  *
  * `provider` names the admitted source kind; `queryAvailable` is the only
  * authorization to issue a request. A Home that is admitted but still indexing, or
@@ -105,7 +117,7 @@ export function resolveHomeMemorySearchReadiness(capability: unknown): HomeMemor
  */
 export function useMemorySearchProvider(
     target: MemorySearchProviderTarget = { kind: 'ambient' },
-    options: Readonly<{ enabled?: boolean; corpora?: readonly MemorySearchCorpusV1[] }> = {},
+    options: Readonly<{ enabled?: boolean; corpora?: readonly MemorySearchCorpusV1[]; conversationSearch?: boolean }> = {},
 ): MemorySearchProvider {
     const enabled = options.enabled !== false;
     const documentsRequested = options.corpora?.includes('documents') === true;
@@ -167,6 +179,14 @@ export function useMemorySearchProvider(
                 ? { serverId: daemonServerId, machineId: daemonMachineId }
                 : null;
         const resolvedHomeReadiness = resolveHomeMemorySearchReadiness(capability);
+        if (options.conversationSearch) {
+            const conversation = resolveConversationSearchProviders({ homeSearchEnabled: homeSearchFeatureEnabled,
+                homeCapability: capability, daemonEnabled: daemonMemorySearchEnabled });
+            return { provider: conversation.homeSessions ? 'home' : conversation.daemonEnabled ? 'daemon' : null,
+                homeServerId: conversation.homeSessions ? activeServerId : null,
+                homeReadiness: resolvedHomeReadiness, daemonTarget: nextDaemonTarget, conversation,
+                queryAvailable: conversation.homeSessions || conversation.daemonEnabled, unavailableReason: null };
+        }
         // Home indexes transcripts, not attached Artifacts. Document requests
         // use only the explicitly selected daemon; its transport negotiates
         // real document support and reports unavailable coverage for old peers.
@@ -222,6 +242,7 @@ export function useMemorySearchProvider(
         return NO_MEMORY_SEARCH_PROVIDER;
     }, [
         enabled,
+        options.conversationSearch,
         documentsRequested,
         sessionsRequested,
         activeServerId,

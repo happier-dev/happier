@@ -12,18 +12,23 @@ import {
     ProjectAccountOrganizationV1Schema, ProjectAccountRowMutationRequestV1Schema, PROJECT_ACCOUNT_ROWS_ROUTE_V1,
 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { V2SessionRecordSchema } from '@happier-dev/protocol';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { SessionTurnsProjectionV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 
-import {
-    createHomeGovernanceHarness, createPlainAccountEncryptionCurrentnessFixture, createPlainProjectAccountRowListFixture,
-    createSessionFixture, flushHookEffects, installHomeGovernanceBoundaries, renderScreen, standardCleanup, waitForHomeGovernance,
-} from '@/dev/testkit';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
-import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { readPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 
@@ -54,8 +59,11 @@ const { sync } = await import('@/sync/sync');
 const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
 const { useMemoryDocument } = await import('./useMemoryDocument');
 const { MemoryDocumentBody } = await import('./MemoryDocumentBody');
+const { MemoryDocumentScreen } = await import('./MemoryDocumentScreen');
 const { ContextMemorySection } = await import('@/components/settings/prompts/context/ContextMemorySection');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+const { SessionMemorySection, selectSessionMemory } = await import('@/components/sessions/work/memory/SessionMemorySection');
+const { useSessionContextLayers } = await import('@/components/sessions/work/context/useSessionContextLayers');
 const { Modal } = await import('@/modal');
 const baseline = storage.getState();
 let serverId: string;
@@ -162,10 +170,21 @@ async function readMemory(ref: PromptDocArtifactRefV1, topic?: string) {
     return MemoryDocReadResultV1Schema.parse(result.result);
 }
 
+it('reads document content through memory.read admission instead of bypassing a disabled UI Action', async () => {
+    const settings = { ...baseline.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+        actions: { 'memory.read': { disabledSurfaces: ['ui'] } } }) };
+    homes.answer(serverId, 'GET /v2/account/settings', { body: { content: { t: 'plain', v: settings }, version: 2 } });
+    storage.getState().applySettingsForScope({ serverId, accountId: 'account-a' }, settings, 2);
+    const ref = await seedDocument({ v: 1, index: [fact('one', 'One')], topics: [] });
+    const hook = await renderHook(() => useMemoryDocument({ ref, serverId }));
+    await settled(() => expect(hook.getCurrent().status).toBe('unavailable'));
+    await hook.unmount();
+});
+
 /** Coding-row HTTP/CAS boundary: the actual catalog reader and attachment writer run above it. */
-function serveAccountContext(conflict = false) {
+function serveAccountContext(conflict = false, entries: Extract<PromptLibraryRecordV1, { key: 'coding' }>['value']['entries'] = []) {
     let record: Extract<PromptLibraryRecordV1, { key: 'coding' }> = {
-        key: 'coding', value: { v: 1, scope: { kind: 'coding' }, entries: [] },
+        key: 'coding', value: { v: 1, scope: { kind: 'coding' }, entries },
     };
     let revision = 4;
     homes.answer(serverId, PROMPT_LIBRARY_ROWS_ROUTE_V1, { select: () => ({ body: { status: 'listed', rows: [
@@ -186,12 +205,14 @@ function serveAccountContext(conflict = false) {
 }
 
 /** Personal Project row HTTP/CAS boundary, retaining its neighboring organization fields. */
-function serveProjectContext(conflict = false) {
+function serveProjectContext(conflict = false, withWorkspace = false) {
     const key = { kind: 'project-organization' as const, serverId, projectKey: 'project' };
     let value = ProjectAccountOrganizationV1Schema.parse({ pinned: true, hidden: true, promptStack: [] });
     let revision = 4;
     homes.answer(serverId, 'POST ' + PROJECT_ACCOUNT_ROWS_ROUTE_V1 + '/list', { select: () => ({ body:
-        createPlainProjectAccountRowListFixture({ organizations: [{ key, value, revision }] }) }) });
+        createPlainProjectAccountRowListFixture({ organizations: [{ key, value, revision }],
+            ...(withWorkspace ? { workspaceRefs: [{ id: 'workspace', serverId, projectKey: 'project', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 }] } : {}),
+        }) }) });
     homes.answer(serverId, 'POST ' + PROJECT_ACCOUNT_ROWS_ROUTE_V1 + '/mutate', { select: input => {
         const mutation = ProjectAccountRowMutationRequestV1Schema.parse(input).mutations[0]!;
         if (conflict || mutation.expectedRevision !== revision) return { status: 409, body: { status: 'conflict', key, revision: revision + 1 } };
@@ -206,6 +227,308 @@ function serveProjectContext(conflict = false) {
 }
 
 describe('MemoryDocumentBody', () => {
+    it('keeps foreign Context navigation on its admitted Home while its write target is withdrawn', async () => {
+        const original = await seedDocument({ v: 1, index: Array.from({ length: 5 }, (_, i) => fact('f' + i, 'Foreign fact ' + i)),
+            topics: [{ title: 'releases', summary: 'Release details', facts: [] }] });
+        const foreignHome = await homes.addHome({ name: 'Foreign memory', serverUrl: 'https://foreign-memory.test', accountId: 'foreign-a', active: false });
+        homes.answer(foreignHome, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
+        const stored = homes.artifacts(serverId).read(original.artifactId)!;
+        const created = await homes.artifacts(foreignHome).handle('/v1/artifacts', { method: 'POST', body: JSON.stringify({
+            id: stored.id, header: stored.header, body: stored.body, dataEncryptionKey: stored.dataEncryptionKey,
+        }) });
+        expect(created?.ok).toBe(true);
+        const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        setRuntimeFetch(homes.request);
+        const ref = { ...original, serverId: foreignHome };
+        if (!connection) throw new Error('Missing admitted Account fixture');
+        const screen = await renderScreen(<InjectedAuthProvider credentials={connection.credentials}><ItemList><ContextMemorySection testID="context.memory" title="Memory" description="Memory"
+            serverId={serverId} entry={{ id: 'account.memory', ref, enabled: true, placement: 'system_append' }}
+            footer="Memory" emptyText="empty" /></ItemList></InjectedAuthProvider>);
+        await settled(() => expect(screen.findByType(MemoryDocumentBody).props.source.status).not.toBe('loading'));
+        expect(screen.findByType(MemoryDocumentBody).props.source.status, boundaryDiagnostic()).toBe('ready');
+        let release!: () => void;
+        const held = new Promise<void>(resolve => { release = resolve; });
+        homes.answer(foreignHome, '/v1/artifacts/' + ref.artifactId, { status: 503, body: { error: 'offline' }, respondAfter: held });
+        let pending!: Promise<void>;
+        await React.act(async () => { pending = screen.findByType(MemoryDocumentBody).props.source.refresh(); });
+        try {
+            for (const status of ['refreshing', 'unavailable']) {
+                expect(screen.findByType(MemoryDocumentBody).props.source.status).toBe(status);
+                expect(screen.findByType(MemoryDocumentBody).props.source.target).toBeNull();
+                const href = '/settings/prompts/memory/' + ref.artifactId + '?serverId=' + encodeURIComponent(foreignHome);
+                await screen.pressByTestIdAsync('context.memory.showAll');
+                expect(navigation.push).toHaveBeenLastCalledWith(href);
+                await screen.pressByTestIdAsync('context.memory.topic.releases');
+                expect(navigation.push).toHaveBeenLastCalledWith(href + '&topic=releases');
+                await React.act(async () => { release(); await pending; });
+            }
+        } finally {
+            await React.act(async () => { release(); await pending; });
+        }
+    });
+
+    it.each([
+        { remoteAccess: 'view' as const, localAccess: null, readOnly: true, shared: true },
+        { remoteAccess: 'edit' as const, localAccess: 'view' as const, readOnly: false, shared: true },
+        { remoteAccess: 'owner' as const, localAccess: 'view' as const, readOnly: false, shared: false },
+    ])('Work uses qualified memory access $remoteAccess instead of ambient $localAccess', async ({ remoteAccess, localAccess, readOnly, shared }) => {
+        const original = await seedDocument({ v: 1, index: [fact('foreign-fact', 'Qualified fact')], topics: [] });
+        const foreignHome = await homes.addHome({ name: 'Foreign memory', serverUrl: 'https://foreign-memory.test', accountId: 'foreign-a', active: false });
+        homes.answer(foreignHome, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
+        const stored = homes.artifacts(serverId).read(original.artifactId)!;
+        await homes.artifacts(foreignHome).handle('/v1/artifacts', { method: 'POST', body: JSON.stringify({
+            id: stored.id, header: stored.header, body: stored.body, dataEncryptionKey: stored.dataEncryptionKey,
+        }) });
+        const foreignArtifact = {
+            ...homes.artifacts(foreignHome).read(original.artifactId), access: remoteAccess,
+            ownerAccountId: remoteAccess === 'owner' ? 'foreign-a' : 'another-owner',
+        };
+        homes.answer(foreignHome, '/v1/artifacts/' + original.artifactId, { body: foreignArtifact });
+        // The Home serves the same caller access on the qualified detail and header inventory.
+        const { body: _body, ...foreignHeader } = foreignArtifact;
+        homes.answer(foreignHome, '/v1/artifacts?limit=500', { body: [foreignHeader] });
+        const ref = { ...original, serverId: foreignHome };
+        serveAccountContext(false, [{ id: 'account.memory', ref, enabled: true, placement: 'system_append' }]);
+        if (localAccess) storage.getState().applyArtifacts([{ ...storage.getState().artifacts[original.artifactId]!, access: localAccess }]);
+        else storage.getState().deleteArtifact(original.artifactId);
+        const base = createSessionFixture();
+        if (!base.metadata || !connection) throw new Error('Missing admitted Session/Account fixture');
+        const session = createSessionFixture({ id: 's1', serverId, metadataVersion: 9,
+            metadata: { ...base.metadata, work: { memoryEnabled: true } } });
+        storage.getState().applySessions([session]);
+        const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        setRuntimeFetch(homes.request);
+        const screen = await renderScreen(<InjectedAuthProvider credentials={connection.credentials}>
+            <SessionMemorySection session={session} serverId={serverId} />
+        </InjectedAuthProvider>);
+        await settled(() => expect(screen.findByType(MemoryDocumentBody).props.source.status).toBe('ready'));
+        expect(screen.findByType(MemoryDocumentBody).props.readOnly).toBe(readOnly);
+        expect(Boolean(screen.findByTestId('session-work-memory.remember'))).toBe(!readOnly);
+        expect(screen.findByType(MemoryDocumentBody).props.footer).toContain(shared
+            ? 'memoryContext.memory.writesAskFirst' : 'memoryContext.memory.writesWithoutAsking');
+        const page = await renderScreen(<InjectedAuthProvider credentials={connection.credentials}>
+            <MemoryDocumentScreen artifactId={ref.artifactId} serverId={foreignHome} />
+        </InjectedAuthProvider>);
+        await settled(() => expect(page.findByType(MemoryDocumentBody).props.source.status).toBe('ready'));
+        expect(page.findByType(MemoryDocumentBody).props.readOnly).toBe(readOnly);
+        expect(Boolean(page.findByTestId('memory-document.remember'))).toBe(!readOnly);
+    });
+
+    it('never retains equal-id facts or a reviewed target when a mounted read switches Homes', async () => {
+        const ref = await seedDocument({ v: 1, index: [fact('home-a-fact', 'Only Home A knows this.')], topics: [] });
+        const homeB = await homes.addHome({ name: 'Other memory Home', serverUrl: 'https://other-memory.test', accountId: 'account-b', active: false });
+        homes.answer(homeB, '/v1/artifacts/' + ref.artifactId, { status: 503, body: { error: 'offline' } });
+        const seen: ReturnType<typeof useMemoryDocument>[] = [];
+        const hook = await renderHook((documentRef: PromptDocArtifactRefV1) => {
+            const value = useMemoryDocument({ ref: documentRef, serverId });
+            seen.push(value);
+            return value;
+        }, { initialProps: ref });
+        await settled(() => expect(hook.getCurrent().status).toBe('ready'));
+        let release!: () => void;
+        const held = new Promise<void>(resolve => { release = resolve; });
+        homes.answer(serverId, '/v1/artifacts/' + ref.artifactId, { body: homes.artifacts(serverId).read(ref.artifactId), respondAfter: held });
+        let pending!: Promise<void>;
+        await React.act(async () => { pending = hook.getCurrent().refresh(); });
+        await settled(() => expect(hook.getCurrent().status).toBe('refreshing'));
+        seen.length = 0;
+        await hook.rerender({ ...ref, serverId: homeB });
+        await settled(() => expect(hook.getCurrent().status).toBe('unavailable'));
+        await React.act(async () => { release(); await pending; });
+        expect(seen.every(value => value.view === null && value.target === null)).toBe(true);
+        expect(hook.getCurrent()).toMatchObject({ status: 'unavailable', view: null, target: null, stale: false });
+    });
+
+    it('retires a mounted memory view and reviewed revision when the same Home replaces its Account', async () => {
+        const ref = await seedDocument({ v: 1, index: [fact('account-a-fact', 'Private to Account A.')], topics: [] });
+        const hook = await renderHook(() => useMemoryDocument({ ref, serverId }));
+        await settled(() => expect(hook.getCurrent().status).toBe('ready'));
+        await connection?.dispose();
+        connection = null;
+        await homes.switchAccount(serverId, 'account-b');
+        homes.answer(serverId, '/v1/artifacts/' + ref.artifactId, { status: 503, body: { error: 'offline' } });
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://memory-body.test', accountId: 'account-b', request: homes.request });
+        installHomeGovernanceBoundaries(homes);
+        await React.act(async () => {
+            const scope = { serverId, accountId: 'account-b' };
+            storage.getState().applySettingsForScope(scope, baseline.settings, 1);
+            storage.getState().activateProfileScope(scope);
+        });
+        await hook.rerender();
+        expect(hook.getCurrent().view).toBeNull();
+        expect(hook.getCurrent().target).toBeNull();
+        await settled(() => expect(hook.getCurrent().status).toBe('unavailable'));
+    });
+
+    it('retires a foreign Home memory view when its credentials change without changing the focused Account', async () => {
+        const original = await seedDocument({ v: 1, index: [fact('foreign-private', 'Only the foreign Account knows this.')], topics: [] });
+        const foreignHome = await homes.addHome({ name: 'Foreign memory', serverUrl: 'https://foreign-memory.test', accountId: 'foreign-a', active: false });
+        homes.answer(foreignHome, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
+        const stored = homes.artifacts(serverId).read(original.artifactId)!;
+        const created = await homes.artifacts(foreignHome).handle('/v1/artifacts', { method: 'POST', body: JSON.stringify({
+            id: stored.id, header: stored.header, body: stored.body, dataEncryptionKey: stored.dataEncryptionKey,
+        }) });
+        expect(created?.ok).toBe(true);
+        installHomeGovernanceBoundaries(homes);
+        // Connection restoration's default HTTP boundary admits only its focused Home.
+        // This case deliberately reads a second Home through the same real transport.
+        const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        setRuntimeFetch(homes.request);
+        const ref = { ...original, serverId: foreignHome };
+        const hook = await renderHook(() => useMemoryDocument({ ref, serverId }));
+        await settled(() => expect(hook.getCurrent().status).not.toBe('loading'));
+        expect(hook.getCurrent().status, boundaryDiagnostic()).toBe('ready');
+        expect(hook.getCurrent().view?.facts[0]?.id).toBe('foreign-private');
+        homes.answer(foreignHome, '/v1/artifacts/' + ref.artifactId, { status: 503, body: { error: 'offline' } });
+        await React.act(async () => { await homes.switchAccount(foreignHome, 'foreign-b'); });
+        expect(storage.getState().profileScope).toEqual({ serverId, accountId: 'account-a' });
+        expect(hook.getCurrent().view).toBeNull();
+        expect(hook.getCurrent().target).toBeNull();
+        await settled(() => expect(hook.getCurrent().status).toBe('unavailable'));
+    });
+
+    it('keeps an unavailable Project unresolved instead of selecting Account memory, then accepts verified empty', async () => {
+        const ref = await seedDocument({ v: 1, index: [], topics: [] });
+        serveAccountContext(false, [{ id: 'account.memory', ref, enabled: true, placement: 'system_append' }]);
+        homes.answer(serverId, 'POST ' + PROJECT_ACCOUNT_ROWS_ROUTE_V1 + '/list', { status: 503, body: { error: 'offline' } });
+        const metadata = { machineId: 'machine', workspaceId: 'workspace', projectId: 'project', path: '/repo', work: { memoryEnabled: true } };
+        const hook = await renderHook(() => useSessionContextLayers({ sessionId: 's1', serverId, ownerMetadata: metadata, metadataVersion: 9 }));
+        await settled(() => {
+            expect(hook.getCurrent().project.status).toBe('unavailable');
+            expect(hook.getCurrent().account).toHaveLength(1);
+        });
+        expect(selectSessionMemory(hook.getCurrent(), serverId)).toMatchObject({ resolving: true, ref: null, scope: 'project' });
+        const base = createSessionFixture();
+        if (!base.metadata || !connection) throw new Error('Missing admitted Session/Account fixture');
+        const session = createSessionFixture({ id: 's1', serverId, metadataVersion: 9,
+            metadata: { ...base.metadata, ...metadata } });
+        storage.getState().applySessions([session]);
+        const screen = await renderScreen(<InjectedAuthProvider credentials={connection.credentials}>
+            <SessionMemorySection session={session} serverId={serverId} />
+        </InjectedAuthProvider>);
+        await settled(() => expect(screen.findByType(MemoryDocumentBody).props.source.status).toBe('loading'));
+        expect(screen.findByType(MemoryDocumentBody).props.footer).toBeUndefined();
+        expect(Boolean(screen.findByTestId('session-work-memory.remember'))).toBe(false);
+        homes.answer(serverId, 'POST ' + PROJECT_ACCOUNT_ROWS_ROUTE_V1 + '/list', { body: createPlainProjectAccountRowListFixture({
+            workspaceRefs: [{ id: 'workspace', serverId, projectKey: 'project', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 }],
+        }) });
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        await React.act(async () => { publishHomeAccountChange(serverId); });
+        await settled(() => {
+            expect(hook.getCurrent().project.status).toBe('ready');
+            expect(selectSessionMemory(hook.getCurrent(), serverId)).toMatchObject({ resolving: false, ref, scope: 'account' });
+        });
+        // A completed attachment-list read is not a completed kind/header read.
+        expect(selectSessionMemory({ ...hook.getCurrent(), project: { ...hook.getCurrent().project, rows: [{
+            layer: 'project', entry: { id: 'project.document', ref, enabled: true, placement: 'system_append' },
+            title: null, kind: 'unknown', on: false, off: null,
+            currentPresentation: () => ({ kind: 'unknown', title: null, headerKind: null, access: null }),
+        }] } }, serverId)).toMatchObject({ resolving: true, ref: null, scope: 'project' });
+    });
+
+    it('Work keeps the first saved memory reachable after attachment conflict and reuses it for the next fact', async () => {
+        serveAccountContext(true);
+        if (!connection) throw new Error('Missing admitted Account');
+        const base = createSessionFixture();
+        if (!base.metadata) throw new Error('Missing Session metadata fixture');
+        const session = createSessionFixture({ id: 's1', serverId, metadataVersion: 9,
+            metadata: { ...base.metadata, work: { memoryEnabled: true } } });
+        storage.getState().applySessions([session]);
+        // Exact Session read at the genuine network boundary; ordinary Session writes target Account here.
+        const row = SessionCurrentProjectionRecordV1Schema.parse({ ...V2SessionRecordSchema.parse({
+            id: 's1', seq: 0, active: false, activeAt: 0, createdAt: 1, updatedAt: 1,
+            encryptionMode: 'plain', metadataLayoutVersion: 0, share: null,
+            metadata: JSON.stringify(session.metadata), metadataVersion: 9,
+            agentState: null, agentStateVersion: 0, dataEncryptionKey: null,
+        }), effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: session.access!.capabilities },
+        responsibleAccountId: null, responsibleAccount: null });
+        homes.answer(serverId, 'GET /v2/sessions/s1?accessProjectionVersion=1', { body: { session: row } });
+        homes.answer(serverId, 'GET /v2/sessions/s1', { body: { session: row } });
+        homes.answer(serverId, 'GET /v1/sessions/s1/turns', { body: SessionTurnsProjectionV1Schema.parse({
+            v: 1, sessionId: session.id, updatedAt: session.updatedAt, turns: [],
+        }) });
+        const screen = await renderScreen(<InjectedAuthProvider credentials={connection.credentials}>
+            <SessionMemorySection session={session} serverId={serverId} />
+        </InjectedAuthProvider>);
+        await flushHookEffects();
+        expect(screen.findByTestId('session-work-memory.remember')?.props.disabled, boundaryDiagnostic()).toBe(false);
+        await screen.pressByTestIdAsync('session-work-memory.remember');
+        await React.act(async () => { screen.changeTextByTestId('session-work-memory.doc.draft', 'Keep this first fact.'); });
+        await screen.pressByTestIdAsync('session-work-memory.doc.draft.save');
+        await settled(() => expect(!screen.findByTestId('session-work-memory.doc.draft') || vi.mocked(Modal.alert).mock.calls.length > 0).toBe(true));
+        expect(vi.mocked(Modal.alert).mock.calls, boundaryDiagnostic()).toEqual([]);
+        expect(screen.findByTestId('session-work-memory.doc.conflict'), boundaryDiagnostic()).toBeTruthy();
+        await flushHookEffects();
+        expect(screen.findByType(MemoryDocumentBody).props.source.status).toBe('ready');
+        const rows = homes.artifacts(serverId).list();
+        expect(rows).toHaveLength(1);
+        const ref = { kind: 'doc' as const, artifactId: rows[0]!.id, serverId };
+        expect(screen.findByType(MemoryDocumentBody).props.source.target.ref).toEqual(ref);
+        homes.answer(serverId, '/v1/public-shares?' + new URLSearchParams({ subjectKind: 'artifact', subjectId: ref.artifactId }), { body: { publicShares: [] } });
+        await screen.pressByTestIdAsync('session-work-memory.remember');
+        await React.act(async () => { screen.changeTextByTestId('session-work-memory.doc.draft', 'Add to the same saved document.'); });
+        await screen.pressByTestIdAsync('session-work-memory.doc.draft.save');
+        await settled(() => expect(!screen.findByTestId('session-work-memory.doc.draft') || vi.mocked(Modal.alert).mock.calls.length > 0).toBe(true));
+        expect(vi.mocked(Modal.alert).mock.calls, boundaryDiagnostic()).toEqual([]);
+        expect(storedBody(ref).index, boundaryDiagnostic()).toHaveLength(2);
+        expect(homes.artifacts(serverId).list()).toHaveLength(1);
+
+        const mountedBody = screen.findByType(MemoryDocumentBody);
+        const firstFact = storedBody(ref).index[0]!;
+        await connection.dispose();
+        connection = null;
+        await homes.switchAccount(serverId, 'account-b');
+        const nextConnection = await restoreServerAccountForTest({ serverUrl: 'https://memory-body.test', accountId: 'account-b', request: homes.request });
+        connection = nextConnection;
+        installHomeGovernanceBoundaries(homes);
+        await React.act(async () => {
+            const scope = { serverId, accountId: 'account-b' };
+            storage.getState().applySettingsForScope(scope, baseline.settings, 1);
+            storage.getState().activateProfileScope(scope);
+            screen.update(<InjectedAuthProvider credentials={nextConnection.credentials}>
+                <SessionMemorySection session={session} serverId={serverId} />
+            </InjectedAuthProvider>);
+        });
+        await flushHookEffects();
+        expect(screen.findByType(MemoryDocumentBody).props.source.status, boundaryDiagnostic()).toBe('none');
+        expect(Boolean(screen.findByTestId('session-work-memory.doc.fact.' + firstFact.id))).toBe(false);
+        expect(screen.findByType(MemoryDocumentBody) === mountedBody).toBe(true);
+    });
+
+    it('a mounted Work layer follows a real Project edit without changing association or Settings version', async () => {
+        const project = serveProjectContext(false, true);
+        serveAccountContext();
+        const ref = await seedDocument({ v: 1, index: [], topics: [] });
+        const metadata = { machineId: 'machine', workspaceId: 'workspace', projectId: 'project', path: '/repo', work: { memoryEnabled: true } };
+        const hook = await renderHook(() => useSessionContextLayers({ sessionId: 's1', serverId, ownerMetadata: metadata, metadataVersion: 9 }));
+        await settled(() => expect(hook.getCurrent().project.status).toBe('ready'));
+        expect(hook.getCurrent().project.rows).toEqual([]);
+        const result = await createDefaultActionExecutor().execute('projects.context.update', {
+            target: { serverId, projectKey: 'project' }, expectedRevision: 4,
+            intent: { kind: 'attach', entry: { id: 'project.memory', ref, enabled: true, placement: 'system_append' } },
+        }, { surface: 'ui', serverId });
+        expect(result).toMatchObject({ ok: true, result: { ok: true } });
+        expect(project.read().promptStack).toHaveLength(1);
+        await settled(() => expect(hook.getCurrent().project.rows).toMatchObject([{ entry: { id: 'project.memory' }, kind: 'memory' }]));
+        expect(storage.getState().settingsVersion).toBe(1);
+    });
+
+    it('keeps unavailable Account and Profile catalogs explicit rather than reporting inherited empty', async () => {
+        serveAccountContext();
+        const hook = await renderHook(() => useSessionContextLayers({ sessionId: 's1', serverId,
+            ownerMetadata: { profileId: 'selected-profile', work: { memoryEnabled: true } }, metadataVersion: 9 }));
+        const { getPromptLibraryCatalogValue } = await import('@/sync/store/settings/promptLibraryCatalogSnapshot');
+        await settled(() => expect(getPromptLibraryCatalogValue({ serverId, accountId: 'account-a' }, 'coding').status).toBe('ready'));
+        const { applyPromptLibraryCatalogSnapshot } = await import('@/sync/store/settings/promptLibraryCatalogSnapshot');
+        const { applyProfileCatalogSnapshot } = await import('@/sync/store/settings/profileCatalogSnapshot');
+        await React.act(async () => {
+            const scope = { serverId, accountId: 'account-a' };
+            applyPromptLibraryCatalogSnapshot(scope, { catalog: { status: 'unavailable', reason: 'forbidden' }, rawSettings: {}, sourceSettingsVersion: 1 }, true);
+            applyProfileCatalogSnapshot(scope, { status: 'unavailable', reason: 'forbidden' }, true);
+        });
+        expect(hook.getCurrent()).toMatchObject({ accountStatus: 'unavailable', profile: { status: 'unavailable' } });
+        expect(selectSessionMemory(hook.getCurrent(), serverId)).toMatchObject({ resolving: true, ref: null });
+    });
     it('shows the index first — key facts, then topics — and a topic opens its own page', async () => {
         const ref = await seedDocument({ v: 1,
             index: [fact('f1', 'Releases ship from release/0.3.'), fact('f2', 'Changelog order: Features, Fixes.')],
@@ -272,7 +595,8 @@ describe('MemoryDocumentBody', () => {
         const screen = await renderDocument(ref, { composing: true });
         homes.artifacts(serverId).beforeNextUpdate(async () => {
             // This competing client keeps the strict memory header valid; null title would corrupt the fixture.
-            await sync.updateArtifact(ref.artifactId, 'Account memory', JSON.stringify({ v: 1, index: [fact('f1', 'Concurrent fact')], topics: [] }));
+            await sync.updateArtifactWithHeader(ref.artifactId, { v: 1, kind: 'memory_doc.v1', title: 'Account memory' },
+                JSON.stringify({ v: 1, index: [fact('f1', 'Concurrent fact')], topics: [] }));
         });
         await React.act(async () => { screen.changeTextByTestId('memory.draft', 'A newer fact'); });
         await screen.pressByTestIdAsync('memory.draft.save');
@@ -303,19 +627,29 @@ describe('MemoryDocumentBody', () => {
         await React.act(async () => { actions.find(action => action.id === 'forget')!.onPress(); });
         await settled(() => {
             expect(Boolean(screen.findByTestId('memory.fact.original'))).toBe(false);
-            expect(Boolean(screen.findByType(SurfaceStateCard).props.action)).toBe(true);
+            // Undo is offered on the app's one notice owner, not on a card of this section's own.
+            expect(readPresentationNotice()?.undo).toBeTruthy();
             const source = screen.findByType(MemoryDocumentBody).props.source;
             expect(source.status).toBe('ready');
             expect(source.target.expectedRevision.bodyVersion).toBeGreaterThan(before.bodyVersion);
         });
         expect(storedBody(ref).topics.find(section => section.title === 'archive')?.facts).toEqual([original]);
         const afterForget = screen.findByType(MemoryDocumentBody).props.source.target.expectedRevision;
-        await React.act(async () => { screen.findByType(SurfaceStateCard).props.action.onPress(); });
+        await React.act(async () => { readPresentationNotice()!.undo!.run(); });
+        expect(readPresentationNotice()).toBeNull();
         await settled(() => {
             const source = screen.findByType(MemoryDocumentBody).props.source;
-            expect(source.status).toBe('ready');
-            expect(source.target.expectedRevision.bodyVersion).toBeGreaterThan(afterForget.bodyVersion);
+            const restored = source.status === 'ready' && source.target?.expectedRevision.bodyVersion > afterForget.bodyVersion;
+            const refused = screen.findByTestId('memory.conflict') || screen.findByTestId('memory.refused')
+                || vi.mocked(Modal.alert).mock.calls.length > 0;
+            expect(Boolean(restored || refused)).toBe(true);
         });
+        expect(screen.findByTestId('memory.conflict'), boundaryDiagnostic()).toBeNull();
+        expect(screen.findByTestId('memory.refused'), boundaryDiagnostic()).toBeNull();
+        expect(vi.mocked(Modal.alert).mock.calls, boundaryDiagnostic()).toEqual([]);
+        const source = screen.findByType(MemoryDocumentBody).props.source;
+        expect(source.status).toBe('ready');
+        expect(source.target.expectedRevision.bodyVersion).toBeGreaterThan(afterForget.bodyVersion);
         expect(Boolean(screen.findByTestId('memory.fact.original'))).toBe(true);
         const restored = await readMemory(ref, topic);
         expect('topic' in restored ? restored.topic.facts : restored.body.index).toEqual([original]);

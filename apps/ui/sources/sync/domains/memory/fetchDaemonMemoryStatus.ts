@@ -5,7 +5,9 @@ import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverSc
 
 export async function fetchDaemonMemoryStatus(args: Readonly<{
   serverId: string | null | undefined;
+  accountId?: string | null;
   machineId: string | null | undefined;
+  timeoutMs?: number;
   /**
    * Caller cancellation, handed to the incumbent machine-RPC cancellation path so a
    * superseded status probe stops waiting locally and relays the cancel.
@@ -14,13 +16,16 @@ export async function fetchDaemonMemoryStatus(args: Readonly<{
 }>): Promise<MemoryStatusV1 | null> {
   const serverId = typeof args.serverId === 'string' ? args.serverId.trim() : '';
   const machineId = typeof args.machineId === 'string' ? args.machineId.trim() : '';
-  if (!serverId || !machineId) return null;
+  const accountId = typeof args.accountId === 'string' ? args.accountId.trim() : '';
+  if (!serverId || !machineId || (args.accountId !== undefined && !accountId)) return null;
 
   const raw = await machineRpcWithServerScope<unknown, unknown>({
     machineId,
     serverId,
+    ...(accountId ? { accountId, preferScoped: true } : {}),
     method: RPC_METHODS.DAEMON_MEMORY_STATUS,
     payload: {},
+    ...(typeof args.timeoutMs === 'number' ? { timeoutMs: args.timeoutMs } : {}),
     ...(args.signal ? { signal: args.signal } : {}),
   });
   return MemoryStatusV1Schema.parse(raw);

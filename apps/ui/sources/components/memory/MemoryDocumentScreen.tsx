@@ -7,7 +7,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { useActiveServerAccountScope, useArtifact } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
 import { MemoryDocumentBody, memoryTopicLabel } from './MemoryDocumentBody';
@@ -30,15 +30,15 @@ export const MemoryDocumentScreen = React.memo(function MemoryDocumentScreen(pro
         [props.artifactId, serverId],
     );
     const source = useMemoryDocument({ ref, serverId, ...(props.topic ? { topic: props.topic } : {}) });
-    const row = useArtifact(props.artifactId);
     const navigateToSession = useNavigateToSession();
     const openSession = React.useCallback((target: Readonly<{ serverId: string; sessionId: string }>) => {
         fireAndForget(navigateToSession(target.sessionId, { serverId: target.serverId }), { tag: 'MemoryDocumentScreen.source' });
     }, [navigateToSession]);
     const [composing, setComposing] = React.useState(false);
     const view = source.view;
-    // Someone else's memory shared for reading stays read-only; unknown access is treated as the owner's.
-    const readOnly = row?.access === 'view';
+    // Only the qualified document read admits access; ambient same-id rows cannot grant it.
+    const documentAccess = view?.access ?? null;
+    const readOnly = documentAccess === null || documentAccess === 'view';
     const title = props.topic ? memoryTopicLabel(props.topic) : (view?.title ?? t('memoryContext.memory.title'));
     const description = props.topic
         ? (view?.topic?.summary ?? '')

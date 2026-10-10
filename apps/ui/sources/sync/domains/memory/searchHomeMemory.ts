@@ -7,10 +7,7 @@ import {
 } from '@happier-dev/protocol/memory/memorySearch';
 
 import { serverFetch } from '@/sync/http/client';
-import {
-    createServerRequestWithServerScope,
-    runWithServerRequestAuthorityForServerAccountScope,
-} from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
+import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { applyMemorySearchSessionEligibility } from './applyMemorySearchSessionEligibility';
 
@@ -30,21 +27,6 @@ function createHomeMemorySearchAbortError(): Error {
     return error;
 }
 
-/** Rebuilds the selected Personal Home's derived search index from canonical transcript rows. */
-export async function rebuildHomeSearchIndex(args: Readonly<{ serverId: string }>): Promise<void> {
-    const serverId = args.serverId.trim();
-    if (!serverId) throw new Error('Rebuilding Home search requires an explicit Home target.');
-    const request = createServerRequestWithServerScope({
-        serverId,
-        preferScoped: true,
-        activeRequest: async (path, init) => await serverFetch(path, init),
-    });
-    const response = await request('/v1/home/search/rebuild', { method: 'POST' });
-    if (!response.ok) {
-        throw new Error(`Home search could not be rebuilt (status ${response.status}).`);
-    }
-}
-
 export async function searchHomeMemory(args: Readonly<{
     /** Exact Home/server profile identity to search; never resolved from focus. */
     serverId: string;
@@ -56,6 +38,9 @@ export async function searchHomeMemory(args: Readonly<{
     eligibleSessionIds?: readonly string[];
     maxResults?: number;
     minScore?: number;
+    cursor?: string;
+    createdAfterMs?: number;
+    createdBeforeMs?: number;
     /**
      * Caller cancellation. A superseded query stops waiting locally and the
      * in-flight HTTP request is aborted through the incumbent fetch transport
@@ -83,6 +68,9 @@ export async function searchHomeMemory(args: Readonly<{
         ...(args.eligibleSessionIds !== undefined ? { eligibleSessionIds: args.eligibleSessionIds } : {}),
         ...(typeof args.maxResults === 'number' ? { maxResults: args.maxResults } : {}),
         ...(typeof args.minScore === 'number' ? { minScore: args.minScore } : {}),
+        ...(args.cursor ? { cursor: args.cursor } : {}),
+        ...(args.createdAfterMs !== undefined ? { createdAfterMs: args.createdAfterMs } : {}),
+        ...(args.createdBeforeMs !== undefined ? { createdBeforeMs: args.createdBeforeMs } : {}),
     });
     if (!parsedQuery.success) {
         return {

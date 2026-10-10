@@ -13,24 +13,14 @@ import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { t } from '@/text';
 
-import { fetchDaemonMemorySettings, writeDaemonMemorySettings } from '@/sync/domains/memory/fetchDaemonMemorySettings';
-import { fetchDaemonMemoryStatus } from '@/sync/domains/memory/fetchDaemonMemoryStatus';
 import { getDaemonMemoryStatusStateTranslationKey } from '@/sync/domains/memory/getDaemonMemoryStatusStateTranslationKey';
 import { getDaemonMemoryEmbeddingsStatusTranslationKey } from '@/sync/domains/memory/getDaemonMemoryEmbeddingsStatusTranslationKey';
 import { presentDaemonMemoryStatus } from '@/sync/domains/memory/presentDaemonMemoryStatus';
 import { presentDaemonMemoryEmbeddingsStatus } from '@/sync/domains/memory/presentDaemonMemoryEmbeddingsStatus';
-import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
-import {
-    useMachineAdministrationTargetSelection,
-    type FreshMachineAdministrationExecutionTargetV1,
-} from '@/sync/domains/machines/administration/useTargetSelection';
-import { isMachineAdministrationExecutionTargetCurrent } from '@/sync/domains/machines/administration/operationCurrentness';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 
-import { DEFAULT_MEMORY_SETTINGS, type MemorySettingsV1 } from '@happier-dev/protocol/memory/memorySettings';
-import type { MemoryStatusV1 } from '@happier-dev/protocol/memory/memoryStatus';
+import type { MemorySettingsV1 } from '@happier-dev/protocol/memory/memorySettings';
 import { MemorySettingsArchivedRow } from './MemorySettingsArchivedSection';
-import type { ArchivedMemoryStatusRequestState } from '@/sync/domains/memory/resolveArchivedMemoryEligibilityControl';
 import { MemorySettingsBudgetsSection } from './MemorySettingsBudgetsSection';
 import { MemorySettingsContentPolicySection } from './MemorySettingsContentPolicySection';
 import { MemorySettingsCoverageRow } from './MemorySettingsCoverageSection';
@@ -40,6 +30,7 @@ import { MemorySettingsPrivacySection } from './MemorySettingsPrivacySection';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { SettingAnchor, SettingRow, SettingSection } from '@/components/settings/shell/SettingRow';
 import { MEMORY_SETTINGS } from '@/components/settings/memory/memorySettings';
+import { useMachineMemorySettings } from '@/components/settings/memory/useMachineMemorySettings';
 
 /**
  * Until a machine's index is ready only the local index section renders; its "Enabled" row says what
@@ -55,130 +46,19 @@ type IndexMode = MemorySettingsV1['indexMode'];
 type BackfillPolicy = MemorySettingsV1['backfillPolicy'];
 type SummarizerPermissionMode = MemorySettingsV1['hints']['summarizerPermissionMode'];
 
-/**
- * Whether the managed machine's memory settings can be shown and changed. Every memory setting
- * lives on the machine, so without a reachable, current daemon the page says why instead of
- * presenting defaults as the machine's settings.
- */
-type MachineSettingsAccess = 'noMachine' | 'pending' | 'ready' | 'updateRequired' | 'unreachable';
-
-/** The outcome of the last settled settings read, for the machine it was read from. */
-type SettledMachineRead = Readonly<{ targetKey: string; access: 'ready' | 'updateRequired' | 'unreachable' }>;
-
-function resolveExecutionTargetKey(target: FreshMachineAdministrationExecutionTargetV1 | null): string | null {
-    return target
-        ? [target.target.serverIdentityId, target.target.machineId, target.serverId].join('\u0000')
-        : null;
-}
-
 export const MemorySettingsView = React.memo(function MemorySettingsView() {
     const router = useRouter();
     const memorySearchEnabled = useFeatureEnabled('memory.search');
-    const administrationTargetSelection = useMachineAdministrationTargetSelection(
-        MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.memory,
-    );
-    const executionTarget = administrationTargetSelection.resolveExecutionTarget();
-    const executionTargetKey = resolveExecutionTargetKey(executionTarget);
-    const hasExecutionTarget = executionTarget !== null;
-    const isExecutionTargetCurrent = React.useCallback((
-        target: FreshMachineAdministrationExecutionTargetV1,
-    ) => {
-        return isMachineAdministrationExecutionTargetCurrent({
-            expectedTarget: target,
-            resolveCurrentTarget: administrationTargetSelection.resolveExecutionTarget,
-        });
-    }, [administrationTargetSelection.resolveExecutionTarget]);
-
-    const [settings, setSettings] = React.useState<MemorySettingsV1>(() => DEFAULT_MEMORY_SETTINGS);
-    // Settings are writable only after a read settled for the machine being managed. Until then the
-    // page holds defaults (or another machine's values), and a write would post them over the machine.
-    const [settledRead, setSettledRead] = React.useState<SettledMachineRead | null>(null);
-    const settledReadRef = React.useRef<SettledMachineRead | null>(null);
-    const settleRead = React.useCallback((next: SettledMachineRead | null) => {
-        settledReadRef.current = next;
-        setSettledRead(next);
-    }, []);
-    const [memoryStatus, setMemoryStatus] = React.useState<MemoryStatusV1 | null>(null);
-    const [memoryStatusRequestState, setMemoryStatusRequestState] = React.useState<ArchivedMemoryStatusRequestState>('unresolved');
-    const [loading, setLoading] = React.useState(false);
-
-    const fetchSettings = React.useCallback(async () => {
-        if (!memorySearchEnabled) return;
-        const target = administrationTargetSelection.resolveExecutionTarget();
-        if (!target) return;
-        setLoading(true);
-        settleRead(null);
-        setMemoryStatus(null);
-        setMemoryStatusRequestState('loading');
-        try {
-            const [settingsResult, statusResult] = await Promise.all([
-                fetchDaemonMemorySettings({
-                    machineId: target.machine.id,
-                    serverId: target.serverId,
-                }).then((result) => ({ result, unreachable: false as const }))
-                    .catch(() => ({ result: null, unreachable: true as const })),
-                fetchDaemonMemoryStatus({
-                    machineId: target.machine.id,
-                    serverId: target.serverId,
-                }).then((status) => ({ status, requestState: 'resolved' as const }))
-                    .catch(() => ({ status: null, requestState: 'unreachable' as const })),
-            ]);
-            if (!isExecutionTargetCurrent(target)) return;
-            const targetKey = resolveExecutionTargetKey(target)!;
-            if (settingsResult.result) {
-                setSettings(settingsResult.result.settings);
-                settleRead({ targetKey, access: settingsResult.result.supported ? 'ready' : 'updateRequired' });
-            } else {
-                settleRead({ targetKey, access: 'unreachable' });
-            }
-            setMemoryStatus(statusResult.status);
-            setMemoryStatusRequestState(statusResult.requestState);
-        } finally {
-            if (isExecutionTargetCurrent(target)) setLoading(false);
-        }
-    }, [administrationTargetSelection.resolveExecutionTarget, isExecutionTargetCurrent, memorySearchEnabled, settleRead]);
-
-    React.useEffect(() => {
-        if (!memorySearchEnabled) return;
-        if (!hasExecutionTarget) {
-            setSettings(DEFAULT_MEMORY_SETTINGS);
-            settleRead(null);
-            setMemoryStatus(null);
-            setMemoryStatusRequestState('unresolved');
-            setLoading(false);
-            return;
-        }
-        void fetchSettings();
-    }, [executionTargetKey, fetchSettings, hasExecutionTarget, memorySearchEnabled, settleRead]);
-
-    const writeSettings = React.useCallback(async (next: MemorySettingsV1) => {
-        if (!memorySearchEnabled) return;
-        const target = administrationTargetSelection.resolveExecutionTarget();
-        if (!target) return;
-        const targetKey = resolveExecutionTargetKey(target)!;
-        const read = settledReadRef.current;
-        if (read?.targetKey !== targetKey || read.access !== 'ready') return;
-        const result = await writeDaemonMemorySettings({
-            machineId: target.machine.id,
-            serverId: target.serverId,
-            settings: next,
-        });
-        if (!isExecutionTargetCurrent(target)) return;
-        setSettings(result.settings);
-        if (!result.supported) {
-            settleRead({ targetKey, access: 'updateRequired' });
-            return;
-        }
-        setMemoryStatusRequestState('loading');
-        const statusResult = await fetchDaemonMemoryStatus({
-            machineId: target.machine.id,
-            serverId: target.serverId,
-        }).then((status) => ({ status, requestState: 'resolved' as const }))
-            .catch(() => ({ status: null, requestState: 'unreachable' as const }));
-        if (!isExecutionTargetCurrent(target)) return;
-        setMemoryStatus(statusResult.status);
-        setMemoryStatusRequestState(statusResult.requestState);
-    }, [administrationTargetSelection.resolveExecutionTarget, isExecutionTargetCurrent, memorySearchEnabled, settleRead]);
+    const {
+        administrationTargetSelection,
+        access,
+        loading,
+        settings,
+        memoryStatus,
+        memoryStatusRequestState,
+        fetchSettings,
+        writeSettings,
+    } = useMachineMemorySettings({ enabled: memorySearchEnabled });
 
     const indexModeOptions = React.useMemo(() => [
         { id: 'hints' as const, label: t('memorySearchSettings.indexMode.options.lightTitle'), description: t('memorySearchSettings.indexMode.options.lightSubtitle') },
@@ -228,12 +108,6 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
     const embeddingsModelSubtitle = React.useMemo(() => {
         return embeddingsStatusPresentation?.modelId ?? t('common.unavailable');
     }, [embeddingsStatusPresentation?.modelId]);
-
-    const access: MachineSettingsAccess = !hasExecutionTarget
-        ? 'noMachine'
-        : settledRead?.targetKey === executionTargetKey
-            ? settledRead.access
-            : 'pending';
 
     // The chip names the machine this page manages; it stays in every state because it is how
     // the user recovers from a missing or unreachable machine.
@@ -338,6 +212,13 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                             />
                         </>
                     ) : null}
+                    {/* Which conversations are searched, and how, is the Search page's. */}
+                    <Item
+                        icon={<Icon name="magnifying-glass" />}
+                        testID="memory-settings-open-search"
+                        title={t('conversationSearch.openSearchSettings')}
+                        onPress={() => router.push('/settings/search')}
+                    />
                 </ItemGroup>
             </SettingSection>
 
@@ -357,7 +238,11 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                                 options={indexModeOptions}
                                 value={settings.indexMode}
                                 onChange={(mode) => {
-                                    void writeSettings({ ...settings, indexMode: mode });
+                                    void writeSettings({
+                                        ...settings,
+                                        indexMode: mode,
+                                        hints: mode === 'hints' ? { ...settings.hints, enabled: true } : settings.hints,
+                                    });
                                 }}
                                 testIDPrefix="memory-settings-index-mode"
                             />
