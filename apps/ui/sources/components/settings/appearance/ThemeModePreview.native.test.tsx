@@ -28,7 +28,7 @@ describe('Native material miniature', () => {
                 materialEnvironment={{ reduceTransparency: reduced }} floatingOnly />);
             const backgrounds = screen.findAllByType('View').map(node => StyleSheet.flatten(node.props.style)?.backgroundColor);
             expect(backgrounds.filter(value => typeof value === 'string').join(' | ')).toContain(
-                Color(lightTheme.colors.surface.base).alpha(reduced ? 1 : 0.7).rgb().string(),
+                Color(lightTheme.colors.surface.base).alpha(reduced ? 1 : 0.02).rgb().string(),
             );
             standardCleanup();
         }

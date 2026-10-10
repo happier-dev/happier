@@ -7,7 +7,6 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { PageHeader, type PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
 import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
@@ -383,17 +382,14 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
                         <ThemePalettePreview palette={markPalette} />
                     </View>
                 )}
+                primaryAction={!readonly ? {
+                    testID: 'settings-theme-profile-save',
+                    title: t('settingsAppearance.themeProfiles.saveAndUse'),
+                    disabled: saveDisabled,
+                    onPress: saveAndActivate,
+                } : undefined}
                 actions={(
                     <View style={styles.headerActions}>
-                        {!readonly ? (
-                            <RoundButton
-                                testID="settings-theme-profile-save"
-                                size="small"
-                                title={t('settingsAppearance.themeProfiles.saveAndUse')}
-                                disabled={saveDisabled}
-                                onPress={() => { void saveAndActivate(); }}
-                            />
-                        ) : null}
                         <PageHeaderMenu testID="settings-theme-profile-menu" actions={menuActions} />
                     </View>
                 )}

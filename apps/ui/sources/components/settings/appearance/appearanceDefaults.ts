@@ -10,6 +10,8 @@ const APPEARANCE_LOCAL_KEYS = [
     'uiFontScale',
     'uiContentWidthMode',
     'uiItemDensity',
+    'uiSurfaceFinish',
+    'uiSurfaceFinishOverrides',
     'uiMultiPanePanelsEnabled',
     'detailsPaneTabsBehavior',
     'settingsNavSidebarEnabled',

@@ -9,55 +9,19 @@ export const THEMES_SETTINGS = defineSettingsPage({
         lightMode: {
             titleKey: 'settingsAppearance.themeProfiles.lightModeSection',
             settings: {
-                lightTheme: {
-                    titleKey: 'settingsAppearance.themeProfiles.lightModeSection',
-                    descriptionKey: 'settingsAppearance.themeProfiles.lightModeSectionDescription',
-                    keywordKeys: [
-                        'settingsAppearance.themeProfiles.presets.premiumLight',
-                        'settingsAppearance.themeProfiles.presets.paperLight',
-                        'settingsAppearance.themeProfiles.presets.catppuccinLatte',
-                        'settingsAppearance.themeProfiles.presets.githubLight',
-                    ],
-                },
+                lightTheme: {},
             },
         },
         darkMode: {
             titleKey: 'settingsAppearance.themeProfiles.darkModeSection',
             settings: {
-                darkTheme: {
-                    titleKey: 'settingsAppearance.themeProfiles.darkModeSection',
-                    descriptionKey: 'settingsAppearance.themeProfiles.darkModeSectionDescription',
-                    keywordKeys: [
-                        'settingsAppearance.themeProfiles.presets.premiumDark',
-                        'settingsAppearance.themeProfiles.presets.pitchDark',
-                        'settingsAppearance.themeProfiles.presets.sunsetDark',
-                        'settingsAppearance.themeProfiles.presets.tokyoNight',
-                        'settingsAppearance.themeProfiles.presets.nightDark',
-                        'settingsAppearance.themeProfiles.presets.classicDark',
-                        'settingsAppearance.themeProfiles.presets.graphiteDark',
-                        'settingsAppearance.themeProfiles.presets.catppuccinMocha',
-                        'settingsAppearance.themeProfiles.presets.catppuccinMacchiato',
-                        'settingsAppearance.themeProfiles.presets.catppuccinFrappe',
-                        'settingsAppearance.themeProfiles.presets.oneDarkPro',
-                        'settingsAppearance.themeProfiles.presets.monokaiPro',
-                        'settingsAppearance.themeProfiles.presets.githubDark',
-                        'settingsAppearance.themeProfiles.presets.darkModern',
-                    ],
-                },
+                darkTheme: {},
             },
         },
         yourThemes: {
             titleKey: 'settingsAppearance.themeProfiles.yourThemes',
             settings: {
-                yourThemes: {
-                    titleKey: 'settingsAppearance.themeProfiles.yourThemes',
-                    descriptionKey: 'settingsAppearance.themeProfiles.yourThemesDescription',
-                    keywordKeys: [
-                        'settingsAppearance.themeProfiles.newTheme',
-                        'settingsAppearance.themeProfiles.importProfile',
-                        'settingsAppearance.themeProfiles.exportProfile',
-                    ],
-                },
+                yourThemes: {},
             },
         },
     },

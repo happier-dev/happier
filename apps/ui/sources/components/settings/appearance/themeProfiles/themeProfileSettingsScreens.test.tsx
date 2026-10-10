@@ -354,8 +354,12 @@ describe('Theme profile editor', () => {
         const screen = await renderEditorScreen('ocean');
         shared.setRootViewBackgroundColor.mockClear();
         shared.setStatusBarStyle.mockClear();
-        vi.stubGlobal('document', {
-            documentElement: { animate: vi.fn() },
+        // Keep the real document beneath the animation boundary: the save spinner
+        // legitimately injects its shared style sheet while the transition waits.
+        const { JSDOM } = await import('jsdom');
+        const dom = new JSDOM();
+        Object.assign(dom.window.document.documentElement, { animate: vi.fn() });
+        Object.assign(dom.window.document, {
             startViewTransition: (update: () => Promise<void>) => ({
                 ready: Promise.resolve().then(async () => {
                     shared.settingsState.themePreference = 'dark';
@@ -366,14 +370,16 @@ describe('Theme profile editor', () => {
                 }),
             }),
         });
-        onTestFinished(() => { vi.unstubAllGlobals(); });
+        vi.stubGlobal('document', dom.window.document);
+        onTestFinished(() => { vi.unstubAllGlobals(); dom.window.close(); });
 
         await screen.pressByTestIdAsync('settings-theme-profile-save');
 
         expect(getThemeProfiles().profiles.map(profile => profile.id)).toEqual(['ocean', 'arrived-during-transition']);
         expect(shared.settingsState).toMatchObject({ themePreference: 'dark', uiFontScale: 1.2 });
         expect(shared.setTheme).toHaveBeenLastCalledWith('dark');
-        expect(shared.setRootViewBackgroundColor).toHaveBeenLastCalledWith('#123456');
+        // Web roots subscribe to the resolved theme; only native uses this imperative adapter.
+        expect(shared.setRootViewBackgroundColor).not.toHaveBeenCalled();
         expect(shared.setStatusBarStyle).toHaveBeenLastCalledWith('light', true);
     });
     it('renders token groups and defaults the editing variant to the active app mode', async () => {

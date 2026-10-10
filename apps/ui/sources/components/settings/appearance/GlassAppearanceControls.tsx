@@ -14,7 +14,7 @@ import { useLiquidGlassAvailable } from '@/components/ui/glass/liquidGlass';
 
 import { useGlassAppearance } from '@/components/ui/glass/useGlassAppearance';
 import { useGlassRuntimeEnvironment } from '@/components/ui/glass/glassRuntimeEnvironment';
-import { GLASS_BLUR_STEPS, GLASS_SURFACE_GROUPS, readGlassMaterials, readGlassPreset, resolveGlassSurfaceMaterial, resolveGlassPresetSettingsDelta, type GlassMaterialChoice, type GlassMaterialSettings } from '@/components/ui/glass/glassMaterial';
+import { GLASS_PRESETS, GLASS_BLUR_STEPS, GLASS_SURFACE_GROUPS, readGlassMaterials, readGlassPreset, resolveGlassSurfaceMaterial, resolveGlassPresetSettingsDelta, type GlassMaterialChoice, type GlassMaterialSettings } from '@/components/ui/glass/glassMaterial';
 import { resolveGlassPresentationVariables } from '@/components/ui/glass/glassDocumentPresentation';
 import { GlassMaterialSettingsProvider } from '@/components/ui/glass/useGlassMaterialSettings';
 import { useReduceTransparency } from '@/hooks/ui/useReduceTransparency';
@@ -45,12 +45,10 @@ export function GlassPresetPreview(props: GlassPresetPreviewProps) {
     return <GlassStagePreview {...props} />;
 }
 
-// Sample artwork from the lab's busy wallpaper, confined to illustrative previews.
-// It is not a new app surface palette; light/dark coats come from the chosen theme.
-const SAMPLE_WALLPAPER_COLORS = ['#17307E', '#5B2BB0', '#E2456A', '#FF9F43', '#23B5A8', '#0B6E6A'] as const;
-
 function SampleWallpaper() {
-    return <GradientSurface fallbackColor={SAMPLE_WALLPAPER_COLORS[0]} gradient={{ colors: SAMPLE_WALLPAPER_COLORS, start: { x: 0, y: 0 }, end: { x: 1, y: 1 } }} borderRadius={0} style={StyleSheet.absoluteFillObject} />;
+    const { theme } = useUnistyles();
+    const colors = [theme.colors.surface.inset, theme.colors.surface.elevated, theme.colors.background.canvas] as const;
+    return <GradientSurface fallbackColor={colors[0]} gradient={{ colors, start: { x: 0, y: 0 }, end: { x: 1, y: 1 } }} borderRadius={0} style={StyleSheet.absoluteFillObject} />;
 }
 
 function GlassStagePreview(props: GlassPresetPreviewProps) {
@@ -70,7 +68,7 @@ function GlassStagePreview(props: GlassPresetPreviewProps) {
     </GlassMaterialSettingsProvider>;
 }
 
-const presetOptions = ['solid', 'auto', 'everywhere'] as const;
+const presetOptions = GLASS_PRESETS;
 const surfaceSettings = {
     chrome: { blur: APPEARANCE_SETTINGS.settings.glassChromeBlur, opacity: APPEARANCE_SETTINGS.settings.glassChromeOpacity },
     sidebar: { blur: APPEARANCE_SETTINGS.settings.glassSidebarBlur, opacity: APPEARANCE_SETTINGS.settings.glassSidebarOpacity },
@@ -160,7 +158,7 @@ export function GlassAppearanceSection() {
 }
 
 /** One effective-state owner for Settings, the popover and draft Personalize choices. */
-export function GlassEffectiveStateLine(props: Readonly<{ settings: GlassMaterialSettings }>) {
+export function GlassEffectiveStateLine(props: Readonly<{ settings: GlassMaterialSettings; inset?: 'sheet' | 'none' }>) {
     const environment = useGlassRuntimeEnvironment();
     const reduced = useReduceTransparency();
     const liquidGlassAvailable = useLiquidGlassAvailable();
@@ -195,12 +193,17 @@ export function GlassEffectiveStateLine(props: Readonly<{ settings: GlassMateria
             if (unavailable) await Modal.alertAsync(t('common.error'), t('settingsAppearance.glassControls.osSettingsUnavailable'));
         } : undefined}
         showChevron={false}
-        bottomElement={Platform.OS === 'web' && !environment.desktopWindow ? <RoundButton size="small" display="inverted" testID="appearance-desktop-download" title={t('setupOnboarding.webDesktopOnlyDesktopAppButton')} onPress={() => { void openExternalUrl(HAPPIER_DESKTOP_DOWNLOAD_URL); }} /> : undefined}
+        titleStyle={styles.effectiveState}
+        style={props.inset === 'none' ? styles.effectiveStateRow : undefined}
+        bottomElement={Platform.OS === 'web' && !environment.desktopWindow ? <View style={styles.downloadAction}><RoundButton size="small" display="inverted" testID="appearance-desktop-download" title={t('setupOnboarding.webDesktopOnlyDesktopAppButton')} onPress={() => { void openExternalUrl(HAPPIER_DESKTOP_DOWNLOAD_URL); }} /></View> : undefined}
     />;
 }
 
 const formatOpacity = (value: number) => `${Math.round(value * 100)}%`;
 const styles = StyleSheet.create(theme => ({
+    effectiveStateRow: { paddingHorizontal: 0 },
+    effectiveState: { color: theme.colors.text.secondary, fontSize: 13, lineHeight: 18 },
+    downloadAction: { flexDirection: 'row', alignSelf: 'flex-start' },
     groupControls: { alignSelf: 'stretch', gap: PAGE_LIST_METRICS.rowPaddingVerticalPx },
     opacityLabels: { flexDirection: 'row', alignItems: 'center', gap: PAGE_LIST_METRICS.rowPaddingHorizontalPx },
     caption: { color: theme.colors.text.secondary, fontSize: 13, lineHeight: 18 },

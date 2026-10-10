@@ -40,9 +40,10 @@ export const ThemeColorTokenRow = React.memo(function ThemeColorTokenRow(props: 
     return (
         <View testID={`settings-theme-color-token-${props.mode}-${props.token.id}`}>
             <Item
-                title={props.token.label}
-                subtitle={props.token.description}
+                title={props.token.labelKey ? t(props.token.labelKey) : props.token.label}
+                subtitle={props.token.descriptionKey ? t(props.token.descriptionKey) : props.token.description}
                 mode="info"
+                accessoryLayout="adaptive"
                 rightElement={(
                     <View style={styles.controls}>
                         <ThemeColorPicker

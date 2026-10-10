@@ -3,8 +3,8 @@ import { Platform, View, type ViewStyle } from 'react-native';
 import Color from 'color';
 
 import { darkTheme, lightTheme } from '@/theme';
-import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
-import { type GlassSurfaceMaterials, type GlassMaterialSettings, type GlassMaterialEnvironment } from '@/components/ui/glass/glassMaterial';
+import { glassSurfaceBackgroundColor, glassSurfaceTintColor } from '@/components/ui/glass/glassSurfacePaint';
+import { resolveGlassBackdropTone, type GlassSurfaceMaterials, type GlassMaterialSettings, type GlassMaterialEnvironment } from '@/components/ui/glass/glassMaterial';
 import { resolveGlassPresentationVariables } from '@/components/ui/glass/glassDocumentPresentation';
 import { createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
 
@@ -13,6 +13,7 @@ type Palette = Readonly<{
     colors: Readonly<{
         background: Readonly<{ canvas: string }>;
         surface: Readonly<{ base: string; elevated: string }>;
+        text?: Readonly<{ primary: string }>;
         border: Readonly<{ default: string; strong: string }>;
     }>;
 }>;
@@ -41,6 +42,10 @@ export function ThemePalettePreview(props: Readonly<{
     const bubbleRadius = DEFAULT_MINIATURE_RADIUS;
     const composerRadius = DEFAULT_MINIATURE_RADIUS;
     const materials = props.materials;
+    const backdropTone = materials ? resolveGlassBackdropTone(
+        props.materialSettings ?? { glassSurfaceMaterials: materials }, 'floating', props.palette.dark === true,
+        props.materialEnvironment ?? { desktopWindow: true, nativeWindowMaterialLive: true },
+    ) : undefined;
     const variables = materials ? resolveGlassPresentationVariables(
         props.materialSettings ?? { glassSurfaceMaterials: materials },
         props.materialEnvironment ?? { desktopWindow: true, nativeWindowMaterialLive: true },
@@ -48,10 +53,13 @@ export function ThemePalettePreview(props: Readonly<{
     const materialStyle = variables && Platform.OS === 'web' ? variables as unknown as ViewStyle : undefined;
     const paint = (color: string, group: 'chrome' | 'sidebar' | 'content' | 'floating', nested = false) => {
         if (!variables) return color;
-        if (Platform.OS === 'web') return glassSurfaceBackgroundColor(color, group, nested);
+        const tintColor = glassSurfaceTintColor({ color, ink: c.text?.primary ?? color, dark: props.palette.dark === true,
+            settings: props.materialSettings ?? { glassSurfaceMaterials: materials }, group,
+            environment: props.materialEnvironment ?? { desktopWindow: true, nativeWindowMaterialLive: true } });
+        if (Platform.OS === 'web') return glassSurfaceBackgroundColor(tintColor, group, nested);
         // The static native miniature paints the same effective coat; CSS variables are web-only.
         const opacity = Number.parseFloat(variables[`--happier-glass-${group}-${nested ? 'nested-opacity' : 'opacity'}`]!) / 100;
-        return Color(color).alpha(opacity).rgb().string();
+        return Color(tintColor).alpha(opacity).rgb().string();
     };
     const line = (width: `${number}%`, color: string, marginTop = 5) => (
         <View style={{ height: 5, borderRadius: 3, width, backgroundColor: color, marginTop }} />
@@ -66,7 +74,7 @@ export function ThemePalettePreview(props: Readonly<{
             <View style={{ position: 'absolute', left: 12, right: 12, bottom: 8, height: 38, overflow: 'hidden', borderRadius: 12 }}>
                 {/* The lab's coloured page remains behind the floating coat on this device. */}
                 {props.backdrop}
-                <View style={[{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', backgroundColor: paint(c.surface.base, 'floating'), borderWidth: 1, borderColor: c.border.default }, Platform.OS === 'web' ? createBackdropWebStyle({ backgroundColor: paint(c.surface.base, 'floating'), blurPx: 0, surfaceGroup: 'floating', fallbackBackgroundColorWhenBlurDisabled: c.surface.base }) as unknown as ViewStyle : null]}>
+                <View style={[{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', backgroundColor: paint(c.surface.base, 'floating'), borderWidth: 1, borderColor: c.border.default }, Platform.OS === 'web' ? createBackdropWebStyle({ backgroundColor: paint(c.surface.base, 'floating'), blurPx: 0, surfaceGroup: 'floating', backdropTone, fallbackBackgroundColorWhenBlurDisabled: c.surface.base }) as unknown as ViewStyle : null]}>
                     {[0, 1, 2, 3].map(id => <View key={id} style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c.border.strong }} />)}
                 </View>
             </View>

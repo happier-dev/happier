@@ -72,15 +72,12 @@ export const ThemeProfileImportScreen = React.memo(function ThemeProfileImportSc
         <ItemList testID="settings-theme-profile-import-screen" style={{ paddingTop: 0 }} keyboardShouldPersistTaps="handled">
             <SettingsPageHeader
                 description={t('settingsAppearance.themeProfiles.importPageDescription')}
-                actions={(
-                    <RoundButton
-                        testID="settings-theme-profile-import-submit"
-                        size="small"
-                        title={t('settingsAppearance.themeProfiles.importAction')}
-                        disabled={json.trim().length === 0}
-                        onPress={submit}
-                    />
-                )}
+                primaryAction={{
+                    testID: 'settings-theme-profile-import-submit',
+                    title: t('settingsAppearance.themeProfiles.importAction'),
+                    disabled: json.trim().length === 0,
+                    onPress: submit,
+                }}
             />
             <ItemGroup
                 title={t('settingsAppearance.themeProfiles.importJson')}
