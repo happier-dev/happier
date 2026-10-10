@@ -4,7 +4,7 @@ import type { AuthoringMemoryContentV1 } from '@happier-dev/protocol';
 import { createAuthoringMemoryCipher } from '@/sync/encryption/authoringMemoryEncryption';
 import { buildProjectLastOpenedMemoryKeyV1 } from '@happier-dev/protocol/account/authoringMemory';
 
-function harness() {
+function harness(options: { rejectMutation?: boolean } = {}) {
     const rows = new Map<string, { revision: number; content: AuthoringMemoryContentV1 | null }>();
     const fetched: string[] = [];
     const applied: unknown[] = [];
@@ -21,6 +21,8 @@ function harness() {
                 : { status: 'present' as const, revision: row.revision, content: row.content };
         },
         mutate: async (key: string, expectedRevision: number | 'absent', content: AuthoringMemoryContentV1 | null) => {
+            // Transport failure is the persistence boundary; all import logic remains real.
+            if (options.rejectMutation) throw new Error('destination commit failed');
             const previous = rows.get(key);
             if ((previous?.revision ?? 'absent') !== expectedRevision) {
                 return { status: 'conflict' as const, revision: previous?.revision ?? 0 };
@@ -115,6 +117,19 @@ describe('Account authoring memory owner', () => {
 });
 
 describe('legacy Account authoring import', () => {
+    it('preserves the original carrier when the destination commit fails', async () => {
+        const h = harness({ rejectMutation: true });
+        const original = { lastUsedProfile: 'old', unrelated: { keep: true } };
+        let raw: Record<string, unknown> = original;
+        await expect(importLegacyAuthoringMemory({ owner: h.owner, settings: {
+            read: async () => ({ raw, version: 1 }),
+            remove: async () => { raw = {}; return 'applied'; },
+        } })).rejects.toThrow('destination commit failed');
+        expect(raw).toBe(original);
+        expect(raw).toEqual({ lastUsedProfile: 'old', unrelated: { keep: true } });
+        expect(h.rows.size).toBe(0);
+        expect(h.projection().lastUsedProfile).toBeUndefined();
+    });
     it('preserves opaque data on canonical scope aliases inside one selection row', async () => {
         const h = harness();
         const canonicalScope = 'home:agent:happier.agent.codex/codex';
