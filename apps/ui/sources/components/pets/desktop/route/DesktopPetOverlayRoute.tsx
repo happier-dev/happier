@@ -18,7 +18,7 @@ import {
     useDesktopPetOverlayMeasuredLayout,
 } from '@/components/pets/desktop/layout/useDesktopPetOverlayMeasuredLayout';
 import { DesktopPetOverlayTray } from '@/components/pets/desktop/tray/DesktopPetOverlayTray';
-import { COMPANION_VELOCITY_SAMPLE_WINDOW_MS } from '@/components/companion/interaction/companionPointerDragConfig';
+import { COMPANION_VELOCITY_SAMPLE_WINDOW_MS } from '@happier-dev/plugin-ui/presentation';
 import {
     type CompanionPointerDragEnd,
     type CompanionPointerDragMove,

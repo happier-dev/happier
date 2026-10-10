@@ -1,6 +1,7 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { fetchAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
 import type { ServerFetch } from '@/sync/http/client';
+import { shouldRetryError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 
 export type AccountPetReadAdmission =
     | Readonly<{ status: 'ready' }>
@@ -27,7 +28,8 @@ export async function resolveAccountPetReadAdmission(
         return currentness.mode === 'plain'
             ? { status: 'ready' }
             : UNAVAILABLE;
-    } catch {
+    } catch (error) {
+        if (shouldRetryError(error)) throw error;
         return UNAVAILABLE;
     }
 }

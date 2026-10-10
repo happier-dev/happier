@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthCredentials } from "@/auth/storage/tokenStorage";
 import type { AccountPetMetadata } from "./accountPetLibraryTypes";
+import { HappyError } from '@/utils/errors/errors';
 
 const fetchAccountEncryptionCurrentness = vi.hoisted(() => vi.fn());
 const resolveRuntimeFeatureDecisionOrThrow = vi.hoisted(() => vi.fn());
@@ -172,7 +173,7 @@ describe("fetchAndApplyAccountPets", () => {
 
     it("does not request predecessor pet metadata when strict currentness is unavailable", async () => {
         fetchAccountEncryptionCurrentness.mockRejectedValue(
-            new Error("account-encryption-currentness-unavailable"),
+            new HappyError("account-encryption-currentness-unavailable", false),
         );
         const listPets = vi.fn(async () => ({
             ok: true as const,

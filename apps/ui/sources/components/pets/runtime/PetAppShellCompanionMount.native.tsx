@@ -48,6 +48,7 @@ import {
     type PetCompanionViewportMetrics,
 } from '@/sync/domains/pets/companionPosition/companionPosition';
 import { useLocalSetting } from '@/sync/domains/state/storage';
+import { useReportSessionCockpitPetRect } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
@@ -167,11 +168,22 @@ function NativePetCompanionLayer({
         bounds,
     ), [bounds, petsCompanionPosition]);
 
+    const reportPetRect = useReportSessionCockpitPetRect(true);
+    const [measuredSize, setMeasuredSize] = React.useState<Readonly<{ width: number; height: number }> | null>(null);
+    const measuredWidth = measuredSize?.width ?? rootWidth;
+    const measuredHeight = measuredSize?.height ?? rootHeight;
+    React.useEffect(() => {
+        // Restored persisted positions and measurements update the shell fact. Continuous native
+        // motion changes pan.point, not initialPoint, so pointer samples stay outside this effect.
+        reportPetRect({ ...initialPoint, width: measuredWidth, height: measuredHeight });
+    }, [initialPoint, measuredHeight, measuredWidth, reportPetRect]);
+
     const pan = useCompanionNativePanGesture<PetAnimationStateV1>({
         bounds,
         initialPoint,
         noDragRegions,
         releaseMotion: PET_COMPANION_RELEASE_MOTION,
+        onDragRelease: ({ target }) => reportPetRect({ ...target, width: measuredWidth, height: measuredHeight }),
         resolveDragState: resolvePetNativeDragAnimationState,
         onPositionChange: ({ point }) => {
             applyLocalSettings({
@@ -220,6 +232,10 @@ function NativePetCompanionLayer({
                     pan.animatedStyle,
                 ]}
                 testID="pet-app-shell-companion-root"
+                onLayout={(event) => {
+                    const { width, height } = event.nativeEvent.layout;
+                    setMeasuredSize((current) => current?.width === width && current.height === height ? current : { width, height });
+                }}
             >
                 {hasTrayItems ? (
                     <CompanionNoDragRegion

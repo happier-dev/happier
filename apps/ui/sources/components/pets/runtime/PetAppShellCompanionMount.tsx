@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View, type ViewStyle } from 'react-native';
+import { Platform, View, useWindowDimensions, type ViewStyle } from 'react-native';
 
 import { DEFAULT_BUILT_IN_PET_ID } from '@/components/pets/builtIns/builtInPetRegistry';
 import {
@@ -31,6 +31,7 @@ import {
 import { useLocalSetting } from '@/sync/domains/state/storage';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
+import { useReportSessionCockpitPetRect } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 
 const APP_SHELL_PET_MARGIN = 24;
 const APP_SHELL_DEFAULT_METRICS = resolvePetCompanionOverlayMetrics(1);
@@ -59,6 +60,7 @@ function clampDragOffset(offset: PetDragOffset, metrics: PetCompanionOverlayMetr
 
 function useAppShellPetDrag(): {
     offset: PetDragOffset;
+    settledOffset: PetDragOffset;
     metrics: PetCompanionOverlayMetrics;
     dragState: PetAnimationStateV1 | null;
     dragTargetRef: ReturnType<typeof useCompanionPointerDragSession<PetAnimationStateV1>>['dragTargetRef'];
@@ -71,21 +73,25 @@ function useAppShellPetDrag(): {
         [petsCompanionSizeScale],
     );
     const [offset, setOffset] = React.useState<PetDragOffset>({ x: 0, y: 0 });
+    const [settledOffset, setSettledOffset] = React.useState<PetDragOffset>(offset);
+    const offsetRef = React.useRef(offset);
     const handleMove = React.useCallback((move: CompanionPointerDragMove) => {
         if (move.coordinateSpace !== 'client') return;
-        setOffset((current) => clampDragOffset({
-            x: current.x + move.deltaX,
-            y: current.y + move.deltaY,
-        }, metrics));
+        const next = clampDragOffset({ x: offsetRef.current.x + move.deltaX, y: offsetRef.current.y + move.deltaY }, metrics);
+        offsetRef.current = next;
+        setOffset(next);
     }, [metrics]);
+    const handleEnd = React.useCallback(() => { setSettledOffset(offsetRef.current); }, []);
     const drag = useCompanionPointerDragSession<PetAnimationStateV1>({
         coordinateSpace: 'client',
         selectors: PET_POINTER_DRAG_SELECTORS,
         resolveDragState: resolvePetDragAnimationState,
         onDragMove: handleMove,
+        onDragEnd: handleEnd,
     });
     return {
         offset,
+        settledOffset,
         metrics,
         dragState: drag.dragState,
         dragTargetRef: drag.dragTargetRef,
@@ -119,6 +125,22 @@ function PetAppShellCompanionRuntime({
     const runtimeActive = useRuntimeActive();
     const actionExecutor = React.useMemo(() => createDefaultActionExecutor(), []);
     const hasTrayItems = activity.trayItems.length > 0;
+    const dimensions = useWindowDimensions();
+    // The shared pointer owner already uses client coordinates from this viewport.
+    const viewport = React.useMemo(readViewportSize, [dimensions.width, dimensions.height]);
+    const reportPetRect = useReportSessionCockpitPetRect(true);
+    const width = hasTrayItems ? Math.max(PET_COMPANION_ACTIVITY_TRAY_WIDTH, drag.metrics.spriteWidth) : drag.metrics.spriteWidth;
+    const height = hasTrayItems ? PET_COMPANION_ACTIVITY_TRAY_MAX_HEIGHT + drag.metrics.spriteHeight + 18 : drag.metrics.spriteHeight;
+    const [measuredSize, setMeasuredSize] = React.useState<Readonly<{ width: number; height: number }> | null>(null);
+    const measuredWidth = measuredSize?.width ?? width;
+    const measuredHeight = measuredSize?.height ?? height;
+    React.useEffect(() => {
+        reportPetRect(viewport.width > 0 && viewport.height > 0 ? {
+            x: viewport.width - APP_SHELL_PET_MARGIN - measuredWidth + drag.settledOffset.x,
+            y: viewport.height - APP_SHELL_PET_MARGIN - measuredHeight + drag.settledOffset.y,
+            width: measuredWidth, height: measuredHeight,
+        } : null);
+    }, [drag.settledOffset, measuredHeight, measuredWidth, reportPetRect, viewport.height, viewport.width]);
     const handleOpenTrayItem = React.useCallback(async (item: PetCompanionTrayItem) => {
         await actionExecutor.execute(
             'session.open',
@@ -146,15 +168,15 @@ function PetAppShellCompanionRuntime({
     return (
         <View
             pointerEvents="box-none"
+            onLayout={(event) => {
+                const { width, height } = event.nativeEvent.layout;
+                setMeasuredSize((current) => current?.width === width && current.height === height ? current : { width, height });
+            }}
             style={[
                 styles.root,
                 {
-                    width: hasTrayItems
-                        ? Math.max(PET_COMPANION_ACTIVITY_TRAY_WIDTH, drag.metrics.spriteWidth)
-                        : drag.metrics.spriteWidth,
-                    height: hasTrayItems
-                        ? PET_COMPANION_ACTIVITY_TRAY_MAX_HEIGHT + drag.metrics.spriteHeight + 18
-                        : drag.metrics.spriteHeight,
+                    width,
+                    height,
                 },
                 {
                     transform: [

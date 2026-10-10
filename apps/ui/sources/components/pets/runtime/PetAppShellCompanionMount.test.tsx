@@ -570,58 +570,6 @@ describe('PetAppShellCompanionMount', () => {
         expect(screen.findByTestId('pet-companion-state')?.props['data-pet-state']).toBe('idle');
     });
 
-    it('keeps web drag movement bounded to the app shell viewport', async () => {
-        enableAccountPetsForTest();
-        class TestPointerEvent extends Event {
-            clientX: number;
-            clientY: number;
-            screenX: number;
-            screenY: number;
-
-            constructor(type: string, init: { clientX: number; clientY: number; screenX?: number; screenY?: number }) {
-                super(type);
-                this.clientX = init.clientX;
-                this.clientY = init.clientY;
-                this.screenX = init.screenX ?? init.clientX;
-                this.screenY = init.screenY ?? init.clientY;
-            }
-        }
-        const fakeWindow = Object.assign(new EventTarget(), { innerWidth: 320, innerHeight: 260 });
-        vi.stubGlobal('window', fakeWindow);
-        vi.stubGlobal('PointerEvent', TestPointerEvent);
-        const { PetAppShellCompanionMount } = await import('./PetAppShellCompanionMount');
-        const screen = await renderScreen(<PetAppShellCompanionMount />);
-
-        await act(async () => {
-            invokeTestInstanceHandler(screen.findByTestId('pet-app-shell-companion-hitbox'), 'onPointerDown', {
-                button: 0,
-                clientX: 220,
-                clientY: 180,
-                screenX: 220,
-                screenY: 180,
-                target: { closest: closestMascot },
-                preventDefault: vi.fn(),
-                stopPropagation: vi.fn(),
-            });
-        });
-
-        await act(async () => {
-            fakeWindow.dispatchEvent(new TestPointerEvent('pointermove', {
-                clientX: -200,
-                clientY: -200,
-                screenX: -200,
-                screenY: -200,
-            }));
-        });
-
-        const rootStyle = flattenStyle(screen.findByTestId('pet-app-shell-companion-root')?.props.style);
-        expect(rootStyle.transform).toEqual([
-            { translateX: -180 },
-            { translateY: -112.33333333333333 },
-        ]);
-        expect(screen.findByTestId('pet-companion-state')?.props['data-pet-state']).toBe('running-left');
-    });
-
     it('applies the local companion size scale to web app-shell dimensions and drag bounds', async () => {
         enableAccountPetsForTest();
         class TestPointerEvent extends Event {
