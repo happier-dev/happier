@@ -31,6 +31,8 @@ export type SettingsCollectionLayoutProps = Readonly<{
     testID: string;
     /** Content above every detail (a banner about the whole collection). */
     detailTop?: React.ReactNode;
+    /** Collection identity above both panes on desktop; phone list pages retain their own header. */
+    collectionHeader?: React.ReactNode;
 }>;
 
 /**
@@ -58,6 +60,7 @@ export const SettingsCollectionLayout = React.memo(function SettingsCollectionLa
         {/* One phone header stays above both panes and follows the active child route. */}
         <Stack.Screen options={routes.find((route) => route.name === currentRoute)?.options} />
         <View style={{ flex: 1, minHeight: 0, backgroundColor: theme.colors.surface.base }}>
+            {isModalPresentation ? props.collectionHeader : null}
             <HappierListDetailLayout
                 testID={`${props.testID}-layout`}
                 listTestID={`${props.testID}-list-pane`}

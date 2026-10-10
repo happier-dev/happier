@@ -331,7 +331,7 @@ describe('SettingsSidebar', () => {
 
     // Retargeted from `groupGeneral`: groups are static headers now, so the only rows that
     // still disclose children are the routed parents (machines / prompts / notifications).
-    it('swaps a routed parent icon to a caret on hover', async () => {
+    it('keeps a routed parent identity on hover and gives its disclosure a separate caret', async () => {
         const { SettingsSidebar } = await import('./SettingsSidebar');
         const screen = await renderScreen(React.createElement(SettingsSidebar));
 
@@ -349,7 +349,11 @@ describe('SettingsSidebar', () => {
         const rowHovered = screen.findByTestId('settings-sidebar.item.machines') as any;
         expect(rowHovered).toBeTruthy();
         const iconNamesHovered = rowHovered.findAllByType('Icon').map((node: any) => node.props?.name).filter(Boolean);
-        expect(iconNamesHovered).toContain('caret-right');
+        expect(iconNamesHovered).toContain('desktop');
+        const disclosure = screen.findByTestId('settings-sidebar.toggle.machines');
+        expect(disclosure?.props.accessibilityState).toMatchObject({ expanded: false });
+        expect(disclosure?.findAll((node) => typeof node.type === 'string' && String(node.type) === 'Icon')
+            .map((node) => node.props.name)).toContain('caret-right');
 
         await act(async () => {
             rowHovered.props.onHoverOut?.();
@@ -361,7 +365,7 @@ describe('SettingsSidebar', () => {
         expect(iconNamesAfter).toContain('desktop');
     });
 
-    it('allows expanding a routed parent item via the hover chevron toggle', async () => {
+    it('allows expanding a routed parent item via its separate disclosure toggle', async () => {
         const { SettingsSidebar } = await import('./SettingsSidebar');
         const screen = await renderScreen(React.createElement(SettingsSidebar));
 

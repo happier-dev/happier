@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
@@ -93,6 +92,8 @@ installSettingsViewCommonModuleMocks({
         });
     },
 });
+
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 
 vi.mock('@react-navigation/native', async () => {
     const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');

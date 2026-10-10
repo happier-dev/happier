@@ -12,6 +12,7 @@ import {
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { NavigationBackChromeProvider } from '@/components/ui/layout/NavigationBackChrome';
 import { useSettingsRailVisible } from './settingsRailVisibility';
+import { useNavigationTitleChromePublisher, useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
 
 /**
  * The settings back affordance on tablet/desktop, where the settings modal has no navigator header.
@@ -141,6 +142,18 @@ export function SettingsFloatingControlsHost(props: Readonly<{
     children: React.ReactNode;
 }>) {
     const parent = React.useContext(SettingsFloatingControlsHostContext);
+    const chromeShowsTitle = useNavigationTitleChromeShowsTitle();
+    const publisher = useNavigationTitleChromePublisher();
+    const back = useSettingsBackControl(undefined);
+    const setChromeBack = publisher?.setBack;
+    const rootPhoneHost = chromeShowsTitle && props.collectionRootPathname === undefined;
+    const navigationBack = React.useMemo(() => back.visible
+        ? <SettingsBackButton onPress={back.handleBack} iconSize={ICON_SIZE.md} /> : null, [back.handleBack, back.visible]);
+    React.useEffect(() => {
+        if (!rootPhoneHost || !setChromeBack) return;
+        setChromeBack(navigationBack);
+        return () => setChromeBack(null);
+    }, [navigationBack, rootPhoneHost, setChromeBack]);
     const [claims, setClaims] = React.useState(0);
     const setClaimed = React.useCallback((claimed: boolean) => {
         setClaims((count) => Math.max(0, count + (claimed ? 1 : -1)));
@@ -149,7 +162,7 @@ export function SettingsFloatingControlsHost(props: Readonly<{
         setClaimed,
         collectionRootPathname: props.collectionRootPathname,
     }), [props.collectionRootPathname, setClaimed]);
-    const active = props.enabled;
+    const active = props.enabled && !chromeShowsTitle;
     const parentSetClaimed = parent?.setClaimed;
     React.useLayoutEffect(() => {
         if (!active || !parentSetClaimed) return;

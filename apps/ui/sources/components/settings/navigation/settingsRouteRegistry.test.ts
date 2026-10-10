@@ -302,7 +302,6 @@ describe('settingsRouteRegistry', () => {
             '[serverId]/[teamId]/groups/new',
             '[serverId]/[teamId]/groups/[groupId]',
             '[serverId]/[teamId]/invitations/index',
-            '[serverId]/[teamId]/invitations/new',
             '[serverId]/[teamId]/settings',
             '[serverId]/[teamId]/authentication',
             '[serverId]/[teamId]/authentication/new',

@@ -20,18 +20,25 @@ import type { ResolvedSettingsPageCatalog } from '@/components/settings/catalog/
 import type { ResolvedSettingsPageNode, SettingsPageSearchResult } from '@/components/settings/catalog/types';
 
 import { buildSettingsSearchRows, indexSettingsSearchPages, type SettingsSearchRow } from './settingsSearchRows';
+import { SETTINGS_SEARCH_RETURN_QUERY_PARAM } from '@/components/settings/navigation/settingsRouteRegistry';
+import type { SettingsPageSearchQuery } from './SettingsPageSearchContext';
 
 /**
  * Settings search, shared by the desktop rail and the phone Settings page: one query, one result
  * list from the catalog owner, one way to open a result (guarded against unsaved work).
  */
 export function useSettingsSearch(catalog: ResolvedSettingsPageCatalog, options: Readonly<{
-    /** Clear the query once a result opens (the rail); the phone keeps it for the way back. */
-    clearOnOpen: boolean;
     tag: string;
-}>) {
+} & (
+    /** Rail queries stay local and clear once a result opens. */
+    { clearOnOpen: true }
+    /** Page queries belong to the retained Settings layout. */
+    | { clearOnOpen: false; queryState: SettingsPageSearchQuery }
+)>) {
     const router = useRouter();
-    const [query, setQuery] = React.useState('');
+    const railQuery = React.useState('');
+    const queryState = options.clearOnOpen ? railQuery : options.queryState;
+    const [query, setQuery] = queryState;
     const normalizedQuery = query.trim();
     const { search } = catalog;
     const results = React.useMemo(
@@ -42,14 +49,41 @@ export function useSettingsSearch(catalog: ResolvedSettingsPageCatalog, options:
     const openRoute = React.useCallback((route: string) => {
         const outcome = runGuardedNavigation(() => {
             if (clearOnOpen) setQuery('');
-            router.navigate(route as never);
+            const destination = clearOnOpen ? route
+                : `${route}${route.includes('?') ? '&' : '?'}${SETTINGS_SEARCH_RETURN_QUERY_PARAM}=1`;
+            router.navigate(destination as never);
         });
         if (outcome !== true) {
             fireAndForget(outcome, { tag });
         }
-    }, [clearOnOpen, router, tag]);
+    }, [clearOnOpen, router, setQuery, tag]);
     return { query, setQuery, active: normalizedQuery.length > 0, results, openRoute };
 }
+
+// Query results are rebuilt as matches change; retained rows depend only on their visible facts.
+// Keep callbacks and the rail icon inside the row so an unchanged match does not redraw.
+const SettingsSearchResultRow = React.memo(function SettingsSearchResultRow(props: Readonly<{
+    title: string;
+    subtitle?: string;
+    route: string;
+    testID: string;
+    presentation: 'rail' | 'page';
+    onOpen: (route: string) => void;
+}>) {
+    const { theme } = useUnistyles();
+    const { onOpen, route } = props;
+    const onPress = React.useCallback(() => onOpen(route), [onOpen, route]);
+    if (props.presentation === 'page') {
+        return <WorkspaceDestinationRow href={route}><Item
+            testID={props.testID} title={props.title} subtitle={props.subtitle} onPress={onPress}
+        /></WorkspaceDestinationRow>;
+    }
+    return <CollectionNavigationRow
+        href={route} testID={props.testID} title={props.title} subtitle={props.subtitle}
+        icon={<Icon name="magnifying-glass" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />}
+        selected={false} onPress={onPress}
+    />;
+});
 
 /**
  * The results of a settings query: the pages it names first, then individual settings with their
@@ -65,7 +99,6 @@ export const SettingsSearchResults = React.memo(function SettingsSearchResults(p
     emptyTestID: string;
     onOpen: (route: string) => void;
 }>) {
-    const { theme } = useUnistyles();
     const pages = React.useMemo(() => indexSettingsSearchPages(props.tree), [props.tree]);
     const { pageRows, settingRows } = React.useMemo(
         () => buildSettingsSearchRows(props.results, pages),
@@ -101,12 +134,14 @@ export const SettingsSearchResults = React.memo(function SettingsSearchResults(p
                     <View key={group.id} testID={`${props.testIDPrefix}.group.${group.id}`}>
                         <ItemGroup title={group.title}>
                             {group.rows.map((row) => (
-                                <WorkspaceDestinationRow key={rowKey(row)} href={row.route}><Item
+                                <SettingsSearchResultRow key={rowKey(row)}
                                     testID={rowTestID(row)}
                                     title={row.title}
                                     subtitle={row.subtitle}
-                                    onPress={() => props.onOpen(row.route)}
-                                /></WorkspaceDestinationRow>
+                                    route={row.route}
+                                    presentation={props.presentation}
+                                    onOpen={props.onOpen}
+                                />
                             ))}
                         </ItemGroup>
                     </View>
@@ -121,15 +156,14 @@ export const SettingsSearchResults = React.memo(function SettingsSearchResults(p
                 <View key={group.id} testID={`${props.testIDPrefix}.group.${group.id}`}>
                     <CollectionListGroupLabel title={group.title} first={index === 0} />
                     {group.rows.map((row) => (
-                        <CollectionNavigationRow
+                        <SettingsSearchResultRow
                             key={rowKey(row)}
-                            href={row.route}
+                            route={row.route}
                             testID={rowTestID(row)}
                             title={row.title}
                             subtitle={row.subtitle}
-                            icon={<Icon name="magnifying-glass" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />}
-                            selected={false}
-                            onPress={() => props.onOpen(row.route)}
+                            presentation={props.presentation}
+                            onOpen={props.onOpen}
                         />
                     ))}
                 </View>

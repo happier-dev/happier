@@ -26,7 +26,7 @@ import { HubIdentityHeader } from '@/components/hub/HubIdentityHeader';
 import { HubAttentionSection } from '@/components/hub/HubAttentionSection';
 import { HubSetupSection } from '@/components/hub/HubSetupSection';
 import { HubMachinesSection } from '@/components/hub/HubMachinesSection';
-import { HubUsageSection } from '@/components/hub/HubUsageSection';
+import { UsageCapacitySection } from '@/components/settings/usage/UsageCapacitySection';
 import { HubSecuritySection } from '@/components/hub/HubSecuritySection';
 import { HubQuickSettingsSection } from '@/components/hub/HubQuickSettingsSection';
 import { useSettingsRailVisible } from '@/components/settings/shell/settingsRailVisibility';
@@ -186,7 +186,7 @@ export const SettingsView = React.memo(function SettingsView() {
             <HubAttentionSection />
             <HubSetupSection presentation="checklist" />
             <HubMachinesSection />
-            <HubUsageSection />
+            <UsageCapacitySection />
             <HubSecuritySection />
             <HubQuickSettingsSection />
 

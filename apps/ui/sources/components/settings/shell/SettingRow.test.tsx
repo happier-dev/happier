@@ -43,39 +43,20 @@ vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () =
     splitStreamingRevealTextParts: () => { throw new Error('Unexpected streaming Markdown in setting anchor test'); },
 }));
 
-const PAGE = await (async () => {
-    const { defineSettingsPage } = await import('@/components/settings/catalog/settingDeclarations');
-    return defineSettingsPage({
-        pageId: 'memory',
-        sections: {
-            content: {
-                titleKey: 'common.enabled',
-                settings: {
-                    indexMode: { titleKey: 'common.enabled' },
-                    backfill: { titleKey: 'common.cancel' },
-                },
-            },
-            other: {
-                settings: {
-                    unrelated: { titleKey: 'common.save' },
-                },
-            },
-        },
-    });
-})();
+const { MEMORY_SETTINGS: PAGE } = await import('@/components/settings/memory/memorySettings');
 
 async function renderPage(requested: string, rowMounted: boolean) {
     paramsState.value = { setting: requested };
     const screen = await renderScreen(
         <>
-            <SettingSection section={PAGE.sectionRefs.content}>
+            <SettingSection section={PAGE.sectionRefs.indexing}>
                 <React.Fragment>
                     {rowMounted ? <SettingRow setting={PAGE.settings.indexMode} /> : null}
                     <SettingRow setting={PAGE.settings.backfill} />
                 </React.Fragment>
             </SettingSection>
-            <SettingSection section={PAGE.sectionRefs.other}>
-                <SettingRow setting={PAGE.settings.unrelated} />
+            <SettingSection section={PAGE.sectionRefs.localIndex}>
+                <SettingRow setting={PAGE.settings.enabled} />
             </SettingSection>
         </>,
     );
@@ -102,9 +83,9 @@ describe('SettingSection', () => {
                 </ExpandableItem>
             </SettingAnchor>;
         }
-        const render = () => <SettingSection section={PAGE.sectionRefs.content}>
+        const render = () => <SettingSection section={PAGE.sectionRefs.indexing}>
             <Group testID="target" settings={[PAGE.settings.indexMode, PAGE.settings.backfill]} />
-            <Group testID="neighbor" settings={[PAGE.settings.unrelated]} />
+            <Group testID="neighbor" settings={[PAGE.settings.enabled]} />
         </SettingSection>;
         const screen = await renderScreen(render());
         expect(screen.findByTestId('target.content')).not.toBeNull();
@@ -122,24 +103,24 @@ describe('SettingSection', () => {
         const screen = await renderPage(PAGE.settings.indexMode.anchor, true);
 
         expect(screen.findByTestId(`setting-reveal.${PAGE.settings.indexMode.anchor}`)).toBeTruthy();
-        expect(screen.findByTestId(`setting-reveal.${PAGE.sectionRefs.content.id}`)).toBeNull();
+        expect(screen.findByTestId(`setting-reveal.${PAGE.sectionRefs.indexing.id}`)).toBeNull();
     });
 
     it('reveals the enclosing section when the page does not render the requested row', async () => {
         vi.useFakeTimers();
         const screen = await renderPage(PAGE.settings.indexMode.anchor, false);
 
-        expect(screen.findByTestId(`setting-reveal.${PAGE.sectionRefs.content.id}`)).toBeTruthy();
+        expect(screen.findByTestId(`setting-reveal.${PAGE.sectionRefs.indexing.id}`)).toBeTruthy();
         // Only the section that holds the row answers; its neighbours stay quiet.
-        expect(screen.findByTestId(`setting-reveal.${PAGE.sectionRefs.other.id}`)).toBeNull();
+        expect(screen.findByTestId(`setting-reveal.${PAGE.sectionRefs.localIndex.id}`)).toBeNull();
     });
 
     it('lets a rendered section answer for a section the page does not render in its state', async () => {
         vi.useFakeTimers();
-        paramsState.value = { setting: PAGE.settings.unrelated.anchor };
+        paramsState.value = { setting: PAGE.settings.enabled.anchor };
         // Only `content` is on screen (say, until a machine is chosen); it explains `other`'s rows too.
         const screen = await renderScreen(
-            <SettingSection section={PAGE.sectionRefs.content} answersFor={[PAGE.sectionRefs.other]}>
+            <SettingSection section={PAGE.sectionRefs.indexing} answersFor={[PAGE.sectionRefs.localIndex]}>
                 <SettingRow setting={PAGE.settings.backfill} />
             </SettingSection>,
         );
@@ -147,7 +128,7 @@ describe('SettingSection', () => {
             await vi.advanceTimersByTimeAsync(1000);
         });
 
-        expect(screen.findByTestId(`setting-reveal.${PAGE.sectionRefs.content.id}`)).toBeTruthy();
+        expect(screen.findByTestId(`setting-reveal.${PAGE.sectionRefs.indexing.id}`)).toBeTruthy();
     });
 
     it('lets route and virtualized owners inspect the requested setting', async () => {
@@ -156,7 +137,7 @@ describe('SettingSection', () => {
         const inside = await renderHook(() => useSettingRevealRequested([PAGE.settings.indexMode, PAGE.settings.backfill]));
         expect(inside.getCurrent()).toBe(true);
         await inside.unmount();
-        const outside = await renderHook(() => useSettingRevealRequested([PAGE.settings.unrelated]));
+        const outside = await renderHook(() => useSettingRevealRequested([PAGE.settings.enabled]));
         expect(outside.getCurrent()).toBe(false);
         await outside.unmount();
     });
@@ -187,14 +168,14 @@ describe('SettingSection', () => {
             {[true, false].map((rowMounted, index) => <DestinationInstanceHost key={index}
                 tabId={`settings-${index}`} ref={{ kind: 'settings', params: { setting: PAGE.settings.indexMode.anchor } }}
                 pathname="/settings/memory" focused={index === 0} visible>
-                <SettingSection section={PAGE.sectionRefs.content}>
+                <SettingSection section={PAGE.sectionRefs.indexing}>
                     {rowMounted ? <SettingRow setting={PAGE.settings.indexMode} /> : null}
                 </SettingSection>
             </DestinationInstanceHost>)}
         </>);
         await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
         expect(screen.findAllHostsByTestId(`setting-reveal.${PAGE.settings.indexMode.anchor}`)).toHaveLength(1);
-        expect(screen.findAllHostsByTestId(`setting-reveal.${PAGE.sectionRefs.content.id}`)).toHaveLength(1);
+        expect(screen.findAllHostsByTestId(`setting-reveal.${PAGE.sectionRefs.indexing.id}`)).toHaveLength(1);
     });
 });
 

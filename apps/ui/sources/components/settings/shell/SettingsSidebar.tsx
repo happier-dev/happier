@@ -191,14 +191,17 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
                     event?.stopPropagation?.();
                     toggleExpanded(node.id);
                 }}
-                style={{ flex: 1, width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' }}
+                accessibilityRole="button"
+                accessibilityLabel={readSettingsPageTitle(node)}
+                accessibilityState={{ expanded }}
+                style={{ alignItems: 'center', justifyContent: 'center' }}
                 hitSlop={6}
             >
                 {child}
             </Pressable>
         );
 
-        const hoveredIconNode = hasChildren ? iconPressable(
+        const disclosure = hasChildren ? iconPressable(
             <Icon
                 name={expanded ? 'caret-down' : 'caret-right'}
                 size={ICON_SIZE.xs}
@@ -214,8 +217,8 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
                     title={readSettingsPageTitle(node)}
                     {...(hasChildren
                         ? {
-                            leftElement: iconPressable(resolvedIconNode),
-                            leftElementWhenHovered: hoveredIconNode,
+                            icon: resolvedIconNode,
+                            rightElement: disclosure,
                         }
                         : {
                             icon: resolvedIconNode,

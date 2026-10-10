@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { act, create, type ReactTestRenderer, type ReactTestInstance } from 'react-test-renderer';
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
+import { SettingsModalFloatingControls } from './SettingsModalFloatingControls';
 
 import {
     clearActiveUnsavedChangesGuard,
@@ -10,23 +11,16 @@ import {
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const pathnameState = vi.hoisted(() => ({ value: '/settings/appearance' }));
+const paramsState = vi.hoisted(() => ({ value: {} as Record<string, string> }));
 const navigateSpy = vi.hoisted(() => vi.fn());
 const dismissToSpy = vi.hoisted(() => vi.fn());
 
-const theme = { colors: { chrome: { header: { foreground: '#111111' } } } };
-
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web', select: (o: any) => (o && 'default' in o ? o.default : undefined) },
-    Pressable: 'Pressable',
-    View: 'View',
-}));
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => (typeof styles === 'function' ? styles(theme) : styles) },
-    useUnistyles: () => ({ theme }),
-}));
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('expo-router', () => ({
     usePathname: () => pathnameState.value,
+    useLocalSearchParams: () => paramsState.value,
     useRouter: () => ({ navigate: navigateSpy, dismissTo: dismissToSpy, back: () => {} }),
 }));
 vi.mock('@/text', () => ({ t: (key: string) => key }));
@@ -37,7 +31,6 @@ function findByTestId(root: ReactTestInstance, testID: string): ReactTestInstanc
 }
 
 async function renderControls(): Promise<ReactTestRenderer> {
-    const { SettingsModalFloatingControls } = await import('./SettingsModalFloatingControls');
     let tree!: ReactTestRenderer;
     await act(async () => {
         tree = create(React.createElement(SettingsModalFloatingControls));
@@ -48,6 +41,7 @@ async function renderControls(): Promise<ReactTestRenderer> {
 describe('SettingsModalFloatingControls', () => {
     beforeEach(() => {
         pathnameState.value = '/settings/appearance';
+        paramsState.value = {};
         navigateSpy.mockReset();
         dismissToSpy.mockReset();
         clearActiveUnsavedChangesGuard();
@@ -72,6 +66,16 @@ describe('SettingsModalFloatingControls', () => {
         });
 
         expect(dismissToSpy).toHaveBeenCalledWith('/settings/appearance');
+    });
+
+    it('returns a nested search result to the retained Settings search rather than its structural parent', async () => {
+        pathnameState.value = '/settings/session/runtime';
+        paramsState.value = { setting: 'session.runtime.sessionName', settingsSearch: '1' };
+        const tree = await renderControls();
+        const back = findByTestId(tree.root, 'settings-modal-back');
+        expect(back).toBeTruthy();
+        act(() => back!.props.onPress());
+        expect(dismissToSpy).toHaveBeenCalledWith('/settings');
     });
 
     it('keeps the current settings screen when its active unsaved-changes guard chooses keep editing', async () => {

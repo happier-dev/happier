@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
@@ -45,6 +44,9 @@ installSettingsViewCommonModuleMocks({
         }).module;
     },
 });
+
+// Install the boundary options before AuthContext's grown import graph reaches them.
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 
 vi.mock('@/utils/platform/desktopHost', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/utils/platform/desktopHost')>(),

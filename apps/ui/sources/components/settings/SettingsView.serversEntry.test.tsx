@@ -1,12 +1,9 @@
 import * as React from 'react';
-import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-    renderSettingsView,
-    standardCleanup,
-} from '@/dev/testkit';
+import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 import { installSettingsViewCommonModuleMocks } from './settingsViewTestHelpers';
 
@@ -100,6 +97,8 @@ installSettingsViewCommonModuleMocks({
         });
     },
 });
+
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 
 vi.mock('expo-image', () => ({
     Image: 'Image',

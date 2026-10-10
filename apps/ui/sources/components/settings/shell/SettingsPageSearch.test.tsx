@@ -33,6 +33,7 @@ vi.mock('react-native', async () => {
             OS: 'web',
             select: (options: any) => (options && 'default' in options ? options.default : undefined),
         },
+        useWindowDimensions: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }),
     });
 });
 
@@ -105,10 +106,11 @@ describe('SettingsPageSearch', () => {
 
     async function renderSearch() {
         const { SettingsPageSearch } = await import('./SettingsPageSearch');
+        const { SettingsShell } = await import('./SettingsShell');
         return await renderScreen(
-            <SettingsPageSearch>
+            <SettingsShell><SettingsPageSearch>
                 <Item testID="settings-overview-content" title="overview" />
-            </SettingsPageSearch>,
+            </SettingsPageSearch></SettingsShell>,
         );
     }
 
@@ -125,17 +127,32 @@ describe('SettingsPageSearch', () => {
         expect(screen.findByTestId('settings-page-search.result.group.settings')).toBeTruthy();
 
         await screen.pressByTestIdAsync('settings-page-search.result.notifications');
-        expect(routerNavigateSpy).toHaveBeenCalledWith('/settings/notifications');
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/settings/notifications?settingsSearch=1');
     });
 
     it('opens a setting at its row, and keeps the query for the way back', async () => {
+        const { SettingsPageSearch } = await import('./SettingsPageSearch');
+        const { SettingsShell } = await import('./SettingsShell');
         const screen = await renderSearch();
         await act(async () => {
             screen.changeTextByTestId('settings-page-search:input', 'itemDensity');
         });
 
         await screen.pressByTestIdAsync('settings-page-search.result.setting.appearance.density');
-        expect(routerNavigateSpy).toHaveBeenCalledWith('/settings/appearance?setting=appearance.density');
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/settings/appearance?setting=appearance.density&settingsSearch=1');
+
+        // Hosted Settings replaces its selected leaf, not the shared layout/shell.
+        await act(async () => {
+            screen.update(<SettingsShell><Item testID="appearance-leaf" title="appearance" /></SettingsShell>);
+        });
+        expect(screen.findByTestId('settings-page-search:input')).toBeNull();
+        expect(screen.findByTestId('appearance-leaf')).toBeTruthy();
+        await act(async () => {
+            screen.update(<SettingsShell><SettingsPageSearch>
+                <Item testID="settings-overview-content" title="overview" />
+            </SettingsPageSearch></SettingsShell>);
+        });
+        expect(screen.findByTestId('settings-page-search:input')?.props.value).toBe('itemDensity');
         expect(screen.findByTestId('settings-page-search.result.setting.appearance.density')).toBeTruthy();
     });
 

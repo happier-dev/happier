@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { getSettingsStackScreenDefinitions, shouldShowSettingsParentBackButton } from './settingsRouteRegistry';
 
 import {
     clearActiveUnsavedChangesGuard,
@@ -16,6 +17,7 @@ const dismissToSpy = vi.hoisted(() => vi.fn());
 // Minimal, self-contained mocks so the registry module imports without the shared testkit.
 vi.mock('expo-router', () => ({
     usePathname: () => pathnameState.value,
+    useLocalSearchParams: () => ({}),
     useRouter: () => ({ navigate: navigateSpy, dismissTo: dismissToSpy, back: () => {} }),
 }));
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
@@ -31,7 +33,6 @@ afterEach(() => {
 
 describe('getSettingsStackScreenDefinitions', () => {
     it('removes the navigator header entirely in modal mode', async () => {
-        const { getSettingsStackScreenDefinitions } = await import('./settingsRouteRegistry');
         const defs = getSettingsStackScreenDefinitions(identity, { isModalPresentation: true });
 
         for (const name of ['index', 'appearance', 'appearance/themes']) {
@@ -44,7 +45,6 @@ describe('getSettingsStackScreenDefinitions', () => {
     });
 
     it('keeps a titled header with a back button in full-screen (phone) mode', async () => {
-        const { getSettingsStackScreenDefinitions } = await import('./settingsRouteRegistry');
         const defs = getSettingsStackScreenDefinitions(identity);
 
         const appearance = defs.find((d) => d.name === 'appearance');
@@ -66,7 +66,6 @@ describe('getSettingsStackScreenDefinitions', () => {
             requestDecision,
             tag: 'SettingsParentBackButton.test',
         });
-        const { getSettingsStackScreenDefinitions } = await import('./settingsRouteRegistry');
         const definition = getSettingsStackScreenDefinitions(identity, { navigator: 'providers' })
             .find((candidate) => candidate.name === 'new');
         const headerLeft = definition?.options.headerLeft;
@@ -101,7 +100,6 @@ describe('settings header Back', () => {
         // Phone: Settings (with a search query) → a search result → header Back must land on that
         // same Settings screen, query and all, as browser Back does.
         pathnameState.value = '/settings/appearance';
-        const { getSettingsStackScreenDefinitions } = await import('./settingsRouteRegistry');
         const headerLeft = getSettingsStackScreenDefinitions(identity)
             .find((candidate) => candidate.name === 'appearance')?.options.headerLeft;
         let tree!: ReactTestRenderer;
@@ -122,19 +120,16 @@ describe('settings header Back', () => {
 
 describe('shouldShowSettingsParentBackButton', () => {
     it('never shows on the settings index (no parent)', async () => {
-        const { shouldShowSettingsParentBackButton } = await import('./settingsRouteRegistry');
         expect(shouldShowSettingsParentBackButton({ pathname: '/settings', hideOnTopLevel: true })).toBe(false);
         expect(shouldShowSettingsParentBackButton({ pathname: '/settings', hideOnTopLevel: false })).toBe(false);
     });
 
     it('hides top-level categories in modal mode but keeps them in full-screen mode', async () => {
-        const { shouldShowSettingsParentBackButton } = await import('./settingsRouteRegistry');
         expect(shouldShowSettingsParentBackButton({ pathname: '/settings/appearance', hideOnTopLevel: true })).toBe(false);
         expect(shouldShowSettingsParentBackButton({ pathname: '/settings/appearance', hideOnTopLevel: false })).toBe(true);
     });
 
     it('always shows on deeper sub-screens (the rail does not list them)', async () => {
-        const { shouldShowSettingsParentBackButton } = await import('./settingsRouteRegistry');
         expect(shouldShowSettingsParentBackButton({ pathname: '/settings/appearance/themes', hideOnTopLevel: true })).toBe(true);
         expect(shouldShowSettingsParentBackButton({ pathname: '/settings/connected-services/abc', hideOnTopLevel: true })).toBe(true);
     });

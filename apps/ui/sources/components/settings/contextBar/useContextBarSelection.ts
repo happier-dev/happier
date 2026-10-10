@@ -1,12 +1,16 @@
 import * as React from 'react';
 
-import { useSettingMutable } from '@/sync/domains/state/storage';
+import { usePromptLibraryCatalogValue } from '@/sync/store/usePromptLibraryCatalog';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { requireUpdatedPromptLibraryMutation } from '@/sync/api/account/apiPromptLibraryCatalog';
 
 type UseContextBarSelectionArgs = Readonly<{
     selectionKey: string;
     defaultMachineId: string | null;
     initialMachineId?: string | null;
     defaultWorkspacePath?: string | null;
+    /** Administration's existing qualified target; it owns placement, not this Context row. */
+    workspaceBindingKey?: string;
 }>;
 
 type StoredContextSelection = Readonly<{
@@ -24,31 +28,28 @@ function readStoredSelection(
 }
 
 export function useContextBarSelection(args: UseContextBarSelectionArgs) {
-    const [contextSelectionsV1, setContextSelectionsV1] = useSettingMutable('contextSelectionsV1');
+    const catalog = usePromptLibraryCatalogValue('contexts');
+    const contextSelectionsV1 = catalog.status === 'ready' && !catalog.stale ? catalog.value : null;
+    const scope = useAccountSettingsScope();
+    const boundary = JSON.stringify([scope?.serverId, scope?.accountId, args.selectionKey]);
     const storedSelection = readStoredSelection(contextSelectionsV1?.selectionsByKey, args.selectionKey);
     const storedMachineId = storedSelection?.machineId ?? null;
     const storedWorkspacePath = storedSelection?.workspacePath ?? null;
     const defaultWorkspacePath = args.defaultWorkspacePath ?? '';
     const initialMachineIdRef = React.useRef(args.initialMachineId ?? null);
 
-    const [machineId, setMachineIdState] = React.useState<string | null>(
-        () => initialMachineIdRef.current ?? storedMachineId ?? args.defaultMachineId ?? null,
-    );
-    const [workspacePath, setWorkspacePathState] = React.useState<string>(
-        () => storedWorkspacePath ?? defaultWorkspacePath,
-    );
+    const [draft, setDraft] = React.useState<Readonly<{ boundary: string; machineId: string | null; workspacePath: string }> | null>(null);
+    const [workspaceBinding, setWorkspaceBinding] = React.useState(() => ({ boundary, key: args.workspaceBindingKey }));
+    const workspaceBindingChanged = workspaceBinding.boundary === boundary
+        && Boolean(workspaceBinding.key)
+        && args.workspaceBindingKey !== undefined
+        && workspaceBinding.key !== args.workspaceBindingKey;
+    const currentDraft = draft?.boundary === boundary ? draft : null;
+    const machineId = currentDraft ? currentDraft.machineId : initialMachineIdRef.current ?? storedMachineId ?? args.defaultMachineId ?? null;
+    const workspacePath = workspaceBindingChanged ? '' : currentDraft ? currentDraft.workspacePath : storedWorkspacePath ?? defaultWorkspacePath;
+    React.useEffect(() => { initialMachineIdRef.current = null; }, [boundary]);
 
-    React.useEffect(() => {
-        const initialMachineId = initialMachineIdRef.current;
-        initialMachineIdRef.current = null;
-        setMachineIdState(initialMachineId ?? storedMachineId ?? args.defaultMachineId ?? null);
-    }, [args.defaultMachineId, storedMachineId]);
-
-    React.useEffect(() => {
-        setWorkspacePathState(storedWorkspacePath ?? defaultWorkspacePath);
-    }, [defaultWorkspacePath, storedWorkspacePath]);
-
-    const persistSelection = React.useCallback((nextSelection: StoredContextSelection) => {
+    const persistSelection = React.useCallback(async (nextSelection: StoredContextSelection) => {
         const normalizedSelection = {
             machineId: nextSelection.machineId ?? null,
             workspacePath: nextSelection.workspacePath ?? null,
@@ -60,36 +61,52 @@ export function useContextBarSelection(args: UseContextBarSelectionArgs) {
         ) {
             return;
         }
-        setContextSelectionsV1({
-            v: 1,
-            selectionsByKey: {
-                ...(contextSelectionsV1?.selectionsByKey ?? {}),
-                [args.selectionKey]: normalizedSelection,
-            },
-        });
-    }, [args.selectionKey, contextSelectionsV1?.selectionsByKey, setContextSelectionsV1]);
+        if (!contextSelectionsV1) return;
+        try {
+            requireUpdatedPromptLibraryMutation(await catalog.write({
+                v: 1,
+                selectionsByKey: {
+                    ...contextSelectionsV1.selectionsByKey,
+                    [args.selectionKey]: normalizedSelection,
+                },
+            }));
+            setDraft(current => current?.boundary === boundary
+                && current.machineId === normalizedSelection.machineId
+                && current.workspacePath === normalizedSelection.workspacePath ? null : current);
+        } catch {
+            // Keep the local choice for retry; an unacknowledged draft is not catalog authority.
+        }
+    }, [args.selectionKey, boundary, catalog.write, contextSelectionsV1]);
 
-    const setMachineId = React.useCallback((nextMachineId: string | null) => {
+    React.useLayoutEffect(() => {
+        if (workspaceBinding.boundary === boundary && workspaceBinding.key === args.workspaceBindingKey) return;
+        setWorkspaceBinding({ boundary, key: args.workspaceBindingKey });
+        if (!workspaceBindingChanged) return;
+        setDraft({ boundary, machineId, workspacePath: '' });
+        void persistSelection({ machineId, workspacePath: '' });
+    }, [args.workspaceBindingKey, boundary, machineId, persistSelection, workspaceBinding, workspaceBindingChanged]);
+
+    const setMachineId = React.useCallback(async (nextMachineId: string | null) => {
         if ((machineId ?? null) === (nextMachineId ?? null)) {
             return;
         }
-        setMachineIdState(nextMachineId);
-        persistSelection({
+        setDraft({ boundary, machineId: nextMachineId, workspacePath });
+        await persistSelection({
             machineId: nextMachineId,
             workspacePath,
         });
-    }, [machineId, persistSelection, workspacePath]);
+    }, [boundary, machineId, persistSelection, workspacePath]);
 
-    const setWorkspacePath = React.useCallback((nextWorkspacePath: string) => {
+    const setWorkspacePath = React.useCallback(async (nextWorkspacePath: string) => {
         if (workspacePath === nextWorkspacePath) {
             return;
         }
-        setWorkspacePathState(nextWorkspacePath);
-        persistSelection({
+        setDraft({ boundary, machineId, workspacePath: nextWorkspacePath });
+        await persistSelection({
             machineId,
             workspacePath: nextWorkspacePath,
         });
-    }, [machineId, persistSelection, workspacePath]);
+    }, [boundary, machineId, persistSelection, workspacePath]);
 
     return {
         machineId,

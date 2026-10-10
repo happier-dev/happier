@@ -5,6 +5,7 @@ import { SearchHeader } from '@/components/ui/forms/SearchHeader';
 import { t } from '@/text';
 import { useResolvedSettingsPageCatalog } from '@/components/settings/catalog/runtime/useResolvedSettingsPageCatalog';
 import { SettingsSearchResults, useSettingsSearch } from '@/components/settings/shell/SettingsSearchResults';
+import { useSettingsPageSearchQuery } from './SettingsPageSearchContext';
 
 /**
  * Settings search where there is no rail (phones, or the rail turned off): a search field at the top
@@ -16,7 +17,11 @@ export const SettingsPageSearch = React.memo(function SettingsPageSearch(props: 
 }>) {
     const catalog = useResolvedSettingsPageCatalog();
     // The query stays when a result opens, so coming back returns to the results.
-    const search = useSettingsSearch(catalog, { clearOnOpen: false, tag: 'SettingsPageSearch.open' });
+    const search = useSettingsSearch(catalog, {
+        clearOnOpen: false,
+        queryState: useSettingsPageSearchQuery(),
+        tag: 'SettingsPageSearch.open',
+    });
     return (
         <>
             <SearchHeader

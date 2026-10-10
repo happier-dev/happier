@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installSettingsViewCommonModuleMocks } from './settingsViewTestHelpers';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
@@ -63,6 +62,8 @@ installSettingsViewCommonModuleMocks({
     },
     storage: async (importOriginal) => await importOriginal<typeof import('@/sync/domains/state/storage')>(),
 });
+
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 
 vi.mock('expo-image', () => ({
     Image: 'Image',

@@ -11,7 +11,8 @@ type InstallSettingsViewCommonModuleMocksOptions = Readonly<{
     modal?: SettingsViewModuleFactory;
     reactNative?: SettingsViewModuleFactory;
     router?: SettingsViewModuleFactory;
-    storage?: SettingsViewStorageModuleFactory;
+    /** Real store consumers must not await importOriginal inside a storage mock cycle. */
+    storage?: SettingsViewStorageModuleFactory | 'real';
     text?: SettingsViewModuleFactory;
     unistyles?: SettingsViewModuleFactory;
 }>;
@@ -22,7 +23,7 @@ const settingsViewModuleState = vi.hoisted(() => ({
         modal: undefined as SettingsViewModuleFactory | undefined,
         reactNative: undefined as SettingsViewModuleFactory | undefined,
         router: undefined as SettingsViewModuleFactory | undefined,
-        storage: undefined as SettingsViewStorageModuleFactory | undefined,
+        storage: undefined as SettingsViewStorageModuleFactory | 'real' | undefined,
         text: undefined as SettingsViewModuleFactory | undefined,
         unistyles: undefined as SettingsViewModuleFactory | undefined,
     },
@@ -55,6 +56,7 @@ export function installSettingsViewCommonModuleMocks(
         text: options.text,
         unistyles: options.unistyles,
     };
+    if (options.storage === 'real') vi.doUnmock('@/sync/domains/state/storage');
 
     vi.mock('react-native', async () => {
         const activeOptions = settingsViewModuleState.options;
@@ -133,7 +135,7 @@ export function installSettingsViewCommonModuleMocks(
 
     vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
         const activeOptions = settingsViewModuleState.options;
-        if (activeOptions.storage) {
+        if (typeof activeOptions.storage === 'function') {
             return await activeOptions.storage(importOriginal);
         }
 

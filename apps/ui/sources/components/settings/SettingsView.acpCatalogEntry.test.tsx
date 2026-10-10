@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 import { installAcpCatalogSettingsCommonModuleMocks } from './acpCatalog/acpCatalogSettingsTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -83,9 +83,10 @@ vi.mock('expo-image', () => ({
     Image: 'Image',
 }));
 
-vi.mock('@react-navigation/native', () => ({
-    useFocusEffect: (_cb: () => void) => {},
-}));
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return { ...createReactNavigationNativeMock(), useFocusEffect: (_cb: () => void) => {} };
+});
 
 vi.mock('expo-constants', () => ({
     default: { expoConfig: { version: '0.0.0-test' } },
@@ -108,9 +109,10 @@ vi.mock('@/hooks/session/useConnectTerminal', () => ({
     useConnectTerminal: () => ({ connectTerminal: vi.fn(), connectWithUrl: vi.fn(), isLoading: false }),
 }));
 
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ credentials: null }),
-}));
+vi.mock('@/auth/context/AuthContext', () => {
+    const auth = { credentials: null };
+    return { useAuth: () => auth, useOptionalAuth: () => auth };
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -207,7 +209,7 @@ describe('SettingsView ACP catalog entry', () => {
         const { SettingsView } = await import('./SettingsView');
 
         let tree!: ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(SettingsView))).tree;
+        tree = (await renderSettingsView(React.createElement(SettingsView))).tree;
 
         const items = tree.findAllByType('Item' as any);
         const acpItem = items.find((item: any) => item?.props?.title === 'settings.acpCatalog');
