@@ -176,7 +176,7 @@ describe('sync.markSessionViewed (authoritative read cursor)', () => {
     afterEach(async () => {
         const { disconnectActiveServerConnection } = await import('./runtime/orchestration/connectionManager');
         await disconnectActiveServerConnection();
-        boundary.dispose();
+        await boundary.dispose();
         webLocks.restore();
         localStorage.restore();
         vi.restoreAllMocks();
@@ -287,7 +287,7 @@ describe('sync.markSessionViewed (authoritative read cursor)', () => {
         storage.getState().applySessions([createPlainSession({ sessionId })]);
         const { sync } = await import('./sync');
         emitReadCursorWithServerScopeMock.mockImplementationOnce(async () => {
-            boundary.setAccount(home.serverUrl, 'account-b');
+            await boundary.setAccount(home.serverUrl, 'account-b');
             const { restoreConnectionToActiveServer } = await import('./runtime/orchestration/connectionManager');
             const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
             await restoreConnectionToActiveServer({ token: createAccountTokenForTests('account-b') });

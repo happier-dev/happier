@@ -4,6 +4,7 @@ import { wrapApiTokenEncryptionAccessV1 } from '@happier-dev/protocol';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import {
   EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES_V2,
+  ActionIdSchema,
   ExternalActionRequestEnvelopeV2Schema,
   createActionExecutor,
   isApprovalRequiredByActionsSettings,
@@ -219,7 +220,7 @@ describe('Happier SDK client', () => {
     } as Pick<ActionExecutorDeps, 'machineTerminalAction' | 'isActionApprovalRequired'> as ActionExecutorDeps);
     vi.stubGlobal('fetch', vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
       const request = JSON.parse(String(init?.body)) as { input: unknown };
-      const actionId = decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1)!);
+      const actionId = ActionIdSchema.parse(decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1)!));
       return responseForRequest(init, { v: 1, actionId,
         execution: await executor.execute(actionId, request.input, { surface: 'api', serverId: target.serverId }) });
     }));
@@ -250,6 +251,8 @@ describe('Happier SDK client', () => {
     const target = { serverId: 'home', machineId: 'machine' };
     const principal = { kind: 'account', accountId: 'bob' } as const;
     const grant = { machineId: 'machine', principal, level: 'view' } as const;
+    const saved = { kind: 'saved', grant, readiness: 'ready', canPrepareKeys: false } satisfies
+      PublicActionResultById['machines.access.grant.set'];
     const access = { machineId: 'machine', custodian: { accountId: 'alice', displayName: 'Alice' },
       access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
       canManage: true, grants: [], ownDirectGrant: false, ownAccessSources: [] } as const;
@@ -262,13 +265,13 @@ describe('Happier SDK client', () => {
       machineAccessAction: async ({ actionId }) => {
         if (actionId === 'machines.access.grants.list') return access;
         permissionWrites++;
-        return { kind: 'saved', grant, readiness: 'ready' };
+        return saved;
       },
       isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
     } as Pick<ActionExecutorDeps, 'machineAccessAction' | 'isActionApprovalRequired'> as ActionExecutorDeps);
     const fetch = vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
       const request = JSON.parse(String(init?.body)) as { input: unknown };
-      const actionId = decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1)!);
+      const actionId = ActionIdSchema.parse(decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1)!));
       requests.push({ actionId, input: request.input });
       const execution = await executor.execute(actionId, request.input, { surface: 'api', serverId: target.serverId });
       return responseForRequest(init, { v: 1, actionId, execution });
@@ -278,7 +281,7 @@ describe('Happier SDK client', () => {
     try {
       await expect(client.actions.machines.access.grants.list(target)).resolves.toEqual(access);
       const input = { ...target, principal, level: 'view' } satisfies PublicActionInputById['machines.access.grant.set'];
-      await expect(client.actions.machines.access.grant.set(input)).resolves.toEqual({ kind: 'saved', grant, readiness: 'ready' });
+      await expect(client.actions.machines.access.grant.set(input)).resolves.toEqual(saved);
       await expect(client.actions.machines.access.grant.set({ ...input,
         // @ts-expect-error Raw recipient ciphertext is not public grant authority.
         recipientKeyEnvelopes: [],
@@ -1262,11 +1265,11 @@ describe('Happier SDK client', () => {
       capabilities: {
         viewTeam: true, viewRoster: true, manageSettings: true, managePolicy: true, manageMembers: true,
         manageGroups: true, manageInvitations: true, manageOwners: true,
-        manageAuthentication: true, archiveTeam: true, restoreTeam: true,
+        manageAuthentication: true, archiveTeam: true, restoreTeam: true, leave: false,
       },
       admission: { historyChoice: { admin: 'choice', member: 'choice', guest: 'hidden' } },
       counts: null,
-    };
+    } satisfies PublicActionResultById['teams.archive'];
     const fetch = vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => responseForRequest(init, {
       v: 1,
       actionId: 'teams.archive',

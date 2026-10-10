@@ -526,7 +526,9 @@ async function detectCliAuthStatus(params: { name: DetectCliName; resolvedPath: 
 async function resolveCliPathForName(
     name: DetectCliName,
 ): Promise<Readonly<{ resolvedPath: string; resolutionSource: 'override' | 'system' | 'managed' }> | null> {
-    const resolved = resolveAgentCliCommandForRuntime(resolveAgentCliRuntimeSpecForLookupId(name));
+    const runtimeSpec = readCurrentContributionRegistry().agentDefinitionsById.get(name)?.runtimeSpec;
+    if (!runtimeSpec) return null;
+    const resolved = resolveAgentCliCommandForRuntime(runtimeSpec);
     return resolved ? { resolvedPath: resolved.command, resolutionSource: resolved.source } : null;
 }
 

@@ -72,7 +72,7 @@ export function buildManagedConfigurationFactsV1<Choices extends z.core.$ZodType
   environment?: MachineEnvironmentV1;
   preset?: Readonly<{ id: string; revision: number; name?: string }> & MachineRetentionOverrideV1;
   machineOverride?: MachineRetentionOverrideV1; categoryPreferences?: MachineRetentionDefaultsV1;
-}>) {
+}>): z.infer<ReturnType<typeof createManagedConfigurationFactsV1Schema<Choices>>> {
   const policy = resolveMachineRetentionPolicyV1({ billing: input.billing,
     nativeCapabilities: input.retentionCapabilities, presetOverride: input.preset,
     machineOverride: input.machineOverride, categoryPreferences: input.categoryPreferences });

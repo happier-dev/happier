@@ -149,16 +149,17 @@ export function projectTriageCurrentUiContextV1(input: Readonly<{
     }));
   }
 
+  const linkedSessionsDetail = input.linkedSessions === undefined || selectedKey === null ? undefined : {
+    linkedSessionIds: [...input.linkedSessions.ids], selectedLinkedSessionId: input.linkedSessions.selectedId,
+  };
   const mountedDetail = { ...detail,
     ...(input.mountedAction === undefined ? {} : { mountedAction: input.mountedAction }),
-    ...(input.linkedSessions === undefined || selectedKey === null ? {} : {
-      linkedSessionIds: [...input.linkedSessions.ids], selectedLinkedSessionId: input.linkedSessions.selectedId,
-    }),
+    ...linkedSessionsDetail,
   };
   let sessionsOmitted = false;
   // Session relationships share the incumbent context byte budget, including large paged details.
-  while (mountedDetail.linkedSessionIds?.length && utf8Bytes(withCommands(base, mountedDetail, [], true)) > CURRENT_UI_CONTEXT_MAX_UTF8_BYTES_V1) {
-    mountedDetail.linkedSessionIds.pop();
+  while (linkedSessionsDetail?.linkedSessionIds.length && utf8Bytes(withCommands(base, mountedDetail, [], true)) > CURRENT_UI_CONTEXT_MAX_UTF8_BYTES_V1) {
+    linkedSessionsDetail.linkedSessionIds.pop();
     sessionsOmitted = true;
   }
   const complete = withCommands(base, mountedDetail, commands, routeOmitted || selectionHasNoDisplay || sessionsOmitted);

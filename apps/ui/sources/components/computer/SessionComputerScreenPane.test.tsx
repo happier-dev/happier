@@ -32,7 +32,7 @@ describe('SessionComputerScreenPane retained source', () => {
             console.error('Computer pane owner diagnostic', failedOwnerDiagnostic());
         }
     });
-    afterAll(() => { network.dispose(); });
+    afterAll(async () => { await network.dispose(); });
 
     it('retains the real Computer body and exact destination scope while parking ordinary read and stream demand', async () => {
         // Only HTTP/Socket.IO and device credentials are replaced; the actual pane,

@@ -10,7 +10,7 @@ type ScmNetworkTestHarness = {
     serverId: string;
     storage: typeof import('@/sync/domains/state/storage').storage;
     reset: () => void;
-    dispose: () => void;
+    dispose: () => Promise<void>;
 };
 
 // Keep policy, target selection, locking, crypto and RPC orchestration real. The
@@ -37,11 +37,11 @@ export async function createScmNetworkTestHarness(): Promise<ScmNetworkTestHarne
             storage.getState().applySessions([createSessionFixture({ id: 's1', serverId: home.id, active: true,
                 metadata: { machineId: machine.id, host: 'tester.local', path: '/repo' } })]);
         },
-        dispose() {
+        async dispose() {
             resetScopedMachineTransportCacheForTests();
             projectManager.clear();
             storage.setState(initialState, true);
-            network.dispose();
+            await network.dispose();
         },
     };
 }

@@ -190,7 +190,7 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
         const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
         serverScopedRpcSocketPool.resetForTests();
         resetScopedMachineTransportCacheForTests();
-        network.dispose();
+        await network.dispose();
     });
 
     it('publishes a background Home descriptor under its Account and retires only that Home when its request lifetime retires', async () => {
@@ -370,7 +370,7 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
             await expect(read(sameAccount.lifetime)).resolves.toMatchObject({ kind: 'ready' });
             expect(projectionDescribeMock).toHaveBeenCalledTimes(1);
 
-            network.setAccount('https://server-1', 'account-b');
+            await network.setAccount('https://server-1', 'account-b');
             await expect(read(nextAccount.lifetime)).resolves.toMatchObject({
                 kind: 'ready', inputs: { pluginProjectionV2: { generation: 8 } },
             });
@@ -442,7 +442,7 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
             accountLifetime: reader.lifetime,
         }));
         await vi.waitFor(() => expect(pending).toHaveLength(1));
-        network.setAccount('https://server-1', 'account-b');
+        await network.setAccount('https://server-1', 'account-b');
         const successorRead = loadDaemonMergedProjectionCacheEntry({
             machineId: 'machine-1',
             serverId: 'server-1',
@@ -515,7 +515,7 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
     });
 
     describe('retained admission custody around a machine answer', () => {
-        beforeEach(() => { network.setAccount('https://server-1', 'account-default'); });
+        beforeEach(async () => { await network.setAccount('https://server-1', 'account-default'); });
         const CUSTODY_TARGET = {
             pluginId: 'acme.preview',
             occurrenceId: 'target-generation-a',

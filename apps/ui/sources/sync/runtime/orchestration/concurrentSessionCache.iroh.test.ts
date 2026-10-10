@@ -142,7 +142,7 @@ async function installHarness(options: { additionalHome?: boolean; failIdentity?
         await pool.resetServerReachabilitySupervisors();
         await (await import('@/sync/runtime/nativeIrohTunnels/runtime')).disposeIrohHomeTunnelRuntime();
         (await import('@/sync/api/capabilities/serverFeaturesClient')).resetServerFeaturesClientForTests();
-        network.dispose();
+        await network.dispose();
         vi.doUnmock('socket.io-client');
         for (const home of [homeB, homeA, ...(homeC ? [homeC] : [])]) {
             const profile = profiles.getServerProfileById(home.id);

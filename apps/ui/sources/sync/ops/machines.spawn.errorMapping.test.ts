@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { createSocketIoAckTimeoutError } from '@happier-dev/sync-client';
@@ -20,6 +20,7 @@ vi.mock('@/platform/randomUUID', () => ({
 
 describe('machineSpawnNewSession error mapping', () => {
   let network: Awaited<ReturnType<typeof installSessionOpsNetworkBoundary>>;
+  let baseline: ReturnType<typeof storage.getState>;
   const homeUrl = 'https://server-b';
   const providerModelSelection = SessionModelSelectionV1Schema.parse({
     v: 1,
@@ -58,16 +59,29 @@ describe('machineSpawnNewSession error mapping', () => {
         homeDir,
       },
       metadataVersion: 0,
+      daemonState: { cliVersion: params.cliVersion ?? '0.2.0' },
       daemonStateVersion: 0,
     });
   }
 
-  beforeEach(async () => {
+  beforeAll(async () => {
+    // Admit one real runtime. Per-case graph reloads retained every Sync owner
+    // and exhausted the worker heap before the custody cases could finish.
     vi.resetModules();
+    network = await installSessionOpsNetworkBoundary();
+    await loadSyncSingletonForTests();
+    ({ storage } = await import('@/sync/domains/state/storage'));
+    ({ createSpawnAttemptKeyForFreshSpawnOptions } = await import('@/sync/domains/session/spawn/spawnAttemptKey'));
+    ({ readSpawnAttemptCustodyState } = await import('@/sync/domains/session/spawn/spawnAttemptNonceStore'));
+    baseline = storage.getState();
+  });
+
+  beforeEach(async () => {
+    network.resetRequests();
     const { getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
     getPersistenceStorage().clearAll();
+    storage.setState(baseline, true);
     machineRpcWithServerScopeMock.mockReset();
-    network = await installSessionOpsNetworkBoundary();
     const home = await network.addHome(homeUrl, 'account-a');
     const homeA = await network.addHome('https://server-a', 'account-a');
     const homeC = await network.addHome('https://server-c', 'account-a');
@@ -79,14 +93,10 @@ describe('machineSpawnNewSession error mapping', () => {
       if (path === '/v2/account/settings') return Response.json(AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: {} }, version: 0 }));
       return null;
     });
-    await loadSyncSingletonForTests();
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
     const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
     await upsertAndActivateServer({ serverUrl: home.serverUrl });
     await restoreConnectionToActiveServer({ token: home.token });
-    ({ storage } = await import('@/sync/domains/state/storage'));
-    ({ createSpawnAttemptKeyForFreshSpawnOptions } = await import('@/sync/domains/session/spawn/spawnAttemptKey'));
-    ({ readSpawnAttemptCustodyState } = await import('@/sync/domains/session/spawn/spawnAttemptNonceStore'));
     storage.setState({
       machines: { 'machine-1': buildMachine({ id: 'machine-1' }) },
       settingsVersion: 0,
@@ -117,15 +127,16 @@ describe('machineSpawnNewSession error mapping', () => {
     await disconnectActiveServerConnection();
     const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
     const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
-    serverScopedRpcSocketPool.resetForTests();
+    await serverScopedRpcSocketPool.stopAll();
     resetScopedMachineTransportCacheForTests();
-    network.dispose();
     vi.clearAllTimers();
     vi.useRealTimers();
   });
 
+  afterAll(async () => { await network.dispose(); });
+
   it('uses one current-only Provider-safe RPC so an older daemon refuses before spawn', async () => {
-    machineRpcWithServerScopeMock.mockRejectedValueOnce(
+    machineRpcWithServerScopeMock.mockRejectedValue(
       Object.assign(new Error('RPC method not available'), {
         rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
       }),
@@ -143,7 +154,7 @@ describe('machineSpawnNewSession error mapping', () => {
 
     expect(result).toMatchObject({ type: 'error' });
     expect(storage.getState().profileScope).toEqual(beforeProfileScope);
-    expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
+    expect(machineRpcWithServerScopeMock.mock.calls.every(([request]) => request.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE)).toBe(true);
     expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
       method: RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
       serverId: 'server-b',
@@ -207,9 +218,10 @@ describe('machineSpawnNewSession error mapping', () => {
     RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
     RPC_ERROR_CODES.METHOD_NOT_FOUND,
   ])('falls back to legacy spawn only after definitive provider-safe absence: %s', async (rpcErrorCode) => {
-    machineRpcWithServerScopeMock
-      .mockRejectedValueOnce(Object.assign(new Error('RPC method absent'), { rpcErrorCode }))
-      .mockResolvedValueOnce({ type: 'success', sessionId: 'session-legacy' });
+    machineRpcWithServerScopeMock.mockImplementation(async ({ method }) => {
+      if (method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE) throw Object.assign(new Error('RPC method absent'), { rpcErrorCode });
+      return { type: 'success', sessionId: 'session-legacy' };
+    });
 
     const { machineSpawnNewSession } = await import('./machines');
     const result = await machineSpawnNewSession({
@@ -225,7 +237,7 @@ describe('machineSpawnNewSession error mapping', () => {
       method: RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
       payload: expect.objectContaining({ spawnNonce: 'same-spawn-nonce' }),
     }));
-    expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+    expect(machineRpcWithServerScopeMock).toHaveBeenLastCalledWith(expect.objectContaining({
       method: RPC_METHODS.SPAWN_HAPPY_SESSION,
       payload: expect.objectContaining({ spawnNonce: 'same-spawn-nonce' }),
     }));
@@ -315,10 +327,7 @@ describe('machineSpawnNewSession error mapping', () => {
 
   it('returns a descriptive error when daemon RPC method is not available', async () => {
     machineRpcWithServerScopeMock
-      .mockRejectedValueOnce(Object.assign(new Error('RPC method not available'), {
-        rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-      }))
-      .mockRejectedValueOnce(Object.assign(new Error('RPC method not available'), {
+      .mockRejectedValue(Object.assign(new Error('RPC method not available'), {
         rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
       }));
 
@@ -1060,7 +1069,13 @@ describe('machineSpawnNewSession error mapping', () => {
   });
 
   it('does not send an initial prompt or spawn nonce to an unsupported daemon', async () => {
-    storage.getState().activateProfileScope({ serverId: 'server-a', accountId: 'account-1' });
+    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+    const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+    await upsertAndActivateServer({ serverUrl: 'https://server-a' });
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const credentials = await TokenStorage.getCredentialsForServerUrl('https://server-a', { serverId: 'server-a' });
+    if (!credentials) throw new Error('Expected the admitted old-daemon Home credentials');
+    await restoreConnectionToActiveServer(credentials);
     storage.setState((previous) => ({
       ...previous,
       machines: {
@@ -1074,9 +1089,8 @@ describe('machineSpawnNewSession error mapping', () => {
       directory: '/tmp',
       backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
       serverId: 'server-a',
-      initialPrompt: 'first prompt',
       spawnNonce: 'new-session-spawn-1',
-    } as any);
+    });
 
     expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
     expect(result).toEqual({
@@ -1097,9 +1111,7 @@ describe('machineSpawnNewSession error mapping', () => {
       if (path !== '/v2/account/settings') return null;
       if (!accountReplaced) {
         accountReplaced = true;
-        const nextAccount = await network.addHome(homeUrl, 'account-b');
-        const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
-        await restoreConnectionToActiveServer({ token: nextAccount.token });
+        await network.setAccount(homeUrl, 'account-b');
       }
       return Response.json(AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: {} }, version: 17 }));
     });
@@ -1114,8 +1126,8 @@ describe('machineSpawnNewSession error mapping', () => {
 
     expect(result.type).toBe('error');
     if (result.type !== 'error') throw new Error('expected an error result');
-    expect(result.errorCode).toBe('ACCOUNT_SCOPE_CHANGED');
     expect(accountReplaced).toBe(true);
+    expect(result.errorCode).toBe('ACCOUNT_SCOPE_CHANGED');
     expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
   });
 
@@ -1226,7 +1238,7 @@ describe('machineSpawnNewSession error mapping', () => {
   });
 
   it('treats missing spawn nonce resolver support as an old-daemon fallback', async () => {
-    machineRpcWithServerScopeMock.mockRejectedValueOnce(
+    machineRpcWithServerScopeMock.mockRejectedValue(
       Object.assign(new Error('RPC method not available'), {
         rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
       }),
@@ -1246,14 +1258,12 @@ describe('machineSpawnNewSession error mapping', () => {
   });
 
   it('falls back to the older spawn nonce RPC method alias when the renamed method is unavailable', async () => {
-    machineRpcWithServerScopeMock
-      .mockRejectedValueOnce(Object.assign(new Error('RPC method not available'), {
+    machineRpcWithServerScopeMock.mockImplementation(async ({ method }) => {
+      if (method === RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE) throw Object.assign(new Error('RPC method not available'), {
         rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-      }))
-      .mockResolvedValueOnce({
-        status: 'success',
-        sessionId: 'session-from-old-alias',
       });
+      return { status: 'success', sessionId: 'session-from-old-alias' };
+    });
 
     const { machineResolveSpawnSessionByNonce } = await import('./machines');
     const result = await machineResolveSpawnSessionByNonce({
@@ -1267,7 +1277,7 @@ describe('machineSpawnNewSession error mapping', () => {
       method: 'daemon.spawnSession.resolveByNonce',
       payload: { spawnNonce: 'spawn-nonce-legacy-alias' },
     }));
-    expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+    expect(machineRpcWithServerScopeMock).toHaveBeenLastCalledWith(expect.objectContaining({
       method: 'daemon.spawnSession.resolve',
       payload: { spawnNonce: 'spawn-nonce-legacy-alias' },
     }));

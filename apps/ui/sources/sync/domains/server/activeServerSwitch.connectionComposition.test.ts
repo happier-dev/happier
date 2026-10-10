@@ -15,7 +15,7 @@ describe('active focus transaction with the production connection manager and Sy
         const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
         serverScopedRpcSocketPool.resetForTests();
         resetScopedMachineTransportCacheForTests();
-        network?.dispose();
+        await network?.dispose();
         network = null;
         vi.unstubAllGlobals();
         vi.restoreAllMocks();

@@ -126,9 +126,9 @@ beforeEach(async () => {
         });
     });
 
-afterEach(() => {
+afterEach(async () => {
     resetServerFeaturesClientForTests();
-    network.dispose();
+    await network.dispose();
     vi.restoreAllMocks();
     storage.setState(initialStorageState, true);
 });

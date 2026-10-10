@@ -43,7 +43,7 @@ describe('syncTodos fetchTodos retry semantics at the HTTP boundary', () => {
         const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
         serverScopedRpcSocketPool.resetForTests();
         resetScopedMachineTransportCacheForTests();
-        network.dispose();
+        await network.dispose();
         vi.restoreAllMocks();
     });
 

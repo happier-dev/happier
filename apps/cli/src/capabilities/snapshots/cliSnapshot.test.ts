@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 import { mkdirSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -12,6 +12,10 @@ import { resolveSystemJavaScriptRuntimeBinary, writeExecutableShimSync } from '@
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 import { projectPath } from '@/projectPath';
 import { buildCliCapabilityData } from '@/capabilities/probes/cliBase';
+import { readCurrentCatalogHook } from '@/agent/catalog/runtimeEntry';
+import { detectNativeAgentCliAuthStatus } from '@/capabilities/cliAuth/detectNativeAgentCliAuthStatus';
+import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
+import { resolveCliSnapshotProbeTimeoutMs } from './cliSnapshotProbeTimeout';
 
 const SCOPED_ENV_KEYS = [
   'HOME',
@@ -66,6 +70,12 @@ describe('detectCliSnapshotOnDaemonPath', () => {
   let homeDir: string;
   let envBaseline: Record<ScopedEnvKey, string | undefined>;
   let nativeRuntime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
+
+  beforeAll(async () => {
+    // Native CLI availability is supplied by admitted Agent contributions,
+    // not by the cold, non-executable manifest projection.
+    nativeRuntime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController });
+  });
 
   beforeEach(() => {
     envBaseline = snapshotEnvValues(SCOPED_ENV_KEYS) as Record<ScopedEnvKey, string | undefined>;
@@ -222,10 +232,17 @@ describe('detectCliSnapshotOnDaemonPath', () => {
         stdout: 'echo "2.0.69 (Claude Code)"',
       });
 
+      expect(readAgentCatalogSnapshot().agentDefinitionsById.get('custom-acp')?.runtimeSpec).toBeNull();
       const snapshot = await detectCliSnapshotOnDaemonPath({});
       expect(snapshot.clis.claude.available).toBe(true);
       expect(snapshot.clis.claude.resolvedPath).toBe(claudePath);
       expect(snapshot.clis.claude.version).toBe('2.0.69');
+      expect(snapshot.clis['custom-acp']).toMatchObject({ available: false, installed: false,
+        signIn: { status: 'unknown', loginSupport: 'unsupported' } });
+      expect(snapshot.clis['custom-acp'].detectionError).toBeUndefined();
+      const requested = await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['custom-acp', 'claude'], bypassCache: true });
+      expect(requested.clis.claude).toMatchObject({ available: true, resolvedPath: claudePath });
+      expect(requested.clis['custom-acp'].detectionError).toBeUndefined();
     },
   );
 
@@ -843,65 +860,32 @@ describe('detectCliSnapshotOnDaemonPath', () => {
   });
 
   it.skipIf(process.platform === 'win32')(
-    'preserves Claude file auth when version probing times out',
+    'preserves Claude native auth when version probing times out',
     async () => {
       const binDir = join(workDir, 'bin');
       mkdirSync(binDir, { recursive: true });
-	      const claudePath = makeExecutableShim({
-	        dir: binDir,
-	        name: 'claude',
-	        stdout: [
-	          '/bin/sleep 1',
-	          'echo "2.0.70 (Claude Code)"',
-	        ].join('\n'),
-	      });
-      const credentialsDir = join(homeDir, '.claude');
-      mkdirSync(credentialsDir, { recursive: true });
-      writeFileSync(
-        join(credentialsDir, '.credentials.json'),
-        JSON.stringify({
-          claudeAiOauth: {
-            accessToken: 'claude-access-token',
-            refreshToken: 'claude-refresh-token',
-            expiresAt: Date.parse('2099-01-01T00:00:00.000Z'),
-            scopes: ['user:inference', 'user:profile', 'user:sessions:claude_code'],
-          },
-          oauthAccount: {
-            emailAddress: 'tester@example.com',
-          },
-        }),
-        'utf8',
-      );
-
-      const previousProbeTimeout = process.env.HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS;
-      const previousLoginStatusProbeTimeout = process.env.HAPPIER_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS;
+      // Nonsecret status payload reported for Claude Code 2.1.133:
+      // https://github.com/anthropics/claude-code/issues/57285
+      // This tests the current contributed parser, not live vendor-version parity.
+      const claudePath = makeExecutableShim({
+        dir: binDir,
+        name: 'claude',
+        stdout: [
+          'if [ "$1" = "auth" ] && [ "$2" = "status" ] && [ "$3" = "--json" ]; then',
+          '  echo \'{"loggedIn":true,"authMethod":"oauth_token","apiProvider":"firstParty"}\'',
+          '  exit 0',
+          'fi',
+          `if [ "$1" = "--version" ]; then exec /bin/sleep ${2 * resolveCliSnapshotProbeTimeoutMs(true) / 1000}; fi`,
+          'echo "development"',
+        ].join('\n'),
+      });
       setEnv('PATH', binDir);
-      process.env.HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS = '25';
-      process.env.HAPPIER_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS = '25';
-
-      try {
-        const snapshot = await detectCliSnapshotOnDaemonPath({ includeLoginStatus: true, requestedCliNames: ['claude'], bypassCache: true });
-        expect(snapshot.clis.claude.available).toBe(true);
-        expect(snapshot.clis.claude.resolvedPath).toBe(claudePath);
-        expect(snapshot.clis.claude.version).toBeUndefined();
-        expect(snapshot.clis.claude.isLoggedIn).toBe(true);
-        expect(snapshot.clis.claude.authStatus).toMatchObject({
-          state: 'logged_in',
-          method: 'credentials_file',
-          source: 'file',
-        });
-      } finally {
-        if (typeof previousProbeTimeout === 'string') {
-          process.env.HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS = previousProbeTimeout;
-        } else {
-          delete process.env.HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS;
-        }
-        if (typeof previousLoginStatusProbeTimeout === 'string') {
-          process.env.HAPPIER_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS = previousLoginStatusProbeTimeout;
-        } else {
-          delete process.env.HAPPIER_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS;
-        }
-      }
+      const snapshot = await detectCliSnapshotOnDaemonPath({ includeLoginStatus: true, requestedCliNames: ['claude'], bypassCache: true });
+      expect(snapshot.clis.claude.available).toBe(true);
+      expect(snapshot.clis.claude.resolvedPath).toBe(claudePath);
+      expect(snapshot.clis.claude.version).toBeUndefined();
+      expect(snapshot.clis.claude.isLoggedIn).toBe(true);
+      expect(snapshot.clis.claude.authStatus).toMatchObject({ state: 'logged_in', source: 'command' });
     },
   );
 
@@ -980,5 +964,28 @@ describe('detectCliSnapshotOnDaemonPath', () => {
       method: 'api_key_env',
       source: 'env',
     });
+  });
+
+  it('refuses a retained native auth result after its admitted occurrence is disposed', async () => {
+    nativeRuntime ??= await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController });
+    const retainedSpec = await readCurrentCatalogHook('codex', async entry => await entry.getCliAuthSpec?.());
+    expect(retainedSpec?.detectAuthStatus).toBeTypeOf('function');
+    await nativeRuntime.dispose();
+    nativeRuntime = undefined;
+
+    // Even a credential that would otherwise answer signed-in must not revive
+    // a retired native callback. Disposal is through the real runtime owner.
+    const status = await detectNativeAgentCliAuthStatus({ agentId: 'codex',
+      resolvedPath: 'unused-for-retired-occurrence', authSpec: retainedSpec,
+      processEnv: { ...process.env, CODEX_API_KEY: 'fixture-api-key' },
+    });
+    expect(status).toMatchObject({ state: 'unknown', reason: 'probe_failed' });
+    // Without applied executable authority, the canonical declaration-only
+    // environment observation remains available; it cannot revive that callback.
+    expect(await detectNativeAgentCliAuthStatus({ agentId: 'codex',
+      resolvedPath: 'unused-for-declaration-only-auth',
+      processEnv: { ...process.env, CODEX_API_KEY: 'fixture-api-key' },
+    })).toMatchObject({ state: 'logged_in', method: 'api_key_env', source: 'env' });
+    expect(await detectNativeAgentCliAuthStatus({ agentId: 'missing-fixture-agent', resolvedPath: 'unused-without-authority' })).toBeNull();
   });
 });

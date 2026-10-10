@@ -591,7 +591,7 @@ export type ProtocolSchemaOutput<TSchema> =
   TSchema extends { parse: (...args: infer _TArguments) => infer TOutput }
     ? TOutput
     : never;
-type ProtocolObjectProjection<TShape extends Readonly<Record<string, AnyProtocolComposableSchema>>, TProjection extends 'input' | 'output'> = {
+export type ProtocolObjectProjection<TShape extends Readonly<Record<string, AnyProtocolComposableSchema>>, TProjection extends 'input' | 'output'> = {
   -readonly [TKey in keyof TShape as undefined extends (
     TProjection extends 'input' ? ProtocolSchemaInput<TShape[TKey]> : ProtocolSchemaOutput<TShape[TKey]>
   ) ? never : TKey]: Exclude<

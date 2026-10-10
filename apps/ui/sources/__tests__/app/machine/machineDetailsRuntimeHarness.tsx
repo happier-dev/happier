@@ -38,7 +38,7 @@ export async function initializeMachineDetailsRuntimeForTests(): Promise<Session
         const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
         serverScopedRpcSocketPool.resetForTests();
         resetScopedMachineTransportCacheForTests();
-        network.dispose();
+        await network.dispose();
         locks.restore();
     });
     return network;

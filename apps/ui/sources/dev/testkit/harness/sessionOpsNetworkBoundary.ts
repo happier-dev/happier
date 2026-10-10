@@ -1,5 +1,6 @@
 import { vi } from 'vitest';
 import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 
 export type SessionOpsRpcRequest = Readonly<{
     serverUrl: string;
@@ -30,7 +31,7 @@ type SessionOpsSocketBoundary = ReturnType<typeof import('../mocks/socketIo').cr
 
 export type SessionOpsNetworkBoundary = Awaited<ReturnType<typeof installSessionOpsNetworkBoundary>>;
 
-/** Scoped operations use real Home/Account admission; only network and device credentials are replaced. */
+/** Scoped operations use real Home/Account admission and custody; only network and device locking are replaced. */
 export async function installSessionOpsNetworkBoundary() {
     const requests: SessionOpsRpcRequest[] = [];
     const responses = new Map<string, unknown>();
@@ -95,14 +96,12 @@ export async function installSessionOpsNetworkBoundary() {
     const { MACHINE_PLAIN_DATA_KEY_MARKER } = await import('@happier-dev/protocol');
     const { createAccountTokenForTests } = await import('./homeGovernanceHarness');
     const { canonicalizeServerUrl } = await import('@/sync/domains/server/url/serverUrlCanonical');
-    const homes = new Map<string, string>();
-    const credentialRequests: Array<{ serverUrl: string; serverId: string | undefined }> = [];
-    const readBoundaryCredentials: typeof TokenStorage.getCredentialsForServerUrl = async (serverUrl, options) => {
-        credentialRequests.push({ serverUrl, serverId: options?.serverId ?? undefined });
-        const token = homes.get(serverUrl);
-        return token ? { token } : null;
-    };
-    let credentialBoundary = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(readBoundaryCredentials);
+    const { installWebLockManagerMock } = await import('@/auth/storage/tokenStorage.web.testHelpers');
+    const locks = typeof globalThis.navigator?.locks?.request === 'function' ? null : installWebLockManagerMock();
+    const homes = new Map<string, { serverId: string; encryptionMode: 'plain' | 'e2ee' }>();
+    const credentialWrites: Array<NonNullable<Awaited<ReturnType<typeof TokenStorage.setCredentialsForServerUrlWithRollback>>>> = [];
+    // Observe the real custody reader without replacing its scope/key/parser decisions.
+    let credentialBoundary = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl');
     const httpRequests: Array<{ url: string; token: string | null }> = [];
     const runtimeFetchBoundary: RuntimeFetch = async (input, init) => {
         const url = new URL(String(input));
@@ -115,6 +114,8 @@ export async function installSessionOpsNetworkBoundary() {
         // contract is the HTTP status, not a response body.
         if (url.pathname === '/health') return new Response(null, { status: 200 });
         if (url.pathname === '/v1/auth/ping') return Response.json({});
+        if (url.pathname === '/v1/account/encryption') return Response.json({ mode: homes.get(url.origin)!.encryptionMode, updatedAt: 1 });
+        if (url.pathname === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
         if (url.pathname.startsWith('/v1/machines/')) return Response.json({ machine: {
             id: decodeURIComponent(url.pathname.slice('/v1/machines/'.length)),
             dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
@@ -125,19 +126,20 @@ export async function installSessionOpsNetworkBoundary() {
     return {
         requests,
         httpRequests,
-        credentialRequests,
+        request: runtimeFetchBoundary,
+        get credentialRequests() {
+            return credentialBoundary.mock.calls.map(([serverUrl, options]) => ({ serverUrl, serverId: options?.serverId ?? undefined }));
+        },
         socketBoundaries,
         resetRequests() {
             // The global UI cleanup retires runtimeFetch after every test.
             setRuntimeFetch(runtimeFetchBoundary);
-            // Real-custody cases restore this shortcut to exercise the native
-            // credential parser/mutation owner. A reused fixture starts the
-            // next case with its original external credential boundary again.
+            // Real-custody cases may retire observation; a reused fixture starts
+            // the next case observing the same real credential reader again.
             credentialBoundary.mockRestore();
-            credentialBoundary = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(readBoundaryCredentials);
+            credentialBoundary = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl');
             requests.length = 0;
             httpRequests.length = 0;
-            credentialRequests.length = 0;
             socketBoundaries.length = 0;
             responses.clear();
             rpcResponder = null;
@@ -162,18 +164,34 @@ export async function installSessionOpsNetworkBoundary() {
         setSocketConfigurator(configure: (boundary: SessionOpsSocketBoundary) => void) {
             socketConfigurator = configure;
         },
-        setAccount(homeUrl: string, accountId: string) {
+        async setAccount(homeUrl: string, accountId: string) {
             const serverUrl = canonicalizeServerUrl(homeUrl);
-            if (!homes.has(serverUrl)) throw new Error(`Test Home is not registered: ${serverUrl}`);
-            homes.set(serverUrl, createAccountTokenForTests(accountId));
+            const home = homes.get(serverUrl);
+            if (!home) throw new Error(`Test Home is not registered: ${serverUrl}`);
+            const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+            const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+            const applied = getActiveServerAccountScope()?.serverId === resolveServerProfileScopeIdForIdentifier(home.serverId);
+            const { disconnectActiveServerConnection, restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+            if (applied) await disconnectActiveServerConnection();
+            const credentials = { token: createAccountTokenForTests(accountId) };
+            const write = await TokenStorage.setCredentialsForServerUrlWithRollback(serverUrl, { serverId: home.serverId }, credentials);
+            if (!write) throw new Error(`Test Home credential replacement was refused: ${serverUrl}`);
+            credentialWrites.push(write);
+            if (applied) await restoreConnectionToActiveServer(credentials);
         },
-        async addHome(serverUrl: string, accountId: string) {
+        async addHome(serverUrl: string, accountId: string, options: Readonly<{
+            credentials?: AuthCredentials; encryptionMode?: 'plain' | 'e2ee';
+        }> = {}) {
             const profile = await upsertServerProfile({ serverUrl, name: accountId });
-            const token = createAccountTokenForTests(accountId);
-            homes.set(profile.serverUrl, token);
+            const credentials = options.credentials ?? { token: createAccountTokenForTests(accountId) };
+            const write = await TokenStorage.setCredentialsForServerUrlWithRollback(profile.serverUrl, { serverId: profile.id }, credentials);
+            if (!write) throw new Error(`Test Home credential publication was refused: ${profile.serverUrl}`);
+            credentialWrites.push(write);
+            homes.set(profile.serverUrl, { serverId: profile.id, encryptionMode: options.encryptionMode ?? 'plain' });
+            const token = credentials.token;
             return { ...profile, accountId, token };
         },
-        dispose() {
+        async dispose() {
             rpcResponder = null;
             rpcAckResponder = null;
             httpResponder = null;
@@ -183,6 +201,8 @@ export async function installSessionOpsNetworkBoundary() {
             resetRuntimeFetch();
             credentialBoundary.mockRestore();
             vi.doUnmock('socket.io-client');
+            try { for (const write of credentialWrites.splice(0).reverse()) await write.rollback(); }
+            finally { locks?.restore(); }
         },
     };
 }

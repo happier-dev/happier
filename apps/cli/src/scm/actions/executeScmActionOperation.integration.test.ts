@@ -1,11 +1,18 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
 import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { ActionIdSchema, ApprovalRequestSchema, createActionExecutor, RPC_METHODS } from '@happier-dev/protocol';
+import { ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1, AccountSettingsV2GetResponseSchema, ActionIdSchema, ApprovalRequestSchema, createActionExecutor, FeaturesResponseSchema, RPC_METHODS } from '@happier-dev/protocol';
 import type { RpcHandler } from '@/api/rpc/types';
 import { registerScmHandlers } from '@/rpc/handlers/scm';
 import { createBlockingApprovalCoordinator } from '@happier-dev/protocol/actions';
 
+import { configuration } from '@/configuration';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
+import { resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createScmBackendRegistry } from '@/scm/registry';
 import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
 import { createGitScmBackendRuntimeRegistration } from '../../../../../packages/plugins/scm-git/src/backend';
@@ -21,6 +28,11 @@ describe('SCM Action execution at the Git backend', () => {
     hostingProviderRuntimeServices: createScmHostingProviderRuntimeServicesForTest(),
   })]);
   const repositories: string[] = [];
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetActiveAccountSettingsSnapshotForTests();
+  });
 
   afterAll(async () => {
     await Promise.all(repositories.map((path) => rm(path, { recursive: true, force: true })));
@@ -82,6 +94,47 @@ describe('SCM Action execution at the Git backend', () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-scm-action-' });
     repositories.push(fixture.rootPath);
     await writeFile(join(fixture.rootPath, fixture.trackedPath), 'changed through Action\n');
+    const sessionId = 'c111111111111111111111111';
+    const machineId = 'machine-action-test';
+    const serverApiUrl = 'https://scm-action-approval.test';
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'account-action-test' })).toString('base64url')}.signature` };
+    const session = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', metadataLayoutVersion: 1, share: null,
+      metadata: JSON.stringify({ v: 1, agentPresentation: { agentId: 'codex' } }),
+      ownerMetadata: { t: 'plain', v: { v: 1, workspace: { path: fixture.rootPath, machineId } } } });
+    // Replace only Home HTTP transport; replay identity, Account eligibility,
+    // Session locality and the blocking approval coordinator remain real.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = new URL(String(input));
+      if (url.origin === serverApiUrl && url.pathname === '/v1/features') {
+        return Response.json(FeaturesResponseSchema.parse({ features: {},
+          capabilities: { serverIdentity: { serverIdentityId: 'srv_scm_action_approval' } } }));
+      }
+      throw new Error(`Unexpected Home HTTP request: ${url}`);
+    });
+    vi.spyOn(axios, 'get').mockImplementation(async (url) => {
+      if (String(url) === `${serverApiUrl}/v1/account/encryption/currentness`) {
+        return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
+      }
+      if (String(url) === `${serverApiUrl}/v2/sessions/${sessionId}`) return { status: 200, data: { session } };
+      if (String(url) === `${serverApiUrl}/v2/account/settings`) {
+        return { status: 200, data: AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: {} }, version: 1 }) };
+      }
+      throw new Error(`Unexpected Home HTTP request: ${String(url)}`);
+    });
+    vi.spyOn(axios, 'request').mockImplementation(async (config) => {
+      if (config.method === 'POST' && String(config.url) === `${serverApiUrl}${ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1}`) {
+        return { status: 200, data: { tokens: [] } };
+      }
+      throw new Error(`Unexpected Home HTTP request: ${String(config.url)}`);
+    });
+    // The running host has loaded its Account policy before accepting Actions.
+    await runWithServerHttpBaseUrl(serverApiUrl, () => bootstrapAccountSettingsContext({
+      credentials, mode: 'blocking', refresh: 'force',
+    }));
+    const isApprovalExecutionOriginCurrent = createDaemonApprovalExecutionOriginCurrentnessFromCredentials({
+      credentials, machineId, serverId: configuration.activeServerId, serverApiUrl,
+    });
+    expect(isApprovalExecutionOriginCurrent).toBeDefined();
     let approved = false;
     let requestedAction: string | undefined;
     const approvalCoordinator = createBlockingApprovalCoordinator();
@@ -97,6 +150,7 @@ describe('SCM Action execution at the Git backend', () => {
       sessionRecentMessagesGet: unused, resetGlobalVoiceAgent: unused,
       sessionModeSet: unused, sessionModesList: unused,
       daemonMemorySearch: unused, daemonMemoryGetWindow: unused, daemonMemoryEnsureUpToDate: unused,
+      isApprovalExecutionOriginCurrent,
       // These are durable-artifact and human-decision transport boundaries.
       // The Action admission and live blocking coordinator remain real.
       approvalsCreate: async ({ request }) => {
@@ -121,9 +175,11 @@ describe('SCM Action execution at the Git backend', () => {
 
     const result = await executor.execute(ActionIdSchema.parse('scm.change.include'), {
       cwd: fixture.rootPath, paths: [fixture.trackedPath],
-    }, { surface: 'agent', authority: 'account_automation', defaultSessionId: 'session-action-test', defaultSessionMachineId: 'machine-action-test' });
+    }, { surface: 'agent', authority: 'account_automation', serverId: configuration.activeServerId,
+      actionRequestId: 'scm-include-action-test',
+      defaultSessionId: sessionId, defaultSessionMachineId: machineId });
 
-    expect(result).toMatchObject({ ok: true, result: { success: true } });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { success: true } });
     expect(requestedAction).toBe('scm.change.include');
     expect(runScmExecutable(fixture.rootPath, 'git', ['diff', '--cached', '--name-only'])).toBe(fixture.trackedPath);
   });

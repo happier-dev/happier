@@ -308,11 +308,6 @@
       "types": "./dist/agent/usage/tokenCountMessage.d.ts",
       "default": "./dist/agent/usage/tokenCountMessage.js"
     },
-    "./agent/usage/pricing": {
-      "happier-source": "./src/agent/usage/pricing.ts",
-      "types": "./dist/agent/usage/pricing.d.ts",
-      "default": "./dist/agent/usage/pricing.js"
-    },
     "./agent/surfaces/sessions/external/identity": {
       "happier-source": "./src/agent/surfaces/sessions/external/identity.ts",
       "types": "./dist/agent/surfaces/sessions/external/identity.d.ts",

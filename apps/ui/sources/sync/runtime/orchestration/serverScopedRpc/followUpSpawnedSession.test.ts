@@ -901,7 +901,7 @@ describe('follow-up first-turn continuity (real scoped transport)', () => {
     afterEach(() => vi.unstubAllGlobals());
     afterAll(async () => {
         await (await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool')).resetServerReachabilitySupervisors();
-        boundary?.dispose();
+        await boundary?.dispose();
     });
 
     it('sends the first turn when the scoped by-id row is older than the stored models seed', async () => {

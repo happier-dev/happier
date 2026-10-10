@@ -48,10 +48,16 @@ function requireVersionHint(version: number | null): PreparedAccountSettingsForD
 async function flushPendingServerSettingsForSpawn(params: Readonly<{
     flushPendingServerSettings: () => Promise<void>;
     hasPendingServerSettings: boolean;
+    getActiveSettingsScope: () => AccountSettingsScope | null;
+    capturedScope: AccountSettingsScope | null;
 }>): Promise<void> {
     try {
         await params.flushPendingServerSettings();
     } catch (error) {
+        assertSettingsScopeUnchanged({
+            currentScope: params.getActiveSettingsScope(),
+            capturedScope: params.capturedScope,
+        });
         if (params.hasPendingServerSettings) {
             throw new AccountSettingsPendingFlushFailedBeforeSpawnError(error);
         }
@@ -75,6 +81,8 @@ export async function prepareAccountSettingsForDaemonSpawn(
         await flushPendingServerSettingsForSpawn({
             flushPendingServerSettings: params.flushPendingServerSettings,
             hasPendingServerSettings: false,
+            getActiveSettingsScope: params.getActiveSettingsScope,
+            capturedScope,
         });
         assertSettingsScopeUnchanged({
             currentScope: params.getActiveSettingsScope(),
@@ -86,6 +94,8 @@ export async function prepareAccountSettingsForDaemonSpawn(
     await flushPendingServerSettingsForSpawn({
         flushPendingServerSettings: params.flushPendingServerSettings,
         hasPendingServerSettings: true,
+        getActiveSettingsScope: params.getActiveSettingsScope,
+        capturedScope,
     });
 
     assertSettingsScopeUnchanged({

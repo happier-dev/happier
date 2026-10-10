@@ -136,9 +136,9 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
         accountContext = await captureLazyActionAccountContext(home.id);
     });
 
-    afterEach(() => {
+    afterEach(async () => {
         accountContext.dispose();
-        network.dispose();
+        await network.dispose();
     });
 
     it('hands a fresh current Project Companion bottom-pane request and peer Project panes to their existing owners', async () => {

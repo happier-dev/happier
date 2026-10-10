@@ -157,7 +157,7 @@ describe('archive routing from canonical session-list rows', () => {
   afterAll(async () => {
     const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
     await resetServerReachabilitySupervisors();
-    boundary?.dispose();
+    await boundary?.dispose();
   });
 
   it('defaults a null serverId to the preferred owner Home from its canonical local list', async () => {
@@ -173,7 +173,7 @@ describe('archive routing from canonical session-list rows', () => {
     const { sessionArchiveWithServerScope: archive } = await import('../sessions');
 
     await expect(archive('sid-owned', { serverId: null })).resolves.toEqual({ success: true, archivedAt: 12 });
-    expect(boundary.httpRequests.filter(({ url }) => url.includes('/archive'))).toEqual([
+    expect(boundary.httpRequests.filter(({ url }) => new URL(url).pathname.endsWith('/archive'))).toEqual([
       { url: `${owner.serverUrl}/v2/sessions/sid-owned/archive`, token: `Bearer ${owner.token}` },
     ]);
   });

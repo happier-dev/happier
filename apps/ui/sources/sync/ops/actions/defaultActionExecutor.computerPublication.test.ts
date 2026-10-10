@@ -25,7 +25,7 @@ await import('@/components/computer/openComputerTargetPickerForSession');
 
 describe('default Action Computer Account publication', () => {
     beforeEach(() => { network.resetRequests(); });
-    afterAll(() => { network.dispose(); });
+    afterAll(async () => { await network.dispose(); });
 
     it('names the exact Home in the real picker when two Homes have the same Session id', async () => {
         const { storage } = await import('@/sync/domains/state/storageStore');
@@ -287,7 +287,7 @@ describe('default Action Computer Account publication', () => {
             expect(currentChoice().presentation?.target).toBeNull();
             await readerA.unmount();
             readerA = null;
-            network.setAccount(home.serverUrl, 'publication-account-b');
+            await network.setAccount(home.serverUrl, 'publication-account-b');
             storage.getState().applyProfile({ ...storage.getState().profile, id: 'publication-account-b' });
             storage.getState().applyMachines([createMachineFixture({ id: scope.machineId, storageMode: 'plain' })], false, { sourceServerId: home.id });
             // During the real applied-runtime reset, saved Home reads use their
@@ -350,7 +350,7 @@ describe('default Action Computer Account publication', () => {
             account = await captureLazyActionAccountContext(home.id);
             expect(account.accountLifetime.isCurrent()).toBe(true);
             const accountId = account.accountLifetime.scope.accountId;
-            network.setAccount(home.serverUrl, 'computer-execution-account-b');
+            await network.setAccount(home.serverUrl, 'computer-execution-account-b');
             storage.getState().activateProfileScope({ serverId: home.id, accountId: 'computer-execution-account-b' });
             storage.getState().applyProfile({ ...storage.getState().profile, id: 'computer-execution-account-b' });
             storage.getState().applyMachines([createMachineFixture({ id: machineId, storageMode: 'plain' })], false, { sourceServerId: home.id });

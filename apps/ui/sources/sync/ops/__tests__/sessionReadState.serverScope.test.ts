@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { SessionViewerProjectionV1 } from '@happier-dev/protocol';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
@@ -12,6 +12,7 @@ describe('sessionSetManualReadStateWithServerScope (real Action and scoped trans
     let holds: typeof import('@/sync/domains/session/readState/sessionManualUnreadHold');
     let visibility: typeof import('@/sync/domains/session/sessionSurfaceVisibility');
     let setReadState: typeof import('../sessionReadState').sessionSetManualReadStateWithServerScope;
+    let accountConnection: Awaited<ReturnType<typeof import('@/dev/testkit/harness/serverAccountConnectionHarness').restoreServerAccountForTest>> | undefined;
     let home: Awaited<ReturnType<typeof boundary.addHome>>;
     let otherHome: Awaited<ReturnType<typeof boundary.addHome>>;
     let reply: () => Promise<Response>;
@@ -63,18 +64,6 @@ describe('sessionSetManualReadStateWithServerScope (real Action and scoped trans
         boundary.resetRequests();
         home = await boundary.addHome('https://read-state-active.example.test', 'alice');
         otherHome = await boundary.addHome('https://read-state-background.example.test', 'background-account');
-        await profiles.setActiveServerId(home.id, { scope: 'device' });
-        // Apply the real connection lifecycle signed out, then seed its mounted Account projection.
-        // No bootstrap or focused-account encryption keys are needed for this Plain HTTP corridor.
-        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
-        vi.mocked(TokenStorage.getCredentialsForServerUrl).mockResolvedValueOnce(null);
-        await (await import('@/sync/runtime/orchestration/connectionManager')).switchConnectionToActiveServer();
-        storage.setState({ profileScope: { serverId: home.id, accountId: home.accountId },
-            settingsScope: { serverId: home.id, accountId: home.accountId } });
-        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
-        expect(captureActiveServerAccountScopeLifetime()?.scope).toEqual({ serverId: home.id, accountId: home.accountId });
-        holds.resetSessionManualUnreadHoldsForTests();
-        visibility.resetSessionSurfaceVisibilityForTests();
         mutations.length = 0;
         answer('unread', 6);
         boundary.setHttpResponder(async (input, init) => {
@@ -85,10 +74,28 @@ describe('sessionSetManualReadStateWithServerScope (real Action and scoped trans
             mutations.push({ url: url.href, init });
             return await reply();
         });
+        const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        accountConnection = await restoreServerAccountForTest({
+            serverUrl: home.serverUrl,
+            accountId: home.accountId,
+            credentials: { token: home.token },
+            request: boundary.request,
+        });
+        // Keep both saved Homes reachable after the active Account's real cold restoration.
+        (await import('@/utils/system/runtimeFetch')).setRuntimeFetch(boundary.request);
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        expect(captureActiveServerAccountScopeLifetime()?.scope).toEqual({ serverId: home.id, accountId: home.accountId });
+        holds.resetSessionManualUnreadHoldsForTests();
+        visibility.resetSessionSurfaceVisibilityForTests();
+    });
+    afterEach(async () => {
+        await accountConnection?.dispose();
+        accountConnection = undefined;
     });
     afterAll(async () => {
+        await accountConnection?.dispose();
         await (await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool')).resetServerReachabilitySupervisors();
-        boundary?.dispose();
+        await boundary?.dispose();
     });
 
     it('enters the shared Action policy before the domain transport', async () => {
@@ -164,25 +171,52 @@ describe('sessionSetManualReadStateWithServerScope (real Action and scoped trans
     });
 
     it('does not apply a private response after switching Accounts on the same Home', async () => {
-        const original = seedSession();
+        seedSession();
+        let replacement: Session | undefined;
         reply = async () => {
-            boundary.setAccount(home.serverUrl, 'bob');
-            storage.setState({ profileScope: { serverId: home.id, accountId: 'bob' } });
+            await boundary.setAccount(home.serverUrl, 'bob');
+            expect(storage.getState().profileScope).toEqual({ serverId: home.id, accountId: 'bob' });
+            replacement = seedSession({ seq: 20, lastViewedSessionSeq: 15 });
             return Response.json({ success: true, state: 'unread', lastViewedSessionSeq: 6, didChange: true });
         };
         await expect(setReadState('sid-1', 'unread', { serverId: home.id }))
             .resolves.toEqual({ success: false, message: 'session_account_changed' });
-        expect(storage.getState().sessions['sid-1']).toBe(original);
+        expect(replacement).toBeDefined();
+        expect(storage.getState().sessions['sid-1']).toBe(replacement);
     });
 
     it('denies a same-Home credential for a different mounted Account before the mutation', async () => {
         const original = seedSession();
-        boundary.setAccount(home.serverUrl, 'bob');
-        await expect(setReadState('sid-1', 'read', { serverId: home.id }))
-            .resolves.toEqual({ success: false, message: 'unavailable' });
-        expect(mutations).toEqual([]);
-        expect(boundary.credentialRequests).toContainEqual({ serverUrl: home.serverUrl, serverId: home.id });
-        expect(storage.getState().sessions['sid-1']).toBe(original);
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        expect(lifetime?.scope).toEqual({ serverId: home.id, accountId: home.accountId });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+        // Custody may change before the mounted Account reconnects; it cannot authorize a write as Alice.
+        const credentialWrite = await TokenStorage.setCredentialsForServerUrlWithRollback(
+            home.serverUrl, { serverId: home.id }, { token: createAccountTokenForTests('bob') },
+        );
+        if (!credentialWrite) throw new Error('Fixture credential replacement was refused');
+        try {
+            expect(captureActiveServerAccountScopeLifetime()).toBe(lifetime);
+            expect(lifetime?.isCurrent()).toBe(true);
+            const { resolveServerAccountRequestContext } = await import('@/sync/runtime/orchestration/serverScopedRpc/resolveServerAccountRequestContext');
+            const context = await resolveServerAccountRequestContext({ serverId: home.id, preferScoped: true });
+            try {
+                expect(context).toMatchObject({ scope: 'scoped', targetServerId: home.id, targetServerUrl: home.serverUrl, targetAccountId: 'bob' });
+            } finally {
+                if (context.scope === 'scoped') await context.release?.();
+            }
+            await expect(setReadState('sid-1', 'read', { serverId: home.id }))
+                .resolves.toEqual({ success: false, message: 'unavailable' });
+            expect(mutations).toEqual([]);
+            expect(boundary.httpRequests.filter(request => request.url.endsWith('/read-state'))).toEqual([]);
+            expect(boundary.httpRequests.every(request => new URL(request.url).origin === home.serverUrl)).toBe(true);
+            expect(boundary.requests).toEqual([]);
+            expect(storage.getState().sessions['sid-1']).toBe(original);
+        } finally {
+            await credentialWrite.rollback();
+        }
     });
 
     it('uses the exact-Home scoped transport and applies the returned cursor after success', async () => {
@@ -262,7 +296,8 @@ describe('sessionSetManualReadStateWithServerScope (real Action and scoped trans
 
     it('returns a structured failure without applying local state', async () => {
         const original = seedSession();
-        reply = async () => Response.json({ error: 'forbidden' }, { status: 403 });
+        // The external route response is validated by the real Action transport projector.
+        reply = async () => Response.json({ error: 'Forbidden' }, { status: 403 });
         await expect(setReadState('sid-1', 'unread', { serverId: home.id }))
             .resolves.toEqual({ success: false, message: 'forbidden' });
         expect(storage.getState().sessions['sid-1']).toBe(original);

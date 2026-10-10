@@ -53,7 +53,7 @@ async function withBrowserAccount(run: (context: Readonly<{
     } finally {
         await hook.unmount();
         await TokenStorage.removeCredentialsForServerUrl(home.serverUrl, { serverId: home.id });
-        network.dispose();
+        await network.dispose();
     }
 }
 

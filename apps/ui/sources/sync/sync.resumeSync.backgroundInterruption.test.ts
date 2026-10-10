@@ -85,7 +85,7 @@ describe('sync resumeSync background interruption', () => {
         releaseChanges();
         const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
         await disconnectActiveServerConnection();
-        network.dispose();
+        await network.dispose();
         vi.restoreAllMocks();
     });
 

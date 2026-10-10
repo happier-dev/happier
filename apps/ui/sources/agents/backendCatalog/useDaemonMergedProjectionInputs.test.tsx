@@ -32,7 +32,7 @@ const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration
 const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 const { createAccountTokenForTests, waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
-afterAll(() => { network.dispose(); });
+afterAll(async () => { await network.dispose(); });
 
 function readyResponse(generation: number) {
     return { protocolVersion: 1 as const, projection: { v: 2 as const, generation, familiesById: {} } };

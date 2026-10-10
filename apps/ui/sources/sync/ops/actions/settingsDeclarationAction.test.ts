@@ -503,7 +503,7 @@ function readSummaryCatalogAccount() {
         const capture = (async () => {
             const network = await installSessionOpsNetworkBoundary();
             let account: Awaited<ReturnType<typeof captureLazyActionAccountContext>> | null = null;
-            onTestFinished(() => { account?.dispose(); network.dispose(); summaryCatalogAccount = null; });
+            onTestFinished(async () => { account?.dispose(); await network.dispose(); summaryCatalogAccount = null; });
             const home = await network.addHome('https://settings-summary.example.test', 'settings-summary-account');
             network.setHttpResponder(async (url, init) => {
                 expect(init?.method ?? 'GET').toBe('GET');

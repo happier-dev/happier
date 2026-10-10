@@ -94,7 +94,7 @@ describe('sync.create initial awaits', () => {
         await syncSwitchServer(null);
         const { apiSocket } = await import('@/sync/api/session/apiSocket');
         apiSocket.disconnect();
-        network.dispose();
+        await network.dispose();
         vi.restoreAllMocks();
         vi.useRealTimers();
     });
@@ -161,11 +161,19 @@ describe('sync.create initial awaits', () => {
         const secretB = new Uint8Array(32).fill(8);
         const encryptionA = await Encryption.create(secretA);
         const encryptionB = await Encryption.create(secretB);
-        network.setAccount(home.serverUrl, 'account-a');
+        const accountA = network.setAccount(home.serverUrl, 'account-a');
+        await flushHookEffects({ cycles: 8, turns: 2 });
+        await flushHookEffects({ cycles: 1, turns: 2, advanceTimersMs: 2_500 });
+        await accountA;
         await finishInitialCreate({ token: createAccountTokenForTests('account-a'), secret: encodeBase64(secretA, 'base64url') });
         expect(getTrackingAnonymousUserId()).toBe(encryptionA.anonID);
 
-        network.setAccount(home.serverUrl, 'account-b');
+        // The real replacement restores the already-applied Home. Drive the
+        // same public initial-sync budget while its HTTP boundary is stalled.
+        const accountB = network.setAccount(home.serverUrl, 'account-b');
+        await flushHookEffects({ cycles: 8, turns: 2 });
+        await flushHookEffects({ cycles: 1, turns: 2, advanceTimersMs: 2_500 });
+        await accountB;
         await sync.switchServer({ token: createAccountTokenForTests('account-b'), secret: encodeBase64(secretB, 'base64url') });
 
         expect(getTrackingAnonymousUserId()).toBe(encryptionB.anonID);

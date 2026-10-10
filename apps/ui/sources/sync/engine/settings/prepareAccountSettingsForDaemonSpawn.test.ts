@@ -111,6 +111,24 @@ describe('prepareAccountSettingsForDaemonSpawn', () => {
         });
     });
 
+    it.each([
+        ['a pending server write', { renameSessions: false }, 5],
+        ['a freshness-only read', {}, null],
+    ] as const)('preserves Account replacement refusal when %s also fails', async (_label, pendingSettings, version) => {
+        let activeScope: AccountSettingsScope | null = scopeA;
+        await expect(prepareAccountSettingsForDaemonSpawn({
+            settingsScope: scopeA,
+            pendingSettings,
+            getActiveSettingsScope: () => activeScope,
+            getCurrentSettingsVersion: () => version,
+            flushPendingServerSettings: async () => {
+                activeScope = { serverId: scopeA.serverId, accountId: 'replacement-account' };
+                throw new Error('The retired Account response failed');
+            },
+            clearPendingSettings: () => {},
+        })).rejects.toMatchObject({ code: 'ACCOUNT_SETTINGS_SCOPE_CHANGED_DURING_SPAWN_PREPARATION' });
+    });
+
     it('lets freshness-only flush failures fail open at the operation boundary', async () => {
         await expect(prepareAccountSettingsForDaemonSpawn({
             settingsScope: scopeA,

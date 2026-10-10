@@ -51,7 +51,7 @@ async function installHarness() {
         pool.setServerReachabilityNetworkAllowed(true);
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         await TokenStorage.removeCredentialsForServerUrl(homeB.serverUrl, { serverId: homeB.id });
-        network.dispose();
+        await network.dispose();
         io.mockRestore();
         for (const home of [homeB, homeA]) {
             const profile = profiles.getServerProfileById(home.id);
@@ -104,7 +104,7 @@ describe('concurrent session cache reachability lease fencing', () => {
 
     it('retires the old credential probe and retains only the replacement Account runtime', async () => {
         const h = await installHarness();
-        h.network.setAccount(h.homeB.serverUrl, 'account-b-new');
+        await h.network.setAccount(h.homeB.serverUrl, 'account-b-new');
         const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
         const newToken = createAccountTokenForTests('account-b-new');
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');

@@ -8,7 +8,6 @@ const { socketRpcCodec } = await import('@happier-dev/sync-client');
 const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
 await loadSyncSingletonForTests();
 const { Encryption } = await import('@/sync/encryption/encryption');
-const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 const { resetScopedMachineTransportCacheForTests } = await import('./serverScopedRpcPool');
 const { serverScopedRpcSocketPool } = await import('./serverScopedRpcSocketPool');
 const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
@@ -36,12 +35,11 @@ describe('machineRpcWithServerScope (scoped encrypted network)', () => {
         boundary.resetRequests();
         resetScopedMachineTransportCacheForTests();
         resetRunnerCreatorMachineContentKeyTrustProjectionForTests();
-        home = await boundary.addHome('https://server-a.example.test', 'account-a');
-        // Credential storage is the genuine device boundary; context, custody,
-        // Machine transport resolution and Encryption construction remain real.
-        vi.mocked(TokenStorage.getCredentialsForServerUrl).mockResolvedValue({
-            token: home.token,
-            secret: Buffer.from(secret).toString('base64url'),
+        const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+        home = await boundary.addHome('https://server-a.example.test', 'account-a', {
+            encryptionMode: 'e2ee', credentials: {
+                token: createAccountTokenForTests('account-a'), secret: Buffer.from(secret).toString('base64url'),
+            },
         });
         boundary.setHttpResponder(async (input) => {
             const url = new URL(String(input));

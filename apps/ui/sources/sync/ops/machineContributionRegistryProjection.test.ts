@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import '@happier-dev/protocol';
 
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
@@ -63,10 +63,14 @@ function automationEligibleEventsSnapshot() {
 }
 
 describe('machine contribution registry projection ops', () => {
-    beforeEach(async () => {
+    beforeAll(async () => {
+        // Retire the setup file's cold module graph once, before installing
+        // this describe's external Socket port and loading its runtime.
         vi.resetModules();
-        machineRpcWithServerScopeMock.mockReset();
         network = await installSessionOpsNetworkBoundary();
+    });
+    async function configureNetworkForCase() {
+        network.resetRequests();
         const homes = await Promise.all([
             network.addHome('https://server-a', 'account-a'),
             network.addHome('https://server-b', 'account-a'),
@@ -96,17 +100,30 @@ describe('machine contribution registry projection ops', () => {
                 throw error; // A physical timeout/disconnect rejects the transport, not a daemon ACK.
             }
         });
+    }
+    beforeEach(async () => {
+        machineRpcWithServerScopeMock.mockReset();
+        await configureNetworkForCase();
+        // Keep one real runtime graph. Reset the canonical read owner rather
+        // than retaining another complete Sync/Account graph for every case.
+        const { resetMachineProjectionReadsForTests } = await import('./machineContributionRegistryProjection');
+        resetMachineProjectionReadsForTests();
     });
     afterEach(async () => {
         vi.useRealTimers();
         const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
         const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
-        serverScopedRpcSocketPool.resetForTests();
+        await serverScopedRpcSocketPool.stopAll();
         resetScopedMachineTransportCacheForTests();
-        network.dispose();
     });
+    afterAll(async () => { await network.dispose(); });
 
     async function installReactNativeRuntimeMocks(platform: 'ios' | 'android' | 'web') {
+        // These three SDK-identity cases genuinely change module-bound native
+        // ports. Retire their custody before changing platforms; ordinary RPC
+        // cases reuse their existing graph and its public per-case cleanup.
+        await network.dispose();
+        vi.resetModules();
         vi.doMock('react-native', async () => {
             const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
             const runtime = await createReactNativeWebMock({
@@ -157,6 +174,8 @@ describe('machine contribution registry projection ops', () => {
                 createElement: (tag: string) => ({ nodeName: tag.toUpperCase(), contentWindow: {}, setAttribute: vi.fn() }),
             });
         }
+        network = await installSessionOpsNetworkBoundary();
+        await configureNetworkForCase();
     }
 
     it('routes projection.describe through server-scoped machine rpc without an operation deadline', async () => {
@@ -436,7 +455,7 @@ describe('machine contribution registry projection ops', () => {
             machineContributionRegistryProjectionDescribe('machine-1', { serverId: 'server-a', accountLifetime: handle('account-a') }),
         ];
         await vi.waitFor(() => expect(pendingResolvers).toHaveLength(1));
-        network.setAccount('https://server-a', 'account-b');
+        await network.setAccount('https://server-a', 'account-b');
         reads.push(machineContributionRegistryProjectionDescribe('machine-1', { serverId: 'server-a', accountLifetime: handle('account-b') }));
         await vi.waitFor(() => expect(pendingResolvers.length).toBeGreaterThanOrEqual(2));
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(2);
@@ -519,6 +538,8 @@ describe('machine contribution registry projection ops', () => {
         const machineTwoScope = { machineId: 'machine-2', serverId: 'server-b' };
         const machineOneListener = vi.fn();
         const machineTwoListener = vi.fn();
+        const machineOneRevision = mod.getMachineContributionRegistryProjectionRevision(machineOneScope);
+        const machineTwoRevision = mod.getMachineContributionRegistryProjectionRevision(machineTwoScope);
         const unsubscribeMachineOne =
             mod.subscribeMachineContributionRegistryProjectionInvalidation(
                 machineOneScope,
@@ -532,8 +553,8 @@ describe('machine contribution registry projection ops', () => {
 
         mod.publishMachineContributionRegistryProjectionReconnect();
 
-        expect(mod.getMachineContributionRegistryProjectionRevision(machineOneScope)).toBe(1);
-        expect(mod.getMachineContributionRegistryProjectionRevision(machineTwoScope)).toBe(1);
+        expect(mod.getMachineContributionRegistryProjectionRevision(machineOneScope)).toBe(machineOneRevision + 1);
+        expect(mod.getMachineContributionRegistryProjectionRevision(machineTwoScope)).toBe(machineTwoRevision + 1);
         expect(machineOneListener).toHaveBeenCalledOnce();
         expect(machineTwoListener).toHaveBeenCalledOnce();
 

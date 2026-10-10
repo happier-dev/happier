@@ -88,7 +88,7 @@ beforeAll(async () => {
 afterAll(async () => {
   (await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool')).serverScopedRpcSocketPool.resetForTests();
   (await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool')).resetScopedMachineTransportCacheForTests();
-  network.dispose();
+  await network.dispose();
 });
 
 const MACHINE_ID = 'machine-triage-proof';

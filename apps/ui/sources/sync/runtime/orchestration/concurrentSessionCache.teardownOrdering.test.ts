@@ -135,7 +135,7 @@ describe('concurrent session cache teardown ordering', () => {
             await observer?.release();
             await connection.disconnectActiveServerConnection();
             await pool.resetServerReachabilitySupervisors();
-            network.dispose();
+            await network.dispose();
             vi.doUnmock('socket.io-client');
             for (const home of [homeB, homeA]) await profiles.removeServerProfile(home.id);
         };

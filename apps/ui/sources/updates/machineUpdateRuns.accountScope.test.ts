@@ -66,7 +66,7 @@ describe('machine update account scope at the real RPC credential boundary', () 
         const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
         serverScopedRpcSocketPool.resetForTests();
         resetScopedMachineTransportCacheForTests();
-        network.dispose();
+        await network.dispose();
         vi.clearAllTimers();
         vi.useRealTimers();
     });
@@ -87,7 +87,7 @@ describe('machine update account scope at the real RPC credential boundary', () 
         });
         const running = runUpdateBatch(scope, [first, second], (update) => runMachineItemUpdate(update, { scope }));
         await firstIssued;
-        network.setAccount(homeUrl, 'account-b');
+        await network.setAccount(homeUrl, 'account-b');
         release();
         await running;
 
@@ -115,7 +115,7 @@ describe('machine update account scope at the real RPC credential boundary', () 
     it('reports an unknown outcome without polling through replacement-account credentials', async () => {
         const cli = item('cli-start-poll-account', { kind: 'happier-cli' });
         boundary.invoke.mockImplementation(async (_accountId, request) => {
-            network.setAccount(homeUrl, 'account-b');
+            await network.setAccount(homeUrl, 'account-b');
             return { ok: true, result: request.method === 'poll' ? { result: { ok: true } } : { taskId: 'task-started' } };
         });
         await runUpdateBatch(scope, [cli], (update) => runMachineItemUpdate(update, { scope }));

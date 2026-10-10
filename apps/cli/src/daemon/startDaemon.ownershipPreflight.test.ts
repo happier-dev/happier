@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, watch, writeFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderSystemdServiceUnit } from '@happier-dev/cli-common/service';
 
@@ -8,10 +8,24 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { spawnSleepyDetachedProcess } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { projectPath } from '@/projectPath';
+import { waitForProcessExit } from '@/testkit/process/spawn';
+
+// Collect the real startup graph before individual behavior-test deadlines.
+// Runtime state still reloads from each test's own persisted OS fixtures.
+await withTempDir('happier-start-daemon-collect-', async (homeDir) => {
+    const collectionEnv = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+    try {
+        collectionEnv.patch({ HAPPIER_HOME_DIR: homeDir });
+        await import('./startDaemon');
+    } finally {
+        collectionEnv.restore();
+        vi.resetModules();
+    }
+});
 
 let ownerProcess: ReturnType<typeof spawnSleepyDetachedProcess> | undefined;
 function spawnOwner() {
-    ownerProcess ??= spawnSleepyDetachedProcess([join(projectPath(), 'src/index.ts'), 'daemon', 'start-sync']);
+    ownerProcess ??= spawnSleepyDetachedProcess([join(projectPath(), 'package-dist/index.mjs'), 'daemon', 'start-sync']);
     return ownerProcess;
 }
 
@@ -19,7 +33,41 @@ async function expectCredentialGateReached(expected: boolean) {
     const { logger } = await import('@/ui/logger');
     logger.flushSync();
     const diagnostic = await readFile(logger.logFilePath, 'utf8');
-    expect(diagnostic.includes('[DAEMON RUN] Waiting for credentials')).toBe(expected);
+    expect(diagnostic.includes('[DAEMON RUN] Waiting for credentials'), diagnostic).toBe(expected);
+}
+
+async function startUntilCredentialGate(startDaemon: () => Promise<void>) {
+    const { logger } = await import('@/ui/logger');
+    // Subscribe before startup, like the logger's existing OS log observer.
+    // Only the containing test bounds this wait; daemon Stop owns its deadline.
+    let inspectLog: () => Promise<void>;
+    let watcher: ReturnType<typeof watch> | undefined;
+    const credentialGate = new Promise<void>((resolve, reject) => {
+        inspectLog = async () => {
+            try {
+                logger.flushSync();
+                if ((await readFile(logger.logFilePath, 'utf8')).includes('[DAEMON RUN] Waiting for credentials')) resolve();
+            } catch (error) { reject(error); }
+        };
+        watcher = watch(dirname(logger.logFilePath), { persistent: false }, () => { void inspectLog(); });
+        watcher.on('error', reject);
+    });
+    const startup = startDaemon();
+    try {
+        void inspectLog!();
+        await Promise.race([credentialGate, startup.then(() => expectCredentialGateReached(true))]);
+        if (ownerProcess) expect(await waitForProcessExit(ownerProcess.pid)).toBe(true);
+        // Retire the actual credential waiter only after its observable admission.
+        process.emit('SIGTERM');
+        await expect(startup).resolves.toBeUndefined();
+    } catch (error) {
+        logger.flushSync();
+        throw new Error(await readFile(logger.logFilePath, 'utf8'), { cause: error });
+    } finally {
+        watcher?.close();
+        process.emit('SIGTERM');
+        await startup.catch(() => {});
+    }
 }
 
 describe('startDaemon ownership preflight', () => {
@@ -42,6 +90,7 @@ describe('startDaemon ownership preflight', () => {
         'HAPPIER_DAEMON_WAIT_FOR_AUTH',
     ]);
     const fetchMock = vi.fn();
+    let ownerControlClosed = false;
     let inputTty: boolean | undefined;
     let outputTty: boolean | undefined;
 
@@ -51,14 +100,18 @@ describe('startDaemon ownership preflight', () => {
         outputTty = process.stdout.isTTY;
         Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: false });
         Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: false });
+        ownerControlClosed = false;
         fetchMock.mockImplementation(async (input: unknown) => {
-            if (String(input).includes('/stop')) {
-                await ownerProcess?.kill();
-                // A real OS shutdown signal retires the following auth wait;
-                // the waiter and daemon shutdown owner stay real.
-                process.emit('SIGTERM');
+            if (String(input).endsWith('/ping') && ownerControlClosed) {
+                throw new TypeError('fetch failed', { cause: Object.assign(new Error('Owner control endpoint closed'), { code: 'ECONNREFUSED' }) });
             }
-            return { ok: true, status: 200, text: async () => JSON.stringify({ success: true }) };
+            if (String(input).includes('/stop')) {
+                expect(await ownerProcess?.kill()).toBe(true);
+                ownerControlClosed = true;
+            }
+            return new Response(JSON.stringify(String(input).endsWith('/ping') ? { status: 'ok' } : { success: true }), {
+                status: 200, headers: { 'content-type': 'application/json' },
+            });
         });
     });
 
@@ -68,6 +121,7 @@ describe('startDaemon ownership preflight', () => {
         envScope.restore();
         fetchMock.mockReset();
         vi.unstubAllGlobals();
+        vi.restoreAllMocks();
         Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: inputTty });
         Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: outputTty });
         vi.resetModules();
@@ -188,7 +242,7 @@ describe('startDaemon ownership preflight', () => {
                 runtimeId: 'runtime-manual',
             });
 
-            await expect(startDaemon()).resolves.toBeUndefined();
+            await startUntilCredentialGate(startDaemon);
             const fetchCalls = fetchMock.mock.calls as Array<readonly unknown[]>;
             expect(fetchCalls.some((call) => String(call[0] ?? '').includes('/stop'))).toBe(true);
             await expectCredentialGateReached(true);
@@ -222,7 +276,7 @@ describe('startDaemon ownership preflight', () => {
                 runtimeId: 'runtime-manual',
             });
 
-            await expect(startDaemon()).resolves.toBeUndefined();
+            await startUntilCredentialGate(startDaemon);
             const fetchCalls = fetchMock.mock.calls as Array<readonly unknown[]>;
             expect(fetchCalls.some((call) => String(call[0] ?? '').includes('/stop'))).toBe(true);
             await expectCredentialGateReached(true);
@@ -255,7 +309,7 @@ describe('startDaemon ownership preflight', () => {
                 runtimeId: 'runtime-manual',
             });
 
-            await expect(startDaemon()).resolves.toBeUndefined();
+            await startUntilCredentialGate(startDaemon);
             const fetchCalls = fetchMock.mock.calls as Array<readonly unknown[]>;
             expect(fetchCalls.some((call) => String(call[0] ?? '').includes('/stop'))).toBe(true);
             await expectCredentialGateReached(true);
@@ -287,7 +341,7 @@ describe('startDaemon ownership preflight', () => {
                 runtimeId: 'runtime-legacy-manual',
             });
 
-            await expect(startDaemon()).resolves.toBeUndefined();
+            await startUntilCredentialGate(startDaemon);
             const fetchCalls = fetchMock.mock.calls as Array<readonly unknown[]>;
             expect(fetchCalls.some((call) => String(call[0] ?? '').includes('/stop'))).toBe(true);
             await expectCredentialGateReached(true);

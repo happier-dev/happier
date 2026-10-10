@@ -33,7 +33,7 @@ let network: Awaited<ReturnType<typeof installSessionOpsNetworkBoundary>> | unde
 let serverId: string;
 
 async function loadOwnerGraph() {
-    network?.dispose();
+    await network?.dispose();
     vi.resetModules();
     // Keep Home credential admission, RPC schemas, discovery and persisted cache real.
     network = await installSessionOpsNetworkBoundary();
@@ -77,7 +77,7 @@ describe('useNewSessionPreflightModelsState persistence through scoped daemon tr
     });
     afterEach(async () => {
         await standardCleanup();
-        network?.dispose();
+        await network?.dispose();
         network = undefined;
         vi.unstubAllGlobals();
     });

@@ -8,7 +8,21 @@ import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+import { indexAgentRoutingIdsByContributionIdentity, readAgentRoutingIdForContributionIdentity } from '@/plugins/projection/registry/agentRoutingIdentity';
+import { writeExecutableShim } from '@/testkit/fs/executableShim';
 import { resolveSpawnChildEnvironment } from './resolveSpawnChildEnvironment';
+
+async function writeAuthenticatedCodexCliFixture(dir: string): Promise<string> {
+  // Substitute the native executable boundary, not auth interpretation. Only
+  // Codex's declared noninteractive login-status command succeeds.
+  return await writeExecutableShim({
+    dir,
+    fileName: process.platform === 'win32' ? 'codex.cmd' : 'codex',
+    contents: process.platform === 'win32'
+      ? '@echo off\r\nif not "%~1"=="login" exit /b 2\r\nif not "%~2"=="status" exit /b 2\r\nif not "%~3"=="" exit /b 2\r\necho Logged in\r\nexit /b 0\r\n'
+      : '#!/bin/sh\nif [ "$#" -eq 2 ] && [ "$1" = "login" ] && [ "$2" = "status" ]; then\n  echo "Logged in"\n  exit 0\nfi\nexit 2\n',
+  });
+}
 
 async function writeLocalExtensionPackageFixture(params: Readonly<{
   pluginRoot: string;
@@ -102,7 +116,7 @@ async function writeSpawnHookPluginFixture(params: Readonly<{
         : []),
       '',
       'export async function validateSpawn(event = {}, context = {}) {',
-      `  await appendFile(${JSON.stringify(params.markerPath)}, JSON.stringify({ type: "decision", event, hasToolContext: typeof context?.tools?.resolveManagedInstallable === "function", hasRunToolContext: typeof context?.tools?.runSystemTool === "function", hasSharedSignal: context?.signal === context?.tools?.signal }) + "\\n", "utf8");`,
+      `  await appendFile(${JSON.stringify(params.markerPath)}, JSON.stringify({ type: "decision", event, hasToolContext: typeof context?.tools?.resolveManagedInstallable === "function", hasRunToolContext: typeof context?.tools?.runSystemTool === "function" }) + "\\n", "utf8");`,
       ...(params.resolveInstallableInDecision
         ? [
           `  const installable = await context.tools.resolveManagedInstallable({ installableId: ${JSON.stringify(params.resolveInstallableInDecision)}, reason: "spawn hook fixture" });`,
@@ -115,7 +129,7 @@ async function writeSpawnHookPluginFixture(params: Readonly<{
       '}',
       '',
       'export async function augmentSpawnEnv(event = {}, context = {}) {',
-      `  await appendFile(${JSON.stringify(params.markerPath)}, JSON.stringify({ type: "augment", event, hasToolContext: typeof context?.tools?.resolveManagedInstallable === "function", hasRunToolContext: typeof context?.tools?.runSystemTool === "function", hasSharedSignal: context?.signal === context?.tools?.signal }) + "\\n", "utf8");`,
+      `  await appendFile(${JSON.stringify(params.markerPath)}, JSON.stringify({ type: "augment", event, hasToolContext: typeof context?.tools?.resolveManagedInstallable === "function", hasRunToolContext: typeof context?.tools?.runSystemTool === "function" }) + "\\n", "utf8");`,
       '  return { HAPPIER_PLUGIN_SPAWN_ENV: "plugin-hook" };',
       '}',
       '',
@@ -170,6 +184,11 @@ async function writeSpawnHookPluginFixture(params: Readonly<{
                     cancel: true,
                   },
                 },
+                cli: {
+                  executable: { binaryName: params.agentId, sourcePreference: 'system-first' },
+                  install: { manual: { kind: 'none' } },
+                  auth: { support: 'unsupported', loginLaunches: [] },
+                },
               },
             ],
           }
@@ -202,7 +221,6 @@ async function readMarkerRecords(markerPath: string): Promise<ReadonlyArray<{
   event: Record<string, unknown>;
   hasToolContext?: boolean;
   hasRunToolContext?: boolean;
-  hasSharedSignal?: boolean;
 }>> {
   return (await readFile(markerPath, 'utf8'))
     .trim()
@@ -213,7 +231,6 @@ async function readMarkerRecords(markerPath: string): Promise<ReadonlyArray<{
       event: Record<string, unknown>;
       hasToolContext?: boolean;
       hasRunToolContext?: boolean;
-      hasSharedSignal?: boolean;
     });
 }
 
@@ -254,13 +271,14 @@ describe('resolveSpawnChildEnvironment (plugin hooks)', () => {
         },
         profileEnvironmentVariables: {},
         daemonSpawnHooks: null,
-        processEnv: { HAPPIER_CODEX_PATH: process.execPath },
+        processEnv: { HAPPIER_CODEX_PATH: await writeAuthenticatedCodexCliFixture(happyHomeDir) },
         logDebug: () => {},
         logInfo: () => {},
         logWarn: () => {},
         connectedServiceAuth: null,
       });
 
+      if (!result.ok) throw new Error(`${result.errorCode}: ${result.errorMessage}`);
       expect(result).toMatchObject({ ok: true });
       expect(appliedRuntime.lease.registry.activatedPluginIds).toContain('happier.agent.codex');
       expect(
@@ -315,15 +333,15 @@ describe('resolveSpawnChildEnvironment (plugin hooks)', () => {
         options,
         profileEnvironmentVariables: {},
         daemonSpawnHooks: null,
-        processEnv: { HAPPIER_CODEX_PATH: process.execPath },
+        processEnv: { HAPPIER_CODEX_PATH: await writeAuthenticatedCodexCliFixture(happyHomeDir) },
         logDebug: () => {},
         logInfo: () => {},
         logWarn: () => {},
         connectedServiceAuth: null,
       });
 
+      if (!result.ok) throw new Error(`${result.errorCode}: ${result.errorMessage}`);
       expect(result.ok).toBe(true);
-      if (!result.ok) return;
 
       expect(result.extraEnvForChild.HAPPIER_PLUGIN_SPAWN_ENV).toBe('plugin-hook');
 
@@ -350,10 +368,8 @@ describe('resolveSpawnChildEnvironment (plugin hooks)', () => {
       });
       expect(decision?.hasToolContext).toBe(true);
       expect(decision?.hasRunToolContext).toBe(true);
-      expect(decision?.hasSharedSignal).toBe(true);
       expect(augment?.hasToolContext).toBe(true);
       expect(augment?.hasRunToolContext).toBe(true);
-      expect(augment?.hasSharedSignal).toBe(true);
     } finally {
       await releaseAppliedPluginRuntime(appliedRuntime);
       await rm(happyHomeDir, { recursive: true, force: true });
@@ -453,13 +469,14 @@ describe('resolveSpawnChildEnvironment (plugin hooks)', () => {
         },
         profileEnvironmentVariables: {},
         daemonSpawnHooks: null,
-        processEnv: { HAPPIER_CODEX_PATH: process.execPath },
+        processEnv: { HAPPIER_CODEX_PATH: await writeAuthenticatedCodexCliFixture(happyHomeDir) },
         logDebug: () => {},
         logInfo: () => {},
         logWarn: () => {},
         connectedServiceAuth: null,
       });
 
+      if (!result.ok) throw new Error(`${result.errorCode}: ${result.errorMessage}`);
       expect(result.ok).toBe(true);
       const targetRecords = await readOptionalMarkerRecords(targetMarkerPath);
       expect(targetRecords).toContainEqual({
@@ -513,7 +530,7 @@ describe('resolveSpawnChildEnvironment (plugin hooks)', () => {
         },
         profileEnvironmentVariables: {},
         daemonSpawnHooks: null,
-        processEnv: { HAPPIER_CODEX_PATH: process.execPath },
+        processEnv: { HAPPIER_CODEX_PATH: await writeAuthenticatedCodexCliFixture(happyHomeDir) },
         logDebug: () => {},
         logInfo: () => {},
         logWarn: () => {},
@@ -572,7 +589,7 @@ describe('resolveSpawnChildEnvironment (plugin hooks)', () => {
         },
         profileEnvironmentVariables: {},
         daemonSpawnHooks: null,
-        processEnv: { HAPPIER_CODEX_PATH: process.execPath },
+        processEnv: { HAPPIER_CODEX_PATH: await writeAuthenticatedCodexCliFixture(happyHomeDir) },
         logDebug: () => {},
         logInfo: () => {},
         logWarn: () => {},
@@ -601,13 +618,6 @@ describe('resolveSpawnChildEnvironment (plugin hooks)', () => {
     const markerPath = join(markerDir, 'spawn-hook-events.jsonl');
     const pluginId = 'acme.spawn.owner';
     const agentId = 'spawn-owner';
-    const concreteBackendId = agentId;
-    const backendTarget = {
-      kind: 'backend',
-      backendId: concreteBackendId,
-      configuredBackendId: concreteBackendId,
-      sourceKind: 'configured',
-    } as const;
     let appliedRuntime: AppliedPluginRuntime | null = null;
 
     try {
@@ -624,21 +634,34 @@ describe('resolveSpawnChildEnvironment (plugin hooks)', () => {
       });
       appliedRuntime = await acquireAppliedPluginRuntime(happyHomeDir);
       const registry = appliedRuntime.lease.registry.contributes;
+      const resolvedAgentId = readAgentRoutingIdForContributionIdentity(
+        indexAgentRoutingIdsByContributionIdentity([...registry.agentDefinitionsById.values()]),
+        { pluginId, localId: agentId },
+      );
+      if (!resolvedAgentId) throw new Error('Expected admitted owning Agent identity');
+      const backendTarget = { kind: 'backend', backendId: resolvedAgentId, sourceKind: 'built_in' } as const;
+      await writeExecutableShim({
+        dir: happyHomeDir,
+        fileName: process.platform === 'win32' ? `${agentId}.cmd` : agentId,
+        contents: process.platform === 'win32' ? '@echo off\r\nexit /b 0\r\n' : '#!/bin/sh\nexit 0\n',
+      });
 
-      expect(registry.pluginDiagnosticsByPluginId[pluginId]).toEqual([]);
-      expect(registry.agentDefinitionsById.get(agentId)?.definition.ownedBackendIds).toEqual([]);
+      expect(registry.pluginDiagnosticsByPluginId[pluginId]).toBeUndefined();
+      expect(registry.agentDefinitionsById.get(resolvedAgentId)?.identity).toEqual({ pluginId, localId: agentId });
+      expect(registry.agentDefinitionsById.get(resolvedAgentId)?.definition.ownedBackendIds).toEqual([]);
       expect(registry).not.toHaveProperty('agentRuntimeDefinitionsById');
 
       const result = await resolveSpawnChildEnvironment({
         happyHomeDir,
         pluginRuntimeRegistry: appliedRuntime.lease.registry,
+        resolvedAgentId,
         options: {
           directory: '/repo',
           backendTarget,
         },
         profileEnvironmentVariables: {},
         daemonSpawnHooks: null,
-        processEnv: {},
+        processEnv: { PATH: happyHomeDir },
         logDebug: () => {},
         logInfo: () => {},
         logWarn: () => {},
@@ -655,24 +678,22 @@ describe('resolveSpawnChildEnvironment (plugin hooks)', () => {
       const augment = records.find((record) => record.type === 'augment');
 
       expect(decision?.event).toMatchObject({
-        agentId,
-        backendId: concreteBackendId,
+        agentId: resolvedAgentId,
+        backendId: resolvedAgentId,
         targetRef: backendTarget,
         runtimeTarget: {
           kind: 'backend',
-          backendId: concreteBackendId,
-          configuredBackendId: concreteBackendId,
-          sourceKind: 'configured',
+          backendId: resolvedAgentId,
+          sourceKind: 'built_in',
         },
       });
       expect(augment?.event).toMatchObject({
-        agentId,
-        backendId: concreteBackendId,
+        agentId: resolvedAgentId,
+        backendId: resolvedAgentId,
         runtimeTarget: {
           kind: 'backend',
-          backendId: concreteBackendId,
-          configuredBackendId: concreteBackendId,
-          sourceKind: 'configured',
+          backendId: resolvedAgentId,
+          sourceKind: 'built_in',
         },
       });
     } finally {
