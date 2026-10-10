@@ -14,6 +14,7 @@ export type {
   HappierLayoutChangeEvent,
   HappierTextSelection,
 } from './portableTypes.js';
+export * from './work/workVocabulary.js';
 export * from './interaction/companionReleaseMotion.js';
 export * from './interaction/companionPointerDragConfig.js';
 export * from './interaction/resolveCompanionDragVelocity.js';
