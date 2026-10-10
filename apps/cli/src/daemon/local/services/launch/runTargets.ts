@@ -1,8 +1,14 @@
 import { createHash } from 'node:crypto';
-import { readdir, readFile, stat } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { join, relative } from 'node:path';
+import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { createProjectServiceDeclarationTargetIdV1, type ProjectServiceDeclarationRefV1 } from '@happier-dev/protocol/local/services/actions/v1';
+import { readProjectManifest } from '@/workspaces/projectSetup/projectManifestFile';
+import { inspectProjectDefinitions } from '@/workspaces/projectSetup/projectDefinitionInspection';
+import { collectNativePackageDirectories, readNativePackage, resolveNativePackageManager, type NativePackageManager } from '@/workspaces/projectSetup/nativePackageScripts';
+import { resolveNativePackageScript } from '@/workspaces/projectSetup/projectNativeResolution';
+import { isWorkspacePathWithin } from '../inventory/provenance';
 
-export type LocalServicePackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun';
+export type LocalServicePackageManager = NativePackageManager;
 
 export type LocalServiceRunTarget = Readonly<{
     id: string;
@@ -19,20 +25,29 @@ export type LocalServiceRunTarget = Readonly<{
     }>;
 }>;
 
+export type LocalServiceDeclarationRunTarget = Readonly<{
+    id: string;
+    cwd: string;
+    workspaceId: string;
+    workspace: WorkspaceAddressV1;
+    declaration: ProjectServiceDeclarationRefV1;
+    title: string;
+    packageScript?: Readonly<{ packageName: string; packageManager: LocalServicePackageManager; scriptName: string }>;
+}>;
+export type LocalServiceLauncherRunTarget = LocalServiceRunTarget | LocalServiceDeclarationRunTarget;
+
+function declarationTarget(workspace: WorkspaceRefV1, selection: ProjectServiceDeclarationRefV1['selection']): LocalServiceDeclarationRunTarget {
+    const declaration = { workspaceRefId: workspace.id, selection };
+    // The feed id fits its wire contract; full source identity is retained separately.
+    const id = createProjectServiceDeclarationTargetIdV1(workspace, selection);
+    return { id, cwd: workspace.rootPath, workspaceId: workspace.id,
+        workspace: { serverId: workspace.serverId, machineId: workspace.machineId, workspaceId: workspace.id, rootPath: workspace.rootPath }, declaration,
+        title: selection.kind === 'manifest' ? selection.name : selection.source.target };
+}
+
 const SERVER_SCRIPT_PRIORITY = ['dev', 'serve', 'preview', 'start'] as const;
 const RUN_TARGET_ID_MAX_LENGTH = 256;
 const RUN_TARGET_ID_HASH_LENGTH = 12;
-const IGNORED_DIRECTORY_NAMES = new Set([
-    '.git',
-    '.hg',
-    '.svn',
-    '.next',
-    '.turbo',
-    'build',
-    'coverage',
-    'dist',
-    'node_modules',
-]);
 
 function disambiguatedRunTargetId(baseId: string, cwd: string): string {
     const suffix = `:${createHash('sha256').update(cwd).digest('hex').slice(0, RUN_TARGET_ID_HASH_LENGTH)}`;
@@ -57,63 +72,6 @@ function disambiguateRunTargetIds(targets: readonly LocalServiceRunTarget[]): re
         };
     });
 }
-
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function readStringRecord(value: unknown): Readonly<Record<string, string>> {
-    if (!isRecord(value)) {
-        return {};
-    }
-    const out: Record<string, string> = {};
-    for (const [key, entry] of Object.entries(value)) {
-        if (typeof entry === 'string' && entry.trim().length > 0) {
-            out[key] = entry;
-        }
-    }
-    return out;
-}
-
-async function pathExists(path: string): Promise<boolean> {
-    try {
-        await stat(path);
-        return true;
-    } catch {
-        return false;
-    }
-}
-
-async function resolvePackageManager(root: string): Promise<LocalServicePackageManager> {
-    if (await pathExists(join(root, 'pnpm-lock.yaml'))) {
-        return 'pnpm';
-    }
-    if (await pathExists(join(root, 'yarn.lock'))) {
-        return 'yarn';
-    }
-    if (await pathExists(join(root, 'bun.lock')) || await pathExists(join(root, 'bun.lockb'))) {
-        return 'bun';
-    }
-    return 'npm';
-}
-
-async function resolvePackageManagerForPackage(cwd: string): Promise<LocalServicePackageManager> {
-    let directory = cwd;
-    while (true) {
-        if (await pathExists(join(directory, 'pnpm-lock.yaml'))
-            || await pathExists(join(directory, 'yarn.lock'))
-            || await pathExists(join(directory, 'bun.lock'))
-            || await pathExists(join(directory, 'bun.lockb'))
-            || await pathExists(join(directory, 'package-lock.json'))
-            || await pathExists(join(directory, 'npm-shrinkwrap.json'))) {
-            return resolvePackageManager(directory);
-        }
-        const parent = dirname(directory);
-        if (parent === directory) return 'npm';
-        directory = parent;
-    }
-}
-
 /** Resolve a launcher selection from the actual package, not its presentation preview.
  * Only the canonical finite script vocabulary is admitted, so the resulting
  * command contains no user-authored shell syntax on POSIX, cmd or PowerShell.
@@ -122,7 +80,7 @@ export async function resolveLocalServiceRunTargetCommand(input: Readonly<{
     cwd: string;
     runTargetId: string;
 }>): Promise<string | null> {
-    const packageJson = await readPackageJson(input.cwd);
+    const packageJson = await readNativePackage(input.cwd);
     if (!packageJson) return null;
     const scriptName = SERVER_SCRIPT_PRIORITY.find((name) => {
         const baseId = `${packageJson.name}:${name}`;
@@ -130,76 +88,31 @@ export async function resolveLocalServiceRunTargetCommand(input: Readonly<{
             && (input.runTargetId === baseId || input.runTargetId === disambiguatedRunTargetId(baseId, input.cwd));
     });
     if (!scriptName) return null;
-    // Workspace packages inherit the root's lockfile selection. Read ancestors
+    // Workspace packages inherit the root's declaration or lockfile. Read ancestors
     // without discovering or executing other packages.
-    const packageManager = await resolvePackageManagerForPackage(input.cwd);
-    return `${packageManager} run ${scriptName}`;
+    const selected = await resolveNativePackageScript({ root: input.cwd, file: 'package.json', target: scriptName, inheritAncestors: true });
+    return selected.kind === 'selected' ? `${selected.packageManager.manager} run ${scriptName}` : null;
 }
-
-async function readPackageJson(cwd: string): Promise<Readonly<{
-    name: string;
-    scripts: Readonly<Record<string, string>>;
-}> | null> {
-    let raw: string;
-    try {
-        raw = await readFile(join(cwd, 'package.json'), 'utf8');
-    } catch {
-        return null;
-    }
-
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(raw);
-    } catch {
-        return null;
-    }
-    if (!isRecord(parsed)) {
-        return null;
-    }
-    const name = typeof parsed.name === 'string' && parsed.name.trim().length > 0
-        ? parsed.name.trim()
-        : cwd.split(/[\\/]+/).filter(Boolean).at(-1) ?? 'package';
-    return {
-        name,
-        scripts: readStringRecord(parsed.scripts),
-    };
-}
-
-async function collectPackageDirectories(root: string): Promise<string[]> {
-    const out: string[] = [];
-    const visit = async (directory: string): Promise<void> => {
-        if (await pathExists(join(directory, 'package.json'))) {
-            out.push(directory);
-        }
-        const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
-        for (const entry of entries) {
-            if (!entry.isDirectory() || IGNORED_DIRECTORY_NAMES.has(entry.name)) {
-                continue;
-            }
-            await visit(join(directory, entry.name));
-        }
-    };
-    await visit(root);
-    return out;
-}
-
+export function discoverLocalServiceRunTargets(input: Readonly<{ roots: readonly string[] }>): Promise<readonly LocalServiceRunTarget[]>;
+export function discoverLocalServiceRunTargets(input: Readonly<{ roots: readonly string[]; acceptedWorkspaceRefs: readonly WorkspaceRefV1[] }>): Promise<readonly LocalServiceLauncherRunTarget[]>;
 export async function discoverLocalServiceRunTargets(input: Readonly<{
     roots: readonly string[];
-}>): Promise<readonly LocalServiceRunTarget[]> {
+    acceptedWorkspaceRefs?: readonly WorkspaceRefV1[];
+}>): Promise<readonly LocalServiceLauncherRunTarget[]> {
     const targets: LocalServiceRunTarget[] = [];
     const seenDirectories = new Set<string>();
-    for (const root of input.roots) {
-        const directories = await collectPackageDirectories(root);
+    for (const root of [...input.roots, ...(input.acceptedWorkspaceRefs ?? []).map(workspace => workspace.rootPath)]) {
+        const directories = await collectNativePackageDirectories(root);
         for (const cwd of directories) {
             if (seenDirectories.has(cwd)) {
                 continue;
             }
             seenDirectories.add(cwd);
-            const packageJson = await readPackageJson(cwd);
+            const packageJson = await readNativePackage(cwd);
             if (!packageJson) {
                 continue;
             }
-            const packageManager = await resolvePackageManagerForPackage(cwd);
+            const { manager: packageManager } = await resolveNativePackageManager(cwd);
             for (const scriptName of SERVER_SCRIPT_PRIORITY) {
                 const command = packageJson.scripts[scriptName];
                 if (!command) {
@@ -223,5 +136,26 @@ export async function discoverLocalServiceRunTargets(input: Readonly<{
         }
     }
 
-    return disambiguateRunTargetIds(targets);
+    const declarations: LocalServiceDeclarationRunTarget[] = [];
+    for (const workspace of input.acceptedWorkspaceRefs ?? []) {
+        for (const target of targets.filter(target => isWorkspacePathWithin(workspace.rootPath, target.cwd))) {
+            const { manager: packageManager } = await resolveNativePackageManager(target.cwd, workspace.rootPath);
+            const selected = declarationTarget(workspace, { kind: 'native', source: { kind: 'native', tool: 'package_script',
+                file: relative(workspace.rootPath, join(target.cwd, 'package.json')).replaceAll('\\', '/'), target: target.scriptName } });
+            declarations.push({ ...selected, cwd: target.cwd, title: `${target.packageName}:${target.scriptName}`,
+                packageScript: { packageName: target.packageName, packageManager, scriptName: target.scriptName } });
+        }
+        const manifest = await readProjectManifest({ root: workspace.rootPath });
+        if (manifest.document?.status === 'valid') {
+            for (const name of Object.keys(manifest.document.manifest.services ?? {})) {
+                declarations.push(declarationTarget(workspace, { kind: 'manifest', name }));
+            }
+        }
+        const detected = await inspectProjectDefinitions(workspace.rootPath);
+        for (const entry of detected.entries) {
+            if (entry.usage === 'service') declarations.push(declarationTarget(workspace, { kind: 'native', source: entry.source }));
+        }
+    }
+    const unqualified = targets.filter(target => !(input.acceptedWorkspaceRefs ?? []).some(workspace => isWorkspacePathWithin(workspace.rootPath, target.cwd)));
+    return [...disambiguateRunTargetIds(unqualified), ...declarations];
 }

@@ -7,6 +7,7 @@ import type { LocalServiceMachineSummaryV1 } from '@happier-dev/protocol/local/s
 import { DEFAULT_LOCAL_SERVICE_CAPABILITIES } from '@happier-dev/protocol/features/payload/capabilities/localServiceCapabilities';
 import type { FeatureDecision } from '@happier-dev/protocol';
 import { isLocalServiceActionConfirmationNonceV1 } from '@happier-dev/protocol/local/services/actions/v1';
+import type { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 
 import { createLocalServiceInventoryAnnotationsFileStore } from './inventory/annotationsFile';
 import {
@@ -33,6 +34,7 @@ import {
     createLocalServiceLauncherHistoryStore,
 } from './launch/leaves';
 import { createLocalServiceLauncherRoutes, type LocalServiceLauncherRoutes } from './launch/routes';
+import { createProjectServiceDeclarationStarter, type ProjectServiceDeclarationStarterInput } from './launch/projectDeclarations';
 import {
     normalizeLocalServiceScan,
     type LocalServiceInventoryDiagnostic,
@@ -46,6 +48,7 @@ import {
     mergeLocalServiceWorkspaceFacts,
     resolveLocalServiceWorkspaceFactsFromSessionMarkers,
     resolveSessionWorkspacePathsFromSessionMarkers,
+    type LocalServiceWorkspaceFactsSnapshot,
 } from './inventory/workspaces';
 import {
     getSharedTerminalProcessRegistry,
@@ -53,7 +56,7 @@ import {
 } from './inventory/terminalRegistry';
 import {
     discoverLocalServiceRunTargets,
-    type LocalServiceRunTarget,
+    type LocalServiceLauncherRunTarget,
 } from './launch/runTargets';
 import {
     scanPlatformLocalServices,
@@ -74,8 +77,9 @@ import {
 
 type LocalServicesScanner = () => Promise<LocalServicesScanResult>;
 
+type LocalServiceWorkspaceFactsSource = readonly LocalServiceWorkspaceFact[] | LocalServiceWorkspaceFactsSnapshot;
 type LocalServiceWorkspaceFactsProvider =
-    () => Promise<readonly LocalServiceWorkspaceFact[]> | readonly LocalServiceWorkspaceFact[];
+    () => Promise<LocalServiceWorkspaceFactsSource> | LocalServiceWorkspaceFactsSource;
 
 export type LocalServicesDaemonRuntime = Readonly<{
     inventoryRegistry: LocalServiceInventoryRegistry;
@@ -90,6 +94,8 @@ export type LocalServicesDaemonRuntime = Readonly<{
     launcherRoutes: LocalServiceLauncherRoutes;
     previewRoutes: LocalServicePreviewRoutes;
     actionRoutes: LocalServiceActionRoutes;
+    /** Actual starter installation only; host-port currentness and feature admission remain with the host. */
+    hasProjectServiceStarter(): boolean;
     refreshInventoryNow(): Promise<NormalizedLocalServiceInventorySnapshot>;
     getSummary(): LocalServiceMachineSummaryV1;
     subscribeSummary(subscriber: (summary: LocalServiceMachineSummaryV1) => void): () => void;
@@ -225,7 +231,9 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     terminalRegistry?: TerminalProcessRegistry;
     internalProcessPids?: () => readonly number[];
     internalEndpointUrls?: () => readonly string[];
-    runTargets?: () => Promise<readonly LocalServiceRunTarget[]> | readonly LocalServiceRunTarget[];
+    runTargets?: () => Promise<readonly LocalServiceLauncherRunTarget[]> | readonly LocalServiceLauncherRunTarget[];
+    projectServiceStarter?: ProjectServiceDeclarationStarterInput;
+    projectManagedServices?: Pick<ReturnType<typeof createManagedServicesOwner>, 'listProjectServices' | 'resolveProjectService'>;
     resolveSessionWorkspacePaths?: (sessionId: string) => Promise<readonly string[]> | readonly string[];
     hostedWebStaticAssets?: Omit<HostedWebStaticAssetLifecycleOptions, 'registerPreview' | 'unregisterPreview'>;
 }>): LocalServicesDaemonRuntime {
@@ -260,6 +268,11 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     );
     const workspaceFacts = params.workspaceFacts
         ?? (params.scan ? undefined : async () => await readDaemonSessionWorkspaceFacts(params.machineId));
+    const readWorkspaceFacts = async (): Promise<LocalServiceWorkspaceFactsSnapshot> => {
+        const source = await workspaceFacts?.();
+        if (source && 'facts' in source) return source;
+        return { facts: source ?? [], acceptedWorkspaceRefs: [], diagnostics: [] };
+    };
     const staleAfterMs = params.staleAfterMs ?? DEFAULT_LOCAL_SERVICE_CAPABILITIES.inventory.staleAfterMs;
     // `localServices.inventory` is server-represented (default-allow): the server is the gate.
     // We cache the latest server-features snapshot (refreshed on each inventory tick) and resolve
@@ -394,7 +407,9 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
         let daemonWorkspaces: readonly LocalServiceWorkspaceFact[] = [];
         if (workspaceFacts) {
             try {
-                daemonWorkspaces = await workspaceFacts();
+                const source = await readWorkspaceFacts();
+                daemonWorkspaces = source.facts;
+                workspaceDiagnostics.push(...source.diagnostics);
             } catch (error) {
                 workspaceDiagnostics.push({
                     code: 'local_services_workspace_facts_failed',
@@ -409,7 +424,7 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
             previous,
             listeners: result.listeners,
             processes: result.processes,
-            workspaces: mergeLocalServiceWorkspaceFacts(result.workspaces, daemonWorkspaces),
+            workspaces: mergeLocalServiceWorkspaceFacts(daemonWorkspaces, result.workspaces),
             terminalRegistry,
             staleAfterMs,
             internalProcessPids: params.internalProcessPids?.() ?? [process.pid],
@@ -503,9 +518,9 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     // (binary-safe: no node/package-manager spawn). Single-flighted + short-TTL cached so
     // the recursive fs walk does not re-run on every launcher snapshot request.
     const RUN_TARGETS_CACHE_TTL_MS = 5_000;
-    let runTargetsCache: { value: readonly LocalServiceRunTarget[]; at: number } | null = null;
-    let runTargetsInFlight: Promise<readonly LocalServiceRunTarget[]> | null = null;
-    const defaultRunTargetsProvider = async (): Promise<readonly LocalServiceRunTarget[]> => {
+    let runTargetsCache: { value: readonly LocalServiceLauncherRunTarget[]; at: number } | null = null;
+    let runTargetsInFlight: Promise<readonly LocalServiceLauncherRunTarget[]> | null = null;
+    const defaultRunTargetsProvider = async (): Promise<readonly LocalServiceLauncherRunTarget[]> => {
         const fresh = runTargetsCache && now() - runTargetsCache.at < RUN_TARGETS_CACHE_TTL_MS;
         if (fresh && runTargetsCache) {
             return runTargetsCache.value;
@@ -515,11 +530,12 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
         }
         runTargetsInFlight = (async () => {
             try {
-                const workspaceRoots = (await readDaemonSessionWorkspaceFacts(params.machineId))
+                const source = await readWorkspaceFacts();
+                const workspaceRoots = source.facts
                     .map((fact) => fact.path)
                     .filter((root) => root.length > 0);
                 const value = workspaceRoots.length > 0
-                    ? await discoverLocalServiceRunTargets({ roots: workspaceRoots })
+                    ? await discoverLocalServiceRunTargets({ roots: workspaceRoots, acceptedWorkspaceRefs: source.acceptedWorkspaceRefs })
                     : [];
                 runTargetsCache = { value, at: now() };
                 return value;
@@ -546,10 +562,13 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
         ...(cachedServerFeaturesSnapshot ? { serverSnapshot: cachedServerFeaturesSnapshot } : {}),
     }).state === 'enabled';
 
+    const launcherHistory = createLocalServiceLauncherHistoryStore();
     const scannedLauncherFeed = createLocalServiceLauncherFeed({
         machineId: params.machineId,
         inventoryRegistry,
         previewRegistry,
+        projectManagedServices: params.projectManagedServices,
+        history: launcherHistory,
         runTargets: runTargetsProvider,
         onRunTargetsError: params.onError,
         terminateDetectedEnabled: isTerminateEnabled,
@@ -568,16 +587,18 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     };
     // Launcher leaf actions (LSV-1): openPreview/registerPreview reuse the canonical launcher
     // feed + private-preview owner; history.clear empties the daemon-owned launcher history.
-    const launcherHistory = createLocalServiceLauncherHistoryStore();
     const launcherLeafRoutes = createLocalServiceLauncherLeafRoutes({
         machineId: params.machineId,
         feed: launcherFeed,
         previewRoutes,
         history: launcherHistory,
     });
+    const declarationStarter = params.projectServiceStarter ? createProjectServiceDeclarationStarter(params.projectServiceStarter) : undefined;
     const launcherRoutes = createLocalServiceLauncherRoutes({
         feed: launcherFeed,
+        history: launcherHistory,
         leaves: launcherLeafRoutes,
+        ...declarationStarter,
     });
     // The executor itself layers identity-tuple TOCTOU revalidation, graceful-then-force
     // signalling, and post-release verification over the real OS process-control adapter.
@@ -590,6 +611,9 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     const actionRoutes = createLocalServiceActionRoutes({
         machineId: params.machineId,
         inventoryRegistry,
+        projectManagedServices: params.projectManagedServices,
+        launcherHistory,
+        restartManagedService: declarationStarter?.restartManagedService,
         terminateEnabled: isTerminateEnabled,
         verifyConfirmationNonce: isLocalServiceActionConfirmationNonceV1,
         terminateDetectedService,
@@ -602,6 +626,7 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
         launcherRoutes,
         previewRoutes,
         actionRoutes,
+        hasProjectServiceStarter: () => declarationStarter !== undefined && !endpointCancellation.signal.aborted,
         refreshInventoryNow,
         getSummary: () => summary,
         subscribeSummary(subscriber) {

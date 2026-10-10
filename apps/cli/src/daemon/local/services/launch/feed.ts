@@ -1,13 +1,21 @@
 import type { LocalServiceLauncherSnapshotV1, LocalServiceLaunchTargetV1 } from '@happier-dev/protocol';
 
 import { expandHomeDirPath } from '../../../../utils/path/expandHomeDirPath';
+import { isWorkspacePathWithin } from '../inventory/provenance';
 import type { LocalServiceInventoryRegistry } from '../inventory/registry';
 import { listLocalServicePreviewResources, type LocalServicePreviewRegistry } from '../preview/registry';
-import type { LocalServiceRunTarget } from './runTargets';
-import { buildLocalServiceLauncherSnapshot } from './suggestions';
+import type { LocalServiceLauncherRunTarget } from './runTargets';
+import type { LocalServiceLauncherHistoryStore } from './leaves';
+import { buildLocalServiceLauncherSnapshot, formatLocalServiceLauncherTitle } from './suggestions';
+import type { createManagedServicesOwner, ProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
+
+type ProjectManagedServicesFeed = Pick<ReturnType<typeof createManagedServicesOwner>, 'listProjectServices'>;
 
 export type LocalServiceLauncherFeedSnapshotRequest = Readonly<{
     sessionId?: string;
+    /** Host-only mutation read: an unresolved Workspace must not broaden to Machine scope. */
+    requireWorkspaceScope?: true;
+    projection?: 'managed_bindings';
     /** Explicit scope: `machine` skips workspace scoping; `workspace` (default) keeps it. */
     scope?: 'workspace' | 'machine';
     /** Session-less project scoping by repo root (canonicalized at this daemon boundary). */
@@ -19,7 +27,7 @@ export type LocalServiceLauncherFeed = Readonly<{
 }>;
 
 export type LocalServiceRunTargetsProvider =
-    () => readonly LocalServiceRunTarget[] | Promise<readonly LocalServiceRunTarget[]>;
+    () => readonly LocalServiceLauncherRunTarget[] | Promise<readonly LocalServiceLauncherRunTarget[]>;
 
 /**
  * Resolves the workspace PATH(s) a session id is anchored to. The feed turns a
@@ -34,7 +42,9 @@ export type CreateLocalServiceLauncherFeedInput = Readonly<{
     sessionId?: string;
     inventoryRegistry: LocalServiceInventoryRegistry;
     previewRegistry: LocalServicePreviewRegistry;
-    runTargets?: readonly LocalServiceRunTarget[] | LocalServiceRunTargetsProvider;
+    runTargets?: readonly LocalServiceLauncherRunTarget[] | LocalServiceRunTargetsProvider;
+    projectManagedServices?: ProjectManagedServicesFeed;
+    history?: Pick<LocalServiceLauncherHistoryStore, 'isDismissed'>;
     onRunTargetsError?: (error: unknown) => void;
     terminateDetectedEnabled?: () => boolean;
     resolveSessionWorkspacePaths?: LocalServiceSessionWorkspacePathsResolver;
@@ -55,6 +65,7 @@ function fenceExecutableAuthority(target: LocalServiceLaunchTargetV1): LocalServ
 }
 
 function sourcePriority(target: LocalServiceLaunchTargetV1): number {
+    if (target.source === 'managed_service' && target.serviceState !== 'stopped') return 0;
     if (target.source === 'registered_preview') return 0;
     if (target.source === 'inventory_entry' && target.browserTarget) return 1;
     if (target.source === 'inventory_entry') return 2;
@@ -65,6 +76,32 @@ function sourcePriority(target: LocalServiceLaunchTargetV1): number {
     // source, so static package.json reads never dominate actually-running services.
     if (target.source === 'package_script') return 6;
     return 7;
+}
+
+function managedTarget(handle: ProjectManagedServiceHandle): LocalServiceLaunchTargetV1 {
+    const snapshot = handle.snapshot();
+    const servingCurrent = handle.isCurrent();
+    const selection = handle.declaration.selection;
+    return {
+        id: handle.serviceId, source: 'managed_service',
+        sourceClass: { kind: 'managed_service', managedServiceId: handle.instanceId },
+        machineId: handle.workspace.machineId, workspaceId: handle.workspace.id,
+        workspace: { serverId: handle.workspace.serverId, workspaceId: handle.workspace.id,
+            machineId: handle.workspace.machineId, rootPath: handle.workspace.rootPath },
+        declaration: handle.declaration, cwd: handle.cwd,
+        title: formatLocalServiceLauncherTitle(selection.kind === 'manifest' ? selection.name : selection.source.target),
+        subtitle: handle.cwd, confidence: 'high',
+        state: snapshot.state === 'starting' ? 'starting' : 'available',
+        serviceState: snapshot.state,
+        ...(snapshot.startedAtMs !== null ? { startedAtMs: snapshot.startedAtMs } : {}),
+        startedByAccountId: handle.requester.accountId,
+        endpointKind: handle.endpointKind,
+        ...(snapshot.readiness ? { readiness: snapshot.readiness } : {}),
+        ...(servingCurrent && snapshot.baseUrl ? { endpointUrl: snapshot.baseUrl } : {}),
+        // Serving retirement does not settle native custody. The authenticated
+        // Machine control path still owns Stop/retry for that exact occurrence.
+        actions: snapshot.state !== 'stopped' ? ['manage'] : [],
+    };
 }
 
 function sortTargets(targets: readonly LocalServiceLaunchTargetV1[]): readonly LocalServiceLaunchTargetV1[] {
@@ -78,7 +115,7 @@ function sortTargets(targets: readonly LocalServiceLaunchTargetV1[]): readonly L
 async function resolveRunTargets(
     value: CreateLocalServiceLauncherFeedInput['runTargets'],
     onError: CreateLocalServiceLauncherFeedInput['onRunTargetsError'],
-): Promise<readonly LocalServiceRunTarget[]> {
+): Promise<readonly LocalServiceLauncherRunTarget[]> {
     if (!value) return [];
     if (typeof value !== 'function') return value;
 
@@ -117,6 +154,11 @@ export function createLocalServiceLauncherFeed(
     const now = input.now ?? (() => Date.now());
     return {
         async getSnapshot(request) {
+            if (request?.projection === 'managed_bindings' && !input.projectManagedServices) {
+                throw Object.assign(new Error('Project Service binding owner is unavailable'), {
+                    code: 'project_service_bindings_unavailable',
+                });
+            }
             const sessionId = request?.sessionId ?? input.sessionId;
             const workspaceScopePaths = await resolveScopePaths({
                 scope: request?.scope,
@@ -124,6 +166,19 @@ export function createLocalServiceLauncherFeed(
                 resolver: input.resolveSessionWorkspacePaths,
                 sessionId,
             });
+            if (request?.requireWorkspaceScope && !workspaceScopePaths?.length) {
+                throw Object.assign(new Error('Local service workspace scope is unavailable'), {
+                    code: 'local_service_workspace_scope_unavailable',
+                });
+            }
+            if (request?.projection === 'managed_bindings') {
+                const targets = input.projectManagedServices!.listProjectServices({ requireComplete: true,
+                    ...(workspaceScopePaths?.length === 1 ? { workspaceRoot: workspaceScopePaths[0] } : {}) })
+                    .filter(handle => handle.isCurrent() && handle.workspace.machineId === input.machineId
+                        && (!workspaceScopePaths || workspaceScopePaths.some(root => isWorkspacePathWithin(root, handle.cwd))))
+                    .map(managedTarget);
+                return { v: 1, machineId: input.machineId, updatedAt: now(), targets: sortTargets(targets) };
+            }
             const snapshot = buildLocalServiceLauncherSnapshot({
                 machineId: input.machineId,
                 sessionId,
@@ -134,11 +189,17 @@ export function createLocalServiceLauncherFeed(
                 previewResources: listLocalServicePreviewResources(input.previewRegistry),
                 terminateDetectedEnabled: input.terminateDetectedEnabled?.() === true,
             });
+            const managed = (input.projectManagedServices?.listProjectServices() ?? [])
+                .filter(handle => handle.workspace.machineId === input.machineId
+                    && (!workspaceScopePaths || workspaceScopePaths.some(root => isWorkspacePathWithin(root, handle.cwd))))
+                .map(managedTarget);
+            const managedIds = new Set(managed.map(target => target.id));
             return {
                 ...snapshot,
                 targets: [...sortTargets([
-                    ...snapshot.targets,
-                ].map(fenceExecutableAuthority))],
+                    ...snapshot.targets.filter(target => !managedIds.has(target.id)).map(fenceExecutableAuthority),
+                    ...managed,
+                ]).filter(target => !input.history?.isDismissed(target.id))],
             };
         },
     };

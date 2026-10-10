@@ -1,10 +1,12 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
 import { discoverLocalServiceRunTargets, resolveLocalServiceRunTargetCommand } from './runTargets';
+import { buildLocalServiceLauncherSnapshot } from './suggestions';
+import { LocalServiceLauncherSnapshotV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 
 async function makeRepo(): Promise<string> {
     return await mkdtemp(join(tmpdir(), 'happier-local-services-'));
@@ -15,6 +17,102 @@ async function writeJson(path: string, value: unknown): Promise<void> {
 }
 
 describe('discoverLocalServiceRunTargets', () => {
+    it('keeps accepted package presentation on the same contained manager selection as native execution', async () => {
+        const parent = await makeRepo();
+        const root = join(parent, 'accepted');
+        try {
+            await writeJson(join(parent, 'package.json'), { packageManager: 'bun@1.2.8' });
+            await mkdir(root);
+            await writeJson(join(root, 'package.json'), { name: 'accepted', scripts: { dev: 'vite' } });
+            const targets = await discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [{
+                id: 'accepted', serverId: 'home', machineId: 'machine', rootPath: root, createdAtMs: 1, projectKey: 'project',
+            }] });
+            const snapshot = LocalServiceLauncherSnapshotV1Schema.parse(buildLocalServiceLauncherSnapshot({
+                machineId: 'machine', updatedAt: 1, runTargets: targets, inventoryEntries: [], previewResources: [],
+            }));
+            expect(snapshot.targets[0]?.commandPreview).toBe('npm run dev');
+        } finally { await rm(parent, { recursive: true, force: true }); }
+    });
+    it('projects valid long Service and package names without rejecting their source identities', async () => {
+        const root = await makeRepo();
+        try {
+            const name = 'service-name-'.repeat(30);
+            await mkdir(join(root, '.happier'));
+            await writeJson(join(root, '.happier', 'project.json'), { version: 1, services: { [name]: { source: { kind: 'command', command: 'echo service' } } } });
+            await writeJson(join(root, 'package.json'), { name, scripts: { dev: 'vite' } });
+            const targets = await discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [{
+                id: 'accepted', serverId: 'home', machineId: 'machine', rootPath: root, createdAtMs: 1, projectKey: 'project',
+            }] });
+            const snapshot = LocalServiceLauncherSnapshotV1Schema.parse(buildLocalServiceLauncherSnapshot({
+                machineId: 'machine', updatedAt: 1, runTargets: targets, inventoryEntries: [], previewResources: [],
+            }));
+            expect(snapshot.targets).toHaveLength(2);
+            const target = snapshot.targets.find(candidate => candidate.declaration?.selection.kind === 'manifest')!;
+            expect(target.declaration?.selection).toEqual({ kind: 'manifest', name });
+            expect(name.startsWith(target.title.replace(/…$/u, ''))).toBe(true);
+            const packageTarget = snapshot.targets.find(candidate => candidate.source === 'package_script')!;
+            expect(packageTarget.sourceClass).toMatchObject({ kind: 'package_script', packageName: name, scriptName: 'dev' });
+            expect(packageTarget.declaration?.selection).toEqual({ kind: 'native',
+                source: { kind: 'native', tool: 'package_script', file: 'package.json', target: 'dev' } });
+        } finally { await rm(root, { recursive: true, force: true }); }
+    });
+    it('qualifies nested accepted package declarations with their real Workspace address and leaves unrelated roots inert', async () => {
+        const root = await makeRepo();
+        const unrelated = await makeRepo();
+        try {
+            await writeJson(join(root, 'package.json'), { name: 'accepted-root', scripts: { dev: 'vite' } });
+            await mkdir(join(root, 'web'));
+            await writeJson(join(root, 'web', 'package.json'), { name: 'accepted-web', scripts: { start: 'next start' } });
+            await writeJson(join(unrelated, 'package.json'), { name: 'unqualified', scripts: { dev: 'vite' } });
+            const workspace = { id: 'accepted', serverId: 'home', machineId: 'machine', rootPath: root, createdAtMs: 1, projectKey: 'project' };
+            const targets = await discoverLocalServiceRunTargets({ roots: [root, unrelated], acceptedWorkspaceRefs: [workspace] });
+            const qualified = targets.filter(target => 'declaration' in target);
+            expect(qualified).toHaveLength(2);
+            expect(qualified).toEqual(expect.arrayContaining([
+                expect.objectContaining({ cwd: root, workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'accepted', rootPath: root },
+                    declaration: { workspaceRefId: 'accepted', selection: { kind: 'native', source: { kind: 'native', tool: 'package_script', file: 'package.json', target: 'dev' } } } }),
+                expect.objectContaining({ cwd: join(root, 'web'), workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'accepted', rootPath: root },
+                    declaration: { workspaceRefId: 'accepted', selection: { kind: 'native', source: { kind: 'native', tool: 'package_script', file: 'web/package.json', target: 'start' } } } }),
+            ]));
+            expect(targets.filter(target => !('declaration' in target))).toMatchObject([{ id: 'unqualified:dev', cwd: unrelated }]);
+            const snapshot = LocalServiceLauncherSnapshotV1Schema.parse(buildLocalServiceLauncherSnapshot({
+                machineId: 'machine', updatedAt: 1, runTargets: targets, inventoryEntries: [], previewResources: [],
+            }));
+            expect(snapshot.targets.filter(target => target.declaration)).toEqual(expect.arrayContaining([
+                expect.objectContaining({ source: 'package_script', cwd: join(root, 'web'),
+                    sourceClass: expect.objectContaining({ kind: 'package_script', packageName: 'accepted-web', scriptName: 'start' }),
+                    workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'accepted', rootPath: root },
+                }),
+            ]));
+        } finally { await Promise.all([root, unrelated].map(directory => rm(directory, { recursive: true, force: true }))); }
+    });
+    it('does not offer package files that escape their root through a symlink', async () => {
+        const root = await makeRepo();
+        const outside = await makeRepo();
+        try {
+            await writeJson(join(outside, 'package.json'), { name: 'outside', scripts: { dev: 'echo private' } });
+            await symlink(join(outside, 'package.json'), join(root, 'package.json'));
+            expect(await discoverLocalServiceRunTargets({ roots: [root] })).toEqual([]);
+            expect(await resolveLocalServiceRunTargetCommand({ cwd: root, runTargetId: 'outside:dev' })).toBeNull();
+        } finally {
+            await Promise.all([root, outside].map((directory) => rm(directory, { recursive: true, force: true })));
+        }
+    });
+    it('honors an inherited packageManager declaration over a conflicting lockfile', async () => {
+        const root = await makeRepo();
+        try {
+            await writeJson(join(root, 'package.json'), { name: 'root', packageManager: 'bun@1.2.8' });
+            await writeFile(join(root, 'yarn.lock'), '');
+            const cwd = join(root, 'web');
+            await mkdir(cwd);
+            await writeJson(join(cwd, 'package.json'), { name: 'web', scripts: { dev: 'vite' } });
+            const targets = await discoverLocalServiceRunTargets({ roots: [root] });
+            expect(targets[0]?.packageManager).toBe('bun');
+            expect(await resolveLocalServiceRunTargetCommand({ cwd, runTargetId: targets[0]!.id })).toBe('bun run dev');
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
     it('uses the same nearest lockfile manager for discovery and shell execution', async () => {
         const root = await makeRepo();
         await writeFile(join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
