@@ -15,6 +15,7 @@ const {
   ProjectCommandApprovalFacts,
   describeProjectCommandApprovalTitle,
   readProjectCommandApproval,
+  readProjectServiceEffectApproval,
 } = await import('./ProjectCommandApprovalFacts');
 
 afterEach(() => {
@@ -29,6 +30,23 @@ const workspace = {
 };
 
 describe('Project command approval facts', () => {
+  it('discloses the same executable and argv boundaries for ad-hoc and service approval', async () => {
+    const executable = 'C:\\Program Files\\tool.exe';
+    const argv = ['', 'a b', 'say "hello"', 'tail'];
+    const expected = '"C:\\\\Program Files\\\\tool.exe" "" "a b" "say \\"hello\\"" tail';
+    const presentation = readProjectCommandApproval({
+      actionId: 'projects.compute.exec',
+      actionArgs: { workspace, executable, argv, cwd: '/src/happier' } as never,
+    });
+    expect(presentation).toMatchObject({ kind: 'exec', command: expected });
+    expect(readProjectServiceEffectApproval({ serverId: 'home', sourceMachineId: 'devbox',
+      reviewedEffect: { command: { executable, args: argv } },
+    })).toMatchObject({ kind: 'service', command: expected });
+    const screen = await renderScreen(<ProjectCommandApprovalFacts presentation={presentation!} testID="facts" />);
+    expect(screen.getTextContent()).toContain(`$ ${expected}`);
+    await screen.unmount();
+  });
+
   it('shows the exact one-off command, the worker it goes to and that only a fresh copy is used', async () => {
     const presentation = readProjectCommandApproval({
       actionId: 'projects.compute.exec',

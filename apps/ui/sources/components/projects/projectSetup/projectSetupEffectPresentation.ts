@@ -1,4 +1,5 @@
 import * as z from 'zod/mini';
+import { formatProjectInvocation } from './projectScriptPresentation';
 
 // A display-only projection of B9's presentation. Unknown fields are stripped at every level;
 // neither secret/config values nor private repository bytes enter the review model.
@@ -51,13 +52,10 @@ export function listReviewedSetupCommands(
       record.source && typeof record.source === 'object'
         ? (record.source as Record<string, unknown>)
         : null;
-    const head =
-      executable ??
-      (typeof source?.command === 'string'
-        ? source.command
-        : typeof source?.target === 'string'
-          ? source.target
-          : null);
-    return [head, ...args].filter(Boolean).join(' ');
+    if (executable !== null) return formatProjectInvocation({ tool: executable, args });
+    if (typeof source?.command === 'string') return source.command;
+    return typeof source?.target === 'string'
+      ? formatProjectInvocation({ tool: source.target, args })
+      : '';
   });
 }

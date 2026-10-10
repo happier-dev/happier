@@ -47,7 +47,8 @@ function basename(path: string): string {
 type ProjectInvocationPreview = Readonly<{ tool: string; args: readonly string[] }>;
 type ProjectInvocationRow = Readonly<{ source: ProjectNativeRefV1; invocation?: ProjectInvocationPreview }>;
 
-function formatProjectInvocation(invocation: ProjectInvocationPreview): string {
+/** Display argv boundaries consistently across rows and reviews; this is not execution-shell quoting. */
+export function formatProjectInvocation(invocation: ProjectInvocationPreview): string {
   return [invocation.tool, ...invocation.args]
     .map((part) => (part === '' || /\s|"/.test(part) ? JSON.stringify(part) : part))
     .join(' ');

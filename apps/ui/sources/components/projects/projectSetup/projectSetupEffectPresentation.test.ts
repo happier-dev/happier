@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
-import { readProjectSetupReviewPresentation } from './projectSetupEffectPresentation';
+import { listReviewedSetupCommands, readProjectSetupReviewPresentation } from './projectSetupEffectPresentation';
 
 describe('safe producer setup review presentation', () => {
+  it('discloses executable paths and every argument boundary while retaining literal commands verbatim', () => {
+    const literal = '  echo "a b" && echo ""  ';
+    expect(listReviewedSetupCommands({ commands: [
+      { executable: 'C:\\Program Files\\tool.exe', args: ['', 'a b', 'say "hello"', 'tail'] },
+      { source: { kind: 'command', command: literal } },
+      literal,
+    ] })).toEqual(['"C:\\\\Program Files\\\\tool.exe" "" "a b" "say \\"hello\\"" tail', literal, literal]);
+  });
+
   it('retains exact binding labels and SCM context while excluding values and extra producer fields', () => {
     const presentation = {
       bindings: [{ name: 'TOKEN', ref: 'saved-secret:deployment', revision: 7, source: 'personal', displayName: 'Deployment account', value: 'private-secret' }],

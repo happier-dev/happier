@@ -59,6 +59,14 @@ describe('finite Script row facts', () => {
         expect(describeProjectCommandSource({ kind: 'command', command: 'python3 check.py' }).command).toBe('python3 check.py');
     });
 
+    it('discloses executable paths and every argument boundary while retaining literal commands verbatim', () => {
+        const source = { kind: 'native', tool: 'package_script', file: 'package.json', target: 'test' } as const;
+        expect(describeProjectCommandSource(source, { tool: 'C:\\Program Files\\tool.exe', args: ['', 'a b', 'say "hello"', 'tail'] }).command)
+            .toBe('"C:\\\\Program Files\\\\tool.exe" "" "a b" "say \\"hello\\"" tail');
+        const command = '  echo "a b" && echo ""  ';
+        expect(describeProjectCommandSource({ kind: 'command', command }).command).toBe(command);
+    });
+
     it('names the actual execution placement, not the operation custody machine', () => {
         expect(presentProjectRun(run(), null, 'idle').text).toContain('machine=target-machine');
     });

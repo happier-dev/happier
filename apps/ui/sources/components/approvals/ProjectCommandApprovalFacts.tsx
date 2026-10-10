@@ -16,6 +16,7 @@ import {
 import { t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { listReviewedSetupCommands } from '@/components/projects/projectSetup/projectSetupEffectPresentation';
+import { formatProjectInvocation } from '@/components/projects/projectSetup/projectScriptPresentation';
 
 export type ProjectCommandApprovalPresentation =
   | Readonly<{
@@ -64,7 +65,7 @@ export function readProjectCommandApproval(
       kind: 'exec',
       serverId: workspace.serverId,
       sourceMachineId: workspace.machineId,
-      command: [executable, ...argv].join(' '),
+      command: formatProjectInvocation({ tool: executable, args: argv }),
       cwd,
       destination: readDestination(choice),
     };
