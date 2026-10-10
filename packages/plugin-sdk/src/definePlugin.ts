@@ -46,6 +46,8 @@ import type {
 import type { AgentContribution } from './agents.js';
 import type { BackgroundServiceDefinition } from './backgroundServices.js';
 import type { PluginCaptureSourceRuntime, PluginCaptureSourceDeclaration } from './captureSources.js';
+import type { PluginProjectNativeAdapterDefinitionV1 } from './projectNativeAdapters.js';
+import type { MachineProvisionerAuthorDefinitionV1 } from './machineProvisioners.js';
 import type { EventContribution } from './events.js';
 import type { HookContribution } from './hooks.js';
 import type {
@@ -369,7 +371,7 @@ export type PluginAgentDefinition = Readonly<{
         providerCliAttach?: never;
         cliSessionCommand?: never;
         cliAuth?: AgentCliAuthContributionV1;
-        connectedAccountLaunch?: never;
+        connectedAccountLaunch?: AgentConnectedAccountLaunchContributionV1;
         preflightSessionControls?: never;
         terminalPromptSubmitVerification?: never;
         sessionStartup?: never;
@@ -771,6 +773,7 @@ type PluginStructuredContributionDefinitions<
     promptAssets?: TPromptAssets;
     backgroundServices?: readonly BackgroundServiceDefinition[];
     captureSources?: Readonly<Record<PluginContributionLocalId, PluginCaptureSourceDefinition>>;
+    projectNativeAdapters?: Readonly<Record<PluginContributionLocalId, PluginProjectNativeAdapterDefinitionV1>>;
     hooks?: Readonly<Record<PluginContributionLocalId, PluginHookDefinition>>;
     events?: Readonly<Record<PluginContributionLocalId, PluginEventDefinition>>;
     mcp?: PluginMcpDefinition;
@@ -898,6 +901,7 @@ export type DefinePluginInput<
             PluginContributionLocalId,
             Omit<NonNullable<NonNullable<PluginManifest['contributes']>['managedDependencies']>[number], 'id'>
         >>;
+        machineProvisioners?: Readonly<Record<PluginContributionLocalId, MachineProvisionerAuthorDefinitionV1>>;
         systemTools?: Readonly<Record<
             PluginContributionLocalId,
             Omit<NonNullable<NonNullable<PluginManifest['contributes']>['systemTools']>[number], 'id'>
@@ -1030,6 +1034,7 @@ export type DefinePluginInput<
         promptAssets?: TPromptAssets;
         backgroundServices?: readonly BackgroundServiceDefinition[];
         captureSources?: Readonly<Record<PluginContributionLocalId, PluginCaptureSourceDefinition>>;
+        projectNativeAdapters?: Readonly<Record<PluginContributionLocalId, PluginProjectNativeAdapterDefinitionV1>>;
         hooks?: Readonly<Record<PluginContributionLocalId, Readonly<{
             declaration: Omit<HookContribution, 'id'>;
             handler: HookHandler;
@@ -1949,8 +1954,13 @@ const AGENTS_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
                                 : { vendorResumeSupport: definition.vendorResumeSupport }),
                         },
                 );
-            } else if (definition.cliAuth !== undefined) {
-                api.agents.registerCliAuth(localId, definition.cliAuth);
+            } else {
+                if (definition.cliAuth !== undefined) {
+                    api.agents.registerCliAuth(localId, definition.cliAuth);
+                }
+                if (definition.connectedAccountLaunch !== undefined) {
+                    api.agents.registerConnectedAccountLaunch(localId, definition.connectedAccountLaunch);
+                }
             }
             if (definition.terminal !== undefined) {
                 api.agents.registerTerminal(localId, definition.terminal);
@@ -2021,6 +2031,21 @@ const CAPTURE_SOURCES_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
     activate(input, api) {
         const definitions = input.captureSources as Readonly<Record<PluginContributionLocalId, PluginCaptureSourceDefinition>> | undefined;
         for (const [id, definition] of Object.entries(definitions ?? {})) api.captureSources.register(id, definition.runtime);
+    },
+});
+
+const PROJECT_NATIVE_ADAPTERS_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
+    authorKey: 'projectNativeAdapters',
+    runtimeReceiverPaths: [['*', 'runtime']],
+    project(input) {
+        const definitions = input.projectNativeAdapters as Readonly<Record<string, PluginProjectNativeAdapterDefinitionV1>> | undefined;
+        return { projectNativeAdapters: Object.entries(definitions ?? {}).map(([id, definition]) => ({
+            ...definition.declaration, id, files: [...definition.declaration.files], roles: [...definition.declaration.roles],
+        })) };
+    },
+    activate(input, api) {
+        const definitions = input.projectNativeAdapters as Readonly<Record<string, PluginProjectNativeAdapterDefinitionV1>> | undefined;
+        for (const [id, definition] of Object.entries(definitions ?? {})) api.projectNativeAdapters.register(id, definition.runtime);
     },
 });
 
@@ -2425,6 +2450,7 @@ const DRAG_SOURCES_ADAPTER = descriptorFamilyAdapter('dragSources');
 const DROP_TARGETS_ADAPTER = descriptorFamilyAdapter('dropTargets');
 const NOTIFICATIONS_ADAPTER = descriptorFamilyAdapter('notifications');
 const MANAGED_DEPENDENCIES_ADAPTER = descriptorFamilyAdapter('managedDependencies');
+const MACHINE_PROVISIONERS_ADAPTER = descriptorFamilyAdapter('machineProvisioners');
 const SYSTEM_TOOLS_ADAPTER = descriptorFamilyAdapter('systemTools');
 const VOICE_MODEL_PACKS_ADAPTER = descriptorFamilyAdapter('voiceModelPacks');
 const OPENABLE_CONTENT_VIEWERS_ADAPTER = descriptorFamilyAdapter('openableContentViewers');
@@ -2581,6 +2607,7 @@ export const DEFINE_PLUGIN_FAMILY_POLICY_V2 = Object.freeze({
     promptAssets: { classification: 'adapter', authorKey: 'promptAssets', inputShape: 'structured', adapter: PROMPT_ASSETS_ADAPTER },
     backgroundServices: { classification: 'adapter', authorKey: 'backgroundServices', inputShape: 'structured', adapter: BACKGROUND_SERVICES_ADAPTER },
     captureSources: { classification: 'adapter', authorKey: 'captureSources', inputShape: 'structured', adapter: CAPTURE_SOURCES_ADAPTER },
+    projectNativeAdapters: { classification: 'adapter', authorKey: 'projectNativeAdapters', inputShape: 'structured', adapter: PROJECT_NATIVE_ADAPTERS_ADAPTER },
     hooks: { classification: 'adapter', authorKey: 'hooks', inputShape: 'structured', adapter: HOOKS_ADAPTER },
     events: { classification: 'adapter', authorKey: 'events', inputShape: 'structured', adapter: EVENTS_ADAPTER },
     'mcp.servers': { classification: 'adapter', authorKey: 'mcp', inputShape: 'structured', adapter: MCP_ADAPTER },
@@ -2620,6 +2647,7 @@ export const DEFINE_PLUGIN_FAMILY_POLICY_V2 = Object.freeze({
     dropTargets: { classification: 'adapter', authorKey: 'dropTargets', inputShape: 'descriptor', adapter: DROP_TARGETS_ADAPTER },
     notifications: { classification: 'descriptor-only', authorKey: 'notifications', inputShape: 'descriptor', adapter: NOTIFICATIONS_ADAPTER },
     managedDependencies: { classification: 'descriptor-only', authorKey: 'managedDependencies', inputShape: 'descriptor', adapter: MANAGED_DEPENDENCIES_ADAPTER },
+    machineProvisioners: { classification: 'descriptor-only', authorKey: 'machineProvisioners', inputShape: 'descriptor', adapter: MACHINE_PROVISIONERS_ADAPTER },
     systemTools: { classification: 'descriptor-only', authorKey: 'systemTools', inputShape: 'descriptor', adapter: SYSTEM_TOOLS_ADAPTER },
     voiceModelPacks: { classification: 'descriptor-only', authorKey: 'voiceModelPacks', inputShape: 'descriptor', adapter: VOICE_MODEL_PACKS_ADAPTER },
     openableContentViewers: { classification: 'descriptor-only', authorKey: 'openableContentViewers', inputShape: 'descriptor', adapter: OPENABLE_CONTENT_VIEWERS_ADAPTER },
@@ -2813,6 +2841,7 @@ const DEFINE_PLUGIN_BASE_KEYS = Object.freeze([
     'runtime',
     'entrypoints',
     'brand',
+    'executionTarget',
     'activation',
     'hostAccess',
     'secrets',
@@ -2923,6 +2952,7 @@ function definePluginImplementation<
         runtime: capturedInput.runtime ?? { apiVersion: 1 },
         ...(capturedInput.entrypoints === undefined ? {} : { entrypoints: capturedInput.entrypoints }),
         ...(capturedInput.brand === undefined ? {} : { brand: capturedInput.brand }),
+        ...(capturedInput.executionTarget === undefined ? {} : { executionTarget: capturedInput.executionTarget }),
         ...(capturedInput.activation === undefined ? {} : { activation: capturedInput.activation }),
         ...(capturedInput.hostAccess === undefined ? {} : { hostAccess: capturedInput.hostAccess }),
         ...(capturedInput.secrets === undefined ? {} : { secrets: capturedInput.secrets }),

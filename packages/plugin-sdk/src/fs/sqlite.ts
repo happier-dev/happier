@@ -15,7 +15,10 @@ export type SqliteDatabaseSync = Readonly<{
 }>;
 
 /** The host runtime selects its native provider lazily, shared by host and plugin callers. */
-export function openSqliteDatabaseSync(filePath: string): SqliteDatabaseSync {
+export function openSqliteDatabaseSync(
+    filePath: string,
+    options?: Readonly<{ readOnly?: boolean }>,
+): SqliteDatabaseSync {
     const require = createRequire(import.meta.url);
     const isBunRuntime = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
     // A literal node:sqlite branch is hoisted by pkgroll and prevents the
@@ -31,5 +34,8 @@ export function openSqliteDatabaseSync(filePath: string): SqliteDatabaseSync {
     if (typeof ctor !== 'function') {
         throw new Error(`Failed to resolve sqlite Database constructor from ${moduleName}`);
     }
-    return new (ctor as new (path: string) => SqliteDatabaseSync)(filePath);
+    const nativeOptions: Readonly<{ readonly?: boolean; readOnly?: boolean }> = options?.readOnly === true
+        ? (isBunRuntime ? { readonly: true } : { readOnly: true })
+        : {};
+    return new (ctor as new (path: string, options?: typeof nativeOptions) => SqliteDatabaseSync)(filePath, nativeOptions);
 }

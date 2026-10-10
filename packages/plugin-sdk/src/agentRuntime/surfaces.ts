@@ -57,6 +57,10 @@ export type AgentRuntimeHandoffSurface = Readonly<{
     request: Parameters<HandoffSurfaceV1['importBundle']>[0],
     context: PluginInvocationContext,
   ) => ReturnType<HandoffSurfaceV1['importBundle']>;
+  resolveExistingState?: (
+    request: Parameters<NonNullable<HandoffSurfaceV1['resolveExistingState']>>[0],
+    context: PluginInvocationContext,
+  ) => ReturnType<NonNullable<HandoffSurfaceV1['resolveExistingState']>>;
   extractMediaScannableRecords?: (
     request: Parameters<NonNullable<HandoffSurfaceV1['extractMediaScannableRecords']>>[0],
     context: PluginInvocationContext,

@@ -286,7 +286,8 @@ export type AgentSessionRuntimeEvent =
       sequence: number;
       sessionId: string;
       emittedAtMs: number;
-      turnId: string;
+      /** Omit for Session output that does not belong to a foreground host turn. */
+      turnId?: string;
       agentTurnId?: string;
       kind: 'message-delta';
       /** Stable transcript identity, shared with the committed message when the Agent supplies it. */
@@ -299,7 +300,8 @@ export type AgentSessionRuntimeEvent =
       sequence: number;
       sessionId: string;
       emittedAtMs: number;
-      turnId: string;
+      /** Omit for Session output that does not belong to a foreground host turn. */
+      turnId?: string;
       agentTurnId?: string;
       kind: 'tool-call';
       toolCallId: string;
@@ -311,7 +313,8 @@ export type AgentSessionRuntimeEvent =
       sequence: number;
       sessionId: string;
       emittedAtMs: number;
-      turnId: string;
+      /** Omit for Session output that does not belong to a foreground host turn. */
+      turnId?: string;
       agentTurnId?: string;
       kind: 'tool-progress';
       toolCallId: string;
@@ -322,7 +325,8 @@ export type AgentSessionRuntimeEvent =
       sequence: number;
       sessionId: string;
       emittedAtMs: number;
-      turnId: string;
+      /** Omit for Session output that does not belong to a foreground host turn. */
+      turnId?: string;
       agentTurnId?: string;
       kind: 'tool-result';
       toolCallId: string;
@@ -345,7 +349,8 @@ export type AgentSessionRuntimeEvent =
       sequence: number;
       sessionId: string;
       emittedAtMs: number;
-      turnId: string;
+      /** Omit for Session output that does not belong to a foreground host turn. */
+      turnId?: string;
       agentTurnId?: string;
       kind: 'file-edit';
       editId: string;
@@ -362,6 +367,14 @@ export type AgentSessionRuntimeEvent =
       emittedAtMs: number;
       kind: 'usage-observed';
       observationId: string;
+      /** Witnessed accounting identity and counter semantics, never an inferred host turn identity. */
+      accounting?: Readonly<{
+        nativeSessionId?: string;
+        inferenceId?: string;
+        inputIncludesCache?: boolean;
+        outputIncludesReasoning?: boolean;
+        historyComplete?: boolean;
+      }>;
       turnId?: string;
       source: string;
       scope: 'turn_delta' | 'session_cumulative' | 'session_final';
@@ -801,11 +814,16 @@ export interface AgentSessionRuntime extends Disposable {
     | Readonly<{ kind: 'terminal_launch'; plan: AgentTerminalLaunchPlan }>
     | Readonly<{ kind: 'managed_terminal'; handle: TerminalHostHandle }>
   >;
-  /** Receives current native source evidence after all preceding transcript output has durable custody. */
+  /**
+   * Receives ordered native source evidence after preceding output has durable
+   * custody. Initial replay establishes provider correlation only; it must not
+   * admit historical rows as fresh work. Omitted phase retains live semantics.
+   */
   observeSourceTranscript?(input: Readonly<{
     providerSessionId: string;
     sourceId: string;
     row: JsonValue;
+    phase?: 'initial_replay';
   }>): Promise<void>;
   connectedServiceApplicationSettled?(request: Readonly<{
     serviceId: string;

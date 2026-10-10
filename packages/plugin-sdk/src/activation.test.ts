@@ -112,6 +112,7 @@ describe('plugin activation contract', () => {
             | 'resolveLinkedIdentity'
             | 'pageTranscript'
             | 'readAfterTranscript'
+            | 'readAccounting'
             | 'resolveManagedEndpointService'
         >();
         expectTypeOf<AgentExternalSessionsContribution>().not.toHaveProperty('status');

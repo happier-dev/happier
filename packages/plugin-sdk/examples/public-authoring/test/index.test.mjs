@@ -2,7 +2,108 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 
+test('authors independently bound UsageQuery fields and subscribes to their admitted host read', async () => {
+  const { usageQueryAuthoring: example } = await import('../dist/daemon.js');
+  assert.ok(example, 'the public author build must expose the UsageQuery consumer');
+  const { parsePluginManifest } = await import('@happier-dev/plugin-sdk/manifest');
+  const { createWidgetActionInputResolverV1 } = await import('@happier-dev/protocol/widgets/widgetActionInputResolverV1');
+  const { createPluginUiTestkit, createSurfaceContextFixture } = await import('@happier-dev/plugin-sdk/testing');
+  const parsed = parsePluginManifest(example.manifest);
+  assert.equal(parsed.ok, true, JSON.stringify(parsed));
+  const descriptor = parsed.manifest.contributes.ui.views[0];
+  let scope = { agents: [['claude']], machines: [['machine-one']], projects: [['project-one']],
+    sources: [['runtime']], session: [null], costBasis: ['reported'] };
+  const resolver = createWidgetActionInputResolverV1({
+    readDescriptor: async () => descriptor,
+    readContext: async () => scope,
+    readViewerValues: async () => ({ values: {} }),
+    validateValue: async () => ({ status: 'valid' }),
+    resolveOptions: async () => { throw new Error('The public host type needs no plugin options Resource'); },
+  });
+  const request = { ref: { surface: { serverId: 'home', accountId: 'account', owner: { kind: 'home' } }, instanceId: 'usage' },
+    instance: { v: 1, id: 'usage', definition: { kind: 'installed', surface: { pluginId: example.manifest.id, localId: descriptor.id } },
+      bindings: example.bindings }, context: {} };
+  const first = await resolver.resolve(request);
+  assert.equal(first.status, 'ready', JSON.stringify(first));
+  scope = { agents: [['codex']], machines: [['machine-two']], projects: [['project-two']],
+    sources: [['native']], session: ['session-two'], costBasis: ['estimated'] };
+  const second = await resolver.resolve(request);
+  assert.equal(second.status, 'ready', JSON.stringify(second));
+  assert.deepEqual(second.input.query, { period: { startMs: 1790812800000, endMs: 1790899200000 },
+    ...Object.fromEntries(Object.entries(scope).map(([key, values]) => [key, values[0]])), metric: 'cost', breakdown: ['model'] });
+  assert.deepEqual(second.input.query.period, first.input.query.period);
+  for (const path of ['query.metric', 'query.breakdown']) {
+    const followedPresentation = await resolver.resolve({ ...request, instance: { ...request.instance,
+      bindings: { ...example.bindings, [path]: { kind: 'context', slot: 'costBasis' } } } });
+    assert.equal(followedPresentation.status, 'invalid');
+    assert.ok(followedPresentation.fields.some(field => field.path === path
+      && field.reasonCode === 'widget_context_binding_forbidden'));
+  }
+  const forgedAuthority = await resolver.resolve({ ...request, instance: { ...request.instance,
+    bindings: { ...example.bindings, query: { kind: 'value', value: { accountId: 'other-account' } } } } });
+  assert.equal(forgedAuthority.status, 'invalid');
+  assert.ok(forgedAuthority.fields.some(field => field.path === 'query'));
+  const digest = 'sha256:' + 'a'.repeat(64);
+  const revisedDigest = 'sha256:' + 'b'.repeat(64);
+  const expectedReference = { hostRead: 'usage.query', input: { queries: [second.input.query] } };
+  const revisions = [];
+  let watchSignal;
+  const fixture = await createPluginUiTestkit({
+    identity: { instanceId: 'usage-author', mountNonce: 'usage-author-mount' },
+    authorPlugin: { id: example.manifest.id, version: example.manifest.version },
+    surface: { kind: 'author-surface' }, surfaceContext: createSurfaceContextFixture(),
+    adapter: { async mount() { return { async snapshot() { return { revision: 1, nodes: [] }; },
+      async update() {}, async invoke() {}, async dispose() {} }; } },
+    handlers: { watchResource: ({ resource, signal }) => {
+      assert.deepEqual(resource, expectedReference);
+      watchSignal = signal;
+      return { digest };
+    } },
+  });
+  try {
+    const subscription = await example.watchUsage(fixture.context.hostApi, second.input.query,
+      event => revisions.push(event));
+    assert.equal(subscription.admittedDigest, digest);
+    fixture.invalidateResource(expectedReference, revisedDigest);
+    assert.deepEqual(revisions.map(event => event.digest), [revisedDigest]);
+    await fixture.retire('account-access-lost');
+    assert.equal(watchSignal.aborted, true);
+    assert.throws(() => fixture.invalidateResource(expectedReference, digest), { code: 'stale_surface' });
+    assert.deepEqual(revisions.map(event => event.digest), [revisedDigest]);
+    await assert.rejects(example.watchUsage(fixture.context.hostApi, second.input.query, () => {}),
+      { code: 'ui_host_unavailable' });
+    subscription.dispose();
+  } finally { await fixture.dispose(); }
+});
+
+test('invokes the public Coach Resource and Action and refuses denied or retired invocations', async () => {
+  const { usageCoachAuthoring: example } = await import('../dist/daemon.js');
+  assert.ok(example, 'the public author build must expose the Coach consumer');
+  const { createPluginTestkit } = await import('@happier-dev/plugin-sdk/testing');
+  const testkit = await createPluginTestkit({ manifest: example.manifest, module: example });
+  const deniedCaller = await createPluginTestkit({
+    manifest: { ...example.manifest, id: 'acme.coach-reader', contributes: { actions: [{
+      ...example.manifest.contributes.actions[0], id: 'inspect',
+    }] } }, actionTargets: [testkit],
+    module: { activate(api) { api.actions.register('inspect', async (_input, context) =>
+      context.services.actions.execute(example.inspectAction, {})); } },
+  });
+  try {
+    const resource = testkit.registration('resources', 'findings');
+    assert.ok(resource);
+    const controller = new AbortController();
+    assert.deepEqual(JSON.parse(await resource.read({ signal: controller.signal })), example.finding);
+    assert.deepEqual(await testkit.invokeAction(example.inspectAction.localId, {}), example.finding);
+    await assert.rejects(deniedCaller.invokeAction('inspect', {}), { code: 'plugin_action_unavailable' });
+    controller.abort();
+    assert.throws(() => resource.read({ signal: controller.signal }), { name: 'AbortError' });
+    await testkit.dispose();
+    await assert.rejects(testkit.invokeAction(example.inspectAction.localId, {}), { code: 'plugin_testkit_disposed' });
+  } finally { await deniedCaller.dispose(); await testkit.dispose(); }
+});
+
 test('retains the portable production reference package contract', async () => {
+  const { artifactHtmlBundleFromBodyV1 } = await import('@happier-dev/plugin-sdk/ui');
   const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
   // This is a code-defined package. The canonical author build evaluates its
   // `definePlugin(...)` entry and materializes the generated cold manifest;
@@ -94,12 +195,12 @@ test('retains the portable production reference package contract', async () => {
       {
         id: 'review-services-hosted-html-renderer',
         kind: 'hostedHtml',
-        source: { kind: 'html', html: '<main><h1>Review service</h1><p>Ready for review.</p></main>' },
+        source: artifactHtmlBundleFromBodyV1('<main><h1>Review service</h1><p>Ready for review.</p></main>'),
       },
       {
         id: 'review-project-hosted-html-renderer',
         kind: 'hostedHtml',
-        source: { kind: 'html', html: '<main><h1>Project review</h1><p>Ready for review.</p></main>' },
+        source: artifactHtmlBundleFromBodyV1('<main><h1>Project review</h1><p>Ready for review.</p></main>'),
       },
     ],
   );

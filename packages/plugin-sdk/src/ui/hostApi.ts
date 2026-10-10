@@ -70,6 +70,10 @@ export type { PluginLiveStreamReferenceV1 } from './publicContract.js';
 export type { StoredImageRefV1, PluginUiReadStoredImageResultV1 } from './publicContract.js';
 import type { PluginDiagnosticData } from '../diagnostics.js';
 import type { JsonValue, PluginReference } from '../identity.js';
+import type { PluginUiHostReadReferenceV1 as ProtocolPluginUiHostReadReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
+/** Host reads share Resource lifecycle while retaining the Action's caller policy. */
+export type PluginUiHostReadReference = ProtocolPluginUiHostReadReferenceV1;
+export type PluginUiResourceReference = PluginReference | PluginUiHostReadReference;
 import type { InteractionSeverity } from '../interactions.js';
 import type {
     ComposerAttachmentAuthorValueV1,
@@ -512,7 +516,8 @@ export interface PluginUiHostApi {
         settlement: PluginUiEphemeralInputSettlementV1,
         options?: PluginCancellationOptions,
     ): Promise<void>;
-    readResource(resource: PluginReference, options?: PluginCancellationOptions): Promise<ResourceContent>;
+    /** Host-read references borrow the Account Resource owner after normal Action caller admission. */
+    readResource(resource: PluginUiResourceReference, options?: PluginCancellationOptions): Promise<ResourceContent>;
     /**
      * Read host-derived metadata for the exact opaque workspace-file reference
      * bound to this selected viewer mount. No path-resolution or directory API
@@ -613,12 +618,12 @@ export interface PluginUiHostApi {
      * re-reads after an `invalidated` event rather than receiving bytes here.
      *
      * A **packaged** resource is immutable within its generation, so a host
-     * serving only packaged resources never advertises this method and calling
+     * serving only packaged resources and no observable host reads never advertises this method and calling
      * it rejects with `unsupported_method`. A **dynamic** resource is backed by
      * the plugin's registered producer and is genuinely watchable.
      */
     watchResource(
-        resource: PluginReference,
+        resource: PluginUiResourceReference,
         listener: (event: ResourceSubscriptionEvent) => void,
         options?: PluginCancellationOptions,
     ): Promise<Disposable>;

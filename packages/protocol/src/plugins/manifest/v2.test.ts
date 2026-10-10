@@ -1,3 +1,4 @@
+import { artifactHtmlBundleFromBodyV1 } from '../../artifacts/artifactHtmlV1.js';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import {
@@ -23,6 +24,25 @@ function manifest(overrides: Record<string, unknown> = {}): Record<string, unkno
 }
 
 describe('plugin manifest v2 root contract', () => {
+  it('preserves an optional installation default hint and rejects other target declarations', () => {
+    const admitted = ingestPluginManifestV2(manifest({ executionTarget: { default: 'installation' } }));
+    expect(admitted.ok ? admitted.manifest.executionTarget : admitted.diagnostics)
+      .toEqual({ default: 'installation' });
+    const omitted = ingestPluginManifestV2(manifest());
+    expect(omitted.ok).toBe(true);
+    if (omitted.ok) expect(omitted.manifest).not.toHaveProperty('executionTarget');
+    for (const executionTarget of [
+      {},
+      { default: 'firstOnline' },
+      { default: 'installation', machineId: 'machine-a' },
+      { default: 'installation', permission: 'execute' },
+      null,
+    ]) expect(ingestPluginManifestV2(manifest({ executionTarget }))).toMatchObject({
+      ok: false,
+      diagnostics: expect.arrayContaining([expect.objectContaining({ code: 'plugin_manifest_invalid' })]),
+    });
+  });
+
   it('projects credential use from only the selected Action HostAccess requests', () => {
     const accountRequest = (id: string, operations: readonly string[]) => ({ id, capability: 'connectedAccounts', reason: id,
       scope: { serviceRefs: ['account'], operations } });
@@ -41,7 +61,7 @@ describe('plugin manifest v2 root contract', () => {
   });
   it('admits Widget refresh dependencies only for its own declared Resources', () => {
     const resources = [{ id: 'live-status', source: 'dynamic', kind: 'config', contentType: 'text/plain' }];
-    const renderer = { id: 'native', kind: 'hostedHtml', source: { kind: 'html', html: '<p>Status</p>' } };
+    const renderer = { id: 'native', kind: 'hostedHtml', source: artifactHtmlBundleFromBodyV1('<p>Status</p>') };
     const ingest = (resource: unknown) => ingestPluginManifestV2(manifest({ contributes: {
       resources, ui: { renderers: [renderer], views: [{ sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' }, id: 'status', container: 'widget', renderer: 'native',
         target: { kind: 'app' }, resources: [resource] }] },

@@ -50,6 +50,8 @@ export type {
     PluginUiActionResultFor,
     PluginUiActionTransportResult,
     PluginUiHostApi,
+    PluginUiHostReadReference,
+    PluginUiResourceReference,
     RenderContext,
     RenderSurface,
     ResourceContent,

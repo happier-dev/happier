@@ -406,6 +406,7 @@
     "examples/public-authoring/ui/reviewPanel.css",
     "examples/public-authoring/ui/reviewPanel.native.tsx",
     "examples/public-authoring/ui/reviewPanel.web.tsx",
+    "examples/public-authoring/usageCoach.ts",
     "examples/public-authoring/voiceProvider.ts",
     "examples/public-authoring/voiceSpeechProvider.ts",
     "examples/react-native-dev-hot-reload/.happier-plugin/plugin.json",

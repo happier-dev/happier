@@ -23,6 +23,9 @@ export type AgentSessionRealtimeStartInput = Readonly<{
         kind: 'webrtc';
         offerSdp: string;
     }>;
+    /** Host-prepared exact-Session context, delivered through the Agent's additive
+     * realtime carrier. This closed input is never accepted from the public RPC. */
+    systemAppendBlocks?: readonly string[];
 }>;
 
 export type AgentSessionRealtimeLifecycleEvent = Readonly<{

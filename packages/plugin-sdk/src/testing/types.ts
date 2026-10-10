@@ -74,6 +74,7 @@ export type PluginTestkitRegistrationByFamily = Readonly<{
     dragSources: Parameters<PluginClientApi['dragSources']['register']>[1];
     dropTargets: Parameters<PluginClientApi['dropTargets']['register']>[1];
     captureSources: Parameters<PluginApi['captureSources']['register']>[1];
+    projectNativeAdapters: Parameters<PluginApi['projectNativeAdapters']['register']>[1];
     actions: Parameters<PluginApi['actions']['register']>[1];
     agents: Readonly<{
         factory?: Parameters<PluginApi['agents']['register']>[1];

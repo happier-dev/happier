@@ -1,5 +1,6 @@
 import { utf8ToBytes } from '@noble/hashes/utils';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { webcrypto } from 'node:crypto';
 
 import {
   computePluginUiArtifactFileSetSha256DigestV1,
@@ -11,6 +12,24 @@ import {
 } from './artifactIntegrity';
 
 describe('plugin UI artifact byte integrity', () => {
+  it('uses an asynchronous platform digest with the identical canonical file-set encoding', async () => {
+    const files = [
+      { relativePath: 'assets/é.js', bytes: utf8ToBytes('😀') },
+      { relativePath: 'entry.cjs', bytes: utf8ToBytes('exports.renderSurface = () => null;') },
+    ];
+    const sha256 = vi.fn(async (bytes: Uint8Array) => new Uint8Array(
+      await webcrypto.subtle.digest('SHA-256', new Uint8Array(bytes)),
+    ));
+    const expected = computePluginUiArtifactFileSetSha256DigestV1(files);
+
+    // Native hashing must receive the same path-bound bytes as the build owner.
+    await expect(computePluginUiArtifactFileSetSha256DigestV1([...files].reverse(), sha256)).resolves.toBe(expected);
+    expect(sha256).toHaveBeenCalledOnce();
+    await expect(computePluginUiArtifactSha256DigestV1(files[0].bytes, sha256)).resolves.toBe(
+      computePluginUiArtifactSha256DigestV1(files[0].bytes),
+    );
+  });
+
   it('accepts only canonical sha256 hex digest identifiers at schema boundaries', () => {
     expect(PluginUiArtifactDigestV1Schema.safeParse(`sha256:${'a'.repeat(64)}`).success).toBe(true);
     expect(PluginUiArtifactDigestV1Schema.safeParse('sha256:bundle').success).toBe(false);

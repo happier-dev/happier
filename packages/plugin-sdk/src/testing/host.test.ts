@@ -1326,7 +1326,15 @@ describe('createPluginTestkit', () => {
     }
   });
 
-  it('rejects a mismatched expected target execution origin before the testkit target handler', async () => {
+  it.each([
+    { serverIdentityId: 'srv_plugin_testkit', materializationRef: {
+      pluginId: 'acme.beta', machineId: 'plugin-testkit-machine', materializationId: 'plugin-testkit-acme.beta-before',
+    } },
+    { serverIdentityId: 'srv_plugin_testkit', sourceRef: {
+      pluginId: 'acme.beta', machineId: 'plugin-testkit-machine',
+      sourceCustody: { kind: 'development', registeredRootId: 'source-root' },
+    } },
+  ] as const)('rejects a mismatched expected target execution origin before the testkit target handler (%j)', async (expectedExecutionOrigin) => {
     const targetHandler = vi.fn(async () => ({ accepted: true }));
     const beta = await createPluginTestkit({
       manifest: actionManifest('acme.beta', 'receive', ['plugin']),
@@ -1347,14 +1355,7 @@ describe('createPluginTestkit', () => {
                 { pluginId: 'acme.beta', localId: 'receive' },
                 { title: 'Ready' },
                 {
-                  expectedExecutionOrigin: {
-                    serverIdentityId: 'srv_plugin_testkit',
-                    materializationRef: {
-                      pluginId: 'acme.beta',
-                      machineId: 'plugin-testkit-machine',
-                      materializationId: 'plugin-testkit-acme.beta-before',
-                    },
-                  },
+                  expectedExecutionOrigin,
                 },
               );
             } catch (error) {
@@ -2211,6 +2212,8 @@ describe('createPluginTestkit', () => {
     class StructuralProviderBinding {
       readonly ignoredByRegistration = true;
       readonly owner = 'structural-provider-binding';
+      supportsClaudeHelperModels: true | undefined = true;
+      supportsModelSettings: true | undefined = true;
 
       get v() {
         return 1 as const;
@@ -2255,7 +2258,11 @@ describe('createPluginTestkit', () => {
     });
     const registered = testkit.registration('agents', 'assistant');
     const snapshot = registered?.providerBinding;
-    expect(snapshot).toMatchObject({ v: 1, adapterVersion: 1 });
+    expect(snapshot).toMatchObject({ v: 1, adapterVersion: 1,
+      supportsClaudeHelperModels: true, supportsModelSettings: true });
+    providerBinding.supportsClaudeHelperModels = undefined;
+    providerBinding.supportsModelSettings = undefined;
+    expect(snapshot).toMatchObject({ supportsClaudeHelperModels: true, supportsModelSettings: true });
     expect(snapshot).not.toBe(providerBinding);
     expect(snapshot).not.toHaveProperty('ignoredByRegistration');
     expect(Object.isFrozen(snapshot)).toBe(true);
@@ -2265,11 +2272,13 @@ describe('createPluginTestkit', () => {
     await testkit.dispose();
   });
 
-  it('rejects missing or non-callable Agent provider binding operations', async () => {
+  it('rejects missing or non-callable Agent provider binding operations and malformed capability facts', async () => {
     const materialize = async () => ({ v: 1 as const, kind: 'spawnEnv' as const, env: [] });
     for (const providerBinding of [
       { v: 1, adapterVersion: 1, materialize },
       { v: 1, adapterVersion: 1, prepare: null, materialize },
+      { v: 1, adapterVersion: 1, prepare: () => ({}), materialize, supportsClaudeHelperModels: false },
+      { v: 1, adapterVersion: 1, prepare: () => ({}), materialize, supportsModelSettings: 'true' },
     ]) {
       await expect(createPluginTestkit({
         manifest: agentManifest,

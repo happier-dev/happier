@@ -551,6 +551,19 @@ describe('external Agent runtime source authoring', () => {
     }, fixtureCommandTimeoutMs + 5_000);
 });
 
+describe('external project native adapter source authoring', () => {
+    it('type-checks native definitions and real Project execution, output, service and preview Action consumers using public imports', async () => {
+        await runBoundedFixtureCommand('external native adapter source NodeNext typecheck', externalTargetedPackageFixtureRoot, [
+            join(repoRoot, 'scripts', 'workspaces', 'runTypeScriptCli.mjs'),
+            '-p', join(externalTargetedPackageFixtureRoot, 'tsconfig.project-native.source.json'),
+        ]);
+    }, fixtureCommandTimeoutMs + 5_000);
+
+    it('type-checks observed-entry worker and service-placement Action consumers against the public source API', async () => {
+        await compileFixture('tsconfig.project-workers.source.json');
+    }, fixtureCommandTimeoutMs + 5_000);
+});
+
 describe('admitted targeted-operation source identity', () => {
     it('keeps definePlugin inference exactly assignable to ActionsService without casts', async () => {
         await compileFixture('tsconfig.admittedTargetedOperationIdentity.json');

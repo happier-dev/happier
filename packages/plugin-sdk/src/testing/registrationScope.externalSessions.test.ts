@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { AgentExternalSessionsContribution } from '../activation.js';
+import type { AgentExternalSessionsContribution, AgentExternalSessionsReadAccountingRequest } from '@happier-dev/plugin-sdk/sessions/external';
 import type { AgentRuntimeFactory } from '../agentRuntime/index.js';
 import { createPluginRegistrationScope } from '../host/registration/index.js';
 
@@ -42,6 +42,22 @@ function scope(requiredFields: readonly ('factory' | 'externalSessions')[] = ['e
 }
 
 describe('Agent External Sessions registration staging', () => {
+    it('captures the optional accounting facet through manifest-admitted External Sessions registration', async () => {
+        const registrationScope = scope();
+        registrationScope.api.agents.registerExternalSessions('assistant', {
+            ...externalSessions,
+            readAccounting: async (request: AgentExternalSessionsReadAccountingRequest) => ({ ok: true, value: { outcome: request.cursor ? 'source_replaced' : 'unchanged' } }),
+        });
+        const [registration] = registrationScope.commit();
+        const snapshot = registration?.family === 'agents' ? registration.value.externalSessions : undefined;
+        if (!snapshot?.readAccounting) throw new Error('Expected admitted accounting facet');
+        expect(await snapshot.readAccounting({ source: { kind: 'fixture' }, signal: new AbortController().signal,
+            managedEndpointRead: async () => { throw new Error('unavailable'); },
+            exec: {} as Parameters<typeof snapshot.readAccounting>[0]['exec'],
+            ripgrep: { run: async () => ({ exitCode: 1, stdout: '', stderr: '' }) },
+        })).toEqual({ ok: true, value: { outcome: 'unchanged' } });
+        expect(Object.isFrozen(snapshot)).toBe(true);
+    });
     it('admits and statically captures the optional managed endpoint service declaration', () => {
         const declaring: AgentExternalSessionsContribution = {
             ...externalSessions,

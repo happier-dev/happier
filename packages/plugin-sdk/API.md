@@ -106,6 +106,7 @@
 | `.` | `PluginErrorData` | type | any |
 | `.` | `PluginExecutionScopeV1` | type | daemon |
 | `.` | `PluginIdentity` | type | any |
+| `.` | `PluginInputTypeReferenceV1` | type | any |
 | `.` | `PluginInvocationCaller` | type | daemon |
 | `.` | `PluginInvocationContext` | type | daemon |
 | `.` | `PluginInvocationContributionIdentity` | type | any |
@@ -115,6 +116,17 @@
 | `.` | `PluginOperationAvailability` | type | any |
 | `.` | `PluginPath` | type | daemon |
 | `.` | `PluginProjectNativeAdapterContributionV1` | type | any |
+| `.` | `PluginProjectNativeAdapterDeclarationV1` | type | any |
+| `.` | `PluginProjectNativeAdapterDefinitionV1` | type | any |
+| `.` | `PluginProjectNativeAdapterRuntimeV1` | type | any |
+| `.` | `PluginProjectNativeCommandRequestV1` | type | any |
+| `.` | `PluginProjectNativeCommandResultV1` | type | any |
+| `.` | `PluginProjectNativeCommandV1` | type | any |
+| `.` | `PluginProjectNativeEnvironmentRequestV1` | type | any |
+| `.` | `PluginProjectNativeEnvironmentResultV1` | type | any |
+| `.` | `PluginProjectNativeFailureV1` | type | any |
+| `.` | `PluginProjectNativeFileFactV1` | type | any |
+| `.` | `PluginProjectNativeInspectionV1` | type | any |
 | `.` | `PluginReference` | type | any |
 | `.` | `PluginRemediationData` | type | any |
 | `.` | `PluginRequestInterceptorDefinition` | type | any |
@@ -135,6 +147,10 @@
 | `.` | `PluginSettingsSnapshot` | type | daemon |
 | `.` | `PluginSourceCustodyV1` | type | daemon |
 | `.` | `PluginWorkflowContributionV1` | type | any |
+| `.` | `ProjectDefinitionDetectionV1` | type | any |
+| `.` | `ProjectEnvironmentSelectionV1` | type | any |
+| `.` | `ProjectNativeAdapterRoleV1` | type | any |
+| `.` | `ProjectNativeRefV1` | type | any |
 | `.` | `ProtocolActionSchemaInput` | type | any |
 | `.` | `ProtocolActionSchemaOutput` | type | any |
 | `.` | `ReadonlyAuthorDeclaration` | type | any |
@@ -270,6 +286,7 @@
 | `./actions` | `ExecutionRunControlActionResultById` | type | any |
 | `./actions` | `ExternalSessionsActionInputById` | type | any |
 | `./actions` | `ExternalSessionsActionResultById` | type | any |
+| `./actions` | `ExternalSessionsSource` | type | any |
 | `./actions` | `FilesystemActionInputById` | type | any |
 | `./actions` | `FilesystemActionResultById` | type | any |
 | `./actions` | `FindActionInputById` | type | any |
@@ -457,6 +474,12 @@
 | `./actions` | `TodoSessionLinkActionInputById` | type | any |
 | `./actions` | `TodoSessionLinkActionResultById` | type | any |
 | `./actions` | `ToolContribution` | type | any |
+| `./actions` | `UsageActionInputById` | type | any |
+| `./actions` | `UsageActionResultById` | type | any |
+| `./actions` | `UsageCoachEvaluation` | type | any |
+| `./actions` | `UsageCoachFinding` | type | any |
+| `./actions` | `UsageSourcesActionInputById` | type | any |
+| `./actions` | `UsageSourcesActionResultById` | type | any |
 | `./actions` | `VoiceControlsActionInputById` | type | any |
 | `./actions` | `VoiceControlsActionResultById` | type | any |
 | `./actions` | `VoiceProviderSettingsJsonValueV1` | type | any |
@@ -576,6 +599,7 @@
 | `./agents/runtime` | `AgentAcpToolUpdateContentSanitizer` | type | daemon |
 | `./agents/runtime` | `AgentAcpToolUpdatePolicy` | type | daemon |
 | `./agents/runtime` | `AgentAcpTransport` | type | daemon |
+| `./agents/runtime` | `AgentAcpUsageLimitDiagnosticDefinition` | type | daemon |
 | `./agents/runtime` | `AgentAuthorRestoreCheckpointResult` | type | daemon |
 | `./agents/runtime` | `AgentAuthoredSessionRuntimeCapabilities` | type | daemon |
 | `./agents/runtime` | `AgentCliAuthCommandResultV1` | type | daemon |
@@ -1103,6 +1127,8 @@
 | `./connected-accounts` | `PluginConnectedAccountRegistrationApi` | type | daemon |
 | `./connected-accounts` | `ProviderAccountSubscriptionV1` | type | any |
 | `./connected-accounts` | `ProviderAccountUsageQuotaScopeV1` | type | any |
+| `./connected-accounts` | `ProviderResetTextEvidenceParser` | type | any |
+| `./connected-accounts` | `ProviderResetTiming` | type | any |
 | `./connected-accounts` | `QualifiedConnectedAccountRef` | type | any |
 | `./connected-accounts` | `QualifiedConnectedAccountRefJsonSchema` | value | any |
 | `./connected-accounts` | `QualifiedConnectedAccountRefSchema` | value | any |
@@ -1111,10 +1137,16 @@
 | `./connected-accounts` | `QuotaFetchErrorCode` | type | any |
 | `./connected-accounts` | `TokenCredentialRecord` | type | any |
 | `./connected-accounts` | `UnsupportedAccountUsage` | type | any |
+| `./connected-accounts` | `addSafeEpochMilliseconds` | value | any |
 | `./connected-accounts` | `buildConnectedAccountRequestAuthClientSource` | value | any |
 | `./connected-accounts` | `buildOauthAuthEntry` | value | daemon |
 | `./connected-accounts` | `defineAuthMaterialization` | value | daemon |
+| `./connected-accounts` | `normalizeNonNegativeSafeMilliseconds` | value | any |
+| `./connected-accounts` | `parseCompactDurationMs` | value | any |
 | `./connected-accounts` | `parseCredentialRecord` | value | daemon |
+| `./connected-accounts` | `parseProviderResetAt` | value | any |
+| `./connected-accounts` | `parseProviderTimestampMs` | value | any |
+| `./connected-accounts` | `parseRetryAfterHeader` | value | any |
 | `./connected-accounts` | `requireOauthCredentialRecordWithExpiry` | value | daemon |
 | `./connected-accounts` | `requireTokenCredentialRecord` | value | daemon |
 | `./connected-accounts` | `unsupportedAccountUsage` | value | any |
@@ -1247,6 +1279,7 @@
 | `./first-party/claude` | `normalizeClaudeUnifiedTerminalResumeChoice` | value | any |
 | `./first-party/claude` | `normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy` | value | any |
 | `./first-party/claude` | `readClaudeSettingSourcesV2` | value | any |
+| `./first-party/connected-accounts` | `ANTIGRAVITY_OAUTH_PROFILE` | value | any |
 | `./first-party/connected-accounts` | `CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1` | value | any |
 | `./first-party/connected-accounts` | `CLAUDE_SUBSCRIPTION_OAUTH_PROFILE` | value | any |
 | `./first-party/connected-accounts` | `CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1` | value | any |
@@ -1420,6 +1453,9 @@
 | `./managed-services` | `ManagedServiceLocalId` | type | daemon |
 | `./managed-services` | `ManagedServiceLocalIdSchema` | value | daemon |
 | `./managed-services` | `ManagedServiceMaterializationInjection` | type | daemon |
+| `./managed-services` | `ManagedServiceNativeInstanceV1` | type | daemon |
+| `./managed-services` | `ManagedServiceNativeLifecycleV1` | type | daemon |
+| `./managed-services` | `ManagedServiceNativeObservationV1` | type | daemon |
 | `./managed-services` | `ManagedServiceRequest` | type | daemon |
 | `./managed-services` | `ManagedServiceResponse` | type | daemon |
 | `./managed-services` | `ManagedServiceSnapshot` | type | daemon |
@@ -1902,6 +1938,7 @@
 | `./scm` | `ScmPullRequestState` | type | any |
 | `./scm` | `ScmPullRequestStatusProjection` | type | any |
 | `./scm` | `ScmPullRequestSummary` | type | any |
+| `./scm` | `ScmPullRequestWorkEvidence` | type | any |
 | `./scm` | `ScmPushMode` | type | any |
 | `./scm` | `ScmReconcilePolicy` | type | any |
 | `./scm` | `ScmRefreshPolicy` | type | any |
@@ -1934,6 +1971,7 @@
 | `./scm` | `ScmRepositoryInitRequest` | type | any |
 | `./scm` | `ScmRepositoryInitResponse` | type | any |
 | `./scm` | `ScmRepositoryOperationKind` | type | any |
+| `./scm` | `ScmRepositoryProvisioningFailureResponseSchema` | value | any |
 | `./scm` | `ScmRepositoryRemoveIndexLockRequest` | type | any |
 | `./scm` | `ScmRepositoryRemoveIndexLockResponse` | type | any |
 | `./scm` | `ScmReviewWorkspaceCurrentness` | type | any |
@@ -2185,6 +2223,8 @@
 | `./sessions` | `sanitizeHappierStructuredInputV1` | value | any |
 | `./sessions/external` | `AGENT_EXTERNAL_SESSION_HOOK_LIMITS` | value | daemon |
 | `./sessions/external` | `AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS` | value | daemon |
+| `./sessions/external` | `AgentExternalSessionAccountingObservation` | type | daemon |
+| `./sessions/external` | `AgentExternalSessionAccountingSource` | type | daemon |
 | `./sessions/external` | `AgentExternalSessionCandidate` | type | daemon |
 | `./sessions/external` | `AgentExternalSessionCandidateIndexLookup` | type | daemon |
 | `./sessions/external` | `AgentExternalSessionCandidateIndexState` | type | daemon |
@@ -2238,6 +2278,8 @@
 | `./sessions/external` | `AgentExternalSessionsManagedEndpointReadResponse` | type | daemon |
 | `./sessions/external` | `AgentExternalSessionsManagedEndpointServiceRequest` | type | daemon |
 | `./sessions/external` | `AgentExternalSessionsPageTranscriptRequest` | type | daemon |
+| `./sessions/external` | `AgentExternalSessionsReadAccountingRequest` | type | daemon |
+| `./sessions/external` | `AgentExternalSessionsReadAccountingResult` | type | daemon |
 | `./sessions/external` | `AgentExternalSessionsReadAfterDiagnostic` | type | daemon |
 | `./sessions/external` | `AgentExternalSessionsReadAfterTranscriptRequest` | type | daemon |
 | `./sessions/external` | `AgentExternalSessionsReadAfterTranscriptResult` | type | daemon |
@@ -2294,6 +2336,10 @@
 | `./sessions/external` | `validateAgentExternalSessionTakeoverLaunchPlan` | value | daemon |
 | `./sessions/external` | `validateAgentExternalSessionTakeoverResolveLaunchRequest` | value | daemon |
 | `./sessions/external` | `validateAgentExternalSessionTakeoverResolveLaunchResult` | value | daemon |
+| `./sessions/file-stores` | `AgentAccountingJsonlProjection` | type | daemon |
+| `./sessions/file-stores` | `AgentAccountingJsonlState` | type | daemon |
+| `./sessions/file-stores` | `ExternalSessionContentSearchControl` | type | daemon |
+| `./sessions/file-stores` | `ExternalSessionContentSearchYield` | value | daemon |
 | `./sessions/file-stores` | `JsonlByteCursorV1` | type | daemon |
 | `./sessions/file-stores` | `JsonlForwardLine` | type | daemon |
 | `./sessions/file-stores` | `JsonlParsedLine` | type | daemon |
@@ -2307,8 +2353,10 @@
 | `./sessions/file-stores` | `SessionFileStoreResolution` | type | daemon |
 | `./sessions/file-stores` | `SessionFileStoreResolutionInput` | type | daemon |
 | `./sessions/file-stores` | `SessionFileStoreRootDescriptorV1` | type | daemon |
+| `./sessions/file-stores` | `createExternalSessionContentSearchControl` | value | daemon |
 | `./sessions/file-stores` | `decodeIndexCursor` | value | daemon |
 | `./sessions/file-stores` | `decodeJsonlByteCursor` | value | daemon |
+| `./sessions/file-stores` | `discoverAgentAccountingJsonlSource` | value | daemon |
 | `./sessions/file-stores` | `encodeIndexCursor` | value | daemon |
 | `./sessions/file-stores` | `encodeJsonlByteCursor` | value | daemon |
 | `./sessions/file-stores` | `extractUserMessageText` | value | daemon |
@@ -2317,6 +2365,7 @@
 | `./sessions/file-stores` | `listSessionFileStoreRoots` | value | daemon |
 | `./sessions/file-stores` | `parseDefaultSessionHeader` | value | daemon |
 | `./sessions/file-stores` | `parseSessionIdFromFileName` | value | daemon |
+| `./sessions/file-stores` | `readAgentAccountingJsonlSource` | value | daemon |
 | `./sessions/file-stores` | `readJsonlAfterCursor` | value | daemon |
 | `./sessions/file-stores` | `readJsonlFileBackwardPage` | value | daemon |
 | `./sessions/file-stores` | `readJsonlFileForward` | value | daemon |
@@ -2326,6 +2375,7 @@
 | `./sessions/file-stores` | `resolveSessionFileStoreDirsSync` | value | daemon |
 | `./sessions/file-stores` | `resolveSessionFileStoreLaunchEnvironment` | value | daemon |
 | `./sessions/file-stores` | `scanJsonlSessionFile` | value | daemon |
+| `./sessions/file-stores` | `searchExternalSessionContent` | value | daemon |
 | `./sessions/file-stores` | `sessionFileNameMatchesSessionId` | value | daemon |
 | `./sessions/subagents` | `ExecutionRunProfileContribution` | type | any |
 | `./sessions/subagents` | `ParticipantMessageV1` | type | any |
@@ -2626,6 +2676,7 @@
 | `./ui` | `PluginUiEntityDropDestinationV1` | type | any |
 | `./ui` | `PluginUiHostApi` | type | any |
 | `./ui` | `PluginUiHostMethodV1` | type | any |
+| `./ui` | `PluginUiHostReadReference` | type | any |
 | `./ui` | `PluginUiIconTokenV1` | type | any |
 | `./ui` | `PluginUiJsonObjectV1` | type | any |
 | `./ui` | `PluginUiJsonValueV1` | type | any |
@@ -2634,6 +2685,7 @@
 | `./ui` | `PluginUiPlatform` | type | any |
 | `./ui` | `PluginUiReadEntityDragItemRequestV1` | type | any |
 | `./ui` | `PluginUiReadStoredImageResultV1` | type | any |
+| `./ui` | `PluginUiResourceReference` | type | any |
 | `./ui` | `PluginUiSchema` | type | any |
 | `./ui` | `PluginUiSelectActionInputTargetedSubmittedV1` | type | any |
 | `./ui` | `PluginUiSelectedActionInputCarrierV1` | type | any |

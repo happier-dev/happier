@@ -22,6 +22,8 @@ import type { PluginDynamicResourceRuntime } from '../../services/resources.js';
 import type { PluginConnectedAccountRuntime } from '../../services/index.js';
 import type { VoiceProvidersRegistrationApi } from '../../voice/projections.js';
 import type { PluginCaptureSourceRuntime } from '../../captureSources.js';
+import type { PluginProjectNativeAdapterRuntimeV1 } from '../../projectNativeAdapters.js';
+import type { ManagedServiceNativeLifecycleV1 } from '../../managed-services/contract.js';
 
 export { captureStaticRegistrationMethod };
 
@@ -457,6 +459,15 @@ export function snapshotScmHostingProviderRuntime(
             && readMember(requireObject(capability, 'SCM hosting Provider pullRequests'), 'supportsDraftCreate') === true
             ? Object.freeze({ ...methods, supportsDraftCreate: true })
             : methods;
+        if (capabilityName === 'routing') {
+            const listDeployments = captureStaticRegistrationMethod(
+                requireObject(capability, 'SCM hosting Provider routing'),
+                'listDeployments',
+                'SCM hosting Provider adapter.routing.listDeployments',
+                false,
+            );
+            if (listDeployments) capabilities[capabilityName] = Object.freeze({ ...methods, listDeployments });
+        }
     }
     return Object.freeze({
         adapter: Object.freeze(capabilities),
@@ -465,9 +476,9 @@ export function snapshotScmHostingProviderRuntime(
 
 const SCM_BACKEND_HANDLER_METHODS = Object.freeze({
     detection: ['detectRepo', 'describeBackend'],
-    read: ['statusSnapshot', 'worktreesEnrichment', 'diffFile', 'diffCommit', 'logList', 'stashList'],
+    read: ['statusSnapshot', 'worktreesEnrichment', 'diffFile', 'diffCommit', 'logList', 'historyEntries', 'stashList'],
     changeSet: ['include', 'exclude', 'discard'],
-    commit: ['create', 'backout'],
+    commit: ['captureTarget', 'create', 'backout', 'resolveOutcome', 'undoLast'],
     remote: ['add', 'setUrl', 'remove', 'fetch', 'pull', 'push', 'publish'],
     branch: ['list', 'create', 'checkout', 'merge', 'rebase', 'operationContinue', 'operationSkip', 'operationAbort', 'conflictAcceptSide', 'conflictMarkResolved'],
     worktree: ['create', 'remove', 'prune'],
@@ -861,6 +872,23 @@ export function snapshotStaticRegistrationValue<
         case 'captureSources': {
             const receiver = requireObject(value, 'Capture source runtime');
             return Object.freeze({ start: captureStaticRegistrationMethod(receiver, 'start', 'Capture source runtime.start', true) }) as PluginCaptureSourceRuntime as PluginRegistrationValueByFamily[TFamily];
+        }
+        case 'projectNativeAdapters': {
+            const receiver = requireObject(value, 'Project native adapter');
+            const runtime: { -readonly [K in keyof PluginProjectNativeAdapterRuntimeV1]: PluginProjectNativeAdapterRuntimeV1[K] } = {};
+            for (const role of ['detect', 'resolveCommand', 'produceEnvironment'] as const) {
+                const callback = captureStaticRegistrationMethod(receiver, role, `Project native adapter.${role}`, false);
+                if (callback !== undefined) Object.assign(runtime, { [role]: callback });
+            }
+            const serviceLifecycle = Reflect.get(receiver, 'nativeServiceLifecycle');
+            if (serviceLifecycle !== undefined) {
+                const lifecycle = requireObject(serviceLifecycle, 'Native service lifecycle');
+                runtime.nativeServiceLifecycle = Object.freeze({
+                    inspect: captureStaticRegistrationMethod<ManagedServiceNativeLifecycleV1['inspect']>(lifecycle, 'inspect', 'Native service lifecycle.inspect', true)!,
+                    stop: captureStaticRegistrationMethod<ManagedServiceNativeLifecycleV1['stop']>(lifecycle, 'stop', 'Native service lifecycle.stop', true)!,
+                });
+            }
+            return Object.freeze(runtime) as PluginRegistrationValueByFamily[TFamily];
         }
         case 'actions':
         case 'hooks':

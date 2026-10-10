@@ -4,6 +4,11 @@ import {
     type ProjectEnvironmentSelectionV1,
     type PluginProjectNativeAdapterRuntimeV1,
 } from '@happier-dev/plugin-sdk';
+import {
+    isPluginActionApprovalRequestCreated,
+    type ActionsService,
+    type PluginActionInputById,
+} from '@happier-dev/plugin-sdk/actions';
 
 export const pixiAdapter = { pluginId: 'acme.pixi-native', localId: 'native-pixi' } as const;
 export const importedPixiTask: ProjectNativeRefV1 = {
@@ -58,3 +63,45 @@ export const persistedQualifiedArms = JSON.stringify({
     scripts: { check: { source: importedPixiTask } },
     environment: importedPixiEnvironment,
 });
+
+/** Acceptance gives custody on the actual Machine; it does not mean the script finished. */
+export async function runPixiScriptAndReadOutput(
+    actions: ActionsService,
+    input: Omit<PluginActionInputById['projects.script.run'], 'selection'>,
+) {
+    const run = await actions.execute('projects.script.run', {
+        ...input, selection: { kind: 'native', source: importedPixiTask },
+    });
+    if (isPluginActionApprovalRequestCreated(run) || !('operation' in run)) return { run };
+    const operation = {
+        serverId: input.workspace.serverId,
+        machineId: run.operation.scope.machineId,
+        operationId: run.operation.operationId,
+    };
+    const output = await actions.execute('projects.execution.output.read', { ...operation, byteOffset: 0 });
+    return { run, output };
+}
+
+export async function preparePixiProject(actions: ActionsService, input: PluginActionInputById['projects.prepare']) {
+    return await actions.execute('projects.prepare', input);
+}
+
+export async function startPixiService(actions: ActionsService, input: PluginActionInputById['localServices.launcher.start']) {
+    return await actions.execute('localServices.launcher.start', input);
+}
+
+export async function stopPixiService(actions: ActionsService, input: PluginActionInputById['localServices.actions.stopManaged']) {
+    return await actions.execute('localServices.actions.stopManaged', input);
+}
+
+export async function restartPixiService(actions: ActionsService, input: PluginActionInputById['localServices.actions.restartManaged']) {
+    return await actions.execute('localServices.actions.restartManaged', input);
+}
+
+export async function createPixiPrivatePreview(actions: ActionsService, input: PluginActionInputById['localServices.preview.openOrCreate']) {
+    return await actions.execute('localServices.preview.openOrCreate', input);
+}
+
+export async function readPixiPublicPreview(actions: ActionsService, input: PluginActionInputById['localServices.publicPreview.status']) {
+    return await actions.execute('localServices.publicPreview.status', input);
+}

@@ -3,7 +3,28 @@ import type {
   CheckpointSurface,
   AgentSessionRuntimeContext,
   AgentSessionModesSource,
+  AgentAccountUsageSubscription,
 } from '@happier-dev/plugin-sdk/agents/runtime';
+
+// Account observations carry optional provider payment or dated list facts;
+// an author does not need to supply prices when the provider reports none.
+export const observedSubscription = {
+  status: 'subscribed',
+  renewal: 'on',
+  observedAtMs: 1_000,
+  staleAfterMs: 60_000,
+  monetaryFacts: [{
+    kind: 'paid', amount: 20, currency: 'USD',
+    period: { startAtMs: 0, endAtMs: 30_000 },
+    source: { kind: 'provider', id: 'account-payment', version: '1' },
+    effectiveAtMs: 0, asOfMs: 1_000,
+  }, {
+    kind: 'list', amount: 25, currency: 'USD',
+    period: { startAtMs: 0, endAtMs: 30_000 },
+    source: { kind: 'published', id: 'dated-provider-list', version: '2026-10' },
+    effectiveAtMs: 0, asOfMs: 1_000,
+  }],
+} as const satisfies AgentAccountUsageSubscription;
 
 // Authors supply native facts through the session-owned service, not owner metadata writes.
 export function bindNativeModes(context: AgentSessionRuntimeContext, source: AgentSessionModesSource) {

@@ -1,3 +1,4 @@
+import { artifactHtmlBundleFromBodyV1 } from '../../../artifacts/artifactHtmlV1.js';
 import type { core } from 'zod';
 import { ActionJsonSchemaProjectionError, zodSchemaToJsonSchemaObject } from '../../../actions/actionInputJsonSchema.js';
 import { createPluginManifestJsonSchemaV2 } from '../../manifest/jsonSchema.js';
@@ -19,7 +20,6 @@ import {
   MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1,
   PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
 } from './declarativeDocument.js';
-import { MAX_PLUGIN_HOSTED_HTML_SOURCE_UTF8_BYTES_V1 } from './hostedHtmlSourceV1.js';
 import { QualifiedConnectedAccountRefSchema } from '../../../connect/qualifiedConnectedAccountPersistence.js';
 
 /**
@@ -87,19 +87,9 @@ describe('declarative node vocabulary v2', () => {
     expect(PluginUiViewV2Schema.parse({ ...widget, inputs, inputSchema, sessionInputPath: 'session' })).not.toHaveProperty('placements');
   });
 
-  it('admits inline HTML through the canonical UTF-8 source boundary without granting authority fields', () => {
-    const renderer = { id: 'inline', kind: 'hostedHtml', source: { kind: 'html', html: '<p>Hello</p>' } };
+  it('admits canonical HTML bundles without granting authority fields', () => {
+    const renderer = { id: 'inline', kind: 'hostedHtml', source: artifactHtmlBundleFromBodyV1('<p>Hello</p>') };
     expect(PluginUiRendererV2Schema.safeParse(renderer).success).toBe(true);
-    const maximumUtf8Document = 'é'.repeat(MAX_PLUGIN_HOSTED_HTML_SOURCE_UTF8_BYTES_V1 / 2);
-    expect(new TextEncoder().encode(maximumUtf8Document).byteLength).toBe(MAX_PLUGIN_HOSTED_HTML_SOURCE_UTF8_BYTES_V1);
-    expect(PluginUiRendererV2Schema.safeParse({
-      ...renderer,
-      source: { kind: 'html', html: maximumUtf8Document },
-    }).success).toBe(true);
-    expect(PluginUiRendererV2Schema.safeParse({
-      ...renderer,
-      source: { kind: 'html', html: `${maximumUtf8Document}é` },
-    }).success).toBe(false);
     expect(PluginUiRendererV2Schema.safeParse({ ...renderer, source: { ...renderer.source, url: 'https://example.com' } }).success).toBe(false);
     expect(PluginUiRendererV2Schema.safeParse({ ...renderer, sessionId: 'forged' }).success).toBe(false);
   });
@@ -107,7 +97,7 @@ describe('declarative node vocabulary v2', () => {
     const renderer = {
       id: 'inline',
       kind: 'hostedHtml',
-      source: { kind: 'html', html: '<p>Hello</p>' },
+      source: artifactHtmlBundleFromBodyV1('<p>Hello</p>'),
       requiredHostMethods: ['context', 'watchContext'],
       requestedCapabilities: {
         resources: [{ pluginId: 'com.acme.health', localId: 'status' }],
@@ -299,6 +289,8 @@ describe('declarative node vocabulary v2', () => {
       'assigned',
       'new',
       'waiting',
+      'list',
+      'board',
     ]);
 
     // Metadata is bounded, and an empty metadata block is a modeling mistake.

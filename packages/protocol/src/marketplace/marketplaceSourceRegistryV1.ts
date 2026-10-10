@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 
@@ -5,12 +6,12 @@ import { z } from 'zod';
 
 import { NpmRegistryProfileIdV1Schema } from '../rpc/npmRegistryProfiles.js';
 
-export const MarketplaceSourceOriginV1Schema = z.enum(['user', 'curated']);
+export const MarketplaceSourceOriginV1Schema = lazyZodSchema(() => z.enum(['user', 'curated']));
 export type MarketplaceSourceOriginV1 = z.infer<typeof MarketplaceSourceOriginV1Schema>;
 
-const MarketplaceSourceIdV1Schema = z.string().trim().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u);
+const MarketplaceSourceIdV1Schema = lazyZodSchema(() => z.string().trim().min(1).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u));
 
-const MarketplaceSourceUrlV1Schema = z.string().trim().min(1).max(2_048).transform((value, context) => {
+const MarketplaceSourceUrlV1Schema = lazyZodSchema(() => z.string().trim().min(1).transform((value, context) => {
   try {
     const url = new URL(value);
     if (url.protocol !== 'https:' || url.username || url.password || url.hash || !url.hostname) {
@@ -22,25 +23,25 @@ const MarketplaceSourceUrlV1Schema = z.string().trim().min(1).max(2_048).transfo
     context.addIssue({ code: 'custom', message: 'Expected a credential-free HTTPS marketplace source URL' });
     return z.NEVER;
   }
-});
+}));
 
-export const MarketplaceSourceV1Schema = z.object({
+export const MarketplaceSourceV1Schema = lazyZodSchema(() => z.object({
   id: MarketplaceSourceIdV1Schema,
-  title: z.string().trim().min(1).max(512),
+  title: z.string().trim().min(1),
   sourceUrl: MarketplaceSourceUrlV1Schema,
   enabled: z.boolean(),
   origin: MarketplaceSourceOriginV1Schema,
   registryProfileId: NpmRegistryProfileIdV1Schema.optional(),
-  description: z.string().trim().min(1).max(2_048).nullable().optional(),
+  description: z.string().trim().min(1).nullable().optional(),
   addedAtMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
   updatedAtMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
-}).strict();
+}).strict());
 export type MarketplaceSourceV1 = z.infer<typeof MarketplaceSourceV1Schema>;
 
-export const MarketplaceSourceRegistryV1Schema = z.object({
+export const MarketplaceSourceRegistryV1Schema = lazyZodSchema(() => z.object({
   t: z.literal('happier_marketplace_source_registry_v1'),
   schemaVersion: z.literal(1),
-  sources: z.array(MarketplaceSourceV1Schema).max(64),
+  sources: z.array(MarketplaceSourceV1Schema),
 }).strict().superRefine((registry, context) => {
   const ids = new Set<string>();
   const urls = new Set<string>();
@@ -50,21 +51,21 @@ export const MarketplaceSourceRegistryV1Schema = z.object({
     ids.add(source.id);
     urls.add(source.sourceUrl);
   }
-});
+}));
 export type MarketplaceSourceRegistryV1 = z.infer<typeof MarketplaceSourceRegistryV1Schema>;
 
-const MarketplaceSourceMutationInputV1Schema = z.object({
+const MarketplaceSourceMutationInputV1Schema = lazyZodSchema(() => z.object({
   sourceId: MarketplaceSourceIdV1Schema.nullable().optional(),
   sourceUrl: MarketplaceSourceUrlV1Schema,
-  title: z.string().trim().min(1).max(512).nullable().optional(),
-  description: z.string().trim().max(2_048).nullable().optional(),
+  title: z.string().trim().min(1).nullable().optional(),
+  description: z.string().trim().nullable().optional(),
   enabled: z.boolean().optional(),
   origin: MarketplaceSourceOriginV1Schema.nullable().optional(),
   registryProfileId: NpmRegistryProfileIdV1Schema.nullable().optional(),
-}).strict();
+}).strict());
 
 /** One source-scoped registry change, applied against daemon-current state. */
-export const MarketplaceSourceRegistryMutationV1Schema = z.discriminatedUnion('kind', [
+export const MarketplaceSourceRegistryMutationV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('upsert'), input: MarketplaceSourceMutationInputV1Schema }).strict(),
   z.object({ kind: z.literal('remove'), sourceId: MarketplaceSourceIdV1Schema }).strict(),
   z.object({ kind: z.literal('setEnabled'), sourceId: MarketplaceSourceIdV1Schema, enabled: z.boolean() }).strict(),
@@ -73,7 +74,7 @@ export const MarketplaceSourceRegistryMutationV1Schema = z.discriminatedUnion('k
     sourceId: MarketplaceSourceIdV1Schema,
     registryProfileId: NpmRegistryProfileIdV1Schema.nullable(),
   }).strict(),
-]);
+]));
 export type MarketplaceSourceRegistryMutationV1 = z.infer<typeof MarketplaceSourceRegistryMutationV1Schema>;
 
 export const DEFAULT_CURATED_MARKETPLACE_SOURCE_TITLE = 'Happier curated marketplace';

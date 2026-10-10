@@ -15,6 +15,7 @@
       "@happier-dev/plugin-sdk/collections": ["../../src/collections/index.ts"],
       "@happier-dev/plugin-sdk/interactions": ["../../src/interactions.ts"],
       "@happier-dev/plugin-sdk/manifest": ["../../src/manifest.ts"],
+      "@happier-dev/plugin-sdk/machine-provisioners": ["../../src/machine-provisioners/index.ts"],
       "@happier-dev/plugin-sdk/providers": ["../../src/providers/index.ts"],
       "@happier-dev/plugin-sdk/protocol": ["../../src/protocol/index.ts"],
       "@happier-dev/plugin-sdk/contributions": ["../../src/contributions/index.ts"],
@@ -25,5 +26,5 @@
       "@happier-dev/plugin-sdk/voice/speech": ["../../src/voice/speech.ts"]
     }
   },
-  "include": ["accountCollections.ts", "actions.ts", "agentRuntimeSurfaces.ts", "index.ts", "managedProvider.ts", "promptAsset.ts", "publicServices.ts", "run.ts", "targetedContributions.ts", "testing.ts", "workflowTriggers.ts"]
+  "include": ["accountCollections.ts", "actions.ts", "agentRuntimeSurfaces.ts", "index.ts", "managedProvider.ts", "machineAccess.ts", "machineProvisioners.ts", "promptAsset.ts", "projectWorkers.ts", "publicServices.ts", "run.ts", "targetedContributions.ts", "testing.ts", "workflowTriggers.ts"]
 }

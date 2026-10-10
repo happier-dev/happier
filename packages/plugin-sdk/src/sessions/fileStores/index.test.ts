@@ -55,6 +55,7 @@ describe('sessions/file-stores SDK subpath', () => {
     ) as { exports?: Record<string, unknown> };
 
     expect(packageJson.exports).toHaveProperty('./sessions/file-stores', {
+      'happier-source': './src/sessions/file-stores/index.ts',
       types: './dist/sessions/file-stores/index.d.ts',
       default: './dist/sessions/file-stores/index.js',
     });

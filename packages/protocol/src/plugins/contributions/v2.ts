@@ -1,7 +1,12 @@
 import { z } from 'zod';
 
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { PluginAgentAcpStderrRulesV2Schema } from './agentAcpStderrRules.js';
 import { PluginCaptureSourceContributionV1Schema } from './captureSources.js';
+import { MachineProvisionerContributionV1Schema, validateMachineProvisionerContributionsV1 } from './machineProvisioners.js';
+export * from './machineProvisioners.js';
+import { PluginProjectNativeAdapterContributionV1Schema } from './projectNativeAdapters.js';
+export { PluginProjectNativeAdapterContributionV1Schema, type PluginProjectNativeAdapterContributionV1 } from './projectNativeAdapters.js';
 export { PluginCaptureSourceContributionV1Schema, type PluginCaptureSourceContributionV1 } from './captureSources.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
@@ -24,6 +29,7 @@ import {
 } from '../actions/v2.js';
 import {
   AgentUiBehaviorDeclarationV1Schema,
+  AgentUiIdentityColorV1Schema,
   AgentUiComponentsDeclarationV1Schema,
   AgentUiMessageDeclarationV1Schema,
   AgentUiSessionDeclarationV1Schema,
@@ -101,7 +107,7 @@ import {
 } from '../backendDefinitionV1.js';
 import { findAgentResumeOnlyExternalSourceContractIssue } from './agentResumeOnlySources.js';
 import { PluginUiContributionsV2Schema } from './ui/v2.js';
-import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
+import { PluginContributionIdentityV1Schema, PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginRoleDeclarationV1Schema } from './roles.js';
 import { PluginWorkflowContributionV1Schema } from './workflows.js';
 import { PluginInputTypeContributionV1Schema } from './inputTypes.js';
@@ -169,37 +175,14 @@ const PluginHookRegistrationFilterV1Schema = lazyZodSchema(() => z.object({
   eventNames: z.array(z.string().trim().min(1)).optional(),
 }).strict());
 
-const PluginAgentAcpStderrMatchRuleV2Schema = lazyZodSchema(() => z.object({
-  includes: z.array(z.string().min(1)).min(1),
-  caseSensitive: z.boolean().optional(),
-}).strict());
-
-const PluginAgentAcpStderrStatusErrorRuleV2Schema =
-  lazyZodSchema(() => PluginAgentAcpStderrMatchRuleV2Schema.extend({
-    detail: z.string().min(1),
-  }).strict());
-
-const PluginAgentAcpStderrRulesV2Schema = lazyZodSchema(() => z.object({
-  authenticationErrorDetail: z.string().trim().min(1).optional(),
-  suppress: z.array(PluginAgentAcpStderrMatchRuleV2Schema)
-    .min(1)
-    .optional(),
-  statusErrors: z.array(PluginAgentAcpStderrStatusErrorRuleV2Schema)
-    .min(1)
-    .optional(),
-}).strict().refine(
-  (value) => value.authenticationErrorDetail !== undefined || value.suppress !== undefined || value.statusErrors !== undefined,
-  'ACP stderr rules must declare at least one rule.',
-));
-
 // Retain concrete identity for the shared permission map in raw draft-7 Manifest JSON.
-const PluginAgentAcpPermissionModeMappingV2Schema = z.object({
+const PluginAgentAcpPermissionModeMappingV2Schema = lazyZodSchema(() => z.object({
   default: z.string().trim().min(1).nullable().optional(),
   'read-only': z.string().trim().min(1).nullable().optional(),
   'safe-yolo': z.string().trim().min(1).nullable().optional(),
   yolo: z.string().trim().min(1).nullable().optional(),
   plan: z.string().trim().min(1).nullable().optional(),
-}).strict();
+}).strict());
 
 const PluginAgentAcpPermissionModeArgvV2Schema = lazyZodSchema(() => z.object({
   flag: z.string().trim().min(1),
@@ -304,7 +287,7 @@ const PluginAgentAcpModelTrailingOptionV2Schema = lazyZodSchema(() => z.object({
  * model list, and to expand a selection back to the advertised id.
  */
 // Keep concrete identity for the public Manifest's shared JSON Schema references.
-const PluginAgentAcpModelSuffixOptionV2Schema = z.object({
+const PluginAgentAcpModelSuffixOptionV2Schema = lazyZodSchema(() => z.object({
   id: z.string().trim().min(1),
   name: z.string().trim().min(1),
   values: z.array(PluginAgentAcpModelSuffixOptionValueV2Schema)
@@ -337,7 +320,7 @@ const PluginAgentAcpModelSuffixOptionV2Schema = z.object({
       message: 'Primary and trailing option ids must differ.',
     });
   }
-});
+}));
 export type PluginAgentAcpModelSuffixOptionV2 =
   z.infer<typeof PluginAgentAcpModelSuffixOptionV2Schema>;
 
@@ -358,6 +341,16 @@ export const PluginAgentAcpDefinitionV2Schema = lazyZodSchema(() => z.object({
   models: z.object({
     suffixOption: PluginAgentAcpModelSuffixOptionV2Schema,
   }).strict().optional(),
+  usageLimitDiagnostic: z.object({
+    pattern: z.string().min(1).refine(value => {
+      try { new RegExp(value, 'u'); return true; } catch { return false; }
+    }, 'Diagnostic patterns must be valid Unicode regular expressions.'),
+    connectedAccountService: asProtocolZod(PluginContributionIdentityV1Schema),
+  }).strict().optional(),
+  usageLimitRecoveryBackoff: z.object({
+    fallbackBackoffEnvKey: z.string().trim().min(1),
+    maxAttemptsEnvKey: z.string().trim().min(1),
+  }).strict().optional(),
   permissionModeMapping: PluginAgentAcpPermissionModeMappingV2Schema.optional(),
   permissionModeArgv: PluginAgentAcpPermissionModeArgvV2Schema.optional(),
 }).strict().refine(
@@ -367,6 +360,8 @@ export const PluginAgentAcpDefinitionV2Schema = lazyZodSchema(() => z.object({
     || value.stderrRules !== undefined
     || value.mcp !== undefined
     || value.models !== undefined
+    || value.usageLimitDiagnostic !== undefined
+    || value.usageLimitRecoveryBackoff !== undefined
     || value.permissionModeMapping !== undefined
     || value.permissionModeArgv !== undefined
   ),
@@ -504,6 +499,7 @@ const PluginAgentResumeChecklistV1Schema = lazyZodSchema(() => z.object({
  * interpreter and silently no-op.
  */
 export const PluginAgentUiBehaviorContributionV2Schema = lazyZodSchema(() => z.object({
+  identityColor: AgentUiIdentityColorV1Schema.optional(),
   behavior: AgentUiBehaviorDeclarationV1Schema.optional(),
   session: AgentUiSessionDeclarationV1Schema.optional(),
   message: AgentUiMessageDeclarationV1Schema.optional(),
@@ -613,7 +609,7 @@ const PluginAgentExternalSessionsAuxiliaryV2Schema = lazyZodSchema(() => z.objec
 }).strict());
 
 // Keep concrete identity for the public Manifest's shared JSON Schema references.
-export const PluginAgentContributionV2Schema = z.union([
+export const PluginAgentContributionV2Schema = lazyZodSchema(() => z.union([
   PluginAgentPrimaryContributionV2Schema,
   PluginAgentExternalSessionsAuxiliaryV2Schema,
 ]).superRefine((value, ctx) => {
@@ -641,7 +637,7 @@ export const PluginAgentContributionV2Schema = z.union([
       message: resumeOnlySourceIssue,
     });
   }
-});
+}));
 export type PluginAgentContributionV2 = z.input<typeof PluginAgentContributionV2Schema>;
 export type ParsedPluginAgentContributionV2 = z.output<typeof PluginAgentContributionV2Schema>;
 
@@ -833,6 +829,7 @@ export {
 export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 = [
   definePluginContributionFamilyV2({ family: 'agents', schema: PluginAgentContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'providers', schema: ProviderContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: 'machineProvisioners', schema: MachineProvisionerContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'actions', schema: PluginActionContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'commands', schema: PluginCommandContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'tools', schema: PluginToolContributionV2Schema }),
@@ -864,6 +861,7 @@ export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 = [
   definePluginContributionFamilyV2({ family: 'voiceProviders', schema: VoiceProviderContributionSchema }),
   definePluginContributionFamilyV2({ family: 'backgroundServices', schema: BackgroundServiceContributionSchema }),
   definePluginContributionFamilyV2({ family: 'captureSources', schema: PluginCaptureSourceContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: 'projectNativeAdapters', schema: PluginProjectNativeAdapterContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'daemonDatabases', schema: PluginDaemonDatabaseContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'composerReferences', schema: PluginComposerReferenceProviderContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'searchProviders', schema: PluginSearchProviderContributionV1Schema }),
@@ -885,7 +883,8 @@ const PluginContributesV2BaseSchema = lazyZodSchema(() => buildPluginContributio
   PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2,
 ));
 
-const PluginContributesV2SchemaWithoutDefault = lazyZodSchema(() => PluginContributesV2BaseSchema.extend({
+function createPluginContributesV2SchemaWithoutDefault() {
+  return PluginContributesV2BaseSchema.extend({
   mcp: PluginMcpContributesV1Schema,
   ui: PluginUiContributionsV2Schema,
 }).superRefine((value, ctx) => {
@@ -920,10 +919,16 @@ const PluginContributesV2SchemaWithoutDefault = lazyZodSchema(() => PluginContri
     }
   });
   validatePluginSearchProviderContributionsV1(value, ctx);
+  validateMachineProvisionerContributionsV1(value, ctx);
   validateTargetedContributionEnvelopeBoundsV1(value, ctx);
-}));
+});
+}
+type PluginContributesV2ShapeDefinition = ReturnType<typeof createPluginContributesV2SchemaWithoutDefault>['shape'];
+export interface PluginContributesV2Shape extends PluginContributesV2ShapeDefinition {}
+const PluginContributesV2SchemaWithoutDefault: z.ZodObject<PluginContributesV2Shape> =
+  lazyZodSchema(createPluginContributesV2SchemaWithoutDefault);
 
-export const PluginContributesV2Schema = lazyZodSchema(() => PluginContributesV2SchemaWithoutDefault.default(
+export const PluginContributesV2Schema: z.ZodDefault<typeof PluginContributesV2SchemaWithoutDefault> = lazyZodSchema(() => PluginContributesV2SchemaWithoutDefault.default(
   PluginContributesV2SchemaWithoutDefault.parse({}),
 ));
 export type PluginContributesV2 = z.infer<typeof PluginContributesV2Schema>;

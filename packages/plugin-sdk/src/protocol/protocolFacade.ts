@@ -44,6 +44,7 @@ export type PluginJsonSchema = {
     uniqueItems?: boolean;
     minimum?: number;
     maximum?: number;
+    multipleOf?: number;
     minLength?: number;
     maxLength?: number;
     'x-happier-max-utf8-bytes'?: number;
@@ -204,6 +205,7 @@ export type ProtocolNumberOptions = Readonly<{
     integer?: boolean;
     minimum?: number;
     maximum?: number;
+    multipleOf?: number;
 }>;
 
 export type ProtocolArrayOptions = Readonly<{

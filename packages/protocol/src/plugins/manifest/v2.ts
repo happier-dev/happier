@@ -77,6 +77,12 @@ export const PluginBrandV2Schema = lazyZodSchema(() => z.object({
 }).strict());
 export type PluginBrandV2 = z.infer<typeof PluginBrandV2Schema>;
 
+/** Preference for the supplying installation; never an execution grant. */
+export const PluginExecutionTargetV2Schema = lazyZodSchema(() => z.object({
+  default: z.literal('installation'),
+}).strict());
+export type PluginExecutionTargetV2 = z.infer<typeof PluginExecutionTargetV2Schema>;
+
 export { PluginLocalizedStringV2Schema, type PluginLocalizedStringV2 } from '../contributions/publicTypes.js';
 const HttpMethodSchema = lazyZodSchema(() => z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']));
 export const MAX_PLUGIN_ENVIRONMENT_KEYS = 64;
@@ -325,7 +331,8 @@ export const PluginManifestActivationV2Schema = lazyZodSchema(() => z.object({
 }).strict().optional());
 export type PluginManifestActivationV2 = z.infer<typeof PluginManifestActivationV2Schema>;
 
-export const PluginManifestV2Schema = lazyZodSchema(() => z.object({
+function createPluginManifestV2Schema() {
+  return z.object({
   schemaVersion: z.literal(2),
   id: asProtocolZod(PluginIdSchema),
   version: z.string().trim().refine(
@@ -338,6 +345,7 @@ export const PluginManifestV2Schema = lazyZodSchema(() => z.object({
   runtime: PluginRuntimeV2Schema,
   entrypoints: PluginEntrypointsV2Schema.optional(),
   brand: PluginBrandV2Schema.optional(),
+  executionTarget: PluginExecutionTargetV2Schema.optional(),
   activation: PluginManifestActivationV2Schema,
   hostAccess: PluginManifestHostAccessV2Schema,
   secrets: z.array(PluginDirectSecretDeclarationV1Schema).default([]),
@@ -371,7 +379,12 @@ export const PluginManifestV2Schema = lazyZodSchema(() => z.object({
     });
   });
 
-}));
+});
+}
+type PluginManifestV2ShapeDefinition = ReturnType<typeof createPluginManifestV2Schema>['shape'];
+export interface PluginManifestV2Shape extends PluginManifestV2ShapeDefinition {}
+export const PluginManifestV2Schema: z.ZodObject<PluginManifestV2Shape, z.core.$strict> =
+  lazyZodSchema(createPluginManifestV2Schema);
 export type PluginManifestV2 = z.input<typeof PluginManifestV2Schema>;
 export type PluginManifest = z.input<typeof PluginManifestV2Schema>;
 export type ParsedPluginManifestV2 = z.output<typeof PluginManifestV2Schema>;

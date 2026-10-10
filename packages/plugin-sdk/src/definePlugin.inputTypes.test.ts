@@ -1,3 +1,4 @@
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { describe, expect, it } from 'vitest';
 import { definePlugin } from './definePlugin.js';
 import { createPluginTestkit } from './testing/host.js';
@@ -26,7 +27,7 @@ describe('public author input types', () => {
   it('projects the descriptor and activates only its declared genuine Resource leaf', async () => {
     const plugin = definePlugin({ id: 'examples.public-sdk-review-assistant', version: '1.0.0',
       inputTypes: repositoryInputTypes, resources: repositoryResources,
-      ui: { renderers: [{ id: 'review-native', kind: 'hostedHtml', source: { kind: 'html', html: '<main>Repository picker</main>' } }] },
+      ui: { renderers: [{ id: 'review-native', kind: 'hostedHtml', source: artifactHtmlBundleFromBodyV1('<main>Repository picker</main>') }] },
     });
     const parsed = parsePluginManifest(plugin.manifest);
     if (!parsed.ok) throw new Error(JSON.stringify(parsed.diagnostics));

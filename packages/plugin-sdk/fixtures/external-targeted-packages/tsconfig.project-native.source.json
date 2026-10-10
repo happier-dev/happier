@@ -4,6 +4,7 @@
     "skipLibCheck": true, "strict": true, "target": "ES2022", "types": ["node"],
     "paths": {
       "@happier-dev/plugin-sdk": ["../../src/index.ts"],
+      "@happier-dev/plugin-sdk/actions": ["../../src/actions/index.ts"],
       "@happier-dev/protocol/plugins/contributions/projectNativeAdapters": ["../../../protocol/src/plugins/contributions/projectNativeAdapters.ts"],
       "@happier-dev/protocol/workspaces/projectSetup/projectManifestV1": ["../../../protocol/src/workspaces/projectSetup/projectManifestV1.ts"]
     }

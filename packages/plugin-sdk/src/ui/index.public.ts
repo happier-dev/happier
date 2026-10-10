@@ -1,4 +1,7 @@
 export type { HostedWebBridgeEnvelopeV1 } from '../ui.js';
+export { artifactHtmlBundleFromBodyV1 } from './hostedWeb.js';
+export type { ArtifactHtmlBundleV1 } from './hostedWeb.js';
+export { buildArtifactHtmlDocumentV1, ARTIFACT_HTML_SANDBOX_V1, ARTIFACT_HTML_CONTENT_CSP_V1 } from './hostedWeb.js';
 export type { WidgetSizeV1, WidgetSizeFootprintV1 } from './hostApi.js';
 export type { PluginUiWidgetAreaDeclarationV1 } from '../ui.js';
 export type { PluginUiWidgetAreaRequestV1, PluginUiWidgetAreaResultV1, PluginUiWidgetAreaOperationV1 } from './hostApi.js';
@@ -101,6 +104,8 @@ export type { PluginUiIconTokenV1 } from '../ui.js';
 export type { PluginUiToneV1 } from '../ui.js';
 export type { PluginUiAttachmentToneV1 } from '../ui.js';
 export type { PluginUiHostApi } from './hostApi.js';
+export type { PluginUiResourceReference } from './hostApi.js';
+export type { PluginUiHostReadReference } from './hostApi.js';
 export type { StoredImageRefV1, PluginUiReadStoredImageResultV1, PluginLiveStreamReferenceV1 } from './hostApi.js';
 export type { WorkBoardPreviewLayoutV1 } from './publicContract.js';
 export type {

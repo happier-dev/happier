@@ -1,6 +1,6 @@
 // Portable declarative grammar is projected by the single Action DTO producer.
-import type { PluginLocalizedStringV2 as DtoPluginLocalizedStringV2, PluginDeclarativeToneV2 as DtoPluginDeclarativeToneV2, PluginDeclarativeControlV2 as DtoPluginDeclarativeControlV2, PluginDeclarativeActionNodeV2 as DtoPluginDeclarativeActionNodeV2, PluginContributionReference as DtoPluginContributionReference, PluginDeclarativeComposerApplyEffectV1 as DtoPluginDeclarativeComposerApplyEffectV1, PluginDeclarativeActionVariantV2 as DtoPluginDeclarativeActionVariantV2, PluginDeclarativeListNodeV2 as DtoPluginDeclarativeListNodeV2, PluginDeclarativeSectionNodeV2 as DtoPluginDeclarativeSectionNodeV2, PluginDeclarativeRowNodeV2 as DtoPluginDeclarativeRowNodeV2, PluginDeclarativeItemNodeV2 as DtoPluginDeclarativeItemNodeV2, PluginDeclarativeStateNodeV2 as DtoPluginDeclarativeStateNodeV2, PluginDeclarativeStateV2 as DtoPluginDeclarativeStateV2, PluginDeclarativeTargetedSurfaceNodeV2 as DtoPluginDeclarativeTargetedSurfaceNodeV2, PluginDeclarativeTargetedSurfaceReferenceV1 as DtoPluginDeclarativeTargetedSurfaceReferenceV1, PluginDeclarativeMetadataNodeV2 as DtoPluginDeclarativeMetadataNodeV2, PluginDeclarativeMetadataEntryV2 as DtoPluginDeclarativeMetadataEntryV2, PluginDeclarativeActionPanelNodeV2 as DtoPluginDeclarativeActionPanelNodeV2, PluginDeclarativeCollectionListNodeV2 as DtoPluginDeclarativeCollectionListNodeV2, PluginCollectionProjectedScalarFieldRefV1 as DtoPluginCollectionProjectedScalarFieldRefV1, PluginCollectionRowCommandV1 as DtoPluginCollectionRowCommandV1 } from './actions/dtos/actionDeclarativeNodeDto.generated.js';
-import type { PluginDeclarativeNodeV2 } from './actions/dtos/pluginActionDtoSupport.generated.js';
+import type { PluginDeclarativeToneV2 as DtoPluginDeclarativeToneV2, PluginDeclarativeControlV2 as DtoPluginDeclarativeControlV2, PluginDeclarativeActionNodeV2 as DtoPluginDeclarativeActionNodeV2, PluginContributionReference as DtoPluginContributionReference, PluginDeclarativeComposerApplyEffectV1 as DtoPluginDeclarativeComposerApplyEffectV1, PluginDeclarativeActionVariantV2 as DtoPluginDeclarativeActionVariantV2, PluginDeclarativeListNodeV2 as DtoPluginDeclarativeListNodeV2, PluginDeclarativeSectionNodeV2 as DtoPluginDeclarativeSectionNodeV2, PluginDeclarativeRowNodeV2 as DtoPluginDeclarativeRowNodeV2, PluginDeclarativeItemNodeV2 as DtoPluginDeclarativeItemNodeV2, PluginDeclarativeStateNodeV2 as DtoPluginDeclarativeStateNodeV2, PluginDeclarativeStateV2 as DtoPluginDeclarativeStateV2, PluginDeclarativeTargetedSurfaceNodeV2 as DtoPluginDeclarativeTargetedSurfaceNodeV2, PluginDeclarativeTargetedSurfaceReferenceV1 as DtoPluginDeclarativeTargetedSurfaceReferenceV1, PluginDeclarativeMetadataNodeV2 as DtoPluginDeclarativeMetadataNodeV2, PluginDeclarativeMetadataEntryV2 as DtoPluginDeclarativeMetadataEntryV2, PluginDeclarativeActionPanelNodeV2 as DtoPluginDeclarativeActionPanelNodeV2, PluginDeclarativeCollectionListNodeV2 as DtoPluginDeclarativeCollectionListNodeV2, PluginCollectionProjectedScalarFieldRefV1 as DtoPluginCollectionProjectedScalarFieldRefV1, PluginCollectionRowCommandV1 as DtoPluginCollectionRowCommandV1 } from './actions/dtos/actionDeclarativeNodeDto.generated.js';
+import type { PluginDeclarativeNodeV2, PluginLocalizedStringV2 } from './actions/dtos/pluginActionDtoSupport.generated.js';
 import type { PluginDeclarativeDataNodeV1 as DtoPluginDeclarativeDataNodeV1 } from './actions/dtos/pluginActionDtoSupport.generated.js';
 import { compilePluginJsonSchema as canonicalCompilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { createPluginContributionIdentity as canonicalCreatePluginContributionIdentity, PluginContributionIdentityV1JsonSchema as canonicalPluginContributionIdentityV1JsonSchema, PluginContributionIdentityV1Schema as canonicalPluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -21,6 +21,8 @@ import type {
 } from './ui/publicContract.js';
 import type { WorkflowsActionResultById } from './actions/dtos/workflowsActionDtos.generated.js';
 import type { PluginDragSourceContributionV1, PluginDropTargetContributionV1 } from '@happier-dev/protocol';
+import type { MachineProvisionerContributionV1 } from './machineProvisioners.js';
+import type { PluginProjectNativeAdapterContributionV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
 export type { PluginDragSourceContributionV1, PluginDropTargetContributionV1 } from '@happier-dev/protocol';
 export type { PluginProjectNativeAdapterContributionV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
 
@@ -33,6 +35,11 @@ export type PluginWorkflowContributionV1 = Readonly<{
 }>;
 
 /** Typed input declarations use the incumbent Resource and UI-view families. */
+export type PluginInputTypeReferenceV1 =
+  | Readonly<{ hostType: 'usageQuery'; field?: 'period' | 'session' }>
+  | Readonly<{ hostType: 'session' | 'workspace' }>
+  | Readonly<{ pluginId: string; localId: string }>;
+
 export type PluginInputTypeContributionV1 = Readonly<{
   id: string;
   title: PluginLocalizedStringV2;
@@ -354,6 +361,8 @@ export type AgentUiComponentsDeclarationV1 = {
  * compiled into the app to get parity.
  */
 export type PluginAgentUiContribution = Readonly<{
+  /** Display-only identity hue, paired with the Agent's mark and name. */
+  identityColor?: Readonly<{ light: string; dark: string }>;
   behavior?: AgentUiBehaviorDeclarationV1;
   message?: AgentUiMessageDeclarationV1;
   session?: AgentUiSessionDeclarationV1;
@@ -424,7 +433,7 @@ export const PluginIdSchema: ProtocolComposableSchema<string> = canonicalPluginI
 // declarative grammar below stays structurally identical to Protocol's, which
 // `uiPublicContract.test.ts` enforces. `readonly` property modifiers do not
 // affect assignability, so no author or host call site changes meaning.
-export type PluginLocalizedStringV2 = DtoPluginLocalizedStringV2;
+export type { PluginLocalizedStringV2 } from './actions/dtos/pluginActionDtoSupport.generated.js';
 
 export type PluginAvailabilityDescriptor = unknown;
 export type PluginContributionReference = DtoPluginContributionReference;
@@ -486,6 +495,8 @@ export interface PluginManifest {
   readonly runtime: Readonly<{ apiVersion: 1 }>;
   readonly entrypoints?: Readonly<{ daemon?: string; development?: string }>;
   readonly brand?: Readonly<{ iconResourceId: string; monochrome?: boolean }>;
+  /** Prefer the admitted supplying installation, after an explicit user choice. */
+  readonly executionTarget?: Readonly<{ default: 'installation' }>;
   readonly activation?: Readonly<{ events?: readonly Readonly<{ kind: 'startup' }>[] }>;
   readonly hostAccess?: Readonly<{
     required?: readonly Readonly<{
@@ -540,6 +551,8 @@ export interface PluginManifest {
       readonly [key: string]: unknown;
     }>[];
   } & {
+    machineProvisioners?: readonly MachineProvisionerContributionV1[];
+    projectNativeAdapters?: readonly Readonly<PluginProjectNativeAdapterContributionV1>[];
     /**
      * Agent contributions. `ui` is typed by the ONE public Agent UI grammar, so
      * a malformed declaration is refused where it is written rather than
@@ -698,6 +711,8 @@ export interface PluginManifest {
 
 /** Canonical readonly contribution collection returned by public structural parsing. */
 export type PluginContributes = Readonly<{
+  machineProvisioners: readonly MachineProvisionerContributionV1[];
+  projectNativeAdapters: NonNullable<NonNullable<PluginManifest['contributes']>['projectNativeAdapters']>;
   agents: NonNullable<NonNullable<PluginManifest['contributes']>['agents']>;
   providers: NonNullable<NonNullable<PluginManifest['contributes']>['providers']>;
   actions: readonly (Readonly<{

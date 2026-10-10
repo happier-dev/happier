@@ -12,7 +12,7 @@ import { PluginIdSchema } from '../pluginId.js';
 import { PluginUiArtifactDigestV1Schema } from '../ui/artifactIntegrity.js';
 import {
   PluginAccountAvailabilityIntentReadResponseV1Schema,
-  PluginAccountAvailabilityIntentIdsListResponseV1Schema,
+  PluginAccountAvailabilityIntentsListResponseV1Schema,
   PluginAccountAvailabilityMaterializationsReadResponseV1Schema,
   PluginAccountAvailabilityReleaseReadResponseV1Schema,
   PluginAccountPluginIntentV1Schema,
@@ -100,15 +100,18 @@ export const PluginAvailabilityIntentReadActionOutputV1Schema: typeof PluginAcco
 export type PluginAvailabilityIntentReadActionOutputV1 = z.infer<typeof PluginAvailabilityIntentReadActionOutputV1Schema>;
 
 /**
- * Lists every Account intent id (release-selected or release-less claim) for Availability bootstrap. Exact intent
- * details stay on the incumbent per-plugin read operation.
+ * Reads Account intents and caller-known identities through their canonical
+ * read projection. Known ids include materialized plugins and previously read
+ * intents so an absent intent still has an explicit current read.
  */
 export const PluginAvailabilityIntentsListActionInputV1Schema = lazyZodSchema(() => z.object({
+  knownPluginIds: z.array(asProtocolZod(PluginIdSchema)).readonly().optional(),
+  cursor: asProtocolZod(PluginIdSchema).optional(),
 }).strict());
 export type PluginAvailabilityIntentsListActionInputV1 = z.infer<typeof PluginAvailabilityIntentsListActionInputV1Schema>;
 
 export const PluginAvailabilityIntentsListActionOutputV1Schema =
-  PluginAccountAvailabilityIntentIdsListResponseV1Schema;
+  PluginAccountAvailabilityIntentsListResponseV1Schema;
 export type PluginAvailabilityIntentsListActionOutputV1 = z.infer<typeof PluginAvailabilityIntentsListActionOutputV1Schema>;
 
 /**

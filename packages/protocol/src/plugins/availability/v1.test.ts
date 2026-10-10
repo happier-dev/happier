@@ -10,6 +10,7 @@ import {
   PluginMachineMaterializationRefV1Schema,
   PluginMachineMaterializationSnapshotV1Schema,
   PluginReleaseFactsV1Schema,
+  createPluginCompatibilityProjectionV1,
   PluginUiReleaseSlotV1Schema,
   isExactPluginMachineMaterializationReleaseCorrespondenceV1,
   isPluginUiReleaseSlotCompatibleWithArtifactLinkV1,
@@ -47,6 +48,38 @@ function packageAssetArchive(resources: readonly Record<string, unknown>[] = [])
 }
 
 describe('Plugin Account availability v1', () => {
+  it('compares complete generated compatibility metadata beyond former count and byte cutoffs', () => {
+    const entries = Array.from({ length: 129 }, (_, index) => {
+      const artifactId = `panel-${index}`;
+      const entry = `hosted-web/${artifactId}/index.html`;
+      return {
+        artifactId, tier: 'hostedWeb' as const, entry,
+        files: [{ relativePath: entry, digest: `sha256:${'a'.repeat(64)}` as const, byteSize: 1 }],
+        digest: `sha256:${'b'.repeat(64)}` as const,
+        builtWith: { staging: 'staticDirectory' as const }, hostUiApiRange: '^1.0.0',
+      };
+    });
+    const first = entries[0]!;
+    first.files.push(...Array.from({ length: 8000 }, (_, index) => ({
+      relativePath: `hosted-web/${first.artifactId}/assets/file-${index}.js`,
+      digest: `sha256:${'a'.repeat(64)}` as const, byteSize: 1,
+    })));
+    const projection = createPluginCompatibilityProjectionV1({
+      manifest: availability.PluginPortableReleaseManifestV1Schema.parse(manifest()),
+      uiArtifacts: { version: 2, entries },
+    });
+    expect(projection.uiArtifacts.entries).toHaveLength(129);
+    expect(new TextEncoder().encode(createCanonicalJsonSigningInput(projection)).byteLength).toBeGreaterThan(1024 * 1024);
+  });
+
+  it('keeps release-less preparation inside the closed writer claim envelope', () => {
+    const input = { manifest: manifest(), prepare: true };
+    const parsed = availability.PluginAvailabilityCollectionWritersClaimActionInputV1Schema.parse(input);
+    expect(parsed.prepare).toBe(true);
+    expect(availability.PluginAvailabilityCollectionWritersClaimActionInputV1Schema.safeParse({ ...input, prepare: false }).success).toBe(false);
+    expect(availability.PluginAvailabilityCollectionWritersClaimActionInputV1Schema.safeParse({ ...input, accountId: 'forged' }).success).toBe(false);
+    expect(availability.PluginAvailabilityCollectionWritersClaimActionInputV1Schema.safeParse({ ...input, callbacks: {} }).success).toBe(false);
+  });
   it('keeps ordinary UI Artifact reads current-render fenced while admitting one explicit candidate-preparation purpose', () => {
     const target = {
       release: { pluginId: 'com.acme.fixture', version: '1.2.3' },
@@ -827,7 +860,7 @@ describe('Plugin Account availability v1', () => {
       .toBe('/v1/plugins/availability/package-assets/read');
   });
 
-  it('keeps Account intent discovery strictly limited to intent identities', () => {
+  it('admits complete canonical Account intent reads while rejecting ambiguous list identities', () => {
     const inputSchema = (availability as Record<string, unknown>)
       .PluginAvailabilityIntentsListActionInputV1Schema as
       | Readonly<{ safeParse: (value: unknown) => Readonly<{ success: boolean }> }>
@@ -838,23 +871,40 @@ describe('Plugin Account availability v1', () => {
       | undefined;
 
     expect(inputSchema?.safeParse({}).success).toBe(true);
+    expect(inputSchema?.safeParse({ knownPluginIds: ['com.acme.removed'] }).success).toBe(true);
     expect(inputSchema?.safeParse({ pluginId: 'com.acme.fixture' }).success).toBe(false);
     expect(outputSchema?.safeParse({
       availabilityCursor: 7,
       pluginIds: ['com.acme.alpha', 'com.acme.fixture'],
+      intentReads: [{ pluginId: 'com.acme.fixture', response: {
+        availabilityCursor: 7, hostingCapability: { enabled: false }, intent: null,
+        release: null, uiArtifacts: [], packageAssets: [],
+      } }],
+      failedPluginIds: ['com.acme.alpha'],
     }).success).toBe(true);
     expect(outputSchema?.safeParse({
       availabilityCursor: 7,
       pluginIds: ['com.acme.fixture', 'com.acme.alpha'],
+      intentReads: [], failedPluginIds: [],
     }).success).toBe(false);
     expect(outputSchema?.safeParse({
       availabilityCursor: 7,
       pluginIds: ['com.acme.fixture', 'com.acme.fixture'],
+      intentReads: [], failedPluginIds: [],
     }).success).toBe(false);
     expect(outputSchema?.safeParse({
       availabilityCursor: 7,
       pluginIds: ['com.acme.fixture'],
+      intentReads: [], failedPluginIds: [],
       materializations: [],
+    }).success).toBe(false);
+    expect(outputSchema?.safeParse({
+      availabilityCursor: 7, pluginIds: ['com.acme.fixture'],
+      intentReads: [], failedPluginIds: [],
+    }).success).toBe(false);
+    expect(outputSchema?.safeParse({
+      availabilityCursor: 7, pluginIds: [], intentReads: [],
+      failedPluginIds: ['com.acme.fixture', 'com.acme.fixture'],
     }).success).toBe(false);
   });
 });

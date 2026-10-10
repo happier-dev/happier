@@ -35,8 +35,8 @@ import { SpawnConfigOptionValueSchema } from '../../actions/sessionSpawnConfigOp
  * sets in the wire schema would create a second decision-maker for them.
  */
 
-const AgentUiIdSchema = z.string().trim().min(1);
-const AgentUiIdArraySchema = z.array(AgentUiIdSchema);
+const AgentUiIdSchema = lazyZodSchema(() => z.string().trim().min(1));
+const AgentUiIdArraySchema = lazyZodSchema(() => z.array(AgentUiIdSchema));
 const AgentUiStringRecordSchema = lazyZodSchema(() => z.record(z.string(), z.string()));
 
 /**
@@ -45,10 +45,10 @@ const AgentUiStringRecordSchema = lazyZodSchema(() => z.record(z.string(), z.str
  * declaring plugin's scoped Settings contributions. Bare local IDs are not a
  * supported compatibility form.
  */
-const AgentUiSettingReferenceSchema = z.object({
+const AgentUiSettingReferenceSchema = lazyZodSchema(() => z.object({
   scope: z.enum(['host', 'account', 'daemon']),
   localId: AgentUiIdSchema,
-}).strict();
+}).strict());
 export type AgentUiSettingReferenceV1 = z.infer<typeof AgentUiSettingReferenceSchema>;
 const AgentUiMutablePluginSettingReferenceSchema = lazyZodSchema(() => z.object({
   scope: z.enum(['account', 'daemon']),
@@ -242,7 +242,7 @@ const AgentUiExternalSessionsSchema = lazyZodSchema(() => z.object({
  * setting mutation and/or attached-terminal presentation. The declaration is
  * data only: it never supplies a callback, a route, or a generic action.
  */
-const AgentUiAskUserQuestionDialogSchema = z.object({
+const AgentUiAskUserQuestionDialogSchema = lazyZodSchema(() => z.object({
   dialogId: AgentUiIdSchema,
   settingMutation: z.object({
     settingId: AgentUiMutablePluginSettingReferenceSchema,
@@ -262,7 +262,7 @@ const AgentUiAskUserQuestionDialogSchema = z.object({
     || dialog.terminalNotice !== undefined
     || dialog.terminalSecondaryAction !== undefined,
   { message: 'AskUserQuestion dialogs require a declared host-owned behavior.' },
-);
+));
 
 const AgentUiAskUserQuestionSchema = lazyZodSchema(() => z.object({
   dialogs: z.array(AgentUiAskUserQuestionDialogSchema).min(1),
@@ -467,6 +467,12 @@ export type AgentUiComponentsDeclarationV1 = z.infer<typeof AgentUiComponentsDec
 /* projected carrier                                                           */
 /* -------------------------------------------------------------------------- */
 
+/** Optional display-only hue; it never identifies or routes an Agent. */
+export const AgentUiIdentityColorV1Schema = lazyZodSchema(() => z.object({
+  light: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  dark: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+}).strict());
+
 /**
  * The SAME declaration slots as they travel in the daemon contribution
  * registry projection, carried structurally rather than re-validated.
@@ -481,6 +487,7 @@ export type AgentUiComponentsDeclarationV1 = z.infer<typeof AgentUiComponentsDec
  * is the correct blast radius. This is transport, not a second grammar owner.
  */
 export const AgentUiProjectedDeclarationV1Schema = lazyZodSchema(() => z.object({
+  identityColor: z.record(z.string(), z.unknown()).optional(),
   behavior: z.record(z.string(), z.unknown()).optional(),
   session: z.record(z.string(), z.unknown()).optional(),
   message: z.record(z.string(), z.unknown()).optional(),

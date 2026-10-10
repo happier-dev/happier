@@ -940,29 +940,36 @@ test('one generation plan includes host package seams but excludes them from aut
   assert.doesNotMatch(generated.authorApiMarkdown, /withJsonOwnerFileLock/u);
 });
 
-test('generation orders package export conditions from types through realm targets to default', async () => {
+test('generation exposes canonical source entries before packaged realm conditions', async () => {
   const inventory = await readCurrentApiSurfaceInventory();
   const generated = createApiSurfaceGenerationPlan(inventory);
 
-  assert.deepEqual(Object.keys(generated.packageExports['.']), ['types', 'browser', 'default']);
+  assert.deepEqual(Object.keys(generated.packageExports['.']), ['happier-source', 'types', 'browser', 'default']);
   assert.deepEqual(
     Object.keys(generated.packageExports['./ui/client']),
-    ['types', 'browser', 'default'],
+    ['happier-source', 'types', 'browser', 'default'],
   );
   assert.deepEqual(
     Object.keys(generated.packageExports['./voice/client']),
-    ['types', 'browser', 'react-native', 'default'],
+    ['happier-source', 'types', 'browser', 'react-native', 'default'],
   );
   assert.deepEqual(
     Object.keys(generated.packageExports['./host/registration']),
-    ['types', 'browser', 'react-native', 'default'],
+    ['happier-source', 'types', 'browser', 'react-native', 'default'],
   );
   assert.deepEqual(
     Object.keys(generated.packageExports['./scm/backend']),
-    ['types', 'default'],
+    ['happier-source', 'types', 'default'],
   );
 
+  assert.deepEqual(generated.packageExports['./protocol'].browser, {
+    'happier-source': './src/protocol/index.browser.ts',
+    default: './dist/protocol/index.browser.js',
+  });
+  assert.equal(generated.packageExports['./host/registration'].browser, './dist/host/registration/index.js');
+
   for (const [specifier, conditions] of Object.entries(generated.packageExports)) {
+    assert.equal(conditions['happier-source'], `./${inventory.entrypoints.find((entry) => entry.specifier === specifier).sourceModule}`);
     assert.equal(
       Object.keys(conditions).at(-1),
       'default',

@@ -84,6 +84,7 @@ export type {
   AgentAcpRuntimeOptions,
   AgentAcpToolUpdateContentSanitizer,
   AgentAcpToolUpdatePolicy,
+  AgentAcpUsageLimitDiagnosticDefinition,
   AgentRuntimeProtocolComposers,
 } from './acp.js';
 export type {
@@ -792,6 +793,15 @@ export type HandoffExportRequestV1 = Readonly<{
   directory: string;
 }>;
 
+/** Read-only native-state lookup under the target's effective launch environment. */
+export type HandoffExistingStateRequestV1 = Readonly<{
+  sessionId: string;
+  metadata: HandoffExportSessionMetadata;
+  targetDirectory: string;
+  /** Complete effective child environment when supplied; do not restore removed daemon variables. */
+  environmentVariables?: Readonly<Record<string, string>>;
+}>;
+
 /** Declaration-neutral runtime identity for focused Agent handoff leaves. */
 export type HandoffRuntimeDescriptorV1 = Readonly<{
   v: 1;
@@ -847,6 +857,10 @@ export type HandoffSurfaceV1 = Readonly<{
     | Promise<AgentSurfaceResultV1<HandoffExportResultV1, HandoffFailureCodeV1>>;
   importBundle: (
     request: HandoffImportRequestV1,
+  ) => AgentSurfaceResultV1<HandoffImportResultV1, HandoffFailureCodeV1>
+    | Promise<AgentSurfaceResultV1<HandoffImportResultV1, HandoffFailureCodeV1>>;
+  resolveExistingState?: (
+    request: HandoffExistingStateRequestV1,
   ) => AgentSurfaceResultV1<HandoffImportResultV1, HandoffFailureCodeV1>
     | Promise<AgentSurfaceResultV1<HandoffImportResultV1, HandoffFailureCodeV1>>;
   extractMediaScannableRecords?: (

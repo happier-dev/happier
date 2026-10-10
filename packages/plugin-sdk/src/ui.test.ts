@@ -297,6 +297,8 @@ describe('plugin UI public surface', () => {
             'assigned',
             'new',
             'waiting',
+            'list',
+            'board',
         ]);
     });
 

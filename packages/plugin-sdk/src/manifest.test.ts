@@ -31,6 +31,38 @@ type ProviderContributionV1 = never; /* @sdk-negative-type-case-end */
 type VoiceModelPackContributionV1 = never; /* @sdk-negative-type-case-end */
 
 describe('manifest authoring contract', () => {
+    it('lets an external Agent author an identity hue through the public manifest parser', () => {
+        const ui = { identityColor: { light: '#112233', dark: '#aabbcc' } } as const satisfies manifestSdk.PluginAgentUiContribution;
+        const parsed = manifestSdk.parsePluginManifest({
+            schemaVersion: 2,
+            id: 'acme.agent-colors',
+            version: '1.0.0',
+            displayName: 'Agent colors',
+            runtime: { apiVersion: 1 },
+            contributes: { agents: [{
+                id: 'assistant', title: 'Assistant', runtime: { kind: 'custom' },
+                primary: 'sessions',
+                capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+                ui,
+            }] },
+        });
+        expect(parsed.ok).toBe(true);
+        if (!parsed.ok) throw new Error(JSON.stringify(parsed.diagnostics));
+        expect(parsed.manifest.contributes.agents?.[0]?.ui).toEqual(ui);
+        const agent = parsed.manifest.contributes.agents?.[0];
+        if (!agent) throw new Error('Expected the parsed Agent declaration');
+        const { ui: omittedUi, ...withoutUi } = agent;
+        expect(omittedUi).toEqual(ui);
+        expect(manifestSdk.parsePluginManifest({
+            ...parsed.manifest,
+            contributes: { agents: [withoutUi] },
+        }).ok).toBe(true);
+        expect(manifestSdk.parsePluginManifest({
+            ...parsed.manifest,
+            contributes: { agents: [{ ...withoutUi, ui: {} }] },
+        }).ok).toBe(true);
+    });
+
     it('accepts reusable readonly Action input-hint declarations', () => {
         const inputHints = {
             fields: [{
@@ -38,6 +70,11 @@ describe('manifest authoring contract', () => {
                 title: 'Repository',
                 widget: 'text',
                 required: true,
+            }, {
+                path: 'query',
+                title: 'Usage',
+                widget: 'json',
+                inputType: { hostType: 'usageQuery' },
             }],
         } as const;
         const manifest = {
@@ -56,7 +93,7 @@ describe('manifest authoring contract', () => {
                     surfaces: ['plugin'],
                     inputSchema: {
                         type: 'object',
-                        properties: { repository: { type: 'string' } },
+                        properties: { repository: { type: 'string' }, query: { type: 'object' } },
                     },
                     inputHints,
                     dangerLevel: 'safe',
@@ -65,6 +102,13 @@ describe('manifest authoring contract', () => {
         } as const satisfies PluginManifest;
 
         expect(manifest.contributes.actions[0]?.inputHints).toBe(inputHints);
+        const parsed = manifestSdk.parsePluginManifest(manifest);
+        expect(parsed, JSON.stringify(parsed)).toMatchObject({ ok: true, manifest: { contributes: { actions: [{ inputHints }] } } });
+        expect(manifestSdk.parsePluginManifest({ ...manifest, contributes: { actions: [{
+            ...manifest.contributes.actions[0], inputHints: { fields: [{
+                ...inputHints.fields[1], inputType: { hostType: 'usageQuery', accountId: 'forged' },
+            }] },
+        }] } })).toMatchObject({ ok: false });
     });
 
     it('projects every node named by the declarative UI union', async () => {
@@ -182,6 +226,7 @@ describe('manifest authoring contract', () => {
             'PluginDeclarativeCollectionListNodeV2',
             'PluginDeclarativeComposerApplyEffectV1',
             'PluginDeclarativeControlV2',
+            'PluginDeclarativeDataNodeV1',
             'PluginDeclarativeItemNodeV2',
             'PluginDeclarativeListNodeV2',
             'PluginDeclarativeMetadataEntryV2',
@@ -194,18 +239,24 @@ describe('manifest authoring contract', () => {
             'PluginDeclarativeTargetedSurfaceNodeV2',
             'PluginDeclarativeTargetedSurfaceReferenceV1',
             'PluginDeclarativeToneV2',
+            'PluginDragSourceContributionV1',
+            'PluginDropTargetContributionV1',
             'PluginIdJsonSchema',
             'PluginIdSchema',
             'PluginHttpMethod',
+            'PluginInputTypeContributionV1',
+            'PluginInputTypeReferenceV1',
             'PluginJsonSchemaValidator',
             'PluginLocalizedStringV2',
             'PluginManifest',
             'PluginManifestDiagnostic',
             'PluginManifestParseResult',
+            'PluginProjectNativeAdapterContributionV1',
             'PluginRequestInterceptorContribution',
             'PluginSystemToolAcpFingerprintV1',
             'PluginSystemToolReadinessV1',
             'PluginTestkitManifest',
+            'PluginWorkflowContributionV1',
             'PromptAssetCapabilities',
             'PromptAssetTypeDescriptor',
             'PublicHostAccessCapability',

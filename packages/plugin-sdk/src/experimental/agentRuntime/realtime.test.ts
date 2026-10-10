@@ -79,7 +79,7 @@ describe('experimental Agent session realtime contract', () => {
             }>
         >();
         expectTypeOf<AgentSessionRealtimeStartInput>().toEqualTypeOf<
-            Readonly<{ transport: Readonly<{ kind: 'webrtc'; offerSdp: string }> }>
+            Readonly<{ transport: Readonly<{ kind: 'webrtc'; offerSdp: string }>; systemAppendBlocks?: readonly string[] }>
         >();
         expectTypeOf<AgentSessionRealtimeStartResult>().toEqualTypeOf<
             | Readonly<{

@@ -8,8 +8,9 @@ import {
   createUiSurfaceRequestedCapabilitiesDigestV1,
 } from './executableSurfaceApprovalV1.js';
 import { normalizeUiSurfaceCapabilityRequestV1 } from './hostedHtmlCapabilitiesV1.js';
+import { artifactHtmlBundleFromBodyV1 } from '../../../artifacts/artifactHtmlV1.js';
 
-const source = Object.freeze({ kind: 'html', html: '<p>Hello</p>' } as const);
+const source = Object.freeze(artifactHtmlBundleFromBodyV1('<p>Hello</p>'));
 const capabilities = normalizeUiSurfaceCapabilityRequestV1({ hostMethods: ['context'] })!;
 
 function fingerprint(overrides: Partial<Parameters<typeof createUiSurfaceExecutableSecurityFingerprintV1>[0]> = {}): string {
@@ -27,12 +28,26 @@ function fingerprint(overrides: Partial<Parameters<typeof createUiSurfaceExecuta
  * govern currentness elsewhere (Lane 08.01 §8).
  */
 describe('createUiSurfaceExecutableSecurityFingerprintV1', () => {
+  it('covers every bundle asset and entrypoint while ignoring file insertion order', () => {
+    const bundle = artifactHtmlBundleFromBodyV1('<script src="app.js"></script>');
+    const script = { mime: 'application/javascript', contentBase64: 'YWxlcnQoMSk=' };
+    bundle.files['app.js'] = script;
+    bundle.files['second.html'] = bundle.files['index.html'];
+    const own = fingerprint({ source: bundle });
+    expect(fingerprint({ source: { ...bundle, files: Object.fromEntries(Object.entries(bundle.files).reverse()) } })).toBe(own);
+    expect(fingerprint({ source: { ...bundle, entrypoint: 'second.html' } })).not.toBe(own);
+    for (const changed of [
+      { ...bundle, files: { ...bundle.files, 'app.js': { ...script, contentBase64: 'YWxlcnQoMik=' } } },
+      { ...bundle, files: { ...bundle.files, 'app.js': { ...script, mime: 'text/javascript' } } },
+      { ...bundle, files: { 'index.html': bundle.files['index.html'], 'second.html': bundle.files['second.html'], 'other.js': script } },
+    ]) expect(fingerprint({ source: changed })).not.toBe(own);
+  });
   it('is stable for identical executable bytes, isolation profile, and egress', () => {
     expect(fingerprint()).toBe(fingerprint());
   });
 
   it('changes when the document bytes change', () => {
-    expect(fingerprint({ source: { kind: 'html', html: '<p>Hello </p>' } })).not.toBe(fingerprint());
+    expect(fingerprint({ source: artifactHtmlBundleFromBodyV1('<p>Hello </p>') })).not.toBe(fingerprint());
   });
 
   it('changes when the isolation profile version changes', () => {
@@ -47,8 +62,8 @@ describe('createUiSurfaceExecutableSecurityFingerprintV1', () => {
   });
 
   it('cannot be forged by moving bytes across the origin/document boundary', () => {
-    expect(fingerprint({ source: { kind: 'html', html: 'x' }, networkOrigins: ['https://a.example.com'] }))
-      .not.toBe(fingerprint({ source: { kind: 'html', html: 'xhttps://a.example.com' }, networkOrigins: [] }));
+    expect(fingerprint({ source: artifactHtmlBundleFromBodyV1('x'), networkOrigins: ['https://a.example.com'] }))
+      .not.toBe(fingerprint({ source: artifactHtmlBundleFromBodyV1('xhttps://a.example.com'), networkOrigins: [] }));
   });
 });
 

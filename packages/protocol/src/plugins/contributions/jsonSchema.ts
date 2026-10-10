@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 /**
  * The JSON value and JSON Schema dialect are deliberately independent from
  * plugin identity and contribution declarations. Keeping this owner neutral
@@ -24,10 +25,10 @@ export type PluginJsonValueV2 =
   | PluginJsonValueV2[]
   | { [key: string]: PluginJsonValueV2 };
 
-const PluginJsonValueShallowSchema = z.union([
+const PluginJsonValueShallowSchema = lazyZodSchema(() => z.union([
   z.null(), z.boolean(), z.number().finite(), z.string(),
   z.array(z.unknown()), z.record(z.string(), z.unknown()),
-]);
+]));
 
 // Stored Workflow envelopes reach this structural JSON owner before their
 // purpose-specific schema. Parse its existing dialect without recursive calls;
@@ -107,6 +108,7 @@ export type PluginJsonSchemaV2 = {
   uniqueItems?: boolean;
   minimum?: number;
   maximum?: number;
+  multipleOf?: number;
   exclusiveMinimum?: number;
   exclusiveMaximum?: number;
   minLength?: number;
@@ -135,6 +137,7 @@ export const PluginJsonSchemaV2Schema: z.ZodType<PluginJsonSchemaV2> = z.lazy(()
   minItems: z.number().int().nonnegative().optional(), maxItems: z.number().int().nonnegative().optional(),
   uniqueItems: z.boolean().optional(),
   minimum: z.number().finite().optional(), maximum: z.number().finite().optional(),
+  multipleOf: z.number().finite().positive().optional(),
   exclusiveMinimum: z.number().finite().optional(), exclusiveMaximum: z.number().finite().optional(),
   minLength: z.number().int().nonnegative().optional(), maxLength: z.number().int().nonnegative().optional(), pattern: z.string().optional(),
   'x-happier-max-utf8-bytes': z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),

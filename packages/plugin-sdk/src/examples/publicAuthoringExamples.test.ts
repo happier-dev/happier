@@ -1555,12 +1555,12 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             expect.objectContaining({
                 id: 'review-services-hosted-html-renderer',
                 kind: 'hostedHtml',
-                source: { kind: 'html', html: expect.stringContaining('Review service') },
+                source: artifactHtmlBundleFromBodyV1('<main><h1>Review service</h1><p>Ready for review.</p></main>'),
             }),
             expect.objectContaining({
                 id: 'review-project-hosted-html-renderer',
                 kind: 'hostedHtml',
-                source: { kind: 'html', html: expect.stringContaining('Project review') },
+                source: artifactHtmlBundleFromBodyV1('<main><h1>Project review</h1><p>Ready for review.</p></main>'),
             }),
         ]));
         // The owner test must consume the entry's exports, rather than a local
@@ -4520,3 +4520,4 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         }
     });
 });
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';

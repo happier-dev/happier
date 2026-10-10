@@ -21,8 +21,8 @@ export * from './hostedWebBuild.js';
 export * from './hostedWebAssetPolicy.js';
 export * from './hostedWebAssetPolicyNative.js';
 export * from './hostedWebBridge.js';
+export * from '../../artifacts/artifactHtmlDocumentV1.js';
 export {
-  MAX_PLUGIN_HOSTED_HTML_SOURCE_UTF8_BYTES_V1,
   PluginHostedHtmlSourceV1Schema,
   type PluginHostedHtmlSourceV1,
 } from '../contributions/ui/hostedHtmlSourceV1.js';

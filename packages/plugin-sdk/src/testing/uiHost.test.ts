@@ -1222,11 +1222,11 @@ describe('createPluginUiTestkit', () => {
                     return { kind: 'cancelled' };
                 },
                 readResource: async ({ resource: requested }) => {
-                    calls.push(`resource:${typeof requested === 'string' ? requested : requested.localId}`);
+                    calls.push(`resource:${typeof requested === 'string' ? requested : 'hostRead' in requested ? requested.hostRead : requested.localId}`);
                     return resource;
                 },
                 watchResource: ({ resource: requested, signal }) => {
-                    calls.push(`watch:${typeof requested === 'string' ? requested : requested.localId}`);
+                    calls.push(`watch:${typeof requested === 'string' ? requested : 'hostRead' in requested ? requested.hostRead : requested.localId}`);
                     expect(signal.aborted).toBe(false);
                     return { digest: firstDigest };
                 },
@@ -1424,6 +1424,53 @@ describe('createPluginUiTestkit', () => {
         }
     });
 
+    it('keeps host-read inputs distinct through Resource reads, invalidation and retirement', async () => {
+        const reference = { hostRead: 'usage.query' as const, input: { queries: [{ id: 'current' }] } };
+        const otherReference = { hostRead: 'usage.query' as const, input: { queries: [{ id: 'comparison' }] } };
+        const watchSignals: AbortSignal[] = [];
+        const currentDigests: string[] = [];
+        const otherDigests: string[] = [];
+        const fixture = await createPluginUiTestkit({
+            identity: { instanceId: 'fixture-host-read', mountNonce: 'fixture-host-read-mount' },
+            authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
+            surface: { kind: 'author-surface' },
+            surfaceContext: initialSurface,
+            adapter: createSemanticAdapter().adapter,
+            handlers: {
+                readResource: ({ resource }) => {
+                    expect(resource).toEqual(reference);
+                    return { contentType: 'application/json', digest: firstDigest, bytes: new Uint8Array([55]) };
+                },
+                watchResource: ({ resource, signal }) => {
+                    expect([reference, otherReference]).toContainEqual(resource);
+                    watchSignals.push(signal);
+                    return { digest: firstDigest };
+                },
+            },
+        });
+        try {
+            await expect(fixture.context.hostApi.readResource(reference)).resolves.toMatchObject({ bytes: new Uint8Array([55]) });
+            const current = await fixture.context.hostApi.watchResource(reference, event => {
+                if (event.kind === 'invalidated') currentDigests.push(event.digest);
+            });
+            const other = await fixture.context.hostApi.watchResource(otherReference, event => {
+                if (event.kind === 'invalidated') otherDigests.push(event.digest);
+            });
+            expect(current).toMatchObject({ admittedDigest: firstDigest });
+            fixture.invalidateResource({ input: { queries: [{ id: 'current' }] }, hostRead: 'usage.query' }, secondDigest);
+            expect(currentDigests).toEqual([secondDigest]);
+            expect(otherDigests).toEqual([]);
+            other.dispose();
+            await fixture.retire('host-read-mount-replaced');
+            expect(watchSignals.every(signal => signal.aborted)).toBe(true);
+            await expect(fixture.context.hostApi.readResource(reference)).rejects.toMatchObject({ code: 'ui_host_unavailable' });
+            await expect(fixture.context.hostApi.watchResource(reference, () => {})).rejects.toMatchObject({ code: 'ui_host_unavailable' });
+            current.dispose();
+        } finally {
+            await fixture.dispose();
+        }
+    });
+
     it('returns the exact Resource watch establishment digest through the public testkit', async () => {
         const fixture = await createPluginUiTestkit({
             identity: { instanceId: 'fixture-instance-24', mountNonce: 'fixture-mount-24' },
@@ -1442,6 +1489,39 @@ describe('createPluginUiTestkit', () => {
             expect(subscription).toMatchObject({ admittedDigest: firstDigest });
 
             subscription.dispose();
+        } finally {
+            await fixture.dispose();
+        }
+    });
+
+    it('keeps host Resource invalidations scoped to the Action and canonical input', async () => {
+        const fixture = await createPluginUiTestkit({
+            identity: { instanceId: 'fixture-host-reads', mountNonce: 'fixture-host-reads' },
+            authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
+            surface: { kind: 'author-surface' },
+            surfaceContext: initialSurface,
+            adapter: createSemanticAdapter().adapter,
+            handlers: { watchResource: () => ({ digest: firstDigest }) },
+        });
+        const input = { source: { pluginId: 'com.acme.fixture', localId: 'quota' }, accountId: 'account-1' };
+        const quotaEvents: string[] = [];
+        const usageEvents: string[] = [];
+        const otherEvents: string[] = [];
+        try {
+            await fixture.context.hostApi.watchResource({ hostRead: 'connectedServices.quota.get', input },
+                event => { if (event.kind === 'invalidated') quotaEvents.push(event.digest); });
+            await fixture.context.hostApi.watchResource({ hostRead: 'usage.query', input },
+                event => { if (event.kind === 'invalidated') usageEvents.push(event.digest); });
+            await fixture.context.hostApi.watchResource({ hostRead: 'connectedServices.quota.get', input: { ...input, accountId: 'account-2' } },
+                event => { if (event.kind === 'invalidated') otherEvents.push(event.digest); });
+
+            fixture.invalidateResource({ hostRead: 'connectedServices.quota.get', input: {
+                accountId: 'account-1', source: { localId: 'quota', pluginId: 'com.acme.fixture' },
+            } }, secondDigest);
+
+            expect(quotaEvents).toEqual([secondDigest]);
+            expect(usageEvents).toEqual([]);
+            expect(otherEvents).toEqual([]);
         } finally {
             await fixture.dispose();
         }

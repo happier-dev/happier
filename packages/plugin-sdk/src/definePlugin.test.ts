@@ -114,6 +114,20 @@ import type { VoiceProvidersRegistrationApi } from './voice/projections.js';
 import type { SpeechProviderRuntime, VoiceSpeechSynthesizeRequest } from './voice/speech.js';
 
 describe('declarative plugin workflows', () => {
+    it('projects the optional execution installation hint through strict manifest normalization', () => {
+        const plugin = definePlugin({
+            id: 'com.acme.execution-default',
+            version: '1.0.0',
+            executionTarget: { default: 'installation' },
+        });
+        expect(plugin.manifest.executionTarget).toEqual({ default: 'installation' });
+        const parsed = parsePluginManifest(plugin.manifest);
+        expect(parsed.ok).toBe(true);
+        if (parsed.ok) expect(parsed.manifest.executionTarget).toEqual({ default: 'installation' });
+        const omitted = definePlugin({ id: 'com.acme.no-execution-default', version: '1.0.0' });
+        expect(omitted.manifest).not.toHaveProperty('executionTarget');
+    });
+
     it('projects manifest-declared workflow ids and refuses an undeclared runtime registration', async () => {
         const definition = { version: 1 as const, inputs: [], defaults: {}, blocks: [{ kind: 'wait' as const, id: 'review',
             document: { text: 'Review the result.', references: [], attachments: [] }, result: { kind: 'text' as const },
@@ -276,29 +290,23 @@ describe('definePlugin', () => {
     });
 
     it('projects canonical Connected Account declarations at the author call', () => {
+        const declaration = {
+            title: 'Example Account',
+            authentication: {
+                defaultModeId: 'manual',
+                modes: [{
+                    id: 'manual', kind: 'manual', outcomeReconciliation: 'none',
+                    fields: [{ id: 'token', title: 'Token', schema: { type: 'string' }, secret: true }],
+                }],
+            },
+            metadata: { documentation: 'https://example.com/account' },
+        } as const;
         const plugin = definePlugin({
             id: 'example.canonical-connected-account-declaration',
             version: '0.1.0',
             connectedAccountDescriptors: {
                 account: {
-                    declaration: {
-                        title: 'Example Account',
-                        authentication: {
-                            defaultModeId: 'manual',
-                            modes: [{
-                                id: 'manual',
-                                kind: 'manual',
-                                outcomeReconciliation: 'none',
-                                fields: [{
-                                    id: 'token',
-                                    title: 'Token',
-                                    schema: { type: 'string' },
-                                    secret: true,
-                                }],
-                            }],
-                        },
-                        metadata: { documentation: 'https://example.com/account' },
-                    },
+                    declaration,
                     runtime: {} as PluginConnectedAccountRuntime,
                 },
             },
@@ -306,21 +314,8 @@ describe('definePlugin', () => {
 
         expect(plugin.manifest.contributes.connectedAccountDescriptors?.[0]?.metadata)
             .toEqual({ documentation: 'https://example.com/account' });
-    });
-
-    it('uses the canonical Connected Account declaration projection at the definePlugin boundary', () => {
-        const sourceText = readFileSync(new URL('./definePlugin.ts', import.meta.url), 'utf8');
-
-        expect(sourceText).toContain('PluginConnectedAccountDescriptorContributionV2,');
-        expect(sourceText).toContain(
-            "DistributiveOmit<PluginConnectedAccountDescriptorContributionV2, 'id'>",
-        );
-        expect(sourceText).toContain(
-            "declaration: Omit<PluginConnectedAccountDescriptorContributionV2, 'id'>;",
-        );
-        expect(sourceText).not.toContain(
-            "NonNullable<NonNullable<PluginManifest['contributes']>['connectedAccountDescriptors']>[number]",
-        );
+        expect(plugin.manifest.contributes.connectedAccountDescriptors?.[0]?.authentication)
+            .toEqual(declaration.authentication);
     });
 
     it('omits undeclared cold defaults while retaining explicit empty declarations', () => {
@@ -4490,5 +4485,30 @@ describe('manifest capture source activation', () => {
         expect(frames).toMatchObject([{ streamId: 'viewing-1', sequence: 1 }]);
         await capture.stop();
         await testkit.dispose();
+    });
+});
+
+describe('manifest project native adapter activation', () => {
+    it('captures declared callbacks and refuses an undeclared effectful role', async () => {
+        const plugin = definePlugin({ id: 'example.native', version: '0.1.0', projectNativeAdapters: {
+            tasks: { declaration: { files: ['tasks.toml'], roles: ['detect'] },
+                runtime: { async detect(request) {
+                    return { entries: [{ source: { kind: 'pluginNative', adapter: request.adapter, file: 'tasks.toml', target: 'check' }, usage: 'script' }], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] };
+                } },
+            },
+        } });
+        const testkit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin });
+        try {
+            const runtime = testkit.registration('projectNativeAdapters', 'tasks');
+            expect(runtime?.resolveCommand).toBeUndefined();
+            await expect(runtime!.detect!({ root: '/project', adapter: { pluginId: 'example.native', localId: 'tasks' }, files: [] })).resolves.toMatchObject({ entries: [{ source: { kind: 'pluginNative', target: 'check' } }] });
+        } finally { await testkit.dispose(); }
+        const scope = createPluginRegistrationScope({ pluginId: 'example.native', target: { realm: 'daemon' }, rights: [{ family: 'projectNativeAdapters', localId: 'tasks', target: { realm: 'daemon' }, projectNativeAdapterRoles: ['detect'] }] });
+        scope.api.projectNativeAdapters.register('tasks', {
+            async detect() { return { entries: [], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] }; },
+            async resolveCommand() { return { kind: 'unsupported', code: 'not_admitted' }; },
+        });
+        expect(() => scope.commit()).toThrow(/runtime roles do not match/u);
+        await scope.dispose();
     });
 });

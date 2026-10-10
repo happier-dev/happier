@@ -40,6 +40,7 @@ export type { AgentAcpPromptUsageDefinition } from '../../agentRuntime/projectio
 export type { AgentAcpRequestExtension } from '../../agentRuntime/projections.js';
 export type { AgentAcpRuntimeComposer } from '../../agentRuntime/projections.js';
 export type { AgentAcpRuntimeDefinition } from '../../agentRuntime/projections.js';
+export type { AgentAcpUsageLimitDiagnosticDefinition } from '../../agentRuntime/projections.js';
 export type { AgentAcpRuntimeExtensions } from '../../agentRuntime/projections.js';
 export type { AgentAcpRuntimeOptions } from '../../agentRuntime/projections.js';
 export type { AgentAcpStderrMatchRule } from '../../agentRuntime/projections.js';
@@ -344,6 +345,7 @@ export type { ForkSessionMetadata } from '../../agentRuntime/projections.js';
 export type { ForkSurfaceV1 } from '../../agentRuntime/projections.js';
 export type { HandoffAvailabilityRequestV1 } from '../../agentRuntime/projections.js';
 export type { HandoffExportRequestV1 } from '../../agentRuntime/projections.js';
+export type { HandoffExistingStateRequestV1 } from '../../agentRuntime/projections.js';
 export type { HandoffExportResultV1 } from '../../agentRuntime/projections.js';
 export type { HandoffExportSessionMetadata } from '../../agentRuntime/projections.js';
 export type { HandoffFailureCodeV1 } from '../../agentRuntime/projections.js';

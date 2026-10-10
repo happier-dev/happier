@@ -105,6 +105,7 @@ export const CAPABILITY_MATRIX_DECLARATIONS_V1 = Object.freeze({
     exec: available('packages/plugins/review-coderabbit/src/agent/reviews/nativeRun.ts'),
     providers: available(null),
     managedServices: available('packages/plugins/opencode/src/agent/runtime/server/runtimeContext.ts'),
+    machineProvisioners: available('packages/plugins/machine-cua/src/machine/remoteProvisioner.ts'),
     sessions: available('packages/plugins/channels/src/ingress.ts'),
     resources: available(null),
     mcp: available(null),

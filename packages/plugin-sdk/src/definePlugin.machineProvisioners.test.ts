@@ -13,6 +13,15 @@ describe('public machine provisioner authoring', () => {
       expect(options).toEqual(machineProvisionerAuthorOptions);
       expect(options.choices[0]?.nativeFacts?.size).not.toHaveProperty('memoryBytes');
       expect(machineProvisionerAuthorFixture.manifest.contributes.machineProvisioners?.[0]?.retention.finiteOnly).toBe(true);
+      await expect(testkit.invokeAction('check', {})).resolves.toEqual({ available: true });
+      const selected = options.choices[0]!;
+      await expect(testkit.invokeAction('acquire', { launch: selected.launch })).resolves.toEqual({
+        kind: 'bound', resource: { contributionRef: { pluginId: machineProvisionerAuthorFixture.manifest.id, localId: 'guest' },
+          schemaVersion: 1, value: selected.launch },
+      });
+      await expect(testkit.invokeAction('acquire', { launch: { name: 'archived-preset' } }))
+        .resolves.toEqual({ kind: 'rejected', code: 'preset_archived' });
+      await expect(testkit.invokeAction('acquire', { launch: { name: selected.title, extra: true } })).rejects.toThrow();
     } finally { await testkit.dispose(); }
   });
   it('checks prerequisites without repairing and invokes their declared repair through the ordinary Action ABI', async () => {

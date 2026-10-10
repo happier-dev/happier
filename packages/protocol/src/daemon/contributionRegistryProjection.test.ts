@@ -1042,8 +1042,6 @@ describe('daemon contribution registry projection (wire)', () => {
     } as const;
 
     expect(PluginActionPresentUserAuthorizationFactsSchema.parse(authorization)).toEqual(authorization);
-    expect(PluginProjectedActionV2Schema.shape.authorization.unwrap())
-      .toBe(PluginActionPresentUserAuthorizationFactsSchema);
     expect(PluginProjectedActionV2Schema.parse(projectedAction)).toMatchObject({ authorization });
     expect(PluginProjectedActionV2Schema.safeParse({
       ...projectedAction,
@@ -2916,7 +2914,12 @@ describe('daemon contribution registry projection (wire)', () => {
         format: 'plainJs',
         byteSize: 9,
       },
-      bytesBase64: 'Ly8gYnVuZGxl',
+      files: [{
+        relativePath: 'native/entry.cjs',
+        digest: `sha256:${'b'.repeat(64)}`,
+        byteSize: 9,
+        bytesBase64: 'Ly8gYnVuZGxl',
+      }],
     })).toMatchObject({ ok: true, cacheIdentity });
   });
 
@@ -2948,7 +2951,6 @@ describe('daemon contribution registry projection (wire)', () => {
         digest: `sha256:${'c'.repeat(64)}`,
         byteSize: 13,
       },
-      bytesBase64: 'PCFkb2N0eXBlIGh0bWw+',
       files: [{
         relativePath: 'hosted/index.html',
         digest: `sha256:${'d'.repeat(64)}`,

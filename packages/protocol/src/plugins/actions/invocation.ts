@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { AgentRuntimeJsonValueV1Schema } from '../../runtime/agentSessionV1.js';
 import {
   PluginDiagnosticDataV1Schema,
@@ -303,6 +304,7 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
 function awaitPluginActionHandlerSettlementOrAbort(
   signal: AbortSignal,
   invoke: () => unknown | Promise<unknown>,
+  retainHandlerResultAfterCancellation?: () => boolean,
 ): Promise<PluginActionHandlerSettlement> {
   return new Promise<PluginActionHandlerSettlement>((resolve) => {
     let settled = false;
@@ -319,6 +321,9 @@ function awaitPluginActionHandlerSettlementOrAbort(
       resolve(settlement);
     }
     function onAbort(): void {
+      // Issued managed acquisition must retain its native outcome for cleanup.
+      // The signal still cancels IO; it cannot retract an already-issued purchase.
+      if (retainHandlerResultAfterCancellation?.() === true) return;
       if (enteringHandler) {
         abortedDuringHandlerEntry = true;
         return;
@@ -420,7 +425,7 @@ export type PluginActionFailureAuthorPayloadV1 = Readonly<{
   diagnostics?: readonly PluginDiagnosticDataV1[];
 }>;
 
-const PluginActionFailureDiagnosticsV1Schema = z.array(PluginDiagnosticDataV1Schema);
+const PluginActionFailureDiagnosticsV1Schema = lazyZodSchema(() => z.array(PluginDiagnosticDataV1Schema));
 
 /**
  * Reads the author vocabulary out of a projected failure `data` payload. Each
@@ -449,27 +454,27 @@ export function readPluginActionFailureAuthorPayload(
   });
 }
 
-const PluginActionPresentUserAuthorizationScopeSchema = z.object({
+const PluginActionPresentUserAuthorizationScopeSchema = lazyZodSchema(() => z.object({
   accountId: z.string().optional(),
   projectId: z.string().optional(),
   workspaceId: z.string().optional(),
   machineId: z.string().optional(),
   actorId: z.string().optional(),
-}).strict();
+}).strict());
 
-const PluginActionPresentUserAuthorizationRequirementSchema = z.object({
+const PluginActionPresentUserAuthorizationRequirementSchema = lazyZodSchema(() => z.object({
   id: z.string(),
   required: z.boolean(),
   status: z.enum(['available', 'denied', 'unavailable', 'notApplicable']),
   code: z.string().optional(),
-}).strict();
+}).strict());
 
 /**
  * The one wire-safe form of the canonical final-policy facts used by Action
  * admission. It deliberately excludes availability and confirmation because
  * those remain Action-present-user gate inputs rather than authorization facts.
  */
-export const PluginActionPresentUserAuthorizationFactsSchema = z.object({
+export const PluginActionPresentUserAuthorizationFactsSchema = lazyZodSchema(() => z.object({
   generation: z.object({
     targetGeneration: z.string(),
     desiredGeneration: z.string().nullable(),
@@ -491,7 +496,7 @@ export const PluginActionPresentUserAuthorizationFactsSchema = z.object({
   }).strict()),
   serviceAvailability: z.array(PluginActionPresentUserAuthorizationRequirementSchema),
   operatingSystemAuthorization: z.array(PluginActionPresentUserAuthorizationRequirementSchema),
-}).strict();
+}).strict());
 
 export type PluginActionPresentUserAuthorizationFacts = Readonly<
   Omit<PluginActionPolicyInput, 'availability' | 'confirmation'>
@@ -801,6 +806,8 @@ export function createPluginActionInvocation(params: Readonly<{
   qualifiedId: string;
   invoke(input: unknown, options: Readonly<{
     signal?: AbortSignal;
+    /** Host-private check that a managed acquire was actually issued; never new effect authority. */
+    retainHandlerResultAfterCancellation?: () => boolean;
     /** Host-only admission that runs after input validation, before handler effects. */
     preDispatch?(input: PluginActionInvocationHandlerInput): (
       | PluginActionInvocationPreDispatchResult
@@ -930,6 +937,7 @@ export function createPluginActionInvocation(params: Readonly<{
             actionHandlerStarted = true;
             return options.handler(handlerInput);
           },
+          options.retainHandlerResultAfterCancellation,
         );
         if (settlement.kind === 'aborted') {
           const unavailableAfterCancellation = actionHandlerStarted

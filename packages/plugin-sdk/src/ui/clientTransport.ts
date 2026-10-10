@@ -14,9 +14,11 @@ import {
 } from '../host/ui/hostApiCodecs.js';
 import type { PluginErrorData } from '../errors.js';
 import type { JsonValue, PluginReference } from '../identity.js';
+import { PluginUiResourceSubscriptionTargetV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import type { Disposable, PluginCancellationOptions } from '../lifecycle.js';
 import type {
     PluginUiHostApi,
+    PluginUiResourceReference,
     PluginUiActionExecutionOptions,
     PluginUiHostApiVersion,
     ComposerDecorationResultV1,
@@ -84,9 +86,9 @@ export interface CreatePluginUiHostApiClientFromTransportOptions {
     readonly transport: PluginUiHostApiClientTransport;
     readonly apiRange?: string;
     /**
-     * Bounds the OPENING HANDSHAKE only. A host that never answers `negotiate`
-     * would otherwise leave the client waiting forever with nothing to cancel
-     * it, because no caller yet holds a handle to abort.
+     * Optional caller-owned opening-handshake budget. Without one, negotiation
+     * remains pending until the host answers, the caller aborts, or the
+     * transport disconnects.
      *
      * Ordinary operations are deliberately unbounded: `selectActionInput` is
      * held open by a person filling a form, and a wall-clock deadline on it
@@ -206,6 +208,11 @@ function isAdvertisableHostMethod(
 }
 function asJsonReference(reference: PluginReference): JsonValue {
     return typeof reference === 'string' ? reference : { pluginId: reference.pluginId, localId: reference.localId };
+}
+function asJsonResourceReference(reference: PluginUiResourceReference): JsonValue {
+    const parsed = PluginUiResourceSubscriptionTargetV1Schema.safeParse(reference);
+    if (!parsed.success) throw new PluginUiHostApiClientError('invalid_payload', 'Resource reference is invalid.');
+    return parsed.data;
 }
 function createExecuteActionRequest(action: PluginReference, input?: JsonValue) {
     const parsed = PluginUiExecuteActionRequestV1Schema.safeParse({
@@ -415,7 +422,6 @@ export async function createPluginUiHostApiClientFromTransport(
 ): Promise<PluginUiHostApi> {
     const createRequestId = options.createRequestId ?? (() => defaultId('plugin-ui-request'));
     const createSubscriptionId = options.createSubscriptionId ?? (() => defaultId('plugin-ui-subscription'));
-    const negotiationTimeoutMs = options.negotiationTimeoutMs ?? 30_000;
     const pending = new Map<string, PendingRequest>();
     const subscriptions = new Map<string, SubscriptionRecord>();
     const issuedInjectedRequestIds = options.createRequestId === undefined ? undefined : new Set<string>();
@@ -548,7 +554,9 @@ export async function createPluginUiHostApiClientFromTransport(
     });
     if (!online) disposeTransport();
 
-    negotiationTimeout = setTimeout(() => disconnect('negotiation_timeout'), negotiationTimeoutMs);
+    if (options.negotiationTimeoutMs !== undefined) {
+        negotiationTimeout = setTimeout(() => disconnect('negotiation_timeout'), options.negotiationTimeoutMs);
+    }
     if (options.signal?.aborted) disconnect('aborted');
     else options.signal?.addEventListener('abort', () => disconnect('aborted'), { once: true });
     await Promise.resolve(options.transport.send({ wireVersion: PLUGIN_UI_HOST_API_WIRE_VERSION_V1, kind: 'negotiate', identity: options.identity, apiRange: requestedApiRange })).catch(() => disconnect('transport_unavailable'));
@@ -932,7 +940,7 @@ export async function createPluginUiHostApiClientFromTransport(
         },
         readResource: async (resource, requestOptions): Promise<ResourceContent> => {
             const decoded = decodePluginUiResourceContent(
-                await request('readResource', { resource: asJsonReference(resource) }, requestOptions?.signal),
+                await request('readResource', { resource: asJsonResourceReference(resource) }, requestOptions?.signal),
                 decodeBase64,
             );
             if (!decoded.ok) throw new PluginUiHostApiClientError('invalid_payload', decoded.diagnostic);
@@ -962,7 +970,7 @@ export async function createPluginUiHostApiClientFromTransport(
         watchResource: async (resource, listener, requestOptions) => {
             const subscription = await subscribe(
                 'watchResource',
-                { resource: asJsonReference(resource) },
+                { resource: asJsonResourceReference(resource) },
                 (value, subscriptionId) => listener(readResourceSubscriptionEvent(value, subscriptionId)),
                 requestOptions?.signal,
             );

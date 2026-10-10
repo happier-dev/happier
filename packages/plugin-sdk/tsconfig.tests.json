@@ -2,7 +2,7 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
-    "rootDir": ".",
+    "rootDir": "..",
     "incremental": true,
     "tsBuildInfoFile": "node_modules/.cache/tsc/plugin-sdk.tests.typecheck.tsbuildinfo",
     "module": "ESNext",

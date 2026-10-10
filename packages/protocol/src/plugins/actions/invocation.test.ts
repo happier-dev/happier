@@ -619,6 +619,7 @@ describe('createPluginActionInvocation', () => {
     const handler = vi.fn(() => ({ committed: true }));
     const pending = createInvocation().invoke(null, {
       signal: caller.signal,
+      retainHandlerResultAfterCancellation: () => true,
       preDispatch,
       handler,
     });
@@ -633,6 +634,27 @@ describe('createPluginActionInvocation', () => {
       actionHandlerInvocation: 'notStarted',
     });
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('retains the validated outcome of an issued host-managed allocation after cancellation', async () => {
+    const caller = new AbortController();
+    let resolveHandler!: (value: { nativeId: string }) => void;
+    const resultSchema = defineProtocolObject({ nativeId: defineProtocolString() }, { policy: 'closed' });
+    const pending = createInvocation({ resultSchema: resultSchema.jsonSchema }).invoke(null, {
+      signal: caller.signal,
+      retainHandlerResultAfterCancellation: () => true,
+      handler: ({ signal }) => new Promise<{ nativeId: string }>((resolve) => {
+        resolveHandler = resolve;
+        expect(signal.aborted).toBe(false);
+      }),
+    });
+    caller.abort(new Error('creation was canceled after native submission'));
+    resolveHandler({ nativeId: 'paid-native-1' });
+    await expect(pending).resolves.toEqual({ status: 'executed', value: { nativeId: 'paid-native-1' } });
+    await expect(createInvocation({ resultSchema: resultSchema.jsonSchema }).invoke(null, {
+      retainHandlerResultAfterCancellation: () => true,
+      handler: () => ({ unrelated: true }),
+    })).resolves.toMatchObject({ status: 'invalid' });
   });
 
   it('proves non-start when cancellation arrives after pre-dispatch but before handler entry', async () => {

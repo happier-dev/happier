@@ -7,6 +7,7 @@ import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { SERVER_IDENTITY_ID_PATTERN } from '../../features/payload/capabilities/serverIdentityCapabilities.js';
 import { PluginCollectionContractRefV1Schema } from '../data/collectionContractRefV1.js';
 import { PluginManifestV2Schema } from '../manifest/v2.js';
+import { PluginDeclaredUiEntriesV1Schema } from '../../daemon/contributionRegistryProjection.js';
 import { PluginIdSchema } from '../pluginId.js';
 import {
   PluginUiArtifactIdV2Schema,
@@ -44,10 +45,10 @@ const MachineMaterializationRevisionSchema = lazyZodSchema(() => z.number().int(
 const TimestampMsSchema = lazyZodSchema(() => z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER));
 
 /**
- * Intent-listing is a bounded bootstrap discovery seam, never a paginated
- * catalog. Per-plugin intent reads retain every declaration-bearing fact.
+ * Intent discovery pages the canonical read projections. This is a processing
+ * page size, not a limit on the Account census or its encoded bytes.
  */
-export const MAX_PLUGIN_ACCOUNT_AVAILABILITY_INTENT_IDS = 200;
+export const PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE = 200;
 
 export {
   MAX_PLUGIN_RELEASE_VERSION_BYTES,
@@ -65,33 +66,16 @@ export const PluginPortableReleaseManifestV1Schema: typeof PluginManifestV2Schem
 export type PluginPortableReleaseManifestV1 = z.infer<typeof PluginPortableReleaseManifestV1Schema>;
 
 /**
- * The bounded, generated compatibility input published beside an immutable
+ * The generated compatibility input published beside an immutable
  * package version. It deliberately contains only canonical manifest and UI
  * artifact facts: host/SDK build provenance is not an author-controlled
  * compatibility switch and therefore has no field here.
  */
-export const MAX_PLUGIN_COMPATIBILITY_PROJECTION_BYTES = 1024 * 1024;
-export const MAX_PLUGIN_COMPATIBILITY_PROJECTION_UI_ARTIFACTS = 128;
-
 export const PluginCompatibilityProjectionV1Schema = lazyZodSchema(() => z.object({
   version: z.literal(1),
   manifest: PluginPortableReleaseManifestV1Schema,
   uiArtifacts: PluginUiArtifactsManifestV2Schema,
-}).strict().superRefine((value, context) => {
-  if (value.uiArtifacts.entries.length > MAX_PLUGIN_COMPATIBILITY_PROJECTION_UI_ARTIFACTS) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['uiArtifacts', 'entries'],
-      message: 'Compatibility projection has too many generated UI artifacts.',
-    });
-  }
-  if (new TextEncoder().encode(createCanonicalJsonSigningInput(value)).byteLength > MAX_PLUGIN_COMPATIBILITY_PROJECTION_BYTES) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'Compatibility projection exceeds the bounded canonical payload size.',
-    });
-  }
-}));
+}).strict());
 export type PluginCompatibilityProjectionV1 = z.infer<typeof PluginCompatibilityProjectionV1Schema>;
 
 /**
@@ -397,12 +381,23 @@ export const PluginMachineMaterializationV1Schema = lazyZodSchema(() => z.object
    */
   sourceClass: z.enum(['registryPackage', 'versionedArchive', 'localPath', 'bundledFirstParty']),
   portableRelease: z.boolean(),
+  /** Admitted installed declaration for discovery; never an execution grant. */
+  declaredManifest: PluginPortableReleaseManifestV1Schema.optional(),
+  declaredUiEntries: PluginDeclaredUiEntriesV1Schema.optional(),
   archiveDigestSha256: PluginUiArtifactDigestV1Schema.optional(),
   uiArtifacts: z.array(PluginMachineUiArtifactV1Schema).readonly(),
   enabled: z.boolean(),
   trustState: z.enum(['trusted', 'untrusted', 'revoked']),
   observedAt: TimestampMsSchema,
 }).strict().superRefine((value, context) => {
+  if (value.declaredManifest && (value.declaredManifest.id !== value.pluginId || value.declaredManifest.version !== value.version)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['declaredManifest'], message: 'Installed declaration must match its plugin and version.' });
+  }
+  for (const [entryId, entry] of Object.entries(value.declaredUiEntries ?? {})) {
+    if (entry.id !== entryId || entry.pluginId !== value.pluginId) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ['declaredUiEntries', entryId], message: 'Installed UI declaration must match its entry and plugin identity.' });
+    }
+  }
   if ((value.sourceClass === 'localPath' || value.sourceClass === 'bundledFirstParty') && value.portableRelease) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
@@ -424,6 +419,31 @@ export const PluginMachineMaterializationV1Schema = lazyZodSchema(() => z.object
   });
 }));
 export type PluginMachineMaterializationV1 = z.infer<typeof PluginMachineMaterializationV1Schema>;
+
+/**
+ * The installation facts the server reports and persists. Live daemon
+ * declarations stay with their source and are not server census semantics.
+ */
+export function projectPluginMachineMaterializationReportFactsV1(
+  materialization: PluginMachineMaterializationV1,
+): Readonly<Omit<PluginMachineMaterializationV1, 'declaredManifest' | 'declaredUiEntries'>> {
+  return Object.freeze({
+    serverIdentityId: materialization.serverIdentityId,
+    machineId: materialization.machineId,
+    materializationId: materialization.materializationId,
+    pluginId: materialization.pluginId,
+    version: materialization.version,
+    sourceClass: materialization.sourceClass,
+    portableRelease: materialization.portableRelease,
+    ...(materialization.archiveDigestSha256 !== undefined
+      ? { archiveDigestSha256: materialization.archiveDigestSha256 }
+      : {}),
+    uiArtifacts: materialization.uiArtifacts,
+    enabled: materialization.enabled,
+    trustState: materialization.trustState,
+    observedAt: materialization.observedAt,
+  });
+}
 
 /**
  * The Account release is the canonical immutable-content owner. Portable
@@ -505,13 +525,19 @@ export type PluginAccountAvailabilityIntentReadResponseV1 =
   z.infer<typeof PluginAccountAvailabilityIntentReadResponseV1Schema>;
 
 /**
- * This bootstrap response names only selected Account intent identities. It
- * intentionally excludes intent/release/declaration data so `intent.read`
- * remains the sole declaration authority.
+ * The Account bootstrap batch reuses the exact intent.read projection, including
+ * release and Artifact facts. Failed reads remain explicit per plugin; neither
+ * a partial result nor a missing intent can fabricate a current declaration.
  */
-export const PluginAccountAvailabilityIntentIdsListResponseV1Schema = lazyZodSchema(() => z.object({
+export const PluginAccountAvailabilityIntentsListResponseV1Schema = lazyZodSchema(() => z.object({
   availabilityCursor: MachineMaterializationRevisionSchema,
-  pluginIds: z.array(asProtocolZod(PluginIdSchema)).max(MAX_PLUGIN_ACCOUNT_AVAILABILITY_INTENT_IDS).readonly(),
+  pluginIds: z.array(asProtocolZod(PluginIdSchema)).readonly(),
+  nextCursor: asProtocolZod(PluginIdSchema).nullable().optional(),
+  intentReads: z.array(z.object({
+    pluginId: asProtocolZod(PluginIdSchema),
+    response: PluginAccountAvailabilityIntentReadResponseV1Schema,
+  }).strict()).readonly(),
+  failedPluginIds: z.array(asProtocolZod(PluginIdSchema)).readonly(),
 }).strict().superRefine((value, context) => {
   for (let index = 1; index < value.pluginIds.length; index += 1) {
     const previous = value.pluginIds[index - 1]!;
@@ -524,9 +550,30 @@ export const PluginAccountAvailabilityIntentIdsListResponseV1Schema = lazyZodSch
       });
     }
   }
+  const accountedPluginIds = new Set<string>();
+  for (const [index, entry] of value.intentReads.entries()) {
+    if (accountedPluginIds.has(entry.pluginId)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ['intentReads', index, 'pluginId'],
+        message: 'Account Availability reads must name each plugin once.' });
+    }
+    accountedPluginIds.add(entry.pluginId);
+  }
+  for (const [index, pluginId] of value.failedPluginIds.entries()) {
+    if (accountedPluginIds.has(pluginId)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ['failedPluginIds', index],
+        message: 'A failed plugin cannot also have a successful read or appear twice.' });
+    }
+    accountedPluginIds.add(pluginId);
+  }
+  for (const [index, pluginId] of value.pluginIds.entries()) {
+    if (!accountedPluginIds.has(pluginId)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ['pluginIds', index],
+        message: 'Every discovered intent must have a successful or failed read.' });
+    }
+  }
 }));
-export type PluginAccountAvailabilityIntentIdsListResponseV1 =
-  z.infer<typeof PluginAccountAvailabilityIntentIdsListResponseV1Schema>;
+export type PluginAccountAvailabilityIntentsListResponseV1 =
+  z.infer<typeof PluginAccountAvailabilityIntentsListResponseV1Schema>;
 
 /**
  * Reads immutable Account release facts by exact coordinate. Selection intent
@@ -540,12 +587,20 @@ export const PluginAccountAvailabilityReleaseReadResponseV1Schema = lazyZodSchem
 export type PluginAccountAvailabilityReleaseReadResponseV1 =
   z.infer<typeof PluginAccountAvailabilityReleaseReadResponseV1Schema>;
 
-export const PluginAccountAvailabilityMaterializationsReadResponseV1Schema = lazyZodSchema(() => z.object({
+export type PluginAccountAvailabilityMaterializationsReadResponseV1 = Readonly<{
+  availabilityCursor: number;
+  snapshots: readonly PluginMachineMaterializationSnapshotV1[];
+  inventoryComplete?: boolean;
+  releases?: readonly PluginReleaseFactsV1[];
+}>;
+export const PluginAccountAvailabilityMaterializationsReadResponseV1Schema: z.ZodType<PluginAccountAvailabilityMaterializationsReadResponseV1> = lazyZodSchema(() => z.object({
   availabilityCursor: MachineMaterializationRevisionSchema,
   snapshots: z.array(PluginMachineMaterializationSnapshotV1Schema).readonly(),
+  /** Omitted machine rows are unknown if any complete machine snapshot could not be read. */
+  inventoryComplete: z.boolean().optional(),
+  /** Immutable facts for reported portable coordinates, independent of enabled selection intent. */
+  releases: z.array(PluginReleaseFactsV1Schema).readonly().optional(),
 }).strict());
-export type PluginAccountAvailabilityMaterializationsReadResponseV1 =
-  z.infer<typeof PluginAccountAvailabilityMaterializationsReadResponseV1Schema>;
 
 function normalizePluginMachineMaterializationV1(
   input: PluginMachineMaterializationV1,

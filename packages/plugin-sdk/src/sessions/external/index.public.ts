@@ -9,6 +9,10 @@ export {
     HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1,
     isAgentExternalSessionsResultWithinByteBudget,
 } from '../../externalSessions.js';
+export type { AgentExternalSessionAccountingObservation } from '../../externalSessions.js';
+export type { AgentExternalSessionAccountingSource } from '../../externalSessions.js';
+export type { AgentExternalSessionsReadAccountingRequest } from '../../externalSessions.js';
+export type { AgentExternalSessionsReadAccountingResult } from '../../externalSessions.js';
 export type { AgentExternalSessionCandidate } from '../../externalSessions.js';
 export type { AgentExternalSessionCandidateThread } from '../../externalSessions.js';
 export type { AgentExternalSessionCandidateIndexLookup } from '../../externalSessions.js';

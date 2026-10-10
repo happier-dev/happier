@@ -1,3 +1,4 @@
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import { definePlugin } from '../definePlugin.js';
@@ -45,7 +46,7 @@ describe('defineUiSurfaceDefinition', () => {
         const inline = defineUiSurfaceDefinition({
             id: 'inline',
             placement: 'rendererOnly',
-            renderer: { kind: 'hostedHtml', source: { kind: 'html', html: '<p>Hello</p>' } },
+            renderer: { kind: 'hostedHtml', source: artifactHtmlBundleFromBodyV1('<p>Hello</p>') },
         });
         const plugin = definePlugin({
             id: 'com.acme.hosted',
@@ -62,7 +63,7 @@ describe('defineUiSurfaceDefinition', () => {
             {
                 id: 'inline-renderer',
                 kind: 'hostedHtml',
-                source: { kind: 'html', html: '<p>Hello</p>' },
+                source: artifactHtmlBundleFromBodyV1('<p>Hello</p>'),
             },
         ]);
     });

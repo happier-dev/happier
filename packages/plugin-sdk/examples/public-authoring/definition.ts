@@ -1,3 +1,4 @@
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/plugin-sdk/ui';
 import {
     defineComposerAttachment,
     defineComposerControl,
@@ -77,10 +78,7 @@ const reviewServicesHostedHtmlSurface = defineUiSurfaceDefinition({
     title: 'Review service status',
     renderer: {
         kind: 'hostedHtml',
-        source: {
-            kind: 'html',
-            html: '<main><h1>Review service</h1><p>Ready for review.</p></main>',
-        },
+        source: artifactHtmlBundleFromBodyV1('<main><h1>Review service</h1><p>Ready for review.</p></main>'),
     },
 });
 
@@ -91,10 +89,7 @@ const reviewProjectHostedHtmlSurface = defineUiSurfaceDefinition({
     title: 'Review project status',
     renderer: {
         kind: 'hostedHtml',
-        source: {
-            kind: 'html',
-            html: '<main><h1>Project review</h1><p>Ready for review.</p></main>',
-        },
+        source: artifactHtmlBundleFromBodyV1('<main><h1>Project review</h1><p>Ready for review.</p></main>'),
     },
 });
 

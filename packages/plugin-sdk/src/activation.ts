@@ -1,6 +1,7 @@
 /** @moduleRealm daemon */
 import type {
     AgentCliAuthContributionV1,
+    AgentConnectedAccountLaunchContributionV1,
     AgentRuntimeFactory,
     AgentRuntimeRegistrationOptions,
     AgentTerminalSurface,
@@ -55,6 +56,7 @@ import type {
 import type { PluginUiIconTokenV1 } from './ui.js';
 import type { VoiceProvidersRegistrationApi } from './voice/projections.js';
 import type { PluginCaptureSourceRuntime } from './captureSources.js';
+import type { PluginProjectNativeAdapterRuntimeV1 } from './projectNativeAdapters.js';
 import type { PluginDragSourceRuntime, PluginDropTargetRuntime } from './entityDragDrop.js';
 
 /** SDK author projection of one exact attachment callback instance. */
@@ -375,6 +377,8 @@ export interface PluginApi {
          * whose runtime remains host-owned (for example an ACP Agent).
          */
         registerCliAuth(id: string, contribution: AgentCliAuthContributionV1): void;
+        /** Registers launch and continuity facts for a host-owned Agent runtime. */
+        registerConnectedAccountLaunch(id: string, contribution: AgentConnectedAccountLaunchContributionV1): void;
         registerTerminal(id: string, contribution: AgentTerminalSurface): void;
         registerExternalSessions(id: string, contribution: AgentExternalSessionsContribution): void;
         registerExternalSessionHooks(
@@ -402,6 +406,7 @@ export interface PluginApi {
     readonly resources: ResourcesRegistrationApi;
     readonly backgroundServices: BackgroundServicesRegistrationApi;
     readonly captureSources: { register(id: string, runtime: PluginCaptureSourceRuntime): void };
+    readonly projectNativeAdapters: { register(id: string, runtime: PluginProjectNativeAdapterRuntimeV1): void };
 }
 
 /**

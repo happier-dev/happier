@@ -227,7 +227,7 @@ async function inspectAndScavengeLockArtifacts(lockPath: string, staleAfterMs: n
         }
       }
     }
-    if (oldEnough && actorIsDead && exactDeadOwner) {
+    if (actorIsDead && exactDeadOwner) {
       if (artifact.isLegacyDirectory) {
         const ownerSnapshot = await readSnapshot(join(artifact.path, 'owner.json'));
         if (ownerSnapshot && parsePredecessorDirectoryOwner(ownerSnapshot.raw)) {

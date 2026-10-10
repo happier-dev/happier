@@ -16,6 +16,7 @@ import {
   resolveAcpToolPermissionPolicy as canonicalResolveAcpToolPermissionPolicy,
 } from '@happier-dev/agents/acpPresets';
 import type {
+  HandoffExistingStateRequestV1 as CanonicalHandoffExistingStateRequestV1,
   HandoffImportResultV1 as CanonicalHandoffImportResultV1,
   RuntimeOutboundTranscriptToolNormalizationV1 as CanonicalRuntimeOutboundTranscriptToolNormalizationV1,
 } from '@happier-dev/agents';
@@ -44,6 +45,7 @@ import type {
   ForkAvailabilityRequestV1,
   ForkSessionMetadata,
   ForkSurfaceV1,
+  HandoffExistingStateRequestV1,
   HandoffImportResultV1,
   RuntimeOutboundTranscriptToolNormalizationV1,
 } from './projections.js';
@@ -512,6 +514,9 @@ describe('Agent runtime package-local publication projection', () => {
       .toEqualTypeOf<'identity.runtimeDescriptor' | 'identity.providerSessionId'>();
     expectTypeOf<HandoffImportResultV1>()
       .toMatchTypeOf<CanonicalHandoffImportResultV1>();
+    // Host metadata is deliberately narrower than the declaration-neutral author view.
+    expectTypeOf<CanonicalHandoffExistingStateRequestV1>()
+      .toMatchTypeOf<HandoffExistingStateRequestV1>();
   });
 
   it('owns terminal runtime-descriptor and handoff-import declaration closure in the SDK', async () => {

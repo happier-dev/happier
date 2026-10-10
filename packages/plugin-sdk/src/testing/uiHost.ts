@@ -40,6 +40,7 @@ import type {
     ComposerTransactionResultV1,
     ComposerTransactionV1,
     PluginUiContextEnrichmentV1,
+    PluginUiResourceReference,
     RenderContext,
     ResourceContent,
     SurfaceContext,
@@ -403,7 +404,7 @@ export type PluginUiTestkitExecuteActionInput = Readonly<{
 }>;
 
 export type PluginUiTestkitReadResourceInput = Readonly<{
-    resource: PluginReference;
+    resource: PluginUiResourceReference;
     signal: AbortSignal;
 }>;
 
@@ -420,7 +421,7 @@ export type PluginUiTestkitReadOpenableContentInput = Readonly<{
 }>;
 
 export type PluginUiTestkitWatchResourceInput = Readonly<{
-    resource: PluginReference;
+    resource: PluginUiResourceReference;
     signal: AbortSignal;
 }>;
 
@@ -744,7 +745,7 @@ export interface PluginUiTestkit {
      */
     updatePageLocation(subPath: string): Promise<void>;
     /** Emit only the canonical invalidation signal; consumers re-read through `hostApi.readResource`. */
-    invalidateResource(resource: PluginReference, digest: string): void;
+    invalidateResource(resource: PluginUiResourceReference, digest: string): void;
     /** Emit the canonical invalidation signal to every watch of this Session; consumers re-read through `hostApi.readSession`. */
     invalidateSession(sessionId: string, digest: string): void;
     /** Emit one schema-checked observation through exact active Composer watches. */
@@ -766,7 +767,7 @@ export interface PluginUiTestkit {
 }
 
 type ActiveRequest = Readonly<{ controller: AbortController }>;
-type ResourceSubscription = Readonly<{ resource: PluginReference }>;
+type ResourceSubscription = Readonly<{ resource: PluginUiResourceReference; controller: AbortController }>;
 type ComposerHostResource = Readonly<{
     method: 'watchComposer' | 'acquireComposerInputLock' | 'watchEntityDragDrop';
     ref?: ComposerRefV1;
@@ -810,9 +811,9 @@ function requireString(value: JsonValue | undefined, label: string): string {
     return value;
 }
 
-function readResourceReference(value: JsonValue | undefined, label: string): PluginReference {
+function readResourceReference(value: JsonValue | undefined, label: string): PluginUiResourceReference {
     const parsed = PluginUiResourceSubscriptionTargetV1Schema.safeParse(value);
-    if (!parsed.success) throw fixtureError('invalid_payload', `${label} must be a plugin contribution reference.`);
+    if (!parsed.success) throw fixtureError('invalid_payload', `${label} must be a Resource reference.`);
     return parsed.data;
 }
 
@@ -959,7 +960,12 @@ function sleepForSemanticQuery(milliseconds: number): Promise<void> {
     return new Promise((resolve) => { setTimeout(resolve, milliseconds); });
 }
 
-function sameReference(left: PluginReference, right: PluginReference, pluginId: string): boolean {
+function sameReference(left: PluginUiResourceReference, right: PluginUiResourceReference, pluginId: string): boolean {
+    if (typeof left !== 'string' && 'hostRead' in left) {
+        return typeof right !== 'string' && 'hostRead' in right
+            && left.hostRead === right.hostRead && pluginJsonValuesEqual(left.input, right.input);
+    }
+    if (typeof right !== 'string' && 'hostRead' in right) return false;
     const key = (value: PluginReference): string => (
         typeof value === 'string'
             ? `${pluginId}\u0000${value}`
@@ -1160,6 +1166,7 @@ async function createPluginUiTestkitInternal<TSurface>(
         for (const request of activeRequests.values()) request.controller.abort(reason);
         activeRequests.clear();
         contextSubscriptions.clear();
+        for (const subscription of resourceSubscriptions.values()) subscription.controller.abort(reason);
         resourceSubscriptions.clear();
         sessionSubscriptions.clear();
         selectedInputByOperation.clear();
@@ -1675,7 +1682,7 @@ async function createPluginUiTestkitInternal<TSurface>(
                     const resource = readResourceReference(payload.resource, 'resource');
                     const watch = await handlers.watchResource({ resource, signal: controller.signal });
                     if (controller.signal.aborted) return;
-                    resourceSubscriptions.set(message.subscriptionId, { resource });
+                    resourceSubscriptions.set(message.subscriptionId, { resource, controller });
                     establishment = {
                         subscriptionId: message.subscriptionId,
                         digest: PluginUiArtifactDigestV1Schema.parse(watch.digest),
@@ -1819,6 +1826,7 @@ async function createPluginUiTestkitInternal<TSurface>(
         }
         if (message.kind === 'disposeHostResource') {
             contextSubscriptions.delete(message.subscriptionId);
+            resourceSubscriptions.get(message.subscriptionId)?.controller.abort('disposed');
             resourceSubscriptions.delete(message.subscriptionId);
             sessionSubscriptions.delete(message.subscriptionId);
             void disposeComposerHostResource(message.subscriptionId, 'disposed').catch(() => undefined);
@@ -1959,7 +1967,7 @@ async function createPluginUiTestkitInternal<TSurface>(
             assertActive();
             fixtureRevision += 1;
         },
-        invalidateResource(resource: PluginReference, digest: string) {
+        invalidateResource(resource: PluginUiResourceReference, digest: string) {
             assertActive();
             const canonicalResource = readResourceReference(resource, 'resource');
             const canonicalDigest = PluginUiArtifactDigestV1Schema.parse(digest);

@@ -100,7 +100,7 @@ async function assertPortablePluginOwnedInputs(
     }
 }
 
-function compilerPolicyPlugin(artifactId: string): Plugin {
+function compilerPolicyPlugin(artifactId: string, resolveSourceImport?: (specifier: string) => string | undefined): Plugin {
     return {
         name: 'happier-plugin-ui-universal-cjs-policy',
         setup(pluginBuild) {
@@ -135,6 +135,10 @@ function compilerPolicyPlugin(artifactId: string): Plugin {
                         `Executable Plugin UI artifact "${artifactId}" imports a binary asset; use Plugin Resources, a bounded data representation, or hosted static UI`,
                     );
                 }
+                if (/^[^./#]/u.test(args.path)) {
+                    const sourcePath = resolveSourceImport?.(args.path);
+                    if (sourcePath) return { path: sourcePath };
+                }
                 return null;
             });
             pluginBuild.onLoad(
@@ -155,6 +159,8 @@ export async function compileUniversalPluginUiCommonJs(input: Readonly<{
     entryPath: string;
     artifactId: string;
     requestedExports: readonly string[];
+    exportConditions?: readonly string[];
+    resolveSourceImport?: (specifier: string) => string | undefined;
 }>): Promise<UniversalPluginUiCommonJsCompileResult> {
     const projectRoot = resolve(input.projectRoot);
     const entryPath = isAbsolute(input.entryPath) ? input.entryPath : resolve(projectRoot, input.entryPath);
@@ -179,11 +185,11 @@ export async function compileUniversalPluginUiCommonJs(input: Readonly<{
             charset: 'utf8',
             target: 'es2020',
             mainFields: ['module', 'main'],
-            conditions: [...UNIVERSAL_PLUGIN_UI_EXPORT_CONDITIONS],
+            conditions: [...(input.exportConditions ?? []), ...UNIVERSAL_PLUGIN_UI_EXPORT_CONDITIONS],
             metafile: true,
             write: false,
             nodePaths: [packageNodeModulesPath()],
-            plugins: [compilerPolicyPlugin(input.artifactId)],
+            plugins: [compilerPolicyPlugin(input.artifactId, input.resolveSourceImport)],
             logLevel: 'silent',
         });
     } catch (cause) {

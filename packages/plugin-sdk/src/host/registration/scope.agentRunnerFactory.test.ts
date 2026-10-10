@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type {
   AgentCliAuthContributionV1,
+  AgentConnectedAccountLaunchContributionV1,
   AgentCliSessionCommandDeclarationV1,
   AgentDaemonSpawnRuntimeSelectionV1,
   AgentProviderCliAttachDeclarationV1,
@@ -657,6 +658,25 @@ describe('Agent runner-factory registration transaction', () => {
     }).preflightSessionControls?.models?.resolveCommandToolId;
     expect(captured).not.toBe(resolveCommandToolId);
     expect(captured?.({ accountSettings: null, environment: {} })).toBe('assistant-v2');
+  });
+
+  it('captures connected-account launch facts without replacing a host-owned ACP runtime', () => {
+    const scope = scopeFor([]);
+    const contribution = {
+      switchContinuity: {
+        continuityMode: 'restart_shared_state_required',
+        supportedTransitions: ['same_connected_group'],
+      },
+      continuity: { generationApplicationScope: 'per_session_runtime' },
+    } satisfies AgentConnectedAccountLaunchContributionV1;
+    const agents = scope.api.agents as typeof scope.api.agents & Readonly<{
+      registerConnectedAccountLaunch?: (id: string, contribution: AgentConnectedAccountLaunchContributionV1) => void;
+    }>;
+    expect(agents.registerConnectedAccountLaunch).toBeTypeOf('function');
+    agents.registerConnectedAccountLaunch?.('assistant', contribution);
+    const [registration] = scope.commit();
+    expect(registration?.value).toMatchObject({ connectedAccountLaunch: contribution });
+    expect(registration?.value).not.toHaveProperty('factory');
   });
 
   it('captures an auth-only auxiliary registration for a declarative ACP Agent', async () => {

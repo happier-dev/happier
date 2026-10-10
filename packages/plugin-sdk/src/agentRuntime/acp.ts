@@ -1,6 +1,6 @@
 import type { PluginAgentAcpTransport } from '@happier-dev/protocol';
 
-import type { JsonValue } from '../identity.js';
+import type { JsonValue, PluginContributionRef } from '../identity.js';
 import type {
   AgentAcpMcpInputPolicy,
   AgentAcpStderrRules,
@@ -187,7 +187,15 @@ export type AgentAcpPromptUsageDefinition = Readonly<{
   }>): JsonValue | null;
 }>;
 
+/** Provider-declared quota diagnostic carried as ordinary ACP assistant output. */
+export type AgentAcpUsageLimitDiagnosticDefinition = Readonly<{
+  pattern: string;
+  connectedAccountService: PluginContributionRef;
+}>;
+
 export type AgentAcpRuntimeDefinition = Readonly<{
+  /** Native child requests use the root session; the provider settles the requesting tool. */
+  permissions?: Readonly<{ scope: 'session' }>;
   auth?: AgentAcpAuthenticationDefinition;
   parameterizedModelPicker?: boolean;
   modelConfigOptionId?: string;
@@ -204,6 +212,8 @@ export type AgentAcpRuntimeDefinition = Readonly<{
   timeouts?: AgentAcpTimeouts;
   toolNameInference?: AgentAcpToolNameInference;
   stderrRules?: AgentAcpStderrRules;
+  /** Exact provider-declared quota diagnostics carried as ordinary ACP assistant output. */
+  usageLimitDiagnostic?: AgentAcpUsageLimitDiagnosticDefinition;
   toolNameResolver?: AgentAcpToolNameResolver;
   sanitizeToolUpdateContent?: AgentAcpToolUpdateContentSanitizer;
   toolUpdates?: AgentAcpToolUpdatePolicy;

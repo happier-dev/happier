@@ -69,7 +69,7 @@ export function isManagedServiceLoopbackHostname(hostname: string): boolean {
 }
 
 export function managedServiceEndpointHostPolicyForMode(
-  mode: 'spawn' | 'attach' | 'managedSpawn' | 'externalAttach',
+  mode: 'spawn' | 'attach' | 'managedSpawn' | 'externalAttach' | 'native',
 ): ManagedServiceEndpointHostPolicy {
   return mode === 'attach' || mode === 'externalAttach'
     ? 'userDeclaredAttach'

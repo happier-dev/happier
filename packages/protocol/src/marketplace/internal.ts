@@ -13,7 +13,6 @@ export {
 } from './expectedMarketplaceListingV1.js';
 
 export {
-  MAX_PLUGIN_INSTALLATION_REVIEW_STRING_LENGTH,
   PluginChangePendingReviewResultSchema,
   PluginDevelopmentProjectTrustReviewSchema,
   PluginInstallationReviewCompatibilityDiagnosticSchema,

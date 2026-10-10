@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
@@ -33,7 +34,7 @@ export type { PluginUiSurfacePlacementV1 } from './surfaceContextPlacement.js';
  * the latter remains the controller's coarse dispatch key, while this union is
  * the one public SDK truth rendered to an author.
  */
-export const PluginUiMountContextV1Schema = z.discriminatedUnion('kind', [
+export const PluginUiMountContextV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('destination'),
     destination: asProtocolZod(PluginContributionIdentityV1Schema),
@@ -44,7 +45,7 @@ export const PluginUiMountContextV1Schema = z.discriminatedUnion('kind', [
     role: z.string().trim().min(1),
     presentation: z.enum(['content', 'fill']),
   }).strict(),
-]);
+]));
 export type PluginUiMountContextV1 =
   | Readonly<{
     kind: 'destination';
@@ -62,13 +63,13 @@ export type PluginUiMountContextV1 =
  * current public surface fact. The mounted transport already has JSON-safe
  * values; this is an author-facing payload grammar, not a normalizer.
  */
-const PluginUiHostApiSurfaceNonBlankStringV1Schema = z.string().refine(
+const PluginUiHostApiSurfaceNonBlankStringV1Schema = lazyZodSchema(() => z.string().refine(
   (value) => value.trim().length > 0,
   'Expected a non-blank string.',
-);
+));
 
 /** The exact mounted target disclosure carried to an author-facing UI. */
-export const PluginUiHostApiSurfaceTargetV1Schema = z.discriminatedUnion('kind', [
+export const PluginUiHostApiSurfaceTargetV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('app') }).strict(),
   z.object({
     kind: z.literal('session'),
@@ -85,14 +86,14 @@ export const PluginUiHostApiSurfaceTargetV1Schema = z.discriminatedUnion('kind',
     origin: PluginUiHostApiSurfaceNonBlankStringV1Schema.optional(),
   }).strict(),
   z.object({ kind: z.literal('services') }).strict(),
-]);
+]));
 export type PluginUiHostApiSurfaceTargetV1 = z.infer<
   typeof PluginUiHostApiSurfaceTargetV1Schema
 >;
 
-const PluginUiHostApiSurfaceMetricV1Schema = z.number().finite().nonnegative();
+const PluginUiHostApiSurfaceMetricV1Schema = lazyZodSchema(() => z.number().finite().nonnegative());
 
-const PluginUiHostApiSurfaceThemeTypographyV1Schema = z.object({
+const PluginUiHostApiSurfaceThemeTypographyV1Schema = lazyZodSchema(() => z.object({
   body: z.object({
     fontSize: PluginUiHostApiSurfaceMetricV1Schema,
     lineHeight: PluginUiHostApiSurfaceMetricV1Schema,
@@ -124,11 +125,20 @@ const PluginUiHostApiSurfaceThemeTypographyV1Schema = z.object({
     lineHeight: PluginUiHostApiSurfaceMetricV1Schema,
     fontFamily: PluginUiHostApiSurfaceNonBlankStringV1Schema.optional(),
   }).strict(),
-}).strict();
+}).strict());
 
 /** The complete semantic theme payload, not a style-system object. */
-export const PluginUiHostApiSurfaceThemeV1Schema = z.object({
+export const PluginUiHostApiSurfaceThemeV1Schema = lazyZodSchema(() => z.object({
   version: z.literal(1),
+  // Presentation-only V1 addition. The map, gradient and coordinates drop unknown fields;
+  // the surrounding identity/authority context remains closed.
+  surfaceFinish: z.object({
+    card: surfaceFinishGradientSchema().nullable().optional(),
+    floating: surfaceFinishGradientSchema().nullable().optional(),
+    composer: surfaceFinishGradientSchema().nullable().optional(),
+    primaryButton: surfaceFinishGradientSchema().nullable().optional(),
+    secondaryButton: surfaceFinishGradientSchema().nullable().optional(),
+  }).optional(),
   colors: z.object({
     canvas: PluginUiHostApiSurfaceNonBlankStringV1Schema,
     surface: PluginUiHostApiSurfaceNonBlankStringV1Schema,
@@ -174,10 +184,19 @@ export const PluginUiHostApiSurfaceThemeV1Schema = z.object({
     pill: PluginUiHostApiSurfaceMetricV1Schema,
   }).strict(),
   typography: PluginUiHostApiSurfaceThemeTypographyV1Schema,
-}).strict();
+}).strict());
 export type PluginUiHostApiSurfaceThemeV1 = z.infer<
   typeof PluginUiHostApiSurfaceThemeV1Schema
 >;
+
+function surfaceFinishGradientSchema() {
+  const point = z.object({ x: z.number().finite(), y: z.number().finite() });
+  return z.object({
+    colors: z.tuple([PluginUiHostApiSurfaceNonBlankStringV1Schema, PluginUiHostApiSurfaceNonBlankStringV1Schema]).rest(PluginUiHostApiSurfaceNonBlankStringV1Schema),
+    locations: z.tuple([z.number().finite(), z.number().finite()]).rest(z.number().finite()).optional(),
+    start: point.optional(), end: point.optional(),
+  });
+}
 
 /**
  * The one strict browser-safe rich payload for `context()` and `watchContext`.
@@ -185,7 +204,7 @@ export type PluginUiHostApiSurfaceThemeV1 = z.infer<
  * `PluginUiSurfaceContextV1Schema` below remains the separate host-private
  * request dispatch key. It is not an alternate author payload grammar.
  */
-export const PluginUiHostApiSurfaceContextV1Schema = z.object({
+export const PluginUiHostApiSurfaceContextV1Schema = lazyZodSchema(() => z.object({
   mount: PluginUiMountContextV1Schema,
   target: PluginUiHostApiSurfaceTargetV1Schema,
   /** Host page chrome for app pages; absent on other surface placements. */
@@ -207,22 +226,22 @@ export const PluginUiHostApiSurfaceContextV1Schema = z.object({
   }).strict(),
   theme: PluginUiHostApiSurfaceThemeV1Schema,
   translations: z.record(z.string(), z.string()),
-  targetedContributions: PluginUiTargetedContributionsV1Schema,
-}).strict();
+  targetedContributions: PluginUiTargetedContributionsV1Schema.optional(),
+}).strict());
 export type PluginUiHostApiSurfaceContextV1 = z.infer<
   typeof PluginUiHostApiSurfaceContextV1Schema
 >;
 
 /** One current hosted render snapshot for context reads and watches. */
-export const PluginUiHostApiRenderContextSnapshotV1Schema = z.object({
+export const PluginUiHostApiRenderContextSnapshotV1Schema = lazyZodSchema(() => z.object({
   surface: PluginUiHostApiSurfaceContextV1Schema,
   activity: z.object({ active: z.boolean() }).strict(),
-}).strict();
+}).strict());
 export type PluginUiHostApiRenderContextSnapshotV1 = z.infer<
   typeof PluginUiHostApiRenderContextSnapshotV1Schema
 >;
 
-export const PluginUiSurfaceContextV1Schema = z.object({
+export const PluginUiSurfaceContextV1Schema = lazyZodSchema(() => z.object({
   pluginId: z.string().trim().min(1),
   contributionId: z.string().trim().min(1),
   surfaceId: z.string().trim().min(1),
@@ -232,5 +251,5 @@ export const PluginUiSurfaceContextV1Schema = z.object({
   channel: PluginUiChannelV1Schema,
   resourceScope: z.array(PluginSessionResourceTargetV1Schema).default([]),
   diagnostics: z.array(z.string().trim().min(1)).default([]),
-}).strict();
+}).strict());
 export type PluginUiSurfaceContextV1 = z.infer<typeof PluginUiSurfaceContextV1Schema>;

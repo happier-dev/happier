@@ -66,6 +66,7 @@ import type {
 } from '../../connectedAccounts.js';
 import type { BackgroundServiceRunner } from '../../backgroundServices.js';
 import type { PluginCaptureSourceRuntime } from '../../captureSources.js';
+import type { PluginProjectNativeAdapterRuntimeV1, ProjectNativeAdapterRoleV1 } from '../../projectNativeAdapters.js';
 import type { PluginDragSourceRuntime, PluginDropTargetRuntime } from '../../entityDragDrop.js';
 import type { JsonValue } from '../../identity.js';
 import type { PromptAssetAdapter } from '../../resources.js';
@@ -114,6 +115,7 @@ export type PluginRegistrationRight = Readonly<{
     promptAssetDescriptor?: PromptAssetTypeDescriptor;
     voiceProviderDeclaration?: VoiceProviderContribution;
     connectedAccountDescriptorDeclaration?: PluginConnectedAccountDescriptorContributionV2;
+    projectNativeAdapterRoles?: readonly ProjectNativeAdapterRoleV1[];
     /**
      * The complete arm composite the Provider contribution declares. A Provider
      * may declare a managed runtime, contributed catalog formats, or both, and
@@ -148,6 +150,7 @@ type StagedAgentRuntimeRegistration = Readonly<{
     factory?: AgentRuntimeFactory;
     options?: AgentRuntimeRegistrationOptions;
     cliAuth?: AgentCliAuthContributionV1;
+    connectedAccountLaunch?: AgentConnectedAccountLaunchContributionV1;
     terminal?: AgentTerminalSurface;
     externalSessions?: AgentExternalSessionsContribution;
     externalSessionHooks?: AgentExternalSessionHooksContribution;
@@ -219,6 +222,7 @@ const REGISTRATION_FAMILY = Object.freeze({
     voiceProviders: 'voiceProviders',
     backgroundServices: 'backgroundServices',
     captureSources: 'captureSources',
+    projectNativeAdapters: 'projectNativeAdapters',
     dragSources: 'dragSources',
     dropTargets: 'dropTargets',
     promptAssets: 'promptAssets',
@@ -307,6 +311,7 @@ const AGENT_EXTERNAL_SESSIONS_KEYS = Object.freeze([
  */
 const AGENT_EXTERNAL_SESSIONS_OPTIONAL_KEYS = Object.freeze([
     'resolveManagedEndpointService',
+    'readAccounting',
 ] as const);
 const AGENT_EXTERNAL_SESSION_OBSERVATION_KEYS = Object.freeze([
     'describeResource',
@@ -366,14 +371,22 @@ function snapshotAgentProviderBindingAdapter(
     const receiver = readAgentRegistrationObject(value, 'Agent provider binding');
     const v = receiver.v;
     const adapterVersion = receiver.adapterVersion;
+    const supportsClaudeHelperModels = receiver.supportsClaudeHelperModels;
+    const supportsModelSettings = receiver.supportsModelSettings;
     if (v !== 1
         || !Number.isSafeInteger(adapterVersion)
         || (adapterVersion as number) < 1) {
         throw new TypeError('Agent provider binding has an invalid version');
     }
+    if (supportsClaudeHelperModels !== undefined && supportsClaudeHelperModels !== true
+        || supportsModelSettings !== undefined && supportsModelSettings !== true) {
+        throw new TypeError('Agent provider binding has an invalid capability');
+    }
     return Object.freeze({
         v: 1,
         adapterVersion: adapterVersion as number,
+        ...(supportsClaudeHelperModels === true ? { supportsClaudeHelperModels } : {}),
+        ...(supportsModelSettings === true ? { supportsModelSettings } : {}),
         prepare: bindAgentRegistrationCallback<AgentProviderBindingAdapter['prepare']>(
             receiver,
             receiver.prepare,
@@ -725,6 +738,12 @@ function snapshotAgentConnectedAccountLaunchContribution(
                 receiver.continuity,
                 'Agent connected-account launch continuity',
             );
+            const generationApplicationScope = source.generationApplicationScope;
+            if (generationApplicationScope !== undefined
+                && generationApplicationScope !== 'per_session_runtime'
+                && generationApplicationScope !== 'shared_group_auth_surface') {
+                throw new TypeError('Agent connected-account launch continuity.generationApplicationScope is invalid');
+            }
             const nativeAuthCodec = source.nativeAuthCodec;
             let capturedNativeAuthCodec: AgentConnectedAccountContinuityV1['nativeAuthCodec'];
             if (nativeAuthCodec !== undefined) {
@@ -778,14 +797,15 @@ function snapshotAgentConnectedAccountLaunchContribution(
                 }
             }
             if (
-                nativeAuthCodec === undefined
-                &&
-                runtimeAuthAdapter === undefined
+                generationApplicationScope === undefined
+                && nativeAuthCodec === undefined
+                && runtimeAuthAdapter === undefined
                 && source.verifyResumeReachable === undefined
             ) {
                 throw new TypeError('Agent connected-account launch continuity must declare at least one callback');
             }
             return Object.freeze({
+                ...(generationApplicationScope === undefined ? {} : { generationApplicationScope }),
                 ...(capturedNativeAuthCodec === undefined ? {} : { nativeAuthCodec: capturedNativeAuthCodec }),
                 ...(runtimeAuthAdapter === undefined ? {} : { runtimeAuthAdapter }),
                 ...(source.verifyResumeReachable === undefined
@@ -1466,6 +1486,9 @@ function snapshotAgentRuntimeRegistration(
     const cliAuth = staged.cliAuth === undefined
         ? options.cliAuth
         : snapshotAgentCliAuthContribution(staged.cliAuth);
+    const connectedAccountLaunch = staged.connectedAccountLaunch === undefined
+        ? options.connectedAccountLaunch
+        : snapshotAgentConnectedAccountLaunchContribution(staged.connectedAccountLaunch);
     if (staged.factory !== undefined && typeof staged.factory !== 'function') {
         throw new TypeError('Agent runtime factory must be a function');
     }
@@ -1485,8 +1508,8 @@ function snapshotAgentRuntimeRegistration(
             ? { cliSessionCommand: options.cliSessionCommand }
             : {}),
         ...(cliAuth !== undefined ? { cliAuth } : {}),
-        ...(options.connectedAccountLaunch !== undefined
-            ? { connectedAccountLaunch: options.connectedAccountLaunch }
+        ...(connectedAccountLaunch !== undefined
+            ? { connectedAccountLaunch }
             : {}),
         ...(options.preflightSessionControls !== undefined
             ? { preflightSessionControls: options.preflightSessionControls }
@@ -1686,6 +1709,7 @@ export function createPluginRegistrationScope(
             ...(right.requiredFields
                 ? { requiredFields: Object.freeze([...right.requiredFields]) }
                 : {}),
+            ...(right.projectNativeAdapterRoles ? { projectNativeAdapterRoles: Object.freeze([...right.projectNativeAdapterRoles]) } : {}),
             ...(right.promptAssetDescriptor
                 ? { promptAssetDescriptor: snapshotPromptAssetDescriptor(right.promptAssetDescriptor) }
                 : {}),
@@ -1893,11 +1917,14 @@ export function createPluginRegistrationScope(
             fail(`Plugin '${params.pluginId}' registered conflicting contribution 'agents/${localId}'`);
         }
         const current = existing?.value as StagedAgentRuntimeRegistration | undefined;
+        const fieldsDeclareLaunch = fields.connectedAccountLaunch !== undefined || fields.options?.connectedAccountLaunch !== undefined;
+        const currentDeclaresLaunch = current?.connectedAccountLaunch !== undefined || current?.options?.connectedAccountLaunch !== undefined;
         const fieldsDeclareCliAuth = fields.cliAuth !== undefined || fields.options?.cliAuth !== undefined;
         const currentDeclaresCliAuth = current?.cliAuth !== undefined || current?.options?.cliAuth !== undefined;
         if ((fields.factory !== undefined && current?.factory !== undefined)
             || (fields.options !== undefined && current?.options !== undefined)
             || (fieldsDeclareCliAuth && currentDeclaresCliAuth)
+            || (fieldsDeclareLaunch && currentDeclaresLaunch)
             || (fields.terminal !== undefined && current?.terminal !== undefined)
             || (fields.externalSessions !== undefined && current?.externalSessions !== undefined)
             || (fields.externalSessionHooks !== undefined
@@ -1912,6 +1939,7 @@ export function createPluginRegistrationScope(
             ...(current?.factory !== undefined ? { factory: current.factory } : {}),
             ...(current?.options !== undefined ? { options: current.options } : {}),
             ...(current?.cliAuth !== undefined ? { cliAuth: current.cliAuth } : {}),
+            ...(current?.connectedAccountLaunch !== undefined ? { connectedAccountLaunch: current.connectedAccountLaunch } : {}),
             ...(current?.terminal !== undefined ? { terminal: current.terminal } : {}),
             ...(current?.externalSessions !== undefined
                 ? { externalSessions: current.externalSessions }
@@ -1982,6 +2010,13 @@ export function createPluginRegistrationScope(
                     id,
                     Object.freeze({ cliAuth: contribution }),
                     'Agent CLI auth contribution',
+                );
+            },
+            registerConnectedAccountLaunch: (id: string, contribution: AgentConnectedAccountLaunchContributionV1) => {
+                return registerAgentFields(
+                    id,
+                    Object.freeze({ connectedAccountLaunch: contribution }),
+                    'Agent Connected Account launch contribution',
                 );
             },
             registerTerminal: (id: string, contribution: AgentTerminalSurface) => {
@@ -2123,6 +2158,9 @@ export function createPluginRegistrationScope(
         captureSources: Object.freeze({
             register: (id: string, runtime: PluginCaptureSourceRuntime) => register(REGISTRATION_FAMILY.captureSources, id, runtime),
         }),
+        projectNativeAdapters: Object.freeze({
+            register: (id: string, runtime: PluginProjectNativeAdapterRuntimeV1) => register(REGISTRATION_FAMILY.projectNativeAdapters, id, runtime),
+        }),
     });
     const clientApi: PluginClientApi = Object.freeze({
         actions: clientActions,
@@ -2216,6 +2254,14 @@ export function createPluginRegistrationScope(
                         right,
                         capturedValue as ComposerAttachmentRuntime,
                     );
+                }
+                if (staged.family === REGISTRATION_FAMILY.projectNativeAdapters) {
+                    const roles = rightsByKey.get(registrationKey(staged.family, staged.localId))!.projectNativeAdapterRoles ?? [];
+                    const runtime = capturedValue as PluginProjectNativeAdapterRuntimeV1;
+                    const registeredRoles = Object.keys(runtime);
+                    if (roles.length === 0 || registeredRoles.length !== roles.length || registeredRoles.some(role => !roles.includes(role as ProjectNativeAdapterRoleV1))) {
+                        fail(`Plugin '${params.pluginId}' native adapter '${staged.localId}' runtime roles do not match its declaration`);
+                    }
                 }
                 if (staged.family === REGISTRATION_FAMILY.connectedAccounts) {
                     const right = rightsByKey.get(registrationKey(staged.family, staged.localId))!;

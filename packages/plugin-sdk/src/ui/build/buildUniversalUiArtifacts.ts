@@ -36,6 +36,8 @@ type StagedArtifactFile = Readonly<{
 
 async function collectHostedStaticFiles(
     declaration: DiscoveredHostedStaticPluginUiArtifact,
+    exportConditions?: readonly string[],
+    resolveSourceImport?: (specifier: string) => string | undefined,
 ): Promise<readonly StagedArtifactFile[]> {
     const files: StagedArtifactFile[] = [];
     const conventionalSourceEntry = join(declaration.sourceRoot, 'entry.ts');
@@ -123,7 +125,14 @@ async function collectHostedStaticFiles(
                 entryPoints: [conventionalSourceEntry],
                 outfile: join(declaration.sourceRoot, 'assets/app.js'),
                 bundle: true,
-                platform: 'browser',
+            platform: 'browser',
+            conditions: exportConditions ? [...exportConditions] : undefined,
+            plugins: resolveSourceImport ? [{ name: 'hosted-ui-source-inputs', setup(builder) {
+                builder.onResolve({ filter: /^[^./#]/u }, ({ path }) => {
+                    const sourcePath = resolveSourceImport(path);
+                    return sourcePath ? { path: sourcePath } : undefined;
+                });
+            } }] : undefined,
                 format: 'esm',
                 minify: true,
                 treeShaking: true,
@@ -172,10 +181,15 @@ async function collectHostedStaticFiles(
 export async function buildUniversalPluginUiArtifacts(
     projectRootInput: string,
     manifestPath?: string,
+    options: Readonly<{
+        outputDir?: string;
+        exportConditions?: readonly string[];
+        resolveSourceImport?: (specifier: string) => string | undefined;
+    }> = {},
 ): Promise<BuildUniversalPluginUiArtifactsResult> {
     const projectRoot = resolve(projectRootInput);
     const [declarations, hostedStaticDeclarations] = await Promise.all([
-        discoverExecutablePluginUiArtifacts(projectRoot, manifestPath),
+        discoverExecutablePluginUiArtifacts(projectRoot, manifestPath, options.exportConditions),
         discoverHostedStaticPluginUiArtifacts(projectRoot, manifestPath),
     ]);
     const compiled = [];
@@ -185,6 +199,8 @@ export async function buildUniversalPluginUiArtifacts(
             entryPath: declaration.entryPath,
             artifactId: declaration.artifactId,
             requestedExports: declaration.requestedExports,
+            exportConditions: options.exportConditions,
+            resolveSourceImport: options.resolveSourceImport,
         }));
     }
 
@@ -192,7 +208,7 @@ export async function buildUniversalPluginUiArtifacts(
     for (const declaration of hostedStaticDeclarations) {
         stagedHostedStatic.push(Object.freeze({
             artifactId: declaration.artifactId,
-            files: await collectHostedStaticFiles(declaration),
+            files: await collectHostedStaticFiles(declaration, options.exportConditions, options.resolveSourceImport),
         }));
     }
     const entries: unknown[] = compiled.map((artifact) => {
@@ -237,7 +253,7 @@ export async function buildUniversalPluginUiArtifacts(
     });
 
     const workspaceDistOutputDir = process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR?.trim();
-    const artifactsRoot = workspaceDistOutputDir
+    const artifactsRoot = options.outputDir ? resolve(options.outputDir) : workspaceDistOutputDir
         ? join(resolve(workspaceDistOutputDir), 'happier-plugin-ui')
         : join(projectRoot, ...PLUGIN_UI_ARTIFACTS_ROOT_RELATIVE_PATH.split('/'));
     await mkdir(dirname(artifactsRoot), { recursive: true });

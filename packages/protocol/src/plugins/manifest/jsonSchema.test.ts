@@ -1,3 +1,4 @@
+import { artifactHtmlBundleFromBodyV1 } from '../../artifacts/artifactHtmlV1.js';
 import { describe, expect, it } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import Ajv2020 from 'ajv/dist/2020.js';
@@ -148,7 +149,7 @@ describe('createPluginManifestJsonSchemaV2', () => {
     const renderer = {
       id: 'inline-status',
       kind: 'hostedHtml',
-      source: { kind: 'html', html: '<main>Status</main>' },
+      source: artifactHtmlBundleFromBodyV1('<main>Status</main>'),
       requiredHostMethods: ['context'],
       requestedCapabilities: { networkOrigins: ['https://status.example.com'] },
     } as const;

@@ -8,12 +8,37 @@ import {
 } from './pluginInstallationReviewV1.js';
 
 describe('PluginInstallationReviewSchema', () => {
+  it('preserves large review facts and normalized JSON without competing projection cutoffs', () => {
+    const normalizedScope: Record<string, unknown> = Object.fromEntries(
+      Array.from({ length: 300 }, (_, index) => [`key-${index}`, 'value'.repeat(1_000)]),
+    );
+    normalizedScope['key'.repeat(100)] = Array.from({ length: 300 }, () => 'value');
+    normalizedScope.nested = { a: { b: { c: { d: { e: { f: { g: { h: { i: { j: true } } } } } } } } } };
+    const request = { id: 'network', capability: 'network', reason: 'Reason', authorizationClass: 'hostResourceSelection' as const, normalizedScope };
+    const review = createPluginInstallationReviewFixture({
+      displayName: 'Name'.repeat(10_000),
+      provenance: { status: 'retrievedUnverified', predicateTypes: Array.from({ length: 70 }, (_, index) => `predicate-${index}`) },
+      contributions: Array.from({ length: 70 }, (_, index) => ({ family: `family-${index}`, count: 1 })),
+      uiArtifacts: { status: 'verified', contributionIds: Array.from({ length: 70 }, (_, index) => `artifact-${index}`) },
+      requiredHostAccess: Array.from({ length: 140 }, (_, index) => ({ ...request, id: `required-${index}`, normalizedScope: index === 0 ? normalizedScope : {} })),
+      optionalHostAccess: Array.from({ length: 140 }, (_, index) => ({ ...request, id: `optional-${index}`, normalizedScope: {} })),
+    });
+    expect(PluginInstallationReviewSchema.parse(review)).toEqual(review);
+  });
+
+  it.each([Infinity, () => true])('rejects non-JSON normalized scope values', (invalid) => {
+    const review = createPluginInstallationReviewFixture({ requiredHostAccess: [{
+      id: 'network', capability: 'network', reason: 'Reason', authorizationClass: 'hostResourceSelection', normalizedScope: { invalid },
+    }] });
+    expect(PluginInstallationReviewSchema.safeParse(review).success).toBe(false);
+  });
+
   it('carries one closed, duplicate-free authority delta for update decisions', () => {
     const review = createPluginInstallationReviewFixture();
     const result = {
       kind: 'reviewRequired',
       reviewKind: 'installation',
-      pendingChangeId: 'pending-authority-delta',
+      pendingChangeId: `pending-${'a'.repeat(300)}`,
       reason: 'authorityExpansion',
       currentVersion: '1.0.0',
       authorityExpansion: ['requiredHostAccess', 'requestInterceptor'],
@@ -76,7 +101,7 @@ describe('PluginInstallationReviewSchema', () => {
     }).success).toBe(false);
   });
 
-  it('admits a bounded newer-version compatibility report and rejects an unbounded one', () => {
+  it('preserves every newer-version compatibility reason beyond the former count limits', () => {
     const pathReview = createPluginInstallationReviewFixture();
     const blockedVersion = {
       version: '1.2.5',
@@ -98,9 +123,12 @@ describe('PluginInstallationReviewSchema', () => {
       ...review,
       compatibility: {
         ...review.compatibility,
-        blockedNewerVersions: Array.from({ length: 33 }, () => blockedVersion),
+        blockedNewerVersions: Array.from({ length: 33 }, (_, index) => ({
+          version: `1.2.${index}`,
+          diagnostics: Array.from({ length: 5 }, () => blockedVersion.diagnostics[0]),
+        })),
       },
-    }).success).toBe(false);
+    }).success).toBe(true);
     expect(PluginInstallationReviewSchema.safeParse({
       ...pathReview,
       compatibility: { runtimeApiVersion: 1 },

@@ -51,6 +51,9 @@ export type {
 export {
   PluginUiDisposeHostResourceRequestV1Schema,
   PluginUiResourceSubscriptionEventV1Schema,
+  PluginUiResourceSubscriptionTargetV1Schema,
+  PluginUiHostReadReferenceV1Schema,
+  type PluginUiHostReadReferenceV1,
   type PluginUiDisposeHostResourceRequestV1,
   type PluginUiResourceSubscriptionEventV1,
 } from './subscriptions.js';

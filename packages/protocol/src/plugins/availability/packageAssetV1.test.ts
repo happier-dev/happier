@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createPackageAssetArchiveV1,
   openPackageAssetArchiveV1,
+  PackageAssetArchiveDescriptorV1Schema,
 } from './packageAssetV1.js';
 
 function manifest(resources: readonly Record<string, unknown>[]): Record<string, unknown> {
@@ -18,6 +19,45 @@ function manifest(resources: readonly Record<string, unknown>[]): Record<string,
 }
 
 describe('Package Asset archive v1', () => {
+  it('admits small assets beyond the former collection cutoff while preserving materialization byte bounds', () => {
+    const resources = Array.from({ length: 513 }, (_, index) => ({
+      resourceId: `asset-${String(index).padStart(4, '0')}`,
+      path: `assets/${index}.bin`, mimeType: 'application/octet-stream',
+      byteSize: 1,
+      digestSha256: `sha256:${'a'.repeat(64)}`,
+    }));
+    expect(PackageAssetArchiveDescriptorV1Schema.parse({
+      archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources,
+    }).resources).toHaveLength(resources.length);
+    const archive = createPackageAssetArchiveV1({
+      manifest: manifest(resources.map((resource) => ({
+        id: resource.resourceId, kind: 'asset', path: resource.path, contentType: resource.mimeType,
+      }))),
+      files: resources.map((resource) => ({ path: resource.path, bytes: new Uint8Array([1]) })),
+    });
+    expect(archive).not.toBeNull();
+    expect(openPackageAssetArchiveV1({
+      expectedDescriptor: archive!.descriptor, header: archive!.header, body: archive!.body,
+    })?.resources.size).toBe(resources.length);
+    expect(PackageAssetArchiveDescriptorV1Schema.safeParse({
+      archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [resources[0], resources[0]],
+    }).success).toBe(false);
+    const maximumResources = resources.slice(0, 4).map((resource) => ({
+      ...resource, byteSize: 16 * 1024 * 1024,
+    }));
+    expect(PackageAssetArchiveDescriptorV1Schema.safeParse({
+      archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: maximumResources,
+    }).success).toBe(true);
+    expect(PackageAssetArchiveDescriptorV1Schema.safeParse({
+      archiveDigestSha256: `sha256:${'b'.repeat(64)}`,
+      resources: [...maximumResources, resources[4]],
+    }).success).toBe(false);
+    expect(PackageAssetArchiveDescriptorV1Schema.safeParse({
+      archiveDigestSha256: `sha256:${'b'.repeat(64)}`,
+      resources: [{ ...resources[0], byteSize: 16 * 1024 * 1024 + 1 }],
+    }).success).toBe(false);
+  });
+
   it('admits only manifest-declared packaged assets in canonical order and opens only against an external descriptor', () => {
     const archive = createPackageAssetArchiveV1({
       manifest: manifest([

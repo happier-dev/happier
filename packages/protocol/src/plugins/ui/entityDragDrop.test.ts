@@ -3,6 +3,28 @@ import { EntityDragItemV1Schema, EntityDropEffectV1Schema, entityDragKindV1, isE
 
 const scope = { serverId: 'home-a', accountId: 'account-a' };
 describe('transient entity identity', () => {
+    it('carries layout groups only in the supported Account-scoped group hosts', () => {
+        const group = { kind: 'widget-layout-group', scope, ref: { surface: { ...scope, owner: { kind: 'home' } }, instanceId: 'group' } };
+        expect(EntityDragItemV1Schema.safeParse(group).success).toBe(true);
+        expect(isEntityDragKindV1('widget-layout-group')).toBe(true);
+        expect(EntityDragItemV1Schema.safeParse({ ...group, ref: { ...group.ref, surface: { ...group.ref.surface, accountId: 'other' } } }).success).toBe(false);
+        for (const owner of [{ kind: 'workBoard', boardId: 'board' }, { kind: 'sessionBoard', sessionId: 'session' }, { kind: 'companion', sessionId: 'session' }]) {
+            expect(EntityDragItemV1Schema.safeParse({ ...group, ref: { ...group.ref, surface: { ...group.ref.surface, owner } } }).success).toBe(false);
+        }
+    });
+    it('carries library Artifacts and folders in the same admitted Account scope with identity only', () => {
+        for (const item of [
+            { kind: 'artifact', scope, artifactId: 'shared-document' },
+            { kind: 'artifact-folder', scope, folderId: 'personal-research' },
+        ]) {
+            expect(EntityDragItemV1Schema.safeParse(item).success).toBe(true);
+            expect(isEntityDragKindV1(item.kind)).toBe(true);
+            expect(EntityDragItemV1Schema.safeParse({ ...item, header: { folderId: 'owner-private' } }).success).toBe(false);
+            expect(EntityDragItemV1Schema.safeParse({ ...item, scope: { ...scope, grant: 'writer' } }).success).toBe(false);
+        }
+        expect(EntityDragItemV1Schema.safeParse({ kind: 'artifact', scope, artifactId: '' }).success).toBe(false);
+        expect(EntityDragItemV1Schema.safeParse({ kind: 'artifact-folder', scope, folderId: '' }).success).toBe(false);
+    });
     it('isolates navigation placement carries by surface and item instead of accepting them as destinations', () => {
         const item = { kind: 'navigation-item', scope, surfaceId: 'appRail', itemId: 'plugin:example:review' };
         expect(EntityDragItemV1Schema.safeParse(item).success).toBe(true);

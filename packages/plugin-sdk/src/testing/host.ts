@@ -1,5 +1,5 @@
 /** @moduleRealm daemon */
-import { arePluginMachineMaterializationRefsEqual, PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { arePluginMachineMaterializationRefsEqual, PluginMachineExecutionOriginV1Schema, PluginMachineMaterializationExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { createPluginActionInvocation, readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 import { MessageActionAvailableSnapshotV1Schema } from '@happier-dev/protocol/sessions/messages/messageActionReferenceV1';
 import { PluginMachineMaterializationRefV1Schema } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
@@ -179,7 +179,9 @@ function readExpectedExecutionOrigin(expectedExecutionOrigin: unknown): PluginMa
     }
     return Object.freeze({
         serverIdentityId: parsed.data.serverIdentityId,
-        materializationRef: Object.freeze({ ...parsed.data.materializationRef }),
+        ...('materializationRef' in parsed.data
+            ? { materializationRef: Object.freeze({ ...parsed.data.materializationRef }) }
+            : { sourceRef: Object.freeze({ ...parsed.data.sourceRef, sourceCustody: Object.freeze({ ...parsed.data.sourceRef.sourceCustody }) }) }),
     });
 }
 
@@ -508,7 +510,7 @@ export async function createPluginTestkit(
     function resolveCurrentPluginExecutionOrigin(): PluginMachineExecutionOriginV1 | null {
         const materializationRef = resolveCurrentPluginMaterializationRef();
         if (!materializationRef) return null;
-        const origin = PluginMachineExecutionOriginV1Schema.safeParse({
+        const origin = PluginMachineMaterializationExecutionOriginV1Schema.safeParse({
             serverIdentityId: TESTKIT_SERVER_IDENTITY_ID,
             materializationRef,
         });

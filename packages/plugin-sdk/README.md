@@ -41,6 +41,42 @@ Contributed numeric settings can request the host's shared stepper with
 and optional localized `unitKey`. This changes presentation, not saved values.
 See the [Voice guide](../../apps/docs/content/docs/plugins/guides/voice.mdx).
 
+## Managed-machine provisioners (development source)
+
+Managed-machine provisioners are available in development source through the
+descriptor-only `machineProvisioners` author input and the public
+`@happier-dev/plugin-sdk/machine-provisioners` schema constructors. Bind their
+roles as ordinary daemon Actions; the host owns selection, retained credentials
+and effect admission. Pending acquisitions declare a native-operation schema and
+safe reconciliation Action through the same ABI. Persistence-only readers use
+the same canonical tolerant projection; strict Action inputs and writes remain
+separate.
+Safe prerequisite checks may describe a qualified repair Action and its input;
+they do not run repairs or grant installation permission.
+Options can return labelled native size, image and location facts without
+changing their raw launch selectors. Declare finite-only retention explicitly;
+native expiry is a separate fact, and omitted measurements remain unknown.
+See [declaration and activation ownership](../../docs/plugin-platform.md#declaration-activation-and-projection)
+and the [public author fixture](fixtures/authoring-inference/machineProvisioners.ts).
+This is not a registry-publication or loaded-runtime readiness claim.
+
+## Plugin execution targets (0.3 development)
+
+Plugin UI is discovered across the Account's installed machines. Declare
+`executionTarget: { default: 'installation' }` in `definePlugin` or the manifest
+to prefer the supplying installation for machine-bound work. The host admits
+that hint against current installation and source facts. An explicit user choice
+takes precedence, followed by an admitted plugin default, a sole compatible
+installation, or a machine selector. Several supplying defaults leave the choice
+open; an unavailable saved choice is never silently replaced. Machine-free UI
+requires no execution target. Invocation revalidates the exact selected
+materialization or source occurrence, while installation administration and
+Session-native work retain their own targets.
+
+`SurfaceContext.targetedContributions` is optional: static, machine-free UI can
+render without a runtime occurrence. Absence does not admit private machine
+operations or manufacture a targeted contribution snapshot.
+
 ## Cross-plugin protocol authoring
 
 Use the [SDK protocol-evolution doctrine](../../docs/compatibility.md#sdk-protocol-evolution)

@@ -19,6 +19,8 @@ import type { ManagedServiceSpec } from './managed-services/contract.js';
 import type { ExecService } from './exec.js';
 import type { JsonValue } from './identity.js';
 import type { SessionMessageRole, SessionSchema } from './services/sessions.js';
+import type { UsageObservationCost, UsageObservationScope, UsageObservationTokens } from './usage.js';
+import type { AgentExternalSessionObservationResourceDescriptorV1, AgentExternalSessionObservationWatchFileChangesV1 } from './externalSessionObservation.js';
 
 /**
  * Public author shape for one admitted External Session transcript record.
@@ -274,6 +276,8 @@ export type AgentExternalSessionsResolveSourceRequest = AgentExternalSessionsInv
 }>;
 export type AgentExternalSessionsResolveSourceResult = Readonly<{
     source: AgentExternalSessionSource;
+    /** Metadata-only source-wide accounting discovery; never grants capture consent. */
+    accountingSource?: AgentExternalSessionAccountingSource;
     /**
      * Transient, source-owned absolute directories for media paths emitted by
      * this source. The host validates this evidence at admission and must not
@@ -281,6 +285,62 @@ export type AgentExternalSessionsResolveSourceResult = Readonly<{
      */
     transcriptMediaReadRoots?: readonly string[];
 }>;
+
+export type AgentExternalSessionAccountingSource = Readonly<{
+    rootPath?: string;
+    rootField?: string;
+    resourceKey: string;
+    changeObservation: AgentExternalSessionObservationResourceDescriptorV1['changeObservation'];
+    watchFileChanges?: AgentExternalSessionObservationWatchFileChangesV1;
+}>;
+
+export type AgentExternalSessionAccountingObservation = Readonly<{
+    nativeSessionId: string;
+    observedAt: number;
+    inferenceId?: string;
+    parentNativeSessionId?: string;
+    /** Exact native cwd/project evidence; machine-local and never an ingest field. */
+    project?: Readonly<{ rootPath: string; label?: string }>;
+    /** Native counter semantics; omission leaves inclusivity unknown. */
+    accounting?: Readonly<{
+        inputIncludesCache?: boolean;
+        outputIncludesReasoning?: boolean;
+    }>;
+    observation: Readonly<{
+        provider: string;
+        source: string;
+        scope: UsageObservationScope;
+        key: string | null;
+        modelId: string | null;
+        tokens: UsageObservationTokens | null;
+        cost: UsageObservationCost | null;
+        contextUsedTokens: number | null;
+        contextWindowTokens: number | null;
+    }>;
+}>;
+
+export type AgentExternalSessionsReadAccountingRequest = AgentExternalSessionsInvocation & Readonly<{
+    source: AgentExternalSessionSource;
+    /** Opaque source-owned cursor; omission requests initial capture. */
+    cursor?: string;
+    /** Complete observed Session invalidations since this cursor. Omission means
+     * coarse reconciliation; an empty list means no observed change. Readers
+     * may safely ignore this optimization and reconcile the whole source. */
+    changedNativeSessionIds?: readonly string[];
+}>;
+
+export type AgentExternalSessionsReadAccountingResult =
+    | Readonly<{ outcome: 'unchanged' }>
+    | Readonly<{
+        outcome: 'advanced';
+        observations: readonly AgentExternalSessionAccountingObservation[];
+        nextCursor: string;
+        coverage: Readonly<{ complete: boolean; reason?: string }>;
+    }>
+    | Readonly<{ outcome: 'source_replaced' }>
+    | Readonly<{ outcome: 'gap_or_cursor_expired' }>
+    | Readonly<{ outcome: 'source_unavailable' }>
+    | Readonly<{ outcome: 'read_failed' }>;
 
 export type AgentExternalSessionsListCandidatesRequest = AgentExternalSessionsInvocation & Readonly<{
     maxSerializedBytes: number;
@@ -397,6 +457,11 @@ export type AgentExternalSessionsTranscriptPage = Readonly<{
  * explicit inputs and must not add lifecycle/control operations here.
  */
 export type AgentExternalSessionsContribution = Readonly<{
+    /** Source-wide numeric accounting, invoked only under host-owned machine/source consent. */
+    readAccounting?(
+        request: AgentExternalSessionsReadAccountingRequest,
+    ): AgentExternalSessionsResult<AgentExternalSessionsReadAccountingResult>
+        | Promise<AgentExternalSessionsResult<AgentExternalSessionsReadAccountingResult>>;
     resolveSource(
         request: AgentExternalSessionsResolveSourceRequest,
     ): AgentExternalSessionsResult<AgentExternalSessionsResolveSourceResult>

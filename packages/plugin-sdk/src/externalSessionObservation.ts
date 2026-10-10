@@ -47,8 +47,12 @@ export type AgentExternalSessionObservationObserveResourceRequest = Readonly<{
     signal: AbortSignal;
     managedEndpointRead: AgentExternalSessionsManagedEndpointRead;
     emit(batch: AgentExternalSessionObservationLinkEvidenceBatchV1): void;
-    requestReconcile(): void;
-    requestTranscriptRefresh(linkKey: AgentExternalSessionObservationLinkKeyV1): void;
+    /** Optional native Session evidence narrows accounting while host lifecycle
+     * reconciliation retains its resource-wide semantics. */
+    requestReconcile(nativeSessionId?: string): void;
+    /** Native Session evidence also invalidates consented accounting, including
+     * Sessions without a Happier link. Omission requests coarse accounting. */
+    requestTranscriptRefresh(linkKey: AgentExternalSessionObservationLinkKeyV1, nativeSessionId?: string): void;
 }>;
 
 export type AgentExternalSessionObservationReconcileLink = Readonly<{

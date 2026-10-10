@@ -10,6 +10,7 @@ import {
   normalizeHostedWebAssetRequestPath,
 } from './hostedWebAssetPolicyPaths.js';
 import { PluginUiArtifactsManifestEntryV2Schema } from './uiArtifactsManifest.js';
+import { resolveHostedWebAssetContentTypeV1 } from './hostedWebAssetMime.js';
 
 export type HostedWebAssetPolicyFailureCode =
   | 'asset_not_declared'
@@ -129,34 +130,8 @@ export const EPHEMERAL_HOSTED_WEB_ASSET_DELIVERY_HEADERS_V1: Readonly<Record<str
   'X-Content-Type-Options': 'nosniff',
 });
 
-const MIME_BY_EXTENSION: Readonly<Record<string, string>> = Object.freeze({
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.map': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.webp': 'image/webp',
-  '.woff': 'font/woff',
-  '.woff2': 'font/woff2',
-});
-
 function failure(code: HostedWebAssetPolicyFailureCode, status: number): HostedWebAssetPolicyResult {
   return Object.freeze({ ok: false, code, status });
-}
-
-function extensionFor(path: string): string {
-  const basename = path.slice(path.lastIndexOf('/') + 1);
-  const lastDot = basename.lastIndexOf('.');
-  return lastDot > 0 ? basename.slice(lastDot).toLowerCase() : '';
-}
-
-function contentTypeFor(relativePath: string): string | null {
-  return MIME_BY_EXTENSION[extensionFor(relativePath)] ?? null;
 }
 
 function isSourceMap(relativePath: string): boolean {
@@ -223,7 +198,7 @@ export function resolveHostedWebAssetPolicy(input: HostedWebAssetPolicyInput): H
     }
   }
 
-  const contentType = contentTypeFor(relativePath);
+  const contentType = resolveHostedWebAssetContentTypeV1(relativePath);
   if (!contentType) {
     return failure('mime_type_not_allowed', 415);
   }

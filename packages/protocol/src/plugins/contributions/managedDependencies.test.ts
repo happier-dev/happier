@@ -33,6 +33,10 @@ describe('PluginManagedDependencyContributionV2Schema', () => {
           timeoutMs: 10 * 60_000,
         },
         assetsByPlatform: {
+        'darwin-x64': {
+          archiveUrl: 'https://dl.example.test/agy-acp-server-darwin-x86_64.zip', sha256: 'b'.repeat(64),
+          executableSubpath: 'agy_acp_server.par',
+        },
         'linux-x64': {
           archiveUrl: 'https://dl.example.test/agy-acp-server.zip', sha256: 'a'.repeat(64),
           executableSubpath: 'agy_acp_server.par', args: ['--uid='],

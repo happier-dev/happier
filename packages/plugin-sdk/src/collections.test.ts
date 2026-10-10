@@ -72,6 +72,7 @@ describe('Account Collection declarations', () => {
         }>;
 
         expect(packageJson.exports['./collections']).toEqual({
+            'happier-source': './src/collections/index.ts',
             types: './dist/collections/index.d.ts',
             default: './dist/collections/index.js',
         });

@@ -7,6 +7,7 @@ import {
   draftMarketplaceRegistryProfileV1,
   MarketplaceIndexQueryResultV1Schema,
   MarketplaceIndexQueryV1Schema,
+  MarketplaceIndexEntryV1Schema,
   MarketplaceNpmDiscoveryProjectionV1Schema,
   MarketplaceIndexSourceSnapshotV1Schema,
   marketplaceNpmDiscoveryProjectionEqualV1,
@@ -19,6 +20,65 @@ import {
 import { PluginCompatibilityProjectionV1Schema } from '../plugins/availability/v1.js';
 
 describe('MarketplaceIndexV1', () => {
+  it('preserves large listing facts and filters through canonical projections', () => {
+    const ids = Array.from({ length: 140 }, (_, index) => `entry-${index}`);
+    const categories = Array.from({ length: 40 }, (_, index) => `category-${index}-${'a'.repeat(140)}`);
+    const entry = {
+      pluginId: 'acme.plugin', publisher: { id: 'acme', displayName: 'Acme' },
+      display: { title: 'Title'.repeat(200), description: 'Description'.repeat(500) },
+      distribution: { kind: 'npm', registryOrigin: 'https://registry.example', packageName: '@acme/plugin', version: `1.0.0-${'a'.repeat(150)}`, integrity: `sha512-${Buffer.alloc(64, 1).toString('base64')}` },
+      manifestDigest: `sha256:${'a'.repeat(64)}`, compatibility: { happier: `>=0.0.0${' '.repeat(300)}<10000.0.0`, platforms: Array.from({ length: 8 }, () => 'linux') },
+      summary: { contributions: ids, requiredHostAccess: ids, optionalHostAccess: ids, executableRealms: Array.from({ length: 5 }, () => 'daemon') },
+      review: { status: 'unreviewed', reviewedAt: null, reason: 'Reason'.repeat(300) },
+      categories, media: Array.from({ length: 20 }, (_, index) => `https://media.example/${index}`), updatePolicy: 'allowed', links: {},
+    };
+    expect(MarketplaceIndexEntryV1Schema.parse(entry)).toEqual(entry);
+    expect(MarketplaceNpmDiscoveryProjectionV1Schema.parse({
+      version: 1, pluginId: entry.pluginId, manifestDigest: entry.manifestDigest, display: entry.display, summary: entry.summary,
+    }).summary).toEqual(entry.summary);
+  });
+  it('preserves large query filter collections without competing count cutoffs', () => {
+    const filters = {
+      categories: Array.from({ length: 40 }, (_, index) => `category-${index}`),
+      pluginIds: Array.from({ length: 12 }, (_, index) => `acme.plugin-${index}`),
+      platforms: Array.from({ length: 8 }, () => 'linux'),
+      sourceKinds: Array.from({ length: 5 }, () => 'user'),
+    };
+    expect(MarketplaceIndexQueryV1Schema.parse({ filters }).filters).toEqual(filters);
+  });
+  it('preserves full query text beyond the former cutoff', () => {
+    const text = 'terminal theme '.repeat(100).trim();
+    expect(MarketplaceIndexQueryV1Schema.parse({ text }).text).toBe(text);
+  });
+
+  it('preserves valid catalogs beyond the former entry cutoff', () => {
+    const entry = {
+      pluginId: 'acme.plugin', publisher: { id: 'acme', displayName: 'Acme' }, display: { title: 'Acme', description: null },
+      distribution: { kind: 'npm', registryOrigin: 'https://registry.example', packageName: '@acme/plugin', version: '1.0.0', integrity: `sha512-${Buffer.alloc(64, 1).toString('base64')}` },
+      manifestDigest: `sha256:${'a'.repeat(64)}`, compatibility: { platforms: ['linux'] },
+      summary: { contributions: [], requiredHostAccess: [], optionalHostAccess: [], executableRealms: ['daemon'] },
+      review: { status: 'unreviewed', reviewedAt: null }, categories: [], media: [], updatePolicy: 'allowed', links: {},
+    };
+    const catalog = {
+      source: { id: `source-${'a'.repeat(300)}`, title: 'title'.repeat(200), kind: 'user', sourceUrl: `https://catalog.example/index.json?key=${'x'.repeat(3_000)}` },
+      freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: Array.from({ length: 5_001 }, () => entry), diagnostics: [],
+    };
+    expect(MarketplaceIndexSourceSnapshotV1Schema.parse(catalog)).toEqual(catalog);
+    expect(parseMarketplaceIndexSourceSnapshotV1(catalog)).toEqual(catalog);
+  });
+  it('preserves every queried source and diagnostic beyond the former count limits', () => {
+    const diagnostics = Array.from({ length: 140 }, (_, index) => ({ code: `reason_${index}`, message: `Reason ${index}` }));
+    const sources = Array.from({ length: 70 }, (_, index) => ({
+      source: { id: `source-${index}`, title: `Source ${index}`, kind: 'user' as const, sourceUrl: `https://catalog.example/${index}.json` },
+      freshness: { state: 'fresh' as const, fetchedAtMs: 1 },
+      diagnostics,
+    }));
+    const query = MarketplaceIndexQueryV1Schema.parse({ filters: { sourceIds: sources.map(({ source }) => source.id) } });
+    expect(query.filters.sourceIds).toHaveLength(70);
+    expect(MarketplaceIndexSourceSnapshotV1Schema.parse({ ...sources[0], entries: [] }).diagnostics).toEqual(diagnostics);
+    expect(MarketplaceIndexQueryResultV1Schema.parse({ revision: 1, items: [], nextCursor: null, sources, diagnostics }))
+      .toEqual({ revision: 1, items: [], nextCursor: null, sources, diagnostics });
+  });
   it('derives a closed npm discovery projection from generated compatibility facts', () => {
     const compatibility = PluginCompatibilityProjectionV1Schema.parse({
       version: 1,
@@ -81,7 +141,7 @@ describe('MarketplaceIndexV1', () => {
     expect(MarketplaceNpmDiscoveryProjectionV1Schema.safeParse(projection).success).toBe(true);
   });
 
-  it('bounds query pagination and source documents', () => {
+  it('bounds query page size and rejects malformed source entries', () => {
     expect(MarketplaceIndexQueryV1Schema.safeParse({ text: 'x'.repeat(257), limit: 101, cursor: null, filters: {} }).success).toBe(false);
     expect(MarketplaceIndexSourceSnapshotV1Schema.safeParse({
       source: { id: 'user', title: 'User', kind: 'user', sourceUrl: 'https://catalog.example/index.json' },
@@ -91,7 +151,7 @@ describe('MarketplaceIndexV1', () => {
     }).success).toBe(false);
   });
 
-  it('applies the lifecycle projector UTF-8 byte ceiling to every outward diagnostic schema', () => {
+  it('preserves diagnostic text through source and query projections without a separate byte cutoff', () => {
     const source = { id: 'user', title: 'User', kind: 'user' as const, sourceUrl: 'https://catalog.example/index.json' };
     const freshness = { state: 'fresh' as const, fetchedAtMs: 1 };
     const exact = { code: 'source_failed', message: 'é'.repeat(1_024) };
@@ -102,7 +162,7 @@ describe('MarketplaceIndexV1', () => {
     }).success).toBe(true);
     expect(MarketplaceIndexSourceSnapshotV1Schema.safeParse({
       source, freshness, entries: [], diagnostics: [oversized],
-    }).success).toBe(false);
+    }).success).toBe(true);
 
     expect(MarketplaceIndexQueryResultV1Schema.safeParse({
       revision: 1,
@@ -117,7 +177,7 @@ describe('MarketplaceIndexV1', () => {
       nextCursor: null,
       sources: [{ source, freshness, diagnostics: [oversized] }],
       diagnostics: [oversized],
-    }).success).toBe(false);
+    }).success).toBe(true);
   });
 
   it.each(['http://catalog.example/index.json', 'javascript:alert(1)', 'https://token@catalog.example/index.json'])(

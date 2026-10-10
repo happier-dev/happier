@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 import { PluginDeclarativeMetricNodeV1Schema, PluginDeclarativeTableNodeV1Schema, PluginDeclarativeRowsNodeV1Schema, PluginDeclarativeChartNodeV1Schema, type PluginDeclarativeDataNodeV1 } from './declarativeDataV1.js';
 import { ActionIdSchema, type ActionId } from '../../../actions/actionIds.js';
@@ -84,14 +85,14 @@ export type PluginDeclarativeProjectedQualifiedReferenceV1 = Readonly<{
     localId: string;
   };
   qualifiedId: string;
-  occurrenceId: string;
+  occurrenceId?: string;
 }>;
 
-export const PluginDeclarativeProjectedQualifiedReferenceV1Schema = z.object({
+export const PluginDeclarativeProjectedQualifiedReferenceV1Schema = lazyZodSchema(() => z.object({
   identity: PluginContributionIdentityV1ZodSchema,
   qualifiedId: z.string().trim().min(1).max(1_024),
-  occurrenceId: z.string().trim().min(1).max(MAX_PLUGIN_DECLARATIVE_DOCUMENT_OCCURRENCE_LENGTH_V1),
-}).strict();
+  occurrenceId: z.string().trim().min(1).max(MAX_PLUGIN_DECLARATIVE_DOCUMENT_OCCURRENCE_LENGTH_V1).optional(),
+}).strict());
 
 export type PluginDeclarativeProjectedActionBindingV1 =
   PluginDeclarativeProjectedQualifiedReferenceV1 & Readonly<{
@@ -102,11 +103,11 @@ export type PluginDeclarativeProjectedActionBindingV1 =
   }>;
 
 export const PluginDeclarativeProjectedActionBindingV1Schema =
-  PluginDeclarativeProjectedQualifiedReferenceV1Schema.extend({
+  lazyZodSchema(() => PluginDeclarativeProjectedQualifiedReferenceV1Schema.extend({
     enabled: z.boolean(),
     title: z.string().trim().min(1).optional(),
     icon: z.string().trim().min(1).optional(),
-  });
+  }));
 
 /**
  * The exact existing Settings projection reattached for the UI renderer. The
@@ -131,7 +132,7 @@ export type PluginDeclarativeProjectedSettingsFieldV1 = Readonly<{
   }>;
 }>;
 
-export const PluginDeclarativeProjectedSettingsFieldV1Schema = z.object({
+export const PluginDeclarativeProjectedSettingsFieldV1Schema = lazyZodSchema(() => z.object({
   id: PluginSettingFieldIdV2Schema,
   contributionId: asProtocolZod(PluginContributionLocalIdSchema),
   qualifiedId: z.string().trim().min(1).max(1_024),
@@ -157,7 +158,7 @@ export const PluginDeclarativeProjectedSettingsFieldV1Schema = z.object({
       });
     }
   }),
-}).strict();
+}).strict());
 
 export type PluginDeclarativeProjectedSettingsBindingV1 =
   Readonly<{
@@ -170,15 +171,15 @@ export type PluginDeclarativeProjectedSettingsBindingV1 =
   }>;
 
 export const PluginDeclarativeProjectedSettingsBindingV1Schema =
-  PluginDeclarativeSettingsInventoryEntryV1Schema.extend({
+  lazyZodSchema(() => PluginDeclarativeSettingsInventoryEntryV1Schema.extend({
     setting: PluginDeclarativeProjectedSettingsFieldV1Schema,
-  });
+  }));
 
 export type PluginDeclarativeProjectedCollectionRowCommandV1 =
   | Readonly<{ kind: 'action'; action: PluginDeclarativeProjectedQualifiedReferenceV1 }>
   | Readonly<{ kind: 'openSurface'; destination: PluginDeclarativeProjectedQualifiedReferenceV1 }>;
 
-export const PluginDeclarativeProjectedCollectionRowCommandV1Schema = z.discriminatedUnion('kind', [
+export const PluginDeclarativeProjectedCollectionRowCommandV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('action'),
     action: PluginDeclarativeProjectedQualifiedReferenceV1Schema,
@@ -187,7 +188,7 @@ export const PluginDeclarativeProjectedCollectionRowCommandV1Schema = z.discrimi
     kind: z.literal('openSurface'),
     destination: PluginDeclarativeProjectedQualifiedReferenceV1Schema,
   }).strict(),
-]);
+]));
 
 export type PluginDeclarativeProjectedStateNodeV1 = Readonly<{
   kind: 'state';
@@ -204,14 +205,14 @@ const ProjectedNodeBaseV1Shape = {
   order: z.number().int().nonnegative(),
 } as const;
 
-export const PluginDeclarativeProjectedStateNodeV1Schema = z.object({
+export const PluginDeclarativeProjectedStateNodeV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('state'),
   ...ProjectedNodeBaseV1Shape,
   state: PluginDeclarativeStateV2Schema,
   title: PluginLocalizedStringV2Schema,
   description: PluginLocalizedStringV2Schema.optional(),
   icon: PluginUiIconTokenV1Schema.optional(),
-}).strict();
+}).strict());
 
 /**
  * The projected node tree. Protocol already normalized, bounded, and qualified
@@ -339,7 +340,7 @@ export type PluginDeclarativeProjectedNodeV1 =
   }>;
 
 export const PluginDeclarativeProjectedNodeV1Schema: z.ZodType<PluginDeclarativeProjectedNodeV1> = z.lazy(
-  () => z.union([
+  () => z.discriminatedUnion('kind', [
     PluginDeclarativeMetricNodeV1Schema.extend(ProjectedNodeBaseV1Shape),
     PluginDeclarativeTableNodeV1Schema.extend(ProjectedNodeBaseV1Shape),
     PluginDeclarativeRowsNodeV1Schema.extend(ProjectedNodeBaseV1Shape),
@@ -478,7 +479,7 @@ export type PluginDeclarativeProjectedModelV1 = Readonly<{
     pluginId: string;
     localId: string;
     qualifiedId: string;
-    occurrenceId: string;
+    occurrenceId?: string;
   }>;
   visible: boolean;
   requiredHostMethods: readonly PluginUiHostMethodV1[];
@@ -493,13 +494,84 @@ export type PluginDeclarativeProjectedModelV1 = Readonly<{
   root: PluginDeclarativeProjectedNodeV1;
 }>;
 
+/**
+ * Declaration comparison only. Generated occurrence stamps and effect availability
+ * differ between installed presentation and a serving runtime; authored values
+ * (including identically named keys inside input/data) and targeted handles do not.
+ * The result is not an admitted renderable model or effect authority.
+ */
+export function projectPluginDeclarativeModelComparisonV1(
+  model: PluginDeclarativeProjectedModelV1,
+): Readonly<Record<string, unknown>> {
+  const withoutOccurrence = <T extends Readonly<{ occurrenceId?: string }>>(value: T) => {
+    const { occurrenceId: _occurrenceId, ...content } = value;
+    return content;
+  };
+  const commandContent = (command: PluginDeclarativeProjectedCollectionRowCommandV1): PluginDeclarativeProjectedCollectionRowCommandV1 => (
+    command.kind === 'action'
+      ? { ...command, action: withoutOccurrence(command.action) }
+      : { ...command, destination: withoutOccurrence(command.destination) }
+  );
+  const nodeContent = (node: PluginDeclarativeProjectedNodeV1): PluginDeclarativeProjectedNodeV1 => {
+    switch (node.kind) {
+      case 'stack':
+      case 'group':
+      case 'list':
+      case 'section':
+      case 'actionPanel':
+        return { ...node, children: node.children.map(nodeContent) };
+      case 'dragSource':
+        return { ...node, source: withoutOccurrence(node.source), children: node.children.map(nodeContent) };
+      case 'dropTarget':
+        return { ...node, target: withoutOccurrence(node.target), children: node.children.map(nodeContent) };
+      case 'action':
+        return { ...node, ...(node.action ? { action: withoutOccurrence(node.action) } : {}), enabled: false };
+      case 'item':
+        return node.action ? { ...node, action: withoutOccurrence(node.action), enabled: false } : node;
+      case 'collectionList':
+        return {
+          ...node,
+          ...(node.primaryCommand ? { primaryCommand: commandContent(node.primaryCommand) } : {}),
+          ...(node.secondaryCommands ? { secondaryCommands: node.secondaryCommands.map(commandContent) } : {}),
+        };
+      case 'metric':
+      case 'table':
+      case 'rows':
+      case 'chart':
+      case 'widgetArea':
+      case 'text':
+      case 'markdown':
+      case 'field':
+      case 'status':
+      case 'state':
+      case 'targetedSurface':
+      case 'metadata':
+        return node;
+      default:
+        return node satisfies never;
+    }
+  };
+  return {
+    ...model,
+    identity: withoutOccurrence(model.identity),
+    declarativeInventory: {
+      ...model.declarativeInventory,
+      actions: model.declarativeInventory.actions.map((action) => ({ ...withoutOccurrence(action), enabled: false })),
+      destinations: model.declarativeInventory.destinations.map(withoutOccurrence),
+      ...(model.declarativeInventory.dragSources ? { dragSources: model.declarativeInventory.dragSources.map(withoutOccurrence) } : {}),
+      ...(model.declarativeInventory.dropTargets ? { dropTargets: model.declarativeInventory.dropTargets.map(withoutOccurrence) } : {}),
+    },
+    root: nodeContent(model.root),
+  };
+}
+
 export const PluginDeclarativeProjectedModelV1Schema: z.ZodType<PluginDeclarativeProjectedModelV1> =
-  z.object({
+  lazyZodSchema(() => z.object({
     identity: z.object({
       pluginId: asProtocolZod(PluginIdSchema),
       localId: asProtocolZod(PluginContributionLocalIdSchema),
       qualifiedId: z.string().trim().min(1).max(1_024),
-      occurrenceId: z.string().trim().min(1).max(MAX_PLUGIN_DECLARATIVE_DOCUMENT_OCCURRENCE_LENGTH_V1),
+      occurrenceId: z.string().trim().min(1).max(MAX_PLUGIN_DECLARATIVE_DOCUMENT_OCCURRENCE_LENGTH_V1).optional(),
     }).strict(),
     visible: z.boolean(),
     requiredHostMethods: z.array(PluginUiHostMethodV1Schema),
@@ -512,4 +584,19 @@ export const PluginDeclarativeProjectedModelV1Schema: z.ZodType<PluginDeclarativ
       dropTargets: z.array(PluginDeclarativeProjectedQualifiedReferenceV1Schema).optional(),
     }).strict(),
     root: PluginDeclarativeProjectedNodeV1Schema,
-  }).strict();
+  }).strict().superRefine((model, context) => {
+    if (model.identity.occurrenceId !== undefined) return;
+    const pending: PluginDeclarativeProjectedNodeV1[] = [model.root];
+    let hasLiveEffect = model.declarativeInventory.actions.some((action) => action.enabled);
+    while (!hasLiveEffect && pending.length > 0) {
+      const node = pending.pop();
+      if (!node) break;
+      hasLiveEffect = ((node.kind === 'action' || node.kind === 'item') && node.enabled === true)
+        || node.kind === 'targetedSurface';
+      if ('children' in node) pending.push(...node.children);
+    }
+    if (hasLiveEffect) context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'A declarative presentation without a runtime occurrence cannot enable effects or embed a current targeted Surface.',
+    });
+  }));

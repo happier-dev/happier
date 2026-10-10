@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import type {
     PluginHostedWebAccountDataBridgeOperationV1,
@@ -92,6 +92,27 @@ function readyAcknowledgementMessage(input: Readonly<{
 }
 
 describe('hosted-web UI client bootstrap', () => {
+    it('keeps one document pending beyond the former cutoff and cancels only the abandoned waiter', async () => {
+        vi.useFakeTimers();
+        onTestFinished(() => { vi.useRealTimers(); });
+        const harness = createRealm();
+        expect(installHostedWebPluginUiHostApiClientBootstrap(harness.realm)).toBe(true);
+        const cancellation = new AbortController();
+        const abandoned = awaitHostedWebPluginUiHostApiClientBootstrap(harness.realm, { signal: cancellation.signal });
+        const abandonedResult = abandoned.catch((error: unknown) => error);
+        const settlements: unknown[] = [];
+        const readiness = awaitHostedWebPluginUiHostApiClientBootstrap(harness.realm);
+        void readiness.then((value) => settlements.push(value), (error: unknown) => settlements.push(error));
+        await vi.advanceTimersByTimeAsync(30_001);
+        expect(settlements).toEqual([]);
+        cancellation.abort();
+        await expect(abandonedResult).resolves.toMatchObject({ code: 'ui_host_bootstrap_aborted' });
+        harness.dispatch({ source: harness.parent, origin: 'https://host.test', data: bootstrapMessage() });
+        harness.dispatch({ source: harness.parent, origin: 'https://host.test', data: readyAcknowledgementMessage() });
+        await expect(readiness).resolves.toMatchObject({ identity });
+        expect(settlements).toHaveLength(1);
+    });
+
     it('carries only genuine primary-button HTTP(S) anchor activation outside Host API', () => {
         const harness = createRealm('', 'about:srcdoc');
         const clickListeners = new Set<(event: unknown) => void>();

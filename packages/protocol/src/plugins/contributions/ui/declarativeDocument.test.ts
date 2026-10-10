@@ -17,9 +17,56 @@ import {
   rehydrateCanonicalProtocolComposableSchema,
 } from '../../actions/jsonSchemaValidation.js';
 import { PluginDeclarativeNodeV2Schema } from './v2.js';
-import { PluginDeclarativeProjectedNodeV1Schema } from './declarativeProjectedModelV1.js';
+import { PluginDeclarativeProjectedModelV1Schema, PluginDeclarativeProjectedNodeV1Schema, projectPluginDeclarativeModelComparisonV1 } from './declarativeProjectedModelV1.js';
 
 describe('declarative document normalizer v1', () => {
+  it('compares declaration content independently of runtime stamps while preserving authored payloads', () => {
+    const identity = { pluginId: 'com.acme.dashboard', localId: 'refresh' };
+    const reference = { identity, qualifiedId: 'com.acme.dashboard/refresh' };
+    const payload = { occurrenceId: 'authored', enabled: true };
+    const neutral = PluginDeclarativeProjectedModelV1Schema.parse({
+      identity: { pluginId: identity.pluginId, localId: 'dashboard', qualifiedId: 'com.acme.dashboard/dashboard' },
+      visible: true, requiredHostMethods: [],
+      declarativeInventory: { actions: [{ ...reference, enabled: false }], destinations: [], settings: [], uiQueries: [] },
+      root: { kind: 'action', action: reference, label: 'Refresh', input: payload, path: 'root', order: 0, enabled: false },
+    });
+    const live = PluginDeclarativeProjectedModelV1Schema.parse({
+      ...neutral,
+      identity: { ...neutral.identity, occurrenceId: 'live' },
+      declarativeInventory: { ...neutral.declarativeInventory, actions: [{ ...reference, occurrenceId: 'live', enabled: true }] },
+      root: { ...neutral.root, action: { ...reference, occurrenceId: 'live' }, enabled: true },
+    });
+    expect(projectPluginDeclarativeModelComparisonV1(live)).toEqual(projectPluginDeclarativeModelComparisonV1(neutral));
+    expect(projectPluginDeclarativeModelComparisonV1(live)).toMatchObject({ root: { input: payload } });
+    for (const root of [
+      { ...live.root, label: 'Changed declaration' },
+      { ...live.root, input: { ...payload, occurrenceId: 'different authored value' } },
+      { ...live.root, input: { ...payload, enabled: false } },
+    ]) {
+      expect(projectPluginDeclarativeModelComparisonV1({ ...live, root })).not.toEqual(projectPluginDeclarativeModelComparisonV1(neutral));
+    }
+  });
+
+  it('rejects projected effect availability without a runtime occurrence', () => {
+    const model = {
+      identity: { pluginId: 'com.acme.dashboard', localId: 'dashboard', qualifiedId: 'com.acme.dashboard/dashboard' },
+      visible: true,
+      requiredHostMethods: [],
+      declarativeInventory: { actions: [], destinations: [], settings: [], uiQueries: [] },
+      root: { kind: 'action', hostAction: 'session.message.send', label: 'Send', path: 'root', order: 0, enabled: true },
+    };
+    expect(PluginDeclarativeProjectedModelV1Schema.safeParse(model).success).toBe(false);
+    expect(PluginDeclarativeProjectedModelV1Schema.safeParse({ ...model, root: { ...model.root, enabled: false } }).success).toBe(true);
+    const live = { ...model, identity: { ...model.identity, occurrenceId: 'live' } };
+    expect(PluginDeclarativeProjectedModelV1Schema.safeParse(live).success).toBe(true);
+    for (const root of [
+      { ...model.root, kind: 'unknown-node' },
+      { ...model.root, action: { identity: { pluginId: 'com.acme.dashboard', localId: 'refresh' }, qualifiedId: 'com.acme.dashboard/refresh' } },
+      { kind: 'action', path: 'root', order: 0, label: 'Replace draft', enabled: true, input: null,
+        effect: { kind: 'composerApply', expectedRevision: 1, operations: [{ kind: 'text.set', text: 'Draft' }] } },
+    ]) expect(PluginDeclarativeProjectedModelV1Schema.safeParse({ ...live, root }).success).toBe(false);
+  });
+
   it('preserves significant Markdown whitespace through admission, normalization and projection', () => {
     const markdown = '    indented code\n\nline with hard break  \n';
     for (const text of [markdown, { key: ' note.body ', fallback: markdown }]) {
@@ -482,6 +529,16 @@ describe('declarative document normalizer v1', () => {
       () => normalizePluginDeclarativeDocumentV1(mismatchedDynamicCandidate),
       'plugin_declarative_document_content_type_invalid',
     );
+    const validDynamicCandidate = {
+      ...mismatchedDynamicCandidate,
+      resourceContentTypes: { declaredContentType: contentType, returnedContentType: contentType },
+    };
+    expect(() => normalizePluginDeclarativeDocumentV1(validDynamicCandidate)).not.toThrow();
+    const { occurrenceId: _occurrenceId, ...withoutRuntime } = validDynamicCandidate;
+    expectNormalizationFailure(
+      () => normalizePluginDeclarativeDocumentV1(withoutRuntime),
+      'plugin_declarative_generation_invalid',
+    );
   });
 
   it('resolves a symbolic targeted Surface only from the mounted target inventory and stamps its current handle', () => {
@@ -552,6 +609,20 @@ describe('declarative document normalizer v1', () => {
     if (normalized.root.kind !== 'targetedSurface') {
       throw new Error('Expected the mounted target Surface leaf.');
     }
+    const model = PluginDeclarativeProjectedModelV1Schema.parse({
+      identity: { pluginId: 'com.acme.dashboard', localId: 'dashboard', qualifiedId: 'com.acme.dashboard/dashboard', occurrenceId: 'occurrenceId-4' },
+      visible: true, requiredHostMethods: [],
+      declarativeInventory: { actions: [], destinations: [], settings: [], uiQueries: [] },
+      root: normalized.root,
+    });
+    const successor = {
+      ...model,
+      root: {
+        ...normalized.root,
+        surface: { ...normalized.root.surface, contributor: { ...normalized.root.surface.contributor, occurrenceId: 'review-occurrence-b' } },
+      },
+    };
+    expect(projectPluginDeclarativeModelComparisonV1(successor)).not.toEqual(projectPluginDeclarativeModelComparisonV1(model));
     expect(normalized.root.instanceKey).toBe(derivePluginUiTargetedSurfaceMountInstanceKeyV1({
       targetPluginId: 'com.acme.dashboard',
       surface: normalized.root.surface,

@@ -36,3 +36,6 @@ export const PluginHostedWebAccountDataBridgeOperationV1Schema:
 export const PluginHostedWebAccountDataBridgeResponseV1Schema:
     PluginUiSchema<PluginHostedWebAccountDataBridgeResponseV1> =
     canonicalPluginHostedWebAccountDataBridgeResponseV1Schema;
+export { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
+export type { ArtifactHtmlBundleV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
+export { buildArtifactHtmlDocumentV1, ARTIFACT_HTML_SANDBOX_V1, ARTIFACT_HTML_CONTENT_CSP_V1 } from '@happier-dev/protocol/artifacts/artifactHtmlDocumentV1';

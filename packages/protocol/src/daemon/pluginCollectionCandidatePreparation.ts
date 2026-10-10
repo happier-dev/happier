@@ -1,6 +1,7 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
-import { PluginMachineExecutionOriginV1Schema } from '../machines/administration/pluginMachineExecutionOriginV1.js';
+import { PluginMachineMaterializationExecutionOriginV1Schema } from '../machines/administration/pluginMachineExecutionOriginV1.js';
 import { PluginReleaseRefV1Schema } from '../plugins/availability/v1.js';
 import {
   NormalizedPluginAccountCollectionContractV1Schema,
@@ -15,24 +16,24 @@ import { PluginUiArtifactDigestV1Schema } from '../plugins/ui/artifactIntegrity.
  * selected exact materialization; retirement deliberately does not, so it
  * can clean an exact retained stage after its candidate becomes non-executable.
  */
-const DaemonPluginCollectionCandidatePreparationTargetV1Schema = z.object({
-  serverIdentityId: PluginMachineExecutionOriginV1Schema.shape.serverIdentityId,
-  machineId: PluginMachineExecutionOriginV1Schema.shape.materializationRef.shape.machineId,
-}).strict();
+const DaemonPluginCollectionCandidatePreparationTargetV1Schema = lazyZodSchema(() => z.object({
+  serverIdentityId: PluginMachineMaterializationExecutionOriginV1Schema.shape.serverIdentityId,
+  machineId: PluginMachineMaterializationExecutionOriginV1Schema.shape.materializationRef.shape.machineId,
+}).strict());
 
-const DaemonPluginCollectionCandidatePreparationSourceV1Schema = z.object({
+const DaemonPluginCollectionCandidatePreparationSourceV1Schema = lazyZodSchema(() => z.object({
   release: PluginReleaseRefV1Schema,
   collectionContracts: z.array(NormalizedPluginAccountCollectionContractV1Schema).readonly(),
-}).strict();
+}).strict());
 
-const DaemonPluginCollectionCandidatePreparationCandidateV1Schema = z.object({
+const DaemonPluginCollectionCandidatePreparationCandidateV1Schema = lazyZodSchema(() => z.object({
   release: PluginReleaseRefV1Schema,
   /** Public exact artifact/graph integrity fact; never a daemon generation id. */
   artifactDigest: PluginUiArtifactDigestV1Schema,
   /** Exact trusted machine materialization selected before daemon execution. */
-  origin: PluginMachineExecutionOriginV1Schema,
+  origin: PluginMachineMaterializationExecutionOriginV1Schema,
   collectionContracts: z.array(PluginCollectionContractRefV1Schema).readonly(),
-}).strict();
+}).strict());
 
 function addUniqueCollectionIssues(
   contracts: readonly Readonly<{ collectionId: string }>[],
@@ -52,7 +53,7 @@ function addUniqueCollectionIssues(
   });
 }
 
-const DaemonPluginCollectionCandidatePreparationPrepareRequestV1Schema = z.object({
+const DaemonPluginCollectionCandidatePreparationPrepareRequestV1Schema = lazyZodSchema(() => z.object({
   version: z.literal(1),
   daemonTarget: DaemonPluginCollectionCandidatePreparationTargetV1Schema,
   operation: z.literal('prepare'),
@@ -107,32 +108,32 @@ const DaemonPluginCollectionCandidatePreparationPrepareRequestV1Schema = z.objec
   });
   addUniqueCollectionIssues(value.source.collectionContracts, ['source', 'collectionContracts'], context);
   addUniqueCollectionIssues(value.candidate.collectionContracts, ['candidate', 'collectionContracts'], context);
-});
+}));
 
-const DaemonPluginCollectionCandidatePreparationRetireRequestV1Schema = z.object({
+const DaemonPluginCollectionCandidatePreparationRetireRequestV1Schema = lazyZodSchema(() => z.object({
   version: z.literal(1),
   daemonTarget: DaemonPluginCollectionCandidatePreparationTargetV1Schema,
   operation: z.literal('retire'),
   bindings: z.array(PluginCollectionCandidatePreparationBindingV1Schema).readonly(),
-}).strict();
+}).strict());
 
 /**
  * One host-private daemon execution family. It transports only static facts,
  * artifact integrity, and opaque Data-stage bindings; callbacks and daemon
  * immutable generation identity stay in the daemon process.
  */
-export const DaemonPluginCollectionCandidatePreparationRequestV1Schema = z.discriminatedUnion(
+export const DaemonPluginCollectionCandidatePreparationRequestV1Schema = lazyZodSchema(() => z.discriminatedUnion(
   'operation',
   [
     DaemonPluginCollectionCandidatePreparationPrepareRequestV1Schema,
     DaemonPluginCollectionCandidatePreparationRetireRequestV1Schema,
   ],
-);
+));
 export type DaemonPluginCollectionCandidatePreparationRequestV1 = z.infer<
   typeof DaemonPluginCollectionCandidatePreparationRequestV1Schema
 >;
 
-export const DaemonPluginCollectionCandidatePreparationResponseV1Schema = z.discriminatedUnion(
+export const DaemonPluginCollectionCandidatePreparationResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion(
   'kind',
   [
     z.object({
@@ -157,7 +158,7 @@ export const DaemonPluginCollectionCandidatePreparationResponseV1Schema = z.disc
       ]),
     }).strict(),
   ],
-);
+));
 export type DaemonPluginCollectionCandidatePreparationResponseV1 = z.infer<
   typeof DaemonPluginCollectionCandidatePreparationResponseV1Schema
 >;

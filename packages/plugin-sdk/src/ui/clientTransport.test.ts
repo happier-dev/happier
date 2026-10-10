@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { PluginUiExecuteActionRequestV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { PluginUiExecuteActionRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import {
     type PluginUiHostApiSurfaceContextV1,
     type PluginUiHostApiWireEnvelopeV1,
@@ -57,6 +57,24 @@ const preparedSelection = {
 };
 
 describe('plugin UI domain client transport adapter', () => {
+    it('preserves host read identities over the hosted bridge and refuses unadmitted methods', async () => {
+        let receive: ((message: unknown) => void) | undefined;
+        const reference = { hostRead: 'usage.query' as const, input: { queries: [] } };
+        const api = await createPluginUiHostApiClientFromTransport({ identity, transport: {
+            subscribe(listener) { receive = listener; return { dispose() {} }; },
+            send(message) {
+                if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
+                    apiVersion: '1.0.0', methods: ['readResource'], surface });
+                if (message.kind === 'request') receive?.({ wireVersion: 1, kind: 'result', identity,
+                    requestId: message.requestId, method: message.method,
+                    result: JSON.stringify(message.payload) === JSON.stringify({ resource: reference })
+                        ? { contentType: 'application/json', digest: `sha256:${'a'.repeat(64)}`, bytesBase64: 'Nw==' }
+                        : { code: 'denied', diagnostics: [] } });
+            },
+        } });
+        await expect(api.readResource(reference)).resolves.toMatchObject({ bytes: new Uint8Array([55]) });
+        await expect(api.watchResource(reference, () => {})).rejects.toMatchObject({ code: 'unsupported_method' });
+    });
     it('carries declared-area operations without accepting author-chosen host scope', async () => {
         let receive: ((message: unknown) => void) | undefined;
         const sent: PluginUiHostApiWireEnvelopeV1[] = [];
@@ -74,7 +92,7 @@ describe('plugin UI domain client transport adapter', () => {
                 },
             },
         });
-        const request = { area: 'pinned', context: { filter: 'open' }, operation: { actionId: 'widgets.instance.list' as const } };
+        const request = { area: 'pinned', context: { filter: 'open' }, operation: { actionId: 'widgets.item.list' as const } };
         await expect(api.widgetArea({ ...request, accountId: 'other' } as never)).rejects.toMatchObject({ code: 'invalid_payload' });
         expect(sent.filter(message => message.kind === 'request')).toHaveLength(0);
         await expect(api.widgetArea(request)).resolves.toMatchObject({ ok: false, errorCode: 'widget_area_not_declared' });
@@ -723,7 +741,7 @@ describe('plugin UI domain client transport adapter', () => {
         expect(api.version().methods).toEqual(
             ['context', 'executeAction', 'readResource', 'watchContext', 'watchResource', 'openSurface', 'diagnostic', 'readClipboard', 'writeClipboard', 'openExternalLink'],
         );
-        await expect(api.context()).resolves.toEqual(surface);
+        expect(api.version().apiVersion).toBe('1.0.0');
         expect(sent[0]).toMatchObject({ kind: 'negotiate', identity });
     });
 
@@ -1945,7 +1963,44 @@ describe('plugin UI domain client transport adapter', () => {
         expect(sent.filter((message) => message.kind === 'disposeHostResource')).toHaveLength(1);
     });
 
-    it('fails boundedly when the host never completes negotiation', async () => {
+    it('accepts late negotiation beyond the former default and retires the exact cancelled transport', async () => {
+        vi.useFakeTimers();
+        let receive: ((message: unknown) => void) | undefined;
+        const disposal = vi.fn();
+        const cancellation = new AbortController();
+        const disconnected = vi.fn();
+        const pending = createPluginUiHostApiClientFromTransport({
+            identity,
+            signal: cancellation.signal,
+            onDisconnected: disconnected,
+            transport: {
+                send(message) {
+                    if (message.kind === 'request' && message.method === 'context') {
+                        receive?.({
+                            wireVersion: 1, kind: 'result', identity,
+                            requestId: message.requestId, method: 'context',
+                            result: { surface, activity: { active: true } },
+                        });
+                    }
+                },
+                subscribe(listener) { receive = listener; return { dispose: disposal }; },
+            },
+        });
+        const settlements: unknown[] = [];
+        void pending.then((value) => settlements.push(value), (error: unknown) => settlements.push(error));
+        await vi.advanceTimersByTimeAsync(30_001);
+        expect(settlements).toEqual([]);
+        receive?.({ wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0', methods: ['context'], surface });
+        const api = await pending;
+        await expect(api.context()).resolves.toEqual(surface);
+        cancellation.abort();
+        expect(disposal).toHaveBeenCalledOnce();
+        expect(disconnected).toHaveBeenCalledWith('aborted');
+        await expect(api.context()).rejects.toMatchObject({ code: 'ui_host_unavailable' });
+        vi.useRealTimers();
+    });
+
+    it('fails boundedly when an explicit caller handshake budget expires', async () => {
         vi.useFakeTimers();
         const pending = createPluginUiHostApiClientFromTransport({
             authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
@@ -1973,6 +2028,26 @@ describe('plugin UI domain client transport adapter', () => {
                 },
             },
         })).rejects.toMatchObject({ code: 'already_offline' });
+    });
+
+    it('cancels pending negotiation and ignores a late host response', async () => {
+        let receive: ((message: unknown) => void) | undefined;
+        const disposal = vi.fn();
+        const cancellation = new AbortController();
+        const disconnected = vi.fn();
+        const pending = createPluginUiHostApiClientFromTransport({
+            identity, signal: cancellation.signal, onDisconnected: disconnected,
+            transport: {
+                send: () => undefined,
+                subscribe(listener) { receive = listener; return { dispose: disposal }; },
+            },
+        });
+        const error = pending.catch((cause: unknown) => cause);
+        cancellation.abort();
+        await expect(error).resolves.toMatchObject({ code: 'aborted' });
+        receive?.({ wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0', methods: ['context'], surface });
+        expect(disposal).toHaveBeenCalledOnce();
+        expect(disconnected.mock.calls).toEqual([['aborted']]);
     });
 
     it('fails closed when an injected request-id generator repeats an in-flight id', async () => {

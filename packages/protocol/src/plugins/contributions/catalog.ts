@@ -32,6 +32,8 @@ import { isBundledProviderCatalogParserV1 } from '../../providers/catalog/descri
 import { isBundledProviderCommandCatalogParserV1 } from '../../providers/detection/descriptorV1.js';
 import { normalizePluginWorkflowContributionV1 } from './workflows.js';
 import { parseQualifiedPluginContributionKey } from '../contributionIdentity.js';
+import { readMachineProvisionerActionRolesV1, type MachineProvisionerContributionV1 } from './machineProvisioners.js';
+import type { ProjectNativeAdapterRoleV1 } from './projectNativeAdapters.js';
 
 export type PluginContributionReferenceRuleV2 = Readonly<{
   field: string;
@@ -80,6 +82,7 @@ export type PluginContributionRegistrationRight = Readonly<{
   /** Canonical parsed declaration used to validate the registered Voice runtime. */
   voiceProviderDeclaration?: VoiceProviderContribution;
   connectedAccountDescriptorDeclaration?: PluginConnectedAccountDescriptorContributionV2;
+  projectNativeAdapterRoles?: readonly ProjectNativeAdapterRoleV1[];
   /**
    * The complete set of runtime arms a Provider contribution declares. A
    * Provider can declare a managed runtime, contributed catalog formats, or
@@ -190,6 +193,7 @@ type FamilyPolicy = Pick<PluginContributionCatalogEntryV2,
 const FAMILY_POLICIES = {
   agents: { identityField: 'id', disposition: 'reshaped', activationDemand: 'conditional', projectionFamily: null, allowedRuntimeRegistration: 'agents', consumer: 'agent-runtime', platforms: CLI_PLATFORMS },
   providers: { identityField: 'id', disposition: 'delegated', activationDemand: 'conditional', projectionFamily: 'providers', allowedRuntimeRegistration: 'providers', registrationHost: 'daemon', consumer: 'providers-first-class', platforms: CLI_PLATFORMS },
+  machineProvisioners: { identityField: 'id', disposition: 'reshaped', activationDemand: 'declarative', projectionFamily: 'machineProvisioners', allowedRuntimeRegistration: null, consumer: 'managed-machine-admission', platforms: CLI_PLATFORMS },
   actions: { identityField: 'id', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: null, allowedRuntimeRegistration: 'actions', registrationHost: 'discriminated', consumer: 'action-dispatch', platforms: ALL_PLATFORMS },
   commands: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'cli-commands', platforms: CLI_PLATFORMS },
   tools: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'agent-tools', platforms: CLI_PLATFORMS },
@@ -221,6 +225,7 @@ const FAMILY_POLICIES = {
   voiceProviders: { identityField: 'id', disposition: 'retained', activationDemand: 'registration', projectionFamily: 'voiceProviders', allowedRuntimeRegistration: 'voiceProviders', registrationHost: 'discriminated', consumer: 'voice-host', platforms: Object.freeze(['web', 'ios', 'android'] as const) },
   backgroundServices: { identityField: 'id', disposition: 'retained', activationDemand: 'registration', projectionFamily: null, allowedRuntimeRegistration: 'backgroundServices', registrationHost: 'daemon', consumer: 'background-service-runner', platforms: CLI_PLATFORMS },
   captureSources: { identityField: 'id', disposition: 'retained', activationDemand: 'registration', projectionFamily: null, allowedRuntimeRegistration: 'captureSources', registrationHost: 'daemon', consumer: 'live-stream-capture', platforms: ALL_PLATFORMS },
+  projectNativeAdapters: { identityField: 'id', disposition: 'retained', activationDemand: 'registration', projectionFamily: null, allowedRuntimeRegistration: 'projectNativeAdapters', registrationHost: 'daemon', consumer: 'project-native-resolution', platforms: CLI_PLATFORMS },
   daemonDatabases: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'daemon-database-service', platforms: CLI_PLATFORMS },
   composerReferences: { identityField: 'id', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: null, allowedRuntimeRegistration: 'composerReferences', registrationHost: 'daemon', consumer: 'composer-reference-host', platforms: ALL_PLATFORMS },
   searchProviders: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, consumer: 'universal-search-host', platforms: ALL_PLATFORMS },
@@ -250,6 +255,14 @@ function extractRuleReferences(
 }
 
 function extractNestedReferences(family: string, value: Readonly<Record<string, unknown>>): PluginContributionReferenceCandidateV2[] {
+  if (family === 'machineProvisioners') {
+    return readMachineProvisionerActionRolesV1(value as MachineProvisionerContributionV1).map(binding => ({
+      targetFamily: 'actions', reference: binding.action,
+      path: binding.role === 'reconcile' ? ['reconciliation', 'action']
+        : [binding.role === 'exec' || binding.role === 'putFile' ? 'bootstrapTransport' : 'actions', binding.role],
+      allowQualifiedCrossPlugin: false,
+    }));
+  }
   if (family === 'dragSources' || family === 'dropTargets') {
     const client = value.client as Readonly<{ artifactId?: unknown }> | undefined;
     const actions = Array.isArray(value.actions) ? value.actions : [];
@@ -1102,6 +1115,9 @@ function derivePluginContributionRegistrationRightsForHost(
       const localId = entry.identityField === null ? null : (value as Readonly<Record<string, unknown>>)[entry.identityField];
       const family = entry.runtimeRegistrationFamily(record);
       if (typeof localId !== 'string') return [];
+      if (entry.manifestKey === 'projectNativeAdapters') {
+        return [{ family, localId, target, projectNativeAdapterRoles: Object.freeze([...(record.roles as readonly ProjectNativeAdapterRoleV1[])]) }];
+      }
       if (entry.manifestKey === 'connectedAccountDescriptors') {
         return [{
           family,

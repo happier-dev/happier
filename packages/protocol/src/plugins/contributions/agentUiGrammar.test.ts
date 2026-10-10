@@ -110,6 +110,17 @@ function parse(value: unknown) {
 }
 
 describe('public Agent UI authoring grammar', () => {
+  it('admits an optional Agent identity hue without requiring behavior or controls', () => {
+    const declaration = { identityColor: { light: '#eb6834', dark: '#d95926' } };
+    const result = parse(declaration);
+    expect(result.success ? result.data : result.error.issues).toEqual(declaration);
+    expect(AgentUiProjectedDeclarationV1Schema.parse(declaration)).toEqual(declaration);
+    expect(parse({ identityColor: { light: 'red', dark: '#d95926' } }).success).toBe(false);
+    expect(parse({ identityColor: { light: '#eb6834' } }).success).toBe(false);
+    expect(parse({ identityColor: { ...declaration.identityColor, agentId: 'claude' } }).success).toBe(false);
+    expect(parse({ ...declaration, identityColour: declaration.identityColor }).success).toBe(false);
+  });
+
   it('accepts the full declarative language an installed Agent can reach', () => {
     const result = parse(SUPPORTED_DECLARATION);
     expect(result.success ? null : result.error.issues).toBeNull();

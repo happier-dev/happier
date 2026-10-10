@@ -18,7 +18,7 @@ const SURFACE_ROLE = 'detail';
 export function selectPhysicalCopyDetailSurface(
   targetedContributions: SurfaceContext['targetedContributions'],
 ) {
-  if (targetedContributions.target.pluginId !== TARGET_PLUGIN_ID) return null;
+  if (targetedContributions?.target.pluginId !== TARGET_PLUGIN_ID) return null;
 
   const surface = selectTargetedContributionSurface(targetedContributions, {
     pointId: POINT_ID,

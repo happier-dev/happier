@@ -137,6 +137,7 @@ const VOICE_PUBLIC_EXPORTS_BY_ENTRYPOINT = Object.freeze({
     'VoiceModelPackSupportArtifactV1Schema',
     'VoiceModelPackTransducerArtifactsV1',
     'VoiceModelPackTransducerArtifactsV1Schema',
+    'VoicePrivacyFacts',
     'VoiceProviderContribution',
     'VoiceProviderContributionSchema',
     'VoiceProviderSettings',
@@ -147,11 +148,13 @@ const VOICE_PUBLIC_EXPORTS_BY_ENTRYPOINT = Object.freeze({
     'VoiceRawCredentialAccess',
     'VoiceRawCredentialGrantDeclaration',
     'VoiceSchema',
+    'VoiceServiceMark',
+    'VoiceServiceMarkSchema',
     'VoiceSettingReadinessDeclaration',
     'VoiceSettingsActionContext',
     'classifyVoiceProviderHttpFailure',
-    'resolveVoiceProviderLanguagePreference',
     'createVoiceRecordSchema',
+    'resolveVoiceProviderLanguagePreference',
     'withVoiceSchemaField',
   ]),
   './voice/client': Object.freeze([
@@ -4473,6 +4476,7 @@ test('derives added and removed entrypoint topology solely from author-owned pub
     assert.equal(added.status, 0, added.stderr);
     const addedPackageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
     assert.deepEqual(addedPackageJson.exports['./webhooks'], {
+      'happier-source': './src/webhooks/index.ts',
       types: './dist/webhooks/index.d.ts',
       default: './dist/webhooks/index.js',
     });

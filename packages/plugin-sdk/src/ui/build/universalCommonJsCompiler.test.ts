@@ -41,6 +41,35 @@ async function compileFixture(root: string, entry: string, artifactId: string) {
 }
 
 describe('compileUniversalPluginUiCommonJs', () => {
+    it('selects actual workspace source when source preparation explicitly requests its condition', async () => {
+        const { root, entry } = await fixture("import { marker } from '@happier-dev/source-fixture'; export const renderSurface = () => marker;");
+        const packageRoot = join(root, 'node_modules/@happier-dev/source-fixture');
+        await mkdir(packageRoot, { recursive: true });
+        await writeFile(join(packageRoot, 'package.json'), JSON.stringify({
+            name: '@happier-dev/source-fixture', type: 'module',
+            exports: { 'happier-source': './source.ts', default: './dist.js' },
+        }));
+        await writeFile(join(packageRoot, 'source.ts'), "export const marker = 'actual-source-ui';");
+        await writeFile(join(packageRoot, 'dist.js'), "export const marker = 'stale-dist-ui';");
+        const result = await compileUniversalPluginUiCommonJs({
+            projectRoot: root, entryPath: entry, artifactId: 'source-ui',
+            requestedExports: ['renderSurface'], exportConditions: ['happier-source'],
+        });
+        const output = new TextDecoder().decode(result.bytes);
+        expect(output).toContain('actual-source-ui');
+        expect(output).not.toContain('stale-dist-ui');
+        const canonicalSource = join(root, 'canonical-source.ts');
+        await writeFile(canonicalSource, "export const marker = 'canonical-host-source-ui';");
+        const canonical = await compileUniversalPluginUiCommonJs({
+            projectRoot: root, entryPath: entry, artifactId: 'canonical-ui',
+            requestedExports: ['renderSurface'], exportConditions: ['happier-source'],
+            resolveSourceImport: (specifier) => specifier === '@happier-dev/source-fixture' ? canonicalSource : undefined,
+        });
+        expect(new TextDecoder().decode(canonical.bytes)).toContain('canonical-host-source-ui');
+        const published = await compileFixture(root, entry, 'published-ui');
+        expect(new TextDecoder().decode(published.bytes)).toContain('stale-dist-ui');
+    });
+
     it('emits one minified neutral CommonJS file and keeps only the exact host family external', async () => {
         const { root, entry } = await fixture([
             "import React from 'react';",

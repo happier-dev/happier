@@ -6,6 +6,14 @@ import {
 } from './subscriptions.js';
 
 describe('plugin UI resource subscriptions', () => {
+  it('admits closed host read references through the incumbent subscription target', () => {
+    for (const hostRead of ['usage.query', 'connectedServices.quota.get']) {
+      const resource = { hostRead, input: { queries: [] } };
+      expect(PluginUiResourceSubscriptionRequestV1Schema.safeParse({ resource, subscriptionId: 'host' }).success).toBe(true);
+      expect(PluginUiResourceSubscriptionRequestV1Schema.safeParse({ resource: { ...resource, accountId: 'foreign' }, subscriptionId: 'host' }).success).toBe(false);
+    }
+    expect(PluginUiResourceSubscriptionRequestV1Schema.safeParse({ resource: { hostRead: 'settings.set', input: {} }, subscriptionId: 'host' }).success).toBe(false);
+  });
   it('uses subscription ids for events instead of request sequence correlation', () => {
     const request = PluginUiResourceSubscriptionRequestV1Schema.parse({
       resource: { pluginId: 'acme.preview', localId: 'live-status' },

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDigest.js';
@@ -11,6 +12,7 @@ import {
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginIdSchema } from '../pluginId.js';
 import { PluginUiArtifactDigestV1Schema } from '../ui/artifactIntegrity.js';
+import { PluginManifestV2Schema } from '../manifest/v2.js';
 import {
   PluginJsonSchemaV2Schema,
   type PluginJsonSchemaV2,
@@ -298,10 +300,10 @@ function compareCanonicalText(left: string, right: string): number {
 const OpaqueCollectionCursorSchema = asProtocolZod(PluginCollectionOpaqueCursorV1Schema);
 const ProjectedScalarValueSchema = PluginCollectionProjectedScalarValueV1Schema;
 
-export const PluginCollectionWriterContextV1Schema = z.object({
+export const PluginCollectionWriterContextV1Schema = lazyZodSchema(() => z.object({
   schemaVersion: PluginCollectionSchemaVersionV1Schema,
   contractDigest: PluginCollectionContractDigestV1Schema,
-}).strict();
+}).strict());
 export type PluginCollectionWriterContextV1 = z.infer<typeof PluginCollectionWriterContextV1Schema>;
 
 /**
@@ -330,7 +332,7 @@ export const PLUGIN_COLLECTION_PRIVATE_PAYLOAD_ACCOUNT_SCOPED_BLOB_KIND_V1 =
  * it was built for, and the strict walker reads own data descriptors only, so
  * nothing observes the value between the check and its use.
  */
-const PluginCollectionMemberValueV1Schema = z.unknown().transform(
+const PluginCollectionMemberValueV1Schema = lazyZodSchema(() => z.unknown().transform(
   (value, context): PluginJsonValueV2 => {
     try {
       assertStrictPluginJsonValue(value, 'Collection member value');
@@ -343,12 +345,12 @@ const PluginCollectionMemberValueV1Schema = z.unknown().transform(
       return z.NEVER;
     }
   },
-);
+));
 
-export const PluginCollectionPrivatePayloadV1Schema = z.record(
+export const PluginCollectionPrivatePayloadV1Schema = lazyZodSchema(() => z.record(
   PluginCollectionMemberNameV1Schema,
   PluginCollectionMemberValueV1Schema,
-);
+));
 export type PluginCollectionPrivatePayloadV1 = z.infer<typeof PluginCollectionPrivatePayloadV1Schema>;
 
 /** The exact generic Account cipher domain allocated to Collection private row payloads. */
@@ -384,7 +386,7 @@ export function openPluginCollectionPrivatePayloadV1(params: Readonly<{
   return parsed.success ? parsed.data : null;
 }
 
-export const PluginCollectionContentEnvelopeV1Schema = z.discriminatedUnion('t', [
+export const PluginCollectionContentEnvelopeV1Schema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.object({ t: z.literal('plain'), v: PluginCollectionPrivatePayloadV1Schema }).strict(),
   z.object({ t: z.literal('encrypted'), c: z.string().min(1) }).strict(),
 ]).superRefine((value, context) => {
@@ -394,7 +396,7 @@ export const PluginCollectionContentEnvelopeV1Schema = z.discriminatedUnion('t',
       message: 'Collection private envelope exceeds the 512 KiB encoded limit.',
     });
   }
-});
+}));
 export type PluginCollectionContentEnvelopeV1 = z.infer<typeof PluginCollectionContentEnvelopeV1Schema>;
 
 export class PluginCollectionContentEnvelopeModeMismatchError extends Error {
@@ -428,7 +430,7 @@ export function assertPluginCollectionContentEnvelopeForModeV1(
 }
 
 /** Only declared server-readable scalar fields cross the mutation boundary. */
-export const PluginCollectionProjectionV1Schema = z.record(
+export const PluginCollectionProjectionV1Schema = lazyZodSchema(() => z.record(
   PluginCollectionMemberNameV1Schema,
   ProjectedScalarValueSchema,
 ).superRefine((value, context) => {
@@ -441,21 +443,21 @@ export const PluginCollectionProjectionV1Schema = z.record(
       message: 'Collection projection exceeds the 64 KiB encoded limit.',
     });
   }
-});
+}));
 export type PluginCollectionProjectionV1 = z.infer<typeof PluginCollectionProjectionV1Schema>;
 
 /**
  * One exact row currentness witness. Its ceiling is the persisted `Int` column,
  * not a policy number: see `PLUGIN_COLLECTION_REVISION_MAX`.
  */
-export const PluginCollectionRevisionV1Schema = z.number().int().positive()
-  .max(PLUGIN_COLLECTION_REVISION_MAX);
+export const PluginCollectionRevisionV1Schema = lazyZodSchema(() => z.number().int().positive()
+  .max(PLUGIN_COLLECTION_REVISION_MAX));
 /**
  * One compact currentness floor per Account/plugin/Collection. It shares the
  * revision's monotone space and therefore its persisted ceiling.
  */
-export const PluginCollectionAbsenceEpochV1Schema = z.number().int().nonnegative()
-  .max(PLUGIN_COLLECTION_REVISION_MAX);
+export const PluginCollectionAbsenceEpochV1Schema = lazyZodSchema(() => z.number().int().nonnegative()
+  .max(PLUGIN_COLLECTION_REVISION_MAX));
 const PluginCollectionPutMutationBaseV1Schema = {
   kind: z.literal('put'),
   rowId: PluginCollectionRowIdV1Schema,
@@ -463,48 +465,48 @@ const PluginCollectionPutMutationBaseV1Schema = {
   projection: PluginCollectionProjectionV1Schema,
 } as const;
 
-const PluginCollectionAbsentPutMutationV1Schema = z.object({
+const PluginCollectionAbsentPutMutationV1Schema = lazyZodSchema(() => z.object({
   ...PluginCollectionPutMutationBaseV1Schema,
   expectedRevision: z.literal('absent'),
   expectedAbsenceEpoch: PluginCollectionAbsenceEpochV1Schema,
-}).strict();
+}).strict());
 
-const PluginCollectionCurrentPutMutationV1Schema = z.object({
+const PluginCollectionCurrentPutMutationV1Schema = lazyZodSchema(() => z.object({
   ...PluginCollectionPutMutationBaseV1Schema,
   expectedRevision: PluginCollectionRevisionV1Schema,
-}).strict();
+}).strict());
 
 /**
  * An absent create and an exact-current put have different currentness
  * witnesses. Keep that distinction in the inferred wire type, rather than
  * recovering it with a server-side cast after schema validation.
  */
-export const PluginCollectionPutMutationV1Schema = z.union([
+export const PluginCollectionPutMutationV1Schema = lazyZodSchema(() => z.union([
   PluginCollectionAbsentPutMutationV1Schema,
   PluginCollectionCurrentPutMutationV1Schema,
-]);
+]));
 export type PluginCollectionPutMutationV1 = z.infer<typeof PluginCollectionPutMutationV1Schema>;
 
-export const PluginCollectionDeleteMutationV1Schema = z.object({
+export const PluginCollectionDeleteMutationV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('delete'),
   rowId: PluginCollectionRowIdV1Schema,
   expectedRevision: PluginCollectionRevisionV1Schema,
-}).strict();
+}).strict());
 export type PluginCollectionDeleteMutationV1 = z.infer<typeof PluginCollectionDeleteMutationV1Schema>;
 
 /** A non-mutating exact-currentness precondition for one currently live row. */
-export const PluginCollectionBatchAssertV1Schema = z.object({
+export const PluginCollectionBatchAssertV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('assert'),
   rowId: PluginCollectionRowIdV1Schema,
   expectedRevision: PluginCollectionRevisionV1Schema,
-}).strict();
+}).strict());
 export type PluginCollectionBatchAssertV1 = z.infer<typeof PluginCollectionBatchAssertV1Schema>;
 
-export const PluginCollectionMutationOperationV1Schema = z.union([
+export const PluginCollectionMutationOperationV1Schema = lazyZodSchema(() => z.union([
   PluginCollectionPutMutationV1Schema,
   PluginCollectionDeleteMutationV1Schema,
   PluginCollectionBatchAssertV1Schema,
-]);
+]));
 export type PluginCollectionMutationOperationV1 = z.infer<typeof PluginCollectionMutationOperationV1Schema>;
 
 /**
@@ -512,7 +514,7 @@ export type PluginCollectionMutationOperationV1 = z.infer<typeof PluginCollectio
  * batch is bounded and contains each row at most once, which makes the
  * complete conflict set meaningful and keeps server execution one transaction.
  */
-export const PluginCollectionMutationRequestV1Schema = z.object({
+export const PluginCollectionMutationRequestV1Schema = lazyZodSchema(() => z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   collectionId: asProtocolZod(PluginContributionLocalIdSchema),
   writerContext: PluginCollectionWriterContextV1Schema,
@@ -544,7 +546,7 @@ export const PluginCollectionMutationRequestV1Schema = z.object({
       message: 'Collection mutation batch exceeds the 64 MiB encoded limit.',
     });
   }
-});
+}));
 export type PluginCollectionMutationRequestV1 = z.infer<typeof PluginCollectionMutationRequestV1Schema>;
 
 /**
@@ -554,36 +556,36 @@ export type PluginCollectionMutationRequestV1 = z.infer<typeof PluginCollectionM
  * whole currentness witness: the server reads and advances the Collection
  * absence epoch in that same transaction, so no caller carries it here.
  */
-export const PluginCollectionForgetRequestV1Schema = z.object({
+export const PluginCollectionForgetRequestV1Schema = lazyZodSchema(() => z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   collectionId: asProtocolZod(PluginContributionLocalIdSchema),
   writerContext: PluginCollectionWriterContextV1Schema,
   rowId: PluginCollectionRowIdV1Schema,
   expectedRevision: PluginCollectionRevisionV1Schema,
-}).strict();
+}).strict());
 export type PluginCollectionForgetRequestV1 = z.infer<typeof PluginCollectionForgetRequestV1Schema>;
 
-export const PluginCollectionForgetResultV1Schema = z.discriminatedUnion('status', [
+export const PluginCollectionForgetResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('forgotten') }).strict(),
   z.object({ status: z.literal('conflict') }).strict(),
-]);
+]));
 export type PluginCollectionForgetResultV1 = z.infer<typeof PluginCollectionForgetResultV1Schema>;
 
-export const PluginCollectionMutationResultEntryV1Schema = z.object({
+export const PluginCollectionMutationResultEntryV1Schema = lazyZodSchema(() => z.object({
   rowId: PluginCollectionRowIdV1Schema,
   revision: PluginCollectionRevisionV1Schema,
   deleted: z.boolean(),
-}).strict();
+}).strict());
 export type PluginCollectionMutationResultEntryV1 = z.infer<typeof PluginCollectionMutationResultEntryV1Schema>;
 
-export const PluginCollectionMutationConflictV1Schema = z.object({
+export const PluginCollectionMutationConflictV1Schema = lazyZodSchema(() => z.object({
   rowId: PluginCollectionRowIdV1Schema,
   revision: PluginCollectionRevisionV1Schema.nullable(),
   deleted: z.boolean(),
-}).strict();
+}).strict());
 export type PluginCollectionMutationConflictV1 = z.infer<typeof PluginCollectionMutationConflictV1Schema>;
 
-export const PluginCollectionMutationResultV1Schema = z.discriminatedUnion('status', [
+export const PluginCollectionMutationResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('updated'),
     results: z.array(PluginCollectionMutationResultEntryV1Schema).min(1).max(PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1),
@@ -593,10 +595,10 @@ export const PluginCollectionMutationResultV1Schema = z.discriminatedUnion('stat
     status: z.literal('conflict'),
     conflicts: z.array(PluginCollectionMutationConflictV1Schema).min(1).max(PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1),
   }).strict(),
-]);
+]));
 export type PluginCollectionMutationResultV1 = z.infer<typeof PluginCollectionMutationResultV1Schema>;
 
-export const PluginCollectionMutationErrorCodeV1Schema = z.enum([
+export const PluginCollectionMutationErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'collection_mutation_invalid',
   'collection_unavailable',
   'collection_writer_contract_unavailable',
@@ -608,14 +610,14 @@ export const PluginCollectionMutationErrorCodeV1Schema = z.enum([
   'collection_quota_incompatible',
   'collection_contract_inconsistent',
   'collection_revision_exhausted',
-]);
+]));
 export type PluginCollectionMutationErrorCodeV1 = z.infer<typeof PluginCollectionMutationErrorCodeV1Schema>;
 
 /**
  * The named effective limit that made a current Collection state incompatible.
  * These names are shared by mutation and Availability readiness failures.
  */
-export const PluginCollectionQuotaDimensionV1Schema = z.enum([
+export const PluginCollectionQuotaDimensionV1Schema = lazyZodSchema(() => z.enum([
   'maxRowEncodedBytes',
   'maxRows',
   'maxCollectionEncodedBytes',
@@ -623,14 +625,14 @@ export const PluginCollectionQuotaDimensionV1Schema = z.enum([
   'maxBatchBytes',
   'maxAccountRows',
   'maxAccountBytes',
-]);
+]));
 export type PluginCollectionQuotaDimensionV1 = z.infer<typeof PluginCollectionQuotaDimensionV1Schema>;
 
-export const PluginCollectionQuotaIncompatibleErrorV1Schema = z.object({
+export const PluginCollectionQuotaIncompatibleErrorV1Schema = lazyZodSchema(() => z.object({
   error: z.literal('collection_quota_incompatible'),
   dimension: PluginCollectionQuotaDimensionV1Schema,
   effectiveMaximum: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-}).strict();
+}).strict());
 export type PluginCollectionQuotaIncompatibleErrorV1 = z.infer<
   typeof PluginCollectionQuotaIncompatibleErrorV1Schema
 >;
@@ -640,17 +642,17 @@ export type PluginCollectionQuotaIncompatibleErrorV1 = z.infer<
  * source Collection index. Callers reuse the ordinary Collection query and
  * cursor; this schema does not introduce another paging protocol.
  */
-export const PluginCollectionRelationRestrictionQueryV1Schema = z.object({
+export const PluginCollectionRelationRestrictionQueryV1Schema = lazyZodSchema(() => z.object({
   indexId: PluginCollectionMemberNameV1Schema,
   prefix: z.array(PluginCollectionRowIdV1Schema).length(1),
   order: z.literal('asc'),
   limit: z.number().int().min(1).max(PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1),
-}).strict();
+}).strict());
 export type PluginCollectionRelationRestrictionQueryV1 = z.infer<
   typeof PluginCollectionRelationRestrictionQueryV1Schema
 >;
 
-export const PluginCollectionRelationRestrictionContinuationV1Schema = z.object({
+export const PluginCollectionRelationRestrictionContinuationV1Schema = lazyZodSchema(() => z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   collectionId: asProtocolZod(PluginContributionLocalIdSchema),
   relationId: PluginCollectionMemberNameV1Schema,
@@ -659,12 +661,12 @@ export const PluginCollectionRelationRestrictionContinuationV1Schema = z.object(
     rowId: PluginCollectionRowIdV1Schema,
   }).strict(),
   query: PluginCollectionRelationRestrictionQueryV1Schema,
-}).strict();
+}).strict());
 export type PluginCollectionRelationRestrictionContinuationV1 = z.infer<
   typeof PluginCollectionRelationRestrictionContinuationV1Schema
 >;
 
-const PluginCollectionSimpleMutationErrorCodeV1Schema = z.enum([
+const PluginCollectionSimpleMutationErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'collection_mutation_invalid',
   'collection_unavailable',
   'collection_writer_contract_unavailable',
@@ -674,9 +676,9 @@ const PluginCollectionSimpleMutationErrorCodeV1Schema = z.enum([
   'collection_quota_exceeded',
   'collection_contract_inconsistent',
   'collection_revision_exhausted',
-]);
+]));
 
-export const PluginCollectionMutationErrorV1Schema = z.union([
+export const PluginCollectionMutationErrorV1Schema = lazyZodSchema(() => z.union([
   z.object({
     error: PluginCollectionSimpleMutationErrorCodeV1Schema,
   }).strict(),
@@ -686,16 +688,16 @@ export const PluginCollectionMutationErrorV1Schema = z.union([
     dependentCount: z.number().int().min(1).max(PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1),
     continuation: PluginCollectionRelationRestrictionContinuationV1Schema,
   }).strict(),
-]);
+]));
 export type PluginCollectionMutationErrorV1 = z.infer<typeof PluginCollectionMutationErrorV1Schema>;
 
 /** One decoded collection row at the direct authenticated Data boundary. */
-export const PluginCollectionRowV1Schema = z.object({
+export const PluginCollectionRowV1Schema = lazyZodSchema(() => z.object({
   rowId: PluginCollectionRowIdV1Schema,
   revision: PluginCollectionRevisionV1Schema,
   content: PluginCollectionContentEnvelopeV1Schema,
   projection: PluginCollectionProjectionV1Schema,
-}).strict();
+}).strict());
 export type PluginCollectionRowV1 = z.infer<typeof PluginCollectionRowV1Schema>;
 
 /**
@@ -703,32 +705,32 @@ export type PluginCollectionRowV1 = z.infer<typeof PluginCollectionRowV1Schema>;
  * present only when the app must open private projected fields; the app strips
  * it before exposing the declared scalar result to a plugin renderer.
  */
-export const PluginCollectionUiQueryTransportRowV1Schema = PluginCollectionUiRowV1Schema.extend({
+export const PluginCollectionUiQueryTransportRowV1Schema = lazyZodSchema(() => PluginCollectionUiRowV1Schema.extend({
   logicalRow: z.object({
     content: PluginCollectionContentEnvelopeV1Schema,
     projection: PluginCollectionProjectionV1Schema,
   }).strict().optional(),
-}).strict();
+}).strict());
 export type PluginCollectionUiQueryTransportRowV1 = z.infer<
   typeof PluginCollectionUiQueryTransportRowV1Schema
 >;
 
-export const PluginCollectionUiQueryTransportResultV1Schema = z.object({
+export const PluginCollectionUiQueryTransportResultV1Schema = lazyZodSchema(() => z.object({
   rows: z.array(PluginCollectionUiQueryTransportRowV1Schema).max(200),
   nextCursor: asProtocolZod(PluginCollectionOpaqueCursorV1Schema).optional(),
   changeCursor: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 export type PluginCollectionUiQueryTransportResultV1 = z.infer<
   typeof PluginCollectionUiQueryTransportResultV1Schema
 >;
 
 /** Scalar inputs are validated against the selected admitted index by the canonical query owner. */
-export const PluginCollectionIndexScalarValueV1Schema = z.union([
+export const PluginCollectionIndexScalarValueV1Schema = lazyZodSchema(() => z.union([
   z.null(),
   z.boolean(),
   z.string(),
   FiniteNumberSchema,
-]);
+]));
 export type PluginCollectionIndexScalarValueV1 = z.infer<typeof PluginCollectionIndexScalarValueV1Schema>;
 
 /**
@@ -746,13 +748,13 @@ export const PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1 = '/v1/plugins/data/query';
  * Account, while these opaque facts bind one selected candidate rather than
  * granting callers any release or activation authority.
  */
-const PluginCollectionCandidatePreparationOpaqueIdentityV1Schema = z.string()
+const PluginCollectionCandidatePreparationOpaqueIdentityV1Schema = lazyZodSchema(() => z.string()
   .min(1)
   .max(256)
   .refine(
     (value) => value.trim() === value && !value.includes('\u0000'),
     'Candidate preparation identities must be non-empty, unpadded, and NUL-free.',
-  );
+  ));
 
 /**
  * One immutable source/target/candidate binding for a host-owned Collection
@@ -760,7 +762,7 @@ const PluginCollectionCandidatePreparationOpaqueIdentityV1Schema = z.string()
  * current Account, Availability, and contract state before admitting any read
  * or target stage; it does not select a candidate or activate a contract.
  */
-export const PluginCollectionCandidatePreparationBindingV1Schema = z.object({
+export const PluginCollectionCandidatePreparationBindingV1Schema = lazyZodSchema(() => z.object({
   source: PluginCollectionContractRefV1Schema,
   target: PluginCollectionContractRefV1Schema,
   candidate: z.object({
@@ -770,6 +772,8 @@ export const PluginCollectionCandidatePreparationBindingV1Schema = z.object({
      * identity, never the daemon's private immutable generation id.
      */
     artifactDigest: PluginUiArtifactDigestV1Schema,
+    /** Release-less candidates bind the declaring module, not an Account release. */
+    releaseLessManifest: PluginManifestV2Schema.optional(),
   }).strict(),
 }).strict().superRefine((value, context) => {
   if (value.source.pluginId !== value.target.pluginId) {
@@ -786,7 +790,7 @@ export const PluginCollectionCandidatePreparationBindingV1Schema = z.object({
       message: 'Candidate preparation source and target must name one collection.',
     });
   }
-});
+}));
 export type PluginCollectionCandidatePreparationBindingV1 = z.infer<
   typeof PluginCollectionCandidatePreparationBindingV1Schema
 >;
@@ -803,11 +807,11 @@ export const PLUGIN_COLLECTION_CANDIDATE_PREPARATION_RETIRE_HTTP_PATH_V1 =
  * cursor remains server-owned; callbacks and logical plaintext values never
  * appear as separately caller-controlled wire fields.
  */
-export const PluginCollectionCandidatePreparationSourcePageRequestV1Schema = z.object({
+export const PluginCollectionCandidatePreparationSourcePageRequestV1Schema = lazyZodSchema(() => z.object({
   binding: PluginCollectionCandidatePreparationBindingV1Schema,
   cursor: OpaqueCollectionCursorSchema.optional(),
   limit: z.number().int().min(1).max(PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1).default(50),
-}).strict();
+}).strict());
 export type PluginCollectionCandidatePreparationSourcePageRequestV1 = z.infer<
   typeof PluginCollectionCandidatePreparationSourcePageRequestV1Schema
 >;
@@ -817,43 +821,43 @@ export type PluginCollectionCandidatePreparationSourcePageRequestV1 = z.infer<
  * It exposes no staged target material: a host skips its pure callback when
  * true and otherwise lets the exact-revision stage CAS arbitrate a race.
  */
-const PluginCollectionCandidatePreparationSourcePageRowV1Schema = PluginCollectionRowV1Schema.extend({
+const PluginCollectionCandidatePreparationSourcePageRowV1Schema = lazyZodSchema(() => PluginCollectionRowV1Schema.extend({
   alreadyStaged: z.boolean(),
-});
+}));
 
-export const PluginCollectionCandidatePreparationSourcePageResultV1Schema = z.object({
+export const PluginCollectionCandidatePreparationSourcePageResultV1Schema = lazyZodSchema(() => z.object({
   rows: z.array(PluginCollectionCandidatePreparationSourcePageRowV1Schema).max(PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1),
   nextCursor: OpaqueCollectionCursorSchema.optional(),
-}).strict();
+}).strict());
 export type PluginCollectionCandidatePreparationSourcePageResultV1 = z.infer<
   typeof PluginCollectionCandidatePreparationSourcePageResultV1Schema
 >;
 
-const PluginCollectionCandidatePreparationSourceRowRefV1Schema = PluginCollectionRowV1Schema.pick({
+const PluginCollectionCandidatePreparationSourceRowRefV1Schema = lazyZodSchema(() => PluginCollectionRowV1Schema.pick({
   rowId: true,
   revision: true,
-});
-const PluginCollectionCandidatePreparationTargetRowV1Schema = PluginCollectionRowV1Schema.pick({
+}));
+const PluginCollectionCandidatePreparationTargetRowV1Schema = lazyZodSchema(() => PluginCollectionRowV1Schema.pick({
   content: true,
   projection: true,
-});
+}));
 
-const PluginCollectionCandidatePreparationStageItemV1Schema = z.object({
+const PluginCollectionCandidatePreparationStageItemV1Schema = lazyZodSchema(() => z.object({
   source: PluginCollectionCandidatePreparationSourceRowRefV1Schema,
   target: PluginCollectionCandidatePreparationTargetRowV1Schema,
-}).strict();
+}).strict());
 
 /**
  * The target-artifact host stages bounded target envelopes and projections
  * against observed source revisions. Neither this request nor its response
  * replaces the incumbent canonical row or writable contract.
  */
-export const PluginCollectionCandidatePreparationStageRequestV1Schema = z.object({
+export const PluginCollectionCandidatePreparationStageRequestV1Schema = lazyZodSchema(() => z.object({
   binding: PluginCollectionCandidatePreparationBindingV1Schema,
   items: z.array(PluginCollectionCandidatePreparationStageItemV1Schema)
     .min(1)
     .max(PLUGIN_COLLECTION_LIMITS_V1.maximumMutationBatchRows),
-}).strict();
+}).strict());
 export type PluginCollectionCandidatePreparationStageRequestV1 = z.infer<
   typeof PluginCollectionCandidatePreparationStageRequestV1Schema
 >;
@@ -908,16 +912,16 @@ export function splitPluginCollectionCandidatePreparationStageRequestsForKnownLi
   return requests;
 }
 
-const PluginCollectionCandidatePreparationStageItemResultV1Schema = z.discriminatedUnion('status', [
+const PluginCollectionCandidatePreparationStageItemResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('staged') }).strict(),
   z.object({ status: z.literal('sourceChanged') }).strict(),
-]);
+]));
 
-export const PluginCollectionCandidatePreparationStageResultV1Schema = z.object({
+export const PluginCollectionCandidatePreparationStageResultV1Schema = lazyZodSchema(() => z.object({
   results: z.array(PluginCollectionCandidatePreparationStageItemResultV1Schema)
     .min(1)
     .max(PLUGIN_COLLECTION_LIMITS_V1.maximumMutationBatchRows),
-}).strict();
+}).strict());
 export type PluginCollectionCandidatePreparationStageResultV1 = z.infer<
   typeof PluginCollectionCandidatePreparationStageResultV1Schema
 >;
@@ -927,21 +931,21 @@ export type PluginCollectionCandidatePreparationStageResultV1 = z.infer<
  * binding. The authenticated Account and lifecycle reason stay server-owned;
  * retirement neither reports stage existence nor changes activation state.
  */
-export const PluginCollectionCandidatePreparationRetireRequestV1Schema = z.object({
+export const PluginCollectionCandidatePreparationRetireRequestV1Schema = lazyZodSchema(() => z.object({
   binding: PluginCollectionCandidatePreparationBindingV1Schema,
-}).strict();
+}).strict());
 export type PluginCollectionCandidatePreparationRetireRequestV1 = z.infer<
   typeof PluginCollectionCandidatePreparationRetireRequestV1Schema
 >;
 
-export const PluginCollectionCandidatePreparationRetireResultV1Schema = z.object({
+export const PluginCollectionCandidatePreparationRetireResultV1Schema = lazyZodSchema(() => z.object({
   status: z.literal('retired'),
-}).strict();
+}).strict());
 export type PluginCollectionCandidatePreparationRetireResultV1 = z.infer<
   typeof PluginCollectionCandidatePreparationRetireResultV1Schema
 >;
 
-const PluginCollectionCandidatePreparationSimpleErrorCodeV1Schema = z.enum([
+const PluginCollectionCandidatePreparationSimpleErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'collection_candidate_preparation_invalid',
   'collection_candidate_preparation_unavailable',
   'collection_candidate_preparation_source_changed',
@@ -949,44 +953,44 @@ const PluginCollectionCandidatePreparationSimpleErrorCodeV1Schema = z.enum([
   'collection_candidate_preparation_content_mode_mismatch',
   'collection_candidate_preparation_cursor_invalid',
   'collection_quota_exceeded',
-]);
+]));
 
 /**
  * Typed terminal refusal for either host-owned candidate-preparation
  * operation. The detailed quota incompatibility arm is the existing Collection
  * quota owner so source-plus-stage admission cannot acquire a parallel shape.
  */
-export const PluginCollectionCandidatePreparationErrorV1Schema = z.union([
+export const PluginCollectionCandidatePreparationErrorV1Schema = lazyZodSchema(() => z.union([
   z.object({ error: PluginCollectionCandidatePreparationSimpleErrorCodeV1Schema }).strict(),
   PluginCollectionQuotaIncompatibleErrorV1Schema,
-]);
+]));
 export type PluginCollectionCandidatePreparationErrorV1 = z.infer<
   typeof PluginCollectionCandidatePreparationErrorV1Schema
 >;
 
-export const PluginCollectionGetRequestV1Schema = z.object({
+export const PluginCollectionGetRequestV1Schema = lazyZodSchema(() => z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   collectionId: asProtocolZod(PluginContributionLocalIdSchema),
   readerContext: PluginCollectionContractRefV1Schema,
   rowId: PluginCollectionRowIdV1Schema,
-}).strict();
+}).strict());
 export type PluginCollectionGetRequestV1 = z.infer<typeof PluginCollectionGetRequestV1Schema>;
 
-export const PluginCollectionGetResultV1Schema = z.object({
+export const PluginCollectionGetResultV1Schema = lazyZodSchema(() => z.object({
   row: PluginCollectionRowV1Schema.nullable(),
   // Direct-cut servers always return this; the default preserves a safe stale
   // rejection when a transitional mocked/older response omits it.
   absenceEpoch: PluginCollectionAbsenceEpochV1Schema.default(0),
-}).strict();
+}).strict());
 export type PluginCollectionGetResultV1 = z.infer<typeof PluginCollectionGetResultV1Schema>;
 
-export const PluginCollectionQueryRangeV1Schema = z.object({
+export const PluginCollectionQueryRangeV1Schema = lazyZodSchema(() => z.object({
   lower: PluginCollectionIndexScalarValueV1Schema.optional(),
   upper: PluginCollectionIndexScalarValueV1Schema.optional(),
 }).strict().refine(
   (value) => value.lower !== undefined || value.upper !== undefined,
   'A collection query range needs a lower or upper bound.',
-);
+));
 export type PluginCollectionQueryRangeV1 = z.infer<typeof PluginCollectionQueryRangeV1Schema>;
 
 /**
@@ -994,7 +998,7 @@ export type PluginCollectionQueryRangeV1 = z.infer<typeof PluginCollectionQueryR
  * supply bounded logical index values, order, cursor, and page size. Contract
  * and Account authority are intentionally absent from this wire shape.
  */
-export const PluginCollectionQueryRequestV1Schema = z.object({
+export const PluginCollectionQueryRequestV1Schema = lazyZodSchema(() => z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   collectionId: asProtocolZod(PluginContributionLocalIdSchema),
   readerContext: PluginCollectionContractRefV1Schema,
@@ -1004,14 +1008,14 @@ export const PluginCollectionQueryRequestV1Schema = z.object({
   order: z.enum(['asc', 'desc']),
   cursor: OpaqueCollectionCursorSchema.optional(),
   limit: z.number().int().min(1).max(PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1).default(50),
-}).strict();
+}).strict());
 export type PluginCollectionQueryRequestV1 = z.infer<typeof PluginCollectionQueryRequestV1Schema>;
 
-export const PluginCollectionQueryResultV1Schema = z.object({
+export const PluginCollectionQueryResultV1Schema = lazyZodSchema(() => z.object({
   rows: z.array(PluginCollectionRowV1Schema).max(PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1),
   nextCursor: OpaqueCollectionCursorSchema.optional(),
   changeCursor: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 export type PluginCollectionQueryResultV1 = z.infer<typeof PluginCollectionQueryResultV1Schema>;
 
 /**
@@ -1053,7 +1057,7 @@ function collectionObjectProperties(
  * columns. Realm clients consume it only after an exact ref has been admitted;
  * this schema never accepts an author manifest as a substitute.
  */
-export const NormalizedPluginAccountCollectionContractV1Schema = z.object({
+export const NormalizedPluginAccountCollectionContractV1Schema = lazyZodSchema(() => z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   collectionId: asProtocolZod(PluginContributionLocalIdSchema),
   schemaVersion: PluginCollectionSchemaVersionV1Schema,
@@ -1076,7 +1080,7 @@ export const NormalizedPluginAccountCollectionContractV1Schema = z.object({
       message: COLLECTION_OBJECT_ROOT_SCHEMA_MESSAGE,
     });
   }
-});
+}));
 
 export type NormalizedPluginAccountCollectionContractV1 = Readonly<{
   pluginId: string;
@@ -1154,15 +1158,15 @@ export function resolvePluginCollectionIdentityTagV1(input: Readonly<{
 /** Exact authenticated read of one release-admitted persisted contract. */
 export const PLUGIN_COLLECTION_CONTRACT_HTTP_PATH_V1 = '/v1/plugins/data/contract';
 
-export const PluginCollectionContractReadRequestV1Schema = z.object({
+export const PluginCollectionContractReadRequestV1Schema = lazyZodSchema(() => z.object({
   ref: PluginCollectionContractRefV1Schema,
-}).strict();
+}).strict());
 export type PluginCollectionContractReadRequestV1 = z.infer<typeof PluginCollectionContractReadRequestV1Schema>;
 
-export const PluginCollectionContractReadResultV1Schema = z.object({
+export const PluginCollectionContractReadResultV1Schema = lazyZodSchema(() => z.object({
   access: z.enum(['readOnly', 'writable']),
   contract: NormalizedPluginAccountCollectionContractV1Schema,
-}).strict();
+}).strict());
 export type PluginCollectionContractReadResultV1 = z.infer<typeof PluginCollectionContractReadResultV1Schema>;
 
 export type PluginCollectionContractAccessV1 = PluginCollectionContractReadResultV1['access'];

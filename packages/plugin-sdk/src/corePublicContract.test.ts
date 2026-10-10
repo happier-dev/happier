@@ -373,6 +373,7 @@ describe('CORE.T1/T5 public contract', () => {
             | 'exec'
             | 'providers'
             | 'managedServices'
+            | 'machineProvisioners'
             | 'sessions'
             | 'resources'
             | 'mcp'

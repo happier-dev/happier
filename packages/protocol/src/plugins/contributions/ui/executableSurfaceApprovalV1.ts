@@ -75,8 +75,13 @@ export function createUiSurfaceExecutableSecurityFingerprintV1(
 ): string {
   const source = PluginHostedHtmlSourceV1Schema.parse(input.source);
   return computeCanonicalDomainSeparatedDigest(FINGERPRINT_DOMAIN_V1, [
-    source.kind,
-    source.html,
+    String(source.v),
+    source.entrypoint,
+    ...Object.keys(source.files).sort().flatMap((path) => [
+      path,
+      source.files[path].mime,
+      source.files[path].contentBase64,
+    ]),
     String(input.isolationProfileVersion),
     ...[...input.networkOrigins].sort(),
   ]);

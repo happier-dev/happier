@@ -44,6 +44,19 @@ function omitKeys(value: Record<string, unknown>, ...keys: readonly string[]): R
 }
 
 describe('marketplaceSourceRegistryV1 schemas', () => {
+  it('preserves large valid source configuration through mutation and persisted schemas', () => {
+    const source = { ...COMPLETE_PERSISTED_SOURCE,
+      id: `marketplace:${'source'.repeat(100)}`,
+      title: 'title'.repeat(200), description: 'description'.repeat(300),
+      sourceUrl: `https://source.example/catalog.json?key=${'x'.repeat(3_000)}`,
+    };
+    expect(MarketplaceSourceV1Schema.parse(source)).toEqual(source);
+    expect(MarketplaceSourceRegistryMutationV1Schema.parse({ kind: 'upsert', input: {
+      sourceId: source.id, title: source.title, description: source.description, sourceUrl: source.sourceUrl,
+    } })).toEqual({ kind: 'upsert', input: {
+      sourceId: source.id, title: source.title, description: source.description, sourceUrl: source.sourceUrl,
+    } });
+  });
   it('parses only fine-grained source mutations', () => {
     expect(MarketplaceSourceRegistryMutationV1Schema.parse({
       kind: 'upsert',
@@ -64,8 +77,9 @@ describe('marketplaceSourceRegistryV1 schemas', () => {
       kind: 'remove', sourceId: 'marketplace:user', registry: { sources: [] },
     }).success).toBe(false);
   });
-  it('bounds configured sources', () => {
-    expect(MarketplaceSourceRegistryV1Schema.safeParse({ sources: Array.from({ length: 65 }, (_, index) => ({ id: `source-${index}`, title: `Source ${index}`, sourceUrl: `https://source-${index}.example/index.json`, enabled: true, origin: 'user' })) }).success).toBe(false);
+  it('preserves every configured source beyond the former count limit', () => {
+    const sources = Array.from({ length: 70 }, (_, index) => ({ id: `source-${index}`, title: `Source ${index}`, sourceUrl: `https://source-${index}.example/index.json`, enabled: true, origin: 'user' }));
+    expect(MarketplaceSourceRegistryV1Schema.parse({ ...COMPLETE_PERSISTED_REGISTRY, sources }).sources).toEqual(sources);
   });
 
   it('requires the persisted root discriminator, schema version, and sources', () => {

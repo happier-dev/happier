@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { decodeBase64, encodeBase64, readCanonicalPaddedBase64DecodedLength } from '../../crypto/base64.js';
@@ -11,16 +12,16 @@ import {
   type PluginUiArtifactDigestV1,
 } from '../ui/artifactIntegrity.js';
 
-/** One Package Asset archive stays within the incumbent packaged-Resource byte envelope. */
+/** Each asset stays within the contextual Resource read envelope used by publication. */
 export const MAX_PACKAGE_ASSET_ARCHIVE_RESOURCE_BYTES_V1 = 16 * 1024 * 1024;
+/** Archive creation/opening retain payload copies and base64; preserve this memory control until streaming replaces them. */
 export const MAX_PACKAGE_ASSET_ARCHIVE_TOTAL_BYTES_V1 = 64 * 1024 * 1024;
-export const MAX_PACKAGE_ASSET_ARCHIVE_RESOURCE_COUNT_V1 = 512;
 
 const MAX_PACKAGE_ASSET_ARCHIVE_BASE64_BYTES_V1 = Math.ceil(
   MAX_PACKAGE_ASSET_ARCHIVE_RESOURCE_BYTES_V1 / 3,
 ) * 4;
-const PackageAssetResourceIdSchema = z.string().trim().min(1).max(256);
-const PackageAssetMimeTypeSchema = z.string().trim().min(1).max(256);
+const PackageAssetResourceIdSchema = lazyZodSchema(() => z.string().trim().min(1).max(256));
+const PackageAssetMimeTypeSchema = lazyZodSchema(() => z.string().trim().min(1).max(256));
 
 export const PLUGIN_PACKAGE_ASSET_ARCHIVE_KIND_V1 = 'plugin.package-assets.archive' as const;
 export const PLUGIN_PACKAGE_ASSET_ARCHIVE_VERSION_V1 = 1 as const;
@@ -29,13 +30,13 @@ export const PLUGIN_PACKAGE_ASSET_ARCHIVE_VERSION_V1 = 1 as const;
  * The immutable portable descriptor binds each exact manifest-declared asset
  * before the surrounding generic Artifact envelope receives any bytes.
  */
-export const PackageAssetArchiveResourceV1Schema = z.object({
+export const PackageAssetArchiveResourceV1Schema = lazyZodSchema(() => z.object({
   resourceId: PackageAssetResourceIdSchema,
   path: PluginUiArtifactRelativePathV1Schema,
   mimeType: PackageAssetMimeTypeSchema,
   byteSize: z.number().int().nonnegative().max(MAX_PACKAGE_ASSET_ARCHIVE_RESOURCE_BYTES_V1),
   digestSha256: PluginUiArtifactDigestV1Schema,
-}).strict();
+}).strict());
 export type PackageAssetArchiveResourceV1 = z.infer<typeof PackageAssetArchiveResourceV1Schema>;
 
 function resourceKey(resource: Pick<PackageAssetArchiveResourceV1, 'resourceId' | 'path'>): string {
@@ -49,7 +50,6 @@ function isCanonicalResourceOrder(resources: readonly PackageAssetArchiveResourc
 }
 
 function hasBoundedResourceSet(resources: readonly PackageAssetArchiveResourceV1[]): boolean {
-  if (resources.length > MAX_PACKAGE_ASSET_ARCHIVE_RESOURCE_COUNT_V1) return false;
   let totalBytes = 0;
   const resourceIds = new Set<string>();
   for (const resource of resources) {
@@ -61,10 +61,9 @@ function hasBoundedResourceSet(resources: readonly PackageAssetArchiveResourceV1
   return true;
 }
 
-export const PackageAssetArchiveDescriptorV1Schema = z.object({
+export const PackageAssetArchiveDescriptorV1Schema = lazyZodSchema(() => z.object({
   archiveDigestSha256: PluginUiArtifactDigestV1Schema,
-  resources: z.array(PackageAssetArchiveResourceV1Schema)
-    .max(MAX_PACKAGE_ASSET_ARCHIVE_RESOURCE_COUNT_V1),
+  resources: z.array(PackageAssetArchiveResourceV1Schema),
 }).strict().superRefine((value, context) => {
   if (!isCanonicalResourceOrder(value.resources)) {
     context.addIssue({
@@ -80,7 +79,7 @@ export const PackageAssetArchiveDescriptorV1Schema = z.object({
       message: 'Package Asset archive resources must be unique and stay within the bounded archive capacity.',
     });
   }
-});
+}));
 export type PackageAssetArchiveDescriptorV1 = z.infer<typeof PackageAssetArchiveDescriptorV1Schema>;
 
 /** Produces the one comparison shape release facts persist and rejoin against. */
@@ -94,24 +93,23 @@ export function normalizePackageAssetArchiveDescriptorV1(
   });
 }
 
-export const PackageAssetArchiveHeaderV1Schema = z.object({
+export const PackageAssetArchiveHeaderV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(PLUGIN_PACKAGE_ASSET_ARCHIVE_VERSION_V1),
   kind: z.literal(PLUGIN_PACKAGE_ASSET_ARCHIVE_KIND_V1),
   title: z.null(),
   descriptor: PackageAssetArchiveDescriptorV1Schema,
-}).strict();
+}).strict());
 export type PackageAssetArchiveHeaderV1 = z.infer<typeof PackageAssetArchiveHeaderV1Schema>;
 
-export const PackageAssetArchiveBodyResourceV1Schema = PackageAssetArchiveResourceV1Schema.extend({
+export const PackageAssetArchiveBodyResourceV1Schema = lazyZodSchema(() => PackageAssetArchiveResourceV1Schema.extend({
   /** Canonical padded base64 for the exact admitted resource bytes. */
   bytesBase64: z.string().max(MAX_PACKAGE_ASSET_ARCHIVE_BASE64_BYTES_V1),
-}).strict();
+}).strict());
 export type PackageAssetArchiveBodyResourceV1 = z.infer<typeof PackageAssetArchiveBodyResourceV1Schema>;
 
-export const PackageAssetArchiveBodyV1Schema = z.object({
+export const PackageAssetArchiveBodyV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(PLUGIN_PACKAGE_ASSET_ARCHIVE_VERSION_V1),
-  resources: z.array(PackageAssetArchiveBodyResourceV1Schema)
-    .max(MAX_PACKAGE_ASSET_ARCHIVE_RESOURCE_COUNT_V1),
+  resources: z.array(PackageAssetArchiveBodyResourceV1Schema),
 }).strict().superRefine((value, context) => {
   if (!isCanonicalResourceOrder(value.resources) || !hasBoundedResourceSet(value.resources)) {
     context.addIssue({
@@ -120,7 +118,7 @@ export const PackageAssetArchiveBodyV1Schema = z.object({
       message: 'Package Asset archive body resources must be canonical, unique, and bounded.',
     });
   }
-});
+}));
 export type PackageAssetArchiveBodyV1 = z.infer<typeof PackageAssetArchiveBodyV1Schema>;
 
 export type PackageAssetArchiveOpenedV1 = Readonly<{

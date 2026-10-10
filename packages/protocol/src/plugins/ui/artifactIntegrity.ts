@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
@@ -10,9 +11,9 @@ function isPluginUiArtifactDigestV1(value: string): value is PluginUiArtifactDig
   return SHA256_HEX_DIGEST_PATTERN.test(value);
 }
 
-export const PluginUiArtifactDigestV1Schema = z.string().trim().refine(
+export const PluginUiArtifactDigestV1Schema = lazyZodSchema(() => z.string().trim().refine(
   isPluginUiArtifactDigestV1,
-);
+));
 
 type TypeEqual<Left, Right> = (
   <Value>() => Value extends Left ? 1 : 2
@@ -24,12 +25,12 @@ type PluginUiArtifactDigestV1SchemaOutputContract = AssertType<
   TypeEqual<z.output<typeof PluginUiArtifactDigestV1Schema>, PluginUiArtifactDigestV1>
 >;
 
-export const PluginUiArtifactIntegrityBindingV1Schema = z.object({
+export const PluginUiArtifactIntegrityBindingV1Schema = lazyZodSchema(() => z.object({
   digest: PluginUiArtifactDigestV1Schema,
   pluginId: z.string().trim().min(1),
   contributionId: z.string().trim().min(1),
   artifactKind: z.string().trim().min(1),
-}).strict();
+}).strict());
 export type PluginUiArtifactIntegrityBindingV1 =
   z.infer<typeof PluginUiArtifactIntegrityBindingV1Schema>;
 
@@ -42,7 +43,16 @@ export type VerifyPluginUiArtifactBytesIntegrityV1Result =
     }>
   | Readonly<{ ok: false; reasonCode: 'unsupported_digest' }>;
 
-export function computePluginUiArtifactSha256DigestV1(bytes: Uint8Array): PluginUiArtifactDigestV1 {
+export function computePluginUiArtifactSha256DigestV1(bytes: Uint8Array): PluginUiArtifactDigestV1;
+export function computePluginUiArtifactSha256DigestV1(
+  bytes: Uint8Array,
+  sha256Bytes: (bytes: Uint8Array) => Promise<Uint8Array>,
+): Promise<PluginUiArtifactDigestV1>;
+export function computePluginUiArtifactSha256DigestV1(
+  bytes: Uint8Array,
+  sha256Bytes?: (bytes: Uint8Array) => Promise<Uint8Array>,
+): PluginUiArtifactDigestV1 | Promise<PluginUiArtifactDigestV1> {
+  if (sha256Bytes) return sha256Bytes(bytes).then((hashed): PluginUiArtifactDigestV1 => `sha256:${bytesToHex(hashed)}`);
   return `sha256:${bytesToHex(sha256(bytes))}`;
 }
 
@@ -102,8 +112,19 @@ function canonicalPluginUiArtifactFileSetBytesV1(
 
 export function computePluginUiArtifactFileSetSha256DigestV1(
   files: readonly PluginUiArtifactFileSetEntryV1[],
-): PluginUiArtifactDigestV1 {
-  return computePluginUiArtifactSha256DigestV1(canonicalPluginUiArtifactFileSetBytesV1(files));
+): PluginUiArtifactDigestV1;
+export function computePluginUiArtifactFileSetSha256DigestV1(
+  files: readonly PluginUiArtifactFileSetEntryV1[],
+  sha256Bytes: (bytes: Uint8Array) => Promise<Uint8Array>,
+): Promise<PluginUiArtifactDigestV1>;
+export function computePluginUiArtifactFileSetSha256DigestV1(
+  files: readonly PluginUiArtifactFileSetEntryV1[],
+  sha256Bytes?: (bytes: Uint8Array) => Promise<Uint8Array>,
+): PluginUiArtifactDigestV1 | Promise<PluginUiArtifactDigestV1> {
+  const bytes = canonicalPluginUiArtifactFileSetBytesV1(files);
+  return sha256Bytes
+    ? computePluginUiArtifactSha256DigestV1(bytes, sha256Bytes)
+    : computePluginUiArtifactSha256DigestV1(bytes);
 }
 
 export function verifyPluginUiArtifactBytesIntegrityV1(input: Readonly<{

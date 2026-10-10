@@ -1115,6 +1115,15 @@ describe('Plugin Account Collection contracts', () => {
     };
 
     expect(PluginCollectionCandidatePreparationBindingV1Schema.parse(binding)).toEqual(binding);
+    const releaseLessBinding = {
+      ...binding,
+      candidate: {
+        ...binding.candidate,
+        releaseLessManifest: { schemaVersion: 2, id: 'example.tasks', version: '1.2.3', displayName: 'Tasks', engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, contributes: {} },
+      },
+    };
+    expect(PluginCollectionCandidatePreparationBindingV1Schema.parse(releaseLessBinding).candidate.releaseLessManifest?.id).toBe('example.tasks');
+    expect(PluginCollectionCandidatePreparationBindingV1Schema.safeParse({ ...releaseLessBinding, candidate: { ...releaseLessBinding.candidate, callbacks: {} } }).success).toBe(false);
     expect(PluginCollectionCandidatePreparationBindingV1Schema.safeParse({
       ...binding,
       target: { ...binding.target, pluginId: 'another.plugin' },

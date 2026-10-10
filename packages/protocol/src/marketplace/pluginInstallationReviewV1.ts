@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
@@ -34,10 +35,9 @@ import {
  * the daemon staged.
  */
 
-export const MAX_PLUGIN_INSTALLATION_REVIEW_STRING_LENGTH = 32_768;
-const ReviewNonEmptyStringSchema = z.string().trim().min(1).max(MAX_PLUGIN_INSTALLATION_REVIEW_STRING_LENGTH);
-const ReviewStringListSchema = z.array(ReviewNonEmptyStringSchema).max(64)
-  .refine((values) => new Set(values).size === values.length);
+const ReviewNonEmptyStringSchema = lazyZodSchema(() => z.string().trim().min(1));
+const ReviewStringListSchema = lazyZodSchema(() => z.array(ReviewNonEmptyStringSchema)
+  .refine((values) => new Set(values).size === values.length));
 
 /**
  * A compatibility diagnostic carried inside the review.
@@ -47,7 +47,7 @@ const ReviewStringListSchema = z.array(ReviewNonEmptyStringSchema).max(64)
  * review only promises that every rejected version explains itself with a
  * stable `code`/`message` pair.
  */
-export const PluginInstallationReviewCompatibilityDiagnosticSchema = z.object({
+export const PluginInstallationReviewCompatibilityDiagnosticSchema = lazyZodSchema(() => z.object({
   code: ReviewNonEmptyStringSchema,
   message: PluginDiagnosticTextV1Schema,
   contribution: asProtocolZod(PluginContributionIdentityV1Schema).optional(),
@@ -61,15 +61,15 @@ export const PluginInstallationReviewCompatibilityDiagnosticSchema = z.object({
   }).strict().optional(),
   /** Local-development realm only: root-rebased, credential- and path-redacted. */
   stack: PluginDiagnosticTextV1Schema.optional(),
-}).strict();
+}).strict());
 export type PluginInstallationReviewCompatibilityDiagnostic = z.infer<
   typeof PluginInstallationReviewCompatibilityDiagnosticSchema
 >;
 
-const ReviewBlockedNewerVersionSchema = z.object({
+const ReviewBlockedNewerVersionSchema = lazyZodSchema(() => z.object({
   version: ReviewNonEmptyStringSchema,
-  diagnostics: z.array(PluginInstallationReviewCompatibilityDiagnosticSchema).min(1).max(4),
-}).strict();
+  diagnostics: z.array(PluginInstallationReviewCompatibilityDiagnosticSchema).min(1),
+}).strict());
 
 const HostPluginContributionIdentityV1Schema = asProtocolZod(
   PluginContributionIdentityV1Schema,
@@ -103,7 +103,7 @@ export type PluginInstallationReviewRawCredentialAccess = Readonly<{
   request: ConnectedAccountMaterializationRequest;
 }>;
 
-const ReviewRawCredentialSourceClassSchema = z.discriminatedUnion('kind', [
+const ReviewRawCredentialSourceClassSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('savedSecret'),
     secretKinds: z.array(z.enum(['apiKey', 'token', 'password', 'other'])).min(1).max(4)
@@ -113,9 +113,9 @@ const ReviewRawCredentialSourceClassSchema = z.discriminatedUnion('kind', [
     kind: z.literal('connectedAccount'),
     service: HostPluginContributionIdentityV1Schema,
   }).strict(),
-]);
+]));
 
-export const PluginInstallationReviewRawCredentialAccessSchema: z.ZodType<PluginInstallationReviewRawCredentialAccess> = z.object({
+export const PluginInstallationReviewRawCredentialAccessSchema: z.ZodType<PluginInstallationReviewRawCredentialAccess> = lazyZodSchema(() => z.object({
   accessMode: z.literal('raw'),
   contribution: HostPluginContributionIdentityV1Schema,
   credentialSlot: z.object({
@@ -127,7 +127,7 @@ export const PluginInstallationReviewRawCredentialAccessSchema: z.ZodType<Plugin
   realm: z.enum(['web', 'ios', 'android', 'daemon']),
   phase: VoiceCredentialAccessPhaseSchema,
   request: ConnectedAccountMaterializationRequestSchema,
-}).strict();
+}).strict());
 
 type PluginInstallationReviewHttpMethod = NonNullable<
   PluginRequestInterceptorContributionV1['methods']
@@ -245,7 +245,7 @@ export type PluginInstallationReview = Readonly<{
     happier?: string;
     runtimeApiVersion: 1;
     /**
-     * Bounded metadata-selection facts for versions newer than the staged
+     * Metadata-selection facts for versions newer than the staged
      * candidate. They explain an intentional compatible fallback; they do not
      * make a second compatibility decision at the review boundary.
      */
@@ -257,29 +257,14 @@ export type PluginInstallationReview = Readonly<{
   updatePolicy: PluginUpdatePolicyV1;
 }>;
 
-function isBoundedReviewJsonValue(value: unknown, depth = 0): boolean {
-  if (depth > 8) return false;
-  if (value === null || typeof value === 'boolean') return true;
-  if (typeof value === 'string') return value.length <= 4_096;
-  if (typeof value === 'number') return Number.isFinite(value);
-  if (Array.isArray(value)) {
-    return value.length <= 256
-      && value.every((entry) => isBoundedReviewJsonValue(entry, depth + 1));
-  }
-  if (typeof value !== 'object' || Object.keys(value).length > 256) return false;
-  return Object.entries(value).every(([key, entry]) => (
-    key.length <= 256 && isBoundedReviewJsonValue(entry, depth + 1)
-  ));
-}
-
 const ReviewHostAccessBaseShape = {
   id: ReviewNonEmptyStringSchema,
   capability: ReviewNonEmptyStringSchema,
   reason: ReviewNonEmptyStringSchema,
-  normalizedScope: z.record(z.string(), z.unknown()).refine(isBoundedReviewJsonValue),
+  normalizedScope: z.record(z.string(), PluginJsonValueV2Schema),
 } as const;
 
-export const PluginInstallationReviewSchema: z.ZodType<PluginInstallationReview> = z.object({
+export const PluginInstallationReviewSchema: z.ZodType<PluginInstallationReview> = lazyZodSchema(() => z.object({
   pluginId: ReviewNonEmptyStringSchema,
   displayName: ReviewNonEmptyStringSchema,
   version: ReviewNonEmptyStringSchema,
@@ -375,7 +360,7 @@ export const PluginInstallationReviewSchema: z.ZodType<PluginInstallationReview>
   contributions: z.array(z.object({
     family: ReviewNonEmptyStringSchema,
     count: z.number().int().positive().safe(),
-  }).strict()).max(64).refine((values) => (
+  }).strict()).refine((values) => (
     new Set(values.map((entry) => entry.family)).size === values.length
   )),
   requestInterceptors: z.array(PluginInstallationReviewRequestInterceptorSchema),
@@ -394,19 +379,19 @@ export const PluginInstallationReviewSchema: z.ZodType<PluginInstallationReview>
       'hostResourceSelection',
       'presentIntentOrOs',
     ]),
-  }).strict()).max(128),
+  }).strict()),
   optionalHostAccess: z.array(z.object({
     ...ReviewHostAccessBaseShape,
     authorizationClass: z.literal('hostResourceSelection'),
-  }).strict()).max(128),
+  }).strict()),
   rawCredentialAccess: z.array(PluginInstallationReviewRawCredentialAccessSchema),
   compatibility: z.object({
     happier: ReviewNonEmptyStringSchema.optional(),
     runtimeApiVersion: z.literal(1),
-    blockedNewerVersions: z.array(ReviewBlockedNewerVersionSchema).max(32).optional(),
+    blockedNewerVersions: z.array(ReviewBlockedNewerVersionSchema).optional(),
   }).strict(),
   updatePolicy: PluginUpdatePolicyV1Schema,
-}).strict();
+}).strict());
 
 /**
  * Authorization to evaluate executable code from a local development source
@@ -425,12 +410,12 @@ export type PluginDevelopmentProjectTrustReview = Readonly<{
   }>;
 }>;
 
-export const PluginDevelopmentProjectTrustReviewSchema: z.ZodType<PluginDevelopmentProjectTrustReview> = z.object({
+export const PluginDevelopmentProjectTrustReviewSchema: z.ZodType<PluginDevelopmentProjectTrustReview> = lazyZodSchema(() => z.object({
   source: z.object({
     kind: z.literal('path'),
     locator: ReviewNonEmptyStringSchema,
   }).strict(),
-}).strict();
+}).strict());
 
 /**
  * A daemon-issued change that is waiting on a present user, in the exactly two
@@ -442,17 +427,17 @@ export const PluginDevelopmentProjectTrustReviewSchema: z.ZodType<PluginDevelopm
  * continuation paths — uses this one envelope, so the decision a screen offers
  * can never disagree with the stage the daemon is actually at.
  */
-export const PluginChangePendingReviewResultSchema = z.union([
+export const PluginChangePendingReviewResultSchema = lazyZodSchema(() => z.union([
   z.object({
     kind: z.literal('reviewRequired'),
     reviewKind: z.literal('projectTrust'),
-    pendingChangeId: z.string().trim().min(1).max(256),
+    pendingChangeId: z.string().trim().min(1),
     review: PluginDevelopmentProjectTrustReviewSchema,
   }).strict(),
   z.object({
     kind: z.literal('reviewRequired'),
     reviewKind: z.literal('installation'),
-    pendingChangeId: z.string().trim().min(1).max(256),
+    pendingChangeId: z.string().trim().min(1),
     reason: z.enum(['firstInstall', 'authorityExpansion']),
     currentVersion: ReviewNonEmptyStringSchema.nullable(),
     authorityExpansion: z.array(z.enum([
@@ -464,6 +449,6 @@ export const PluginChangePendingReviewResultSchema = z.union([
     ])).max(5).refine((values) => new Set(values).size === values.length),
     review: PluginInstallationReviewSchema,
   }).strict(),
-]);
+]));
 
 export type PluginChangePendingReviewResult = z.infer<typeof PluginChangePendingReviewResultSchema>;

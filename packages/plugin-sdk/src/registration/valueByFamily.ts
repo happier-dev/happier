@@ -1,5 +1,6 @@
 import type { ActionHandler } from '../actions/service.js';
 import type { PluginCaptureSourceRuntime } from '../captureSources.js';
+import type { PluginProjectNativeAdapterRuntimeV1 } from '../projectNativeAdapters.js';
 import type { PluginDragSourceRuntime, PluginDropTargetRuntime } from '../entityDragDrop.js';
 import type {
     AgentExternalSessionObservationContribution,
@@ -58,6 +59,7 @@ export interface PluginRegistrationValueByFamily {
     dragSources: PluginDragSourceRuntime;
     dropTargets: PluginDropTargetRuntime;
     captureSources: PluginCaptureSourceRuntime;
+    projectNativeAdapters: PluginProjectNativeAdapterRuntimeV1;
     actions: CapturedActionHandler;
     agents: Readonly<{
         factory?: AgentRuntimeFactory;

@@ -155,7 +155,7 @@ describe('managed-services author contract', () => {
             body: ReadableStream<Uint8Array> | null;
         }>>();
         expectTypeOf<ManagedServiceSnapshot['state']>().toEqualTypeOf<
-            'starting' | 'detecting' | 'healthy' | 'unhealthy' | 'stopping' | 'stopped' | 'failed'
+            'starting' | 'running' | 'detecting' | 'healthy' | 'unhealthy' | 'stopping' | 'stopped' | 'failed'
         >();
         expectTypeOf<ManagedServiceSnapshot['diagnosticsTruncated']>().toEqualTypeOf<boolean>();
         expectTypeOf<ManagedServiceSnapshot>().not.toHaveProperty('host');
@@ -168,6 +168,7 @@ describe('managed-services author contract', () => {
             | 'plugin_managed_service_unavailable'
             | 'plugin_managed_service_establishment_failed'
             | 'plugin_managed_service_health_timeout'
+            | 'plugin_managed_server_termination_incomplete'
             | 'plugin_operation_aborted'
             | 'plugin_managed_provider_result_invalid'
         >();
@@ -175,7 +176,7 @@ describe('managed-services author contract', () => {
         expectTypeOf<SpawnManagedServiceSpec>().toHaveProperty('requestAuth');
         expectTypeOf<NonNullable<SpawnManagedServiceSpec['requestAuth']>>()
             .toEqualTypeOf<Readonly<{
-            kind: 'connectedAccountCapabilityPath';
+            kind: 'connectedAccountCapabilityPath' | 'connectedAccountConsumerAccessPath';
             injectEnvironmentKey: string;
         }>>();
         expectTypeOf<AttachManagedServiceSpec>().not.toHaveProperty('requestAuth');

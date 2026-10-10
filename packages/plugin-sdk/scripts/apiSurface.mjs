@@ -651,7 +651,17 @@ export function createApiSurfaceGenerationPlan(input) {
   ));
   for (const entrypoint of entrypoints) {
     const entrypointSymbols = symbolsBySpecifier.get(entrypoint.specifier);
-    packageExports[entrypoint.specifier] = orderPackageExportConditions(entrypoint.conditions);
+    const conditions = orderPackageExportConditions(entrypoint.conditions);
+    if (conditions.browser && conditions.browser !== conditions.default) {
+      conditions.browser = {
+        'happier-source': `./${apiSurfaceEntrypointBrowserSourceModule(entrypoint.specifier)}`,
+        default: conditions.browser,
+      };
+    }
+    packageExports[entrypoint.specifier] = {
+      'happier-source': `./${entrypoint.sourceModule}`,
+      ...conditions,
+    };
     sourceBarrels[entrypoint.sourceModule] = renderBarrel(entrypoint, entrypointSymbols);
     if (entrypoint.visibility !== 'author') continue;
     const names = entrypointSymbols.map((symbol) => symbol.exportName).sort(compareCodePoints);

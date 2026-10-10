@@ -102,12 +102,14 @@ export async function withExclusiveFileLock<TResult>(
     options: Readonly<{
         lockPath: string;
         timeoutMs: number;
+        signal?: AbortSignal;
     }>,
     effect: () => Promise<TResult>,
 ): Promise<TResult> {
     return await withJsonOwnerFileLock({
         lockPath: options.lockPath,
         timeoutMs: options.timeoutMs,
+        ...(options.signal ? { signal: options.signal } : {}),
         staleAfterMs: 60_000,
         errorCode: 'exclusive_file_lock_timeout',
     }, effect);

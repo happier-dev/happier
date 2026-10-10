@@ -60,6 +60,10 @@ describe('plugin UI surface context', () => {
 
     expect(PluginUiSurfaceContextV1Schema.safeParse(surface).success).toBe(false);
     expect(PluginUiHostApiSurfaceContextV1Schema.parse(surface)).toEqual(surface);
+    const gradient = { colors: ['rgba(0,0,0,0)', 'rgba(0,0,0,0.024)'], locations: [0.3, 1], start: { x: 0.5, y: 0 }, end: { x: 0.5, y: 1 } };
+    const withFinish = { ...surface, theme: { ...surface.theme, surfaceFinish: { card: { ...gradient, futurePaintHint: true }, composer: null, futureRole: gradient } } };
+    expect(PluginUiHostApiSurfaceContextV1Schema.parse(withFinish).theme.surfaceFinish).toEqual({ card: gradient, composer: null });
+    expect(PluginUiHostApiSurfaceContextV1Schema.safeParse({ ...withFinish, theme: { ...withFinish.theme, surfaceFinish: { card: { colors: ['one-stop'] } } } }).success).toBe(false);
     const withStatusText = { ...surface, theme: { ...surface.theme, statusText: {
       success: '#187733', warning: '#9a5c00', attention: '#945200', danger: '#c62828', info: '#4e5ba5', neutral: '#6c6c70',
     } } };
@@ -86,6 +90,10 @@ describe('plugin UI surface context', () => {
       page: { columnVisible: true },
     } as const;
     expect(PluginUiHostApiSurfaceContextV1Schema.parse(appPage)).toEqual(appPage);
+    // Account-visible static artifacts have no executable daemon occurrence.
+    // Their context must not fabricate a target snapshot to negotiate the ABI.
+    const { targetedContributions: _runtimeTarget, ...staticAppPage } = appPage;
+    expect(PluginUiHostApiSurfaceContextV1Schema.safeParse(staticAppPage).success).toBe(true);
     expect(PluginUiHostApiSurfaceContextV1Schema.parse({ ...appPage, page: { columnVisible: false } }).page).toEqual({ columnVisible: false });
     expect(PluginUiHostApiSurfaceContextV1Schema.safeParse({ ...appPage, page: { columnVisible: true, extra: true } }).success).toBe(false);
   });

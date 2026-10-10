@@ -103,6 +103,7 @@ const HOST_BINDING_OWNER_EVIDENCE = Object.freeze({
   'apps/cli/src/plugins/projection/registry/voiceDeclarations.ts': 'export const voiceModelPackProjectionFamily',
   'apps/cli/src/plugins/projection/registry/roles.ts': 'export const rolesProjectionFamily',
   'apps/cli/src/plugins/projection/registry/workflows.ts': 'export const workflowsProjectionFamily',
+  'apps/cli/src/plugins/projection/registry/inputTypes.ts': 'export const inputTypesProjectionFamily',
   'apps/cli/src/plugins/projection/registry/targetedContributions.ts': 'export function resolveAdmittedTargetedContributions',
   'apps/cli/src/cli/pluginCommandContributions.ts': 'export async function handlePluginCommandCliCommand',
   'apps/cli/src/plugins/runtime/toolCatalog.ts': 'export function projectExecutablePluginToolCatalog',

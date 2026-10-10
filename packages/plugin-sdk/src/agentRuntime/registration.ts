@@ -350,6 +350,8 @@ export type AgentCliAuthContributionV1 = Readonly<{
 export type AgentConnectedAccountStateSharingDescriptorEntryV1 = Readonly<{
   path: string;
   mode: 'linked' | 'copied' | 'linked_or_copied' | 'env_redirect' | 'force_copied';
+  /** Establish a native shared directory on first launch; isolated mode never creates it. */
+  createIfMissing?: 'directory';
   envVar?: string;
   allowHardLinkFallback?: boolean;
   secret?: boolean;

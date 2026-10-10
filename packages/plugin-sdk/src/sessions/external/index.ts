@@ -1,5 +1,7 @@
 export { AGENT_EXTERNAL_SESSION_HOOK_LIMITS } from '../../externalSessionHooks.js';
 export { AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS } from '../externalSessionTakeover.js';
+export type { AgentExternalSessionAccountingObservation } from '../../externalSessions.js';
+export type { AgentExternalSessionAccountingSource } from '../../externalSessions.js';
 export type { AgentExternalSessionCandidate } from '../../externalSessions.js';
 export type { AgentExternalSessionCandidateIndexLookup } from '../../externalSessions.js';
 export type { AgentExternalSessionCandidateIndexState } from '../../externalSessions.js';
@@ -53,6 +55,8 @@ export type { AgentExternalSessionsManagedEndpointReadRequest } from '../../exte
 export type { AgentExternalSessionsManagedEndpointReadResponse } from '../../externalSessions.js';
 export type { AgentExternalSessionsManagedEndpointServiceRequest } from '../../externalSessions.js';
 export type { AgentExternalSessionsPageTranscriptRequest } from '../../externalSessions.js';
+export type { AgentExternalSessionsReadAccountingRequest } from '../../externalSessions.js';
+export type { AgentExternalSessionsReadAccountingResult } from '../../externalSessions.js';
 export type { AgentExternalSessionsReadAfterDiagnostic } from '../../externalSessions.js';
 export type { AgentExternalSessionsReadAfterTranscriptRequest } from '../../externalSessions.js';
 export type { AgentExternalSessionsReadAfterTranscriptResult } from '../../externalSessions.js';

@@ -1,5 +1,5 @@
 /** @moduleRealm daemon */
-import { PluginMachineExecutionOriginV1JsonSchema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { PluginMachineExecutionOriginV1JsonSchema as canonicalPluginMachineExecutionOriginV1JsonSchema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import type {
     NormalizedPluginCollectionUiQueryDescriptorV1,
     PluginAccountCollectionContributionV1,
@@ -52,7 +52,8 @@ export type PluginAccountCollectionDeclaration = Readonly<{
  * Canonical reusable JSON-schema fragment for a Collection field that stores
  * an Account-portable machine execution origin.
  */
-export { PluginMachineExecutionOriginV1JsonSchema };
+export const PluginMachineExecutionOriginV1JsonSchema: PluginJsonSchema =
+    canonicalPluginMachineExecutionOriginV1JsonSchema;
 
 /**
  * Account Collection declarations are raw, readonly author data. The manifest

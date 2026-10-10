@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 import { type PluginDeclarativeDataNodeV1 } from './declarativeDataV1.js';
 import { ActionIdSchema, type ActionId } from '../../../actions/actionIds.js';
@@ -147,7 +148,7 @@ export class PluginDeclarativeDocumentNormalizationErrorV1 extends Error {
 export type PluginDeclarativeQualifiedReferenceV1 = Readonly<{
   identity: PluginContributionIdentityV1;
   qualifiedId: string;
-  occurrenceId: string;
+  occurrenceId?: string;
 }>;
 
 /**
@@ -180,13 +181,13 @@ export type PluginDeclarativeSettingsInventoryEntryV1 = Readonly<{
 // Deliberately unannotated: the projected-model contract composes this schema
 // with `.extend`, and a `z.ZodType<T>` annotation would erase the object
 // internals (see providers/capabilities/v1.ts for the same ruling).
-export const PluginDeclarativeSettingsInventoryEntryV1Schema = z.object({
+export const PluginDeclarativeSettingsInventoryEntryV1Schema = lazyZodSchema(() => z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   id: asProtocolZod(PluginContributionLocalIdSchema),
   qualifiedId: z.string().trim().min(1).max(1_024),
   schema: PluginJsonSchemaV2Schema,
   secret: z.boolean(),
-}).strict();
+}).strict());
 
 export type PluginDeclarativeQualifiedSettingBindingV1 = Readonly<{
   pluginId: string;
@@ -348,7 +349,8 @@ export type PluginDeclarativeDocumentNormalizationV1 = Readonly<{
 
 export type NormalizePluginDeclarativeDocumentV1Input = Readonly<{
   pluginId: string;
-  occurrenceId: string;
+  /** Absent for manifest-authored presentation; never grants live effect authority. */
+  occurrenceId?: string;
   document: unknown;
   /** The immutable admitted Action inventory for this candidate's plugin. */
   actions: readonly PluginContributionIdentityV1[];
@@ -825,7 +827,7 @@ function normalizeCollectionProjectionField(
 
 function normalizeCollectionListBinding(input: Readonly<{
   pluginId: string;
-  occurrenceId: string;
+  occurrenceId?: string;
   source: Extract<PluginDeclarativeNodeV2, { kind: 'collectionList' }>;
   inventory: CollectionUiQueryInventory;
   actions: ReadonlySet<string>;
@@ -907,7 +909,7 @@ function normalizeCollectionListBinding(input: Readonly<{
 
 function normalizeContributionReference(input: Readonly<{
   pluginId: string;
-  occurrenceId: string;
+  occurrenceId?: string;
   inventory: ReadonlySet<string>;
   reference: PluginContributionReferenceV2;
   label: string;
@@ -942,13 +944,13 @@ function normalizeContributionReference(input: Readonly<{
   return Object.freeze({
     identity: Object.freeze({ ...identity }),
     qualifiedId,
-    occurrenceId,
+    ...(occurrenceId === undefined ? {} : { occurrenceId }),
   });
 }
 
 function normalizeActionReference(
   pluginId: string,
-  occurrenceId: string,
+  occurrenceId: string | undefined,
   inventory: ReadonlySet<string>,
   reference: PluginContributionReferenceV2,
 ): PluginDeclarativeQualifiedReferenceV1 {
@@ -965,7 +967,7 @@ function normalizeActionReference(
 
 function normalizeCollectionRowCommand(input: Readonly<{
   pluginId: string;
-  occurrenceId: string;
+  occurrenceId?: string;
   actions: ReadonlySet<string>;
   destinations: ReadonlySet<string>;
   command: PluginCollectionRowCommandV1;
@@ -1010,8 +1012,13 @@ export function normalizeDeclarativeDocumentV1Core(
 ): PluginDeclarativeDocumentNormalizationV1 {
   const pluginInput = input.kind === 'plugin' ? input : null;
   const pluginId = pluginInput === null ? null : normalizePluginId(pluginInput.pluginId);
-  const occurrenceId = pluginInput === null ? null : normalizeOccurrenceId(pluginInput.occurrenceId);
+  const occurrenceId = pluginInput === null ? null : pluginInput.occurrenceId === undefined
+    ? undefined
+    : normalizeOccurrenceId(pluginInput.occurrenceId);
   if (pluginInput?.resourceContentTypes) {
+    if (occurrenceId === undefined) {
+      return fail('plugin_declarative_generation_invalid', 'A Resource document requires a current plugin occurrence');
+    }
     assertPluginDeclarativeDocumentResourceContentTypesV1(
       pluginInput.resourceContentTypes.declaredContentType,
       pluginInput.resourceContentTypes.returnedContentType,
@@ -1087,7 +1094,7 @@ export function normalizeDeclarativeDocumentV1Core(
         break;
       case 'dragSource':
       case 'dropTarget': {
-        if (!pluginId || !occurrenceId) return fail('plugin_declarative_drag_scope_invalid', 'Drag nodes require a mounted plugin declaration');
+        if (!pluginId || occurrenceId === null) return fail('plugin_declarative_drag_scope_invalid', 'Drag nodes require a plugin declaration');
         const reference = normalizeContributionReference({
           pluginId, occurrenceId, inventory: source.kind === 'dragSource' ? sourceIds : targetIds,
           reference: source.kind === 'dragSource' ? source.sourceId : source.targetId,

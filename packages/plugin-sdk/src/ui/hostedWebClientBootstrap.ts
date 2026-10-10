@@ -58,7 +58,6 @@ type HostedWebBootstrapController = Readonly<{
     awaitReady(options?: AwaitHostedWebPluginUiHostApiClientBootstrapOptions): Promise<PluginUiHostApiClientBootstrap>;
 }>;
 
-const BOOTSTRAP_TIMEOUT_MS = 30_000;
 const controllers = new WeakMap<object, HostedWebBootstrapController>();
 
 /**
@@ -229,7 +228,6 @@ function createHostedWebBootstrapController(
     let accountDataCapability = false;
     let createAccountDataTransport: (() => HostedWebAccountDataTransport) | null = null;
     let documentPort: HostedWebMessagePort | null = null;
-    let timeout: ReturnType<typeof setTimeout> | null = null;
     const sentSequences = new Set<number>();
     const listeners = new Set<(message: unknown) => void>();
     const accountDataListeners = new Set<(
@@ -246,12 +244,6 @@ function createHostedWebBootstrapController(
 
     const removeListener = () => realm.removeEventListener('message', handleMessage);
     let removeExternalLinkCarrier: () => void = () => {};
-    const clearBootstrapTimeout = () => {
-        if (timeout !== null) {
-            clearTimeout(timeout);
-            timeout = null;
-        }
-    };
     const sendEnvelope = (envelope: PluginHostedWebBridgeEnvelopeV1): void => {
         if (typeof nativePostMessage === 'function') {
             Reflect.apply(nativePostMessage, realm.ReactNativeWebView, [JSON.stringify(envelope)]);
@@ -279,7 +271,6 @@ function createHostedWebBootstrapController(
         if (state === 'disconnected') return;
         const currentIdentity = identity;
         state = 'disconnected';
-        clearBootstrapTimeout();
         removeListener();
         removeExternalLinkCarrier();
         documentPort?.close();
@@ -300,7 +291,6 @@ function createHostedWebBootstrapController(
     const disconnectFromHost = (reason: string): void => {
         if (state === 'disconnected') return;
         state = 'disconnected';
-        clearBootstrapTimeout();
         removeListener();
         documentPort?.close();
         documentPort = null;
@@ -472,7 +462,6 @@ function createHostedWebBootstrapController(
         const acceptedBootstrap = asBootstrap(payload, transport);
         bootstrap = acceptedBootstrap;
         state = 'bootstrapped';
-        clearBootstrapTimeout();
         const installed = Reflect.defineProperty(realm, PLUGIN_UI_HOST_API_CLIENT_BOOTSTRAP_KEY, {
             configurable: false,
             enumerable: false,
@@ -619,9 +608,6 @@ function createHostedWebBootstrapController(
     } else {
         sendEnvelope(readyEnvelope);
     }
-    timeout = setTimeout(() => {
-        fail('ui_host_bootstrap_timeout', 'The hosted plugin UI host did not bootstrap the ready frame in time.');
-    }, BOOTSTRAP_TIMEOUT_MS);
 
     return Object.freeze({
         awaitReady(options = {}) {

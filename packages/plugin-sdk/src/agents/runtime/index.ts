@@ -53,6 +53,7 @@ export type { AgentAcpToolNameResolver } from '../../agentRuntime/projections.js
 export type { AgentAcpToolUpdateContentSanitizer } from '../../agentRuntime/projections.js';
 export type { AgentAcpToolUpdatePolicy } from '../../agentRuntime/projections.js';
 export type { AgentAcpTransport } from '../../agentRuntime/projections.js';
+export type { AgentAcpUsageLimitDiagnosticDefinition } from '../../agentRuntime/projections.js';
 export type { AgentAuthorRestoreCheckpointResult } from '../../agentRuntime/projections.js';
 export type { AgentAuthoredSessionRuntimeCapabilities } from '../../agentRuntime/projections.js';
 export type { AgentCliAuthCommandResultV1 } from '../../agentRuntime/projections.js';
@@ -340,6 +341,7 @@ export type { ForkSessionMetadata } from '../../agentRuntime/projections.js';
 export type { ForkSurfaceV1 } from '../../agentRuntime/projections.js';
 export type { HandoffAvailabilityRequestV1 } from '../../agentRuntime/projections.js';
 export type { HandoffExportRequestV1 } from '../../agentRuntime/projections.js';
+export type { HandoffExistingStateRequestV1 } from '../../agentRuntime/projections.js';
 export type { HandoffExportResultV1 } from '../../agentRuntime/projections.js';
 export type { HandoffExportSessionMetadata } from '../../agentRuntime/projections.js';
 export type { HandoffFailureCodeV1 } from '../../agentRuntime/projections.js';

@@ -1,4 +1,8 @@
+export { createExternalSessionContentSearchControl, ExternalSessionContentSearchYield, searchExternalSessionContent } from '../fileStores/contentSearch.js';
+export type { ExternalSessionContentSearchControl } from '../fileStores/contentSearch.js';
 export type { JsonlByteCursorV1 } from '../fileStores/boundedJsonlScanner.js';
+export type { AgentAccountingJsonlState, AgentAccountingJsonlProjection } from '../fileStores/accountingJsonl.js';
+export { readAgentAccountingJsonlSource, discoverAgentAccountingJsonlSource } from '../fileStores/accountingJsonl.js';
 export type { JsonlForwardLine } from '../fileStores/index.js';
 export type { JsonlParsedLine } from '../fileStores/index.js';
 export type { JsonlScanBounds } from '../fileStores/index.js';
