@@ -1,5 +1,4 @@
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import type { PluginMachineExecutionOriginV1 } from '@happier-dev/plugin-sdk/actions';
 import type {
   ConversationBindingInputModeV1,
   ConversationProviderConnectionStopInputV1,
@@ -13,6 +12,7 @@ import {
 import type {
   ConversationCheckpointedPollInvocationBasisV1,
   ConversationConnectionHistoryGapV1,
+  ConversationConnectionTransportOriginV1,
   ConversationConnectionOverlapSafetyV1,
   ConversationConnectionPollFailureV1,
   ConversationConnectionProviderReadinessV1,
@@ -41,7 +41,7 @@ export type ConversationConnectionFixtureAuthority = Readonly<{
   providerContributionSelection: PersistedConversationProviderContributionSelection;
   providerSetupInput: JsonValue;
   credentialRef: ConversationProviderConnectionStopInputV1['credentialRef'];
-  transportOrigin: PluginMachineExecutionOriginV1;
+  transportOrigin: ConversationConnectionTransportOriginV1;
   providerConnectionKey: ConversationProviderConnectionStopInputV1['providerConnectionKey'];
   providerConfig: ConversationProviderConnectionStopInputV1['providerConfig'];
   routingIdentityKey: string;
@@ -61,7 +61,7 @@ export type CurrentConversationConnectionFixture = Readonly<{
     providerContributionSelection: PersistedConversationProviderContributionSelection;
     providerSetupInput: JsonValue;
     credentialRef: ConversationProviderConnectionStopInputV1['credentialRef'];
-    transportOrigin: PluginMachineExecutionOriginV1;
+    transportOrigin: ConversationConnectionTransportOriginV1;
     transport: ConnectionTransportFixture;
     overlapSafety: ConversationConnectionOverlapSafetyV1;
     replayContinuity: 'checkpointed' | 'sessionBound' | 'none';

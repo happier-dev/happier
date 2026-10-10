@@ -106,6 +106,7 @@ import {
   confirmConversationConnectionStop,
   finalizeConversationConnectionDeleteWithoutProviderStop,
   finalizeConversationConnectionTransferWithoutProviderStop,
+  freezeConversationConnectionTransportOrigin,
   hasAcceptedConversationTransferLoss,
   recordConversationConnectionHistoryGap,
   recordConversationConnectionProviderReadiness,
@@ -116,6 +117,7 @@ import {
   type ConversationCheckpointedPollInvocationBasisV1,
   type ConversationConnectionEnabledResultV1,
   type ConversationConnectionLifecycleStateV1,
+  type ConversationConnectionTransportOriginV1,
   type ConversationConnectionStopConfirmationResultV1,
   type ConversationDeleteStopRequestV1,
   type ConversationPendingOldTransportStopV1,
@@ -198,9 +200,7 @@ export {
   updateConversationConnectionInAccountCollection,
 };
 
-type ConnectionTransportOrigin = Awaited<
-  ReturnType<PluginInvocationContext['services']['actions']['executeAdmittedTargetedOperationWithExecutionOrigin']>
->['executionOrigin'];
+type ConnectionTransportOrigin = ConversationConnectionTransportOriginV1;
 type ConversationConnectionEndpointRequiredResult = Extract<
   ConversationConnectionCreateResultV1,
   Readonly<{ kind: 'endpointRequired' }>
@@ -265,7 +265,11 @@ type ProviderConnectionPreparation =
   }>;
 type ProviderConnectionSetup =
   | ConversationProviderSetupRemediationV1
-  | Extract<ProviderConnectionPreparation, Readonly<{ kind: 'ready' }>>;
+  | Readonly<{
+    kind: 'ready';
+    setup: ConversationProviderSetupResultV1;
+    transportOrigin: PluginMachineExecutionOriginV1;
+  }>;
 type ConversationStorageContext = Pick<PluginInvocationContext, 'services' | 'signal'>;
 type ChannelStateCollection = ReturnType<PluginAccountStorageScope['collection']>;
 type ChannelStateBatchMutation = Parameters<ChannelStateCollection['batch']>[0][number];
@@ -335,17 +339,6 @@ function assertNotAborted(signal: AbortSignal): void {
     'Conversation connection setup was cancelled before its Account mutation completed.',
     true,
   );
-}
-
-function freezeTransportOrigin(origin: ConnectionTransportOrigin): ConnectionTransportOrigin {
-  return Object.freeze({
-    serverIdentityId: origin.serverIdentityId,
-    materializationRef: Object.freeze({
-      pluginId: origin.materializationRef.pluginId,
-      machineId: origin.materializationRef.machineId,
-      materializationId: origin.materializationRef.materializationId,
-    }),
-  });
 }
 
 /**
@@ -2240,13 +2233,16 @@ async function readCurrentSelectedProvider(input: Readonly<{
 
 function assertProviderExecutionOrigin(input: Readonly<{
   provider: CurrentProvider;
-  executionOrigin: ConnectionTransportOrigin;
+  executionOrigin: PluginMachineExecutionOriginV1;
   operation: 'setup' | 'connectionTest';
 }>): void {
-  if (input.executionOrigin.materializationRef.pluginId === input.provider.pluginId) return;
+  const ref = 'materializationRef' in input.executionOrigin
+    ? input.executionOrigin.materializationRef
+    : input.executionOrigin.sourceRef;
+  if (ref.pluginId === input.provider.pluginId) return;
   throw pluginError(
     'channels_connection_execution_origin_provider_mismatch',
-    `The selected provider ${input.operation} Action settled under another plugin's materialization.`,
+    `The selected provider ${input.operation} Action settled under another plugin's execution origin.`,
   );
 }
 
@@ -2313,7 +2309,7 @@ async function runProviderSetup(input: Readonly<{
       'Provider setup returned a webhook contribution owned by another plugin.',
     );
   }
-  const setupTransportOrigin = freezeTransportOrigin(setupExecution.executionOrigin);
+  const setupTransportOrigin = setupExecution.executionOrigin;
   assertProviderExecutionOrigin({
     provider: input.provider,
     executionOrigin: setupTransportOrigin,
@@ -2373,6 +2369,13 @@ async function runProviderSetupAndTest(input: Readonly<{
       'Provider setup requires remediation before connection creation.',
     );
   }
+  // Provider callers, pairing, and webhook targets require exact materialized
+  // transport authority. Source-backed setup can describe safe preparation
+  // facts, but it cannot create or replace a retained connection transport.
+  if (!('materializationRef' in prepared.transportOrigin)) {
+    return { kind: 'notReady', reason: 'unsupported' };
+  }
+  const transportOrigin = freezeConversationConnectionTransportOrigin(prepared.transportOrigin);
   if (!prepared.setup.supportedTransports.includes(input.setupInput.selectedTransport)) {
     return { kind: 'notReady', reason: 'unsupported' };
   }
@@ -2403,13 +2406,16 @@ async function runProviderSetupAndTest(input: Readonly<{
     }, { cause });
   }
   assertNotAborted(input.context.signal);
-  const testTransportOrigin = freezeTransportOrigin(testExecution.executionOrigin);
   assertProviderExecutionOrigin({
     provider: input.provider,
-    executionOrigin: testTransportOrigin,
+    executionOrigin: testExecution.executionOrigin,
     operation: 'connectionTest',
   });
-  if (!arePluginMachineExecutionOriginsEqual(prepared.transportOrigin, testTransportOrigin)) {
+  if (!('materializationRef' in testExecution.executionOrigin)) {
+    return { kind: 'notReady', reason: 'unsupported' };
+  }
+  const testTransportOrigin = freezeConversationConnectionTransportOrigin(testExecution.executionOrigin);
+  if (!arePluginMachineExecutionOriginsEqual(transportOrigin, testTransportOrigin)) {
     throw pluginError(
       'channels_connection_execution_origin_mismatch',
       'Provider setup and connection test did not settle at the same current execution origin.',
@@ -2423,7 +2429,7 @@ async function runProviderSetupAndTest(input: Readonly<{
       'Provider setup and connection test disagreed about immutable connection identity.',
     );
   }
-  return prepared;
+  return { ...prepared, transportOrigin };
 }
 
 function projectConnectionPrepareTransportSelection(
@@ -3663,6 +3669,7 @@ export async function recordConversationCheckpointedPollHistoryGapForInvocation(
   if (
     !isJsonRecord(transport)
     || transport.kind !== 'checkpointedPull'
+    || !('materializationRef' in input.executionOrigin)
     || current.providerPluginId !== input.executionOrigin.materializationRef.pluginId
     || !arePluginMachineExecutionOriginsEqual(current.transportOrigin, input.executionOrigin)
   ) return 'staleAuthority';
@@ -3797,6 +3804,7 @@ export async function settleConversationProviderExclusiveCheckpointedPollReplace
     || !isJsonRecord(transport)
     || transport.kind !== 'checkpointedPull'
     || replayContinuity !== 'checkpointed'
+    || !('materializationRef' in input.executionOrigin)
     || current.providerPluginId !== input.executionOrigin.materializationRef.pluginId
     || !arePluginMachineExecutionOriginsEqual(current.transportOrigin, input.executionOrigin)
   ) return { kind: 'staleAuthority' };

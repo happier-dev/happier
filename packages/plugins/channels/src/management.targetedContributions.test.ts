@@ -24,8 +24,10 @@ import {
   manageSessionPullRequestBindingForInvocation,
   deleteConversationConnectionForInvocation,
   prepareConversationConnectionForInvocation,
+  recordConversationCheckpointedPollHistoryGapForInvocation,
   retestConversationConnectionForInvocation,
   setConversationBindingEnabledForInvocation,
+  settleConversationProviderExclusiveCheckpointedPollReplacementForInvocation,
   updateConversationConnectionForInvocation,
   transferConversationConnectionForInvocation,
 } from './management.js';
@@ -844,6 +846,67 @@ describe('prepareConversationConnectionForInvocation targeted provider selection
   });
 });
 
+describe('checkpointed poll source custody', () => {
+  const authority = {
+    providerPluginId: providerSelection.contributor.pluginId,
+    providerContributionSelection: { contributionId: providerSelection.contributor.contributionId },
+    providerSetupInput: {},
+    credentialRef: null,
+    transportOrigin: {
+      serverIdentityId: 'srv-example',
+      materializationRef: {
+        pluginId: providerSelection.contributor.pluginId,
+        machineId: 'machine-example',
+        materializationId: 'materialization-example',
+      },
+    },
+    providerConnectionKey: 'example:connection',
+    providerConfig: {},
+    routingIdentityKey: 'r'.repeat(43),
+    integrationPrincipal: { id: 'example-bot' },
+    authorityEpoch: 4,
+  } as const satisfies ConversationConnectionFixtureAuthority;
+
+  it.each(['historyGap', 'replacement'] as const)('returns stale authority for source-backed %s settlement', async (settlement) => {
+    const connectionId = 'connection-source-poll';
+    const collection = createMutableConnectionStateCollection();
+    collection.rows.set(connectionId, {
+      rowId: connectionId,
+      revision: 4,
+      value: createCurrentConversationConnectionFixture({
+        connectionId,
+        authority,
+        transport: { kind: 'checkpointedPull' },
+        replayContinuity: 'checkpointed',
+      }),
+    });
+    const input = {
+      connectionId,
+      expectedRevision: 4,
+      authorityEpoch: authority.authorityEpoch,
+      executionOrigin: {
+        serverIdentityId: authority.transportOrigin.serverIdentityId,
+        sourceRef: {
+          pluginId: authority.providerPluginId,
+          machineId: authority.transportOrigin.materializationRef.machineId,
+          sourceCustody: providerSelection.contributor.sourceCustody,
+        },
+      },
+    };
+    const context = invocationContext({ stateCollection: collection });
+    if (settlement === 'historyGap') {
+      await expect(recordConversationCheckpointedPollHistoryGapForInvocation({
+        ...input,
+        fact: { reason: 'providerHistoryUnavailable' },
+      }, context)).resolves.toBe('staleAuthority');
+    } else {
+      await expect(settleConversationProviderExclusiveCheckpointedPollReplacementForInvocation(input, context))
+        .resolves.toEqual({ kind: 'staleAuthority' });
+    }
+    expect(collection.batch).not.toHaveBeenCalled();
+  });
+});
+
 describe('deleteConversationConnectionForInvocation transport ownership', () => {
   it('detaches a durable-push Channels connection without invoking provider stop or webhook revoke', async () => {
     const connectionId = 'connection-durable-push-delete';
@@ -1238,6 +1301,83 @@ describe('createConversationConnectionForInvocation targeted provider selection'
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledOnce();
     expect(collection.rows.size).toBe(1);
     expect(collection.batch).not.toHaveBeenCalled();
+  });
+
+  it.each(['setup', 'connectionTest'] as const)('declines source custody from %s without retaining transport authority', async (sourceOperation) => {
+    const collection = createMutableConnectionStateCollection();
+    seedConnectionIdentityKey(collection);
+    const materializedOrigin = {
+      serverIdentityId: 'srv-example',
+      materializationRef: {
+        pluginId: providerSelection.contributor.pluginId,
+        machineId: 'machine-example',
+        materializationId: 'materialization-example',
+      },
+    };
+    const sourceOrigin = {
+      serverIdentityId: 'srv-example',
+      sourceRef: {
+        pluginId: providerSelection.contributor.pluginId,
+        machineId: 'machine-example',
+        sourceCustody: providerSelection.contributor.sourceCustody,
+      },
+    };
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (action: unknown) => ({
+      result: action === setupAction
+        ? {
+          v: 1,
+          credentialRef: null,
+          providerConnectionKey: 'example:connection',
+          providerConfigVersion: 1,
+          providerConfig: { opaque: true },
+          integrationPrincipal: { id: 'example-bot' },
+          supportedTransports: ['socket'],
+          recommendedTransport: 'socket',
+          overlapSafety: 'safe',
+          replayContinuity: 'none',
+          outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
+        }
+        : {
+          kind: 'ready',
+          integrationPrincipal: { id: 'example-bot' },
+          providerConnectionKey: 'example:connection',
+        },
+      executionOrigin: (action === setupAction) === (sourceOperation === 'setup')
+        ? sourceOrigin
+        : materializedOrigin,
+    }));
+    const context = invocationContext({
+      actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as unknown as ActionsService,
+      targetedContributions: targetedContributionsFixture({
+        contributorImmutableGenerationId: providerSelection.contributor.sourceCustody.immutableGenerationId,
+        operations: {
+          setup: setupAction,
+          connectionTest: connectionTestAction,
+          messageDeliver: messageDeliverAction,
+          connectionStop: connectionStopAction,
+        },
+      }),
+      stateCollection: collection,
+    });
+
+    await expect(createConversationConnectionForInvocation({
+      providerSelection,
+      providerSetupInput: { source: 'create' },
+      credentialRef: null,
+      selectedTransport: 'socket',
+      maximumObservationAgeMs: 60_000,
+    }, context)).resolves.toEqual({ kind: 'notReady', reason: 'unsupported' });
+    expect(collection.rows.size).toBe(1);
+    expect(collection.batch).not.toHaveBeenCalled();
+    if (sourceOperation === 'setup') {
+      expect(executeAdmittedTargetedOperationWithExecutionOrigin.mock.calls.map(([action]) => action))
+        .toEqual([setupAction]);
+      await expect(prepareConversationConnectionForInvocation({
+        providerSelection,
+        providerSetupInput: { source: 'prepare' },
+        credentialRef: null,
+      }, context)).resolves.toMatchObject({ kind: 'ready', supportedTransports: ['socket'] });
+    }
   });
 
   it('rejects mismatched setup and test execution origins before persistence', async () => {

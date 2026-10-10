@@ -444,8 +444,8 @@ type IngressHarnessOptions = Readonly<{
   automationEventAdmitResults?: readonly JsonValue[];
   automationEventAdmitResult?: JsonValue;
   getAutomationEventAdmitResult?: (input: JsonValue) => JsonValue | Promise<JsonValue>;
-  pollExecutionOrigin?: ReturnType<typeof channelConnection>['payload']['transportOrigin'];
-  getPollExecutionOrigin?: () => ReturnType<typeof channelConnection>['payload']['transportOrigin'];
+  pollExecutionOrigin?: PluginMachineExecutionOriginV1;
+  getPollExecutionOrigin?: () => PluginMachineExecutionOriginV1;
   beforeCollectionGet?: (input: Readonly<{ rowId: string }>) => void;
   beforeCollectionPut?: (input: Readonly<{ value: Readonly<Record<string, unknown>> }>) => void;
   beforeCollectionForget?: (input: Readonly<{ rowId: string; expectedRevision: number }>) => void;
@@ -6379,6 +6379,32 @@ describe('Conversation provider observation ingress', () => {
 });
 
 describe('Conversation checkpointed-poll ingress', () => {
+  it('refuses source custody before interpreting a replacement-baseline provider result', async () => {
+    const harness = createIngressHarness({
+      pollExecutionOrigin: {
+        serverIdentityId: telegramConnectionAuthority.transportOrigin.serverIdentityId,
+        sourceRef: {
+          pluginId: telegramProviderPluginId,
+          machineId: 'machine-1',
+          sourceCustody: { kind: 'development', registeredRootId: 'telegram-root' },
+        },
+      },
+      pollResult: { kind: 'historyGap', reason: 'providerHistoryUnavailable' },
+    });
+    const gapConnection = setConnectionHistoryGap(harness.rows);
+    const before = [...harness.rows.values()];
+
+    await expect(acceptConversationStreamBaselineForInvocation({
+      connectionId: 'connection-1',
+      expectedRevision: gapConnection.revision,
+    }, harness.context)).rejects.toMatchObject({
+      code: 'channels_stream_baseline_conflict',
+      retryable: true,
+    });
+    expect([...harness.rows.values()]).toEqual(before);
+    expect(harness.send).not.toHaveBeenCalled();
+  });
+
   it('atomically marks only fully terminal ingress census coverage with its successful checkpoint', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);

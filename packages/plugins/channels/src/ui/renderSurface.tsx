@@ -8,7 +8,7 @@ import type {
 import { readActionInputOptionValue } from '@happier-dev/plugin-sdk/actions';
 import type {
   PluginUiActionExecutionOptions,
-  PluginUiTargetedContributionsV1,
+  SurfaceContext,
   RenderContext,
   ResourceContent,
   SelectActionInputRequest,
@@ -343,13 +343,13 @@ function isSameProviderContributionOperation(
 }
 
 function currentProviderOperationsForRole(
-  targetedContributions: PluginUiTargetedContributionsV1,
+  targetedContributions: SurfaceContext['targetedContributions'],
   targetPluginId: string,
   role: 'setup' | 'setupRemediation',
   providerPluginId?: string,
   selectedContribution?: ProviderTargetedOperation,
 ): readonly ProviderTargetedOperation[] {
-  if (targetedContributions.target.pluginId !== targetPluginId) return [];
+  if (targetedContributions === undefined || targetedContributions.target.pluginId !== targetPluginId) return [];
   const point = targetedContributions.points.find(
     (candidate) => candidate.pointId === CONVERSATION_PROVIDERS_CONTRIBUTION_POINT_ID_V1,
   );
@@ -375,7 +375,7 @@ function currentProviderOperationsForRole(
 }
 
 function currentProviderSetupOperations(
-  targetedContributions: PluginUiTargetedContributionsV1,
+  targetedContributions: SurfaceContext['targetedContributions'],
   targetPluginId: string,
   providerPluginId?: string,
 ): readonly ProviderSetupOperation[] {
@@ -388,7 +388,7 @@ function currentProviderSetupOperations(
 }
 
 function currentProviderSetupRemediationOperations(
-  targetedContributions: PluginUiTargetedContributionsV1,
+  targetedContributions: SurfaceContext['targetedContributions'],
   targetPluginId: string,
   selectedSetupOperation: ProviderSetupOperation,
 ): readonly ProviderSetupRemediationOperation[] {

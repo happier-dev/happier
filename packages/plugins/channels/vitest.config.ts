@@ -64,9 +64,13 @@ const reactNativeWebAliases = [
   { find: /^react-dom\/client$/u, replacement: resolve(repoRoot, 'apps/ui/node_modules/react-dom/client.js') },
   { find: /^react-dom$/u, replacement: resolve(repoRoot, 'apps/ui/node_modules/react-dom/index.js') },
   { find: /^react-native$/u, replacement: resolve(repoRoot, 'apps/ui/node_modules/react-native-web/dist/index.js') },
+  // Match plugin-ui's RNW harness: Vite does not choose Metro's .web SVG entry.
+  { find: /^react-native-svg$/u, replacement: resolve(repoRoot, 'apps/ui/node_modules/react-native-svg/lib/module/elements.web.js') },
 ];
 
 export default defineConfig({
+  // The source harness consumes sibling workspace setup and presentation owners.
+  server: { fs: { allow: [repoRoot] } },
   resolve: { alias: reactNativeWebAliases, dedupe: ['react', 'react-dom'] },
   plugins: [createWorkspacePackageSourcesPlugin(workspacePackages)],
   test: {

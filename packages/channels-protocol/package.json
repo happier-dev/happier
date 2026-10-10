@@ -7,14 +7,17 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
     "./v1": {
+      "happier-source": "./src/v1/index.ts",
       "types": "./dist/v1/index.d.ts",
       "default": "./dist/v1/index.js"
     },
     "./testing/v1": {
+      "happier-source": "./src/testing/v1/index.ts",
       "types": "./dist/testing/v1/index.d.ts",
       "default": "./dist/testing/v1/index.js"
     }

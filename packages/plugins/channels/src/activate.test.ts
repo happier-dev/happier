@@ -679,7 +679,8 @@ describe('Channels core activation', () => {
         );
         if (!manifestAction) throw new Error(`Missing manifest Action '${id}'.`);
         expect(manifestAction.surfaces).toEqual(
-          id === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingUpdate
+          id === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingRead
+            || id === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingUpdate
             || id === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingSetEnabled
             ? ['cli', 'ui', 'agent', 'mcp']
             : ['cli', 'ui'],

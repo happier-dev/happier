@@ -1094,15 +1094,21 @@ function createOfflineChannelStateFixture() {
 }
 
 describe('Channels mounted provider setup recovery', () => {
-  it('offers a next step instead of an empty surface when no provider is admitted', async () => {
+  it.each(['empty provider snapshot', 'Account presentation without an occurrence'] as const)(
+    'offers a next step instead of an empty surface with %s', async (scope) => {
     // A fresh Account, or a machine with no conversation integration enabled,
     // reaches this state. Rendering nothing left the person with no way to
     // learn why the page is empty or what to do about it.
+    const surfaceContext = createChannelsSurfaceContextWithoutProviders();
+    if (scope === 'Account presentation without an occurrence') {
+      surfaceContext.target = { kind: 'app' };
+      delete surfaceContext.targetedContributions;
+    }
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'fixture-instance-72', mountNonce: 'fixture-mount-72' },
       authorPlugin: { id: 'happier.channels', version: '0.0.0' },
       surface: renderSurface,
-      surfaceContext: createChannelsSurfaceContextWithoutProviders(),
+      surfaceContext,
       adapter: createChannelsSemanticAdapter(),
       handlers: {
         selectActionInput: async () => ({ kind: 'cancelled' as const }),

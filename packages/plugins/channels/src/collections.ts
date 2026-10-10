@@ -306,12 +306,22 @@ const OLD_TRANSPORT_STOP_REQUEST_DELETE_SCHEMA: PluginJsonSchema = {
   ],
 };
 
+// Channels freezes materialized transport authority for caller reconciliation,
+// pairing and webhook targets. Reuse the canonical origin grammar while
+// excluding source custody, which cannot fulfill those retained obligations.
+const CONNECTION_TRANSPORT_ORIGIN_SCHEMA: PluginJsonSchema = {
+  allOf: [
+    PluginMachineExecutionOriginV1JsonSchema,
+    { type: 'object', required: ['materializationRef'] },
+  ],
+};
+
 const CHECKPOINTED_POLL_INVOCATION_BASIS_SCHEMA: PluginJsonSchema = {
   type: 'object',
   properties: {
     connectionRevision: COLLECTION_ROW_REVISION_SCHEMA,
     authorityEpoch: POSITIVE_SAFE_INTEGER_SCHEMA,
-    transportOrigin: PluginMachineExecutionOriginV1JsonSchema,
+    transportOrigin: CONNECTION_TRANSPORT_ORIGIN_SCHEMA,
   },
   required: ['connectionRevision', 'authorityEpoch', 'transportOrigin'],
   additionalProperties: false,
@@ -327,7 +337,7 @@ function pendingOldTransportStopSchema(input: Readonly<{
     type: 'object',
     properties: {
       predecessorCheckpointedPollInvocation: input.predecessorCheckpointedPollInvocation,
-      transportOrigin: PluginMachineExecutionOriginV1JsonSchema,
+      transportOrigin: CONNECTION_TRANSPORT_ORIGIN_SCHEMA,
       providerContributionSelection: ConversationProviderContributionSelectionJsonSchema,
       stopRequest: input.stopRequest,
       // The retired transport, frozen with the slot. The row's own transport
@@ -542,7 +552,7 @@ const CONNECTION_PAYLOAD_SCHEMA = {
     // bytes are bounded by the one canonical Account Collection row limit.
     providerSetupInput: JSON_VALUE_SCHEMA,
     credentialRef: nullable(QualifiedConnectedAccountRefJsonSchema),
-    transportOrigin: PluginMachineExecutionOriginV1JsonSchema,
+    transportOrigin: CONNECTION_TRANSPORT_ORIGIN_SCHEMA,
     transport: CONNECTION_TRANSPORT_SCHEMA,
     overlapSafety: { type: 'string', enum: ['safe', 'providerExclusive', 'destructive'] },
     replayContinuity: { type: 'string', enum: ['checkpointed', 'sessionBound', 'none'] },

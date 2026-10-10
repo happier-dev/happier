@@ -405,6 +405,17 @@ function currentAuthority() {
 }
 
 describe('Channels control-response outward custody', () => {
+  it('does not report unavailable binding storage as authoritative source revocation', async () => {
+    const state = new MemoryAccountCollection();
+    vi.spyOn(state, 'get').mockRejectedValueOnce(new Error('Account storage transport disconnected'));
+    const input = { stateCollection: state, signal: new AbortController().signal, accepted: {
+      sourceRef: 'channels:binding:binding-1', sourceRevisionOrEpoch: '4:7', remoteApprovalMaxScope: 'off' as const,
+    } };
+    await expect(isConversationPermissionMediationSourceCurrent(input)).rejects.toThrow('conversation_source_currentness_unavailable');
+    // The same successful storage read now proves the binding is absent.
+    await expect(isConversationPermissionMediationSourceCurrent(input)).resolves.toBe(false);
+  });
+
   it('invalidates an accepted mediated source when its binding authority rotates', async () => {
     const state = new MemoryAccountCollection();
     await state.put(providerConnectionRow(), { expectedRevision: 'absent' });

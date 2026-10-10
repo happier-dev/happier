@@ -114,6 +114,23 @@ function frozenOldStop(overrides: Readonly<Record<string, JsonValue>> = {}): Jso
 }
 
 describe('readConversationConnectionUpdateRow frozen provider selection', () => {
+  it.each(['current', 'retired'] as const)('rejects source-only %s transport custody with a typed corrupt result', (slot) => {
+    const sourceOrigin = {
+      serverIdentityId: 'server-example',
+      sourceRef: {
+        pluginId: replacementAuthority.providerPluginId,
+        machineId: 'machine-example',
+        sourceCustody: { kind: 'development', registeredRootId: 'provider-root' },
+      },
+    } as const;
+    const row = slot === 'current'
+      ? connectionRow(frozenOldStop(), { transportOrigin: sourceOrigin })
+      : connectionRow(frozenOldStop({ transportOrigin: sourceOrigin }));
+
+    expect(() => readConversationConnectionUpdateRow({ row, connectionId: CONNECTION_ID }))
+      .toThrow(expect.objectContaining({ code: 'channels_connection_update_corrupt' }));
+  });
+
   it('retains the old slot selection independently from the replacement row selection', () => {
     const current = readConversationConnectionUpdateRow({
       row: connectionRow(frozenOldStop()),

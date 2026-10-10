@@ -62,6 +62,34 @@ describe('current Channels connection fixture', () => {
     expect(isValidPluginJsonSchemaValue(validate, connection)).toBe(true);
     expect(isValidPluginJsonSchemaValue(validate, pendingDeleteConnection)).toBe(true);
 
+    const sourceOrigin = {
+      serverIdentityId: authority.transportOrigin.serverIdentityId,
+      sourceRef: {
+        pluginId: authority.providerPluginId,
+        machineId: authority.transportOrigin.materializationRef.machineId,
+        sourceCustody: { kind: 'development', registeredRootId: 'provider-root' },
+      },
+    } as const;
+    for (const payload of [
+      { ...connection.payload, transportOrigin: sourceOrigin },
+      {
+        ...pendingDeleteConnection.payload,
+        pendingOldTransportStop: { ...pendingOldTransportStop, transportOrigin: sourceOrigin },
+      },
+      {
+        ...pendingDeleteConnection.payload,
+        pendingOldTransportStop: {
+          ...pendingOldTransportStop,
+          predecessorCheckpointedPollInvocation: {
+            ...pendingOldTransportStop.predecessorCheckpointedPollInvocation,
+            transportOrigin: sourceOrigin,
+          },
+        },
+      },
+    ]) {
+      expect(isValidPluginJsonSchemaValue(validate, { ...connection, payload })).toBe(false);
+    }
+
     for (const field of [
       'providerPluginId',
       'providerContributionSelection',

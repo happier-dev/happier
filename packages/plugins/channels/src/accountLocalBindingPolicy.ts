@@ -2,7 +2,6 @@ import {
   PluginError,
   type JsonValue,
 } from '@happier-dev/plugin-sdk';
-import type { PluginMachineExecutionOriginV1 } from '@happier-dev/plugin-sdk/actions';
 import {
   PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
   type PluginAccountCollectionForDefinition,
@@ -39,6 +38,7 @@ import {
   type ConversationCheckpointedPollInvocationBasisV1,
   type ConversationConnectionEnabledResultV1,
   type ConversationConnectionLifecycleStateV1,
+  type ConversationConnectionTransportOriginV1,
   type ConversationPendingOldTransportStopV1,
   type ConversationConnectionProviderReadinessV1,
 } from './connectionLifecycle.js';
@@ -78,7 +78,7 @@ export type ConversationConnectionUpdateRow = Readonly<{
   providerContributionSelection: PersistedConversationProviderContributionSelection;
   providerSetupInput: JsonValue;
   routingIdentityKey: string;
-  transportOrigin: PluginMachineExecutionOriginV1;
+  transportOrigin: ConversationConnectionTransportOriginV1;
 }>;
 
 export type ConversationConnectionLifecycleMutationResult = Readonly<{
@@ -269,7 +269,7 @@ function assertCurrent(input: Readonly<{
   );
 }
 
-function readPersistedTransportOrigin(value: JsonValue | undefined): PluginMachineExecutionOriginV1 {
+function readPersistedTransportOrigin(value: JsonValue | undefined): ConversationConnectionTransportOriginV1 {
   if (!isChannelStateJsonRecord(value)) {
     throw policyError('channels_connection_update_corrupt', 'Connection update target has an invalid persisted transport origin.');
   }

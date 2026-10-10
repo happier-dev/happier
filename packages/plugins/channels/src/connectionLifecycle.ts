@@ -18,6 +18,12 @@ import {
 } from '@happier-dev/plugin-sdk';
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/plugin-sdk/actions';
 
+/** Channels transport custody requires an exact host-stamped materialization. */
+export type ConversationConnectionTransportOriginV1 = Extract<
+  PluginMachineExecutionOriginV1,
+  Readonly<{ materializationRef: PluginMachineMaterializationRefV1 }>
+>;
+
 import type { PersistedConversationProviderContributionSelection } from './collections.js';
 import type {
   ConversationPollFailureAttemptCountV1,
@@ -120,7 +126,7 @@ export type ConversationConnectionPollFailureV1 =
 export type ConversationCheckpointedPollInvocationBasisV1 = Readonly<{
   connectionRevision: number;
   authorityEpoch: number;
-  transportOrigin: PluginMachineExecutionOriginV1;
+  transportOrigin: ConversationConnectionTransportOriginV1;
 }>;
 
 /**
@@ -145,7 +151,7 @@ export type ConversationPendingEndpointRetargetV1 = 'notRequired' | 'pending';
 export type ConversationPendingOldTransportStopV1 = Readonly<{
   /** Exact predecessor facts that authorize a captured checkpointed poll. */
   predecessorCheckpointedPollInvocation: ConversationCheckpointedPollInvocationBasisV1;
-  transportOrigin: PluginMachineExecutionOriginV1;
+  transportOrigin: ConversationConnectionTransportOriginV1;
   /** Exact incumbent contribution/generation used only for the deferred stop. */
   providerContributionSelection: PersistedConversationProviderContributionSelection;
   stopRequest: Readonly<ConversationProviderConnectionStopInputV1>;
@@ -177,7 +183,7 @@ export type ConversationTransferStopRequestV1 = Readonly<
 
 export type ConversationPendingOldTransportStopDeleteStartV1 = Readonly<{
   predecessorCheckpointedPollInvocation: ConversationCheckpointedPollInvocationBasisV1;
-  transportOrigin: PluginMachineExecutionOriginV1;
+  transportOrigin: ConversationConnectionTransportOriginV1;
   providerContributionSelection: PersistedConversationProviderContributionSelection;
   stopRequest: ConversationDeleteStopRequestV1;
   predecessorTransportKind: ConversationTransportKindV1;
@@ -185,7 +191,7 @@ export type ConversationPendingOldTransportStopDeleteStartV1 = Readonly<{
 
 export type ConversationPendingOldTransportStopTransferStartV1 = Readonly<{
   predecessorCheckpointedPollInvocation: ConversationCheckpointedPollInvocationBasisV1;
-  transportOrigin: PluginMachineExecutionOriginV1;
+  transportOrigin: ConversationConnectionTransportOriginV1;
   providerContributionSelection: PersistedConversationProviderContributionSelection;
   stopRequest: ConversationTransferStopRequestV1;
   predecessorTransportKind: ConversationTransportKindV1;
@@ -307,9 +313,9 @@ function freezeJsonValue(value: ConversationJsonValueV1): ConversationJsonValueV
   return Object.freeze(copy) as ConversationJsonObjectV1;
 }
 
-function freezeTransportOrigin(
-  origin: PluginMachineExecutionOriginV1,
-): PluginMachineExecutionOriginV1 {
+export function freezeConversationConnectionTransportOrigin(
+  origin: ConversationConnectionTransportOriginV1,
+): ConversationConnectionTransportOriginV1 {
   return Object.freeze({
     serverIdentityId: origin.serverIdentityId,
     materializationRef: Object.freeze({
@@ -326,7 +332,7 @@ function freezeCheckpointedPollInvocationBasis(
   return Object.freeze({
     connectionRevision: basis.connectionRevision,
     authorityEpoch: basis.authorityEpoch,
-    transportOrigin: freezeTransportOrigin(basis.transportOrigin),
+    transportOrigin: freezeConversationConnectionTransportOrigin(basis.transportOrigin),
   });
 }
 
@@ -394,7 +400,7 @@ function areConversationProviderReadinessStatesEqual(
  */
 export function freezeConversationPendingOldTransportStop(input: Readonly<{
   predecessorCheckpointedPollInvocation: ConversationCheckpointedPollInvocationBasisV1;
-  transportOrigin: PluginMachineExecutionOriginV1;
+  transportOrigin: ConversationConnectionTransportOriginV1;
   providerContributionSelection: PersistedConversationProviderContributionSelection;
   stopRequest: Readonly<ConversationProviderConnectionStopInputV1>;
   predecessorTransportKind: ConversationTransportKindV1;
@@ -406,7 +412,7 @@ export function freezeConversationPendingOldTransportStop(input: Readonly<{
     predecessorCheckpointedPollInvocation: freezeCheckpointedPollInvocationBasis(
       input.predecessorCheckpointedPollInvocation,
     ),
-    transportOrigin: freezeTransportOrigin(input.transportOrigin),
+    transportOrigin: freezeConversationConnectionTransportOrigin(input.transportOrigin),
     providerContributionSelection: freezeProviderContributionSelection(
       input.providerContributionSelection,
     ),

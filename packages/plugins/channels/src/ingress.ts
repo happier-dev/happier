@@ -77,6 +77,7 @@ import {
   type ConversationConnectionPollFailureEvidenceV1,
   type ConversationConnectionPollFailureV1,
   type ConversationConnectionLifecycleStateV1,
+  type ConversationConnectionTransportOriginV1,
   type ConversationCheckpointedPollInvocationBasisV1,
   type ConversationPendingOldTransportStopV1,
 } from './connectionLifecycle.js';
@@ -149,7 +150,7 @@ type IngressExecutionSource =
   }>
   | Readonly<{
     kind: 'checkpointedPoll';
-    executionOrigin: PluginMachineExecutionOriginV1;
+    executionOrigin: ConversationConnectionTransportOriginV1;
     authorityEpoch: number;
   }>;
 
@@ -193,7 +194,7 @@ type ChannelConnectionProviderTransport = Readonly<{
 type ChannelConnectionPayload = Readonly<{
   providerPluginId: string;
   providerContributionSelection: PersistedConversationProviderContributionSelection;
-  transportOrigin: PluginMachineExecutionOriginV1;
+  transportOrigin: ConversationConnectionTransportOriginV1;
   transport: Readonly<{ kind: 'checkpointedPull' | 'socket' | 'durablePush' }>;
   overlapSafety: ConversationConnectionLifecycleStateV1['overlapSafety'];
   routingIdentityKey: string;
@@ -6505,7 +6506,7 @@ async function commitCurrentCheckpointedPoll(input: Readonly<{
   connectionId: string;
   expectedRevision: number;
   authorityEpoch: number;
-  executionOrigin: PluginMachineExecutionOriginV1;
+  executionOrigin: ConversationConnectionTransportOriginV1;
   checkpointId: string;
   checkpoint: Readonly<{ row: StateRow; value: CheckpointRecord }> | undefined;
   checkpointAfter: JsonValue;
@@ -6841,6 +6842,18 @@ export async function acceptConversationStreamBaselineForInvocation(
   assertNotAborted(context.signal);
   // Origin equality for this call is the host Actions owner's fence: the
   // settled origin-bearing result already proves expected == before == after.
+  if (!('materializationRef' in execution.executionOrigin)) {
+    await settleCapturedCheckpointedPollStop({
+      context,
+      connectionId: connection.value.id,
+      capturedInvocation,
+    });
+    throw pluginError(
+      'channels_stream_baseline_conflict',
+      'The provider poll did not settle under the retained materialized transport authority.',
+      true,
+    );
+  }
   let result: ReturnType<typeof ConversationPollResultV1Schema.parse>;
   try {
     result = readConversationPollResultForAdmission(execution.result);
@@ -7435,6 +7448,7 @@ export async function runConversationCheckpointedPollForInvocation(input: Readon
   if (
     current === undefined
     || current.row.revision !== connection.row.revision
+    || !('materializationRef' in execution.executionOrigin)
     || !arePluginMachineExecutionOriginsEqual(
       current.value.payload.transportOrigin,
       execution.executionOrigin,
