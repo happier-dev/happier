@@ -46,6 +46,7 @@ import type {
     ConnectedAccountMaterialization as PluginConnectedAccountMaterialization } from '@happier-dev/plugin-sdk/connected-accounts';
 import type {
     ExecService,
+    PluginExecSpawnRequest,
 } from '@happier-dev/plugin-sdk/exec';
 
 import {
@@ -2762,7 +2763,8 @@ export type ManagedServicesOwnerInput = Readonly<{
     sharedGatewayAccessDirectory?: string;
     resolveManagedExecutable?(scope: ManagedServicesScope, executable: ManagedExecutableRef, isCurrent: () => boolean): Promise<ResolvedPluginExecutable>;
     /** Resolves only the currently admitted manifest-declared native service role. */
-    resolveNativeLifecycle?(scope: ManagedServicesScope, instance: ManagedServiceNativeInstanceV1): Promise<ManagedServiceNativeLifecycleV1 | null>;
+    resolveNativeLifecycle?(scope: ManagedServicesScope, instance: ManagedServiceNativeInstanceV1,
+        admission: Readonly<{ exec: ExecService; launch: PluginExecSpawnRequest }>): Promise<ManagedServiceNativeLifecycleV1 | null>;
     fetch?: typeof globalThis.fetch;
     registerRawForRedaction?: (
         scope: ManagedServicesScope,
@@ -3698,7 +3700,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                                 }
                                 : undefined;
                         const nativeLifecycle = normalizedSpec.mode.kind === 'native'
-                            ? await input.resolveNativeLifecycle?.(scope, normalizedSpec.mode.instance)
+                            ? await input.resolveNativeLifecycle?.(scope, normalizedSpec.mode.instance, { exec, launch: normalizedSpec.mode.launch })
                             : undefined;
                         assertScopeCurrent(scope);
                         if (normalizedSpec.mode.kind === 'native' && !nativeLifecycle) {
