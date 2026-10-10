@@ -80,9 +80,9 @@ it('a non-UI client runtime Action waits on its own native runner and returns th
     let settled = false;
     const pending = execute('relay.runtime.restart', { runtimeTarget: { channel: 'preview', mode: 'user' } }, context)
         .then(outcome => { settled = true; return outcome; });
-    await vi.waitFor(() => expect(bridge.specs.some(spec => spec.kind === 'relay.runtime.restart.v1')).toBe(true));
+    await waitForHomeGovernance(() => expect(bridge.specs.some(spec => spec.kind === 'relay.runtime.restart.v1')).toBe(true));
     const taskId = `relay-${bridge.specs.findIndex(spec => spec.kind === 'relay.runtime.restart.v1') + 1}`;
-    await vi.waitFor(() => expect(bridge.listeners.has(taskId)).toBe(true));
+    await waitForHomeGovernance(() => expect(bridge.listeners.has(taskId)).toBe(true));
     expect(settled).toBe(false);
     const terminal = { protocolVersion: 1 as const, taskId, ok: false as const, error: { code: 'restart_failed', message: 'Runtime could not start' } };
     bridge.listeners.get(taskId)?.onResult(terminal);
@@ -100,20 +100,53 @@ it('a native restart Action preserves a dispatched start with a lost acknowledge
     expect(outcome).toEqual({ ok: true, result: { status: 'outcome_unknown' } });
 });
 
+it('an agent-started erase presents the native target for human consent and respects cancellation', async () => {
+    const { serverId } = await openRelay({ v: 1, approvalWaivedSurfaces: { 'relay.runtime.personal_home.erase': ['mcp'] } });
+    const [{ createDefaultActionExecutor }, { Modal }] = await Promise.all([
+        import('@/sync/ops/actions/defaultActionExecutor'), import('@/modal'),
+    ]);
+    // The user-facing Modal presenter is a genuine UI boundary; native preview parsing remains real.
+    const show = vi.spyOn(Modal, 'show').mockImplementation(config => {
+        const cancel = config.props?.onCancel;
+        if (typeof cancel === 'function') queueMicrotask(() => cancel());
+        return 'erase-preview';
+    });
+    const pending = createDefaultActionExecutor({ homeRuntimeRunner: getSystemTasksRunner() }).execute(
+        'relay.runtime.personal_home.erase', {}, { surface: 'mcp', serverId, expectedAccountId: 'account' });
+    await waitForHomeGovernance(() => expect(bridge.specs.some(spec => spec.kind === 'relay.runtime.personal_home.erase.v1')).toBe(true));
+    const taskId = `relay-${bridge.specs.findIndex(spec => spec.kind === 'relay.runtime.personal_home.erase.v1') + 1}`;
+    await waitForHomeGovernance(() => expect(bridge.listeners.has(taskId)).toBe(true));
+    bridge.listeners.get(taskId)?.onEvent({ protocolVersion: 1, taskId, type: 'prompt', tsMs: 1, stepId: 'erase', data: {
+        kind: 'personal_home.confirm_erase.v1', canonicalServerUrl: 'https://erase.test', homeServerIdentityId: 'erase-home',
+        paths: ['/owned/home'], estimatedBytes: 100, previewComplete: true, previewReason: null,
+    } });
+    try {
+        await waitForHomeGovernance(() => expect(show).toHaveBeenCalledWith(expect.objectContaining({
+            props: expect.objectContaining({ canonicalServerUrl: 'https://erase.test', homeServerIdentityId: 'erase-home', paths: ['/owned/home'] }),
+        })));
+        await waitForHomeGovernance(() => expect(bridge.responses).toContainEqual({ taskId, answer: { confirmed: false } }));
+        expect(bridge.specs.filter(spec => spec.kind === 'daemon.service.relay.disconnect.v1')).toEqual([]);
+    } finally {
+        bridge.listeners.get(taskId)?.onResult({ protocolVersion: 1, taskId, ok: false, error: { code: 'not_confirmed', message: 'Erase refused' } });
+        await pending;
+        show.mockRestore();
+    }
+});
+
 it('an agent-started erase refuses an incomplete native preview rather than leaving the task unanswered', async () => {
     const { serverId } = await openRelay({ v: 1, approvalWaivedSurfaces: { 'relay.runtime.personal_home.erase': ['mcp'] } });
     const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
     const pending = createDefaultActionExecutor({ homeRuntimeRunner: getSystemTasksRunner() }).execute(
         'relay.runtime.personal_home.erase', {}, { surface: 'mcp', serverId, expectedAccountId: 'account' });
-    await vi.waitFor(() => expect(bridge.specs.some(spec => spec.kind === 'relay.runtime.personal_home.erase.v1')).toBe(true));
+    await waitForHomeGovernance(() => expect(bridge.specs.some(spec => spec.kind === 'relay.runtime.personal_home.erase.v1')).toBe(true));
     const taskId = `relay-${bridge.specs.findIndex(spec => spec.kind === 'relay.runtime.personal_home.erase.v1') + 1}`;
-    await vi.waitFor(() => expect(bridge.listeners.has(taskId)).toBe(true));
+    await waitForHomeGovernance(() => expect(bridge.listeners.has(taskId)).toBe(true));
     bridge.listeners.get(taskId)?.onEvent({ protocolVersion: 1, taskId, type: 'prompt', tsMs: 1, stepId: 'erase', data: {
         kind: 'personal_home.confirm_erase.v1', canonicalServerUrl: 'https://erase.test', homeServerIdentityId: 'erase-home',
         paths: ['/owned/home'], estimatedBytes: 100, previewComplete: false, previewReason: 'inspection_failed',
     } });
     try {
-        await vi.waitFor(() => expect(bridge.responses).toContainEqual({ taskId, answer: { confirmed: false } }));
+        await waitForHomeGovernance(() => expect(bridge.responses).toContainEqual({ taskId, answer: { confirmed: false } }));
     } finally {
         bridge.listeners.get(taskId)?.onResult({ protocolVersion: 1, taskId, ok: false, error: { code: 'not_confirmed', message: 'Erase refused' } });
         await pending;
@@ -128,9 +161,9 @@ it('a non-UI remote relay configure Action observes its admitted native task to 
         hostId: host.id, expectedRevision: 4,
         operation: { kind: 'configure', config: { providerId: 'lan', url: 'https://relay.test' } },
     }, { surface: 'mcp', serverId, expectedAccountId: 'account' });
-    await vi.waitFor(() => expect(bridge.specs.some(spec => spec.kind === 'relay.access.configure.v1')).toBe(true));
+    await waitForHomeGovernance(() => expect(bridge.specs.some(spec => spec.kind === 'relay.access.configure.v1')).toBe(true));
     const taskId = `relay-${bridge.specs.findIndex(spec => spec.kind === 'relay.access.configure.v1') + 1}`;
-    await vi.waitFor(() => expect(bridge.listeners.has(taskId)).toBe(true));
+    await waitForHomeGovernance(() => expect(bridge.listeners.has(taskId)).toBe(true));
     const terminal = { protocolVersion: 1 as const, taskId, ok: false as const,
         error: { code: 'configure_failed', message: 'Relay configuration failed' } };
     bridge.listeners.get(taskId)?.onResult(terminal);
