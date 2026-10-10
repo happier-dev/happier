@@ -220,8 +220,8 @@ function readExternalActionRequestPrincipal(
     const publicAction = PublicActionIdSchema.safeParse(actionId);
     if (request.authTokenKind === 'terminal' && (request.authAuthority === 'account_automation' || request.authAuthority === 'present_user')
         && request.authTokenLegacy === false && request.authTokenEpoch !== undefined && publicAction.success
-        && (isOriginalTerminalExecutionAction(actionId, origin) || ManagedMachineActionIdV1Schema.safeParse(actionId).success)
-        && resolveCredentialActionAdmissionV1({ spec: getActionSpec(publicAction.data), authority: 'account_automation' }).ok) {
+        && isOriginalTerminalExecutionAction(actionId, origin)
+        && resolveCredentialActionAdmissionV1({ spec: getActionSpec(publicAction.data), authority: 'account_automation', grant: null }).ok) {
         // Managed FIN issuance still requires its installed source proof below;
         // this is credential authentication, not a native Action admission.
         // Current terminal policy may allow human local operations, but this
@@ -236,7 +236,7 @@ function readExternalActionRequestPrincipal(
         && request.authTokenLegacy === false && request.authTokenEpoch !== undefined
         && signedRootAction.success
         && isOriginalAccountExecutionAction(actionId)
-        && resolveCredentialActionAdmissionV1({ spec: getActionSpec(signedRootAction.data), authority: request.authAuthority }).ok) {
+        && resolveCredentialActionAdmissionV1({ spec: getActionSpec(signedRootAction.data), authority: request.authAuthority, grant: null }).ok) {
         return { accountId: request.userId, authority: 'present_user', authentication: {
             kind: 'account', tokenEpoch: request.authTokenEpoch,
             ...(request.authTokenAuthenticationEvidence ? { evidence: [...request.authTokenAuthenticationEvidence] } : {}),
@@ -463,10 +463,6 @@ export function registerExternalActionRoutes(
             if (!principal || !actionId.success || !body.success) {
                 return sendExternalActionHttpError(reply, principal ? "invalid_envelope" : "invalid_token");
             }
-            if ('authentication' in principal && principal.authentication.kind === 'terminal'
-                && ManagedMachineActionIdV1Schema.safeParse(actionId.data).success && !body.data.workflowActionOrigin) {
-                return sendExternalActionHttpError(reply, 'invalid_token', body.data.envelope.requestId);
-            }
             if (!isExternalActionRequestWithinLimit(body.data.envelope)) {
                 return sendExternalActionHttpError(reply, "request_too_large");
             }
@@ -485,7 +481,8 @@ export function registerExternalActionRoutes(
                     return sendExternalActionHttpError(reply, 'invalid_token', body.data.envelope.requestId);
                 }
                 const publicAction = PublicActionIdSchema.safeParse(actionId.data);
-                if (!publicAction.success || !resolveCredentialActionAdmissionV1({ spec: getActionSpec(publicAction.data), authority: principal.authority }).ok) {
+                if (!publicAction.success || !resolveCredentialActionAdmissionV1({ spec: getActionSpec(publicAction.data), authority: principal.authority,
+                    grant: 'grant' in principal ? principal.grant : null }).ok) {
                     return sendExternalActionHttpError(reply, 'credential_scope_denied', body.data.envelope.requestId);
                 }
             }
@@ -543,7 +540,7 @@ export function registerExternalActionRoutes(
             }
             try {
                 const { authority: _authority, ...provenance } = principal;
-                const authorization = await auth.mintExternalActionExecutionAuthorization({
+                const mintInput = {
                     serverIdentityId: homeId,
                     ...provenance,
                     machineId: body.data.machineId,
@@ -560,7 +557,13 @@ export function registerExternalActionRoutes(
                     ...(body.data.sessionActionOrigin ? { sessionActionOrigin: body.data.sessionActionOrigin,
                         sessionActionSource: body.data.sessionActionSource } : {}),
                     ...(body.data.workflowActionOrigin ? { workflowActionOrigin: body.data.workflowActionOrigin } : {}),
-                }, { input: body.data.envelope.v === 1 ? body.data.envelope.input : body.data.envelope.sessionSpawnAdmission,
+                };
+                // Keep the actual signed credential discriminant correlated with its binding branch.
+                const authorization = await auth.mintExternalActionExecutionAuthorization('authentication' in mintInput
+                    ? mintInput.authentication.kind === 'account'
+                        ? { ...mintInput, authentication: mintInput.authentication }
+                        : { ...mintInput, authentication: mintInput.authentication }
+                    : mintInput, { input: body.data.envelope.v === 1 ? body.data.envelope.input : body.data.envelope.sessionSpawnAdmission,
                     resolveCurrentSessionMachine: app.resolveCurrentSessionMachine });
                 const managedFiniteWake = Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, authorization.binding.actionId)
                     ? await inTx(tx => readCurrentManagedFiniteWakeCustodyInTx(tx, { actionOrigin: authorization })) : null;
@@ -660,10 +663,6 @@ export function registerExternalActionRoutes(
                 principal = await readInstalledSessionRequestPrincipal(app, actionId.data, wrapped.data, principal);
             }
             if (!principal) return sendExternalActionHttpError(reply, 'invalid_token');
-            if ('authentication' in principal && principal.authentication.kind === 'terminal'
-                && ManagedMachineActionIdV1Schema.safeParse(actionId.data).success && !admittedRoot) {
-                return sendExternalActionHttpError(reply, 'invalid_token');
-            }
             const envelope = ExternalActionRequestEnvelopeSchema.safeParse(wrapped.success && (admittedRoot || continuation || wrapped.data.sessionActionOrigin)
                 ? wrapped.data.envelope : request.body);
             if (!envelope.success) {

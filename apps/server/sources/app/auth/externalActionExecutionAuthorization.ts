@@ -92,6 +92,8 @@ export function isOriginalAccountExecutionAction(actionId: string): boolean {
 export function isOriginalTerminalExecutionAction(actionId: string,
     origin?: Pick<ExternalActionExecutionAuthorizationBindingV1, 'sessionActionOrigin' | 'sessionActionSource' | 'workflowActionOrigin'>): boolean {
     return Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId)
+        || ManagedMachineActionIdV1Schema.safeParse(actionId).success
+            && resolveCredentialActionAdmissionV1({ spec: getActionSpec(actionId), authority: 'account_automation', grant: null }).ok
         || (actionId === 'session.spawn_new' || isSettingsDeclarationActionIdV1(actionId))
             && !origin?.sessionActionOrigin && !origin?.sessionActionSource
             && !origin?.workflowActionOrigin
@@ -733,7 +735,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         ? PublicActionIdSchema.safeParse(readExternalActionCredentialActionId(verified.binding)) : effect;
     if (!effect.success || !credentialAction.success || !resolveCredentialActionAdmissionV1({
         spec: getActionSpec(credentialAction.data),
-        authority: verified.principal.authority, ...('grant' in verified.binding ? { grant: verified.binding.grant } : {}) }).ok) return null;
+        authority: verified.principal.authority, grant: 'grant' in verified.binding ? verified.binding.grant : null }).ok) return null;
     return managedGuestActivity ? { ...verified, managedGuestActivity } : verified;
 }
 
@@ -806,7 +808,7 @@ async function readCurrentWorkspaceSyncSourceAuthorization(binding: ExternalActi
     if (!principal || narrowCredentialAuthority(principal.authority, context.callerAuthority) !== context.callerAuthority
         || !await hasCurrentExecutionMachineAdmission(binding)
         || !resolveCredentialActionAdmissionV1({ spec: getActionSpec(action.data), authority: context.callerAuthority,
-            ...('grant' in binding ? { grant: binding.grant } : {}) }).ok) return null;
+            grant: 'grant' in binding ? binding.grant : null }).ok) return null;
     if (binding.sessionActionOrigin && ((context.callerPermissionMode != null
         && context.callerPermissionMode !== binding.sessionActionOrigin.callerPermissionMode)
         || (context.causalPermissionAuthority != null
@@ -1099,7 +1101,7 @@ export async function verifyExternalActionMachineRpcExecution(
     if (!credentialAction.success || !await readCurrentExternalActionPrincipal(binding, db)
         || !await hasCurrentExecutionMachineAdmission(binding)
         || !resolveCredentialActionAdmissionV1({ spec: getActionSpec(credentialAction.data),
-            authority: principal.authority, ...('grant' in binding ? { grant: binding.grant } : {}) }).ok) return null;
+            authority: principal.authority, grant: 'grant' in binding ? binding.grant : null }).ok) return null;
     // Run the full derived guest scope last, after all other asynchronous
     // credential/source/controller work, including at the forwarding preIO guard.
     if (managedGuestActivity && (!guestMachineId || !guestTarget?.success && !encryptedGuestParams
@@ -1125,6 +1127,6 @@ export async function verifyExternalActionExecutionAuthorizationCurrentness(
         ? PublicActionIdSchema.safeParse(readExternalActionCredentialActionId(verified.binding)) : effect;
     if (!effect.success || !credentialAction.success || !resolveCredentialActionAdmissionV1({
         spec: getActionSpec(credentialAction.data),
-        authority: verified.principal.authority, ...('grant' in verified.binding ? { grant: verified.binding.grant } : {}) }).ok) return null;
+        authority: verified.principal.authority, grant: 'grant' in verified.binding ? verified.binding.grant : null }).ok) return null;
     return verified;
 }
