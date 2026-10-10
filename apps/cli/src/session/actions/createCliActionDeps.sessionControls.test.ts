@@ -1703,6 +1703,7 @@ describe('createCliActionDeps session controls', () => {
       status: 'cancelled',
       sessionId: 'sess_inactive',
     });
+    mocks.callMachineRpc.mockResolvedValue({ ok: false, errorCode: 'session_usage_limit_recovery_control_inactive' });
     await expect(deps.sessionUsageLimitCheckNow?.({ sessionId: 'sess_inactive' })).resolves.toEqual({
       ok: false, status: 'inactive', sessionId: 'sess_inactive',
       errorCode: 'session_usage_limit_recovery_control_inactive',
@@ -2526,4 +2527,30 @@ describe('createCliActionDeps session controls', () => {
       request: input,
     }));
   });
+  it.each([
+    { active: true, machineId: 'machine-local' },
+    { active: false, machineId: 'machine-local' },
+    { active: true, machineId: 'machine-remote' },
+  ])('routes an owned CLI check to its daemon ($active, $machineId)', async ({ active, machineId }) => {
+    const recovery = { v: 1, status: 'waiting', issueFingerprint: 'attempt',
+      runtimeAuthRecoveryAttemptId: 'attempt', armedAtMs: 1, resetAtMs: 2, nextCheckAtMs: 2,
+      attemptCount: 0, maxAttempts: 3, lastProbeError: null, resumePromptMode: 'standard',
+      selectedAuth: { kind: 'profile', serviceId: 'claude-subscription', profileId: 'work' } };
+    mocks.resolveSessionTransportContext.mockResolvedValue({ ok: true, sessionId: 'sess_1',
+      rawSession: { active, machineId, metadata: { machineId,
+        agentRuntimeDescriptorV1: { v: 1, providerId: 'claude' }, sessionUsageLimitRecoveryV1: recovery } },
+      ctx: { encryptionKey: new Uint8Array(32).fill(3), encryptionVariant: 'legacy' }, mode: 'plain' });
+    mocks.callMachineRpc.mockResolvedValue({ ok: true, status: 'waiting', sessionId: 'sess_1' });
+    const deps = createCliActionDeps({ token: 'token', credentials: createCredentials(), sessionId: 'sess_1',
+      ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy' }, mode: 'plain', rawSession: { metadata: {} } });
+    const result = await deps.sessionUsageLimitCheckNow?.({ sessionId: 'sess_1', resumePromptMode: 'custom' });
+    expect(result).toMatchObject({ ok: true, status: 'waiting' });
+    expect(mocks.callMachineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      machineId, method: RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CHECK_NOW,
+      request: { sessionId: 'sess_1', resumePromptMode: 'custom' },
+      authorization: { kind: 'session.write', sessionId: 'sess_1' },
+    }));
+    expect(mocks.callSessionRpc).not.toHaveBeenCalled();
+  });
+
 });

@@ -238,6 +238,48 @@ describe('fake Claude fixture helpers', () => {
     expect(fixturePath.endsWith('fake-claude-code-cli.js')).toBe(true);
   });
 
+  it.each([false, true])('settles the SDK continuation signal wait (signal arrives=%s)', async (releaseSignal) => {
+    await withTempDir({ prefix: 'fake-claude-continuation-' }, async ({ path: dir }) => {
+      const logPath = join(dir, 'claude.jsonl');
+      const signalPath = join(dir, 'accept');
+      // Seed the prior rejection: this process represents the continuation SDK child.
+      await writeFile(logPath, `${JSON.stringify({ type: 'sdk_usage_limit' })}\n`);
+      const child = spawn(process.execPath, [fakeClaudeFixturePath(), '--output-format', 'stream-json', '--input-format', 'stream-json'], {
+        env: {
+          ...process.env,
+          HAPPIER_E2E_FAKE_CLAUDE_LOG: logPath,
+          HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: 'usage-limit-once',
+          HAPPIER_E2E_FAKE_CLAUDE_CONTINUATION_ACCEPT_SIGNAL: signalPath,
+          HAPPIER_E2E_FAKE_CLAUDE_CONTINUATION_ACCEPT_TIMEOUT_MS: '500',
+        },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      let stderr = '';
+      child.stderr.setEncoding('utf8');
+      child.stderr.on('data', (chunk: string) => { stderr += chunk; });
+      let releaseTimer: ReturnType<typeof setTimeout> | undefined;
+      child.stdout.once('data', () => {
+        // A valid signal may arrive well after a short polling interval.
+        if (releaseSignal) releaseTimer = setTimeout(() => { void writeFile(signalPath, 'accept\n'); }, 150);
+      });
+      child.stdin.end(`${JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'Continue' }] } })}\n`);
+      const code = await new Promise<number | null>((resolve, reject) => {
+        let timedOut = false;
+        const guard = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, 2_000);
+        child.once('error', (error) => { clearTimeout(guard); reject(error); });
+        child.once('close', (exitCode) => {
+          clearTimeout(guard);
+          if (timedOut) reject(new Error('Fixture did not settle its configured signal deadline'));
+          else resolve(exitCode);
+        });
+      }).finally(() => { if (releaseTimer) clearTimeout(releaseTimer); });
+      expect(code).toBe(releaseSignal ? 0 : 1);
+      const log = await readFile(logPath, 'utf8');
+      expect(log.includes('sdk_continuation_accepted')).toBe(releaseSignal);
+      if (!releaseSignal) expect(stderr).toContain('continuation_accept_signal_timeout');
+    });
+  });
+
   it('can correlate SDK responses to prompts across separate provider processes', async () => {
     async function runEchoProcess(prompt: string): Promise<string[]> {
       const child = spawn(

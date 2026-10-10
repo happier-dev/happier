@@ -2,12 +2,13 @@ import {
   ConnectedServiceBindingsV1Schema,
   SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
   SessionUsageLimitRecoveryV1Schema,
-  type SessionRuntimeIssueV1,
   type SessionUsageLimitRecoveryV1,
 } from '@happier-dev/protocol';
 import type { Credentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import type { sendSessionMessage } from '@/session/services/sendSessionMessage';
+import { buildUsageLimitIssueFingerprint } from '@/session/usageLimitRecoveryControls/buildUsageLimitIssueFingerprint';
+import { hasSameUsageLimitRecoveryIdentity } from '@/session/usageLimitRecoveryControls/mergeUsageLimitRecoveryIntent';
 import { readLatestUsageLimitFailureIssue } from '@/session/usageLimitRecoveryControls/readLatestUsageLimitFailureIssue';
 import { resolveUsageLimitRecoverySelectedAuthFromIssue } from '@/session/usageLimitRecoveryControls/usageLimitRecoverySelectedAuth';
 
@@ -45,11 +46,6 @@ function matchesCurrentBinding(metadata: Record<string, unknown>, auth: SessionU
       && (binding.profileId === undefined || binding.profileId === auth.profileId);
 }
 
-function issueFingerprint(issue: SessionRuntimeIssueV1): string {
-  return ['usage-limit', issue.provider ?? 'unknown-provider', issue.providerTurnId ?? 'unknown-turn',
-    String(issue.occurredAt), String(issue.usageLimit?.resetAtMs ?? 'no-reset')].join(':');
-}
-
 function isTerminal(recovery: SessionUsageLimitRecoveryV1): boolean {
   // Unowned backoff controls project ready as paused; daemon-owned paused means recovered.
   return recovery.status === 'cancelled' || recovery.status === 'exhausted'
@@ -75,9 +71,7 @@ export async function continueSessionAfterUsageLimitReset(input: Readonly<{
   if (currentValue !== undefined && !currentParsed.success) return { status: 'superseded' };
   if (currentParsed.success) {
     const current = currentParsed.data;
-    if (isTerminal(current) || current.issueFingerprint !== recovery.issueFingerprint
-      || current.armedAtMs !== recovery.armedAtMs || current.resetAtMs !== recovery.resetAtMs
-      || current.runtimeAuthRecoveryAttemptId !== recovery.runtimeAuthRecoveryAttemptId
+    if (isTerminal(current) || !hasSameUsageLimitRecoveryIdentity(current, recovery) || current.resetAtMs !== recovery.resetAtMs
       || !matchesAuth(current.selectedAuth, recovery.selectedAuth)) return { status: 'superseded' };
     if (current.resumePromptMode === 'off') return { status: 'disabled' };
   }
@@ -92,12 +86,10 @@ export async function continueSessionAfterUsageLimitReset(input: Readonly<{
   const failedAuth = resolveUsageLimitRecoverySelectedAuthFromIssue({ issue, connectedServices: input.metadata.connectedServices ?? null });
   if (!failedAuth || !matchesAuth(failedAuth, recovery.selectedAuth)) return { status: 'superseded' };
 
-  const fingerprint = issueFingerprint(issue);
+  const fingerprint = buildUsageLimitIssueFingerprint(issue);
   const owned = Boolean(recovery.runtimeAuthRecoveryAttemptId);
-  // Runtime-auth arms after receiving the failure. Native controls arm at the issue itself.
-  if (owned ? issue.occurredAt > recovery.armedAtMs : (
-    issue.occurredAt !== recovery.armedAtMs || fingerprint !== recovery.issueFingerprint
-  )) return { status: 'superseded' };
+  // Rearming allocates a new lifecycle epoch; the fingerprint still identifies the failed issue.
+  if (issue.occurredAt > recovery.armedAtMs || (!owned && fingerprint !== recovery.issueFingerprint)) return { status: 'superseded' };
   const interruptedOriginId = issue.providerTurnId
     ?? input.rawSession.latestTurnId
     ?? (fingerprint === recovery.issueFingerprint ? fingerprint : null);
@@ -107,7 +99,6 @@ export async function continueSessionAfterUsageLimitReset(input: Readonly<{
   const dueAtMs = owned ? recovery.resetAtMs : recovery.nextCheckAtMs ?? recovery.resetAtMs
     ?? (recovery.status === 'paused' ? input.nowMs : null);
   if (dueAtMs === null || input.nowMs < dueAtMs) return { status: 'not_ready' };
-  if (!(await input.isCurrent())) return { status: 'superseded' };
   const dispatcher = createConnectedServiceContinuationMessageDispatcher({
     credentials: input.credentials, sendMessage: input.sendMessage,
   });
@@ -123,14 +114,14 @@ export async function continueSessionAfterUsageLimitReset(input: Readonly<{
       if (!(await input.isCurrent()) || rawSession.latestTurnStatus !== 'failed' || rawSession.archivedAt != null || !metadata
         || rawSession.latestTurnId !== input.rawSession.latestTurnId) return false;
       const freshIssue = readLatestUsageLimitFailureIssue(rawSession);
-      if (!freshIssue || issueFingerprint(freshIssue) !== fingerprint || !matchesCurrentBinding(metadata, recovery.selectedAuth)) return false;
+      if (!freshIssue || buildUsageLimitIssueFingerprint(freshIssue) !== fingerprint || !matchesCurrentBinding(metadata, recovery.selectedAuth)) return false;
       const source = issue.usageLimit?.connectedService;
       const freshSource = freshIssue.usageLimit?.connectedService;
       if (source?.serviceId !== freshSource?.serviceId || source?.profileId !== freshSource?.profileId
         || source?.groupId !== freshSource?.groupId) return false;
       const current = SessionUsageLimitRecoveryV1Schema.safeParse(metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]);
       return (!current.success && metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY] === undefined)
-        || (current.success && !isTerminal(current.data) && current.data.resumePromptMode !== 'off'
+        || (current.success && !isTerminal(current.data) && (owned || current.data.resumePromptMode !== 'off')
         && current.data.armedAtMs <= recovery.armedAtMs
         && (!current.data.runtimeAuthRecoveryAttemptId || current.data.runtimeAuthRecoveryAttemptId === recovery.runtimeAuthRecoveryAttemptId));
     },

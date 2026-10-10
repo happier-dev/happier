@@ -310,7 +310,8 @@ export async function createConnectedServiceProfile(params: Readonly<{
   tokenType?: string | null;
   providerAccountId?: string;
   expiresAt?: number;
-}>): Promise<void> {
+  allowProviderIdentityChange?: boolean;
+}>): Promise<string> {
   const now = Date.now();
   const providerAccountId = params.providerAccountId ?? `acct-${params.profileId}`;
   const expiresAt = params.expiresAt ?? now + 60 * 60_000;
@@ -340,7 +341,7 @@ export async function createConnectedServiceProfile(params: Readonly<{
     randomBytes: (length) => randomBytes(length),
   });
 
-  const response = await fetchJson<{ success?: boolean }>(
+  const response = await fetchJson<{ success?: boolean; credentialRevision?: string }>(
     `${params.fixture.serverBaseUrl}/v2/connect/${params.serviceId}/profiles/${params.profileId}/credential`,
     {
       method: 'POST',
@@ -350,6 +351,7 @@ export async function createConnectedServiceProfile(params: Readonly<{
       },
       body: JSON.stringify({
         sealed: { format: 'account_scoped_v1', ciphertext },
+        ...(params.allowProviderIdentityChange ? { reconnect: { allowProviderIdentityChange: true } } : {}),
         metadata: {
           kind: 'oauth',
           providerEmail: params.providerEmail,
@@ -360,9 +362,10 @@ export async function createConnectedServiceProfile(params: Readonly<{
       timeoutMs: 20_000,
     },
   );
-  if (response.status !== 200 || response.data?.success !== true) {
+  if (response.status !== 200 || response.data?.success !== true || typeof response.data.credentialRevision !== 'string') {
     throw new Error(`Failed to seed connected service profile ${params.profileId} (status=${response.status})`);
   }
+  return response.data.credentialRevision;
 }
 
 export async function createConnectedServiceAuthGroup(params: Readonly<{
@@ -490,7 +493,7 @@ export async function patchConnectedServiceAuthGroupMemberExhaustion(params: Rea
   return group;
 }
 
-function recoveryIntentPath(fixture: Pick<StartedConnectedServicesCodexDaemonFixture, 'daemonHomeDir' | 'serverId'>): string {
+export function recoveryIntentPath(fixture: Pick<StartedConnectedServicesCodexDaemonFixture, 'daemonHomeDir' | 'serverId'>): string {
   return resolve(
     join(
       fixture.daemonHomeDir,

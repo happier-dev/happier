@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 
-import { isCurrentUsageLimitRecoveryCredential } from './isCurrentUsageLimitRecoveryCredential';
+import { isCurrentUsageLimitRecoveryCredential, isCurrentUsageLimitRecoverySource } from './isCurrentUsageLimitRecoveryCredential';
 import type { ConnectedServiceRuntimeFailureClassification } from './types';
 
 const classification: ConnectedServiceRuntimeFailureClassification = {
@@ -36,4 +36,16 @@ describe('isCurrentUsageLimitRecoveryCredential', () => {
   it.each([{ groupId: 'group' }, { kind: 'auth_expired' as const }])('leaves other recovery policies with their owners (%j)', (patch) => {
     expect(isCurrentUsageLimitRecoveryCredential({ classification: { ...classification, ...patch }, record, credentialRevision: 'csr_original' })).toBe(false);
   });
+  it.each(['credential', 'live authorization'])('rejects cancellation during asynchronous %s qualification', async (phase) => {
+    let current = true;
+    expect(await isCurrentUsageLimitRecoverySource({ classification,
+      isCurrentRecovery: () => current,
+      resolveCredential: async () => {
+        if (phase === 'credential') current = false;
+        return { record, credentialRevision: 'csr_refreshed' };
+      },
+      authorizeLiveSource: async () => { current = false; return true; },
+    })).toBe(false);
+  });
+
 });

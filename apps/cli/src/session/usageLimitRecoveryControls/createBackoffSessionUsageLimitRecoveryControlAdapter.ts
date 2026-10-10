@@ -1,3 +1,4 @@
+import { buildUsageLimitIssueFingerprint } from '@/session/usageLimitRecoveryControls/buildUsageLimitIssueFingerprint';
 import {
   SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
   SessionUsageLimitRecoveryV1Schema,
@@ -89,21 +90,6 @@ function readLatestUsageLimitIssue(input: Readonly<{
   return issue;
 }
 
-function buildUsageLimitIssueFingerprint(input: Readonly<{
-  issue: SessionRuntimeIssueV1;
-  providerId: string;
-}>): string {
-  return [
-    'usage-limit',
-    input.issue.provider ?? input.providerId,
-    input.issue.providerTurnId ?? 'unknown-turn',
-    String(input.issue.occurredAt),
-    input.issue.usageLimit?.resetAtMs === null || input.issue.usageLimit?.resetAtMs === undefined
-      ? 'no-reset'
-      : String(input.issue.usageLimit.resetAtMs),
-  ].join(':');
-}
-
 function resolveFallbackNextCheckAtMs(params: Readonly<{
   intent: Pick<SessionUsageLimitRecoveryV1, 'armedAtMs'>;
   issue: SessionRuntimeIssueV1 | null;
@@ -160,10 +146,7 @@ function buildRecoveryIntentFromLatestUsageLimitIssue(params: Readonly<{
   const intent: SessionUsageLimitRecoveryV1 = {
     v: 1,
     status: 'waiting',
-    issueFingerprint: buildUsageLimitIssueFingerprint({
-      issue: params.issue,
-      providerId: params.providerId,
-    }),
+    issueFingerprint: buildUsageLimitIssueFingerprint(params.issue, params.providerId),
     armedAtMs: params.issue.occurredAt,
     resetAtMs: timing.resetAtMs,
     nextCheckAtMs: timing.nextCheckAtMs,

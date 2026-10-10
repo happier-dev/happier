@@ -849,8 +849,16 @@ async function runSdkStreamUntilEof() {
         continue;
       }
       const acceptSignal = process.env.HAPPIER_E2E_FAKE_CLAUDE_CONTINUATION_ACCEPT_SIGNAL;
+      // The recipe owns this phase's budget; do not leave a failed assertion's SDK child waiting forever.
+      const acceptTimeoutMs = Number(process.env.HAPPIER_E2E_FAKE_CLAUDE_CONTINUATION_ACCEPT_TIMEOUT_MS);
+      if (acceptSignal && (!Number.isFinite(acceptTimeoutMs) || acceptTimeoutMs <= 0)) {
+        throw new Error('continuation_accept_signal_timeout_not_configured');
+      }
+      const acceptDeadline = Date.now() + acceptTimeoutMs;
       while (acceptSignal && !fs.existsSync(acceptSignal)) {
-        await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+        const remainingMs = acceptDeadline - Date.now();
+        if (remainingMs <= 0) throw new Error(`continuation_accept_signal_timeout:${acceptTimeoutMs}`);
+        await new Promise((resolveWait) => setTimeout(resolveWait, Math.min(20, remainingMs)));
       }
       safeAppendJsonl(logPath, { type: 'sdk_continuation_accepted', invocationId, sessionId, ts: Date.now() });
     }

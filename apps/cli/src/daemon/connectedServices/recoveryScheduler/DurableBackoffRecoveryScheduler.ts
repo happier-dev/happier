@@ -167,12 +167,17 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
     intent: TIntent;
     expectedCurrent: (current: TIntent) => boolean;
     merge?: (current: TIntent, next: TIntent) => TIntent;
+    requireUnclaimed?: boolean;
   }>): Promise<DurableConditionalUpsertResult<TIntent>> {
+    if (input.requireUnclaimed && this.wakePromisesByRecoveryKey.has(input.recoveryKey)) {
+      return { status: 'stale', intent: this.readByKeyPassive(input.recoveryKey) };
+    }
     this.sessionIdByRecoveryKey.set(input.recoveryKey, input.sessionId);
     if (this.deps.store?.transact) {
       const settlement = await this.deps.store.transact<DurableConditionalUpsertResult<TIntent>>(input.recoveryKey, (current) => {
         const currentIntent = current.intent === null ? null : this.deps.normalizeIntent(current.intent);
-        if (!currentIntent || !input.expectedCurrent(currentIntent)) {
+        if (!currentIntent || !input.expectedCurrent(currentIntent)
+          || (input.requireUnclaimed && current.effectClaimToken !== null)) {
           return {
             intent: currentIntent,
             effectClaimToken: current.effectClaimToken,

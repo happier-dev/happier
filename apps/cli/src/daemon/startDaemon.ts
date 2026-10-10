@@ -23,7 +23,7 @@ import {
 } from './sessions/pendingQueueWake';
 import { publishSessionPendingQueueWake } from './sessions/publishSessionPendingQueueWake';
 import { checkRuntimeAuthUsageLimitRecovery } from './connectedServices/runtimeAuth/checkRuntimeAuthUsageLimitRecovery';
-import { isCurrentUsageLimitRecoveryCredential } from './connectedServices/runtimeAuth/isCurrentUsageLimitRecoveryCredential';
+import { isCurrentUsageLimitRecoverySource } from './connectedServices/runtimeAuth/isCurrentUsageLimitRecoveryCredential';
 import { continueSessionAfterUsageLimitReset } from './connectedServices/continuation/continueSessionAfterUsageLimitReset';
 import { buildRuntimeAuthUsageLimitRecoveryMetadataUpdater } from './connectedServices/runtimeAuth/projection/connectedServiceRuntimeAuthRecoveryUsageLimitMetadata';
 import { SessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol';
@@ -6696,31 +6696,38 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             const recovery = SessionUsageLimitRecoveryV1Schema.safeParse(metadata.sessionUsageLimitRecoveryV1);
             if (!recovery.success) return { status: 'recovery_superseded', reason: 'usage_limit_recovery_source_unavailable' };
             const recoveryKey = buildRuntimeAuthRecoveryKey(intent);
-            const isCurrent = async () => {
+            const isCurrentRecovery = () => {
               const current = runtimeAuthRecoveryScheduler?.readByKey(recoveryKey);
               if (!current || current.attemptId !== intent.attemptId
                 || current.status === 'cancelled' || current.status === 'exhausted' || current.status === 'recovered'
-                || current.classification.resetsAtMs !== intent.classification.resetsAtMs) return false;
+                || current.classification.resetsAtMs !== intent.classification.resetsAtMs
+                || (current.resumePromptMode ?? 'standard') !== (intent.resumePromptMode ?? 'standard')) return false;
+              return true;
+            };
+            const isCurrent = async () => {
               const binding = connectedServiceRuntimeRegistry.getBySessionId(intent.sessionId)
                 ?.activeBindings.find((candidate) => candidate.serviceId === intent.serviceId);
               if (binding && (binding.profileId !== intent.profileId || binding.groupId !== intent.groupId)) return false;
-              if (!connectedServiceRuntimeRegistry.getBySessionId(intent.sessionId)
-                && !getCurrentChildren().some((child) => child.happySessionId === intent.sessionId)) {
-                const serviceId = ConnectedServiceIdSchema.parse(intent.serviceId);
-                if (!intent.profileId) return false;
-                const resolved = await resolveConnectedServiceCredentialsWithRevisions({
-                  credentials, api, bindings: [{ serviceId, profileId: intent.profileId }],
-                });
-                const credential = resolved.get(serviceId);
-                return Boolean(credential && isCurrentUsageLimitRecoveryCredential({
-                  classification: intent.classification, record: credential.record,
-                  credentialRevision: credential.revisionSemantics === 'revisioned' ? credential.credentialRevision : null,
-                }));
-              }
-              const authorization = await authorizeRuntimeAuthFailureForSession({
-                sessionId: intent.sessionId, classification: intent.classification, recoveryInvocationSource: 'scheduler_retry',
+              const hasLiveRunner = Boolean(connectedServiceRuntimeRegistry.getBySessionId(intent.sessionId)
+                || getCurrentChildren().some((child) => child.happySessionId === intent.sessionId));
+              return await isCurrentUsageLimitRecoverySource({
+                classification: intent.classification, isCurrentRecovery,
+                resolveCredential: async () => {
+                  if (!intent.profileId) return null;
+                  const serviceId = ConnectedServiceIdSchema.parse(intent.serviceId);
+                  const credential = (await resolveConnectedServiceCredentialsWithRevisions({
+                    credentials, api, bindings: [{ serviceId, profileId: intent.profileId }],
+                  })).get(serviceId);
+                  return credential ? { record: credential.record,
+                    credentialRevision: credential.revisionSemantics === 'revisioned' ? credential.credentialRevision : null } : null;
+                },
+                ...(hasLiveRunner ? { authorizeLiveSource: async () => {
+                  const authorization = await authorizeRuntimeAuthFailureForSession({
+                    sessionId: intent.sessionId, classification: intent.classification, recoveryInvocationSource: 'scheduler_retry',
+                  });
+                  return authorization.status === 'authorized' || authorization.status === 'current_credential_revision';
+                } } : {}),
               });
-              return authorization.status === 'authorized' || authorization.status === 'current_credential_revision';
             };
             const spawnOptions = buildInactiveUsageLimitResumeSpawnOptions({
               sessionId: intent.sessionId, fallbackMachineId: machineId, rawSession, metadata,

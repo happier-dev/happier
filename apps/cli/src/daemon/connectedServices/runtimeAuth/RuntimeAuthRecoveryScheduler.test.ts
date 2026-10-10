@@ -52,6 +52,38 @@ function createDeferred<T>(): {
 }
 
 describe('RuntimeAuthRecoveryScheduler', () => {
+  it.each(['checking', 'waiting'] as const)('coalesces manual mode changes after an existing claim (%s)', async (status) => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-claimed-mode-'));
+    const store = createRecoveryIntentFileStore<RuntimeAuthRecoveryIntent>(join(dir, 'recovery.json'));
+    const admitted = createDeferred<void>();
+    const finish = createDeferred<void>();
+    const continueAfterUsageLimitReset = vi.fn(async () => {
+      admitted.resolve(); await finish.promise;
+      return { ok: true, status: 'continuation_enqueued' };
+    });
+    const deps = { nowMs: () => 1000, recover: async () => ({}), continueAfterUsageLimitReset, durableStore: store };
+    const scheduler = new RuntimeAuthRecoveryScheduler(deps);
+    const otherOwner = new RuntimeAuthRecoveryScheduler(deps);
+    let timer: Promise<unknown> | null = null;
+    try {
+      const source = classificationFor({ groupId: null, resetsAtMs: 1000 });
+      const begun = await scheduler.beginClassifiedFailure({ sessionId: 'mode-race', switchesThisTurn: 0,
+        resumePromptMode: 'standard', classification: source });
+      if (!begun.attemptId) throw new Error('Expected armed attempt');
+      timer = scheduler.wake({ sessionId: 'mode-race', reason: 'timer' });
+      await admitted.promise;
+      const key = buildRuntimeAuthRecoveryKey({ sessionId: 'mode-race', ...source });
+      // A new report can project waiting while the previous effect still owns its claim.
+      await store.transact!(key, (current) => ({ ...current, intent: { ...current.intent!, status }, result: undefined }));
+      await otherOwner.wake({ sessionId: 'mode-race', reason: 'manual',
+        attemptId: begun.attemptId, resumePromptMode: 'custom' });
+      expect(store.read(key)).toMatchObject({ resumePromptMode: 'standard' });
+      finish.resolve(); await timer;
+      expect(store.read(key)).toMatchObject({ resumePromptMode: 'standard', status: 'resumed_awaiting_proof' });
+      expect(continueAfterUsageLimitReset).toHaveBeenCalledOnce();
+    } finally { finish.resolve(); await timer; scheduler.dispose(); otherOwner.dispose(); await rm(dir, { recursive: true, force: true }); }
+  });
+
   it.each([0, 27])('continues a profile limit at reset plus %i ms and waits for provider proof', async (offset) => {
     let nowMs = 1_000;
     const pending: string[] = [];

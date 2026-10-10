@@ -8,6 +8,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import type { Credentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+import { checkRuntimeAuthUsageLimitRecovery } from '@/daemon/connectedServices/runtimeAuth/checkRuntimeAuthUsageLimitRecovery';
 import { RuntimeAuthRecoveryScheduler } from '@/daemon/connectedServices/runtimeAuth/RuntimeAuthRecoveryScheduler';
 import { TemporaryThrottleRecoveryScheduler } from '@/daemon/connectedServices/temporaryThrottle/TemporaryThrottleRecoveryScheduler';
 
@@ -1236,4 +1237,38 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
     });
     expect(checkNow).not.toHaveBeenCalled();
   });
+  it.each([
+    { stored: 'standard', requested: 'off' },
+    { stored: 'standard', requested: 'custom' },
+    { stored: 'off', requested: 'custom' },
+  ] as const)('passes explicit $requested over stored $stored to the exact owner', async ({ stored, requested }) => {
+    let nowMs = 1000;
+    const observedModes: unknown[] = [];
+    const scheduler = new RuntimeAuthRecoveryScheduler({ nowMs: () => nowMs,
+      recover: async () => ({ status: 'recovery_action_required' }),
+      continueAfterUsageLimitReset: async (intent) => {
+        observedModes.push(intent.resumePromptMode);
+        return { ok: true, status: 'continuation_enqueued' };
+      },
+    });
+    try {
+      const begun = await scheduler.beginClassifiedFailure({ sessionId: 'sess_1', switchesThisTurn: 0,
+        resumePromptMode: stored, classification: { kind: 'usage_limit', serviceId: 'claude-subscription',
+        profileId: 'work', groupId: null, resetsAtMs: 2000, planType: null, rateLimits: null, source: 'structured_provider_error' } });
+      nowMs = 2000;
+      await routeSessionUsageLimitRecoveryCheckNow({ token: 'token', credentials: createCredentials(),
+        sessionId: 'sess_1', rawSession: createRawSession(), metadata: createMetadata({ sessionUsageLimitRecoveryV1: {
+          v: 1, status: 'waiting', issueFingerprint: begun.attemptId, runtimeAuthRecoveryAttemptId: begun.attemptId,
+          armedAtMs: 1000, resetAtMs: 2000, nextCheckAtMs: 2000, attemptCount: 0, maxAttempts: 5,
+          lastProbeError: null, resumePromptMode: stored,
+          selectedAuth: { kind: 'profile', serviceId: 'claude-subscription', profileId: 'work' },
+        } }), currentMachineId: 'machine-local', ctx, mode: 'plain',
+        request: { sessionId: 'sess_1', resumePromptMode: requested }, callLiveSessionRpc: vi.fn(),
+        checkRuntimeAuthUsageLimitRecovery: async (input) => checkRuntimeAuthUsageLimitRecovery({ scheduler, ...input }),
+      });
+      expect(observedModes).toEqual([requested]);
+      expect(scheduler.readForSession('sess_1')[0]?.resumePromptMode).toBe(requested);
+    } finally { scheduler.dispose(); }
+  });
+
 });

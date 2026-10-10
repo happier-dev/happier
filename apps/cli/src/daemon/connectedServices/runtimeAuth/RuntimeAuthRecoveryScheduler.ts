@@ -1734,7 +1734,7 @@ export class RuntimeAuthRecoveryScheduler {
     this.scheduler.dispose();
   }
 
-  async wake(input: Readonly<{ sessionId: string; reason: 'timer' | 'manual'; attemptId?: string }>): Promise<Readonly<{ status: string }>> {
+  async wake(input: Readonly<{ sessionId: string; reason: 'timer' | 'manual'; attemptId?: string; resumePromptMode?: 'standard' | 'off' | 'custom' }>): Promise<Readonly<{ status: string }>> {
     const intents = this.readForSession(input.sessionId).filter((intent) => (
       isPendingRuntimeAuthRecoveryStatus(intent.status)
       && (input.attemptId === undefined || intent.attemptId === input.attemptId)
@@ -1744,6 +1744,7 @@ export class RuntimeAuthRecoveryScheduler {
       return await this.wakeByKey({
         recoveryKey: buildRecoveryKeyForIntent(intents[0]!),
         reason: input.reason,
+        resumePromptMode: input.resumePromptMode,
         ...(input.attemptId !== undefined ? { attemptId: input.attemptId } : {}),
       });
     }
@@ -1752,6 +1753,7 @@ export class RuntimeAuthRecoveryScheduler {
       results.push(await this.wakeByKey({
         recoveryKey: buildRecoveryKeyForIntent(intent),
         reason: input.reason,
+        resumePromptMode: input.resumePromptMode,
         ...(input.attemptId !== undefined ? { attemptId: input.attemptId } : {}),
       }));
     }
@@ -1763,7 +1765,21 @@ export class RuntimeAuthRecoveryScheduler {
     return { status: 'inactive' };
   }
 
-  async wakeByKey(input: Readonly<{ recoveryKey: string; reason: 'timer' | 'manual'; attemptId?: string }>): Promise<Readonly<{ status: string }>> {
+  async wakeByKey(input: Readonly<{ recoveryKey: string; reason: 'timer' | 'manual'; attemptId?: string; resumePromptMode?: 'standard' | 'off' | 'custom' }>): Promise<Readonly<{ status: string }>> {
+    if (input.resumePromptMode !== undefined && input.attemptId !== undefined) {
+      const current = this.readByKeyPassive(input.recoveryKey);
+      if (!current) return { status: 'inactive' };
+      // A claimed continuation keeps its selected prompt; manual checks coalesce with that turn.
+      if (current.status === 'waiting') {
+        await this.scheduler.upsertConditionallyByKey({
+          sessionId: current.sessionId, recoveryKey: input.recoveryKey,
+          intent: { ...current, resumePromptMode: input.resumePromptMode },
+          expectedCurrent: (intent) => intent.attemptId === input.attemptId && intent.status === 'waiting',
+          merge: (intent, next) => ({ ...intent, resumePromptMode: next.resumePromptMode }),
+          requireUnclaimed: true,
+        });
+      }
+    }
     return await this.scheduler.wakeByKey({
       recoveryKey: input.recoveryKey,
       reason: input.reason,

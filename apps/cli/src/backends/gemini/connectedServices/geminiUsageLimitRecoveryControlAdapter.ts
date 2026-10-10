@@ -1,3 +1,4 @@
+import { buildUsageLimitIssueFingerprint } from '@/session/usageLimitRecoveryControls/buildUsageLimitIssueFingerprint';
 import {
   ConnectedServiceQuotaSnapshotV1Schema,
   SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
@@ -49,20 +50,6 @@ function readRecoveryIntent(metadata: MetadataRecord): SessionUsageLimitRecovery
   return parsed.success ? parsed.data : null;
 }
 
-function buildUsageLimitIssueFingerprint(
-  issue: NonNullable<ReturnType<typeof SessionRuntimeIssueV1Schema.safeParse>['data']>,
-): string {
-  return [
-    'usage-limit',
-    issue.provider ?? 'gemini',
-    issue.providerTurnId ?? 'unknown-turn',
-    String(issue.occurredAt),
-    issue.usageLimit?.resetAtMs === null || issue.usageLimit?.resetAtMs === undefined
-      ? 'no-reset'
-      : String(issue.usageLimit.resetAtMs),
-  ].join(':');
-}
-
 function buildRecoveryIntentFromLatestUsageLimitIssue(
   params: SessionUsageLimitRecoveryControlAdapterParams,
 ): SessionUsageLimitRecoveryV1 | null {
@@ -93,7 +80,7 @@ function buildRecoveryIntentFromLatestUsageLimitIssue(
   return {
     v: 1,
     status: 'waiting',
-    issueFingerprint: buildUsageLimitIssueFingerprint(issueParsed.data),
+    issueFingerprint: buildUsageLimitIssueFingerprint(issueParsed.data, 'gemini'),
     armedAtMs: issueParsed.data.occurredAt,
     resetAtMs: timing.resetAtMs,
     nextCheckAtMs: timing.nextCheckAtMs,

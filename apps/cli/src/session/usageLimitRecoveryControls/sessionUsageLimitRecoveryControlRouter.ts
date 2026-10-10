@@ -1,3 +1,4 @@
+import { buildUsageLimitIssueFingerprint } from '@/session/usageLimitRecoveryControls/buildUsageLimitIssueFingerprint';
 import {
   inferAgentIdFromSessionMetadata,
   resolveAgentIdFromFlavor,
@@ -56,7 +57,7 @@ type RouteSessionUsageLimitRecoveryControlParams = Readonly<{
   retryTemporaryThrottleNow?: (input: Readonly<{
     sessionId: string;
   }>) => Promise<unknown> | unknown;
-  checkRuntimeAuthUsageLimitRecovery?: (input: Readonly<{ sessionId: string; attemptId: string }>) => Promise<unknown>;
+  checkRuntimeAuthUsageLimitRecovery?: (input: Readonly<{ sessionId: string; attemptId: string; resumePromptMode?: 'standard' | 'off' | 'custom' }>) => Promise<unknown>;
   resumeInactiveSessionWhenReady?: (input: Readonly<{
     sessionId: string;
     rawSession: RawSessionRecord;
@@ -246,20 +247,6 @@ async function persistAdapterMetadataResult(
 function parseRecoveryIntent(metadata: Record<string, unknown>): SessionUsageLimitRecoveryV1 | null {
   const parsed = SessionUsageLimitRecoveryV1Schema.safeParse(metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]);
   return parsed.success ? parsed.data : null;
-}
-
-function buildUsageLimitIssueFingerprint(
-  issue: NonNullable<ReturnType<typeof SessionRuntimeIssueV1Schema.safeParse>['data']>,
-): string {
-  return [
-    'usage-limit',
-    issue.provider ?? 'unknown-provider',
-    issue.providerTurnId ?? 'unknown-turn',
-    String(issue.occurredAt),
-    issue.usageLimit?.resetAtMs === null || issue.usageLimit?.resetAtMs === undefined
-      ? 'no-reset'
-      : String(issue.usageLimit.resetAtMs),
-  ].join(':');
 }
 
 function isRetryableTemporaryThrottleIssue(rawSession: RawSessionRecord): boolean {
@@ -533,6 +520,7 @@ export async function routeSessionUsageLimitRecoveryCheckNow(
     }
     return operationResult(params, await params.checkRuntimeAuthUsageLimitRecovery({
       sessionId: params.sessionId, attemptId: ownedAttemptId,
+      ...(params.request?.resumePromptMode !== undefined ? { resumePromptMode: params.request.resumePromptMode } : {}),
     }));
   }
 

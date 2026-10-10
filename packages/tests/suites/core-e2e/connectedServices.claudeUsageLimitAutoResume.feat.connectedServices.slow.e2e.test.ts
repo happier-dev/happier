@@ -1,22 +1,27 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol';
+import { createRecoveryIntentFileStore } from '@/daemon/connectedServices/recoveryScheduler/recoveryIntentFileStore';
+import { buildRuntimeAuthRecoveryKey } from '@/daemon/connectedServices/runtimeAuth/recoveryKey/runtimeAuthRecoveryKey';
+import type { RuntimeAuthRecoveryIntent } from '@/daemon/connectedServices/runtimeAuth/RuntimeAuthRecoveryScheduler';
 
 import {
   CLAUDE_CODE_E2E_OAUTH_SCOPE,
   CLAUDE_SUBSCRIPTION_SERVICE_ID,
+  asRecord as record,
   createConnectedServiceProfile,
   readRuntimeAuthRecoveryIntent,
+  recoveryIntentPath,
   spawnConnectedClaudeSession,
   startConnectedServiceRecoveryTokenServer,
   startConnectedServicesClaudeDaemon,
   type ConnectedServiceRecoveryTokenServer,
   type StartedConnectedServicesClaudeDaemonFixture,
 } from '../../src/testkit/connectedServicesRecovery';
-import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
+import { fakeClaudeFixturePath, readFakeClaudeLogEvents as providerEvents } from '../../src/testkit/fakeClaude';
 import { decryptLegacyBase64Normalized } from '../../src/testkit/decryptLegacyBase64Normalized';
 import { encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
@@ -25,24 +30,14 @@ import { fetchMessagesSince, fetchSessionV2 } from '../../src/testkit/sessions';
 import { enqueueEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
 import { createUserScopedSocketCollector, type SocketCollector } from '../../src/testkit/socketClient';
 import { listPendingQueueV2 } from '../../src/testkit/pendingQueueV2';
+import { resolveCliTestLaunchSpec } from '../../src/testkit/process/cliLaunchSpec';
+import { runLoggedCommand } from '../../src/testkit/process/spawnProcess';
 import { sleep, waitFor } from '../../src/testkit/timing';
 
 // Real source daemon, relay, durable scheduler, Pending admission and Agent SDK.
 // Only the Claude executable and OAuth service are boundary fixtures.
 const run = createRunDirs({ runLabel: 'core' });
-type RecordValue = Record<string, unknown>;
-function record(value: unknown): RecordValue | null {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as RecordValue : null;
-}
-
-async function providerEvents(logPath: string): Promise<RecordValue[]> {
-  const raw = await readFile(logPath, 'utf8').catch(() => '');
-  return raw.split('\n').flatMap((line) => {
-    if (!line.trim()) return [];
-    const value = record(JSON.parse(line) as unknown);
-    return value ? [value] : [];
-  });
-}
+const providerAcceptTimeoutMs = 60_000;
 
 describe('core e2e: Claude due usage-limit continuation', () => {
   let fixture: StartedConnectedServicesClaudeDaemonFixture | null = null;
@@ -80,7 +75,7 @@ describe('core e2e: Claude due usage-limit continuation', () => {
         claudeUnifiedTerminalEnabled: false,
         usageLimitRecoverySettingsV1: {
           resumePromptMode: options.resumePromptMode ?? 'standard',
-          ...(options.resumePromptMode === 'custom' ? { customResumePrompt: 'Continue the interrupted Claude work carefully.' } : {}),
+          customResumePrompt: 'Continue the interrupted Claude work carefully.',
         },
       },
       serverExtraEnv: { HAPPIER_FEATURE_SESSIONS_USAGE_LIMIT_RECOVERY__ENABLED: '1' },
@@ -89,6 +84,7 @@ describe('core e2e: Claude due usage-limit continuation', () => {
         HAPPIER_E2E_FAKE_CLAUDE_ALLOW_ACCESS_ONLY_NATIVE_OAUTH: '1',
         HAPPIER_E2E_FAKE_CLAUDE_RESET_DELAY_MS: String(options.resetDelayMs ?? 10000),
         HAPPIER_E2E_FAKE_CLAUDE_CONTINUATION_ACCEPT_SIGNAL: resolve(testDir, 'fake-claude.jsonl.accept'),
+        HAPPIER_E2E_FAKE_CLAUDE_CONTINUATION_ACCEPT_TIMEOUT_MS: String(providerAcceptTimeoutMs),
       },
     });
     await createConnectedServiceProfile({
@@ -177,6 +173,34 @@ describe('core e2e: Claude due usage-limit continuation', () => {
     await sleep(Math.max(0, resetAtMs - Date.now()));
   }
 
+  async function checkNowThroughCli(sessionId: string, resumePromptMode: 'custom' | 'off', label: string): Promise<unknown> {
+    const current = fixture!;
+    const testDir = dirname(current.fakeClaudeLogPath);
+    const env = { ...process.env, CI: '1', HAPPIER_HOME_DIR: current.daemonHomeDir,
+      HAPPIER_SERVER_URL: current.serverBaseUrl, HAPPIER_WEBAPP_URL: current.serverBaseUrl,
+      HAPPIER_ACTIVE_SERVER_ID: current.serverId };
+    const launch = await resolveCliTestLaunchSpec({ testDir, env }, { snapshotDir: resolve(testDir, 'cli-source'), preferSourceEntrypoint: true });
+    const stdoutPath = resolve(testDir, `${label}.stdout.log`);
+    await runLoggedCommand({ command: launch.command,
+      args: [...launch.args, 'session', 'actions', 'execute', sessionId, 'session.usageLimit.checkNow',
+        '--input-json', JSON.stringify({ sessionId, resumePromptMode }), '--json'],
+      cwd: launch.cwd ?? testDir, env: { ...env, ...launch.env }, stdoutPath,
+      stderrPath: resolve(testDir, `${label}.stderr.log`), timeoutMs: providerAcceptTimeoutMs,
+    });
+    return JSON.parse(await readFile(stdoutPath, 'utf8')) as unknown;
+  }
+
+  async function deferTimerPastManualObservation(sessionId: string): Promise<void> {
+    const current = fixture!;
+    const store = createRecoveryIntentFileStore<RuntimeAuthRecoveryIntent>(recoveryIntentPath(current));
+    const recoveryKey = buildRuntimeAuthRecoveryKey({ sessionId, serviceId: CLAUDE_SUBSCRIPTION_SERVICE_ID, profileId: 'work', groupId: null });
+    await store.transact!(recoveryKey, ({ intent, effectClaimToken }) => {
+      if (!intent || intent.status !== 'waiting' || effectClaimToken) throw new Error('Expected an unclaimed waiting recovery');
+      // Exercise a due provider reset before the local scheduled wake, using the real durable owner.
+      return { intent: { ...intent, nextRetryAtMs: Date.now() + providerAcceptTimeoutMs }, effectClaimToken, result: undefined };
+    });
+  }
+
   async function expectContinued(sessionId: string): Promise<void> {
     const current = fixture!;
     try {
@@ -193,7 +217,7 @@ describe('core e2e: Claude due usage-limit continuation', () => {
     expect((await providerEvents(current.fakeClaudeLogPath)).filter((event) => event.type === 'sdk_continuation_accepted')).toHaveLength(0);
     await writeFile(`${current.fakeClaudeLogPath}.accept`, 'accept\n', 'utf8');
     await waitFor(async () => (await providerEvents(current.fakeClaudeLogPath)).some((event) => event.type === 'sdk_continuation_accepted'), {
-      timeoutMs: 60_000, context: 'due continuation accepted by Claude SDK boundary',
+      timeoutMs: providerAcceptTimeoutMs, context: 'due continuation accepted by Claude SDK boundary',
     });
     await waitFor(async () => (await readIntent(sessionId))?.status === 'recovered', {
       timeoutMs: 20_000, context: 'provider activity settles recovery',
@@ -246,21 +270,60 @@ describe('core e2e: Claude due usage-limit continuation', () => {
     expect(resumed?.pid).not.toBe(runnerPid);
   }, 360_000);
 
-  it('falls back from the unavailable session method and admits one continuation when manual checks race the timer', async () => {
-    const { sessionId, runnerPid } = await startLimitedSession({ resumePromptMode: 'custom' });
+  it('executes public CLI Check now with an explicit custom override before the deferred timer', async () => {
+    const { sessionId, runnerPid } = await startLimitedSession({ resumePromptMode: 'off' });
     await connectRpc();
     const live = record(await callRpc(sessionId, SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CHECK_NOW, sessionId));
     expect(live?.ok).toBe(false);
     expect(['unsupported_session_runtime_method', 'RPC_METHOD_NOT_AVAILABLE', 'RPC_METHOD_NOT_FOUND']).toContain(live?.errorCode ?? live?.error);
+    await deferTimerPastManualObservation(sessionId);
     await waitPastReset(sessionId);
-    await Promise.all([
-      callRpc(fixture!.machineId, RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CHECK_NOW, sessionId),
-      callRpc(fixture!.machineId, RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CHECK_NOW, sessionId),
+    expect((await readIntent(sessionId))?.status).toBe('waiting');
+    await expectNoSyntheticAdmission(sessionId);
+    const checks = await Promise.all([
+      checkNowThroughCli(sessionId, 'custom', 'manual-first'),
+      checkNowThroughCli(sessionId, 'custom', 'manual-second'),
     ]);
+    for (const check of checks) expect(check).toMatchObject({ ok: true, data: { result: { ok: true, status: 'waiting' } } });
     await expectContinued(sessionId);
     expect((await providerEvents(fixture!.fakeClaudeLogPath)).some((event) => event.type === 'sdk_stdin'
       && typeof event.userTextPreview === 'string'
       && event.userTextPreview.includes('Continue the interrupted Claude work carefully.'))).toBe(true);
+    process.kill(runnerPid, 0);
+  }, 360_000);
+
+  it.each([false, true])('qualifies a reconnected profile against the failed quota account (account replaced=%s)', async (replaceAccount) => {
+    const { sessionId, runnerPid } = await startLimitedSession();
+    const current = fixture!;
+    const failed = await readIntent(sessionId);
+    expect(record(failed?.classification)?.sourceProviderAccountId).toBe('acct-claude-usage-limit');
+    const credentialRevision = await createConnectedServiceProfile({
+      fixture: current, serviceId: CLAUDE_SUBSCRIPTION_SERVICE_ID, profileId: 'work',
+      providerEmail: 'claude-usage-limit@example.test', idToken: null,
+      accessToken: 'refreshed-access', refreshToken: 'refreshed-refresh',
+      scope: CLAUDE_CODE_E2E_OAUTH_SCOPE, tokenType: 'Bearer',
+      providerAccountId: replaceAccount ? 'acct-replacement' : 'acct-claude-usage-limit',
+      expiresAt: Date.now() + 3600_000, allowProviderIdentityChange: replaceAccount,
+    });
+    expect(credentialRevision).not.toBe(record(failed?.classification)?.credentialRevision);
+    if (replaceAccount) {
+      await waitPastReset(sessionId);
+      const daemonLogPath = current.daemon.state.daemonLogPath;
+      if (!daemonLogPath) throw new Error('Missing source-daemon diagnostic log');
+      // A changed source supersedes and removes the obsolete owner so a future failure can re-arm.
+      await waitFor(async () => {
+        if (await readIntent(sessionId)) return false;
+        const log = await readFile(daemonLogPath, 'utf8');
+        return log.includes('"event":"runtime_auth_recovery_superseded"')
+          && log.includes('"reason":"usage_limit_continuation_superseded"');
+      }, {
+        timeoutMs: providerAcceptTimeoutMs, context: 'changed quota account retires the old healthy-runner recovery owner',
+      });
+      expect((await providerEvents(current.fakeClaudeLogPath)).filter((event) => event.type === 'sdk_continuation_accepted')).toHaveLength(0);
+      await expectNoSyntheticAdmission(sessionId);
+    } else {
+      await expectContinued(sessionId);
+    }
     process.kill(runnerPid, 0);
   }, 360_000);
 
