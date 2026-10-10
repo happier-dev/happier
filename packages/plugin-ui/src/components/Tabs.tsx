@@ -32,6 +32,8 @@ export type TabsItemProps = Readonly<{
   badge?: string;
   /** The badge's tone: quiet by default; a count that is itself a state ("2 failing") takes that state's tone. */
   badgeTone?: TextTone;
+  /** A quiet state dot, announced with the tab title. */
+  marker?: string;
   disabled?: boolean;
   /**
    * Whether leaving this tab keeps its panel mounted.

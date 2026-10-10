@@ -13,8 +13,10 @@ import { actionInputOptionValueKey, readActionInputOptionValue } from '@happier-
 
 import { useOptionalHappierUiAccessibility } from '../../environment/context.js';
 import type { HappierUiTheme } from '../../environment/types.js';
+import type { HappierActionInputField } from './actionInputFields.js';
 import { HappierSpinner, iconMatchedSpinnerSize } from '../feedback/Spinner.js';
-import { HAPPIER_BUTTON_DISABLED_OPACITY, resolveHappierButtonChrome } from '../interaction/buttonChrome.js';
+import { HAPPIER_BUTTON_DISABLED_OPACITY, resolveHappierButtonChrome, useHappierButtonMaterial } from '../interaction/buttonChrome.js';
+import { HappierSurfaceGradientLayer } from '../layout/SurfaceGradientLayer.js';
 import { HappierPressable, type HappierPressableStyleState } from '../interaction/Pressable.js';
 import { happierDiscretePressStyle, happierPressTransitionStyle } from '../interaction/pressFeedback.js';
 import type { HappierFocusable, HappierPortableStyle } from '../portableTypes.js';
@@ -22,10 +24,9 @@ import { HappierText } from '../text/Text.js';
 import { useHappierTypeRoleStyle } from '../text/typeRole.js';
 
 /** The part of a typed field a picker needs: which field, and which declared input type it holds. */
-export type HappierInputPickerField = Readonly<{
+export type HappierInputPickerField = Pick<HappierActionInputField, 'inputType'> & Readonly<{
   path: string;
   title: string;
-  inputType?: Readonly<{ pluginId: string; localId: string }>;
 }>;
 
 /** One choice the field already shows, from the host's single options read. */
@@ -119,7 +120,9 @@ export function useHappierInputPicker(input: Readonly<{
   // Authors may replace Form hints without replacing the host port. Compare the
   // bounded public values, not fresh field/option objects created during rendering.
   const contextKey = JSON.stringify([
-    input.field.path, input.field.inputType?.pluginId, input.field.inputType?.localId,
+    input.field.path, input.field.inputType && ('hostType' in input.field.inputType
+      ? ['host', input.field.inputType.hostType, input.field.inputType.hostType === 'usageQuery' ? input.field.inputType.field : undefined]
+      : ['plugin', input.field.inputType.pluginId, input.field.inputType.localId]),
     currentValue === undefined ? null : actionInputOptionValueKey(currentValue),
     input.options?.flatMap(option => {
       const value = readActionInputOptionValue(option.value);
@@ -183,13 +186,14 @@ export function HappierInputPickerButton(props: Readonly<{
   testID?: string;
 }>): ReactElement | null {
   const reducedMotion = useOptionalHappierUiAccessibility()?.reducedMotion ?? false;
+  const material = useHappierButtonMaterial(props.theme);
   const labelStyle = useHappierTypeRoleStyle('label', props.theme);
   const affordance = props.picker.affordance;
   if (affordance === null) return null;
   const disabled = props.disabled === true;
   const { foreground } = resolveHappierButtonChrome({ theme: props.theme, variant: 'secondary', disabled, focused: false });
   const resolveStyle = (state: HappierPressableStyleState): HappierPortableStyle => ({
-    ...resolveHappierButtonChrome({ theme: props.theme, variant: 'secondary', disabled, focused: state.focused }).style,
+    ...resolveHappierButtonChrome({ theme: props.theme, variant: 'secondary', disabled: state.disabled, focused: state.focused, pressed: state.pressed, ...material }).style,
     alignSelf: 'flex-start',
     opacity: state.disabled && !state.busy ? HAPPIER_BUTTON_DISABLED_OPACITY : 1,
     ...happierDiscretePressStyle(state.pressed && !state.disabled, reducedMotion),
@@ -206,6 +210,7 @@ export function HappierInputPickerButton(props: Readonly<{
     >
       {(state) => (
         <>
+          <HappierSurfaceGradientLayer gradient={resolveHappierButtonChrome({ theme: props.theme, variant: 'secondary', disabled: state.disabled, focused: state.focused, pressed: state.pressed }).gradient} borderRadius={props.theme.radii.control} />
           {state.busy ? (
             <HappierSpinner
               size={iconMatchedSpinnerSize(props.theme.typography.label.fontSize)}

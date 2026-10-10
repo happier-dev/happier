@@ -14,6 +14,7 @@ import { HappierPressable, type HappierPressableStyleState } from '../presentati
 import { HappierScrollArea, HappierStack } from '../presentation/layout/Layout.js';
 import { HappierText } from '../presentation/text/Text.js';
 import {
+  HAPPIER_MENU_ROW_METRICS,
   resolveHappierMenuContent,
   resolveHappierMenuRadioGroups,
   useHappierMenuInteraction,
@@ -22,7 +23,8 @@ import {
 import type { HappierTextVariant, HappierTone } from '../presentation/semantics.js';
 import { HAPPIER_PRESS_FEEDBACK_V1, happierPressTransitionStyle } from '../presentation/interaction/pressFeedback.js';
 import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, happierFocusRingStyle } from '../presentation/interaction/focusVisible.js';
-import { resolveHappierButtonChrome } from '../presentation/interaction/buttonChrome.js';
+import { resolveHappierButtonChrome, useHappierButtonMaterial } from '../presentation/interaction/buttonChrome.js';
+import { HappierSurfaceGradientLayer } from '../presentation/layout/SurfaceGradientLayer.js';
 import { settleHappierRaisedEdge } from '../presentation/layout/raisedEdge.js';
 import { HAPPIER_ICON_BUTTON_SIZE, resolveHappierIconButtonChrome } from '../presentation/interaction/iconButtonChrome.js';
 import {
@@ -132,6 +134,7 @@ function PopoverPresentation({
   }
   const nativeMinimumTouchTarget = useHappierNativeMinimumInteractiveTargetSize();
   const theme = usePluginTheme();
+  const material = useHappierButtonMaterial(theme);
   const host = useOptionalPluginUiPresentationHost();
   const followScrollRef = useOptionalPluginUiPopoverScrollSource();
   const fieldTrigger = useContext(OverlayFieldTriggerContext);
@@ -217,6 +220,7 @@ function PopoverPresentation({
                 focused: state.focused,
                 pressed: state.pressed,
                 gloss: palette.accentGloss,
+                ...material,
               }).style
             : {}),
           ...(!fieldTrigger && triggerIcon === undefined && triggerAppearance === 'control'
@@ -244,6 +248,7 @@ function PopoverPresentation({
           });
           return (
             <HappierFieldBoxTrigger
+              span="column"
               colors={{
                 borderColor: palette.controlBorder,
                 focusRing: state.focused ? theme.colors.focus : null,
@@ -259,15 +264,18 @@ function PopoverPresentation({
           <View style={iconChrome({ ...state, pressed: false }).surface}>
             <Icon name={triggerIcon} size="medium" tone="neutral" />
           </View>
-        ) : triggerAppearance === 'primary' ? (
+        ) : triggerAppearance === 'primary' ? (state) => (
+          <>
+          <HappierSurfaceGradientLayer gradient={resolveHappierButtonChrome({ theme, variant: 'primary', disabled: state.disabled, focused: state.focused, pressed: state.pressed }).gradient} borderRadius={theme.radii.control} />
           <HappierText
             accessible={false}
             variant="label"
             numberOfLines={1}
-            style={{ color: resolveHappierButtonChrome({ theme, variant: 'primary', disabled: false, focused: false }).foreground }}
+            style={{ color: resolveHappierButtonChrome({ theme, variant: 'primary', disabled: false, focused: false, ...material }).foreground }}
           >
             {trigger}
           </HappierText>
+          </>
         ) : (
           <HappierText accessible={false} variant={triggerTextVariant} tone={triggerTextTone} numberOfLines={1}>
             {trigger}
@@ -505,13 +513,14 @@ function MenuRows({
           if (item.kind !== 'checkbox') controls.requestClose('selection');
         }}
         style={(state) => ({
+          minHeight: Math.max(HAPPIER_MENU_ROW_METRICS.minHeightPx, nativeMinimumTouchTarget ?? 0),
+          paddingVertical: HAPPIER_MENU_ROW_METRICS.paddingVerticalPx,
           ...(nativeMinimumTouchTarget === undefined ? {} : {
             minWidth: nativeMinimumTouchTarget,
-            minHeight: nativeMinimumTouchTarget,
           }),
-          paddingHorizontal: theme.spacing.medium,
-          borderRadius: theme.radii.control,
-          borderWidth: 2,
+          paddingHorizontal: HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx,
+          borderRadius: HAPPIER_MENU_ROW_METRICS.radiusPx,
+          borderWidth: 0,
           borderColor: 'transparent',
           // Inset: menu rows span the floating surface, whose scroll area clips anything outside it.
           ...happierFocusRingStyle({ visible: state.focused, color: theme.colors.focus, placement: 'inset' }),
@@ -523,7 +532,7 @@ function MenuRows({
           opacity: state.disabled ? 0.45 : state.pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle : 1,
         })}
       >
-        {item.icon ? <Icon name={item.icon} size="medium" tone={item.destructive ? 'danger' : 'secondary'} /> : null}
+        {item.icon ? <Icon name={item.icon} size="small" tone={item.destructive ? 'danger' : 'secondary'} /> : null}
         <View style={{ flex: 1, flexShrink: 1 }}>
           <HappierText tone={item.destructive ? 'danger' : 'neutral'}>{item.label}</HappierText>
           {item.subtitle ? <HappierText variant="caption" tone="secondary">{item.subtitle}</HappierText> : null}

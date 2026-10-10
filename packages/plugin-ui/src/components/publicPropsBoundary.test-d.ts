@@ -76,7 +76,7 @@ type _AuthorTabsKeysAreCurated = Assert<IsEqual<keyof TabsProps,
   'value' | 'onValueChange' | 'ariaLabel' | 'testID' | 'tabList' | 'layout' | 'sharedPanel' | 'children'
 >>;
 type _AuthorTabsItemKeysAreCurated = Assert<IsEqual<keyof TabsItemProps,
-  'value' | 'title' | 'icon' | 'badge' | 'badgeTone' | 'disabled' | 'retention' | 'children'
+  'value' | 'title' | 'icon' | 'badge' | 'badgeTone' | 'marker' | 'disabled' | 'retention' | 'children'
 >>;
 
 type _AuthorFormFieldDoesNotExposeHostOptionSources = Assert<
@@ -149,6 +149,7 @@ type _AuthorFormFieldKeysAreCurated = Assert<IsEqual<keyof FormProps['hints']['f
   | 'placeholder'
   | 'widget'
   | 'inputType'
+  | 'contextMode'
   | 'required'
   | 'requireExplicitSelection'
   | 'listSeparator'

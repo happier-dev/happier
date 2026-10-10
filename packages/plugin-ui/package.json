@@ -11,34 +11,47 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
     "./components": {
+      "happier-source": "./src/components/index.ts",
       "types": "./dist/components/index.d.ts",
       "default": "./dist/components/index.js"
     },
     "./hostApi": {
+      "happier-source": "./src/hostApi/index.ts",
       "types": "./dist/hostApi/index.d.ts",
       "default": "./dist/hostApi/index.js"
     },
     "./data": {
+      "happier-source": "./src/data/index.ts",
       "types": "./dist/data/index.d.ts",
       "default": "./dist/data/index.js"
     },
     "./presentation": {
+      "happier-source": "./src/presentation/index.ts",
       "types": "./dist/presentation/index.d.ts",
       "default": "./dist/presentation/index.js"
     },
+    "./declarative": {
+      "happier-source": "./src/declarative/index.ts",
+      "types": "./dist/declarative/index.d.ts",
+      "default": "./dist/declarative/index.js"
+    },
     "./environment": {
+      "happier-source": "./src/environment/index.ts",
       "types": "./dist/environment/index.d.ts",
       "default": "./dist/environment/index.js"
     },
     "./advanced": {
+      "happier-source": "./src/advanced/index.ts",
       "types": "./dist/advanced/index.d.ts",
       "default": "./dist/advanced/index.js"
     },
     "./testing": {
+      "happier-source": "./src/testing/index.ts",
       "types": "./dist/testing/index.d.ts",
       "default": "./dist/testing/index.js"
     }
@@ -89,7 +102,8 @@
   "peerDependencies": {
     "react": "19.2.0",
     "react-dom": ">=19.2.0",
-    "react-native": ">=0.79.0"
+    "react-native": ">=0.79.0",
+    "react-native-svg": "15.15.3"
   },
   "peerDependenciesMeta": {
     "react-dom": {
@@ -105,6 +119,7 @@
     "@types/react-test-renderer": "^19.1.0",
     "react": "19.2.0",
     "react-native": "0.83.5",
+    "react-native-svg": "15.15.3",
     "react-test-renderer": "19.2.0",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"

@@ -32,7 +32,7 @@ export type SelectionTilesOption<T extends string = string> = Readonly<{
   badgeKey?: string;
   testID?: string;
   /**
-   * What this option looks like (visual tiles): render the real component at
+   * What this option looks like (visual tiles or compact card rows): render the real component at
    * static props — never a drawn replica — so the preview cannot drift from
    * what the option does.
    */
@@ -105,7 +105,7 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>):
   const typography = useOptionalHappierUiTypography();
   // The tiles' type scale is the shared owner's; this adapter adds the host's face per weight
   // and the theme's colours, exactly as Happier core's tile adapter does.
-  const renderText = useCallback<HappierSelectionTilesTextRenderer>(({ role, text, selected, compact, numberOfLines }) => {
+  const renderText = useCallback<HappierSelectionTilesTextRenderer>(({ role, text, selected, compact, numberOfLines, alignment }) => {
     const step = HAPPIER_SELECTION_TILE_TEXT[role];
     const weight = selected && step.selectedWeight ? step.selectedWeight : step.weight;
     const color = role === 'visualSublabel'
@@ -119,7 +119,7 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>):
         style={[
           resolveHappierTextStepStyle({ ...step, weight }, typography),
           compact && step.compactFontSize !== undefined ? { fontSize: step.compactFontSize } : null,
-          role === 'visualLabel' || role === 'visualSublabel' ? { textAlign: 'center' } : null,
+          role === 'visualLabel' || role === 'visualSublabel' ? { textAlign: alignment ?? 'center' } : null,
           role === 'visualSublabel' ? { marginTop: -4 } : null,
           { color },
         ]}

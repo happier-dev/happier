@@ -31,8 +31,8 @@ function takeLeadingGraphemes(value: string, maximum: number): string {
 }
 
 /** One size projection shared by the package Resource adapter and core chrome. */
-export function resolveHappierImagePixels(size: HappierImageSize | undefined): number {
-  return IMAGE_SIZE[size ?? 'medium'];
+export function resolveHappierImagePixels(size: HappierImageSize | undefined, pixelSize?: number): number {
+  return pixelSize === undefined ? IMAGE_SIZE[size ?? 'medium'] : Math.max(1, pixelSize);
 }
 
 /** One neutral textual fallback; manifest projection remains the brand owner. */
@@ -117,7 +117,7 @@ export function HappierImage(props: Readonly<{
       }}
     >
       <HappierText {...(props.brandMark
-        ? { style: { color: props.theme.colors.text } }
+        ? { textScale: 1, style: { color: props.theme.colors.text, fontSize: pixels * 0.75, lineHeight: pixels, fontWeight: '600', textAlign: 'center' } }
         : { tone: 'secondary' })}
       >
         {resolveHappierImageFallback(props.fallback)}
@@ -131,6 +131,8 @@ export type HappierBrandMarkProps = Readonly<{
   displayName: string;
   bytes?: Uint8Array;
   size?: HappierImageSize;
+  /** Exact mark slot supplied by the containing presentation owner. */
+  pixelSize?: number;
   showName?: boolean;
   theme: HappierUiTheme;
   /** Projected package declaration; colored artwork is otherwise unchanged. */
@@ -149,19 +151,35 @@ export type HappierBrandMarkProps = Readonly<{
 export function HappierBrandMark(props: HappierBrandMarkProps): ReactElement {
   const showName = props.showName === true;
   const fallback = resolveHappierBrandFallback(props.displayName);
+  const image = (
+    <HappierImage
+      bytes={props.bytes}
+      size={props.size}
+      fallback={fallback}
+      theme={props.theme}
+      brandMark
+      monochrome={props.monochrome}
+      accessibilityLabel={showName || props.externallyLabelled ? undefined : props.displayName}
+      fallbackAccessibilityHidden={showName || props.externallyLabelled}
+      onDecodeError={props.onDecodeError}
+    />
+  );
+  const basePixels = resolveHappierImagePixels(props.size);
+  const pixelSize = props.pixelSize === undefined ? undefined : resolveHappierImagePixels(props.size, props.pixelSize);
+  const mark = pixelSize === undefined ? image : (
+    <View
+      testID={showName ? undefined : props.testID}
+      style={{ width: pixelSize, height: pixelSize, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}
+    >
+      <View style={{ width: basePixels, height: basePixels, transform: [{ scale: pixelSize / basePixels }] }}>
+        {image}
+      </View>
+    </View>
+  );
+  if (pixelSize !== undefined && !showName) return mark;
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }} testID={props.testID}>
-      <HappierImage
-        bytes={props.bytes}
-        size={props.size}
-        fallback={fallback}
-        theme={props.theme}
-        brandMark
-        monochrome={props.monochrome}
-        accessibilityLabel={showName || props.externallyLabelled ? undefined : props.displayName}
-        fallbackAccessibilityHidden={showName || props.externallyLabelled}
-        onDecodeError={props.onDecodeError}
-      />
+      {mark}
       {showName ? <HappierText>{props.displayName}</HappierText> : null}
     </View>
   );

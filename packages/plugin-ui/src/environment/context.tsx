@@ -289,7 +289,9 @@ export function resolveHappierUiPalette(theme: PluginUiThemeV1): HappierUiPalett
     controlBorder: colors.divider,
     fieldBackground: colors.surface,
     placeholder: colors.mutedText,
-    selection: colors.accent,
+    // Selection is ink (DESIGN.md: colour means state): a host that projects no palette of its own
+    // still draws chosen tiles, rings and radio marks in the text colour, never the accent.
+    selection: colors.text,
     switchTrackOn: colors.accent,
     switchTrackOff: colors.control,
     switchThumb: colors.onAccent,

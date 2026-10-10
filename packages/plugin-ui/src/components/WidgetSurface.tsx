@@ -28,7 +28,8 @@ const NO_CONTEXT: Readonly<Record<string, JsonValue>> = Object.freeze({});
  * A personal widget area on a plugin page: `<WidgetSurface area="pinned" context={{ repository }} />`.
  *
  * The plugin declares the area and supplies its page context; everything inside belongs to the host —
- * catalog, gallery, Set up, frames, layout storage and access — and is the same as on Home. This
+ * catalog, gallery, Set up, frames, named-layout tabs, layout storage and access. The host's tabs
+ * and the page-local area port reach the same layout Actions, including the mounted selection. This
  * component holds no state of its own: it lends the mounted Host API area port and the context to the
  * host's presentation bridge. Declarative documents use the `widgetArea` node against the same
  * port. Hosted HTML owns its whole iframe and manages widgets through ordinary `widgets.*` Actions;

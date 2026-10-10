@@ -17,6 +17,7 @@ import { I18nManager, View, type ViewStyle } from 'react-native';
 import {
   HappierUiAnimationActivityProviderInternal,
   useOptionalHappierUiLocalization,
+  useOptionalHappierUiTypography,
 } from '../../environment/context.js';
 import { resolveHappierRovingTabStop } from '../collection/semantics.js';
 import {
@@ -27,7 +28,8 @@ import { HappierScrollArea } from '../layout/Layout.js';
 import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { HappierText } from '../text/Text.js';
-import type { HappierTone } from '../semantics.js';
+import { readHappierTypeRoleTabular, resolveHappierTypeRoleStyle } from '../text/typeRole.js';
+import { HAPPIER_TONE_COLOR_TOKEN, type HappierTone } from '../semantics.js';
 import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
 
 /** A tab's pointer height (lab `.tabs .tb`); a native touch platform's floor still wins. */
@@ -49,10 +51,18 @@ export type HappierTabDescriptor = Readonly<{
   badge?: string;
   /** The badge's tone; quiet (`secondary`) unless the count is itself a state ("2 failing"). */
   badgeTone?: HappierTone;
+  /** A quiet dot whose localized meaning is included in the accessible tab name. */
+  marker?: string;
   disabled?: boolean;
   retention?: HappierTabRetention;
   children?: ReactNode;
 }>;
+
+/** Shared quiet status dot for tabs and compact layout selectors; the parent announces its meaning. */
+export function HappierTabMarker(props: Readonly<{ color: string; testID?: string }>): ReactElement {
+  return <View testID={props.testID} accessible={false} aria-hidden={true}
+    style={{ width: 6, height: 6, borderRadius: 3, marginLeft: 6, flexShrink: 0, backgroundColor: props.color }} />;
+}
 
 /**
  * A panel's current **active interval**, which is not the same fact as being
@@ -244,10 +254,18 @@ export function HappierTabs(props: Readonly<{
   tabList?: 'shown' | 'host';
   layout?: HappierTabsLayout;
   sharedPanel?: ReactNode;
+  /**
+   * Controls that act on the tab set itself (add a tab, the selected tab's menu), at the strip's
+   * trailing edge above its hairline. The strip scrolls beside them; they never scroll away.
+   */
+  trailing?: ReactNode;
 }>) {
   const fill = props.layout === 'fill';
   const nativeMinimumTouchTarget = useHappierNativeMinimumInteractiveTargetSize();
   const localization = useOptionalHappierUiLocalization();
+  const typography = useOptionalHappierUiTypography();
+  const labelStyle = resolveHappierTypeRoleStyle('label', props.theme, typography);
+  const badgeStyle = resolveHappierTypeRoleStyle('caption', props.theme, typography);
   const rtl = localization ? localization.direction === 'rtl' : I18nManager.isRTL;
   const instanceId = useId().replace(/:/gu, '');
   const tabs = Children.toArray(props.children)
@@ -363,9 +381,10 @@ export function HappierTabs(props: Readonly<{
 
   return (
     <View testID={props.testID} style={fill ? { ...fillStyle, gap: props.theme.spacing.medium } : { gap: props.theme.spacing.medium }}>
-      <View>
+      <View style={props.trailing === undefined ? undefined : { flexDirection: 'row', alignItems: 'center', gap: props.theme.spacing.xsmall }}>
       {/* The strip's one hairline across the full width; the selected tab's underline lands on it (lab `.tabs`). */}
       <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 1, backgroundColor: props.theme.colors.divider }} />
+      <View style={props.trailing === undefined ? undefined : { flex: 1, minWidth: 0 }}>
       <HappierScrollArea horizontal>
         <View
           role="tablist"
@@ -386,7 +405,7 @@ export function HappierTabs(props: Readonly<{
               <HappierPressable
                 key={tab.value}
                 accessibilityRole="tab"
-                accessibilityLabel={tab.title}
+                accessibilityLabel={[tab.title, tab.marker].filter(Boolean).join(' ')}
                 selected={isSelected}
                 disabled={tab.disabled}
                 tabIndex={tabIndex === tabStopIndex ? 0 : -1}
@@ -434,8 +453,10 @@ export function HappierTabs(props: Readonly<{
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: props.theme.spacing.xsmall }}>
                   {tab.icon}
-                  <HappierText variant="label" tone={isSelected ? 'accent' : 'secondary'}>{tab.title}</HappierText>
-                  {tab.badge ? <HappierText variant="caption" tone={tab.badgeTone ?? 'secondary'} tabularNumbers>{tab.badge}</HappierText> : null}
+                  <HappierText style={{ ...labelStyle, color: isSelected ? props.theme.colors.accent : props.theme.colors.secondaryText }} tabularNumbers={readHappierTypeRoleTabular('label', typography)}>{tab.title}</HappierText>
+                  {tab.badge ? <HappierText style={{ ...badgeStyle, color: props.theme.colors[HAPPIER_TONE_COLOR_TOKEN[tab.badgeTone ?? 'secondary']] }} tabularNumbers>{tab.badge}</HappierText> : null}
+                  {tab.marker ? <HappierTabMarker color={props.theme.colors.mutedText}
+                    testID={`${props.testID ?? 'tabs'}:${tab.value}:marker`} /> : null}
                 </View>
               </HappierPressable>
             );
@@ -443,7 +464,10 @@ export function HappierTabs(props: Readonly<{
         </View>
       </HappierScrollArea>
       </View>
-      {props.sharedPanel !== undefined && selected !== undefined ? (
+      {props.trailing}
+      </View>
+      {/* `null`: the strip selects something its host draws elsewhere (a page's widget area), so no empty panel or gap follows it. */}
+      {props.sharedPanel === null ? null : props.sharedPanel !== undefined && selected !== undefined ? (
         <HappierTabPanel
           active
           nativeID={`${instanceId}-panel-${tabs.indexOf(selected)}`}

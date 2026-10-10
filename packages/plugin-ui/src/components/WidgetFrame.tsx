@@ -7,7 +7,7 @@ import { usePluginTheme } from './PluginUiProvider.js';
 
 /** Public author adapter of the same structural frame rendered by Happier's widget hosts. */
 export type WidgetFrameProps = Omit<HappierWidgetFrameProps,
-  'cardStyle' | 'dividerColor' | 'renderText' | 'disclosureMotion' | 'reducedMotion'>;
+  'cardStyle' | 'dividerColor' | 'renderText' | 'renderSourceGlyph' | 'disclosureMotion' | 'reducedMotion'>;
 
 export function WidgetFrame(props: WidgetFrameProps): ReactElement {
   const theme = usePluginTheme();

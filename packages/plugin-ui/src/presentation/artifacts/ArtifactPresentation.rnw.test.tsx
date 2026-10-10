@@ -81,6 +81,21 @@ describe('shared artifact presentation', () => {
     view.unmount();
   });
 
+  it('lets the enclosing share row own identity while inline link controls remain usable', async () => {
+    const view = mountThroughReactNativeWeb(publicLink({ presentation: 'inline', shareUrl: 'https://viewer.example.test/link#secret',
+      copyControl: <Text>Copy</Text>, notices: <Text>Awaiting approval</Text> }));
+    try {
+      expect(byId(view.container, 'session-public-link-status')).toBeNull();
+      expect(view.container.textContent).not.toContain('Public link');
+      expect(byId(view.container, 'session-public-link-url')?.textContent).toContain('#secret');
+      expect(view.container.textContent).toContain('Awaiting approval');
+      expect(view.container.textContent).toContain('Turn off');
+      await view.render(publicLink({ presentation: 'inline', configuring: true }));
+      expect(view.container.textContent).toContain('Submit');
+      expect(view.container.textContent).not.toContain('Turn off');
+    } finally { view.unmount(); }
+  });
+
   it('keeps revision selection controlled and preserves the supplied saved provenance', async () => {
     let selected: number | null = null;
     const render = (sideBySide: boolean) => <HappierArtifactRevisionList sideBySide={sideBySide} title="Versions"

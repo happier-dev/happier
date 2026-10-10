@@ -1,4 +1,4 @@
-import type { Disposable } from '@happier-dev/plugin-sdk';
+import { createCanonicalJsonSigningInput, type Disposable } from '@happier-dev/plugin-sdk';
 import type {
   PluginUiHostApi,
   ResourceContent,
@@ -20,7 +20,13 @@ export type PluginUiResourceReference = Parameters<PluginUiHostApi['readResource
  * contract directly without manufacturing a Surface identity.
  */
 export type PluginUiResourceClient = Readonly<{
-  readResource: PluginUiHostApi['readResource'];
+  readResource: (resource: PluginUiResourceReference,
+    options?: Parameters<PluginUiHostApi['readResource']>[1] & Readonly<{
+      /** Host-private progress is admitted by this read's existing entry and lifetime. */
+      onProgress?: (value: ResourceContent) => void;
+    }>) => ReturnType<PluginUiHostApi['readResource']>;
+  /** A host client may normalize Action-specific semantic input through its canonical owner. */
+  resourceKey?: (resource: PluginUiResourceReference) => string;
   /**
    * Contextual app clients may attach the daemon's admitted digest to the
    * disposable. The public Host API deliberately need not synthesize it.
@@ -174,14 +180,16 @@ export function pluginUiResourceReferenceKey(
   const normalized = normalizePluginUiResourceReference(reference, mountedPluginId);
   return typeof normalized === 'string'
     ? `bare:${normalized}`
-    : `qualified:${normalized.pluginId}\u0000${normalized.localId}`;
+    : 'hostRead' in normalized
+      ? `host:${normalized.hostRead}\u0000${createCanonicalJsonSigningInput(normalized.input)}`
+      : `qualified:${normalized.pluginId}\u0000${normalized.localId}`;
 }
 
 /** The author-readable name of a Resource; the entry key is a NUL-joined map key. */
 function resourceLabel(reference: PluginUiResourceReference): string {
   return typeof reference === 'string'
     ? reference
-    : `${reference.pluginId}/${reference.localId}`;
+    : 'hostRead' in reference ? reference.hostRead : `${reference.pluginId}/${reference.localId}`;
 }
 
 function readError(error: unknown): PluginUiResourceError {
@@ -500,40 +508,46 @@ export function createPluginUiResourceStore(input: Readonly<{
     }
     const controller = new AbortController();
     entry.readController = controller;
-    void input.client.readResource(entry.resource, { signal: controller.signal }).then(
-      (value) => {
-        if (!isEntryCurrent(entry) || controller.signal.aborted) return;
-        const previous = entry.snapshot;
-        // A new Uint8Array with the same canonical digest is not a semantic
-        // Resource update. Preserve the LKG reference and avoid a rerender.
-        const unchanged = previous.digest === value.digest && previous.value !== undefined;
-        // Admission, not render, is where a renderable image becomes a platform
-        // source. Encoding is linear in the byte length and the Resource
-        // ceiling is 16 MiB, so a render that derived it would block the UI for
-        // seconds. This resolution is already off the render path, and the
-        // image owner alone decides the renderable type and the product size
-        // and decode ceilings.
-        if (!unchanged && value.contentType === HAPPIER_RENDERABLE_IMAGE_CONTENT_TYPE) {
-          const admission = materializeHappierRenderableImage(value.bytes);
-          if (!admission.admitted) {
-            // A refused image is indistinguishable from an absent one on every
-            // user-facing surface, so the only place an author can learn about
-            // it is their own diagnostic channel. The owner decided the code,
-            // severity and numbers; this adds the Resource identity, which is
-            // the one fact only this entry knows.
-            reportDiagnostic({
-              ...admission.refusal,
-              details: { ...admission.refusal.details, resource: resourceLabel(entry.resource) },
-            });
-          }
+    const admitValue = (value: ResourceContent, pending: PluginUiResourceSnapshot['pending']): void => {
+      if (!isEntryCurrent(entry) || controller.signal.aborted || entry.readController !== controller) return;
+      const previous = entry.snapshot;
+      // A new Uint8Array with the same canonical digest is not a semantic
+      // Resource update. Preserve the LKG reference and avoid a rerender.
+      const unchanged = previous.digest === value.digest && previous.value !== undefined;
+      // Admission, not render, is where a renderable image becomes a platform
+      // source. Encoding is linear in the byte length and the Resource
+      // ceiling is 16 MiB, so a render that derived it would block the UI for
+      // seconds. This resolution is already off the render path, and the
+      // image owner alone decides the renderable type and the product size
+      // and decode ceilings.
+      if (!unchanged && value.contentType === HAPPIER_RENDERABLE_IMAGE_CONTENT_TYPE) {
+        const admission = materializeHappierRenderableImage(value.bytes);
+        if (!admission.admitted) {
+          // A refused image is indistinguishable from an absent one on every
+          // user-facing surface, so the only place an author can learn about
+          // it is their own diagnostic channel. The owner decided the code,
+          // severity and numbers; this adds the Resource identity, which is
+          // the one fact only this entry knows.
+          reportDiagnostic({
+            ...admission.refusal,
+            details: { ...admission.refusal.details, resource: resourceLabel(entry.resource) },
+          });
         }
-        publish(entry, {
-          value: unchanged ? previous.value : value,
-          digest: value.digest,
-          freshness: 'fresh',
-          pending: 'idle',
-          subscription: previous.subscription,
-        });
+      }
+      publish(entry, {
+        value: unchanged ? previous.value : value,
+        digest: value.digest,
+        freshness: 'fresh',
+        pending,
+        subscription: previous.subscription,
+      });
+    };
+    void input.client.readResource(entry.resource, { signal: controller.signal,
+      onProgress: value => admitValue(value, requestedPending),
+    }).then(
+      (value) => {
+        if (!isEntryCurrent(entry) || controller.signal.aborted || entry.readController !== controller) return;
+        admitValue(value, 'idle');
         clearRereadRetry(entry);
         settleRefreshWaiters(entry);
       },
@@ -778,10 +792,10 @@ export function createPluginUiResourceStore(input: Readonly<{
     );
   }
 
-  function createEntry(resource: PluginUiResourceReference): MutableEntry {
+  function createEntry(resource: PluginUiResourceReference, key: string): MutableEntry {
     const canonicalResource = normalizePluginUiResourceReference(resource, pluginId);
     return {
-      key: pluginUiResourceReferenceKey(canonicalResource, pluginId),
+      key,
       resource: canonicalResource,
       listeners: new Set(),
       snapshot: initialSnapshot(),
@@ -811,10 +825,10 @@ export function createPluginUiResourceStore(input: Readonly<{
   const store = Object.freeze({
     getEntry(resource: PluginUiResourceReference): PluginUiResourceEntry {
       const canonicalResource = normalizePluginUiResourceReference(resource, pluginId);
-      const key = pluginUiResourceReferenceKey(canonicalResource, pluginId);
+      const key = input.client.resourceKey?.(canonicalResource) ?? pluginUiResourceReferenceKey(canonicalResource, pluginId);
       let entry = entries.get(key);
       if (!entry) {
-        entry = createEntry(canonicalResource);
+        entry = createEntry(canonicalResource, key);
         entries.set(key, entry);
       }
       return Object.freeze({

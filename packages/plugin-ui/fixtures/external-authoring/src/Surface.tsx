@@ -21,6 +21,10 @@ import {
   usePluginCollectionQuery,
   usePluginUiDataClient,
 } from '@happier-dev/plugin-ui/data';
+import {
+  StackedSeriesChart, Heatmap, DotGrid, IntervalTimeline, CapacityBar,
+  BurnUpChart, RankedRows, CompositionStrip, OutcomeScatter, OutcomeFunnel,
+} from '@happier-dev/plugin-ui/presentation';
 
 const summary = { pluginId: 'example.plugin-ui', localId: 'summary' } as const;
 
@@ -47,8 +51,39 @@ function Summary() {
       <Text tone="secondary" value={`v${theme.version}`} />
       <ExternalAuthoringForm />
       <ExternalAuthoringOverlays />
+      <NeutralMeasurements />
     </Card>
   );
+}
+
+/** Public chart inputs are measurements, not Happier Usage identifiers or fetching policy. */
+function NeutralMeasurements() {
+  const theme = usePluginTheme();
+  const series = [{ id: 'temperature', label: 'Temperature', points: [
+    { id: 'morning', x: 0, y: 0, label: 'Morning' }, { id: 'noon', x: 6, y: 21, label: 'Noon' },
+    { id: 'evening', x: 12, y: null, label: 'Evening', annotation: 'Not measured' },
+  ] }];
+  const rows = [{ id: 'north', label: 'North greenhouse', value: 21 }, { id: 'south', label: 'South greenhouse', value: null }];
+  const grid = { theme, label: 'Plant samples', rows: [{ id: 'plants', label: 'Plants' }],
+    columns: [{ id: 'morning', label: 'Morning' }, { id: 'noon', label: 'Noon' }],
+    cells: [{ id: 'dry', row: 'plants', column: 'morning', label: 'Morning moisture', value: 0 },
+      { id: 'wet', row: 'plants', column: 'noon', label: 'Noon moisture', value: 17 }] };
+  return <>
+    <StackedSeriesChart theme={theme} label="Greenhouse temperature" series={series} variant="area" size="tile" />
+    <BurnUpChart theme={theme} label="Water collected" series={series} size="tile" />
+    <Heatmap {...grid} size="tile" />
+    <DotGrid {...grid} size="tile" />
+    <IntervalTimeline theme={theme} label="Irrigation" domain={{ start: 0, end: 24 }}
+      intervals={[{ id: 'north', label: 'North greenhouse', start: 6, end: 8 }]} basis="Hours" />
+    <CapacityBar theme={theme} label="Water tank" value={17} capacity={30} basis="Litres" />
+    <RankedRows theme={theme} label="Temperatures" rows={rows} basis="Degrees" size="inline" />
+    <CompositionStrip theme={theme} label="Planting area" total={10} variant="waffle" size="tile"
+      segments={[{ id: 'tomatoes', label: 'Tomatoes', value: 4 }, { id: 'herbs', label: 'Herbs', value: 6 }]} />
+    <OutcomeScatter theme={theme} label="Growth samples" xLabel="Water" yLabel="Height"
+      points={[{ id: 'north', label: 'North greenhouse', x: 17, y: 21 }]} />
+    <OutcomeFunnel theme={theme} label="Propagation" steps={[{ id: 'seeds', label: 'Seeds', value: 30 },
+      { id: 'sprouts', label: 'Sprouts', value: 17 }]} basis="Plants" />
+  </>;
 }
 
 /**

@@ -95,6 +95,7 @@ describe('author package boundary', () => {
       || specifier.startsWith('react/')
       || specifier === 'react-native'
       || specifier.startsWith('react-native/')
+      || specifier === 'react-native-svg'
       || specifier.startsWith('./')
       || specifier.startsWith('../')
     );

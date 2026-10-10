@@ -132,7 +132,7 @@ async function renderInteractiveFamilies(
             onSelect={() => undefined}
           />
         </PluginUiPresentationHostProviderInternal>
-      </PluginUiProvider>,
+      </PluginUiProvider>
   );
 
   await act(async () => {

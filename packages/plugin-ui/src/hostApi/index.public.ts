@@ -16,6 +16,7 @@ import {
 } from './resourceStore.js';
 
 export type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+export { useFindSurfaceRegistration, type FindSurfaceRegistration } from './find.public.js';
 export { useWidgetAreaPort, type PluginUiWidgetAreaPortV1 } from './widgetArea.public.js';
 
 export {

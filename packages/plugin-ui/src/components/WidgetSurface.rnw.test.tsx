@@ -39,8 +39,8 @@ describe('WidgetSurface', () => {
     expect(request).toMatchObject({ area: 'pinned', context: { repository: 'happier' }, title: 'Pinned' });
 
     // The author names an operation; the host binds area and context — never a surface, Home or Account.
-    await request.port.execute({ actionId: 'widgets.instance.list' }, request.context);
-    expect(widgetArea).toHaveBeenCalledWith({ area: 'pinned', operation: { actionId: 'widgets.instance.list' }, context: { repository: 'happier' } }, undefined);
+    await request.port.execute({ actionId: 'widgets.item.list' }, request.context);
+    expect(widgetArea).toHaveBeenCalledWith({ area: 'pinned', operation: { actionId: 'widgets.item.list' }, context: { repository: 'happier' } }, undefined);
     mount.unmount();
   });
 

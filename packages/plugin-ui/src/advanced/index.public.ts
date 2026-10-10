@@ -36,6 +36,7 @@ export {
   PluginHostApiProvider,
   type PluginHostApiProviderProps,
 } from '../hostApi/context.js';
+export { useFindSurfaceRegistrationWithHost, type FindSurfaceRegistrationHost } from '../presentation/find/useFindSurfaceRegistration.js';
 /**
  * Byte admission for a renderable packaged image.
  *
@@ -57,6 +58,7 @@ export {
 export {
   createPluginUiHostApiResourceClient,
   createPluginUiResourceStore,
+  pluginUiResourceReferenceKey,
   isPluginUiResourceReadAuthorityLost,
   type PluginUiResourceAccountLifetime,
   type PluginUiResourceClient,

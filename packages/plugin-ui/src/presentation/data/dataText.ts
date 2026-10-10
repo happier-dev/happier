@@ -10,6 +10,10 @@ import { resolveHappierTypeRoleStyle } from '../text/typeRole.js';
 export const HAPPIER_DATA_METRICS = Object.freeze({
   /** The hero number of a metric. */
   metricValue: Object.freeze({ weight: 'bold' as const, fontSize: 30, lineHeight: 36, letterSpacing: -0.6 }),
+  /** The one number a widget is about (a period's total), set larger and tighter. */
+  heroValue: Object.freeze({ weight: 'bold' as const, fontSize: 44, lineHeight: 50, letterSpacing: -1.4 }),
+  /** One of a row of labelled facts. */
+  statValue: Object.freeze({ weight: 'semiBold' as const, fontSize: 22, lineHeight: 28, letterSpacing: -0.3 }),
   /** Space between a metric and a chart beneath it, and between stacked rows. */
   blockGapPx: 12,
   comparisonGapPx: 6,
@@ -28,6 +32,9 @@ export const HAPPIER_DATA_METRICS = Object.freeze({
   /** A zero still reads as a point in the series. */
   barStubPx: 4,
   lineStrokePx: 2,
+  /** The paper seam between stacked area series. */
+  areaSeamPx: 1.5,
+  barSeamPx: 1,
   axisGapPx: 4,
   /** Opacity of the text colour for resting bars, a proportion's track and its fill. */
   barRestOpacity: 0.16,

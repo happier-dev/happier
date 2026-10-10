@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { View } from 'react-native';
 
 import type { HappierUiTheme } from '../../environment/types.js';
 import type { HappierLayoutChangeEvent } from '../portableTypes.js';
 import { HappierText } from '../text/Text.js';
+import { HappierProgress } from '../content/Foundation.js';
 import {
   formatHappierDataShare,
   formatHappierDataValue,
@@ -21,6 +22,22 @@ export type HappierDataRowsProps = Readonly<{
   columns: readonly HappierDataColumn[];
   /** Every row the source returned, cells in column order. Nothing is cut to fit the card. */
   rows: readonly (readonly HappierDataValue[])[];
+  rowIds?: readonly string[];
+  proportionColors?: readonly (string | undefined)[];
+  proportionAppearance?: Readonly<{
+    minimumVisibleFraction?: number; fillOpacity?: number; zeroFillOpacity?: number; trackColor?: string;
+  }>;
+  showProportionShares?: boolean;
+  /** Visible ink for numeric cells (compact "317M"); assistive technology keeps the exact value. */
+  valueFormatter?: (value: number) => string;
+  /** One identity mark per row (an agent's glyph), drawn before its title. */
+  rowLeads?: readonly (ReactNode | undefined)[];
+  /** Further identity marks per row (who worked on it), drawn straight after its title. */
+  rowTrails?: readonly (ReactNode | undefined)[];
+  /** Each row's share of a whole the caller supplied, shown beside the amount ("44%"). */
+  rowShares?: readonly (number | null)[];
+  density?: 'compact' | 'comfortable';
+  renderRow?: (row: readonly HappierDataValue[], visual: ReactNode, index: number) => ReactNode;
   /** One admitted boolean status per row; its label carries the meaning beyond color. */
   marks?: readonly Readonly<{ passed: boolean; label: string; meaning: 'good' | 'bad' | 'neutral' }>[];
   /**
@@ -66,52 +83,64 @@ export function HappierDataRows(props: HappierDataRowsProps) {
     return typeof value === 'number' ? value : 0;
   }));
   return (
-    <View testID={props.testID} role="list" accessibilityLabel={props.label} style={{ gap: HAPPIER_DATA_METRICS.rowGapPx }}>
+    <View testID={props.testID} role="list" accessibilityLabel={props.label} style={{ gap: props.density === 'compact' ? props.theme.spacing.small : HAPPIER_DATA_METRICS.rowGapPx }}>
       {props.rows.map((row, rowIndex) => {
         const mark = props.marks?.[rowIndex];
         const title = row[0] === undefined ? '' : formatHappierDataValue(row[0], text.locale);
         const lineCells = props.columns
           .map((column, index) => ({ column, index }))
           .filter(({ index }) => index > 0 && index !== proportionIndex);
-        const line = lineCells.map(({ index }) => row[index]).filter((value) => value !== undefined)
-          .map((value) => formatHappierDataValue(value!, text.locale)).join(' · ');
-        const share = proportionIndex < 0 ? null : shares[rowIndex] ?? 0;
+        const visibleValue = (value: HappierDataValue) => typeof value === 'number' && Number.isFinite(value) && props.valueFormatter
+          ? props.valueFormatter(value) : formatHappierDataValue(value, text.locale);
+        const line = lineCells.map(({ index }) => row[index]).filter((value) => value !== undefined && value !== '')
+          .map((value) => visibleValue(value!)).join(' · ');
+        const rowShare = props.rowShares?.[rowIndex] ?? null;
+        const lead = props.rowLeads?.[rowIndex];
+        const trail = props.rowTrails?.[rowIndex];
         const amount = proportionIndex < 0 ? null : row[proportionIndex];
-        return (
+        const share = proportionIndex < 0 || typeof amount !== 'number' || !Number.isFinite(amount) ? null : shares[rowIndex] ?? 0;
+        const visual = (
           <View
-            key={rowIndex}
+            key={props.rowIds?.[rowIndex] ?? rowIndex}
             role="listitem"
             accessible
             accessibilityLabel={[title, ...(mark ? [mark.label] : []), ...props.columns.slice(1).map((column, index) => readable(column, row[index + 1], text.locale)),
-              ...(share === null ? [] : [formatHappierDataShare(share, text.locale)])].join(', ')}
+              ...(rowShare !== null ? [formatHappierDataShare(rowShare, text.locale)] : share === null ? [] : [formatHappierDataShare(share, text.locale)])].join(', ')}
             testID={props.testID ? `${props.testID}-row-${rowIndex}` : undefined}
           >
             <View style={{ flexDirection: 'row', alignItems: 'baseline', columnGap: HAPPIER_DATA_METRICS.columnGapPx }}>
               {mark ? <RowMark mark={mark} theme={props.theme} styles={text} testID={props.testID ? `${props.testID}-mark-${rowIndex}` : undefined} /> : null}
-              <HappierText style={{ ...text.body, flexShrink: 1, flexGrow: 1 }} numberOfLines={1}>{title}</HappierText>
+              {lead ? <View style={{ alignSelf: 'center' }} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{lead}</View> : null}
+              <HappierText style={{ ...text.body, flexShrink: 1, flexGrow: trail ? 0 : 1 }} numberOfLines={1}>{title}</HappierText>
+              {trail ? <View style={{ alignSelf: 'center', flexGrow: 1, flexDirection: 'row' }} accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants">{trail}</View> : null}
               {amount === null || amount === undefined ? null : (
                 <HappierText style={text.strong} tabularNumbers>
-                  {formatHappierDataValue(amount, text.locale)}
-                  <HappierText style={text.caption} tabularNumbers>{` ${formatHappierDataShare(share ?? 0, text.locale)}`}</HappierText>
+                  {visibleValue(amount)}
+                  {props.showProportionShares === false || share === null ? null : <HappierText style={text.caption} tabularNumbers>{` ${formatHappierDataShare(share, text.locale)}`}</HappierText>}
                 </HappierText>
               )}
+              {rowShare === null ? null : <View style={{ alignSelf: 'center', borderRadius: props.theme.radii.small, paddingHorizontal: props.theme.spacing.xsmall,
+                backgroundColor: props.theme.colors.control }}>
+                <HappierText style={text.captionStrong} tabularNumbers>{formatHappierDataShare(rowShare, text.locale)}</HappierText>
+              </View>}
             </View>
             {line ? <HappierText style={text.caption} numberOfLines={1}>{line}</HappierText> : null}
             {share === null ? null : (
-              <View
+              <HappierProgress theme={props.theme} label={title} semantics="none" value={share}
                 testID={props.testID ? `${props.testID}-bar-${rowIndex}` : undefined}
-                style={{ height: HAPPIER_DATA_METRICS.proportionHeightPx, borderRadius: HAPPIER_DATA_METRICS.proportionHeightPx / 2,
-                  marginTop: HAPPIER_DATA_METRICS.axisGapPx, overflow: 'hidden' }}
-              >
-                <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: props.theme.colors.text,
-                  opacity: HAPPIER_DATA_METRICS.trackOpacity }} />
-                <View testID={props.testID ? `${props.testID}-fill-${rowIndex}` : undefined} style={{ position: 'absolute', top: 0, left: 0, bottom: 0,
-                  width: `${share * 100}%` as const, borderRadius: HAPPIER_DATA_METRICS.proportionHeightPx / 2,
-                  backgroundColor: props.theme.colors.text, opacity: HAPPIER_DATA_METRICS.proportionOpacity }} />
-              </View>
+                fillTestID={props.testID ? `${props.testID}-fill-${rowIndex}` : undefined}
+                height={HAPPIER_DATA_METRICS.proportionHeightPx} fillColor={props.proportionColors?.[rowIndex] ?? props.theme.colors.text}
+                minimumVisibleFraction={props.proportionAppearance?.minimumVisibleFraction}
+                fillOpacity={amount === 0 && props.proportionAppearance?.zeroFillOpacity !== undefined ? props.proportionAppearance.zeroFillOpacity
+                  : props.proportionAppearance?.fillOpacity ?? (props.proportionColors?.[rowIndex] ? undefined : HAPPIER_DATA_METRICS.proportionOpacity)}
+                trackColor={props.proportionAppearance?.trackColor ?? props.theme.colors.text}
+                trackOpacity={props.proportionAppearance?.trackColor ? undefined : HAPPIER_DATA_METRICS.trackOpacity}
+                style={{ marginTop: HAPPIER_DATA_METRICS.axisGapPx }} />
             )}
           </View>
         );
+        return props.renderRow ? <View key={props.rowIds?.[rowIndex] ?? rowIndex}>{props.renderRow(row, visual, rowIndex)}</View> : visual;
       })}
       {props.incomplete ? <IncompleteLine text={props.incomplete} styles={text} testID={props.testID} /> : null}
     </View>

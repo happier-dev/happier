@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState, type ReactElement, type ReactNode } fro
 import { Pressable, StyleSheet, View, type ViewStyle } from 'react-native';
 
 import type { HappierGestureResponderEvent, HappierLayoutChangeEvent } from '../portableTypes.js';
-import type { HappierWorkMap, HappierWorkMapNode } from './workMap.js';
+import { formatHappierWorkMapNodeName, type HappierWorkMap, type HappierWorkMapNode } from './workMap.js';
 import { resolveHappierWorkStatusSurfaceStyle, type HappierWorkStatusTone } from './workStatus.js';
 import {
   resolveHappierWorkHost,
@@ -89,6 +89,7 @@ export type HappierWorkMapViewProps<TNode extends HappierWorkMapNode> = Readonly
 /**
  * A lane narrower than this stacks instead: side-by-side cards would truncate every title. Three
  * lanes fit a Work sidebar (lab `map-M2`), and stack on a phone (`phone-P5m`).
+ * Recursive nesting spends this same budget before adding another horizontal inset.
  */
 export const HAPPIER_WORK_MAP_LANE_MIN_WIDTH = 128;
 
@@ -126,6 +127,7 @@ const GEOMETRY: Readonly<Record<HappierWorkMapDensity, WorkMapGeometry>> = {
   },
 };
 const LANE_GAP = 8;
+const CARD_BORDER_WIDTH = 1;
 
 const DEFAULT_PRESENTATION: HappierWorkMapNodePresentation = Object.freeze({});
 
@@ -147,7 +149,7 @@ function createWorkMapStyles(theme: HappierWorkTheme, density: HappierWorkMapDen
       paddingLeft: g.markX - g.mark / 2,
       paddingRight: g.cardPaddingRight,
       borderRadius: compact ? theme.radii.control : theme.radii.card,
-      borderWidth: 1,
+      borderWidth: CARD_BORDER_WIDTH,
       borderColor: theme.colors.border,
       backgroundColor: theme.colors.surface,
     },
@@ -177,8 +179,9 @@ function createWorkMapStyles(theme: HappierWorkTheme, density: HappierWorkMapDen
     mark: { width: g.mark, height: g.mark, alignItems: 'center', justifyContent: 'center' },
     glyph: { width: 18, alignItems: 'center', justifyContent: 'center' },
     copy: { flex: 1, minWidth: 0 },
+    rowWrap: { flexWrap: 'wrap', alignContent: 'center' },
     subtitle: { marginTop: 1 },
-    stackedStatus: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
+    stackedStatus: { alignItems: 'stretch', marginTop: 2, minWidth: 0 },
     rowSelected: { backgroundColor: theme.colors.selected },
     /** Contact feedback for a node press. */
     rowPressed: { backgroundColor: theme.colors.hover },
@@ -207,6 +210,10 @@ function createWorkMapStyles(theme: HappierWorkTheme, density: HappierWorkMapDen
 
 type WorkMapStyles = ReturnType<typeof createWorkMapStyles>;
 
+function detailRole(compact: boolean): HappierWorkTextRole {
+  return compact ? 'mapDetailCompact' : 'mapDetail';
+}
+
 function labelRole(appearance: HappierWorkMapNodeAppearance, compact: boolean): HappierWorkTextRole {
   if (appearance === 'lane') return 'mapLane';
   if (appearance === 'card') return compact ? 'mapLabelCompact' : 'mapLabel';
@@ -219,18 +226,39 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
   const { Text } = resolveHappierWorkHost(props.host);
   const density = props.density ?? 'regular';
   const compact = density === 'compact';
+  const g = GEOMETRY[density];
   const styles = useMemo(() => createWorkMapStyles(theme, density), [theme, density]);
   const [width, setWidth] = useState<number | null>(null);
   const onLayout = useCallback((event: HappierLayoutChangeEvent) => {
     const next = Math.round(event.nativeEvent.layout.width);
     setWidth((current) => (current === next ? current : next));
   }, []);
-  const lanesFit = (count: number) => width === null
-    || (width - LANE_GAP * (count - 1)) / count >= HAPPIER_WORK_MAP_LANE_MIN_WIDTH;
+  const lanesFit = (count: number, availableWidth: number | null) => availableWidth === null
+    || (availableWidth - LANE_GAP * (count - 1)) / count >= HAPPIER_WORK_MAP_LANE_MIN_WIDTH;
+  // Reserve connector space for the actual remaining structure, not an arbitrary depth ceiling.
+  // At extreme depth the hairlines can share a compact gutter; no level or edge disappears.
+  const insetLevelsByNodeId = useMemo(() => {
+    const levels = new Map<string, number>();
+    const pending = props.map.rootNodeIds.map(nodeId => ({ nodeId, visited: false }));
+    while (pending.length > 0) {
+      const entry = pending.pop()!;
+      const node = props.map.nodesById.get(entry.nodeId);
+      if (node === undefined) continue;
+      if (!entry.visited) {
+        pending.push({ nodeId: entry.nodeId, visited: true });
+        for (const nodeId of node.childNodeIds) pending.push({ nodeId, visited: false });
+        continue;
+      }
+      const childLevels = node.childNodeIds.reduce((deepest, nodeId) => Math.max(deepest, levels.get(nodeId) ?? 0), 0);
+      const indented = node.childNodeIds.length > 0 && props.presentNode?.(node).appearance !== 'lane';
+      levels.set(entry.nodeId, childLevels + (indented ? 1 : 0));
+    }
+    return levels;
+  }, [props.map, props.presentNode]);
 
   // Visits in depth-first declared order, so reading order and connectors match. Inside a lane a
   // card is narrow, so its status moves under its title instead of squeezing it.
-  const renderNode = (nodeId: string, inLane = false): ReactElement | null => {
+  const renderNode = (nodeId: string, inLane = false, availableWidth = width, compressed = false): ReactElement | null => {
     const node = props.map.nodesById.get(nodeId);
     if (node === undefined) return null;
     const presentation = props.presentNode?.(node) ?? DEFAULT_PRESENTATION;
@@ -238,10 +266,37 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
     const selected = props.selectedNodeId === node.nodeId;
     const disabled = props.isNodeDisabled?.(node) === true;
     const tone = presentation.tone ?? 'neutral';
+    // Keep the approved anatomy while it fits alongside the remaining hairlines. Thereafter spend
+    // half the spare budget here and leave half for deeper levels: progressively smaller insets,
+    // never a flattened branch. Frame padding and its rail compress together, preserving grouping.
+    const ordinaryPadding = appearance === 'frame' ? g.framePadding : 0;
+    const ordinaryIndent = appearance !== 'lane' && node.childNodeIds.length > 0 ? g.railIndent : 0;
+    const ordinaryInset = 2 * ordinaryPadding + ordinaryIndent;
+    const levels = insetLevelsByNodeId.get(nodeId) ?? 0;
+    const budget = availableWidth === null ? null : Math.max(0, availableWidth - HAPPIER_WORK_MAP_LANE_MIN_WIDTH);
+    const minimumInset = budget === null || levels === 0 ? 0 : Math.min(StyleSheet.hairlineWidth, budget / levels);
+    const scale = budget === null || ordinaryInset === 0
+      || ordinaryInset + minimumInset * Math.max(0, levels - 1) <= budget
+      ? 1
+      : (minimumInset + Math.max(0, budget - minimumInset * levels) / 2) / ordinaryInset;
+    const framePadding = ordinaryPadding * scale;
+    const rowWidth = availableWidth === null ? null : availableWidth - 2 * framePadding;
+    const indent = ordinaryIndent * scale;
+    const railGeometry = scale === 1 ? null : { left: (g.markX - g.railIndent) * scale };
+    const compressedNode = compressed || scale < 1;
     const lanes = presentation.childLayout === 'lanes'
       && node.childNodeIds.length > 1
-      && lanesFit(node.childNodeIds.length);
+      && lanesFit(node.childNodeIds.length, rowWidth);
     const leading = props.renderLeading?.(node) ?? null;
+    const rowPadding = appearance === 'card'
+      ? g.markX - g.mark / 2 + g.cardPaddingRight + 2 * CARD_BORDER_WIDTH
+      : appearance === 'lane' ? 2 * theme.spacing.small : g.markX - 9 + theme.spacing.xsmall;
+    const leadingWidth = leading ? (appearance === 'card' ? g.mark + g.cardGap
+      : 18 + (appearance === 'lane' ? theme.spacing.xsmall : theme.spacing.small)) : 0;
+    const wrapRow = !compact && (appearance !== 'card' || compressedNode);
+    // A trailing fact wraps below the name instead of taking its readable-width budget.
+    const copyMinWidth = rowWidth === null ? 0
+      : Math.min(HAPPIER_WORK_MAP_LANE_MIN_WIDTH, Math.max(0, rowWidth - rowPadding - leadingWidth));
     // A compact map keeps each node to its title and state (lab `.wm.sm` hides the second line).
     const subtitle = compact ? null : props.renderSubtitle?.(node) ?? null;
     const role = labelRole(appearance, compact);
@@ -256,6 +311,7 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
         onPress={(event) => props.onOpen?.(node, event)}
         style={({ pressed }) => [
           appearance === 'card' ? styles.card : appearance === 'lane' ? styles.laneCaption : styles.headerRow,
+          wrapRow ? styles.rowWrap : null,
           appearance === 'card' ? resolveHappierWorkStatusSurfaceStyle(tone, theme.colors) as ViewStyle | null : null,
           selected ? styles.rowSelected : null,
           pressed && !disabled ? styles.rowPressed : null,
@@ -270,28 +326,35 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
             {leading}
           </View>
         ) : null}
-        <View style={styles.copy}>
+        <View style={[styles.copy, wrapRow ? { minWidth: copyMinWidth } : null]}>
           <Text
             role={role}
             strong={selected}
-            numberOfLines={appearance === 'card' && !compact ? 2 : 1}
-            style={{ color: appearance === 'lane' ? theme.colors.secondaryText : theme.colors.text }}
+            // Compressed regular names remain fully readable. Ordinary cards retain two lines;
+            // compact cards keep one except in a narrow lane (lab `.wm-c .t` under
+            // `@container (max-width: 200px)`).
+            numberOfLines={compact ? (appearance === 'card' && inLane ? 2 : 1)
+              : appearance === 'card' && !compressedNode ? 2 : undefined}
+            style={{ color: appearance === 'lane' ? theme.colors.secondaryText : theme.colors.text, overflow: 'hidden' }}
           >
             {node.label}
+            {node.labelDetail === undefined ? null : (
+              <Text role={detailRole(compact)} style={{ color: theme.colors.secondaryText }}>{` \u00b7 ${node.labelDetail}`}</Text>
+            )}
           </Text>
           {subtitle ? <View style={styles.subtitle}>{subtitle}</View> : null}
-          {inLane && appearance === 'card' ? (
+          {appearance === 'card' ? (
             <View style={styles.stackedStatus}>{props.renderStatus?.(node)}</View>
           ) : null}
         </View>
-        {inLane && appearance === 'card' ? null : props.renderStatus?.(node)}
+        {appearance === 'card' ? null : props.renderStatus?.(node)}
       </Pressable>
     );
 
     const children = node.childNodeIds.length === 0 ? null : lanes ? (
       <WorkMapLanes
         testID={`${testIDPrefix}-group-${node.nodeId}`}
-        accessibilityLabel={node.label}
+        accessibilityLabel={formatHappierWorkMapNodeName(node)}
         count={node.childNodeIds.length}
         density={density}
         styles={styles}
@@ -303,7 +366,7 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
               importantForAccessibility="no-hide-descendants"
               style={styles.laneStub}
             />
-            {renderNode(childNodeId, true)}
+            {renderNode(childNodeId, true, rowWidth === null ? null : (rowWidth - LANE_GAP * (node.childNodeIds.length - 1)) / node.childNodeIds.length, compressedNode)}
           </View>
         ))}
       </WorkMapLanes>
@@ -311,28 +374,29 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
       <View
         testID={`${testIDPrefix}-group-${node.nodeId}`}
         accessibilityRole="list"
-        accessibilityLabel={node.label}
-        style={appearance === 'lane' ? styles.laneStack : styles.sequence}
+        accessibilityLabel={formatHappierWorkMapNodeName(node)}
+        style={appearance === 'lane' ? styles.laneStack : [styles.sequence, scale === 1 ? null : { paddingLeft: indent }]}
       >
         {node.childNodeIds.map((childNodeId, index) => (
           <View key={childNodeId} style={appearance === 'lane' ? null : styles.sequenceItem}>
             {appearance === 'lane' ? (index === 0 ? null : <WorkMapSpine style={styles.spine} />) : (
               <>
                 <View
+                  testID={`${testIDPrefix}-rail-${childNodeId}`}
                   accessibilityElementsHidden
                   importantForAccessibility="no-hide-descendants"
-                  style={index === node.childNodeIds.length - 1
+                  style={[index === node.childNodeIds.length - 1
                     ? [styles.railEnd, index === 0 ? styles.railEndFirst : null]
-                    : [styles.rail, index === 0 ? styles.railFirst : null]}
+                    : [styles.rail, index === 0 ? styles.railFirst : null], railGeometry]}
                 />
                 <View
                   accessibilityElementsHidden
                   importantForAccessibility="no-hide-descendants"
-                  style={styles.tick}
+                  style={[styles.tick, scale === 1 ? null : { ...railGeometry, width: (g.railIndent - g.markX) * scale }]}
                 />
               </>
             )}
-            {renderNode(childNodeId, inLane)}
+            {renderNode(childNodeId, inLane, rowWidth === null ? null : rowWidth - indent, compressedNode)}
           </View>
         ))}
       </View>
@@ -343,7 +407,7 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
         key={node.nodeId}
         testID={`${testIDPrefix}-item-${node.nodeId}`}
         role="listitem"
-        style={[styles.item, appearance === 'frame' ? styles.frame : null]}
+        style={[styles.item, appearance === 'frame' ? [styles.frame, scale === 1 ? null : { paddingHorizontal: framePadding }] : null]}
       >
         {row}
         {props.renderDetail?.(node)}

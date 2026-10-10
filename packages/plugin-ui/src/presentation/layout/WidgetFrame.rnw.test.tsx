@@ -7,6 +7,9 @@ import {
   HAPPIER_WIDGET_FRAME_METRICS,
   HappierWidgetFrame,
   isHappierWidgetFrameSourceShown,
+  resolveHappierWidgetFrameMeta,
+  resolveHappierWidgetFrameSource,
+  resolveHappierWidgetFrameSourceText,
   type HappierWidgetFrameProps,
 } from './WidgetFrame.js';
 
@@ -113,6 +116,16 @@ describe('HappierWidgetFrame', () => {
     expect(byId(frame, 'frame.footer')!.style.borderTopColor).not.toBe('rgb(9, 8, 7)');
   });
 
+  it('draws no header row when there is nothing to say in it (an untitled group is only what it holds)', () => {
+    const view = mount({ title: null, mark: undefined, source: undefined, meta: undefined, accessory: undefined });
+    const frame = byId(view.container, 'frame')!;
+    expect(byId(frame, 'frame.header')).toBeNull();
+    expect(byId(frame, 'frame.body')!.textContent).toBe('body');
+    // A title alone keeps the header.
+    const titled = mount({ title: 'happier', mark: undefined, source: undefined, meta: undefined, accessory: undefined });
+    expect(byId(titled.container, 'frame.header')).not.toBeNull();
+  });
+
   it('puts the source under the title when asked (phones), and beside it otherwise', () => {
     const inline = mount();
     const below = mount({ sourcePlacement: 'below' });
@@ -130,10 +143,56 @@ describe('HappierWidgetFrame', () => {
     expect(byId(card.container, 'frame.body')!.style.paddingLeft).toBe(`${HAPPIER_WIDGET_FRAME_METRICS.cardInsetPx}px`);
   });
 
+  it('draws a move handle before the mark, and keeps a header for a frame that has only one', () => {
+    const framed = mount({ leading: <Text testID="grip">grip</Text> });
+    const header = byId(framed.container, 'frame.header')!;
+    expect(header.textContent!.indexOf('grip')).toBeLessThan(header.textContent!.indexOf('mark'));
+    const only = mount({ title: null, mark: undefined, meta: undefined, accessory: undefined, leading: <Text testID="grip">grip</Text> });
+    expect(byId(only.container, 'frame.header')).not.toBeNull();
+  });
+
+  it('draws the meta compact below the narrowing width, so the title keeps its room', () => {
+    const limit = HAPPIER_WIDGET_FRAME_METRICS.sourceHiddenBelowPx;
+    expect(resolveHappierWidgetFrameMeta({ widthPx: limit - 1, meta: 'Refreshing…', compactMeta: '◌' })).toBe('◌');
+    expect(resolveHappierWidgetFrameMeta({ widthPx: limit, meta: 'Refreshing…', compactMeta: '◌' })).toBe('Refreshing…');
+    expect(resolveHappierWidgetFrameMeta({ widthPx: limit - 1, meta: 'as of 10:42' })).toBe('as of 10:42');
+  });
+
   it('lets the source leave before the title truncates: hidden only below the narrowing width', () => {
     const limit = HAPPIER_WIDGET_FRAME_METRICS.sourceHiddenBelowPx;
     expect(isHappierWidgetFrameSourceShown(null)).toBe(true);
     expect(isHappierWidgetFrameSourceShown(limit)).toBe(true);
     expect(isHappierWidgetFrameSourceShown(limit - 1)).toBe(false);
+  });
+
+  it('draws a bound source from its descriptor: the binding glyph, the line, and the full phrase as its accessible name', () => {
+    const followed = mount({
+      source: { binding: 'follow', text: 'happier', accessibilityLabel: 'Following group · happier' },
+      renderSourceGlyph: (binding) => <Text testID={`glyph-${binding}`}>g</Text>,
+    });
+    const line = byId(followed.container, 'frame.source')!;
+    expect(line.getAttribute('aria-label')).toBe('Following group · happier');
+    expect(byId(followed.container, 'glyph-follow')).not.toBeNull();
+    expect(line.textContent).toContain('happier');
+    // A plugin frame passes no glyph adapter: the frame draws the pin itself.
+    const pinned = mount({ source: { binding: 'pin', text: 'website · main' } });
+    expect(byId(pinned.container, 'frame.source.glyph')).not.toBeNull();
+    expect(byId(pinned.container, 'frame.source')!.getAttribute('aria-label')).toBe('website · main');
+  });
+
+  it('keeps a bound source narrow by its short text, and lets it leave when it has none', () => {
+    const limit = HAPPIER_WIDGET_FRAME_METRICS.sourceHiddenBelowPx;
+    const followed = { binding: 'follow' as const, text: 'Following group · happier', compactText: 'happier' };
+    expect(resolveHappierWidgetFrameSourceText({ widthPx: limit, source: followed })).toBe('Following group · happier');
+    expect(resolveHappierWidgetFrameSourceText({ widthPx: limit - 1, source: followed })).toBe('happier');
+    expect(resolveHappierWidgetFrameSourceText({ widthPx: limit - 1, source: { binding: 'pin', text: 'website · main' } })).toBeNull();
+  });
+
+  it('falls back to a compact source below the narrowing width instead of hiding it, when the widget supplies one', () => {
+    const limit = HAPPIER_WIDGET_FRAME_METRICS.sourceHiddenBelowPx;
+    expect(resolveHappierWidgetFrameSource({ widthPx: limit - 1, source: 'Following group · happier', compactSource: 'happier' })).toBe('happier');
+    expect(resolveHappierWidgetFrameSource({ widthPx: limit, source: 'Following group · happier', compactSource: 'happier' })).toBe('Following group · happier');
+    // Without a compact form, the source still leaves before the title truncates.
+    expect(resolveHappierWidgetFrameSource({ widthPx: limit - 1, source: 'Note' })).toBeNull();
   });
 });

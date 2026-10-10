@@ -3,6 +3,8 @@ import { Pressable } from 'react-native';
 import { describe, expect, it } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
+import { PluginUiProvider } from '../../components/PluginUiProvider.js';
+import { createHostApiStub, createSurfaceContext } from '../../surfaceFixture.testSupport.js';
 import { HappierDragGrip } from './DragGrip.js';
 import {
   HappierReleaseOutcomePill,
@@ -74,6 +76,27 @@ describe('HappierDragGrip', () => {
 });
 
 describe('HappierReleasePreviewCard', () => {
+  it('gives the floating preview, OS-drag pill and staged dock one role finish while retaining their flat inner strips and keycaps', async () => {
+    const context = createSurfaceContext();
+    const gradient = { colors: ['rgba(0,0,0,0)', 'rgba(0,0,0,0.024)'] as const };
+    const outcome = { tone: 'allowed', title: 'Move Review' } as const;
+    const scene = (soft: boolean) => {
+      const projected = { ...context, theme: { ...context.theme, surfaceFinish: { card: null, floating: soft ? gradient : null } } };
+      return <PluginUiProvider context={projected} hostApi={createHostApiStub(projected)}>
+        <HappierReleasePreviewCard identity={{ title: 'Review' }} outcome={outcome} colors={colors} host={host} reducedMotion testID="preview" />
+        <HappierReleaseOutcomePill outcome={outcome} colors={colors} host={host} reducedMotion testID="pill" />
+        <HappierStagedMoveDock outcome={outcome} hints={[{ keys: ['esc'], label: 'Cancel' }]} colors={colors} host={host} reducedMotion testID="dock" />
+      </PluginUiProvider>;
+    };
+    const mounted = mountThroughReactNativeWeb(scene(true));
+    const paints = (id: string) => [...mounted.container.querySelectorAll<HTMLElement>(`[data-testid="${id}"], [data-testid="${id}"] *`)]
+      .filter(node => getComputedStyle(node).backgroundImage.includes('linear-gradient'));
+    for (const id of ['preview', 'pill', 'dock']) expect(paints(id)).toHaveLength(1);
+    await mounted.render(scene(false));
+    for (const id of ['preview', 'pill', 'dock']) expect(paints(id)).toHaveLength(0);
+    expect(mounted.container.textContent).toContain('escCancel');
+    mounted.unmount();
+  });
   it('names the carried item, then what releasing here does and its consequence', () => {
     const mounted = mountThroughReactNativeWeb(
       <HappierReleasePreviewCard

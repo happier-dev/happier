@@ -54,6 +54,31 @@ function mount(children: React.ReactNode, hostVirtualizer: CollectionVirtualizer
 const items = [{ id: 'a', title: 'Alpha' }, { id: 'b', title: 'Beta' }, { id: 'c', title: 'Gamma' }];
 
 describe('host-injected Collection virtualizer', () => {
+  it('chooses an unmounted radio row through the existing reveal and focus lifecycle', () => {
+    const changes: string[] = [];
+    function Example() {
+      const [value, setValue] = React.useState<string | null>('a');
+      return <List items={items} keyForItem={(item) => item.id} accessibilityLabel="Size"
+        selection={{ single: { value, onValueChange: (key) => { changes.push(key); setValue(key); },
+          isItemSelectable: (item) => item.id !== 'b' } }}
+        renderItem={(item) => <List.Item title={item.title} />} />;
+    }
+    const view = mount(<Example />);
+    try {
+      const first = view.container.querySelector<HTMLElement>('[role="radio"]')!;
+      expect(first?.getAttribute('aria-checked')).toBe('true');
+      act(() => {
+        first.focus();
+        first.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+      });
+      const chosen = view.container.querySelector<HTMLElement>('[role="radio"]')!;
+      expect(changes).toEqual(['c']);
+      expect(chosen.textContent).toContain('Gamma');
+      expect(chosen.getAttribute('aria-checked')).toBe('true');
+      expect(chosen.getAttribute('tabindex')).toBe('0');
+      expect(document.activeElement).toBe(chosen);
+    } finally { view.unmount(); }
+  });
   it('uses the injected flat window while List retains reveal, focus and selection', () => {
     const selected: string[] = [];
     const view = mount(

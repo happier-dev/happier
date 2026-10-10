@@ -21,9 +21,15 @@ import {
   type SectionListData as ReactNativeSectionListData,
 } from 'react-native';
 
-import { useOptionalHappierUiLocalization, useOptionalHappierUiPalette } from '../environment/context.js';
+import {
+  useOptionalHappierUiLocalization,
+  useOptionalHappierUiPalette,
+} from '../environment/context.js';
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
-import { HappierPageSectionHeader, HappierPageSheet } from '../presentation/layout/PageSection.js';
+import {
+  HappierPageSectionHeader,
+  HappierPageSheet,
+} from '../presentation/layout/PageSection.js';
 import { useHappierPageChrome } from '../presentation/layout/pageChrome.js';
 import type {
   HappierFocusable,
@@ -59,9 +65,7 @@ import {
   HappierItemGroup,
   HappierItemGroupBehavior,
 } from '../presentation/collection/ItemGroup.js';
-import {
-  HappierItemOverflow,
-} from '../presentation/collection/ItemOverflow.js';
+import { HappierItemOverflow } from '../presentation/collection/ItemOverflow.js';
 import type { HappierTone } from '../presentation/semantics.js';
 import {
   ListMultiSelectionProvider,
@@ -76,8 +80,14 @@ import { ContextMenu } from './Overlay.js';
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
 import { resolveAuthorText } from './resolveAuthorText.js';
 import { ListCollectionControlContext } from './listCollectionControl.js';
-import { ListCollectionHeader, useListCollectionSearch } from './listCollectionHeader.js';
-import { HappierDisclosure, resolveHappierDisclosureFrameStyle } from '../presentation/collection/Disclosure.js';
+import {
+  ListCollectionHeader,
+  useListCollectionSearch,
+} from './listCollectionHeader.js';
+import {
+  HappierDisclosure,
+  resolveHappierDisclosureFrameStyle,
+} from '../presentation/collection/Disclosure.js';
 import { HAPPIER_INSTANT_DISCLOSURE_MOTION } from '../presentation/collection/collectionMotion.js';
 import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
 import { useHappierUiAccessibility } from '../environment/context.js';
@@ -129,18 +139,19 @@ type ListSearchBaseProps<Item> = Readonly<{
  * A bounded search state for a virtualized List. An empty query retains the
  * original item array, so selection updates do not rebuild the data window.
  */
-export type ListSearchProps<Item> = ListSearchBaseProps<Item> & (
-  | Readonly<{
-      value: string;
-      defaultValue?: never;
-      onValueChange: (value: string) => void;
-    }>
-  | Readonly<{
-      value?: never;
-      defaultValue?: string;
-      onValueChange?: (value: string) => void;
-    }>
-);
+export type ListSearchProps<Item> = ListSearchBaseProps<Item> &
+  (
+    | Readonly<{
+        value: string;
+        defaultValue?: never;
+        onValueChange: (value: string) => void;
+      }>
+    | Readonly<{
+        value?: never;
+        defaultValue?: string;
+        onValueChange?: (value: string) => void;
+      }>
+  );
 
 type ListSelectionBaseProps<Item> = Readonly<{
   /**
@@ -218,31 +229,33 @@ export type ListMultiSelectionCapabilityProps<Item = unknown> = Readonly<{
 }>;
 
 /** Navigation selection or an explicit controlled single-choice capability. */
-export type ListSelectionProps<Item = unknown> = ListSelectionBaseProps<Item> & (
-  | Readonly<{
-      single: ListSingleChoiceCapabilityProps<Item>;
-      multiple?: never;
-      selectedKey?: never;
-      defaultSelectedKey?: never;
-      onSelectedKeyChange?: never;
-    }>
-  | (Readonly<{
-      single?: never;
-      /** Bulk choice stays independent of the row whose detail is open. */
-      multiple?: ListMultiSelectionCapabilityProps<Item>;
-    }> & (
-      | Readonly<{
-          selectedKey: string | null;
-          defaultSelectedKey?: never;
-          onSelectedKeyChange: (key: string) => void;
-        }>
-      | Readonly<{
-          selectedKey?: never;
-          defaultSelectedKey?: string | null;
-          onSelectedKeyChange?: (key: string) => void;
-        }>
-    ))
-);
+export type ListSelectionProps<Item = unknown> = ListSelectionBaseProps<Item> &
+  (
+    | Readonly<{
+        single: ListSingleChoiceCapabilityProps<Item>;
+        multiple?: never;
+        selectedKey?: never;
+        defaultSelectedKey?: never;
+        onSelectedKeyChange?: never;
+      }>
+    | (Readonly<{
+        single?: never;
+        /** Bulk choice stays independent of the row whose detail is open. */
+        multiple?: ListMultiSelectionCapabilityProps<Item>;
+      }> &
+        (
+          | Readonly<{
+              selectedKey: string | null;
+              defaultSelectedKey?: never;
+              onSelectedKeyChange: (key: string) => void;
+            }>
+          | Readonly<{
+              selectedKey?: never;
+              defaultSelectedKey?: string | null;
+              onSelectedKeyChange?: (key: string) => void;
+            }>
+        ))
+  );
 
 /** The current selected row exposed to an optional virtualized List header. */
 export type ListHeaderContext<Item> = Readonly<{
@@ -277,7 +290,10 @@ type VirtualizedListSectionMetadata = Readonly<{
   authorKey: string;
 }>;
 
-type VirtualizedListSectionData<Item> = ReactNativeSectionListData<Item, VirtualizedListSectionMetadata>;
+type VirtualizedListSectionData<Item> = ReactNativeSectionListData<
+  Item,
+  VirtualizedListSectionMetadata
+>;
 
 type VirtualizedListSharedProps<Item> = Readonly<{
   /** Replace platform rendering only; List keeps selection, focus and viewport custody. */
@@ -290,7 +306,11 @@ type VirtualizedListSharedProps<Item> = Readonly<{
    * row's own collection unit: the whole list in the flat arm, where
    * `sectionKey` is `null`, or its section in the sectioned arm.
    */
-  renderItem: (item: Item, index: number, sectionKey: string | null) => ReactNode;
+  renderItem: (
+    item: Item,
+    index: number,
+    sectionKey: string | null,
+  ) => ReactNode;
   /** Content, or content derived from List's filtered selected row, above the collection. */
   header?: ReactNode | ((context: ListHeaderContext<Item>) => ReactNode);
   /** Search/filter state owned by this List before the native virtualizer receives rows. */
@@ -324,26 +344,28 @@ type VirtualizedListSharedProps<Item> = Readonly<{
   children?: never;
 }>;
 
-type NonSelectableVirtualizedListProps<Item> = VirtualizedListSharedProps<Item> & Readonly<{
-  selection?: undefined;
-  /**
-   * Content at the end of the collection that scrolls WITH the rows, unlike
-   * `footer`. It reaches the platform's own end slot, so a long trailing
-   * region — a second settings section under a list, for example — is
-   * reachable without nesting a second scroller inside this one.
-   *
-   * It is deliberately absent from the selectable arms: a `listbox` or `grid`
-   * owns options and rows, and has no honest cell for author content, while a
-   * `list` admits it through the `listitem` its role permits. When the
-   * collection is empty the `empty` slot travels into the same region, so a
-   * reader still meets "no rows" before whatever follows them.
-   */
-  endContent?: ReactNode;
-}>;
+type NonSelectableVirtualizedListProps<Item> =
+  VirtualizedListSharedProps<Item> &
+    Readonly<{
+      selection?: undefined;
+      /**
+       * Content at the end of the collection that scrolls WITH the rows, unlike
+       * `footer`. It reaches the platform's own end slot, so a long trailing
+       * region — a second settings section under a list, for example — is
+       * reachable without nesting a second scroller inside this one.
+       *
+       * It is deliberately absent from the selectable arms: a `listbox` or `grid`
+       * owns options and rows, and has no honest cell for author content, while a
+       * `list` admits it through the `listitem` its role permits. When the
+       * collection is empty the `empty` slot travels into the same region, so a
+       * reader still meets "no rows" before whatever follows them.
+       */
+      endContent?: ReactNode;
+    }>;
 
-type SelectableVirtualizedListProps<Item> = VirtualizedListSharedProps<Item>
-  & ListAccessibleNameProps
-  & Readonly<{
+type SelectableVirtualizedListProps<Item> = VirtualizedListSharedProps<Item> &
+  ListAccessibleNameProps &
+  Readonly<{
     endContent?: never;
     /** Makes one semantic List.Item per row an accessible selected collection row. */
     selection: ListSelectionProps<Item>;
@@ -359,19 +381,21 @@ type SelectableVirtualizedListProps<Item> = VirtualizedListSharedProps<Item>
 type FlatVirtualizedListProps<Item> = (
   | NonSelectableVirtualizedListProps<Item>
   | SelectableVirtualizedListProps<Item>
-) & Readonly<{
-  items: readonly Item[];
-  sections?: never;
-}>;
+) &
+  Readonly<{
+    items: readonly Item[];
+    sections?: never;
+  }>;
 
 type SectionedVirtualizedListProps<Item> = (
   | NonSelectableVirtualizedListProps<Item>
   | SelectableVirtualizedListProps<Item>
-) & Readonly<{
-  items?: never;
-  /** Labelled groups virtualized together; sections and rows share one scroller. */
-  sections: readonly ListSectionData<Item>[];
-}>;
+) &
+  Readonly<{
+    items?: never;
+    /** Labelled groups virtualized together; sections and rows share one scroller. */
+    sections: readonly ListSectionData<Item>[];
+  }>;
 
 type VirtualizedListProps<Item> =
   | FlatVirtualizedListProps<Item>
@@ -410,7 +434,8 @@ type ListRow<Item> = Readonly<{
   sectionIndex: number;
 }>;
 
-export type ListProps<Item> = ListBaseProps & (VirtualizedListProps<Item> | StaticListProps);
+export type ListProps<Item> = ListBaseProps &
+  (VirtualizedListProps<Item> | StaticListProps);
 
 export type ListSectionProps = Readonly<{
   children?: ReactNode;
@@ -530,7 +555,8 @@ export type ItemProps = Readonly<{
    */
   expanded?: boolean;
   expandedContent?: ReactNode;
-}> & ItemSecondaryActionsProps;
+}> &
+  ItemSecondaryActionsProps;
 export type ListItemProps = ItemProps;
 
 type ListItemSelectionDisposition = 'open' | 'handled';
@@ -544,7 +570,9 @@ export type ListItemSelectionContextValue = Readonly<{
   selected: boolean;
   activatable: boolean;
   /** The activation event carries the modifier keys one press means something by. */
-  select: (event?: HappierGestureResponderEvent) => ListItemSelectionDisposition;
+  select: (
+    event?: HappierGestureResponderEvent,
+  ) => ListItemSelectionDisposition;
   positionInSet: number;
   setSize: number;
   roving: HappierRovingCollectionItem;
@@ -555,7 +583,8 @@ export type ListItemSelectionContextValue = Readonly<{
   rowCount: number;
 }>;
 
-export const ListItemSelectionContext = createContext<ListItemSelectionContextValue | null>(null);
+export const ListItemSelectionContext =
+  createContext<ListItemSelectionContextValue | null>(null);
 
 type VirtualizedListRowProps<Item> = Readonly<{
   item: Item;
@@ -570,7 +599,11 @@ type VirtualizedListRowProps<Item> = Readonly<{
   setSize: number;
   /** Total grid rows, including section header rows in the sectioned arm. */
   collectionSize: number;
-  renderItem: (item: Item, index: number, sectionKey: string | null) => ReactNode;
+  renderItem: (
+    item: Item,
+    index: number,
+    sectionKey: string | null,
+  ) => ReactNode;
   selectionEnabled: boolean;
   multiSelectable: boolean;
   activatable: boolean;
@@ -583,7 +616,10 @@ type VirtualizedListRowProps<Item> = Readonly<{
    * instead of every mounted row.
    */
   isTabStop: boolean;
-  onSelect: (key: string, event?: HappierGestureResponderEvent) => ListItemSelectionDisposition;
+  onSelect: (
+    key: string,
+    event?: HappierGestureResponderEvent,
+  ) => ListItemSelectionDisposition;
   onFocus: (key: string) => void;
   onRovingKey: (index: number, key: string, event: unknown) => boolean;
   registerTarget: (key: string, target: HappierFocusable | null) => void;
@@ -596,47 +632,65 @@ type VirtualizedListRowProps<Item> = Readonly<{
  * the row boundary narrow so the public List's selected key changes only the
  * formerly selected and newly selected semantic rows.
  */
-class VirtualizedListRow<Item> extends PureComponent<VirtualizedListRowProps<Item>> {
+class VirtualizedListRow<Item> extends PureComponent<
+  VirtualizedListRowProps<Item>
+> {
   render(): ReactElement {
     const props = this.props;
-    const selection: ListItemSelectionContextValue | null = props.selectionEnabled
-      ? {
-          itemKey: props.itemKey,
-          multiSelectable: props.multiSelectable,
-          selected: props.selected,
-          activatable: props.activatable,
-          select: (event) => props.onSelect(props.itemKey, event),
-          positionInSet: props.index + 1,
-          setSize: props.setSize,
-          roving: {
-            isTabStop: props.isTabStop,
-            onFocus: () => props.onFocus(props.itemKey),
-            onKeyDown: (key, event) => props.onRovingKey(props.rowIndex, key, event),
-            register: (target) => props.registerTarget(props.itemKey, target),
-          },
-          accessibilityPattern: props.accessibilityPattern,
-          unavailableReason: props.unavailableReason,
-          rowIndex: props.accessibilityRowIndex,
-          rowCount: props.accessibilityPattern === 'grid' ? props.collectionSize : props.setSize,
-        }
-      : null;
-    const renderedItem = props.renderItem(props.item, props.index, props.sectionKey);
+    const selection: ListItemSelectionContextValue | null =
+      props.selectionEnabled
+        ? {
+            itemKey: props.itemKey,
+            multiSelectable: props.multiSelectable,
+            selected: props.selected,
+            activatable: props.activatable,
+            select: (event) => props.onSelect(props.itemKey, event),
+            positionInSet: props.index + 1,
+            setSize: props.setSize,
+            roving: {
+              isTabStop: props.isTabStop,
+              onFocus: () => props.onFocus(props.itemKey),
+              onKeyDown: (key, event) =>
+                props.onRovingKey(props.rowIndex, key, event),
+              register: (target) => props.registerTarget(props.itemKey, target),
+            },
+            accessibilityPattern: props.accessibilityPattern,
+            unavailableReason: props.unavailableReason,
+            rowIndex: props.accessibilityRowIndex,
+            rowCount:
+              props.accessibilityPattern === 'grid'
+                ? props.collectionSize
+                : props.setSize,
+          }
+        : null;
+    const renderedItem = props.renderItem(
+      props.item,
+      props.index,
+      props.sectionKey,
+    );
     // A primitive item has no React Native text host or row semantics. Route it
     // through the selectable List.Item owner when selection is active; authored
     // semantic rows already consume that context and must not be wrapped again.
-    const row = typeof renderedItem === 'string' || typeof renderedItem === 'number'
-      ? selection === null
-        ? <HappierListItem>{renderedItem}</HappierListItem>
-        : <ListItem>{renderedItem}</ListItem>
-      : <>{renderedItem}</>;
-
-    return selection === null
-      ? row
-      : (
-        <HappierListRowOpenContext.Provider value={props.open}>
-          <ListItemSelectionContext.Provider value={selection}>{row}</ListItemSelectionContext.Provider>
-        </HappierListRowOpenContext.Provider>
+    const row =
+      typeof renderedItem === 'string' || typeof renderedItem === 'number' ? (
+        selection === null ? (
+          <HappierListItem>{renderedItem}</HappierListItem>
+        ) : (
+          <ListItem>{renderedItem}</ListItem>
+        )
+      ) : (
+        <>{renderedItem}</>
       );
+
+    return selection === null ? (
+      row
+    ) : (
+      <HappierListRowOpenContext.Provider value={props.open}>
+        <ListItemSelectionContext.Provider value={selection}>
+          {row}
+        </ListItemSelectionContext.Provider>
+      </HappierListRowOpenContext.Provider>
+    );
   }
 }
 
@@ -698,30 +752,39 @@ const virtualizedListBoxStyle: HappierPortableStyle = {
 
 export function useRowFocusRequest(): RowFocusRequest {
   const requested = useRef<string | null>(null);
-  return useMemo<RowFocusRequest>(() => ({
-    claim: (key) => {
-      requested.current = key;
-    },
-    abandon: () => {
-      requested.current = null;
-    },
-    requestedKey: () => requested.current,
-    consume: (key, target) => {
-      if (requested.current !== key) return;
-      requested.current = null;
-      target.focus?.();
-    },
-  }), []);
+  return useMemo<RowFocusRequest>(
+    () => ({
+      claim: (key) => {
+        requested.current = key;
+      },
+      abandon: () => {
+        requested.current = null;
+      },
+      requestedKey: () => requested.current,
+      consume: (key, target) => {
+        if (requested.current !== key) return;
+        requested.current = null;
+        target.focus?.();
+      },
+    }),
+    [],
+  );
 }
 
-function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>): ReactElement {
+function VirtualizedList<Item>(
+  props: ListBaseProps & VirtualizedListProps<Item>,
+): ReactElement {
   const listRootRef = useRef<View | null>(null);
   const collectionControl = useContext(ListCollectionControlContext);
   // Density changes only the spacing between authored rows. It does not select
   // a separate item implementation or carry core row policy into the public
   // component surface.
-  const densityStyle: HappierPortableStyle = props.density === 'compact' ? { gap: 4 } : { gap: 8 };
-  const { query, control: searchControl } = useListCollectionSearch(props.search, listRootRef);
+  const densityStyle: HappierPortableStyle =
+    props.density === 'compact' ? { gap: 4 } : { gap: 8 };
+  const { query, control: searchControl } = useListCollectionSearch(
+    props.search,
+    listRootRef,
+  );
   const filter = props.search?.filter;
   const keyForItem = props.keyForItem;
   const [authorItems, authorSections] = useMemo(() => {
@@ -730,7 +793,9 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     // The Collection model's identity rule: keys are unique across the whole List.
     admitHappierCollectionKeys(
       sections !== undefined
-        ? sections.flatMap((section) => section.data.map((item, index) => keyForItem(item, index)))
+        ? sections.flatMap((section) =>
+            section.data.map((item, index) => keyForItem(item, index)),
+          )
         : (items ?? []).map((item, index) => keyForItem(item, index)),
       'List rows',
     );
@@ -752,36 +817,47 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   // the same fact, so one owner drops both.
   const visibleSections = useMemo(() => {
     if (authorSections === undefined) return undefined;
-    admitHappierCollectionKeys(authorSections.map((section) => section.key), 'List sections');
+    admitHappierCollectionKeys(
+      authorSections.map((section) => section.key),
+      'List sections',
+    );
     // The Collection model's narrowing rule (see the comment above).
     return narrowHappierCollectionGroups(
       authorSections,
       (section) => section.data,
       (section, data) => ({ ...section, data }),
-      query === '' || filter === undefined ? undefined : (item: Item) => filter(item, query),
+      query === '' || filter === undefined
+        ? undefined
+        : (item: Item) => filter(item, query),
     );
   }, [authorSections, filter, query]);
-  const virtualizedSections = useMemo<readonly VirtualizedListSectionData<Item>[]>(() => (
-    (visibleSections ?? []).map((section) => ({
-      ...section,
-      authorKey: section.key,
-      key: encodeHappierSectionCellKey(section.key),
-    }))
-  ), [visibleSections]);
+  const virtualizedSections = useMemo<
+    readonly VirtualizedListSectionData<Item>[]
+  >(
+    () =>
+      (visibleSections ?? []).map((section) => ({
+        ...section,
+        authorKey: section.key,
+        key: encodeHappierSectionCellKey(section.key),
+      })),
+    [visibleSections],
+  );
 
   // ONE flattened traversal order for both arms. The roving tab stop, arrow
   // movement and pending focus all address a row by its position here, so a
   // section boundary never becomes a second navigation owner.
   const rows = useMemo<readonly ListRow<Item>[]>(() => {
     return visibleSections !== undefined
-      ? visibleSections.flatMap((section, sectionIndex) => section.data.map((item, index) => ({
-        item,
-        key: keyForItem(item, index),
-        index,
-        setSize: section.data.length,
-        sectionKey: section.key,
-        sectionIndex,
-      })))
+      ? visibleSections.flatMap((section, sectionIndex) =>
+          section.data.map((item, index) => ({
+            item,
+            key: keyForItem(item, index),
+            index,
+            setSize: section.data.length,
+            sectionKey: section.key,
+            sectionIndex,
+          })),
+        )
       : (visibleItems ?? []).map((item, index) => ({
           item,
           key: keyForItem(item, index),
@@ -840,15 +916,19 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   const retainedSelectionKeys = multiCapability?.retainedSelectionKeys;
   const eligibleSelectionKeys = useMemo(() => {
     if (multiStore === null) return [];
-    const authorRows = authorSections !== undefined
-      ? authorSections.flatMap((section) => section.data.map((item, index) => ({ item, index })))
-      : (authorItems ?? []).map((item, index) => ({ item, index }));
+    const authorRows =
+      authorSections !== undefined
+        ? authorSections.flatMap((section) =>
+            section.data.map((item, index) => ({ item, index })),
+          )
+        : (authorItems ?? []).map((item, index) => ({ item, index }));
     const present = new Set<string>();
     const eligible: string[] = [];
     for (const entry of authorRows) {
       const key = keyForItem(entry.item, entry.index);
       present.add(key);
-      if (isItemSelectable?.(entry.item, entry.index) !== false) eligible.push(key);
+      if (isItemSelectable?.(entry.item, entry.index) !== false)
+        eligible.push(key);
     }
     // A retained key is only ever about a row that is NOT here. One whose row
     // IS present has already been judged by the author's own predicate, and
@@ -857,23 +937,41 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
       if (!present.has(key)) eligible.push(key);
     }
     return eligible;
-  }, [authorItems, authorSections, isItemSelectable, keyForItem, multiStore, retainedSelectionKeys]);
+  }, [
+    authorItems,
+    authorSections,
+    isItemSelectable,
+    keyForItem,
+    multiStore,
+    retainedSelectionKeys,
+  ]);
   useEffect(() => {
     if (collectionControl?.ownsSelectionRows) return;
     multiStore?.setVisibleRows({
       visibleOrderedKeys: visibleSelectionKeys,
       eligibleKeys: eligibleSelectionKeys,
     });
-  }, [collectionControl?.ownsSelectionRows, eligibleSelectionKeys, multiStore, visibleSelectionKeys]);
+  }, [
+    collectionControl?.ownsSelectionRows,
+    eligibleSelectionKeys,
+    multiStore,
+    visibleSelectionKeys,
+  ]);
 
-  const [uncontrolledSelectedKey, setUncontrolledSelectedKey] = useState<string | null>(
-    props.selection?.defaultSelectedKey ?? null,
-  );
+  const [uncontrolledSelectedKey, setUncontrolledSelectedKey] = useState<
+    string | null
+  >(props.selection?.defaultSelectedKey ?? null);
   const singleChoice = props.selection?.single;
   const singleChoiceRef = useRef(singleChoice);
   singleChoiceRef.current = singleChoice;
-  const controlledSelectedKey = singleChoice === undefined ? props.selection?.selectedKey : singleChoice.value;
-  const selectedKey = controlledSelectedKey === undefined ? uncontrolledSelectedKey : controlledSelectedKey;
+  const controlledSelectedKey =
+    singleChoice === undefined
+      ? props.selection?.selectedKey
+      : singleChoice.value;
+  const selectedKey =
+    controlledSelectedKey === undefined
+      ? uncontrolledSelectedKey
+      : controlledSelectedKey;
   const selectionIsControlled = controlledSelectedKey !== undefined;
   const selectionEnabled = props.selection !== undefined;
   // Logical focus is its own fact. Keyboard navigation moves it alone, so a
@@ -881,7 +979,10 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   // rest of the surface would immediately act on, and a background refresh,
   // scan arrival or watch update moves neither.
   const [localFocusedKey, setFocusedKey] = useState<string | null>(null);
-  const focusedKey = collectionControl?.focus === undefined ? localFocusedKey : collectionControl.focus.key;
+  const focusedKey =
+    collectionControl?.focus === undefined
+      ? localFocusedKey
+      : collectionControl.focus.key;
   const lastReportedFocus = useRef<string | null>(null);
   // One owner for "focus moved", so both movement paths report the same fact
   // and neither reads the author's callback through a memoized closure that an
@@ -917,30 +1018,41 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   const rowFocusRequest = useRowFocusRequest();
   const observesCollectionFocus = useRef(false);
   observesCollectionFocus.current = collectionControl?.focus !== undefined;
-  const observeFocus = useCallback((key: string) => {
-    if (!observesCollectionFocus.current) return;
-    rowFocusRequest.abandon();
-    requestFocusRef.current(key);
-  }, [rowFocusRequest]);
+  const observeFocus = useCallback(
+    (key: string) => {
+      if (!observesCollectionFocus.current) return;
+      rowFocusRequest.abandon();
+      requestFocusRef.current(key);
+    },
+    [rowFocusRequest],
+  );
 
   // Pointer and touch activation is one gesture that both focuses and selects;
   // only the keyboard separates the two. The gesture has already placed native
   // focus on the row it landed on, so it also RETIRES any request still waiting
   // for a reveal — otherwise that row's later registration pulls focus off the
   // row the reader just chose, one or more frames after the interaction.
-  const selectItem = useCallback((
-    key: string,
-    event?: HappierGestureResponderEvent,
-  ): ListItemSelectionDisposition => {
-    rowFocusRequest.abandon();
-    if (singleChoiceRef.current !== undefined) {
-      requestFocusRef.current(key);
-      requestSelectionRef.current(key);
-      return 'handled';
-    }
-    return activateListItem({ key, event, store: multiStoreRef.current,
-      focus: requestFocusRef.current, open: requestSelectionRef.current });
-  }, [rowFocusRequest]);
+  const selectItem = useCallback(
+    (
+      key: string,
+      event?: HappierGestureResponderEvent,
+    ): ListItemSelectionDisposition => {
+      rowFocusRequest.abandon();
+      if (singleChoiceRef.current !== undefined) {
+        requestFocusRef.current(key);
+        requestSelectionRef.current(key);
+        return 'handled';
+      }
+      return activateListItem({
+        key,
+        event,
+        store: multiStoreRef.current,
+        focus: requestFocusRef.current,
+        open: requestSelectionRef.current,
+      });
+    },
+    [rowFocusRequest],
+  );
   // ---- Collection keyboard navigation -------------------------------------
   // A listbox is one composite widget, so it owns a single roving tab stop and
   // arrow/Home/End movement over the WHOLE filtered array. Only this owner can
@@ -948,7 +1060,9 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   // navigation rule itself stays in the shared collection semantics owner, the
   // same one HappierItemGroup's radio groups use.
   const localization = useOptionalHappierUiLocalization();
-  const rtl = localization ? localization.direction === 'rtl' : I18nManager.isRTL;
+  const rtl = localization
+    ? localization.direction === 'rtl'
+    : I18nManager.isRTL;
   const isItemDisabled = props.selection?.isItemDisabled;
   const isSingleItemSelectable = singleChoice?.isItemSelectable;
   const isItemActivatable = props.selection?.isItemActivatable;
@@ -957,44 +1071,64 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     [isItemActivatable, rows],
   );
   const rovingEntries = useMemo<readonly HappierRovingEntry[]>(
-    () => rows.map((row, rowIndex) => ({
-      disabled: isItemDisabled?.(row.item, row.index) === true
-        || isSingleItemSelectable?.(row.item, row.index) === false
-        || activatableRows[rowIndex] === false,
-    })),
+    () =>
+      rows.map((row, rowIndex) => ({
+        disabled:
+          isItemDisabled?.(row.item, row.index) === true ||
+          isSingleItemSelectable?.(row.item, row.index) === false ||
+          activatableRows[rowIndex] === false,
+      })),
     [activatableRows, isItemDisabled, isSingleItemSelectable, rows],
   );
   // A range extension also respects bulk eligibility. Its traversal otherwise
   // shares the primary-action cursor, which already excludes action-only rows;
   // those rows remain readable and their sibling controls keep their own focus.
   const multiRovingEntries = useMemo<readonly HappierRovingEntry[]>(
-    () => (multiStore === null
-      ? rovingEntries
-      : rows.map((row, rowIndex) => ({
-          disabled: rovingEntries[rowIndex]?.disabled === true
-            || isItemSelectable?.(row.item, row.index) === false,
-        }))),
+    () =>
+      multiStore === null
+        ? rovingEntries
+        : rows.map((row, rowIndex) => ({
+            disabled:
+              rovingEntries[rowIndex]?.disabled === true ||
+              isItemSelectable?.(row.item, row.index) === false,
+          })),
     [isItemSelectable, multiStore, rovingEntries, rows],
   );
-  const selectedIndex = selectedKey === null ? -1 : rowIndexByKey.get(selectedKey) ?? -1;
-  const focusedIndex = focusedKey === null ? -1 : rowIndexByKey.get(focusedKey) ?? -1;
+  const selectedIndex =
+    selectedKey === null ? -1 : (rowIndexByKey.get(selectedKey) ?? -1);
+  const focusedIndex =
+    focusedKey === null ? -1 : (rowIndexByKey.get(focusedKey) ?? -1);
   // The single tab stop follows logical focus. Before the reader has moved it —
   // and after a query filters the focused row away — the selected row is the
   // collection's current choice, so Tab still returns to something meaningful.
-  const tabStopIndex = collectionControl?.focus === undefined ? resolveHappierRovingTabStop({
-    entries: rovingEntries,
-    selectedIndex: focusedIndex >= 0 && rovingEntries[focusedIndex]?.disabled !== true ? focusedIndex : selectedIndex,
-  }) : rowIndexByKey.get(collectionControl.focus.tabStopKey ?? '') ?? -1;
+  const tabStopIndex =
+    collectionControl?.focus === undefined
+      ? resolveHappierRovingTabStop({
+          entries: rovingEntries,
+          selectedIndex:
+            focusedIndex >= 0 && rovingEntries[focusedIndex]?.disabled !== true
+              ? focusedIndex
+              : selectedIndex,
+        })
+      : (rowIndexByKey.get(collectionControl.focus.tabStopKey ?? '') ?? -1);
   const tabStopIndexRef = useRef(tabStopIndex);
   tabStopIndexRef.current = tabStopIndex;
 
   const inheritedVirtualizer = useContext(CollectionVirtualizerContext);
-  const hostVirtualizer = useOptionalPluginUiPresentationHost()?.collectionVirtualizer;
-  const virtualizer = props.virtualizer ?? inheritedVirtualizer ?? hostVirtualizer ?? NATIVE_COLLECTION_VIRTUALIZER;
+  const hostVirtualizer =
+    useOptionalPluginUiPresentationHost()?.collectionVirtualizer;
+  const virtualizer =
+    props.virtualizer ??
+    inheritedVirtualizer ??
+    hostVirtualizer ??
+    NATIVE_COLLECTION_VIRTUALIZER;
   const virtualizerHandle = useRef<CollectionVirtualizerHandle | null>(null);
-  const onVirtualizerHandle = useCallback((handle: CollectionVirtualizerHandle | null) => {
-    virtualizerHandle.current = handle;
-  }, []);
+  const onVirtualizerHandle = useCallback(
+    (handle: CollectionVirtualizerHandle | null) => {
+      virtualizerHandle.current = handle;
+    },
+    [],
+  );
   const previousRowKeysRef = useRef<readonly string[]>([]);
   const previousInsertAnchorRef = useRef<Readonly<{
     anchorKey: string;
@@ -1002,7 +1136,8 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   }> | null>(null);
   const scrollOffsetRef = useRef(0);
   const collectionScrollOffsetRef = useRef<{ current: number } | null>(null);
-  collectionScrollOffsetRef.current = collectionControl?.scroll?.offsetRef ?? null;
+  collectionScrollOffsetRef.current =
+    collectionControl?.scroll?.offsetRef ?? null;
   const contentHeightRef = useRef<number | null>(null);
   const pendingContentPreservationRef = useRef<Readonly<{
     contentHeight: number;
@@ -1016,13 +1151,14 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     const insertAnchor = props.preserveVisibleContentPositionOnInsert ?? null;
     previousInsertAnchorRef.current = insertAnchor;
     const contentHeight = contentHeightRef.current;
-    const insertedInsideStableAnchor = insertAnchor !== null
-      && contentHeight !== null
-      && previous.includes(insertAnchor.anchorKey)
-      && rowKeys.includes(insertAnchor.anchorKey)
-      && (previousInsertAnchor === null
-        || previousInsertAnchor.anchorKey !== insertAnchor.anchorKey
-        || !Object.is(previousInsertAnchor.revision, insertAnchor.revision));
+    const insertedInsideStableAnchor =
+      insertAnchor !== null &&
+      contentHeight !== null &&
+      previous.includes(insertAnchor.anchorKey) &&
+      rowKeys.includes(insertAnchor.anchorKey) &&
+      (previousInsertAnchor === null ||
+        previousInsertAnchor.anchorKey !== insertAnchor.anchorKey ||
+        !Object.is(previousInsertAnchor.revision, insertAnchor.revision));
     if (insertedInsideStableAnchor) {
       pendingContentPreservationRef.current = {
         contentHeight,
@@ -1030,17 +1166,22 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
       };
       return;
     }
-    if (!props.preserveVisibleContentPositionOnPrepend || Platform.OS !== 'web') {
+    if (
+      !props.preserveVisibleContentPositionOnPrepend ||
+      Platform.OS !== 'web'
+    ) {
       pendingContentPreservationRef.current = null;
       return;
     }
     const prependedCount = rowKeys.length - previous.length;
-    const purePrepend = previous.length > 0
-      && prependedCount > 0
-      && previous.every((key, index) => rowKeys[index + prependedCount] === key);
-    pendingContentPreservationRef.current = purePrepend && contentHeight !== null
-      ? { contentHeight, offset: scrollOffsetRef.current }
-      : null;
+    const purePrepend =
+      previous.length > 0 &&
+      prependedCount > 0 &&
+      previous.every((key, index) => rowKeys[index + prependedCount] === key);
+    pendingContentPreservationRef.current =
+      purePrepend && contentHeight !== null
+        ? { contentHeight, offset: scrollOffsetRef.current }
+        : null;
   }, [
     props.preserveVisibleContentPositionOnInsert,
     props.preserveVisibleContentPositionOnPrepend,
@@ -1052,18 +1193,23 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     const observed = collectionScrollOffsetRef.current;
     if (observed !== null) observed.current = offset;
   }, []);
-  const onCollectionContentSizeChange = useCallback((_width: number, height: number) => {
-    const pending = pendingContentPreservationRef.current;
-    pendingContentPreservationRef.current = null;
-    contentHeightRef.current = height;
-    if (pending === null || height <= pending.contentHeight) return;
-    const offset = pending.offset + height - pending.contentHeight;
-    scrollOffsetRef.current = offset;
-    virtualizerHandle.current?.scrollToOffset(offset);
-  }, []);
-  const observeContentMetrics = props.preserveVisibleContentPositionOnInsert !== undefined
-    || (props.preserveVisibleContentPositionOnPrepend === true && Platform.OS === 'web')
-    || collectionControl?.scroll !== undefined;
+  const onCollectionContentSizeChange = useCallback(
+    (_width: number, height: number) => {
+      const pending = pendingContentPreservationRef.current;
+      pendingContentPreservationRef.current = null;
+      contentHeightRef.current = height;
+      if (pending === null || height <= pending.contentHeight) return;
+      const offset = pending.offset + height - pending.contentHeight;
+      scrollOffsetRef.current = offset;
+      virtualizerHandle.current?.scrollToOffset(offset);
+    },
+    [],
+  );
+  const observeContentMetrics =
+    props.preserveVisibleContentPositionOnInsert !== undefined ||
+    (props.preserveVisibleContentPositionOnPrepend === true &&
+      Platform.OS === 'web') ||
+    collectionControl?.scroll !== undefined;
   // A Collection's scroll request lands before paint, so a geometry change and the scroll that keeps its
   // anchored row in place are one frame.
   const collectionScrollRequest = collectionControl?.scroll?.request ?? null;
@@ -1078,16 +1224,19 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collectionScrollRequest]);
   const rowTargets = useRef(new Map<string, HappierFocusable>());
-  const registerTarget = useCallback((key: string, target: HappierFocusable | null) => {
-    if (target === null) {
-      rowTargets.current.delete(key);
-      return;
-    }
-    rowTargets.current.set(key, target);
-    // The request survives until ITS OWN row registers a real target, which is
-    // the one event that proves the reveal landed.
-    rowFocusRequest.consume(key, target);
-  }, [rowFocusRequest]);
+  const registerTarget = useCallback(
+    (key: string, target: HappierFocusable | null) => {
+      if (target === null) {
+        rowTargets.current.delete(key);
+        return;
+      }
+      rowTargets.current.set(key, target);
+      // The request survives until ITS OWN row registers a real target, which is
+      // the one event that proves the reveal landed.
+      rowFocusRequest.consume(key, target);
+    },
+    [rowFocusRequest],
+  );
   // A row that has left the collection can never register, so its request must
   // not stay alive: a later scroll back into range would steal focus long after
   // the reader moved on. Only a live request pays for the lookup.
@@ -1097,26 +1246,29 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     if (!rowIndexByKey.has(key)) rowFocusRequest.abandon();
   }, [rowFocusRequest, rowIndexByKey]);
 
-  const revealRow = useCallback((rowIndex: number) => {
-    const row = rows[rowIndex];
-    if (row === undefined) return;
-    if (row.sectionKey !== null) {
-      // A section virtualizer has no whole-list index: a cell is addressed by
-      // its section and its position inside that section.
-      virtualizerHandle.current?.reveal({
-        sectionIndex: row.sectionIndex,
-        index: row.index,
-      });
-      return;
-    }
-    const list = virtualizerHandle.current;
-    if (list === null) return;
-    // Home and End land far outside the measured window, where `scrollToIndex`
-    // has no frame to target; both ends are always reachable by offset.
-    if (rowIndex === 0) list.scrollToOffset(0);
-    else if (rowIndex === rows.length - 1) list.scrollToEnd();
-    else list.reveal({ index: rowIndex });
-  }, [rows]);
+  const revealRow = useCallback(
+    (rowIndex: number) => {
+      const row = rows[rowIndex];
+      if (row === undefined) return;
+      if (row.sectionKey !== null) {
+        // A section virtualizer has no whole-list index: a cell is addressed by
+        // its section and its position inside that section.
+        virtualizerHandle.current?.reveal({
+          sectionIndex: row.sectionIndex,
+          index: row.index,
+        });
+        return;
+      }
+      const list = virtualizerHandle.current;
+      if (list === null) return;
+      // Home and End land far outside the measured window, where `scrollToIndex`
+      // has no frame to target; both ends are always reachable by offset.
+      if (rowIndex === 0) list.scrollToOffset(0);
+      else if (rowIndex === rows.length - 1) list.scrollToEnd();
+      else list.reveal({ index: rowIndex });
+    },
+    [rows],
+  );
   /**
    * Ask for physical focus on one logical row.
    *
@@ -1133,8 +1285,10 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   };
   const requestRowFocusRef = useRef(requestRowFocus);
   requestRowFocusRef.current = requestRowFocus;
-  const authorFocusRequest = collectionControl?.focus === undefined
-    ? props.selection?.focusRequest : collectionControl.focus.request ?? undefined;
+  const authorFocusRequest =
+    collectionControl?.focus === undefined
+      ? props.selection?.focusRequest
+      : (collectionControl.focus.request ?? undefined);
   const handledFocusRequest = useRef<typeof authorFocusRequest>(undefined);
   useEffect(() => {
     if (authorFocusRequest === undefined) return;
@@ -1147,14 +1301,22 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     requestRowFocusRef.current(authorFocusRequest.key, rowIndex);
     collectionControl?.focus?.onRequestHandled?.(authorFocusRequest);
   }, [authorFocusRequest, rovingEntries]);
-  const moveFocus = (fromIndex: number, key: string, event: unknown): boolean => {
-    const currentRowIndex = focusedIndex >= 0 && rovingEntries[focusedIndex]?.disabled !== true ? focusedIndex : fromIndex;
+  const moveFocus = (
+    fromIndex: number,
+    key: string,
+    event: unknown,
+  ): boolean => {
+    const currentRowIndex =
+      focusedIndex >= 0 && rovingEntries[focusedIndex]?.disabled !== true
+        ? focusedIndex
+        : fromIndex;
     const controlledNavigation = collectionControl?.focus;
     if (controlledNavigation !== undefined) {
       const from = rows[currentRowIndex]?.key;
       if (from === undefined) return false;
       if (controlledNavigation.onKey?.(key, from, event)) return true;
-      if (singleChoice === undefined) return collectionControl?.onRowKey?.(key, from) === true;
+      if (singleChoice === undefined)
+        return collectionControl?.onRowKey?.(key, from) === true;
     }
     const multiStoreForKey = multiStoreRef.current;
     if (multiStoreForKey !== null) {
@@ -1170,11 +1332,13 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
       // Escape belongs to whatever the reader is actually in. With no live
       // selection it is the host's — a dialog, a detail pane — so the capability
       // declines it rather than swallowing a key it has nothing to close.
-      const claimed = intent !== null && (intent.kind !== 'exit' || snapshot.isSelectionMode);
+      const claimed =
+        intent !== null && (intent.kind !== 'exit' || snapshot.isSelectionMode);
       if (claimed && intent !== null) {
         const currentKey = rows[currentRowIndex]?.key ?? null;
         if (intent.kind === 'exit') multiStoreForKey.exit();
-        else if (intent.kind === 'selectAllVisible') multiStoreForKey.selectAllVisible();
+        else if (intent.kind === 'selectAllVisible')
+          multiStoreForKey.selectAllVisible();
         else if (intent.kind === 'toggleFocused') {
           if (currentKey !== null) multiStoreForKey.toggle(currentKey);
         } else {
@@ -1200,11 +1364,17 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     // event happened to reach.
     const rowKeyClaim = collectionControl?.onRowKey;
     const claimedRow = rows[currentRowIndex];
-    if (rowKeyClaim !== undefined && claimedRow !== undefined && rowKeyClaim(key, claimedRow.key)) return true;
+    if (
+      rowKeyClaim !== undefined &&
+      claimedRow !== undefined &&
+      rowKeyClaim(key, claimedRow.key)
+    )
+      return true;
     // Activation stays with the shared row pressable. This owner claims only
     // collection navigation, so Space and Enter still select through the
     // author's row action rather than through a second activation path.
-    if ((key === ' ' || key === 'Spacebar') && singleChoice === undefined) return false;
+    if ((key === ' ' || key === 'Spacebar') && singleChoice === undefined)
+      return false;
     // Logical focus, not the row the key event happened to reach, is where the
     // reader is. While a reveal is in flight the requested row has not mounted,
     // so the keydown still arrives at the previous row's element; navigating
@@ -1217,7 +1387,8 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
       rtl,
       listNavigationKeys: singleChoice === undefined,
     });
-    if (next === null || (next === currentIndex && singleChoice === undefined)) return false;
+    if (next === null || (next === currentIndex && singleChoice === undefined))
+      return false;
     const nextRow = rows[next];
     if (nextRow === undefined) return false;
     const nextKey = nextRow.key;
@@ -1233,19 +1404,27 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   // Held behind a ref so a focus or selection change never invalidates the row
   // renderer and forces the virtualizer to rebuild its mounted cells.
   const onRovingKey = useCallback(
-    (index: number, key: string, event: unknown) => moveFocusRef.current(index, key, event),
+    (index: number, key: string, event: unknown) =>
+      moveFocusRef.current(index, key, event),
     [],
   );
 
-  const headerRenderer = typeof props.header === 'function' ? props.header : undefined;
+  const headerRenderer =
+    typeof props.header === 'function' ? props.header : undefined;
   const selectedItem = useMemo(() => {
     if (headerRenderer === undefined || selectedKey === null) return null;
     const rowIndex = rowIndexByKey.get(selectedKey);
-    return rowIndex === undefined ? null : rows[rowIndex]?.item ?? null;
+    return rowIndex === undefined ? null : (rows[rowIndex]?.item ?? null);
   }, [headerRenderer, rowIndexByKey, rows, selectedKey]);
   const authorHeader = resolveVirtualizedHeader(props.header, { selectedItem });
-  const headerContent = collectionControl?.hideChrome ? authorHeader : (
-    <ListCollectionHeader search={searchControl} store={multiStore} selectable={eligibleSelectionKeys.length > 0}>
+  const headerContent = collectionControl?.hideChrome ? (
+    authorHeader
+  ) : (
+    <ListCollectionHeader
+      search={searchControl}
+      store={multiStore}
+      selectable={eligibleSelectionKeys.length > 0}
+    >
       {authorHeader}
     </ListCollectionHeader>
   );
@@ -1268,72 +1447,137 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     </View>
   ) : undefined;
   const renderItem = props.renderItem;
-  const accessibilityPattern = singleChoice !== undefined ? 'radiogroup' : selectionEnabled ? props.accessibilityPattern ?? 'listbox' : 'listbox';
-  const collectionRole = collectionControl?.collectionRole ?? (selectionEnabled
-    ? accessibilityPattern
-    : 'list');
+  const accessibilityPattern =
+    singleChoice !== undefined
+      ? 'radiogroup'
+      : selectionEnabled
+        ? (props.accessibilityPattern ?? 'listbox')
+        : 'listbox';
+  const collectionRole =
+    collectionControl?.collectionRole ??
+    (selectionEnabled ? accessibilityPattern : 'list');
   // One row projection for both arms. `rowIndex` is the collection-wide
   // navigation position; `index` and `setSize` stay unit-local, which is what a
   // reader hears and what the author's callbacks already receive.
-  const renderRow = useCallback((input: Readonly<{
-    item: Item;
-    rowIndex: number;
-    accessibilityRowIndex: number;
-    index: number;
-    setSize: number;
-    collectionSize: number;
-    sectionKey: string | null;
-  }>) => {
-    const itemKey = keyForItem(input.item, input.index);
-    return (
-      <VirtualizedListRow
-        item={input.item}
-        rowIndex={input.rowIndex}
-        accessibilityRowIndex={input.accessibilityRowIndex}
-        index={input.index}
-        itemKey={itemKey}
-        sectionKey={input.sectionKey}
-        setSize={input.setSize}
-        collectionSize={input.collectionSize}
-        renderItem={renderItem}
-        selectionEnabled={selectionEnabled}
-        multiSelectable={multiStore !== null && multiRovingEntries[input.rowIndex]?.disabled === false}
-        activatable={singleChoice === undefined ? activatableRows[input.rowIndex] !== false : rovingEntries[input.rowIndex]?.disabled === false}
-        unavailableReason={singleChoice?.unavailableReason?.(input.item, input.index)}
-        // With the capability mounted, `aria-selected` is the multi-selection —
-        // the standard meaning in a multi-selectable listbox. The single key
-        // stays the open detail and keeps owning the tab stop.
-        selected={multiStore === null
-          ? selectedKeyRef.current === itemKey
-          : multiSelectedKeysRef.current.has(itemKey)}
-        open={singleChoice === undefined && selectedKeyRef.current === itemKey}
-        isTabStop={selectionEnabled && tabStopIndexRef.current === input.rowIndex}
-        onSelect={selectItem}
-        onFocus={observeFocus}
-        onRovingKey={onRovingKey}
-        registerTarget={registerTarget}
-        accessibilityPattern={accessibilityPattern}
-      />
-    );
-  }, [accessibilityPattern, activatableRows, keyForItem, multiRovingEntries, multiStore, observeFocus, onRovingKey, registerTarget, renderItem, rovingEntries, selectItem, selectionEnabled, singleChoice?.unavailableReason]);
+  const renderRow = useCallback(
+    (
+      input: Readonly<{
+        item: Item;
+        rowIndex: number;
+        accessibilityRowIndex: number;
+        index: number;
+        setSize: number;
+        collectionSize: number;
+        sectionKey: string | null;
+      }>,
+    ) => {
+      const itemKey = keyForItem(input.item, input.index);
+      return (
+        <VirtualizedListRow
+          item={input.item}
+          rowIndex={input.rowIndex}
+          accessibilityRowIndex={input.accessibilityRowIndex}
+          index={input.index}
+          itemKey={itemKey}
+          sectionKey={input.sectionKey}
+          setSize={input.setSize}
+          collectionSize={input.collectionSize}
+          renderItem={renderItem}
+          selectionEnabled={selectionEnabled}
+          multiSelectable={
+            multiStore !== null &&
+            multiRovingEntries[input.rowIndex]?.disabled === false
+          }
+          activatable={
+            singleChoice === undefined
+              ? activatableRows[input.rowIndex] !== false
+              : rovingEntries[input.rowIndex]?.disabled === false
+          }
+          unavailableReason={singleChoice?.unavailableReason?.(
+            input.item,
+            input.index,
+          )}
+          // With the capability mounted, `aria-selected` is the multi-selection —
+          // the standard meaning in a multi-selectable listbox. The single key
+          // stays the open detail and keeps owning the tab stop.
+          selected={
+            multiStore === null
+              ? selectedKeyRef.current === itemKey
+              : multiSelectedKeysRef.current.has(itemKey)
+          }
+          open={
+            singleChoice === undefined && selectedKeyRef.current === itemKey
+          }
+          isTabStop={
+            selectionEnabled && tabStopIndexRef.current === input.rowIndex
+          }
+          onSelect={selectItem}
+          onFocus={observeFocus}
+          onRovingKey={onRovingKey}
+          registerTarget={registerTarget}
+          accessibilityPattern={accessibilityPattern}
+        />
+      );
+    },
+    [
+      accessibilityPattern,
+      activatableRows,
+      keyForItem,
+      multiRovingEntries,
+      multiStore,
+      observeFocus,
+      onRovingKey,
+      registerTarget,
+      renderItem,
+      rovingEntries,
+      selectItem,
+      selectionEnabled,
+      singleChoice?.unavailableReason,
+    ],
+  );
 
   const flatSetSize = visibleItems?.length ?? 0;
-  const renderFlatRow = useCallback(({ item, index }: Readonly<{ item: Item; index: number }>) => (
-    renderRow({ item, rowIndex: index, accessibilityRowIndex: index, index, setSize: flatSetSize, collectionSize: flatSetSize, sectionKey: null })
-  ), [flatSetSize, renderRow]);
-  const renderSectionRow = useCallback(({ item, index, section }: Readonly<{
-    item: Item;
-    index: number;
-    section: VirtualizedListSectionData<Item>;
-  }>) => renderRow({
-    item,
-    rowIndex: (sectionRowOffsets.get(section.key) ?? 0) + index,
-    accessibilityRowIndex: (sectionGridRowOffsets.get(section.key) ?? 0) + 1 + index,
-    index,
-    setSize: section.data.length,
-    collectionSize: rows.length + (visibleSections?.length ?? 0),
-    sectionKey: section.authorKey,
-  }), [renderRow, rows.length, sectionGridRowOffsets, sectionRowOffsets, visibleSections?.length]);
+  const renderFlatRow = useCallback(
+    ({ item, index }: Readonly<{ item: Item; index: number }>) =>
+      renderRow({
+        item,
+        rowIndex: index,
+        accessibilityRowIndex: index,
+        index,
+        setSize: flatSetSize,
+        collectionSize: flatSetSize,
+        sectionKey: null,
+      }),
+    [flatSetSize, renderRow],
+  );
+  const renderSectionRow = useCallback(
+    ({
+      item,
+      index,
+      section,
+    }: Readonly<{
+      item: Item;
+      index: number;
+      section: VirtualizedListSectionData<Item>;
+    }>) =>
+      renderRow({
+        item,
+        rowIndex: (sectionRowOffsets.get(section.key) ?? 0) + index,
+        accessibilityRowIndex:
+          (sectionGridRowOffsets.get(section.key) ?? 0) + 1 + index,
+        index,
+        setSize: section.data.length,
+        collectionSize: rows.length + (visibleSections?.length ?? 0),
+        sectionKey: section.authorKey,
+      }),
+    [
+      renderRow,
+      rows.length,
+      sectionGridRowOffsets,
+      sectionRowOffsets,
+      visibleSections?.length,
+    ],
+  );
   // A listbox that admits more than one chosen option has to say so. The
   // capability marks every chosen row `aria-selected`, and without this fact a
   // screen reader treats those as contradictory and announces the last one as
@@ -1341,9 +1585,10 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   // present only while the capability is mounted, so an ordinary
   // single-selection list never claims a choice its reader cannot make.
   const collectionMultiSelectable = multiStore === null ? undefined : true;
-  const collectionRowCount = visibleSections === undefined
-    ? flatSetSize
-    : rows.length + visibleSections.length;
+  const collectionRowCount =
+    visibleSections === undefined
+      ? flatSetSize
+      : rows.length + visibleSections.length;
   // `role="listbox"` is a React Native Web alias, and the selectable arm
   // deliberately withholds the native `list` role that would contradict its
   // `option` rows — so on Android a selectable list is not a collection at all
@@ -1355,11 +1600,12 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   // indices (including section headers), so the sectioned grid can publish the
   // same native extent as the flat grid. Listbox rows intentionally retain
   // section-local set positions, so that arm withholds a contradictory extent.
-  const nativeCollection = Platform.OS === 'web'
-    || !selectionEnabled
-    || (visibleSections !== undefined && accessibilityPattern !== 'grid')
-    ? undefined
-    : { rowCount: collectionRowCount, columnCount: 1 };
+  const nativeCollection =
+    Platform.OS === 'web' ||
+    !selectionEnabled ||
+    (visibleSections !== undefined && accessibilityPattern !== 'grid')
+      ? undefined
+      : { rowCount: collectionRowCount, columnCount: 1 };
   // The shared section owner, told which collection element the virtualizer
   // makes this header a direct child of. The rows are its siblings there, so
   // the header has to be a child that collection role actually permits.
@@ -1375,67 +1621,143 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   useLayoutEffect(() => {
     const previous = previousPageGeometryRef.current;
     previousPageGeometryRef.current = pageGeometry;
-    if (!pageScroll || pageTracker === null || previous === undefined || pageGeometry === undefined) return;
-    if (previous.width === pageGeometry.width && previous.headerHeight === pageGeometry.headerHeight
-      && previous.defaultRowHeight === pageGeometry.defaultRowHeight) return;
+    if (
+      !pageScroll ||
+      pageTracker === null ||
+      previous === undefined ||
+      pageGeometry === undefined
+    )
+      return;
+    if (
+      previous.width === pageGeometry.width &&
+      previous.headerHeight === pageGeometry.headerHeight &&
+      previous.defaultRowHeight === pageGeometry.defaultRowHeight
+    )
+      return;
     // Logical focus also remembers navigation after blur. Only a still-focused web row may reposition
     // the page on recomposition; an outside control must never pull the reader back to that old cursor.
-    if (Platform.OS !== 'web' || focusedKey === null
-      || document.activeElement !== rowTargets.current.get(focusedKey)) return;
+    if (
+      Platform.OS !== 'web' ||
+      focusedKey === null ||
+      !Object.is(document.activeElement, rowTargets.current.get(focusedKey))
+    )
+      return;
     const index = rowIndexByKey.get(focusedKey);
     if (index !== undefined) revealRow(index);
-  }, [focusedKey, pageGeometry, pageScroll, pageTracker, revealRow, rowIndexByKey]);
+  }, [
+    focusedKey,
+    pageGeometry,
+    pageScroll,
+    pageTracker,
+    revealRow,
+    rowIndexByKey,
+  ]);
 
-  const renderSectionHeader = useCallback(({ section }: Readonly<{ section: VirtualizedListSectionData<Item> }>) => {
-    const header = (
-      <HappierListSection
-        title={section.title}
-        {...(section.count === undefined ? {} : { count: section.count })}
-        {...(section.description === undefined ? {} : { description: section.description })}
-        {...(sectionHeaderStyle === undefined ? {} : { style: sectionHeaderStyle })}
-        {...(collectionControl?.sectionHeaderTitleRole === undefined ? {} : { titleRole: collectionControl.sectionHeaderTitleRole })}
-        {...(sectionHeaderAction === undefined ? {} : { action: sectionHeaderAction(section.authorKey) })}
-        virtualizedCollectionRole={collectionRole}
-        {...(collectionRole === 'grid'
-          ? {
-              accessibilityRowIndex: (sectionGridRowOffsets.get(section.key) ?? 0) + 1,
-              accessibilityRowCount: collectionRowCount,
-            }
-          : {})}
-      />
-    );
-    return wrapSectionHeader === undefined ? header : <>{wrapSectionHeader(section.authorKey, header)}</>;
-  }, [collectionControl?.sectionHeaderTitleRole, collectionRole, collectionRowCount, sectionGridRowOffsets, sectionHeaderAction, sectionHeaderStyle, wrapSectionHeader]);
+  const renderSectionHeader = useCallback(
+    ({ section }: Readonly<{ section: VirtualizedListSectionData<Item> }>) => {
+      const header = (
+        <HappierListSection
+          title={section.title}
+          {...(section.count === undefined ? {} : { count: section.count })}
+          {...(section.description === undefined
+            ? {}
+            : { description: section.description })}
+          {...(sectionHeaderStyle === undefined
+            ? {}
+            : { style: sectionHeaderStyle })}
+          {...(collectionControl?.sectionHeaderTitleRole === undefined
+            ? {}
+            : { titleRole: collectionControl.sectionHeaderTitleRole })}
+          {...(sectionHeaderAction === undefined
+            ? {}
+            : { action: sectionHeaderAction(section.authorKey) })}
+          virtualizedCollectionRole={collectionRole}
+          {...(collectionRole === 'grid'
+            ? {
+                accessibilityRowIndex:
+                  (sectionGridRowOffsets.get(section.key) ?? 0) + 1,
+                accessibilityRowCount: collectionRowCount,
+              }
+            : {})}
+        />
+      );
+      return wrapSectionHeader === undefined ? (
+        header
+      ) : (
+        <>{wrapSectionHeader(section.authorKey, header)}</>
+      );
+    },
+    [
+      collectionControl?.sectionHeaderTitleRole,
+      collectionRole,
+      collectionRowCount,
+      sectionGridRowOffsets,
+      sectionHeaderAction,
+      sectionHeaderStyle,
+      wrapSectionHeader,
+    ],
+  );
 
   // Both facts reach the mounted cells: the tab stop follows focus, so a
   // focus-only move must still commit the two rows whose tab order changed.
-  const extraData = useMemo(() => selectionEnabled
-    ? Object.freeze({
-        selectedKey,
-        focusedKey,
-        multiSelectionVersion: multiStore === null ? null : multiSnapshot.version,
-      })
-    : undefined, [focusedKey, multiSnapshot.version, multiStore, selectedKey, selectionEnabled]);
+  const extraData = useMemo(
+    () =>
+      selectionEnabled
+        ? Object.freeze({
+            selectedKey,
+            focusedKey,
+            multiSelectionVersion:
+              multiStore === null ? null : multiSnapshot.version,
+          })
+        : undefined,
+    [
+      focusedKey,
+      multiSnapshot.version,
+      multiStore,
+      selectedKey,
+      selectionEnabled,
+    ],
+  );
 
-  const renderVirtualizedItem = useCallback((item: Item, index: number, sectionIndex: number | null) => {
-    if (sectionIndex === null) return renderFlatRow({ item, index });
-    const section = virtualizedSections[sectionIndex];
-    return section === undefined ? null : renderSectionRow({ item, index, section });
-  }, [renderFlatRow, renderSectionRow, virtualizedSections]);
-  const renderVirtualizedSectionHeader = useCallback((sectionIndex: number) => {
-    const section = virtualizedSections[sectionIndex];
-    return section === undefined ? null : renderSectionHeader({ section });
-  }, [renderSectionHeader, virtualizedSections]);
+  const renderVirtualizedItem = useCallback(
+    (item: Item, index: number, sectionIndex: number | null) => {
+      if (sectionIndex === null) return renderFlatRow({ item, index });
+      const section = virtualizedSections[sectionIndex];
+      return section === undefined
+        ? null
+        : renderSectionRow({ item, index, section });
+    },
+    [renderFlatRow, renderSectionRow, virtualizedSections],
+  );
+  const renderVirtualizedSectionHeader = useCallback(
+    (sectionIndex: number) => {
+      const section = virtualizedSections[sectionIndex];
+      return section === undefined ? null : renderSectionHeader({ section });
+    },
+    [renderSectionHeader, virtualizedSections],
+  );
 
   const virtualizerRequest: CollectionVirtualizerRequest<Item> = {
     ...(visibleSections === undefined
-      ? { kind: 'flat', items: visibleItems ?? [] } as const
-      : { kind: 'sections', sections: virtualizedSections, renderSectionHeader: renderVirtualizedSectionHeader } as const),
-    keyForItem: visibleSections === undefined ? keyForItem
-      : (item, index) => encodeHappierSectionRowCellKey(keyForItem(item, index)),
+      ? ({ kind: 'flat', items: visibleItems ?? [] } as const)
+      : ({
+          kind: 'sections',
+          sections: virtualizedSections,
+          renderSectionHeader: renderVirtualizedSectionHeader,
+        } as const)),
+    keyForItem:
+      visibleSections === undefined
+        ? keyForItem
+        : (item, index) =>
+            encodeHappierSectionRowCellKey(keyForItem(item, index)),
     renderItem: renderVirtualizedItem,
     onHandle: onVirtualizerHandle,
-    accessibilityRole: collectionRole === 'radiogroup' ? 'radiogroup' : selectionEnabled ? undefined : 'list',
+    accessibilityRole:
+      collectionRole === 'radiogroup'
+        ? 'radiogroup'
+        : selectionEnabled
+          ? undefined
+          : 'list',
     role: collectionRole,
     rowCount: collectionRole === 'grid' ? collectionRowCount : undefined,
     multiSelectable: collectionMultiSelectable,
@@ -1446,53 +1768,87 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     contentContainerStyle: [densityStyle, props.contentContainerStyle],
     extraData,
     endContent: collectionEndContent,
-    preserveVisibleContentPositionOnPrepend: props.preserveVisibleContentPositionOnPrepend,
+    preserveVisibleContentPositionOnPrepend:
+      props.preserveVisibleContentPositionOnPrepend,
     onScroll: observeContentMetrics ? onCollectionScroll : undefined,
-    onContentSizeChange: observeContentMetrics ? onCollectionContentSizeChange : undefined,
+    onContentSizeChange: observeContentMetrics
+      ? onCollectionContentSizeChange
+      : undefined,
   };
 
   // A page-sized collection is not virtualized: the same headers and rows, every one mounted, in the same
   // collection element, scrolling with the page around it (no reveal is needed: every row is on the page).
-  const collection = pageScroll && pageGeometry !== undefined && pageTracker !== null ? (
-    <PageCollectionVirtualizer request={virtualizerRequest} geometry={pageGeometry} tracker={pageTracker}
-      tabStopKey={tabStopIndex === null || tabStopIndex < 0 ? null : visibleSections === undefined ? rows[tabStopIndex]?.key ?? null
-        : encodeHappierSectionRowCellKey(rows[tabStopIndex]?.key ?? '')} />
-  ) : pageScroll ? (
-    <View
-      accessibilityRole={collectionRole === 'radiogroup' ? 'radiogroup' : selectionEnabled ? undefined : 'list'}
-      // @ts-expect-error React Native's role union omits RNW's standard listbox role.
-      role={collectionRole}
-      aria-rowcount={collectionRole === 'grid' ? collectionRowCount : undefined}
-      aria-multiselectable={collectionMultiSelectable}
-      accessibilityCollection={nativeCollection}
-      accessibilityLabel={props.accessibilityLabel}
-      testID={props.testID}
-      style={[props.style, densityStyle, props.contentContainerStyle]}
-    >
-      {virtualizedSections !== undefined && visibleSections !== undefined
-        ? virtualizedSections.map((section) => {
-            const sectionRows = section.data.map((item, index) => (
-              <Fragment key={encodeHappierSectionRowCellKey(keyForItem(item, index))}>
-                {renderSectionRow({ item, index, section })}
+  const collection =
+    pageScroll && pageGeometry !== undefined && pageTracker !== null ? (
+      <PageCollectionVirtualizer
+        request={virtualizerRequest}
+        geometry={pageGeometry}
+        tracker={pageTracker}
+        tabStopKey={
+          tabStopIndex === null || tabStopIndex < 0
+            ? null
+            : visibleSections === undefined
+              ? (rows[tabStopIndex]?.key ?? null)
+              : encodeHappierSectionRowCellKey(rows[tabStopIndex]?.key ?? '')
+        }
+      />
+    ) : pageScroll ? (
+      <View
+        accessibilityRole={
+          collectionRole === 'radiogroup'
+            ? 'radiogroup'
+            : selectionEnabled
+              ? undefined
+              : 'list'
+        }
+        // @ts-expect-error React Native's role union omits RNW's standard listbox role.
+        role={collectionRole}
+        aria-rowcount={
+          collectionRole === 'grid' ? collectionRowCount : undefined
+        }
+        aria-multiselectable={collectionMultiSelectable}
+        accessibilityCollection={nativeCollection}
+        accessibilityLabel={props.accessibilityLabel}
+        testID={props.testID}
+        style={[props.style, densityStyle, props.contentContainerStyle]}
+      >
+        {virtualizedSections !== undefined && visibleSections !== undefined
+          ? virtualizedSections.map((section) => {
+              const sectionRows = section.data.map((item, index) => (
+                <Fragment
+                  key={encodeHappierSectionRowCellKey(keyForItem(item, index))}
+                >
+                  {renderSectionRow({ item, index, section })}
+                </Fragment>
+              ));
+              return (
+                <Fragment key={section.key}>
+                  {renderSectionHeader({ section })}
+                  {pageSheet === undefined ? (
+                    sectionRows
+                  ) : (
+                    // The rows' own hairlines divide them; the sheet only draws its ground and edge. One plain
+                    // child keeps the sheet from re-keying the rows it would otherwise flatten.
+                    <HappierPageSheet
+                      colors={pageSheet.colors}
+                      rowDividers={false}
+                    >
+                      <View>{sectionRows}</View>
+                    </HappierPageSheet>
+                  )}
+                </Fragment>
+              );
+            })
+          : (visibleItems ?? []).map((item, index) => (
+              <Fragment key={keyForItem(item, index)}>
+                {renderFlatRow({ item, index })}
               </Fragment>
-            ));
-            return (
-              <Fragment key={section.key}>
-                {renderSectionHeader({ section })}
-                {pageSheet === undefined ? sectionRows : (
-                  // The rows' own hairlines divide them; the sheet only draws its ground and edge. One plain
-                  // child keeps the sheet from re-keying the rows it would otherwise flatten.
-                  <HappierPageSheet colors={pageSheet.colors} rowDividers={false}><View>{sectionRows}</View></HappierPageSheet>
-                )}
-              </Fragment>
-            );
-          })
-        : (visibleItems ?? []).map((item, index) => (
-            <Fragment key={keyForItem(item, index)}>{renderFlatRow({ item, index })}</Fragment>
-          ))}
-      {collectionEndContent}
-    </View>
-  ) : virtualizer.render(virtualizerRequest);
+            ))}
+        {collectionEndContent}
+      </View>
+    ) : (
+      virtualizer.render(virtualizerRequest)
+    );
 
   // One box around the collection and its chrome. It is unconditional so that
   // gaining or losing chrome never changes the React tree shape around the
@@ -1503,7 +1859,10 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   // own row affordance, and to `List.SelectionActionBar` in the footer.
   return (
     <ListMultiSelectionProvider store={multiStore}>
-      <View ref={listRootRef} style={pageScroll ? pageScrollListBoxStyle : virtualizedListBoxStyle}>
+      <View
+        ref={listRootRef}
+        style={pageScroll ? pageScrollListBoxStyle : virtualizedListBoxStyle}
+      >
         {headerContent}
         {collection}
         {scrollsEndContent ? null : emptyContent}
@@ -1523,15 +1882,20 @@ function ListRoot<Item>(props: ListProps<Item>): ReactElement {
   );
   if (isVirtualizedList(props)) {
     if (
-      props.selection !== undefined
-      && (typeof resolvedAccessibilityLabel !== 'string' || resolvedAccessibilityLabel.trim().length === 0)
+      props.selection !== undefined &&
+      (typeof resolvedAccessibilityLabel !== 'string' ||
+        resolvedAccessibilityLabel.trim().length === 0)
     ) {
       throw new Error('Selectable List requires a non-empty accessible name.');
     }
-    const resolvedProps = { ...rest, accessibilityLabel: resolvedAccessibilityLabel } as ListBaseProps & VirtualizedListProps<Item>;
+    const resolvedProps = {
+      ...rest,
+      accessibilityLabel: resolvedAccessibilityLabel,
+    } as ListBaseProps & VirtualizedListProps<Item>;
     return <VirtualizedList {...resolvedProps} />;
   }
-  const densityStyle: HappierPortableStyle = props.density === 'compact' ? { gap: 4 } : { gap: 8 };
+  const densityStyle: HappierPortableStyle =
+    props.density === 'compact' ? { gap: 4 } : { gap: 8 };
   return (
     <HappierList
       accessibilityLabel={resolvedAccessibilityLabel}
@@ -1548,11 +1912,12 @@ function ListSection(props: ListSectionProps): ReactElement {
 }
 
 function renderListItem(
-  props: ItemProps & Readonly<{
-    rovingCollectionItem?: HappierRovingCollectionItem;
-    accessibilityRowIndex?: number;
-    accessibilityRowCount?: number;
-  }>,
+  props: ItemProps &
+    Readonly<{
+      rovingCollectionItem?: HappierRovingCollectionItem;
+      accessibilityRowIndex?: number;
+      accessibilityRowCount?: number;
+    }>,
   defaultSecondaryActionAccessibilityLabel: string,
   suppressListItemRole = false,
   secondaryActionsControl?: Readonly<{
@@ -1570,9 +1935,10 @@ function renderListItem(
     accessoryOutsidePressable,
     ...item
   } = props;
-  const hasSecondaryActions = secondaryActions !== undefined
-    && secondaryActions.length > 0
-    && onSecondaryAction !== undefined;
+  const hasSecondaryActions =
+    secondaryActions !== undefined &&
+    secondaryActions.length > 0 &&
+    onSecondaryAction !== undefined;
   // Disabled/busy row-action admission is a shared collection decision, not a
   // Menu-local condition. The overflow retains its own individual-action guard.
   const secondaryActionsEnabled = resolveHappierItemBehavior({
@@ -1585,13 +1951,18 @@ function renderListItem(
     <HappierItemOverflow
       actions={secondaryActions}
       secondaryActionsEnabled={secondaryActionsEnabled}
-      accessibilityLabel={secondaryActionAccessibilityLabel ?? defaultSecondaryActionAccessibilityLabel}
+      accessibilityLabel={
+        secondaryActionAccessibilityLabel ??
+        defaultSecondaryActionAccessibilityLabel
+      }
       onSelect={onSecondaryAction}
-      {...(secondaryActionsControl === undefined ? {} : {
-        open: secondaryActionsControl.open,
-        onOpenChange: secondaryActionsControl.onOpenChange,
-        focusReturnRef: secondaryActionsControl.focusReturnRef,
-      })}
+      {...(secondaryActionsControl === undefined
+        ? {}
+        : {
+            open: secondaryActionsControl.open,
+            onOpenChange: secondaryActionsControl.onOpenChange,
+            focusReturnRef: secondaryActionsControl.focusReturnRef,
+          })}
       renderMenu={(input) => (
         <ContextMenu
           open={input.open}
@@ -1603,24 +1974,37 @@ function renderListItem(
           disabled={input.disabled}
           triggerTabIndex={input.triggerTabIndex}
           focusReturnRef={input.focusReturnRef}
-          items={input.actions.map((action) => ({ id: action.id, label: action.label, disabled: action.disabled, destructive: action.destructive }))}
+          items={input.actions.map((action) => ({
+            id: action.id,
+            label: action.label,
+            disabled: action.disabled,
+            destructive: action.destructive,
+          }))}
           onSelect={input.onSelect}
         />
       )}
     />
   ) : null;
-  const composedAccessory = accessory === undefined || accessory === null
-    ? overflow
-    : overflow === null
-      ? accessory
-      : <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>{accessory}{overflow}</View>;
+  const composedAccessory =
+    accessory === undefined || accessory === null ? (
+      overflow
+    ) : overflow === null ? (
+      accessory
+    ) : (
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        {accessory}
+        {overflow}
+      </View>
+    );
   return (
     <HappierListItem
       {...item}
       onContextMenu={secondaryActionsControl?.onContextMenu}
       accessory={composedAccessory}
       hasSecondaryActions={hasSecondaryActions}
-      accessoryOutsidePressable={hasSecondaryActions || accessoryOutsidePressable === true}
+      accessoryOutsidePressable={
+        hasSecondaryActions || accessoryOutsidePressable === true
+      }
       suppressListItemRole={suppressListItemRole}
     />
   );
@@ -1633,18 +2017,22 @@ function renderListItem(
  */
 const EXPANDED_BODY_GLYPH_COLUMN_PX = 20;
 
-function ListItemExpansion(props: Readonly<{
-  expanded: boolean;
-  hasIcon: boolean;
-  row: ReactElement;
-  children: ReactNode;
-  testID?: string;
-}>): ReactElement {
+function ListItemExpansion(
+  props: Readonly<{
+    expanded: boolean;
+    hasIcon: boolean;
+    row: ReactElement;
+    children: ReactNode;
+    testID?: string;
+  }>,
+): ReactElement {
   const host = useOptionalPluginUiPresentationHost();
   const theme = usePluginTheme();
   const { reducedMotion } = useHappierUiAccessibility();
   const motion = host?.disclosureMotion ?? HAPPIER_INSTANT_DISCLOSURE_MOTION;
-  const inset = theme.spacing.medium + (props.hasIcon ? EXPANDED_BODY_GLYPH_COLUMN_PX + theme.spacing.small : 0);
+  const inset =
+    theme.spacing.medium +
+    (props.hasIcon ? EXPANDED_BODY_GLYPH_COLUMN_PX + theme.spacing.small : 0);
   return (
     <View
       style={resolveHappierDisclosureFrameStyle({
@@ -1660,9 +2048,17 @@ function ListItemExpansion(props: Readonly<{
         showDivider={false}
         reducedMotion={reducedMotion || host?.disclosureMotion === undefined}
         motion={motion}
-        {...(props.testID === undefined ? {} : { testID: `${props.testID}:expanded` })}
+        {...(props.testID === undefined
+          ? {}
+          : { testID: `${props.testID}:expanded` })}
       >
-        <View style={{ paddingLeft: inset, paddingRight: theme.spacing.medium, paddingBottom: theme.spacing.medium }}>
+        <View
+          style={{
+            paddingLeft: inset,
+            paddingRight: theme.spacing.medium,
+            paddingBottom: theme.spacing.medium,
+          }}
+        >
           {props.children}
         </View>
       </HappierDisclosure>
@@ -1696,48 +2092,82 @@ function ListItemRow(props: ListItemProps): ReactElement {
   const multiStore = useOptionalListMultiSelectionStore();
   const [secondaryActionsOpen, setSecondaryActionsOpen] = useState(false);
   const rowFocusRef = useRef<HappierFocusable | null>(null);
-  const defaultSecondaryActionAccessibilityLabel = translate(LIST_MORE_ACTIONS_TRANSLATION_KEY, 'More actions');
+  const defaultSecondaryActionAccessibilityLabel = translate(
+    LIST_MORE_ACTIONS_TRANSLATION_KEY,
+    'More actions',
+  );
   const { accessibilityLabelKey, accessibilityHintKey, ...authorProps } = props;
-  const canSelectRow = selection?.activatable === true && selection.multiSelectable;
+  const canSelectRow =
+    selection?.activatable === true && selection.multiSelectable;
   const selectActionId = 'selection.select';
   const resolvedProps = {
     ...authorProps,
-    accessibilityLabel: resolveAuthorText(translate, props.accessibilityLabel, accessibilityLabelKey),
-    accessibilityHint: resolveAuthorText(translate, props.accessibilityHint, accessibilityHintKey),
-    ...(canSelectRow ? {
-      secondaryActions: props.secondaryActions?.some((action) => action.id === selectActionId)
-        ? props.secondaryActions
-        : [...(props.secondaryActions ?? []), {
-            id: selectActionId,
-            label: translate('happier.plugin-ui.list.selectItems', 'Select'),
-          }],
-      onSecondaryAction: (id: string) => {
-        if (id === selectActionId) multiStore?.replaceWith(selection.itemKey);
-        else props.onSecondaryAction?.(id);
-      },
-    } : {}),
+    accessibilityLabel: resolveAuthorText(
+      translate,
+      props.accessibilityLabel,
+      accessibilityLabelKey,
+    ),
+    accessibilityHint: resolveAuthorText(
+      translate,
+      props.accessibilityHint,
+      accessibilityHintKey,
+    ),
+    ...(canSelectRow
+      ? {
+          secondaryActions: props.secondaryActions?.some(
+            (action) => action.id === selectActionId,
+          )
+            ? props.secondaryActions
+            : [
+                ...(props.secondaryActions ?? []),
+                {
+                  id: selectActionId,
+                  label: translate(
+                    'happier.plugin-ui.list.selectItems',
+                    'Select',
+                  ),
+                },
+              ],
+          onSecondaryAction: (id: string) => {
+            if (id === selectActionId)
+              multiStore?.replaceWith(selection.itemKey);
+            else props.onSecondaryAction?.(id);
+          },
+        }
+      : {}),
   } as ListItemProps;
-  const hasSecondaryActions = resolvedProps.secondaryActions !== undefined
-    && resolvedProps.secondaryActions.length > 0
-    && resolvedProps.onSecondaryAction !== undefined;
-  const secondaryActionsEnabled = resolveHappierItemBehavior({
-    disabled: resolvedProps.disabled,
-    busy: resolvedProps.busy,
-    hasPrimaryAction: resolvedProps.onPress !== undefined,
-    hasSecondaryActions,
-  }).secondaryActionsEnabled
-    && resolvedProps.secondaryActions?.some((action) => action.disabled !== true) === true;
-  const openSecondaryActionsFromContext = useCallback((event: unknown) => {
-    if (!secondaryActionsEnabled) return;
-    const candidate = event as Readonly<{
-      preventDefault?: () => void;
-      stopPropagation?: () => void;
-    }>;
-    candidate.preventDefault?.();
-    candidate.stopPropagation?.();
-    setSecondaryActionsOpen(true);
-  }, [secondaryActionsEnabled]);
-  if (selection === null) return renderListItem(resolvedProps, defaultSecondaryActionAccessibilityLabel);
+  const hasSecondaryActions =
+    resolvedProps.secondaryActions !== undefined &&
+    resolvedProps.secondaryActions.length > 0 &&
+    resolvedProps.onSecondaryAction !== undefined;
+  const secondaryActionsEnabled =
+    resolveHappierItemBehavior({
+      disabled: resolvedProps.disabled,
+      busy: resolvedProps.busy,
+      hasPrimaryAction: resolvedProps.onPress !== undefined,
+      hasSecondaryActions,
+    }).secondaryActionsEnabled &&
+    resolvedProps.secondaryActions?.some(
+      (action) => action.disabled !== true,
+    ) === true;
+  const openSecondaryActionsFromContext = useCallback(
+    (event: unknown) => {
+      if (!secondaryActionsEnabled) return;
+      const candidate = event as Readonly<{
+        preventDefault?: () => void;
+        stopPropagation?: () => void;
+      }>;
+      candidate.preventDefault?.();
+      candidate.stopPropagation?.();
+      setSecondaryActionsOpen(true);
+    },
+    [secondaryActionsEnabled],
+  );
+  if (selection === null)
+    return renderListItem(
+      resolvedProps,
+      defaultSecondaryActionAccessibilityLabel,
+    );
   // A grid row's controls are sibling cells by contract. Keeping this at the
   // collection owner prevents an author from accidentally nesting an
   // interactive accessory (Button, toggle, overflow trigger) inside the
@@ -1745,11 +2175,12 @@ function ListItemRow(props: ListItemProps): ReactElement {
   // Passive accessories may live in their own cell as well; that structural
   // consistency is preferable to guessing whether an arbitrary ReactNode is
   // interactive.
-  const gridResolvedProps = selection.accessibilityPattern === 'grid'
-    && resolvedProps.accessory !== undefined
-    && resolvedProps.accessory !== null
-    ? { ...resolvedProps, accessoryOutsidePressable: true }
-    : resolvedProps;
+  const gridResolvedProps =
+    selection.accessibilityPattern === 'grid' &&
+    resolvedProps.accessory !== undefined &&
+    resolvedProps.accessory !== null
+      ? { ...resolvedProps, accessoryOutsidePressable: true }
+      : resolvedProps;
   const rovingCollectionItem: HappierRovingCollectionItem = {
     ...selection.roving,
     register: (target) => {
@@ -1757,8 +2188,9 @@ function ListItemRow(props: ListItemProps): ReactElement {
       selection.roving.register(target);
     },
     onKeyDown: (key, event) => {
-      const opensSecondaryActions = key === 'ContextMenu'
-        || (key === 'F10' && readHappierPointerModifiers(event).shiftKey);
+      const opensSecondaryActions =
+        key === 'ContextMenu' ||
+        (key === 'F10' && readHappierPointerModifiers(event).shiftKey);
       if (opensSecondaryActions && secondaryActionsEnabled) {
         setSecondaryActionsOpen(true);
         return true;
@@ -1771,32 +2203,58 @@ function ListItemRow(props: ListItemProps): ReactElement {
         const disposition = selection.select(event);
         return disposition === 'open' ? props.onPress?.(event) : undefined;
       }
-    // A listbox has options rather than sibling action cells. Preserve a
-    // structural disabled option there; a grid can render a stated row with no
-    // invented primary control at all.
-    : selection.accessibilityPattern !== 'grid'
+    : // A listbox has options rather than sibling action cells. Preserve a
+      // structural disabled option there; a grid can render a stated row with no
+      // invented primary control at all.
+      selection.accessibilityPattern !== 'grid'
       ? () => undefined
       : undefined;
-  return renderListItem({
-    ...gridResolvedProps,
-    selected: selection.selected,
-    ...(selection.accessibilityPattern !== 'grid' && !selection.activatable
-      ? { disabled: true }
-      : {}),
-    accessibilityRole: selection.accessibilityPattern === 'grid' ? 'button' : selection.accessibilityPattern === 'radiogroup' ? 'radio' : 'option',
-    ...(selection.unavailableReason ? { accessibilityHint: selection.unavailableReason } : {}),
-    accessibilityPositionInSet: selection.accessibilityPattern === 'grid' ? undefined : selection.positionInSet,
-    accessibilitySetSize: selection.accessibilityPattern === 'grid' ? undefined : selection.setSize,
-    accessibilityRowIndex: selection.accessibilityPattern === 'grid' ? selection.rowIndex + 1 : undefined,
-    accessibilityRowCount: selection.accessibilityPattern === 'grid' ? selection.rowCount : undefined,
-    ...(selection.activatable ? { rovingCollectionItem } : {}),
-    ...(collectionOnPress === undefined ? {} : { onPress: collectionOnPress }),
-  }, defaultSecondaryActionAccessibilityLabel, true, {
-    open: secondaryActionsOpen,
-    onOpenChange: setSecondaryActionsOpen,
-    focusReturnRef: rowFocusRef,
-    onContextMenu: openSecondaryActionsFromContext,
-  });
+  return renderListItem(
+    {
+      ...gridResolvedProps,
+      selected: selection.selected,
+      ...(selection.accessibilityPattern !== 'grid' && !selection.activatable
+        ? { disabled: true }
+        : {}),
+      accessibilityRole:
+        selection.accessibilityPattern === 'grid'
+          ? 'button'
+          : selection.accessibilityPattern === 'radiogroup'
+            ? 'radio'
+            : 'option',
+      ...(selection.unavailableReason
+        ? { accessibilityHint: selection.unavailableReason }
+        : {}),
+      accessibilityPositionInSet:
+        selection.accessibilityPattern === 'grid'
+          ? undefined
+          : selection.positionInSet,
+      accessibilitySetSize:
+        selection.accessibilityPattern === 'grid'
+          ? undefined
+          : selection.setSize,
+      accessibilityRowIndex:
+        selection.accessibilityPattern === 'grid'
+          ? selection.rowIndex + 1
+          : undefined,
+      accessibilityRowCount:
+        selection.accessibilityPattern === 'grid'
+          ? selection.rowCount
+          : undefined,
+      ...(selection.activatable ? { rovingCollectionItem } : {}),
+      ...(collectionOnPress === undefined
+        ? {}
+        : { onPress: collectionOnPress }),
+    },
+    defaultSecondaryActionAccessibilityLabel,
+    true,
+    {
+      open: secondaryActionsOpen,
+      onOpenChange: setSecondaryActionsOpen,
+      focusReturnRef: rowFocusRef,
+      onContextMenu: openSecondaryActionsFromContext,
+    },
+  );
 }
 
 /** Standalone semantic row; identical owner and behavior to `List.Item`. */
@@ -1859,9 +2317,18 @@ export function ItemGroup(props: ItemGroupProps): ReactElement {
     ...rest
   } = props;
   const title = resolveAuthorText(translate, titleText, titleKey);
-  const description = resolveAuthorText(translate, descriptionText, descriptionKey);
-  const resolvedAccessibilityLabel = resolveAuthorText(translate, accessibilityLabel, accessibilityLabelKey) ?? title;
-  const hasHeader = Boolean(title) || Boolean(description) || (action !== null && action !== undefined);
+  const description = resolveAuthorText(
+    translate,
+    descriptionText,
+    descriptionKey,
+  );
+  const resolvedAccessibilityLabel =
+    resolveAuthorText(translate, accessibilityLabel, accessibilityLabelKey) ??
+    title;
+  const hasHeader =
+    Boolean(title) ||
+    Boolean(description) ||
+    (action !== null && action !== undefined);
   const resolvedSurface = surface ?? (hasHeader ? 'sheet' : undefined);
   resolveHappierItemGroupConstraints({
     role: rest.accessibilityRole,
@@ -1886,37 +2353,42 @@ export function ItemGroup(props: ItemGroupProps): ReactElement {
     // the section title and sheet sit on the page title's line.
     <View testID={testID} style={[{ alignItems: 'center' }, style]}>
       <View style={{ width: '100%', maxWidth: pageChrome?.columnMaxWidthPx }}>
-      {hasHeader ? (
-        <HappierPageSectionHeader
-          title={title}
-          description={description}
-          action={action}
-          insetPx={HAPPIER_PAGE_METRICS.sheetInsetPx + HAPPIER_PAGE_METRICS.headingOpticalInsetPx}
-        />
-      ) : (
-        // An untitled page section starts one section gap below what precedes it, like a titled one
-        // (the header → first block distance does not depend on what the first block is).
-        <View style={{ height: HAPPIER_PAGE_METRICS.sectionGapPx }} />
-      )}
-      <HappierItemGroupBehavior
-        accessibilityRole={rest.accessibilityRole}
-        accessibilityLabel={resolvedAccessibilityLabel}
-        selectableItemCount={Children.count(children)}
-        renderContent={(rows) => (
-          <View
-            role={rest.accessibilityRole ?? 'group'}
-            accessibilityRole={rest.accessibilityRole}
-            accessibilityLabel={resolvedAccessibilityLabel}
-            aria-label={resolvedAccessibilityLabel}
-            style={{ marginHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx }}
-          >
-            {/* The radio projection runs first, so the sheet divides the projected rows. */}
-            <HappierPageSheet surface={resolvedSurface} colors={palette}>{rows}</HappierPageSheet>
-          </View>
+        {hasHeader ? (
+          <HappierPageSectionHeader
+            title={title}
+            description={description}
+            action={action}
+            insetPx={
+              HAPPIER_PAGE_METRICS.sheetInsetPx +
+              HAPPIER_PAGE_METRICS.headingOpticalInsetPx
+            }
+          />
+        ) : (
+          // An untitled page section starts one section gap below what precedes it, like a titled one
+          // (the header → first block distance does not depend on what the first block is).
+          <View style={{ height: HAPPIER_PAGE_METRICS.sectionGapPx }} />
         )}
-      >
-        {children}
-      </HappierItemGroupBehavior>
+        <HappierItemGroupBehavior
+          accessibilityRole={rest.accessibilityRole}
+          accessibilityLabel={resolvedAccessibilityLabel}
+          selectableItemCount={Children.count(children)}
+          renderContent={(rows) => (
+            <View
+              role={rest.accessibilityRole ?? 'group'}
+              accessibilityRole={rest.accessibilityRole}
+              accessibilityLabel={resolvedAccessibilityLabel}
+              aria-label={resolvedAccessibilityLabel}
+              style={{ marginHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx }}
+            >
+              {/* The radio projection runs first, so the sheet divides the projected rows. */}
+              <HappierPageSheet surface={resolvedSurface} colors={palette}>
+                {rows}
+              </HappierPageSheet>
+            </View>
+          )}
+        >
+          {children}
+        </HappierItemGroupBehavior>
       </View>
     </View>
   );

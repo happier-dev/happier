@@ -57,6 +57,9 @@ const APPROVED_CATALOG_VOCABULARY = [
   'Progress', 'Banner',
   'PluginNavigation', 'Tooltip', 'Dialog', 'Sheet', 'Drawer',
   'Grid', 'Tree', 'Skeleton', 'DiffViewer', 'KeyHint',
+  // Plan 70s2: the one widget frame with controlled viewer-local disclosure.
+  'WidgetFrame',
+  'FloatingFrame',
   // r0.42 (Triage plan): the numbered story-rail step, one presentation owner.
   'Step',
   // configuration-surfaces r1 U9 (03b amendment r0.14): visual tiles, one presentation owner.
@@ -820,7 +823,8 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     sharedModule: 'presentation/content/Foundation.tsx',
     sharedSymbol: 'HappierBadge',
     pluginOwner: { module: 'components/Foundation.tsx', symbol: 'Badge' },
-    coreConsumers: ['components/profiles/ProfileRequirementsBadge.tsx'],
+    // StatusPill is core's semantic adapter over the one status-chrome geometry (plan 70 §3 CONSOLIDATE).
+    coreConsumers: ['components/profiles/ProfileRequirementsBadge.tsx', 'components/ui/status/StatusPill.tsx'],
     devMountSymbols: ['Badge as PluginBadge'],
     declarative: { kind: 'not-applicable', reason: 'V2 has no badge node.' },
   },
@@ -1312,9 +1316,9 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     sharedModule: 'presentationHost/context.ts',
     sharedSymbol: 'useOptionalPluginUiPresentationHost',
     pluginOwner: { module: 'components/Session.tsx', symbol: publicName },
-    // The app side is a presentation-host renderer (`PluginSessionPartHost` installed by
-    // `pluginUiPrivatePresentationHost.tsx`), not a consumer of a shared presentation primitive.
-    coreConsumers: [],
+    // The host implements the shared renderSessionPart contract rather than calling the plugin hook.
+    coreConsumers: ['components/plugins/surfaces/pluginUiPrivatePresentationHost.tsx'],
+    corePresentationMechanism: { module: 'presentationHost/context.ts', symbol: 'renderSessionPart' },
     positiveConsumer: publicName === 'SessionChat'
       ? { kind: 'plugin-surface' as const, pathFromRepoRoot: 'packages/plugins/triage/src/ui/detail/sessionPanel.tsx' }
       : {
@@ -1367,6 +1371,63 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     coreConsumers: ['components/ui/forms/SelectionTiles.tsx'],
     devMountSymbols: [],
     declarative: { kind: 'not-applicable', reason: 'V2 has no choice-tile node; a visual preview is an executable React element a declarative document cannot carry.' },
+  },
+  {
+    publicName: 'Tree',
+    propTypeName: 'TreeProps',
+    family: 'Tree',
+    disposition: 'required',
+    // Plan 70 §5/§7: an author's own visible tree projection drawn with the shared tree row
+    // (indent, the one turning disclosure chevron, mark/title/meta/trailing) and the shared tree
+    // keyboard. Happier core's file trees (FilesystemBrowserRow and the repository/Git/path trees)
+    // consume the same rhythm and disclosure owner. Short of graduation until a maintained plugin
+    // page and the loaded-platform proof consume it.
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/navigation/TreeRow.tsx',
+    sharedSymbol: 'HappierTreeRow',
+    pluginOwner: { module: 'components/Tree.tsx', symbol: 'Tree' },
+    coreConsumers: [],
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no tree node; the tree is an executable author projection with its own keyboard.' },
+  },
+  {
+    publicName: 'WidgetFrame',
+    propTypeName: 'WidgetFrameProps',
+    family: 'Widget frame',
+    disposition: 'required',
+    // Plan 70s2: the one widget frame (header grammar, body, footer, controlled viewer-local
+    // disclosure) that Happier core's widget frame adapter also draws. Short of graduation until a
+    // maintained plugin page and the loaded-platform proof consume it.
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/layout/WidgetFrame.tsx',
+    sharedSymbol: 'HappierWidgetFrame',
+    pluginOwner: { module: 'components/WidgetFrame.tsx', symbol: 'WidgetFrame' },
+    coreConsumers: [],
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'Declarative widgets render inside the host frame; there is no free frame node.' },
+  },
+  {
+    publicName: 'FloatingFrame',
+    propTypeName: 'FloatingFrameProps',
+    family: 'Floating frame',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/layout/FloatingFrame.tsx',
+    sharedSymbol: 'FloatingFrame',
+    pluginOwner: { module: 'components/FloatingFrame.tsx', symbol: 'FloatingFrame' },
+    coreConsumers: ['components/sessions/viewer/SessionViewerHost.tsx'],
+    positiveConsumer: {
+      kind: 'external-author-reference',
+      pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/semanticSurface.tsx',
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'The controlled frame contains executable author content; V2 has no free frame node.' },
   },
   {
     publicName: 'PageHeader',
@@ -1658,7 +1719,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     devMountSymbols: [],
     declarative: { kind: 'not-applicable', reason: 'The canonical interaction/modal owner mediates dialog outcomes.' },
   },
-  ...(['Tooltip', 'Grid', 'Tree', 'Skeleton', 'KeyHint'] as const).map((publicName) => ({
+  ...(['Tooltip', 'Grid', 'Skeleton', 'KeyHint'] as const).map((publicName) => ({
     publicName,
     propTypeName: 'never',
     family: publicName,
@@ -2035,6 +2096,28 @@ function publicComponentPaths(): readonly string[] {
 const graduatedEntries = GRADUATED_FAMILIES.filter((entry) => entry.phase === 'graduated');
 
 describe('graduated shared presentation families (§8.2)', () => {
+  it('records the Session host renderer relationship through the shared bridge mechanism', () => {
+    const sessions = GRADUATED_FAMILIES.filter((entry) => entry.family === 'Host-mediated Session');
+    expect(sessions.map((entry) => entry.publicName)).toEqual(['SessionProvider', 'SessionTranscript', 'SessionComposer', 'SessionChat']);
+    for (const entry of sessions) {
+      expect(entry.coreConsumers).toEqual(['components/plugins/surfaces/pluginUiPrivatePresentationHost.tsx']);
+      expect(entry.corePresentationMechanism).toEqual({ module: 'presentationHost/context.ts', symbol: 'renderSessionPart' });
+    }
+    expect(catalogProblems(sessions, (path) => read(join(packageSourceRoot, path)))).toEqual([]);
+  });
+  it('maps the public FloatingFrame adapter and Session viewer to the same neutral owner', () => {
+    expect(GRADUATED_FAMILIES.find((entry) => entry.publicName === 'FloatingFrame')).toMatchObject({
+      propTypeName: 'FloatingFrameProps',
+      sharedModule: 'presentation/layout/FloatingFrame.tsx',
+      sharedSymbol: 'FloatingFrame',
+      pluginOwner: { module: 'components/FloatingFrame.tsx', symbol: 'FloatingFrame' },
+      coreConsumers: ['components/sessions/viewer/SessionViewerHost.tsx'],
+      positiveConsumer: {
+        kind: 'external-author-reference',
+        pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/semanticSurface.tsx',
+      },
+    });
+  });
   it('follows a named declarativeNode renderer without crediting unrelated source', () => {
     const source = [
       'const renderContainer = () => <HappierStack />;',
@@ -2272,6 +2355,9 @@ describe('graduated shared presentation families (§8.2)', () => {
       'SessionChat',
       'Step',
       'SelectionTiles',
+      'Tree',
+      'WidgetFrame',
+      'FloatingFrame',
       'PageHeader',
       'ListDetailLayout',
       'Columns',

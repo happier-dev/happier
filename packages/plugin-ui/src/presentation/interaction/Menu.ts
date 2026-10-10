@@ -1,4 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { HAPPIER_RADIUS_V1 } from '../../environment/radius.js';
+
+/** One transient-menu scale, independent of a collection's density preference. */
+export const HAPPIER_MENU_ROW_METRICS = {
+  iconGlyphSizePx: 16,
+  iconBoxSizePx: 16,
+  iconMarginRightPx: 12,
+  minHeightPx: 36,
+  paddingVerticalPx: 8,
+  insetPx: 4,
+  radiusPx: HAPPIER_RADIUS_V1.lg - 4,
+  paddingHorizontalPx: 12,
+  sectionPaddingVerticalPx: 4,
+  subtitleGapPx: 2,
+} as const;
 
 export type HappierMenuItemDescriptor = Readonly<{
   id: string;

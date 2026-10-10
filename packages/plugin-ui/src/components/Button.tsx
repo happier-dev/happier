@@ -1,5 +1,6 @@
 import type { ReactElement, ReactNode } from 'react';
 import { View } from 'react-native';
+import { HappierSurfaceGradientLayer } from '../presentation/layout/SurfaceGradientLayer.js';
 
 import { useOptionalHappierUiAccessibility, useOptionalHappierUiPalette } from '../environment/context.js';
 import { HappierPressable, type HappierPressableStyleState } from '../presentation/interaction/Pressable.js';
@@ -11,6 +12,7 @@ import type { HappierPortableStyle } from '../presentation/portableTypes.js';
 import {
   HAPPIER_BUTTON_DISABLED_OPACITY,
   resolveHappierButtonChrome,
+  useHappierButtonMaterial,
 } from '../presentation/interaction/buttonChrome.js';
 import { HappierSpinner, iconMatchedSpinnerSize } from '../presentation/feedback/Spinner.js';
 import { HappierText } from '../presentation/text/Text.js';
@@ -114,6 +116,7 @@ export function Button({
   children,
 }: ButtonProps): ReactElement {
   const theme = usePluginTheme();
+  const material = useHappierButtonMaterial(theme);
   const translate = usePluginTranslation();
   const label = resolveAuthorText(translate, title, titleKey);
   const resolvedAccessibilityLabel = resolveAuthorText(
@@ -127,11 +130,11 @@ export function Button({
   const reducedMotion = useOptionalHappierUiAccessibility()?.reducedMotion ?? false;
   const palette = useOptionalHappierUiPalette(theme);
   const nativeMinimumTarget = useHappierNativeMinimumInteractiveTargetSize();
-  const { foreground } = resolveHappierButtonChrome({ theme, variant, disabled: disabled === true, focused: false });
+  const { foreground } = resolveHappierButtonChrome({ theme, variant, disabled: disabled === true, focused: false, ...material });
   const resolveStyle = (state: HappierPressableStyleState): HappierPortableStyle => ({
     ...resolveHappierButtonChrome({
-      theme, variant, size, nativeMinimumTarget, disabled: disabled === true, focused: state.focused,
-      pressed: state.pressed, gloss: palette?.accentGloss,
+      theme, variant, size, nativeMinimumTarget, disabled: state.disabled, focused: state.focused,
+      pressed: state.pressed, gloss: palette?.accentGloss, ...material,
     }).style,
     opacity: state.disabled && !state.busy ? HAPPIER_BUTTON_DISABLED_OPACITY : 1,
     // The shared press vocabulary: a discrete control scales under the finger
@@ -153,6 +156,7 @@ export function Button({
     >
       {(state) => (
         <>
+          <HappierSurfaceGradientLayer gradient={resolveHappierButtonChrome({ theme, variant, disabled: state.disabled, focused: state.focused, pressed: state.pressed }).gradient} borderRadius={theme.radii.control} />
           {state.busy ? (
             <HappierSpinner
               size={iconMatchedSpinnerSize(theme.typography.label.fontSize)}

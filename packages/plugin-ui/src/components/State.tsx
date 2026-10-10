@@ -29,6 +29,7 @@ import {
   type HappierSceneInput,
 } from '../presentation/state/scenes.js';
 import { HappierPressable } from '../presentation/interaction/Pressable.js';
+import { HappierEmptySlot } from '../presentation/state/EmptySlot.js';
 import { HappierText } from '../presentation/text/Text.js';
 import { PluginUiIconGlyph, type IconName } from './Icon.js';
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
@@ -292,6 +293,44 @@ export function EmptyState(props: EmptyStateProps): ReactElement {
   return addFrame
     ? <View testID={props.testID} style={[HAPPIER_EMPTY_STATE_FRAME.centeredAdd, addFrame]}>{framedState}</View>
     : framedState;
+}
+
+export type EmptySlotProps = Readonly<{
+  /** What belongs here ("Drop a card here"). */
+  text?: string;
+  /** A key from this plugin's declared translation bundle; `text` is its fallback. */
+  textKey?: string;
+  icon?: IconName;
+  /** One inline action that finishes the sentence (a text `Button`). */
+  action?: ReactNode;
+  /** Makes the whole slot the control (an "Add …" line). Omit it when the slot only marks a place. */
+  onPress?: () => void;
+  accessibilityLabel?: string;
+  minHeight?: number;
+  testID?: string;
+}>;
+
+/**
+ * A place something can go: the dashed outline Happier uses for a hole in a widget group, an area's
+ * "Add widget" line and a "new row" drop target. Dashed always means "add something here".
+ */
+export function EmptySlot(props: EmptySlotProps): ReactElement {
+  const translate = usePluginTranslation();
+  const theme = usePluginTheme();
+  const palette = useOptionalHappierUiPalette(theme);
+  const text = resolveAuthorText(translate, props.text, props.textKey);
+  return (
+    <HappierEmptySlot
+      testID={props.testID}
+      colors={{ border: palette?.sheetBorder ?? theme.colors.secondaryText, activeFill: theme.colors.control, focusRing: theme.colors.focus }}
+      glyph={props.icon ? <PluginUiIconGlyph name={props.icon} size={14} tone="secondary" /> : undefined}
+      label={<HappierText variant="caption" tone="secondary">{text}</HappierText>}
+      action={props.action}
+      onPress={props.onPress}
+      accessibilityLabel={props.accessibilityLabel ?? text}
+      minHeight={props.minHeight}
+    />
+  );
 }
 
 /**

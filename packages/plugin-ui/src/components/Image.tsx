@@ -51,6 +51,8 @@ export type BrandMarkProps = Readonly<{
   /** Exact host-known package target; omitted preserves the mounted plugin brand. */
   pluginId?: string;
   size?: ImageProps['size'];
+  /** Exact mark slot supplied by the containing presentation owner. */
+  pixelSize?: number;
   showName?: boolean;
   /** An adjacent host-owned label already supplies the one canonical name. */
   externallyLabelled?: boolean;
@@ -85,7 +87,7 @@ export function usePluginBrandDisplayName(pluginId?: string): string | undefined
  * intentionally not an author prop: `manifest.brand.iconResourceId` remains
  * the one declaration and projection owner.
  */
-export function BrandMark({ pluginId, size, showName = false, externallyLabelled = false, testID }: BrandMarkProps): ReactElement {
+export function BrandMark({ pluginId, size, pixelSize, showName = false, externallyLabelled = false, testID }: BrandMarkProps): ReactElement {
   const presentationHost = useOptionalPluginUiPresentationHost();
   const displayName = usePluginBrandDisplayName(pluginId) ?? 'Plugin';
   const targetPluginId = pluginId === undefined ? undefined : pluginId.trim();
@@ -95,6 +97,7 @@ export function BrandMark({ pluginId, size, showName = false, externallyLabelled
     const rendered = presentationHost?.renderBrandMark?.({
       pluginId: targetPluginId,
       ...(size === undefined ? {} : { size }),
+      ...(pixelSize === undefined ? {} : { pixelSize }),
       showName,
       externallyLabelled,
       ...(testID === undefined ? {} : { testID }),
@@ -106,6 +109,7 @@ export function BrandMark({ pluginId, size, showName = false, externallyLabelled
       displayName={displayName}
       resource={resource}
       size={size}
+      pixelSize={pixelSize}
       showName={showName}
       externallyLabelled={externallyLabelled}
       theme={theme}
@@ -117,6 +121,7 @@ export function BrandMark({ pluginId, size, showName = false, externallyLabelled
     <HappierBrandMark
       displayName={displayName}
       size={size}
+      pixelSize={pixelSize}
       showName={showName}
       externallyLabelled={externallyLabelled}
       theme={theme}
@@ -129,6 +134,7 @@ function ResourceBrandMark(props: Readonly<{
   displayName: string;
   resource: PluginUiResourceReference;
   size?: HappierImageSize;
+  pixelSize?: number;
   showName: boolean;
   externallyLabelled: boolean;
   theme: ReturnType<typeof usePluginTheme>;
@@ -143,6 +149,7 @@ function ResourceBrandMark(props: Readonly<{
       displayName={props.displayName}
       bytes={content?.contentType === 'image/png' ? content.bytes : undefined}
       size={props.size}
+      pixelSize={props.pixelSize}
       showName={props.showName}
       externallyLabelled={props.externallyLabelled}
       theme={props.theme}

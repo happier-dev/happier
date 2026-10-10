@@ -1,9 +1,10 @@
-import { Fragment, memo, type ReactNode } from 'react';
+import { memo, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { HappierSpinner } from '../feedback/Spinner.js';
+import { HappierFactLine } from './FactLine.js';
 import { happierFocusRingStyle } from '../interaction/focusVisible.js';
-import { HappierPressable } from '../interaction/Pressable.js';
+import { HappierPressable, type HappierPressableProps } from '../interaction/Pressable.js';
 import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
 import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
 import { resolveHappierWorkStatusWordColor, type HappierWorkStatusTone } from './workStatus.js';
@@ -38,7 +39,6 @@ import {
 /** Each nesting level of work under its lead. */
 const LEVEL_INDENT_PX = 24;
 const MARK_SIZE_PX = 30;
-const SEPARATOR = ' · ';
 
 const styles = StyleSheet.create({
   summary: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, minWidth: 0 },
@@ -56,6 +56,8 @@ const styles = StyleSheet.create({
   },
   attentionDot: { width: 7, height: 7, borderRadius: 4 },
   copy: { flex: 1, minWidth: 0 },
+  // A title in two runs: the start gives way with its own ellipsis, the end stays whole.
+  splitTitle: { flexDirection: 'row', minWidth: 0 },
 });
 
 // Styles handed to the shared pressable and the host's text are portable styles.
@@ -70,15 +72,27 @@ const ROW_STYLE: HappierPortableStyle = {
 };
 const LINE_STYLE: HappierPortableStyle = { marginTop: 1 };
 const TIME_STYLE: HappierPortableStyle = { flexShrink: 0 };
+const TITLE_HEAD_STYLE: HappierPortableStyle = { flexShrink: 1, minWidth: 0 };
+const TITLE_TAIL_STYLE: HappierPortableStyle = { flexShrink: 0, maxWidth: '100%' };
+/** Keeps the word gap between the two runs of a split title; an ordinary space would collapse. */
+const NON_BREAKING_SPACE = '\u00A0';
 const TRAILING_STATE_STYLE: HappierPortableStyle = { flexShrink: 0, maxWidth: '45%' };
 
 export type HappierWorkRowShellProps = Readonly<{
   testID: string;
   accessibilityLabel: string;
   selected?: boolean;
+  expanded?: HappierPressableProps['expanded'];
+  controlRef?: HappierPressableProps['controlRef'];
+  accessibilityActions?: HappierPressableProps['accessibilityActions'];
+  onAccessibilityAction?: HappierPressableProps['onAccessibilityAction'];
+  /** Independent row actions stay outside the navigation button's accessibility/event subtree. */
+  trailingAccessory?: ReactNode;
   /** How deep under its lead the work sits; each level indents the row. */
   level?: number;
   onPress: () => void;
+  onLongPress?: HappierPressableProps['onLongPress'];
+  onContextMenu?: HappierPressableProps['onContextMenu'];
   children: ReactNode;
   /** Omitted inside a mounted plugin surface: the environment's theme. */
   theme?: HappierWorkTheme;
@@ -89,15 +103,23 @@ export const HappierWorkRowShell = memo(function HappierWorkRowShell(props: Happ
   const level = props.level ?? 0;
   const selected = props.selected === true;
   return (
-    <View style={level > 0 ? { paddingLeft: level * LEVEL_INDENT_PX } : null}>
+    <View style={[level > 0 ? { paddingLeft: level * LEVEL_INDENT_PX } : null,
+      props.trailingAccessory ? { flexDirection: 'row', alignItems: 'center' } : null]}>
       <HappierPressable
         testID={props.testID}
         accessibilityRole="button"
         accessibilityLabel={props.accessibilityLabel}
         selected={selected}
+        expanded={props.expanded}
+        controlRef={props.controlRef}
+        accessibilityActions={props.accessibilityActions}
+        onAccessibilityAction={props.onAccessibilityAction}
         onPress={props.onPress}
+        onLongPress={props.onLongPress}
+        onContextMenu={props.onContextMenu}
         style={({ hovered, focused, pressed }) => [
           ROW_STYLE,
+          props.trailingAccessory ? { flex: 1, minWidth: 0 } : null,
           hovered ? { backgroundColor: theme.colors.hover } : null,
           selected ? { backgroundColor: theme.colors.selected } : null,
           happierFocusRingStyle({ visible: focused, color: theme.colors.focus }),
@@ -106,6 +128,7 @@ export const HappierWorkRowShell = memo(function HappierWorkRowShell(props: Happ
       >
         {props.children}
       </HappierPressable>
+      {props.trailingAccessory}
     </View>
   );
 });
@@ -118,6 +141,12 @@ export type HappierWorkSummaryPhase = 'attention' | 'live' | 'finished';
 
 export type HappierWorkSummaryProps = Readonly<{
   title: string;
+  /**
+   * Where the title's distinguishing end starts, for rows named from one stem ("… child A",
+   * "… child B"). When the row is too narrow, the start truncates and this end stays whole, so
+   * sibling rows never read the same. Omitted, the title truncates at its end.
+   */
+  titleTailStart?: number | null;
   phase: HappierWorkSummaryPhase;
   /** The work's mark (an Agent mark, an avatar), drawn at 30pt. */
   mark: ReactNode;
@@ -129,10 +158,11 @@ export type HappierWorkSummaryProps = Readonly<{
    */
   facts: readonly ReactNode[];
   /** A short date at the trailing edge ("2h"); omitted while live. */
-  trailingTime?: string | null;
+  trailingTime?: ReactNode;
   /** The owner's state word at the trailing edge: the row then says where the work stands once. */
   trailingState?: Readonly<{ word: string; tone: HappierWorkStatusTone }> | null;
   accessibilityLabel: string;
+  accessibilityLiveRegion?: 'none' | 'polite' | 'assertive';
   /** Prefix for this instance's test ids. */
   testID?: string;
   /** Omitted inside a mounted plugin surface: the environment's theme. */
@@ -148,10 +178,14 @@ export const HappierWorkSummary = memo(function HappierWorkSummary(props: Happie
   const { phase, testID } = props;
   const trailingState = props.trailingState ?? null;
   const trailingTime = props.trailingTime ?? '';
+  const titleTailStart = props.titleTailStart ?? 0;
+  const titleHead = titleTailStart > 0 ? props.title.slice(0, titleTailStart).trimEnd() : '';
+  const titleTail = titleHead.length > 0 ? props.title.slice(titleTailStart) : '';
+  const titleColor = { color: theme.colors.text };
 
   return (
-    <View testID={testID} accessible accessibilityLabel={props.accessibilityLabel} style={styles.summary}>
-      <View style={styles.mark}>
+    <View testID={testID} accessible accessibilityLabel={props.accessibilityLabel} accessibilityLiveRegion={props.accessibilityLiveRegion} style={styles.summary}>
+      {props.mark !== null && props.mark !== undefined ? <View style={styles.mark}>
         {props.mark}
         {phase === 'attention' ? (
           <View
@@ -165,25 +199,45 @@ export const HappierWorkSummary = memo(function HappierWorkSummary(props: Happie
             {props.liveIndicator ?? <HappierSpinner size={9} color={theme.colors.secondaryText} />}
           </View>
         ) : null}
-      </View>
+      </View> : null}
       <View style={styles.copy}>
-        <Text role="rowTitle" strong={phase === 'attention'} numberOfLines={1} style={{ color: theme.colors.text }}>
-          {props.title}
-        </Text>
+        {titleTail.length > 0 ? (
+          <View style={styles.splitTitle}>
+            <Text
+              role="rowTitle"
+              strong={phase === 'attention'}
+              numberOfLines={1}
+              testID={testID ? `${testID}:title` : undefined}
+              style={[TITLE_HEAD_STYLE, titleColor]}
+            >
+              {titleHead}
+            </Text>
+            <Text
+              role="rowTitle"
+              strong={phase === 'attention'}
+              numberOfLines={1}
+              testID={testID ? `${testID}:title-tail` : undefined}
+              style={[TITLE_TAIL_STYLE, titleColor]}
+            >
+              {NON_BREAKING_SPACE}
+              {titleTail}
+            </Text>
+          </View>
+        ) : (
+          <Text role="rowTitle" strong={phase === 'attention'} numberOfLines={1} style={titleColor}>
+            {props.title}
+          </Text>
+        )}
         {props.facts.length > 0 ? (
-          <Text
+          <HappierFactLine
             role="rowLine"
             testID={testID ? `${testID}:facts` : undefined}
             numberOfLines={1}
             style={[LINE_STYLE, { color: theme.colors.secondaryText }]}
-          >
-            {props.facts.map((fact, index) => (
-              <Fragment key={index}>
-                {index > 0 ? <Text role="rowLine" style={{ color: theme.colors.mutedText }}>{SEPARATOR}</Text> : null}
-                {fact}
-              </Fragment>
-            ))}
-          </Text>
+            facts={props.facts}
+            theme={theme}
+            host={host}
+          />
         ) : null}
       </View>
       {trailingTime ? (

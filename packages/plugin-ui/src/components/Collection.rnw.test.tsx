@@ -1210,9 +1210,15 @@ describe('board', () => {
     view.measure(980);
     const columns = ['empty-a', 'empty-b', 'empty-c', 'needs', 'rest'].map(key => view.query(`collection:column:${key}`)!);
     expect(columns.every(column => column !== null)).toBe(true);
-    expect(columns.map(column => getComputedStyle(column).width)).toEqual(Array(5).fill('260px'));
+    const widths = columns.map(column => Number.parseFloat(getComputedStyle(column).width));
+    expect(new Set(widths).size).toBe(1);
+    expect(widths.reduce((sum, width) => sum + width, 0)).toBeLessThanOrEqual(980);
     expect(columns[0]!.textContent).toContain('None');
     expect(view.query('collection:hints')).toBeNull();
+    view.measure(600);
+    const narrowWidths = columns.map(column => Number.parseFloat(getComputedStyle(column).width));
+    expect(new Set(narrowWidths).size).toBe(1);
+    expect(narrowWidths.reduce((sum, width) => sum + width, 0)).toBeGreaterThan(600);
     view.unmount();
   });
 

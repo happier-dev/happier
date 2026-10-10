@@ -4,6 +4,7 @@ export type HappierItemOverflowAction = Readonly<{
   id: string;
   label: string;
   disabled?: boolean;
+  destructive?: boolean;
   icon?: ReactNode;
 }>;
 

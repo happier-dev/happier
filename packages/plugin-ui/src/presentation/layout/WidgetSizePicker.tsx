@@ -6,6 +6,8 @@ export type WidgetSizePickerChoice = Readonly<{
   key: string;
   label: string;
   footprint: Readonly<{ columnSpan: number; columns: number; rowSpan: number }>;
+  /** The size cannot be chosen here (a widget inside a half-width group); the host says why beside it. */
+  unavailable?: boolean;
 }>;
 
 /** What a host's compact picker receives when the segments do not fit: the same choices and value. */
@@ -81,7 +83,7 @@ export function WidgetSizePicker(props: WidgetSizePickerProps) {
             colors={props.colors}
             disabled={props.disabled}
             segments={props.choices.map(choice => ({
-              key: choice.key, label: choice.label, selected: choice.key === props.value, disabled: false,
+              key: choice.key, label: choice.label, selected: choice.key === props.value, disabled: choice.unavailable === true,
               testID: testID ? `${testID}.${choice.key}` : undefined,
               leading: <View accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
                 style={{ width: 16, height: 16, alignItems: 'center', justifyContent: 'center' }}>
@@ -92,7 +94,7 @@ export function WidgetSizePicker(props: WidgetSizePickerProps) {
             }))}
             onSelect={index => {
               const choice = props.choices[index];
-              if (choice && choice.key !== props.value) props.onChange(choice.key);
+              if (choice && !choice.unavailable && choice.key !== props.value) props.onChange(choice.key);
             }}
           />
         </View>

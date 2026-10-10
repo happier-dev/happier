@@ -56,6 +56,32 @@ async function pressKey(target: HTMLElement, key: string): Promise<void> {
 }
 
 describe('SelectionTiles', () => {
+  it('shows compact card previews beside their labels while retaining radio keyboard selection', async () => {
+    function ControlledPreviewRows() {
+      const [value, setValue] = useState<'list' | 'grid'>('grid');
+      return <SelectionTiles
+        density="compact" maximumColumns={1} accessibilityLabel="Layout" testID="layout"
+        options={[
+          { id: 'list', title: 'List', subtitle: 'One column', preview: <Text value="list preview" testID="preview:list" /> },
+          { id: 'grid', title: 'Grid', subtitle: 'Two columns', preview: <Text value="grid preview" testID="preview:grid" /> },
+        ]}
+        value={value} onChange={setValue}
+      />;
+    }
+    const mount = mountTiles(<ControlledPreviewRows />);
+    const list = mount.container.querySelector<HTMLElement>('[data-testid="layout:list"]')!;
+    const grid = mount.container.querySelector<HTMLElement>('[data-testid="layout:grid"]')!;
+    expect(list.querySelector('[data-testid="preview:list"]')?.textContent).toBe('list preview');
+    expect(grid.querySelector('[data-testid="preview:grid"]')?.textContent).toBe('grid preview');
+    expect(list.textContent).toContain('List');
+    expect(grid.getAttribute('aria-checked')).toBe('true');
+    await pressKey(grid, 'ArrowUp');
+    expect(list.getAttribute('aria-checked')).toBe('true');
+    expect(grid.getAttribute('aria-checked')).toBe('false');
+    expect(list.getAttribute('tabindex')).toBe('0');
+    expect(document.activeElement).toBe(list);
+    mount.unmount();
+  });
   it('presents author-supplied bare marks, badges and current option footers without losing choice semantics', async () => {
     const onChange = vi.fn();
     const mount = mountTiles(<SelectionTiles
@@ -169,7 +195,7 @@ describe('SelectionTiles', () => {
           variant="visual"
           accessibilityLabel="Layout"
           options={[
-            { id: 'list', title: 'List', preview: <Text value="list preview" testID="preview:list" /> },
+            { id: 'list', title: 'List', badge: 'Current', preview: <Text value="list preview" testID="preview:list" /> },
             { id: 'grid', title: 'Grid', preview: <Text value="grid preview" testID="preview:grid" /> },
           ]}
           value={value}
@@ -185,6 +211,7 @@ describe('SelectionTiles', () => {
     // The preview is the author's real element, inside its tile, above the label.
     expect(list.querySelector('[data-testid="preview:list"]')?.textContent).toBe('list preview');
     expect(grid.querySelector('[data-testid="preview:grid"]')?.textContent).toBe('grid preview');
+    expect(list.textContent).toContain('Current');
     expect(list.getAttribute('aria-label')).toBe('List');
     expect(grid.getAttribute('aria-checked')).toBe('true');
 

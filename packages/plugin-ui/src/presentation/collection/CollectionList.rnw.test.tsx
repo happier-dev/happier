@@ -66,6 +66,16 @@ describe('HappierCollectionList (list presentation)', () => {
     mount.unmount();
   });
 
+  it('keeps the count and add action when the surrounding page already names the collection', () => {
+    const mount = mountThroughReactNativeWeb(
+      <HappierCollectionList host={host} count={9} headerAction={<View testID="add" />} />,
+    );
+    expect(mount.container.querySelector('[role="heading"]')).toBeNull();
+    expect(textOf(mount.container, 'text-count')).toBe('9');
+    expect(mount.container.querySelector('[data-testid="add"]')).not.toBeNull();
+    mount.unmount();
+  });
+
   it('lets rows that own their scrolling replace the host scroller', () => {
     const mount = mountThroughReactNativeWeb(
       <HappierCollectionList host={host} title="Teams" scrollContent={<ScrollView testID="virtualized" />} />,

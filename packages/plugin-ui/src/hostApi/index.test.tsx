@@ -1081,6 +1081,7 @@ describe('plugin host API hooks', () => {
     };
     let failOwnerRefresh = false;
     const readResource: PluginUiHostApi['readResource'] = vi.fn(async (reference) => {
+      if (typeof reference !== 'string' && 'hostRead' in reference) throw new Error('Unsupported host read in plugin Resource fixture');
       const pluginId = typeof reference === 'string' ? 'acme.preview' : reference.pluginId;
       if (pluginId === 'acme.preview' && failOwnerRefresh) {
         throw Object.assign(new Error('temporary resource failure'), { code: 'temporary' });

@@ -236,6 +236,13 @@ constructors on the beginner root:
 import { PluginUiProvider } from '@happier-dev/plugin-ui/advanced';
 ```
 
+Advanced Resource clients can publish intermediate `ResourceContent` through
+the read options' optional `onProgress` callback. The same entry admits those
+bytes under the read's existing signal and Account lifetime, preserves identical
+digest references, and keeps `pending` until the read settles. Retirement or
+authority withdrawal rejects later progress. This is a Developer Preview
+package construction seam, not another `PluginUiHostApi` method or wire stream.
+
 `/presentation` exposes lower-level shared primitives and behavior; it does
 not grant private app state, host transport, navigation, overlay, or
 presentation-host control. `/environment` exposes factual theme, localization,

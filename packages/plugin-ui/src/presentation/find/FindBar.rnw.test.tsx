@@ -1,9 +1,13 @@
 import * as React from 'react';
 import { act } from 'react';
 import { describe, expect, it } from 'vitest';
-import { Platform } from 'react-native';
+import { Platform, View } from 'react-native';
 
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
+import { createHostApiStub, createSurfaceContext } from '../../surfaceFixture.testSupport.js';
+import { PluginUiProvider } from '../../components/PluginUiProvider.js';
+import { HappierMaterialSurface } from '../layout/Surface.js';
+import { happierSurfaceGradientWebStyle } from '../layout/material.js';
 import { HappierFindBar, type HappierFindBarHost, type HappierFindBarInputProps, type HappierFindBarLabels, type HappierFindBarProps } from './FindBar.js';
 import type { FindOptions, FindStatus } from './findTypes.js';
 
@@ -55,7 +59,7 @@ const colors = {
 
 type Recorded = { steps: Array<1 | -1>; options: FindOptions[]; closed: number; stopped: number; queries: string[] };
 
-function mountBar(overrides: Partial<HappierFindBarProps> & { status: FindStatus }) {
+function mountBar(overrides: Partial<HappierFindBarProps> & { status: FindStatus }, wrap: (body: React.ReactElement) => React.ReactElement = body => body) {
   const recorded: Recorded = { steps: [], options: [], closed: 0, stopped: 0, queries: [] };
   const props: HappierFindBarProps = {
     query: 'remount',
@@ -75,8 +79,8 @@ function mountBar(overrides: Partial<HappierFindBarProps> & { status: FindStatus
     testID: 'find',
     ...overrides,
   };
-  const mounted = mountThroughReactNativeWeb(<HappierFindBar {...props} />);
-  return { mounted, recorded };
+  const mounted = mountThroughReactNativeWeb(wrap(<HappierFindBar {...props} />));
+  return { mounted, recorded, props };
 }
 
 const byTestId = (container: HTMLElement, id: string) => container.querySelector<HTMLElement>(`[data-testid="${id}"]`);
@@ -101,6 +105,121 @@ async function key(element: HTMLElement | null, init: KeyboardEventInit & { keyC
 }
 
 describe('HappierFindBar', () => {
+  const gradient = { colors: ['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0.024)'] as [string, string] };
+  const baseContext = createSurfaceContext();
+  const context = { ...baseContext, theme: { ...baseContext.theme, surfaceFinish: { floating: gradient } } };
+  const provider = (body: React.ReactElement) => <PluginUiProvider context={context} hostApi={createHostApiStub(context)}>{body}</PluginUiProvider>;
+
+  it('paints the floating capsule once while its field keeps focus, keyboard behavior and identity across Flat', async () => {
+    const { mounted, recorded, props } = mountBar({ status: { kind: 'results', current: 1, total: 2, coverage: 'complete' } }, provider);
+    const capsule = byTestId(mounted.container, 'find.capsule');
+    expect(capsule).toBeTruthy();
+    expect(getComputedStyle(capsule!).backgroundImage).toContain('linear-gradient');
+    expect(getComputedStyle(capsule!).backgroundColor).toContain('--happier-glass-floating-opacity');
+    expect(mounted.container.querySelector('svg')).toBeNull();
+    const field = byTestId(mounted.container, 'find.field')!;
+    const input = byTestId(mounted.container, 'find.input') as HTMLInputElement;
+    expect(field.contains(input)).toBe(true);
+    expect(['', 'none']).toContain(getComputedStyle(field).backgroundImage);
+    await press(field);
+    expect(document.activeElement).toBe(input);
+    await mounted.render(provider(<HappierFindBar {...props} gradient={null} />));
+    expect(byTestId(mounted.container, 'find.input')).toBe(input);
+    expect(document.activeElement).toBe(input);
+    expect(['', 'none']).toContain(getComputedStyle(byTestId(mounted.container, 'find.capsule')!).backgroundImage);
+    await key(input, { key: 'Enter' });
+    expect(recorded.steps).toEqual([1]);
+    await press(buttonNamed(mounted.container, 'Close find'));
+    expect(recorded.closed).toBe(1);
+    mounted.unmount();
+  });
+
+  it('inherits an already-finished floating group without a second coat and keeps independent content groups separate', () => {
+    const same = mountBar({ status: { kind: 'idle' }, note: { icon: 'offline', text: 'Offline' } }, body => provider(<HappierMaterialSurface testID="parent" materialRole="floating" finishRole="floating" style={{ backgroundColor: 'white' }}>{body}</HappierMaterialSurface>));
+    expect(getComputedStyle(byTestId(same.mounted.container, 'parent')!).backgroundImage).toContain('linear-gradient');
+    expect(byTestId(same.mounted.container, 'find.capsule')).toBeTruthy();
+    expect(['', 'none']).toContain(getComputedStyle(byTestId(same.mounted.container, 'find.capsule')!).backgroundImage);
+    expect(['', 'none']).toContain(getComputedStyle(byTestId(same.mounted.container, 'find.note')!).backgroundImage);
+    same.mounted.unmount();
+    const separate = mountBar({ status: { kind: 'idle' } }, body => provider(<HappierMaterialSurface materialRole="content" gradient={gradient} style={{ backgroundColor: 'white' }}>{body}</HappierMaterialSurface>));
+    expect(getComputedStyle(byTestId(separate.mounted.container, 'find.capsule')!).backgroundImage).toContain('linear-gradient');
+    separate.mounted.unmount();
+  });
+
+  it('delivers the resolved floating coat to the material host without replacing its translucent fill', async () => {
+    const renderMaterialSurface: NonNullable<HappierFindBarProps['renderMaterialSurface']> = input => {
+      expect(input.role).toBe('floating');
+      expect(input.finishRole).toBe('floating');
+      // The platform glass renderer is a boundary; shared finish decisions and capsule anatomy stay real.
+      return <View testID={input.testID} style={[input.style, { backgroundColor: 'rgba(255, 255, 255, 0.3)' }, happierSurfaceGradientWebStyle(input.gradient)]}>{input.children}</View>;
+    };
+    const { mounted, props } = mountBar({ status: { kind: 'idle' }, renderMaterialSurface }, provider);
+    const body = byTestId(mounted.container, 'find.capsule')!;
+    expect(getComputedStyle(body).backgroundColor).toBe('rgba(255, 255, 255, 0.3)');
+    expect(getComputedStyle(body).backgroundImage).toContain('linear-gradient');
+    expect(['', '1']).toContain(getComputedStyle(body).opacity);
+    const input = byTestId(mounted.container, 'find.input');
+    await mounted.render(provider(<HappierFindBar {...props} gradient={null} />));
+    expect(byTestId(mounted.container, 'find.input')).toBe(input);
+    expect(['', 'none']).toContain(getComputedStyle(byTestId(mounted.container, 'find.capsule')!).backgroundImage);
+    expect(getComputedStyle(byTestId(mounted.container, 'find.capsule')!).backgroundColor).toBe('rgba(255, 255, 255, 0.3)');
+    mounted.unmount();
+  });
+
+  it('renders one native-branch overlay per floating plane and none for an explicit null finish', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(Platform, 'OS');
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
+    try {
+      for (const presentation of ['inline', 'keyboardSeated'] as const) {
+        const { mounted, props } = mountBar({ presentation, status: { kind: 'idle' }, note: { icon: 'offline', text: 'Offline' } }, provider);
+        const planes = presentation === 'inline' ? 2 : 1;
+        expect(mounted.container.querySelectorAll('svg')).toHaveLength(planes);
+        expect(mounted.container.querySelectorAll('linearGradient')).toHaveLength(planes);
+        expect(byTestId(mounted.container, 'find.note')!.querySelectorAll('svg')).toHaveLength(presentation === 'inline' ? 1 : 0);
+        const input = byTestId(mounted.container, 'find.input');
+        expect(byTestId(mounted.container, 'find.capsule')!.contains(input)).toBe(true);
+        await mounted.render(provider(<HappierFindBar {...props} gradient={null} />));
+        expect(mounted.container.querySelectorAll('svg')).toHaveLength(0);
+        expect(byTestId(mounted.container, 'find.input')).toBe(input);
+        mounted.unmount();
+      }
+    } finally {
+      if (descriptor) Object.defineProperty(Platform, 'OS', descriptor);
+    }
+  });
+
+  it('finishes the separate inline alert but seats the note inside the single phone material without remounting its input', async () => {
+    for (const presentation of ['inline', 'keyboardSeated'] as const) {
+      let searched = 0;
+      const { mounted, props, recorded } = mountBar({
+        presentation,
+        status: { kind: 'results', current: 1, total: 2, coverage: 'loaded' },
+        note: { icon: 'history', text: 'Older messages remain unsearched.', action: { label: 'Search older messages', onPress: () => { searched += 1; } } },
+      }, provider);
+      const note = byTestId(mounted.container, 'find.note')!;
+      const capsule = byTestId(mounted.container, 'find.capsule')!;
+      expect(capsule.contains(note)).toBe(presentation === 'keyboardSeated');
+      if (presentation === 'inline') {
+        expect(getComputedStyle(note).backgroundImage).toContain('linear-gradient');
+        expect(getComputedStyle(note).backgroundColor).toContain('--happier-glass-floating-opacity');
+      } else {
+        expect(['', 'none']).toContain(getComputedStyle(note).backgroundImage);
+        expect(['', 'transparent', 'rgba(0, 0, 0, 0)']).toContain(getComputedStyle(note).backgroundColor);
+      }
+      const input = byTestId(mounted.container, 'find.input')!;
+      await act(async () => { input.focus(); });
+      await press(buttonNamed(mounted.container, 'Search older messages'));
+      expect(searched).toBe(1);
+      await mounted.render(provider(<HappierFindBar {...props} gradient={null} status={{ kind: 'searching', current: 1, total: 2 }} />));
+      expect(byTestId(mounted.container, 'find.input')).toBe(input);
+      expect(['', 'none']).toContain(getComputedStyle(byTestId(mounted.container, 'find.note')!).backgroundImage);
+      expect(buttonNamed(mounted.container, 'Search older messages')).toBeUndefined();
+      await press(buttonNamed(mounted.container, 'Stop'));
+      expect(recorded.stopped).toBe(1);
+      mounted.unmount();
+    }
+  });
+
   it('steps once for the native SDK keyPress Enter followed by submitEditing sequence', async () => {
     const descriptor = Object.getOwnPropertyDescriptor(Platform, 'OS');
     Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });

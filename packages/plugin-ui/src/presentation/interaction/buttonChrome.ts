@@ -1,8 +1,30 @@
 import type { HappierUiTheme } from '../../environment/types.js';
+import { Platform } from 'react-native';
 import { HAPPIER_DEFAULT_MINIMUM_INTERACTIVE_TARGET_SIZE } from '../../environment/interactiveTarget.js';
 import type { HappierPortableStyle } from '../portableTypes.js';
 import { happierRaisedEdgeStyle, settleHappierRaisedEdge, type HappierRaisedEdge } from '../layout/raisedEdge.js';
 import { happierFocusRingStyle } from './focusVisible.js';
+import { happierSurfaceGradientWebStyle, resolveHappierSurfaceFinish, type HappierSurfaceGradient } from '../layout/material.js';
+import { happierMaterialBackgroundColor } from '../layout/material.js';
+import { useContainingHappierMaterialRole, useHappierMaterialColorResolver } from '../layout/Surface.js';
+import { useOptionalHappierUiPlatform } from '../../environment/context.js';
+import { useOptionalPluginUiPresentationHost } from '../../presentationHost/context.js';
+
+/** Material facts are resolved at the host boundary; this does not own glass policy. */
+export function useHappierButtonMaterial(theme: HappierUiTheme) {
+  const containingRole = useContainingHappierMaterialRole();
+  const resolveColor = useHappierMaterialColorResolver();
+  const host = useOptionalPluginUiPresentationHost();
+  const dark = useOptionalHappierUiPlatform()?.colorScheme === 'dark';
+  const role = containingRole ?? 'content';
+  const nested = containingRole !== undefined;
+  return {
+    dark,
+    resolveColor,
+    secondaryFill: nested ? resolveColor(theme.colors.control) : host?.resolveMaterialColor?.({ color: theme.colors.control, role: containingRole, nested })
+      ?? happierMaterialBackgroundColor(theme.colors.control, role, Platform.OS === 'web', nested),
+  };
+}
 
 export type HappierButtonChromeVariant = 'primary' | 'secondary' | 'plain' | 'destructive';
 
@@ -40,7 +62,10 @@ export function resolveHappierButtonChrome(input: Readonly<{
   pressed?: boolean;
   /** The host's accent gloss (`HappierUiPalette.accentGloss`), the light top line of the primary fill. */
   gloss?: HappierRaisedEdge | null;
-}>): Readonly<{ style: HappierPortableStyle; foreground: string }> {
+  dark?: boolean;
+  secondaryFill?: string;
+  resolveColor?: (color: string, translucentColor?: string) => string;
+}>): Readonly<{ style: HappierPortableStyle; foreground: string; gradient: HappierSurfaceGradient | null }> {
   const { theme, variant } = input;
   const small = input.size === 'small';
   const foreground = variant === 'primary' ? theme.colors.onAccent
@@ -49,9 +74,14 @@ export function resolveHappierButtonChrome(input: Readonly<{
     ? 'transparent'
     : input.disabled
       ? theme.colors.controlDisabled
-      : (variant === 'primary' ? theme.colors.accent : theme.colors.control);
+      : (variant === 'primary' ? theme.colors.accent : input.secondaryFill ?? theme.colors.control);
+  const gradient = variant === 'plain' ? null : resolveHappierSurfaceFinish({
+    role: variant === 'primary' ? 'primaryButton' : 'secondaryButton', gradients: theme.surfaceFinish ?? {},
+    state: { disabled: input.disabled, focused: input.focused, pressed: input.pressed },
+  });
   return {
-    foreground,
+    foreground: variant === 'primary' ? input.resolveColor?.(foreground, theme.colors.text) ?? foreground : foreground,
+    gradient,
     style: {
       minHeight: small
         ? Math.max(HAPPIER_SMALL_BUTTON_HEIGHT, input.nativeMinimumTarget ?? 0)
@@ -63,7 +93,8 @@ export function resolveHappierButtonChrome(input: Readonly<{
       paddingHorizontal: small ? theme.spacing.medium : theme.spacing.large,
       paddingVertical: small ? 0 : BUTTON_PADDING_VERTICAL,
       borderRadius: theme.radii.control,
-      backgroundColor: background,
+      backgroundColor: input.resolveColor?.(background) ?? background,
+      ...(Platform.OS === 'web' ? happierSurfaceGradientWebStyle(gradient, input.dark !== true) : null),
       borderWidth: BUTTON_EDGE_WIDTH,
       borderColor: 'transparent',
       ...happierFocusRingStyle({ visible: input.focused, color: theme.colors.focus }),

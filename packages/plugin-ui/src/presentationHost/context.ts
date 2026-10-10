@@ -16,13 +16,14 @@ import type { HappierSceneRenderRequest } from '../presentation/state/scenes.js'
 import type { HappierCapsuleHost } from '../presentation/status/capsuleHost.js';
 import type { HappierAgentCursorMotionDriver } from '../presentation/copresence/AgentCursor.js';
 import type { HappierLiveStreamProps } from '../presentation/media/LiveStream.js';
-import type { HappierFloatingFramePointerBinding } from '../presentation/layout/FloatingFrame.js';
+import type { HappierFloatingFramePointerBinding, HappierFloatingFrameNativeBindingProps } from '../presentation/layout/FloatingFrame.js';
 import type { HappierStoredImageHost } from '../presentation/content/StoredImage.js';
 import type { DragSourceProps, DropTargetProps } from '../components/EntityDragDrop.js';
 import type { PluginUiWidgetAreaPortV1 } from '../hostApi/widgetArea.public.js';
 import type { SetupBlockGridProps, SetupBlockTileProps } from '../components/Setup.js';
 import type { DictationButtonProps, StatusCellProps, VoiceMarkArtProps } from '../components/Voice.js';
 import type { PluginUiScrollActivityTracker } from './scrollActivity.js';
+import type { FindSurfaceRegistrationHost } from '../presentation/find/useFindSurfaceRegistration.js';
 
 export type PluginUiPopoverPresentation = 'popover' | 'menu' | 'dropdown' | 'context';
 
@@ -169,6 +170,8 @@ export type PluginUiPaneHeaderHost = Readonly<{
  * navigation roots, or modal/portal infrastructure.
  */
 export type PluginUiPresentationHost = Readonly<{
+  /** Same-realm surfaces join the incumbent mounted Find owner. */
+  find?: FindSurfaceRegistrationHost;
   /** The incumbent host viewport policy, carried by a same-realm physical scroller. */
   createScrollActivityTracker?(scrollRef: RefObject<unknown>, horizontal: boolean): PluginUiScrollActivityTracker;
   renderVoiceMarkArt?(input: Omit<VoiceMarkArtProps, 'fallback'>): ReactNode;
@@ -185,14 +188,9 @@ export type PluginUiPresentationHost = Readonly<{
   renderDragSource?(input: DragSourceProps): ReactNode;
   renderDropTarget?(input: DropTargetProps): ReactNode;
   /** The incumbent host material owner; no settings or platform policy enters the author API. */
-  renderMaterialSurface?(input: Readonly<{
-    role: HappierMaterialRole;
-    /** A same-role parent already owns this plane's material coat. */
-    nested?: boolean;
-    children?: ReactNode;
-    style?: HappierStyleProp;
-    testID?: string;
-  }>): ReactNode;
+  renderMaterialSurface?: import('../presentation/layout/Surface.js').HappierMaterialSurfaceRender;
+  /** Concrete paint from the same host material owner, for native secondary controls. */
+  resolveMaterialColor?(input: Readonly<{ color: string; role?: HappierMaterialRole; nested: boolean; translucentColor?: string }>): string;
   /** Incumbent platform image decoder; Session-media acquisition remains in the mounted host API. */
   storedImageHost?: HappierStoredImageHost;
   /** Qualified row destinations use the incumbent workspace owner; absent hosts keep ordinary activation. */
@@ -239,9 +237,11 @@ export type PluginUiPresentationHost = Readonly<{
   /**
    * The host's platform pointer boundary for the shared companion drag session, so a public
    * `FloatingFrame` drags with the same listener/coordinate owner as Happier's own companions.
-   * Absent (a hosted-web realm, native), frames move through their keyboard and menu controls.
+   * Absent, web frames move through their keyboard and menu controls; native uses companionNativeFrame.
    */
   companionPointer?: HappierFloatingFramePointerBinding;
+  /** Same-realm native pan/animation adapter; native dependencies remain app-owned. */
+  companionNativeFrame?: import('react').ComponentType<HappierFloatingFrameNativeBindingProps>;
   /** Each mounted read-only viewer is admitted and disposed by the app's capture owner. */
   renderLiveStream?(input: HappierLiveStreamProps): ReactNode;
   /** The host's motion for the agent cursor (`AgentCursor`). Absent, the hand lands at once. */

@@ -55,15 +55,11 @@ import type {
 /**
  * The interaction facts THIS owner holds, available to content and overlays.
  *
- * `pressed` is deliberately absent. React Native surfaces it only inside the
- * `style` callback of the underlying pressable, for the duration of one frame;
- * a content render prop that claimed to carry it would either lie or force this
- * component to pass a function down as `children`, which several React Native
- * renderers (including the app's own test host) do not resolve. Content that
- * needs the pressed look expresses it in {@link HappierPressableProps.style},
- * where the value is real.
+ * Native paint layers need the same press fact as CSS chrome. The existing
+ * press-in/out boundary supplies it to content without changing its parent.
  */
 export type HappierPressableState = Readonly<{
+  pressed: boolean;
   hovered: boolean;
   focused: boolean;
   /** Composite-widget roving highlight; it is not a semantic selected value. */
@@ -165,6 +161,8 @@ export type HappierPressableProps = Readonly<{
   nativeID?: string;
   /** Web tab-to-panel relationship. */
   controls?: string;
+  /** Web ARIA shortcut declaration for a composite row's owner-defined key. */
+  keyboardShortcuts?: string;
   style?: HappierStyleProp | ((state: HappierPressableStyleState) => HappierStyleProp);
   /**
    * Rendered beside the pressable rather than inside it, in a relatively
@@ -255,12 +253,14 @@ export function HappierPressable({
   tabIndex,
   nativeID,
   controls,
+  keyboardShortcuts,
   style,
   overlay,
   children,
 }: HappierPressableProps) {
   const nativeMinimumInteractiveTargetSize = useHappierNativeMinimumInteractiveTargetSize();
   const [pendingPress, setPendingPress] = useState(false);
+  const [pressed, setPressed] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
   const pendingRef = useRef(false);
@@ -360,6 +360,7 @@ export function HappierPressable({
   }, [accessibilityRole, handlePress, onKeyDown]);
 
   const state: HappierPressableState = {
+    pressed: pressed && !isDisabled,
     hovered,
     focused,
     highlighted: highlighted === true,
@@ -467,6 +468,7 @@ export function HappierPressable({
       aria-expanded={expanded}
       aria-haspopup={hasPopup}
       aria-controls={controls}
+      aria-keyshortcuts={keyboardShortcuts}
       tabIndex={tabIndex}
       disabled={isDisabled}
       // Touch targets grow through their physical layout box, never an
@@ -474,8 +476,8 @@ export function HappierPressable({
       // hit-slop behavior because the provider explicitly reports desktop/web.
       hitSlop={physicalHitSlop}
       onPress={handlePress}
-      onPressIn={onPressIn}
-      onPressOut={onPressOut}
+      onPressIn={(event) => { setPressed(true); onPressIn?.(event); }}
+      onPressOut={(event) => { setPressed(false); onPressOut?.(event); }}
       onLongPress={isDisabled ? undefined : onLongPress}
       {...webContextMenuProps}
       onKeyDown={Platform.OS === 'web' ? handleKeyDown : undefined}

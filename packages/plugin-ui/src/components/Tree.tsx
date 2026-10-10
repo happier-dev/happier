@@ -46,6 +46,8 @@ export type TreeProps = Readonly<{
   onFocusedKeyChange?: (key: string) => void;
   /** An author's own controls at a row's trailing edge (a ⋯ menu). */
   renderTrailing?: (item: TreeItem) => ReactNode;
+  /** An in-place editor instead of the title/meta/controls. The author owns its draft and Save/Cancel. */
+  renderInlineEdit?: (item: TreeItem) => ReactNode;
   /**
    * The row inside the author's own host (a drag source, a drop outline, a measured box). The tree still draws the
    * row and owns its keyboard and semantics; the host only surrounds it. It must render `row` exactly once.
@@ -101,6 +103,7 @@ export function Tree(props: TreeProps): ReactElement {
             mark={item.mark}
             meta={item.meta}
             trailing={props.renderTrailing?.(item)}
+            inlineEdit={props.renderInlineEdit?.(item)}
             selected={props.selectedKey === item.key}
             tabStop={interaction.activeKey === item.key}
             presentation={props.presentation}

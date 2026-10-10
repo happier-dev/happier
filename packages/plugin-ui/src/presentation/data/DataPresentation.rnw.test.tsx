@@ -40,6 +40,19 @@ describe('public data nodes through React Native Web', () => {
       expect(chart.getAttribute('aria-label')).toBe('Signups: Mon 214, Tue 236, Wed 183');
     } finally { mount.unmount(); }
   });
+  it('draws a row\'s trailing identity marks after its title and before the amount, outside the spoken label', () => {
+    const context = createSurfaceContext();
+    const mount = mountThroughReactNativeWeb(<HappierDataRows testID="ledger" theme={context.theme}
+      columns={[{ label: 'Branch' }, { label: 'Cost', proportion: true }]} rows={[['glass', 38], ['relay', 12]]}
+      showProportionShares={false} rowTrails={[<span data-testid="marks">CX</span>, undefined]} />);
+    try {
+      const row = query(mount.container, 'ledger-row-0')!;
+      expect(query(row, 'marks')).not.toBeNull();
+      expect(row.textContent).toBe('glassCX38');
+      expect(row.getAttribute('aria-label')).toBe('glass, Cost: 38, 100%');
+      expect(query(mount.container, 'ledger-row-1')!.textContent).toBe('relay12');
+    } finally { mount.unmount(); }
+  });
   it('shows the status mark and announces its label for every CI row', () => {
     const context = createSurfaceContext();
     const mount = mountThroughReactNativeWeb(<HappierDataRows testID="checks" theme={context.theme}

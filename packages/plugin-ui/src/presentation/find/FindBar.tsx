@@ -6,6 +6,8 @@ import { HappierSearchFieldBox } from '../form/FieldBox.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { HAPPIER_MOTION_V1 } from '../interaction/motion.js';
 import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
+import { HappierMaterialSurface, type HappierMaterialSurfaceRender } from '../layout/Surface.js';
+import type { HappierSurfaceGradient } from '../layout/material.js';
 import type { HappierFocusable, HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
 import type { FindCapabilities, FindOptions, FindStatus } from './findTypes.js';
 
@@ -168,6 +170,10 @@ export type HappierFindBarProps = Readonly<{
   colors: HappierFindBarColors;
   /** The capsule's cast shadow, from the runtime's elevation owner. */
   elevation?: HappierPortableStyle;
+  /** Resolved floating finish; absent consumes the plugin theme snapshot, null explicitly draws Flat. */
+  gradient?: HappierSurfaceGradient | null;
+  /** Core binds its incumbent material owner; standalone plugins consume their presentation host. */
+  renderMaterialSurface?: HappierMaterialSurfaceRender;
   host: HappierFindBarHost;
   /** The runtime's touch-target floor where a finger is the pointer (44/48); pointer platforms omit it. */
   minimumTargetSize?: number;
@@ -427,6 +433,8 @@ export function HappierFindBar(props: HappierFindBarProps) {
       colors={colors}
       host={host}
       seated={seated}
+      gradient={props.gradient}
+      renderMaterialSurface={props.renderMaterialSurface}
       elevation={props.elevation}
       testID={props.testID}
     />
@@ -463,6 +471,8 @@ export function HappierFindBar(props: HappierFindBarProps) {
         {...barKeyHandlers}
         style={[{ alignSelf: 'stretch' }, arrivalStyle, props.style] as HappierStyleProp}
       >
+        <HappierMaterialSurface materialRole="floating" finishRole="floating" gradient={props.gradient} renderMaterialSurface={props.renderMaterialSurface}
+          testID={props.testID ? `${props.testID}.capsule` : undefined} style={{ backgroundColor: colors.surface }}>
         {note}
         {optionsOpen ? (
           // Find lab `.fd-popt`: the options as pills on their own quiet row above the bar.
@@ -472,7 +482,6 @@ export function HappierFindBar(props: HappierFindBarProps) {
             alignItems: 'center',
             columnGap: 8,
             paddingHorizontal: 12,
-            backgroundColor: colors.surface,
             borderTopWidth: StyleSheet.hairlineWidth,
             borderTopColor: colors.ring,
           }}>
@@ -490,7 +499,6 @@ export function HappierFindBar(props: HappierFindBarProps) {
           gap: seatedMetrics.gapPx,
           paddingVertical: seatedMetrics.paddingVerticalPx,
           paddingHorizontal: seatedMetrics.paddingHorizontalPx,
-          backgroundColor: colors.surface,
           borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: colors.ring,
         }}>
@@ -547,6 +555,7 @@ export function HappierFindBar(props: HappierFindBarProps) {
             )}
           </HappierPressable>
         </View>
+        </HappierMaterialSurface>
       </Animated.View>
     );
   }
@@ -570,6 +579,7 @@ export function HappierFindBar(props: HappierFindBarProps) {
       style={[{ alignItems: 'flex-end', gap: inline.noteGapPx }, arrivalStyle, props.style] as HappierStyleProp}
     >
       <HappierSearchFieldBox
+        testID={props.testID}
         colors={{ backgroundColor: colors.surface, borderColor: colors.ring }}
         radius={inline.radiusPx}
         minimumTargetSize={barHeight}
@@ -591,6 +601,9 @@ export function HappierFindBar(props: HappierFindBarProps) {
         )}
         // A narrow pane shrinks the field first; the count and controls never clip.
         style={[{ paddingRight: inline.paddingRightPx, borderWidth: StyleSheet.hairlineWidth, maxWidth: '100%' }, props.elevation ?? null] as HappierStyleProp}
+        renderSurface={body => <HappierMaterialSurface materialRole="floating" finishRole="floating" gradient={props.gradient}
+          renderMaterialSurface={props.renderMaterialSurface} testID={props.testID ? `${props.testID}.capsule` : undefined}
+          style={body.style}>{body.children}</HappierMaterialSurface>}
       >
         <View style={{ width: inline.fieldWidthPx, flexShrink: 1, minWidth: compact ? inline.compactFieldMinWidthPx : inline.fieldMinWidthPx, flexDirection: 'row', alignItems: 'center' }}>{input}</View>
       </HappierSearchFieldBox>
@@ -743,37 +756,36 @@ function FindBarNote(props: Readonly<{
   colors: HappierFindBarColors;
   host: HappierFindBarHost;
   seated: boolean;
+  gradient?: HappierSurfaceGradient | null;
+  renderMaterialSurface?: HappierMaterialSurfaceRender;
   elevation?: HappierPortableStyle;
   testID?: string;
 }>) {
   const { colors, host } = props;
   const icon = props.note?.icon ?? 'history';
-  return (
-    <View
-      testID={props.testID ? `${props.testID}.note` : undefined}
-      style={props.seated ? {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 7,
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        backgroundColor: colors.surface,
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderTopColor: colors.ring,
-      } : {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        gap: 7,
-        maxWidth: HAPPIER_FIND_BAR_METRICS.inline.noteMaxWidthPx,
-        paddingVertical: 7,
-        paddingHorizontal: 10,
-        borderRadius: 9,
-        backgroundColor: colors.surface,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: colors.ring,
-        ...props.elevation,
-      }}
-    >
+  const style: HappierPortableStyle = props.seated ? {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.ring,
+  } : {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 7,
+    maxWidth: HAPPIER_FIND_BAR_METRICS.inline.noteMaxWidthPx,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    borderRadius: 9,
+    backgroundColor: colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.ring,
+    ...props.elevation,
+  };
+  const content = (
+    <>
       <View style={{ marginTop: 1 }}>{host.renderGlyph(icon, colors.tertiaryText, 14)}</View>
       {/* The link (Stop, Search older) closes the note's last line rather than wrapping onto a line of its own. */}
       <View style={{ flexShrink: 1, flexDirection: 'row', alignItems: 'flex-end', columnGap: 4 }}>
@@ -794,7 +806,13 @@ function FindBarNote(props: Readonly<{
           </HappierPressable>
         ) : null}
       </View>
-    </View>
+    </>
+  );
+  const testID = props.testID ? `${props.testID}.note` : undefined;
+  // A seated note is a flat row within the capsule; the separate inline alert owns its floating plane.
+  return props.seated ? <View testID={testID} style={style}>{content}</View> : (
+    <HappierMaterialSurface materialRole="floating" finishRole="floating" gradient={props.gradient}
+      renderMaterialSurface={props.renderMaterialSurface} testID={testID} style={style}>{content}</HappierMaterialSurface>
   );
 }
 

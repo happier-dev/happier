@@ -72,6 +72,9 @@ export type HappierPortableStyle = Readonly<{
   alignSelf?: 'auto' | HappierAlignment;
   aspectRatio?: number | string;
   backgroundColor?: string;
+  /** Web surface paint only; native draws through the shared gradient layer. */
+  backgroundImage?: string;
+  backgroundClip?: 'padding-box';
   borderBottomColor?: string;
   borderBottomLeftRadius?: number | string;
   borderBottomRightRadius?: number | string;

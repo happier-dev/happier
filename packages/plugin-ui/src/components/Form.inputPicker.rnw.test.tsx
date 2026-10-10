@@ -2,6 +2,7 @@ import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ActionFormHints } from '@happier-dev/plugin-sdk/actions';
+import type { PluginInputTypeReferenceV1 } from '@happier-dev/plugin-sdk';
 import {
   invokeInputTypePicker,
   type InputTypePickerHostV1,
@@ -90,12 +91,12 @@ async function choose(control: HTMLElement | null): Promise<void> {
   });
 }
 
-function mountForm(port: HappierInputPickerPort | null, value: Record<string, unknown>, onChange = vi.fn()) {
+function mountForm(port: HappierInputPickerPort | null, value: Record<string, unknown>, onChange = vi.fn(), initialHints: ActionFormHints = hints) {
   const context = createSurfaceContext();
   const mount = mountThroughReactNativeWeb(
     <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
       <HappierInputPickerProvider port={port}>
-        <Form hints={hints} value={value} onChange={onChange} onSubmit={() => undefined} />
+        <Form hints={initialHints} value={value} onChange={onChange} onSubmit={() => undefined} />
       </HappierInputPickerProvider>
     </PluginUiProvider>,
   );
@@ -104,6 +105,66 @@ function mountForm(port: HappierInputPickerPort | null, value: Record<string, un
 }
 
 describe('public Form custom pickers', () => {
+  it('writes only the canonical host UsageQuery picker answer into the author field', async () => {
+    const inputType = { hostType: 'usageQuery' } as const satisfies PluginInputTypeReferenceV1;
+    const queryHints: ActionFormHints = { fields: [hints.fields![0]!, {
+      path: 'query', title: 'Usage', widget: 'json', inputType,
+    }] };
+    let answer: unknown = { kind: 'completed', input: {
+      agents: ['codex', 'claude', 'codex'], session: 'session', costBasis: 'reported', metric: 'cost', breakdown: ['machine'],
+    } };
+    const host: InputTypePickerHostV1 = {
+      resolveType: async () => { throw new Error('Host input must not discover a plugin'); },
+      resolveOptions: async () => { throw new Error('Host input has no contributed inventory'); },
+      openPicker: async () => { throw new Error('Host input has no contributed picker'); },
+      openHostPicker: async () => answer,
+    };
+    const port: HappierInputPickerPort = {
+      describe: field => field.inputType && 'hostType' in field.inputType
+        ? { label: 'Browse…', accessibilityLabel: 'Browse for Usage' } : null,
+      pick: async request => {
+        const result = await invokeInputTypePicker({ field: queryHints.fields![1]!, host, signal: request.signal });
+        return result.status === 'error' ? { status: 'error', message: result.reasonCode } : result;
+      },
+    };
+    const original = { note: 'Keep this note', query: { agents: ['saved'] } };
+    const { mount, onChange } = mountForm(port, original, vi.fn(), queryHints);
+    const browse = () => mount.container.querySelector<HTMLElement>('[aria-label="Browse for Usage"]');
+    await choose(browse());
+    expect(onChange).toHaveBeenCalledWith({ note: 'Keep this note', query: expect.objectContaining({
+      agents: ['claude', 'codex'], session: ['session'], costBasis: 'reported', metric: 'cost', breakdown: ['machine'],
+    }) });
+    onChange.mockClear();
+    answer = { kind: 'completed', input: { accountId: 'someone-else' } };
+    await choose(browse());
+    expect(onChange).not.toHaveBeenCalled();
+    expect(mount.container.querySelector('[role="alert"]')?.textContent).toContain('input_type_value_invalid');
+    expect(original).toEqual({ note: 'Keep this note', query: { agents: ['saved'] } });
+    mount.unmount();
+  });
+  it('cancels a host query picker when the author replaces its semantic host input type', async () => {
+    let settle: ((answer: HappierInputPickerResult) => void) | undefined;
+    let signal: AbortSignal | undefined;
+    const port: HappierInputPickerPort = {
+      describe: () => ({ label: 'Browse…', accessibilityLabel: 'Browse for Repository' }),
+      pick: request => { signal = request.signal; return new Promise(resolve => { settle = resolve; }); },
+    };
+    const hostHints: ActionFormHints = { fields: [{ path: 'repository', title: 'Repository', widget: 'json',
+      inputType: { hostType: 'usageQuery' } }] };
+    const { mount, browse, onChange } = mountForm(port, { repository: {} }, vi.fn(), hostHints);
+    await choose(browse());
+    const context = createSurfaceContext();
+    await mount.render(<PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+      <HappierInputPickerProvider port={port}>
+        <Form hints={{ fields: [{ ...hostHints.fields![0]!, inputType: { hostType: 'workspace' } }] }}
+          value={{ repository: {} }} onChange={onChange} onSubmit={() => undefined} />
+      </HappierInputPickerProvider>
+    </PluginUiProvider>);
+    expect(signal?.aborted).toBe(true);
+    await act(async () => { settle?.({ status: 'selected', value: { metric: 'cost' } }); });
+    expect(onChange).not.toHaveBeenCalled();
+    mount.unmount();
+  });
   it('ignores a late choice when the mounted author replaces the field’s choices', async () => {
     let settle: ((answer: HappierInputPickerResult) => void) | undefined;
     let signal: AbortSignal | undefined;

@@ -21,6 +21,8 @@ import { resolveHappierTypeRoleStyle } from '../text/typeRole.js';
 import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
 import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
 import { resolveHappierPageTextStyle } from '../layout/pageText.js';
+import { HappierDataHatch } from './Hatch.js';
+import { useHappierMaterialColorResolver } from '../layout/Surface.js';
 
 export type HappierMetadataEntry = Readonly<{
   label: string;
@@ -173,6 +175,7 @@ export function HappierBadge(
     style?: HappierStyleProp;
   }>,
 ) {
+  const paintColor = useHappierMaterialColorResolver();
   const words = isValidElement(props.children) ? (
     props.children
   ) : (
@@ -191,7 +194,7 @@ export function HappierBadge(
           gap: props.gap ?? HAPPIER_BADGE_METRICS.gap,
           borderWidth: props.borderColor === undefined ? 0 : 1,
           borderColor: props.borderColor,
-          backgroundColor: props.backgroundColor,
+          backgroundColor: paintColor(props.backgroundColor),
           borderRadius:
             props.shape === 'capsule'
               ? 999
@@ -328,9 +331,14 @@ export function HappierProgress(
     semantics?: 'progress' | 'none' | 'image';
     /** Shares of one whole (0–1 each), drawn left to right on the one track; `value` is not drawn. */
     segments?: readonly Readonly<{ value: number; color: string }>[];
+    segmentGap?: number;
+    renderSegment?: (segment: Readonly<{ value: number; color: string }>, visual: ReactNode, index: number) => ReactNode;
     height?: number;
     fillColor?: string;
+    fillOpacity?: number;
+    fillPattern?: 'solid' | 'hatched';
     trackColor?: string;
+    trackOpacity?: number;
     fillTestID?: string;
     minimumVisibleFraction?: number;
     minimumFillWidth?: number;
@@ -352,6 +360,7 @@ export function HappierProgress(
     minWidth: props.minimumFillWidth,
     width: `${fillPercentage}%`,
     backgroundColor: props.fillColor ?? props.theme.colors.accent,
+    opacity: props.fillOpacity,
     borderRadius: props.theme.radii.pill,
   };
   return (
@@ -384,15 +393,19 @@ export function HappierProgress(
           overflow: 'hidden',
           borderRadius: props.theme.radii.pill,
           backgroundColor:
-            props.trackColor ?? props.theme.colors.controlDisabled,
+            props.trackOpacity === undefined ? props.trackColor ?? props.theme.colors.controlDisabled : 'transparent',
         },
         props.style,
         webPointerEventsStyle,
       ]}
     >
+      {props.trackOpacity === undefined ? null : <View pointerEvents={Platform.OS === 'web' ? undefined : 'none'} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+        ...(Platform.OS === 'web' ? { pointerEvents: 'none' as const } : {}),
+        backgroundColor: props.trackColor ?? props.theme.colors.controlDisabled, opacity: props.trackOpacity }} />}
       {props.segments !== undefined ? (
-        <View style={{ flexDirection: 'row', height: '100%' }}>
-          {props.segments.map((segment, index) => (
+        <View style={{ flexDirection: 'row', height: '100%', gap: props.segmentGap }}>
+          {props.segments.map((segment, index) => {
+            const visual = (
             <View
               key={index}
               testID={
@@ -402,16 +415,23 @@ export function HappierProgress(
               }
               style={{
                 height: '100%',
-                width: `${resolveHappierProgressPercentage(segment.value, { indeterminate: 0 })}%`,
                 backgroundColor: segment.color,
               }}
             />
-          ))}
+            );
+            return <View key={index} style={{ width: `${resolveHappierProgressPercentage(segment.value, {
+              indeterminate: 0, minimumVisible: segment.value > 0 ? props.minimumVisibleFraction : undefined,
+            })}%`, minWidth: segment.value > 0 ? props.minimumFillWidth : undefined, flexShrink: 1, height: '100%' }}>
+              {props.renderSegment?.(segment, visual, index) ?? visual}
+            </View>;
+          })}
         </View>
       ) : props.renderFill ? (
         props.renderFill(percentage)
       ) : (
-        <View testID={props.fillTestID} style={fillStyle} />
+        <View testID={props.fillTestID} style={fillStyle}>
+          {props.fillPattern === 'hatched' ? <HappierDataHatch theme={props.theme} /> : null}
+        </View>
       )}
     </View>
   );
@@ -444,6 +464,11 @@ export function HappierBanner(
     action?: ReactNode;
     /** Compact call-to-action below the whole banner identity, not only its text column. */
     compactActionPlacement?: 'full-width';
+    /**
+     * `below` keeps the action under the text at every width: several buttons, or a notice whose
+     * text is a list of steps, would otherwise squeeze the words into a narrow column beside them.
+     */
+    actionPlacement?: 'trailing' | 'below';
     theme: HappierUiTheme;
     testID?: string;
     style?: HappierStyleProp;
@@ -460,12 +485,14 @@ export function HappierBanner(
     accessibilityLiveRegion?: 'polite' | 'assertive';
   }>,
 ) {
+  const paintColor = useHappierMaterialColorResolver();
   const isUrgent = isHappierBannerUrgent(props.tone);
   const color = props.theme.colors[HAPPIER_TONE_COLOR_TOKEN[props.tone]];
   const typography = useOptionalHappierUiTypography();
   const [narrow, setNarrow] = useState(false);
   const fullWidthAction =
     narrow && props.compactActionPlacement === 'full-width';
+  const actionBelow = narrow || props.actionPlacement === 'below';
   const role =
     props.announce === 'none'
       ? undefined
@@ -502,13 +529,14 @@ export function HappierBanner(
       style={[
         {
           flexDirection: 'row',
-          alignItems: narrow ? 'flex-start' : 'center',
+          // Stacked, the mark belongs to the title's line, not to the middle of a tall block.
+          alignItems: actionBelow ? 'flex-start' : 'center',
           borderRadius: HAPPIER_PAGE_METRICS.sheetRadiusPx,
           paddingVertical: 12,
           paddingLeft: HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx,
           paddingRight: 12,
           gap: HAPPIER_PAGE_METRICS.rowLeadingGapPx,
-          backgroundColor: props.backgroundColor ?? props.theme.colors.surface,
+          backgroundColor: paintColor(props.backgroundColor ?? props.theme.colors.surface, 'transparent'),
         },
         props.style,
       ]}
@@ -565,13 +593,13 @@ export function HappierBanner(
             </HappierText>
           ) : null)}
         {props.details}
-        {props.action && narrow && !fullWidthAction ? (
+        {props.action && actionBelow && !fullWidthAction ? (
           <View style={{ alignItems: 'flex-start', marginTop: 10 }}>
             {props.action}
           </View>
         ) : null}
       </View>
-      {props.action && !narrow ? (
+      {props.action && !actionBelow ? (
         <View style={{ flexShrink: 0 }}>{props.action}</View>
       ) : null}
       {props.dismiss ? (

@@ -1,4 +1,4 @@
-import { View } from 'react-native';
+import { View, type ViewStyle } from 'react-native';
 
 import type { HappierUiTheme } from '../../environment/types.js';
 import type { HappierStyleProp } from '../portableTypes.js';
@@ -9,6 +9,33 @@ export const HAPPIER_RADIO_MARK_METRICS = Object.freeze({
   ringWidth: 1.5,
   selectedRingWidth: 5,
 });
+
+/**
+ * The mark's geometry and ink for owners that hold colours rather than a whole theme (a tile grid's
+ * own palette). `HappierRadioMark` draws exactly this, so every single-choice mark is one drawing.
+ */
+export function resolveHappierRadioMarkStyle(input: Readonly<{
+  selected: boolean;
+  /** The chosen ring's colour (ink). */
+  ink: string;
+  /** The unchosen ring's colour. */
+  quiet: string;
+  /** The centre: the surface the mark stands on. */
+  surface: string;
+  disabled?: boolean;
+}>): ViewStyle {
+  const { size, ringWidth, selectedRingWidth } = HAPPIER_RADIO_MARK_METRICS;
+  return {
+    width: size,
+    height: size,
+    borderRadius: size / 2,
+    borderWidth: input.selected ? selectedRingWidth : ringWidth,
+    borderColor: input.selected ? input.ink : input.quiet,
+    backgroundColor: input.surface,
+    opacity: input.disabled ? 0.4 : 1,
+    flexShrink: 0,
+  };
+}
 
 /**
  * The one single-choice mark: a quiet ring that fills to an ink ring with a light centre when chosen. It
@@ -27,7 +54,6 @@ export function HappierRadioMark(
     style?: HappierStyleProp;
   }>,
 ) {
-  const { size, ringWidth, selectedRingWidth } = HAPPIER_RADIO_MARK_METRICS;
   return (
     <View
       testID={props.testID}
@@ -35,18 +61,13 @@ export function HappierRadioMark(
       importantForAccessibility="no-hide-descendants"
       pointerEvents="none"
       style={[
-        {
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          borderWidth: props.selected ? selectedRingWidth : ringWidth,
-          borderColor: props.selected
-            ? props.theme.colors.text
-            : props.theme.colors.mutedText,
-          backgroundColor: props.theme.colors.surface,
-          opacity: props.disabled ? 0.4 : 1,
-          flexShrink: 0,
-        },
+        resolveHappierRadioMarkStyle({
+          selected: props.selected,
+          ink: props.theme.colors.text,
+          quiet: props.theme.colors.mutedText,
+          surface: props.theme.colors.surface,
+          disabled: props.disabled,
+        }),
         props.style,
       ]}
     />

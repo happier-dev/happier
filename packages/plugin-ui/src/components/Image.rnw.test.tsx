@@ -53,6 +53,19 @@ function renderedColor(property: 'backgroundColor' | 'borderColor', color: strin
 }
 
 describe('bounded package image and brand fallback', () => {
+  it('fits a public brand into the presentation owner\'s compact mark slot', () => {
+    const context = createSurfaceContext();
+    const mount = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <BrandMark size="small" pixelSize={10} testID="compact-brand" externallyLabelled />
+      </PluginUiProvider>,
+    );
+    const mark = mount.container.querySelector<HTMLElement>('[data-testid="compact-brand"]');
+    expect(mark?.style.width).toBe('10px');
+    expect(mark?.style.height).toBe('10px');
+    mount.unmount();
+  });
+
   it('reports one attributable diagnostic and renders the neutral fallback when the web decoder fails', async () => {
     const context = createSurfaceContext();
     const diagnostic = vi.fn();

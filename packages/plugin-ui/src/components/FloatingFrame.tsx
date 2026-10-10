@@ -14,7 +14,7 @@ export function FloatingFrame(props: FloatingFrameProps): ReactElement {
   const theme = usePluginTheme();
   const { reducedMotion } = useHappierUiAccessibility();
   return <SharedFloatingFrame {...props}
-    colors={{ grip: theme.colors.textSecondary, focusRing: theme.colors.focus }}
+    colors={{ grip: theme.colors.secondaryText, focusRing: theme.colors.focus }}
     reducedMotion={reducedMotion}
   />;
 }

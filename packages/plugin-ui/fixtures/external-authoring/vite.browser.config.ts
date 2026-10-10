@@ -10,6 +10,7 @@ export default {
     dedupe: ['react', 'react-dom'],
     alias: [
       { find: /^react-native$/u, replacement: reactNativeWebEntry },
+      { find: /^react-native-svg$/u, replacement: resolve(root, 'node_modules/react-native-svg/lib/module/elements.web.js') },
     ],
   },
   build: {

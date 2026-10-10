@@ -6,6 +6,7 @@ import { HappierChevron } from '../collection/DisclosureChevron.js';
 import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { happierRaisedEdgeStyle, type HappierRaisedEdge } from '../layout/raisedEdge.js';
 import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
+import { useHappierMaterialColorResolver } from '../layout/Surface.js';
 
 /** The compact rail/search well; phones take the platform target supplied by the adapter. */
 export const HAPPIER_SEARCH_FIELD_METRICS = Object.freeze({ heightPx: 32, iconInsetPx: 10, iconSizePx: 14, iconGapPx: 8, trailingInsetPx: 8 });
@@ -20,12 +21,19 @@ export function HappierSearchFieldBox(props: Readonly<{
   trailing?: ReactNode;
   children: ReactNode;
   style?: HappierStyleProp;
+  /** A floating capsule can bind its material body without replacing this field's focus/hit owner. */
+  renderSurface?: (input: Readonly<{ style: HappierStyleProp; children: ReactNode }>) => ReactNode;
 }>) {
   const metrics = HAPPIER_SEARCH_FIELD_METRICS;
-  return <Pressable testID={props.testID ? `${props.testID}.field` : undefined} onPress={props.onFocusInput} accessible={false} focusable={false} tabIndex={-1} style={[{ flexDirection: 'row', alignItems: 'center', borderRadius: props.radius, paddingLeft: metrics.iconInsetPx, paddingRight: metrics.trailingInsetPx, paddingVertical: 0, minHeight: Math.max(metrics.heightPx, props.minimumTargetSize ?? 0), backgroundColor: props.colors.backgroundColor, borderColor: props.colors.borderColor, borderWidth: StyleSheet.hairlineWidth }, happierRaisedEdgeStyle(props.colors.edge), props.style]}>
+  const paintColor = useHappierMaterialColorResolver();
+  const style = [{ flexDirection: 'row' as const, alignItems: 'center' as const, borderRadius: props.radius, paddingLeft: metrics.iconInsetPx, paddingRight: metrics.trailingInsetPx, paddingVertical: 0, minHeight: Math.max(metrics.heightPx, props.minimumTargetSize ?? 0), backgroundColor: paintColor(props.colors.backgroundColor), borderColor: props.colors.borderColor, borderWidth: StyleSheet.hairlineWidth }, happierRaisedEdgeStyle(props.colors.edge), props.style];
+  const children = <>
     {props.leading ? <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ marginRight: metrics.iconGapPx }}>{props.leading}</View> : null}
     {props.children}
     {props.trailing ?? null}
+  </>;
+  return <Pressable testID={props.testID ? `${props.testID}.field` : undefined} onPress={props.onFocusInput} accessible={false} focusable={false} tabIndex={-1} style={props.renderSurface ? { maxWidth: '100%', minWidth: 0 } : style}>
+    {props.renderSurface ? props.renderSurface({ style, children }) : children}
   </Pressable>;
 }
 
@@ -133,6 +141,7 @@ export type HappierFieldBoxTriggerProps = Readonly<{
  * trigger takes `HAPPIER_FOCUS_RING_DELEGATED_STYLE` when the box draws the ring.
  */
 export function HappierFieldBoxTrigger({ colors, leading, children, trailing, span }: HappierFieldBoxTriggerProps) {
+  const paintColor = useHappierMaterialColorResolver();
   return (
     <View
       style={[HAPPIER_FIELD_BOX_SHAPE, {
@@ -143,7 +152,7 @@ export function HappierFieldBoxTrigger({ colors, leading, children, trailing, sp
         ...(span === 'column' ? { width: HAPPIER_FIELD_BOX_METRICS.inlineMinWidthPx } : {}),
         ...(span === 'row' ? { alignSelf: 'stretch' as const } : { maxWidth: HAPPIER_FIELD_BOX_METRICS.triggerMaxWidthPx }),
         borderColor: colors.borderColor,
-        backgroundColor: colors.backgroundColor,
+        backgroundColor: paintColor(colors.backgroundColor),
       }, happierRaisedEdgeStyle(colors.edge), colors.focusRing ? happierFocusRingStyle({ visible: true, color: colors.focusRing }) : null]}
     >
       {leading ?? null}
@@ -242,32 +251,40 @@ export type HappierFieldTextBoxProps = Readonly<{
  * `FieldTextInput` and the public `TextField presentation="field"` render it.
  */
 export function HappierFieldTextBox(props: HappierFieldTextBoxProps) {
+  const paintColor = useHappierMaterialColorResolver();
   return (
     <View
       style={[
         {
-          // Prefer the field column in an intrinsic inline slot, but span a bounded stacked slot
-          // even when it is narrower than that column. A hard numeric minimum defeats shrinking.
-          width: HAPPIER_FIELD_BOX_METRICS.inlineMinWidthPx,
-          minWidth: '100%',
+          // Caller sizing belongs to this frame; registered styles can be opaque.
+          minWidth: 0,
           maxWidth: '100%',
           flexShrink: 1,
-          gap: HAPPIER_FIELD_TEXT_METRICS.errorGapPx,
         },
         props.style,
       ]}
     >
       <View
-        style={[
-          HAPPIER_FIELD_BOX_SHAPE,
-          { justifyContent: 'center', borderColor: props.colors.borderColor, backgroundColor: props.colors.backgroundColor },
-          happierRaisedEdgeStyle(props.colors.edge),
-          props.multiline ? { paddingVertical: HAPPIER_FIELD_TEXT_METRICS.multilinePaddingVerticalPx } : null,
-        ]}
+        style={{
+          // Prefer the shared column intrinsically, but fill the caller's bounded frame.
+          width: HAPPIER_FIELD_BOX_METRICS.inlineMinWidthPx,
+          minWidth: '100%',
+          maxWidth: '100%',
+          gap: HAPPIER_FIELD_TEXT_METRICS.errorGapPx,
+        }}
       >
-        {props.children}
+        <View
+          style={[
+            HAPPIER_FIELD_BOX_SHAPE,
+            { justifyContent: 'center', borderColor: props.colors.borderColor, backgroundColor: paintColor(props.colors.backgroundColor) },
+            happierRaisedEdgeStyle(props.colors.edge),
+            props.multiline ? { paddingVertical: HAPPIER_FIELD_TEXT_METRICS.multilinePaddingVerticalPx } : null,
+          ]}
+        >
+          {props.children}
+        </View>
+        {props.error ?? null}
       </View>
-      {props.error ?? null}
     </View>
   );
 }

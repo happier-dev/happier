@@ -3,6 +3,9 @@ import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
+import { PluginUiProvider } from '../../components/PluginUiProvider.js';
+import { createHostApiStub, createSurfaceContext } from '../../surfaceFixture.testSupport.js';
+import { HappierMaterialSurface } from '../layout/Surface.js';
 import {
   HappierSelectionActionBar,
   resolveHappierSelectionActionBarLayout,
@@ -44,6 +47,32 @@ async function click(element: HTMLElement | undefined): Promise<void> {
 }
 
 describe('HappierSelectionActionBar', () => {
+  it('finishes its floating rail once without replacing its inverted fill, selection identity or actions when Flat changes', async () => {
+    const context = createSurfaceContext();
+    const gradient = { colors: ['rgba(0,0,0,0)', 'rgba(0,0,0,0.024)'] as const };
+    const pressed: string[] = [];
+    const scene = (soft: boolean) => {
+      const projected = { ...context, theme: { ...context.theme, surfaceFinish: { floating: soft ? gradient : null } } };
+      return <PluginUiProvider context={projected} hostApi={createHostApiStub(projected)}>
+        <HappierMaterialSurface materialRole="floating" gradient={gradient}>
+        <HappierSelectionActionBar visible label="2 selected" actions={actions(id => pressed.push(id))} dismiss={{ label: 'Clear selection', onPress: () => {} }} colors={COLORS} host={host} reducedMotion testID="bar" />
+        </HappierMaterialSurface>
+      </PluginUiProvider>;
+    };
+    const mounted = mountThroughReactNativeWeb(scene(true));
+    const paints = () => [...mounted.container.querySelectorAll<HTMLElement>('[data-testid="bar"], [data-testid="bar"] *')]
+      .filter(node => getComputedStyle(node).backgroundImage.includes('linear-gradient'));
+    expect(paints()).toHaveLength(1);
+    expect(getComputedStyle(paints()[0]!).backgroundColor).toContain('black var(--happier-glass-floating-opacity');
+    const action = buttonNamed(mounted.container, 'Ask Agent');
+    await mounted.render(scene(false));
+    expect(paints()).toHaveLength(0);
+    expect(buttonNamed(mounted.container, 'Ask Agent')).toBe(action);
+    await click(action);
+    expect(pressed).toEqual(['ask']);
+    expect(mounted.container.textContent).toContain('2 selected');
+    mounted.unmount();
+  });
   it('says how many are selected, offers the actions in order, and clears with one ✕ named by its label', async () => {
     const pressed: string[] = [];
     let dismissed = 0;

@@ -54,7 +54,8 @@ const CARD = Object.freeze({
   footerHeight: 28,
   /** The preview band's height: about seven preview lines, enough to recognise the item at a glance. */
   previewHeight: 128,
-  boardColumnMinWidth: 260,
+  // Compact tracks still leave room for the mark, a readable title and the card insets.
+  boardColumnMinWidth: 160,
   boardCardInsetX: 10,
   boardCardInsetY: 4,
   /** The default narrowest grid card; one column at a 390 pt phone. */
@@ -246,7 +247,7 @@ function BoardColumn<Item>(props: Readonly<{
       {!props.showHeader || group === null || group.title === '' ? null : (
         <View style={columnHeaderStyle}>
           <View style={lineStyle}>
-            <HappierText variant="label" tone={HAPPIER_WORK_STATUS_SEMANTIC_TONE[section.items.length > 0 ? group.tone ?? 'neutral' : 'neutral']} numberOfLines={1} style={[titleStyle, { flexShrink: 1 }]}>{group.title}</HappierText>
+            <HappierText variant="label" tone={HAPPIER_WORK_STATUS_SEMANTIC_TONE[section.items.length > 0 ? group.tone ?? 'neutral' : 'neutral']} style={[titleStyle, { flexShrink: 1 }]}>{group.title}</HappierText>
             <HappierText variant="caption" tone="muted" tabularNumbers>{String(section.items.length)}</HappierText>
           </View>
           {group.description === undefined ? null : (
@@ -297,7 +298,9 @@ function CollectionBoard<Item>(props: CollectionCardsProps<Item>): ReactElement 
   const horizontalScroll = useRef<ScrollView | null>(null);
   const minColumn = CARD.boardColumnMinWidth * textScale;
   // Empty and populated buckets keep the same track; arrivals never resize their neighbours.
-  const fits = props.width === null || sections.length * minColumn + 2 * (GUTTER - CARD.boardCardInsetX) <= props.width;
+  const availableWidth = props.width === null ? null : Math.max(0, props.width - 2 * (GUTTER - CARD.boardCardInsetX));
+  const fits = availableWidth === null || sections.length * minColumn <= availableWidth;
+  const columnWidth = availableWidth === null ? null : Math.max(minColumn, availableWidth / Math.max(1, sections.length));
   useLayoutEffect(() => {
     horizontalScroll.current?.scrollTo({ x: boardViewport.horizontalOffsetRef.current, animated: false });
     stackedScroll.current?.scrollTo({ y: boardViewport.offsetRef.current, animated: false });
@@ -385,7 +388,7 @@ function CollectionBoard<Item>(props: CollectionCardsProps<Item>): ReactElement 
   }
 
   const columns = sections.map((section, index) => columnFor(section, index, [
-    { width: minColumn, flexShrink: 0 },
+    columnWidth === null ? { flex: 1, minWidth: 0 } : { width: columnWidth, flexShrink: 0 },
   ], true));
   return fits ? (
     <View style={boardRowStyle}>{columns}</View>

@@ -9,6 +9,7 @@ import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
 import { resolveHappierTabKeySelection } from '../navigation/Tabs.js';
 import type { HappierFocusable, HappierPortableStyle } from '../portableTypes.js';
 import { HappierText } from '../text/Text.js';
+import { useHappierMaterialColorResolver } from '../layout/Surface.js';
 
 /**
  * The segmented control's geometry and label type, shared by Happier core's
@@ -99,6 +100,7 @@ export type HappierSegmentedChoiceProps = Readonly<{
  * stop on the chosen segment.
  */
 export function HappierSegmentedChoice(props: HappierSegmentedChoiceProps) {
+  const paintColor = useHappierMaterialColorResolver();
   const localization = useOptionalHappierUiLocalization();
   const rtl = localization ? localization.direction === 'rtl' : I18nManager.isRTL;
   const size = props.size ?? 'default';
@@ -125,7 +127,7 @@ export function HappierSegmentedChoice(props: HappierSegmentedChoiceProps) {
         maxWidth: '100%',
         padding: HAPPIER_SEGMENTED_METRICS.trackPaddingPx,
         borderRadius: HAPPIER_SEGMENTED_METRICS.trackRadiusPx[size],
-        backgroundColor: props.colors.track,
+        backgroundColor: paintColor(props.colors.track),
         // One dim on the track, not per segment, so the chosen surface is not dimmed twice.
         opacity: groupDisabled ? HAPPIER_SEGMENTED_METRICS.disabledOpacity : 1,
       }}
@@ -171,7 +173,7 @@ export function HappierSegmentedChoice(props: HappierSegmentedChoiceProps) {
               paddingHorizontal: horizontalPadding,
               borderRadius: HAPPIER_SEGMENTED_METRICS.segmentRadiusPx[size],
               ...happierFocusRingStyle({ visible: state.focused, color: props.colors.focusRing }),
-              backgroundColor: segment.selected ? props.colors.thumb : 'transparent',
+              backgroundColor: segment.selected ? paintColor(props.colors.thumb) : 'transparent',
               ...(segment.selected && !state.pressed ? props.colors.thumbLift : undefined),
               opacity: !groupDisabled && segment.disabled
                 ? HAPPIER_SEGMENTED_METRICS.disabledOpacity

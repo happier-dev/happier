@@ -7,6 +7,7 @@ import {
   FloatingFrame,
   resolveFloatingFrameBodyRect,
   resolveFloatingFrameHeight,
+  resolveFloatingFrameSettleTransition,
   type FloatingFrameProps,
   type HappierFloatingFramePointerBinding,
 } from './FloatingFrame.js';
@@ -166,6 +167,51 @@ function key(target: Element, value: string) {
 }
 
 describe('FloatingFrame', () => {
+  it('reveals its controls on hover for a pointer that hovers, and keeps them shown for one that cannot', () => {
+    const hovering = mount();
+    expect(hovering.byId('frame-controls').style.opacity).toBe('0');
+    hovering.view.unmount();
+
+    const matchMedia = window.matchMedia;
+    window.matchMedia = ((query: string) =>
+      ({ matches: query === '(hover: none)' }) as MediaQueryList) as typeof window.matchMedia;
+    try {
+      const touch = mount();
+      expect(touch.byId('frame-controls').style.opacity).toBe('1');
+      expect(touch.byId('frame-grip').style.opacity).toBe('1');
+      touch.view.unmount();
+    } finally {
+      window.matchMedia = matchMedia;
+    }
+  });
+
+  it('keeps its controls shown once a finger has reached it on a device that also hovers', () => {
+    const { view, byId } = mount();
+    const event = new MouseEvent('pointerover', { bubbles: true });
+    Object.defineProperty(event, 'pointerType', { value: 'touch' });
+    act(() => {
+      byId('frame').dispatchEvent(event);
+    });
+    act(() => {
+      byId('frame').dispatchEvent(new MouseEvent('pointerout', { bubbles: true }));
+    });
+    expect(byId('frame-controls').style.opacity).toBe('1');
+    view.unmount();
+  });
+
+  it('settles on one critically damped curve its host can share with the body it presents', () => {
+    const settle = resolveFloatingFrameSettleTransition();
+    expect(settle.durationMs).toBeGreaterThan(0);
+    expect(settle.easingCss.startsWith('linear(0')).toBe(true);
+    // Critically damped: every sample moves forward and none passes the rest position.
+    const samples = settle.easingCss.slice('linear('.length, -1).split(',').map(Number);
+    expect(samples.at(-1)).toBe(1);
+    expect(samples.every((value, index) => value <= 1 && (index === 0 || value >= samples[index - 1]!))).toBe(true);
+    const { view, byId } = mount();
+    expect(byId('frame').style.transitionTimingFunction).toBe(settle.easingCss);
+    view.unmount();
+  });
+
   it('moves 1:1 by its picture while watching and settles into the nearest corner on release', () => {
     const { view, byId, onRectChange } = mount();
     drag(byId('picture'), -400, -300);

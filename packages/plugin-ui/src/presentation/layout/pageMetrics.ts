@@ -96,18 +96,21 @@ export function resolveHappierPageBackPlacement(input: Readonly<{
 }
 
 /**
- * Whether a section's action drops beneath its title and description. Every
- * action preserves `sectionTextMinWidthPx`; adaptive actions also follow the
- * existing narrow page-control rule. Until the action is measured it follows
- * that rule too, so the first measured paint is never squeezed.
+ * Whether a section's action drops beneath its title and description. Inline
+ * and adaptive actions preserve `sectionTextMinWidthPx`; adaptive actions also
+ * follow the existing narrow page-control rule. Until the action is measured it
+ * follows that rule too, so the first measured paint is never squeezed. A
+ * `trailing` action (a quiet icon cluster) never drops.
  */
 export function isHappierSectionActionStacked(input: Readonly<{
   headerWidthPx: number | null;
   actionWidthPx: number | null;
-  actionLayout?: 'inline' | 'adaptive';
+  actionLayout?: 'inline' | 'adaptive' | 'trailing';
   gapPx: number;
 }>): boolean {
   const { headerWidthPx, actionWidthPx } = input;
+  // A trailing icon cluster needs no text column of its own: the title beside it shrinks instead.
+  if (input.actionLayout === 'trailing') return false;
   if (typeof headerWidthPx !== 'number' || !Number.isFinite(headerWidthPx) || headerWidthPx <= 0) return false;
   if (input.actionLayout === 'adaptive' && isHappierPageRowNarrow(headerWidthPx)) return true;
   if (typeof actionWidthPx !== 'number' || !Number.isFinite(actionWidthPx) || actionWidthPx <= 0) {

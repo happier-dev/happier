@@ -18,6 +18,8 @@ import type { HappierLayoutChangeEvent, HappierPortableStyle, HappierStyleProp }
 import { HappierText } from '../text/Text.js';
 import { HAPPIER_PAGE_METRICS, isHappierSectionActionStacked } from './pageMetrics.js';
 import { resolveHappierPageTextStyle } from './pageText.js';
+import { HappierMaterialSurface, type HappierMaterialSurfaceRender } from './Surface.js';
+import type { HappierSurfaceGradient } from './material.js';
 
 /**
  * The shape of a page section's sheet: the page radius and a hairline edge on
@@ -47,6 +49,13 @@ export type HappierPageSectionHeaderProps = Readonly<{
   description?: ReactNode;
   /** A compact section-level action ("Check now", "Add"), aligned with the title. */
   action?: ReactNode;
+  /**
+   * `inline` (default) stays beside the text while its minimum label column fits.
+   * `adaptive` also moves beneath on narrow page widths, preserving the full explanation column.
+   * `trailing` never moves: a quiet icon cluster (ⓘ, +) stays at the title line's end in a narrow
+   * pane, and the title gives way.
+   */
+  actionLayout?: 'inline' | 'adaptive' | 'trailing';
   /**
    * From the section's own edge to its title — the sheet's inset plus the
    * heading's optical inset — so the title sits on the page title's line.
@@ -97,9 +106,9 @@ const SECTION_ACTION_GAP_PX = 12;
 /**
  * A page section's heading: a sentence-case title with its description above
  * the rows, and an optional section action aligned with the title. The action
- * drops beneath only when, beside it, the text would get narrower than the page
- * label column (`isHappierSectionActionStacked`): a compact action stays on the
- * title's line on a phone, a wide one moves under the text.
+ * defaults to staying beside the text while the page label column fits
+ * (`isHappierSectionActionStacked`). An adaptive action also follows the wide
+ * page-control rule on narrow pages, keeping the explanation's full column.
  *
  * Happier core's `ItemGroup` (page presentation) and the public plugin
  * `ItemGroup` both render it.
@@ -117,7 +126,12 @@ export function HappierPageSectionHeader(props: HappierPageSectionHeaderProps) {
     setActionWidthPx((current) => (current === next ? current : next));
   }, []);
   const renderText = props.renderText ?? renderDefaultSectionText;
-  const stacked = hasAction && isHappierSectionActionStacked({ headerWidthPx, actionWidthPx, gapPx: SECTION_ACTION_GAP_PX });
+  const stacked = hasAction && isHappierSectionActionStacked({
+    headerWidthPx: headerWidthPx === null ? null : headerWidthPx - props.insetPx * 2,
+    actionWidthPx,
+    actionLayout: props.actionLayout,
+    gapPx: SECTION_ACTION_GAP_PX,
+  });
   return (
     <View
       testID={props.testID}
@@ -237,6 +251,8 @@ export type HappierPageSheetProps = Readonly<{
    * between {@link HappierPageSheetGroup}s, lighter than `rowDivider`.
    */
   colors: Readonly<{ sheet: string; sheetBorder: string; rowDivider: string; groupDivider: string }>;
+  gradient?: HappierSurfaceGradient | null;
+  renderMaterialSurface?: HappierMaterialSurfaceRender;
   /** `none` lays the rows on the page with the same insets and no sheet. */
   surface?: 'sheet' | 'none';
   /**
@@ -276,7 +292,7 @@ export function HappierPageSheet(props: HappierPageSheetProps) {
   const grouped = children.some(isSheetGroup);
   return (
     <HappierPageSectionContext.Provider value={section}>
-      <View testID={props.testID} style={[sheetStyle, props.style]}>
+      <HappierMaterialSurface testID={props.testID} materialRole={props.surface === 'none' ? undefined : 'content'} gradient={props.surface === 'none' ? null : props.gradient} renderMaterialSurface={props.renderMaterialSurface} style={[sheetStyle, props.style]}>
         {grouped
           ? children.map((child, index) => (isSheetGroup(child) ? (
               <Fragment key={child.key ?? `page-sheet-group-${index}`}>
@@ -297,7 +313,7 @@ export function HappierPageSheet(props: HappierPageSheetProps) {
               </Fragment>
             ) : cloneElement(child, { key: child.key ?? `page-sheet-row-${index}`, showDivider: false } as DividerChildProps & { key: string })))
           : withRowDividers(children)}
-      </View>
+      </HappierMaterialSurface>
     </HappierPageSectionContext.Provider>
   );
 }

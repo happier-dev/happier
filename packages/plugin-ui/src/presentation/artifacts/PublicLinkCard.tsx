@@ -5,6 +5,8 @@ import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js
 
 export type HappierPublicLinkCardProps = Readonly<{
   testID: string;
+  /** The enclosing Share sheet row already presents the link's title and state. */
+  presentation?: 'card' | 'inline';
   published: boolean;
   loaded: boolean;
   configuring: boolean;
@@ -45,15 +47,15 @@ export function HappierPublicLinkCard(props: HappierPublicLinkCardProps) {
   const meta = [typography.subtitle, { color: colors.secondary }];
   const label = [typography.emphasizedSubtitle, { color: colors.secondary }];
   return (
-    <View testID={props.testID} style={[styles.card, { borderColor: colors.border, backgroundColor: colors.inset }]}>
-      <View style={styles.top}>
+    <View testID={props.testID} style={props.presentation === 'inline' ? styles.inline : [styles.card, { borderColor: colors.border, backgroundColor: colors.inset }]}>
+      {props.presentation !== 'inline' ? <View style={styles.top}>
         {props.linkMark}
         <Text style={[typography.title, { color: colors.text, flex: 1 }]}>{props.title}</Text>
         {props.published || props.loaded ? <View style={styles.status}>
           {props.published ? props.statusMark : null}
           <Text testID="session-public-link-status" style={[typography.emphasizedSubtitle, { color: props.published ? colors.success : colors.secondary }]}>{props.status}</Text>
         </View> : null}
-      </View>
+      </View> : null}
       {props.notices}
       {props.published && !props.configuring ? <>
         {props.shareUrl ? <View style={[styles.url, { borderColor: colors.border, backgroundColor: colors.surface }]}>
@@ -86,6 +88,7 @@ export function HappierPublicLinkCard(props: HappierPublicLinkCardProps) {
 }
 
 const styles = StyleSheet.create({
+  inline: { gap: 10 },
   card: { marginHorizontal: 12, marginBottom: 12, padding: 12, gap: 10, borderRadius: 12, borderWidth: StyleSheet.hairlineWidth },
   top: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   status: { flexDirection: 'row', alignItems: 'center', gap: 5 },

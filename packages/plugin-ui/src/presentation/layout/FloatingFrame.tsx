@@ -4,10 +4,12 @@ import {
   useRef,
   useState,
   type HTMLAttributes,
+  type ComponentType,
   type ReactNode,
 } from 'react';
 import { Platform, View, type ViewStyle } from 'react-native';
 
+import { useOptionalHappierUiTheme } from '../../environment/context.js';
 import { useOptionalPluginUiPresentationHost } from '../../presentationHost/context.js';
 import {
   projectCompanionRelease,
@@ -20,7 +22,10 @@ import {
 import { HAPPIER_MOTION_V1 } from '../interaction/motion.js';
 import { HAPPIER_PRESENCE_CAPSULE_HEIGHT } from '../copresence/PresenceCapsule.js';
 import {
+  resolveFloatingFrameCorner,
+  resolveFloatingFrameCornerRect,
   resolveFloatingFrameRect,
+  type FloatingFrameCorner,
   type FloatingFrameMode,
   type FrameRect,
 } from './floatingFrameGeometry.js';
@@ -37,7 +42,17 @@ export type HappierFloatingFramePointerBinding = Pick<
 
 /** `move` follows the pointer 1:1; `settle` is where a release, a key or a corner choice lands. */
 export type FloatingFrameRectChange = Readonly<{ kind: 'move' | 'settle' }>;
-export type FloatingFrameCorner = 'tl' | 'tr' | 'bl' | 'br';
+export { resolveFloatingFrameCorner, resolveFloatingFrameCornerRect } from './floatingFrameGeometry.js';
+export type { FloatingFrameCorner } from './floatingFrameGeometry.js';
+
+/** Native libraries belong to the app. This same-realm host component binds the shared pan owner. */
+export type HappierFloatingFrameNativeBindingProps = Pick<FloatingFrameProps,
+  'mode' | 'rect' | 'availableRect' | 'avoidRects' | 'aspectRatio' | 'minWidth' | 'moveInput'
+  | 'onRectChange' | 'onModeChange' | 'reducedMotion' | 'children'> & Readonly<{
+    releaseMotion: CompanionReleaseMotion;
+    chromeHeight: number;
+    bodyRect: FrameRect;
+}>;
 
 export type FloatingFrameProps = Readonly<{
   mode: FloatingFrameMode;
@@ -73,6 +88,8 @@ export type FloatingFrameProps = Readonly<{
   resizeLabel?: string;
   /** Platform pointer binding; absent, the presentation host's binding is used, then keyboard only. */
   pointer?: HappierFloatingFramePointerBinding;
+  /** Stable host component; defaults to the presentation host's native frame binding. */
+  nativeBinding?: ComponentType<HappierFloatingFrameNativeBindingProps>;
   /** How a thrown frame comes to rest (the shared companion release parameterization). */
   releaseMotion?: CompanionReleaseMotion;
   reducedMotion?: boolean;
@@ -90,6 +107,8 @@ export const HAPPIER_FLOATING_FRAME_METRICS = Object.freeze({
   footerHeight: HAPPIER_PRESENCE_CAPSULE_HEIGHT,
   bodyRadius: 12,
   gripSize: 16,
+  /** One resize step (the grip's arrow keys, a host's Larger/Smaller), as a share of the width. */
+  resizeStep: 0.1,
 });
 
 /** Which optional bands a frame draws around its body. */
@@ -103,16 +122,56 @@ export function resolveFloatingFrameChromeHeight(
   return controlsHeight + gap + (options?.footer ? gap + footerHeight : 0);
 }
 
-/** Resize step for the grip's keyboard equivalents, as a share of the current width. */
-const KEYBOARD_RESIZE_STEP = 0.1;
 
+/**
+ * The frame reads a release motion's duration (how long it travels) and its projection (which
+ * corner a throw aims at). It always settles critically damped, so the damping and velocity fields
+ * of the shared companion type carry their neutral values here.
+ */
 const DEFAULT_RELEASE_MOTION: CompanionReleaseMotion = Object.freeze({
   durationMs: HAPPIER_MOTION_V1.slowMs,
   dampingRatio: 1,
   overshootClamping: false,
-  carryVelocity: true,
+  carryVelocity: false,
   projectionSeconds: 0,
 });
+
+/** `ω·T` at which a critically damped spring is within a thousandth of rest. */
+const SETTLE_SPRING_REST = 9.2;
+const SETTLE_SPRING_SAMPLES = 16;
+
+/** A critically damped spring's position over its duration, as a CSS `linear()` easing. */
+const SETTLE_SPRING_EASING_CSS = `linear(${Array.from(
+  { length: SETTLE_SPRING_SAMPLES + 1 },
+  (_, index) => {
+    if (index === SETTLE_SPRING_SAMPLES) return '1';
+    const phase = (index / SETTLE_SPRING_SAMPLES) * SETTLE_SPRING_REST;
+    return (1 - (1 + phase) * Math.exp(-phase)).toFixed(4).replace(/\.?0+$/, '') || '0';
+  },
+).join(', ')})`;
+
+/**
+ * How a released frame travels to where it settles: one critically damped spring curve (it arrives
+ * without overshoot or wobble). A host that draws the frame's body in another layer applies this
+ * same transition to it, so the two cannot drift apart.
+ */
+export function resolveFloatingFrameSettleTransition(
+  motion: Pick<CompanionReleaseMotion, 'durationMs'> = DEFAULT_RELEASE_MOTION,
+): Readonly<{ durationMs: number; easingCss: string }> {
+  return { durationMs: motion.durationMs, easingCss: SETTLE_SPRING_EASING_CSS };
+}
+
+/** The primary pointer cannot hover (a phone or tablet browser): nothing can reveal on hover. */
+function primaryPointerCannotHover(): boolean {
+  if (Platform.OS !== 'web') return true;
+  const match = (globalThis as { matchMedia?: (query: string) => { matches: boolean } }).matchMedia;
+  if (typeof match !== 'function') return false;
+  try {
+    return match('(hover: none)').matches === true;
+  } catch {
+    return false;
+  }
+}
 
 const NO_DRAG_SELECTOR =
   '[data-happier-floating-frame-no-drag="true"], [role="button"], [role="tab"], button, a, input, textarea';
@@ -150,36 +209,6 @@ export function resolveFloatingFrameHeight(
   const aspect =
     aspectRatio > 0 && Number.isFinite(aspectRatio) ? aspectRatio : 16 / 10;
   return resolveFloatingFrameChromeHeight(options) + width / aspect;
-}
-
-/** The rect of `size` standing in `corner` of the available space. */
-export function resolveFloatingFrameCornerRect(
-  corner: FloatingFrameCorner,
-  size: Readonly<{ width: number; height: number }>,
-  availableRect: FrameRect,
-): FrameRect {
-  const left = corner === 'tl' || corner === 'bl';
-  const top = corner === 'tl' || corner === 'tr';
-  return {
-    x: left
-      ? availableRect.x
-      : availableRect.x + availableRect.width - size.width,
-    y: top
-      ? availableRect.y
-      : availableRect.y + availableRect.height - size.height,
-    width: size.width,
-    height: size.height,
-  };
-}
-
-/** Which corner a point (a frame's centre) is nearest. */
-export function resolveFloatingFrameCorner(
-  point: Readonly<{ x: number; y: number }>,
-  availableRect: FrameRect,
-): FloatingFrameCorner {
-  const left = point.x < availableRect.x + availableRect.width / 2;
-  const top = point.y < availableRect.y + availableRect.height / 2;
-  return top ? (left ? 'tl' : 'tr') : left ? 'bl' : 'br';
 }
 
 function clampRect(rect: FrameRect, available: FrameRect): FrameRect {
@@ -232,9 +261,14 @@ function consume(event: unknown): void {
 export function FloatingFrame(props: FloatingFrameProps) {
   const presentationHost = useOptionalPluginUiPresentationHost();
   const pointer = props.pointer ?? presentationHost?.companionPointer;
+  const NativeBinding = Platform.OS === 'web' ? undefined : props.nativeBinding ?? presentationHost?.companionNativeFrame;
   const motion = props.releaseMotion ?? DEFAULT_RELEASE_MOTION;
   const [interacting, setInteracting] = useState(false);
   const [hovered, setHovered] = useState(false);
+  // A finger never hovers: once one reaches the frame, or when the primary pointer cannot hover at
+  // all, the controls stay shown instead of waiting for a reveal that cannot come.
+  const [touchPointer, setTouchPointer] = useState(primaryPointerCannotHover);
+  const environmentTheme = useOptionalHappierUiTheme();
   const [focused, setFocused] = useState(false);
   const [bodyNode, setBodyNode] = useState<View | null>(null);
   const latest = useRef(props);
@@ -249,8 +283,8 @@ export function FloatingFrame(props: FloatingFrameProps) {
   const floating = props.mode === 'floating';
   const dragEnabled = floating && pointer != null;
 
-  const settle = useCallback(
-    (rect: FrameRect, corner?: FloatingFrameCorner) => {
+  const settleAt = useCallback(
+    (rect: FrameRect, corner?: FloatingFrameCorner, projectedPoint?: Readonly<{ x: number; y: number }>) => {
       const current = latest.current;
       const target = corner
         ? resolveFloatingFrameCornerRect(corner, rect, current.availableRect)
@@ -262,6 +296,7 @@ export function FloatingFrame(props: FloatingFrameProps) {
         aspectRatio: current.aspectRatio,
         chromeHeight: resolveFloatingFrameChromeHeight({ footer: current.footer != null }),
         minWidth: current.minWidth,
+        projectedPoint,
       });
       if (!placement.fits) {
         current.onModeChange('docked');
@@ -319,12 +354,13 @@ export function FloatingFrame(props: FloatingFrameProps) {
       const velocityY = end.cancelled ? 0 : gesture.velocityY;
       const rect = gesture.current;
       const projected = {
-        x: projectCompanionRelease(rect.x + rect.width / 2, velocityX, motion),
-        y: projectCompanionRelease(rect.y + rect.height / 2, velocityY, motion),
+        x: projectCompanionRelease(rect.x, velocityX, motion),
+        y: projectCompanionRelease(rect.y, velocityY, motion),
       };
-      settle(
+      settleAt(
         rect,
-        resolveFloatingFrameCorner(projected, latest.current.availableRect),
+        undefined,
+        projected,
       );
     },
     readClientPoint: pointer?.readClientPoint ?? (() => ({ x: null, y: null })),
@@ -366,7 +402,7 @@ export function FloatingFrame(props: FloatingFrameProps) {
       const gesture = gestureRef.current;
       gestureRef.current = null;
       setInteracting(false);
-      if (gesture) settle(gesture.current);
+      if (gesture) settleAt(gesture.current);
     },
     readClientPoint: pointer?.readClientPoint ?? (() => ({ x: null, y: null })),
     readScreenPoint: pointer?.readScreenPoint ?? (() => ({ x: null, y: null })),
@@ -399,9 +435,9 @@ export function FloatingFrame(props: FloatingFrameProps) {
       const target = key ? next[key] : undefined;
       if (!target) return;
       consume(event);
-      settle(rect, target);
+      settleAt(rect, target);
     },
-    [settle],
+    [settleAt],
   );
 
   const onGripKeyDown = useCallback(
@@ -419,11 +455,13 @@ export function FloatingFrame(props: FloatingFrameProps) {
         Math.max(
           resolveMinimumWidth(current),
           rect.width *
-            (grow ? 1 + KEYBOARD_RESIZE_STEP : 1 - KEYBOARD_RESIZE_STEP),
+            (grow
+              ? 1 + HAPPIER_FLOATING_FRAME_METRICS.resizeStep
+              : 1 - HAPPIER_FLOATING_FRAME_METRICS.resizeStep),
         ),
       );
       const right = rect.x + rect.width;
-      settle(
+      settleAt(
         clampRect(
           {
             x: right - width,
@@ -437,7 +475,7 @@ export function FloatingFrame(props: FloatingFrameProps) {
         ),
       );
     },
-    [settle],
+    [settleAt],
   );
 
   // A double-click on the watched picture expands it, and restores it when expanded (web pointer).
@@ -460,11 +498,12 @@ export function FloatingFrame(props: FloatingFrameProps) {
 
   const controlsShown =
     props.controlsAlwaysVisible === true ||
-    Platform.OS !== 'web' ||
+    touchPointer ||
     !floating ||
     hovered ||
     focused ||
     interacting;
+  const settle = resolveFloatingFrameSettleTransition(motion);
   const transition: WebTransitionStyle | null =
     Platform.OS === 'web' &&
     props.mode !== 'docked' &&
@@ -472,8 +511,8 @@ export function FloatingFrame(props: FloatingFrameProps) {
     props.reducedMotion !== true
       ? {
           transitionProperty: 'left, top, width, height',
-          transitionDuration: `${motion.durationMs}ms`,
-          transitionTimingFunction: HAPPIER_MOTION_V1.standardEasingCss,
+          transitionDuration: `${settle.durationMs}ms`,
+          transitionTimingFunction: settle.easingCss,
         }
       : null;
   const controlsTransition: WebTransitionStyle | null =
@@ -515,7 +554,10 @@ export function FloatingFrame(props: FloatingFrameProps) {
     onKeyDown,
     onFocus: () => setFocused(true),
     onBlur: () => setFocused(false),
-    onPointerEnter: () => setHovered(true),
+    onPointerEnter: (event) => {
+      if (event.pointerType === 'touch') setTouchPointer(true);
+      setHovered(true);
+    },
     onPointerLeave: () => setHovered(false),
   } satisfies Pick<
     HTMLAttributes<HTMLElement>,
@@ -525,7 +567,7 @@ export function FloatingFrame(props: FloatingFrameProps) {
     onKeyDown: onGripKeyDown,
   } satisfies Pick<HTMLAttributes<HTMLElement>, 'onKeyDown'>;
 
-  return (
+  const frame = (
     <View
       ref={moveSession.dragTargetRef}
       testID={props.testID}
@@ -536,6 +578,7 @@ export function FloatingFrame(props: FloatingFrameProps) {
       {...frameEventHandlers}
       style={[
         frameStyle,
+        NativeBinding && props.mode !== 'docked' ? { position: 'relative', left: 0, top: 0 } : null,
         { flexDirection: 'column', gap: HAPPIER_FLOATING_FRAME_METRICS.gap },
         transition,
       ]}
@@ -616,7 +659,7 @@ export function FloatingFrame(props: FloatingFrameProps) {
                 borderLeftWidth: 2,
                 borderBottomWidth: 2,
                 borderBottomLeftRadius: 3,
-                borderColor: props.colors?.grip ?? 'rgba(0, 0, 0, 0.35)',
+                borderColor: props.colors?.grip ?? environmentTheme?.colors.mutedText,
               }}
             />
           </View>
@@ -638,6 +681,17 @@ export function FloatingFrame(props: FloatingFrameProps) {
       ) : null}
     </View>
   );
+  return NativeBinding ? (
+    <NativeBinding
+      mode={props.mode} rect={props.mode === 'expanded' ? props.availableRect : props.rect}
+      availableRect={props.availableRect} avoidRects={props.avoidRects}
+      aspectRatio={props.aspectRatio} minWidth={props.minWidth} moveInput={props.moveInput}
+      onRectChange={props.onRectChange} onModeChange={props.onModeChange}
+      reducedMotion={props.reducedMotion} releaseMotion={motion}
+      chromeHeight={resolveFloatingFrameChromeHeight({ footer: props.footer != null })}
+      bodyRect={resolveFloatingFrameBodyRect(props.mode === 'expanded' ? props.availableRect : props.rect, { footer: props.footer != null })}
+    >{frame}</NativeBinding>
+  ) : frame;
 }
 
 const NOOP_POINTER_HOST: HappierFloatingFramePointerBinding['pointerHost'] = {

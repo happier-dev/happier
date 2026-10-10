@@ -240,13 +240,14 @@ function HappierCollectionListImpl(props: HappierCollectionListProps): ReactElem
   const { host } = props;
   const { Text, Scroller, SearchField } = host;
   const showFilters = props.filters != null && props.filters.targetCount > 0;
+  const showHeader = props.title !== undefined || props.count != null || props.headerAction != null;
   return (
     <HappierCollectionListRowContext.Provider value>
     <View testID={props.testID} style={[railStyle, host.surfaceStyle]}>
-      {props.title !== undefined ? (
+      {showHeader ? (
         <View style={headerStyle}>
           <View style={headingStyle}>
-            <Text role="title" accessibilityRole="header">{props.title}</Text>
+            {props.title !== undefined ? <Text role="title" accessibilityRole="header">{props.title}</Text> : null}
             {props.count !== undefined && props.count !== null ? (
               <Text role="count">{props.count}</Text>
             ) : null}
@@ -259,7 +260,7 @@ function HappierCollectionListImpl(props: HappierCollectionListProps): ReactElem
           value={props.search.value}
           onChangeText={props.search.onChangeText}
           placeholder={props.search.placeholder}
-          style={props.title !== undefined ? searchStyle : untitledSearchStyle}
+          style={showHeader ? searchStyle : untitledSearchStyle}
           {...(props.search.testID === undefined ? {} : { testID: props.search.testID })}
         />
       ) : null}

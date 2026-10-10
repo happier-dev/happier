@@ -6,6 +6,7 @@ import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js
 import { HAPPIER_MOTION_V1 } from './motion.js';
 import { HappierPressable } from './Pressable.js';
 import { HAPPIER_PRESS_FEEDBACK_V1 } from './pressFeedback.js';
+import { HappierMaterialSurface, type HappierSurfaceProps } from '../layout/Surface.js';
 
 /**
  * The ONE selection action bar (ui-primitives-audit §4): what every "N selected · actions · ✕" surface
@@ -92,6 +93,8 @@ export type HappierSelectionActionBarProps = Readonly<{
   accessibilityLabel?: string;
   testID?: string;
   style?: HappierStyleProp;
+  gradient?: HappierSurfaceProps['gradient'];
+  renderMaterialSurface?: HappierSurfaceProps['renderMaterialSurface'];
 }>;
 
 export type HappierSelectionActionBarLayout = Readonly<{
@@ -223,18 +226,15 @@ export function HappierSelectionActionBar(props: HappierSelectionActionBarProps)
         testID={props.visible ? props.testID : undefined}
         onLayout={onPillLayout}
         style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: layout.folded ? 'space-between' : 'flex-start',
-          gap: ACTION_GAP,
           maxWidth: '100%',
-          padding: BAR_INSET,
-          borderRadius: BAR_RADIUS,
-          backgroundColor: background,
           opacity: progress,
           transform: [{ translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [ENTER_OFFSET_Y, 0] }) }],
         }}
       >
+        <HappierMaterialSurface materialRole="floating" finishRole="floating" nested={false} gradient={props.gradient} renderMaterialSurface={props.renderMaterialSurface} style={{
+          flexDirection: 'row', alignItems: 'center', justifyContent: layout.folded ? 'space-between' : 'flex-start', gap: ACTION_GAP,
+          maxWidth: '100%', padding: BAR_INSET, borderRadius: BAR_RADIUS, backgroundColor: background,
+        }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 8, paddingRight: 8, flexShrink: 1, minWidth: 0 }}>
           <Text
             testID={presented.labelTestID}
@@ -332,6 +332,7 @@ export function HappierSelectionActionBar(props: HappierSelectionActionBarProps)
               : props.host.renderGlyph('dismiss', foreground, GLYPH_SIZE)}
           </HappierPressable>
         </View>
+        </HappierMaterialSurface>
       </Animated.View>
     </View>
   );

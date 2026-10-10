@@ -75,6 +75,8 @@ const reactNativeWebAliases = [
   { find: /^react-dom\/client$/u, replacement: resolve('../../apps/ui/node_modules/react-dom/client.js') },
   { find: /^react-dom$/u, replacement: resolve('../../apps/ui/node_modules/react-dom/index.js') },
   { find: /^react-native$/u, replacement: resolve('../../apps/ui/node_modules/react-native-web/dist/index.js') },
+  // Native/Metro chooses this web implementation by platform extension; Vite does not.
+  { find: /^react-native-svg$/u, replacement: resolve('../../apps/ui/node_modules/react-native-svg/lib/module/elements.web.js') },
 ];
 
 export default defineConfig({

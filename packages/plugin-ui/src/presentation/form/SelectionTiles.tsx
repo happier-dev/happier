@@ -8,6 +8,8 @@ import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
 import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
 import { resolveHappierTabKeySelection } from '../navigation/Tabs.js';
 import { HAPPIER_FIELD_BOX_METRICS } from './FieldBox.js';
+import { resolveHappierRadioMarkStyle } from './RadioMark.js';
+import { useHappierMaterialColorResolver } from '../layout/Surface.js';
 
 /**
  * The one tile owner for Happier core and plugin surfaces: text choice tiles
@@ -316,7 +318,13 @@ function choiceGroupSemantics(props: Readonly<{ selectionMode?: 'single' | 'mult
 }
 
 function useTileStyles(colors: HappierSelectionTilesColors) {
-  return useMemo(() => createTileStyles(colors), [colors]);
+  const paintColor = useHappierMaterialColorResolver();
+  return useMemo(() => createTileStyles({
+    ...colors,
+    tileBackground: paintColor(colors.tileBackground),
+    previewBackground: paintColor(colors.previewBackground),
+    actionBackground: paintColor(colors.actionBackground),
+  }), [colors, paintColor]);
 }
 
 function VisualSelectionTiles<T extends string, I extends string>(props: HappierChoiceSelectionTilesProps<T, I>) {
@@ -471,24 +479,6 @@ function ActionSelectionTiles<T extends string, I extends string>(props: Happier
 
 const CARD_GAP_PX = 10;
 const FILL_TILE_FRAME: ViewStyle = { width: '100%' };
-
-/**
- * The radio mark of a single-choice card: an empty ring, and the same ring filled when chosen, so one
- * group never mixes a ring with a check (a multiple-choice card's chosen mark stays the check).
- */
-function SelectionRing(props: Readonly<{ size: number; color: string; filled?: boolean }>) {
-  const diameter = Math.round(props.size * (20 / 24));
-  const dot = Math.round(diameter / 2.5);
-  return (
-    <View
-      aria-hidden
-      style={{ width: diameter, height: diameter, borderRadius: diameter / 2, borderWidth: 2, borderColor: props.color,
-        alignItems: 'center', justifyContent: 'center' }}
-    >
-      {props.filled ? <View style={{ width: dot, height: dot, borderRadius: dot / 2, backgroundColor: props.color }} /> : null}
-    </View>
-  );
-}
 
 function CardSelectionTiles<T extends string, I extends string>(props: HappierChoiceSelectionTilesProps<T, I>) {
   const styles = useTileStyles(props.colors);
@@ -654,7 +644,8 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
                 <View style={styles.selectionAccessory} pointerEvents="none" aria-hidden>
                   {selected && props.selectionMode === 'multiple'
                     ? props.renderGlyph({ glyph: { kind: 'check' }, size: 16, color: props.colors.selection })
-                    : <SelectionRing size={16} color={selected ? props.colors.selection : props.colors.glyph} filled={selected} />}
+                    // The one single-choice mark (`RadioMark`): the same drawing as a table's or a list's radio.
+                    : <View style={resolveHappierRadioMarkStyle({ selected, ink: props.colors.selection, quiet: props.colors.glyph, surface: 'transparent' })} />}
                 </View>
               </View>
             </Pressable>

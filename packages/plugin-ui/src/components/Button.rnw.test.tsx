@@ -80,6 +80,24 @@ async function activateWithEnter(button: HTMLElement): Promise<void> {
 }
 
 describe('plugin-ui Button renders real React Native pressable semantics', () => {
+  it('activates a tab with Space through the shared pressable owner', async () => {
+    function TabSurface() {
+      const [selected, setSelected] = useState(false);
+      return <HappierPressable accessibilityRole="tab" accessibilityLabel="Files" selected={selected}
+        onPress={() => setSelected(true)}><span>Files</span></HappierPressable>;
+    }
+    const mount = mountSurface(<TabSurface />);
+    const tab = mount.container.querySelector<HTMLElement>('[role="tab"]')!;
+    expect(tab.getAttribute('aria-selected')).toBe('false');
+    await act(async () => {
+      tab.focus();
+      tab.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true, cancelable: true }));
+      tab.dispatchEvent(new KeyboardEvent('keyup', { key: ' ', code: 'Space', bubbles: true, cancelable: true }));
+    });
+    expect(tab.getAttribute('aria-selected')).toBe('true');
+    mount.unmount();
+  });
+
   it('renders a real accessible button carrying its label, never a marker element', () => {
     const mount = mountSurface(<Button title="Refresh findings" onPress={() => {}} testID="plugin-button" />);
 
@@ -508,7 +526,7 @@ describe('plugin-ui Button renders real React Native pressable semantics', () =>
         onPress={() => {}}
         onPressIn={onPressIn}
         onPressOut={onPressOut}
-      />,
+      >{state => <span data-testid="press-fact">{state.pressed ? 'pressed' : 'resting'}</span>}</HappierPressable>,
     );
     const button = findButton(mount.container);
 
@@ -518,12 +536,14 @@ describe('plugin-ui Button renders real React Native pressable semantics', () =>
       await new Promise((resolve) => setTimeout(resolve, 80));
     });
     expect(onPressIn).toHaveBeenCalledOnce();
+    expect(mount.container.querySelector('[data-testid="press-fact"]')?.textContent).toBe('pressed');
     expect(onPressOut).not.toHaveBeenCalled();
 
     await act(async () => {
       button.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, button: 0 }));
     });
     expect(onPressOut).toHaveBeenCalledOnce();
+    expect(mount.container.querySelector('[data-testid="press-fact"]')?.textContent).toBe('resting');
     mount.unmount();
   });
 

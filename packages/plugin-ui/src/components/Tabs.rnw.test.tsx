@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
-import { isHappierTabSelected } from '../presentation/navigation/Tabs.js';
+import { HappierTabs, isHappierTabSelected, type HappierTabDescriptor } from '../presentation/navigation/Tabs.js';
 import { Tabs, Text, useTabPanelActivity } from './index.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
 
@@ -16,6 +16,59 @@ function mountTabs(element: React.ReactElement, context = createSurfaceContext()
 }
 
 describe('controlled Tabs', () => {
+  it('renders a quiet state marker and includes its meaning in the tab name without changing the visible title', () => {
+    const theme = createSurfaceContext().theme;
+    function TabDescriptor(_props: HappierTabDescriptor) { return null; }
+    const mount = mountThroughReactNativeWeb(<HappierTabs theme={theme} value="overview" onValueChange={() => {}} testID="views">
+      <TabDescriptor value="overview" title="Overview" marker="Edited" />
+      <TabDescriptor value="mine" title="Mine" />
+    </HappierTabs>);
+    try {
+      const edited = mount.container.querySelector('[data-testid="views:overview"]');
+      expect(edited?.getAttribute('aria-label')).toBe('Overview Edited');
+      expect(edited?.textContent).toBe('Overview');
+      expect(mount.container.querySelector('[data-testid="views:overview:marker"]')).not.toBeNull();
+      expect(mount.container.querySelector('[data-testid="views:mine:marker"]')).toBeNull();
+    } finally { mount.unmount(); }
+  });
+  it('draws a strip-only tablist with its trailing controls and no empty panel when the host shows the selection elsewhere', () => {
+    const theme = createSurfaceContext().theme;
+    function TabDescriptor(_props: HappierTabDescriptor) { return null; }
+    const mount = mountThroughReactNativeWeb(<HappierTabs theme={theme} value="overview" onValueChange={() => {}} ariaLabel="Views" testID="views"
+      sharedPanel={null} trailing={<Text testID="views-create">+</Text>}>
+      <TabDescriptor value="overview" title="Overview" />
+      <TabDescriptor value="costs" title="Costs" />
+    </HappierTabs>);
+    try {
+      expect(mount.container.querySelector('[role="tablist"]')).not.toBeNull();
+      expect(mount.container.querySelector('[role="tabpanel"]')).toBeNull();
+      const trailing = mount.container.querySelector('[data-testid="views-create"]');
+      expect(trailing).not.toBeNull();
+      // Beside the strip, not inside the scrolling tablist.
+      expect(mount.container.querySelector('[role="tablist"]')?.contains(trailing)).toBe(false);
+    } finally { mount.unmount(); }
+  });
+  it('renders and switches core tabs with an explicit theme and no plugin environment', async () => {
+    const theme = createSurfaceContext().theme;
+    function TabDescriptor(_props: HappierTabDescriptor) { return null; }
+    function CoreTabs() {
+      const [value, setValue] = useState('activity');
+      return <HappierTabs theme={theme} value={value} onValueChange={setValue} ariaLabel="Core views" testID="core-tabs">
+        <TabDescriptor value="activity" title="Activity" />
+        <TabDescriptor value="logs" title="Logs" badge="3" badgeTone="warning" />
+      </HappierTabs>;
+    }
+    const mount = mountThroughReactNativeWeb(<CoreTabs />);
+    try {
+      const tabs = [...mount.container.querySelectorAll<HTMLElement>('[role="tab"]')];
+      expect(tabs.map(tab => tab.getAttribute('aria-label'))).toEqual(['Activity', 'Logs']);
+      expect(tabs.map(tab => tab.getAttribute('aria-selected'))).toEqual(['true', 'false']);
+      expect(tabs[1]?.textContent).toContain('3');
+      await act(async () => { tabs[1]?.click(); });
+      expect(tabs.map(tab => tab.getAttribute('aria-selected'))).toEqual(['false', 'true']);
+    } finally { mount.unmount(); }
+  });
+
   it('shares the controlled selection equality used by the core segmented-tab adapter', () => {
     expect(isHappierTabSelected('activity', 'activity')).toBe(true);
     expect(isHappierTabSelected('activity', 'logs')).toBe(false);

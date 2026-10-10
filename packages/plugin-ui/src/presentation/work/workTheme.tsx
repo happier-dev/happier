@@ -128,14 +128,21 @@ export type HappierWorkTextRole =
   | 'sectionCount'
   | 'pageSectionTitle'
   | 'pageSectionCount'
+  | 'pageSectionDescription'
   | 'rowTitle'
   | 'rowLine'
   | 'rowState'
   | 'rowTime'
+  | 'cardTitle'
+  | 'cardWord'
+  | 'cardMeta'
+  | 'cardFact'
   | 'mapLabel'
   | 'mapLabelCompact'
   | 'mapHeading'
   | 'mapHeadingCompact'
+  | 'mapDetail'
+  | 'mapDetailCompact'
   | 'mapLane';
 
 export type HappierWorkTextStep = HappierPageTextStep & Readonly<{ tabular?: boolean }>;
@@ -148,14 +155,24 @@ export const HAPPIER_WORK_TEXT: Readonly<Record<HappierWorkTextRole, HappierWork
   // A configuration section of the pane: the page section title step and its quiet count.
   pageSectionTitle: HAPPIER_PAGE_TEXT.sectionTitle,
   pageSectionCount: { ...HAPPIER_PAGE_TEXT.sectionDescription, tabular: true },
+  pageSectionDescription: HAPPIER_PAGE_TEXT.sectionDescription,
   rowTitle: { weight: 'regular', fontSize: 13, lineHeight: 18 },
   rowLine: { weight: 'regular', fontSize: 12, lineHeight: 16 },
   rowState: { weight: 'regular', fontSize: 12, lineHeight: 18 },
   rowTime: { weight: 'regular', fontSize: 11.5, lineHeight: 18, tabular: true },
+  // A Work update card (lab `.uws-card`): its head reads as one line — title, state word, kind and age.
+  cardTitle: { weight: 'semiBold', fontSize: 13.5, lineHeight: 18 },
+  cardWord: { weight: 'regular', fontSize: 12.5, lineHeight: 18 },
+  cardMeta: { weight: 'regular', fontSize: 12, lineHeight: 18, tabular: true },
+  cardFact: { weight: 'regular', fontSize: 12, lineHeight: 16, tabular: true },
   mapLabel: { weight: 'semiBold', fontSize: 13.5, lineHeight: 18 },
-  mapLabelCompact: { weight: 'semiBold', fontSize: 12, lineHeight: 16 },
+  // A small map's step names read as words, not headings (lab `.wm.sm .wm-c .t`, DESIGN-9 P5).
+  mapLabelCompact: { weight: 'medium', fontSize: 12, lineHeight: 16 },
   mapHeading: { weight: 'semiBold', fontSize: 13, lineHeight: 18 },
   mapHeadingCompact: { weight: 'semiBold', fontSize: 12, lineHeight: 16 },
+  // A node's quiet fact after its name ("· 2 lanes"), on the name's line (lab `.wm-forkhd .tx`).
+  mapDetail: { weight: 'regular', fontSize: 13, lineHeight: 18 },
+  mapDetailCompact: { weight: 'regular', fontSize: 12, lineHeight: 16 },
   mapLane: { weight: 'regular', fontSize: 12, lineHeight: 16 },
 });
 

@@ -97,9 +97,10 @@ type WorkStatusSurfaceStyle = Readonly<{
 }>;
 
 /**
- * The ring and tint of a card or node in this tone (unified-work lab `.wm-node.need`, `.uws-card.need`):
- * the state hue at about half strength as a full ring, a 3px halo at about a tenth, over the state's
- * own tint. There is never a coloured left edge. `null` keeps healthy work neutral.
+ * The ring and tint of a card or node in this tone (unified-work lab `.wm-node.need`, `.uws-card.need`;
+ * PLAN §5.3, owner ruling 2026-10-09): the state hue at about half strength as a full ring, a 3px halo at
+ * about a tenth, over the state's own tint. Needs-you and trouble both carry it, each in its own hue.
+ * There is never a coloured left edge. `null` keeps healthy work neutral.
  */
 export function resolveHappierWorkStatusSurfaceStyle(
   tone: Exclude<HappierWorkStatusTone, 'neutral'>,
@@ -119,7 +120,8 @@ export function resolveHappierWorkStatusSurfaceStyle(
   return {
     borderWidth: 1,
     borderColor: softenHappierWorkColor(state.border, 0.55) ?? state.border,
-    backgroundColor: state.background,
+    // Work cards stack; the lab's six-percent wash leaves each card distinct while its ring speaks.
+    backgroundColor: tone === 'attention' ? softenHappierWorkColor(state.border, 0.06) ?? state.background : state.background,
     ...(halo ? { boxShadow: `0 0 0 3px ${halo}` } : null),
   };
 }

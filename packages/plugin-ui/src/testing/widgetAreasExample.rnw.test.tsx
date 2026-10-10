@@ -104,14 +104,14 @@ it('mounts the registered page area, changes followed context and reloads config
       expect(presented?.context).toEqual({ directory: '.', filter: 'files' });
       await pageMount.press(await pageMount.getByRole('button', { name: 'Use directory' }));
       expect(presented?.context).toEqual({ directory, filter: 'files' });
-      expect(await execute({ actionId: 'widgets.instance.add', instance: instance('following') })).toMatchObject({ ok: true });
-      expect(await execute({ actionId: 'widgets.instance.add', instance: instance('pinned', true) })).toMatchObject({ ok: true });
-      expect(await execute({ actionId: 'widgets.instance.size.set', instanceId: 'following', size: 'full' })).toMatchObject({ ok: true });
-      expect(await execute({ actionId: 'widgets.instance.move', instanceId: 'pinned', toIndex: 0 })).toMatchObject({ ok: true });
+      expect(await execute({ actionId: 'widgets.item.add', instance: instance('following') })).toMatchObject({ ok: true });
+      expect(await execute({ actionId: 'widgets.item.add', instance: instance('pinned', true) })).toMatchObject({ ok: true });
+      expect(await execute({ actionId: 'widgets.item.size.set', instanceId: 'following', size: 'full' })).toMatchObject({ ok: true });
+      expect(await execute({ actionId: 'widgets.item.move', instanceId: 'pinned', toIndex: 0 })).toMatchObject({ ok: true });
       await pageMount.press(await pageMount.getByRole('radio', { name: 'Folders' }));
       expect(presented?.context).toEqual({ directory, filter: 'folders' });
       for (const [id, pinned, filter, count] of [['following', false, 'folders', 1], ['pinned', true, 'files', 2]] as const) {
-        const input = await execute({ actionId: 'widgets.instance.inputs.validate', instanceId: id, bindings: instance(id, pinned).bindings });
+        const input = await execute({ actionId: 'widgets.item.inputs.validate', instanceId: id, bindings: instance(id, pinned).bindings });
         expect(input).toEqual({ ok: true, result: { status: 'ready', input: { directory, filter } } });
         if (!input.ok || !('input' in input.result)) throw new Error('Inputs were not admitted');
         const launchInput = input.result.input;
@@ -138,7 +138,7 @@ it('mounts the registered page area, changes followed context and reloads config
     } finally { await pageMount.dispose(); }
     const reload = await mountPage();
     try {
-      expect(await execute({ actionId: 'widgets.instance.list' })).toMatchObject({ ok: true, result: { instances: [
+      expect(await execute({ actionId: 'widgets.item.list' })).toMatchObject({ ok: true, result: { instances: [
         { instance: instance('pinned', true), size: 'medium' }, { instance: instance('following'), size: 'full' },
       ] } });
       expect(boundary.rows.size).toBe(1);

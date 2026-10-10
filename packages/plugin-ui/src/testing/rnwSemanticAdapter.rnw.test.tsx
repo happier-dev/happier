@@ -75,6 +75,25 @@ describe('ephemeral shared scope test host binding', () => {
 });
 
 describe('plugin-ui RNW semantic fixture adapter', () => {
+  it('keeps targeted child presentation unavailable when its Account-only context has no runtime target', async () => {
+    function AccountOnlySurface() {
+      return <TargetedSurface surface={{ point: { pointId: 'sources', protocol: { id: 'review-sources', version: 1 } },
+        contributor: { pluginId: 'com.acme.child', contributionId: 'review-source', occurrenceId: 'child-a',
+          sourceCustody: { kind: 'development', registeredRootId: 'child-root' } },
+        role: 'detail', presentation: 'content' }} fallback={<Text value="Child unavailable" />} />;
+    }
+    const { targetedContributions: _runtimeTarget, ...context } = createSurfaceContext();
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'account-only-instance', mountNonce: 'account-only-mount' },
+      authorPlugin: { id: 'com.acme.semantic-rnw', version: '1.0.0' },
+      surface: defineUiSurface(AccountOnlySurface), surfaceContext: context,
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ targetedSurfaces: {
+        readCurrentMounts: () => [], readContributorManifest: () => null,
+      } }),
+    });
+    expect(await fixture.getByText('Child unavailable')).toBeTruthy();
+    await fixture.dispose();
+  });
   it('uses the SDK testing context builder rather than a duplicate local fixture', () => {
     expect(createSurfaceContext).toBe(createSurfaceContextFixture);
     expect(SURFACE_THEME_FIXTURE).toBe(SURFACE_CONTEXT_THEME_FIXTURE);
@@ -257,7 +276,7 @@ describe('plugin-ui RNW semantic fixture adapter', () => {
 
     function TargetSurface() {
       const { targetedContributions } = useSurfaceContext();
-      const surface = targetedContributions.points[0]?.protocols[0]?.contributions[0]?.surfaces[0];
+      const surface = targetedContributions?.points[0]?.protocols[0]?.contributions[0]?.surfaces[0];
       if (!surface) return <Text value="External review unavailable" />;
       return (
         <TargetedSurface

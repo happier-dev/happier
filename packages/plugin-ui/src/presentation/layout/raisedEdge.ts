@@ -43,7 +43,7 @@ export type HappierRaisedEdgeState = Readonly<{
   invalid?: boolean;
 }>;
 
-function isFlat(state: HappierRaisedEdgeState | undefined): boolean {
+export function isFlat(state: HappierRaisedEdgeState | undefined): boolean {
   return state !== undefined && (state.pressed === true || state.disabled === true || state.focused === true || state.invalid === true);
 }
 

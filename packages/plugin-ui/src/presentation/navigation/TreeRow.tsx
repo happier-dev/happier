@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { View } from 'react-native';
 
 import type { HappierUiTheme } from '../../environment/types.js';
@@ -126,10 +126,21 @@ export type HappierTreeRowProps = Readonly<{
   title: string;
   /** The item's own mark (a folder or file glyph, a brand mark); it stands alone, never on a tile. */
   mark?: ReactNode;
+  /** A controlled selection control before the mark (for example, a changed-file checkbox). */
+  selection?: ReactNode;
+  /** A compact state mark immediately after the selection control. */
+  selectionMark?: ReactNode;
+  /** A compact fact immediately after the title (for example, a changed-file count). */
+  titleAccessory?: ReactNode;
   /** One quiet fact at the trailing edge ("2 days"). */
-  meta?: string;
+  meta?: ReactNode;
   /** The row's own controls after the meta (an author's menu). */
   trailing?: ReactNode;
+  /** Row actions revealed by the shared row's hover/focus/selected state, or opened by a touch long press. */
+  renderActions?: (control: HappierTreeRowActionsControl) => ReactNode;
+  actionsRevealed?: boolean;
+  /** Replaces display content while editing; nested controls retain their own press and keyboard intents. */
+  inlineEdit?: ReactNode;
   selected?: boolean;
   /** The roving tab stop of the tree. */
   tabStop: boolean;
@@ -138,17 +149,43 @@ export type HappierTreeRowProps = Readonly<{
   theme: HappierUiTheme;
   reducedMotion?: boolean;
   onActivate: () => void;
+  onLongPress?: () => void;
+  onContextMenu?: (event: unknown) => void;
+  keyboardShortcuts?: string;
   onFocus: () => void;
   onKeyDown: (key: string, event: unknown) => boolean;
   controlRef: (target: HappierFocusable | null) => void;
   disclosure?: Readonly<{
-    onPress: () => void;
+    onPress?: () => void;
     accessibilityLabel: string;
     testID?: string;
   }>;
   testID?: string;
   style?: HappierStyleProp;
 }>;
+
+export type HappierTreeRowActionsControl = Readonly<{
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** Touch rows open actions from long press and do not draw a separate trigger until opened. */
+  triggerHidden: boolean;
+}>;
+
+const ROW_ACTIONS_OVERLAY_STYLE = {
+  position: 'absolute',
+  right: 0,
+  top: 0,
+  bottom: 0,
+  justifyContent: 'center',
+  borderRadius: 6,
+} as const;
+const ROW_ACTIONS_HIDDEN_ANCHOR_STYLE = {
+  position: 'absolute',
+  right: 0,
+  width: 0,
+  height: 0,
+  overflow: 'visible',
+} as const;
 
 /**
  * One tree item: indent · disclosure · mark · title · meta · trailing, on the column row's inset chip (the
@@ -160,6 +197,21 @@ export function HappierTreeRow(props: HappierTreeRowProps) {
   const palette = useOptionalHappierUiPalette(theme);
   const typography = useOptionalHappierUiTypography();
   const branch = node.kind === 'branch';
+  const editing = Boolean(props.inlineEdit);
+  const wasEditing = useRef(editing);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [rowFocused, setRowFocused] = useState(false);
+  const target = useRef<HappierFocusable | null>(null);
+  const controlRef = useRef(props.controlRef);
+  controlRef.current = props.controlRef;
+  const bindTarget = useCallback((value: HappierFocusable | null) => {
+    target.current = value;
+    controlRef.current(value);
+  }, []);
+  useEffect(() => {
+    if (wasEditing.current && !editing) target.current?.focus();
+    wasEditing.current = editing;
+  }, [editing]);
   const heights =
     props.presentation === 'table'
       ? HAPPIER_TREE_ROW_METRICS.tableMinHeightPx
@@ -175,12 +227,18 @@ export function HappierTreeRow(props: HappierTreeRowProps) {
       selected={props.selected === true}
       disabled={node.disabled}
       tabIndex={props.tabStop ? 0 : -1}
-      controlRef={props.controlRef}
-      onKeyDown={props.onKeyDown}
+      controlRef={bindTarget}
+      onKeyDown={editing ? () => false : props.onKeyDown}
       onFocusChange={(focused) => {
+        setRowFocused(focused);
         if (focused) props.onFocus();
       }}
-      onPress={props.onActivate}
+      onLongPress={props.renderActions && props.touch ? () => setActionsOpen(true) : props.onLongPress}
+      onContextMenu={props.onContextMenu}
+      keyboardShortcuts={props.keyboardShortcuts}
+      onPress={() => {
+        if (!editing) props.onActivate();
+      }}
       style={(state) => [
         {
           flexDirection: 'row',
@@ -215,52 +273,84 @@ export function HappierTreeRow(props: HappierTreeRowProps) {
         props.style,
       ]}
     >
-      <HappierTreeDisclosure
-        kind={node.kind}
-        expanded={node.expanded}
-        color={theme.colors.mutedText}
-        activeColor={theme.colors.text}
-        onPress={props.disclosure?.onPress ?? null}
-        disabled={node.disabled}
-        accessibilityLabel={props.disclosure?.accessibilityLabel}
-        reducedMotion={props.reducedMotion}
-        testID={props.disclosure?.testID}
-      />
-      {props.mark ? (
-        <View
-          aria-hidden
-          style={{ alignItems: 'center', justifyContent: 'center' }}
-        >
-          {props.mark}
-        </View>
-      ) : null}
-      {/* One title size for every row (the column row's title step, lab `.ca-row .t`): a branch differs only in weight. */}
-      <HappierText
-        numberOfLines={1}
-        ellipsizeMode={branch ? 'middle' : 'tail'}
-        style={{
-          ...resolveHappierTextStepStyle(
-            HAPPIER_COLLECTION_LIST_TEXT[branch ? 'rowTitleSelected' : 'rowTitle'],
-            typography,
-          ),
-          flex: 1,
-          minWidth: 0,
-          color: theme.colors.text,
-        }}
-      >
-        {props.title}
-      </HappierText>
-      {props.meta ? (
-        <HappierText
-          variant="caption"
-          numberOfLines={1}
-          tabularNumbers
-          style={{ flexShrink: 0, color: theme.colors.mutedText }}
-        >
-          {props.meta}
-        </HappierText>
-      ) : null}
-      {props.trailing ?? null}
+      {(state) => {
+        const actionsVisible = Boolean(props.renderActions) && (props.touch
+          ? actionsOpen
+          : state.hovered || rowFocused || actionsOpen || props.actionsRevealed === true || props.selected === true);
+        const actions = actionsVisible && props.renderActions
+          ? props.renderActions({ open: actionsOpen, onOpenChange: setActionsOpen, triggerHidden: props.touch === true })
+          : null;
+        return (
+          <>
+            <HappierTreeDisclosure
+              kind={node.kind}
+              expanded={node.expanded}
+              color={theme.colors.mutedText}
+              activeColor={theme.colors.text}
+              onPress={editing ? null : props.disclosure?.onPress ?? null}
+              disabled={node.disabled}
+              accessibilityLabel={props.disclosure?.accessibilityLabel}
+              reducedMotion={props.reducedMotion}
+              testID={props.disclosure?.testID}
+            />
+            {props.selection ?? null}
+            {props.mark ? (
+              <View aria-hidden style={{ alignItems: 'center', justifyContent: 'center' }}>
+                {props.mark}
+              </View>
+            ) : null}
+            {props.selectionMark ?? null}
+            {editing ? (
+              <View style={{ flex: 1, minWidth: 0 }}>{props.inlineEdit}</View>
+            ) : (
+              <>
+                <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: HAPPIER_TREE_ROW_METRICS.glyphGapPx }}>
+                  {/* One title size for every row (lab `.ca-row .t`); table branches keep the regular file-table weight. */}
+                  <HappierText
+                    numberOfLines={1}
+                    ellipsizeMode={branch ? 'middle' : 'tail'}
+                    style={{
+                      ...resolveHappierTextStepStyle(
+                        HAPPIER_COLLECTION_LIST_TEXT[branch && props.presentation !== 'table' ? 'rowTitleSelected' : 'rowTitle'],
+                        typography,
+                      ),
+                      flexShrink: 1,
+                      minWidth: 0,
+                      color: theme.colors.text,
+                    }}
+                  >
+                    {props.title}
+                  </HappierText>
+                  {props.titleAccessory ?? null}
+                </View>
+                {typeof props.meta === 'string' || typeof props.meta === 'number' ? (
+                  <HappierText
+                    variant="caption"
+                    numberOfLines={1}
+                    tabularNumbers
+                    style={{ flexShrink: 0, color: theme.colors.mutedText }}
+                  >
+                    {props.meta}
+                  </HappierText>
+                ) : props.meta ?? null}
+                {props.trailing || props.renderActions ? (
+                  <View style={{ position: 'relative', flexDirection: 'row', alignItems: 'center' }}>
+                    {props.trailing ?? null}
+                    {actions ? (
+                      <View style={props.touch
+                        ? ROW_ACTIONS_HIDDEN_ANCHOR_STYLE
+                        : [ROW_ACTIONS_OVERLAY_STYLE, { backgroundColor: palette?.navigationHover ?? theme.colors.elevatedSurface }]}
+                      >
+                        {actions}
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
+              </>
+            )}
+          </>
+        );
+      }}
     </HappierPressable>
   );
 }

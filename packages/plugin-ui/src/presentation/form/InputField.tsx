@@ -26,7 +26,6 @@ export type HappierInputFieldDescriptor = HappierActionInputField & Readonly<{
   required?: boolean;
   disabled?: boolean;
   maxSelections?: number;
-  inputType?: Readonly<{ pluginId: string; localId: string }>;
 }>;
 
 export type HappierInputFieldProps<Value> = Readonly<{

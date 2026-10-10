@@ -84,11 +84,13 @@ type RadioEntry = Readonly<{
   selected: boolean;
 }>;
 
+const NO_RADIO_ENTRIES: readonly RadioEntry[] = [];
+
 function projectRadioChildren(children: React.ReactNode, enabled: boolean): Readonly<{
   children: React.ReactNode;
   entries: readonly RadioEntry[];
 }> {
-  if (!enabled) return { children, entries: [] };
+  if (!enabled) return { children, entries: NO_RADIO_ENTRIES };
   const entries: RadioEntry[] = [];
   const project = (node: React.ReactNode): React.ReactNode => React.Children.map(node, (child) => {
     if (!React.isValidElement(child)) return child;

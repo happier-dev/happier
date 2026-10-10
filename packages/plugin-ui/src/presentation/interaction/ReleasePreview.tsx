@@ -7,6 +7,9 @@ import { HAPPIER_RADIUS_V1 } from '../../environment/radius.js';
 import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
 import { HappierSpinner } from '../feedback/Spinner.js';
 import { HAPPIER_MOTION_V1 } from './motion.js';
+import { HappierMaterialSurface, type HappierSurfaceProps } from '../layout/Surface.js';
+
+type ReleaseMaterialProps = Pick<HappierSurfaceProps, 'gradient' | 'renderMaterialSurface'>;
 
 /**
  * The ONE release preview (DnD lab E1): the answer to "what happens if I let go here", drawn the same
@@ -245,7 +248,7 @@ export function HappierReleasePreviewCard(props: Readonly<{
   reducedMotion?: boolean;
   testID?: string;
   style?: HappierStyleProp;
-}>) {
+}> & ReleaseMaterialProps) {
   const accessibility = useOptionalHappierUiAccessibility();
   const reducedMotion = props.reducedMotion ?? accessibility?.reducedMotion ?? false;
   const density = props.density ?? 'pointer';
@@ -262,7 +265,6 @@ export function HappierReleasePreviewCard(props: Readonly<{
       style={[
         {
           ...(metrics.width !== undefined ? { width: metrics.width } : {}),
-          ...floatingChrome(colors, metrics.radius),
           opacity: progress,
           transform: [
             { scale: progress.interpolate({ inputRange: [0, 1], outputRange: [ENTER_FROM_SCALE, 1] }) },
@@ -272,6 +274,7 @@ export function HappierReleasePreviewCard(props: Readonly<{
         props.style,
       ] as HappierStyleProp}
     >
+      <HappierMaterialSurface materialRole="floating" finishRole="floating" gradient={props.gradient} renderMaterialSurface={props.renderMaterialSurface} style={floatingChrome(colors, metrics.radius)}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: metrics.idGap, paddingHorizontal: metrics.padX, paddingVertical: metrics.idPadY }}>
         {identity.renderMark ? (
           <View style={{ width: metrics.mark, height: metrics.mark, alignItems: 'center', justifyContent: 'center' }}>
@@ -291,6 +294,7 @@ export function HappierReleasePreviewCard(props: Readonly<{
       {props.outcome ? (
         <HappierReleaseOutcomeStrip outcome={props.outcome} colors={colors} host={host} density={density} reducedMotion={reducedMotion} divided />
       ) : null}
+      </HappierMaterialSurface>
     </Animated.View>
   );
 }
@@ -302,7 +306,7 @@ export function HappierReleaseOutcomePill(props: Readonly<{
   reducedMotion?: boolean;
   testID?: string;
   style?: HappierStyleProp;
-}>) {
+}> & ReleaseMaterialProps) {
   const accessibility = useOptionalHappierUiAccessibility();
   const progress = useEnterProgress(props.reducedMotion ?? accessibility?.reducedMotion ?? false);
   return (
@@ -310,11 +314,13 @@ export function HappierReleaseOutcomePill(props: Readonly<{
       testID={props.testID}
       pointerEvents="none"
       style={[
-        { maxWidth: HAPPIER_RELEASE_PREVIEW_METRICS.pillMaxWidth, alignSelf: 'flex-start', ...floatingChrome(props.colors, FLOATING_RADIUS), opacity: progress },
+        { maxWidth: HAPPIER_RELEASE_PREVIEW_METRICS.pillMaxWidth, alignSelf: 'flex-start', opacity: progress },
         props.style,
       ] as HappierStyleProp}
     >
+      <HappierMaterialSurface materialRole="floating" finishRole="floating" gradient={props.gradient} renderMaterialSurface={props.renderMaterialSurface} style={floatingChrome(props.colors, FLOATING_RADIUS)}>
       <HappierReleaseOutcomeStrip outcome={props.outcome} colors={props.colors} host={props.host} reducedMotion={props.reducedMotion} />
+      </HappierMaterialSurface>
     </Animated.View>
   );
 }
@@ -333,7 +339,7 @@ export function HappierStagedMoveDock(props: Readonly<{
   reducedMotion?: boolean;
   testID?: string;
   style?: HappierStyleProp;
-}>) {
+}> & ReleaseMaterialProps) {
   const accessibility = useOptionalHappierUiAccessibility();
   const progress = useEnterProgress(props.reducedMotion ?? accessibility?.reducedMotion ?? false);
   const { colors, host } = props;
@@ -343,10 +349,11 @@ export function HappierStagedMoveDock(props: Readonly<{
       testID={props.testID}
       pointerEvents="none"
       style={[
-        { ...floatingChrome(colors, FLOATING_RADIUS), opacity: progress },
+        { opacity: progress },
         props.style,
       ] as HappierStyleProp}
     >
+      <HappierMaterialSurface materialRole="floating" finishRole="floating" gradient={props.gradient} renderMaterialSurface={props.renderMaterialSurface} style={floatingChrome(colors, FLOATING_RADIUS)}>
       <HappierReleaseOutcomeStrip outcome={props.outcome} colors={colors} host={host} reducedMotion={props.reducedMotion} />
       {props.hints.length > 0 ? (
         <View
@@ -385,6 +392,7 @@ export function HappierStagedMoveDock(props: Readonly<{
           ))}
         </View>
       ) : null}
+      </HappierMaterialSurface>
     </Animated.View>
   );
 }

@@ -124,7 +124,7 @@ function createSemanticPresentationHost(input: Readonly<{
     renderTargetedSurface(presentation: PluginUiTargetedSurfacePresentation) {
       const context = input.readCurrentContext();
       const targetedSurfaces = input.options.targetedSurfaces;
-      if (targetedSurfaces === undefined) return presentation.fallback ?? null;
+      if (targetedSurfaces === undefined || !context.surface.targetedContributions) return presentation.fallback ?? null;
       const admission = readPluginUiTestkitTargetedSurfaceAdmission({
         mounts: targetedSurfaces.readCurrentMounts(),
         target: context.surface.targetedContributions.target,

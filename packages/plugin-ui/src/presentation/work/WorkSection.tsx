@@ -2,6 +2,7 @@ import { memo, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { HappierSkeletonRows } from '../feedback/Skeleton.js';
+import { HappierPressable } from '../interaction/Pressable.js';
 import { HappierPageSectionHeader, HappierPageSheet } from '../layout/PageSection.js';
 import {
   HAPPIER_WORK_PANE_METRICS,
@@ -51,6 +52,10 @@ export type HappierWorkSectionProps = Readonly<{
   /** One quiet operation on the whole section ("+", ✎, "Use defaults"), at the header's trailing edge. */
   action?: ReactNode;
   children?: ReactNode;
+  /** Explicit empty state from the source owner, never inferred from child count. */
+  empty?: HappierWorkSectionEmptyLineProps;
+  /** A caller-owned disclosure of retained rows below this section. */
+  more?: HappierWorkDisclosureLineProps;
   /** The resolved reduced-motion preference for the loading skeleton; omitted, the environment's. */
   reducedMotion?: boolean;
   /** Omitted inside a mounted plugin surface: the environment's theme. */
@@ -123,7 +128,7 @@ function WorkListSection(props: HappierWorkSectionProps) {
           theme={theme}
           reducedMotion={props.reducedMotion}
         />
-      ) : props.children}
+      ) : <WorkSectionBody {...props} />}
     </View>
   );
 }
@@ -167,6 +172,8 @@ function WorkPageSection(props: HappierWorkSectionProps) {
       <HappierPageSectionHeader
         insetPx={HAPPIER_WORK_PANE_METRICS.rowInsetPx}
         style={styles.pageHeader}
+        // ⓘ and the one icon action stay on the title line at the pane's narrowest width.
+        actionLayout="trailing"
         title={(
           <View style={styles.pageTitleRow}>
             <Text
@@ -204,9 +211,75 @@ function WorkPageSection(props: HappierWorkSectionProps) {
           reducedMotion={props.reducedMotion}
         />
       ) : (
-        <HappierWorkFlatSheet theme={theme}>{props.children}</HappierWorkFlatSheet>
+        <HappierWorkFlatSheet theme={theme}><WorkSectionBody {...props} /></HappierWorkFlatSheet>
       )}
     </View>
+  );
+}
+
+function WorkSectionBody(props: HappierWorkSectionProps) {
+  return (
+    <>
+      {props.empty ? <HappierWorkSectionEmptyLine theme={props.theme} host={props.host} {...props.empty} /> : props.children}
+      {props.more ? <HappierWorkDisclosureLine theme={props.theme} host={props.host} {...props.more} /> : null}
+    </>
+  );
+}
+
+export type HappierWorkSectionEmptyLineProps = Readonly<{
+  testID?: string;
+  text: string;
+  onPress?: () => void;
+  theme?: HappierWorkTheme;
+  host?: HappierWorkHost;
+}>;
+
+/**
+ * A Work section's description on its rows' text edge, optionally the whole invitation to start.
+ * Unlike a generic empty list row, it has no row-title/glyph/trailing-action anatomy or row height.
+ */
+export function HappierWorkSectionEmptyLine(props: HappierWorkSectionEmptyLineProps) {
+  const theme = useHappierWorkTheme(props.theme);
+  const { Text } = resolveHappierWorkHost(props.host);
+  const style = { paddingHorizontal: HAPPIER_WORK_PANE_METRICS.rowInsetPx, paddingBottom: 2 };
+  const line = <Text role="pageSectionDescription" style={{ color: theme.colors.secondaryText }}>{props.text}</Text>;
+  return props.onPress ? (
+    <HappierPressable
+      testID={props.testID}
+      accessibilityRole="button"
+      accessibilityLabel={props.text}
+      onPress={props.onPress}
+      style={style}
+    >
+      {line}
+    </HappierPressable>
+  ) : <View testID={props.testID} style={style}>{line}</View>;
+}
+
+export type HappierWorkDisclosureLineProps = Readonly<{
+  testID?: string;
+  label: string;
+  onPress: () => void;
+  /** The surrounding anatomy supplies its text edge; default is below a Work row title. */
+  insetPx?: number;
+  theme?: HappierWorkTheme;
+  host?: HappierWorkHost;
+}>;
+
+/** Show the rest in place; visibility and expansion remain source-owned. */
+export function HappierWorkDisclosureLine(props: HappierWorkDisclosureLineProps) {
+  const theme = useHappierWorkTheme(props.theme);
+  const { Text } = resolveHappierWorkHost(props.host);
+  return (
+    <HappierPressable
+      testID={props.testID}
+      accessibilityRole="button"
+      accessibilityLabel={props.label}
+      onPress={props.onPress}
+      style={{ minHeight: 32, justifyContent: 'center', paddingLeft: props.insetPx ?? HAPPIER_WORK_PANE_METRICS.rowInsetPx + 40 }}
+    >
+      <Text role="sectionTitle" style={{ color: theme.colors.secondaryText }}>{props.label}</Text>
+    </HappierPressable>
   );
 }
 

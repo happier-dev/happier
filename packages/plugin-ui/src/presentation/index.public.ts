@@ -11,11 +11,25 @@
  *   adapters     → presentation + plugin-sdk/ui
  */
 export type {
+  HappierFocusable,
   HappierLayoutChangeEvent,
+  HappierStyleProp,
   HappierTextSelection,
 } from './portableTypes.js';
 export * from './work/workVocabulary.js';
+export { HappierRoleMark } from './work/RoleMark.js';
+export {
+  HappierDecisionBar,
+  type HappierDecisionAction,
+  type HappierDecisionButtonProps,
+  type HappierDecisionBarProps,
+} from './interaction/DecisionBar.js';
 export * from './interaction/companionReleaseMotion.js';
+export {
+  HappierApprovalPromptChrome,
+  type HappierApprovalPromptChromeProps,
+  type HappierApprovalPromptTextRender,
+} from './interaction/ApprovalPromptChrome.js';
 export * from './interaction/companionPointerDragConfig.js';
 export * from './interaction/resolveCompanionDragVelocity.js';
 export * from './interaction/companionGeometry.js';
@@ -31,14 +45,22 @@ export {
   FloatingFrame,
   HAPPIER_FLOATING_FRAME_METRICS,
   resolveFloatingFrameBodyRect,
+  resolveFloatingFrameChromeHeight,
   resolveFloatingFrameCorner,
   resolveFloatingFrameCornerRect,
   resolveFloatingFrameHeight,
+  resolveFloatingFrameSettleTransition,
+  type FloatingFrameChromeOptions,
   type FloatingFrameCorner,
   type FloatingFrameProps,
   type FloatingFrameRectChange,
   type HappierFloatingFramePointerBinding,
+  type HappierFloatingFrameNativeBindingProps,
 } from './layout/FloatingFrame.js';
+export {
+  FloatingFramePicture,
+  type FloatingFramePictureProps,
+} from './layout/FloatingFramePicture.js';
 export {
   useHappierTreeInteraction,
   resolveHappierTreeFocusKey,
@@ -50,7 +72,10 @@ export {
 export {
   HAPPIER_TREE_ROW_METRICS,
   HappierTreeDisclosure,
+  HappierTreeRow,
   resolveHappierTreeRowIndentPx,
+  type HappierTreeRowActionsControl,
+  type HappierTreeRowProps,
 } from './navigation/TreeRow.js';
 export {
   WidgetSizePicker,
@@ -63,7 +88,7 @@ export type {
   CollectionVirtualizerHandle,
   CollectionVirtualizerRequest,
 } from './collection/collectionVirtualizer.js';
-export { HappierDropTargetOutline } from './interaction/DropTargetOutline.js';
+export { HAPPIER_DROP_INDICATOR_METRICS, HappierDropInsertionLine, HappierDropTargetOutline } from './interaction/DropTargetOutline.js';
 export {
   HappierArtifactPreviewCard,
   type HappierArtifactPreview,
@@ -93,8 +118,17 @@ export { HappierFieldStepper } from './form/FieldStepper.js';
 export type { HappierFieldStepperBounds } from './form/fieldValueDraft.js';
 export {
   happierMaterialBackgroundColor,
+  happierMaterialInnerBackgroundColor,
+  happierMaterialGradient,
+  happierSurfaceGradientWebStyle,
+  happierSurfaceFinishLift,
+  resolveHappierSurfaceFinish,
+  type HappierSurfaceGradient,
+  type HappierSurfaceFinishRole,
   type HappierMaterialRole,
 } from './layout/material.js';
+export { HappierSurfaceGradientLayer } from './layout/SurfaceGradientLayer.js';
+export { HappierMaterialRoleProvider, useContainingHappierMaterialRole, useHappierMaterialColorResolver, type HappierMaterialSurfaceRender } from './layout/Surface.js';
 export {
   matchFindText,
   type FindTextMatchRange,
@@ -281,6 +315,11 @@ export {
   HAPPIER_WIDGET_FRAME_STYLES,
   HappierWidgetFrame,
   isHappierWidgetFrameSourceShown,
+  isHappierWidgetFrameSourceDescriptor,
+  resolveHappierWidgetFrameSource,
+  resolveHappierWidgetFrameSourceText,
+  type HappierWidgetFrameSourceBinding,
+  type HappierWidgetFrameSourceDescriptor,
   resolveHappierWidgetFrameInsetPx,
   type HappierWidgetFramePlacement,
   type HappierWidgetFrameProps,
@@ -399,6 +438,17 @@ export {
   type HappierDataRowsProps,
 } from './data/DataRows.js';
 export { HappierDataChart, type HappierDataChartProps } from './data/Chart.js';
+export { CapacityBar, type CapacityBarProps } from './data/CapacityBar.js';
+export { RankedRows, type RankedRowsProps } from './data/RankedRows.js';
+export { CompositionStrip, type CompositionStripProps, type CompositionSegment } from './data/CompositionStrip.js';
+export { StackedSeriesChart, type StackedSeriesChartProps } from './data/StackedSeriesChart.js';
+export { BurnUpChart, type BurnUpChartProps } from './data/BurnUpChart.js';
+export { Heatmap, resolveFirstFullyVisibleColumn, type HeatmapProps, type HappierGridAxis, type HappierGridCell, type HappierGridFrame } from './data/Heatmap.js';
+export { DotGrid, type DotGridProps } from './data/DotGrid.js';
+export { IntervalTimeline, type IntervalTimelineProps, type IntervalTimelineInterval } from './data/IntervalTimeline.js';
+export { OutcomeScatter, type OutcomeScatterProps, type OutcomeScatterPoint, type OutcomeScatterGuide } from './data/OutcomeScatter.js';
+export { OutcomeFunnel, type OutcomeFunnelProps, type OutcomeFunnelStep } from './data/OutcomeFunnel.js';
+export { describeHappierSeriesBucket, type HappierSeries, type HappierSeriesPoint, type HappierSeriesBucket } from './data/dataModel.js';
 export type {
   HappierCapsuleButtonEmphasis,
   HappierCapsuleColors,
@@ -407,9 +457,17 @@ export type {
   HappierSurfaceGlyphRenderer,
 } from './status/capsuleHost.js';
 export {
+  HappierIdentityCapsule,
   HappierStatusCapsule,
+  type HappierIdentityCapsuleProps,
   type HappierStatusCapsuleProps,
 } from './status/StatusCapsule.js';
+export {
+  HAPPIER_CONTROL_CAPSULE_BUTTON_SIZE,
+  HAPPIER_CONTROL_CAPSULE_METRICS,
+  HappierControlCapsule,
+  type HappierControlCapsuleProps,
+} from './status/ControlCapsule.js';
 export {
   HAPPIER_INSTANT_AGENT_CURSOR_MOTION,
   HappierAgentCursor,
@@ -512,6 +570,8 @@ export type {
   FindStatus,
   FindTextRange,
 } from './find/findTypes.js';
+export type { FindSurfaceRegistration } from './find/useFindSurfaceRegistration.js';
+export { HappierFindHighlightedText, sliceFindRanges, type FindMarkStyle, type HappierFindHighlightedTextProps } from './find/FindHighlightedText.js';
 export {
   HappierPressable,
   type HappierPressableProps,
@@ -529,6 +589,7 @@ export {
 } from './interaction/focusVisible.js';
 export {
   resolveHappierMenuKeyAction,
+  HAPPIER_MENU_ROW_METRICS,
   resolveHappierMenuContent,
   resolveHappierMenuRadioGroups,
   resolveHappierMenuSelection,
@@ -547,6 +608,13 @@ export {
   type HappierResolvedPopoverPlacement,
   type HappierResolvedMenuGroup,
 } from './interaction/Menu.js';
+export { HappierOptionRow, type HappierOptionRowProps, type HappierOptionRowStyles, type HappierOptionRowControlProps } from './interaction/OptionRow.js';
+export {
+  HAPPIER_EMPTY_SLOT_METRICS,
+  HappierEmptySlot,
+  type HappierEmptySlotColors,
+  type HappierEmptySlotProps,
+} from './state/EmptySlot.js';
 export {
   HAPPIER_EMPTY_STATE_FRAME,
   HAPPIER_FRESHNESS_LINE_METRICS,
@@ -790,6 +858,7 @@ export {
 } from './form/SelectionTiles.js';
 export {
   HappierTabs,
+  HappierTabMarker,
   isHappierTabSelected,
   resolveHappierTabKeySelection,
   useHappierTabPanelActivity,
@@ -854,9 +923,22 @@ export {
   type HappierSegmentedSize,
 } from './form/SegmentedChoice.js';
 export {
+  HappierSegmentedChoiceRow,
+  resolveHappierSegmentedChoiceRow,
+  type HappierSegmentedChoiceRowColors,
+  type HappierSegmentedChoiceRowModel,
+  type HappierSegmentedChoiceRowOption,
+  type HappierSegmentedChoiceRowProps,
+} from './form/SegmentedChoiceRow.js';
+export {
   HAPPIER_RADIO_MARK_METRICS,
   HappierRadioMark,
 } from './form/RadioMark.js';
+export {
+  HAPPIER_RADIO_CHOICE_LIST_METRICS,
+  HappierRadioChoiceList,
+  type HappierRadioChoiceOption,
+} from './form/RadioChoiceList.js';
 // The Work primitives (INT I3 status language, the Work pane anatomy, the Work row and the work
 // map): Happier core's Work tab, Inbox, Boards and workflow maps render through these, so a plugin's
 // Work-style surface draws with exactly the same owners.
@@ -909,8 +991,14 @@ export {
 export {
   HappierWorkFlatSheet,
   HappierWorkSection,
+  HappierWorkSectionEmptyLine,
+  HappierWorkDisclosureLine,
   type HappierWorkSectionProps,
+  type HappierWorkSectionEmptyLineProps,
+  type HappierWorkDisclosureLineProps,
 } from './work/WorkSection.js';
+export { HappierFactLine, joinHappierFacts, type HappierFactLineProps } from './work/FactLine.js';
+export { HappierBreadcrumb, type HappierBreadcrumbItem, type HappierBreadcrumbProps } from './navigation/Breadcrumb.js';
 export {
   HappierWorkRowShell,
   HappierWorkStatusWord,
@@ -919,3 +1007,11 @@ export {
   type HappierWorkSummaryPhase,
   type HappierWorkSummaryProps,
 } from './work/WorkRow.js';
+export {
+  HAPPIER_WORK_UPDATE_CARD_FACT_ICON_SIZE_PX,
+  HAPPIER_WORK_UPDATE_CARD_MARK_SIZE_PX,
+  HappierWorkUpdateCard,
+  type HappierWorkUpdateCardFact,
+  type HappierWorkUpdateCardProps,
+  type HappierWorkUpdateCardSurface,
+} from './work/WorkUpdateCard.js';

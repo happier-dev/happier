@@ -45,6 +45,7 @@ import { useHappierTypeRoleStyle } from '../text/typeRole.js';
 import { resolveHappierTextScaleOwnership } from '../text/textScaleOwnership.js';
 import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
 import { HappierSwitch, HappierSwitchNative } from './Switch.js';
+import { useHappierMaterialColorResolver } from '../layout/Surface.js';
 import {
   HAPPIER_FIELD_TEXT_METRICS,
   HappierFieldTextBox,
@@ -369,6 +370,7 @@ export type HappierTextFieldProps = Readonly<{
 }>;
 
 export function HappierTextField(props: HappierTextFieldProps) {
+  const paintColor = useHappierMaterialColorResolver();
   const palette = useOptionalHappierUiPalette(props.theme);
   const searchInputRef = useRef<HappierFocusable | null>(null);
   const nativeMinimumTouchTarget = useHappierNativeMinimumInteractiveTargetSize();
@@ -388,7 +390,7 @@ export function HappierTextField(props: HappierTextFieldProps) {
   // relied on it for its edge rendered as bare text on the page.
   const textStyle = scaleTextStyleMetrics({
     color: props.theme.colors.text,
-    backgroundColor: props.theme.colors.control,
+    backgroundColor: paintColor(props.theme.colors.control),
     fontSize: bodyStyle.fontSize,
     lineHeight: bodyStyle.lineHeight,
     ...(bodyStyle.fontFamily === undefined ? {} : { fontFamily: bodyStyle.fontFamily }),
@@ -590,7 +592,7 @@ export function HappierTextField(props: HappierTextFieldProps) {
         flexDirection: 'row',
         alignItems: 'center',
         gap: props.theme.spacing.small,
-        backgroundColor: props.theme.colors.control,
+        backgroundColor: paintColor(props.theme.colors.control),
       }}
     >
       <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
@@ -680,6 +682,7 @@ type HappierSelectOptionControlProps<Value> = Readonly<{
 }>;
 
 function HappierSelectOptionControl<Value>(props: HappierSelectOptionControlProps<Value>) {
+  const paintColor = useHappierMaterialColorResolver();
   const labelStyle = useHappierTypeRoleStyle('label', props.theme);
   const captionStyle = useHappierTypeRoleStyle('caption', props.theme);
   const groupItem = useHappierItemGroupItemBehavior({
@@ -724,7 +727,7 @@ function HappierSelectOptionControl<Value>(props: HappierSelectOptionControlProp
         borderRadius: props.theme.radii.control,
         paddingHorizontal: props.theme.spacing.medium,
         paddingVertical: props.theme.spacing.small,
-        backgroundColor: props.selected ? props.theme.colors.elevatedSurface : props.theme.colors.surface,
+        backgroundColor: paintColor(props.selected ? props.theme.colors.elevatedSurface : props.theme.colors.surface),
         opacity: state.disabled ? 0.4 : state.pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacity : 1,
       })}
     >

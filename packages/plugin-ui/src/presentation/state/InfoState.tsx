@@ -2,6 +2,7 @@ import { isValidElement, useState, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
+import { HAPPIER_COLLECTION_LIST_METRICS } from '../collection/CollectionList.js';
 import { HappierText } from '../text/Text.js';
 import type { HappierTone } from '../semantics.js';
 import { HappierPressable } from '../interaction/Pressable.js';
@@ -61,6 +62,7 @@ export function HappierStateLine(props: Readonly<{
   return (
     <View testID={props.testID} {...resolveHappierStateAnnouncement(props.accessibilitySemantics)} style={{
       minHeight: metrics.minHeightPx,
+      paddingHorizontal: metrics.paddingHorizontalPx,
       paddingVertical: metrics.paddingVerticalPx,
       flexDirection: 'row',
       flexWrap: 'wrap',
@@ -261,6 +263,7 @@ export const HAPPIER_FRESHNESS_LINE_METRICS = Object.freeze({
  */
 export const HAPPIER_STATE_LINE_METRICS = Object.freeze({
   minHeightPx: 32,
+  paddingHorizontalPx: HAPPIER_COLLECTION_LIST_METRICS.contentInset,
   paddingVerticalPx: 7,
   gapPx: 8,
   glyphPx: 14,
