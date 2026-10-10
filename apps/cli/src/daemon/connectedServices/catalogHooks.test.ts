@@ -14,6 +14,8 @@ import {
   getConnectedServiceRuntimeAuthAdapter,
   getConnectedServiceStateSharingDescriptor,
   resolveConnectedServiceSwitchContinuity,
+  resolveConnectedServiceGenerationApplicationScope,
+  resolveConnectedServicePredictiveSoftSwitchCapability,
 } from './catalogHooks';
 
 describe('connected-service catalog hooks', () => {
@@ -38,6 +40,30 @@ describe('connected-service catalog hooks', () => {
 
   afterAll(async () => {
     await runtime?.dispose();
+  });
+
+  it.each([
+    ['codex', 'happier.agent.codex/openai-codex', 'per_session_runtime'],
+    ['ohMyPi', 'happier.agent.codex/openai-codex', 'per_session_runtime'],
+    ['gemini', 'happier.agent.gemini/gemini-account', 'per_session_runtime'],
+    ['pi', 'happier.agent.codex/openai-codex', 'request_time_auth'],
+    ['claude', 'happier.agent.claude/claude-subscription', 'shared_group_auth_surface'],
+  ] as const)('projects %s credential application from runtime auth rather than its native home', async (agentId, serviceId, scope) => {
+    const application = await resolveConnectedServiceGenerationApplicationScope(serviceId, agentId);
+    expect(application, JSON.stringify(runtime.pluginDiagnosticsByPluginId[`happier.agent.${agentId.toLowerCase()}`])).toEqual({
+      status: 'supported', scope, ownerId: agentId,
+    });
+  });
+
+  it.each([
+    ['codex', 'happier.agent.codex/openai-codex', 'supported_in_turn'],
+    ['ohMyPi', 'happier.agent.codex/openai-codex', 'unsupported'],
+    ['gemini', 'happier.agent.gemini/gemini-account', 'unsupported'],
+    ['pi', 'happier.agent.codex/openai-codex', 'supported'],
+  ] as const)('projects %s predictive capability from live auth application rather than materialization', async (agentId, serviceId, expected) => {
+    await expect(resolveConnectedServicePredictiveSoftSwitchCapability(agentId, {
+      serviceId, groupId: 'pool', activeProfileId: 'work', profileId: 'work',
+    })).resolves.toBe(expected);
   });
 
   it('loads focused Agent-auth hooks from the authoritative runtime catalog', async () => {
@@ -219,6 +245,13 @@ describe('connected-service catalog hooks', () => {
     await expect(resolveConnectedServiceSwitchContinuity('gemini', baseParams)).resolves.toEqual({
       mode: 'restart_same_home',
     });
+    await expect(resolveConnectedServiceSwitchContinuity('gemini', {
+      ...baseParams,
+      previousBinding: { ...baseParams.previousBinding, source: 'connected', selection: 'group', profileId: 'old', groupId: 'pool' },
+      nextBinding: { ...baseParams.nextBinding, selection: 'group', profileId: 'work', groupId: 'pool' },
+      fromBindings: { v: 2, bindingsByServiceId: { 'happier.agent.gemini/gemini-account': { source: 'connected', selection: 'group', groupId: 'pool', profileId: 'old' } } },
+      toBindings: { v: 2, bindingsByServiceId: { 'happier.agent.gemini/gemini-account': { source: 'connected', selection: 'group', groupId: 'pool', profileId: 'work' } } },
+    })).resolves.toEqual({ mode: 'restart_same_home' });
     const claudeParams = {
       ...baseParams,
       agentId: 'claude' as const,

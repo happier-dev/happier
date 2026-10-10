@@ -20,6 +20,8 @@ export type ProviderBrokerApplicationStreamTarget = Readonly<{
 
 export type StartedProviderBrokerApplicationServer = Readonly<{
     app: FastifyInstance;
+    /** Runner-owned access endpoint; its request owner obtains current daemon custody. */
+    localConsumerEndpointUrl?: string;
     createStreamTarget(
         context: ProviderBrokerAuthenticatedStreamContext,
         admissionSignal?: AbortSignal,
@@ -130,10 +132,14 @@ function loopbackPort(app: FastifyInstance): number {
  */
 export async function startProviderBrokerApplicationServer(input: Readonly<{
     handler: ProviderBrokerRequestHandler;
+    localConsumer?: Readonly<{
+        authorize(headers: Readonly<Record<string, string>>): boolean;
+        request(request: ManagedServiceRequest): ReturnType<ProviderBrokerRequestHandler>;
+    }>;
 }>): Promise<StartedProviderBrokerApplicationServer> {
     const contextsByRemotePort = new Map<number, ProviderBrokerAuthenticatedStreamContext>();
     const proxies = new Set<FirstBytesLocalCapabilityProxy>();
-    const streamLifetimes = new Set<ProviderBrokerApplicationStreamLifetime>();
+    const streamLifetimes = new Set<Pick<ProviderBrokerApplicationStreamLifetime, 'close' | 'retire'>>();
     const app = fastify({ logger: false });
 
     const sendResponse = async (
@@ -148,7 +154,7 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
                 response,
                 // Only the private stream has a recipient Session to attribute
                 // the refusal to; the external carrier answers an API key.
-                context && context.kind !== 'external' ? context.expected.resourceId : undefined,
+                context && context.kind !== 'external' && context.kind !== 'account_connection' ? context.expected.resourceId : undefined,
             );
         }
         for (const [name, value] of Object.entries(response.response.headers)) {
@@ -221,10 +227,13 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
         handler: async (request, reply) => {
             const remotePort = request.raw.socket.remotePort;
             const context = remotePort === undefined ? undefined : contextsByRemotePort.get(remotePort);
-            if (!context || context.kind === 'external') return reply.code(403).send();
             const headers: Record<string, string> = {};
             for (const [name, value] of Object.entries(request.headers)) {
                 if (typeof value === 'string') headers[name] = value;
+            }
+            const localConsumer = !context ? input.localConsumer : undefined;
+            if (localConsumer ? !localConsumer.authorize(headers) : !context || context.kind === 'external') {
+                return reply.code(403).send();
             }
             // The Agent's bearer is its local capability, meaningful only to
             // the tunnel; authority comes from the stream's admission.
@@ -237,16 +246,16 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
             const controller = new AbortController();
             request.raw.once('aborted', () => controller.abort());
             reply.raw.once('close', () => controller.abort());
-            const result = await input.handler({
-                context,
-                request: {
+            const forwardedRequest: ManagedServiceRequest = {
                     pathAndQuery: request.raw.url ?? request.url,
                     method: request.method as ManagedServiceRequest['method'],
                     headers,
                     ...(body ? { body } : {}),
                     signal: controller.signal,
-                },
-            });
+            };
+            const result = localConsumer
+                ? await localConsumer.request(forwardedRequest)
+                : await input.handler({ context, request: forwardedRequest });
             return await sendResponse(reply, result, controller.signal, context);
         },
     });
@@ -293,6 +302,7 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
     };
     return Object.freeze({
         app,
+        ...(input.localConsumer ? { localConsumerEndpointUrl: `http://127.0.0.1:${loopbackPort(app)}` } : {}),
         createStreamTarget,
         close: async () => {
             await Promise.all([...proxies].map(async (proxy) => await proxy.close()));

@@ -9,6 +9,24 @@ Configure model routing under **Settings → Providers**. Profiles remain option
 
 For MCP servers, including detected Agent-native MCP configuration and per-session selection, see [MCP servers](/extending/mcp-servers).
 
+## Account setup in 0.3 development
+
+The unreleased 0.3 integration lets you manage Provider connections, Account-level
+endpoint and Saved Secret bindings, and manual model entries without selecting
+a machine. These changes belong to your Account; saving them does not test an
+endpoint or authorize a particular machine to use it.
+
+An Agent's Models settings can show compatible static and manual Provider models
+from the available declarations. With no machine selected, these models remain
+unverified: health is unchecked, load state is unknown, and no live model list
+has been fetched. Refreshing this Account-only view rereads its catalog rather
+than contacting a model API. A missing Agent or Provider declaration remains
+unavailable instead of implying compatibility or choosing another model source.
+
+Select the machine that will run the Agent before testing, fetching live models,
+loading local models or confirming a runtime pairing. Account-only browsing
+does not replace those checks. See [Account-only model browsing](/agents/model-and-engine-selection#account-only-browsing-in-03-development).
+
 ## Connect a third-party model API
 
 If the service is a built-in Provider:
@@ -38,6 +56,47 @@ For a local router such as Claude Code Router:
 The per-machine confirmation is deliberate. `localhost` and private-network addresses can identify a different service on every machine, so Happier does not send credentials to them from another machine without an endpoint-bound machine grant.
 
 If a supported local Provider such as Ollama or LM Studio is discovered, it appears under **On this machine**. Enabling it uses the same connection and machine-grant path as a manually configured local endpoint.
+
+## Managed gateways in development
+
+The unreleased 0.3 gateway integration uses the same managed Provider connection
+from Providers and Connected services. A gateway combines one account or pool
+per vendor; each pool remains single-vendor. Choosing another pool replaces that
+vendor's slot. Clearing a pool's use removes only the slot it still owns, and
+does not change the other vendor selections.
+
+Gateway configuration distinguishes the session's machine from an explicitly
+chosen hub machine. Saving a hub does not prove it is online, and describes where
+gateway requests run rather than where a model performs inference. Shared hub
+execution and the settings controls are still undergoing integration validation.
+
+The development runtime shares a subscription gateway between admitted sessions
+on the same connection and execution machine, while giving each session its own
+scoped access. Closing or canceling one session does not retire another session's
+access. After the last consumer and its active requests settle, the gateway
+stops unless an explicit Start still retains it. A chosen hub becoming
+unavailable reports a failure; it does not silently start a local gateway or
+replay an inference request. This is not yet a released or live-certified flow.
+
+Claude Code helper-model configuration offers fast, default and strongest pins.
+Unset pins use the session's selected model; explicit full model ids in native
+agent definitions retain Claude's own choice. These settings apply to subsequent
+session materialization. Subscription-backed routing is experimental: upstream
+authentication or policy failures stay visible, and Happier does not silently
+switch credentials or model sources.
+
+## Attached children in 0.3 development
+
+The unreleased attached-child integration inherits the parent's applied Provider
+connection and model when no explicit child choice is supplied. Pending changes
+and Account defaults do not replace that route. An explicit native or Provider
+choice wins. A different Agent must support the inherited pairing; an unavailable
+or incompatible pairing asks for a choice rather than silently switching sources.
+
+The child obtains its own authorized configuration at launch. Parent credentials
+and gateway access tokens are not copied into a draft or summary. See
+[child model choices](/agents/model-and-engine-selection#child-choices-in-03-development)
+for detached work, Workflow choices, Voice and resume behavior.
 
 ## Environment switchers
 

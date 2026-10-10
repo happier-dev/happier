@@ -8,8 +8,8 @@ import {
 
 /** The daemon's existing qualified purpose callbacks; legacy ingress stays at its caller. */
 type RequestAuthAccountContext = Readonly<{
-    bootstrap: Pick<RequesterSessionRuntimeContext['bootstrap'], 'isCurrent' | 'serverHttpBaseUrl'>;
-}> & Pick<RequesterSessionRuntimeContext, 'resolveCurrentRequestAuthBinding' | 'materializeRequestAuthBearer'>;
+    bootstrap: Pick<RequesterSessionRuntimeContext['bootstrap'], 'serverHttpBaseUrl'>;
+}> & Pick<RequesterSessionRuntimeContext, 'isCurrent' | 'resolveCurrentRequestAuthBinding' | 'materializeRequestAuthBearer'>;
 
 export function createDaemonQualifiedRequestAuthCallbacks<T extends RequestAuthAccountContext>(params: Readonly<{
     resolveCurrentRequestAuthBinding?: ConnectedAccountPurposeBindingOwner['resolveCurrentRequestAuthBinding'];
@@ -26,12 +26,12 @@ export function createDaemonQualifiedRequestAuthCallbacks<T extends RequestAuthA
                 const resolve = context ? context.resolveCurrentRequestAuthBinding : params.resolveCurrentRequestAuthBinding;
                 if (!resolve) return null;
                 if (subject.parentSessionId) await params.assertSessionAccountCurrent?.(subject.parentSessionId, context);
-                if (context && !await context.bootstrap.isCurrent()) throw new Error('requester_session_not_current');
+                if (context && !await context.isCurrent()) throw new Error('requester_session_not_current');
                 const read = () => resolve({ subjectId: subject.subjectId, binding, signal });
                 const resolved = await (context ? runWithServerHttpBaseUrl(context.bootstrap.serverHttpBaseUrl, read) : read());
                 signal.throwIfAborted();
                 if (subject.parentSessionId) await params.assertSessionAccountCurrent?.(subject.parentSessionId, context);
-                if (context && !await context.bootstrap.isCurrent()) throw new Error('requester_session_not_current');
+                if (context && !await context.isCurrent()) throw new Error('requester_session_not_current');
                 if (!subject.isCurrent() || !resolved) return null;
                 return Object.freeze({ account: resolved.account, credentialRevision: resolved.credentialRevision,
                     ...(resolved.group ? { group: resolved.group } : {}) });
@@ -48,12 +48,12 @@ export function createDaemonQualifiedRequestAuthCallbacks<T extends RequestAuthA
             const materialize = context ? context.materializeRequestAuthBearer : params.materializeRequestAuthBearer;
             if (!materialize) throw new ConnectedAccountRequestAuthError('request_auth_binding_unavailable');
             if (subject.parentSessionId) await params.assertSessionAccountCurrent?.(subject.parentSessionId, context);
-            if (context && !await context.bootstrap.isCurrent()) throw new ConnectedAccountRequestAuthError('request_auth_not_active');
+            if (context && !await context.isCurrent()) throw new ConnectedAccountRequestAuthError('request_auth_not_active');
             const read = () => materialize({ subjectId: subject.subjectId, binding, resolved, materialization, signal });
             const result = await (context ? runWithServerHttpBaseUrl(context.bootstrap.serverHttpBaseUrl, read) : read());
             signal.throwIfAborted();
             if (subject.parentSessionId) await params.assertSessionAccountCurrent?.(subject.parentSessionId, context);
-            if (context && !await context.bootstrap.isCurrent()) throw new ConnectedAccountRequestAuthError('request_auth_not_active');
+            if (context && !await context.isCurrent()) throw new ConnectedAccountRequestAuthError('request_auth_not_active');
             if (!subject.isCurrent()) throw new ConnectedAccountRequestAuthError('request_auth_not_active');
             return result;
         },

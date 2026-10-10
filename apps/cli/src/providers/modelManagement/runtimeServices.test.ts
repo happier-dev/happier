@@ -977,6 +977,17 @@ describe('runtime provider model-management composition', () => {
     expect(projection.groups.flatMap((group) => group.rows).map((row) => row.ref.modelId))
       .toEqual(['cold-model']);
 
+    // A fresh observation is reusable without starting another probe. This is
+    // also the default read used by an automatic chosen-hub launch.
+    const probeCount = transport.mock.calls.length;
+    const warmFresh = await services.projectModels({
+      machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex',
+    });
+    expect(warmFresh).toMatchObject({ status: 'success', groups: [{ rows: [{
+      ref: { modelId: 'cold-model' }, catalog: { stale: false },
+    }] }] });
+    expect(transport.mock.calls.length).toBe(probeCount);
+
     // The complement, and the reason the awaited read is safe at all: a connection
     // that already produced an observation is warm, so its refresh stays advisory.
     // Marking the retained snapshot stale makes the next read genuinely re-demand,

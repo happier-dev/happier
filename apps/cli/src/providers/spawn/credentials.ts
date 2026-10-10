@@ -123,6 +123,7 @@ export async function resolveProviderCredentialPlaintextAsync(input: Readonly<{
   accountSettings: unknown;
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
   settingsSecretsReadKeys: ReadonlyArray<Uint8Array | null | undefined>;
+  isCurrent?: () => boolean;
   connectionId: ProviderConnectionId | string;
   machineId: string;
   openTeamDirect?: (input: Readonly<{
@@ -165,6 +166,7 @@ export async function resolveProviderCredentialPlaintextAsync(input: Readonly<{
     accountSettings: input.accountSettings,
     settingsSecretsReadKeys: input.settingsSecretsReadKeys.filter((key): key is Uint8Array => key instanceof Uint8Array),
     resources: input.savedSecretResources,
+    ...(input.isCurrent ? { isCurrent: input.isCurrent } : {}),
   });
   const current = materializer.inspect(input.reference.secretId);
   if (current.status !== 'ready') {
@@ -185,6 +187,7 @@ export function resolveProviderCredentialPlaintext(input: Readonly<{
   accountSettings: unknown;
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
   settingsSecretsReadKeys: ReadonlyArray<Uint8Array | null | undefined>;
+  isCurrent?: () => boolean;
   connectionId: ProviderConnectionId | string;
   machineId: string;
 }>): ProviderCredentialPlaintextResultForSpawn {
@@ -194,6 +197,7 @@ export function resolveProviderCredentialPlaintext(input: Readonly<{
     accountSettings: input.accountSettings,
     settingsSecretsReadKeys: input.settingsSecretsReadKeys.filter((key): key is Uint8Array => key instanceof Uint8Array),
     resources: input.savedSecretResources,
+    ...(input.isCurrent ? { isCurrent: input.isCurrent } : {}),
   });
   const current = materializer.inspect(input.reference.secretId);
   if (current.status !== 'ready' || current.fingerprint !== input.reference.secretRecordFingerprint) {

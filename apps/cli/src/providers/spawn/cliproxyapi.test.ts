@@ -193,7 +193,7 @@ describe('CLIProxyAPI ordinary Provider binding', () => {
     const initialResolution = resolveProviderConnectionForMachine({
       connectionId,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: initialSettings },
+      providerSettings: initialSettings,
       registry,
       dnsEvidenceByEndpointUrl,
     });
@@ -355,7 +355,7 @@ describe('CLIProxyAPI ordinary Provider binding', () => {
     const initialResolution = resolveProviderConnectionForMachine({
       connectionId,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: initialSettings, secrets },
+      providerSettings: initialSettings,
       registry,
       dnsEvidenceByEndpointUrl,
     });

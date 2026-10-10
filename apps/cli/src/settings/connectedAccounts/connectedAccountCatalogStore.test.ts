@@ -18,6 +18,28 @@ import { createCliConnectedAccountCatalogStore } from './connectedAccountCatalog
 describe('Connected catalog source admission', () => {
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); resetActiveAccountSettingsSnapshotForTests(); });
 
+  it('observes admitted configuration authority without transferring an absent source or writing Settings', async () => {
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'configuration-read-owner' })).toString('base64url')}.signature`, encryption: null };
+    const raw = { connectedAccountServiceConfigurationsV1: { v: 1, entries: [] } };
+    setActiveAccountSettingsSnapshot({ source: 'network', scopeKey: resolveAccountSettingsScopeKey(credentials), settings: accountSettingsParse(raw),
+      rawSettings: raw, settingsVersion: 7, loadedAtMs: 1, settingsSecretsReadKeys: [] });
+    const requested: string[] = [];
+    vi.spyOn(axios, 'get').mockImplementation(async input => {
+      const path = new URL(String(input)).pathname;
+      requested.push(path);
+      if (path.endsWith('/currentness')) return { status: 200, data: { mode: 'plain', version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      if (path.endsWith('/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (path.endsWith('/connected-accounts/configurations')) return { status: 200, data: { status: 'absent' } };
+      throw new Error(`Unexpected source read: ${path}`);
+    });
+    const writes = vi.spyOn(axios, 'post').mockRejectedValue(new Error('A read cannot transfer retained Settings'));
+    const result = await createCliConnectedAccountCatalogStore({ credentials }).readAdmittedCatalog('configurations');
+    expect(result.status).toBe('unavailable');
+    expect(requested).not.toContain('/v2/account/settings');
+    expect(writes).not.toHaveBeenCalled();
+  });
+
   it.each(['empty', 'non-secret', 'partial', 'personal-locked'] as const)(
     'admits only the required source of an absent %s configuration catalog with a locked personal secret', async variant => {
       const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'configuration-source-owner' })).toString('base64url')}.signature`, encryption: null };

@@ -47,12 +47,70 @@ import {
 } from './externalProviderBrokerAdmission';
 import { admitTeamCredentialResourceTestRequestInTx } from './resourceTestBrokerAdmission';
 import { readRequestHomeEnv } from '@/app/home/settings/requestHomeEnv';
+import {
+    PROVIDER_BROKER_ACCOUNT_OPEN_HTTP_PATH_V2, PROVIDER_BROKER_ACCOUNT_ADMIT_HTTP_PATH_V2,
+    ProviderBrokerAccountOpenRequestV2Schema, ProviderBrokerAccountOpenResponseV2Schema,
+    ProviderBrokerAccountAdmissionV2Schema, ProviderBrokerAccountAdmissionResponseV2Schema,
+} from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { openAccountConnectionProviderBroker, admitAccountConnectionProviderBroker } from '@/app/providers/providerBrokerAdmission';
+import { verifyProviderBrokerRouteGrantSignatureV2 } from '@/app/machines/peer/mediation/signProviderBrokerRouteGrantV1';
+import { readProvidersFeatureEnv } from '@/app/features/catalog/readFeatureEnv';
 
-export function registerTeamCredentialProviderBrokerRoutes(app: Fastify): void {
+export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, personalApp: Fastify = app): void {
     const resolveExecutionRunCurrentness = createExecutionRunBrokerCurrentnessResolver({
         app,
         resolveServerIdentityId: () => getOrCreateServerIdentityId(process.env),
         createNonce: () => crypto.randomUUID(),
+    });
+    personalApp.post(PROVIDER_BROKER_ACCOUNT_OPEN_HTTP_PATH_V2, {
+        preHandler: app.authenticate, attachValidation: true,
+        config: { restrictedCredentialBinding: { scope: 'session', session: 'body.consumer.sessionId', machine: 'body.initiatorMachineId' } },
+        schema: { body: ProviderBrokerAccountOpenRequestV2Schema, response: {
+            200: ProviderBrokerAccountOpenResponseV2Schema, 400: ProviderBrokerAccountOpenResponseV2Schema,
+        } },
+    }, async (request, reply) => {
+        const parsed = ProviderBrokerAccountOpenRequestV2Schema.safeParse(request.body);
+        if (!parsed.success) return reply.code(400).send({ ok: false, reasonCode: 'invalid_request' });
+        const env = await readRequestHomeEnv(request);
+        if (!readProvidersFeatureEnv(env).enabled) return reply.send({ ok: false, reasonCode: 'resource_unavailable' });
+        const signing = resolvePeerMediationGrantSigningConfig(env);
+        if (!signing.ok) return reply.send({ ok: false, reasonCode: 'update_required' });
+        // Restricted Runner credentials have a different activation/selection
+        // authority. They cannot impersonate an ordinary Account connection.
+        if (request.sessionRuntimePrincipal) return reply.send({ ok: false, reasonCode: 'update_required' });
+        const result = await openAccountConnectionProviderBroker({
+            actorAccountId: request.userId, homeId: await getOrCreateServerIdentityId(process.env),
+            presence: await getMachineDaemonPresenceInventory({ accountId: request.userId, io: app.machineDaemonPresence }),
+            request: parsed.data, tokenEpoch: readSessionAccessAuthenticationFromRequest(request).tokenEpoch,
+            nowMs: Date.now(), grantId: crypto.randomUUID(),
+            signingKey: { keyId: signing.keyId, secretKey: signing.secretKey }, resolveExecutionRunCurrentness,
+            verifyRefreshAuthority: authority => verifyProviderBrokerRouteGrantSignatureV2({
+                authority, signingCapability: signing.capability, nowMs: Date.now(),
+            }),
+        });
+        return reply.send(ProviderBrokerAccountOpenResponseV2Schema.parse(result));
+    });
+    personalApp.post(PROVIDER_BROKER_ACCOUNT_ADMIT_HTTP_PATH_V2, {
+        preHandler: app.authenticate, attachValidation: true,
+        schema: { body: ProviderBrokerAccountAdmissionV2Schema, response: {
+            200: ProviderBrokerAccountAdmissionResponseV2Schema, 400: ProviderBrokerAccountAdmissionResponseV2Schema,
+        } },
+    }, async (request, reply) => {
+        const parsed = ProviderBrokerAccountAdmissionV2Schema.safeParse(request.body);
+        if (!parsed.success) return reply.code(400).send({ ok: false, reasonCode: 'invalid_request' });
+        const env = await readRequestHomeEnv(request);
+        if (!readProvidersFeatureEnv(env).enabled) return reply.send({ ok: false, reasonCode: 'resource_unavailable' });
+        const signing = resolvePeerMediationGrantSigningConfig(env);
+        if (!signing.ok) return reply.send({ ok: false, reasonCode: 'update_required' });
+        const result = await admitAccountConnectionProviderBroker({
+            actorAccountId: request.userId, homeId: await getOrCreateServerIdentityId(process.env),
+            presence: await getMachineDaemonPresenceInventory({ accountId: request.userId, io: app.machineDaemonPresence }),
+            request: parsed.data, resolveExecutionRunCurrentness,
+            verifyAuthority: authority => verifyProviderBrokerRouteGrantSignatureV2({
+                authority, signingCapability: signing.capability, nowMs: Date.now(),
+            }),
+        });
+        return reply.send(ProviderBrokerAccountAdmissionResponseV2Schema.parse(result));
     });
     const modelCatalogAuthorizationSchema = ProviderBrokerModelCatalogAuthorizationV1Schema
         .or(TeamCredentialExternalProviderModelCatalogAuthorizationV1Schema);

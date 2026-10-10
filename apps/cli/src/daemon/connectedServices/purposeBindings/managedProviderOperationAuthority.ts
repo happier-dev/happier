@@ -285,6 +285,9 @@ export function createManagedProviderOperationAuthority(input: Readonly<{
                   purpose: use.purpose.purpose,
                   materialization: use.materialization,
                 }))),
+              qualifiedRequestAuthUses: Object.freeze(requestAuthUses.filter((use) => (
+                purposeLease !== null && purposeLease.resolvePurposeBinding(use.purpose) !== null
+              ))),
               isCurrent: () => (
                 !cleanupStarted
                 && isCurrent()

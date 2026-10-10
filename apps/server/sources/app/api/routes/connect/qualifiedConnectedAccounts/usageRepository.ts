@@ -23,6 +23,8 @@ import {
     deleteProviderAccountUsageRecord,
     deleteProviderAccountUsageRecordsForAccount,
     readProviderAccountUsageRecord,
+    readProviderAccountUsageHistory,
+    readProviderAccountUsageHistoryWitness,
     requestProviderAccountUsageRefresh,
 } from "../providerAccountUsage/recordStorage";
 import {
@@ -1241,6 +1243,18 @@ export async function readQualifiedProviderAccountUsageRecord(
         await admitQualifiedProviderAccountUsageRecordInTx(tx, params));
 }
 
+export async function readQualifiedProviderAccountUsageHistory(params: Readonly<{ accountId: string }> & ReturnType<typeof import('@happier-dev/protocol/connect/providerAccountUsageHistory').QualifiedProviderAccountUsageHistoryRequestV4Schema.parse>) {
+    return await inTx(async tx => {
+        const admitted = await admitQualifiedProviderAccountUsageRecordInTx(tx, params);
+        if (admitted.status !== 'resolved') return admitted;
+        const page = 'history' in params
+            ? await readProviderAccountUsageHistory(params, tx)
+            : { entries: [await readProviderAccountUsageHistoryWitness(params, tx)].filter((entry): entry is NonNullable<typeof entry> => entry !== null), nextCursor: null };
+        if (page.entries.some(entry => entry.record.accountId !== params.accountId || entry.record.recordId !== params.recordId || entry.record.payloadMode !== admitted.record.payloadMode)) return { status: 'storage_mode_mismatch' as const };
+        return { status: 'resolved' as const, entries: page.entries, nextCursor: page.nextCursor, sources: admitted.sources };
+    });
+}
+
 export async function deleteQualifiedProviderAccountUsageRecord(
     params: Readonly<{ accountId: string; recordId: string }>,
 ): Promise<"deleted" | "not_found" | "storage_mode_mismatch"> {
@@ -1678,6 +1692,7 @@ export async function requestQualifiedConnectedAccountQuotaRefresh(
         }, tx);
     });
 }
+
 
 export async function requestLegacyConnectedServiceQuotaCompatibilityRefresh(
     params: Readonly<{

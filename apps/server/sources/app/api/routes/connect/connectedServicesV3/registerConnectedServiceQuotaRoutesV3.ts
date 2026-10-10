@@ -13,7 +13,7 @@ import {
 import { NotFoundSchema } from "../../../schemas/notFoundSchema";
 import { ConnectedServiceProfileIdSchema } from "../connectedServicesV2/profileIdSchema";
 import {
-    readQualifiedConnectedAccountUsageRecordWithSource,
+    readLegacyConnectedServiceQuotaCompatibilityRecordWithSource,
     requestLegacyConnectedServiceQuotaCompatibilityRefresh,
     unlinkLegacyConnectedServiceQuotaCompatibilitySource,
     writeLegacyConnectedServiceQuotaCompatibilityRecord,
@@ -154,11 +154,10 @@ export function registerConnectedServiceQuotaRoutesV3(app: Fastify): void {
                 ),
             accountId: profileId,
         };
-        // Admission is owned by the adjacent V4 ProviderAccountUsage read: one
-        // transaction admits the persisted Account encryption mode and the
-        // record's payload mode together. Source-less PAU history remains
-        // absent from this compatibility projection without being deleted.
-        const admitted = await readQualifiedConnectedAccountUsageRecordWithSource({
+        // The released unfenced V3 writer shares the existing legacy reader.
+        // Account-mode and record admission still belong to the canonical PAU
+        // transaction; strict V4 credential authority is unchanged.
+        const admitted = await readLegacyConnectedServiceQuotaCompatibilityRecordWithSource({
             accountId: userId,
             ref,
         });

@@ -1,4 +1,5 @@
 import { createProviderManagedProbeRequestFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
+import { randomUUID } from 'node:crypto';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { ProviderErrorV1 } from '@happier-dev/protocol';
 
@@ -126,6 +127,7 @@ export function isExactManagedCatalogLaunch(input: Readonly<{
 export function createProviderManagedCatalogRuntimePort(input: Readonly<{
   happyHomeDir?: string;
   acquireRegistryLease?: AcquireProviderCatalogRegistryLease;
+  resolveSharedGateway?: import('@/plugins/runtime/invocation/services/managedServicesAdapter').ResolveSharedManagedProviderGatewayBinding;
 }> = {}): ProviderManagedCatalogRuntimePort<ProviderProbeHostAuthorizationTicket> {
   const acquireRegistryLease = input.acquireRegistryLease
     ?? (() => acquireAuthoritativePluginRuntimeRegistryLease(
@@ -224,6 +226,11 @@ export function createProviderManagedCatalogRuntimePort(input: Readonly<{
       let invocationServices: Awaited<ReturnType<typeof createInvocationServices>>;
       try {
         invocationServices = await createInvocationServices({
+          ...(input.resolveSharedGateway ? { sharedGateway: await input.resolveSharedGateway({
+            connectionId: ticket.connectionId,
+            consumerId: `catalogProbe:${randomUUID()}`,
+            signal,
+          }) ?? undefined } : {}),
           identity: ticket.implementationIdentity,
           purposeBindings: ticket.purposeBindings,
           signal,

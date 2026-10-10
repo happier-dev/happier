@@ -1,17 +1,21 @@
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { LegacyProfileMigrationSourceNotFoundError } from '@happier-dev/protocol/providers/migrations/legacyProfilesV1';
 import type { ProviderErrorV1 } from '@happier-dev/protocol';
+import type { DaemonProviderProfileMigrationPrepareSourceRequestV1, DaemonProviderProfileMigrationPrepareSourceResponseV1 } from '@happier-dev/protocol/rpc/providers';
 import type { DaemonProviderProfileMigrationConfirmRequestV1, DaemonProviderProfileMigrationConfirmResponseV1, DaemonProviderProfileMigrationPreviewRequestV1, DaemonProviderProfileMigrationPreviewResponseV1, DaemonProviderProfileMigrationConflictConfirmRequestV1, DaemonProviderProfileMigrationConflictConfirmResponseV1 } from '@happier-dev/protocol/rpc/providers';
 
 import { ProviderSettingsMigrationError } from '../settings/migration';
-import { confirmLegacyProfileMigration, confirmLegacyProfileMigrationConflict, previewLegacyProfileMigration } from './runtime';
+import { confirmLegacyProfileMigration, confirmLegacyProfileMigrationConflict, previewLegacyProfileMigration, prepareLegacyProfileMigrationSource } from './runtime';
 
-export function mapLegacyProfileMigrationFailure(error: unknown, sourceProfileId: string): ProviderErrorV1 {
+export function mapLegacyProfileMigrationFailure(error: unknown, sourceProfileId?: string): ProviderErrorV1 {
   if (error instanceof LegacyProfileMigrationSourceNotFoundError) {
     return createProviderErrorV1('provider_profile_migration_source_not_found', { sourceProfileId });
   }
   if (error instanceof ProviderSettingsMigrationError) {
+    if (error.reason === 'migration_outcome_unknown') {
+      return createProviderErrorV1('provider_rpc_mutation_outcome_unknown', { sourceProfileId });
+    }
     if (error.reason === 'legacy_profile_source_changed') {
       return createProviderErrorV1('provider_profile_migration_source_changed', { sourceProfileId });
     }
@@ -32,9 +36,10 @@ export function mapLegacyProfileMigrationFailure(error: unknown, sourceProfileId
 }
 
 export function createLegacyProfileMigrationRpcServices(input: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   now?: () => number;
 }>): Readonly<{
+  prepareProfileMigrationSource(request: DaemonProviderProfileMigrationPrepareSourceRequestV1, signal?: AbortSignal): Promise<DaemonProviderProfileMigrationPrepareSourceResponseV1>;
   previewProfileMigration(
     request: DaemonProviderProfileMigrationPreviewRequestV1,
   ): Promise<DaemonProviderProfileMigrationPreviewResponseV1>;
@@ -46,6 +51,11 @@ export function createLegacyProfileMigrationRpcServices(input: Readonly<{
   ): Promise<DaemonProviderProfileMigrationConflictConfirmResponseV1>;
 }> {
   return Object.freeze({
+    prepareProfileMigrationSource: async (request, signal) => {
+      try { return await prepareLegacyProfileMigrationSource({ credentials: input.credentials,
+        expectedSettingsVersion: request.expectedSettingsVersion, signal }); }
+      catch (error) { return { status: 'error', error: mapLegacyProfileMigrationFailure(error) }; }
+    },
     previewProfileMigration: async (request) => {
       try {
         const result = await previewLegacyProfileMigration({

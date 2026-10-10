@@ -541,7 +541,9 @@ export function registerTeamCredentialResourceRoutes(
         503,
         { allowLegacyHomeToken: false },
     );
-    registerTeamCredentialProviderBrokerRoutes(routes);
+    // Personal Provider connections use their own feature and Account admission;
+    // only the Team source arm consumes the Team-resource gate.
+    registerTeamCredentialProviderBrokerRoutes(routes, app);
     const resolveExecutionRunCurrentness = createExecutionRunBrokerCurrentnessResolver({
         app,
         resolveServerIdentityId: () => getOrCreateServerIdentityId(env),

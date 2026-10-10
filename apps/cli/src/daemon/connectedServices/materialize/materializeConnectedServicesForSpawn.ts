@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { lstat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
@@ -17,6 +18,7 @@ import { resolveAgentContributionQualifiedId } from '@/plugins/projection/regist
 import type { AgentSpawnQualifiedPurposeBindingSnapshot } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
+import type { StablePluginConnectedAccountsOwner } from '@/plugins/runtime/invocation/services/connectedAccounts';
 import {
   applyConnectedServiceStateSharingDescriptor,
   resolveConnectedServiceNativeHomeRoot,
@@ -29,6 +31,8 @@ import type {
   ConnectedServicesMaterializationDiagnostic,
 } from '@/daemon/connectedServices/materialization/materializer';
 import { createBestEffortCleanupDirectory } from '@/daemon/connectedServices/materialization/materializer';
+import { isConnectedServiceMaterializedHomeRetainedOnExit } from './cleanup/createConnectedServiceMaterializedHomeCleanupScheduler';
+import { copyConnectedServiceHomeEntry } from '../stateSharing/connectedServiceHomeEntrySync';
 import { replaceDirectoryAtomically } from '@/utils/fs/replaceDirectoryAtomically';
 import {
   HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_ENV_KEY,
@@ -205,10 +209,14 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
   previousMaterializedRoot?: string | null;
   sessionDirectory?: string | null;
   processEnv?: NodeJS.ProcessEnv;
+  allowNativeAccountState?: boolean;
+  connectedAccountsOwner?: StablePluginConnectedAccountsOwner;
+  isAccountRuntimeCurrent?: () => Promise<boolean>;
   accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
   snapshot?: AgentSpawnQualifiedPurposeBindingSnapshot | null;
   requestAuthRequired: boolean;
   legacyV021?: boolean;
+  nativeHomeOnly?: boolean;
   recordsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
   exactPurposeBindingSubjectId?: string;
   purposeBindingSessionId?: string;
@@ -260,7 +268,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
           contributions: lease.registry.contributes,
         })
       : null);
-    if (!snapshot && !params.legacyV021) {
+    if (!snapshot && !params.legacyV021 && !params.nativeHomeOnly) {
       throw new Error('Connected Account launch declaration is unavailable');
     }
     const projectionOnlyGeminiOauth = params.legacyV021
@@ -275,8 +283,8 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
           purposeBindings: snapshot?.bindings ?? Object.freeze([]),
           recordsByServiceId: params.recordsByServiceId,
         })
-      : lease.registry.resolveConnectedAccountPurposeBindingOwner?.();
-    if (!connectedAccountsOwner) {
+      : params.connectedAccountsOwner ?? lease.registry.resolveConnectedAccountPurposeBindingOwner?.();
+    if (!connectedAccountsOwner && !params.nativeHomeOnly) {
       throw new Error('Connected Account launch authority is unavailable');
     }
     const contribution = lease.registry.contributes.agentDefinitionsById.get(
@@ -298,7 +306,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
           : []
       )),
     );
-    const launchEnvironment = snapshot && !projectionOnlyGeminiOauth
+    const launchEnvironment = snapshot && connectedAccountsOwner && !projectionOnlyGeminiOauth
       ? await materializeQualifiedConnectedAccountLaunchUses({
         connectedAccountsOwner,
         credentialFileOwner,
@@ -342,12 +350,17 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
     const diagnostics: ConnectedServicesMaterializationDiagnostic[] = [];
     const stateSharingDescriptor =
       await catalogEntry?.getConnectedServiceStateSharingDescriptor?.() ?? null;
+    if (params.nativeHomeOnly && (!stateSharingDescriptor?.nativeHome
+      || stateSharingDescriptor.providerSupportStatus !== 'supported')) {
+      throw new Error('agent_native_home_unavailable');
+    }
     if (
       stateSharingDescriptor?.providerSupportStatus === 'supported'
       && stateSharingDescriptor.nativeHome
     ) {
+      const allowNativeState = params.allowNativeAccountState !== false;
       const sourceEnvironment = Object.freeze(Object.fromEntries(
-        Object.entries(params.processEnv ?? process.env).filter(
+        Object.entries(allowNativeState ? params.processEnv ?? process.env : {}).filter(
           (entry): entry is [string, string] => typeof entry[1] === 'string',
         ),
       ));
@@ -356,14 +369,19 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
           ?.connectedServicesProviderStateSharingSettingsV1,
         params.agentId,
       );
+      if (!allowNativeState && !params.previousMaterializedRoot) {
+        throw new Error('Requester materialized home identity unavailable');
+      }
       const stateSharing = await writeArtifacts(() => applyConnectedServiceStateSharingDescriptor({
         descriptor: stateSharingDescriptor,
         nativeSourceContext: {
-          sourceRoot: resolveConnectedServiceNativeHomeRoot({
-            nativeHome: stateSharingDescriptor.nativeHome,
+          // Foreign requester materialization has no authority over the
+          // custodian's native home. Only its already-owned target is reachable.
+          sourceRoot: allowNativeState ? resolveConnectedServiceNativeHomeRoot({
+            nativeHome: stateSharingDescriptor.nativeHome!,
             sourceEnvironment,
             homeDir: homedir(),
-          }),
+          }) : params.previousMaterializedRoot!,
           sourceEnv: sourceEnvironment,
         },
         target: {
@@ -371,9 +389,9 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
           targetMaterializedEnv: env,
         },
         previousMaterializedRoot: params.previousMaterializedRoot ?? null,
-        configMode: policy.configMode,
+        configMode: allowNativeState ? policy.configMode : 'isolated',
         requestedStateMode: policy.stateMode,
-        effectiveStateMode: policy.stateMode,
+        effectiveStateMode: allowNativeState ? policy.stateMode : 'isolated',
         cwd: params.sessionDirectory ?? process.cwd(),
         providerLabel: params.agentId,
       }));
@@ -382,6 +400,23 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
       });
       diagnostics.push(...stateSharing.diagnostics);
 
+      if (params.previousMaterializedRoot && stateSharing.manifest.effectiveStateMode === 'isolated') {
+        await writeArtifacts(async () => {
+          for (const entry of stateSharingDescriptor.state.entries) {
+            const source = join(params.previousMaterializedRoot!, entry.path);
+            const sourceStat = await lstat(source).catch((error: unknown) => {
+              if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+              throw error;
+            });
+            // Carry this Run's private state through credential replacement.
+            // Shared native-account links remain owned by their original home.
+            if (sourceStat && !sourceStat.isSymbolicLink()) {
+              await copyConnectedServiceHomeEntry(source, join(params.rootDir, entry.path), { localStateOnly: true });
+            }
+          }
+        });
+      }
+
       const nativeHomeFiles: Record<string, Uint8Array> = Object.create(null);
       for (const scope of projectionOnlyGeminiOauth
         ? []
@@ -389,6 +424,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
         if (!snapshot?.bindings.some((binding) => (
           qualifiedPurposeKey(binding.purpose) === qualifiedPurposeKey(scope.purpose)
         ))) continue;
+        if (!connectedAccountsOwner) throw new Error('Connected Account launch authority is unavailable');
         const binding = await connectedAccountsOwner.getBinding({
           purpose: scope.purpose,
           serviceRefs: scope.serviceRefs,
@@ -491,12 +527,15 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
   sessionDirectory?: string | null;
   recordsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
   selectionsByServiceId?: ReadonlyMap<ConnectedAccountServiceKey, ConnectedServiceResolvedSelection>;
-  connectedAccountMaterializationAuthority: ConnectedServicesMaterializationAuthority;
+  connectedAccountMaterializationAuthority?: ConnectedServicesMaterializationAuthority;
   qualifiedPurposeBindingSnapshot?: AgentSpawnQualifiedPurposeBindingSnapshot | null;
   exactPurposeBindingSubjectId?: string;
   purposeBindingSessionId?: string;
   accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
   processEnv?: NodeJS.ProcessEnv;
+  allowNativeAccountState?: boolean;
+  connectedAccountsOwner?: StablePluginConnectedAccountsOwner;
+  isAccountRuntimeCurrent?: () => Promise<boolean>;
 }>): Promise<ConnectedServicesMaterialization | null> {
   const rootDir = resolveConnectedServiceMaterializedRootDir({
     baseDir: params.baseDir,
@@ -518,12 +557,15 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
   sessionDirectory?: string | null;
   recordsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
   selectionsByServiceId?: ReadonlyMap<ConnectedAccountServiceKey, ConnectedServiceResolvedSelection>;
-  connectedAccountMaterializationAuthority: ConnectedServicesMaterializationAuthority;
+  connectedAccountMaterializationAuthority?: ConnectedServicesMaterializationAuthority;
   qualifiedPurposeBindingSnapshot?: AgentSpawnQualifiedPurposeBindingSnapshot | null;
   exactPurposeBindingSubjectId?: string;
   purposeBindingSessionId?: string;
   accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
   processEnv?: NodeJS.ProcessEnv;
+  allowNativeAccountState?: boolean;
+  connectedAccountsOwner?: StablePluginConnectedAccountsOwner;
+  isAccountRuntimeCurrent?: () => Promise<boolean>;
 }>, rootDir: string): Promise<ConnectedServicesMaterialization | null> {
   // Qualified Agent ids contain '/'; staging has one owned root per attempt.
   const attemptRoot = join(params.baseDir, '.attempts', randomUUID());
@@ -540,11 +582,17 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
   };
   const writeArtifacts: MaterializationArtifactWrite = async write => {
     assertOpen();
+    if (params.isAccountRuntimeCurrent && !await params.isAccountRuntimeCurrent()) {
+      throw new Error('requester_account_context_unavailable');
+    }
     const pending = write();
     artifactWrite = pending;
     try {
       const result = await pending;
       assertOpen();
+      if (params.isAccountRuntimeCurrent && !await params.isAccountRuntimeCurrent()) {
+        throw new Error('requester_account_context_unavailable');
+      }
       return result;
     } finally {
       if (artifactWrite === pending) artifactWrite = undefined;
@@ -559,7 +607,11 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
       try { await cleanupAttemptRoot(); } catch (error) { failures.push(error); }
       if (promoted) {
         try {
-          await createBestEffortCleanupDirectory(rootDir, undefined, { failureMode: 'reject' })();
+          if (!await isConnectedServiceMaterializedHomeRetainedOnExit({
+            materializationKey: params.materializationKey, homeRoot: rootDir,
+          })) {
+            await createBestEffortCleanupDirectory(rootDir, undefined, { failureMode: 'reject' })();
+          }
         } catch (error) { failures.push(error); }
       }
       forgetActiveAttemptIfCurrent(rootDir, attemptId);
@@ -576,11 +628,14 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
   };
 
   const qualifiedAuthority =
-    params.connectedAccountMaterializationAuthority.kind === 'qualified'
+    params.connectedAccountMaterializationAuthority?.kind === 'qualified'
       ? params.connectedAccountMaterializationAuthority
       : null;
   const legacyV021Authority =
-    params.connectedAccountMaterializationAuthority.kind === 'legacy_unfenced_one_shot';
+    params.connectedAccountMaterializationAuthority?.kind === 'legacy_unfenced_one_shot';
+  const nativeHomeOnly = params.connectedAccountMaterializationAuthority === undefined
+    && params.allowNativeAccountState === false && params.recordsByServiceId.size === 0
+    && !params.qualifiedPurposeBindingSnapshot;
   const qualifiedPurposeBindingSnapshot =
     params.qualifiedPurposeBindingSnapshot ?? null;
   const exactPurposeBindingSubjectId =
@@ -629,7 +684,11 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
           requestAuthRequired: false,
           legacyV021: true,
         })
-      : null;
+      : nativeHomeOnly
+        ? async () => await materializeQualifiedConnectedAccountLaunchForSpawn({ ...params,
+            rootDir: attemptRoot, writeArtifacts, waitForArtifactWrite: async () => { await artifactWrite; },
+            previousMaterializedRoot: rootDir, nativeHomeOnly: true, requestAuthRequired: false })
+        : null;
   if (!materializer) {
     forgetActiveAttemptIfCurrent(rootDir, attemptId);
     return null;
@@ -717,14 +776,20 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
     const cleanupFinalRoot = createBestEffortCleanupDirectory(
       rootDir, undefined, { failureMode: 'reject' },
     );
-    // The promoted root is custody: its cleanup receipt awaits real root
-    // removal and surfaces a typed failure alongside the leaf credential
-    // cleanup instead of detaching the removal and suppressing its outcome.
+    // Unretained promoted roots are custody: cleanup awaits real removal and
+    // surfaces failures alongside credential retirement. Resumable native
+    // state remains under the existing home reclamation owner.
     const runPromotedRootCleanup = async (
       cleanupCredentials: (() => void | Promise<void>) | null | undefined,
     ): Promise<void> => {
       let rootRemovalError: unknown;
-      const rootRemoval = cleanupFinalRoot().catch((error: unknown) => {
+      const rootRemoval = (async () => {
+        // Native rollouts may be the only resume state. Credential/runtime
+        // retirement still runs; the existing orphan sweep owns later reclamation.
+        if (!await isConnectedServiceMaterializedHomeRetainedOnExit({
+          materializationKey: params.materializationKey, homeRoot: rootDir,
+        })) await cleanupFinalRoot();
+      })().catch((error: unknown) => {
         rootRemovalError = error;
       });
       let credentialCleanupError: unknown;

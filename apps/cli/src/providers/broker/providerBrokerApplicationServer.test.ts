@@ -141,6 +141,42 @@ async function closeApplicationTarget(input: Readonly<{
 }
 
 describe('Provider broker target application integration', () => {
+  it('keeps the consumer endpoint through upstream replacement and refuses withdrawn admission before effects', async () => {
+    let admitted = true;
+    let generation = 'daemon-one';
+    let effects = 0;
+    const server = await startProviderBrokerApplicationServer({
+      handler: async () => ({ ok: false, reasonCode: 'transport_identity_mismatch' }),
+      localConsumer: {
+        authorize: (headers) => headers.authorization === 'Bearer consumer-local-token',
+        request: async (request) => {
+          if (!admitted) return { ok: false, reasonCode: 'resource_unavailable' };
+          effects += 1;
+          return { ok: true, response: {
+            ok: true, status: 200, statusText: 'OK', headers: { 'content-type': 'text/plain' },
+            body: new ReadableStream<Uint8Array>({ start(controller) {
+              controller.enqueue(new TextEncoder().encode(`${generation}:${request.pathAndQuery}`));
+              controller.close();
+            } }),
+          } };
+        },
+      },
+    });
+    try {
+      expect(server.localConsumerEndpointUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/u);
+      const url = `${server.localConsumerEndpointUrl}/v1/messages`;
+      const headers = { authorization: 'Bearer consumer-local-token' };
+      expect(await (await fetch(url, { headers })).text()).toBe('daemon-one:/v1/messages');
+      generation = 'daemon-two';
+      expect(await (await fetch(url, { headers })).text()).toBe('daemon-two:/v1/messages');
+      admitted = false;
+      expect((await fetch(url, { headers })).status).toBe(403);
+      expect((await fetch(url, { headers: { authorization: 'Bearer another-consumer' } })).status).toBe(403);
+      expect(effects).toBe(2);
+    } finally {
+      await server.close();
+    }
+  });
   it('releases an unclaimed target and its stream lifetime when admission is cancelled, then permits an immediate retry', async () => {
     const closeFirstLifetime = vi.fn(async () => {});
     const closeRetryLifetime = vi.fn(async () => {});

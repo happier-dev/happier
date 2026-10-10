@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { QualifiedProviderAccountUsageHistoryRequestV4Schema, QualifiedProviderAccountUsageHistoryResponseV4Schema } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
+import { projectProviderAccountUsageRecordV4 } from '../providerAccountUsage/recordStorage';
 import {
     QualifiedConnectedAccountCredentialDeleteResponseV4Schema,
     ManagedResourceDispositionV1Schema,
@@ -68,6 +70,7 @@ import {
     deleteQualifiedProviderAccountUsageRecord,
     readExactQualifiedConnectedServiceUsageSource,
     readQualifiedProviderAccountUsageRecord,
+    readQualifiedProviderAccountUsageHistory,
     readQualifiedConnectedAccountQuota,
     requestQualifiedProviderAccountUsageRefresh,
     requestQualifiedConnectedAccountQuotaRefresh,
@@ -554,7 +557,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                 error: "connect_credential_referenced_by_group",
             });
         }
-        if (result.status === "managed_resources_review_required") return reply.code(409).send({ error: result.status, resources: result.resources });
+        if (result.status === "managed_resources_review_required") return reply.code(409).send({ error: result.status, resources: [...result.resources] });
         if (result.status === "ready") return reply.send({ status: "ready" });
         if (result.status === "superseded") {
             return reply.code(409).send({
@@ -1316,6 +1319,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
         },
     );
 
+
     app.post("/v4/connect/qualified/provider-account-usage", {
         preHandler: app.authenticate,
         schema: {
@@ -1401,6 +1405,19 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
         }
     });
 
+    app.get('/v4/connect/qualified/provider-account-usage/history', {
+        preHandler: app.authenticate,
+        schema: { querystring: z.object({ query: z.union([z.string(), z.array(z.string())]) }).strict(), response: { 200: QualifiedProviderAccountUsageHistoryResponseV4Schema, 400: z.object({ error: z.literal('invalid-params') }).strict(), 404: NotFoundResponseSchema, 409: QualifiedProviderAccountUsageReadErrorV4Schema } },
+    }, async (request, reply) => {
+        let query;
+        try { query = parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema, request.query.query); }
+        catch { return reply.code(400).send({ error: 'invalid-params' }); }
+        const page = await readQualifiedProviderAccountUsageHistory({ accountId: request.userId, ...query });
+        if (page.status === 'storage_mode_mismatch') return reply.code(409).send({ error: 'provider_account_usage_storage_mode_mismatch' });
+        if (page.status === 'not_found') return reply.code(404).send({ error: 'provider_account_usage_not_found' });
+        return reply.send({ entries: page.entries.map(entry => ({ id: entry.id, observedAtMs: entry.observedAtMs, record: projectProviderAccountUsageRecordV4(entry.record, page.sources) })), nextCursor: page.nextCursor });
+    });
+
     app.get(
         "/v4/connect/qualified/provider-account-usage/record",
         {
@@ -1449,45 +1466,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                     error: "provider_account_usage_not_found",
                 });
             }
-            const fallbackFetchedAt =
-                record.snapshot?.fetchedAtMs ?? 0;
-            const fallbackStaleAfterMs =
-                record.snapshot?.staleAfterMs ?? 0;
-            return reply.send({
-                content:
-                    record.payloadMode === "plain_json_v1"
-                        ? {
-                            t: "plain",
-                            v: record.snapshot!,
-                        }
-                        : {
-                            t: "encrypted",
-                            c: record.sealedPayload!.ciphertext,
-                            ...(record.sealedPayload!.subscription
-                                ? { subscription: record.sealedPayload!.subscription }
-                                : {}),
-                        },
-                metadata: {
-                    fetchedAt:
-                        record.fetchedAt ?? fallbackFetchedAt,
-                    staleAfterMs:
-                        record.staleAfterMs
-                        ?? fallbackStaleAfterMs,
-                    status:
-                        record.status === "unavailable"
-                        || record.status === "estimated"
-                        || record.status === "error"
-                            ? record.status
-                            : "ok",
-                    ...(record.refreshRequestedAt !== undefined
-                        ? {
-                            refreshRequestedAt:
-                                record.refreshRequestedAt,
-                        }
-                        : {}),
-                },
-                sources: qualifiedRecord.sources,
-            });
+            return reply.send(projectProviderAccountUsageRecordV4(record, qualifiedRecord.sources));
         },
     );
 

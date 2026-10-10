@@ -121,7 +121,10 @@ async function resolveDraftFacts(input: Readonly<{
   exactDestination?: Readonly<{ endpointUrl: string; resolvedAddresses: readonly string[] }>;
   lifetime: ProviderOperationLifetime;
 }>) {
-  const currentProviderSettings = readProviderSettingsForCli(input.snapshot.settings);
+  if (input.snapshot.providerConnectionsCatalog?.status !== 'ready') {
+    return { ok: false as const, error: error(input.request, 'provider_probe_authorization_invalid') };
+  }
+  const currentProviderSettings = readProviderSettingsForCli(input.snapshot);
   if (currentProviderSettings.diagnostics.length > 0
     || currentProviderSettings.settings.connections.some((connection) => connection.id === input.request.draftConnectionId)) {
     return { ok: false as const, error: error(input.request, 'provider_probe_authorization_invalid') };
@@ -161,7 +164,7 @@ async function resolveDraftFacts(input: Readonly<{
   const resolution = resolveProviderConnectionForMachine({
     connectionId: input.request.draftConnectionId,
     machineId: input.request.machineId,
-    accountSettings: { providerSettingsV1: providerSettings },
+    providerSettings,
     registry,
     dnsEvidenceByEndpointUrl,
   });

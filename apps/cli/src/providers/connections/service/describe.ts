@@ -2,7 +2,6 @@ import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers
 import { PROVIDER_SETTINGS_LIMITS_V1 } from '@happier-dev/protocol/providers/settings/limits';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { readOwnRecordValue } from '@happier-dev/protocol/providers/ownRecordValue';
-import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
 import { resolveProviderGrantV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
 import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
 import type { ResolvedProviderManagedConnectedAccountPurposeDeclarationV1 } from '@happier-dev/protocol';
@@ -11,7 +10,7 @@ import {
   getProviderContribution,
   normalizeProviderContributionRegistryKey,
 } from '@/providers/registry/lookup';
-import { redactProviderSettingsDiagnostic, replaceSettings } from './settings';
+import { redactProviderSettingsDiagnostic } from './settings';
 import type {
   ProviderConnectionDescription,
   ProviderConnectionRuntimeSummary,
@@ -88,7 +87,7 @@ export async function describeProviderConnections(
     wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
   });
   const snapshot = await deps.loadSnapshot(input.registryProjection);
-  const read = readProviderSettingsFromAccountSettingsV1(snapshot.rawAccountSettings);
+  const read = { settings: snapshot.providerSettings, diagnostics: snapshot.providerSettingsDiagnostics ?? [] };
   if (read.diagnostics.some((diagnostic) => diagnostic.path === 'providerSettingsV1')) {
     return { status: 'error', error: createProviderErrorV1('provider_settings_invalid', { machineId: input.machineId }) };
   }
@@ -169,14 +168,14 @@ export async function describeProviderConnections(
         return { defaultBaseUrl, accountOverrideBaseUrl, machineOverrideBaseUrl };
       };
       const dnsEvidence = await deps.collectDnsEvidence({
-        accountSettings: snapshot.rawAccountSettings,
+        providerSettings: snapshot.providerSettings,
         connectionId: connection.id,
         machineId: input.machineId,
         registry: snapshot.registry,
         lifetime,
       });
       const resolution = deps.resolveConnection({
-        accountSettings: snapshot.rawAccountSettings,
+        providerSettings: snapshot.providerSettings,
         connectionId: connection.id,
         machineId: input.machineId,
         registry: snapshot.registry,
@@ -196,11 +195,11 @@ export async function describeProviderConnections(
       const accountViewResolution = accountViewConnection === connection
         ? resolution
         : deps.resolveConnection({
-            accountSettings: replaceSettings(snapshot.rawAccountSettings, {
+            providerSettings: {
               ...settings,
               connections: settings.connections.map((entry) =>
                 entry.id === connection.id ? accountViewConnection : entry),
-            }),
+            },
             connectionId: connection.id,
             machineId: input.machineId,
             registry: snapshot.registry,
@@ -247,6 +246,8 @@ export async function describeProviderConnections(
             connectionId: connection.id,
             machineId: input.machineId,
             accountSettings: snapshot.accountSettings,
+            providerSettings: settings,
+            savedSecretResources: snapshot.savedSecretResources,
             registry: snapshot.registry,
             dnsEvidence,
             resolution: resolved,
@@ -392,6 +393,12 @@ export async function describeProviderConnections(
             }
           : null,
         deployment,
+        ...(connection.gatewayPlacement !== undefined
+          ? { gatewayPlacement: connection.gatewayPlacement }
+          : {}),
+        ...(connection.claudeHelperModels !== undefined
+          ? { claudeHelperModels: connection.claudeHelperModels }
+          : {}),
         managedLocalOption,
         endpoints,
         scope: resolved?.record.scope ?? null,

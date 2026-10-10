@@ -9,6 +9,7 @@ import {
     ConnectedServiceIdSchema,
     assertConnectedServiceCredentialRecordBinding,
 } from "@happier-dev/protocol";
+import { createStoredReadSchema } from "@happier-dev/protocol/json/storedReadSchema";
 
 import { decryptString } from "@/modules/encrypt";
 import {
@@ -201,7 +202,7 @@ export function decodeLegacyQualifiedConnectedAccountCredentialEnvelope(
             new Uint8Array(params.token),
         )
         : new TextDecoder().decode(params.token);
-    const record = ConnectedServiceCredentialRecordV1Schema.parse(
+    const record = createStoredReadSchema(ConnectedServiceCredentialRecordV1Schema).parse(
         JSON.parse(json),
     );
     assertConnectedServiceCredentialRecordBinding({

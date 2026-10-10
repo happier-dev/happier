@@ -81,6 +81,11 @@ export type QualifiedConnectedAccountMaterialSnapshot = Readonly<{
 }>;
 
 export type QualifiedConnectedAccountEstablishedRuntimeOwner = Readonly<{
+  /** Account-scoped connection identity, independent of renewable bearer material. */
+  readCredentialConfigurationRevision(input: Readonly<{
+    account: QualifiedConnectedAccountRef;
+    signal?: AbortSignal;
+  }>): Promise<string | null>;
   /**
    * Host-private currentness read for the request-auth broker. It exposes no credential content
    * and does not invoke a plugin runtime.
@@ -104,6 +109,17 @@ export type QualifiedConnectedAccountEstablishedRuntimeOwner = Readonly<{
     account: QualifiedConnectedAccountRef;
     signal?: AbortSignal;
   }>): Promise<QualifiedConnectedAccountMaterialSnapshot>;
+  /** Provider-free quota capability and admitted source basis for host usage initialization. */
+  readQuotaSourceSnapshot(input: Readonly<{
+    account: QualifiedConnectedAccountRef;
+    credentialRevision: string;
+    configurationRevision: string | null;
+    accountMode: 'plain' | 'e2ee';
+  }>): Promise<Readonly<{
+    credentialRevision: string;
+    credentialConfigurationRevision: string | null;
+    isCurrent(): Promise<boolean>;
+  }> | null>;
   /** Invokes the existing trusted contribution materializer over one opened,
    * recipient-scoped Team snapshot without creating a recipient source row. */
   invokeDirectMaterial<TOperation extends Extract<
@@ -123,7 +139,11 @@ export type QualifiedConnectedAccountEstablishedRuntimeOwner = Readonly<{
       operation: TOperation;
       /** Host-private callback fence; never a public plugin capability field. */
       expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1;
+      expectedConfigurationRevision?: string | null;
       assertEffectfulOperationAllowed?: () => void;
+      /** Lets the host establish usage before provider work under the admitted source basis. */
+      beforeInvoke?: (basis: Pick<QualifiedConnectedAccountEstablishedInvocationBasis,
+        'credentialRevision' | 'credentialConfigurationRevision' | 'isCurrent'>) => MaybePromise<void>;
       signal?: AbortSignal;
     }>,
   ): Promise<Readonly<{
@@ -136,6 +156,7 @@ export type QualifiedConnectedAccountEstablishedRuntimeOwner = Readonly<{
       operation: TOperation;
       /** Host-private callback fence; never a public plugin capability field. */
       expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1;
+      expectedConfigurationRevision?: string | null;
       assertEffectfulOperationAllowed?: () => void;
       signal?: AbortSignal;
     }>,
@@ -392,6 +413,8 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
       'acquireRuntimeRegistry' | 'isRuntimeRegistryCurrent'
     >;
     credentials: StoredCredentials;
+    isAccountRuntimeCurrent?: () => Promise<boolean>;
+    runAccountOperation?: <T>(operation: () => Promise<T>) => Promise<T>;
     getAccountEncryptionMode(signal?: AbortSignal): Promise<ConnectedServiceAccountEncryptionMode>;
     readCredential?: CredentialSnapshotReader;
     readConfiguration?: ConfigurationSnapshotReader;
@@ -403,10 +426,23 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
     randomBytes?: (length: number) => Uint8Array;
   }>,
 ): QualifiedConnectedAccountEstablishedRuntimeOwner {
-  const readCredential =
+  async function assertAccountRuntimeCurrent(): Promise<void> {
+    if (params.isAccountRuntimeCurrent && !await params.isAccountRuntimeCurrent()) {
+      throw new Error('connected_account_runtime_not_current');
+    }
+  }
+  async function runCurrentAccountRead<T>(read: () => Promise<T>): Promise<T> {
+    await assertAccountRuntimeCurrent();
+    const result = await (params.runAccountOperation ? params.runAccountOperation(read) : read());
+    await assertAccountRuntimeCurrent();
+    return result;
+  }
+  const credentialSnapshotReader =
     params.readCredential ?? readQualifiedConnectedAccountCredentialV4;
-  const readConfiguration =
+  const readCredential: CredentialSnapshotReader = (input) => runCurrentAccountRead(() => credentialSnapshotReader(input));
+  const configurationSnapshotReader =
     params.readConfiguration ?? readQualifiedConnectedAccountConfigurationV4;
+  const readConfiguration: ConfigurationSnapshotReader = (input) => runCurrentAccountRead(() => configurationSnapshotReader(input));
   const material = resolveCryptoMaterial(params.credentials);
   const randomBytes =
     params.randomBytes
@@ -466,12 +502,20 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
     return credential.credentialRevision;
   }
 
+  async function readCredentialConfigurationRevision(input: Readonly<{
+    account: QualifiedConnectedAccountRef;
+    signal?: AbortSignal;
+  }>): Promise<string | null> {
+    const snapshots = await readExactSnapshots(input.account, input.signal);
+    return snapshots.credential.configurationRevision;
+  }
+
   async function readMaterialSnapshot(input: Readonly<{
     account: QualifiedConnectedAccountRef;
     signal?: AbortSignal;
   }>): Promise<QualifiedConnectedAccountMaterialSnapshot> {
     assertNotAborted(input.signal);
-    const accountMode = await params.getAccountEncryptionMode(input.signal);
+    const accountMode = await runCurrentAccountRead(() => params.getAccountEncryptionMode(input.signal));
     if (accountMode === 'unknown') {
       throw new Error('Connected-account account encryption mode is unavailable');
     }
@@ -629,7 +673,10 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
       operation: TOperation;
       /** Host-private callback fence; never a public plugin capability field. */
       expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1;
+      expectedConfigurationRevision?: string | null;
       assertEffectfulOperationAllowed?: () => void;
+      beforeInvoke?: (basis: Pick<QualifiedConnectedAccountEstablishedInvocationBasis,
+        'credentialRevision' | 'credentialConfigurationRevision' | 'isCurrent'>) => MaybePromise<void>;
       signal?: AbortSignal;
     }>,
   ): Promise<Readonly<{
@@ -637,11 +684,15 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
     basis: QualifiedConnectedAccountEstablishedInvocationBasis;
   }>> {
       assertNotAborted(input.signal);
-      const accountMode = await params.getAccountEncryptionMode(input.signal);
+      const accountMode = await runCurrentAccountRead(() => params.getAccountEncryptionMode(input.signal));
       if (accountMode === 'unknown') {
         throw new Error('Connected-account account encryption mode is unavailable');
       }
       const initial = await readExactSnapshots(input.account, input.signal);
+      if (input.expectedConfigurationRevision !== undefined
+        && initial.credential.configurationRevision !== input.expectedConfigurationRevision) {
+        throw new Error('Connected-account configuration revision is no longer current');
+      }
       const expectedCredentialRevision =
         input.expectedCredentialRevision ?? initial.credential.credentialRevision;
       if (
@@ -806,19 +857,42 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
         }
         const baseConfiguration = admittedConfiguration.snapshot;
         const exactConfiguration: PluginConnectedAccountRuntimeConfiguration =
-          baseConfiguration;
+          params.isAccountRuntimeCurrent || params.runAccountOperation
+            ? Object.freeze<PluginConnectedAccountRuntimeConfiguration>({
+                ...baseConfiguration,
+                getSecret: (fieldId, options) => runCurrentAccountRead(() => baseConfiguration.getSecret(fieldId, options)),
+              })
+            : baseConfiguration;
         const credentialReader: ConnectedAccountCredentialReader =
           Object.freeze({
             async get(key, options) {
               assertNotAborted(options?.signal ?? input.signal);
+              await assertAccountRuntimeCurrent();
               return credentialPayload.values[key] ?? null;
             },
           });
         const runtimeConfigurationRevision =
           exactConfiguration.revision;
+        const isCurrent = () => (
+          params.reloadController.isRuntimeRegistryCurrent(lease.registry)
+          && runtimeLease.isCurrent()
+        );
 
         input.assertEffectfulOperationAllowed?.();
-        const result = await invoker.invokeEstablished({
+        if (input.beforeInvoke) {
+          assertNotAborted(input.signal);
+          await assertAccountRuntimeCurrent();
+          if (!isCurrent()) {
+            throw new Error('Connected-account runtime generation is no longer current');
+          }
+          await input.beforeInvoke(Object.freeze({
+            credentialRevision: initial.credential.credentialRevision,
+            credentialConfigurationRevision: initial.credential.configurationRevision,
+            isCurrent,
+          }));
+          assertNotAborted(input.signal);
+        }
+        const result = await runCurrentAccountRead(() => invoker.invokeEstablished({
           target: Object.freeze({
             account: input.account,
             expectedCredentialRevision,
@@ -833,6 +907,7 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
           }),
           async isConfigurationCurrent(configuration) {
             if (configuration !== exactConfiguration) return false;
+            if (params.isAccountRuntimeCurrent && !await params.isAccountRuntimeCurrent()) return false;
             if (!await configurationOwner.isCurrent(baseConfiguration)) return false;
             const latest = await readExactSnapshots(input.account, input.signal);
             return latest.credential.configurationRevision
@@ -846,6 +921,7 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
                 );
           },
           async isCredentialRevisionCurrent() {
+            if (params.isAccountRuntimeCurrent && !await params.isAccountRuntimeCurrent()) return false;
             const latest = await readCredential({
               token: params.credentials.token,
               ref: input.account,
@@ -859,11 +935,7 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
             );
           },
           ...(input.signal ? { signal: input.signal } : {}),
-        });
-        const isCurrent = () => (
-          params.reloadController.isRuntimeRegistryCurrent(lease.registry)
-          && runtimeLease.isCurrent()
-        );
+        }));
         return Object.freeze({
           result,
           basis: Object.freeze({
@@ -989,6 +1061,8 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
     signal?: AbortSignal;
   }>): Promise<ConnectedAccountRuntimeEstablishedResult<TOperation>> {
     assertNotAborted(input.signal);
+    await assertAccountRuntimeCurrent();
+    if (!await input.isCurrent()) throw new Error('connected_account_runtime_not_current');
     const lease = await params.reloadController.acquireRuntimeRegistry();
     try {
       if (!params.reloadController.isRuntimeRegistryCurrent(lease.registry)) {
@@ -1016,25 +1090,34 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
         revision: input.sourceVersion,
         values: Object.freeze({ ...(input.material.configuration?.values ?? {}) }),
         async getSecret(fieldId) {
+          await assertAccountRuntimeCurrent();
+          if (!await input.isCurrent()) throw new Error('connected_account_runtime_not_current');
           return input.material.configuration?.secretValues[fieldId] ?? null;
         },
       });
       const credentials: ConnectedAccountCredentialReader = Object.freeze({
         async get(key) {
+          await assertAccountRuntimeCurrent();
+          if (!await input.isCurrent()) throw new Error('connected_account_runtime_not_current');
           return input.material.credential.values[key] ?? null;
         },
       });
-      return await invoker.invokeEstablished({
-        target: Object.freeze({
-          account: input.account,
-          expectedCredentialRevision: input.sourceVersion,
-          expectedRuntimeConfigurationRevision: input.sourceVersion,
-        }),
-        operation: input.operation,
-        context: Object.freeze({ account: input.account, configuration, credentials }),
-        isConfigurationCurrent: (candidate) => candidate === configuration && input.isCurrent(),
-        isCredentialRevisionCurrent: input.isCurrent,
-        ...(input.signal ? { signal: input.signal } : {}),
+      return await runCurrentAccountRead(async () => {
+        if (!await input.isCurrent()) throw new Error('connected_account_runtime_not_current');
+        return await invoker.invokeEstablished({
+          target: Object.freeze({
+            account: input.account,
+            expectedCredentialRevision: input.sourceVersion,
+            expectedRuntimeConfigurationRevision: input.sourceVersion,
+          }),
+          operation: input.operation,
+          context: Object.freeze({ account: input.account, configuration, credentials }),
+          isConfigurationCurrent: async (candidate) => candidate === configuration
+            && (!params.isAccountRuntimeCurrent || await params.isAccountRuntimeCurrent()) && await input.isCurrent(),
+          isCredentialRevisionCurrent: async () => (!params.isAccountRuntimeCurrent || await params.isAccountRuntimeCurrent())
+            && await input.isCurrent(),
+          ...(input.signal ? { signal: input.signal } : {}),
+        });
       });
     } finally {
       await lease.release();
@@ -1046,7 +1129,7 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
     signal?: AbortSignal;
   }>): Promise<readonly ConnectedAccountConfiguredEndpoint[]> {
     assertNotAborted(input.signal);
-    const accountMode = await params.getAccountEncryptionMode(input.signal);
+    const accountMode = await runCurrentAccountRead(() => params.getAccountEncryptionMode(input.signal));
     if (accountMode === 'unknown') {
       throw new Error('Connected-account account encryption mode is unavailable');
     }
@@ -1121,22 +1204,58 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
     }
   }
 
-  return Object.freeze({
-    readCredentialRevision,
-    readMaterialSnapshot,
-    invokeDirectMaterial,
-    readConfiguredEndpoints,
-    invokeWithReceipt,
+  async function readQuotaSourceSnapshot(
+    input: Parameters<QualifiedConnectedAccountEstablishedRuntimeOwner['readQuotaSourceSnapshot']>[0],
+  ) {
+    const materialSnapshot = await readMaterialSnapshot({ account: input.account });
+    if (materialSnapshot.credentialRevision !== input.credentialRevision
+      || materialSnapshot.configurationRevision !== input.configurationRevision
+      || await params.getAccountEncryptionMode() !== input.accountMode) return null;
+    const lease = await params.reloadController.acquireRuntimeRegistry();
+    try {
+      const runtimeLease = await lease.registry.resolveConnectedAccountRuntime?.(input.account.service);
+      if (!runtimeLease?.runtime.quota
+        || runtimeLease.occurrenceId !== materialSnapshot.contributionContractVersion
+        || !sameService(runtimeLease.ref, input.account.service)) return null;
+      const isCurrent = async () => {
+        if (!await materialSnapshot.isCurrent()
+          || (params.isAccountRuntimeCurrent && !await params.isAccountRuntimeCurrent())
+          || await params.getAccountEncryptionMode() !== input.accountMode) return false;
+        // Recheck the synchronous generation fence after every asynchronous read.
+        return params.reloadController.isRuntimeRegistryCurrent(lease.registry)
+          && runtimeLease.isCurrent();
+      };
+      if (!await isCurrent()) return null;
+      return Object.freeze({
+        credentialRevision: materialSnapshot.credentialRevision,
+        credentialConfigurationRevision: materialSnapshot.configurationRevision,
+        isCurrent,
+      });
+    } finally {
+      await lease.release();
+    }
+  }
+
+  const owner: QualifiedConnectedAccountEstablishedRuntimeOwner = {
+    readCredentialConfigurationRevision: (input) => runCurrentAccountRead(() => readCredentialConfigurationRevision(input)),
+    readCredentialRevision: (input) => runCurrentAccountRead(() => readCredentialRevision(input)),
+    readMaterialSnapshot: (input) => runCurrentAccountRead(() => readMaterialSnapshot(input)),
+    readQuotaSourceSnapshot: (input) => runCurrentAccountRead(() => readQuotaSourceSnapshot(input)),
+    invokeDirectMaterial: (input) => runCurrentAccountRead(() => invokeDirectMaterial(input)),
+    readConfiguredEndpoints: (input) => runCurrentAccountRead(() => readConfiguredEndpoints(input)),
+    invokeWithReceipt: (input) => runCurrentAccountRead(() => invokeWithReceipt(input)),
     async invoke<TOperation extends ConnectedAccountRuntimeEstablishedOperation>(
       input: Readonly<{
         account: QualifiedConnectedAccountRef;
         operation: TOperation;
         expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1;
+        expectedConfigurationRevision?: string | null;
         assertEffectfulOperationAllowed?: () => void;
         signal?: AbortSignal;
       }>,
     ): Promise<ConnectedAccountRuntimeEstablishedResult<TOperation>> {
-      return (await invokeWithReceipt(input)).result;
+      return (await runCurrentAccountRead(() => invokeWithReceipt(input))).result;
     },
-  });
+  };
+  return Object.freeze(owner);
 }

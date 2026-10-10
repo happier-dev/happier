@@ -39,7 +39,8 @@ export type ConnectedServicesBindingsV2 = ProtocolConnectedServicesBindingsV2;
 
 // Admission preserves absence, but never recovers malformed explicit intent as native auth.
 // The protocol ingress is the sole owner of current validation and released V1 normalization.
-export const ConnectedServicesBindingsIngressSchema = ConnectedServiceBindingsV2IngressSchema.optional();
+export const ConnectedServicesBindingsIngressSchema: ReturnType<typeof ConnectedServiceBindingsV2IngressSchema.optional> =
+  ConnectedServiceBindingsV2IngressSchema.optional();
 
 export function parseConnectedServiceBindingSelections(raw: unknown): ConnectedServiceBindingSelection[] {
   // Recovering metadata projection only; execution admission must validate with the schema above.

@@ -12,7 +12,7 @@ import {
     getMachinePoolCandidateSnapshotInTx,
     type MachinePoolCandidateSnapshot,
 } from "@/app/machines/pools/machinePoolService";
-import { selectMachinePoolCandidate } from "@/app/machines/pools/machinePoolPlacementService";
+import { selectMachinePoolCandidate } from "@happier-dev/protocol/machines/pools";
 import { acquireMachinePoolMutationFenceInTx } from "@/app/machines/pools/machinePoolMutationFence";
 import {
     classifyTeamCredentialBrokerMachineEligibility,
@@ -341,6 +341,7 @@ export async function resolveTeamCredentialBrokerPlacementInTx(
             input.poolEligibleMachineIds!.has(machineId)
         )));
         selectedMachineId = selectMachinePoolCandidate({
+            purpose: "session",
             members: snapshot.value.members,
             availableMachineIds,
             requestKey: input.requestKey,

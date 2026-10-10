@@ -13,6 +13,7 @@ import type { ResolvedProviderContribution } from '@/plugins/projection/registry
 import type {
   ResolveManagedProviderPurposeBindingIntent,
 } from '@/providers/managed/resolvePurposeBindingSnapshot';
+import { DaemonProviderModelProjectionResponseV1Schema, type DaemonProviderModelProjectionRequestV1 } from '@happier-dev/protocol/rpc/providers';
 
 import { resolveProviderConnectionForMachine } from '../registry';
 import {
@@ -136,6 +137,19 @@ describe('provider spawn runtime catalog bridge', () => {
       currentObservationAuthorizationFingerprints: new Set([currentAuthorization]),
       modelId: 'wrong',
     })).toEqual({ model: null, loadState: 'unknown' });
+    expect(selectProviderRuntimeCatalogSelectionObservation({
+      runtimeState: state,
+      machineId: 'machine-a',
+      connectionId: 'pc_gateway',
+      catalogFingerprint: 'catalog:v1:current',
+      currentObservationAuthorizationFingerprints: new Set([currentAuthorization]),
+      modelId: 'probe-only',
+      additionalModelIds: ['probe-only', 'wrong', 'disappeared'],
+    })?.additionalModels).toEqual([{
+      id: 'probe-only',
+      name: 'Probe only',
+      capabilities: { toolRoundTrips: 'supported', reasoningControls: 'unsupported' },
+    }]);
   });
 
   it('does not treat an aged model-load observation as current admission truth', () => {
@@ -319,7 +333,7 @@ describe('provider spawn runtime catalog bridge', () => {
     }
   });
 
-  it('resolves a managed catalog model through stable source authorization without a durable endpoint', async () => {
+  it.each(['sessionMachine', 'remote'] as const)('resolves a managed catalog model on %s through stable source authorization without a durable endpoint', async (placement) => {
     const connectionId = 'pc_managed_gateway';
     const contributionKey = 'acme.gateway/gateway';
     const definition = ProviderContributionV1Schema.parse({
@@ -364,6 +378,7 @@ describe('provider spawn runtime catalog bridge', () => {
       },
       managedRuntime: {
         kind: 'managed',
+        sharing: 'connectionMachine',
         endpointTemplateIds: ['responses'],
         connectedAccounts: [{
           purpose: 'upstream',
@@ -424,6 +439,7 @@ describe('provider spawn runtime catalog bridge', () => {
         displayName: 'Gateway',
         displayNameMode: 'automatic',
         deployment: { kind: 'managedLocal' },
+        ...(placement === 'remote' ? { gatewayPlacement: { kind: 'machine', machineId: 'machine-hub' } } : {}),
         purposeBindingDefaults: {
           upstream: {
             kind: 'account',
@@ -441,7 +457,7 @@ describe('provider spawn runtime catalog bridge', () => {
     const initialResolution = resolveProviderConnectionForMachine({
       connectionId,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: initialSettings },
+      providerSettings: initialSettings,
       registry,
       dnsEvidenceByEndpointUrl: new Map(),
     });
@@ -465,7 +481,7 @@ describe('provider spawn runtime catalog bridge', () => {
     const authorizedResolution = resolveProviderConnectionForMachine({
       connectionId,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: providerSettings },
+      providerSettings,
       registry,
       dnsEvidenceByEndpointUrl: new Map(),
     });
@@ -540,6 +556,39 @@ describe('provider spawn runtime catalog bridge', () => {
       target: input.target,
     }));
     const readRuntimeState = vi.fn(async () => runtimeState);
+    let projectionStale = false;
+    let projectionCold = false;
+    let upstreamCatalogReads = 0;
+    const readModelProjection = async (request: DaemonProviderModelProjectionRequestV1, signal: AbortSignal) => {
+      signal.throwIfAborted();
+      expect(request).toMatchObject({ machineId: 'machine-hub', agentTargetKey: 'agent:happier.agent.codex/codex',
+        includeDirectMaterialization: true,
+        providerConnection: { connectionId, expectedConnectionSecurityFingerprint: authorizedResolution.record.connectionSecurityFingerprint } });
+      expect(request).not.toHaveProperty('application');
+      // The external hub RPC owns cold demand: a default read can acquire a
+      // managed runtime and query upstream; current_only can only observe.
+      if (projectionCold && request.refreshPolicy === 'current_only') {
+        return DaemonProviderModelProjectionResponseV1Schema.parse({ status: 'success', agentTargetKey: request.agentTargetKey, groups: [] });
+      }
+      if (projectionCold) upstreamCatalogReads++;
+      return DaemonProviderModelProjectionResponseV1Schema.parse({ status: 'success', agentTargetKey: request.agentTargetKey,
+        groups: [{ connectionId, providerName: 'Gateway', connectionName: 'Gateway', connectionRole: 'default',
+          connectionDisplayNameMode: 'automatic', connectionRevision: 1,
+          sourceAuthority: { provider: { identity: contribution.identity, definitionRevision: 1 },
+            connectionSecurityFingerprint: authorizedResolution.record.connectionSecurityFingerprint },
+          authorization: { authorized: true }, modelLoadAction: 'descriptor_absent', manualModelPolicy: 'allowed',
+          supportsFreeformModelIds: false, suppressedConnectedServiceIds: [], rows: [{
+            ref: { agentTargetKey: request.agentTargetKey, providerConnectionId: connectionId, modelId: 'managed-model' },
+            descriptor: { id: 'managed-model', name: 'Managed model' },
+            application: { agentTargetKey: request.agentTargetKey, implementationIdentity: contribution.identity,
+              endpointTemplateId: 'responses', protocol: 'openai-responses' },
+            sources: { manual: false, static: false, probe: true }, confidence: 'probe',
+            compatibility: { result: { status: 'verified', selectedProtocol: 'openai-responses', evidence: { sourceUrls: ['https://example.test'], verifiedAt: '2026-10-09' } },
+              compatibilityFingerprint: 'compatibility:v1:remote', confirmed: false },
+            endpointHealth: 'not_checked', catalog: { stale: projectionStale }, loadState: 'unknown', visibility: 'visible',
+          }] }],
+      });
+    };
 
     await expect(resolveProviderRuntimeCatalogModel({
       selection: {
@@ -560,10 +609,31 @@ describe('provider spawn runtime catalog bridge', () => {
       runtimeStateStore: {
         read: readRuntimeState,
       },
+      ...(placement === 'remote' ? { readModelProjection, signal: new AbortController().signal } : {}),
     })).resolves.toEqual({
       id: 'managed-model',
       name: 'Managed model',
     });
+    if (placement === 'remote') {
+      expect(readRuntimeState).not.toHaveBeenCalled();
+      projectionCold = true;
+      await expect(resolveProviderRuntimeCatalogModel({
+        selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: connectionId, modelId: 'managed-model' } },
+        machineId: 'machine-a', accountSettings: { providerSettingsV1: providerSettings }, providerSettings, registry,
+        dnsEvidenceByEndpointUrl: new Map(), resolveManagedPurposeBindingIntent,
+        runtimeStateStore: { read: readRuntimeState }, readModelProjection, signal: new AbortController().signal,
+      })).rejects.toMatchObject({ code: 'provider_endpoint_unavailable' });
+      expect(upstreamCatalogReads).toBe(0);
+      projectionCold = false;
+      projectionStale = true;
+      await expect(resolveProviderRuntimeCatalogModel({
+        selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: connectionId, modelId: 'managed-model' } },
+        machineId: 'machine-a', accountSettings: { providerSettingsV1: providerSettings }, providerSettings, registry,
+        dnsEvidenceByEndpointUrl: new Map(), resolveManagedPurposeBindingIntent,
+        runtimeStateStore: { read: readRuntimeState }, readModelProjection, signal: new AbortController().signal,
+      })).rejects.toMatchObject({ code: 'provider_endpoint_unavailable' });
+      return;
+    }
     expect(resolveManagedPurposeBindingIntent).toHaveBeenCalledWith({
       purpose: authorizedResolution.record.deployment.purposeBindingIntents.bindings[0]!.purpose,
       target: authorizedResolution.record.deployment.purposeBindingIntents.bindings[0]!.target,

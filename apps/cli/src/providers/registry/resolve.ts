@@ -3,13 +3,13 @@ import { createProviderAccountGrantFingerprintV1, createProviderConnectionSecuri
 import { readOwnRecordValue } from '@happier-dev/protocol/providers/ownRecordValue';
 import { resolveProviderGrantV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
 import { ProviderConnectionIdSchema, ProviderMachineIdSchema } from '@happier-dev/protocol/providers/ids';
-import { QualifiedConnectedAccountPurposeBindingsV1Schema } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
-import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
-import type { CustomProviderTemplateV1, ProviderCatalogProbeV1, ProviderCatalogCommandFallbackV1, ProviderConnectionId, ProviderConnectionV1, ProviderContributionV1, ProviderCredentialTransportV1, ProviderEndpointTemplateV1, ProviderManagedSecurityEndpointV1, ProviderModelLoadDescriptorV1, ProviderSettingsV1 } from '@happier-dev/protocol';
+import { resolveProviderManagedRuntimeDeclarationV1, resolveManagedPurposeBindingIntentsV1 as resolveManagedPurposeBindingIntents } from '@happier-dev/protocol/providers/contributions';
+import type { ProviderConnectionId, ProviderConnectionV1, ProviderEndpointTemplateV1, ProviderManagedSecurityEndpointV1, ProviderSettingsV1 } from '@happier-dev/protocol';
 import type { ProviderConnectionSecurityFingerprintV1 } from '@happier-dev/protocol/providers';
 import { ProviderConnectionSecurityFingerprintV1Schema } from '@happier-dev/protocol/providers/fingerprints';
+import { readProviderConnectionSourceFactsV1, type ProviderConnectionSourceFactsV1 } from '@happier-dev/protocol/providers/connections/sourceFactsV1';
 
-import { readProviderSettingsForCli } from '../settings/read';
+import type { ProviderSettingsReadResultV1 } from '@happier-dev/protocol';
 import { getProviderContribution } from './lookup';
 import type {
   ProviderConnectionResolution,
@@ -29,40 +29,6 @@ class ProviderEndpointRealizationError extends Error {
     this.name = 'ProviderEndpointRealizationError';
     this.code = code;
   }
-}
-
-type RuntimeProviderFacts = Readonly<{
-  endpointTemplates: readonly ProviderEndpointTemplateV1[];
-  credentialTransports: readonly ProviderCredentialTransportV1[];
-  catalogProbes: readonly ProviderCatalogProbeV1[];
-  availabilityProbe?: NonNullable<ProviderContributionV1['discovery']>['availabilityProbe'];
-  catalogFallback?: ProviderCatalogCommandFallbackV1;
-  modelLoad?: ProviderModelLoadDescriptorV1;
-}>;
-
-function readCatalogProbes(
-  catalog: ProviderContributionV1['catalog'] | CustomProviderTemplateV1['catalog'],
-) {
-  return 'probes' in catalog ? catalog.probes : [];
-}
-
-function factsFromContribution(definition: ProviderContributionV1): RuntimeProviderFacts {
-  return {
-    endpointTemplates: definition.endpointTemplates,
-    credentialTransports: definition.credential?.transports ?? [],
-    catalogProbes: readCatalogProbes(definition.catalog),
-    ...(definition.discovery ? { availabilityProbe: definition.discovery.availabilityProbe } : {}),
-    ...(definition.discovery?.catalogFallback ? { catalogFallback: definition.discovery.catalogFallback } : {}),
-    ...(definition.modelLoad ? { modelLoad: definition.modelLoad } : {}),
-  };
-}
-
-function factsFromCustom(template: CustomProviderTemplateV1): RuntimeProviderFacts {
-  return {
-    endpointTemplates: template.endpointTemplates,
-    credentialTransports: template.credential?.transports ?? [],
-    catalogProbes: readCatalogProbes(template.catalog),
-  };
 }
 
 function readOverrideMap(
@@ -235,63 +201,9 @@ function endpointUnresolved(
   return { status: 'endpoint_unresolved', connectionId, reason, diagnostics };
 }
 
-function sameContributionIdentity(
-  left: Readonly<{ pluginId: string; localId: string }>,
-  right: Readonly<{ pluginId: string; localId: string }>,
-): boolean {
-  return left.pluginId === right.pluginId && left.localId === right.localId;
-}
-
-function resolveManagedPurposeBindingIntents(
-  connection: ProviderConnectionV1,
-  deployment: Omit<Extract<
-    ResolvedProviderConnectionRecord['deployment'],
-    { kind: 'managedLocal' }
-  >, 'purposeBindingIntents'>,
-) {
-  const defaults = connection.purposeBindingDefaults ?? {};
-  const declarationsByPurpose = new Map(
-    (deployment.managedRuntime.connectedAccounts ?? []).map((declaration) => [
-      declaration.purpose,
-      declaration,
-    ]),
-  );
-  for (const [purpose, target] of Object.entries(defaults)) {
-    const declaration = declarationsByPurpose.get(purpose);
-    const targetService = target.kind === 'account'
-      ? target.account.service
-      : target.service;
-    if (!declaration || !sameContributionIdentity(declaration.service, targetService)) {
-      return null;
-    }
-  }
-  if ((deployment.managedRuntime.connectedAccounts ?? []).some(
-    (declaration) => declaration.required === true && defaults[declaration.purpose] === undefined,
-  )) {
-    return null;
-  }
-  if (
-    deployment.managedRuntime.connectedAccountPurposeBindingPolicy?.minimumBound === 1
-    && Object.keys(defaults).length === 0
-  ) {
-    return null;
-  }
-  const parsed = QualifiedConnectedAccountPurposeBindingsV1Schema.safeParse({
-    v: 1,
-    bindings: Object.entries(defaults).map(([purpose, target]) => ({
-      purpose: {
-        consumer: deployment.implementationIdentity,
-        purpose,
-      },
-      target,
-    })),
-  });
-  return parsed.success ? parsed.data : null;
-}
-
 function resolveProviderConnectionFromSettings(
-  input: Omit<ResolveProviderConnectionForMachineInput, 'accountSettings'>,
-  settingsRead: ReturnType<typeof readProviderSettingsForCli>,
+  input: Omit<ResolveProviderConnectionForMachineInput, 'providerSettings'>,
+  settingsRead: ProviderSettingsReadResultV1,
 ): ProviderConnectionResolution {
   const connectionIdResult = ProviderConnectionIdSchema.safeParse(input.connectionId);
   if (!connectionIdResult.success) return invalidResolution(input.connectionId, [], 'invalid_connection_id');
@@ -309,7 +221,7 @@ function resolveProviderConnectionFromSettings(
   }
 
   let source: ResolvedProviderConnectionSource;
-  let facts: RuntimeProviderFacts;
+  let facts: ProviderConnectionSourceFactsV1;
   let managedDeployment: Omit<Extract<
     ResolvedProviderConnectionRecord['deployment'],
     { kind: 'managedLocal' }
@@ -333,7 +245,7 @@ function resolveProviderConnectionFromSettings(
       provenance: resolvedContribution.provenance,
       definition: resolvedContribution.definition,
     };
-    facts = factsFromContribution(resolvedContribution.definition);
+    facts = readProviderConnectionSourceFactsV1(resolvedContribution.definition);
     if (connection.deployment.kind === 'managedLocal') {
       const declaredManagedRuntime =
         resolvedContribution.definition.managedRuntime;
@@ -357,7 +269,7 @@ function resolveProviderConnectionFromSettings(
     if (connection.displayNameMode === 'automatic') displayName = resolvedContribution.definition.name;
   } else {
     source = { kind: 'custom', template: connection.source.template };
-    facts = factsFromCustom(connection.source.template);
+    facts = readProviderConnectionSourceFactsV1(connection.source.template);
   }
 
   if (connection.deployment.kind === 'managedLocal') {
@@ -370,6 +282,9 @@ function resolveProviderConnectionFromSettings(
     }
     const purposeBindingIntents =
       resolveManagedPurposeBindingIntents(connection, managedDeployment);
+    if (purposeBindingIntents === 'unbound') {
+      return invalidResolution(connectionId, diagnostics, 'managed_purpose_bindings_missing');
+    }
     if (!purposeBindingIntents) {
       return invalidResolution(
         connectionId,
@@ -412,6 +327,7 @@ function resolveProviderConnectionFromSettings(
       credentialTransports: facts.credentialTransports,
       ...(facts.modelLoad ? { modelLoad: facts.modelLoad } : {}),
       managedDeployment: {
+        gatewayPlacement: connection.gatewayPlacement,
         implementationIdentity: resolvedManagedDeployment.implementationIdentity,
         managedRuntime: resolvedManagedDeployment.managedRuntime,
         logicalEndpoints: managedLogicalEndpoints,
@@ -531,18 +447,18 @@ function resolveProviderConnectionFromSettings(
 export function resolveProviderConnectionForMachine(
   input: ResolveProviderConnectionForMachineInput,
 ): ProviderConnectionResolution {
-  return resolveProviderConnectionFromSettings(input, readProviderSettingsForCli(input.accountSettings));
+  return resolveProviderConnectionFromSettings(input, { settings: input.providerSettings, diagnostics: [] });
 }
 
 /**
  * Reuses the canonical connection resolver with one already-parsed settings
- * snapshot. Bulk consumers use this to avoid repeatedly parsing the same
- * Account settings while preserving the resolver's endpoint, grant, and
+ * snapshot. Bulk consumers use this to share one admitted domain basis
+ * while preserving the resolver's endpoint, grant, and
  * deployment decisions in one owner.
  */
 export function resolveProviderConnectionForMachineFromSettingsRead(
-  input: Omit<ResolveProviderConnectionForMachineInput, 'accountSettings'>,
-  settingsRead: ReturnType<typeof readProviderSettingsForCli>,
+  input: Omit<ResolveProviderConnectionForMachineInput, 'providerSettings'>,
+  settingsRead: ProviderSettingsReadResultV1,
 ): ProviderConnectionResolution {
   return resolveProviderConnectionFromSettings(input, settingsRead);
 }

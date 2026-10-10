@@ -18,6 +18,7 @@ import type { AgentConnectedAccountLaunchContributionV1 } from '@happier-dev/plu
 import type { TrackedSession } from '@/daemon/types';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import { createSessionConnectedServiceAuthHotApply } from './sessionConnectedServiceAuthHotApply';
+import { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
 import { ConnectedServiceSessionAuthSwitchLockRegistry, createConnectedServiceSessionAuthSwitchCore } from '../runtimeAuth/connectedServiceSessionAuthSwitchCore';
 import { projectConnectedServiceRuntimeAuthTargetInput } from '../runtimeAuth/projectRuntimeAuthTargetInput';
 import { projectAgentConnectedAccountLaunchCatalogEntry } from '@/plugins/projection/registry/agentCatalogEntryHooks';
@@ -3751,6 +3752,7 @@ describe('switchSessionConnectedServiceAuth', () => {
     const codexRuntimeAuthAdapter = (await readCodexRuntimeAuthAdapterRegistration()) as
       ConnectedServiceProviderRuntimeAuthAdapter;
     const hotApply = createSessionConnectedServiceAuthHotApply({
+      runtimeRegistry: new ConnectedServiceRuntimeRegistry(),
       resolveRuntimeAuthAdapter: async () => codexRuntimeAuthAdapter,
       validateGroupMutationCurrentness: async () => ({ current: true }),
     });

@@ -1,5 +1,6 @@
 import { DaemonProviderModelLoadResponseV1Schema, DaemonProviderConnectionsDescribeRequestV1Schema, DaemonProviderConnectionsDescribeResponseV1Schema, DaemonProviderConnectionMutationRequestV1Schema, DaemonProviderConnectionMutationResponseV1Schema, DaemonProviderProbeRequestV1Schema, DaemonProviderModelsResponseV1Schema, DaemonProviderProbeResponseV1Schema, DaemonProviderModelProjectionRequestV1Schema, DaemonProviderModelProjectionResponseV1Schema, DaemonProviderTeamCredentialRequestPolicySupportRequestV1Schema, DaemonProviderTeamCredentialRequestPolicySupportResponseV1Schema, DaemonProviderModelSettingsMutationRequestV1Schema, DaemonProviderModelSettingsMutationResponseV1Schema, DaemonProviderTeamCredentialResourceTestCandidateRequestV1Schema, DaemonProviderTeamCredentialResourceTestCandidateResponseV1Schema, DaemonProviderTeamCredentialBrokerEligibilityRequestV1Schema, DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema, DaemonProviderBindingStatusRequestV1Schema, DaemonProviderBindingStatusResponseV1Schema, DaemonProviderProfileMigrationPreviewRequestV1Schema, DaemonProviderProfileMigrationPreviewResponseV1Schema, DaemonProviderProfileMigrationConfirmRequestV1Schema, DaemonProviderProfileMigrationConfirmResponseV1Schema, DaemonProviderProfileMigrationConflictConfirmRequestV1Schema, DaemonProviderProfileMigrationConflictConfirmResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { DaemonProviderProfileMigrationPrepareSourceRequestV1Schema, DaemonProviderProfileMigrationPrepareSourceResponseV1Schema, type DaemonProviderProfileMigrationPrepareSourceRequestV1, type DaemonProviderProfileMigrationPrepareSourceResponseV1 } from '@happier-dev/protocol/rpc/providers';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { ProviderCatalogRefreshResult } from '@/providers/probe/catalog';
 import type {
@@ -19,6 +20,7 @@ import type { DaemonProviderDraftProbeRequestV1 } from '@happier-dev/protocol/rp
 import type { DaemonProviderConnectionMutationRequestV1, DaemonProviderConnectionMutationResponseV1, DaemonProviderConnectionsDescribeRequestV1, DaemonProviderConnectionsDescribeResponseV1, DaemonProviderModelProjectionRequestV1, DaemonProviderModelProjectionResponseV1, DaemonProviderTeamCredentialRequestPolicySupportRequestV1, DaemonProviderTeamCredentialRequestPolicySupportResponseV1, DaemonProviderModelSettingsMutationRequestV1, DaemonProviderModelSettingsMutationResponseV1, DaemonProviderTeamCredentialResourceTestCandidateRequestV1, DaemonProviderTeamCredentialResourceTestCandidateResponseV1, DaemonProviderTeamCredentialBrokerEligibilityRequestV1, DaemonProviderTeamCredentialBrokerEligibilityResponseV1, DaemonProviderBindingStatusRequestV1, DaemonProviderBindingStatusResponseV1, DaemonProviderProfileMigrationPreviewRequestV1, DaemonProviderProfileMigrationPreviewResponseV1, DaemonProviderProfileMigrationConfirmRequestV1, DaemonProviderProfileMigrationConfirmResponseV1, DaemonProviderProfileMigrationConflictConfirmRequestV1, DaemonProviderProfileMigrationConflictConfirmResponseV1 } from '@happier-dev/protocol/rpc/providers';
 
 export type MachineProviderRpcServices = Readonly<{
+  prepareProfileMigrationSource(input: DaemonProviderProfileMigrationPrepareSourceRequestV1, signal?: AbortSignal): Promise<DaemonProviderProfileMigrationPrepareSourceResponseV1>;
   probe(
     input: Readonly<{ connectionId: string; machineId: string }>,
     waiterLifetime?: ProviderProbeWaiterLifetime,
@@ -70,6 +72,17 @@ export function registerMachineProviderRpcHandlers(input: Readonly<{
       ...(request.sourceProfileId ? { sourceProfileId: request.sourceProfileId } : {}),
     }),
   });
+  input.rpcHandlerManager.registerHandler(
+    RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_PREPARE_SOURCE,
+    async (raw, context) => {
+      const request = DaemonProviderProfileMigrationPrepareSourceRequestV1Schema.parse(raw);
+      const result = !input.featureGate.isEnabled('providers') ? featureDisabled(request)
+        : request.machineId !== input.machineId
+          ? { status: 'error' as const, error: createProviderErrorV1('provider_not_enabled_on_machine', { machineId: request.machineId }) }
+          : await input.services.prepareProfileMigrationSource(request, context?.signal);
+      return DaemonProviderProfileMigrationPrepareSourceResponseV1Schema.parse(result);
+    },
+  );
   input.rpcHandlerManager.registerHandler(
     RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE,
     async (raw) => {

@@ -8,6 +8,7 @@ import {
   ProviderSettingsV1Schema,
   formatSavedSecretCatalogReferenceV1,
   sealSavedSecretResourceStoredContentV1,
+  splitProviderSettingsV1,
 } from '@happier-dev/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -42,13 +43,6 @@ const persistenceMocks = vi.hoisted(() => ({
 vi.mock('@/persistence', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/persistence')>(),
   readStoredCredentials: persistenceMocks.readStoredCredentials,
-}));
-
-vi.mock('@/features/serverFeaturesClient', () => ({
-  fetchServerFeaturesSnapshot: vi.fn(async () => ({
-    status: 'ready' as const,
-    features: FeaturesResponseSchema.parse({ features: { teams: { enabled: true } }, capabilities: {} }),
-  })),
 }));
 
 const token = 'source-account-token';
@@ -135,30 +129,32 @@ function sourceSettings() {
     }],
   });
   const resolution = resolveProviderConnectionForMachine({
-    connectionId, machineId: 'machine-a', accountSettings: { providerSettingsV1: initial },
+    connectionId, machineId: 'machine-a', providerSettings: initial,
     registry, dnsEvidenceByEndpointUrl,
   });
   if (resolution.status !== 'resolved') throw new Error('expected resolved connection');
+  const { catalog, defaults } = splitProviderSettingsV1(ProviderSettingsV1Schema.parse({
+    ...initial,
+    accountGrants: [{
+      v: 1, connectionId,
+      connectionSecurityFingerprint: resolution.record.connectionSecurityFingerprint,
+      confirmedAt: 1,
+    }],
+    secretBindingsByConnectionId: {
+      [connectionId]: { account: { apiKey: sharedRef } },
+    },
+  }));
   return {
     fingerprint: resolution.record.connectionSecurityFingerprint,
     settings: AccountSettingsSchema.parse({
-      providerSettingsV1: {
-        ...initial,
-        accountGrants: [{
-          v: 1, connectionId,
-          connectionSecurityFingerprint: resolution.record.connectionSecurityFingerprint,
-          confirmedAt: 1,
-        }],
-        secretBindingsByConnectionId: {
-          [connectionId]: { account: { apiKey: sharedRef } },
-        },
-      },
+      providerDefaultModelSelectionsByAgentTargetKeyV1: defaults,
     }),
+    providerConnectionsCatalog: { status: 'ready' as const, revision: 1, catalog },
   };
 }
 
 describe('Provider direct source admits its shared Saved Secret before preparation', () => {
-  const { settings, fingerprint } = sourceSettings();
+  const { settings, fingerprint, providerConnectionsCatalog } = sourceSettings();
   const source = {
     v: 1 as const,
     kind: 'provider_connection' as const,
@@ -180,9 +176,14 @@ describe('Provider direct source admits its shared Saved Secret before preparati
     vi.mocked(axios.get).mockReset();
     persistenceMocks.readStoredCredentials.mockReset();
     persistenceMocks.readStoredCredentials.mockResolvedValue({ token, encryption: null });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(teamsEnabled), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })));
     setActiveAccountSettingsSnapshot({
       source: 'network',
       settings,
+      providerConnectionsCatalog,
       settingsVersion: 1,
       loadedAtMs: 1,
       settingsSecretsReadKeys: [],
@@ -194,6 +195,7 @@ describe('Provider direct source admits its shared Saved Secret before preparati
 
   afterEach(() => {
     resetActiveAccountSettingsSnapshotForTests();
+    vi.unstubAllGlobals();
   });
 
   it('refuses a revoked shared key whose AccountChange hint was missed', async () => {

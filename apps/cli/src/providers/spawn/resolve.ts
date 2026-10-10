@@ -5,13 +5,14 @@ import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { mergeProviderCatalogV1, resolveProviderCatalogReferenceV1 } from '@happier-dev/protocol/providers/catalog/merge';
 import { normalizeProviderEndpointUrlSyntax } from '@happier-dev/protocol/providers/safety/url';
 import { readOwnRecordValue } from '@happier-dev/protocol/providers/ownRecordValue';
-import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import type { ProviderSettingsReadResultV1 } from '@happier-dev/protocol';
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
 import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
 import { createProviderManagedRuntimeBindingEqualityKeyV1, resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
 import { selectProviderRuntimeCredentialTransportV1 } from '@happier-dev/protocol/providers/binding-compatibility';
 import type { AgentProviderRequirementsV1, ProviderBindingAuthorizationTicketV1, ProviderCredentialTransportV1, ProviderErrorV1, ProviderModelLoadDescriptorV1, ProviderModelDescriptorV1, ProviderSettingsV1, ProviderObservationAuthorizationFingerprintV1, ProviderProbeRequestFingerprintV1, ResolvedProviderManagedRuntimeDeclarationV1, QualifiedConnectedAccountPurposeBindingsV1, SessionModelSelectionV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
 import type {
+  AgentProviderBindingAdapter,
   AgentProviderBindingPrepared,
   AgentProviderBindingResolvedFacts,
 } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -49,10 +50,21 @@ import type {
 } from '@/plugins/projection/registry/types';
 import { projectProviderRuntimeBindingBasis } from './runtimeBindingBasis';
 
+export function selectProviderSpawnClaudeHelperModels(input: Readonly<{
+  adapter?: Pick<AgentProviderBindingAdapter, 'supportsClaudeHelperModels'>;
+  configuredModels?: AgentProviderBindingResolvedFacts['claudeHelperModels'];
+}>): AgentProviderBindingResolvedFacts['claudeHelperModels'] {
+  return input.adapter?.supportsClaudeHelperModels === true
+    ? input.configuredModels ?? {}
+    : undefined;
+}
+
 export type ManagedProviderBindingAuthorizationFacts = Readonly<{
   v: 1;
   agentTargetKey: string;
   selection: AgentProviderBindingResolvedFacts['selection'];
+  claudeHelperModels?: AgentProviderBindingResolvedFacts['claudeHelperModels'];
+  modelSettings?: AgentProviderBindingResolvedFacts['modelSettings'];
   contributionKey: string;
   endpoint: Readonly<{
     endpointTemplateId: string;
@@ -82,6 +94,7 @@ export type ProviderSpawnAuthorization = ProviderSpawnAuthorizationBase & Readon
   | {
       deployment: Readonly<{
         kind: 'managedLocal';
+        gatewayPlacement?: import('@happier-dev/protocol/providers/connections/v1').ProviderGatewayPlacementV1;
         contribution: ResolvedProviderContribution;
         implementation: Readonly<
           Omit<
@@ -207,13 +220,15 @@ export type ResolveProviderSpawnAuthorizationInput = Readonly<{
   agentId: string;
   accountSettings: unknown;
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
-  providerSettings?: ProviderSettingsV1;
+  providerSettings: ProviderSettingsV1;
   registry: ProviderContributionRegistryView;
   dnsEvidenceByEndpointUrl: ProviderEndpointDnsEvidence;
   localCandidateUrlsByConnectionId?: Parameters<typeof resolveProviderConnectionForMachine>[0]['localCandidateUrlsByConnectionId'];
   lease: PluginRuntimeRegistryLease;
   /** Exact selected-model descriptor from the current runtime catalog snapshot. */
   runtimeModelDescriptor?: ProviderModelDescriptorV1;
+  /** Helper descriptors from the same current authorized catalog observation. */
+  runtimeAdditionalModelDescriptors?: readonly ProviderModelDescriptorV1[];
   /** True when the exact current catalog has a successful snapshot, including an empty one. */
   runtimeCatalogSnapshotExists?: boolean;
   managedPurposeBindingSnapshot?: QualifiedConnectedAccountPurposeBindingsV1;
@@ -271,17 +286,16 @@ export function resolveProviderProbeAuthorization(input: Readonly<{
   request: ProviderProbeAuthorizationRequest;
   accountSettings: unknown;
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
-  providerSettings?: ProviderSettingsV1;
+  providerSettings: ProviderSettingsV1;
   /** A caller-owned point-in-time parse for one bulk Provider projection. */
-  settingsRead?: ReturnType<typeof readProviderSettingsFromAccountSettingsV1>;
+  settingsRead?: ProviderSettingsReadResultV1;
   registry: ProviderContributionRegistryView;
   dnsEvidenceByEndpointUrl: ProviderEndpointDnsEvidence;
   localCandidateUrlsByConnectionId?: ResolveProviderSpawnAuthorizationInput['localCandidateUrlsByConnectionId'];
   managedPurposeBindingSnapshot?: QualifiedConnectedAccountPurposeBindingsV1;
 }>): ProviderProbeHostAuthorizationResult {
-  const settingsRead = input.settingsRead
-    ?? readProviderSettingsFromAccountSettingsV1(input.accountSettings);
-  const providerSettings = input.providerSettings ?? settingsRead.settings;
+  const settingsRead = input.settingsRead ?? { settings: input.providerSettings, diagnostics: [] };
+  const providerSettings = settingsRead.settings;
   const resolution = resolveProviderConnectionForMachineFromSettingsRead({
     connectionId: input.request.connectionId,
     machineId: input.request.machineId,
@@ -300,6 +314,10 @@ export function resolveProviderProbeAuthorization(input: Readonly<{
     return { ok: false, error: createProviderErrorV1(record.authorization.errorCode, context) };
   }
   if (input.request.deployment === 'managedLocal') {
+    const placement = record.connection.gatewayPlacement;
+    if (placement?.kind === 'machine' && placement.machineId !== input.request.machineId) {
+      return { ok: false, error: createProviderErrorV1('provider_not_enabled_on_machine', context) };
+    }
     const managedPurposeBindingSnapshot =
       input.managedPurposeBindingSnapshot;
     const contribution = record.source.kind === 'contribution'
@@ -542,17 +560,16 @@ export function resolveProviderModelLoadAuthorization(input: Readonly<{
   request: ProviderModelLoadHostRequest;
   accountSettings: unknown;
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
-  providerSettings?: ProviderSettingsV1;
+  providerSettings: ProviderSettingsV1;
   registry: ProviderContributionRegistryView;
   dnsEvidenceByEndpointUrl: ProviderEndpointDnsEvidence;
   localCandidateUrlsByConnectionId?: ResolveProviderSpawnAuthorizationInput['localCandidateUrlsByConnectionId'];
 }>): ProviderModelLoadHostAuthorizationResult {
-  const providerSettings = input.providerSettings
-    ?? readProviderSettingsFromAccountSettingsV1(input.accountSettings).settings;
+  const providerSettings = input.providerSettings;
   const resolution = resolveProviderConnectionForMachine({
     connectionId: input.request.connectionId,
     machineId: input.request.machineId,
-    accountSettings: input.accountSettings,
+    providerSettings,
     registry: input.registry,
     dnsEvidenceByEndpointUrl: input.dnsEvidenceByEndpointUrl,
     ...(input.localCandidateUrlsByConnectionId
@@ -758,7 +775,7 @@ export type ProviderSpawnDefinitiveRejectionResult =
 /**
  * Side-effect-free subset of provider launch authority.
  *
- * This owns only facts that the current Account settings and cold plugin
+ * This owns only facts that the admitted Provider catalog and cold plugin
  * manifest prove locally.  It deliberately does not resolve endpoints, DNS,
  * grants, activation, runtime observations, credentials, or materialization:
  * those retain their normal launch-time owners and may still fail after a
@@ -768,7 +785,7 @@ export function resolveProviderSpawnDefinitiveRejection(input: Readonly<{
   selection: unknown;
   agentTargetKey: string;
   agentId: string;
-  accountSettings: unknown;
+  providerSettings: ProviderSettingsV1;
   registry: Pick<
     ResolvedContributionRegistry,
     'agentDefinitionsById' | 'providersByContributionKey'
@@ -784,7 +801,7 @@ export function resolveProviderSpawnDefinitiveRejection(input: Readonly<{
   const connectionId = selection.data.providerConnectionId;
   if (connectionId === null) return { ok: true };
 
-  const providerSettings = readProviderSettingsFromAccountSettingsV1(input.accountSettings).settings;
+  const providerSettings = input.providerSettings;
   const connection = providerSettings.connections.find((candidate) => candidate.id === connectionId);
   if (!connection) {
     return {
@@ -867,12 +884,11 @@ export function resolveProviderSpawnAuthorization(
   if (connectionId === null || input.selection.ref.agentTargetKey !== input.agentTargetKey) {
     return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent') };
   }
-  const providerSettings = input.providerSettings
-    ?? readProviderSettingsFromAccountSettingsV1(input.accountSettings).settings;
+  const providerSettings = input.providerSettings;
   const resolution = resolveProviderConnectionForMachine({
     connectionId,
     machineId: input.machineId,
-    accountSettings: input.accountSettings,
+    providerSettings,
     registry: input.registry,
     dnsEvidenceByEndpointUrl: input.dnsEvidenceByEndpointUrl,
     ...(input.localCandidateUrlsByConnectionId
@@ -910,6 +926,12 @@ export function resolveProviderSpawnAuthorization(
       : {}),
   });
   if (!model) return { ok: false, error: createProviderErrorV1('provider_model_not_found', errorContext) };
+  const configuredModelSettings = record.connection.modelSettings?.[model.id];
+  const modelSettings = configuredModelSettings?.temperature != null || configuredModelSettings?.maxTokens != null
+    ? configuredModelSettings : undefined;
+  if (modelSettings && adapter.adapter.supportsModelSettings !== true) {
+    return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent', errorContext) };
+  }
   const compatibility = resolveProviderModelCompatibility({
     record,
     providerSettings,
@@ -975,6 +997,28 @@ export function resolveProviderSpawnAuthorization(
         error: createProviderErrorV1('provider_credential_transport_unavailable', errorContext),
       };
     }
+    const claudeHelperModels = selectProviderSpawnClaudeHelperModels({
+      adapter: adapter.adapter,
+      configuredModels: record.connection.claudeHelperModels,
+    });
+    for (const modelId of Object.values(claudeHelperModels ?? {})) {
+      const runtimeProbe = modelId === model.id
+        ? input.runtimeModelDescriptor
+        : input.runtimeAdditionalModelDescriptors?.find((candidate) => candidate.id === modelId);
+      const helperModel = selectedModel({
+        modelId,
+        record,
+        facts,
+        providerSettings,
+        supportsFreeformModelIds: adapter.support.supportsFreeformModelIds,
+        runtimeCatalogSnapshotExists: input.runtimeCatalogSnapshotExists === true
+          || input.runtimeModelDescriptor !== undefined,
+        ...(runtimeProbe ? { runtimeProbe } : {}),
+      });
+      if (!helperModel) {
+        return { ok: false, error: createProviderErrorV1('provider_model_not_found', errorContext) };
+      }
+    }
     let prepared: AgentProviderBindingPrepared;
     try {
       prepared = prepareLeasedAgentProviderBinding({
@@ -984,6 +1028,8 @@ export function resolveProviderSpawnAuthorization(
           v: 1,
           agentTargetKey: input.agentTargetKey,
           connectionId,
+          model,
+          ...(claudeHelperModels !== undefined ? { claudeHelperModels } : {}),
         },
       });
     } catch {
@@ -1000,6 +1046,7 @@ export function resolveProviderSpawnAuthorization(
       },
       deployment: {
         kind: 'managedLocal',
+        gatewayPlacement: record.connection.gatewayPlacement ?? { kind: 'sessionMachine' },
         implementationIdentity: record.deployment.implementationIdentity,
         managedRuntime: record.deployment.managedRuntime,
       },
@@ -1018,6 +1065,8 @@ export function resolveProviderSpawnAuthorization(
       v: 1,
       agentTargetKey: input.agentTargetKey,
       selection: { connectionId, model },
+      ...(modelSettings ? { modelSettings } : {}),
+      ...(claudeHelperModels !== undefined ? { claudeHelperModels } : {}),
       contributionKey: contributionSource.contributionKey,
       endpoint: {
         endpointTemplateId: endpointTemplate.id,
@@ -1059,6 +1108,7 @@ export function resolveProviderSpawnAuthorization(
     const authorization: ProviderSpawnAuthorization = {
         deployment: {
           kind: 'managedLocal',
+          gatewayPlacement: record.connection.gatewayPlacement ?? { kind: 'sessionMachine' },
           contribution,
           implementation: {
             kind: 'managedLocal',
@@ -1171,6 +1221,7 @@ export function resolveProviderSpawnAuthorization(
       model,
     },
     contributionKey: facts.contributionKey,
+    ...(modelSettings ? { modelSettings } : {}),
     endpoint: {
       endpointTemplateId: endpoint.endpointTemplateId,
       normalizedUrl: endpoint.normalizedUrl,

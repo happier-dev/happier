@@ -2,6 +2,28 @@ import type { ProviderBrokerApplicationBindingV1, ProviderWireProtocol, Provider
 import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
 
 import { getProviderContribution, type ProviderContributionRegistryView, type ResolvedProviderConnectionRecord } from '@/providers/registry';
+import type { ProviderConnectionId } from '@happier-dev/protocol';
+import { DaemonProviderModelProjectionRequestV1Schema, type DaemonProviderModelProjectionRequestV1 } from '@happier-dev/protocol/rpc/providers';
+
+/** A personal connection reads its own application, never the Team credential
+ * Provider-Connection adapter's distinct broker executable projection. */
+export function createAccountConnectionModelProjectionRequest(input: Readonly<{
+  machineId: string;
+  connectionId: ProviderConnectionId;
+  expectedConnectionSecurityFingerprint: string;
+  agentTargetKey: string;
+  application?: ProviderBrokerApplicationBindingV1;
+  refreshPolicy?: 'current_only';
+}>): DaemonProviderModelProjectionRequestV1 {
+  return DaemonProviderModelProjectionRequestV1Schema.parse({
+    machineId: input.machineId, agentTargetKey: input.agentTargetKey, mode: 'management',
+    includeDirectMaterialization: true,
+    providerConnection: { connectionId: input.connectionId,
+      expectedConnectionSecurityFingerprint: input.expectedConnectionSecurityFingerprint },
+    ...(input.application ? { application: input.application } : {}),
+    ...(input.refreshPolicy ? { refreshPolicy: input.refreshPolicy } : {}),
+  });
+}
 
 function projectApplicationEndpoint(input: Readonly<{
   implementationIdentity: ProviderBrokerApplicationBindingV1['implementationIdentity'];

@@ -29,6 +29,7 @@ import {
 import {
     listQualifiedUsageSourcesForRecord,
     readQualifiedConnectedAccountUsageRecord,
+    requestQualifiedConnectedAccountQuotaRefresh,
     unlinkQualifiedConnectedAccountQuota,
     writeQualifiedProviderAccountUsageRecord,
 } from "./usageRepository";
@@ -120,6 +121,30 @@ describe("qualified Connected Account usage stored identity", () => {
             staleAfterMs: snapshot.staleAfterMs,
         };
     }
+
+    it('accepts refresh for a producer-initialized account before its first quota observation', async () => {
+        const account = await db.account.create({
+            data: { publicKey: null, encryptionMode: 'plain' },
+            select: { id: true },
+        });
+        const { credential, ref } = await createCredential(account.id);
+        const write = buildUsageWrite(account.id, {
+            credentialRevision: credential.credentialRevision,
+            source: { ref, bindingKind: 'account' },
+            fetchedAt: 0,
+            planLabel: 'not observed',
+        });
+        const snapshot = { ...write.snapshot, state: 'not_loaded' as const, planLabel: null, meters: [] };
+        await writeQualifiedProviderAccountUsageRecord({ ...write, status: 'unavailable', snapshot });
+
+        await expect(requestQualifiedConnectedAccountQuotaRefresh({ accountId: account.id, ref }))
+            .resolves.toBe('written');
+        const stored = await readQualifiedConnectedAccountUsageRecord({ accountId: account.id, ref });
+        expect(stored).toMatchObject({ snapshot: { state: 'not_loaded', meters: [] } });
+        expect(stored?.refreshRequestedAt).toBeGreaterThan(0);
+        await expect(listQualifiedUsageSourcesForRecord({ accountId: account.id, recordId: write.recordId }))
+            .resolves.toEqual([{ ref, bindingKind: 'account' }]);
+    });
 
     it("rejects a group binding whose stored structured tuple disagrees with its retained digests", async () => {
         const account = await db.account.create({

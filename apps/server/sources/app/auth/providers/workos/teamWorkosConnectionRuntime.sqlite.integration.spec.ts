@@ -20,6 +20,58 @@ describe("Team WorkOS connection runtime", () => {
     }, 120_000);
     afterAll(async () => await harness.close());
 
+    it("resolves Home SSO only in Home scope and never as a Team directory carrier", async () => {
+        const provider = await db.identityProviderInstance.create({ data: {
+            kind: "workos_sso", displayName: "Company Home", enabled: true,
+            firstEnabledAt: new Date(), config: { v: 1, kind: "workos_sso" },
+        } });
+        const connection = await db.teamIdentityConnection.create({ data: {
+            teamId: null, providerInstanceId: provider.id, enabled: true,
+            externalReference: { v: 1, kind: "workos_sso", organizationId: "org_home", connectionId: "conn_home" },
+            settings: { v: 1, kind: "workos_sso" },
+        } });
+        const dependencies = { resolvePlatform: () => ({ available: true as const, clientId: "client_home",
+            client: {} as WorkOS, runtimeFingerprint: "platform_home" }) };
+        await expect(inTx((tx) => resolveTeamWorkosConnectionRuntimeInTx(tx, {
+            env: {}, teamId: null, connectionId: connection.id,
+        }, dependencies))).resolves.toMatchObject({ status: "ready", connection: { teamId: null } });
+        const team = await db.team.create({ data: { name: "Other Team" } });
+        await expect(inTx((tx) => resolveTeamWorkosConnectionRuntimeInTx(tx, {
+            env: {}, teamId: team.id, connectionId: connection.id, purpose: "directory",
+        }, dependencies))).resolves.toEqual({ status: "connection_not_found" });
+    });
+
+    it("refuses every runtime of a provider whose legacy Home and Team bindings disagree on the WorkOS namespace", async () => {
+        const team = await db.team.create({ data: { name: "Legacy shared WorkOS Team" } });
+        const provider = await db.identityProviderInstance.create({ data: {
+            kind: "workos_sso", displayName: "Shared company", enabled: true,
+            firstEnabledAt: new Date(), config: { v: 1, kind: "workos_sso" },
+        } });
+        const externalReference = { v: 1, kind: "workos_sso", organizationId: "org_shared", connectionId: "conn_shared" };
+        const homeConnection = await db.teamIdentityConnection.create({ data: {
+            teamId: null, providerInstanceId: provider.id, enabled: true,
+            externalReference, settings: { v: 1, kind: "workos_sso" },
+        } });
+        const teamConnection = await db.teamIdentityConnection.create({ data: {
+            teamId: team.id, providerInstanceId: provider.id, enabled: true,
+            externalReference, settings: { v: 1, kind: "workos_sso" },
+        } });
+        const dependencies = { resolvePlatform: () => ({ available: true as const, clientId: "client_shared",
+            client: {} as WorkOS, runtimeFingerprint: "platform_shared" }) };
+        await expect(inTx((tx) => resolveTeamWorkosConnectionRuntimeInTx(tx, {
+            env: {}, teamId: null, connectionId: homeConnection.id,
+        }, dependencies))).resolves.toMatchObject({ status: "ready" });
+        // Direct database insertion models legacy persisted data, not a current writer bypass.
+        await db.teamIdentityConnection.update({ where: { id: teamConnection.id }, data: {
+            externalReference: { ...externalReference, connectionId: "conn_other" },
+        } });
+        for (const connection of [homeConnection, teamConnection]) {
+            await expect(inTx((tx) => resolveTeamWorkosConnectionRuntimeInTx(tx, {
+                env: {}, teamId: connection.teamId, connectionId: connection.id, includeDisabled: true,
+            }, dependencies))).resolves.toEqual({ status: "unreadable" });
+        }
+    });
+
     it("resolves a Home-owned provider only through the exact enabled Team binding", async () => {
         const team = await db.team.create({ data: { name: "WorkOS Team" } });
         const provider = await db.identityProviderInstance.create({
@@ -85,6 +137,7 @@ describe("Team WorkOS connection runtime", () => {
                 providerSecurityRevision: 4,
                 connectionRevision: 7,
                 platformRuntimeFingerprint: "workos-platform:v1:exact",
+                externalReference: { organizationId: "org_exact", connectionId: "conn_exact" },
             }),
         );
 

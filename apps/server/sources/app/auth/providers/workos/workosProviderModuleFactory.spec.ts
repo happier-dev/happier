@@ -6,6 +6,7 @@ import type { AuthPolicy } from "@/app/auth/authPolicy";
 import {
     createWorkosProviderModule,
     resolveWorkosAuthProviderFeatures,
+    type WorkosProviderModuleInput,
 } from "./workosProviderModuleFactory";
 
 describe("createWorkosProviderModule", () => {
@@ -21,7 +22,7 @@ describe("createWorkosProviderModule", () => {
                 connectionId: "conn_exact",
             },
         }));
-        const module = createWorkosProviderModule({
+        const moduleInput = {
             providerInstanceId: "provider_exact",
             displayName: "Acme SSO",
             enabled: true,
@@ -38,7 +39,8 @@ describe("createWorkosProviderModule", () => {
                 client: { sso: { getAuthorizationUrl, getProfileAndToken } } as unknown as WorkOS,
                 runtimeFingerprint: "workos-platform:v1:test",
             },
-        });
+        } satisfies WorkosProviderModuleInput;
+        const module = createWorkosProviderModule(moduleInput);
 
         await expect(module.oauth?.exchangeCodeForAccessToken({
             env: {},
@@ -62,6 +64,7 @@ describe("createWorkosProviderModule", () => {
             connectionId: "conn_exact",
         })).toBe("user@example.com");
         expect(module.identity?.id).toBe("provider_exact");
+        expect(module.oauth?.accessTokenCustody).toBe("identity_proof_only");
 
         const policy: AuthPolicy = {
             anonymousSignupEnabled: false,
@@ -83,7 +86,7 @@ describe("createWorkosProviderModule", () => {
                 orgMatch: "any",
             },
             offboarding: {
-                enabled: true,
+                enabled: false,
                 intervalSeconds: 900,
                 mode: "per-request-cache",
                 source: "workos_sso",
@@ -94,6 +97,12 @@ describe("createWorkosProviderModule", () => {
             displayName: "Acme SSO",
             enabled: true,
             configured: true,
+            scope: "home",
         }, policy)).toEqual(expectedFeatures);
+        const teamModule = createWorkosProviderModule({
+            ...moduleInput,
+            teamConnection: { teamId: "team_exact", connectionId: "binding_exact" },
+        });
+        expect(teamModule.auth?.resolveFeatures({ env: {}, policy }).offboarding.enabled).toBe(true);
     });
 });

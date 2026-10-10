@@ -17,6 +17,7 @@ import {
 } from '@happier-dev/cli-common/output';
 
 import type { CommandContext } from '@/cli/commandRegistry';
+import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
 import { configuration } from '@/configuration';
 import { parseOauthRedirectPaste } from '@/cloud/parseOauthRedirectPaste';
 import { readStoredCredentials } from '@/persistence';
@@ -42,7 +43,7 @@ type ControlResponse = Awaited<
 type DescribedService = Extract<ControlResponse, { status: 'described' }>;
 type ConfigurationDescription = Extract<
   ControlResponse,
-  { status: 'configuration' | 'configurationCommitted' }
+  { status: 'configuration' }
 >;
 type ConfigurationTarget = ConfigurationDescription['target'];
 type ManualField = Extract<
@@ -226,7 +227,7 @@ function findTarget(
   return matches.length === 1 ? matches[0]! : null;
 }
 
-async function createDaemonClient(): Promise<ConnectedAccountDaemonClient> {
+async function createDaemonClient(signal?: AbortSignal): Promise<ConnectedAccountDaemonClient> {
   const credentials = await readStoredCredentials();
   if (!credentials) {
     throw new Error(
@@ -234,7 +235,7 @@ async function createDaemonClient(): Promise<ConnectedAccountDaemonClient> {
     );
   }
   const { machineId } = await ensureMachineIdForCredentials(credentials);
-  return createConnectedAccountDaemonClient({ credentials, machineId });
+  return createConnectedAccountDaemonClient({ credentials, machineId, ...(signal ? { signal } : {}) });
 }
 
 function modeSelectedByFlags(
@@ -618,6 +619,10 @@ async function continueAuthentication(params: Readonly<{
         }
         case 'awaitingOAuth': {
           leaveWaiting();
+          const mode = resolveAuthenticationMode();
+          if (!mode || mode.kind !== 'oauthAuthorizationCode') {
+            throw new Error('Daemon returned an undeclared OAuth authentication phase.');
+          }
           if (!response.authorizationUrl) {
             throw new Error('Daemon did not provide an OAuth authorization URL.');
           }
@@ -625,10 +630,22 @@ async function continueAuthentication(params: Readonly<{
           if (!params.options.noOpen) {
             await openBrowser(response.authorizationUrl);
           }
-          const pasted = await promptInput('Paste the final redirect URL: ');
-          const parsed = parseOauthRedirectPaste({ pasted });
+          const expectedState = new URL(response.authorizationUrl).searchParams.get('state');
+          const allowRawAuthorizationCode = mode.allowRawAuthorizationCode === true && Boolean(expectedState);
+          const pasted = await promptInput(allowRawAuthorizationCode
+            ? 'Paste the authorization code, final redirect URL, or code#state: '
+            : 'Paste the final redirect URL: ');
+          const parsed = parseOauthRedirectPaste({
+            pasted,
+            redirectUri: mode.callbackUrl ?? response.callbackUrl,
+            allowRawAuthorizationCode,
+          });
           if (!parsed.ok) {
             throw new Error(`Invalid OAuth callback (${parsed.error}).`);
+          }
+          const state = parsed.rawAuthorizationCode ? expectedState : parsed.state;
+          if (!state || (expectedState && state !== expectedState)) {
+            throw new Error('OAuth callback state does not match this authentication attempt.');
           }
           response = await params.client.authenticate({
             operation: 'completeOAuth',
@@ -636,7 +653,7 @@ async function continueAuthentication(params: Readonly<{
             completion: {
               code: parsed.code,
               callbackUrl: response.callbackUrl,
-              state: parsed.state,
+              state,
             },
           });
           break;
@@ -793,13 +810,14 @@ async function describeService(
 async function handleConnectTarget(
   target: ConnectTarget,
   options: ConnectParsedOptions,
+  signal?: AbortSignal,
 ): Promise<void> {
   console.log(
     `\n${banner(`Connecting ${localizedText(target.descriptor.title) || target.commandId}`, {
       subtitle: 'Happier daemon',
     })}\n`,
   );
-  const client = await createDaemonClient();
+  const client = await createDaemonClient(signal);
   const described = await describeService(client, target);
   const accountId =
     options.accountId ??
@@ -853,9 +871,9 @@ function accountPresentation(
   );
 }
 
-async function handleConnectStatus(targets: readonly ConnectTarget[]): Promise<void> {
+async function handleConnectStatus(targets: readonly ConnectTarget[], signal?: AbortSignal): Promise<void> {
   console.log(`\n${sectionTitle('Connection status')}\n`);
-  const client = await createDaemonClient();
+  const client = await createDaemonClient(signal);
   for (const target of targets) {
     const fallbackTitle =
       localizedText(target.descriptor.title) || target.commandId;
@@ -894,7 +912,7 @@ async function handleConnectStatus(targets: readonly ConnectTarget[]): Promise<v
   console.log('');
 }
 
-export async function handleConnectCommand(args: string[]): Promise<void> {
+export async function handleConnectCommand(args: string[], signal?: AbortSignal): Promise<void> {
   const { subcommand, options } = parseConnectArgs(args);
   const targets = await loadConnectTargets();
 
@@ -908,22 +926,24 @@ export async function handleConnectCommand(args: string[]): Promise<void> {
     return;
   }
   if (subcommand.toLowerCase() === 'status') {
-    await handleConnectStatus(targets);
+    await handleConnectStatus(targets, signal);
     return;
   }
   const target = findTarget(targets, subcommand);
   if (!target) {
     throw new Error(`Unknown or ambiguous connected-account service: ${subcommand}`);
   }
-  await handleConnectTarget(target, options);
+  await handleConnectTarget(target, options, signal);
 }
 
 export async function handleConnectCliCommand(
   context: CommandContext,
 ): Promise<void> {
   try {
-    await handleConnectCommand(context.args.slice(1));
+    await handleConnectCommand(context.args.slice(1), context.signal);
   } catch (error) {
+    if (error && typeof error === 'object' && 'details' in error
+      && await tryHandleApprovalRequestCreated({ envelopeKind: 'connect', json: false, result: error.details })) return;
     console.error(
       errorFrame(error instanceof Error ? error.message : 'Unknown error'),
     );

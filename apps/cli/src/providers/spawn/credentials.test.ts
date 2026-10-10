@@ -130,6 +130,10 @@ describe('provider spawn credential resolution', () => {
       machineId: 'machine-a',
     })).toEqual({ ok: true, credential: { kind: 'apiKey', value: 'secret-value' } });
 
+    expect(resolveProviderCredentialPlaintext({ reference: referenceResult.reference, accountSettings,
+      settingsSecretsReadKeys: [key], connectionId: 'pc_gateway', machineId: 'machine-a', isCurrent: () => false,
+    })).toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
+
     const rotated = encryptSecretStringV1('rotated', key, (length) => new Uint8Array(length).fill(4));
     expect(resolveProviderCredentialPlaintext({
       reference: referenceResult.reference,

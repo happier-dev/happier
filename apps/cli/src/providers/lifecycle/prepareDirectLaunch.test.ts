@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   ProviderConnectionIdSchema,
+  ConnectedAccountServiceKeyIngressSchema,
   createProviderErrorV1,
   type SessionProviderBindingMetadataV1,
 } from '@happier-dev/protocol';
@@ -274,13 +275,15 @@ describe('direct Provider launch lifecycle', () => {
 
   it('suppresses native auth before returning the Provider launch', async () => {
     const events: string[] = [];
+    const nativeServiceKey = ConnectedAccountServiceKeyIngressSchema.parse('openai-codex');
+    const githubServiceKey = ConnectedAccountServiceKeyIngressSchema.parse('github');
     const attempt = {
       deployment: { kind: 'external' as const },
       authorization: {
         sessionBindingMetadata: bindingMetadata,
         support: {
           authIsolation: {
-            suppressConnectedServiceIds: ['openai-codex'],
+            suppressConnectedServiceIds: [nativeServiceKey],
           },
         },
       },
@@ -307,8 +310,8 @@ describe('direct Provider launch lifecycle', () => {
     const connectedServices = {
       v: 2 as const,
       bindingsByServiceId: {
-        'openai-codex': { source: 'connected' as const, selection: 'profile' as const, profileId: 'native-auth' },
-        github: { source: 'connected' as const, selection: 'profile' as const, profileId: 'github' },
+        [nativeServiceKey]: { source: 'connected' as const, selection: 'profile' as const, profileId: 'native-auth' },
+        [githubServiceKey]: { source: 'connected' as const, selection: 'profile' as const, profileId: 'github' },
       },
     };
 
@@ -331,14 +334,13 @@ describe('direct Provider launch lifecycle', () => {
       createAuthorizationAttempt: async () => ({ ok: true, attempt: attempt as never }),
     });
 
-    expect(events).toEqual(['provider-materialize']);
     expect(result).toMatchObject({
       ok: true,
       kind: 'provider',
       connectedServices: {
         v: 2,
         bindingsByServiceId: {
-          github: {
+          [githubServiceKey]: {
             source: 'connected',
             selection: 'profile',
             profileId: 'github',
@@ -350,6 +352,7 @@ describe('direct Provider launch lifecycle', () => {
         PROVIDER_ONLY: 'provider-only',
       },
     });
+    expect(events).toEqual(['provider-materialize']);
   });
 
   it('releases caller-owned initial resources when a native selection reaches the shared helper', async () => {

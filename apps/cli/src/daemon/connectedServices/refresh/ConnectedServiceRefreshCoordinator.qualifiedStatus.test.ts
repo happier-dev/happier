@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildConnectedServiceCredentialRecord,
   sealQualifiedConnectedAccountContentEnvelope,
+  type QualifiedConnectedAccountProfileV4,
 } from '@happier-dev/protocol';
 
 import type { ApiClient } from '@/api/api';
@@ -210,7 +211,20 @@ async function createHarness(input: Readonly<{
             ),
             establishedRuntimeOwner,
             mutateCredentialHealth,
-            readCredential: vi.fn(async () => null),
+            readCredential: readQualifiedCredential,
+            listScheduledAccounts: async (): Promise<readonly QualifiedConnectedAccountProfileV4[]> => [{
+              ref: { service: openAiService, accountId: 'work' },
+              status: 'connected',
+              authenticationModeId: 'api-key',
+              revisionSemantics: 'revisioned',
+              credentialRevision,
+              configurationReady: false,
+              configurationRevision: null,
+              kind: 'token',
+              expiresAt: null,
+              displayName: 'work',
+              scopes: [],
+            }],
             acquireRefreshLease: vi.fn(async () => ({
               acquired: false,
               leaseUntil: 0,
@@ -244,12 +258,9 @@ describe('ConnectedServiceRefreshCoordinator qualified status integration', () =
       pid: 123,
       agentId: 'codex',
       materializationKey: 'session-1',
-      connectedServicesBindingsRaw: {
-        v: 1,
-        bindingsByServiceId: {
-          openai: { source: 'connected', profileId: 'work' },
-        },
-      },
+      // The Voice Account is scheduled from the Home's account listing, not
+      // projected as a Codex native subscription binding.
+      connectedServicesBindingsRaw: { v: 1, bindingsByServiceId: {} },
     });
 
     await harness.coordinator.tickOnce();

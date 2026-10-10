@@ -15,7 +15,8 @@ export type ProviderLaunchResourceScope = Readonly<{
 
 /**
  * Owns all pre-commit Provider launch resources until the successful child
- * commit explicitly transfers them. Cleanup is reverse-order and exact-once.
+ * commit explicitly transfers them. Settled cleanup is exact-once; failed
+ * resources remain owned for an explicit retry, always in reverse order.
  */
 export function createProviderLaunchResourceScope(input: Readonly<{
   onCleanupError?: (safeMessage: string) => void;
@@ -28,7 +29,7 @@ export function createProviderLaunchResourceScope(input: Readonly<{
     const text = value instanceof Error ? value.message : String(value);
     return sanitizer ? sanitizer(text) : text;
   };
-  let releasePromise: Promise<void> | null = null;
+  let releaseCleanup: ProviderLaunchCleanup | null = null;
   let transferredRetirement: ProviderLaunchCleanup | null = null;
   const run = async (owned: ProviderLaunchCleanup[]) => {
     let firstError: unknown;
@@ -36,6 +37,7 @@ export function createProviderLaunchResourceScope(input: Readonly<{
     for (let index = owned.length - 1; index >= 0; index -= 1) {
       try {
         await owned[index]?.();
+        owned.splice(index, 1);
       } catch (error) {
         if (!cleanupFailed) {
           cleanupFailed = true;
@@ -49,6 +51,18 @@ export function createProviderLaunchResourceScope(input: Readonly<{
       }
     }
     if (cleanupFailed) throw firstError;
+  };
+  const ownCleanup = (owned: ProviderLaunchCleanup[]): ProviderLaunchCleanup => {
+    let pending: Promise<void> | null = null;
+    return async () => {
+      if (pending) return await pending;
+      pending = run(owned);
+      try {
+        await pending;
+      } finally {
+        if (owned.length > 0) pending = null;
+      }
+    };
   };
 
   return Object.freeze({
@@ -64,29 +78,29 @@ export function createProviderLaunchResourceScope(input: Readonly<{
     },
     sanitize,
     async release() {
-      if (releasePromise) return await releasePromise;
+      if (releaseCleanup) return await releaseCleanup();
       if (state !== 'open') return;
       state = 'released';
       const owned = resources;
       resources = [];
-      releasePromise = run(owned.map((resource) => resource.onFailure));
-      await releasePromise;
+      releaseCleanup = ownCleanup(owned.map((resource) => resource.onFailure));
+      await releaseCleanup();
     },
     async retire() {
       if (state === 'transferred') {
         await transferredRetirement?.();
         return;
       }
-      if (releasePromise) {
-        await releasePromise;
+      if (releaseCleanup) {
+        await releaseCleanup();
         return;
       }
       if (state !== 'open') return;
       state = 'released';
       const owned = resources;
       resources = [];
-      releasePromise = run(owned.map((resource) => resource.onFailure));
-      await releasePromise;
+      releaseCleanup = ownCleanup(owned.map((resource) => resource.onFailure));
+      await releaseCleanup();
     },
     transfer() {
       if (state !== 'open') return null;
@@ -94,12 +108,7 @@ export function createProviderLaunchResourceScope(input: Readonly<{
       const owned = resources;
       resources = [];
       if (owned.length === 0) return null;
-      let cleanupPromise: Promise<void> | null = null;
-      transferredRetirement = async () => {
-        if (cleanupPromise) return await cleanupPromise;
-        cleanupPromise = run(owned.map((resource) => resource.onExit));
-        await cleanupPromise;
-      };
+      transferredRetirement = ownCleanup(owned.map((resource) => resource.onExit));
       return transferredRetirement;
     },
   });

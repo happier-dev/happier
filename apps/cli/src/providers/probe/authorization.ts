@@ -16,11 +16,13 @@ import type {
   ProviderEndpointDnsEvidence,
 } from '../registry/types';
 import type { readProviderSettingsForCli } from '../settings/read';
+import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 /** One already-parsed Account settings generation owned by a bulk operation. */
 export type ProviderProbeAccountSettingsBasis = Readonly<{
   scopeKey: string;
   settingsVersion: number;
+  providerConnectionsCatalog: ActiveAccountSettingsSnapshot['providerConnectionsCatalog'];
   accountSettings: unknown;
   settingsRead: ReturnType<typeof readProviderSettingsForCli>;
 }>;

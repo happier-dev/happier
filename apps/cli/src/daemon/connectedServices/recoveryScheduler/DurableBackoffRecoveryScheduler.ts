@@ -83,7 +83,7 @@ function readErrorMessage(error: unknown): string | null {
 export class DurableBackoffRecoveryScheduler<TIntent> {
   #disposed = false;
   readonly #intentsBySessionId = new Map<string, TIntent>();
-  readonly #timersBySessionId = new Map<string, TimerHandle>();
+  readonly #timersBySessionId = new Map<string | object, TimerHandle>();
   readonly #wakePromisesBySessionId = new Map<string, Promise<Readonly<{ status: string }>>>();
   readonly #intentVersionsBySessionId = new Map<string, number>();
   readonly #nowMs: () => number;
@@ -415,6 +415,15 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
     for (const sessionId of [...this.#timersBySessionId.keys()]) {
       this.#clearTimer(sessionId);
     }
+  }
+
+  /** External durable demand borrows this owner's timers without becoming a recovery intent. */
+  scheduleDemand(input: Readonly<{ key: object; notBeforeMs: number; wake: () => void }>): void {
+    this.#scheduleNotBefore(input.key, input.notBeforeMs, input.wake);
+  }
+
+  clearDemand(key: object): void {
+    this.#clearTimer(key);
   }
 
   async wake(input: Readonly<{ sessionId: string; reason: string }>): Promise<Readonly<{ status: string }>> {
@@ -807,16 +816,29 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
     if (this.#getStatus(intent) !== 'waiting') return;
     const nextRetryAtMs = this.#getNextRetryAtMs(intent);
     if (nextRetryAtMs === null || !Number.isFinite(nextRetryAtMs)) return;
-    const delayMs = Math.min(MAX_SAFE_TIMER_DELAY_MS, Math.max(0, nextRetryAtMs - this.#nowMs()));
-    const timer = setTimeout(() => {
-      this.#timersBySessionId.delete(sessionId);
+    this.#scheduleNotBefore(sessionId, nextRetryAtMs, () => {
       void this.wake({ sessionId, reason: 'timer' });
-    }, delayMs);
-    timer.unref?.();
-    this.#timersBySessionId.set(sessionId, timer);
+    });
   }
 
-  #clearTimer(sessionId: string): void {
+  #scheduleNotBefore(key: string | object, notBeforeMs: number, wake: () => void): void {
+    this.#clearTimer(key);
+    if (this.#disposed || !Number.isFinite(notBeforeMs)) return;
+    const delayMs = Math.min(MAX_SAFE_TIMER_DELAY_MS, Math.max(0, notBeforeMs - this.#nowMs()));
+    const timer = setTimeout(() => {
+      this.#timersBySessionId.delete(key);
+      if (this.#disposed) return;
+      if (this.#nowMs() < notBeforeMs) {
+        this.#scheduleNotBefore(key, notBeforeMs, wake);
+        return;
+      }
+      wake();
+    }, delayMs);
+    timer.unref?.();
+    this.#timersBySessionId.set(key, timer);
+  }
+
+  #clearTimer(sessionId: string | object): void {
     const timer = this.#timersBySessionId.get(sessionId);
     if (!timer) return;
     clearTimeout(timer);

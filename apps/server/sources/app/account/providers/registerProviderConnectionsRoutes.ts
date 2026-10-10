@@ -17,7 +17,7 @@ export function registerProviderConnectionsRoutes(app: Fastify): void {
   app.get(PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, { preHandler: app.authenticate, config,
     schema: { response: { 200: asServerProtocolZod(ProviderConnectionsRowReadResponseV1Schema), 500: internal } },
   }, async (request, reply) => {
-    try { return reply.send(await inTx(tx => readProviderConnectionsRowInTx(tx, { accountId: request.userId }))); }
+    try { return reply.send(await inTx(tx => readProviderConnectionsRowInTx(tx, { accountId: request.userId }), { readOnly: true })); }
     catch { return reply.code(500).send({ error: 'internal' }); }
   });
   app.post(PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, { preHandler: app.authenticate, config,

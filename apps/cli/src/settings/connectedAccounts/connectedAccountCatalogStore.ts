@@ -128,6 +128,13 @@ export function createCliConnectedAccountCatalogStore(input: Readonly<{
     return ConnectedAccountCatalogRowMutationResponseV1Schema.parse(await request(
       `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/${value.record.key}`, mutation));
   };
+  const readAdmittedCatalog = async (key: ConnectedAccountCatalogKeyV1) => {
+    const storage = await readStorageContext();
+    const catalog = await loadConnectedAccountCatalogV1({ key, ...storage, signal: input.signal, readRow: () => readRow(key) });
+    const current = await readStorageContext();
+    await verifyCurrent();
+    return current.mode === storage.mode ? catalog : { status: 'unavailable' as const, reason: 'account-mode-mismatch' as const };
+  };
   const readCatalog = async (key: ConnectedAccountCatalogKeyV1,
     onReadyBeforeCleanup?: (catalog: Extract<ConnectedAccountCatalogSnapshotV1, { status: 'ready' }>) => Promise<void>) => {
     const storage = await readStorageContext();
@@ -188,6 +195,6 @@ export function createCliConnectedAccountCatalogStore(input: Readonly<{
       c: sealAccountScopedBlobCiphertext({ kind: 'account_settings', material: source.material, payload: raw,
         randomBytes: length => new Uint8Array(randomBytes(length)) }) },
   });
-  return { serverHttpBaseUrl: base, assertCurrent, readSnapshot, readStorageContext, readRow, readCatalog, readSourceSnapshot, writeRecord,
+  return { serverHttpBaseUrl: base, assertCurrent, readSnapshot, readStorageContext, readRow, readCatalog, readAdmittedCatalog, readSourceSnapshot, writeRecord,
     sealSettingsMutation, publishSource };
 }

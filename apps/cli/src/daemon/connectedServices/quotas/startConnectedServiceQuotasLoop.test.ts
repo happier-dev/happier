@@ -1,8 +1,61 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { startConnectedServiceQuotasLoop } from './startConnectedServiceQuotasLoop';
+import { ConnectedServiceQuotasCoordinator } from './ConnectedServiceQuotasCoordinator';
 
 describe('startConnectedServiceQuotasLoop', () => {
+  it('notifies subscribed demand readers only after a successful settled tick, and detaches on stop', async () => {
+    let tick: () => void = () => {};
+    let complete: () => void = () => {};
+    let fail = false;
+    const observations: string[] = [];
+    // Account HTTP and clock are external boundaries; keep the real coordinator beneath them.
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      credentials: { token: 'quota-loop-account', encryption: null }, quotaFetchers: [], discoveryEnabled: false,
+      now: () => { if (fail) throw new Error('clock unavailable'); return 500; },
+      randomBytes: length => new Uint8Array(length),
+      api: {
+        getAccountEncryptionMode: async () => {
+          await new Promise<void>(resolve => { complete = resolve; });
+          return 'plain';
+        },
+        getConnectedServiceQuotaSnapshotSealed: async () => null,
+        getConnectedServiceCredentialSealed: async () => null,
+      },
+    });
+    const handle = startConnectedServiceQuotasLoop({
+      enabled: true, tickMs: 10,
+      coordinator,
+      onTickError: () => {},
+      setIntervalFn: fn => { tick = fn; return 123; },
+      clearIntervalFn: () => {},
+    });
+    const unsubscribe = handle!.subscribeAfterTick(() => { observations.push('read-demand'); });
+    tick();
+    expect(observations).toEqual([]);
+    complete();
+    await vi.waitFor(() => expect(observations).toEqual(['read-demand']));
+    fail = true;
+    tick();
+    complete();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(observations).toEqual(['read-demand']);
+    unsubscribe();
+    fail = false;
+    tick();
+    complete();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(observations).toEqual(['read-demand']);
+    handle!.subscribeAfterTick(() => { observations.push('after-stop'); });
+    tick();
+    const stopping = handle!.stop();
+    complete();
+    await stopping;
+    expect(observations).not.toContain('after-stop');
+  });
+
   it('schedules tickOnce when enabled', async () => {
     const coordinator: { tickOnce: () => Promise<void> } = { tickOnce: vi.fn(async () => {}) };
 

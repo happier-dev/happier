@@ -21,6 +21,45 @@ const descriptor = {
 } as const;
 
 describe('verifyDeclaredResumeFileReachability', () => {
+  it('requires trajectory, JSON metadata and brain state in declared roots without admitting private auth paths', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-resume-companions-'));
+    const id = 'native-session-id';
+    const state = { ...descriptor.state, entries: [
+      { path: 'antigravity-acp/conversations', mode: 'linked' as const },
+      { path: 'antigravity-acp/brain', mode: 'linked' as const },
+    ] };
+    const paths = [
+      { path: `antigravity-acp/conversations/${id}.db`, kind: 'file' as const },
+      { path: `antigravity-acp/conversations/${id}.meta`, kind: 'json_object' as const },
+      { path: `antigravity-acp/brain/${id}`, kind: 'directory' as const },
+    ];
+    const verify = () => verifyDeclaredResumeFileReachability({
+      targetMaterializedRoot: root, stateSharingDescriptor: { ...descriptor, state }, vendorResumeId: id,
+      verifyResumeReachable: async (input) => {
+        const complete = await input.sessionFiles.verifyDeclaredPaths({ paths });
+        const privateAuth = await input.sessionFiles.verifyDeclaredPaths({ paths: [{ path: 'antigravity-acp/acp_token.json', kind: 'file' }] });
+        expect(privateAuth?.found).not.toBe(true);
+        const candidate = await input.sessionFiles.findDeclaredCandidate({ matchesCandidate: ({ fileName }) => fileName === `${id}.db` });
+        return complete?.found && candidate.found ? { ok: true } : { ok: false, reason: 'required_native_state_missing' };
+      },
+    });
+    try {
+      await mkdir(join(root, 'antigravity-acp', 'conversations'), { recursive: true });
+      await mkdir(join(root, 'antigravity-acp', 'brain', id), { recursive: true });
+      await writeFile(join(root, paths[0].path), 'trajectory');
+      await writeFile(join(root, paths[1].path), '{}');
+      await writeFile(join(root, 'antigravity-acp', 'acp_token.json'), '{}');
+      await expect(verify()).resolves.toMatchObject({ ok: true });
+      await writeFile(join(root, paths[1].path), 'invalid');
+      await expect(verify()).resolves.toEqual({ ok: false, reason: 'required_native_state_missing' });
+      await writeFile(join(root, paths[1].path), '{}');
+      await rm(join(root, paths[2].path), { recursive: true });
+      await expect(verify()).resolves.toEqual({ ok: false, reason: 'required_native_state_missing' });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('keeps paths in the host while admitting a host-linked declared root and excluding nested symlink escapes', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-resume-root-'));
     const linkedSessions = await mkdtemp(join(tmpdir(), 'happier-resume-linked-'));

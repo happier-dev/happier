@@ -42,6 +42,25 @@ function connectedSelectionsWithCredentialRevision(credentialRevision: string): 
 }
 
 describe('ConnectedServiceRuntimeRegistry', () => {
+  it('reads only an exact applied parent pool identity, without its member or pending bootstrap selection', () => {
+    const registry = new ConnectedServiceRuntimeRegistry();
+    registry.registerTarget({ pid: 123, sessionId: 'parent', agentId: 'codex',
+      connectedServicesBindingsRaw: connectedBindings, connectedServiceSelectionsEnvRaw: connectedSelections });
+    registry.registerTarget({ pid: 123, sessionId: 'parent', agentId: 'codex',
+      connectedServicesBindingsRaw: { v: 2, bindingsByServiceId: {
+        'acme.accounts/session-auth': { source: 'connected', selection: 'profile', profileId: 'pending' },
+      } } }, { source: 'bootstrap' });
+    expect(registry.readAppliedSessionBindings({ runnerPid: 123, sessionId: 'parent', agentId: 'codex' }))
+      .toEqual({ status: 'applied', connectedServices: { v: 2, bindingsByServiceId: {
+        'acme.accounts/session-auth': { source: 'connected', selection: 'group', groupId: 'codex-team' },
+      } } });
+    expect(registry.readAppliedSessionBindings({ runnerPid: 124, sessionId: 'parent', agentId: 'codex' }))
+      .toEqual({ status: 'unavailable' });
+    expect(registry.readAppliedSessionBindings({ runnerPid: 123, sessionId: 'other', agentId: 'codex' }))
+      .toEqual({ status: 'unavailable' });
+    expect(registry.readAppliedSessionBindings({ runnerPid: 123, sessionId: 'parent', agentId: 'claude' }))
+      .toEqual({ status: 'unavailable' });
+  });
   it('keeps an admitted cold requester run out of the custodian view when its tracked attribution is unavailable', () => {
     const registry = new ConnectedServiceRuntimeRegistry();
     const alice = registry.scopeToRequester(() => true, { serverId: 'home-a', accountId: 'alice' });

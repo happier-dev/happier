@@ -1,4 +1,4 @@
-import { readFile, rm } from 'node:fs/promises';
+import { lstat, readFile, readdir, rm } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
@@ -130,6 +130,41 @@ export async function readConnectedServiceStateSharingManifest(
   const legacy = await tryReadParsedManifest(resolveManifestPath(destinationHome, LEGACY_CODEX_MANIFEST_NAME));
   if (legacy) return legacy;
   return EMPTY_MANIFEST;
+}
+
+/** Local resume data outlives process/Run custody; shared native-home links do not. */
+export async function hasLocalConnectedServiceResumeState(homeRoot: string): Promise<boolean> {
+  const manifest = await readConnectedServiceStateSharingManifest(homeRoot);
+  // Historical homes may predate the sharing manifest; isolation owns XDG state.
+  const entries = new Set(['sessions', 'projects', 'xdg/state', ...manifest.stateEntries]);
+  const hasLocalFile = async (path: string): Promise<boolean> => {
+    const entry = await lstat(path).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+      throw error;
+    });
+    if (!entry || entry.isSymbolicLink()) return false;
+    if (entry.isFile()) return true;
+    if (!entry.isDirectory()) return false;
+    for (const child of await readdir(path)) {
+      if (await hasLocalFile(join(path, child))) return true;
+    }
+    return false;
+  };
+  for (const entry of entries) {
+    if (!isSafeConnectedServiceStateSharingEntry(entry)) continue;
+    let path = homeRoot;
+    let local = true;
+    for (const segment of entry.split(/[\\/]+/).filter(segment => segment && segment !== '.')) {
+      path = join(path, segment);
+      const entryStat = await lstat(path).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+        throw error;
+      });
+      if (!entryStat || entryStat.isSymbolicLink()) { local = false; break; }
+    }
+    if (local && await hasLocalFile(path)) return true;
+  }
+  return false;
 }
 
 export async function removeLegacyConnectedServiceStateSharingManifest(destinationHome: string): Promise<void> {

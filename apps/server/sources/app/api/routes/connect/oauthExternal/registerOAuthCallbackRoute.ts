@@ -567,6 +567,16 @@ export function registerOAuthCallbackRoute(app: Fastify) {
                 pkceCodeVerifier: attemptParsed.data.pkceCodeVerifier,
                 expectedNonce: attemptParsed.data.nonce,
             });
+            // The upstream exchange is outside the transaction that resolved the
+            // attempt. No purpose may retain success from a replaced runtime.
+            if (!await resolveOAuthSecurityBinding({
+                env: requestHomeEnv, providerId, binding: securityBinding,
+                purpose: securityBinding.purpose, stage: "oauth_callback",
+            })) {
+                return reply.redirect(buildRedirectUrl(webAppUrl, {
+                    ...redirectBaseParams, error: "auth_provider_configuration_changed",
+                }));
+            }
             const login = provider.getLogin(profile) ?? "";
 
             if (isIdentityConnectionTest) {
@@ -1018,6 +1028,10 @@ export function registerOAuthCallbackRoute(app: Fastify) {
                 code === "profile_fetch_failed" ||
                 code === "not-eligible" ||
                 code === "auth_provider_configuration_changed" ||
+                code === "workos_organization_mismatch" ||
+                code === "workos_connection_mismatch" ||
+                code === "workos_platform_unavailable" ||
+                code === "team_identity_not_configured" ||
                 code === OAUTH_NOT_CONFIGURED_ERROR
                     ? code
                     : "server_error";

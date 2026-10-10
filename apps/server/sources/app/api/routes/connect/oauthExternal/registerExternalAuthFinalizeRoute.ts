@@ -669,7 +669,7 @@ export function registerExternalAuthFinalizeRoute(app: Fastify) {
                             accountId: account.id,
                             providerId,
                             runtimeFingerprint: parsedValue.securityBinding!.provider.runtimeFingerprint,
-                            ...(parsedValue.securityBinding!.connection?.id
+                            ...(parsedValue.securityBinding!.provider.context.kind === "team" && parsedValue.securityBinding!.connection?.id
                                 ? { teamConnectionId: parsedValue.securityBinding!.connection.id }
                                 : {}),
                         })
@@ -872,7 +872,7 @@ export function registerExternalAuthFinalizeRoute(app: Fastify) {
                             accountId: existingAccount.id,
                             providerId,
                             runtimeFingerprint: parsedValue.securityBinding.provider.runtimeFingerprint,
-                            ...(parsedValue.securityBinding.connection?.id
+                            ...(parsedValue.securityBinding.provider.context.kind === "team" && parsedValue.securityBinding.connection?.id
                                 ? { teamConnectionId: parsedValue.securityBinding.connection.id }
                                 : {}),
                         })

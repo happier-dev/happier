@@ -19,6 +19,7 @@ import {
   isPluginHostAccessRequestAuthorizedBySelection,
 } from '@/plugins/runtime/hostAccess/resourceSelection';
 import { resolveManifestHostAccessRequests } from '@/plugins/runtime/hostAccess/manifestRequests';
+import { resolvePluginActionConnectedAccountUseRequestsV2 } from '@happier-dev/protocol/plugins/manifest/v2';
 import type {
   ConnectedAccountPurposeAuthorizationScope,
   ConnectedAccountPurposeBindingOwner,
@@ -172,28 +173,22 @@ type RegistryConnectedAccountActionMatch = NonNullable<
   ReturnType<typeof resolveRegistryConnectedAccountAction>
 >;
 
+function resolveRegistryConnectedAccountActionPurposeRequests(match: RegistryConnectedAccountActionMatch) {
+  return resolvePluginActionConnectedAccountUseRequestsV2(match.target.manifest, match.identity.localId);
+}
+
 function resolveRegistryConnectedAccountActionPurposeAuthorizationFromMatch(input: Readonly<{
   match: RegistryConnectedAccountActionMatch;
   purposeId: string;
   requireSelect: boolean;
   resolveOptionalAccess?: ResolveRegistryConnectedAccountOptionalAccess;
 }>): RegistryConnectedAccountActionFormPurposeAuthorization | null {
-  const { target, action, identity } = input.match;
-  let requests: ReturnType<typeof resolveManifestHostAccessRequests>;
-  try {
-    requests = resolveManifestHostAccessRequests({
-      manifest: target.manifest,
-      pluginId: identity.pluginId,
-      contribution: { family: 'actions', localId: identity.localId },
-      ...(action.hostAccess ? { requestIds: action.hostAccess } : {}),
-    });
-  } catch {
-    return null;
-  }
+  const { identity } = input.match;
+  const requests = resolveRegistryConnectedAccountActionPurposeRequests(input.match);
+  if (!requests) return null;
   const connectedAccountRequests = requests.filter((entry) => (
-    entry.request.capability === 'connectedAccounts'
-    && entry.request.id === input.purposeId
-    && entry.request.scope.operations.includes('use')
+    entry.request.id === input.purposeId
+    && entry.request.capability === 'connectedAccounts'
     && (!input.requireSelect || entry.request.scope.operations.includes('select'))
   ));
   if (connectedAccountRequests.length !== 1) return null;
@@ -216,6 +211,44 @@ function resolveRegistryConnectedAccountActionPurposeAuthorizationFromMatch(inpu
       qualifyServiceReference(identity.pluginId, service)
     ))),
   });
+}
+
+/** Host-only retained-account admission from the actual role Action declaration. */
+export function resolveRegistryConnectedAccountActionPurposeAuthorization(input: Readonly<{
+  registry: Pick<RegistryConnectedAccountPurposeAuthorizationProjection, 'activationTargets'>;
+  qualifiedActionId: string;
+  purposeId: string;
+  resolveOptionalAccess?: ResolveRegistryConnectedAccountOptionalAccess;
+}>): RegistryConnectedAccountActionFormPurposeAuthorization | null {
+  const match = resolveRegistryConnectedAccountAction(input);
+  return match ? resolveRegistryConnectedAccountActionPurposeAuthorizationFromMatch({
+    match,
+    purposeId: input.purposeId,
+    requireSelect: false,
+    ...(input.resolveOptionalAccess ? { resolveOptionalAccess: input.resolveOptionalAccess } : {}),
+  }) : null;
+}
+
+/** Complete authorized credential-use declarations; null is not an empty scope. */
+export function resolveRegistryConnectedAccountActionPurposeAuthorizations(input: Readonly<{
+  registry: Pick<RegistryConnectedAccountPurposeAuthorizationProjection, 'activationTargets'>;
+  qualifiedActionId: string;
+  resolveOptionalAccess?: ResolveRegistryConnectedAccountOptionalAccess;
+}>): readonly RegistryConnectedAccountActionFormPurposeAuthorization[] | null {
+  const match = resolveRegistryConnectedAccountAction(input);
+  if (!match) return null;
+  const requests = resolveRegistryConnectedAccountActionPurposeRequests(match);
+  if (!requests) return null;
+  const authorizations: RegistryConnectedAccountActionFormPurposeAuthorization[] = [];
+  for (const entry of requests) {
+    const authorization = resolveRegistryConnectedAccountActionPurposeAuthorizationFromMatch({
+      match, purposeId: entry.request.id, requireSelect: false,
+      ...(input.resolveOptionalAccess ? { resolveOptionalAccess: input.resolveOptionalAccess } : {}),
+    });
+    if (!authorization) return null;
+    authorizations.push(authorization);
+  }
+  return Object.freeze(authorizations);
 }
 
 function resolveRegistryConnectedAccountActionCredentialPurposeAuthorization(input: Readonly<{

@@ -12,6 +12,7 @@ import {
 } from '@/providers/lifecycle/publicManagedProviderRuntimeStart';
 import type {
   ManagedProviderEndpointAccessProjection,
+  ResolveSharedManagedProviderGatewayBinding,
 } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import type {
   ManagedProviderRuntimeOperationClaim,
@@ -43,6 +44,7 @@ export type ManagedProviderExplicitStartCustody = Readonly<{
   retire(input: Readonly<{
     identity: ManagedProviderExplicitStartCustodyRequest['identity'];
     operationClaim: ManagedProviderExplicitStartCustodyRequest['operationClaim'];
+    sharedGateway?: ManagedProviderExplicitStartCustodyRequest['sharedGateway'];
   }>): Promise<boolean>;
   retireExternalApiKey(input: Readonly<{
     identity: ManagedProviderExplicitStartCustodyRequest['identity'];
@@ -81,6 +83,7 @@ function createManagedProviderExplicitStartOperation(input: Readonly<{
   operationClaim?: ManagedProviderExplicitStartCustodyRequest['operationClaim'];
   retirementGroup?: ManagedProviderExplicitStartCustodyRequest['retirementGroup'];
   revalidateRetainedCurrentness?: (signal?: AbortSignal) => Promise<boolean>;
+  resolveSharedGateway?: ResolveSharedManagedProviderGatewayBinding;
   signal?: AbortSignal;
 }>): (request: Parameters<PublicManagedProviderRuntimeStartOperation>[0]) =>
   Promise<ManagedProviderEndpointAccessProjection> {
@@ -140,7 +143,15 @@ function createManagedProviderExplicitStartOperation(input: Readonly<{
           machineId: input.machineId,
         });
       }
+      const sharedGateway = request.sharedGateway ?? (request.connectionId && input.resolveSharedGateway
+        ? await input.resolveSharedGateway({
+            connectionId: request.connectionId,
+            consumerId: `explicitStart:${request.connectionId}`,
+            ...(input.signal ? { signal: input.signal } : {}),
+          })
+        : null);
       const joined = await runManagedProviderExplicitStart({
+        ...(sharedGateway ? { sharedGateway } : {}),
         ...(input.retirementGroup ? { retirementGroup: input.retirementGroup } : {}),
         identity: request.identity,
         purposeBindings: request.purposeBindings,
@@ -162,6 +173,7 @@ function createManagedProviderExplicitStartOperation(input: Readonly<{
           launchResourceScope.register(release);
           try {
             const invocationServices = await createInvocationServices({
+              ...(sharedGateway ? { sharedGateway } : {}),
               identity: request.identity,
               purposeBindings: request.purposeBindings,
               operationClaim: input.operationClaim ?? {
@@ -201,8 +213,9 @@ function createManagedProviderExplicitStartOperation(input: Readonly<{
             }
             try {
               addRuntimeDisposable(request.identity.pluginId, Object.freeze({
-                dispose: input.retirementGroup
+                    dispose: input.retirementGroup
                   ? async () => { await registry.retireManagedProviderExplicitStart?.({
+                      ...(sharedGateway ? { sharedGateway } : {}),
                       identity: request.identity,
                       machineId: input.machineId,
                       operationClaim: input.operationClaim,
@@ -270,6 +283,7 @@ export function createPublicManagedProviderRuntimeStartOperation(input: Readonly
   machineId: string;
   happyHomeDir: string;
   controller?: PluginReloadController;
+  resolveSharedGateway?: ResolveSharedManagedProviderGatewayBinding;
 }>): PublicManagedProviderRuntimeStartOperation {
   const start = createManagedProviderExplicitStartOperation(input);
   return async (request) => {
@@ -313,16 +327,17 @@ export function createManagedProviderExplicitStartCustody(input: Readonly<{
       await lease.release();
     }
   };
-  const retire = async ({ identity, operationClaim }: Readonly<{
+  const retire = async ({ identity, operationClaim, sharedGateway }: Readonly<{
     identity: ManagedProviderExplicitStartCustodyRequest['identity'];
     operationClaim: ManagedProviderExplicitStartCustodyRequest['operationClaim'];
-  }>): Promise<boolean> => await withRegistry(
+    sharedGateway?: ManagedProviderExplicitStartCustodyRequest['sharedGateway'];
+  }>): Promise<boolean> => await withRegistryRequired(
     async (registry) => await registry.retireManagedProviderExplicitStart?.({
+      ...(sharedGateway ? { sharedGateway } : {}),
       identity,
       machineId: input.machineId,
       operationClaim,
     }) ?? false,
-    false,
   );
   return Object.freeze({
     async acquire(request) {

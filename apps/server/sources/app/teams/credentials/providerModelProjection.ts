@@ -15,7 +15,7 @@ import {
 import {
     selectMachinePoolCandidate,
     type MachinePoolSelectableMemberV1,
-} from "@/app/machines/pools/machinePoolPlacementService";
+} from "@happier-dev/protocol/machines/pools";
 
 function providerModelCandidateKey(model: TeamCredentialProviderModelCatalogEntryV1): string {
     return JSON.stringify([
@@ -147,6 +147,7 @@ export function selectPoolBackedTeamCredentialRequestPolicySupportModels(input: 
     }
     return [...byModel.entries()].flatMap(([key, candidates]) => {
         const selected = selectMachinePoolCandidate({
+            purpose: "session",
             members: input.members,
             availableMachineIds: new Set(candidates.map(candidate => candidate.machineId)),
             requestKey: `${input.requestKey}\u0000${key}`,
@@ -181,6 +182,7 @@ export function selectPoolBackedTeamCredentialProviderModels(input: Readonly<{
     }
     return [...byModel.entries()].flatMap(([key, candidates]) => {
         const selected = selectMachinePoolCandidate({
+            purpose: "session",
             members: input.members,
             availableMachineIds: new Set(candidates.map(candidate => candidate.machineId)),
             requestKey: `${input.requestKey}\u0000${key}`,

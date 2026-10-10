@@ -378,6 +378,157 @@ describe("OAuth callback provider security binding", () => {
         expect(await db.teamMembership.count()).toBe(0);
     });
 
+    it.each([
+        { outcome: "exact", error: null },
+        { outcome: "wrong_org", error: "workos_organization_mismatch" },
+        { outcome: "wrong_connection", error: "workos_connection_mismatch" },
+        { outcome: "changed_during_exchange", error: "auth_provider_configuration_changed" },
+        { outcome: "changed_before_finalize", error: null },
+        { outcome: "changed_before_start", error: "auth_provider_configuration_changed" },
+        { outcome: "wrong_local_connection", error: "auth_provider_configuration_changed" },
+    ])("binds Home company sign-in to its exact current connection ($outcome)", async ({ outcome, error }) => {
+        harness.resetEnv({ HAPPIER_PUBLIC_SERVER_URL: "https://home.example.test",
+            HAPPIER_WEBAPP_URL: "https://app.example.test", WORKOS_API_KEY: "sk_test", WORKOS_CLIENT_ID: "client_test" });
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        const providerRow = await db.identityProviderInstance.create({ data: {
+            ownerTeamId: null, kind: "workos_sso", displayName: "Company Home", enabled: true,
+            firstEnabledAt: new Date(), config: { v: 1, kind: "workos_sso" },
+        } });
+        const connection = await db.teamIdentityConnection.create({ data: {
+            teamId: null, providerInstanceId: providerRow.id, enabled: true,
+            externalReference: { v: 1, kind: "workos_sso", organizationId: "org_home", connectionId: "conn_home" },
+            settings: { v: 1, kind: "workos_sso" },
+        } });
+        const runtime = await resolveOAuthRuntimeById(process.env, providerRow.id);
+        expect(runtime).not.toBeNull();
+        if (outcome === "changed_before_start") {
+            await db.teamIdentityConnection.update({ where: { id: connection.id }, data: { revision: { increment: 1 } } });
+            await expect(createExternalAuthorizeUrl({ flow: "connect", providerId: providerRow.id,
+                provider: runtime!.provider, reference: runtime!.reference, env: process.env, userId: account.id,
+                connectFinalization: "credential_adoption_v1" })).rejects.toThrow("auth_provider_configuration_changed");
+            expect(await db.repeatKey.count()).toBe(0);
+            expect(workosExchange).not.toHaveBeenCalled();
+            return;
+        }
+        const url = await createExternalAuthorizeUrl({ flow: "connect", providerId: providerRow.id,
+            provider: runtime!.provider, reference: runtime!.reference, env: process.env, userId: account.id,
+            connectFinalization: "credential_adoption_v1" });
+        if (outcome === "wrong_local_connection") {
+            const attempt = await db.repeatKey.findFirstOrThrow();
+            const value = JSON.parse(attempt.value);
+            await db.repeatKey.update({ where: { key: attempt.key }, data: { value: JSON.stringify({ ...value,
+                securityBinding: { ...value.securityBinding, connection: { id: "another-local-connection", revision: connection.revision } },
+            }) } });
+        }
+        workosExchange.mockImplementationOnce(async () => {
+            if (outcome === "changed_during_exchange") {
+                await db.teamIdentityConnection.update({ where: { id: connection.id }, data: { revision: { increment: 1 }, enabled: false } });
+            }
+            return { accessToken: "ephemeral", profile: { id: "profile_home", email: "person@example.test",
+                organizationId: outcome === "wrong_org" ? "org_other" : "org_home",
+                connectionId: outcome === "wrong_connection" ? "conn_other" : "conn_home",
+                role: "owner", roles: ["admin"], groups: ["everyone"], rawAttributes: { privileged: true } } };
+        });
+        const app = Fastify({ logger: false });
+        app.setValidatorCompiler(validatorCompiler);
+        app.setSerializerCompiler(serializerCompiler);
+        trackApp(app);
+        // The authenticated HTTP adapter is the system boundary; linking, policy and storage stay real.
+        app.decorate("authenticate", async (request: { userId: string; authTokenKind: string; authAuthority: string }) => {
+            request.userId = account.id;
+            request.authTokenKind = "account";
+            request.authAuthority = "present_user";
+        });
+        const typed = app.withTypeProvider<ZodTypeProvider>() as unknown as Parameters<typeof connectConnectExternalRoutes>[0];
+        connectConnectExternalRoutes(typed);
+        registerOAuthCallbackRoute(typed);
+        const response = await app.inject({ method: "GET", url:
+            `/v1/oauth/${providerRow.id}/callback?state=${encodeURIComponent(new URL(url!).searchParams.get("state")!)}&code=code` });
+        const redirect = new URL(response.headers.location as string);
+        expect(redirect.searchParams.get("error")).toBe(error);
+        if (error === null) {
+            const pending = await db.repeatKey.findUniqueOrThrow({ where: { key: redirect.searchParams.get("pending")! } });
+            expect(JSON.parse(pending.value)).toMatchObject({
+                securityBinding: { provider: runtime!.reference, connection: { id: connection.id, revision: connection.revision }, admission: null, purpose: null },
+                userId: account.id,
+            });
+            expect(JSON.parse(pending.value)).not.toHaveProperty("accessTokenEnc");
+        } else {
+            expect(await db.repeatKey.count()).toBe(0);
+        }
+        expect(await db.account.count()).toBe(1);
+        expect(await db.accountIdentity.count()).toBe(0);
+        expect((await db.account.findUniqueOrThrow({ where: { id: account.id } })).homeRole).toBe("member");
+        expect(await db.teamMembership.count()).toBe(0);
+        if (error === null) {
+            if (outcome === "changed_before_finalize") {
+                await db.teamIdentityConnection.update({ where: { id: connection.id }, data: { revision: { increment: 1 } } });
+            } else {
+                const mailboxPeer = await db.account.create({ data: { encryptionMode: "plain" } });
+                await db.accountIdentity.create({ data: {
+                    accountId: mailboxPeer.id, provider: providerRow.id, providerUserId: "profile_other",
+                    providerLogin: "person@example.test", profile: { email: "person@example.test" },
+                } });
+            }
+            const finalized = await app.inject({ method: "POST", url: `/v1/connect/external/${providerRow.id}/finalize`,
+                payload: { pending: redirect.searchParams.get("pending"), username: "companyperson" } });
+            if (outcome === "changed_before_finalize") {
+                expect(finalized.statusCode, finalized.body).toBe(409);
+                expect(finalized.json()).toEqual({ error: "auth_provider_configuration_changed" });
+                expect(await db.accountIdentity.count()).toBe(0);
+            } else {
+                expect(finalized.statusCode, finalized.body).toBe(200);
+                const linked = await db.accountIdentity.findFirstOrThrow({ where: { accountId: account.id, provider: providerRow.id } });
+                expect(linked).toMatchObject({ providerUserId: "profile_home", providerLogin: "person@example.test" });
+                expect(linked.profile).not.toHaveProperty("roles");
+                expect(linked.profile).not.toHaveProperty("groups");
+                expect(linked.profile).not.toHaveProperty("rawAttributes");
+                expect(await db.accountIdentity.count()).toBe(2);
+                expect(await db.account.count()).toBe(2);
+            }
+            expect((await db.account.findUniqueOrThrow({ where: { id: account.id } })).homeRole).toBe("member");
+            expect(await db.teamMembership.count()).toBe(0);
+        }
+    });
+
+    it.each(["home", "team"] as const)("refuses a %s WorkOS binding changed during the external exchange before writing a test result", async (scope) => {
+        harness.resetEnv({ HAPPIER_PUBLIC_SERVER_URL: "https://home.example.test",
+            HAPPIER_WEBAPP_URL: "https://app.example.test", WORKOS_API_KEY: "sk_test", WORKOS_CLIENT_ID: "client_test" });
+        const team = scope === "team" ? await db.team.create({ data: { name: "Company" } }) : null;
+        const providerRow = await db.identityProviderInstance.create({ data: {
+            ownerTeamId: team?.id ?? null, kind: "workos_sso", displayName: "Company SSO", enabled: true,
+            firstEnabledAt: new Date(), config: { v: 1, kind: "workos_sso" },
+        } });
+        const connection = await db.teamIdentityConnection.create({ data: {
+            teamId: team?.id ?? null, providerInstanceId: providerRow.id, enabled: true,
+            externalReference: { v: 1, kind: "workos_sso", organizationId: "org_exact", connectionId: "conn_exact" },
+            settings: { v: 1, kind: "workos_sso" },
+        } });
+        const runtime = (await resolveOAuthRuntimeById(process.env, providerRow.id,
+            team ? { kind: "team", teamId: team.id } : { kind: "home" }, "identity_connection_test"))!;
+        expect(runtime).not.toBeNull();
+        const url = await createExternalAuthorizeUrl({ flow: "connect", providerId: providerRow.id,
+            provider: runtime.provider, reference: runtime.reference, env: process.env, userId: "test-initiator",
+            purpose: "identity_connection_test", connection: { id: connection.id, revision: connection.revision } });
+        workosExchange.mockImplementationOnce(async () => {
+            await db.teamIdentityConnection.update({ where: { id: connection.id }, data: { revision: { increment: 1 }, enabled: false } });
+            return { accessToken: "ephemeral", profile: { id: "profile_exact", email: "person@example.test",
+                organizationId: "org_exact", connectionId: "conn_exact" } };
+        });
+        const app = Fastify({ logger: false });
+        app.setValidatorCompiler(validatorCompiler);
+        app.setSerializerCompiler(serializerCompiler);
+        trackApp(app);
+        registerOAuthCallbackRoute(app.withTypeProvider<ZodTypeProvider>());
+        const response = await app.inject({ method: "GET", url:
+            `/v1/oauth/${providerRow.id}/callback?state=${encodeURIComponent(new URL(url!).searchParams.get("state")!)}&code=code` });
+        expect(new URL(response.headers.location as string).searchParams.get("error")).toBe("auth_provider_configuration_changed");
+        expect(await db.repeatKey.count()).toBe(0);
+        expect(await db.account.count()).toBe(0);
+        expect(await db.accountIdentity.count()).toBe(0);
+        expect(await db.teamMembership.count()).toBe(0);
+    });
+
     it.each(["idp_exact", null])("binds WorkOS provisioned admission only by its exact IdP subject (%s)", async (idpId) => {
         harness.resetEnv({
             HAPPIER_PUBLIC_SERVER_URL: "https://home.example.test",

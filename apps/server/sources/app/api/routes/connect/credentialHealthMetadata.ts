@@ -7,6 +7,7 @@ import {
     QualifiedConnectedAccountCredentialMetadataV4Schema,
     type ConnectedServiceCredentialHealthV1,
 } from "@happier-dev/protocol";
+import { createStoredReadSchema } from "@happier-dev/protocol/json/storedReadSchema";
 
 type MetadataWithHealth = Readonly<{
     providerEmail?: string | null;
@@ -34,7 +35,7 @@ export type QualifiedConnectedServiceCredentialStoredMetadataV4 = z.infer<
 export function parseQualifiedConnectedServiceCredentialStoredMetadataV4(
     raw: unknown,
 ): QualifiedConnectedServiceCredentialStoredMetadataV4 {
-    return QualifiedConnectedServiceCredentialStoredMetadataV4Schema.parse(
+    return createStoredReadSchema(QualifiedConnectedServiceCredentialStoredMetadataV4Schema).parse(
         raw,
     );
 }

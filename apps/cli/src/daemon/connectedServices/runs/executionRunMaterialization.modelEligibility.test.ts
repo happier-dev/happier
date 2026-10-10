@@ -267,7 +267,7 @@ async function createScenario() {
     const bridge = createExecutionRunConnectedServicesBridge({
         resolveAuthForSpawn: (input) => resolveConnectedServiceAuthForSpawn({ ...input,
             activeServerDir: join(root, 'server'), baseDir, credentials, api, nowMs: () => 1_000,
-            processEnv: { HOME: root, CODEX_HOME: join(root, 'native-source') },
+            processEnv: { NODE_ENV: 'test', HOME: root, CODEX_HOME: join(root, 'native-source') },
             qualifiedConnectedAccountApi: { readGroup: async () => currentGroup, listAccounts: async () => accounts },
         }),
         recoverRejectedStart: ({ selection, modelId: requestedModel, isCurrent }) => coordinator.switchAfterClassifiedFailure({
@@ -433,7 +433,9 @@ describe('composed finite Run model recovery', () => {
             }
             const expectedMembers = rejectCount === 0 ? ['first'] : memberIds;
             expect(openedMembers).toEqual(expectedMembers);
-            expect(scenario.credentialReads).toEqual(expectedMembers);
+            // Currentness checks may reread a credential between native effects.
+            // The finite admitted members and their first-use order remain the contract.
+            expect([...new Set(scenario.credentialReads)]).toEqual(expectedMembers);
             expect(scenario.commits).toEqual(rejectCount === 0 ? [] : ['second', 'third']);
             expect(processBoundaries.map((boundary) => boundary.rpcRequests.filter((request) => request.method === 'thread/start').length))
                 .toEqual(expectedMembers.map(() => 1));
@@ -497,7 +499,7 @@ describe('composed finite Run model recovery', () => {
             machineIdProvider: () => 'fixture-machine', activeServerDir: join(scenario.root, 'server'), baseDir: scenario.baseDir,
             refreshWindowMs: 60_000, refreshLeaseMs: 30_000, now: () => 1_000,
             ...(onAuthUpdated ? { onAuthUpdated } : {}),
-            processEnv: { HOME: scenario.root, CODEX_HOME: join(scenario.root, 'native-source') },
+            processEnv: { NODE_ENV: 'test', HOME: scenario.root, CODEX_HOME: join(scenario.root, 'native-source') },
             resolveQualifiedPurposeBindingSnapshot: async (input) => resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
                 agentId: input.agentId, bindings: ConnectedServiceBindingsV2Schema.parse(input.connectedServicesBindingsRaw),
                 contributions: scenario.runtimeRegistry.contributes,
@@ -670,7 +672,7 @@ describe('composed finite Run model recovery', () => {
             activeServerDir: join(scenario.root, 'server'), baseDir: scenario.baseDir, credentials: scenario.credentials,
             api: scenario.api, nowMs: () => 1_000,
             qualifiedConnectedAccountApi: scenario.qualifiedConnectedAccountApi,
-            processEnv: { HOME: scenario.root, CODEX_HOME: join(scenario.root, 'native-source') },
+            processEnv: { NODE_ENV: 'test', HOME: scenario.root, CODEX_HOME: join(scenario.root, 'native-source') },
             resolveQualifiedPurposeBindingSnapshot: (bindings) => resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
                 agentId: 'codex', bindings, contributions: scenario.runtimeRegistry.contributes,
             }),

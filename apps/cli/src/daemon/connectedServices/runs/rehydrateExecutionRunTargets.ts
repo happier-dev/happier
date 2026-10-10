@@ -118,6 +118,7 @@ export async function rehydrateLiveExecutionRunTargets(input: Readonly<{
           runnerPid: marker.pid,
           sessionId: marker.happySessionId,
           receipt: marker.executionRunConnectedServicesCleanupReceiptV1,
+          ...(normalized?.registration.materializedRoot ? { materializedRoot: normalized.registration.materializedRoot } : {}),
         });
         if (cleaned) {
           await input.clearTerminalCleanupReceipt?.(marker.runId);

@@ -526,6 +526,23 @@ describe('provider catalog host assembly', () => {
 });
 
 describe('provider catalog exact-reference and picker projection', () => {
+  it('hides an off source in browse, retains only exact exceptions, and lets explicit browsing reach it', () => {
+    const connection = resolvedConnection();
+    const assembled = assembleProviderConnectionCatalog({
+      agentTargetKey: 'codex', connection, providerSettings: settings(connection),
+      runtimeState: runtimeState({ catalogs: [catalogRecord({ models: [{ id: 'new' }, { id: 'favorite' }] })] }),
+      catalogRuntimeKey: currentCatalogKey,
+      compatibilityByModelId: compatibilityMap(['default', 'Case', 'new', 'favorite']),
+    });
+    const input = { catalogs: [assembled], modelVisibilityByRef: {}, modelPickerVisibilityByConnectionId: { pc_a: false } };
+    expect(projectProviderCatalogForPicker(input).groups).toEqual([]);
+    const favoriteSelection = { agentTargetKey: assembled.agentTargetKey, providerConnectionId: assembled.connectionId, modelId: 'favorite' };
+    expect(projectProviderCatalogForPicker({ ...input, favoriteSelections: [favoriteSelection] }).groups[0]?.rows.map(row => row.ref.modelId)).toEqual(['favorite']);
+    const sourceBrowse = projectProviderCatalogForPicker({ ...input, sourceConnectionId: assembled.connectionId });
+    expect(sourceBrowse.groups[0]?.rows.some(row => row.ref.modelId === 'new')).toBe(true);
+    const hidden = serializeModelVisibilityRefV1({ scope: 'allAgents', providerConnectionId: assembled.connectionId, modelId: 'new' });
+    expect(projectProviderCatalogForPicker({ ...input, sourceConnectionId: assembled.connectionId, modelVisibilityByRef: { [hidden]: 'hidden' } }).groups[0]?.rows.some(row => row.ref.modelId === 'new')).toBe(false);
+  });
   it('keeps visibility out of exact resolution while hiding normal rows and retaining the hidden current selection', () => {
     const connection = resolvedConnection();
     const assembled = assembleProviderConnectionCatalog({

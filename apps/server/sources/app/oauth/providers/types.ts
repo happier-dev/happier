@@ -21,6 +21,8 @@ export type OAuthFlowProvider = Readonly<{
      * The persisted attempt still carries the exact provider instance ID.
      */
     callbackProviderId?: string;
+    /** Exact scoped connection that the catalog used to construct this runtime. */
+    connectionBinding?: Readonly<{ id: string; revision: number }>;
     /**
      * Declared custody of the access token this provider exchanges.
      *

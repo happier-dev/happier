@@ -4,10 +4,8 @@ import {
     resolveIdentityProviderInstanceRuntimeInTx,
     type IdentityProviderInstanceView,
 } from "@/app/auth/providers/managed/identityProviderInstanceLifecycle";
-import {
-    parseTeamIdentityConnectionDocuments,
-    type TeamIdentityConnectionDocuments,
-} from "@/app/auth/providers/managed/identityProviderDocuments";
+import type { TeamIdentityConnectionDocuments } from "@/app/auth/providers/managed/identityProviderDocuments";
+import { readTeamIdentityConnectionInTx } from "@/app/teams/identity/teamIdentityConnectionLifecycle";
 import type {
     WorkosPlatformConfigResolution,
     WorkosPlatformRequestPolicy,
@@ -33,6 +31,7 @@ type TeamWorkosRuntimeUnavailableResult =
 type TeamWorkosRuntimeReadyResult<
     TPurpose extends "sso" | "directory",
     TExternalReference extends WorkosOrganizationExternalReference,
+    TeamId extends string | null = string,
 > =
     | Readonly<{
         status: "ready";
@@ -40,7 +39,7 @@ type TeamWorkosRuntimeReadyResult<
         provider: IdentityProviderInstanceView;
         connection: Readonly<{
             id: string;
-            teamId: string;
+            teamId: TeamId;
             providerInstanceId: string;
             enabled: boolean;
             revision: number;
@@ -51,8 +50,8 @@ type TeamWorkosRuntimeReadyResult<
         runtimeFingerprint: string;
     }>;
 
-export type TeamWorkosConnectionRuntimeResult =
-    | TeamWorkosRuntimeReadyResult<"sso", ConfiguredWorkosExternalReference>
+export type TeamWorkosConnectionRuntimeResult<TeamId extends string | null = string> =
+    | TeamWorkosRuntimeReadyResult<"sso", ConfiguredWorkosExternalReference, TeamId>
     | TeamWorkosRuntimeUnavailableResult;
 
 export type TeamWorkosDirectoryRuntimeResult =
@@ -61,7 +60,7 @@ export type TeamWorkosDirectoryRuntimeResult =
 
 type TeamWorkosRuntimeInput = Readonly<{
     env: NodeJS.ProcessEnv;
-    teamId: string;
+    teamId: string | null;
     connectionId: string;
     includeDisabled?: boolean;
     purpose?: "sso" | "directory";
@@ -76,20 +75,24 @@ type TeamWorkosRuntimeDependencies = Readonly<{
 }>;
 
 export function computeTeamWorkosConnectionRuntimeFingerprint(input: Readonly<{
-    teamId: string;
+    teamId: string | null;
     connectionId: string;
     providerInstanceId: string;
     providerSecurityRevision: number;
     connectionRevision: number;
     platformRuntimeFingerprint: string;
+    externalReference: Readonly<{ organizationId: string; connectionId: string | null }>;
 }>): string {
     const digest = computeCanonicalDomainSeparatedDigest(
         "happier.team-workos-connection.runtime.v1",
         [
-            input.teamId,
+            input.teamId === null ? "home" : "team",
+            input.teamId ?? "",
             input.connectionId,
             input.providerInstanceId,
             input.platformRuntimeFingerprint,
+            input.externalReference.organizationId,
+            input.externalReference.connectionId ?? "",
         ],
     );
     return `team-workos:v1:${input.providerSecurityRevision}:${input.connectionRevision}:${digest}`;
@@ -98,12 +101,12 @@ export function computeTeamWorkosConnectionRuntimeFingerprint(input: Readonly<{
 /** Current provider authority shared by network reads and directory effect commits. */
 export async function resolveTeamWorkosProviderInstanceInTx(
     tx: Tx,
-    input: Readonly<{ teamId: string; providerInstanceId: string; includeDisabled?: boolean }>,
+    input: Readonly<{ teamId: string | null; providerInstanceId: string; includeDisabled?: boolean }>,
 ): Promise<
     | Readonly<{ status: "ready"; instance: IdentityProviderInstanceView }>
     | Readonly<{ status: "unreadable" | "provider_unavailable" }>
 > {
-    const teamProvider = await resolveIdentityProviderInstanceRuntimeInTx(tx, {
+    const teamProvider = input.teamId === null ? { status: "not_found" as const } : await resolveIdentityProviderInstanceRuntimeInTx(tx, {
         id: input.providerInstanceId,
         owner: { kind: "team", teamId: input.teamId },
         includeDisabled: input.includeDisabled,
@@ -127,35 +130,27 @@ export async function resolveTeamWorkosProviderInstanceInTx(
 
 export function resolveTeamWorkosConnectionRuntimeInTx(
     tx: Tx,
-    input: TeamWorkosRuntimeInput & Readonly<{ purpose: "directory" }>,
+    input: TeamWorkosRuntimeInput & Readonly<{ purpose: "directory"; teamId: string }>,
     dependencies?: TeamWorkosRuntimeDependencies,
 ): Promise<TeamWorkosDirectoryRuntimeResult>;
-export function resolveTeamWorkosConnectionRuntimeInTx(
+export function resolveTeamWorkosConnectionRuntimeInTx<TeamId extends string | null>(
     tx: Tx,
-    input: TeamWorkosRuntimeInput & Readonly<{ purpose?: "sso" }>,
+    input: TeamWorkosRuntimeInput & Readonly<{ purpose?: "sso"; teamId: TeamId }>,
     dependencies?: TeamWorkosRuntimeDependencies,
-): Promise<TeamWorkosConnectionRuntimeResult>;
+): Promise<TeamWorkosConnectionRuntimeResult<TeamId>>;
 export async function resolveTeamWorkosConnectionRuntimeInTx(
     tx: Tx,
     input: TeamWorkosRuntimeInput,
     dependencies: TeamWorkosRuntimeDependencies = {},
-): Promise<TeamWorkosConnectionRuntimeResult | TeamWorkosDirectoryRuntimeResult> {
+): Promise<TeamWorkosConnectionRuntimeResult<string | null> | TeamWorkosDirectoryRuntimeResult> {
     const purpose = input.purpose ?? "sso";
-    const row = await tx.teamIdentityConnection.findFirst({
-        where: { id: input.connectionId, teamId: input.teamId },
-        select: {
-            id: true,
-            teamId: true,
-            providerInstanceId: true,
-            externalReference: true,
-            settings: true,
-            enabled: true,
-            revision: true,
-            lastObservation: true,
-            lastSuccessfulTestAt: true,
-        },
+    if (purpose === "directory" && input.teamId === null) return { status: "connection_not_found" };
+    const current = await readTeamIdentityConnectionInTx(tx, {
+        id: input.connectionId, teamId: input.teamId,
     });
-    if (!row) return { status: "connection_not_found" };
+    if (current.status === "not_found") return { status: "connection_not_found" };
+    if (current.status !== "ready") return { status: "unreadable" };
+    const row = current.connection;
     if (!row.enabled && purpose === "sso" && input.includeDisabled !== true) {
         return { status: "connection_disabled" };
     }
@@ -167,18 +162,11 @@ export async function resolveTeamWorkosConnectionRuntimeInTx(
     });
     if (resolvedProvider.status !== "ready") return resolvedProvider;
 
-    const documents = parseTeamIdentityConnectionDocuments({
-        providerKind: resolvedProvider.instance.kind,
-        externalReference: row.externalReference,
-        settings: row.settings,
-        lastObservation: row.lastObservation,
-        lastSuccessfulTestAt: row.lastSuccessfulTestAt,
-    });
-    if (!documents.ok || documents.value.externalReference.kind !== "workos_sso" || documents.value.settings.kind !== "workos_sso") {
+    if (row.externalReference.kind !== "workos_sso" || row.settings.kind !== "workos_sso") {
         return { status: "unreadable" };
     }
-    const organizationId = documents.value.externalReference.organizationId;
-    const connectionId = documents.value.externalReference.connectionId;
+    const organizationId = row.externalReference.organizationId;
+    const connectionId = row.externalReference.connectionId;
     if (organizationId === null || (purpose === "sso" && connectionId === null)) {
         return { status: "not_configured" };
     }
@@ -194,6 +182,7 @@ export async function resolveTeamWorkosConnectionRuntimeInTx(
         providerSecurityRevision: resolvedProvider.instance.securityRevision,
         connectionRevision: row.revision,
         platformRuntimeFingerprint: platform.runtimeFingerprint,
+        externalReference: { organizationId, connectionId },
     });
     const connection = {
         id: row.id,
@@ -201,7 +190,7 @@ export async function resolveTeamWorkosConnectionRuntimeInTx(
         providerInstanceId: row.providerInstanceId,
         enabled: row.enabled,
         revision: row.revision,
-        settings: documents.value.settings,
+        settings: row.settings,
     };
     if (purpose === "directory") {
         return {
@@ -210,8 +199,9 @@ export async function resolveTeamWorkosConnectionRuntimeInTx(
             provider: resolvedProvider.instance,
             connection: {
                 ...connection,
+                teamId: input.teamId!,
                 externalReference: {
-                    ...documents.value.externalReference,
+                    ...row.externalReference,
                     organizationId,
                 },
             },
@@ -226,7 +216,7 @@ export async function resolveTeamWorkosConnectionRuntimeInTx(
         connection: {
             ...connection,
             externalReference: {
-                ...documents.value.externalReference,
+                ...row.externalReference,
                 organizationId,
                 connectionId: connectionId!,
             },

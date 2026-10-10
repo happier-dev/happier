@@ -120,7 +120,7 @@ export async function registerExecutionRunConnectedServicesTarget(input: Readonl
     const registration = input.registration;
     const context = await input.resolveSessionAccountContext(registration.sessionId);
     await input.assertSessionAccountCurrent(registration.sessionId, context);
-    if (context && !await context.bootstrap.isCurrent()) throw new Error('requester_session_not_current');
+    if (context && !await context.isCurrent()) throw new Error('requester_session_not_current');
     input.registry.registerRunTarget({ runKey: registration.runKey, pid: registration.runnerPid, agentId: registration.agentId,
         materializationKey: registration.materializationKey, connectedServicesBindingsRaw: registration.connectedServicesBindingsRaw,
         connectedServiceSelectionsEnv: registration.connectedServiceSelectionsEnv,

@@ -7,17 +7,24 @@ import {
   SavedSecretSchema,
   createProviderErrorV1,
   readOwnRecordValue,
-  readProviderSettingsFromAccountSettingsV1,
   type ProviderSettingsV1,
 } from '@happier-dev/protocol';
+import { readRetainedProviderConnectionsCatalogV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { DaemonProviderConnectionViewV1Schema } from '@happier-dev/protocol/rpc';
 
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 import type { ProviderContributionRegistryView } from '@/providers/registry';
 import { resolveProviderConnectionForMachine } from '@/providers/registry';
 import { createProviderConnectionService } from '@/providers/connections/service';
+import { createInMemoryAccountProviderActions } from '@/providers/connections/service/accountActions.testkit';
+import type { ProviderConnectionServiceDeps } from '@/providers/connections/service/types';
 import type { ProviderModelLoadResult } from '@/providers/modelManagement/load';
 import { executeProvidersCommand, ProviderCliError, type ProviderCliDependencies } from './index';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { routeProviderCliActions } from './actionDependencies';
+import { createProviderActionExecuteV1 } from '@happier-dev/protocol/providers/executeProviderActionV1';
+import { createProviderConnectionRpcAdapter } from '@/providers/connections/rpcAdapter';
 
 const contributionKey = 'acme.gateway/gateway';
 const existingSavedSecret = SavedSecretSchema.parse({
@@ -96,15 +103,28 @@ function harness(overrides: Partial<ProviderCliDependencies> = {}, initialSecret
     providersByContributionKey,
   };
   let nextId = 1;
-  const connectionService = createProviderConnectionService({
-    machineId: 'machine-a',
-    featureGate: { isEnabled: () => true },
+  const persistence: Pick<ProviderConnectionServiceDeps, 'loadSnapshot' | 'updateProviderSettings' | 'now'> = {
     loadSnapshot: async () => ({
       accountSettings: AccountSettingsSchema.parse(raw),
       rawAccountSettings: raw,
+      providerSettings: settings(raw),
+      providerSettingsDiagnostics: [],
       registry,
     }),
-    updateAccountSettings: async (mutate) => { raw = mutate(raw); return raw; },
+    updateProviderSettings: async (mutate, options) => {
+      const next = mutate(settings(raw));
+      raw = { ...raw, providerSettingsV1: next,
+        ...(options?.preparedSavedSecret ? { secrets: [...(raw.secrets as readonly unknown[]), options.preparedSavedSecret.record] } : {}),
+      };
+      return next;
+    },
+    now: () => 100,
+  };
+  const connectionService = createProviderConnectionService({
+    ...persistence,
+    accountProviderActionExecute: createInMemoryAccountProviderActions(persistence),
+    machineId: 'machine-a',
+    featureGate: { isEnabled: () => true },
     collectDnsEvidence: async () => new Map([
       ['https://gateway.example/v1', ['1.1.1.1']],
       ['https://changed.example/v1', ['1.1.1.2']],
@@ -112,16 +132,15 @@ function harness(overrides: Partial<ProviderCliDependencies> = {}, initialSecret
       ['http://127.0.0.1:1234/v1', ['127.0.0.1']],
       ['http://127.0.0.1:8080/v1', ['127.0.0.1']],
     ]),
-    resolveConnection: ({ accountSettings, connectionId, machineId, registry: inputRegistry, dnsEvidence }) =>
+    resolveConnection: ({ providerSettings, connectionId, machineId, registry: inputRegistry, dnsEvidence }) =>
       resolveProviderConnectionForMachine({
-        accountSettings, connectionId, machineId, registry: inputRegistry,
+        providerSettings, connectionId, machineId, registry: inputRegistry,
         dnsEvidenceByEndpointUrl: dnsEvidence,
       }),
     runtimeSummary: async () => ({
       summary: { health: 'not_checked', modelCount: null, checkedAt: null, endpoints: [] },
       probeObservationIdentity: null,
     }),
-    now: () => 100,
   });
   const deps: ProviderCliDependencies = {
     assertProvidersFeatureEnabled: () => {},
@@ -138,14 +157,106 @@ function harness(overrides: Partial<ProviderCliDependencies> = {}, initialSecret
     createSavedSecret: vi.fn(async () => { throw new Error('not configured'); }),
     ...overrides,
   };
-  return { deps, getRaw: () => raw, registry, providersByContributionKey };
+  return { deps, getRaw: () => raw, registry, providersByContributionKey, persistence, connectionService };
 }
 
 function settings(raw: Record<string, unknown>): ProviderSettingsV1 {
-  return readProviderSettingsFromAccountSettingsV1(raw).settings;
+  const read = readRetainedProviderConnectionsCatalogV1(raw);
+  if (read.status !== 'ready') throw new Error('Expected a complete retained Provider fixture');
+  return { ...read.catalog, defaultsByAgentTargetKey: read.defaults };
 }
 
 describe('happier providers command domain', () => {
+  it.each(['local-create', 'machine-secret'] as const)('keeps prepared %s secret promotion behind canonical approval', async workflow => {
+    const prepared = { id: 'secret-prepared', record: SavedSecretSchema.parse({ id: 'secret-prepared',
+      name: 'Prepared API key', kind: 'apiKey', encryptedValue: { _isSecretValue: true, value: 'private-prepared-key' },
+      createdAt: 100, updatedAt: 100 }) };
+    const h = harness({ promptSecret: async () => 'private-prepared-key', createSavedSecret: async () => prepared }, [existingSavedSecret]);
+    h.providersByContributionKey.set(contributionKey, workflow === 'local-create'
+      ? localContribution(undefined, { credentialRequired: true }) : contribution('Gateway', { credentialRequired: true }));
+    let args: readonly string[];
+    if (workflow === 'local-create') {
+      const preview = await h.deps.connections.previewCreateContribution({ machineId: 'machine-a',
+        connectionId: 'pc_1', contributionKey, displayName: null, selectedCandidateId: null });
+      if (preview.status === 'error' || preview.authoringPreview.status !== 'selection_required') throw new Error('Expected local candidates');
+      args = ['add', contributionKey, '--candidate-id', preview.authoringPreview.candidates[0]!.candidateId!];
+    } else {
+      await executeProvidersCommand(['add', contributionKey, '--saved-secret-id', 'secret-existing'], h.deps);
+      args = ['replace-secret', 'pc_1', '--scope', 'machine'];
+    }
+    const before = structuredClone(h.getRaw());
+    let decision: 'missing' | 'reject' | 'canceled' | 'approve' = 'missing';
+    const observedInputs: unknown[] = [];
+    const approvalRecords: unknown[] = [];
+    const deps = routeProviderCliActions(h.deps, async (actionId, input, options) => {
+      const rpc = createProviderConnectionRpcAdapter(h.connectionService);
+      const signal = new AbortController().signal;
+      const executor = createActionExecutor({
+        isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, {}, context),
+        hostActionApprovalLifetime: { actionId, signal },
+        // Captured credentials are a genuine host boundary; the Action owner validates their stored origin.
+        isApprovalExecutionOriginCurrent: async ({ origin }) => origin.serverId === 'home'
+          && origin.accountId === 'account' && origin.requestId === 'request-1',
+        ...(decision === 'missing' ? {} : {
+          approvalsCreate: async ({ request }) => { approvalRecords.push(request); return { artifactId: 'approval-1' }; },
+          approvalsWaitForDecision: async ({ request }) => ({ decision: decision as 'reject' | 'canceled' | 'approve', request }),
+          approvalsUpdate: async ({ request }) => { approvalRecords.push(request); return { ok: true as const }; },
+        }),
+        providerActionExecute: createProviderActionExecuteV1({ assertCurrent() {},
+          async rpc({ request, machineId }) {
+            expect(machineId).toBe('machine-a');
+            if (!('action' in request.input) || (request.input.action !== 'createContribution' && request.input.action !== 'bindSecret')) {
+              throw new Error('Unexpected machine effect');
+            }
+            return rpc.mutateConnection(request.input, options?.preparedSavedSecret);
+          },
+          setDefault: async () => ({ status: 'updated' }),
+          account: (request) => createInMemoryAccountProviderActions(h.persistence)(request, options?.preparedSavedSecret),
+        }),
+      });
+      observedInputs.push(input);
+      return executor.execute(actionId, input, { surface: 'cli', signal,
+        serverId: 'home', runtimeAccountId: 'account', actionRequestId: 'request-1' });
+    });
+    await expect(executeProvidersCommand(args, deps)).rejects.toMatchObject({ code: 'approvals_not_supported' });
+    expect(h.getRaw()).toEqual(before);
+    decision = 'reject';
+    await expect(executeProvidersCommand(args, deps)).rejects.toMatchObject({ code: 'approval_rejected' });
+    expect(h.getRaw()).toEqual(before);
+    decision = 'canceled';
+    await expect(executeProvidersCommand(args, deps)).rejects.toMatchObject({ code: 'approval_canceled' });
+    expect(h.getRaw()).toEqual(before);
+    decision = 'approve';
+    await expect(executeProvidersCommand(args, deps)).resolves.toMatchObject({ ok: true });
+    expect((h.getRaw().secrets as readonly unknown[])).toContainEqual(prepared.record);
+    const connectionId = workflow === 'local-create' ? 'pc_4' : 'pc_1';
+    expect(settings(h.getRaw()).secretBindingsByConnectionId[connectionId]?.byMachineId?.['machine-a'])
+      .toEqual({ apiKey: prepared.id });
+    expect(JSON.stringify(observedInputs)).not.toContain('private-prepared-key');
+    expect(JSON.stringify(approvalRecords)).not.toContain('private-prepared-key');
+    expect(approvalRecords).toMatchObject([{ requestedSurface: 'cli', approval: { flow: 'blocking' } }]);
+  });
+  it('does not delete a connection while canonical CLI Action approval is required', async () => {
+    const h = harness();
+    await executeProvidersCommand(['add', contributionKey], h.deps);
+    const before = structuredClone(h.getRaw());
+    const executor = createActionExecutor({
+      isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, {}, context),
+      providerActionExecute: createInMemoryAccountProviderActions({
+        loadSnapshot: async () => ({ accountSettings: AccountSettingsSchema.parse(h.getRaw()),
+          rawAccountSettings: h.getRaw(), providerSettings: settings(h.getRaw()), registry: h.registry }),
+        updateProviderSettings: async () => { throw new Error('Approval must precede persistence'); },
+        now: () => 100,
+      }),
+    });
+    const deps = routeProviderCliActions(h.deps,
+      (actionId, input) => executor.execute(actionId, input, { surface: 'cli' }));
+
+    await expect(executeProvidersCommand(['remove', 'pc_1'], deps)).rejects.toMatchObject({
+      code: 'approvals_not_supported',
+    });
+    expect(h.getRaw()).toEqual(before);
+  });
   it('accepts and persists the exact canonical Provider contribution key', async () => {
     const h = harness();
     await expect(executeProvidersCommand(['add', contributionKey], h.deps)).resolves.toMatchObject({
@@ -597,12 +708,23 @@ describe('happier providers command domain', () => {
     });
     await h.deps.connections.setEnabled({
       action: 'setEnabled', machineId: 'machine-a', connectionId: 'pc_1', enabled: true,
+      scope: 'machine',
     });
     expect(settings(h.getRaw()).machineGrants).toHaveLength(1);
     expect(await executeProvidersCommand(['disable', 'pc_1', '--machine', 'machine-a'], h.deps))
       .toMatchObject({ ok: true, data: { scope: 'connection' } });
     expect(settings(h.getRaw()).accountGrants).toEqual([]);
     expect(settings(h.getRaw()).machineGrants).toEqual([]);
+  });
+
+  it('enables a local Provider on its resolved machine rather than authoring an ineffective Account grant', async () => {
+    const h = harness();
+    await executeProvidersCommand(['add', '--custom', '--name', 'Local', '--protocol', 'openai-chat',
+      '--base-url', 'http://127.0.0.1:8080/v1', '--catalog', 'manual'], h.deps);
+    expect(await executeProvidersCommand(['enable', 'pc_1'], h.deps)).toMatchObject({ ok: true,
+      data: { connectionId: 'pc_1', machineId: 'machine-a', scope: 'machine' } });
+    expect(settings(h.getRaw()).accountGrants).toEqual([]);
+    expect(settings(h.getRaw()).machineGrants).toMatchObject([{ machineId: 'machine-a', connectionId: 'pc_1' }]);
   });
 
   it('rejects misspelled command flags instead of silently targeting the current machine', async () => {

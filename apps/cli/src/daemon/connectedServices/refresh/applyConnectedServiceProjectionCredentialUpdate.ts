@@ -1,9 +1,7 @@
 import type {
   ConnectedServiceExecutionAuthorityV1,
   ConnectedAccountServiceKey,
-  ConnectedServiceId,
 } from '@happier-dev/protocol';
-import { resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 
 import type { StopSessionResult } from '@/daemon/sessions/stopSessionContract';
 import type { ConnectedServiceRuntimeRefreshTarget } from '../runtimeRegistry/registry';
@@ -55,7 +53,7 @@ export async function applyConnectedServiceProjectionCredentialUpdate(params: Re
   stopSession: (sessionId: string) => Promise<StopSessionResult>;
   getRefreshCoordinator: () => Readonly<{
     handleExternalCredentialUpdate(input: Readonly<{
-      serviceId: ConnectedServiceId;
+      serviceId: ConnectedAccountServiceKey;
       profileId: string;
       credentialPresence: PresentCredentialProjection;
       executionAuthority: ConnectedServiceExecutionAuthorityV1;
@@ -90,16 +88,8 @@ export async function applyConnectedServiceProjectionCredentialUpdate(params: Re
   if (!coordinator) {
     throw new Error('connected_service_credential_projection_materialization_owner_unavailable');
   }
-  const legacyServiceId =
-    resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(
-      params.input.serviceId,
-    );
-  if (!legacyServiceId) {
-    throw new Error('connected_service_credential_projection_legacy_materialization_unavailable');
-  }
   await coordinator.handleExternalCredentialUpdate({
     ...params.input,
-    serviceId: legacyServiceId,
     credentialPresence: params.input.credentialPresence,
   });
 }

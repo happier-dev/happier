@@ -59,7 +59,7 @@ type QualifiedConnectedAccountMaterializationOwner = Pick<
   'invokeWithReceipt' | 'invokeDirectMaterial'
 > & Partial<Pick<
   QualifiedConnectedAccountEstablishedRuntimeOwner,
-  'readCredentialRevision'
+  'readCredentialRevision' | 'readCredentialConfigurationRevision'
 >>;
 
 type ResolvedDaemonConnectedAccountService = Readonly<{
@@ -100,6 +100,7 @@ export type DaemonConnectedAccountActionFormOption = Readonly<{
 
 export type DaemonConnectedAccountPurposeBindingRuntime = Readonly<{
   owner: StablePluginConnectedAccountsOwner;
+  readCredentialConfigurationRevision: ConnectedAccountPurposeBindingOwner['readCredentialConfigurationRevision'];
   activatePurposeBindings:
     ConnectedAccountPurposeBindingOwner['activatePurposeBindings'];
   activateSessionPurposeBindings:
@@ -403,6 +404,8 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
   store?: ConnectedAccountPurposeBindingStore;
   /** OS executable lookup/process boundary, shared with the canonical GitHub CLI owner. */
   ghDependencies?: Parameters<typeof resolveGhNativeToken>[1];
+  /** A foreign requester cannot borrow the host custodian's native sign-in. */
+  allowNativeAccountCredentials?: boolean;
   /**
    * Host-private projection of the incumbent configured-endpoint owner for one
    * exact qualified account. It returns bounded, unique, host-normalized,
@@ -989,6 +992,7 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
 
   const materializeAccount = async (input: Readonly<{
     account: QualifiedConnectedAccountRef;
+    expectedConfigurationRevision?: string | null;
     credentialRevisionBasis?: ConnectedAccountMaterializationCredentialRevisionBasis;
     request: ConnectedAccountMaterializationRequest;
     signal: AbortSignal;
@@ -996,6 +1000,7 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
     input.signal.throwIfAborted();
     const receipt = await params.establishedRuntimeOwner.invokeWithReceipt({
       account: input.account,
+      ...(input.expectedConfigurationRevision !== undefined ? { expectedConfigurationRevision: input.expectedConfigurationRevision } : {}),
       operation: Object.freeze({
         kind: 'materialize',
         request: input.request,
@@ -1022,6 +1027,7 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
     resolveTarget,
     materializeAccount,
     async materializeNative(input): Promise<PluginConnectedAccountMaterialization> {
+      if (params.allowNativeAccountCredentials === false) throw listedAccountOutOfScope();
       const unavailable = () => new PluginError({
         code: 'plugin_connected_account_native_unavailable',
         message: 'sign in with gh CLI',
@@ -1106,6 +1112,10 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
     },
     projectTargetAccounts,
     assertTargetAccountMaterializable,
+    async resolveCredentialConfigurationRevision(account, signal) {
+      if (!params.establishedRuntimeOwner.readCredentialConfigurationRevision) throw listedAccountOutOfScope();
+      return await params.establishedRuntimeOwner.readCredentialConfigurationRevision({ account, signal });
+    },
     async resolveCredentialRevision(account, signal) {
       signal.throwIfAborted();
       if (!params.establishedRuntimeOwner.readCredentialRevision) {
@@ -1167,6 +1177,7 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
 
   return Object.freeze({
     owner,
+    readCredentialConfigurationRevision: bindingOwner.readCredentialConfigurationRevision,
     activatePurposeBindings: bindingOwner.activatePurposeBindings,
     activateSessionPurposeBindings: bindingOwner.activateSessionPurposeBindings,
     resolveCurrentSessionPurposeBindingSnapshot:

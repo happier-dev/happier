@@ -15,6 +15,8 @@ import {
   type SignedProviderBrokerRouteGrantV1,
 } from '@happier-dev/protocol';
 import { createPeerMediationLoopbackApp } from '@/daemon/peer/mediation/loopback/server';
+import { createProviderBrokerRouteGrantSigningInputV2, type SignedProviderBrokerRouteGrantV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
 import { PROVIDER_BROKER_PRIVATE_CLOSE_PATH } from './providerBrokerPrivateProtocol';
 import { createBrokerProviderRegistry } from './providerBroker.testkit';
 import {
@@ -25,10 +27,13 @@ import {
 
 import type { ManagedProviderEndpointHttpAccess } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import type { ManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
+import { createManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
+import { createAccountConnectionBrokerSourceOpen } from './accountConnectionSource';
 import {
   createConnectedServicesBrokerSourceMemberSelect,
   createConnectedServicesBrokerSourceOpen,
 } from './connectedServicesSource';
+import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import {
   createTeamCredentialBrokerSourceOwner,
   type TeamCredentialBrokerSourceOwner,
@@ -546,7 +551,18 @@ describe('startDaemonProviderBrokerRuntime', () => {
     }
   });
 
-  it('streams a Connected Account request through Home admission, canonical source custody, and Provider dispatch', async () => {
+  it.each([
+    { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, protocol: 'openai-responses', endpointTemplateId: 'cliproxyapi-openai-responses', purpose: 'openai-upstream', modelId: 'gpt-5' },
+    { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, protocol: 'anthropic', endpointTemplateId: 'cliproxyapi-anthropic', purpose: 'openai-upstream', modelId: 'gpt-5' },
+    { service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, protocol: 'openai-responses', endpointTemplateId: 'cliproxyapi-openai-responses', purpose: 'anthropic-upstream', modelId: 'claude-sonnet-4-5' },
+  ] as const)('streams $purpose through signed $protocol admission and exact source custody', async ({ service, protocol, endpointTemplateId, purpose, modelId }) => {
+    const authority = signedAuthority({ ...signedAuthority().payload,
+      application: { ...signedAuthority().payload.application, endpointTemplateId, protocol },
+    });
+    const source = { v: 1 as const, kind: 'connected_account' as const,
+      target: { kind: 'account' as const, account: { service, accountId: 'source-account' } },
+      credentialIncarnation: 'credential-row-1',
+    };
     const upstream = createServer((request, response) => {
       expect(request.headers.authorization).toBeUndefined();
       response.writeHead(200, { 'content-type': 'application/json' });
@@ -565,7 +581,9 @@ describe('startDaemonProviderBrokerRuntime', () => {
           method: request.method,
           headers: request.headers,
           body: request.body,
-          signal: request.signal,
+          // The genuine fetch boundary accepts the same native signal; its
+          // installed overload uses a legacy global AbortSignal declaration.
+          signal: request.signal as NonNullable<Parameters<typeof fetch>[1]>['signal'],
         });
         return {
           ok: response.ok,
@@ -611,11 +629,16 @@ describe('startDaemonProviderBrokerRuntime', () => {
       createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(),
     };
     const readResource = vi.fn(async () => resource);
-    const resolveBindingIntentSelection = vi.fn(async ({ purpose, target }) => ({
-      binding: { purpose, target },
-      resolved: { displayName: 'Account 1', account: source.target.account },
-      isCurrent: async () => true,
-    }));
+    const unusedBoundary = (): never => { throw new Error('Unexpected effect boundary'); };
+    const bindingOwner = createConnectedAccountPurposeBindingOwner({
+      store: { read: async () => ({ v: 1, bindings: [] }), update: unusedBoundary, subscribe: () => ({ dispose() {} }) },
+      selectTarget: unusedBoundary,
+      resolveTarget: async () => ({ displayName: 'Account 1', account: source.target.account }),
+      materializeAccount: unusedBoundary,
+      projectTargetAccounts: unusedBoundary,
+      assertTargetAccountMaterializable: unusedBoundary,
+    });
+    const resolveBindingIntentSelection = vi.fn(bindingOwner.resolveBindingIntentSelection);
     const custody: ManagedProviderExplicitStartCustody = Object.freeze({
       acquire: vi.fn(async () => {
         dispatchOrder.push('source-selection');
@@ -644,9 +667,8 @@ describe('startDaemonProviderBrokerRuntime', () => {
     });
     const runtime = await startDaemonProviderBrokerRuntime({
       machineId: 'broker-machine',
-      resolveTrustRoots: () => [],
+      resolveTrustRoots: () => homeTrustRoots,
       nowMs: () => 150,
-      verifyAuthority: () => ({ valid: true as const, authority }),
       resolveRequestPolicy: async () => {
         dispatchOrder.push('policy');
         return {
@@ -655,7 +677,7 @@ describe('startDaemonProviderBrokerRuntime', () => {
           application: authority.payload.application,
           policy: null,
           modelCatalog: {
-            models: [{ id: 'gpt-5' }],
+            models: [{ id: modelId }],
             resolveCanonicalModelId: (modelId: string) => modelId,
           },
           source,
@@ -684,13 +706,18 @@ describe('startDaemonProviderBrokerRuntime', () => {
       signal: new AbortController().signal,
     });
     expect(target).not.toBeNull();
-    const response = await requestThroughApplicationTarget(target!);
+    const response = await rawRequestThroughApplicationTarget({ ...target!, method: 'POST',
+      path: protocol === 'anthropic' ? '/v1/messages' : '/v1/responses',
+      body: JSON.stringify({ model: modelId, ...(protocol === 'anthropic'
+        ? { messages: [{ role: 'user', content: 'hello' }], max_tokens: 10 }
+        : { input: 'hello' }) }),
+    });
     expect(response).toContain('HTTP/1.1 200 OK');
     expect(response).toContain('{"ok":true}');
     expect(dispatchOrder).toEqual(['policy', 'usage-admission', 'source-selection']);
     expect(resolveBindingIntentSelection).toHaveBeenCalledWith(expect.objectContaining({
       target: source.target,
-      purpose: expect.objectContaining({ purpose: 'openai-upstream' }),
+      purpose: expect.objectContaining({ purpose }),
     }));
     expect(custody.acquire).toHaveBeenCalledWith(expect.objectContaining({
       operationClaim: { kind: 'providerBroker', operation: authority.payload.consumer },
@@ -1137,13 +1164,13 @@ async function keepAliveRequestsThroughApplicationTarget(input: Readonly<{
 
 const homeKey = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(23));
 const homeTrustRoots = [{ keyId: 'home', publicKey: Buffer.from(homeKey.publicKey).toString('base64url') }];
-const signedAuthority = (): SignedProviderBrokerRouteGrantV1 => ({
-  payload: authority.payload,
+const signedAuthority = (payload: SignedProviderBrokerRouteGrantV1['payload'] = authority.payload): SignedProviderBrokerRouteGrantV1 => ({
+  payload,
   signature: {
     alg: 'Ed25519',
     keyId: 'home',
     valueBase64Url: Buffer.from(tweetnacl.sign.detached(
-      Buffer.from(createProviderBrokerRouteGrantSigningInputV1(authority.payload)),
+      Buffer.from(createProviderBrokerRouteGrantSigningInputV1(payload)),
       homeKey.secretKey,
     )).toString('base64url'),
   },
@@ -1154,6 +1181,7 @@ const signedAuthority = (): SignedProviderBrokerRouteGrantV1 => ({
 function startBrokerAdmission(
   runtime: Awaited<ReturnType<typeof startDaemonProviderBrokerRuntime>>,
   nowMs: number,
+  handshake?: Parameters<typeof runtime.resolveProviderBrokerApplicationTarget>[0]['handshake'],
 ) {
   const admission = createPeerMediationLoopbackApp({
     nowMs: () => nowMs,
@@ -1179,7 +1207,7 @@ function startBrokerAdmission(
       method: 'POST',
       url: IROH_MACHINE_ADMISSION_PATH,
       headers: { [IROH_MACHINE_REMOTE_ENDPOINT_HEADER]: remoteEndpointId },
-      payload: { v: 1, kind: 'provider_broker', authority: signedAuthority() },
+      payload: handshake ?? { v: 1, kind: 'provider_broker', authority: signedAuthority() },
     });
     return {
       statusCode: response.statusCode,
@@ -1190,6 +1218,66 @@ function startBrokerAdmission(
 }
 
 describe('Provider-broker release after grant expiry (machine/1 admission + broker runtime)', () => {
+  it.each([{ label: 'expired', nowMs: 60_000 }, { label: 'current release-only', nowMs: 150 }])('admits $label personal authority only to release its own connection consumer', async ({ nowMs }) => {
+    const payload: SignedProviderBrokerRouteGrantV2['payload'] = {
+      v: 2, grantId: 'personal-release', aud: 'happier-provider-broker-route-v2', issuedAt: 100, expiresAt: 200,
+      homeId: 'home-1', accountId: 'custodian-account', initiatorTokenEpoch: 0,
+      source: { kind: 'account_connection', connectionId: ProviderConnectionIdSchema.parse('personal-gateway'),
+        expectedConnectionSecurityFingerprint: 'connection-security:v1:test',
+        expectedManagedRuntimeBindingFingerprint: 'managed-runtime-binding:v1:test' },
+      initiator: { ...authority.payload.initiator, accountId: 'custodian-account' },
+      target: authority.payload.target, consumer: authority.payload.consumer, application: authority.payload.application,
+    };
+    const signed: SignedProviderBrokerRouteGrantV2 = { payload, signature: { alg: 'Ed25519', keyId: 'home',
+      valueBase64Url: Buffer.from(tweetnacl.sign.detached(Buffer.from(createProviderBrokerRouteGrantSigningInputV2(payload)), homeKey.secretKey)).toString('base64url') } };
+    let retired = false;
+    let catalogReads = 0;
+    const openAccountSource = createAccountConnectionBrokerSourceOpen({
+      homeId: 'home-1', accountId: 'custodian-account', machineId: 'broker-machine',
+      expectedAccountSettingsScopeKey: 'unreached-release-source',
+      custody: createManagedProviderExplicitStartCustody({ machineId: 'broker-machine', happyHomeDir: '/unreached-release-source' }),
+      withRegistry: async read => await read(createBrokerProviderRegistry()),
+      // Account settings storage and Machine model RPC are genuine external
+      // boundaries. Retirement must not even read the catalog, let alone
+      // acquire a source through the real canonical opener.
+      getAccountSettingsSnapshot: () => { catalogReads++; return null; },
+      resolveBindingIntent: async () => { throw new Error('release resolved a credential'); },
+      projectModels: async () => { throw new Error('release projected models'); },
+      admitConsumer: async () => { throw new Error('release sought fresh Home admission'); },
+    });
+    const runtime = await startDaemonProviderBrokerRuntime({ machineId: 'broker-machine', resolveTrustRoots: () => homeTrustRoots,
+      nowMs: () => nowMs, createRequestId: () => 'request-1', resolveRequestPolicy: async () => null,
+      admitRequest: async () => ({ ok: false, reasonCode: 'resource_unavailable' }), authorizeModelCatalog: async () => ({ ok: false, reasonCode: 'resource_unavailable' }),
+      sourceOwner: createTeamCredentialBrokerSourceOwner({ machineId: 'broker-machine', custody: { retire: async () => false },
+        selectConnectedServicesSourceMember: async () => null, openConnectedServicesSource: async () => null, openProviderConnectionSource: async () => null }),
+      accountConnection: { homeId: 'home-1', accountId: 'custodian-account',
+        open: openAccountSource,
+        retire: async () => { retired = true; } },
+    });
+    closeTasks.push(runtime.close);
+    const handshake = { v: 2 as const, kind: 'provider_broker' as const, authority: signed, intent: 'release' as const };
+    const target = await runtime.resolveProviderBrokerApplicationTarget({ handshake,
+      authority: signed, authenticatedRemoteEndpointId: payload.initiator.endpointId, localEndpointId: payload.target.endpointId,
+      signal: new AbortController().signal });
+    expect(target).not.toBeNull();
+    if (!target) throw new Error('personal release target unavailable');
+    const inference = await rawRequestThroughApplicationTarget({ ...target, method: 'POST', path: '/v1/responses', body: '{}' });
+    expect(inference).toContain('HTTP/1.1 403');
+    expect(retired).toBe(false);
+    const admit = startBrokerAdmission(runtime, nowMs, handshake);
+    expect((await admit('c'.repeat(64))).statusCode).toBe(403);
+    const tampered = startBrokerAdmission(runtime, nowMs, { ...handshake, authority: {
+      ...signed, payload: { ...payload, source: { ...payload.source, connectionId: ProviderConnectionIdSchema.parse('foreign-connection') } },
+    } });
+    expect((await tampered()).statusCode).toBe(403);
+    expect(retired).toBe(false);
+    const releaseStream = await admit();
+    expect(releaseStream.statusCode).toBe(204);
+    const response = await rawRequestThroughApplicationTarget({ ...releaseStream, method: 'DELETE', path: PROVIDER_BROKER_PRIVATE_CLOSE_PATH });
+    expect(response).toContain('HTTP/1.1 204');
+    expect(retired).toBe(true);
+    expect(catalogReads).toBe(0);
+  });
   async function startTarget(nowMs: number) {
     const custodyRetire = vi.fn(async () => true);
     const openConnectedServicesSource = vi.fn(async () => null);
@@ -1334,7 +1422,8 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
         const response = await fetch(`http://127.0.0.1:${address.port}${request.pathAndQuery}`, {
           method: request.method,
           body: request.body,
-          signal: request.signal,
+          // Preserve the native signal across the legacy fetch type boundary.
+          signal: request.signal as NonNullable<Parameters<typeof fetch>[1]>['signal'],
         });
         return {
           ok: response.ok,

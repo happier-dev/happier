@@ -10,6 +10,7 @@ import {
 } from '@happier-dev/protocol';
 import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
 import { SessionModelTransitionResultV1Schema } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
+import { createModelIntentMetadataCasCandidate } from '@happier-dev/agents/session/state/metadataWriters';
 
 import {
   createSessionModelTransitionAuthorizer,
@@ -26,6 +27,7 @@ const native = (modelId: string): ProviderBoundModelRef => ({
   providerConnectionId: null,
   modelId,
 });
+const modelMutationScope = { serverId: 'home', accountId: 'account-1', sessionId: 'session-1' };
 
 const provider = (
   connectionId: string,
@@ -262,6 +264,8 @@ function deferred<T>() {
 }
 
 function createHarness(params?: Readonly<{
+  publishIntent?: Parameters<typeof createSessionModelTransitionCoordinator>[0]['publishIntent'];
+  ownerScope?: typeof modelMutationScope;
   authorize?: Parameters<typeof createSessionModelTransitionCoordinator>[0]['authorize'];
   initial?: ProviderBoundModelRef;
   initialTarget?: AuthorizedSessionModelTransitionTarget;
@@ -277,14 +281,10 @@ function createHarness(params?: Readonly<{
   let currentRun = true;
   const events: string[] = [];
   const authorize = vi.fn(params?.authorize ?? (async (selection: ProviderBoundModelRef) => authorized(selection)));
-  const publishIntent = vi.fn<
-    (
-      selection: ProviderBoundModelRef,
-    ) => Promise<Readonly<{ accepted: boolean; updatedAt: number }>>
-  >(async (selection) => {
+  const publishIntent = vi.fn<Parameters<typeof createSessionModelTransitionCoordinator>[0]['publishIntent']>(params?.publishIntent ?? (async (selection) => {
     events.push(`intent:${selection.modelId}`);
     return { accepted: true, updatedAt: Date.now() };
-  });
+  }));
   const applyRuntime = vi.fn<
     (
       target: AuthorizedSessionModelTransitionTarget,
@@ -319,6 +319,7 @@ function createHarness(params?: Readonly<{
     },
   );
   const coordinator = createSessionModelTransitionCoordinator({
+    ...(params?.ownerScope ? { ownerScope: params.ownerScope } : {}),
     runId: 'run-1',
     agentTargetKey: 'agent:happier.agent.claude/claude',
     initialActiveTarget: params?.initialTarget ?? authorized(current),
@@ -362,6 +363,135 @@ function createHarness(params?: Readonly<{
 }
 
 describe('createSessionModelTransitionCoordinator', () => {
+  it('reads applied X while Y is only pending, but refuses unknown runtime custody after effect starts', async () => {
+    const initialTarget = authorized(native('X'));
+    let active = () => initialTarget;
+    const authorizer = createSessionModelTransitionAuthorizer({
+      agentId: 'claude', agentTargetKey: native('X').agentTargetKey,
+      sessionId: 'session-1', machineId: 'machine-1', nativeModelApplyPolicy: 'live',
+      readActiveTarget: () => active(),
+    });
+    // Publication and Agent application are external custody boundaries; the
+    // real coordinator and native authorizer own all transition decisions.
+    const publicationStarted = deferred<void>();
+    const publicationRelease = deferred<void>();
+    const applicationStarted = deferred<void>();
+    const applicationRelease = deferred<void>();
+    let current = true;
+    const coordinator = createSessionModelTransitionCoordinator({
+      runId: 'run-1', agentTargetKey: native('X').agentTargetKey, initialActiveTarget: initialTarget,
+      isCurrentRun: () => current, checkCurrentPublisherAuthority: async () => current,
+      authorize: authorizer,
+      publishIntent: async () => {
+        publicationStarted.resolve(); await publicationRelease.promise;
+        return { accepted: true, updatedAt: 1 };
+      },
+      applyRuntime: async () => {
+        applicationStarted.resolve(); await applicationRelease.promise;
+        return { status: 'applied' };
+      },
+      publishActive: async () => undefined, revokeActiveSelectionProof: async () => undefined,
+      fencePromptAdmission: async () => undefined, clearPromptAdmission: async () => undefined,
+      transferPromptAdmission: async (_epoch, input) => { await input.dispatch(); return { status: 'dispatched', value: undefined }; },
+    });
+    active = coordinator.readActiveTarget;
+    try {
+      const transition = coordinator.submit(native('Y'), { source: 'command' });
+      await publicationStarted.promise;
+      expect(await coordinator.readAppliedTarget()).toMatchObject({ status: 'applied', target: { selection: native('X') } });
+      publicationRelease.resolve();
+      await applicationStarted.promise;
+      expect(await coordinator.readAppliedTarget()).toEqual({ status: 'unavailable' });
+      applicationRelease.resolve();
+      await expect(transition).resolves.toMatchObject({ ok: true, activeSelection: native('Y') });
+      expect(await coordinator.readAppliedTarget()).toMatchObject({ status: 'applied', target: { selection: native('Y') } });
+      current = false;
+      expect(await coordinator.readAppliedTarget()).toEqual({ status: 'unavailable' });
+    } finally {
+      publicationRelease.resolve(); applicationRelease.resolve(); await coordinator.dispose();
+    }
+  });
+  it('captures active owner state and conditionally restores it, refusing an intervening model or a replacement run', async () => {
+    let intent = { modelSelectionIntentV1: { v: 1 as const, updatedAt: 1, selection: native('old') } };
+    let order = 10;
+    let publicationPause: { ready: ReturnType<typeof deferred<void>>; release: ReturnType<typeof deferred<void>> } | null = null;
+    const authorizer = createSessionModelTransitionAuthorizer({ sessionId: 'session-1', machineId: 'machine-1',
+      agentId: 'claude', agentTargetKey: native('old').agentTargetKey, nativeModelApplyPolicy: 'live',
+      readActiveTarget: () => h.coordinator.readActiveTarget() });
+    const h = createHarness({ initial: native('old'), authorize: authorizer, ownerScope: modelMutationScope,
+      publishIntent: async (selection, expected, requiredBefore) => {
+        const candidate = createModelIntentMetadataCasCandidate({ selection, nowMs: () => ++order, ownerScope: modelMutationScope,
+          ...(requiredBefore ? { captureBefore: true, requiredBefore } : {}),
+          ...(expected ? { expected: { owner: 'inactive', scope: modelMutationScope, ...expected } } : {}) });
+        intent = candidate.update(intent);
+        const state = candidate.readState();
+        if (publicationPause) {
+          publicationPause.ready.resolve(undefined);
+          await publicationPause.release.promise;
+        }
+        return { accepted: state.accepted, updatedAt: state.updatedAt ?? 0 };
+      } });
+    const priorIntent = intent;
+    expect(await h.coordinator.submit(native('unexpected'), { source: 'command',
+      expected: { owner: 'active', scope: modelMutationScope, runId: 'run-1', selection: native('different'), updatedAt: 1 } }))
+      .toMatchObject({ ok: false, status: 'superseded' });
+    expect(intent).toBe(priorIntent);
+    expect(h.coordinator.readActiveTarget().selection).toEqual(native('old'));
+    expect(await h.coordinator.submit(native('unexpected'), { source: 'command',
+      expected: { owner: 'active', scope: { ...modelMutationScope, serverId: 'other-home' }, runId: 'run-1', selection: native('old'), updatedAt: 1 } }))
+      .toMatchObject({ ok: false, status: 'superseded' });
+    expect(intent).toBe(priorIntent);
+    const applied = await h.coordinator.submit(native('new'), { source: 'command', captureBefore: true });
+    expect(applied).toMatchObject({ ok: true, reversal: {
+      owner: 'active', scope: modelMutationScope, runId: 'run-1', before: native('old'), applied: native('new'), updatedAt: 11,
+    } });
+    expect(await h.coordinator.submit(native('old'), { source: 'command',
+      expected: { owner: 'active', scope: modelMutationScope, runId: 'run-1', selection: native('new'), updatedAt: 11 } })).toMatchObject({ ok: true });
+    expect(await h.coordinator.submit(native('new'), { source: 'command', captureBefore: true }))
+      .toMatchObject({ ok: true, reversal: { before: native('old'), applied: native('new'), updatedAt: 13 } });
+    // The newer intent has won storage, but its acknowledgement is in flight.
+    // A stale Undo must not cancel that real transition before its CAS refuses.
+    publicationPause = { ready: deferred<void>(), release: deferred<void>() };
+    const intervening = h.coordinator.submit(native('intervening'), { source: 'command' });
+    await publicationPause.ready.promise;
+    const staleUndo = h.coordinator.submit(native('old'), { source: 'command',
+      expected: { owner: 'active', scope: modelMutationScope, runId: 'run-1', selection: native('new'), updatedAt: 13 } });
+    publicationPause.release.resolve(undefined);
+    expect(await intervening).toMatchObject({ ok: true });
+    expect(await staleUndo).toMatchObject({ ok: false, status: 'superseded' });
+    publicationPause = null;
+    expect(h.coordinator.readActiveTarget().selection).toEqual(native('intervening'));
+    // A capture queued behind an ordinary same-target write must obtain its
+    // own exact receipt rather than inherit the unreceipted command result.
+    publicationPause = { ready: deferred<void>(), release: deferred<void>() };
+    const ordinary = h.coordinator.submit(native('coalescing'), { source: 'command' });
+    await publicationPause.ready.promise;
+    const sameTargetCapture = h.coordinator.submit(native('coalescing'), { source: 'command', captureBefore: true });
+    publicationPause.release.resolve(undefined);
+    expect(await ordinary).toMatchObject({ ok: true });
+    expect(await sameTargetCapture).toMatchObject({ ok: true, reversal: {
+      before: native('coalescing'), applied: native('coalescing'), updatedAt: 16,
+    } });
+    publicationPause = null;
+    expect(await h.coordinator.submit(native('old'), { source: 'command',
+      expected: { owner: 'active', scope: modelMutationScope, runId: 'retired-run', selection: native('coalescing'), updatedAt: 16 } })).toMatchObject({ ok: false, status: 'superseded' });
+    const captured = await h.coordinator.submit(native('new'), { source: 'command', captureBefore: true });
+    expect(captured.ok).toBe(true);
+    const appliedStamp = intent.modelSelectionIntentV1.updatedAt;
+    // A restart-required choice can change durable intent while the live
+    // selection remains applied. That newer choice must also defeat Undo.
+    intent = { modelSelectionIntentV1: { v: 1, updatedAt: appliedStamp + 1, selection: native('future') } };
+    expect(await h.coordinator.submit(native('old'), { source: 'command',
+      expected: { owner: 'active', scope: modelMutationScope, runId: 'run-1', selection: native('new'), updatedAt: appliedStamp } })).toMatchObject({ ok: false, status: 'superseded' });
+    expect(intent.modelSelectionIntentV1.selection).toEqual(native('future'));
+    expect(h.coordinator.readActiveTarget().selection).toEqual(native('new'));
+    expect(await h.coordinator.submit(native('different'), { source: 'command', captureBefore: true }))
+      .toMatchObject({ ok: false });
+    expect(intent.modelSelectionIntentV1.selection).toEqual(native('future'));
+    expect(h.coordinator.readActiveTarget().selection).toEqual(native('new'));
+    await h.coordinator.dispose();
+  });
+
   it('checks each caller before coalescing an unrestricted native transition', async () => {
     const initial = native('A');
     const requested = native('B');

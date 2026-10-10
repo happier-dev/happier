@@ -281,6 +281,7 @@ async function materializeLinkedStateEntry(params: Readonly<{
     return false;
   }
   await prepareManagedConnectedServiceHomeDestination(params.destinationPath);
+  await mkdir(dirname(params.destinationPath), { recursive: true });
   const tempLinkPath = `${params.destinationPath}.happier-link-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   try {
     await createConnectedServiceSharedStateLink({
@@ -627,6 +628,9 @@ export async function applyConnectedServiceStateSharingDescriptor(
       if (!descriptorEntry) continue;
       const sourcePath = join(resolve(resolveStateSourceRoot(entryName)), entryName);
       const destinationPath = join(targetRoot, entryName);
+      if (descriptorEntry.createIfMissing === 'directory') {
+        await mkdir(sourcePath, { recursive: true });
+      }
       if (descriptorEntry.mode === 'env_redirect') {
         await mkdir(destinationPath, { recursive: true });
         if (descriptorEntry.envVar) envOverrides[descriptorEntry.envVar] = destinationPath;

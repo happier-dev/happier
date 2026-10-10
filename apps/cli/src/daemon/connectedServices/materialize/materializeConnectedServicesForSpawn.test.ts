@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -7,6 +7,9 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { reloadConfiguration } from '@/configuration';
+import { retainExecutionRunState } from '@/daemon/executionRunRegistry';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import {
   resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn,
@@ -25,6 +28,25 @@ import {
 type MaterializeParams = Parameters<typeof materializeConnectedServicesForSpawnProduction>[0];
 
 let runtimeFixture: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | null = null;
+
+it('prepares an isolated requester Agent home without a Connected Account for Provider or API-key authentication', async () => {
+  const baseDir = await mkdtemp(join(tmpdir(), 'requester-native-only-'));
+  try {
+    const aliceHome = join(baseDir, 'alice-native');
+    await mkdir(aliceHome);
+    await writeFile(join(aliceHome, 'auth.json'), JSON.stringify({ access_token: 'alice-login' }));
+    const materialized = await materializeConnectedServicesForSpawnProduction({
+      agentId: 'codex', materializationKey: 'bob-session', activeServerDir: baseDir,
+      baseDir: join(baseDir, 'bob-materialized'), recordsByServiceId: new Map(), allowNativeAccountState: false,
+      processEnv: { CODEX_HOME: aliceHome }, isAccountRuntimeCurrent: async () => true,
+    });
+    expect(materialized?.env.CODEX_HOME).toBe(materialized?.targetMaterializedRoot);
+    expect(materialized?.env.CODEX_HOME).toBeTruthy();
+    expect(existsSync(join(materialized!.env.CODEX_HOME!, 'auth.json'))).toBe(false);
+    expect(await readFile(join(aliceHome, 'auth.json'), 'utf8')).toContain('alice-login');
+    await materialized?.cleanupOnExit?.();
+  } finally { await rm(baseDir, { recursive: true, force: true }); }
+});
 
 beforeAll(async () => {
   runtimeFixture = await createAdmittedPluginRuntimeFixture({
@@ -96,6 +118,113 @@ const LEGACY_UNFENCED_ONE_SHOT_MATERIALIZATION_AUTHORITY = {
 } as const satisfies MaterializeParams['connectedAccountMaterializationAuthority'];
 
 describe('materializeConnectedServicesForSpawn', () => {
+  it('preserves a Session home and its local rollout through exit and credential rematerialization', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-session-native-home-'));
+    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+    try {
+      envScope.patch({ HAPPIER_HOME_DIR: join(root, 'cli') });
+      reloadConfiguration();
+      const params: MaterializeParams = {
+        agentId: 'codex', materializationKey: 'csm_retained-session', activeServerDir: root,
+        baseDir: join(root, 'materialized'), recordsByServiceId: new Map(), allowNativeAccountState: false,
+        isAccountRuntimeCurrent: async () => true,
+      };
+      const first = await materializeConnectedServicesForSpawnProduction(params);
+      const home = first!.env.CODEX_HOME!;
+      // Immediate cleanup cannot establish absence of a server Session reference.
+      await first!.cleanupOnExit!();
+      expect(existsSync(home)).toBe(true);
+      await mkdir(join(home, 'sessions'), { recursive: true });
+      await writeFile(join(home, 'sessions', 'rollout.jsonl'), '{"nativeSession":"session-thread"}\n');
+      const shared = join(root, 'shared-native-sessions');
+      await mkdir(shared);
+      await writeFile(join(shared, 'another-session.jsonl'), 'another account');
+      await symlink(shared, join(home, 'sessions', 'shared'), 'dir');
+      const second = await materializeConnectedServicesForSpawnProduction(params);
+      await second!.cleanupOnExit!();
+      expect(await readFile(join(home, 'sessions', 'rollout.jsonl'), 'utf8')).toContain('session-thread');
+      await expect(lstat(join(home, 'sessions', 'shared'))).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      envScope.restore(); reloadConfiguration(); await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps isolated native rollout state on exit while its retained Run can resume', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-retained-run-native-home-'));
+    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+    try {
+      envScope.patch({ HAPPIER_HOME_DIR: join(root, 'cli') });
+      reloadConfiguration();
+      const runId = 'retained-isolated-run';
+      const materialized = await materializeConnectedServicesForSpawnProduction({
+        agentId: 'codex', materializationKey: runId, activeServerDir: root,
+        baseDir: join(root, 'materialized'), recordsByServiceId: new Map(), allowNativeAccountState: false,
+        isAccountRuntimeCurrent: async () => true,
+      });
+      const rollout = join(materialized!.env.CODEX_HOME!, 'sessions', 'rollout.jsonl');
+      await mkdir(join(materialized!.env.CODEX_HOME!, 'sessions'), { recursive: true });
+      await writeFile(rollout, '{"nativeSession":"thread"}\n');
+      await retainExecutionRunState({
+        runId, callId: 'call', sidechainId: 'side', sessionId: null, depth: 0,
+        intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex',
+        instructions: '', permissionMode: 'read_only', retentionPolicy: 'resumable',
+        runClass: 'bounded', ioMode: 'request_response', status: 'succeeded', startedAtMs: 1, finishedAtMs: 2,
+        resumeHandle: { kind: 'provider_session.v1', backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' }, providerSessionId: 'thread' },
+      });
+      await materialized!.cleanupOnExit!();
+      expect(await readFile(rollout, 'utf8')).toContain('thread');
+      const resumed = await materializeConnectedServicesForSpawnProduction({
+        agentId: 'codex', materializationKey: runId, activeServerDir: root,
+        baseDir: join(root, 'materialized'), recordsByServiceId: new Map(), allowNativeAccountState: false,
+        isAccountRuntimeCurrent: async () => true,
+      });
+      expect(await readFile(rollout, 'utf8')).toContain('thread');
+      await resumed!.cleanupOnExit!();
+    } finally {
+      envScope.restore(); reloadConfiguration(); await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('materializes requester credentials without importing custodian native configuration or sessions', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-requester-native-isolation-'));
+    const nativeHome = join(root, 'alice-codex');
+    await mkdir(join(nativeHome, 'sessions'), { recursive: true });
+    await writeFile(join(nativeHome, 'config.toml'), 'model = "alice-private-model"\n');
+    await writeFile(join(nativeHome, 'sessions', 'alice.jsonl'), '{"private":"Alice"}\n');
+    const record = buildConnectedServiceCredentialRecord({ now: 10, serviceId: 'openai-codex', profileId: 'bob',
+      kind: 'oauth', expiresAt: 123, oauth: { accessToken: 'bob-access', refreshToken: 'bob-refresh', idToken: 'bob-id',
+        scope: 'openid profile', tokenType: 'Bearer', providerAccountId: 'bob', providerEmail: null } });
+    let result: Awaited<ReturnType<typeof materializeConnectedServicesForSpawn>> = null;
+    try {
+      const deniedRoot = resolveConnectedServiceMaterializedRootDir({ baseDir: join(root, 'denied-materialized'),
+        agentId: 'codex', materializationKey: 'denied-bob-session' });
+      await expect(materializeConnectedServicesForSpawn({ agentId: 'codex', materializationKey: 'denied-bob-session',
+        activeServerDir: join(root, 'server'), baseDir: join(root, 'denied-materialized'),
+        connectedAccountMaterializationAuthority: LEGACY_UNFENCED_ONE_SHOT_MATERIALIZATION_AUTHORITY,
+        recordsByServiceId: new Map([['openai-codex', record]]), allowNativeAccountState: false,
+        isAccountRuntimeCurrent: async () => false,
+      })).rejects.toThrow('requester_account_context_unavailable');
+      expect(existsSync(deniedRoot)).toBe(false);
+      result = await materializeConnectedServicesForSpawn({ agentId: 'codex', materializationKey: 'bob-session',
+        activeServerDir: join(root, 'server'), baseDir: join(root, 'bob-materialized'),
+        connectedAccountMaterializationAuthority: LEGACY_UNFENCED_ONE_SHOT_MATERIALIZATION_AUTHORITY,
+        recordsByServiceId: new Map([['openai-codex', record]]), allowNativeAccountState: false,
+        accountSettings: { connectedServicesProviderStateSharingSettingsV1: {
+          v: 1, defaults: { configMode: 'linked', stateMode: 'shared' }, byAgentId: {}, acknowledgedRisksByAgentId: {},
+        } }, processEnv: { CODEX_HOME: nativeHome, HOME: root },
+      });
+      expect(result).not.toBeNull();
+      const home = result!.env.CODEX_HOME!;
+      expect(home).not.toBe(nativeHome);
+      expect(await readFile(join(home, 'auth.json'), 'utf8')).toContain('bob-access');
+      await expect(lstat(join(home, 'config.toml'))).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(lstat(join(home, 'sessions'))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await readFile(join(nativeHome, 'config.toml'), 'utf8')).toContain('alice-private-model');
+    } finally {
+      await result?.cleanupOnExit?.();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
   it('persists the shared target materialized root for OpenCode continuity recovery', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));

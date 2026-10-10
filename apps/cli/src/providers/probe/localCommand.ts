@@ -8,7 +8,6 @@ import type { ProviderCatalogFormatParser } from './parsers';
 
 const LITERAL_TOKEN = /^[^\u0000-\u001f\u007f;&|`$<>]+$/u;
 const LOCAL_CATALOG_COMMAND_MAX_BYTES = 1024 * 1024;
-const LOCAL_CATALOG_COMMAND_TTL_MS = 30_000;
 
 export type ProviderLocalCommandRunner = Readonly<{
   runSystemTool(input: Readonly<{
@@ -152,22 +151,7 @@ function runCommandCatalogFormat(
  */
 export function createProviderLocalCatalogFallbackRunner(input: Readonly<{
   runner: ProviderLocalCommandRunner;
-  now?: () => number;
-  ttlMs?: number;
-  maxEntries?: number;
 }>) {
-  const now = input.now ?? Date.now;
-  const ttlMs = input.ttlMs ?? LOCAL_CATALOG_COMMAND_TTL_MS;
-  const maxEntries = input.maxEntries ?? 128;
-  if (!Number.isInteger(ttlMs) || ttlMs < LOCAL_CATALOG_COMMAND_TTL_MS || ttlMs > 10 * 60_000) {
-    throw new TypeError('Provider local catalog fallback TTL must be between 30 seconds and 10 minutes');
-  }
-  if (!Number.isInteger(maxEntries) || maxEntries < 1 || maxEntries > 512) {
-    throw new TypeError('Provider local catalog fallback cache limit must be between 1 and 512');
-  }
-  const inFlight = new Map<string, Promise<ProviderLocalCatalogFallbackResult>>();
-  const completed = new Map<string, Readonly<{ expiresAt: number; result: ProviderLocalCatalogFallbackResult }>>();
-
   const run = async (raw: Readonly<{
     descriptor: ProviderCatalogCommandFallbackV1;
     endpointUrl: string;
@@ -180,43 +164,19 @@ export function createProviderLocalCatalogFallbackRunner(input: Readonly<{
   }>): Promise<ProviderLocalCatalogFallbackResult> => {
     const descriptor = ProviderCatalogCommandFallbackV1Schema.parse(raw.descriptor);
     const endpointUrl = ProviderEndpointUrlSyntaxSchema.parse(raw.endpointUrl);
-    const key = JSON.stringify([descriptor, endpointUrl]);
-    const active = inFlight.get(key);
-    if (active) return active;
-    const cached = completed.get(key);
-    if (cached && now() < cached.expiresAt) return cached.result;
-
-    const operation = (async (): Promise<ProviderLocalCatalogFallbackResult> => {
-      const result = await input.runner.runSystemTool({
-        toolId: `provider-catalog-fallback:${descriptor.endpointTemplateId}`,
-        lookupNames: [...descriptor.lookupNames],
-        args: [...descriptor.fixedArgs],
-        ...(descriptor.endpointEnvName ? { env: { [descriptor.endpointEnvName]: endpointUrl } } : {}),
-        timeoutMs: 5_000,
-        maxStdoutBytes: LOCAL_CATALOG_COMMAND_MAX_BYTES + 1,
-        maxStderrBytes: 16 * 1024,
-        reason: 'provider local catalog fallback',
-      });
-      if (!result.ok || result.exitCode !== 0) return { status: 'unavailable' };
-      return runCommandCatalogFormat(descriptor.parser, result.stdout, raw.contributedCatalogParsers);
-    })();
-    inFlight.set(key, operation);
-    try {
-      const result = await operation;
-      const currentTime = now();
-      for (const [entryKey, entry] of completed) {
-        if (currentTime >= entry.expiresAt) completed.delete(entryKey);
-      }
-      while (completed.size >= maxEntries) {
-        const oldest = completed.keys().next().value as string | undefined;
-        if (oldest === undefined) break;
-        completed.delete(oldest);
-      }
-      completed.set(key, { expiresAt: currentTime + ttlMs, result });
-      return result;
-    } finally {
-      inFlight.delete(key);
-    }
+    // The enclosing catalog scheduler owns freshness and single-flight work.
+    const result = await input.runner.runSystemTool({
+      toolId: `provider-catalog-fallback:${descriptor.endpointTemplateId}`,
+      lookupNames: [...descriptor.lookupNames],
+      args: [...descriptor.fixedArgs],
+      ...(descriptor.endpointEnvName ? { env: { [descriptor.endpointEnvName]: endpointUrl } } : {}),
+      timeoutMs: 5_000,
+      maxStdoutBytes: LOCAL_CATALOG_COMMAND_MAX_BYTES + 1,
+      maxStderrBytes: 16 * 1024,
+      reason: 'provider local catalog fallback',
+    });
+    if (!result.ok || result.exitCode !== 0) return { status: 'unavailable' };
+    return runCommandCatalogFormat(descriptor.parser, result.stdout, raw.contributedCatalogParsers);
   };
 
   return { run };

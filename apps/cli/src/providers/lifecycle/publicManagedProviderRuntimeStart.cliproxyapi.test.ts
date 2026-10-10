@@ -1,4 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
+import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
+import type { ProviderBrokerAccountOpenResponseV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { openAccountConnectionProviderBrokerAccess } from '@/providers/broker/accountConnectionClient';
+import { createProviderBrokerRequestHandler } from '@/providers/broker/providerBrokerRequestHandler';
+import type { PublicManagedProviderEndpointPath } from './publicManagedProviderRuntimeStart';
 
 import type {
   ConnectedAccountBindingSummary,
@@ -100,27 +107,23 @@ function connectedAccounts(
   });
 }
 
-function healthyIdentityFor(boundPurposes: readonly ManagedPurpose[]) {
+function healthyIdentityFor(_boundPurposes: readonly ManagedPurpose[]) {
   const families = [
-    boundPurposes.includes('openai-upstream')
-      ? Object.freeze({
+    Object.freeze({
           purpose: 'openai-upstream',
-          protocols: Object.freeze(['openai-chat', 'openai-responses']),
-        })
-      : null,
-    boundPurposes.includes('anthropic-upstream')
-      ? Object.freeze({
+          protocols: Object.freeze(['openai-chat', 'openai-responses', 'anthropic']),
+        }),
+    Object.freeze({
           purpose: 'anthropic-upstream',
-          protocols: Object.freeze(['anthropic']),
-        })
-      : null,
-  ].filter((family): family is NonNullable<typeof family> => family !== null);
+          protocols: Object.freeze(['openai-chat', 'openai-responses', 'anthropic']),
+        }),
+  ];
   return Object.freeze({
     v: 1,
-    contractVersion: 'happier.cliproxyapi-managed/v1',
+    contractVersion: 'happier.cliproxyapi-managed/v2',
     sdkVersion: 'v7.2.95',
     wrapperBuildVersion: 'cliproxyapi-test-build',
-    protocols: families.flatMap((family) => family.protocols),
+    protocols: [...new Set(families.flatMap((family) => family.protocols))],
     purposes: families.map((family) => Object.freeze({
       consumer: Object.freeze({
         pluginId: 'happier.provider.cliproxyapi',
@@ -200,7 +203,7 @@ describe('CLIProxyAPI composed public managed Provider start', () => {
     expect(service.stop).not.toHaveBeenCalled();
   });
 
-  it('projects only the exact bound OpenAI family before endpoint publication', async () => {
+  it('projects proven downstream endpoints for the bound OpenAI upstream before endpoint publication', async () => {
     const boundPurposes = ['openai-upstream'] as const;
     const dispose = vi.fn(async () => undefined);
     const request = vi.fn<ManagedServiceHandle['request']>(async () => Object.freeze({
@@ -226,8 +229,8 @@ describe('CLIProxyAPI composed public managed Provider start', () => {
       sourceCustody: createManagedPluginSourceCustody('immutable-cliproxyapi'),
       isCurrent: () => true,
     }) satisfies ResolvedManagedProviderRuntime;
-    const projectEndpointAccess = vi.fn(async () => Object.freeze({
-      access: Object.freeze({ kind: 'opaque-endpoint-access' as const }),
+    const projectEndpointAccess = vi.fn(async ({ endpoints }: Readonly<{ endpoints: readonly PublicManagedProviderEndpointPath[] }>) => Object.freeze({
+      access: endpoints,
       isCurrent: () => true,
     }));
     const launchResourceScope = createProviderLaunchResourceScope();
@@ -268,8 +271,82 @@ describe('CLIProxyAPI composed public managed Provider start', () => {
       endpoints: [
         { endpointTemplateId: 'cliproxyapi-openai-responses', servicePath: '/v1' },
         { endpointTemplateId: 'cliproxyapi-openai-chat', servicePath: '/v1' },
+        { endpointTemplateId: 'cliproxyapi-anthropic', servicePath: '/' },
       ],
     }));
+
+    if (!result.ok) throw new Error('managed endpoint publication failed');
+    // The process and carrier are boundaries. Runtime declaration, source
+    // metadata, broker publication and installed SDK URL joining stay real.
+    for (const endpoint of result.access) {
+      const protocol = endpoint.endpointTemplateId === 'cliproxyapi-anthropic' ? 'anthropic'
+        : endpoint.endpointTemplateId === 'cliproxyapi-openai-responses' ? 'openai-responses' : 'openai-chat';
+      const application = { agentTargetKey: 'backend:claude:built_in',
+        implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+        endpointTemplateId: endpoint.endpointTemplateId, protocol } as const;
+      const connectionId = ProviderConnectionIdSchema.parse('gateway-1');
+      const consumer = { kind: 'session', sessionId: 'session-1' } as const;
+      const source = { kind: 'account_connection', connectionId,
+        expectedConnectionSecurityFingerprint: 'connection-security:v1:test',
+        expectedManagedRuntimeBindingFingerprint: 'managed-runtime-binding:v1:test' } as const;
+      const opened: Extract<ProviderBrokerAccountOpenResponseV2, { ok: true }> = {
+        ok: true, authority: { payload: { v: 2, grantId: 'grant-1', aud: 'happier-provider-broker-route-v2',
+          issuedAt: 100, expiresAt: 200, homeId: 'home-1', accountId: 'account-1', source,
+          initiatorTokenEpoch: 0, initiator: { accountId: 'account-1', machineId: 'worker-1', endpointId: 'a'.repeat(64) },
+          target: { custodianAccountId: 'account-1', machineId: 'hub-1', endpointId: 'b'.repeat(64) }, consumer, application },
+          signature: { alg: 'Ed25519', keyId: 'home', valueBase64Url: Buffer.alloc(64).toString('base64url') } },
+        target: { custodianAccountId: 'account-1', brokerMachineId: 'hub-1', endpointId: 'b'.repeat(64), endpointRevision: 1,
+          endpoint: { endpointId: 'b'.repeat(64) } },
+      };
+      const upstream = vi.fn(async () => ({ ok: true, status: 200, statusText: 'OK', headers: {}, body: null }));
+      let current = true;
+      const handler = createProviderBrokerRequestHandler({ resolveTrustRoots: () => [], nowMs: () => 150,
+        resolveRequestPolicy: async () => null, createRequestId: () => 'unused',
+        admit: async () => ({ ok: false, reasonCode: 'resource_unavailable' }) });
+      const context = { kind: 'account_connection' as const, authority: opened.authority,
+        authenticatedRemoteEndpointId: opened.authority.payload.initiator.endpointId,
+        access: { endpointUrl: (id: string) => id === endpoint.endpointTemplateId
+          ? `http://127.0.0.1:45123${endpoint.servicePath}` : null, request: upstream },
+        revalidate: async () => current, streamLifetime: { close: async () => {}, retire: async () => {} } };
+      const access = await openAccountConnectionProviderBrokerAccess({ homeId: 'home-1', accountId: 'account-1',
+        initiatorMachineId: 'worker-1', targetMachineId: 'hub-1', connectionId, consumer, application,
+        expectedConnectionSecurityFingerprint: source.expectedConnectionSecurityFingerprint,
+        expectedManagedRuntimeBindingFingerprint: source.expectedManagedRuntimeBindingFingerprint,
+        signal: new AbortController().signal, openBroker: async () => opened,
+        admitConsumer: async () => current,
+        openTunnel: async () => ({ localPort: 45124, localCapability: 'c'.repeat(64), observedPath: 'relay',
+          retire: async () => {}, close: async () => {} }),
+        fetchImpl: async (url, init) => {
+          const response = await handler({ context, request: { method: 'GET', pathAndQuery: new URL(String(url)).pathname,
+            signal: init?.signal ?? undefined } });
+          return response.ok ? new Response(response.response.body, { status: response.response.status, headers: response.response.headers })
+            : new Response(null, { status: 403 });
+        },
+      });
+      try {
+        const binding = await access.readHttpBinding();
+        expect(new URL(binding.endpointUrl).pathname).toBe(endpoint.servicePath);
+        let requestedPath = '';
+        const sdkFetch: typeof fetch = async (url) => {
+          requestedPath = new URL(url instanceof Request ? url.url : String(url)).pathname;
+          return Response.json({ id: 'result', type: 'message', role: 'assistant', content: [], model: 'test',
+            object: 'response', output: [], choices: [], usage: { input_tokens: 0, output_tokens: 0 } });
+        };
+        if (protocol === 'anthropic') {
+          await new Anthropic({ apiKey: 'test', baseURL: binding.endpointUrl, fetch: sdkFetch, maxRetries: 0 })
+            .messages.create({ model: 'test', max_tokens: 1, messages: [] });
+        } else {
+          const client = new OpenAI({ apiKey: 'test', baseURL: binding.endpointUrl, fetch: sdkFetch, maxRetries: 0 });
+          if (protocol === 'openai-responses') await client.responses.create({ model: 'test', input: 'test' });
+          else await client.chat.completions.create({ model: 'test', messages: [] });
+        }
+        expect(requestedPath).toBe(protocol === 'anthropic' ? '/v1/messages'
+          : protocol === 'openai-responses' ? '/v1/responses' : '/v1/chat/completions');
+        expect(upstream).not.toHaveBeenCalled();
+        current = false;
+        await expect(access.readHttpBinding()).rejects.toMatchObject({ code: 'provider_endpoint_unavailable' });
+      } finally { await access.cleanup(); }
+    }
 
     await launchResourceScope.release();
     expect(dispose).toHaveBeenCalledOnce();

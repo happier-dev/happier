@@ -1,4 +1,4 @@
-import { pluginJsonValuesEqual } from '@happier-dev/protocol';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import type { ProviderBrokerApplicationBindingV1, ProviderBrokerConsumerV1, ProviderConnectionId } from '@happier-dev/protocol';
 import { ProviderBrokerAccountOpenResponseV2Schema, type ProviderBrokerAccountOpenRequestV2, type ProviderBrokerAccountOpenResponseV2, type SignedProviderBrokerRouteGrantV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
@@ -6,6 +6,7 @@ import { normalizeProviderOriginRelativePathSyntax } from '@happier-dev/protocol
 import { MACHINE_HTTP_LOCAL_CAPABILITY_HEADER } from '@happier-dev/iroh-native/node';
 import type { ManagedProviderEndpointAccessProjection } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import type { ManagedServiceRequest } from '@happier-dev/plugin-sdk/managed-services';
+import { PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH, PROVIDER_BROKER_ENDPOINT_PATH_HEADER } from './providerBrokerPrivateProtocol';
 
 type BrokerTunnel = Readonly<{
   localPort: number;
@@ -67,18 +68,56 @@ export async function openAccountConnectionProviderBrokerAccess(input: Parameter
   // exact authority for each new stream and never replays an inference call.
   const tunnel = await input.openTunnel({ brokerOpen: opened, signal: input.signal,
     refreshBrokerOpen: async (signal = input.signal) => await input.openBroker({ ...request, refreshAuthority: opened.authority }, signal) });
-  const endpointUrl = `http://127.0.0.1:${tunnel.localPort}/v1`;
+  const localOrigin = `http://127.0.0.1:${tunnel.localPort}`;
   let closed = false;
   let cleanupInFlight: Promise<void> | null = null;
-  const readHttpBinding = async () => {
+  const headers = Object.freeze({
+    authorization: `Bearer ${tunnel.localCapability}`,
+    [MACHINE_HTTP_LOCAL_CAPABILITY_HEADER]: tunnel.localCapability,
+  });
+  const assertAdmitted = async () => {
     input.signal.throwIfAborted();
     if (closed || !await input.admitConsumer(opened.authority, input.signal)) throw unavailable();
     input.signal.throwIfAborted();
     if (closed) throw unavailable();
-    return Object.freeze({ endpointUrl, headers: Object.freeze({
-      authorization: `Bearer ${tunnel.localCapability}`,
-      [MACHINE_HTTP_LOCAL_CAPABILITY_HEADER]: tunnel.localCapability,
-    }) });
+  };
+  const cleanup = () => {
+    if (cleanupInFlight) return cleanupInFlight;
+    closed = true;
+    cleanupInFlight ??= (async () => {
+      try {
+        await tunnel.retire();
+      } finally {
+        await tunnel.close();
+      }
+    })().catch((error: unknown) => {
+      cleanupInFlight = null;
+      throw error;
+    });
+    return cleanupInFlight;
+  };
+  let endpointUrl: string;
+  try {
+    await assertAdmitted();
+    const response = await (input.fetchImpl ?? fetch)(new URL(PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH, localOrigin), {
+      method: 'GET', headers, redirect: 'error', signal: input.signal,
+    });
+    const declaredPath = response.headers.get(PROVIDER_BROKER_ENDPOINT_PATH_HEADER);
+    if (response.status !== 204 || declaredPath === null) throw unavailable();
+    const path = normalizeProviderOriginRelativePathSyntax(declaredPath);
+    await assertAdmitted();
+    endpointUrl = new URL(path, localOrigin).href;
+  } catch {
+    // Never publish an unverified base path or leave its listener exposed.
+    // Preserve the opening failure even if remote retirement also fails.
+    try { await cleanup(); } finally {
+      input.signal.throwIfAborted();
+      throw unavailable();
+    }
+  }
+  const readHttpBinding = async () => {
+    await assertAdmitted();
+    return Object.freeze({ endpointUrl, headers });
   };
   return Object.freeze({
     isCurrent: () => !closed && !input.signal.aborted,
@@ -88,8 +127,8 @@ export async function openAccountConnectionProviderBrokerAccess(input: Parameter
       async request(request: ManagedServiceRequest) {
         const binding = await readHttpBinding();
         const path = normalizeProviderOriginRelativePathSyntax(request.pathAndQuery, { allowQuery: true });
-        const target = new URL(path, `http://127.0.0.1:${tunnel.localPort}`);
-        if (target.origin !== `http://127.0.0.1:${tunnel.localPort}` || target.hash !== '') throw unavailable();
+        const target = new URL(path, localOrigin);
+        if (target.origin !== localOrigin || target.hash !== '') throw unavailable();
         const signal = request.signal ? AbortSignal.any([input.signal, request.signal]) : input.signal;
         const response = await (input.fetchImpl ?? fetch)(target, {
           method: request.method ?? 'GET', headers: { ...request.headers, ...binding.headers },
@@ -99,20 +138,6 @@ export async function openAccountConnectionProviderBrokerAccess(input: Parameter
           headers: Object.freeze(Object.fromEntries(response.headers)), body: response.body });
       },
     }),
-    cleanup() {
-      if (cleanupInFlight) return cleanupInFlight;
-      closed = true;
-      cleanupInFlight ??= (async () => {
-        try {
-          await tunnel.retire();
-        } finally {
-          await tunnel.close();
-        }
-      })().catch((error: unknown) => {
-        cleanupInFlight = null;
-        throw error;
-      });
-      return cleanupInFlight;
-    },
+    cleanup,
   });
 }

@@ -1,6 +1,8 @@
 import type { ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/protocol';
 
 import type { TrackedSession } from '../../../types';
+import { isExecutionRunHomeRetained, readRetainedExecutionRunHomeKeys } from '../../../executionRunRegistry';
+import { hasLocalConnectedServiceResumeState } from '../../stateSharing/connectedServiceStateSharingManifest';
 import {
   readConnectedServiceMaterializationIdentityFromEnvironment,
   readConnectedServiceMaterializationIdentityFromSpawnOptions,
@@ -21,8 +23,19 @@ function readTrackedMaterializationKey(tracked: TrackedSession): string | null {
     ?? readIdentityId(readConnectedServiceMaterializationIdentityFromEnvironment(tracked.spawnOptions?.environmentVariables));
 }
 
+/** Exit cannot query server Session absence. The incumbent sweep owns that decision. */
+export async function isConnectedServiceMaterializedHomeRetainedOnExit(input: Readonly<{
+  materializationKey: string;
+  homeRoot: string;
+}>): Promise<boolean> {
+  return input.materializationKey.startsWith('csm_')
+    || await isExecutionRunHomeRetained(input.materializationKey)
+    || await hasLocalConnectedServiceResumeState(input.homeRoot);
+}
+
 export function createConnectedServiceMaterializedHomeCleanupScheduler(params: Readonly<{
   baseDir: string;
+  isolationBaseDir?: string;
   pidToTrackedSession: ReadonlyMap<number, TrackedSession>;
   nowMs?: () => number;
   getRetainedMaterializationKeys?: () => Promise<ConnectedServiceRetainedMaterializationKeysResult> | ConnectedServiceRetainedMaterializationKeysResult;
@@ -33,6 +46,7 @@ export function createConnectedServiceMaterializedHomeCleanupScheduler(params: R
 }>): ConnectedServiceMaterializedHomeCleanupScheduler {
   return new ConnectedServiceMaterializedHomeCleanupScheduler({
     baseDir: params.baseDir,
+    ...(params.isolationBaseDir ? { isolationBaseDir: params.isolationBaseDir } : {}),
     nowMs: params.nowMs ?? (() => Date.now()),
     ...(params.sanitizeRetainedMaterializedHome
       ? { sanitizeRetainedMaterializedHome: params.sanitizeRetainedMaterializedHome }
@@ -45,9 +59,17 @@ export function createConnectedServiceMaterializedHomeCleanupScheduler(params: R
       }
       return keys;
     },
-    ...(params.getRetainedMaterializationKeys
-      ? { getRetainedMaterializationKeys: params.getRetainedMaterializationKeys }
-      : {}),
+    getRetainedMaterializationKeys: async () => {
+      const [retained, runKeys] = await Promise.all([
+        params.getRetainedMaterializationKeys?.() ?? [],
+        readRetainedExecutionRunHomeKeys(),
+      ]);
+      if (typeof retained === 'object' && retained !== null && 'status' in retained) {
+        if (retained.status === 'unavailable') return retained;
+        return [...retained.keys, ...runKeys];
+      }
+      return [...retained, ...runKeys];
+    },
     ...(params.orphanTtlMs === undefined ? {} : { orphanTtlMs: params.orphanTtlMs }),
     ...(params.attemptTtlMs === undefined ? {} : { attemptTtlMs: params.attemptTtlMs }),
     ...(params.maxCleanupRetries === undefined ? {} : { maxCleanupRetries: params.maxCleanupRetries }),

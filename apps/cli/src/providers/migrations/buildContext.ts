@@ -7,7 +7,7 @@ import { isLegacyAiLaunchEndpointLikeEnvironmentNameV1 } from '@happier-dev/prot
 import { compareProviderCanonicalStringsV1 } from '@happier-dev/protocol/providers/canonicalOrderV1';
 import { LaunchProfileV2Schema } from '@happier-dev/protocol/profiles/v2/schema';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import type { ProviderAccountSettingsMigrationCandidateV1, ProviderAccountSettingsMigrationContextV1, ProviderContributionV1 } from '@happier-dev/protocol';
+import type { ProviderAccountSettingsMigrationCandidateV1, ProviderAccountSettingsMigrationContextV1, ProviderContributionV1, ProviderSettingsV1 } from '@happier-dev/protocol';
 
 type ProviderContributionEntry = Readonly<{ definition: ProviderContributionV1 }>;
 
@@ -65,17 +65,10 @@ function profileReferenceEvidence(raw: Readonly<Record<string, unknown>>, source
 }
 
 function readCompletedConnectionOutcome(
-  raw: Readonly<Record<string, unknown>>,
+  settings: ProviderSettingsV1,
   sourceProfileId: string,
 ) {
-  const providerSettings = isRecord(own(raw, 'providerSettingsV1')) ? own(raw, 'providerSettingsV1') : undefined;
-  const migration = isRecord(providerSettings) && isRecord(own(providerSettings, 'migration'))
-    ? own(providerSettings, 'migration')
-    : undefined;
-  const completedSources = isRecord(migration) && Array.isArray(own(migration, 'completedSources'))
-    ? own(migration, 'completedSources')
-    : [];
-  for (const entry of completedSources as readonly unknown[]) {
+  for (const entry of settings.migration?.completedSources ?? []) {
     const parsed = ProviderSettingsMigrationSourceOutcomeV1Schema.safeParse(entry);
     if (parsed.success && parsed.data.sourceProfileId === sourceProfileId && parsed.data.kind === 'connection') {
       return parsed.data;
@@ -102,6 +95,7 @@ const DEFAULT_ENVIRONMENT_PROFILE_IDS = Object.freeze(['anthropic', 'codex', 'ge
 
 export function buildLegacyProfileMigrationContext(input: Readonly<{
   rawSettings: Readonly<Record<string, unknown>>;
+  providerSettings: ProviderSettingsV1;
   authoringMemory: Readonly<{ lastUsedProfile: string | null }>;
   providersByContributionKey: ReadonlyMap<string, ProviderContributionEntry>;
   allocatedConnectionIdsBySourceProfileId: Readonly<Record<string, string>>;
@@ -124,7 +118,7 @@ export function buildLegacyProfileMigrationContext(input: Readonly<{
     for (const descriptor of entry.definition.legacyProfileMigrations ?? []) {
       const sourceProfileId = descriptor.sourceProfileId;
       knownSourceIds.add(sourceProfileId);
-      const completedOutcome = readCompletedConnectionOutcome(input.rawSettings, sourceProfileId);
+      const completedOutcome = readCompletedConnectionOutcome(input.providerSettings, sourceProfileId);
       // Built-ins historically need not be persisted at all. When a row is
       // present, however, only the exact legacy schema is safe to transform;
       // opaque/future/duplicate rows remain byte-for-byte legacy state. A known
@@ -220,10 +214,10 @@ export function buildLegacyProfileMigrationContext(input: Readonly<{
           selectedModelOrigin: completedOutcome?.modelSelectionOrigin
             ?? (hasExplicitModelAlias ? 'explicit_process_environment' : 'implicit_default'),
         } : {}),
-        removedEnvironmentVariableNames: [
+        removedEnvironmentVariableNames: [...new Set([
           ...descriptor.migratedEnvironmentVariables.map((environment) => environment.name),
           ...(descriptor.credentialBinding ? [descriptor.credentialBinding.legacyEnvVarName] : []),
-        ],
+        ])],
         ...(descriptor.credentialBinding ? {
           movedSecretBindingEnvironmentVariableNames: [descriptor.credentialBinding.legacyEnvVarName],
         } : {}),

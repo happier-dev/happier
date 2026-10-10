@@ -1,5 +1,6 @@
 import { ConnectedServiceMaterializationIdentityV1Schema } from '@happier-dev/protocol/sessions/metadata/connectedServiceMaterializationIdentityV1';
-import type { ConnectedAccountServiceKey, ConnectedServiceCredentialRevisionV1 } from '@happier-dev/protocol';
+import type { ConnectedAccountServiceKey, ConnectedServiceBindingsV2, ConnectedServiceCredentialRevisionV1 } from '@happier-dev/protocol';
+import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 
 import { isCatalogAgentId } from '@/agent/catalog/resolution';
 import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '../../lifecycle/requesterWorkAttribution';
@@ -178,6 +179,29 @@ export class ConnectedServiceRuntimeRegistry {
     const target = this.writeTarget(input.pid, patch, existing?.target ?? null);
     this.notifyTargetRegistration(target);
     return this.withRegisteredBindings(target);
+  }
+
+  public readAppliedSessionBindings(input: Readonly<{ runnerPid: number; sessionId: string; agentId: string }>): Readonly<
+    { status: 'unavailable' } | { status: 'applied'; connectedServices: ConnectedServiceBindingsV2 }
+  > {
+    const target = this.getByPid(input.runnerPid);
+    if (!target || target.sessionId !== input.sessionId || target.agentId !== input.agentId) return { status: 'unavailable' };
+    const parsed = ConnectedServiceBindingsV2IngressSchema.safeParse(target.connectedServicesBindingsRaw);
+    if (!parsed.success) return { status: 'unavailable' };
+    const bindingsByServiceId: ConnectedServiceBindingsV2['bindingsByServiceId'] = {};
+    for (const [serviceId, binding] of Object.entries(parsed.data.bindingsByServiceId)) {
+      if (binding.source === 'connected' && binding.selection === 'group') {
+        bindingsByServiceId[serviceId] = { source: 'connected', selection: 'group', groupId: binding.groupId };
+      } else if (binding.source === 'team_resource') {
+        // A direct Team binding includes its disclosed member. It is not an
+        // inheritable Connected Services identity, even inside this host seam.
+        if (binding.deliveryMode !== 'brokered') return { status: 'unavailable' };
+        bindingsByServiceId[serviceId] = binding;
+      } else {
+        bindingsByServiceId[serviceId] = binding;
+      }
+    }
+    return { status: 'applied', connectedServices: { v: 2, bindingsByServiceId } };
   }
 
   public registerRunTarget(

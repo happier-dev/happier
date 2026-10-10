@@ -7,6 +7,7 @@ import {
 } from "@happier-dev/protocol";
 
 import { db } from "@/storage/db";
+import { QualifiedProviderAccountUsageHistoryRequestV4Schema } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { connectRoutes } from "./connectRoutes";
@@ -160,7 +161,7 @@ describe("connectRoutes provider-account usage source-of-truth phase 4 contract"
         expect(credential.statusCode, credential.body).toBe(200);
         const credentialBody = credential.json();
         const snapshot = createUsageSnapshot({
-            fetchedAt: Date.now(),
+            fetchedAt: Date.now() - 3000,
             recordKey: createProviderAccountUsageRecordKey({
                 accountSubjectId: "acct_exact_source",
             }),
@@ -213,6 +214,27 @@ describe("connectRoutes provider-account usage source-of-truth phase 4 contract"
             fetchedAt: snapshot.fetchedAtMs,
             staleAfterMs: snapshot.staleAfterMs,
         });
+
+        const changed = { ...snapshot, fetchedAtMs: snapshot.fetchedAtMs + 1000, observedAtMs: snapshot.observedAtMs + 1000, planLabel: 'changed-source' };
+        const nextWrite = await app.inject({ method: 'POST', url: '/v4/connect/qualified/provider-account-usage', headers: { 'content-type': 'application/json', 'x-test-user-id': user.id }, payload: { source, expectedCredentialRevision: credentialBody.credentialRevision, expectedConfigurationRevision: credentialBody.configurationRevision, recordId: changed.recordId, recordKey: changed.recordKey, payloadMode: 'plain_json_v1', status: 'ok', snapshot: changed, fetchedAt: changed.fetchedAtMs, staleAfterMs: changed.staleAfterMs } });
+        expect(nextWrite.statusCode, nextWrite.body).toBe(200);
+        const historyRead = (query: ReturnType<typeof QualifiedProviderAccountUsageHistoryRequestV4Schema.parse>, accountId = user.id) => app.inject({ method: 'GET', url: '/v4/connect/qualified/provider-account-usage/history?query=' + encodeURIComponent(encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema, query)), headers: { 'x-test-user-id': accountId } });
+        const history = { range: { startAtMs: snapshot.fetchedAtMs, endAtMs: changed.fetchedAtMs + 1 }, pageSize: 1 };
+        const firstPage = await historyRead({ recordId: snapshot.recordId, history });
+        expect(firstPage.statusCode, firstPage.body).toBe(200);
+        const firstPageBody = firstPage.json();
+        expect(firstPageBody.entries).toMatchObject([{ observedAtMs: snapshot.fetchedAtMs, record: { content: { t: 'plain', v: snapshot } } }]);
+        const nextPage = await historyRead({ recordId: snapshot.recordId, history: { ...history, cursor: firstPageBody.nextCursor } });
+        expect(nextPage.statusCode, nextPage.body).toBe(200);
+        expect(nextPage.json().entries).toMatchObject([{ record: { content: { t: 'plain', v: changed } } }]);
+        expect(nextPage.json().nextCursor).toBeNull();
+        const witness = await historyRead({ recordId: snapshot.recordId, witness: { id: firstPageBody.entries[0].id, observedAtMs: snapshot.fetchedAtMs } });
+        expect(witness.statusCode, witness.body).toBe(200);
+        expect(witness.json().entries).toEqual(firstPageBody.entries);
+        const foreign = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' }, select: { id: true } });
+        expect((await historyRead({ recordId: snapshot.recordId, history }, foreign.id)).statusCode).toBe(404);
+        await db.account.update({ where: { id: user.id }, data: { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee' } });
+        expect((await historyRead({ recordId: snapshot.recordId, history })).statusCode).toBe(409);
     });
 
     it("projects the server-v0.2.1 V3 profile quota through refresh and delete", async () => {

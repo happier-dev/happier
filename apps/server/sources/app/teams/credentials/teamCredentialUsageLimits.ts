@@ -6,7 +6,7 @@ import {
     type TeamCredentialUsageLimitPeriodV1,
     type TeamCredentialUsageLimitSubjectKindV1,
 } from '@happier-dev/protocol/teams';
-import { resolveBucketBounds } from '@/app/usage/query/bucketBounds';
+import { resolveUsageBucketBounds as resolveBucketBounds } from '@happier-dev/protocol';
 import { resolveScopedUsageContributions } from '@/app/usage/query/resolveScopedUsageContributions';
 import { toScopedUsageEventRow } from '@/app/usage/query/scopedUsageEventRow';
 import { resolveEffectiveUsageCostUsd } from '@/app/usage/query/resolveUsageCostMode';

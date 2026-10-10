@@ -299,6 +299,7 @@ export function assembleProviderConnectionCatalog(
     connectionRole: input.connection.connection.role,
     connectionDisplayNameMode: input.connection.connection.displayNameMode,
     manualModelPolicy: catalog.manualModelPolicy,
+    sourceKind: input.connection.source.kind === 'custom' ? 'custom' : input.connection.source.definition.kind,
     rows: projected.rows.map(bind),
     staleRows: [...projected.staleRows, ...recoveryRows].map(bind),
   };

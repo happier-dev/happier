@@ -8,6 +8,10 @@ import {
     classifyQualifiedConnectedAccountLegacyAuthenticationMode,
     resolveLegacyCredentialKindForAuthenticationMode,
     resolveLegacyServiceAccountTokenIdentityFields,
+    resolveLegacyQualifiedConnectedAccountService,
+    resolveLegacyServiceIdForQualifiedConnectedAccountService,
+    resolveQualifiedConnectedAccountLegacyIdentity,
+    projectQualifiedConnectedAccountPublicAuthenticationModeId,
 } from "./identity";
 
 describe("qualified Connected Account persistence identity", () => {
@@ -100,6 +104,21 @@ describe("qualified Connected Account persistence identity", () => {
         expect(legacy.qualifiedIdentityDigest).toMatch(/^[a-f0-9]{64}$/);
     });
 
+    it("rejects a credential kind without a historical authentication mode", () => {
+        let error: unknown;
+        try {
+            resolveLegacyServiceAccountTokenIdentityFields({
+                serviceId: "openai",
+                profileId: "oauth-account",
+                credentialKind: "oauth",
+            });
+        } catch (caught) {
+            error = caught;
+        }
+        expect(error).toBeInstanceOf(Error);
+        expect(error).not.toBeInstanceOf(ReferenceError);
+    });
+
     it("derives a legacy multi-mode credential from the stored credential kind", () => {
         expect(resolveLegacyServiceAccountTokenIdentityFields({
             serviceId: "claude-subscription",
@@ -115,6 +134,21 @@ describe("qualified Connected Account persistence identity", () => {
             serviceId: "claude-subscription",
             profileId: "legacy-account",
         }).authenticationModeId).toBe("setup-token");
+    });
+
+    it("admits predecessor Antigravity storage without publishing it to scalar peers", () => {
+        const service = { pluginId: "happier.agent.antigravity", localId: "antigravity-account" };
+        expect(resolveLegacyQualifiedConnectedAccountService("antigravity")).toEqual(service);
+        expect(resolveLegacyCredentialKindForAuthenticationMode({
+            serviceId: "antigravity", authenticationModeId: "oauth-personal",
+        })).toBe("oauth");
+        expect(resolveQualifiedConnectedAccountLegacyIdentity({
+            ref: { service, accountId: "work" }, authenticationModeId: "oauth-personal",
+        })).toEqual({ serviceId: "antigravity", profileId: "work" });
+        expect(resolveLegacyServiceIdForQualifiedConnectedAccountService(service)).toBeNull();
+        expect(projectQualifiedConnectedAccountPublicAuthenticationModeId({
+            service, authenticationModeId: "legacy-token-unsupported",
+        })).toBeNull();
     });
 
     it("preserves unsupported historical Gemini OAuth without relabeling it as an API key", () => {

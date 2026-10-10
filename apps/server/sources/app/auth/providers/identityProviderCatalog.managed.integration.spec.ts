@@ -66,6 +66,50 @@ afterEach(async () => {
 });
 
 describe("managed identity-provider catalog source", () => {
+    it("publishes only an enabled exact Home WorkOS binding and invalidates its OAuth proof when changed", async () => {
+        const provider = await db.identityProviderInstance.create({ data: {
+            kind: "workos_sso", displayName: "Acme company sign-in", enabled: true,
+            firstEnabledAt: new Date(), securityRevision: 3, config: { v: 1, kind: "workos_sso" },
+        } });
+        const env = {
+            HAPPIER_PUBLIC_SERVER_URL: "https://home.example.test",
+            WORKOS_API_KEY: "sk_test_catalog", WORKOS_CLIENT_ID: "client_catalog",
+        };
+        expect((await listProviderDescriptors(env)).some(({ reference }) => reference.id === provider.id)).toBe(false);
+        await expect(resolveOAuthRuntimeById(env, provider.id)).resolves.toBeNull();
+        const connection = await db.teamIdentityConnection.create({ data: {
+            teamId: null, providerInstanceId: provider.id, enabled: true, firstEnabledAt: new Date(), revision: 4,
+            externalReference: { v: 1, kind: "workos_sso", organizationId: "org_home", connectionId: "conn_home" },
+            settings: { v: 1, kind: "workos_sso" },
+        } });
+        const listed = (await listProviderDescriptors(env)).find(({ reference }) => reference.id === provider.id);
+        expect(listed).toMatchObject({
+            providerKind: "workos_sso",
+            descriptor: { ui: { displayName: "Acme company sign-in" } },
+            reference: { context: { kind: "home" } },
+        });
+        const runtime = await resolveOAuthRuntimeById(env, provider.id);
+        expect(runtime?.reference).toEqual(listed?.reference);
+        const binding = { provider: runtime!.reference, connection: { id: connection.id, revision: 4 }, admission: null, purpose: "identity_connection_test" } as const;
+        await expect(resolveOAuthSecurityBinding({ env, providerId: provider.id, binding, purpose: "identity_connection_test", stage: "oauth_callback" }))
+            .resolves.toMatchObject({ securityBinding: binding });
+        const otherTeam = await db.team.create({ data: { name: "Unrelated Team" } });
+        const otherConnection = await db.teamIdentityConnection.create({ data: {
+            teamId: otherTeam.id, providerInstanceId: provider.id, enabled: true, revision: 4,
+            externalReference: { v: 1, kind: "workos_sso", organizationId: "org_team", connectionId: "conn_team" },
+            settings: { v: 1, kind: "workos_sso" },
+        } });
+        await expect(resolveOAuthSecurityBinding({ env, providerId: provider.id,
+            binding: { ...binding, connection: { id: otherConnection.id, revision: 4 } },
+            purpose: "identity_connection_test", stage: "oauth_callback" })).resolves.toBeNull();
+        await db.teamIdentityConnection.update({ where: { id: connection.id }, data: { enabled: false, revision: 5 } });
+        expect((await listProviderDescriptors(env)).some(({ reference }) => reference.id === provider.id)).toBe(false);
+        await expect(resolveOAuthRuntimeById(env, provider.id)).resolves.toBeNull();
+        await expect(resolveOAuthRuntimeById(env, provider.id, HOME_PROVIDER_CONTEXT, "identity_connection_test"))
+            .resolves.toMatchObject({ reference: { id: provider.id, context: { kind: "home" } } });
+        await expect(resolveOAuthSecurityBinding({ env, providerId: provider.id, binding,
+            purpose: "identity_connection_test", stage: "oauth_finalize" })).resolves.toBeNull();
+    });
     it("resolves an enabled Home OIDC instance and isolates a malformed sibling", async () => {
         const managed = await db.identityProviderInstance.create({
             data: {

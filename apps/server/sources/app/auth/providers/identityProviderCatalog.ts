@@ -3,6 +3,7 @@ import { normalizeOidcAllowRules } from "@/app/auth/providers/oidc/oidcProviderC
 import { managedGitHubAppUserAuthorizationCallbackUrl } from "@/app/integrations/github/githubManagedAppManifest";
 import type {
     TeamIdentityEligibleProviderV1,
+    IdentityEligibleProviderV1,
     TeamIdentityProviderKindV1,
 } from "@happier-dev/protocol/teams";
 
@@ -104,9 +105,9 @@ export type ProviderDescriptorResolution = Readonly<{
 }>;
 
 function unavailableEligibleProvider(
-    provider: Omit<TeamIdentityEligibleProviderV1, "availability">,
-    code: Extract<TeamIdentityEligibleProviderV1["availability"], { status: "unavailable" }>["code"],
-): TeamIdentityEligibleProviderV1 {
+    provider: Omit<IdentityEligibleProviderV1, "availability">,
+    code: Extract<IdentityEligibleProviderV1["availability"], { status: "unavailable" }>["code"],
+): IdentityEligibleProviderV1 {
     return { ...provider, availability: { status: "unavailable", code } };
 }
 
@@ -115,28 +116,35 @@ function unavailableEligibleProvider(
  * This is catalog-owned so list UI and live provider resolution share owner,
  * collision, policy, and platform decisions without reading provider secrets.
  */
+type EligibleIdentityProvidersInput<TeamId extends string | null> = Readonly<{
+    env: NodeJS.ProcessEnv;
+    teamId: TeamId;
+    connectedProviderInstanceIds: ReadonlySet<string>;
+}>;
+
+export function listEligibleTeamIdentityProvidersInTx(tx: Tx, input: EligibleIdentityProvidersInput<string>): Promise<readonly TeamIdentityEligibleProviderV1[]>;
+export function listEligibleTeamIdentityProvidersInTx(tx: Tx, input: EligibleIdentityProvidersInput<string | null>): Promise<readonly IdentityEligibleProviderV1[]>;
 export async function listEligibleTeamIdentityProvidersInTx(
     tx: Tx,
-    input: Readonly<{
-        env: NodeJS.ProcessEnv;
-        teamId: string;
-        connectedProviderInstanceIds: ReadonlySet<string>;
-    }>,
-): Promise<readonly TeamIdentityEligibleProviderV1[]> {
-    const context = { kind: "team" as const, teamId: input.teamId };
+    input: EligibleIdentityProvidersInput<string | null>,
+): Promise<readonly IdentityEligibleProviderV1[]> {
+    const context: ProviderCatalogContext = input.teamId === null
+        ? HOME_PROVIDER_CONTEXT
+        : { kind: "team", teamId: input.teamId };
     const [home, homeRows, teamRows] = await Promise.all([
         readHomeGovernancePolicyInTx(tx),
         listIdentityProviderInstancesInTx(tx, { owner: HOME_PROVIDER_CONTEXT }),
-        listIdentityProviderInstancesInTx(tx, { owner: context }),
+        input.teamId === null ? Promise.resolve([]) : listIdentityProviderInstancesInTx(tx, { owner: context }),
     ]);
     const snapshot = resolveDeploymentProviderSnapshot(input.env);
     const platform = resolveWorkosPlatformRuntimeMetadata(input.env);
 
     const projectExisting = async (
         resolved: (typeof homeRows)[number],
-    ): Promise<TeamIdentityEligibleProviderV1 | null> => {
+    ): Promise<IdentityEligibleProviderV1 | null> => {
         if (resolved.status !== "ready") return null;
         const provider = resolved.instance;
+        if (context.kind === "home" && provider.kind !== "workos_sso") return null;
         if (
             input.connectedProviderInstanceIds.has(provider.id)
             || snapshot.references.has(normalizeProviderId(provider.id))
@@ -154,7 +162,7 @@ export async function listEligibleTeamIdentityProvidersInTx(
         if (!provider.enabled && !explicitlyBindableTeamGitHubCandidate) {
             return unavailableEligibleProvider(base, "provider_disabled");
         }
-        const policy = resolveTeamProviderKindPolicy(home, provider.kind);
+        const policy = context.kind === "home" ? "allowed" : resolveTeamProviderKindPolicy(home, provider.kind);
         if (policy === "unavailable") return unavailableEligibleProvider(base, "home_policy_unavailable");
         if (policy === "prohibited") return unavailableEligibleProvider(base, "home_policy_prohibited");
         if (provider.kind === "workos_sso" && !platform.available) {
@@ -213,24 +221,24 @@ export async function listEligibleTeamIdentityProvidersInTx(
         ...homeRows.map(projectExisting),
         ...teamRows.map(projectExisting),
     ]);
-    const existingAvailable = projectedRows.filter((row): row is TeamIdentityEligibleProviderV1 =>
+    const existingAvailable = projectedRows.filter((row): row is IdentityEligibleProviderV1 =>
         row !== null && row.availability.status === "available");
-    const existingUnavailable = projectedRows.filter((row): row is TeamIdentityEligibleProviderV1 =>
+    const existingUnavailable = projectedRows.filter((row): row is IdentityEligibleProviderV1 =>
         row !== null && row.availability.status === "unavailable");
-    const genericKinds: readonly TeamIdentityProviderKindV1[] = [
+    const genericKinds: readonly TeamIdentityProviderKindV1[] = context.kind === "home" ? ["workos_sso"] : [
         "oidc",
         "workos_sso",
         "github_app_identity",
     ];
-    const generic = genericKinds.map((providerKind): TeamIdentityEligibleProviderV1 => {
+    const generic = genericKinds.map((providerKind): IdentityEligibleProviderV1 => {
         const base = {
             v: 1 as const,
             providerId: null,
             providerKind,
-            owner: "team" as const,
+            owner: context.kind,
             displayName: null,
         };
-        const policy = resolveTeamProviderKindPolicy(home, providerKind);
+        const policy = context.kind === "home" ? "allowed" : resolveTeamProviderKindPolicy(home, providerKind);
         if (policy === "unavailable") return unavailableEligibleProvider(base, "home_policy_unavailable");
         if (policy === "prohibited") return unavailableEligibleProvider(base, "home_policy_prohibited");
         const deployment = resolveTeamProviderKindDeploymentAvailability(input.env, providerKind);
@@ -238,7 +246,9 @@ export async function listEligibleTeamIdentityProvidersInTx(
         const actionId = providerKind === "oidc"
             ? "identity.providers.create" as const
             : providerKind === "workos_sso"
-                ? "teams.identity.workos.connection.create" as const
+                ? context.kind === "home"
+                    ? "home.identity.workos.connection.create" as const
+                    : "teams.identity.workos.connection.create" as const
                 : "identity.githubApps.manifestSetup.start" as const;
         return {
             ...base,
@@ -356,6 +366,19 @@ export async function listProviderDescriptorsInTx(
                         providerKind: instance.kind,
                     };
                 }
+                if (instance.kind === "workos_sso") {
+                    const rows = await tx.teamIdentityConnection.findMany({
+                        where: { teamId: null, providerInstanceId: instance.id }, select: { id: true },
+                    });
+                    if (rows.length !== 1) return null;
+                    const row = rows[0];
+                    const read = await readTeamIdentityConnectionInTx(tx, { id: row.id, teamId: null });
+                    if (read.status !== "ready") return null;
+                    return projectTeamManagedProviderDescriptor({
+                        env, context, connection: read.connection, provider: instance, snapshot, policy, home,
+                        platform: resolveWorkosPlatformRuntimeMetadata(env), githubRuntimeFingerprint: null,
+                    });
+                }
                 return null;
             }))).filter((item): item is ProviderDescriptorResolution => item !== null)
         : await listTeamManagedProviderDescriptorsInTx(tx, env, context, snapshot, policy, home);
@@ -379,8 +402,8 @@ async function readTeamConnectionProviderInTx(
 
 function projectTeamManagedProviderDescriptor(input: Readonly<{
     env: NodeJS.ProcessEnv;
-    context: Extract<ProviderCatalogContext, { kind: "team" }>;
-    connection: TeamIdentityConnectionView;
+    context: ProviderCatalogContext;
+    connection: TeamIdentityConnectionView<string | null>;
     provider: IdentityProviderInstanceView;
     snapshot: ReturnType<typeof resolveDeploymentProviderSnapshot>;
     policy: ReturnType<typeof resolveAuthPolicyFromEnv>;
@@ -393,7 +416,7 @@ function projectTeamManagedProviderDescriptor(input: Readonly<{
         !connection.enabled
         || !provider.enabled
         || input.snapshot.references.has(normalizeProviderId(provider.id))
-        || resolveTeamProviderKindPolicy(input.home, provider.kind) !== "allowed"
+        || (input.context.kind === "team" && resolveTeamProviderKindPolicy(input.home, provider.kind) !== "allowed")
     ) return null;
     const id = normalizeProviderId(provider.id);
     if (
@@ -407,6 +430,7 @@ function projectTeamManagedProviderDescriptor(input: Readonly<{
             home: input.home,
         });
         return {
+            providerKind: provider.kind,
             descriptor: resolveOidcAuthProviderFeatures({
                 displayName: provider.displayName,
                 allow: provider.config.allow,
@@ -434,21 +458,27 @@ function projectTeamManagedProviderDescriptor(input: Readonly<{
         && input.platform.available
     ) {
         return {
+            providerKind: provider.kind,
             descriptor: resolveWorkosAuthProviderFeatures({
                 displayName: provider.displayName,
                 enabled: true,
                 configured: true,
+                scope: input.context.kind,
             }, input.policy),
             reference: {
                 id,
                 source: "managed",
                 runtimeFingerprint: computeTeamWorkosConnectionRuntimeFingerprint({
-                    teamId: input.context.teamId,
+                    teamId: input.context.kind === "team" ? input.context.teamId : null,
                     connectionId: connection.id,
                     providerInstanceId: provider.id,
                     providerSecurityRevision: provider.securityRevision,
                     connectionRevision: connection.revision,
                     platformRuntimeFingerprint: input.platform.runtimeFingerprint,
+                    externalReference: {
+                        organizationId: connection.externalReference.organizationId,
+                        connectionId: connection.externalReference.connectionId,
+                    },
                 }),
                 context: input.context,
             },
@@ -460,6 +490,7 @@ function projectTeamManagedProviderDescriptor(input: Readonly<{
         && input.githubRuntimeFingerprint !== null
     ) {
         return {
+            providerKind: provider.kind,
             descriptor: resolveManagedGitHubAuthProviderFeatures({
                 displayName: provider.displayName,
                 enabled: true,
@@ -808,20 +839,21 @@ async function resolveTeamWorkosModuleWithReferenceInTx(
     context: ProviderCatalogContext,
     purpose: ProviderRuntimePurpose,
 ): Promise<Readonly<{ module: ProviderModule; reference: ProviderReference }> | null> {
-    if (context.kind !== "team") return null;
-    const connection = await tx.teamIdentityConnection.findUnique({
-        where: { teamId_providerInstanceId: { teamId: context.teamId, providerInstanceId: id } },
+    const teamId = context.kind === "team" ? context.teamId : null;
+    const connections = await tx.teamIdentityConnection.findMany({
+        where: { teamId, providerInstanceId: id },
         select: { id: true },
     });
-    if (!connection) return null;
+    if (connections.length !== 1) return null;
+    const connection = connections[0];
     const runtime = await resolveTeamWorkosConnectionRuntimeInTx(tx, {
         env,
-        teamId: context.teamId,
+        teamId,
         connectionId: connection.id,
         ...(purpose === "identity_connection_test" ? { includeDisabled: true } : {}),
     });
     if (runtime.status !== "ready") return null;
-    if (resolveTeamProviderKindPolicy(await readHomeGovernancePolicyInTx(tx), "workos_sso") !== "allowed") return null;
+    if (context.kind === "team" && resolveTeamProviderKindPolicy(await readHomeGovernancePolicyInTx(tx), "workos_sso") !== "allowed") return null;
     const publicServerUrl = resolveConfiguredPublicServerUrl(env);
     if (!publicServerUrl) return null;
     return {
@@ -832,7 +864,8 @@ async function resolveTeamWorkosModuleWithReferenceInTx(
             redirectUrl: managedIdentityProviderCallbackUrl(publicServerUrl, { id: runtime.provider.id, kind: "workos_sso" }),
             externalReference: runtime.connection.externalReference,
             platform: runtime.platform,
-            teamConnection: { teamId: context.teamId, connectionId: connection.id },
+            connectionBinding: { id: runtime.connection.id, revision: runtime.connection.revision },
+            ...(context.kind === "team" ? { teamConnection: { teamId: context.teamId, connectionId: connection.id } } : {}),
         }),
         reference: {
             id: runtime.provider.id,

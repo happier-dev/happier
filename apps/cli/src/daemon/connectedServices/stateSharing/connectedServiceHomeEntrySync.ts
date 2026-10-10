@@ -66,13 +66,18 @@ export async function prepareManagedConnectedServiceHomeDestination(destinationP
   await moveConnectedServiceHomeEntryAside(destinationPath);
 }
 
-export async function copyConnectedServiceHomeEntry(sourcePath: string, destinationPath: string): Promise<void> {
+export async function copyConnectedServiceHomeEntry(
+  sourcePath: string,
+  destinationPath: string,
+  options?: Readonly<{ localStateOnly?: boolean }>,
+): Promise<void> {
   await mkdir(dirname(destinationPath), { recursive: true });
   await cp(sourcePath, destinationPath, {
     recursive: true,
     force: true,
     dereference: true,
     errorOnExist: false,
+    ...(options?.localStateOnly ? { filter: async (source: string) => !(await lstat(source)).isSymbolicLink() } : {}),
   });
 }
 

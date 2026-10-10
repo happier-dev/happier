@@ -96,8 +96,8 @@ function collectOptions(
   for (const raw of options) {
     const option = asRecord(raw);
     const id = readString(option?.[idKey]);
-    const status = readString(option?.status);
-    if (!id || (selection === 'profile' && status && status !== 'connected')) continue;
+    // Selection resolves identity; the daemon owns credential health and recovery.
+    if (!id) continue;
     candidates.push({ serviceId, selection, id });
   }
 }

@@ -7,6 +7,7 @@ import {
     oauthAuthPendingSchema,
     oauthStateAttemptSchema,
 } from "./oauthExternalSchemas";
+import { isTeamOwnedConnectionAdmission } from "./oauthSecurityBinding";
 
 const githubReference = {
     id: "github",
@@ -16,6 +17,18 @@ const githubReference = {
 };
 
 describe("OAuth persisted security binding", () => {
+    it("keeps a Home-owned company connection under Home policy during Team admission", () => {
+        const binding = {
+            provider: { ...githubReference, id: "company", source: "managed" as const },
+            connection: { id: "home-connection", revision: 1 },
+            admission: null,
+            purpose: "team_admission" as const,
+        };
+        expect(isTeamOwnedConnectionAdmission(binding)).toBe(false);
+        expect(isTeamOwnedConnectionAdmission({ ...binding,
+            provider: { ...binding.provider, context: { kind: "team", teamId: "company-team" } },
+        })).toBe(true);
+    });
     it("rejects unknown top-level fields on authority-bearing attempt and connect-pending records", () => {
         // ../0.2 @ b23f95ed354e8d49183017e487bdb75f217017de writes these exact
         // shapes without securityBinding. Strictness must not close that live predecessor reader.

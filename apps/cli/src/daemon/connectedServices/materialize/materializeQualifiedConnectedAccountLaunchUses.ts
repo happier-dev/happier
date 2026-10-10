@@ -150,7 +150,7 @@ export async function materializeQualifiedConnectedAccountLaunchUses(input: Read
     input.signal.throwIfAborted();
     const writeArtifacts = input.writeArtifacts ?? (async <T>(write: () => Promise<T>) => await write());
     const credentialFiles = await writeArtifacts(() => input.credentialFileOwner!.materialize({
-      scope: input.credentialFileScope,
+      scope: input.credentialFileScope!,
       files: Object.freeze(files),
       retainCleanup: input.retainCredentialFileCleanup!,
     }));

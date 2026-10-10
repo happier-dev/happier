@@ -25,7 +25,7 @@ The normal flow is:
 
 Provider setup is intentionally separate from session launch. Once configured, users choose a model rather than repeatedly choosing or re-entering a provider.
 
-Local providers are machine-aware. A detected Ollama or LM Studio service appears for the machine on which it is running; its models are offered only when that target machine is authorized and available. A local/private endpoint must be enabled per machine before Happier resolves its secret or sends it network traffic.
+Local providers are machine-aware. A detected Ollama or LM Studio service appears for the machine on which it is running; using its models requires that target machine to be authorized and available. Account-only browsing can show declared static and manually entered models without asserting that a local service is running. A local/private endpoint must be enabled per machine before Happier resolves its secret or sends it network traffic.
 
 The CLI mirrors the same ownership:
 
@@ -57,9 +57,118 @@ The canonical schema is `packages/protocol/src/providers/contributions/v1.ts`. F
 - a contribution reference or a fully typed custom-provider template;
 - a display name and default/named role;
 - account-wide or per-machine endpoint overrides;
+- optional model-id-keyed generation settings (`temperature` and `maxTokens`);
 - a monotonic revision and timestamps.
 
-Credentials, enablement, machine grants, visibility choices, and manual models are settings owned alongside connections, not fields smuggled into the contribution. The canonical schemas live under `packages/protocol/src/providers/connections/**` and `packages/protocol/src/providers/settings/**`.
+Credential bindings, enablement, machine grants, visibility choices, and manual models belong alongside connections, not inside the immutable contribution. Raw credentials remain SavedSecret resources. The canonical schemas live under `packages/protocol/src/providers/connections/**` and `packages/protocol/src/providers/settings/**`.
+
+The 0.3 development storage contract groups connections, grants, bindings,
+manual models, visibility/confirmation choices and unresolved migration conflicts
+in one private Account catalog owned by `connections/connectionRowsV1.ts`.
+`defaultsByAgentTargetKey` is deliberately excluded: the genuine preference is
+`providerDefaultModelSelectionsByAgentTargetKeyV1`, with its typed shape owned by
+`selection/v1.ts`. A missing connection does not erase selected intent or imply
+native fallback. Catalog revision and Account Settings revision are separate
+authority facts. Retained `providerSettingsV1` is an import source, not a second
+current persistence contract; consumer contraction and composed conversion are
+still being integrated. See [private catalog encryption](encryption.md#private-agent-provider-and-connected-account-catalogs-03-development).
+
+In 0.3 development, Account-scoped connection CRUD, Account endpoint and SavedSecret
+bindings, manual models, visibility and confirmation persistence use the shared
+`connections/accountProviderActionV1.ts` semantic owner. UI and CLI adapters capture
+the Account catalog and write through its revision-checked CAS boundary; these
+operations do not require a selected machine or fall back to machine-RPC writes.
+Machine-scoped grants and bindings, detection, DNS/network checks, probing, loading
+and execution still require their machine authority. A successful Account write
+does not prove runtime access or endpoint health.
+
+An Account-only description of an admitted vendor gateway reports process status
+and peer reachability as `not_checked`. These facts are separate from endpoint
+probe health; a saved placement or an online computer does not prove a running
+gateway or that another computer can reach it. The G1 live-custody producer and
+its UI wiring are still being integrated in 0.3 development.
+
+The development connection update Action accepts a validated replacement
+template only for an existing custom connection, with its captured connection
+revision. It keeps SavedSecret bindings and manual models, retains endpoint
+overrides whose template ids still exist, and advances the connection revision
+through the same catalog CAS writer. Security changes withdraw affected Account
+and machine grants; a name-only template edit retains them. A built-in
+connection cannot be rewritten as custom through this operation, and a stale
+revision refuses without committing the draft.
+
+Agent Models can browse compatible static and manual Provider models without a
+machine. `catalog/accountModelProjectionV1.ts` merges the stored Account catalog
+with admitted Provider declarations and the selected Agent's actual manifest
+`providerRequirements`. The bundled UI declarations come from the existing
+bundled-plugin generator; the CLI uses its admitted manifest registry. Missing
+Agent requirements refuse the projection rather than assuming compatibility.
+These rows are `account_unverified`, with unknown load state, unchecked health,
+no probe observation and no runtime confirmation. Their declaration fingerprint
+is not executable-adapter evidence and cannot prompt runtime confirmation.
+
+In 0.3 development, retained 0.2 Voice OpenAI-compatible Chat settings import
+into the connection's `modelSettings`, not per-prompt Voice configuration. The
+spawn resolver passes only the selected model's settings to an adapter that
+declares support; otherwise it returns `provider_incompatible_with_agent` rather
+than silently dropping them. OpenCode writes `maxTokens` as the native model's
+`limit.output` and temperature into its `build`/`plan` Agent configurations,
+enabling the model's temperature capability. `limit.context: 0` preserves
+OpenCode's existing unknown-context default for these custom models; it is not
+an invented context allowance. These are native configuration fields, not model
+`options.temperature` or unsupported V2 per-prompt overrides. See the
+[OpenCode Agent configuration](https://opencode.ai/docs/agents/#temperature)
+and [native schema](https://opencode.ai/config.json).
+
+Distinct imported Chat and commit models retain Chat temperature and the
+predecessor commit temperature of 0.2, respectively. When their model ids are
+identical, the one model settings entry retains the user's Chat temperature;
+the native per-model binding cannot also express a different commit-only
+temperature. OpenCode's native output-token ceiling still applies to
+`limit.output`. This does not claim arbitrary custom native Agents inherit
+the `build`/`plan` temperature setting.
+Non-positive predecessor token values remain stored, but OpenCode materialization
+refuses them explicitly: its native zero means “use the default”, not a zero-token
+request. Unset values leave native defaults unchanged.
+
+### Source discovery policy (0.3 development)
+
+`modelPickerVisibilityByConnectionId` is an optional sparse map in that private
+catalog. Only explicit choices are stored. The Protocol policy in
+`catalog/modelPickerVisibility.ts` defaults frontier, cloud, local and custom
+sources on, and aggregators off. This is presentation policy, not authorization:
+it changes neither connection revision, credentials, grants nor an applied route.
+Deletion clears the override; duplication carries an explicit choice without grants.
+
+The shared Protocol picker projection in `catalog/pickerProjectionV1.ts`, consumed
+by the CLI and Account projection, distinguishes ordinary discovery from explicit source browsing,
+management and route consumers. An off source retains exact current, default and
+favorite model refs; that exception never reveals its unrelated models or bypasses
+the narrower per-model hide policy. Team/broker consumers do not inherit discovery
+filtering. Ordinary picker projections also return `hiddenSources` for off
+sources with withheld rows or retained exception rows. `modelCount` counts only
+withheld rows and can be zero when every row is retained; source-off is the
+visibility owner's fact, not an inference from that count. The UI names them
+under the model grid and browses one in place through
+the same projection with `sourceConnectionId`; browsing never writes a selection.
+Rows carry their source as data; the picker shows "· via <source>" only where a
+heading cannot (a name present under more than one source, or a Provider/Team row
+in Favorites), so identical names are never merged.
+
+`providers.models.source_visibility.set` is an Account Action with no machine input.
+In 0.3 development, the UI and CLI use their captured Account catalog read/CAS writer;
+frontends without that writer refuse the operation before transport. A source
+switch also needs the stored connection and its declared kind, never a guessed
+default from runtime model counts. No machine-RPC write fallback exists.
+An uncertain catalog write requires current-state review rather than automatic
+replay; a catalog CAS conflict retains the existing connection-changed recovery.
+The shared `resolveSessionRoutePresentation` selector accepts the exact draft or
+runtime-applied selection, separately presents pending intent, preserves Team V2
+identity and leaves missing applied facts unknown. `presentSessionRouteChip` is the
+one owner of the composer chip's words ("Runs through <source>", or "Now via
+<applied source>" plus a pending mark); without applied evidence it yields nothing
+and the incumbent label stays. Child Run headers read R2's `resolvedSelection`
+("Inherit session · <route> · <model>"). Composed live validation is still pending.
 
 Persisted selections, favorites, drafts, session metadata, fork/resume state, and model-switch requests must use `SessionModelSelectionV1`. A provider model is identified by the exact tuple:
 
@@ -69,7 +178,54 @@ Persisted selections, favorites, drafts, session metadata, fork/resume state, an
 
 Native models use the same shape with `providerConnectionId: null`. Never infer a connection from a model id, concatenate provider/model ids into a wire id, or silently fall back to a native model when a connection is stale or unavailable.
 
+In 0.3 development, Usage contributions retain the applied Provider contribution
+key as `providerId` and its connection identity as `providerConnectionId`, separately
+from `agentId`. The Session publisher takes these facts from the validated runtime
+binding only when its model matches the observation. Work consumes this accounting
+projection; it does not infer a Provider from an Agent logo or model name. Historical
+observations without that witness, native captures and unattributed cumulative
+remainders return null identities. Custom connections can have a connection identity
+without a contributed Provider key. This projection carries no endpoint or credential.
+
 When a caller names a model id but omits the connection, the Session itself completes the tuple: an active Session from the Provider binding actually applied to its running runner, an inactive Session from its persisted canonical intent. That completion has three outcomes, not two. Absent state means native. Valid state means the connection it names. State that is **present but unreadable** means unknown, and the operation is refused with `model_selection_session_provider_state_unreadable` before any transition RPC, metadata CAS, or prompt admission — a corrupted binding or intent is never reported as an explicit native selection.
+
+## Attached child selection (0.3 development)
+
+Attached Happier execution runs use one host-owned selection decision at launch
+admission, before Provider and Connected Service materialization. An omitted
+model/source choice inherits the parent Session's actually-applied selection;
+pending model changes and Account defaults do not replace it. Explicit native,
+Provider, Team, Workflow and role choices retain precedence. An explicit native
+reset is distinct from omission.
+
+Attached omissions, structured model references and explicit native resets use
+the existing Provider-safe ensure/start method with no retained run id. The host
+applies inheritance as part of ordinary launch admission, without a separate
+inheritance capability flag. The one-way 0.3 upgrade updates all components
+together; older Session processes and mixed 0.2/0.3 operation are unsupported.
+
+Native Connected Service inheritance retains the selected account or pool
+identity, including a pool rather than its currently active member. It never
+copies credentials, activation handles or capabilities. The child rematerializes
+that choice under current admission. A different Agent must admit the inherited
+source/model through its compatibility adapter; unavailable applied state or an
+incompatible choice returns a typed refusal requiring a choice, without changing
+models or billing sources.
+
+Detached and scheduled runs keep their own explicit choices or Account defaults.
+Resuming a run keeps its retained selection even after the parent or defaults
+change; fork keeps its separate explicit inheritance path. Voice's Session model
+choices are omitted until this admission, while configured chat and commit
+choices remain explicit. Agent-native child definitions retain their Agent's
+own model rules.
+
+The execution-run host projects `resolvedSelection` from its admitted launch
+record for child summaries. That projection contains only source, exact
+model references and account/pool binding identities; it is presentation data,
+not a second persisted route or credential owner. Drafts read the applied-model
+projection for an inherited-choice preview, never the pending selection as proof.
+This is unreleased development behavior; composed runtime validation remains
+part of the Providers integration journey.
 
 ## Protocol and capability matchmaking
 
@@ -155,7 +311,7 @@ Locality is derived by the endpoint-safety owner, not selected by the user. A ma
 
 Changing a local endpoint invalidates the previous grant. The daemon must refuse before secret resolution with an actionable error when the grant is absent or stale. A connection definition may sync across devices; authorization to use a local endpoint does not silently transfer to another machine.
 
-Revoking a machine removes that machine's grants, endpoint overrides, and machine secret bindings from Provider settings. Revocation can remove the last reachable machine, so this cleanup runs in the client against encrypted Account Settings rather than through the CLI Provider settings owner. Both writers consume the same mutation-basis decision: a Provider subtree this build cannot fully parse — a future version, or a malformed record — is left byte-for-byte unchanged and the cleanup is reported pending. The recovering reader used for display must never become the basis for a rewrite, or unparsed connections, grants, overrides, bindings, defaults, and visibility state are silently replaced by normalized defaults.
+In 0.3 development, revoking a machine removes that machine's grants, endpoint overrides, and machine secret bindings from the private Provider catalog. Revocation can remove the last reachable machine, so the client captures the Home/Account before revoking it and performs cleanup through the catalog's revision-checked writer, without requiring that machine's daemon or rewriting Account Settings. Plain and E2EE Accounts use their own admitted catalog envelope. An incomplete catalog, stale revision, or unknown receipt leaves cleanup pending; retry reads the current catalog rather than blindly replaying the mutation. The recovering display projection never authorizes a rewrite, and cleanup does not erase default-model intent from its separate preference.
 
 Health, detected processes, discovered model catalogs, and model load state are machine-local runtime observations. They are not synced as account truth.
 
@@ -175,6 +331,74 @@ Happier distinguishes:
 Installed-but-stopped detection and managed start are separate capabilities. Provider managed start is authorized by the Provider feature and connection policy; it does not depend on the Local Services UI gate or daemon inventory snapshot. Discovery alone never grants process ownership.
 
 ### Managed subscription-backed gateways
+
+In unreleased 0.3 development, a Gateway is the existing managed Provider
+connection. Connected-services listing data and Providers refer to the same
+connection id and detail route; there is no separate Gateway catalog. Pools
+remain single-vendor. Gateway vendor slots use the connection's existing
+`purposeBindingDefaults` and revision-checked update Action. Disabling a pool's
+gateway use clears its slot only while that exact pool still owns it; replacing
+a slot preserves other vendors. An empty saved configuration is allowed, but
+does not authorize an unbound runtime.
+
+The connection stores optional `gatewayPlacement`: omitted or
+`{ kind: 'sessionMachine' }` means the Session machine, while
+`{ kind: 'machine', machineId }` names an explicit hub. Saved placement does not
+prove hub readiness or local/private model inference. Shared gateway execution
+and hub transport are integrated by the daemon managed-services owner; this
+configuration contract alone is not evidence that that live journey ran.
+
+The development managed-runtime declaration can opt into
+`sharing: 'connectionMachine'`. The daemon's existing managed-services owner
+then owns one subscription gateway per admitted Home, Account, connection and
+execution machine. Sessions, catalog probes and an explicit Start retain
+separate consumer claims; they do not transfer the process to a Session runner.
+Each consumer receives opaque access bound to its exact Connected Account
+request-auth capability and qualified purposes. A physical management bearer
+cannot authorize inference. Releasing one consumer withdraws only its access;
+the final consumer and its in-flight requests must settle before idle stop.
+
+The runner keeps its own loopback access endpoint across daemon replacement.
+Each new request re-admits the captured binding before obtaining fresh access;
+transport failure does not replay inference or substitute another source.
+An unavailable exact executable source remains unavailable: retained declaration
+attestation alone does not load an older plugin runtime. The chosen-hub path
+uses the existing machine carrier and broker with a personal Account-connection
+source, not a fabricated Team resource. Its distinct protocol epoch signs the
+Home, Account, initiator, target, consumer and application, while the target
+daemon admits the current private catalog and purpose bindings. Unsupported
+negotiation or hub failure cannot fall back to local execution. These are
+development-source contracts; composed live validation remains pending.
+
+The consumer's published loopback base path comes from the admitted hub runtime
+endpoint, through the same signed application's private metadata operation. It
+does not infer `/v1` from the protocol or disclose the hub origin or credentials.
+CLIProxyAPI therefore retains `/` for Anthropic and `/v1` for Responses/Chat;
+unavailable or invalid metadata retires the unpublished consumer access.
+
+Run source preparation uses the admitted controller occurrence and its issued
+Account reader, not the process-global Account snapshot. The existing catalog
+owner projects that exact Account and purpose context with `current_only`, using
+the same scheduler and store; static declarations do not require a fabricated
+probe. A missing owned reader or withdrawn source refuses rather than consulting
+another Account. Launch preparation does not trigger a cold upstream catalog
+refresh before admission: an unavailable dynamic observation requires a normal
+picker/probe and retry. Direct materialization rechecks its source before final
+commit as well as its existing authorization ticket.
+
+Issued credentials for the same Account can have a different cache scope from
+the daemon's token. The trusted credential/context producer supplies the Account
+identity; the source compares that identity and reads the issued scope exactly.
+A cache path or token digest is not proof of Account identity. The signed target
+source continues to read its own credential-bound Account catalog.
+
+Managed connections can also store `claudeHelperModels` with optional `fast`,
+`default`, and `strongest` model ids. Claude's Provider adapter maps these into
+the Session's scoped Haiku/Sonnet/Opus model-pin environment; omitted pins use
+the actual selected Session model. Explicit full-id native Agent definitions
+retain Claude's own precedence. External/custom connections reject these
+managed configuration fields. Edits affect future materialization, not a
+silent rebinding of running Sessions. See [Claude configuration precedence](agents-catalog.md).
 
 Managed subscription-backed routing is experimental and explicit. Upstream policy or enforcement can change and may make the route stop working. Happier surfaces an upstream policy or authentication rejection as an ordinary failure and does not conceal it, manufacture entitlement, or silently fall back to another credential.
 

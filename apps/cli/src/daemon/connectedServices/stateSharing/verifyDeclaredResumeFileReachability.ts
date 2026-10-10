@@ -1,4 +1,4 @@
-import { readdir, realpath } from 'node:fs/promises';
+import { readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 
 import type {
@@ -85,6 +85,34 @@ export async function verifyDeclaredResumeFileReachability(input: Readonly<{
   }
   let matchedPath: string | null = null;
   const sessionFiles = Object.freeze({
+    verifyDeclaredPaths: async (request: Parameters<
+      AgentConnectedAccountResumeReachabilityInputV1['sessionFiles']['verifyDeclaredPaths']
+    >[0]) => {
+      if (request.paths.length === 0) return Object.freeze({ found: false });
+      for (const required of request.paths) {
+        if (!isSafeConnectedServiceStateSharingEntry(required.path)) return Object.freeze({ found: false });
+        const candidate = resolve(targetMaterializedRoot, ...required.path.split(/[\\/]+/));
+        let found = false;
+        for (const entry of input.stateSharingDescriptor.state.entries) {
+          if (!isSafeConnectedServiceStateSharingEntry(entry.path)) continue;
+          const lexicalRoot = resolve(targetMaterializedRoot, ...entry.path.split(/[\\/]+/));
+          if (!isWithinRoot(lexicalRoot, candidate)) continue;
+          const declaredRoot = await realpath(lexicalRoot).catch(() => null);
+          const canonicalPath = await realpath(candidate).catch(() => null);
+          if (!declaredRoot || !canonicalPath || !isWithinRoot(declaredRoot, canonicalPath)) continue;
+          const entryStat = await stat(canonicalPath).catch(() => null);
+          if (!entryStat || (required.kind === 'directory' ? !entryStat.isDirectory() : !entryStat.isFile())) continue;
+          if (required.kind === 'json_object') {
+            const contents: unknown = await readFile(canonicalPath, 'utf8').then(text => JSON.parse(text)).catch(() => null);
+            if (!contents || typeof contents !== 'object' || Array.isArray(contents)) continue;
+          }
+          found = true;
+          break;
+        }
+        if (!found) return Object.freeze({ found: false });
+      }
+      return Object.freeze({ found: true });
+    },
     findDeclaredCandidate: async (request: Parameters<
       AgentConnectedAccountResumeReachabilityInputV1['sessionFiles']['findDeclaredCandidate']
     >[0]) => {

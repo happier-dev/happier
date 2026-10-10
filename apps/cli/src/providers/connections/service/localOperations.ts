@@ -3,7 +3,7 @@ import { ProviderConnectionV1Schema } from '@happier-dev/protocol/providers/conn
 import { ProviderSettingsV1Schema } from '@happier-dev/protocol/providers/settings/v1';
 import { createProviderDiscoveryCandidateIdV1 } from '@happier-dev/protocol/providers/detection/v1';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
-import type { QualifiedConnectedAccountPurposeBindingsV1, ProviderConnectionV1 } from '@happier-dev/protocol';
+import type { QualifiedConnectedAccountPurposeBindingsV1, ProviderConnectionV1, ProviderSettingsV1 } from '@happier-dev/protocol';
 import { createProviderManagedRuntimeBindingEqualityKeyV1 } from '@happier-dev/protocol/providers/contributions';
 
 import { buildProviderDiscoveryEndpointOverrides } from '@/providers/discovery/bridge';
@@ -15,13 +15,13 @@ import {
 } from '@/providers/registry/lookup';
 import { resolveManagedProviderPurposeBindingSnapshot } from '@/providers/managed/resolvePurposeBindingSnapshot';
 import { createProviderOperationLifetime } from '@/providers/operationLifetime';
-import { addProviderContributionConnection } from './authoring';
+import { prepareProviderConnectionCreationV1 } from '@happier-dev/protocol/providers/connections/creationV1';
 import { errorForProviderResolution, type ProviderConnectionServiceContext } from './context';
 import { bindProviderConnectionSecret, setProviderConnectionGrant } from './grants';
 import {
   parseProviderError,
   readSettings,
-  replaceSettings,
+  readSnapshotSettings,
   requireSavedSecretReferenceReady,
 } from './settings';
 import type {
@@ -122,8 +122,8 @@ export function createProviderLocalOperations(context: ProviderConnectionService
       normalizedEndpointUrl: candidate.normalizedEndpointUrl,
     });
 
-    const prepare = (raw: Readonly<Record<string, unknown>>, requireCreate: boolean) => {
-      let settings = readSettings(raw);
+    const prepare = (providerSettings: ProviderSettingsV1, requireCreate: boolean) => {
+      let settings = readSettings(providerSettings);
       let connection: ProviderConnectionV1;
       if (matchedConnectionId) {
         const existing = settings.connections.find((entry) => entry.id === matchedConnectionId);
@@ -135,12 +135,13 @@ export function createProviderLocalOperations(context: ProviderConnectionService
         }
         connection = existing;
       } else {
-        const mutation = addProviderContributionConnection({
+        const mutation = prepareProviderConnectionCreationV1({
           settings,
-          contributionKey: resolved.contributionKey,
-          contributionName: contribution.definition.name,
+          source: { kind: 'contribution', contributionKey: resolved.contributionKey,
+            definition: contribution.definition, displayName: input.displayName },
           connectionId: input.connectionId,
-          displayName: input.displayName,
+          savedSecretId: null,
+          endpointOverrides: { values: endpointOverrides, machineId: input.machineId },
           now: deps.now(),
         });
         if (requireCreate && !mutation.created) {
@@ -151,7 +152,7 @@ export function createProviderLocalOperations(context: ProviderConnectionService
         settings = mutation.settings;
         connection = mutation.connection;
       }
-      const updatedConnection = ProviderConnectionV1Schema.parse({
+      const updatedConnection = matchedConnectionId ? ProviderConnectionV1Schema.parse({
         ...connection,
         endpointOverridesByMachineId: {
           ...(connection.endpointOverridesByMachineId ?? {}),
@@ -159,7 +160,7 @@ export function createProviderLocalOperations(context: ProviderConnectionService
         },
         revision: connection.revision + 1,
         updatedAt: deps.now(),
-      });
+      }) : connection;
       settings = ProviderSettingsV1Schema.parse({
         ...settings,
         connections: settings.connections.map((entry) => entry.id === connection.id ? updatedConnection : entry),
@@ -174,17 +175,17 @@ export function createProviderLocalOperations(context: ProviderConnectionService
       return { settings, connection: updatedConnection };
     };
 
-    const preview = prepare(snapshot.rawAccountSettings, candidate.connection.status === 'enable_default');
-    const previewRaw = replaceSettings(snapshot.rawAccountSettings, preview.settings);
+    const preview = prepare(readSnapshotSettings(snapshot), candidate.connection.status === 'enable_default');
+    const previewRaw = preview.settings;
     const dnsEvidence = await deps.collectDnsEvidence({
-      accountSettings: previewRaw,
+      providerSettings: previewRaw,
       connectionId: preview.connection.id,
       machineId: input.machineId,
       registry: snapshot.registry,
       lifetime,
     });
     const previewResolution = deps.resolveConnection({
-      accountSettings: previewRaw,
+      providerSettings: previewRaw,
       connectionId: preview.connection.id,
       machineId: input.machineId,
       registry: snapshot.registry,
@@ -194,11 +195,11 @@ export function createProviderLocalOperations(context: ProviderConnectionService
       return { status: 'error', error: errorForProviderResolution(previewResolution, input.machineId) };
     }
 
-    await deps.updateAccountSettings((raw) => {
-      const prepared = prepare(raw, candidate.connection.status === 'enable_default');
-      const candidateRaw = replaceSettings(raw, prepared.settings);
+    await deps.updateProviderSettings((providerSettings) => {
+      const prepared = prepare(providerSettings, candidate.connection.status === 'enable_default');
+      const candidateRaw = prepared.settings;
       const resolution = deps.resolveConnection({
-        accountSettings: candidateRaw,
+        providerSettings: candidateRaw,
         connectionId: prepared.connection.id,
         machineId: input.machineId,
         registry: snapshot.registry,
@@ -211,7 +212,7 @@ export function createProviderLocalOperations(context: ProviderConnectionService
           connectionId: prepared.connection.id, machineId: input.machineId,
         });
       }
-      return replaceSettings(raw, setProviderConnectionGrant({
+      return setProviderConnectionGrant({
         settings: prepared.settings,
         connectionId: prepared.connection.id,
         machineId: input.machineId,
@@ -220,7 +221,7 @@ export function createProviderLocalOperations(context: ProviderConnectionService
         connectionSecurityFingerprint: resolution.record.connectionSecurityFingerprint,
         endpointSetFingerprint: resolution.record.endpointSetFingerprint,
         now: deps.now(),
-      }));
+      });
     });
     if (deps.refreshOnEnable) {
       await deps.refreshOnEnable(
@@ -291,10 +292,18 @@ export function createProviderLocalOperations(context: ProviderConnectionService
         candidateRuntime: typeof managedRuntime,
       ) => {
         const connectedAccounts = candidateRuntime.connectedAccounts ?? [];
-        if (connectedAccounts.length === 0) {
+        const selectedConnection = readSnapshotSettings(candidateSnapshot)
+          .connections.find((connection) => input.connectionId
+            ? connection.id === input.connectionId
+            : connection.role === 'default'
+              && connection.source.kind === 'contribution'
+              && normalizeProviderContributionRegistryKey(connection.source.contributionKey)
+                === candidateResolved.contributionKey);
+        if (!selectedConnection && connectedAccounts.length === 0 && !input.connectionId) {
           const purposeBindings = emptyManagedPurposeBindings();
           return {
             status: 'unconfigured' as const,
+            connectionId: undefined,
             purposeBindings,
             basis: createProviderManagedRuntimeBindingEqualityKeyV1({
               implementationIdentity: candidateContribution.identity,
@@ -303,17 +312,10 @@ export function createProviderLocalOperations(context: ProviderConnectionService
             }),
           };
         }
-        const selectedConnection = readSettings(candidateSnapshot.accountSettings)
-          .connections.find((connection) => (
-            connection.role === 'default'
-            && connection.source.kind === 'contribution'
-            && normalizeProviderContributionRegistryKey(connection.source.contributionKey)
-              === candidateResolved.contributionKey
-          ));
         if (!selectedConnection) return { status: 'missing_default' as const };
 
         const connectionResolution = deps.resolveConnection({
-          accountSettings: candidateSnapshot.accountSettings,
+          providerSettings: candidateSnapshot.providerSettings,
           connectionId: selectedConnection.id,
           machineId: input.machineId,
           registry: candidateSnapshot.registry,
@@ -333,29 +335,36 @@ export function createProviderLocalOperations(context: ProviderConnectionService
             !== candidateContribution.identity.pluginId
           || connectionResolution.record.deployment.implementationIdentity.localId
             !== candidateContribution.identity.localId
-          || !deps.resolveManagedPurposeBindingIntent
+          || (connectedAccounts.length > 0 && !deps.resolveManagedPurposeBindingIntent)
         ) {
           return { status: 'invalid' as const };
         }
+        const record = connectionResolution.record;
+        const placement = record.connection.gatewayPlacement;
+        if (placement?.kind === 'machine' && placement.machineId !== input.machineId) {
+          return { status: 'wrong_machine' as const };
+        }
 
         try {
-          const purposeBindings = await resolveManagedProviderPurposeBindingSnapshot({
+          const purposeBindings = connectedAccounts.length === 0 ? emptyManagedPurposeBindings()
+            : await resolveManagedProviderPurposeBindingSnapshot({
             implementationIdentity:
               connectionResolution.record.deployment.implementationIdentity,
             connectedAccounts:
               connectionResolution.record.deployment.managedRuntime.connectedAccounts ?? [],
             purposeBindingIntents:
               connectionResolution.record.deployment.purposeBindingIntents,
-            resolveBindingIntent: deps.resolveManagedPurposeBindingIntent,
+            resolveBindingIntent: deps.resolveManagedPurposeBindingIntent!,
           });
           return {
             status: 'configured' as const,
+            connectionId: record.connectionId,
             purposeBindings,
-            basis: createProviderManagedRuntimeBindingEqualityKeyV1({
+            basis: JSON.stringify([record.connectionId, record.connectionSecurityFingerprint, createProviderManagedRuntimeBindingEqualityKeyV1({
               implementationIdentity: candidateContribution.identity,
               managedRuntime: candidateRuntime,
               purposeBindings,
-            }),
+            })]),
           };
         } catch {
           return { status: 'invalid' as const };
@@ -372,6 +381,11 @@ export function createProviderLocalOperations(context: ProviderConnectionService
         return { status: 'error', error: createProviderErrorV1('provider_connection_not_found', {
           ...(input.connectionId ? { connectionId: input.connectionId } : {}),
           machineId: input.machineId,
+        }) };
+      }
+      if (purposeBindingResolution.status === 'wrong_machine') {
+        return { status: 'error', error: createProviderErrorV1('provider_not_enabled_on_machine', {
+          ...(input.connectionId ? { connectionId: input.connectionId } : {}), machineId: input.machineId,
         }) };
       }
       if (purposeBindingResolution.status === 'invalid') {
@@ -419,6 +433,7 @@ export function createProviderLocalOperations(context: ProviderConnectionService
         return isAuthorizationCurrent();
       };
       const started = await deps.startManagedProviderRuntime({
+        ...(purposeBindingResolution.connectionId ? { connectionId: purposeBindingResolution.connectionId } : {}),
         contributionKey: resolved.contributionKey,
         identity: contribution.identity,
         request: {

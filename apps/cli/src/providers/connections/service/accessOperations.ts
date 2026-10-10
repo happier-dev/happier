@@ -13,10 +13,9 @@ import { errorForProviderResolution, type ProviderConnectionServiceContext } fro
 import { bindProviderConnectionSecret, setProviderConnectionGrant } from './grants';
 import {
   ProviderConnectionValidationError,
-  addPreparedSavedSecret,
   parseProviderError,
   readSettings,
-  replaceSettings,
+  readSnapshotSettings,
   requireSavedSecretReferenceReady,
 } from './settings';
 import type {
@@ -35,11 +34,9 @@ export function createProviderAccessOperations(context: ProviderConnectionServic
     if (!deps.featureGate.isEnabled('providers')) return { status: 'error', error: featureError(input.connectionId) };
     const machineError = assertMachine(input.machineId, input.connectionId);
     if (machineError) return { status: 'error', error: machineError };
-    if (input.enabled && input.scope === 'connection') {
-      return { status: 'error', error: createProviderErrorV1('provider_connection_invalid', {
-        connectionId: input.connectionId, machineId: input.machineId,
-      }) };
-    }
+    if (input.scope !== 'machine') return { status: 'error', error: createProviderErrorV1('provider_connection_invalid', {
+      connectionId: input.connectionId, machineId: input.machineId,
+    }) };
     const lifetime = createProviderOperationLifetime({
       wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
     });
@@ -48,31 +45,34 @@ export function createProviderAccessOperations(context: ProviderConnectionServic
       registry: snapshot.registry,
       ...(snapshot.registryGeneration ? { generation: snapshot.registryGeneration } : {}),
     };
-    const connection = readSettings(snapshot.rawAccountSettings).connections.find((entry) => entry.id === input.connectionId);
+    const connection = readSnapshotSettings(snapshot).connections.find((entry) => entry.id === input.connectionId);
     if (!connection) return { status: 'error', error: createProviderErrorV1('provider_connection_not_found', { connectionId: input.connectionId, machineId: input.machineId }) };
     let scope = input.scope ?? null;
     let dnsEvidence: ProviderEndpointDnsEvidence = new Map();
     let previewResolution: Extract<ProviderConnectionResolution, { status: 'resolved' }> | null = null;
     if (input.enabled) {
       dnsEvidence = await deps.collectDnsEvidence({
-        accountSettings: snapshot.rawAccountSettings, connectionId: input.connectionId,
+        providerSettings: snapshot.providerSettings, connectionId: input.connectionId,
         machineId: input.machineId, registry: snapshot.registry,
         lifetime,
       });
       const resolution = deps.resolveConnection({
-        accountSettings: snapshot.rawAccountSettings, connectionId: input.connectionId,
+        providerSettings: snapshot.providerSettings, connectionId: input.connectionId,
         machineId: input.machineId, registry: snapshot.registry, dnsEvidence,
       });
       if (resolution.status !== 'resolved') return { status: 'error', error: errorForProviderResolution(resolution, input.machineId) };
+      if (resolution.record.scope !== 'machine') return { status: 'error', error: createProviderErrorV1('provider_connection_invalid', {
+        connectionId: input.connectionId, machineId: input.machineId,
+      }) };
       scope = resolution.record.scope;
       previewResolution = resolution;
     }
     if (!scope) return { status: 'error', error: createProviderErrorV1('provider_connection_disabled', { connectionId: input.connectionId, machineId: input.machineId }) };
-    await deps.updateAccountSettings((raw) => {
-      const settings = readSettings(raw);
+    await deps.updateProviderSettings((providerSettings) => {
+      const settings = readSettings(providerSettings);
       const resolution = input.enabled
         ? deps.resolveConnection({
-            accountSettings: raw, connectionId: input.connectionId,
+            providerSettings, connectionId: input.connectionId,
             machineId: input.machineId, registry: snapshot.registry, dnsEvidence,
           })
         : null;
@@ -86,14 +86,14 @@ export function createProviderAccessOperations(context: ProviderConnectionServic
           connectionId: input.connectionId, machineId: input.machineId,
         });
       }
-      return replaceSettings(raw, setProviderConnectionGrant({
+      return setProviderConnectionGrant({
         settings, connectionId: input.connectionId, machineId: input.machineId,
         scope: resolution?.record.scope ?? scope!,
         enabled: input.enabled,
         connectionSecurityFingerprint: resolution?.record.connectionSecurityFingerprint ?? 'unused-for-disable',
         endpointSetFingerprint: resolution?.record.endpointSetFingerprint ?? 'unused-for-disable',
         now: deps.now(),
-      }));
+      });
     });
     if (input.enabled && deps.refreshOnEnable) {
       await deps.refreshOnEnable(
@@ -122,6 +122,9 @@ export function createProviderAccessOperations(context: ProviderConnectionServic
     if (!deps.featureGate.isEnabled('providers')) return { status: 'error', error: featureError(input.connectionId) };
     const machineError = assertMachine(input.machineId, input.connectionId);
     if (machineError) return { status: 'error', error: machineError };
+    if (input.scope !== 'machine') return { status: 'error', error: createProviderErrorV1('provider_connection_invalid', {
+      connectionId: input.connectionId, machineId: input.machineId,
+    }) };
     const lifetime = createProviderOperationLifetime({
       wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
     });
@@ -134,9 +137,8 @@ export function createProviderAccessOperations(context: ProviderConnectionServic
       if (input.preparedSavedSecret && input.savedSecretId !== input.preparedSavedSecret.id) {
         throw new ProviderConnectionValidationError('The prepared SavedSecret must be the exact bound secret');
       }
-      await deps.updateAccountSettings((raw) => {
-        const rawWithPreparedSecret = addPreparedSavedSecret(raw, input.preparedSavedSecret);
-        const settings = readSettings(rawWithPreparedSecret);
+      await deps.updateProviderSettings((providerSettings) => {
+        const settings = readSettings(providerSettings);
         const connection = settings.connections.find((entry) => entry.id === input.connectionId);
         if (!connection) {
           throw createProviderErrorV1('provider_connection_not_found', { connectionId: input.connectionId, machineId: input.machineId });
@@ -172,20 +174,21 @@ export function createProviderAccessOperations(context: ProviderConnectionServic
         }
         if (input.savedSecretId !== null) {
           requireSavedSecretReferenceReady({
-            rawAccountSettings: rawWithPreparedSecret,
+            rawAccountSettings: snapshot.rawAccountSettings,
             savedSecretId: input.savedSecretId,
             savedSecretResources: snapshot.savedSecretResources,
             savedSecretCatalogState: snapshot.savedSecretCatalogState,
             connectionId: input.connectionId,
             machineId: input.machineId,
+            preparedSavedSecret: input.preparedSavedSecret,
           });
         }
-        return replaceSettings(rawWithPreparedSecret, bindProviderConnectionSecret({
+        return bindProviderConnectionSecret({
           settings, connectionId: input.connectionId,
-          machineId: input.scope === 'machine' ? input.machineId : null,
+          machineId: input.machineId,
           slotId: input.credentialSlotId, savedSecretId: input.savedSecretId,
-        }));
-      });
+        });
+      }, { preparedSavedSecret: input.preparedSavedSecret });
     } catch (error) {
       const providerError = parseProviderError(error);
       if (providerError) return { status: 'error', error: providerError };

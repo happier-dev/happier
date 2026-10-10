@@ -1,5 +1,6 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from "axios";
+import { QualifiedProviderAccountUsageHistoryRequestV4Schema, QualifiedProviderAccountUsageHistoryResponseV4Schema } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { QualifiedConnectedAccountCredentialDeleteResponseV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import type { ManagedResourceDependencyV1 } from '@happier-dev/protocol';
 import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
@@ -24,6 +25,14 @@ function requestHeaders(token: string): Readonly<Record<string, string>> {
         ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
         Authorization: `Bearer ${token}`,
     };
+}
+
+export type QualifiedProviderAccountUsageReadAuthorization = (request: Readonly<{ method: 'GET'; path: string }>) => Readonly<Record<string, string>> | null;
+function providerUsageReadHeaders(params: Readonly<{ token: string; authorizeRequest?: QualifiedProviderAccountUsageReadAuthorization }>, path: string) {
+    if (!params.authorizeRequest) return requestHeaders(params.token);
+    const headers = params.authorizeRequest({ method: 'GET', path });
+    if (!headers) throw new Error('provider_account_usage_request_authority_unavailable');
+    return headers;
 }
 
 export type QualifiedConnectedAccountCompatibilityErrorCode =
@@ -915,6 +924,7 @@ export async function resolveQualifiedProviderAccountUsageSourceV4(
     params: Readonly<{
         token: string;
         source: QualifiedConnectedServiceUsageSourceV4;
+        authorizeRequest?: QualifiedProviderAccountUsageReadAuthorization;
         signal?: AbortSignal;
     }>,
 ) {
@@ -930,7 +940,7 @@ export async function resolveQualifiedProviderAccountUsageSourceV4(
     const response = await axios.get(
         `${resolveServerHttpBaseUrl()}/v4/connect/qualified/provider-account-usage/sources/resolve?${query.toString()}`,
         {
-            headers: requestHeaders(params.token),
+            headers: providerUsageReadHeaders(params, `/v4/connect/qualified/provider-account-usage/sources/resolve?${query.toString()}`),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
             validateStatus: (status) => status === 200 || status === 404,
             ...(params.signal ? { signal: params.signal } : {}),
@@ -951,6 +961,7 @@ export async function readQualifiedProviderAccountUsageRecordV4(
     params: Readonly<{
         token: string;
         recordId: ProviderAccountUsageRecordId;
+        authorizeRequest?: QualifiedProviderAccountUsageReadAuthorization;
         signal?: AbortSignal;
     }>,
 ) {
@@ -960,7 +971,7 @@ export async function readQualifiedProviderAccountUsageRecordV4(
     const response = await axios.get(
         `${resolveServerHttpBaseUrl()}/v4/connect/qualified/provider-account-usage/record?${new URLSearchParams(query).toString()}`,
         {
-            headers: requestHeaders(params.token),
+            headers: providerUsageReadHeaders(params, `/v4/connect/qualified/provider-account-usage/record?${new URLSearchParams(query).toString()}`),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
             validateStatus: (status) =>
                 status === 200 || status === 404 || status === 409,
@@ -980,6 +991,16 @@ export async function readQualifiedProviderAccountUsageRecordV4(
     return QualifiedProviderAccountUsageRecordResponseV4Schema.parse(
         response.data,
     );
+}
+
+export async function readQualifiedProviderAccountUsageHistoryV4(params: Readonly<{ token: string; query: ReturnType<typeof QualifiedProviderAccountUsageHistoryRequestV4Schema.parse>; signal?: AbortSignal; authorizeRequest?: QualifiedProviderAccountUsageReadAuthorization }>) {
+    const query = QualifiedProviderAccountUsageHistoryRequestV4Schema.parse(params.query);
+    const path = `/v4/connect/qualified/provider-account-usage/history?${new URLSearchParams({ query: encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema, query) }).toString()}`;
+    const response = await axios.get(`${resolveServerHttpBaseUrl()}${path}`, { headers: providerUsageReadHeaders(params, path), timeout: resolveConnectedServicesServerApiTimeoutMs(), validateStatus: status => status === 200 || status === 404 || status === 409, ...(params.signal ? { signal: params.signal } : {}) });
+    if (response.status === 404) return null;
+    if (response.status === 409) throwQualifiedProviderAccountUsageReadConflict(response.data);
+    if (response.status !== 200) throw new Error(`Qualified provider-account usage history read returned ${response.status}`);
+    return QualifiedProviderAccountUsageHistoryResponseV4Schema.parse(response.data);
 }
 
 export async function requestQualifiedProviderAccountUsageRefreshV4(

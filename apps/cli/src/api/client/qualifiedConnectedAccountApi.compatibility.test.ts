@@ -5,6 +5,7 @@ import type { CliServerFeaturesSnapshot } from "@/features/serverFeaturesClient"
 import {
     executeQualifiedConnectedAccountNegotiatedOperation,
     resolveQualifiedConnectedAccountAtomicV4Negotiation,
+    resolveQualifiedConnectedAccountRemovalReviewNegotiation,
     resolveQualifiedConnectedAccountOperationTransport,
     resolveQualifiedConnectedAccountPeerClass,
     resolveQualifiedConnectedAccountPeerOperationTransport,
@@ -45,6 +46,12 @@ const credentialRead = {
 } as const;
 
 describe("qualified Connected Account current transport admission", () => {
+    it("negotiates removal review separately from the released strict V4 descriptor", () => {
+        expect(resolveQualifiedConnectedAccountRemovalReviewNegotiation(ready({ qualifiedAccounts: { protocolVersion: 4 } }))).toBe("absent");
+        expect(resolveQualifiedConnectedAccountRemovalReviewNegotiation(ready({ qualifiedAccounts: { protocolVersion: 4 }, credentialRemovalReview: { protocolVersion: 1 } }))).toBe("advertised");
+        expect(resolveQualifiedConnectedAccountRemovalReviewNegotiation(undefined)).toBe("indeterminate");
+        expect(resolveQualifiedConnectedAccountRemovalReviewNegotiation({ status: "error", reason: "network" })).toBe("indeterminate");
+    });
     it.each([
         { label: "exact 0.2.1", snapshot: exactOldServer, serverContract: exactOldServerContract },
         { label: "revisioned V2/V3", snapshot: ready({ credentialDelete: { revisionGuard: true } }) },

@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
-import type { ProviderAccountSettingsMigrationContextV1, ProviderContributionV1 } from '@happier-dev/protocol';
+import type { ProviderAccountSettingsMigrationContextV1, ProviderContributionV1, ProviderSettingsV1 } from '@happier-dev/protocol';
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 import {
   awaitWithinProviderOperation,
@@ -18,11 +18,12 @@ type RegistryLease = Readonly<{
 }>;
 
 type MigrationInvocation = Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   acquireRegistryLease: () => Promise<RegistryLease>;
   deriveContext: (
     latestRawSettings: Readonly<Record<string, unknown>>,
     acceptedRegistry: unknown,
+    providerSettings: ProviderSettingsV1,
   ) => ProviderAccountSettingsMigrationContextV1 | Promise<ProviderAccountSettingsMigrationContextV1>;
 }>;
 
@@ -83,7 +84,7 @@ export function createLegacyProfileMigrationCoordinator(deps: Readonly<{
   const now = deps.now ?? Date.now;
 
   const ensureMigrated = (
-    input: Readonly<{ accountKey: string; credentials: Credentials; providersEnabled: boolean; machineId: string;
+    input: Readonly<{ accountKey: string; credentials: StoredCredentials; providersEnabled: boolean; machineId: string;
       readAuthoringMemory?: () => Promise<Readonly<{ lastUsedProfile: string | null }>> }>,
   ): Promise<LegacyProfileMigrationCoordinatorResult> => {
     if (input.providersEnabled !== true) return Promise.resolve({ status: 'feature_disabled' } as const);
@@ -117,10 +118,11 @@ export function createLegacyProfileMigrationCoordinator(deps: Readonly<{
             // retry. The migration helper receives an explicit borrowed view so
             // its normal finally path cannot release the same generation twice.
             acquireRegistryLease: async () => ({ registry: lease.registry, release: async () => undefined }),
-            deriveContext: async (latestRawSettings, acceptedRegistry) => {
+            deriveContext: async (latestRawSettings, acceptedRegistry, providerSettings) => {
               const providersByContributionKey = resolvedContributionMap(acceptedRegistry);
               const context = buildContext({
                 rawSettings: latestRawSettings,
+                providerSettings,
                 authoringMemory: authoringMemory ?? { lastUsedProfile: null },
                 providersByContributionKey,
                 allocatedConnectionIdsBySourceProfileId,
@@ -129,6 +131,7 @@ export function createLegacyProfileMigrationCoordinator(deps: Readonly<{
               });
               return authorizeLegacyProfileMigrationContext({
                 rawSettings: latestRawSettings,
+                providerSettings,
                 context,
                 providersByContributionKey,
                 machineId: input.machineId,

@@ -54,6 +54,8 @@ export type PublicManagedProviderEndpointAccessProjection<TAccess> = Readonly<{
  */
 export type PublicManagedProviderRuntimeCustody<TAccess> = Readonly<{
   managedServices: ManagedServices;
+  /** A shared consumer retains access only; its physical service stays in the daemon. */
+  lifetime?: 'runnerProcess' | 'sharedConsumer';
   /** Session-only commit boundary. Implementations must persist the full
    * runner-local endpoint/access outcome before this resolves. */
   adoptService?(serviceId: string): Promise<void>;
@@ -469,7 +471,7 @@ export async function startPublicManagedProviderRuntime<TAccess>(input: Readonly
       // A successful Session-demand launch transfers process custody to the
       // persistent runner. Retiring only this daemon invocation must not tear
       // down that adopted service; the runner remains its exact cleanup owner.
-      onExit: request.reason === 'sessionDemand'
+      onExit: request.reason === 'sessionDemand' && input.custody.lifetime !== 'sharedConsumer'
         ? () => undefined
         : () => service.dispose(),
     });
@@ -557,7 +559,7 @@ export async function startPublicManagedProviderRuntime<TAccess>(input: Readonly
     );
   }
 
-  if (request.reason === 'sessionDemand') {
+  if (request.reason === 'sessionDemand' && input.custody.lifetime !== 'sharedConsumer') {
     const adoptService = input.custody.adoptService;
     if (!adoptService) {
       return await fail('managed_provider_custody_adoption_failed');

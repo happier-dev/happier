@@ -21,10 +21,12 @@ type FetchSessionsPage = (params: Readonly<{
   token: string;
   cursor?: string;
   limit?: number;
+  archivedOnly?: boolean;
 }>) => Promise<Readonly<{
   sessions: ReadonlyArray<SessionRowWithMetadata>;
   nextCursor: string | null;
   hasNext: boolean;
+  metadataUpgradeRequiredCount?: number;
 }>>;
 
 type DecryptSessionMetadata = (input: Readonly<{
@@ -35,8 +37,10 @@ type DecryptSessionMetadata = (input: Readonly<{
 
 const DEFAULT_PAGE_LIMIT = 200;
 
-function isArchived(row: SessionRowWithMetadata): boolean {
-  return row.archivedAt !== null && row.archivedAt !== undefined;
+function retentionUnavailable(): Error & { code: string } {
+  return Object.assign(new Error('Connected-service Session home references could not be fully read'), {
+    code: 'connected_service_home_retention_unavailable',
+  });
 }
 
 export async function readRetainedConnectedServiceMaterializationKeys(params: Readonly<{
@@ -53,36 +57,40 @@ export async function readRetainedConnectedServiceMaterializationKeys(params: Re
     : DEFAULT_PAGE_LIMIT;
   const retainedKeys: string[] = [];
   const seenKeys = new Set<string>();
-  const seenCursors = new Set<string>();
-  let cursor: string | undefined;
   const accountEncryptionCurrentness = await (
     params.getAccountEncryptionCurrentness
     ?? (async () => await fetchAccountEncryptionCurrentness({ token: params.credentials.token }))
   )();
 
-  while (true) {
-    const page = await fetchPage({
-      token: params.credentials.token,
-      ...(cursor ? { cursor } : {}),
-      limit: pageLimit,
-    });
-    for (const row of page.sessions) {
-      if (row.active === true || isArchived(row)) continue;
-      const metadata = decryptMetadata({
-        credentials: params.credentials,
-        rawSession: row,
-        accountEncryptionMode: accountEncryptionCurrentness.mode,
+  for (const archivedOnly of [false, true]) {
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    while (true) {
+      const page = await fetchPage({
+        token: params.credentials.token,
+        ...(cursor ? { cursor } : {}),
+        ...(archivedOnly ? { archivedOnly: true } : {}),
+        limit: pageLimit,
       });
-      const identity = readConnectedServiceMaterializationIdentityV1FromMetadata(metadata);
-      const key = typeof identity?.id === 'string' ? identity.id.trim() : '';
-      if (!key || seenKeys.has(key)) continue;
-      seenKeys.add(key);
-      retainedKeys.push(key);
+      if (page.metadataUpgradeRequiredCount) throw retentionUnavailable();
+      for (const row of page.sessions) {
+        const metadata = decryptMetadata({
+          credentials: params.credentials,
+          rawSession: row,
+          accountEncryptionMode: accountEncryptionCurrentness.mode,
+        });
+        if (!metadata) throw retentionUnavailable();
+        const identity = readConnectedServiceMaterializationIdentityV1FromMetadata(metadata);
+        const key = typeof identity?.id === 'string' ? identity.id.trim() : '';
+        if (!key || seenKeys.has(key)) continue;
+        seenKeys.add(key);
+        retainedKeys.push(key);
+      }
+      if (!page.hasNext) break;
+      if (!page.nextCursor || seenCursors.has(page.nextCursor)) throw retentionUnavailable();
+      seenCursors.add(page.nextCursor);
+      cursor = page.nextCursor;
     }
-    if (!page.hasNext || !page.nextCursor) break;
-    if (seenCursors.has(page.nextCursor)) break;
-    seenCursors.add(page.nextCursor);
-    cursor = page.nextCursor;
   }
 
   return retainedKeys;

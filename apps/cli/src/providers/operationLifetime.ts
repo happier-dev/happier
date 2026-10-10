@@ -88,3 +88,21 @@ export async function awaitWithinProviderOperation<T>(
     void work.catch(() => {});
   }
 }
+
+/** Give an abortable transport the same containing operation budget. A caller
+ * without a signal still withdraws the transport when that budget settles. */
+export async function awaitAbortableWithinProviderOperation<T>(
+  work: (signal: AbortSignal) => Promise<T>,
+  lifetime: ProviderOperationLifetime,
+): Promise<T> {
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  lifetime.signal?.addEventListener('abort', cancel, { once: true });
+  if (lifetime.signal?.aborted) controller.abort();
+  try {
+    return await awaitWithinProviderOperation(work(controller.signal), lifetime);
+  } finally {
+    lifetime.signal?.removeEventListener('abort', cancel);
+    controller.abort();
+  }
+}

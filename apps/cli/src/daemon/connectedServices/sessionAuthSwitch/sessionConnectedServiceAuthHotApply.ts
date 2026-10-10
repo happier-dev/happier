@@ -15,6 +15,7 @@ import type {
   AcceptedConnectedServiceAccountVerificationByServiceId,
 } from '../accountTransitions/acceptedConnectedServiceAccountVerification';
 import { projectConnectedServiceRuntimeAuthTargetInput } from '../runtimeAuth/projectRuntimeAuthTargetInput';
+import type { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
 
 type HotApplyResult =
   | Readonly<{
@@ -153,7 +154,8 @@ function readHotApplyFailureErrorCode(
     : 'hot_apply_failed';
 }
 
-export function createSessionConnectedServiceAuthHotApply(deps?: Readonly<{
+export function createSessionConnectedServiceAuthHotApply(deps: Readonly<{
+  runtimeRegistry: ConnectedServiceRuntimeRegistry;
   isSessionCurrent?: (sessionId: string) => Promise<boolean>;
   resolveRuntimeAuthAdapter?: (agentId: CatalogAgentId) => Promise<ConnectedServiceProviderRuntimeAuthAdapter | null>;
   validateGroupMutationCurrentness?: (input: Readonly<{
@@ -203,31 +205,28 @@ export function createSessionConnectedServiceAuthHotApply(deps?: Readonly<{
       const credentialRevision = ConnectedServiceCredentialRevisionV1Schema.safeParse(
         materializedSelectionRecord?.credentialRevision,
       );
-      const validateCurrentBeforeMutation = binding.selection === 'group' || deps?.isSessionCurrent
-        ? async () => {
-            if (!await isCurrent()) return { current: false as const, reason: 'requester_session_not_current' };
-            if (binding.selection !== 'group') return { current: true as const };
-            const groupId = readString(materializedSelectionRecord?.groupId) ?? readString(binding.groupId);
-            const profileId = readString(materializedSelectionRecord?.activeProfileId)
-              ?? readString(materializedSelectionRecord?.profileId)
-              ?? readString(binding.profileId);
-            if (
-              !deps?.validateGroupMutationCurrentness
-              || !groupId
-              || !profileId
-              || !Number.isSafeInteger(groupGeneration)
-            ) {
-              return { current: false as const, reason: 'shared_generation_application_currentness_unavailable' };
-            }
-            return await deps.validateGroupMutationCurrentness({
-              serviceId,
-              groupId,
-              profileId,
-              generation: groupGeneration as number,
-              credentialRevision: credentialRevision.success ? credentialRevision.data : null,
-            });
+      const validateCurrentBeforeMutation = async () => {
+        if (!await isCurrent()) return { current: false as const, reason: 'requester_session_not_current' };
+        if (binding.selection === 'group') {
+          const groupId = readString(materializedSelectionRecord?.groupId) ?? readString(binding.groupId);
+          const profileId = readString(materializedSelectionRecord?.activeProfileId)
+            ?? readString(materializedSelectionRecord?.profileId)
+            ?? readString(binding.profileId);
+          if (!deps.validateGroupMutationCurrentness || !groupId || !profileId || !Number.isSafeInteger(groupGeneration)) {
+            return { current: false as const, reason: 'shared_generation_application_currentness_unavailable' };
           }
-        : undefined;
+          const currentness = await deps.validateGroupMutationCurrentness({
+            serviceId, groupId, profileId, generation: groupGeneration as number,
+            credentialRevision: credentialRevision.success ? credentialRevision.data : null,
+          });
+          if (!currentness.current) return currentness;
+        }
+        // This callback is admitted immediately before native-file or live
+        // SDK auth mutation. Keep process/Run custody, but no longer claim
+        // its old accepted binding is applied until success registration.
+        deps.runtimeRegistry.updateTarget({ pid: input.tracked.pid, connectedServicesBindingsRaw: null });
+        return { current: true as const };
+      };
       const request = projectConnectedServiceRuntimeAuthTargetInput({
         agentId,
         materializedSelection,
@@ -239,7 +238,7 @@ export function createSessionConnectedServiceAuthHotApply(deps?: Readonly<{
             ? { groupId: binding.groupId, activeProfileId: binding.profileId }
             : {}),
         },
-        ...(validateCurrentBeforeMutation ? { validateCurrentBeforeMutation } : {}),
+        validateCurrentBeforeMutation,
       });
       if (!await isCurrent()) return { ok: false, errorCode: 'hot_apply_failed', serviceId };
       const result = await adapter.hotApply(request);

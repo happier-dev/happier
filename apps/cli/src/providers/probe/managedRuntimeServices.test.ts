@@ -25,6 +25,7 @@ import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/
 import { createManagedPluginSourceCustody } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 import { resolveProviderConnectionForMachine } from '@/providers/registry';
+import { splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 
 import {
   createProviderProbeHttpClient,
@@ -164,7 +165,7 @@ describe('managed Provider catalog runtime composition', () => {
     const initial = resolveProviderConnectionForMachine({
       connectionId,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: base },
+      providerSettings: base,
       registry,
       dnsEvidenceByEndpointUrl: new Map(),
     });
@@ -184,6 +185,16 @@ describe('managed Provider catalog runtime composition', () => {
       }],
     });
     let currentSettings = settings;
+    let currentSnapshot = {
+      source: 'cache' as const,
+      settings: AccountSettingsSchema.parse({}),
+      settingsVersion: 1,
+      loadedAtMs: 1,
+      settingsSecretsReadKeys: [],
+      scopeKey: 'account-a',
+      providerConnectionsCatalog: { status: 'ready' as const, revision: 1,
+        catalog: splitProviderSettingsV1(currentSettings).catalog },
+    };
     let invalidateAuthorizationDuringStart = false;
     let switchRuntimeDuringStart = false;
     let returnSuccessorRuntime = false;
@@ -235,6 +246,9 @@ describe('managed Provider catalog runtime composition', () => {
               : connection
           )),
         });
+        currentSnapshot = { ...currentSnapshot,
+          providerConnectionsCatalog: { status: 'ready', revision: currentSnapshot.providerConnectionsCatalog.revision + 1,
+            catalog: splitProviderSettingsV1(currentSettings).catalog } };
       }
       if (switchRuntimeDuringStart) returnSuccessorRuntime = true;
       return Object.freeze({
@@ -384,17 +398,7 @@ describe('managed Provider catalog runtime composition', () => {
       happyHomeDir,
       registry,
       featureGate: { isEnabled: () => true },
-      getAccountSettingsSnapshot: () => ({
-        source: 'cache',
-        settings: AccountSettingsSchema.parse({
-          providerSettingsV1: currentSettings,
-        }),
-        settingsVersion:
-          (currentSettings.connections.find((connection) => connection.id === connectionId)?.revision ?? 0) + 1,
-        loadedAtMs: 1,
-        settingsSecretsReadKeys: [],
-        scopeKey: 'account-a',
-      }),
+      getAccountSettingsSnapshot: () => currentSnapshot,
       client: createProviderProbeHttpClient({
         resolveAddresses: async () => ['127.0.0.1'],
         transport,

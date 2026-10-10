@@ -363,7 +363,7 @@ export function registerExternalAuthFinalizeKeylessRoute(app: Fastify) {
                         accountId: identity.accountId,
                         providerId,
                         runtimeFingerprint: parsedValue.securityBinding.provider.runtimeFingerprint,
-                        ...(parsedValue.securityBinding.connection?.id
+                        ...(parsedValue.securityBinding.provider.context.kind === "team" && parsedValue.securityBinding.connection?.id
                             ? { teamConnectionId: parsedValue.securityBinding.connection.id }
                             : {}),
                     })
@@ -508,7 +508,7 @@ export function registerExternalAuthFinalizeKeylessRoute(app: Fastify) {
                         accountId: account.id,
                         providerId,
                         runtimeFingerprint: parsedValue.securityBinding!.provider.runtimeFingerprint,
-                        ...(parsedValue.securityBinding!.connection?.id
+                        ...(parsedValue.securityBinding!.provider.context.kind === "team" && parsedValue.securityBinding!.connection?.id
                             ? { teamConnectionId: parsedValue.securityBinding!.connection.id }
                             : {}),
                     })

@@ -1,4 +1,4 @@
-import { mkdir, rm, stat, symlink, utimes } from 'node:fs/promises';
+import { mkdir, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
@@ -27,6 +27,93 @@ async function touchOld(path: string, mtimeMs: number): Promise<void> {
 }
 
 describe('ConnectedServiceMaterializedHomeCleanupScheduler', () => {
+  it('preserves local transcripts and declared resume state but reclaims homes with only shared symlinks', async () => {
+    const root = await createTempDir('happier-home-local-state-');
+    try {
+      const baseDir = join(root, 'materialized');
+      const codex = await createIdentityRoot(baseDir, 'local-codex');
+      const claude = await createIdentityRoot(baseDir, 'local-claude', 'happier.agent.claude/claude');
+      const declared = await createIdentityRoot(baseDir, 'declared-state', 'other');
+      const shared = await createIdentityRoot(baseDir, 'shared-only');
+      const outside = join(root, 'shared-sessions');
+      await mkdir(outside);
+      await writeFile(join(outside, 'rollout.jsonl'), '{}');
+      await mkdir(join(codex, 'codex', 'sessions'));
+      await writeFile(join(codex, 'codex', 'sessions', 'rollout.jsonl'), '{}');
+      await mkdir(join(claude, 'happier.agent.claude', 'claude', 'projects'));
+      await writeFile(join(claude, 'happier.agent.claude', 'claude', 'projects', 'session.jsonl'), '{}');
+      await writeFile(join(declared, 'other', '.happier-state-sharing.json'), JSON.stringify({
+        v: 1, stateEntries: ['native.db'], effectiveStateMode: 'isolated',
+      }));
+      await writeFile(join(declared, 'other', 'native.db'), 'resume state');
+      await symlink(outside, join(shared, 'codex', 'sessions'), 'dir');
+      const isolationBaseDir = join(root, 'isolation');
+      const isolated = join(isolationBaseDir, 'codex', 'execution_run', 'local-isolated');
+      await mkdir(join(isolated, 'xdg', 'state'), { recursive: true });
+      await writeFile(join(isolated, 'xdg', 'state', 'native.db'), 'resume state');
+      for (const home of [codex, claude, declared, shared, isolated]) await touchOld(home, 1_000);
+      const scheduler = new ConnectedServiceMaterializedHomeCleanupScheduler({
+        baseDir, isolationBaseDir, nowMs: () => 10_000, orphanTtlMs: 1_000,
+        getLiveMaterializationKeys: () => [], getRetainedMaterializationKeys: async () => [],
+      });
+      await scheduler.reconcile();
+      for (const home of [codex, claude, declared, isolated]) await expectExists(home);
+      await expectMissing(shared);
+      await expectExists(outside);
+    } finally { await removeTempDir(root); }
+  });
+
+  it('reclaims orphan execution-run isolation homes through the same retention sweep', async () => {
+    const root = await createTempDir('happier-isolation-home-cleanup-');
+    try {
+      const isolationBaseDir = join(root, 'isolation');
+      const retained = join(isolationBaseDir, 'codex', 'execution_run', 'retained-run');
+      const orphan = join(isolationBaseDir, 'happier.agent.pi', 'pi', 'execution_run', 'orphan-run');
+      const unknownScope = join(isolationBaseDir, 'claude', 'session', 'unknown');
+      for (const home of [retained, orphan, unknownScope]) {
+        await mkdir(home, { recursive: true });
+        await touchOld(home, 1_000);
+      }
+      const scheduler = new ConnectedServiceMaterializedHomeCleanupScheduler({
+        baseDir: join(root, 'materialized'), isolationBaseDir,
+        nowMs: () => 10_000, orphanTtlMs: 1_000,
+        getLiveMaterializationKeys: () => [],
+        getRetainedMaterializationKeys: async () => ['retained-run'],
+      });
+      await scheduler.reconcile();
+      await expectMissing(orphan);
+      await expectExists(retained);
+      await expectExists(unknownScope);
+    } finally { await removeTempDir(root); }
+  });
+
+  it('keeps isolation homes when retention is unknown or their scope escapes through a symlink', async () => {
+    const root = await createTempDir('happier-isolation-home-cleanup-safety-');
+    const outside = await createTempDir('happier-isolation-home-outside-');
+    try {
+      const isolationBaseDir = join(root, 'isolation');
+      const orphan = join(isolationBaseDir, 'pi', 'execution_run', 'orphan');
+      await mkdir(orphan, { recursive: true });
+      await touchOld(orphan, 1_000);
+      const createScheduler = (available: boolean) => new ConnectedServiceMaterializedHomeCleanupScheduler({
+        baseDir: join(root, 'materialized'), isolationBaseDir,
+        nowMs: () => 10_000, orphanTtlMs: 1_000,
+        getLiveMaterializationKeys: () => [],
+        getRetainedMaterializationKeys: async () => available ? [] : { status: 'unavailable' },
+      });
+      await createScheduler(false).reconcile();
+      await expectExists(orphan);
+      const outsideHome = join(outside, 'native-state');
+      await mkdir(outsideHome);
+      await touchOld(outsideHome, 1_000);
+      await mkdir(join(isolationBaseDir, 'codex'), { recursive: true });
+      await symlink(outside, join(isolationBaseDir, 'codex', 'execution_run'), 'dir');
+      await createScheduler(true).reconcile();
+      await expectMissing(orphan);
+      await expectExists(outsideHome);
+    } finally { await removeTempDir(root); await removeTempDir(outside); }
+  });
+
   it('retains live and resumable identity roots while pruning stale orphan roots and attempts', async () => {
     const root = await createTempDir('happier-materialized-home-cleanup-');
     try {

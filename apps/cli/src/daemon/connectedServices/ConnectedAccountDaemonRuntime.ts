@@ -595,6 +595,40 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                                 code: 'connected_account_runtime_generation_changed',
                             };
                         }
+                        if (
+                            command.requiredOperation === 'quota_refresh'
+                            && operationTransport?.kind === 'v4'
+                        ) {
+                            // Explicit Refresh admission needs the executable quota
+                            // fact; ordinary descriptor discovery stays cold.
+                            const quotaRuntime =
+                                await lease.registry.resolveConnectedAccountRuntime?.(
+                                    command.service,
+                                ) ?? null;
+                            assertNotAborted(options?.signal);
+                            if (
+                                !params.reloadController.isRuntimeRegistryCurrent(lease.registry)
+                                || !contribution.isCurrent()
+                                || quotaRuntime && !quotaRuntime.isCurrent()
+                            ) {
+                                return {
+                                    status: 'unavailable' as const,
+                                    code: 'connected_account_runtime_generation_changed',
+                                };
+                            }
+                            if (!quotaRuntime || !sameService(quotaRuntime.ref, command.service)) {
+                                return {
+                                    status: 'unavailable' as const,
+                                    code: 'connected_account_service_unavailable',
+                                };
+                            }
+                            if (!quotaRuntime.runtime.quota) {
+                                return {
+                                    status: 'unavailable' as const,
+                                    code: 'connected_account_v4_operation_unsupported',
+                                };
+                            }
+                        }
                         const accounts =
                             operationTransport?.kind === 'legacy'
                                 ? Object.freeze([])

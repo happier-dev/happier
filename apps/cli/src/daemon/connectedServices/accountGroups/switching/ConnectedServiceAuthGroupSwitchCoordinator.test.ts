@@ -1585,6 +1585,10 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
         decisionTrace: {
           activeProfileId: 'primary',
           reason: 'no_eligible_members',
+          strategy: 'priority',
+          selectionBasis: 'no_eligible_members',
+          sticky: false,
+          orderedEligibleCandidates: [],
           candidates: [
             {
               profileId: 'primary',

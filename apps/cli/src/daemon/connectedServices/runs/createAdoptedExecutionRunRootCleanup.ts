@@ -2,6 +2,7 @@ import { realpath } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 
 import type { CatalogAgentId } from '@/agent/catalog/ids';
+import { isConnectedServiceMaterializedHomeRetainedOnExit } from '../materialize/cleanup/createConnectedServiceMaterializedHomeCleanupScheduler';
 import { resolveConnectedServiceMaterializedRootDir } from '../materialize/resolveConnectedServiceMaterializedRootDir';
 
 export function createAdoptedExecutionRunRootCleanup(input: Readonly<{
@@ -28,6 +29,8 @@ export function createAdoptedExecutionRunRootCleanup(input: Readonly<{
         } catch {
             return;
         }
-        await input.removeRoot(root);
+        if (!await isConnectedServiceMaterializedHomeRetainedOnExit({
+            materializationKey: input.materializationKey, homeRoot: root,
+        })) await input.removeRoot(root);
     };
 }

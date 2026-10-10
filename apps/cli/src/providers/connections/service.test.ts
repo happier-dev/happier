@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { isDeepStrictEqual } from 'node:util';
 import {
   AccountSettingsSchema,
   DEFAULT_PROVIDER_SETTINGS_V1,
@@ -11,10 +12,13 @@ import {
   createProviderDiscoveryCandidateIdV1,
   formatSavedSecretCatalogReferenceV1,
   readOwnRecordValue,
-  readProviderSettingsFromAccountSettingsV1,
+  createProviderErrorV1,
   sealSavedSecretResourceStoredContentV1,
   type ProviderDiscoveryCandidateV1,
+  type ProviderSettingsV1,
 } from '@happier-dev/protocol';
+import { readRetainedProviderConnectionsCatalogV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { createInMemoryAccountProviderActions } from './service/accountActions.testkit';
 import type { DaemonProviderAgentCompatibilitySummaryV1 } from '@happier-dev/protocol/rpc';
 
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
@@ -23,6 +27,7 @@ import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/
 import { resolveProviderConnectionForMachine, type ProviderContributionRegistryView } from '@/providers/registry';
 import { createProviderConnectionRpcAdapter } from './rpcAdapter';
 import { createProviderConnectionService } from './service';
+import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import type {
   ProviderConnectionServiceDeps,
   ProviderConnectionServiceSnapshot,
@@ -33,6 +38,15 @@ import type {
 } from '@/settings/secrets/savedSecretCatalog';
 
 const contributionKey = 'acme.gateway/gateway';
+
+/** Historical Settings carriers are fixtures only; the canonical retained-source reader owns their interpretation. */
+function readRetainedProviderSettingsFixture(raw: Readonly<Record<string, unknown>>) {
+  const read = readRetainedProviderConnectionsCatalogV1(raw);
+  if (read.status === 'unavailable') return { settings: DEFAULT_PROVIDER_SETTINGS_V1,
+    diagnostics: [{ path: 'providerSettingsV1', reason: read.reason }] };
+  return { settings: { ...read.catalog, defaultsByAgentTargetKey: read.defaults },
+    diagnostics: read.status === 'partial' ? read.diagnostics : [] };
+}
 const sharedSecretResourceId = 'resource-provider-authoring';
 const sharedSecretRef = formatSavedSecretCatalogReferenceV1({
   kind: 'shared_resource',
@@ -261,6 +275,9 @@ function harness(options: Readonly<{
   managedRuntimeRegistryLease?: PluginRuntimeRegistryLease;
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
   savedSecretCatalogState?: SavedSecretCatalogState;
+  rowBacked?: boolean;
+  providerSettings?: ProviderSettingsV1;
+  resolveManagedBindingTarget?: Parameters<typeof createConnectedAccountPurposeBindingOwner>[0]['resolveTarget'];
 }> = {}) {
   let raw: Readonly<Record<string, unknown>> = {
     providerSettingsV1: DEFAULT_PROVIDER_SETTINGS_V1,
@@ -273,6 +290,8 @@ function harness(options: Readonly<{
           encryptedValue: { _isSecretValue: true, value: 'sealed' },
         }],
   };
+  let rowProviderSettings = options.providerSettings ?? DEFAULT_PROVIDER_SETTINGS_V1;
+  if (options.rowBacked) raw = { secrets: raw.secrets };
   let beforeNextUpdate: ((
     current: Readonly<Record<string, unknown>>,
   ) => Readonly<Record<string, unknown>>) | null = null;
@@ -284,6 +303,8 @@ function harness(options: Readonly<{
     const snapshot = {
       accountSettings: AccountSettingsSchema.parse(raw),
       rawAccountSettings: raw,
+      providerSettings: options.rowBacked ? rowProviderSettings : readRetainedProviderSettingsFixture(raw).settings,
+      providerSettingsDiagnostics: options.rowBacked ? [] : readRetainedProviderSettingsFixture(raw).diagnostics,
       registry: registryProjection?.registry ?? currentRegistry,
       ...(options.savedSecretResources ? { savedSecretResources: options.savedSecretResources } : {}),
       ...(options.savedSecretCatalogState ? { savedSecretCatalogState: options.savedSecretCatalogState } : {}),
@@ -295,18 +316,22 @@ function harness(options: Readonly<{
     input: Readonly<Record<string, unknown>>;
     output: Readonly<Record<string, unknown>>;
   }>> = [];
-  const updateAccountSettings = vi.fn(async (mutate: (
-    current: Readonly<Record<string, unknown>>,
-  ) => Readonly<Record<string, unknown>>) => {
+  const updateProviderSettings = vi.fn<ProviderConnectionServiceDeps['updateProviderSettings']>(async (mutate) => {
     if (beforeNextUpdate) {
       const concurrent = beforeNextUpdate;
       beforeNextUpdate = null;
       raw = concurrent(raw);
     }
     const input = raw;
-    raw = mutate(input);
+    const read = options.rowBacked ? { settings: rowProviderSettings, diagnostics: [] }
+      : readRetainedProviderSettingsFixture(raw);
+    if (read.diagnostics.length > 0) throw createProviderErrorV1('provider_settings_invalid', { machineId: 'machine-a' });
+    rowProviderSettings = mutate(read.settings);
+    // Reused fixture assertions retain their input carrier; the row-only case
+    // keeps actual Account preferences separate from Provider persistence.
+    if (!options.rowBacked && !isDeepStrictEqual(rowProviderSettings, read.settings)) raw = { ...raw, providerSettingsV1: rowProviderSettings };
     mutationApplications.push({ input, output: raw });
-    return raw;
+    return rowProviderSettings;
   });
   const collectDnsEvidence = vi.fn<ProviderConnectionServiceDeps['collectDnsEvidence']>(async () => options.dnsEvidence ?? new Map([
     ['https://gateway.example/v1', ['1.1.1.1']],
@@ -346,9 +371,23 @@ function harness(options: Readonly<{
   const startManagedProviderRuntime = vi.fn<
     NonNullable<ProviderConnectionServiceDeps['startManagedProviderRuntime']>
   >(async (_input) => ({ status: 'running' as const }));
-  const resolveManagedPurposeBindingIntent = vi.fn<
-    NonNullable<ProviderConnectionServiceDeps['resolveManagedPurposeBindingIntent']>
-  >(async ({ purpose, target }) => ({ purpose, target }));
+  const bindingOwner = createConnectedAccountPurposeBindingOwner({
+    store: {
+      read: async () => ({ v: 1, bindings: [] }),
+      update: async () => { throw new Error('Provider configuration must not write a purpose mirror'); },
+      subscribe: () => ({ dispose: () => undefined }),
+    },
+    selectTarget: async () => { throw new Error('The operation already carries an explicit target'); },
+    // Genuine current-Home catalog projection boundary; internal binding validation stays real.
+    resolveTarget: options.resolveManagedBindingTarget ?? (async (target) => ({
+      displayName: 'Available target',
+      account: target.kind === 'account' ? target.account : { service: target.service, accountId: `member-${target.groupId}` },
+    })),
+    materializeAccount: async () => { throw new Error('Configuration must not borrow credentials'); },
+    projectTargetAccounts: async () => { throw new Error('Configuration does not enumerate credentials'); },
+    assertTargetAccountMaterializable: async () => { throw new Error('Configuration does not materialize credentials'); },
+  });
+  const resolveManagedPurposeBindingIntent = bindingOwner.resolveBindingIntent;
   const compatibilitySummary = vi.fn((): DaemonProviderAgentCompatibilitySummaryV1[] => [{
       agentTargetKey: 'agent:happier.agent.codex/codex', agentName: 'Codex', status: 'experimental' as const,
       reasons: ['compatibility_evidence_missing'],
@@ -359,6 +398,7 @@ function harness(options: Readonly<{
   }));
   const managedRuntimeRegistryLease = options.managedRuntimeRegistryLease;
   const service = createProviderConnectionService({
+    accountProviderActionExecute: createInMemoryAccountProviderActions({ loadSnapshot, updateProviderSettings, now: () => 100 }),
     machineId: 'machine-a',
     featureGate: { isEnabled: (featureId) => featureId === 'providers'
       ? options.enabled !== false
@@ -366,13 +406,12 @@ function harness(options: Readonly<{
         ? options.localDiscoveryEnabled !== false
         : options.managedEnabled !== false },
     loadSnapshot,
-    updateAccountSettings,
+    updateProviderSettings,
     collectDnsEvidence,
-    resolveConnection: ({ accountSettings, connectionId, machineId, registry: currentRegistry, dnsEvidence }) =>
-      resolveProviderConnectionForMachine({
-        accountSettings, connectionId, machineId, registry: currentRegistry,
-        dnsEvidenceByEndpointUrl: dnsEvidence,
-      }),
+    resolveConnection: request => resolveProviderConnectionForMachine({
+      ...request,
+      dnsEvidenceByEndpointUrl: request.dnsEvidence,
+    }),
     runtimeSummary,
     acquireCompatibilityProjection,
     discoveryCandidates,
@@ -386,13 +425,14 @@ function harness(options: Readonly<{
     now: () => 100,
   });
   return {
-    service, loadSnapshot, updateAccountSettings, collectDnsEvidence, runtimeSummary, compatibilitySummary,
+    service, loadSnapshot, updateProviderSettings, collectDnsEvidence, runtimeSummary, compatibilitySummary,
     acquireCompatibilityProjection, discoveryCandidates, localInstallations, refreshOnEnable,
     startManagedProviderRuntime,
     resolveManagedPurposeBindingIntent,
     providersByContributionKey,
     setRegistry: (next: ProviderContributionRegistryView) => { currentRegistry = next; },
     getRaw: () => raw,
+    getProviderSettings: () => rowProviderSettings,
     getLastSnapshot: () => lastSnapshot,
     mutationApplications,
     setRaw: (next: Record<string, unknown>) => { raw = next; },
@@ -405,6 +445,51 @@ function harness(options: Readonly<{
 }
 
 describe('provider connection service', () => {
+  it('mutates Provider rows without rewriting Account Settings', async () => {
+    const fixture = harness({ rowBacked: true });
+    const preferences = structuredClone(fixture.getRaw());
+    await expect(fixture.service.create({
+      action: 'createContribution', machineId: 'machine-a', connectionId: 'pc_row',
+      contributionKey, displayName: null, savedSecretId: null, enable: false,
+    })).resolves.toMatchObject({ status: 'success', connection: { connectionId: 'pc_row' } });
+    expect(fixture.getProviderSettings().connections).toMatchObject([{ id: 'pc_row' }]);
+    expect(fixture.getRaw()).toEqual(preferences);
+  });
+
+  it('preserves unavailable default selection intent through an unrelated Provider catalog mutation', async () => {
+    const selection = {
+      v: 1 as const,
+      ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'pc_unavailable', modelId: 'saved-model' },
+      updatedAt: 1,
+    };
+    const fixture = harness({ rowBacked: true, providerSettings: {
+      ...DEFAULT_PROVIDER_SETTINGS_V1,
+      defaultsByAgentTargetKey: { [selection.ref.agentTargetKey]: selection },
+    } });
+    await expect(fixture.service.create({
+      action: 'createContribution', machineId: 'machine-a', connectionId: 'pc_row',
+      contributionKey, displayName: null, savedSecretId: null, enable: false,
+    })).resolves.toMatchObject({ status: 'success' });
+    expect(fixture.getProviderSettings().defaultsByAgentTargetKey).toEqual({ [selection.ref.agentTargetKey]: selection });
+    expect(fixture.getProviderSettings().connections).toMatchObject([{ id: 'pc_row' }]);
+  });
+
+  it('retains default intent when its selected Provider connection is deleted', async () => {
+    const selection = { v: 1 as const, updatedAt: 1, ref: {
+      agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'pc_selected', modelId: 'selected-model',
+    } };
+    const fixture = harness({ rowBacked: true, providerSettings: { ...DEFAULT_PROVIDER_SETTINGS_V1,
+      connections: [ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_selected',
+        source: { kind: 'contribution', contributionKey }, role: 'default', displayName: 'Selected',
+        displayNameMode: 'custom', revision: 0, createdAt: 1, updatedAt: 1 })],
+      defaultsByAgentTargetKey: { [selection.ref.agentTargetKey]: selection },
+    } });
+    await expect(fixture.service.delete({ action: 'delete', machineId: 'machine-a', connectionId: 'pc_selected' }))
+      .resolves.toMatchObject({ status: 'success' });
+    expect(fixture.getProviderSettings().connections).toEqual([]);
+    expect(fixture.getProviderSettings().defaultsByAgentTargetKey).toEqual({ [selection.ref.agentTargetKey]: selection });
+  });
+
   it.each(['bundled', 'path', 'package'] as const)(
     'projects the same public managed deployment for a %s Provider without the UI Local Services gate',
     async (source) => {
@@ -548,7 +633,7 @@ describe('provider connection service', () => {
     const ungranted = resolveProviderConnectionForMachine({
       connectionId: connection.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: ungrantedSettings },
+      providerSettings: ungrantedSettings,
       registry: { providersByContributionKey: h.providersByContributionKey },
       dnsEvidenceByEndpointUrl: new Map(),
     });
@@ -588,7 +673,7 @@ describe('provider connection service', () => {
     expect(runtimeSummaryInput?.resolution.record.deployment).toMatchObject({ kind: 'managedLocal' });
   });
 
-  it('holds one registry projection and deadline through a setEnabled final description', async () => {
+  it('captures declaration facts for Account enable without runtime observation', async () => {
     const h = harness();
     await expect(h.service.create({
       action: 'createContribution',
@@ -627,13 +712,8 @@ describe('provider connection service', () => {
       providerName: 'Gateway',
     });
 
-    const lifetimes = h.collectDnsEvidence.mock.calls.map(([input]) => input.lifetime);
-    expect(lifetimes).toHaveLength(2);
-    expect(lifetimes[0]).toBe(lifetimes[1]);
-    const finalProjection = h.loadSnapshot.mock.calls.at(-1)?.[0];
-    expect(finalProjection?.registry.providersByContributionKey).toBe(
-      h.providersByContributionKey,
-    );
+    expect(h.collectDnsEvidence).not.toHaveBeenCalled();
+    expect(readRetainedProviderSettingsFixture(h.getRaw()).settings.accountGrants).toHaveLength(1);
 
     await expect(h.service.describe({
       machineId: 'machine-a',
@@ -762,7 +842,7 @@ describe('provider connection service', () => {
       revision: 1,
       deployment: {
         kind: 'managedLocal',
-        targetMachineId: 'machine-a',
+        targetMachineId: null,
         effects: {
           connectedAccountPurposes: [{
             purpose: 'upstream',
@@ -773,7 +853,7 @@ describe('provider connection service', () => {
       endpoints: [],
       credential: null,
     });
-    const managedSettings = readProviderSettingsFromAccountSettingsV1(
+    const managedSettings = readRetainedProviderSettingsFixture(
       managed.getRaw(),
     ).settings;
     expect(managedSettings.connections[0]).toMatchObject({
@@ -838,7 +918,7 @@ describe('provider connection service', () => {
     expect(managed.getRaw()).toEqual(beforeStaleEdit);
 
     const managedResolution = resolveProviderConnectionForMachine({
-      accountSettings: managed.getRaw(),
+      providerSettings: readRetainedProviderSettingsFixture(managed.getRaw()).settings,
       connectionId: 'pc_managed',
       machineId: 'machine-a',
       registry: {
@@ -880,7 +960,7 @@ describe('provider connection service', () => {
     })).resolves.toMatchObject({
       status: 'success',
       revision: 2,
-      authorized: true,
+      authorized: false,
       deployment: {
         kind: 'managedLocal',
         effects: {
@@ -891,7 +971,7 @@ describe('provider connection service', () => {
       },
     });
     expect(
-      readProviderSettingsFromAccountSettingsV1(managed.getRaw())
+      readRetainedProviderSettingsFixture(managed.getRaw())
         .settings.machineGrants,
     ).toHaveLength(1);
 
@@ -906,7 +986,7 @@ describe('provider connection service', () => {
       revision: 3,
       deployment: { kind: 'external' },
     });
-    const externalSettings = readProviderSettingsFromAccountSettingsV1(
+    const externalSettings = readRetainedProviderSettingsFixture(
       managed.getRaw(),
     ).settings;
     expect(externalSettings.connections[0]?.purposeBindingDefaults)
@@ -1017,16 +1097,88 @@ describe('provider connection service', () => {
       deployment: { kind: 'external' },
     });
     expect(
-      readProviderSettingsFromAccountSettingsV1(managed.getRaw())
+      readRetainedProviderSettingsFixture(managed.getRaw())
         .settings.connections[0],
     ).toMatchObject({
       deployment: { kind: 'external' },
       revision: 1,
     });
     expect(
-      readProviderSettingsFromAccountSettingsV1(managed.getRaw())
+      readRetainedProviderSettingsFixture(managed.getRaw())
         .settings.connections[0]?.purposeBindingDefaults,
     ).toBeUndefined();
+  });
+
+  it.each(['account', 'group'] as const)('retains qualified unavailable %s target intent without runtime authorization', async (kind) => {
+    const service = { pluginId: 'happier.connected-account.openai', localId: 'openai' };
+    const managed = harness({
+      resolveManagedBindingTarget: async (target) => (target.kind === 'account' ? target.account.accountId : target.groupId) === 'here'
+        ? { displayName: 'Available here', account: { service, accountId: 'here' } }
+        : null,
+    });
+    managed.providersByContributionKey.set(contributionKey, managedContribution());
+    managed.setRaw({ providerSettingsV1: ProviderSettingsV1Schema.parse({
+      ...DEFAULT_PROVIDER_SETTINGS_V1,
+      connections: [ProviderConnectionV1Schema.parse({
+        v: 1, id: 'pc_managed', source: { kind: 'contribution', contributionKey },
+        role: 'default', displayName: 'Gateway', displayNameMode: 'automatic',
+        revision: 0, createdAt: 1, updatedAt: 1,
+      })],
+    }), secrets: [] });
+    const target = (id: string) => kind === 'account'
+      ? { kind: 'account' as const, account: { service, accountId: id } }
+      : { kind: 'group' as const, service, groupId: id };
+    const request = { action: 'update' as const, machineId: 'machine-a', connectionId: 'pc_managed', expectedRevision: 0 };
+    await expect(managed.service.update({ ...request, deployment: {
+      kind: 'managedLocal', purposeBindingDefaults: { upstream: target('other-home') },
+    } })).resolves.toMatchObject({ status: 'success', revision: 1, authorized: false });
+    expect(readRetainedProviderSettingsFixture(managed.getRaw()).settings.connections[0]?.purposeBindingDefaults)
+      .toEqual({ upstream: target('other-home') });
+    await expect(managed.service.update({ ...request, expectedRevision: 1, deployment: {
+      kind: 'managedLocal', purposeBindingDefaults: { upstream: target('here') },
+    } })).resolves.toMatchObject({ status: 'success', revision: 2, authorized: false });
+    expect(readRetainedProviderSettingsFixture(managed.getRaw()).settings.connections[0]?.purposeBindingDefaults)
+      .toEqual({ upstream: target('here') });
+  });
+
+  it('revision-replaces and clears one gateway pool while preserving another vendor', async () => {
+    const managed = harness();
+    const source = managedContributionWithTwoPurposes();
+    const runtime = source.definition.managedRuntime;
+    if (!runtime) throw new Error('Expected managed contribution');
+    const otherService = { pluginId: 'happier.connected-account.anthropic', localId: 'anthropic' };
+    managed.providersByContributionKey.set(contributionKey, { ...source, definition: ProviderContributionV1Schema.parse({
+      ...source.definition,
+      managedRuntime: { ...runtime, connectedAccounts: runtime.connectedAccounts?.map((declaration) => ({
+        ...declaration, required: false, ...(declaration.purpose === 'secondary' ? { service: otherService } : {}),
+      })) },
+    }) });
+    const original = { kind: 'group' as const, service: { pluginId: 'happier.connected-account.openai', localId: 'openai' }, groupId: 'pool-a' };
+    const replacement = { ...original, groupId: 'pool-b' };
+    const other = { kind: 'group' as const, service: otherService, groupId: 'other-vendor' };
+    managed.setRaw({ providerSettingsV1: ProviderSettingsV1Schema.parse({
+      ...DEFAULT_PROVIDER_SETTINGS_V1,
+      connections: [ProviderConnectionV1Schema.parse({
+        v: 1, id: 'pc_managed', source: { kind: 'contribution', contributionKey },
+        role: 'default', displayName: 'Gateway', displayNameMode: 'automatic',
+        deployment: { kind: 'managedLocal' }, purposeBindingDefaults: { upstream: original, secondary: other },
+        revision: 0, createdAt: 1, updatedAt: 1,
+      })],
+    }), secrets: [] });
+    const request = { action: 'update' as const, machineId: 'machine-a', connectionId: 'pc_managed' };
+    await expect(managed.service.update({ ...request, expectedRevision: 0, deployment: {
+      kind: 'managedLocal', purposeBindingDefaults: { upstream: replacement, secondary: other },
+    } })).resolves.toMatchObject({ status: 'success', revision: 1 });
+    const afterReplacement = structuredClone(managed.getRaw());
+    await expect(managed.service.update({ ...request, expectedRevision: 0, deployment: {
+      kind: 'managedLocal', purposeBindingDefaults: { secondary: other },
+    } })).resolves.toMatchObject({ status: 'error', error: { code: 'provider_connection_changed' } });
+    expect(managed.getRaw()).toEqual(afterReplacement);
+    await expect(managed.service.update({ ...request, expectedRevision: 1, deployment: {
+      kind: 'managedLocal', purposeBindingDefaults: { secondary: other },
+    } })).resolves.toMatchObject({ status: 'success', revision: 2 });
+    expect(readRetainedProviderSettingsFixture(managed.getRaw()).settings.connections[0]?.purposeBindingDefaults)
+      .toEqual({ secondary: other });
   });
 
   it('rejects forged or undeclared managed deployment defaults before settings write', async () => {
@@ -1161,7 +1313,7 @@ describe('provider connection service', () => {
       error: { code: 'provider_connection_invalid' },
     });
     expect(managed.getRaw()).toEqual(before);
-    expect(managed.updateAccountSettings).not.toHaveBeenCalled();
+    expect(managed.updateProviderSettings).not.toHaveBeenCalled();
   });
 
   it('projects every flat connection-mutation service success into the strict RPC connection shape', async () => {
@@ -1266,7 +1418,7 @@ describe('provider connection service', () => {
         machineId: null,
         endpoints: [{
           endpointTemplateId: 'responses', normalizedUrl: 'https://gateway.example/v1',
-          locality: 'public', scope: 'account',
+          locality: 'unknown', scope: 'account',
         }],
         credential: { slotId: 'apiKey', label: 'api_key', required: true },
         fingerprint: expect.stringMatching(/^authoring-review:v1:/u),
@@ -1274,7 +1426,7 @@ describe('provider connection service', () => {
       },
     });
     expect(cloud.getRaw()).toEqual(cloudBefore);
-    expect(cloud.updateAccountSettings).not.toHaveBeenCalled();
+    expect(cloud.updateProviderSettings).not.toHaveBeenCalled();
   });
 
   it('requires an exact local candidate, persists its daemon-resolved endpoints, and rejects an expired selection', async () => {
@@ -1343,7 +1495,7 @@ describe('provider connection service', () => {
     if (selected.status !== 'success' || selected.authoringPreview?.status !== 'resolved') {
       throw new TypeError('Expected a resolved local authoring review');
     }
-    expect(local.updateAccountSettings).not.toHaveBeenCalled();
+    expect(local.updateProviderSettings).not.toHaveBeenCalled();
 
     const beforeExpiredCreate = structuredClone(local.getRaw());
     local.discoveryCandidates.mockResolvedValue([second]);
@@ -1368,12 +1520,12 @@ describe('provider connection service', () => {
         revision: selected.authoringPreview.revision,
       },
     })).resolves.toMatchObject({ status: 'success', created: true, connection: { authorized: true } });
-    const persisted = readProviderSettingsFromAccountSettingsV1(local.getRaw()).settings.connections
+    const persisted = readRetainedProviderSettingsFixture(local.getRaw()).settings.connections
       .find((connection) => connection.id === 'pc_local_preview');
     expect(readOwnRecordValue(persisted?.endpointOverridesByMachineId, 'machine-a')).toEqual([
       { endpointTemplateId: 'chat', baseUrl: first.normalizedEndpointUrl },
     ]);
-    expect(local.updateAccountSettings).toHaveBeenCalledTimes(1);
+    expect(local.updateProviderSettings).toHaveBeenCalledTimes(1);
   });
 
   it('authorizes an aggregator discovery candidate through the ordinary endpoint review without persisting the preview', async () => {
@@ -1419,7 +1571,7 @@ describe('provider connection service', () => {
     });
     expect(adopted.discoveryCandidates).toHaveBeenCalled();
     expect(adopted.collectDnsEvidence).toHaveBeenCalled();
-    expect(adopted.updateAccountSettings).not.toHaveBeenCalled();
+    expect(adopted.updateProviderSettings).not.toHaveBeenCalled();
   });
 
   it('authors an explicit remote endpoint on the same aggregator contribution through ordinary review', async () => {
@@ -1453,7 +1605,7 @@ describe('provider connection service', () => {
         endpoints: [{
           endpointTemplateId: 'chat',
           normalizedUrl: 'https://remote.gateway.example/v1',
-          locality: 'public',
+          locality: 'unknown',
           scope: 'account',
         }],
       },
@@ -1461,7 +1613,7 @@ describe('provider connection service', () => {
     if (reviewed.status !== 'success' || reviewed.authoringPreview?.status !== 'resolved') {
       throw new TypeError('Expected a resolved explicit remote authoring review');
     }
-    expect(remote.updateAccountSettings).not.toHaveBeenCalled();
+    expect(remote.updateProviderSettings).not.toHaveBeenCalled();
 
     await expect(remote.service.create({
       action: 'createContribution',
@@ -1480,9 +1632,9 @@ describe('provider connection service', () => {
     })).resolves.toMatchObject({
       status: 'success',
       created: true,
-      connection: { authorized: true, scope: 'account' },
+      connection: { authorized: false, scope: null },
     });
-    const persisted = readProviderSettingsFromAccountSettingsV1(remote.getRaw()).settings.connections
+    const persisted = readRetainedProviderSettingsFixture(remote.getRaw()).settings.connections
       .find((connection) => connection.id === 'pc_aggregator_remote');
     expect(persisted?.endpointOverrides).toEqual(endpointOverrides);
     expect(persisted?.endpointOverridesByMachineId).toBeUndefined();
@@ -1514,7 +1666,7 @@ describe('provider connection service', () => {
       },
     });
     expect(local.getRaw()).toEqual(beforePreview);
-    expect(local.updateAccountSettings).not.toHaveBeenCalled();
+    expect(local.updateProviderSettings).not.toHaveBeenCalled();
   });
 
   it('never admits a malformed Provider-shaped dependency failure into the service result', async () => {
@@ -1597,10 +1749,14 @@ describe('provider connection service', () => {
       status: 'success',
       connection: {
         displayName: 'Work gateway',
-        probeObservationIdentity: 'probe-observation:v1:fixture-current-facts',
-        runtime: { health: 'available', modelCount: 3 },
+        probeObservationIdentity: null,
+        runtime: { health: 'not_checked', modelCount: null },
       },
     });
+    expect(h.runtimeSummary).not.toHaveBeenCalled();
+    await expect(h.service.describe({ machineId: 'machine-a', connectionId: ProviderConnectionIdSchema.parse('pc_gateway') }))
+      .resolves.toMatchObject({ status: 'success', connections: [{ probeObservationIdentity: 'probe-observation:v1:fixture-current-facts',
+        runtime: { health: 'available', modelCount: 3 } }] });
     expect(h.runtimeSummary).toHaveBeenCalledWith(expect.objectContaining({
       connectionId: 'pc_gateway',
       machineId: 'machine-a',
@@ -1657,17 +1813,21 @@ describe('provider connection service', () => {
       action: 'createContribution', machineId: 'machine-a', connectionId: 'pc_gateway',
       contributionKey, displayName: null, savedSecretId: 'secret_api', enable: false,
     });
+    await expect(h.service.setEndpointOverride({
+      action: 'setEndpointOverride', machineId: 'machine-a', connectionId: 'pc_gateway', expectedRevision: 0,
+      scope: 'machine', endpointTemplateId: 'responses', baseUrl: 'http://127.0.0.1:8080/v1',
+    })).resolves.toMatchObject({ status: 'success' });
     expect(h.refreshOnEnable).not.toHaveBeenCalled();
-    await h.service.setEnabled({
-      action: 'setEnabled', machineId: 'machine-a', connectionId: 'pc_gateway', enabled: true,
-    });
+    await expect(h.service.setEnabled({
+      action: 'setEnabled', machineId: 'machine-a', connectionId: 'pc_gateway', enabled: true, scope: 'machine',
+    })).resolves.toMatchObject({ status: 'success', authorized: true });
     expect(h.refreshOnEnable).toHaveBeenCalledTimes(1);
     expect(h.refreshOnEnable).toHaveBeenCalledWith(
       { connectionId: 'pc_gateway', machineId: 'machine-a' },
       'enable',
     );
     await h.service.setEnabled({
-      action: 'setEnabled', machineId: 'machine-a', connectionId: 'pc_gateway', enabled: false, scope: 'account',
+      action: 'setEnabled', machineId: 'machine-a', connectionId: 'pc_gateway', enabled: false, scope: 'machine',
     });
     expect(h.refreshOnEnable).toHaveBeenCalledTimes(1);
   });
@@ -1682,7 +1842,7 @@ describe('provider connection service', () => {
       contributionKey, displayName: null, savedSecretId: 'secret_api', enable: true,
     })).resolves.toMatchObject({ status: 'error', error: { code: 'provider_feature_disabled' } });
     expect(h.loadSnapshot).not.toHaveBeenCalled();
-    expect(h.updateAccountSettings).not.toHaveBeenCalled();
+    expect(h.updateProviderSettings).not.toHaveBeenCalled();
     expect(h.collectDnsEvidence).not.toHaveBeenCalled();
     expect(h.runtimeSummary).not.toHaveBeenCalled();
     expect(h.discoveryCandidates).not.toHaveBeenCalled();
@@ -1793,13 +1953,13 @@ describe('provider connection service', () => {
     expect(result).toMatchObject({
       status: 'success', connectionId: 'pc_local', authorized: true, scope: 'machine',
     });
-    const settings = readProviderSettingsFromAccountSettingsV1(h.getRaw()).settings;
+    const settings = readRetainedProviderSettingsFixture(h.getRaw()).settings;
     expect(settings.connections[0]?.endpointOverridesByMachineId?.['machine-a']).toEqual([
       { endpointTemplateId: 'chat', baseUrl: 'http://127.0.0.1:22434/v1' },
     ]);
     expect(settings.machineGrants).toHaveLength(1);
     expect(settings.accountGrants).toHaveLength(0);
-    expect(h.updateAccountSettings).toHaveBeenCalledTimes(1);
+    expect(h.updateProviderSettings).toHaveBeenCalledTimes(1);
   });
 
   it('binds a current shared Saved Secret through the detected-listener authoring choke point', async () => {
@@ -1845,7 +2005,7 @@ describe('provider connection service', () => {
       action: 'enableDetected', machineId: 'machine-a', connectionId: 'pc_local_shared',
       candidateId, displayName: null, savedSecretId: sharedSecretRef,
     })).resolves.toMatchObject({ status: 'success', connectionId: 'pc_local_shared', authorized: true });
-    const settings = readProviderSettingsFromAccountSettingsV1(h.getRaw()).settings;
+    const settings = readRetainedProviderSettingsFixture(h.getRaw()).settings;
     expect(readOwnRecordValue(settings.secretBindingsByConnectionId, 'pc_local_shared')?.byMachineId)
       .toEqual({ 'machine-a': { apiKey: sharedSecretRef } });
   });
@@ -1887,7 +2047,7 @@ describe('provider connection service', () => {
       connectionId: 'pc_adopted',
     })).resolves.toMatchObject({ status: 'success', connectionId: 'pc_adopted' });
     expect(h.startManagedProviderRuntime).not.toHaveBeenCalled();
-    expect(readProviderSettingsFromAccountSettingsV1(h.getRaw()).settings.connections).toEqual([]);
+    expect(readRetainedProviderSettingsFixture(h.getRaw()).settings.connections).toEqual([]);
   });
 
   it('rejects a detected-listener candidate whose opaque id does not describe its current facts', async () => {
@@ -1915,7 +2075,7 @@ describe('provider connection service', () => {
       status: 'error', error: { code: 'provider_authorization_changed' },
     });
     expect(h.getRaw()).toEqual(before);
-    expect(h.updateAccountSettings).not.toHaveBeenCalled();
+    expect(h.updateProviderSettings).not.toHaveBeenCalled();
   });
 
   it('rejects an expired detected-listener candidate without writing settings', async () => {
@@ -1943,7 +2103,7 @@ describe('provider connection service', () => {
       status: 'error', error: { code: 'provider_authorization_changed' },
     });
     expect(h.getRaw()).toEqual(before);
-    expect(h.updateAccountSettings).not.toHaveBeenCalled();
+    expect(h.updateProviderSettings).not.toHaveBeenCalled();
   });
 
   it('starts only a declared managed Provider without consulting advisory discovery candidates', async () => {
@@ -2101,7 +2261,7 @@ describe('provider connection service', () => {
 
       const startInput = h.startManagedProviderRuntime.mock.calls[0]?.[0];
       await expect(startInput?.revalidateAuthorization()).resolves.toBe(true);
-      const settings = readProviderSettingsFromAccountSettingsV1(h.getRaw()).settings;
+      const settings = readRetainedProviderSettingsFixture(h.getRaw()).settings;
       h.setRaw({
         ...h.getRaw(),
         providerSettingsV1: ProviderSettingsV1Schema.parse({
@@ -2132,6 +2292,37 @@ describe('provider connection service', () => {
       await expect(startInput?.revalidateAuthorization()).resolves.toBe(false);
     },
   );
+
+  it('G1 starts the selected named connection and refuses a different saved gateway machine', async () => {
+    const h = harness({ managedEnabled: false });
+    h.providersByContributionKey.set(contributionKey, managedContribution());
+    const connection = (id: string, role: 'default' | 'named', accountId: string) => ProviderConnectionV1Schema.parse({
+      v: 1, id, source: { kind: 'contribution', contributionKey }, role,
+      displayName: id, displayNameMode: 'custom', deployment: { kind: 'managedLocal' },
+      purposeBindingDefaults: { upstream: { kind: 'account', account: {
+        service: { pluginId: 'happier.connected-account.openai', localId: 'openai' }, accountId,
+      } } }, revision: 1, createdAt: 1, updatedAt: 1,
+    });
+    h.setRaw({ providerSettingsV1: ProviderSettingsV1Schema.parse({
+      ...DEFAULT_PROVIDER_SETTINGS_V1,
+      connections: [connection('pc_default', 'default', 'default-account'), connection('pc_named', 'named', 'selected-account')],
+    }), secrets: [] });
+    await expect(h.service.startLocal({ action: 'startLocal', machineId: 'machine-a', contributionKey, connectionId: 'pc_named' }))
+      .resolves.toMatchObject({ status: 'success', phase: 'running' });
+    expect(h.startManagedProviderRuntime.mock.calls[0]?.[0]).toMatchObject({
+      connectionId: 'pc_named', purposeBindings: { bindings: [{ target: { account: { accountId: 'selected-account' } } }] },
+    });
+    const settings = readRetainedProviderSettingsFixture(h.getRaw()).settings;
+    h.setRaw({ ...h.getRaw(), providerSettingsV1: ProviderSettingsV1Schema.parse({
+      ...settings, connections: settings.connections.map(record => record.id === 'pc_named'
+        ? { ...record, gatewayPlacement: { kind: 'machine', machineId: 'machine-b' } } : record),
+    }) });
+    // This is the executable plugin boundary: a refused machine action must
+    // never reach runtime.start or allocate a worker-local gateway.
+    h.startManagedProviderRuntime.mockImplementation(async () => { throw new Error('wrong-machine runtime must not start'); });
+    await expect(h.service.startLocal({ action: 'startLocal', machineId: 'machine-a', contributionKey, connectionId: 'pc_named' }))
+      .resolves.toMatchObject({ status: 'error', error: { code: 'provider_not_enabled_on_machine' } });
+  });
 
   it('keeps explicit managed-start authorization current when equivalent purpose bindings reorder', async () => {
     const h = harness({ managedEnabled: false });
@@ -2186,7 +2377,7 @@ describe('provider connection service', () => {
     const startInput = h.startManagedProviderRuntime.mock.calls[0]?.[0];
     await expect(startInput?.revalidateAuthorization()).resolves.toBe(true);
 
-    const settings = readProviderSettingsFromAccountSettingsV1(h.getRaw()).settings;
+    const settings = readRetainedProviderSettingsFixture(h.getRaw()).settings;
     h.setRaw({
       ...h.getRaw(),
       providerSettingsV1: ProviderSettingsV1Schema.parse({
@@ -2220,6 +2411,95 @@ describe('provider connection service', () => {
       error: { code: 'provider_connection_not_found' },
     });
     expect(h.startManagedProviderRuntime).not.toHaveBeenCalled();
+  });
+
+  it('persists and projects gateway configuration with revision-checked edit, reset and external-mode removal', async () => {
+    const h = harness({ managedEnabled: false });
+    h.providersByContributionKey.set(contributionKey, managedContribution());
+    h.setRaw({
+      providerSettingsV1: ProviderSettingsV1Schema.parse({
+        ...DEFAULT_PROVIDER_SETTINGS_V1,
+        connections: [ProviderConnectionV1Schema.parse({
+          v: 1, id: 'pc_managed', source: { kind: 'contribution', contributionKey },
+          role: 'default', displayName: 'Gateway', displayNameMode: 'automatic',
+          revision: 0, createdAt: 1, updatedAt: 1,
+        })],
+        manualModelsByConnectionId: { pc_managed: [{ id: 'fast-model', addedAt: 1 }] },
+      }),
+      secrets: [],
+    });
+    const request = {
+      action: 'update' as const, machineId: 'machine-a', connectionId: 'pc_managed', expectedRevision: 0,
+      deployment: {
+        kind: 'managedLocal' as const,
+        purposeBindingDefaults: {
+          upstream: { kind: 'group' as const, service: { pluginId: 'happier.connected-account.openai', localId: 'openai' }, groupId: 'pool-a' },
+        },
+      },
+      gatewayPlacement: { kind: 'machine' as const, machineId: 'hub-a' },
+      claudeHelperModels: { fast: 'fast-model' },
+    };
+    await expect(createProviderConnectionRpcAdapter(h.service).mutateConnection(request)).resolves.toMatchObject({
+      status: 'success', action: 'update', connection: {
+        revision: 1, gatewayPlacement: request.gatewayPlacement, claudeHelperModels: request.claudeHelperModels,
+      },
+    });
+    const saved = readRetainedProviderSettingsFixture(h.getRaw()).settings.connections[0];
+    expect(saved).toMatchObject({ gatewayPlacement: request.gatewayPlacement, claudeHelperModels: request.claudeHelperModels });
+    await expect(h.service.update({ ...request, expectedRevision: 0, gatewayPlacement: null })).resolves.toMatchObject({
+      status: 'error', error: { code: 'provider_connection_changed' },
+    });
+    expect(readRetainedProviderSettingsFixture(h.getRaw()).settings.connections[0]).toEqual(saved);
+    await expect(h.service.update({
+      action: 'update', machineId: 'machine-a', connectionId: 'pc_managed', expectedRevision: 1,
+      claudeHelperModels: null,
+    })).resolves.toMatchObject({ status: 'success', revision: 2, gatewayPlacement: request.gatewayPlacement });
+    expect(readRetainedProviderSettingsFixture(h.getRaw()).settings.connections[0]?.claudeHelperModels).toBeUndefined();
+    await expect(h.service.update({ ...request, expectedRevision: 2 })).resolves.toMatchObject({ status: 'success', revision: 3 });
+    await expect(h.service.update({
+      action: 'update', machineId: 'machine-a', connectionId: 'pc_managed', expectedRevision: 3, deployment: { kind: 'external' },
+    })).resolves.toMatchObject({ status: 'success', revision: 4 });
+    const external = readRetainedProviderSettingsFixture(h.getRaw()).settings.connections[0];
+    expect(external?.gatewayPlacement).toBeUndefined();
+    expect(external?.claudeHelperModels).toBeUndefined();
+    await expect(h.service.update({
+      action: 'update', machineId: 'machine-a', connectionId: 'pc_managed', expectedRevision: 4, claudeHelperModels: request.claudeHelperModels,
+    })).resolves.toMatchObject({ status: 'error', error: { code: 'provider_connection_invalid' } });
+  });
+
+  it('saves empty gateway slots without permitting an unbound runtime, and refuses invalid vendor targets', async () => {
+    const h = harness();
+    h.providersByContributionKey.set(contributionKey, managedContribution());
+    h.setRaw({
+      providerSettingsV1: ProviderSettingsV1Schema.parse({
+        ...DEFAULT_PROVIDER_SETTINGS_V1,
+        connections: [ProviderConnectionV1Schema.parse({
+          v: 1, id: 'pc_managed', source: { kind: 'contribution', contributionKey },
+          role: 'default', displayName: 'Gateway', displayNameMode: 'automatic',
+          deployment: { kind: 'managedLocal' },
+          purposeBindingDefaults: { upstream: {
+            kind: 'group', service: { pluginId: 'happier.connected-account.openai', localId: 'openai' }, groupId: 'pool-a',
+          } },
+          revision: 1, createdAt: 1, updatedAt: 1,
+        })],
+      }), secrets: [],
+    });
+    await expect(h.service.update({
+      action: 'update', machineId: 'machine-a', connectionId: 'pc_managed', expectedRevision: 1,
+      deployment: { kind: 'managedLocal', purposeBindingDefaults: {} },
+    })).resolves.toMatchObject({ status: 'success', revision: 2, authorized: false });
+    expect(readRetainedProviderSettingsFixture(h.getRaw()).settings.connections[0]?.purposeBindingDefaults).toEqual({});
+    await expect(h.service.startLocal({ action: 'startLocal', machineId: 'machine-a', contributionKey }))
+      .resolves.toMatchObject({ status: 'error' });
+    expect(h.startManagedProviderRuntime).not.toHaveBeenCalled();
+    const before = structuredClone(h.getRaw());
+    await expect(h.service.update({
+      action: 'update', machineId: 'machine-a', connectionId: 'pc_managed', expectedRevision: 2,
+      deployment: { kind: 'managedLocal', purposeBindingDefaults: { upstream: {
+        kind: 'group', service: { pluginId: 'other-vendor', localId: 'other' }, groupId: 'wrong-pool',
+      } } },
+    })).resolves.toMatchObject({ status: 'error', error: { code: 'provider_connection_invalid' } });
+    expect(h.getRaw()).toEqual(before);
   });
 
   it('authors a managed Provider deployment without depending on the UI Local Services gate', async () => {
@@ -2267,7 +2547,7 @@ describe('provider connection service', () => {
     });
   });
 
-  it('atomically creates, binds, and grants a contribution connection using daemon-derived fingerprints', async () => {
+  it('atomically creates, binds, and grants a contribution connection using shared syntax-derived fingerprints', async () => {
     const h = harness();
     const result = await h.service.create({
       action: 'createContribution', machineId: 'machine-a', connectionId: 'pc_gateway',
@@ -2275,18 +2555,16 @@ describe('provider connection service', () => {
     });
     expect(result).toMatchObject({
       status: 'success', connection: {
-        connectionId: 'pc_gateway', contributionKey, authorized: true, scope: 'account',
+        connectionId: 'pc_gateway', contributionKey, authorized: false, scope: null,
       },
     });
-    const settings = readProviderSettingsFromAccountSettingsV1(h.getRaw()).settings;
+    const settings = readRetainedProviderSettingsFixture(h.getRaw()).settings;
     expect(settings.connections).toHaveLength(1);
     expect(readOwnRecordValue(settings.secretBindingsByConnectionId, 'pc_gateway')?.account).toEqual({ apiKey: 'secret_api' });
     expect(settings.accountGrants).toHaveLength(1);
     expect(settings.machineGrants).toHaveLength(0);
-    expect(h.updateAccountSettings).toHaveBeenCalledTimes(1);
-    expect(h.collectDnsEvidence).toHaveBeenCalledTimes(2);
-    expect(h.collectDnsEvidence.mock.invocationCallOrder[0]!)
-      .toBeLessThan(h.updateAccountSettings.mock.invocationCallOrder[0]!);
+    expect(h.updateProviderSettings).toHaveBeenCalledTimes(1);
+    expect(h.collectDnsEvidence).not.toHaveBeenCalled();
   });
 
   it('treats an existing default as an exact no-op without persisting or binding a prepared secret', async () => {
@@ -2296,7 +2574,7 @@ describe('provider connection service', () => {
       contributionKey, displayName: null, savedSecretId: 'secret_api', enable: false,
     });
     const before = structuredClone(h.getRaw());
-    h.updateAccountSettings.mockClear();
+    h.updateProviderSettings.mockClear();
 
     await expect(h.service.create({
       action: 'createContribution', machineId: 'machine-a', connectionId: 'pc_unused',
@@ -2316,7 +2594,7 @@ describe('provider connection service', () => {
     });
 
     expect(h.getRaw()).toEqual(before);
-    expect(h.updateAccountSettings).not.toHaveBeenCalled();
+    expect(h.updateProviderSettings).not.toHaveBeenCalled();
   });
 
   it('refuses authorization when endpoint fingerprints change between preview and the winning CAS', async () => {
@@ -2330,7 +2608,7 @@ describe('provider connection service', () => {
       scope: 'account', endpointTemplateId: 'responses', baseUrl: 'https://1.1.1.1/v1',
     });
     h.beforeNextUpdate((raw) => {
-      const current = readProviderSettingsFromAccountSettingsV1(raw).settings;
+      const current = readRetainedProviderSettingsFixture(raw).settings;
       return {
         ...raw,
         providerSettingsV1: ProviderSettingsV1Schema.parse({
@@ -2348,13 +2626,13 @@ describe('provider connection service', () => {
     });
     await expect(h.service.setEnabled({
       action: 'setEnabled', machineId: 'machine-a', connectionId: 'pc_gateway', enabled: true,
-    })).resolves.toMatchObject({ status: 'error', error: { code: 'provider_authorization_changed' } });
-    const settings = readProviderSettingsFromAccountSettingsV1(h.getRaw()).settings;
+    })).resolves.toMatchObject({ status: 'error', error: { code: 'provider_connection_changed' } });
+    const settings = readRetainedProviderSettingsFixture(h.getRaw()).settings;
     expect(settings.accountGrants).toEqual([]);
     expect(settings.connections[0]?.endpointOverrides?.[0]?.baseUrl).toBe('https://8.8.8.8/v1');
   });
 
-  it('treats concurrent default reuse as a no-op without authorizing or rebinding it', async () => {
+  it('refuses a captured default create after a concurrent catalog winner without replay', async () => {
     const h = harness();
     h.beforeNextUpdate((raw) => ({
       ...raw,
@@ -2379,11 +2657,9 @@ describe('provider connection service', () => {
         }),
       },
     })).resolves.toMatchObject({
-      status: 'success',
-      created: false,
-      connection: { connectionId: 'pc_concurrent', authorized: false },
+      status: 'error', error: { code: 'provider_connection_changed' },
     });
-    const settings = readProviderSettingsFromAccountSettingsV1(h.getRaw()).settings;
+    const settings = readRetainedProviderSettingsFixture(h.getRaw()).settings;
     expect(settings.connections.map((entry) => entry.id)).toEqual(['pc_concurrent']);
     expect(settings.accountGrants).toEqual([]);
     expect(settings.secretBindingsByConnectionId).toEqual({});
@@ -2391,17 +2667,17 @@ describe('provider connection service', () => {
     expect(h.refreshOnEnable).not.toHaveBeenCalled();
   });
 
-  it('rejects enabling a required-credential connection without resolving DNS or committing settings', async () => {
+  it('saves an Account grant intent with no credential without authorizing runtime', async () => {
     const h = harness({ includeSecret: false });
     await expect(h.service.create({
       action: 'createContribution', machineId: 'machine-a', connectionId: 'pc_gateway',
       contributionKey, displayName: null, savedSecretId: null, enable: true,
-    })).resolves.toMatchObject({ status: 'error', error: { code: 'provider_secret_missing' } });
+    })).resolves.toMatchObject({ status: 'success', connection: { authorized: false, credential: { accountBound: false } } });
     expect(h.collectDnsEvidence).not.toHaveBeenCalled();
-    expect(h.updateAccountSettings).not.toHaveBeenCalled();
+    expect(readRetainedProviderSettingsFixture(h.getRaw()).settings.accountGrants).toHaveLength(1);
   });
 
-  it('maps DNS-required and local-candidate endpoint refusals to actionable stable errors without writes', async () => {
+  it('saves fixed Account endpoint intent without DNS while refusing unresolved local grants', async () => {
     const dnsMissing = harness({ dnsEvidence: new Map() });
     await dnsMissing.service.create({
       action: 'createContribution', machineId: 'machine-a', connectionId: 'pc_saved',
@@ -2409,12 +2685,12 @@ describe('provider connection service', () => {
     });
     await expect(dnsMissing.service.setEnabled({
       action: 'setEnabled', machineId: 'machine-a', connectionId: 'pc_saved', enabled: true,
-    })).resolves.toMatchObject({ status: 'error', error: { code: 'provider_endpoint_unreachable', action: 'retry' } });
+    })).resolves.toMatchObject({ status: 'success', authorized: false });
     await expect(dnsMissing.service.create({
       action: 'createContribution', machineId: 'machine-a', connectionId: 'pc_gateway',
       contributionKey, displayName: 'Named', savedSecretId: 'secret_api', enable: true,
-    })).resolves.toMatchObject({ status: 'error', error: { code: 'provider_endpoint_unreachable', action: 'retry' } });
-    expect(readProviderSettingsFromAccountSettingsV1(dnsMissing.getRaw()).settings.accountGrants).toEqual([]);
+    })).resolves.toMatchObject({ status: 'success', connection: { authorized: false } });
+    expect(readRetainedProviderSettingsFixture(dnsMissing.getRaw()).settings.accountGrants).toHaveLength(2);
 
     const local = harness();
     const localKey = 'acme.gateway/local';
@@ -2423,7 +2699,7 @@ describe('provider connection service', () => {
       action: 'createContribution', machineId: 'machine-a', connectionId: 'pc_local',
       contributionKey: localKey, displayName: null, savedSecretId: null, enable: true,
     })).resolves.toMatchObject({ status: 'error', error: { code: 'provider_connection_invalid', action: 'review_connection' } });
-    expect(local.updateAccountSettings).not.toHaveBeenCalled();
+    expect(local.updateProviderSettings).not.toHaveBeenCalled();
   });
 
   it('rejects latent SavedSecret bindings for no-auth custom and contribution connections', async () => {
@@ -2446,11 +2722,11 @@ describe('provider connection service', () => {
       },
       savedSecretId: 'secret_api', enable: false,
     })).resolves.toMatchObject({ status: 'error', error: { code: 'provider_credential_transport_unavailable' } });
-    expect(readProviderSettingsFromAccountSettingsV1(h.getRaw()).settings.connections).toEqual([]);
-    expect(h.updateAccountSettings).not.toHaveBeenCalled();
+    expect(readRetainedProviderSettingsFixture(h.getRaw()).settings.connections).toEqual([]);
+    expect(h.updateProviderSettings).not.toHaveBeenCalled();
   });
 
-  it('rejects a SavedSecret when reusing an existing no-auth contribution default', async () => {
+  it('ignores unused SavedSecret input when reusing an existing no-auth contribution default', async () => {
     const h = harness();
     const publicKey = 'acme.gateway/public';
     h.providersByContributionKey.set(publicKey, noAuthContribution());
@@ -2459,17 +2735,17 @@ describe('provider connection service', () => {
       contributionKey: publicKey, displayName: null, savedSecretId: null, enable: false,
     })).resolves.toMatchObject({ status: 'success', created: true });
     const before = structuredClone(h.getRaw());
-    h.updateAccountSettings.mockClear();
+    h.updateProviderSettings.mockClear();
 
     await expect(h.service.create({
       action: 'createContribution', machineId: 'machine-a', connectionId: 'pc_unused',
       contributionKey: publicKey, displayName: null, savedSecretId: 'secret_api', enable: false,
     })).resolves.toMatchObject({
-      status: 'error', error: { code: 'provider_credential_transport_unavailable' },
+      status: 'success', created: false, connection: { connectionId: 'pc_public' },
     });
 
     expect(h.getRaw()).toEqual(before);
-    expect(h.updateAccountSettings).not.toHaveBeenCalled();
+    expect(h.updateProviderSettings).not.toHaveBeenCalled();
   });
 
   it('reports credential transport, not contribution availability, when binding a no-auth contribution', async () => {
@@ -2518,7 +2794,7 @@ describe('provider connection service', () => {
         contributionKey, displayName: null, savedSecretId: 'secret_api', enable: false,
       })).resolves.toMatchObject({ status: 'success', created: true });
       expect(readOwnRecordValue(
-        readProviderSettingsFromAccountSettingsV1(h.getRaw()).settings.secretBindingsByConnectionId,
+        readRetainedProviderSettingsFixture(h.getRaw()).settings.secretBindingsByConnectionId,
         'pc_gateway',
       )?.account).toEqual({ apiKey: 'secret_api' });
 
@@ -2532,7 +2808,7 @@ describe('provider connection service', () => {
         credentialSlotId: 'apiKey', savedSecretId: null, scope: 'account',
       })).resolves.toMatchObject({ status: 'success', connectionId: 'pc_gateway' });
       expect(readOwnRecordValue(
-        readProviderSettingsFromAccountSettingsV1(h.getRaw()).settings.secretBindingsByConnectionId,
+        readRetainedProviderSettingsFixture(h.getRaw()).settings.secretBindingsByConnectionId,
         'pc_gateway',
       )).toBeUndefined();
     }
@@ -2554,9 +2830,9 @@ describe('provider connection service', () => {
       manualModels: [{ id: 'claude-custom', name: 'Custom Claude' }, { id: 'claude-second' }],
       savedSecretId: null, enable: false,
     })).resolves.toMatchObject({ status: 'success', created: true });
-    expect(readProviderSettingsFromAccountSettingsV1(h.getRaw()).settings.manualModelsByConnectionId[connectionId])
+    expect(readRetainedProviderSettingsFixture(h.getRaw()).settings.manualModelsByConnectionId[connectionId])
       .toMatchObject([{ id: 'claude-custom', name: 'Custom Claude' }, { id: 'claude-second' }]);
-    expect(h.updateAccountSettings).toHaveBeenCalledTimes(1);
+    expect(h.updateProviderSettings).toHaveBeenCalledTimes(1);
   });
 
   it('rejects mismatched prepared-secret identity before committing an orphan secret', async () => {
@@ -2572,41 +2848,7 @@ describe('provider connection service', () => {
         }),
       },
     })).resolves.toMatchObject({ status: 'error', error: { code: 'provider_connection_invalid' } });
-    expect(h.updateAccountSettings).not.toHaveBeenCalled();
-  });
-
-  it('rejects a prepared secret when the existing SavedSecret collection is malformed', async () => {
-    const h = harness({ includeSecret: false });
-    h.setRaw({
-      ...h.getRaw(),
-      secrets: { malformed: true },
-    });
-    const before = structuredClone(h.getRaw());
-    const prepared = SavedSecretSchema.parse({
-      id: 'secret_prepared',
-      name: 'Prepared',
-      kind: 'apiKey',
-      encryptedValue: { _isSecretValue: true, value: 'secret' },
-      createdAt: 100,
-      updatedAt: 100,
-    });
-
-    await expect(h.service.create({
-      action: 'createContribution',
-      machineId: 'machine-a',
-      connectionId: 'pc_gateway',
-      contributionKey,
-      displayName: null,
-      savedSecretId: prepared.id,
-      enable: false,
-      preparedSavedSecret: { id: prepared.id, record: prepared },
-    })).resolves.toMatchObject({
-      status: 'error',
-      error: { code: 'provider_connection_invalid' },
-    });
-
-    expect(h.getRaw()).toEqual(before);
-    expect(h.updateAccountSettings).not.toHaveBeenCalled();
+    expect(h.updateProviderSettings).not.toHaveBeenCalled();
   });
 
   it('normalizes mutation callback domain errors into stable service results', async () => {
@@ -2687,15 +2929,18 @@ describe('provider connection service', () => {
         }],
         catalog: { source: 'manual', manualModelPolicy: 'allowed' },
       },
-      savedSecretId: null, enable: true,
+      savedSecretId: null, enable: false,
     });
-    let settings = readProviderSettingsFromAccountSettingsV1(h.getRaw()).settings;
+    await expect(h.service.setEnabled({
+      action: 'setEnabled', machineId: 'machine-a', connectionId: 'pc_local', enabled: true, scope: 'machine',
+    })).resolves.toMatchObject({ status: 'success', authorized: true });
+    let settings = readRetainedProviderSettingsFixture(h.getRaw()).settings;
     expect(settings.machineGrants).toHaveLength(1);
     expect(settings.accountGrants).toHaveLength(0);
     await h.service.setEnabled({
       action: 'setEnabled', machineId: 'machine-a', connectionId: 'pc_local', enabled: false, scope: 'machine',
     });
-    settings = readProviderSettingsFromAccountSettingsV1(h.getRaw()).settings;
+    settings = readRetainedProviderSettingsFixture(h.getRaw()).settings;
     expect(settings.machineGrants).toHaveLength(0);
   });
 
@@ -2710,9 +2955,9 @@ describe('provider connection service', () => {
       scope: 'machine', endpointTemplateId: 'responses', baseUrl: 'http://127.0.0.1:8080/v1',
     });
     await h.service.setEnabled({
-      action: 'setEnabled', machineId: 'machine-a', connectionId: 'pc_gateway', enabled: true,
+      action: 'setEnabled', machineId: 'machine-a', connectionId: 'pc_gateway', enabled: true, scope: 'machine',
     });
-    let settings = readProviderSettingsFromAccountSettingsV1(h.getRaw()).settings;
+    let settings = readRetainedProviderSettingsFixture(h.getRaw()).settings;
     expect(settings.accountGrants).toHaveLength(1);
     expect(settings.machineGrants).toHaveLength(1);
     await expect(h.service.describe({ machineId: 'machine-a', connectionId: ProviderConnectionIdSchema.parse('pc_gateway') }))
@@ -2723,7 +2968,7 @@ describe('provider connection service', () => {
         } }],
       });
     h.beforeNextUpdate((current) => {
-      const latest = readProviderSettingsFromAccountSettingsV1(current).settings;
+      const latest = readRetainedProviderSettingsFixture(current).settings;
       return {
         ...current,
         providerSettingsV1: ProviderSettingsV1Schema.parse({
@@ -2738,9 +2983,14 @@ describe('provider connection service', () => {
     const disableResult = await h.service.setEnabled({
       action: 'setEnabled', machineId: 'machine-a', connectionId: 'pc_gateway', enabled: false, scope: 'connection',
     });
-    expect(disableResult).toMatchObject({ status: 'success' });
+    expect(disableResult).toMatchObject({ status: 'error', error: { code: 'provider_connection_changed' } });
+    expect(readRetainedProviderSettingsFixture(h.getRaw()).settings.accountGrants).toHaveLength(1);
+    expect(readRetainedProviderSettingsFixture(h.getRaw()).settings.machineGrants).toHaveLength(1);
+    await expect(h.service.setEnabled({
+      action: 'setEnabled', machineId: 'machine-a', connectionId: 'pc_gateway', enabled: false, scope: 'connection',
+    })).resolves.toMatchObject({ status: 'success' });
 
-    settings = readProviderSettingsFromAccountSettingsV1(h.getRaw()).settings;
+    settings = readRetainedProviderSettingsFixture(h.getRaw()).settings;
     expect(settings.accountGrants).toEqual([]);
     expect(settings.machineGrants).toEqual([]);
     expect(readOwnRecordValue(
@@ -2821,7 +3071,7 @@ describe('provider connection service', () => {
       scope: 'account', endpointTemplateId: 'responses', baseUrl: 'http://127.0.0.1:8080/v1',
     });
     await h.service.setEnabled({
-      action: 'setEnabled', machineId: 'machine-a', connectionId: 'pc_gateway', enabled: true,
+      action: 'setEnabled', machineId: 'machine-a', connectionId: 'pc_gateway', enabled: true, scope: 'machine',
     });
     const described = await h.service.describe({ machineId: 'machine-a', connectionId: ProviderConnectionIdSchema.parse('pc_gateway') });
     expect(described).toMatchObject({
@@ -2871,7 +3121,7 @@ describe('provider connection service', () => {
       action: 'setEndpointOverride', machineId: 'machine-a', connectionId: 'pc_multi', expectedRevision: 2,
       scope: 'account', endpointTemplateId: 'responses', baseUrl: null,
     });
-    const settings = readProviderSettingsFromAccountSettingsV1(h.getRaw()).settings;
+    const settings = readRetainedProviderSettingsFixture(h.getRaw()).settings;
     expect(settings.connections[0]?.endpointOverrides).toEqual([
       { endpointTemplateId: 'anthropic', baseUrl: 'https://1.1.1.1/anthropic' },
     ]);
@@ -2905,7 +3155,7 @@ describe('provider connection service', () => {
       action: 'setEndpointOverride', machineId: 'machine-a', connectionId: 'pc_order', expectedRevision: 1,
       scope: 'account', endpointTemplateId: 'Z', baseUrl: 'https://1.1.1.1/z',
     });
-    expect(readProviderSettingsFromAccountSettingsV1(h.getRaw()).settings.connections[0]?.endpointOverrides
+    expect(readRetainedProviderSettingsFixture(h.getRaw()).settings.connections[0]?.endpointOverrides
       ?.map((entry) => entry.endpointTemplateId)).toEqual(['Z', 'a']);
   });
 
@@ -2916,7 +3166,7 @@ describe('provider connection service', () => {
       contributionKey, displayName: null, savedSecretId: 'secret_api', enable: true,
     });
     await h.service.delete({ action: 'delete', machineId: 'machine-a', connectionId: 'pc_gateway' });
-    const settings = readProviderSettingsFromAccountSettingsV1(h.getRaw()).settings;
+    const settings = readRetainedProviderSettingsFixture(h.getRaw()).settings;
     expect(settings.connections).toEqual([]);
     expect(settings.accountGrants).toEqual([]);
     expect(settings.secretBindingsByConnectionId).toEqual({});
@@ -3060,7 +3310,7 @@ describe('provider connection service', () => {
     expect(await h.service.bindSecret({
       action: 'bindSecret', machineId: 'machine-a', connectionId: 'pc_work',
       credentialSlotId: 'otherKey', savedSecretId: 'secret_api', scope: 'account',
-    })).toMatchObject({ status: 'error', error: { code: 'provider_credential_transport_unavailable' } });
+    })).toMatchObject({ status: 'error', error: { code: 'provider_connection_invalid' } });
   });
 
   it('accepts one current shared Saved Secret reference for contribution/custom authoring and an existing binding', async () => {
@@ -3107,7 +3357,7 @@ describe('provider connection service', () => {
       credentialSlotId: 'apiKey', savedSecretId: sharedSecretRef, scope: 'account',
     })).resolves.toMatchObject({ status: 'success', connectionId: 'pc_shared_bind' });
 
-    const settings = readProviderSettingsFromAccountSettingsV1(h.getRaw()).settings;
+    const settings = readRetainedProviderSettingsFixture(h.getRaw()).settings;
     expect(readOwnRecordValue(settings.secretBindingsByConnectionId, 'pc_shared_contribution')?.account)
       .toEqual({ apiKey: sharedSecretRef });
     expect(readOwnRecordValue(settings.secretBindingsByConnectionId, 'pc_shared_custom')?.account)
@@ -3129,7 +3379,7 @@ describe('provider connection service', () => {
     })).resolves.toMatchObject({
       status: 'error', error: { code: 'provider_secret_unavailable', retryable: true, action: 'retry' },
     });
-    expect(unavailable.updateAccountSettings).not.toHaveBeenCalled();
+    expect(readRetainedProviderSettingsFixture(unavailable.getRaw()).settings.connections).toEqual([]);
 
     const revoked = harness({
       includeSecret: false,
@@ -3140,7 +3390,7 @@ describe('provider connection service', () => {
       action: 'createContribution', machineId: 'machine-a', connectionId: 'pc_shared_revoked',
       contributionKey, displayName: null, savedSecretId: sharedSecretRef, enable: false,
     })).resolves.toMatchObject({ status: 'error', error: { code: 'provider_secret_missing', retryable: false } });
-    expect(revoked.updateAccountSettings).not.toHaveBeenCalled();
+    expect(readRetainedProviderSettingsFixture(revoked.getRaw()).settings.connections).toEqual([]);
   });
 
   it('duplicates as custom only when every declared catalog format is bundled', async () => {
@@ -3166,7 +3416,7 @@ describe('provider connection service', () => {
     })).resolves.toMatchObject({ status: 'success', connectionId: 'pc_copy' });
   });
 
-  it('atomically persists a prepared replacement secret with its binding', async () => {
+  it('submits prepared material and its binding as one typed mutation without writing Account material', async () => {
     const h = harness();
     await h.service.create({
       action: 'createContribution', machineId: 'machine-a', connectionId: 'pc_gateway',
@@ -3176,19 +3426,21 @@ describe('provider connection service', () => {
       id: 'secret_replacement', name: 'Replacement', kind: 'apiKey',
       encryptedValue: { _isSecretValue: true, value: 'sealed replacement' }, createdAt: 100, updatedAt: 100,
     });
+    const beforeMaterial = structuredClone(h.getRaw().secrets);
     await expect(h.service.bindSecret({
       action: 'bindSecret', machineId: 'machine-a', connectionId: 'pc_gateway', credentialSlotId: 'apiKey',
       savedSecretId: replacement.id, scope: 'account',
       preparedSavedSecret: { id: replacement.id, record: replacement },
     })).resolves.toMatchObject({ status: 'success' });
     const raw = h.getRaw();
-    expect((raw.secrets as readonly { id: string }[]).map((secret) => secret.id)).toContain(replacement.id);
+    expect(raw.secrets).toEqual(beforeMaterial);
     expect(readOwnRecordValue(
-      readProviderSettingsFromAccountSettingsV1(raw).settings.secretBindingsByConnectionId,
+      readRetainedProviderSettingsFixture(raw).settings.secretBindingsByConnectionId,
       'pc_gateway',
     )?.account)
       .toEqual({ apiKey: replacement.id });
-    expect(h.updateAccountSettings).toHaveBeenCalledTimes(2);
+    expect(h.updateProviderSettings).toHaveBeenCalledTimes(2);
+    expect(h.updateProviderSettings.mock.calls[1]?.[1]).toEqual({ preparedSavedSecret: { id: replacement.id, record: replacement } });
   });
 
   it('permits disable and delete when the contribution source is unavailable', async () => {
@@ -3239,7 +3491,7 @@ describe('provider connection service', () => {
       enable: false,
     });
     h.beforeNextUpdate((raw) => {
-      const settings = readProviderSettingsFromAccountSettingsV1(raw).settings;
+      const settings = readRetainedProviderSettingsFixture(raw).settings;
       return {
         ...raw,
         providerSettingsV1: ProviderSettingsV1Schema.parse({
@@ -3268,7 +3520,7 @@ describe('provider connection service', () => {
       error: { code: 'provider_connection_changed' },
     });
     expect(
-      readProviderSettingsFromAccountSettingsV1(h.getRaw())
+      readRetainedProviderSettingsFixture(h.getRaw())
         .settings.manualModelsByConnectionId[connectionId],
     ).toBeUndefined();
   });
@@ -3286,7 +3538,7 @@ describe('provider connection service', () => {
       enable: false,
     });
     h.beforeNextUpdate((raw) => {
-      const settings = readProviderSettingsFromAccountSettingsV1(raw).settings;
+      const settings = readRetainedProviderSettingsFixture(raw).settings;
       return {
         ...raw,
         providerSettingsV1: ProviderSettingsV1Schema.parse({
@@ -3311,10 +3563,10 @@ describe('provider connection service', () => {
       models: [{ id: 'vendor/model' }],
     })).resolves.toMatchObject({
       status: 'error',
-      error: { code: 'provider_authorization_changed' },
+      error: { code: 'provider_connection_changed' },
     });
     expect(
-      readProviderSettingsFromAccountSettingsV1(h.getRaw())
+      readRetainedProviderSettingsFixture(h.getRaw())
         .settings.manualModelsByConnectionId[connectionId],
     ).toBeUndefined();
   });

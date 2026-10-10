@@ -511,6 +511,25 @@ function createActionFormRuntime(input: Readonly<{
 }
 
 describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
+  it('refuses custodian native login for an isolated requester before invoking the OS credential owner', async () => {
+    const runGhCommand = vi.fn(async () => ({ ok: true as const, stdout: 'alice-token', stderr: '', exitCode: 0 }));
+    const runtime = createDaemonConnectedAccountPurposeBindingRuntime({
+      store: emptyStore(), allowNativeAccountCredentials: false,
+      establishedRuntimeOwner: { invokeWithReceipt: async () => { throw new Error('Unexpected stored Account read'); },
+        invokeDirectMaterial: unavailableDirectMaterial },
+      resolveQualifiedConnectedAccountV4Support: () => 'advertised',
+      runtimeRegistry: { subscribe: () => () => undefined, acquire: async () => ({
+        isCurrent: () => true, resolveService: () => ({ service: githubService, availability: 'available' as const,
+          authentication: { ...testAuthentication, native: { systemTool: 'gh' as const } } }), release: async () => undefined,
+      }) },
+      // Genuine OS/executable boundary; purpose authorization remains real.
+      ghDependencies: { resolveSystemGhBinPath: async () => '/fixture/gh', resolveManagedGhBinPath: async () => null, runGhCommand },
+    });
+    await expect(runtime.owner.materialize({ purpose, serviceRefs: [githubService], nativeService: githubService,
+      request: { kind: 'httpHeaders', origin: 'https://api.github.com', headerNames: ['authorization'] },
+      signal: new AbortController().signal })).rejects.toMatchObject({ code: 'plugin_connected_account_binding_out_of_scope' });
+    expect(runGhCommand).not.toHaveBeenCalled();
+  });
   it.each([
     { origin: 'https://api.github.com', hostname: 'github.com' },
     { origin: 'https://github.example.test', hostname: 'github.example.test' },

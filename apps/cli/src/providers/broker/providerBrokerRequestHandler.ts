@@ -28,7 +28,10 @@ import type {
 } from '@happier-dev/protocol/teams';
 import { createExternalProviderTerminalTokenReader } from './externalProviderTerminalTokens';
 import { isSameTeamCredentialBrokerApplication } from './teamCredentialModelCatalog';
-import { PROVIDER_BROKER_PRIVATE_CLOSE_PATH } from './providerBrokerPrivateProtocol';
+import { PROVIDER_BROKER_PRIVATE_CLOSE_PATH, PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH,
+    PROVIDER_BROKER_ENDPOINT_PATH_HEADER } from './providerBrokerPrivateProtocol';
+import type { SignedProviderBrokerRouteGrantV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { normalizeProviderOriginRelativePathSyntax } from '@happier-dev/protocol/providers/safety/url';
 
 /** Request-policy refusals come from the evaluator owner; Home admission
  * failures use the one canonical protocol vocabulary. */
@@ -135,7 +138,20 @@ export type ProviderBrokerExternalAuthenticatedStreamContext =
     }>;
 export type ProviderBrokerAuthenticatedStreamContext =
     | ProviderBrokerPrivateAuthenticatedStreamContext
-    | ProviderBrokerExternalAuthenticatedStreamContext;
+    | ProviderBrokerExternalAuthenticatedStreamContext
+    | ProviderBrokerAccountAuthenticatedStreamContext;
+
+/** Hub catalog/admission returns the same scoped managed-service access as a
+ * local consumer. The stream has no credential or catalog selection authority. */
+export type ProviderBrokerAccountAuthenticatedStreamContext = Readonly<{
+    kind: 'account_connection';
+    authority: SignedProviderBrokerRouteGrantV2;
+    authenticatedRemoteEndpointId: string;
+    releaseOnly?: boolean;
+    access: ManagedProviderEndpointHttpAccess;
+    revalidate(signal?: AbortSignal): Promise<boolean>;
+    streamLifetime: Pick<ProviderBrokerApplicationStreamLifetime, 'close' | 'retire'>;
+}>;
 
 export type ProviderBrokerRequestHandlerResult =
     | Readonly<{ ok: true; response: ManagedServiceResponse }>
@@ -343,6 +359,34 @@ export function createProviderBrokerRequestHandler(input: Readonly<{
     };
     return async ({ context, carrierRequest, request }) => {
         if (!context) return { ok: false, reasonCode: 'transport_identity_mismatch' };
+        if (context.kind === 'account_connection') {
+            if (carrierRequest || context.authenticatedRemoteEndpointId !== context.authority.payload.initiator.endpointId) {
+                return { ok: false, reasonCode: 'transport_identity_mismatch' };
+            }
+            if (request.method === 'DELETE' && request.pathAndQuery === PROVIDER_BROKER_PRIVATE_CLOSE_PATH) {
+                await context.streamLifetime.retire();
+                return { ok: true, response: { ok: true, status: 204, statusText: 'No Content', headers: {}, body: null } };
+            }
+            if (context.releaseOnly) return { ok: false, reasonCode: 'grant_expired' };
+            try {
+                if (!await context.revalidate(request.signal)) return { ok: false, reasonCode: 'resource_unavailable' };
+                request.signal?.throwIfAborted();
+                if (request.method === 'GET' && request.pathAndQuery === PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH) {
+                    const endpoint = context.access.endpointUrl(context.authority.payload.application.endpointTemplateId);
+                    if (!endpoint) return { ok: false, reasonCode: 'resource_unavailable' };
+                    const url = new URL(endpoint);
+                    if (url.search || url.hash) return { ok: false, reasonCode: 'resource_unavailable' };
+                    // Project only the canonical runtime path, never the hub's
+                    // upstream origin or credentials, and perform no inference.
+                    const path = normalizeProviderOriginRelativePathSyntax(url.pathname);
+                    return { ok: true, response: { ok: true, status: 204, statusText: 'No Content',
+                        headers: { [PROVIDER_BROKER_ENDPOINT_PATH_HEADER]: path }, body: null } };
+                }
+                return { ok: true, response: await context.access.request(request) };
+            } catch {
+                return { ok: false, reasonCode: 'broker_unavailable' };
+            }
+        }
         if (context.kind === 'external') {
             const binding = context.binding;
             if (binding.kind === 'resource_test') {

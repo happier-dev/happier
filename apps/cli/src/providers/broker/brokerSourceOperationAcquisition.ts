@@ -2,6 +2,7 @@ import type {
   ManagedProviderExplicitStartCustody,
   ManagedProviderExplicitStartCustodyRequest,
 } from '@/providers/connections/publicManagedRuntimeStart';
+import type { SharedManagedProviderGatewayBinding } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 
 type AcquiredBrokerSourceOperation = Readonly<{
   projection: NonNullable<Awaited<ReturnType<ManagedProviderExplicitStartCustody['acquire']>>>;
@@ -35,6 +36,7 @@ type AcquiredBrokerSourceOperation = Readonly<{
  * read is not a decision that the shared operation's authority has ended.
  */
 export async function acquireBrokerSourceOperation(input: Readonly<{
+  sharedGateway?: SharedManagedProviderGatewayBinding;
   retirementGroup?: ManagedProviderExplicitStartCustodyRequest['retirementGroup'];
   custody: ManagedProviderExplicitStartCustody;
   identity: ManagedProviderExplicitStartCustodyRequest['identity'];
@@ -80,6 +82,7 @@ export async function acquireBrokerSourceOperation(input: Readonly<{
     retireInFlight ??= input.custody.retire({
       identity: input.identity,
       operationClaim: input.operationClaim,
+      ...(input.sharedGateway ? { sharedGateway: input.sharedGateway } : {}),
     }).then(
       () => {
         retired = true;
@@ -94,6 +97,7 @@ export async function acquireBrokerSourceOperation(input: Readonly<{
   };
   const revalidateOperationAuthorization = input.revalidateOperationAuthorization;
   const projection = await input.custody.acquire({
+    ...(input.sharedGateway ? { sharedGateway: input.sharedGateway } : {}),
     ...(input.retirementGroup ? { retirementGroup: input.retirementGroup } : {}),
     contributionKey: input.contributionKey,
     identity: input.identity,

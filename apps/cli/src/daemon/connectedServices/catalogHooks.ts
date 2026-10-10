@@ -94,9 +94,9 @@ export async function resolveConnectedServiceGenerationApplicationScope(
 ): Promise<ConnectedServiceGenerationApplicationScopeResolution> {
   const legacyServiceId =
     resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(serviceId);
-  if (!legacyServiceId) {
-    return { status: 'unsupported', errorCode: 'generation_application_scope_unsupported' };
-  }
+  const declaresService = (candidate: AgentCatalogEntry | null | undefined) =>
+    candidate?.connectedAccountServiceIds?.includes(serviceId) === true
+    || (legacyServiceId !== null && candidate?.connectedServiceIds?.includes(legacyServiceId) === true);
   let entry: AgentCatalogEntry | null;
   let ownerId: string;
   try {
@@ -104,9 +104,7 @@ export async function resolveConnectedServiceGenerationApplicationScope(
       entry = await readCurrentCatalogHook(agentId, (current) => current);
       ownerId = String(agentId);
     } else {
-      const matches = Object.values(AGENTS).filter((candidate) => (
-        candidate?.connectedServiceIds?.includes(legacyServiceId)
-      ));
+      const matches = Object.values(AGENTS).filter(declaresService);
       if (matches.length === 0) {
         return { status: 'unsupported', errorCode: 'generation_application_scope_unsupported' };
       }
@@ -123,20 +121,11 @@ export async function resolveConnectedServiceGenerationApplicationScope(
   } catch {
     return { status: 'unavailable', errorCode: 'generation_application_scope_unavailable' };
   }
-  if (!entry?.connectedServiceIds?.includes(legacyServiceId)) {
+  if (!entry || !declaresService(entry)) {
     return { status: 'unsupported', errorCode: 'generation_application_scope_unsupported' };
   }
-  const descriptor = await entry.getConnectedServiceStateSharingDescriptor?.()
-    ?? null;
-  if (
-    descriptor?.providerSupportStatus === 'supported'
-    && descriptor.nativeHome
-  ) {
-    return {
-      status: 'supported',
-      scope: 'shared_group_auth_surface',
-      ownerId,
-    };
+  if (entry.connectedAccountGenerationApplicationScope) {
+    return { status: 'supported', scope: entry.connectedAccountGenerationApplicationScope, ownerId };
   }
   if (entry.connectedAccountRequestAuthUses?.length) {
     return {
@@ -153,6 +142,29 @@ export async function resolveConnectedServiceGenerationApplicationScope(
     };
   }
   return { status: 'unsupported', errorCode: 'generation_application_scope_unsupported' };
+}
+
+/** Projects the provider's predictive application capability through its current runtime. */
+export async function resolveConnectedServicePredictiveSoftSwitchCapability(
+  agentId: CatalogAgentId,
+  selection: Parameters<ConnectedServiceProviderRuntimeAuthAdapter['materializeActiveProfile']>[0]['selection'],
+): Promise<'supported' | 'supported_in_turn' | 'unsupported'> {
+  try {
+    const adapter = await getConnectedServiceRuntimeAuthAdapter(agentId);
+    if (!adapter) return 'unsupported';
+    const materialization = await adapter.materializeActiveProfile({ target: { agentId }, selection });
+    if (materialization.supported !== true) return 'unsupported';
+    if (materialization.supportsInTurnApply === true) return 'supported_in_turn';
+    if (selection.serviceId) {
+      const application = await resolveConnectedServiceGenerationApplicationScope(selection.serviceId, agentId);
+      if (application.status === 'supported' && application.scope === 'request_time_auth') return 'supported';
+    }
+    return adapter.canHotApply({ target: { agentId }, selection }).supported === true
+      ? 'supported'
+      : 'unsupported';
+  } catch {
+    return 'unsupported';
+  }
 }
 
 export async function resolveConnectedServiceSwitchContinuity(

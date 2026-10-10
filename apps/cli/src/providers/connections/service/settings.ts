@@ -1,20 +1,35 @@
-import { AccountSettingsSavedSecretMutationError, applyAccountSettingsSavedSecretMutation } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { ProviderErrorV1Schema, createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
-import { readProviderSettingsMutationBasisV1, writeProviderSettingsToAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import { ProviderSettingsV1Schema } from '@happier-dev/protocol/providers/settings/v1';
 import { SavedSecretSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
-import type { ProviderErrorV1, ProviderSettingsV1 } from '@happier-dev/protocol';
+import type { AccountSettingsMutationResult, ProviderErrorV1, ProviderSettingsV1 } from '@happier-dev/protocol';
+import { applyProviderDefaultModelSelectionV1, type ProviderDefaultModelSelectionMutationV1 } from '@happier-dev/protocol/providers/selection/v1';
+import type { StoredCredentials } from '@/persistence';
+import { updateAccountSettingsV2OnceAgainstLatest } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import {
   createSavedSecretMaterializerV1,
   type SavedSecretCatalogResourceInputV1,
   type SavedSecretCatalogState,
 } from '@/settings/secrets/savedSecretCatalog';
 
-import type { ProviderConnectionCreateInput } from './types';
+import type { ProviderConnectionCreateInput, ProviderConnectionServiceSnapshot } from './types';
+
+/** A selected model is Account preference intent, never catalog authority. */
+export function setDefaultProviderModelSelection(input: ProviderDefaultModelSelectionMutationV1 & Readonly<{
+  credentials: StoredCredentials;
+  signal?: AbortSignal;
+}>): Promise<AccountSettingsMutationResult> {
+  return updateAccountSettingsV2OnceAgainstLatest({
+    credentials: input.credentials,
+    signal: input.signal,
+    mutate: raw => applyProviderDefaultModelSelectionV1(raw, { agentTargetKey: input.agentTargetKey, selection: input.selection }),
+  });
+}
 
 const DIAGNOSTIC_DYNAMIC_PATH_OWNERS = [
   'secretBindingsByConnectionId',
   'manualModelsByConnectionId',
   'modelVisibilityByRef',
+  'modelPickerVisibilityByConnectionId',
   'defaultsByAgentTargetKey',
 ] as const;
 
@@ -33,38 +48,28 @@ export function redactProviderSettingsDiagnostic(
 }
 
 /**
- * The CLI projection of the shared Provider-settings mutation basis. The
- * decision itself lives in Protocol so the encrypted client CAS paths — which
- * cannot call into the CLI at all — refuse exactly the same diagnostic state.
+ * Validate the typed domain view at the canonical Provider schema. Raw Account
+ * Settings are neither a read source nor a mutation target for this service.
  */
 export function readSettings(
-  raw: Readonly<Record<string, unknown>>,
+  settings: ProviderSettingsV1,
   errorContext?: Readonly<{ connectionId?: string; machineId?: string }>,
+  diagnostics: readonly Readonly<{ path: string; reason: string }>[] = [],
 ): ProviderSettingsV1 {
-  const basis = readProviderSettingsMutationBasisV1(raw);
-  if (basis.status === 'refused') {
+  const parsed = ProviderSettingsV1Schema.safeParse(settings);
+  if (!parsed.success || diagnostics.length > 0) {
     throw errorContext
       ? createProviderErrorV1('provider_settings_invalid', errorContext)
       : createProviderErrorV1('provider_settings_invalid');
   }
-  return basis.settings;
+  return parsed.data;
+}
+
+export function readSnapshotSettings(snapshot: ProviderConnectionServiceSnapshot): ProviderSettingsV1 {
+  return readSettings(snapshot.providerSettings, undefined, snapshot.providerSettingsDiagnostics);
 }
 
 export class ProviderConnectionValidationError extends Error {}
-
-export function replaceSettings(
-  raw: Readonly<Record<string, unknown>>,
-  settings: ProviderSettingsV1,
-): Record<string, unknown> {
-  return writeProviderSettingsToAccountSettingsV1(raw, settings);
-}
-
-function personalSavedSecretExists(raw: Readonly<Record<string, unknown>>, id: string): boolean {
-  return Array.isArray(raw.secrets) && raw.secrets.some((entry) =>
-    entry !== null && typeof entry === 'object'
-      && Object.prototype.hasOwnProperty.call(entry, 'id')
-      && (entry as { id?: unknown }).id === id);
-}
 
 /**
  * Validates an opaque Saved Secret reference through the one Account-scoped
@@ -78,13 +83,23 @@ export function requireSavedSecretReferenceReady(input: Readonly<{
   savedSecretCatalogState: SavedSecretCatalogState | undefined;
   connectionId: string;
   machineId: string;
+  preparedSavedSecret?: ProviderConnectionCreateInput['preparedSavedSecret'];
 }>): void {
-  const inspected = createSavedSecretMaterializerV1({
+  const materializer = createSavedSecretMaterializerV1({
     accountSettings: input.rawAccountSettings,
     settingsSecretsReadKeys: [],
     resources: input.savedSecretResources,
     resourceCatalogState: input.savedSecretCatalogState,
-  }).inspect(input.savedSecretId);
+  });
+  const inspected = materializer.inspect(input.savedSecretId);
+  if (input.preparedSavedSecret) {
+    const prepared = SavedSecretSchema.parse(input.preparedSavedSecret.record);
+    if (prepared.id !== input.preparedSavedSecret.id || prepared.id !== input.savedSecretId
+      || inspected.status !== 'missing') {
+      throw new ProviderConnectionValidationError('Prepared SavedSecret identity is inconsistent or already used');
+    }
+    return;
+  }
   if (inspected.status === 'ready') return;
   throw createProviderErrorV1(
     inspected.status === 'temporarily_unavailable'
@@ -92,31 +107,6 @@ export function requireSavedSecretReferenceReady(input: Readonly<{
       : 'provider_secret_missing',
     { connectionId: input.connectionId, machineId: input.machineId },
   );
-}
-
-export function addPreparedSavedSecret(
-  raw: Readonly<Record<string, unknown>>,
-  prepared: ProviderConnectionCreateInput['preparedSavedSecret'],
-): Record<string, unknown> {
-  if (!prepared) return { ...raw };
-  const record = SavedSecretSchema.parse(prepared.record);
-  if (prepared.id !== record.id || personalSavedSecretExists(raw, prepared.id)) {
-    throw new ProviderConnectionValidationError('Allocated SavedSecret id is already used or inconsistent');
-  }
-  try {
-    const applied = applyAccountSettingsSavedSecretMutation(
-      raw,
-      { kind: 'add', secret: record },
-    );
-    return { ...applied.settings };
-  } catch (error) {
-    if (error instanceof AccountSettingsSavedSecretMutationError) {
-      throw new ProviderConnectionValidationError(
-        'Prepared SavedSecret could not be added to Account Settings',
-      );
-    }
-    throw error;
-  }
 }
 
 export function parseProviderError(value: unknown): ProviderErrorV1 | null {

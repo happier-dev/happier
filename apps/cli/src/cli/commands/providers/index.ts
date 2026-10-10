@@ -308,14 +308,15 @@ export async function executeProvidersCommand(
         scope: disabledScope,
       } };
     }
+    const enabledScope = target.connection.scope ?? 'account';
     const enabled = await deps.connections.setEnabled({
       action: 'setEnabled', machineId: target.machineId,
-      connectionId: target.connection.connectionId, enabled: true,
+      connectionId: target.connection.connectionId, enabled: true, scope: enabledScope,
     });
     if (enabled.status === 'error') throwServiceError(enabled);
     return { ok: true, kind: `providers_${subcommand}`, data: {
       connectionId: target.connection.connectionId, contributionKey: target.connection.contributionKey,
-      machineId: target.machineId, scope: enabled.scope,
+      machineId: target.machineId, scope: enabledScope,
     } };
   }
   if (subcommand === 'edit') {

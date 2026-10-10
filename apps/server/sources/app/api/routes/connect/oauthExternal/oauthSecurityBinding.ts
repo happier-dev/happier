@@ -6,6 +6,7 @@ import type { OAuthFlowProvider } from "@/app/oauth/providers/types";
 import { inTx, type Tx } from "@/storage/inTx";
 import type { OAuthSecurityBinding } from "./oauthExternalSchemas";
 import { OAuthProviderConfigurationChangedError } from "./oauthExternalErrors";
+import { readTeamIdentityConnectionInTx } from "@/app/teams/identity/teamIdentityConnectionLifecycle";
 
 /**
  * Whether a pending's Team admission replaces this Home's own method decision.
@@ -14,12 +15,12 @@ import { OAuthProviderConfigurationChangedError } from "./oauthExternalErrors";
  * methods, so `resolveEffectiveHomeAuthMethods` can never answer for it: the
  * Team owner (`finalizeTeamOAuthAdmissionInTx`) and the Home's Team-provider
  * ceiling (`identityProviderCatalog`) decide it instead. A Team admission that
- * runs on a HOME-owned provider (`providerOrigin: "home"`, no connection) is
+ * runs on a HOME-owned provider (`providerOrigin: "home"`, with or without a Home connection) is
  * still one of this Home's own methods, so it keeps the ordinary gate and a
  * Home that disabled the method refuses the finalize.
  */
 export function isTeamOwnedConnectionAdmission(binding: OAuthSecurityBinding | undefined): boolean {
-    return binding?.purpose === "team_admission" && binding.connection !== null;
+    return binding?.purpose === "team_admission" && binding.provider.context.kind === "team" && binding.connection !== null;
 }
 
 /** Resolves only the runtime bound by the server-held attempt/pending, never a newer replacement. */
@@ -28,7 +29,7 @@ export async function resolveOAuthSecurityBinding(input: Readonly<{
     providerId: string;
     binding: OAuthSecurityBinding | undefined;
     purpose: OAuthSecurityBinding["purpose"];
-    stage: "oauth_callback" | "oauth_finalize";
+    stage: "oauth_start" | "oauth_callback" | "oauth_finalize";
 }>): Promise<Readonly<{ provider: OAuthFlowProvider; securityBinding: OAuthSecurityBinding }> | null> {
     return await inTx(async (tx) => await resolveOAuthSecurityBindingInTx(tx, input));
 }
@@ -38,7 +39,7 @@ export async function resolveOAuthSecurityBindingInTx(tx: Tx, input: Readonly<{
     providerId: string;
     binding: OAuthSecurityBinding | undefined;
     purpose: OAuthSecurityBinding["purpose"];
-    stage: "oauth_callback" | "oauth_finalize";
+    stage: "oauth_start" | "oauth_callback" | "oauth_finalize";
 }>): Promise<Readonly<{ provider: OAuthFlowProvider; securityBinding: OAuthSecurityBinding }> | null> {
     if (!input.binding) {
         // Released server-v0.2.11 / preview.2 (98ea8fb76733b1dd785d38c31360179cafa84824)
@@ -62,6 +63,20 @@ export async function resolveOAuthSecurityBindingInTx(tx: Tx, input: Readonly<{
             : input.stage,
     });
     if (!runtime.ok || !runtime.module.oauth) return null;
+    const runtimeConnection = runtime.module.oauth.connectionBinding;
+    if (runtimeConnection && (
+        input.binding.connection?.id !== runtimeConnection.id
+        || input.binding.connection.revision !== runtimeConnection.revision
+    )) return null;
+    if (input.binding.connection) {
+        const connection = await readTeamIdentityConnectionInTx(tx, {
+            id: input.binding.connection.id,
+            teamId: input.binding.provider.context.kind === "team" ? input.binding.provider.context.teamId : null,
+        });
+        if (connection.status !== "ready"
+            || connection.connection.providerInstanceId !== input.providerId
+            || connection.connection.revision !== input.binding.connection.revision) return null;
+    }
     const status = runtime.module.oauth.resolveStatus(input.env);
     if (!status.configured || (!status.enabled && input.purpose !== "identity_connection_test")) return null;
     return { provider: runtime.module.oauth, securityBinding: input.binding };

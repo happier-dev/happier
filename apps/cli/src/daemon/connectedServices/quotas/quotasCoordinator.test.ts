@@ -1,4 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
+import { ApiClient } from '@/api/api';
+import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
+import { PushNotificationClient } from '@/api/pushNotifications';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { startDaemonConnectedServiceRuntime } from '../../startup/startDaemonRuntimeBootstrap';
+import { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
+import { createRequesterSessionControlRuntimeFixture } from '../../testkit/requesterSessionControlRuntimeFixture';
+import { admitRequesterSessionBootstrap } from '../../sessionEncryption/requesterSessionCredentials';
+import { createCliNotificationChannelStore } from '@/settings/notifications/notificationChannelStore';
+import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { sealNotificationChannelCatalogContentV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
@@ -43,11 +55,17 @@ import type {
 } from '@happier-dev/protocol';
 import type { AgentAccountUsageSnapshot } from '@happier-dev/plugin-sdk/agents/runtime';
 import { randomBytes } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createHttpStatusError } from '@/api/client/httpStatusError';
+import { ExpoPushNotificationChannelRecordV1Schema } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import {
+  clearActiveAccountSettingsSnapshot,
+  getActiveAccountSettingsSnapshot,
+  setActiveAccountSettingsSnapshot,
+} from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import {
   resolveQualifiedConnectedAccountPeerOperationTransport,
 } from '@/api/client/qualifiedConnectedAccountApi';
@@ -85,6 +103,7 @@ import {
   createQualifiedConnectedAccountEstablishedRuntimeOwner,
   type QualifiedConnectedAccountEstablishedInvocationBasis,
 } from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
+import { createQualifiedConnectedAccountDaemonPersistence } from '../qualifiedConnectedAccountDaemonPersistence';
 
 type AccountExhaustionInput = Parameters<ConnectedServiceQuotasCoordinator['recordAccountExhaustionAndFanout']>[0];
 type RuntimeUsageLimitInput = Parameters<ConnectedServiceQuotasCoordinator['recordRuntimeUsageLimitExhaustionAndFanout']>[0];
@@ -637,6 +656,26 @@ function recordGroupMemberAccountUsageFixture(
 }
 
 describe('ConnectedServiceQuotasCoordinator', () => {
+  it('preserves provider window labels, fractional allowance and disabled status in qualified quota projection', () => {
+    const snapshot = buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
+      profile: { ref: { service: { pluginId: 'happier.agent.antigravity', localId: 'antigravity-account' }, accountId: 'selected' },
+        status: 'connected', authenticationModeId: 'oauth-personal', revisionSemantics: 'revisioned', credentialRevision: 'csr_abcdefghijklmnopqrstuv',
+        configurationReady: true, configurationRevision: null, providerIdentity: { accountId: 'selected-google-id' }, displayName: 'Selected', scopes: [] },
+      quota: { observedAtMs: 1_000_000, limits: [
+        { id: 'fraction-only', label: 'Provider group · arbitrary-window', remainingPct: 25, utilizationPct: 75,
+          windowDurationMs: 18_000_000, modelId: 'spark', scope: 'session', unit: 'tokens', confidence: 'derived',
+          status: 'ok', details: { rawScope: 'arbitrary-window' } },
+        { id: 'disabled', remaining: 0, isExhausted: false, status: 'unavailable', details: { code: 'provider_disabled' } },
+      ] }, staleAfterMs: 60_000,
+    });
+    expect(snapshot.meters).toMatchObject([
+      { meterId: 'fraction-only', label: 'Provider group · arbitrary-window', remainingPct: 25, utilizationPct: 75, limit: null,
+        windowDurationMs: 18_000_000, modelId: 'spark', scope: 'session', unit: 'tokens', confidence: 'derived',
+        status: 'ok', details: { rawScope: 'arbitrary-window' } },
+      { meterId: 'disabled', remaining: 0, isExhausted: false, status: 'unavailable', details: { code: 'provider_disabled' } },
+    ]);
+  });
+
   it('preserves all 129 plugin quota windows and subscription facts through projection and sealed persistence', () => {
     const subscription = {
       status: 'unavailable' as const,
@@ -644,6 +683,17 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       observedAtMs: 1_000_000,
       staleAfterMs: 60_000,
       lastRefreshError: { observedAtMs: 1_000_000, code: 'network' as const },
+      monetaryFacts: [{
+        kind: 'paid' as const, amount: 20, currency: 'USD',
+        period: { startAtMs: 0, endAtMs: 2_000_000 },
+        source: { kind: 'provider' as const, id: 'account-payment', version: '1' },
+        effectiveAtMs: 0, asOfMs: 1_000_000,
+      }, {
+        kind: 'list' as const, amount: 25, currency: 'USD',
+        period: { startAtMs: 0, endAtMs: 2_000_000 },
+        source: { kind: 'published' as const, id: 'dated-provider-list', version: '2026-10' },
+        effectiveAtMs: 0, asOfMs: 1_000_000,
+      }],
     };
     const snapshot = buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
       profile: {
@@ -1596,6 +1646,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         memberProfileIds: ['primary', 'backup'],
       }));
     const onQuotaLifecycleTransition = vi.fn(async () => {});
+    const acceptedUsage: import('./ConnectedServiceQuotasCoordinator').ConnectedServiceUsageSnapshotTransition[] = [];
     const switchBeforeTurn = vi.fn(async () => ({ status: 'switched' as const, activeProfileId: 'backup', generation: 2 }));
     const coordinator = new ConnectedServiceQuotasCoordinator({
       api: {
@@ -1609,6 +1660,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       accountUsageStore,
       runtimeQuotaSnapshots,
       onQuotaLifecycleTransition,
+      onAccountUsageSnapshotAccepted: (transition) => { acceptedUsage.push(transition); },
       authGroupSwitchCoordinator: { switchBeforeTurn },
       groupSwitchCheckMinIntervalMs: 0,
       groupSwitchCheckJitterMs: 0,
@@ -1681,6 +1733,9 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       bindingKind: 'profile',
     })).not.toBeNull();
     expect(accountUsageStore.listSnapshots()).toHaveLength(2);
+    expect(acceptedUsage).toMatchObject([{ phase: 'observed', serviceId: CODEX_QUALIFIED_SERVICE_ID,
+      profileId: 'primary', previous: null, snapshot: { accountSubject: { id: 'provider-primary' } } }]);
+    expect(acceptedUsage.map(transition => transition.profileId)).toEqual(['primary']);
 
     // Only the primary emitted the live lifecycle edge; the passive backup hydration and the
     // later cold reconstruction produced no false live edge.
@@ -2039,9 +2094,10 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     expect(loadQuota).not.toHaveBeenCalled();
   });
 
-  it.each(['quota_family', 'unusable_spare', 'enumerated', 'aggregate', 'aggregate_timeout', 'aggregate_network', 'read_failure', 'not_available', 'nothing_to_reset', 'already_consumed', 'manual_selected', 'manual_next', 'manual_not_available', 'manual_missing'] as const)('schedules a novel qualified account through the plugin quota leaf and canonical V4 usage writer (%s recovery)', async (recoveryMode) => {
+  it.each(['usage_notice_requester', 'settlement_init_plain', 'settlement_init_e2ee', 'settlement_init_existing', 'settlement_init_no_quota', 'settlement_init_stale', 'settlement_init_failed', 'quota_error', 'quota_error_cold', 'quota_family', 'unusable_spare', 'enumerated', 'aggregate', 'aggregate_timeout', 'aggregate_network', 'read_failure', 'not_available', 'nothing_to_reset', 'already_consumed', 'manual_selected', 'manual_next', 'manual_not_available', 'manual_missing'] as const)('schedules a novel qualified account through the plugin quota leaf and canonical V4 usage writer (%s recovery)', async (recoveryMode) => {
     const now = 1_000_000;
-    const accountMode = recoveryMode === 'enumerated' ? 'e2ee' as const : 'plain' as const;
+    const settlementInitialization = recoveryMode.startsWith('settlement_init_');
+    const accountMode = recoveryMode === 'enumerated' || recoveryMode === 'settlement_init_e2ee' ? 'e2ee' as const : 'plain' as const;
     const manual = recoveryMode.startsWith('manual_');
     const expectedProviderCreditId = recoveryMode === 'enumerated' || recoveryMode === 'manual_next'
       ? 'earliest'
@@ -2061,6 +2117,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       : subscription;
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-quota-home-'));
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-quota-plugin-'));
+    const quotaInvocationMarker = join(pluginRoot, 'quota-invoked');
     const profile: QualifiedConnectedAccountProfileV4 = {
       ref: {
         service: {
@@ -2114,6 +2171,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     await writeFile(join(pluginRoot, 'daemon.mjs'), `export function activate(api) {
       let consumed = false;
       let inventoryReadCount = 0;
+      let quotaReadCount = 0;
       api.connectedAccounts.register('work-cloud', {
         authentication: { modes: { manual: { kind: 'manual', async complete() {
           return { status: 'connected', accountId: 'account-a', scopes: [] };
@@ -2140,21 +2198,24 @@ describe('ConnectedServiceQuotasCoordinator', () => {
             return { status: 'consumed' };
           }
         },
-        async quota(context) {
+        ${recoveryMode === 'settlement_init_no_quota' ? '' : `async quota(context) {
+          ${settlementInitialization ? `await (await import('node:fs/promises')).writeFile(${JSON.stringify(quotaInvocationMarker)}, 'invoked');
+          throw new Error('Connection settlement must not invoke provider quota');` : ''}
           const token = await context.credentials.get('token');
           if (token !== 'novel-token') throw new Error('quota credential unavailable');
+          ${recoveryMode.startsWith('quota_error') ? "throw Object.assign(new Error('Bearer private-token must not be published'), { status: 429, retryAfterMs: 120000, quotaFetchErrorCode: 'provider_backoff' });" : ''}
           return {
-            observedAtMs: ${now},
+            observedAtMs: ${recoveryMode === 'usage_notice_requester' ? '++quotaReadCount === 1 ? 500000 : 600000' : now},
             ${accountMode === 'e2ee' ? `subscription: ${JSON.stringify(failedSubscription)},` : ''}
             limits: [{
               id: ${JSON.stringify(recoveryMode === 'quota_family' ? 'codex_spark:primary' : 'monthly')},
               ${recoveryMode === 'quota_family' ? "providerLimitId: 'codex_spark'," : ''}
-              used: consumed ? 0 : 25,
-              remaining: consumed ? 100 : 75,
-              resetsAtMs: ${now + 60_000}
+              used: ${recoveryMode === 'usage_notice_requester' ? 'quotaReadCount === 1 ? 40 : 70' : 'consumed ? 0 : 25'},
+              remaining: ${recoveryMode === 'usage_notice_requester' ? 'quotaReadCount === 1 ? 60 : 30' : 'consumed ? 100 : 75'},
+              resetsAtMs: ${recoveryMode === 'usage_notice_requester' ? '1000000, windowDurationMs: 1000000' : now + 60_000}
             }]
           };
-        },
+        },`}
         async materialize() { return { kind: 'environment', env: {} }; }
       });
     }`, 'utf8');
@@ -2207,9 +2268,10 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         generationAuthority: fixtureGenerationAuthority,
         accountStorageDependencies: createQuotaFixtureAccountStorageDependencies(),
       });
-    const credentials: Credentials = {
-      token: 'happy-token',
-      encryption: {
+    const credentials: StoredCredentials = {
+      token: recoveryMode === 'usage_notice_requester'
+        ? `header.${Buffer.from(JSON.stringify({ sub: 'bob' })).toString('base64url')}.signature` : 'happy-token',
+      encryption: recoveryMode === 'usage_notice_requester' ? null : {
         type: 'legacy',
         secret: new Uint8Array(32).fill(9),
       },
@@ -2229,10 +2291,13 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       ref: profile.ref,
       authenticationModeId: profile.authenticationModeId,
       revisionSemantics: 'revisioned' as const,
-      credentialRevision: profile.credentialRevision,
+      credentialRevision: recoveryMode === 'settlement_init_stale'
+        ? 'csr_1123456789ABCDEFGHJKMNPQRS' : profile.credentialRevision,
       configurationRevision: profile.configurationRevision,
       content: credentialContent,
-      metadata: { scopes: [] },
+      metadata: settlementInitialization
+        ? { scopes: [], displayName: profile.displayName, providerIdentity: profile.providerIdentity }
+        : { scopes: [] },
     }));
     const establishedRuntimeOwner =
       createQualifiedConnectedAccountEstablishedRuntimeOwner({
@@ -2274,12 +2339,17 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       observedAtMs: now - 70_000, fetchedAtMs: now - 70_000, staleAfterMs: 60_000,
       source: 'providerHttp', confidence: 'confirmed', state: 'loaded_empty', meters: [], subscription,
     };
-    const previousSealed = sealProviderAccountUsageSnapshot({
+    if (recoveryMode === 'quota_error') {
+      previous.state = 'loaded_data';
+      previous.meters = [{ meterId: 'monthly', label: 'Monthly', used: 25, limit: 100, remaining: 75,
+        utilizationPct: 25, unit: 'requests', resetsAt: now + 60_000, status: 'ok', details: {} }];
+    }
+    const previousSealed = credentials.encryption ? sealProviderAccountUsageSnapshot({
       material: credentials.encryption,
       snapshot: previous,
       randomBytes: (length) => new Uint8Array(length).fill(3),
-    });
-    const readQuota = vi.fn(async () => ({
+    }) : null;
+    const readQuota = vi.fn(async () => recoveryMode === 'quota_error_cold' || settlementInitialization && recoveryMode !== 'settlement_init_existing' ? null : ({
       ref: profile.ref,
       sourceResolution: {
         source: { ref: profile.ref, bindingKind: 'account' as const },
@@ -2288,8 +2358,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       },
       content: accountMode === 'e2ee' ? {
         t: 'encrypted' as const,
-        c: previousSealed.ciphertext,
-        subscription: previousSealed.subscription,
+        c: previousSealed!.ciphertext,
+        subscription: previousSealed!.subscription,
       } : {
         t: 'plain' as const,
         v: projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4({
@@ -2298,9 +2368,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       },
       metadata: { fetchedAt: previous.fetchedAtMs, staleAfterMs: previous.staleAfterMs, status: 'ok' as const },
     }));
-    const writeProviderAccountUsage = vi.fn(async (_params: QualifiedProviderAccountUsageWriteArgs) => ({
-      success: true as const,
-    }));
+    let committedSourceWrite: QualifiedProviderAccountUsageWriteArgs['write'] | null = null;
+    const writeProviderAccountUsage = vi.fn(async (params: QualifiedProviderAccountUsageWriteArgs) => {
+      committedSourceWrite = params.write;
+      return { success: true as const };
+    });
     const qualifiedConnectedAccountRuntime = {
       resolvePeerClass: () => 'advertised_v4' as const,
       establishedRuntimeOwner,
@@ -2321,6 +2393,19 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     } as unknown as QuotaApi;
     const notifications: unknown[] = [];
     const pushDeliveries: Record<string, unknown>[] = [];
+    const previousAccountSnapshot = getActiveAccountSettingsSnapshot();
+    const notificationSettings = accountSettingsParse({ attentionDeliveryPolicyV1: { v: 1, channels: { expo_push: { enabled: true } } } });
+    // Dispatch consumes the published Account catalog, not legacy Settings channels.
+    setActiveAccountSettingsSnapshot({
+      source: 'network', settings: notificationSettings, settingsVersion: 1,
+      loadedAtMs: now, settingsSecretsReadKeys: [],
+      notificationChannelCatalog: {
+        status: 'ready', revision: 0, diagnostics: [],
+        channels: [ExpoPushNotificationChannelRecordV1Schema.parse({
+          v: 1, id: 'builtin:expo_push', kind: 'expo_push', topics: {},
+        })],
+      },
+    });
     const coordinator = new ConnectedServiceQuotasCoordinator({
       api,
       credentials,
@@ -2335,7 +2420,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       onAutomaticQuotaResetConsumed: async (event) => {
         notifications.push(event);
         await dispatchConnectedServiceAutomaticQuotaResetNotificationAsync({
-          settings: accountSettingsParse({ attentionDeliveryPolicyV1: { v: 1, channels: { expo_push: { enabled: true } } } }), event, dedupeWindowMs: 0,
+          settings: notificationSettings, event, dedupeWindowMs: 0,
           expoPushSender: { sendToAllDevicesAsync: async (_title, _body, data) => { if (data) pushDeliveries.push(data); return true; } },
         });
         // A pending delivery boundary must not hold quota refresh or the result.
@@ -2345,7 +2430,174 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     });
 
     try {
+      if (recoveryMode === 'usage_notice_requester') {
+        // The installed plugin, credential admission, accepted-snapshot lifecycle,
+        // dispatcher and Artifact writer are real. Only Account HTTP and push
+        // delivery are boundaries; active Alice must not become Bob's authority.
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(500_000);
+        resetServerFeaturesClientForTests();
+        let current = true;
+        const writes: Array<{ url: string; token: unknown; data: Record<string, unknown> }> = [];
+        const pushes: string[] = [];
+        const catalogContent = sealNotificationChannelCatalogContentV1({ mode: 'plain', material: null,
+          record: { v: 1, channels: [ExpoPushNotificationChannelRecordV1Schema.parse({ v: 1,
+            id: 'bob-push', kind: 'expo_push', topics: { connectedServiceUsage: true } })] } });
+        const get = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+          const path = new URL(url).pathname;
+          if (path.endsWith('/profile')) return { status: 200, data: { id: 'bob' } };
+          if (path.endsWith('/currentness')) return { status: 200, data: { mode: 'plain', version: 1,
+            signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+          if (path.endsWith('/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+          if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: {
+            usageQuotaNotificationsV1: { pace: true } } }, version: 1 } };
+          if (path.endsWith('/notification-channels')) return { status: 200, data: { status: 'present',
+            revision: 1, content: catalogContent } };
+          if (path.endsWith('/qualified/accounts')) return { status: 200, data: { service: profile.ref.service, accounts: [] } };
+          if (path.endsWith('/qualified/groups')) return { status: 200, data: { groups: [] } };
+          if (path.endsWith('/qualified/quotas')) return { status: 404, data: {} };
+          if (path === '/v1/artifacts') return { status: 200, data: [] };
+          throw new Error(`Unexpected requester notice GET ${path}`);
+        });
+        const post = vi.spyOn(axios, 'post').mockImplementation(async (url: string, data: Record<string, unknown>, config) => {
+          writes.push({ url, token: config?.headers?.Authorization, data });
+          return { status: 200, data: url.endsWith('/artifacts')
+            ? { id: data.id, headerVersion: 1, bodyVersion: 1 } : { success: true } };
+        });
+        const features = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify(
+          FeaturesResponseSchema.parse({ features: { connectedServices: { enabled: true, quotas: { enabled: true } } }, capabilities: {} })),
+          { status: 200, headers: { 'content-type': 'application/json' } }));
+        const push = vi.spyOn(PushNotificationClient.prototype, 'sendToAllDevicesAsync').mockImplementation(async (_title, _body, data) => {
+          pushes.push(String(data?.topic)); return true;
+        });
+        let host: Awaited<ReturnType<typeof createRequesterSessionControlRuntimeFixture>> | null = null;
+        let runtime: Awaited<ReturnType<typeof startDaemonConnectedServiceRuntime>> | null = null;
+        try {
+          host = await createRequesterSessionControlRuntimeFixture({ happyHomeDir, activeServerDir: happyHomeDir,
+            serverId: 'bob-home', serverHttpBaseUrl: 'https://bob-home.test', machineId: 'machine', custodianAccountId: 'alice',
+            credentials: { token: 'alice', encryption: null }, connectedServicesMaterializationBaseDir: join(happyHomeDir, 'materialized'),
+            registry: new ConnectedServiceRuntimeRegistry(), trackedSessions: new Map(), getRequester: () => null,
+            resolveQualifiedConnectedAccountV4Support: () => 'indeterminate' });
+          const admitted = await admitRequesterSessionBootstrap({ bootstrap: { v: 1, disposition: 'ordinary_requester',
+            credentials: { token: credentials.token } }, boundary: { serverId: 'bob-home', serverHttpBaseUrl: 'https://bob-home.test', happyHomeDir },
+            context: { signal: new AbortController().signal, machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'alice',
+              machineId: 'machine', installationId: 'installation', role: 'use', encryptionMode: 'plain' },
+              verifyMachineAdmissionCurrent: async () => current } });
+          if (!admitted) throw new Error('Missing requester admission');
+          const operation = admitted.admitted.savedSecretOperationContext;
+          await runWithServerHttpBaseUrl('https://bob-home.test', async () => {
+            const catalog = await createCliNotificationChannelStore({ credentials, operationContext: operation }).readNotificationChannelCatalog();
+            expect(await operation.commitNotificationChannelCatalog({ expectedSettingsVersion: 1, catalog })).toBe(true);
+            runtime = await startDaemonConnectedServiceRuntime({ api: await ApiClient.create(credentials), credentials,
+              accountSettingsSnapshot: operation.readSnapshot, isAccountRuntimeCurrent: async () => current && await operation.isCurrent(),
+              runAccountOperation: work => runWithServerHttpBaseUrl('https://bob-home.test', work),
+              activeServerDir: happyHomeDir, happyHomeDir, machineId: 'machine', machineIdProvider: () => 'machine', runtimeId: 'runtime',
+              logger: { debug: () => {}, info: () => {}, warn: () => {} },
+              processEnv: { HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '0' }, pidToTrackedSession: new Map(),
+              connectedServiceRuntimeRegistry: new ConnectedServiceRuntimeRegistry(),
+              connectedServiceAuthGroupPreTurnSwitchCoordinator: host!.runtime.connectedServiceAuthGroupPreTurnSwitchCoordinator,
+              providerAccountUsageStore: accountUsageStore, connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
+              qualifiedConnectedAccountEstablishedRuntimeOwner: establishedRuntimeOwner,
+              resolveQualifiedConnectedAccountPeerClass: () => 'advertised_v4', listScheduledQualifiedConnectedAccounts: async () => [profile],
+            });
+            await runtime.connectedServiceQuotasLoopHandle?.stop();
+            if (!runtime.connectedServiceQuotasCoordinator) throw new Error('Missing real quota coordinator');
+            await runtime.connectedServiceQuotasCoordinator.tickOnce();
+            expect(writes.filter(row => row.url.endsWith('/artifacts'))).toEqual([]);
+            vi.setSystemTime(600_000);
+            await runtime.connectedServiceQuotasCoordinator.tickOnce();
+          });
+          // Establish live producer acceptance before the deciding delivery assertion;
+          // a failed provider/setup path must never masquerade as notification RED.
+          expect(accountUsageStore.listSnapshots()[0]?.observedAtMs).toBe(600_000);
+          expect(writes.filter(row => row.url.endsWith('/provider-account-usage')).at(-1)?.data)
+            .toMatchObject({ snapshot: { observedAtMs: 600_000 } });
+          const notices = writes.filter(row => row.url.endsWith('/artifacts'));
+          expect(notices).toHaveLength(1);
+          expect(notices[0]).toMatchObject({ url: 'https://bob-home.test/v1/artifacts', token: `Bearer ${credentials.token}` });
+          expect(decodePlainArtifactStoredContent(String(notices[0].data.header))).toMatchObject({ kind: 'usage_notice.v1', notice: { kind: 'pace' } });
+          expect(pushes).toEqual(['connected_service_usage']);
+          expect(writes.findIndex(row => row.url.endsWith('/provider-account-usage'))).toBeLessThan(writes.findIndex(row => row.url.endsWith('/artifacts')));
+          expect(getActiveAccountSettingsSnapshot()?.settings).toBe(notificationSettings);
+          current = false;
+        } finally {
+          await runtime?.connectedServiceQuotasLoopHandle?.stop();
+          runtime?.connectedServiceQuotasCoordinator?.disposeInBandQuotaPersistence();
+          await host?.dispose();
+          get.mockRestore(); post.mockRestore(); features.mockRestore(); push.mockRestore(); vi.useRealTimers();
+          resetServerFeaturesClientForTests();
+        }
+        return;
+      }
+      if (settlementInitialization) {
+        if (recoveryMode === 'settlement_init_failed') writeProviderAccountUsage.mockRejectedValueOnce(new Error('Home unavailable'));
+        const persistence = createQualifiedConnectedAccountDaemonPersistence({
+          credentials,
+          getAccountEncryptionMode: async () => accountMode,
+          readCredential,
+          readConfiguration: async () => null,
+          mutateCredential: async () => {
+            // Recovering a lost acknowledgement must seed the same committed source.
+            if (recoveryMode === 'settlement_init_plain') throw new Error('Credential acknowledgement lost');
+            return { success: true, credentialRevision: profile.credentialRevision!, configurationRevision: profile.configurationRevision };
+          },
+          secrets: { admit: async () => {}, has: async () => false, read: async () => null },
+          onAccountSettled: async (settled) => {
+            await coordinator.initializeQualifiedAccountQuotaSource(settled);
+          },
+        });
+        await expect(persistence.attempts.settlement.settle({
+          intent: 'connect', service: profile.ref.service, accountId: profile.ref.accountId,
+          authenticationModeId: profile.authenticationModeId!,
+          expectedCredentialRevision: null, expectedCredentialConfigurationRevision: null,
+          expectedConfigurationRevision: 'unconfigured',
+          sourceCustody: { kind: 'managed', immutableGenerationId: 'plugin-contract-1', installSource: 'npm' },
+          stagedCredentials: { token: 'novel-token' },
+          providerIdentity: profile.providerIdentity, displayName: profile.displayName, scopes: [],
+        })).resolves.toEqual({ status: 'connected', account: profile.ref });
+        // A swallowed quota error cannot disguise provider entry during connection.
+        await expect(readFile(quotaInvocationMarker)).rejects.toMatchObject({ code: 'ENOENT' });
+        if (['settlement_init_existing', 'settlement_init_no_quota', 'settlement_init_stale'].includes(recoveryMode)) {
+          expect(writeProviderAccountUsage).not.toHaveBeenCalled();
+        } else {
+          expect(writeProviderAccountUsage).toHaveBeenCalledWith({ token: 'happy-token', write: expect.objectContaining({
+            source: { ref: profile.ref, bindingKind: 'account' },
+            expectedCredentialRevision: profile.credentialRevision, expectedConfigurationRevision: profile.configurationRevision,
+            status: 'unavailable', fetchedAt: 0,
+          }) });
+          const write = writeProviderAccountUsage.mock.calls[0]![0].write;
+          const snapshot = write.snapshot ?? (write.sealedPayload
+            ? openSealedProviderAccountUsageSnapshot({ material: credentials.encryption, sealed: write.sealedPayload }) : null);
+          expect(snapshot).toMatchObject({ state: 'not_loaded', fetchedAtMs: 0, meters: [], recordKey });
+        }
+        expect(listScheduledAccounts).not.toHaveBeenCalled();
+        if (recoveryMode === 'settlement_init_failed') {
+          expect(committedSourceWrite).toBeNull();
+          await coordinator.tickOnce();
+          expect(committedSourceWrite).toMatchObject({ status: 'error', fetchedAt: 0,
+            snapshot: { state: 'error_last_known_good', meters: [] } });
+          await expect(readFile(quotaInvocationMarker, 'utf8')).resolves.toBe('invoked');
+        }
+        return;
+      }
       await coordinator.tickOnce();
+
+      if (recoveryMode.startsWith('quota_error')) {
+        const writes = writeProviderAccountUsage.mock.calls.map(([params]) => params.write);
+        expect(writes.at(-1)).toMatchObject({ status: 'error', snapshot: {
+          state: 'error_last_known_good',
+          meters: recoveryMode === 'quota_error' ? previous.meters : [],
+          diagnostics: [{ kind: 'provider_http', code: 'provider_backoff', status: 429,
+            observedAtMs: now, retryAtMs: now + 120_000 }],
+        } });
+        expect(JSON.stringify(writes)).not.toContain('private-token');
+        if (recoveryMode === 'quota_error_cold') expect(writes[0]).toMatchObject({ status: 'unavailable',
+          snapshot: { state: 'not_loaded', meters: [], fetchedAtMs: 0 } });
+        const writeCount = writes.length;
+        await coordinator.tickOnce();
+        expect(writeProviderAccountUsage.mock.calls).toHaveLength(writeCount);
+        return;
+      }
 
       expect(listScheduledAccounts).toHaveBeenCalledTimes(1);
       expect(readQuota).toHaveBeenCalledWith({
@@ -2503,6 +2755,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         if (accountMode === 'e2ee') expect(params.write.sealedPayload?.subscription).toBeDefined();
       }
     } finally {
+      clearActiveAccountSettingsSnapshot();
+      if (previousAccountSnapshot) setActiveAccountSettingsSnapshot(previousAccountSnapshot);
       await runtimeRegistry.dispose();
       await Promise.all([
         rm(happyHomeDir, { recursive: true, force: true }),
@@ -2511,7 +2765,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     }
   }, 60_000);
 
-  it('drives poll-driven quota lifecycle and one soft-switch request for a novel qualified group through canonical V4 facts', async () => {
+  it('suppresses predictive application for a novel qualified group before switch effects', async () => {
     const now = 1_000_000;
     const resetAtMs = now + 600_000;
     const credentialRevision = 'csr_abcdefghijklmnopqrstuv';
@@ -2621,9 +2875,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     const writeProviderAccountUsage = vi.fn(async () => ({ success: true as const }));
     const onQuotaLifecycleTransition = vi.fn(async () => {});
     const switchBeforeTurn = vi.fn(async () => ({ status: 'no_eligible_member' as const, groupExhausted: true }));
-    const predictiveSwitchGuard = vi.fn(() => {
-      throw new Error('legacy predictive switch guard must not be consulted for a service without a legacy projection');
-    });
+    const predictiveSwitchGuard = vi.fn(() => ({ status: 'suppress' as const, reason: 'predictive_soft_switch_restart_required' }));
     const diagnostics: unknown[] = [];
     const coordinator = new ConnectedServiceQuotasCoordinator({
       api: {
@@ -2727,28 +2979,15 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       resetAtMs,
     }));
 
-    // Exactly one switch request after the account windows settle; the optional legacy
-    // predictive guard is inapplicable without a legacy projection.
-    expect(switchBeforeTurn).toHaveBeenCalledTimes(1);
-    expect(switchBeforeTurn).toHaveBeenCalledWith({
-      sessionId: 'session-novel',
-      serviceId: novelServiceId,
-      groupId: 'group-1',
-      reason: 'soft_threshold',
-      observedProfileId: 'primary',
+    expect(switchBeforeTurn).not.toHaveBeenCalled();
+    expect(predictiveSwitchGuard).toHaveBeenCalledWith({
+      sessionId: 'session-novel', serviceId: novelServiceId, groupId: 'group-1',
+      activeProfileId: 'primary', reason: 'soft_threshold',
     });
-    expect(predictiveSwitchGuard).not.toHaveBeenCalled();
     expect(diagnostics).toContainEqual(expect.objectContaining({
-      event: 'quota_work_requested',
+      event: 'quota_work_suppressed',
       phase: 'soft_switch',
-      reason: 'soft_switch_requested',
-      sessionId: 'session-novel',
-      serviceId: novelServiceId,
-      groupId: 'group-1',
-      activeProfileId: 'primary',
-      eligibilityStatus: 'eligible',
-      sourceProfileId: 'primary',
-      sourceProjected: false,
+      reason: 'predictive_soft_switch_restart_required',
     }));
 
     // No legacy burn lookup and no legacy V3 group read ever happens for the novel service.
@@ -9335,9 +9574,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     } as unknown as QuotaApi;
     const onQuotaLifecycleTransition = vi.fn(async () => {});
     const switchBeforeTurn = vi.fn(async () => ({ status: 'switched' as const, activeProfileId: 'backup', generation: 2 }));
-    const predictiveSwitchGuard = vi.fn(() => {
-      throw new Error('legacy predictive switch guard must not be consulted for a service without a legacy projection');
-    });
+    const predictiveSwitchGuard = vi.fn(() => ({ status: 'allow' as const }));
     const diagnostics: unknown[] = [];
     const coordinator = new ConnectedServiceQuotasCoordinator({
       api,
@@ -9531,9 +9768,10 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     }));
     // No legacy burn snapshot lookup ever happens for a service without a legacy projection.
     expect(getRecentBurn).not.toHaveBeenCalled();
-    // The discriminating guard assertion: even with a predictive guard installed, the novel
-    // service switches through the canonical owner without ever consulting the legacy guard.
-    expect(predictiveSwitchGuard).not.toHaveBeenCalled();
+    expect(predictiveSwitchGuard).toHaveBeenCalledWith({
+      sessionId: 'session-novel', serviceId: novelServiceId, groupId: 'group-1',
+      activeProfileId: 'primary', reason: 'soft_threshold',
+    });
   });
 
   it('keeps quota probe lifecycle reconstruction passive; live account-usage changes emit rows', async () => {

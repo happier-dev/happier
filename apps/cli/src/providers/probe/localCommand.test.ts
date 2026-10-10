@@ -5,6 +5,7 @@ import {
   resolveDeclaredProviderInstallation,
   runDeclaredProviderLocalCommand,
 } from './localCommand';
+import { createProviderProbeScheduler } from './scheduler';
 
 describe('runDeclaredProviderLocalCommand', () => {
   it('runs literal argv through the canonical system-tool port without a shell', async () => {
@@ -88,28 +89,20 @@ describe('createProviderLocalCatalogFallbackRunner', () => {
     }));
   });
 
-  it('single-flights and caches command results for at least thirty seconds', async () => {
-    let now = 10_000;
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    const runSystemTool = vi.fn(async () => {
-      await gate;
-      return { ok: true as const, exitCode: 0, stdout: 'NAME ID SIZE MODIFIED\nmodel-a id 1 GB now\n', stderr: '' };
-    });
-    const fallback = createProviderLocalCatalogFallbackRunner({ runner: { runSystemTool }, now: () => now });
+  it('observes changed command output between explicit scheduler refreshes', async () => {
+    let modelId = 'model-a';
+    const runSystemTool = vi.fn(async () => ({
+      ok: true as const, exitCode: 0, stdout: `NAME ID SIZE MODIFIED\n${modelId} id 1 GB now\n`, stderr: '',
+    }));
+    const fallback = createProviderLocalCatalogFallbackRunner({ runner: { runSystemTool } });
+    const scheduler = createProviderProbeScheduler();
     const input = { descriptor, endpointUrl: 'http://127.0.0.1:11434/' };
-    const first = fallback.run(input);
-    const second = fallback.run(input);
-    release();
-    await expect(Promise.all([first, second])).resolves.toEqual([
-      { status: 'success', models: [{ id: 'model-a', name: 'model-a' }] },
-      { status: 'success', models: [{ id: 'model-a', name: 'model-a' }] },
-    ]);
-    expect(runSystemTool).toHaveBeenCalledTimes(1);
-    await fallback.run(input);
-    expect(runSystemTool).toHaveBeenCalledTimes(1);
-    now += 30_001;
-    await fallback.run(input);
+    const refresh = () => scheduler.runCatalog('local-catalog', 'manual_refresh', () => fallback.run(input), {
+      unavailable: () => ({ status: 'unavailable' as const }),
+    });
+    await expect(refresh()).resolves.toEqual({ status: 'success', models: [{ id: 'model-a', name: 'model-a' }] });
+    modelId = 'model-b';
+    await expect(refresh()).resolves.toEqual({ status: 'success', models: [{ id: 'model-b', name: 'model-b' }] });
     expect(runSystemTool).toHaveBeenCalledTimes(2);
   });
 
@@ -121,10 +114,7 @@ describe('createProviderLocalCatalogFallbackRunner', () => {
     const runSystemTool = vi.fn(async () => ({
       ok: true as const, exitCode: 0, stdout: outputs.shift()!, stderr: '',
     }));
-    const fallback = createProviderLocalCatalogFallbackRunner({ runner: { runSystemTool }, now: (() => {
-      let value = 0;
-      return () => (value += 31_000);
-    })() });
+    const fallback = createProviderLocalCatalogFallbackRunner({ runner: { runSystemTool } });
     await expect(fallback.run({ descriptor, endpointUrl: 'http://127.0.0.1:11434/' }))
       .resolves.toEqual({ status: 'unavailable' });
     await expect(fallback.run({ descriptor, endpointUrl: 'http://127.0.0.1:11434/' }))

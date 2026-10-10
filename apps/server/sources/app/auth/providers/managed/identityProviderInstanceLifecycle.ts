@@ -116,6 +116,7 @@ async function applyProviderAuthenticationContextEffectsInTx(
     ]);
     const connectionIdsByTeam = new Map<string, Set<string>>();
     for (const connection of connections) {
+        if (connection.teamId === null) continue;
         const ids = connectionIdsByTeam.get(connection.teamId) ?? new Set<string>();
         ids.add(connection.id);
         connectionIdsByTeam.set(connection.teamId, ids);

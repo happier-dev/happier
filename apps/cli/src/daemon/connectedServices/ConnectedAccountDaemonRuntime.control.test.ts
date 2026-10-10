@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  assertConnectedAccountOperationTransportV1,
   PluginConnectedAccountDescriptorContributionV2Schema,
 } from '@happier-dev/protocol';
 
@@ -1314,6 +1315,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
       generationCurrent(): boolean;
       replaceDuringActivation?: boolean;
       replaceSourceDuringActivation?: boolean;
+      quota?: boolean;
     }>) {
       const registrations: ConnectedAccountRuntimeRegistration[] = [];
       const activations: string[] = [];
@@ -1341,7 +1343,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
             pluginId: ref.pluginId,
             occurrenceId,
             localId: ref.localId,
-            runtime: publishedRuntime,
+            runtime: input.quota ? { ...publishedRuntime, quota: unreached } : publishedRuntime,
           });
           if (input.replaceDuringActivation) {
             const nextOccurrence = createPluginRuntimeOccurrenceId(service.pluginId);
@@ -1384,6 +1386,9 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
       reloadController = createPluginReloadController({ resolveRuntimeRegistry: async () => registry });
       const daemon = createConnectedAccountDaemonRuntime({
         reloadController,
+        // Peer negotiation is a transport boundary; executable capability is
+        // deliberately resolved by the real contribution registry above.
+        resolvePeerOperationTransport: () => ({ kind: 'v4' }),
         persistence: {
           profiles: { list: vi.fn(async () => []) },
           configuration: {
@@ -1442,6 +1447,50 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
         },
       });
       expect(activations).toEqual([]);
+    });
+
+    it.each([false, true])('admits quota refresh only when the activated runtime has a quota leaf (quota: %s)', async (quota) => {
+      const { daemon, activations } = createDaemonOverRealRegistry({
+        published: true,
+        generationCurrent: () => true,
+        quota,
+      });
+      try {
+        const result = await daemon.control({ operation: 'describeService', service, requiredOperation: 'quota_refresh' });
+        if (quota) {
+          expect(result).toMatchObject({ status: 'described', operationTransport: { kind: 'v4' } });
+          expect(() => assertConnectedAccountOperationTransportV1(result, service, { kind: 'v4' })).not.toThrow();
+        } else {
+          expect(result).toEqual({ status: 'unavailable', code: 'connected_account_v4_operation_unsupported' });
+          expect(() => assertConnectedAccountOperationTransportV1(result, service, { kind: 'v4' }))
+            .toThrow(expect.objectContaining({ code: 'connected_account_v4_operation_unsupported' }));
+        }
+        expect(activations).toEqual([service.localId]);
+      } finally {
+        daemon.dispose();
+      }
+    });
+
+    it('keeps absent publication distinct from an unsupported quota leaf', async () => {
+      const { daemon } = createDaemonOverRealRegistry({ published: false, generationCurrent: () => true });
+      try {
+        await expect(daemon.control({ operation: 'describeService', service, requiredOperation: 'quota_refresh' }))
+          .resolves.toMatchObject({ status: 'unavailable', code: 'connected_account_service_unavailable' });
+      } finally {
+        daemon.dispose();
+      }
+    });
+
+    it('does not classify a runtime retired during quota admission as unsupported', async () => {
+      const { daemon } = createDaemonOverRealRegistry({
+        published: true, generationCurrent: () => true, replaceDuringActivation: true,
+      });
+      try {
+        await expect(daemon.control({ operation: 'describeService', service, requiredOperation: 'quota_refresh' }))
+          .resolves.toMatchObject({ code: 'connected_account_runtime_generation_changed' });
+      } finally {
+        daemon.dispose();
+      }
     });
 
     it('keeps a retired generation distinguishable from an unavailable service', async () => {

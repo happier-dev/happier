@@ -180,8 +180,8 @@ export function createProviderRuntimeStateStore(input: Readonly<{
    * file, so in-process serialization alone would let a whole-file write
    * overwrite records the other process persisted. Mutations run under the
    * canonical owner-file lock and re-read the file inside it, so every
-   * transform sees the other writer's committed records instead of this
-   * store's private memory.
+   * transform or read sees the other writer's committed records instead of
+   * this store's private memory, preserving only its transient activity.
    */
   async function mutateLocked<T>(mutation: () => Promise<T>): Promise<T> {
     await ensurePrivateParent(path);
@@ -259,7 +259,7 @@ export function createProviderRuntimeStateStore(input: Readonly<{
 
   return {
     path,
-    read: () => enqueue(async () => cloneState(await loadUnlocked())),
+    read: () => enqueue(async () => await mutateLocked(async () => cloneState(await loadUnlocked()))),
     updateTransientEndpointHealth: (transform, options = {}) => enqueue(async () => {
       const apply = async (): Promise<void> => {
         const current = await loadUnlocked();

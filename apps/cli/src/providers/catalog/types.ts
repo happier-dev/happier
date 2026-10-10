@@ -1,64 +1,11 @@
-import type {
-  ProviderBindingCompatibilityV1,
-  ProviderBoundModelRef,
-  ProviderCatalogReferenceResolutionV1,
-  ProviderCatalogRuntimeStateKeyV1,
-  ProviderEndpointRuntimeStateV1,
-  ProviderMergedCatalogRowV1,
-  ProviderModelLoadStateV1,
-  ProviderRuntimeStateFileV1,
-  ProviderSettingsV1,
-  ProviderConnectionId,
-} from '@happier-dev/protocol';
-
+import type { ProviderBoundModelRef, ProviderCatalogReferenceResolutionV1, ProviderCatalogRuntimeStateKeyV1,
+  ProviderEndpointRuntimeStateV1, ProviderRuntimeStateFileV1, ProviderSettingsV1 } from '@happier-dev/protocol';
 import type { ResolvedProviderConnectionRecord } from '../registry/types';
-
-export type ProviderCatalogCompatibilityPresentation = Readonly<{
-  result: ProviderBindingCompatibilityV1;
-  compatibilityFingerprint: string;
-}>;
-
-export type ProviderCatalogObservationPresentation = Readonly<{
-  stale: boolean;
-  observedAt?: number;
-  staleAt?: number;
-}>;
-
-export type ProviderCatalogAuthorizationPresentation =
-  | Readonly<{ authorized: true }>
-  | Extract<ResolvedProviderConnectionRecord['authorization'], { authorized: false }>;
-
-/**
- * Presentation facts intentionally remain separate. Endpoint health is not
- * catalog freshness, and neither fact is model load state or compatibility.
- */
-export type ProviderCatalogRowPresentation = Readonly<{
-  compatibility: ProviderCatalogCompatibilityPresentation | null;
-  endpointHealth: ProviderEndpointRuntimeStateV1 | null;
-  catalog: ProviderCatalogObservationPresentation;
-  loadState: ProviderModelLoadStateV1;
-}>;
-
-export type ProviderConnectionCatalogRow = Readonly<{
-  ref: Extract<ProviderBoundModelRef, { providerConnectionId: string }>;
-  descriptor: ProviderMergedCatalogRowV1['descriptor'];
-  sources: ProviderMergedCatalogRowV1['sources'];
-  confidence: ProviderMergedCatalogRowV1['confidence'];
-  presentation: ProviderCatalogRowPresentation;
-}>;
-
-export type ProviderConnectionCatalog = Readonly<{
-  agentTargetKey: string;
-  connectionId: ProviderConnectionId;
-  authorization: ProviderCatalogAuthorizationPresentation;
-  providerName: string;
-  connectionName: string;
-  connectionRole: 'default' | 'named';
-  connectionDisplayNameMode: 'automatic' | 'custom';
-  manualModelPolicy: 'allowed' | 'catalog-only';
-  rows: readonly ProviderConnectionCatalogRow[];
-  staleRows: readonly ProviderConnectionCatalogRow[];
-}>;
+import type { ProviderCatalogCompatibilityPresentation, ProviderConnectionCatalogRow } from '@happier-dev/protocol/providers/catalog/pickerTypesV1';
+export type { ProviderCatalogCompatibilityPresentation, ProviderCatalogObservationPresentation,
+  ProviderCatalogAuthorizationPresentation, ProviderCatalogRowPresentation, ProviderConnectionCatalogRow,
+  ProviderConnectionCatalog, ProviderPickerCatalogRow, ProviderPickerCatalogGroup, ProviderPickerHiddenSource,
+  ProviderPickerCatalogProjection } from '@happier-dev/protocol/providers/catalog/pickerTypesV1';
 
 export type AssembleProviderConnectionCatalogInput = Readonly<{
   agentTargetKey: string;
@@ -101,19 +48,3 @@ export type ProviderCatalogModelReferenceResolution =
       ref: Extract<ProviderBoundModelRef, { providerConnectionId: string }>;
       errorCode: 'provider_model_not_found';
     }>;
-
-export type ProviderPickerCatalogRow = ProviderConnectionCatalogRow & Readonly<{
-  visibility: 'visible' | 'hidden_agent' | 'hidden_all_agents' | 'hidden_current_selection';
-}>;
-
-export type ProviderPickerCatalogGroup = Readonly<{
-  connectionId: ProviderConnectionId;
-  providerName: string;
-  connectionName: string;
-  authorization: ProviderCatalogAuthorizationPresentation;
-  rows: readonly ProviderPickerCatalogRow[];
-}>;
-
-export type ProviderPickerCatalogProjection = Readonly<{
-  groups: readonly ProviderPickerCatalogGroup[];
-}>;

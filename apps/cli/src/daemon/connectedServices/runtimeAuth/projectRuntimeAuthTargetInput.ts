@@ -107,7 +107,16 @@ export function projectConnectedServiceRuntimeAuthTargetInput(input: Readonly<{
   const applySelectedAuthGeneration = typeof applyAuthGenerationSource === 'function'
     && credential.success
     && selectedServiceId
-    ? async () => await applyAuthGenerationSource({
+    ? async () => {
+      const currentness = await input.validateCurrentBeforeMutation?.();
+      if (currentness && !currentness.current) {
+        return {
+          ok: false as const,
+          error: currentness.reason,
+          errorCode: currentness.reason,
+        };
+      }
+      return await applyAuthGenerationSource({
         serviceId: selectedServiceId,
         ...(applyReason ? { reason: applyReason } : {}),
         expected: {
@@ -123,7 +132,8 @@ export function projectConnectedServiceRuntimeAuthTargetInput(input: Readonly<{
           ...(selection.credentialRevision ? { credentialRevision: selection.credentialRevision } : {}),
           selection,
         },
-      })
+      });
+    }
     : undefined;
   const client = readRecord(sourceSelection.client);
   const requestProviderSource = client?.request;

@@ -27,7 +27,7 @@ import { resolveScopedUsageContributions, type ScopedUsageContribution, type Sco
 import { toScopedUsageEventRow } from '@/app/usage/query/scopedUsageEventRow';
 import { addUsageCostForMode, withEffectiveUsageCost, type UsageCostMode } from '@/app/usage/query/resolveUsageCostMode';
 import { addUsageTokens, createEmptyUsageCost, createEmptyUsageTokens } from '@/app/usage/usageMetrics';
-import { resolveBucketBounds } from '@/app/usage/query/bucketBounds';
+import { resolveUsageBucketBounds as resolveBucketBounds } from '@happier-dev/protocol';
 import { projectTeamCredentialUsageLimitsInTx, type TeamCredentialUsageLimitRow } from './teamCredentialUsageLimits';
 import { resolveEffectiveSessionAccess } from '@/app/session/access/sessionAccess';
 import { resolveEffectiveTeamGroupIdsForAccountInTx } from '../groups/effectiveGroupMembership';

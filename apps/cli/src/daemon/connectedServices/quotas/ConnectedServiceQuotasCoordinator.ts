@@ -155,6 +155,7 @@ import {
 } from '@/api/client/qualifiedConnectedAccountApi';
 import type {
   QualifiedConnectedAccountEstablishedRuntimeOwner,
+  QualifiedConnectedAccountEstablishedInvocationBasis,
 } from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
 import type {
   QualifiedConnectedAccountV4Support,
@@ -179,7 +180,7 @@ export type QualifiedConnectedAccountQuotaRuntime = Readonly<{
   }>): QualifiedConnectedAccountPeerOperationTransport;
   establishedRuntimeOwner: Pick<
     QualifiedConnectedAccountEstablishedRuntimeOwner,
-    'invokeWithReceipt'
+    'invokeWithReceipt' | 'readQuotaSourceSnapshot'
   >;
   listScheduledAccounts(): Promise<
     readonly QualifiedConnectedAccountProfileV4[]
@@ -303,18 +304,17 @@ export function buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota
       && Number.isFinite(limit.remaining)
         ? limit.remaining
         : null;
-    const total =
-      used !== null && remaining !== null
-        ? used + remaining
-        : null;
+    const total = typeof limit.limit === 'number' && Number.isFinite(limit.limit)
+      ? limit.limit
+      : used !== null && remaining !== null ? used + remaining : null;
     const hasPositiveTotal =
       total !== null && Number.isFinite(total) && total > 0;
-    const usedPct = hasPositiveTotal && used !== null
-      ? Math.min(100, Math.max(0, (used / total) * 100))
-      : null;
-    const remainingPct = hasPositiveTotal && remaining !== null
-      ? Math.min(100, Math.max(0, (remaining / total) * 100))
-      : null;
+    const usedPct = typeof limit.utilizationPct === 'number' && Number.isFinite(limit.utilizationPct)
+      ? Math.min(100, Math.max(0, limit.utilizationPct))
+      : hasPositiveTotal && used !== null ? Math.min(100, Math.max(0, (used / total) * 100)) : null;
+    const remainingPct = typeof limit.remainingPct === 'number' && Number.isFinite(limit.remainingPct)
+      ? Math.min(100, Math.max(0, limit.remainingPct))
+      : hasPositiveTotal && remaining !== null ? Math.min(100, Math.max(0, (remaining / total) * 100)) : null;
     const resetsAt =
       typeof limit.resetsAtMs === 'number'
       && Number.isInteger(limit.resetsAtMs)
@@ -323,7 +323,7 @@ export function buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota
         : null;
     return {
       meterId: limit.id,
-      label: limit.id,
+      label: limit.label ?? limit.id,
       used,
       limit: total,
       remaining,
@@ -332,18 +332,19 @@ export function buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota
       resetAtMs: resetsAt,
       resetSource: resetsAt === null ? 'unknown' as const : 'provider' as const,
       providerLimitId: limit.providerLimitId ?? limit.id,
-      isExhausted: remaining !== null ? remaining <= 0 : false,
-      unit: 'unknown' as const,
+      ...(limit.windowDurationMs === undefined ? {} : { windowDurationMs: limit.windowDurationMs }),
+      ...(limit.modelId === undefined ? {} : { modelId: limit.modelId }),
+      isExhausted: limit.isExhausted ?? (remaining !== null ? remaining <= 0 : false),
+      unit: limit.unit ?? 'unknown' as const,
       utilizationPct: usedPct,
       resetsAt,
-      status: used !== null || remaining !== null
-        ? 'ok' as const
-        : 'unavailable' as const,
+      status: limit.status ?? (used !== null || remaining !== null ? 'ok' as const : 'unavailable' as const),
       source: 'provider_api' as const,
-      scope: 'unknown' as const,
-      limitScope: 'account' as const,
-      confidence: 'exact' as const,
+      scope: limit.scope ?? 'unknown' as const,
+      limitScope: limit.limitScope ?? 'account' as const,
+      confidence: limit.confidence ?? 'exact' as const,
       details: {
+        ...limit.details,
         providerLimitId: limit.providerLimitId ?? limit.id,
         remainingPct,
       },
@@ -677,10 +678,8 @@ type PredictiveSwitchGuardResult =
   | Readonly<{ status: 'allow' }>
   | Readonly<{ status: 'suppress' | 'fold'; reason: string }>;
 /**
- * Retained legacy predictive switch guard contract: the guard evaluates
- * first-party scalar-service policy (account settings + turn state), so it
- * receives the reverse-projected legacy `ConnectedServiceId`, never the
- * canonical qualified service key.
+ * Predictive admission consumes the exact canonical service identity before
+ * any switch effect, including services without a legacy scalar projection.
  */
 export type ConnectedServiceQuotaPredictiveSwitchGuard = (
   input: Readonly<{
@@ -705,6 +704,13 @@ export type ConnectedServiceQuotaLifecycleTransition = Readonly<{
 export type ConnectedServiceQuotaLifecycleListener = (
   transition: ConnectedServiceQuotaLifecycleTransition,
 ) => void | Promise<void>;
+export type ConnectedServiceUsageSnapshotTransition = Readonly<{
+  phase: 'observed';
+  serviceId: ConnectedAccountServiceKey;
+  profileId: string;
+  previous: ProviderAccountUsageSnapshotV1 | null;
+  snapshot: ProviderAccountUsageSnapshotV1;
+}>;
 
 function buildResolvedSelectionProfilesByServiceId(
   env: Readonly<Record<string, string | undefined>> | undefined,
@@ -1061,6 +1067,7 @@ export class ConnectedServiceQuotasCoordinator {
   private readonly liveIdentityProbeUnsupportedSessionIds = new Set<string>();
   private readonly quotaLifecycleStateByGroupKey = new Map<string, ConnectedServiceAuthGroupQuotaLifecycleState>();
   private readonly onQuotaLifecycleTransition: ConnectedServiceQuotaLifecycleListener | null;
+  private readonly onAccountUsageSnapshotAccepted: ((transition: ConnectedServiceUsageSnapshotTransition) => void | Promise<void>) | null;
   private readonly onAutomaticQuotaResetConsumed: ((event: AutomaticQuotaResetConsumedEvent) => Promise<void>) | null;
   private readonly recoveryCreditConsumeResultsByKey = new Map<string, ConnectedServiceQuotaRecoveryCreditConsumeResult>();
   private readonly recoveryCreditConsumeInFlightByKey = new Map<string, Promise<ConnectedServiceQuotaRecoveryCreditConsumeResult>>();
@@ -1119,6 +1126,7 @@ export class ConnectedServiceQuotasCoordinator {
     quotaPersistenceMaxConsecutiveFailures?: number;
     quotaLifecycleFreshnessMs?: number;
     onQuotaLifecycleTransition?: ConnectedServiceQuotaLifecycleListener | null;
+    onAccountUsageSnapshotAccepted?: (transition: ConnectedServiceUsageSnapshotTransition) => void | Promise<void>;
     onAutomaticQuotaResetConsumed?: (event: AutomaticQuotaResetConsumedEvent) => Promise<void>;
     runtimeRegistry?: ConnectedServiceRuntimeRegistry;
     qualifiedConnectedAccountRuntime?:
@@ -1216,6 +1224,7 @@ export class ConnectedServiceQuotasCoordinator {
         ? Math.max(0, Math.trunc(params.quotaLifecycleFreshnessMs))
         : this.quotaPersistenceMinFreshnessMs;
     this.onQuotaLifecycleTransition = params.onQuotaLifecycleTransition ?? null;
+    this.onAccountUsageSnapshotAccepted = params.onAccountUsageSnapshotAccepted ?? null;
     this.onAutomaticQuotaResetConsumed = params.onAutomaticQuotaResetConsumed ?? null;
     this.runtimeRegistry = params.runtimeRegistry ?? new ConnectedServiceRuntimeRegistry();
     this.qualifiedConnectedAccountRuntime =
@@ -1729,6 +1738,7 @@ export class ConnectedServiceQuotasCoordinator {
       sourceProviderAccountId,
       recordKey: profileSnapshot.recordKey,
     });
+    const previousProfileSnapshot = store.resolveRecordId(profileSnapshot.recordId);
     const profileRecord = store.recordSnapshot(profileSnapshot, {
       sources: canPersistSourceLinks
         ? [{
@@ -1740,6 +1750,10 @@ export class ConnectedServiceQuotasCoordinator {
     });
     effectiveMutationRecorded ||= isProviderAccountUsageStoreMutationAccepted(profileRecord);
     latest = store.resolveRecordId(profileRecord.recordId) ?? profileSnapshot;
+    if (profileRecord.snapshotAdvanced && !input.localOnly && this.onAccountUsageSnapshotAccepted) {
+      await this.onAccountUsageSnapshotAccepted({ phase: 'observed', serviceId: sourceServiceId,
+        profileId: input.profileId, previous: previousProfileSnapshot, snapshot: latest });
+    }
 
     for (const groupId of displayOnlyGroupIds) {
       const groupSnapshot = profileSnapshot;
@@ -2352,14 +2366,13 @@ export class ConnectedServiceQuotasCoordinator {
             });
           }
           if (!consumed.basis.isCurrent()) return { ...unavailable('stale_basis'), receipt };
-          const refreshed = await runtime.establishedRuntimeOwner.invokeWithReceipt({
-            account: profile.ref,
-            operation: { kind: 'quota' },
+          const refreshed = await this.invokeQualifiedAccountQuota({
+            profile, accountMode,
             expectedCredentialRevision: consumed.basis.credentialRevision,
             signal: controller.signal,
           });
           controller.signal.throwIfAborted();
-          if (!refreshed.result || !refreshed.basis.isCurrent()) return { ...unavailable('refresh_unavailable'), receipt };
+          if (!refreshed?.result || !refreshed.basis.isCurrent()) return { ...unavailable('refresh_unavailable'), receipt };
           const snapshot = buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
             profile, quota: refreshed.result, staleAfterMs: this.quotaPersistenceMinFreshnessMs,
           });
@@ -3653,17 +3666,11 @@ export class ConnectedServiceQuotasCoordinator {
   private async shouldRunSoftSwitchForTarget(target: ActiveGroupQuotaSwitchTarget): Promise<boolean> {
     const guard = this.predictiveSwitchGuard;
     if (!guard) return true;
-    // The retained predictive guard is a legacy scalar-service policy owner, so reverse-project
-    // the qualified service key immediately before that optional guard only. A service without
-    // a legacy scalar identity has no legacy guard to obey and proceeds through the canonical
-    // switch owner instead of failing closed.
-    const legacyServiceId = resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(target.serviceId);
-    if (!legacyServiceId) return true;
     let result: PredictiveSwitchGuardResult;
     try {
       result = await guard({
         sessionId: target.sessionId,
-        serviceId: legacyServiceId,
+        serviceId: target.serviceId,
         groupId: target.groupId,
         activeProfileId: target.activeProfileId,
         reason: 'soft_threshold',
@@ -4423,6 +4430,8 @@ export class ConnectedServiceQuotasCoordinator {
       if (!service) return incomplete(0, 'probe_unavailable');
       const accountUsageStore = this.accountUsageStore;
       if (!runtime?.listGroupQuotaTargets || !accountUsageStore) return incomplete(0, 'probe_unavailable');
+      const accountMode = await resolveConnectedServiceAccountMode(this.api);
+      if (accountMode === 'unknown') return incomplete(0, 'probe_unavailable');
       controller.signal.throwIfAborted();
       const profiles = await runtime.listGroupQuotaTargets({
         service,
@@ -4446,13 +4455,12 @@ export class ConnectedServiceQuotasCoordinator {
             continue;
           }
           try {
-            const invocation = await runtime.establishedRuntimeOwner.invokeWithReceipt({
-              account: profile.ref,
-              operation: Object.freeze({ kind: 'quota' as const }),
+            const invocation = await this.invokeQualifiedAccountQuota({
+              profile, accountMode,
               signal: controller.signal,
             });
             controller.signal.throwIfAborted();
-            if (!invocation.result || !invocation.basis.isCurrent()) continue;
+            if (!invocation?.result || !invocation.basis.isCurrent()) continue;
             const snapshot = buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
               profile,
               quota: invocation.result,
@@ -4550,16 +4558,15 @@ export class ConnectedServiceQuotasCoordinator {
     accountMode: 'e2ee' | 'plain';
     profile: QualifiedConnectedAccountProfileV4;
     snapshot: ProviderAccountUsageSnapshotV1;
-    basis: Awaited<
-      ReturnType<
-        QualifiedConnectedAccountEstablishedRuntimeOwner['invokeWithReceipt']
-      >
-    >['basis'];
+    basis: Pick<QualifiedConnectedAccountEstablishedInvocationBasis,
+      'credentialRevision' | 'credentialConfigurationRevision'> & Readonly<{
+        isCurrent(): boolean | Promise<boolean>;
+      }>;
   }>): Promise<boolean> {
     const runtime = this.qualifiedConnectedAccountRuntime;
     if (
       !runtime
-      || !input.basis.isCurrent()
+      || !await input.basis.isCurrent()
       || !this.shouldRunQualifiedQuotaOperation(
         input.profile,
         'provider_account_usage_write',
@@ -4593,7 +4600,11 @@ export class ConnectedServiceQuotasCoordinator {
       payloadMode: input.accountMode === 'plain'
         ? 'plain_json_v1' as const
         : 'sealed_account_scoped_v1' as const,
-      status: snapshot.meters.length > 0
+      status: snapshot.state === 'error_last_known_good'
+        ? 'error' as const
+        : snapshot.state === 'not_loaded'
+        ? 'unavailable' as const
+        : snapshot.meters.length > 0
         && snapshot.meters.every(
           (meter) => meter.status === 'unavailable',
         )
@@ -4627,7 +4638,7 @@ export class ConnectedServiceQuotasCoordinator {
       payload: write,
       payloadBytes: Buffer.byteLength(JSON.stringify(write), 'utf8'),
       run: async (payload) => {
-        if (!input.basis.isCurrent()) {
+        if (!await input.basis.isCurrent()) {
           throw new Error(
             'Qualified Connected Account quota basis is no longer current',
           );
@@ -4636,7 +4647,7 @@ export class ConnectedServiceQuotasCoordinator {
           token: this.credentials.token,
           write: payload,
         });
-        if (!input.basis.isCurrent()) {
+        if (!await input.basis.isCurrent()) {
           throw new Error(
             'Qualified Connected Account quota generation changed during persistence',
           );
@@ -4645,6 +4656,117 @@ export class ConnectedServiceQuotasCoordinator {
       },
     });
     return outcome.status === 'written';
+  }
+
+  private buildUnloadedQualifiedAccountQuotaSnapshot(profile: QualifiedConnectedAccountProfileV4) {
+    return { ...buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
+      profile, quota: { observedAtMs: 0, limits: [] },
+      staleAfterMs: this.quotaPersistenceMinFreshnessMs,
+    }), state: 'not_loaded' as const, confidence: 'unknown' as const };
+  }
+
+  /** Make the first user Refresh addressable without invoking provider quota work. */
+  async initializeQualifiedAccountQuotaSource(input: Readonly<{
+    account: QualifiedConnectedAccountRef;
+    credentialRevision: string;
+    configurationRevision: string | null;
+    accountMode: 'plain' | 'e2ee';
+  }>): Promise<void> {
+    const runtime = this.qualifiedConnectedAccountRuntime;
+    if (!runtime) return;
+    if (!runtime.listAccounts) throw new Error('Qualified quota source inventory is unavailable');
+    const profiles = await runtime.listAccounts({ service: input.account.service });
+    const profile = profiles.find((candidate) => (
+      matchesQualifiedService(candidate.ref.service, input.account.service)
+      && candidate.ref.accountId === input.account.accountId
+      && candidate.credentialRevision === input.credentialRevision
+      && candidate.configurationRevision === input.configurationRevision
+      && candidate.status === 'connected' && candidate.configurationReady
+    ));
+    if (!profile || !this.shouldRunQualifiedQuotaOperation(profile, 'quota_read')
+      || !this.shouldRunQualifiedQuotaOperation(profile, 'provider_account_usage_write')) return;
+    const basis = await runtime.establishedRuntimeOwner.readQuotaSourceSnapshot(input);
+    if (!basis || !await basis.isCurrent()) return;
+    const existing = await this.readQualifiedAccountQuota(profile);
+    if (existing.response) return;
+    if (!await this.persistQualifiedConnectedAccountQuota({
+      accountMode: input.accountMode, profile,
+      snapshot: this.buildUnloadedQualifiedAccountQuotaSnapshot(profile), basis,
+    })) throw new Error('Qualified quota source could not be initialized');
+  }
+
+  private async readQualifiedAccountQuota(profile: QualifiedConnectedAccountProfileV4) {
+    const readQuota = this.qualifiedConnectedAccountRuntime?.readQuota ?? readQualifiedConnectedAccountQuotaV4;
+    const response = await readQuota({ token: this.credentials.token, ref: profile.ref });
+    const material = response?.content.t === 'encrypted'
+      ? requireQuotaCredentialOpenMaterial(this.resolveCredentialOpenMaterial())
+      : this.resolveCredentialOpenMaterial();
+    const snapshot = response ? openQualifiedConnectedAccountQuotaResponseV4({
+      response, expectedRef: profile.ref, material,
+    }) : null;
+    return { response, snapshot };
+  }
+
+  /** All qualified quota producers share admission, source bootstrap and failure publication. */
+  private async invokeQualifiedAccountQuota(input: Readonly<{
+    profile: QualifiedConnectedAccountProfileV4;
+    accountMode: 'plain' | 'e2ee';
+    previousSnapshot?: ProviderAccountUsageSnapshotV1 | null;
+    expectedCredentialRevision?: string;
+    signal?: AbortSignal;
+  }>) {
+    const runtime = this.qualifiedConnectedAccountRuntime;
+    if (!runtime) return null;
+    const key = `qualified:${qualifiedAccountQuotaKey(input.profile.ref)}`;
+    const retry = this.failureStateByBindingKey.get(key);
+    if (retry && this.now() < retry.nextAllowedAt) return null;
+    const previous = input.previousSnapshot === undefined
+      ? (await this.readQualifiedAccountQuota(input.profile)).snapshot
+      : null;
+    const previousSnapshot = input.previousSnapshot === undefined
+      ? previous && buildProviderAccountUsageSnapshotFromQualifiedQuotaRow({ ref: input.profile.ref, quota: previous })
+      : input.previousSnapshot;
+    const empty = this.buildUnloadedQualifiedAccountQuotaSnapshot(input.profile);
+    const lastKnown = previousSnapshot?.recordId === empty.recordId ? previousSnapshot : empty;
+    let admittedBasis: Pick<QualifiedConnectedAccountEstablishedInvocationBasis,
+      'credentialRevision' | 'credentialConfigurationRevision' | 'isCurrent'> | undefined;
+    try {
+      const invocation = await runtime.establishedRuntimeOwner.invokeWithReceipt({
+        account: input.profile.ref, operation: { kind: 'quota' as const },
+        expectedCredentialRevision: input.expectedCredentialRevision, signal: input.signal,
+        beforeInvoke: async (basis) => {
+          if (!previousSnapshot && !await this.persistQualifiedConnectedAccountQuota({
+            accountMode: input.accountMode, profile: input.profile, snapshot: empty, basis,
+          })) throw new Error('Qualified quota source could not be initialized');
+          admittedBasis = basis;
+        },
+      });
+      if (invocation.result && invocation.basis.isCurrent()) this.failureStateByBindingKey.delete(key);
+      return invocation;
+    } catch (error) {
+      if (input.signal?.aborted || !admittedBasis?.isCurrent()) throw error;
+      const now = this.now();
+      this.applyFailureBackoff({ now, key, error });
+      const failure = isRecord(error) ? error : null;
+      const status = providerHttpStatusForHealth(failure?.status);
+      const code = failure?.quotaFetchErrorCode;
+      const safeCode = typeof code === 'string'
+        && ['auth_failure', 'missing_auth', 'network', 'malformed', 'provider_backoff'].includes(code)
+        ? code : undefined;
+      const snapshot: ProviderAccountUsageSnapshotV1 = { ...lastKnown, state: 'error_last_known_good', diagnostics: [{
+        kind: 'provider_http', ...(safeCode ? { code: safeCode } : {}),
+        ...(status === undefined ? {} : { status }), observedAtMs: now,
+        retryAtMs: this.failureStateByBindingKey.get(key)?.nextAllowedAt,
+      }] };
+      try {
+        await this.persistQualifiedConnectedAccountQuota({
+          accountMode: input.accountMode, profile: input.profile, snapshot, basis: admittedBasis,
+        });
+      } catch {
+        // Keep the original provider failure and its existing retry lifecycle if Home is unreachable.
+      }
+      throw error;
+    }
   }
 
   /**
@@ -4730,7 +4852,12 @@ export class ConnectedServiceQuotasCoordinator {
         });
       }
     }
-    store.recordSnapshot(input.snapshot, { sources });
+    const previous = store.resolveRecordId(input.snapshot.recordId);
+    const mutation = store.recordSnapshot(input.snapshot, { sources });
+    if (input.emitLiveLifecycle && mutation.snapshotAdvanced && this.onAccountUsageSnapshotAccepted) {
+      await this.onAccountUsageSnapshotAccepted({ phase: 'observed', serviceId, profileId: accountId,
+        previous, snapshot: store.resolveRecordId(mutation.recordId) ?? input.snapshot });
+    }
     if (!accountId) return;
 
     // Currentness gate before ANY lifecycle/switch side effect: all async group/account reads
@@ -4890,8 +5017,6 @@ export class ConnectedServiceQuotasCoordinator {
       }
     }
 
-    const readQuota = runtime.readQuota
-      ?? readQualifiedConnectedAccountQuotaV4;
     const switchEvaluationTargets: ActiveGroupQuotaSwitchTarget[] = [];
     for (const profile of profiles) {
       if (!isConnectedServiceCredentialHealthStatusUsable(profile.status)) {
@@ -4908,26 +5033,12 @@ export class ConnectedServiceQuotasCoordinator {
         )) {
           continue;
         }
-        const existing = await readQuota({
-          token: this.credentials.token,
-          ref: profile.ref,
-        });
-        const existingMaterial =
-          existing?.content.t === 'encrypted'
-            ? requireQuotaCredentialOpenMaterial(
-                this.resolveCredentialOpenMaterial(),
-              )
-            : this.resolveCredentialOpenMaterial();
-        const existingSnapshot = existing
-          ? openQualifiedConnectedAccountQuotaResponseV4({
-              response: existing,
-              expectedRef: profile.ref,
-              material: existingMaterial,
-            })
-          : null;
+        const { response: existing, snapshot: existingSnapshot } = await this.readQualifiedAccountQuota(profile);
         if (
           existing
           && existingSnapshot
+          && existing.metadata.status !== 'error'
+          && existing.metadata.fetchedAt > 0
           && isConnectedServiceQuotaObservationFresh({
             observedAtMs: existing.metadata.fetchedAt,
             nowMs: input.now,
@@ -4968,11 +5079,13 @@ export class ConnectedServiceQuotasCoordinator {
           continue;
         }
         const invocation =
-          await runtime.establishedRuntimeOwner.invokeWithReceipt({
-            account: profile.ref,
-            operation: Object.freeze({ kind: 'quota' as const }),
+          await this.invokeQualifiedAccountQuota({
+            profile, accountMode: input.accountMode,
+            previousSnapshot: existingSnapshot ? buildProviderAccountUsageSnapshotFromQualifiedQuotaRow({
+              ref: profile.ref, quota: existingSnapshot,
+            }) : null,
           });
-        if (!invocation.result || !invocation.basis.isCurrent()) continue;
+        if (!invocation?.result || !invocation.basis.isCurrent()) continue;
         const incomingSnapshot =
           buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
             profile,
@@ -5008,11 +5121,9 @@ export class ConnectedServiceQuotasCoordinator {
         });
         this.failureStateByBindingKey.delete(key);
       } catch (error) {
-        this.applyFailureBackoff({
-          now: input.now,
-          key,
-          error,
-        });
+        if ((this.failureStateByBindingKey.get(key)?.nextAllowedAt ?? 0) <= input.now) {
+          this.applyFailureBackoff({ now: input.now, key, error });
+        }
       }
     }
 

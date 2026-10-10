@@ -83,7 +83,12 @@ export type ConnectedServiceAuthGroupCandidateSelection = Readonly<{
   selected: ConnectedServiceAuthGroupCandidate | null;
   reason: 'selected' | 'manual_strategy' | 'no_eligible_members';
   excluded: ReadonlyArray<ConnectedServiceAuthGroupCandidateExclusion>;
-  decisionTrace: ConnectedServiceAuthGroupCandidateDecisionTrace;
+  decisionTrace: ConnectedServiceAuthGroupCandidateDecisionTrace & Readonly<{
+    strategy: ConnectedServiceAuthGroupPolicyV1['strategy'];
+    selectionBasis: 'manual_strategy' | 'no_eligible_members' | 'preference' | 'primary_restore' | 'active_stickiness' | 'soft_switch';
+    sticky: boolean;
+    orderedEligibleCandidates: ReadonlyArray<ConnectedServiceAuthGroupCandidate>;
+  }>;
 }>;
 
 export type ConnectedServiceAuthGroupCandidateDecisionTrace = Readonly<{
@@ -720,6 +725,10 @@ export function selectConnectedServiceAuthGroupCandidate(params: Readonly<{
       decisionTrace: {
         activeProfileId: params.activeProfileId,
         reason: 'manual_strategy',
+        strategy: params.policy.strategy,
+        selectionBasis: 'manual_strategy',
+        sticky: false,
+        orderedEligibleCandidates: [],
         candidates: [],
       },
     };
@@ -872,6 +881,8 @@ export function selectConnectedServiceAuthGroupCandidate(params: Readonly<{
 
   const selected = primaryRestorePreferred ?? softSwitchPreferred ?? candidates[0] ?? null;
   const reason = selected ? 'selected' : 'no_eligible_members';
+  const sticky = !primaryRestorePreferred && softSwitchPreferred !== null
+    && softSwitchPreferred.profileId === params.activeProfileId;
   return {
     selected,
     reason,
@@ -879,6 +890,13 @@ export function selectConnectedServiceAuthGroupCandidate(params: Readonly<{
     decisionTrace: {
       activeProfileId: params.activeProfileId,
       reason,
+      strategy: params.policy.strategy,
+      selectionBasis: !selected ? 'no_eligible_members'
+        : primaryRestorePreferred ? 'primary_restore'
+          : sticky ? 'active_stickiness'
+            : softSwitchPreferred ? 'soft_switch' : 'preference',
+      sticky,
+      orderedEligibleCandidates: candidates,
       candidates: decisionTraceCandidates.map((candidate) => (
         selected && candidate.profileId === selected.profileId
           ? { ...candidate, decision: 'selected' }

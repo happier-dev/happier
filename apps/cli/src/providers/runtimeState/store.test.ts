@@ -48,6 +48,32 @@ function fileWithEndpoint(record = endpointRecord('responses', 1)): ProviderRunt
 }
 
 describe('provider runtime-state store', () => {
+  it('reads another store’s committed changes and deletions while retaining its own transient activity', async () => {
+    const happyHomeDir = await tempHome();
+    const reader = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine_a' });
+    const writer = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine_a' });
+    await reader.read();
+    await writer.update(() => fileWithEndpoint());
+    await expect(reader.read()).resolves.toEqual(fileWithEndpoint());
+    await reader.updateTransientEndpointHealth((records) => records.map((record) => ({
+      ...record, state: { ...record.state, activity: 'checking' as const },
+    })));
+    const changed = fileWithEndpoint({
+      ...endpointRecord('responses', 2), state: { status: 'available', activity: 'idle', observedAt: 2 },
+    });
+    await writer.update(() => changed);
+    await expect(reader.read()).resolves.toEqual({
+      ...changed, endpointHealth: [{ ...changed.endpointHealth[0], state: {
+        ...changed.endpointHealth[0]!.state, activity: 'checking',
+      } }],
+    });
+    await reader.updateTransientEndpointHealth((records) => records.map((record) => ({
+      ...record, state: { ...record.state, activity: 'idle' as const },
+    })));
+    await writer.update((state) => ({ ...state, endpointHealth: [] }));
+    await expect(reader.read()).resolves.toMatchObject({ endpointHealth: [] });
+  });
+
   it('uses the fixed private path, creates missing state, and persists mode 0600', async () => {
     const happyHomeDir = await tempHome();
     const diagnostics: unknown[] = [];

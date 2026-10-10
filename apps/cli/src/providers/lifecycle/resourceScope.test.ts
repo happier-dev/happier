@@ -3,6 +3,22 @@ import { describe, expect, it, vi } from 'vitest';
 import { createProviderLaunchResourceScope } from './resourceScope';
 
 describe('Provider launch resource scope', () => {
+  it.each(['release', 'retire', 'transferred'] as const)('G1 retries only failed cleanup after %s settlement', async mode => {
+    const events: string[] = [];
+    let unavailable = true;
+    const scope = createProviderLaunchResourceScope();
+    scope.register(() => { events.push('settled'); });
+    scope.register(() => {
+      events.push('settlement');
+      if (unavailable) throw new Error('gateway settlement unavailable');
+    });
+    const cleanup = mode === 'transferred' ? scope.transfer()! : () => scope[mode]();
+    await expect(cleanup()).rejects.toThrow('gateway settlement unavailable');
+    unavailable = false;
+    await cleanup();
+    await cleanup();
+    expect(events).toEqual(['settlement', 'settled', 'settlement']);
+  });
   it('releases registered resources in reverse order exactly once', async () => {
     const events: string[] = [];
     const scope = createProviderLaunchResourceScope();

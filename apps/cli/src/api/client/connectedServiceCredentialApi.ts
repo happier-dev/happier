@@ -25,6 +25,13 @@ const ACCOUNT_ENCRYPTION_MODE_CACHE_TTL_MS = 10_000;
 
 export type ConnectedServiceAccountEncryptionMode = 'e2ee' | 'plain' | 'unknown';
 
+export type AccountEncryptionModeReadOptions = Readonly<{
+  refresh?: boolean;
+  signal?: AbortSignal;
+  /** Registration must preserve transport failures for its existing readiness wake owner. */
+  throwOnTransportError?: boolean;
+}>;
+
 export type ConnectedServiceProfileHealthStatus =
   | 'connected'
   | 'refreshing'
@@ -60,7 +67,7 @@ export type ConnectedServiceCredentialSealedResponse = Readonly<{
 
 export type ConnectedServiceCredentialApi = Readonly<{
   getAccountEncryptionCurrentness(): Promise<AccountEncryptionCurrentnessResponse>;
-  getAccountEncryptionMode(options?: Readonly<{ refresh?: boolean; signal?: AbortSignal }>): Promise<ConnectedServiceAccountEncryptionMode>;
+  getAccountEncryptionMode(options?: AccountEncryptionModeReadOptions): Promise<ConnectedServiceAccountEncryptionMode>;
   getConnectedServiceCredentialPlain(params: Readonly<{
     serviceId: ConnectedServiceId;
     profileId: string;
@@ -462,7 +469,16 @@ export class ConnectedServiceCredentialHttpClient implements ConnectedServiceCre
     return { serviceId: serviceIdParsed.data, profiles: profilesParsed.data };
   }
 
-  async getAccountEncryptionMode(options?: Readonly<{ refresh?: boolean; signal?: AbortSignal }>): Promise<ConnectedServiceAccountEncryptionMode> {
+  async getAccountEncryptionMode(options?: AccountEncryptionModeReadOptions): Promise<ConnectedServiceAccountEncryptionMode> {
+    try {
+      return await this.readAccountEncryptionMode(options);
+    } catch (error) {
+      if (options?.signal?.aborted || options?.throwOnTransportError) throw error;
+      return 'unknown';
+    }
+  }
+
+  private async readAccountEncryptionMode(options?: AccountEncryptionModeReadOptions): Promise<ConnectedServiceAccountEncryptionMode> {
     if (options?.signal) return await this.fetchAccountEncryptionModeFromServer(options.signal);
     const cached = this.accountEncryptionModeCache;
     const nowMs = Date.now();
@@ -506,7 +522,7 @@ export class ConnectedServiceCredentialHttpClient implements ConnectedServiceCre
         operation: 'Failed to get account encryption mode',
         error,
       });
-      return 'unknown';
+      throw error;
     }
   }
 

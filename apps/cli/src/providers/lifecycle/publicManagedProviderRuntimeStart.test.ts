@@ -89,6 +89,34 @@ function resolvedRuntime(
 }
 
 describe('public managed Provider runtime start coordinator', () => {
+  it('G1 retains shared consumer cleanup through session disposal without process adoption', async () => {
+    const dispose = vi.fn(async () => undefined);
+    const service = managedServiceHandle(dispose);
+    const runtime = resolvedRuntime({ start: async () => ({
+      service,
+      endpoints: [{ endpointTemplateId: 'responses', endpoint: { kind: 'servicePath', path: '/v1' } }],
+    }) });
+    const scope = createProviderLaunchResourceScope();
+    const result = await startPublicManagedProviderRuntime({
+      identity: { pluginId: 'cliproxyapi', localId: 'cliproxyapi' },
+      request: { reason: 'sessionDemand', connectionId: 'connection-1', connectionRevision: 1, endpointTemplateIds: ['responses'] },
+      acquireRuntime: async () => runtime,
+      connectedAccounts: connectedAccounts(),
+      custody: {
+        lifetime: 'sharedConsumer',
+        managedServices: managedServices(),
+        projectEndpointAccess: async () => ({ access: 'consumer-access', isCurrent: () => true }),
+      },
+      isAuthorizationCurrent: () => true,
+      revalidateAuthorization: async () => true,
+      signal: new AbortController().signal,
+      launchResourceScope: scope,
+    });
+    expect(result).toMatchObject({ ok: true, access: 'consumer-access' });
+    expect(dispose).not.toHaveBeenCalled();
+    await scope.transfer()?.();
+    expect(dispose).toHaveBeenCalledOnce();
+  });
   it('snapshots the authorized request before invoking plugin code', async () => {
     const dispose = vi.fn(async () => undefined);
     const service = managedServiceHandle(dispose);

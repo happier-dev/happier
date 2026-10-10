@@ -46,6 +46,7 @@ const teamsPage = TeamsPageV1Schema.parse({
     viewerRole: 'member',
     capabilities: { ...NO_TEAM_CAPABILITIES_V1, viewTeam: true },
     admission: { historyChoice: { admin: 'choice', member: 'choice', guest: 'hidden' } },
+    counts: null,
   }],
   nextCursor: null,
 });

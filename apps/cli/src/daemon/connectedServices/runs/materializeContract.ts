@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { ConnectedServiceBindingsV2IngressSchema, ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { ExecutionRunConnectedServicesLaunchV1Schema } from '@happier-dev/protocol/daemon/executionRuns';
 import type { ExecutionRunConnectedServicesLaunchV1 } from '@happier-dev/protocol';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from '../runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
@@ -25,6 +25,21 @@ export const CONNECTED_SERVICE_RUN_RELEASE_PATH = '/connected-service-run/releas
 export const CONNECTED_SERVICE_RUN_GENERATION_CURRENT_PATH = '/connected-service-run/generation-current';
 export const CONNECTED_SERVICE_RUN_REJECTED_START_PATH = '/connected-service-run/rejected-start';
 export const CONNECTED_SERVICE_RUN_REFRESH_RUNTIME_AUTH_PATH = '/connected-service-run/refresh-runtime-auth';
+export const CONNECTED_SERVICE_APPLIED_PARENT_SELECTION_PATH = '/connected-service-run/applied-parent-selection';
+export const ConnectedServiceAppliedParentSelectionRequestSchema = z.object({
+    sessionId: z.string().trim().min(1), runnerPid: z.number().int().positive(), agentId: z.string().trim().min(1),
+    /** Startup-only proof from the accepted native open, never a read-time fallback. */
+    initialEmpty: z.literal(true).optional(),
+}).strict();
+export const ConnectedServiceAppliedParentSelectionResultSchema = z.union([
+    z.object({ status: z.literal('unavailable') }).strict(),
+    z.object({ status: z.literal('applied'), connectedServices: ConnectedServiceBindingsV2Schema }).strict(),
+]);
+export type ConnectedServiceAppliedParentSelectionReader = (
+    input: z.infer<typeof ConnectedServiceAppliedParentSelectionRequestSchema>,
+) => z.infer<typeof ConnectedServiceAppliedParentSelectionResultSchema> | Promise<z.infer<typeof ConnectedServiceAppliedParentSelectionResultSchema>>;
+export type ConnectedServiceAppliedParentSelectionRequest = z.infer<typeof ConnectedServiceAppliedParentSelectionRequestSchema>;
+export type ConnectedServiceAppliedParentSelectionResult = z.infer<typeof ConnectedServiceAppliedParentSelectionResultSchema>;
 
 export const ConnectedServiceRunMaterializeRequestSchema = z.object({
     runId: z.string().trim().min(1),

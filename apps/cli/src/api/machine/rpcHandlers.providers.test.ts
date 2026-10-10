@@ -15,6 +15,7 @@ import type {
 } from '@happier-dev/protocol/rpc';
 
 import { registerMachineProviderRpcHandlers } from './rpcHandlers.providers';
+import { createLegacyProfileMigrationRpcServices } from '@/providers/migrations/rpc';
 import { createProviderProbeScheduler } from '@/providers/probe/scheduler';
 import type { ProviderCatalogRefreshResult } from '@/providers/probe/catalog';
 import type { ProviderProbeWaiterLifetime } from '@/providers/probe/rpc';
@@ -26,6 +27,8 @@ function harness(providersEnabled: boolean | (() => boolean) = true) {
     registerHandler(method: string, handler: (raw: unknown, context?: RpcHandlerContext) => Promise<unknown>) { handlers.set(method, handler); },
   } as never;
   const services = {
+    // The new operation remains the real source owner, not a test-local translator.
+    prepareProfileMigrationSource: createLegacyProfileMigrationRpcServices({ credentials: { token: 'boundary-token' } }).prepareProfileMigrationSource,
     probe: vi.fn<(
       input: Readonly<{ connectionId: string; machineId: string }>,
       waiter?: Readonly<{ signal?: AbortSignal }>,

@@ -1,6 +1,7 @@
 import { isModelRefGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { CallerInputConstraintsV1, ModelSelectionApplyPolicy, ProviderBoundModelRef, ProviderRuntimeBindingBasisV1, SessionModelTransitionResultV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
+import type { SessionModelMutationExpectedV1, SessionModelMutationScopeV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
 import { projectPluginFailureMessage } from '@/plugins/runtime/lifecycle/utils';
 import {
@@ -16,6 +17,10 @@ export type AuthorizedSessionModelTransitionTarget = Readonly<{
   runtimeBindingBasis: ProviderRuntimeBindingBasisV1 | null;
   revalidateBeforeEffect: () => Promise<boolean>;
 }>;
+
+export type SessionAppliedModelTransitionTarget = Readonly<
+  { status: 'unavailable' } | { status: 'applied'; target: AuthorizedSessionModelTransitionTarget }
+>;
 
 export type SessionModelTransitionApplyResult =
   | Readonly<{ status: 'applied' }>
@@ -63,6 +68,10 @@ export function mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult
 
 type Proposal = {
   callerInputConstraints?: CallerInputConstraintsV1;
+  captureBefore?: boolean;
+  expected?: SessionModelMutationExpectedV1;
+  capturedBefore?: ProviderBoundModelRef;
+  committedIntentUpdatedAt?: number;
   selection: ProviderBoundModelRef;
   source: 'command' | 'metadata' | 'prompt';
   runWithActiveSelection: ((
@@ -206,6 +215,7 @@ function reconciliationFailure(
 export function createSessionModelTransitionCoordinator(params: Readonly<{
   runId: string;
   agentTargetKey: string;
+  ownerScope?: SessionModelMutationScopeV1;
   initialActiveTarget: AuthorizedSessionModelTransitionTarget;
   isCurrentRun: () => boolean;
   checkCurrentPublisherAuthority: () => Promise<boolean>;
@@ -215,6 +225,8 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
   ) => Promise<AuthorizedSessionModelTransitionTarget>;
   publishIntent: (
     selection: ProviderBoundModelRef,
+    expected?: Readonly<{ selection: ProviderBoundModelRef; updatedAt: number }>,
+    requiredBefore?: ProviderBoundModelRef,
   ) => Promise<Readonly<{ accepted: boolean; updatedAt: number }>>;
   applyRuntime: (
     target: AuthorizedSessionModelTransitionTarget,
@@ -258,6 +270,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     target: AuthorizedSessionModelTransitionTarget,
   ) => Promise<void>;
   readActiveTarget: () => AuthorizedSessionModelTransitionTarget;
+  readAppliedTarget: () => Promise<SessionAppliedModelTransitionTarget>;
   runWithStableActiveTarget: <T>(
     effect: (
       target: AuthorizedSessionModelTransitionTarget,
@@ -302,6 +315,24 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     !disposed
     && !publisherAuthorityUnavailable
     && params.isCurrentRun();
+
+  const hasAppliedTarget = (): boolean => accepting
+    && isCurrent()
+    && !reconciliationRequired
+    && runtimeObservedDriftModelId === null
+    && activeFenceEpochId === null
+    && current?.effectStarted !== true;
+
+  const readAppliedTarget = async (): Promise<SessionAppliedModelTransitionTarget> => {
+    if (!hasAppliedTarget()) return { status: 'unavailable' };
+    const target = activeTarget;
+    const result = await runWithCurrentPublisherPermit(async (): Promise<SessionAppliedModelTransitionTarget> => (
+      hasAppliedTarget() && activeTarget === target
+        ? { status: 'applied', target }
+        : { status: 'unavailable' }
+    ));
+    return result.status === 'completed' ? result.value : { status: 'unavailable' };
+  };
 
   const runWithCurrentPublisherPermit = async <T>(
     localEffect: () => Promise<T>,
@@ -783,6 +814,22 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       ));
       return;
     }
+    if (proposal.expected) {
+      const expected = proposal.expected;
+      const scope = params.ownerScope;
+      if (expected.owner !== 'active' || !scope || expected.runId !== params.runId
+        || expected.scope.serverId !== scope.serverId
+        || expected.scope.accountId !== scope.accountId
+        || expected.scope.sessionId !== scope.sessionId
+        || !sameSelection(expected.selection, activeTarget.selection)) {
+        await settleBeforeRuntimeEffect(proposal, failure('superseded', activeTarget.selection, proposal.selection));
+        return;
+      }
+    }
+    if (proposal.captureBefore && !params.ownerScope) {
+      await settleBeforeRuntimeEffect(proposal, failure('unsupported', activeTarget.selection, proposal.selection, 'exact_model_mutation_scope_unavailable'));
+      return;
+    }
     let target: AuthorizedSessionModelTransitionTarget;
     try {
       target = await params.authorize(proposal.selection, proposal.callerInputConstraints);
@@ -817,6 +864,11 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       ));
       return;
     }
+    if (proposal.captureBefore && target.policy !== 'live') {
+      await settleBeforeRuntimeEffect(proposal, failure('unsupported', activeTarget.selection, proposal.selection, 'exact_model_mutation_requires_live_transition'));
+      return;
+    }
+    if (proposal.captureBefore) proposal.capturedBefore = activeTarget.selection;
 
     // Metadata proposals are observations of an intent that already won the
     // durable CAS. Republishing them would mint a newer timestamp and feed the
@@ -826,7 +878,11 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       // effect boundary. A newer proposal may still supersede this one; the
       // newer CAS runs afterward so accepted intent order remains preserved.
       try {
-        const publication = await params.publishIntent(proposal.selection);
+        const publication = proposal.expected || proposal.capturedBefore
+          ? await params.publishIntent(proposal.selection,
+            proposal.expected ? { selection: proposal.expected.selection, updatedAt: proposal.expected.updatedAt } : undefined,
+            proposal.capturedBefore)
+          : await params.publishIntent(proposal.selection);
         if (!publication.accepted) {
           await settleBeforeRuntimeEffect(proposal, failure(
             'superseded',
@@ -836,6 +892,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
           ));
           return;
         }
+        proposal.committedIntentUpdatedAt = publication.updatedAt;
       } catch (error) {
         if (await settleIfInterruptedBeforeRuntimeEffect(proposal)) return;
         await settleBeforeRuntimeEffect(proposal, failure(
@@ -851,7 +908,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       }
     }
     if (await settleIfInterruptedBeforeRuntimeEffect(proposal)) return;
-    if (pending) {
+    if (pending && !pending.captureBefore && !pending.expected) {
       proposal.superseded = true;
       await settleBeforeRuntimeEffect(proposal, failure(
         'superseded',
@@ -1821,6 +1878,8 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     context: Readonly<{
       source: Proposal['source'];
       callerInputConstraints?: CallerInputConstraintsV1;
+      captureBefore?: boolean;
+      expected?: SessionModelMutationExpectedV1;
       runWithActiveSelection?: NonNullable<Proposal['runWithActiveSelection']>;
     }>,
   ): Promise<SessionModelTransitionResultV1> => {
@@ -1872,6 +1931,8 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       || (
         runWithActiveSelection === null
         && proposal.runWithActiveSelection === null
+        && !context.captureBefore && !context.expected
+        && !proposal.captureBefore && !proposal.expected
       );
     if (
       current
@@ -1888,7 +1949,11 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     ) {
       return pending.promise;
     }
-    if (current && !current.effectStarted) {
+    const conditionalOrCapture = context.captureBefore || context.expected;
+    if (conditionalOrCapture && pending) {
+      return Promise.resolve(failure('superseded', activeTarget.selection, selection, 'model_mutation_owner_busy'));
+    }
+    if (current && !current.effectStarted && !conditionalOrCapture) {
       current.superseded = true;
     }
 
@@ -1900,12 +1965,20 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     });
     const proposal: Proposal = {
       ...(context.callerInputConstraints ? { callerInputConstraints: context.callerInputConstraints } : {}),
+      ...(context.captureBefore ? { captureBefore: true } : {}),
+      ...(context.expected ? { expected: context.expected } : {}),
       selection,
       source: context.source,
       runWithActiveSelection,
       effectStarted: false,
       superseded: false,
-      resolve,
+      resolve: (result) => {
+        if (result.ok && proposal.captureBefore && proposal.capturedBefore
+          && proposal.committedIntentUpdatedAt !== undefined && params.ownerScope) {
+          resolve({ ...result, reversal: { owner: 'active', scope: params.ownerScope, runId: params.runId,
+            before: proposal.capturedBefore, applied: result.activeSelection, updatedAt: proposal.committedIntentUpdatedAt } });
+        } else resolve(result);
+      },
       reject,
       promise,
     };
@@ -1960,6 +2033,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     submit,
     admitReplacementTarget,
     readActiveTarget: () => activeTarget,
+    readAppliedTarget,
     runWithStableActiveTarget,
     dispose,
   });

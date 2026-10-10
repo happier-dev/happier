@@ -1,4 +1,8 @@
 import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
+import { DaemonProviderModelProjectionResponseV1Schema, type DaemonProviderModelProjectionRequestV1, type DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc/providers';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol';
+import { createAccountConnectionModelProjectionRequest, projectProviderBrokerApplication } from '../broker/applicationProjection';
 import { createProviderManagedRuntimeDeclarationEqualityKeyV1, resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
 import { createProviderManagedProbeRequestFingerprintV1, createProviderProbeRequestFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
 import type { ProviderCatalogFingerprintV1, ProviderModelDescriptorV1, ProviderModelLoadStateV1, ProviderObservationAuthorizationFingerprintV1, ProviderRuntimeStateFileV1, ProviderSettingsV1, QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
@@ -29,7 +33,15 @@ export type ProviderRuntimeCatalogModelObservation = Readonly<{
 export type ProviderRuntimeCatalogSelectionObservation = Readonly<{
   model: ProviderModelDescriptorV1 | null;
   loadState: ProviderModelLoadStateV1;
+  additionalModels?: readonly ProviderModelDescriptorV1[];
 }>;
+
+/** Host-private exact Home/Account Machine RPC read; no credentials enter the
+ * catalog domain and the containing Provider operation owns cancellation. */
+export type ProviderRuntimeModelProjectionReader = (
+  request: DaemonProviderModelProjectionRequestV1,
+  signal: AbortSignal,
+) => Promise<DaemonProviderModelProjectionResponseV1>;
 
 type SelectProviderRuntimeCatalogModelInput = Readonly<{
   runtimeState: ProviderRuntimeStateFileV1;
@@ -38,6 +50,7 @@ type SelectProviderRuntimeCatalogModelInput = Readonly<{
   catalogFingerprint: ProviderCatalogFingerprintV1 | string;
   currentObservationAuthorizationFingerprints: ReadonlySet<string>;
   modelId: string;
+  additionalModelIds?: readonly string[];
 }>;
 
 export function selectProviderRuntimeCatalogSelectionObservation(
@@ -53,6 +66,7 @@ export function selectProviderRuntimeCatalogSelectionObservation(
   });
   if (!record || !('catalogObservationId' in record.state)) return null;
   const state = record.state;
+  const additionalModelIds = input.additionalModelIds;
   const model = state.snapshot.models.find((candidate) => candidate.id === input.modelId);
   const modelLoadState = state.snapshot.stale === false
     && model !== undefined
@@ -71,6 +85,14 @@ export function selectProviderRuntimeCatalogSelectionObservation(
         })
       : null,
     loadState: modelLoadState,
+    ...(additionalModelIds ? {
+      additionalModels: state.snapshot.models
+        .filter((candidate) => additionalModelIds.includes(candidate.id))
+        .map((candidate) => ProviderModelDescriptorV1Schema.parse({
+          ...candidate,
+          name: candidate.name ?? candidate.id,
+        })),
+    } : {}),
   };
 }
 
@@ -98,9 +120,12 @@ type ResolveProviderRuntimeCatalogModelInput = Readonly<{
   registry: ProviderContributionRegistryView;
   dnsEvidenceByEndpointUrl: ProviderEndpointDnsEvidence;
   localCandidateUrlsByConnectionId?: ResolveProviderSpawnAuthorizationInput['localCandidateUrlsByConnectionId'];
-  runtimeStateStore: Pick<ProviderRuntimeStateStore, 'read'>;
+  runtimeStateStore?: Pick<ProviderRuntimeStateStore, 'read'>;
   resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
   managedPurposeBindingSnapshot?: QualifiedConnectedAccountPurposeBindingsV1;
+  additionalModelIds?: readonly string[];
+  readModelProjection?: ProviderRuntimeModelProjectionReader;
+  signal?: AbortSignal;
 }>;
 
 export async function resolveProviderRuntimeCatalogSelectionObservation(
@@ -111,7 +136,7 @@ export async function resolveProviderRuntimeCatalogSelectionObservation(
   const resolution = resolveProviderConnectionForMachine({
     connectionId,
     machineId: input.machineId,
-    accountSettings: input.accountSettings,
+    providerSettings: input.providerSettings,
     registry: input.registry,
     dnsEvidenceByEndpointUrl: input.dnsEvidenceByEndpointUrl,
     ...(input.localCandidateUrlsByConnectionId
@@ -187,6 +212,50 @@ export async function resolveProviderRuntimeCatalogSelectionObservation(
         return null;
       }
     }
+    const placement = record.connection.gatewayPlacement;
+    if (placement?.kind === 'machine' && placement.machineId !== input.machineId) {
+      const unavailable = () => createProviderErrorV1('provider_endpoint_unavailable', {
+        connectionId, machineId: placement.machineId,
+      });
+      if (managedDeployment.managedRuntime.sharing !== 'connectionMachine'
+        || !input.readModelProjection || !input.signal) throw unavailable();
+      input.signal.throwIfAborted();
+      // The hub's canonical compatibility owner chooses the application. A
+      // probe endpoint protocol cannot choose an Agent binding protocol.
+      const response = DaemonProviderModelProjectionResponseV1Schema.parse(await input.readModelProjection(
+        createAccountConnectionModelProjectionRequest({ machineId: placement.machineId,
+          connectionId: record.connectionId, expectedConnectionSecurityFingerprint: record.connectionSecurityFingerprint,
+          agentTargetKey: input.selection.ref.agentTargetKey, refreshPolicy: 'current_only' }), input.signal,
+      ));
+      input.signal.throwIfAborted();
+      if (response.status === 'error') throw response.error;
+      if (response.agentTargetKey !== input.selection.ref.agentTargetKey) throw unavailable();
+      const group = response.groups.find(candidate => candidate.connectionId === connectionId
+        && candidate.sourceAuthority?.connectionSecurityFingerprint === record.connectionSecurityFingerprint
+        && pluginJsonValuesEqual(candidate.sourceAuthority.provider.identity, managedDeployment.implementationIdentity));
+      if (!group) throw unavailable();
+      if (!group.authorization.authorized) throw group.authorization.error;
+      const requestedIds = new Set([input.selection.ref.modelId, ...(input.additionalModelIds ?? [])]);
+      const selected = group.rows.filter(row => requestedIds.has(row.ref.modelId));
+      const primary = selected.find(row => row.ref.modelId === input.selection.ref.modelId);
+      if (!primary) throw createProviderErrorV1('provider_model_not_found', { connectionId, machineId: placement.machineId });
+      for (const row of selected) {
+        if (row.ref.agentTargetKey !== input.selection.ref.agentTargetKey || row.ref.providerConnectionId !== connectionId
+          || row.descriptor.id !== row.ref.modelId || row.catalog.stale || !row.application) throw unavailable();
+        if (row.compatibility.result.status === 'incompatible') {
+          throw createProviderErrorV1('provider_incompatible_with_agent', { connectionId, machineId: placement.machineId });
+        }
+        const application = projectProviderBrokerApplication({ connection: record,
+          agentTargetKey: input.selection.ref.agentTargetKey, protocol: row.compatibility.result.selectedProtocol,
+          expectedApplication: row.application });
+        if (!application || !pluginJsonValuesEqual(application, row.application)) throw unavailable();
+      }
+      return {
+        model: ProviderModelDescriptorV1Schema.parse(primary.descriptor), loadState: primary.loadState,
+        ...(input.additionalModelIds ? { additionalModels: selected.filter(row => input.additionalModelIds!.includes(row.ref.modelId))
+          .map(row => ProviderModelDescriptorV1Schema.parse(row.descriptor)) } : {}),
+      };
+    }
     const managedSources = endpointTemplates.map((endpointTemplate) => ({
       implementationIdentity: managedDeployment.implementationIdentity,
       managedRuntime: managedDeployment.managedRuntime,
@@ -196,6 +265,7 @@ export async function resolveProviderRuntimeCatalogSelectionObservation(
       sourceRegistryVersion,
       publicHeaders: endpointTemplate!.publicHeaders ?? {},
     } as const));
+    if (!input.runtimeStateStore) return null;
     const managedSourceByEndpointTemplateId = new Map(
       managedSources.map((source) => [source.endpointTemplateId, source] as const),
     );
@@ -250,9 +320,11 @@ export async function resolveProviderRuntimeCatalogSelectionObservation(
       catalogFingerprint,
       currentObservationAuthorizationFingerprints: currentAuthorizations,
       modelId: input.selection.ref.modelId,
+      ...(input.additionalModelIds ? { additionalModelIds: input.additionalModelIds } : {}),
     });
   }
 
+  if (!input.runtimeStateStore) return null;
   const requestFingerprints = catalog.probes.map((probe) => {
     const endpoint = record.endpoints.find((candidate) => candidate.endpointTemplateId === probe.endpointTemplateId);
     if (!endpoint) throw new TypeError('Provider catalog probe endpoint is absent from the resolved connection');
@@ -308,6 +380,7 @@ export async function resolveProviderRuntimeCatalogSelectionObservation(
     catalogFingerprint,
     currentObservationAuthorizationFingerprints: currentAuthorizations,
     modelId: input.selection.ref.modelId,
+    ...(input.additionalModelIds ? { additionalModelIds: input.additionalModelIds } : {}),
   });
 }
 

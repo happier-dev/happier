@@ -21,10 +21,11 @@ describe('managed Provider operation authority', () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-managed-provider-custody-'));
     roots.push(baseDir);
     const purpose = { consumer: { pluginId: 'acme.compute', localId: 'vm' }, purpose: 'upstream' } as const;
+    const absentPurpose = { consumer: purpose.consumer, purpose: 'optional-unbound' };
     const binding = { purpose, target: { kind: 'account' as const, account: { service: { pluginId: 'acme.accounts', localId: 'cloud' }, accountId: 'account-1' } } };
     const unexpected = async (): Promise<never> => { throw new Error('Unexpected account transport'); };
     const purposeBindingOwner = createConnectedAccountPurposeBindingOwner({
-      store: { read: async () => ({ v: 1, bindings: [] }), update: unexpected },
+      store: { read: async () => ({ v: 1, bindings: [] }), update: unexpected, subscribe: () => ({ dispose() {} }) },
       selectTarget: unexpected, resolveTarget: unexpected, materializeAccount: unexpected,
       projectTargetAccounts: unexpected, assertTargetAccountMaterializable: unexpected,
     });
@@ -36,13 +37,16 @@ describe('managed Provider operation authority', () => {
     });
     let currentRole = 'acquire';
     const operation = {
-      identity: purpose.consumer, operationId: 'managed-1/intent-3', purposes: [purpose],
+      identity: purpose.consumer, operationId: 'managed-1/intent-3', purposes: [purpose, absentPurpose],
       purposeBindings: { v: 1 as const, bindings: [binding] },
-      requestAuthUses: [{ purpose, materialization: { kind: 'httpHeaders' as const, origin: 'https://api.example.test', headerNames: ['authorization'] } }],
+      requestAuthUses: [purpose, absentPurpose].map(purpose => ({ purpose,
+        materialization: { kind: 'httpHeaders' as const, origin: 'https://api.example.test', headerNames: ['authorization'] } })),
       isCurrent: () => true,
       managedOperation: { role: 'acquire' as const, isCurrent: (role: string) => role === currentRole },
     };
     const activation = await authority.activate(operation);
+    expect(activation.requestAuth?.qualifiedRequestAuthUses).toEqual([operation.requestAuthUses[0]]);
+    expect(activation.requestAuth?.requestAuthUses).toHaveLength(2);
     const capability = (JSON.parse(await readFile(activation.requestAuth!.capabilityPath, 'utf8')) as { capability: string }).capability;
     expect(requestAuthRegistry.authenticate(capability)).not.toBeNull();
     currentRole = 'destroy';
@@ -221,6 +225,7 @@ describe('managed Provider operation authority', () => {
     expect(activation.requestAuth).toMatchObject({
       realm: 'managedProviderStart',
       requestAuthUses: [expect.objectContaining({ purpose: 'upstream' })],
+      qualifiedRequestAuthUses: [expect.objectContaining({ purpose })],
     });
     expect(activation.requestAuth?.isCurrent()).toBe(true);
     await expect(access(activation.requestAuth!.capabilityPath)).resolves.toBeUndefined();
@@ -354,6 +359,13 @@ describe('managed Provider operation authority', () => {
     expect(exactLease.resolvePurposeBinding()).toBeNull();
     expect(exactLease.listPurposeBindings()).toEqual([]);
     expect(activation.requestAuth).not.toBeNull();
+    expect(activation.requestAuth?.qualifiedRequestAuthUses).toEqual([]);
+    expect(activation.requestAuth?.requestAuthUses).toEqual([{
+      purpose: purpose.purpose,
+      materialization: {
+        kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['authorization'],
+      },
+    }]);
     await activation.cleanup();
   });
 });

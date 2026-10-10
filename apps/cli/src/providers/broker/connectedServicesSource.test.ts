@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol';
 import type { TeamCredentialResourceSummaryV1 } from '@happier-dev/protocol/teams';
 
 import type { ManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
-import type { ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createConnectedServicesBrokerSourceOpen } from './connectedServicesSource';
 import { createBrokerProviderRegistry } from './providerBroker.testkit';
 
@@ -94,13 +95,22 @@ function request(signal = new AbortController().signal) {
   };
 }
 
-function bindingSelectionResolver() {
-  const resolve: ConnectedAccountPurposeBindingOwner['resolveBindingIntentSelection'] = async ({ purpose, target }) => ({
-    binding: { purpose, target },
-    resolved: { displayName: 'Account 1', account: source.target.account },
-    isCurrent: async () => true,
+function bindingSelectionResolver(account: QualifiedConnectedAccountRef = source.target.account, pool?: Readonly<{
+  group: { groupId: string; generation: number };
+  isCurrent(): boolean;
+}>) {
+  const unusedBoundary = (): never => { throw new Error('Unexpected effect boundary'); };
+  const owner = createConnectedAccountPurposeBindingOwner({
+    store: { read: async () => ({ v: 1, bindings: [] }), update: unusedBoundary, subscribe: () => ({ dispose() {} }) },
+    selectTarget: unusedBoundary,
+    resolveTarget: async () => pool?.isCurrent() === false ? null : ({
+      displayName: 'Account 1', account, ...(pool ? { group: pool.group } : {}),
+    }),
+    materializeAccount: unusedBoundary,
+    projectTargetAccounts: unusedBoundary,
+    assertTargetAccountMaterializable: unusedBoundary,
   });
-  return vi.fn(resolve);
+  return vi.fn(owner.resolveBindingIntentSelection);
 }
 
 describe('Connected Services Team credential broker source', () => {
@@ -129,9 +139,17 @@ describe('Connected Services Team credential broker source', () => {
     expect(acquire).not.toHaveBeenCalled();
   });
 
-  it('reuses the CLIProxyAPI purpose owner and exact managed-runtime custody claim', async () => {
-    const readResource = vi.fn(async () => resource());
-    const resolveBindingIntentSelection = bindingSelectionResolver();
+  it.each([
+    { service: source.target.account.service, endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses', purpose: 'openai-upstream' },
+    { service: source.target.account.service, endpointTemplateId: 'cliproxyapi-anthropic', protocol: 'anthropic', purpose: 'openai-upstream' },
+    { service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses', purpose: 'anthropic-upstream' },
+    { service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, endpointTemplateId: 'cliproxyapi-openai-chat', protocol: 'openai-chat', purpose: 'anthropic-upstream' },
+  ] as const)('qualifies $purpose from the admitted source for $protocol without binding another family', async ({ service, endpointTemplateId, protocol, purpose }) => {
+    const account = { ...source.target.account, service };
+    const exactSource = { ...source, target: { kind: 'account' as const, account } };
+    const exactRequest = { ...request(), source: exactSource, application: { ...request().application, endpointTemplateId, protocol } };
+    const readResource = vi.fn(async () => resource({ source: exactSource }));
+    const resolveBindingIntentSelection = bindingSelectionResolver(account);
     const projection = Object.freeze({
       access: Object.freeze({
         endpointUrl: vi.fn(() => 'http://127.0.0.1:45123/v1'),
@@ -154,26 +172,31 @@ describe('Connected Services Team credential broker source', () => {
       custody,
     });
 
-    await expect(open(request())).resolves.toMatchObject({ projection });
+    await expect(open(exactRequest)).resolves.toMatchObject({ projection, sourceCurrentness: { sourceMember: { service, connectedAccountId: account.accountId } } });
     expect(resolveBindingIntentSelection).toHaveBeenCalledWith(expect.objectContaining({
       purpose: {
         consumer: {
           pluginId: 'happier.provider.cliproxyapi',
           localId: 'cliproxyapi',
         },
-        purpose: 'openai-upstream',
+        purpose,
       },
-      target: source.target,
+      target: exactSource.target,
+      serviceRefs: [service],
     }));
     expect(custody.acquire).toHaveBeenCalledWith(expect.objectContaining({
       contributionKey: 'happier.provider.cliproxyapi/cliproxyapi',
       operationClaim: { kind: 'providerBroker', operation: request().operation },
       request: {
         reason: 'explicitStartLocal',
-        endpointTemplateIds: ['cliproxyapi-openai-responses'],
+        endpointTemplateIds: [endpointTemplateId],
       },
     }));
-    expect(readResource).toHaveBeenCalledTimes(3);
+    const acquired = vi.mocked(custody.acquire).mock.calls[0]![0];
+    expect(acquired.purposeBindings).toEqual({ v: 1, bindings: [{
+      purpose: { consumer: request().application.implementationIdentity, purpose },
+      target: exactSource.target,
+    }] });
   });
 
   it('keeps the operation current across a policy edit, which only advances the resource revision', async () => {
@@ -243,7 +266,7 @@ describe('Connected Services Team credential broker source', () => {
     expect(cleanup).toHaveBeenCalledOnce();
   });
 
-  it('fails closed before source custody for a mismatched application endpoint', async () => {
+  it.each(['endpoint', 'protocol', 'service', 'implementation', 'source-proof'] as const)('fails closed before source custody for a mismatched %s', async (mismatch) => {
     const custody: ManagedProviderExplicitStartCustody = Object.freeze({
       acquire: vi.fn(async () => null),
       retire: vi.fn(async () => false),
@@ -258,13 +281,18 @@ describe('Connected Services Team credential broker source', () => {
       custody,
     });
 
-    await expect(open({
-      ...request(),
-      application: {
-        ...request().application,
-        endpointTemplateId: 'cliproxyapi-anthropic',
-      },
-    })).resolves.toBeNull();
+    const requested = request();
+    const application = {
+      ...requested.application,
+      ...(mismatch === 'endpoint' ? { endpointTemplateId: 'unknown-endpoint' } : {}),
+      ...(mismatch === 'protocol' ? { endpointTemplateId: 'cliproxyapi-anthropic' } : {}),
+      ...(mismatch === 'implementation' ? { implementationIdentity: { pluginId: 'foreign', localId: 'cliproxyapi' } } : {}),
+    };
+    const wrongSource = mismatch === 'service' || mismatch === 'source-proof'
+      ? { ...source, target: { ...source.target, account: { ...source.target.account,
+        ...(mismatch === 'service' ? { service: { pluginId: 'foreign', localId: 'openai-codex' } } : { accountId: 'different-account' }),
+      } } } : source;
+    await expect(open({ ...requested, application, source: wrongSource })).resolves.toBeNull();
     expect(custody.acquire).not.toHaveBeenCalled();
   });
 
@@ -322,16 +350,9 @@ describe('Connected Services Team credential broker source', () => {
       revalidateRetainedClaims: vi.fn(async () => 0),
       retireAll: vi.fn(async () => 0),
     });
-    const resolveSelection: ConnectedAccountPurposeBindingOwner['resolveBindingIntentSelection'] = async ({ purpose, target }) => ({
-      binding: { purpose, target },
-      resolved: {
-        displayName: 'Selected account',
-        account: selectedAccount,
-        group: { groupId: 'pool-1', generation: 4 },
-      },
-      isCurrent: async () => selectionCurrent,
+    const resolveBindingIntentSelection = bindingSelectionResolver(selectedAccount, {
+      group: { groupId: 'pool-1', generation: 4 }, isCurrent: () => selectionCurrent,
     });
-    const resolveBindingIntentSelection = vi.fn(resolveSelection);
     const open = createConnectedServicesBrokerSourceOpen({
       withRegistry: async (read) => await read(createBrokerProviderRegistry()),
       readResource: vi.fn(async () => resource({
@@ -343,7 +364,9 @@ describe('Connected Services Team credential broker source', () => {
       custody,
     });
 
-    const opened = await open({ ...request(), source: poolSource });
+    const opened = await open({ ...request(), source: poolSource, application: {
+      ...request().application, endpointTemplateId: 'cliproxyapi-anthropic', protocol: 'anthropic',
+    } });
     expect(opened?.sourceCurrentness.sourceMember).toEqual({
       kind: 'connected_account',
       service: selectedAccount.service,

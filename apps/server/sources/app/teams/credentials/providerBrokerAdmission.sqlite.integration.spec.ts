@@ -33,7 +33,7 @@ import { hashPasswordMaterial } from '@/app/auth/password/passwordMaterialVerifi
 import { deleteMachinePool } from '@/app/machines/pools/machinePoolService';
 import type { MachineDaemonPresenceSocketServer } from '@/app/machines/machineDaemonPresence';
 import { DaemonProviderModelProjectionResponseV1Schema } from '@happier-dev/protocol/rpc';
-import { selectMachinePoolCandidate } from '@/app/machines/pools/machinePoolPlacementService';
+import { selectMachinePoolCandidate } from '@happier-dev/protocol/machines/pools';
 import { applySessionTurnMutation } from '@/app/session/sessionWriteService';
 import { setTeamPolicyInTx } from '@/app/teams/policy';
 import { auth } from '@/app/auth/auth';
@@ -48,6 +48,8 @@ import {
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import * as privacyKit from 'privacy-kit';
+import { openAccountConnectionProviderBroker, admitAccountConnectionProviderBroker } from '@/app/providers/providerBrokerAdmission';
+import { verifyProviderBrokerRouteGrantSignatureV2 } from '@/app/machines/peer/mediation/signProviderBrokerRouteGrantV1';
 
 const TEST_AUTHENTICATION = {
     env: process.env,
@@ -361,6 +363,44 @@ describe('Team credential Provider broker admission', () => {
         });
     }, 180_000);
     afterAll(async () => { await harness?.close(); });
+
+    it('admits a personal connection without Team authority and withdraws it when the exact hub capability disappears', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const createMachine = async (id: string, endpointId: string, ingress: readonly number[]) => await db.machine.create({ data: {
+            id: `${id}-${account.id}`, accountId: account.id, metadata: '{}', kind: 'persistent', active: true,
+            operationProtocolCapabilities: { irohMachineEndpoint: { protocolVersions: [1], endpointId },
+                providerBrokerIngress: { protocolVersions: [...ingress] } }, operationProtocolCapabilitiesRevision: 1,
+        } });
+        const worker = await createMachine('personal-worker', 'a'.repeat(64), [1]);
+        const hub = await createMachine('personal-hub', 'b'.repeat(64), [1, 2]);
+        const session = await db.session.create({ data: { id: `personal-session-${account.id}`, tag: account.id,
+            accountId: account.id, metadata: '{}', active: true } });
+        await db.accessKey.create({ data: { accountId: account.id, machineId: worker.id, sessionId: session.id, data: '{}' } });
+        const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(41));
+        const verifyAuthority = (authority: unknown) => verifyProviderBrokerRouteGrantSignatureV2({ authority, nowMs: 100,
+            signingCapability: { keyId: 'personal-home', publicKey: Buffer.from(key.publicKey).toString('base64url'), expiresAt: null } });
+        const common = { homeId: 'personal-home', actorAccountId: account.id,
+            presence: { state: 'known' as const, machineIds: new Set([worker.id, hub.id]) },
+            resolveExecutionRunCurrentness: async () => ({ ok: false as const, reasonCode: 'execution_run_not_found' as const }) };
+        const opened = await openAccountConnectionProviderBroker({ ...common, nowMs: 100, grantId: 'personal-grant', tokenEpoch: 0,
+            signingKey: { keyId: 'personal-home', secretKey: key.secretKey }, verifyRefreshAuthority: verifyAuthority,
+            request: { v: 2, source: { kind: 'account_connection', connectionId: ProviderConnectionIdSchema.parse('personal-connection'),
+                expectedConnectionSecurityFingerprint: 'connection-security:v1:test',
+                expectedManagedRuntimeBindingFingerprint: 'managed-runtime-binding:v1:test' },
+                initiatorMachineId: worker.id, targetMachineId: hub.id, consumer: { kind: 'session', sessionId: session.id },
+                application: FIXTURE_APPLICATION } });
+        expect(opened).toMatchObject({ ok: true, authority: { payload: { homeId: 'personal-home', accountId: account.id,
+            source: { kind: 'account_connection', connectionId: 'personal-connection' }, target: { machineId: hub.id } } } });
+        if (!opened.ok) throw new Error('personal open refused');
+        expect(verifyAuthority(opened.authority)).toBe(true);
+        await expect(admitAccountConnectionProviderBroker({ ...common, verifyAuthority,
+            request: { v: 2, authority: opened.authority } })).resolves.toEqual({ ok: true });
+        await db.machine.update({ where: { id: hub.id }, data: { operationProtocolCapabilities: {
+            irohMachineEndpoint: { protocolVersions: [1], endpointId: 'b'.repeat(64) }, providerBrokerIngress: { protocolVersions: [1] },
+        }, operationProtocolCapabilitiesRevision: 2 } });
+        await expect(admitAccountConnectionProviderBroker({ ...common, verifyAuthority,
+            request: { v: 2, authority: opened.authority } })).resolves.toEqual({ ok: false, reasonCode: 'update_required' });
+    });
 
     it('uses the native direct TCP tunnel admission window for new broker streams', () => {
         expect(PROVIDER_BROKER_ROUTE_GRANT_TTL_MS)
@@ -1746,6 +1786,7 @@ describe('Team credential Provider broker admission', () => {
             data: { priorityTier: 0 },
         });
         const ordinarySessionSelection = selectMachinePoolCandidate({
+            purpose: 'session',
             members: [primary.id, fallback.id].map(machineId => ({ machineId, priorityTier: 0, enabled: true })),
             availableMachineIds: new Set([primary.id, fallback.id]),
             requestKey: [resource.id, 'session', session.id].join('\u0000'),
@@ -1933,6 +1974,7 @@ describe('Team credential Provider broker admission', () => {
         for (let index = 0; runByMachineId.size < 2 && index < 1_000; index += 1) {
             const executionRunId = `pool-run-${index}`;
             const selected = selectMachinePoolCandidate({
+                purpose: 'session',
                 members,
                 availableMachineIds,
                 requestKey: [resource.id, 'execution_run', executionRunId].join('\u0000'),

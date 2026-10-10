@@ -1,9 +1,26 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
+import * as persistenceBoundary from '@/persistence';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { SharedSavedSecretPromoteInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import type { StoredCredentials } from '@/persistence';
+import type { AccountSettingsUpdateV2Deps } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 
 import { createLegacyProfileMigrationCoordinator } from './coordinator';
 import { migrateProviderSettings } from '../settings/migration';
-import { ProviderContributionV1Schema, type AccountSettingsStoredContentEnvelope, type AccountSettingsV2UpdateResponse } from '@happier-dev/protocol';
+import { DEFAULT_PROVIDER_SETTINGS_V1 } from '@happier-dev/protocol/providers/settings/v1';
+import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, PROVIDER_CONNECTIONS_ROWS_ROUTE_V1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { PROFILE_PROVIDER_CONVERSION_ROUTE_V1, ProfileProviderConversionMutationV1Schema } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import { REMOTE_HOST_ROWS_ROUTE_V1 } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
+import { NOTIFICATION_CHANNELS_ROUTE_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import { ProviderContributionV1Schema, type AccountSettingsV2UpdateResponse } from '@happier-dev/protocol';
 
 const migrationContributionKey = 'happier.provider.deepseek/deepseek';
 const migrationContribution = ProviderContributionV1Schema.parse({
@@ -41,6 +58,28 @@ async function resolvePlainAccountEncryptionMode(): Promise<'plain'> {
   return 'plain';
 }
 
+/** The real Profile reader and Settings writer share one admitted Account HTTP source. */
+async function installCoordinatorAccountBoundary(credentials: StoredCredentials, fetchSettings: NonNullable<AccountSettingsUpdateV2Deps['fetchSettings']>) {
+  const initial = AccountSettingsV2GetResponseSchema.parse(await fetchSettings());
+  if (initial.content?.t !== 'plain') throw new Error('expected plain coordinator fixture');
+  setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse(initial.content.v), rawSettings: initial.content.v,
+    settingsVersion: initial.version, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) });
+  const baselineGet = vi.mocked(axios.get).getMockImplementation()!;
+  vi.mocked(axios.get).mockImplementation(async (url, options) => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/v2/account/settings') return { status: 200, data: AccountSettingsV2GetResponseSchema.parse(await fetchSettings()) };
+    if (path === PROVIDER_CONNECTIONS_ROWS_ROUTE_V1) return { status: 200, data: { status: 'present', revision: 1,
+      content: { t: 'plain', v: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 } } };
+    if (path === '/v1/account/encryption/currentness') return { status: 200,
+      data: { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+    if (path.endsWith('/reference-guard')) return { status: 200, data: { status: 'ready', revision: 'absent' } };
+    if (path.endsWith('/profiles/transfer')) return { status: 200, data: { status: 'absent' } };
+    if (path === '/v1/account/entity-rows/profiles') return { status: 200, data: { status: 'listed', rows: [], complete: true,
+      nextCursor: null, diagnostics: [], referenceGuardRevision: 'absent', transferControl: { status: 'absent' } } };
+    return baselineGet(url, options);
+  });
+}
+
 describe('legacy profile migration coordinator', () => {
   beforeEach(() => {
     // The real migration helper now reads the canonical Account memory row.
@@ -48,10 +87,130 @@ describe('legacy profile migration coordinator', () => {
       if (String(url).endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
       if (String(url).endsWith('/authoring-memory/lastUsedProfile')) return { status: 200, data: { status: 'present', revision: 1, content: { t: 'plain', v: null } } };
       if (String(url).endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+      if (String(url).endsWith(PROVIDER_CONNECTIONS_ROWS_ROUTE_V1)) return { status: 200, data: { status: 'present', revision: 1,
+        content: { t: 'plain', v: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 } } };
+      if (String(url).endsWith(REMOTE_HOST_ROWS_ROUTE_V1) || String(url).endsWith(NOTIFICATION_CHANNELS_ROUTE_V1)) {
+        return { status: 200, data: { status: 'absent' } };
+      }
       throw new Error(`Unexpected Account read: ${String(url)}`);
     });
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
+
+  it('automatically promotes a descriptor-classified literal before the accepted Profile and Provider catalog transaction', async () => {
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'account-auto' })).toString('base64url')}.signature` };
+    let raw: Record<string, unknown> = { profiles: [{ id: 'deepseek', name: 'Retained DeepSeek', environmentVariables: [
+      { name: 'ANTHROPIC_BASE_URL', value: 'https://api.deepseek.com/anthropic' },
+      { name: 'DEEPSEEK_AUTH_TOKEN', value: 'private-inline-key' }, { name: 'TEAM_FLAG', value: 'public' }], createdAt: 1, updatedAt: 1 }],
+      profileEnabledById: { deepseek: true }, unknown: { keep: true } };
+    let version = 7;
+    let promotedResourceId: string | null = null;
+    setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse(raw), rawSettings: raw,
+      settingsVersion: version, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) });
+    // Only credential persistence, HTTP, DNS, clock/id allocation and cache I/O are boundaries.
+    // The accepted contribution, context builder, authorization and migration remain real.
+    vi.spyOn(persistenceBoundary, 'readStoredCredentials').mockResolvedValue(credentials);
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({
+      features: { teams: { enabled: true, credentialResources: { enabled: true } } }, capabilities: {},
+    }), { status: 200 }));
+    vi.spyOn(axios, 'get').mockImplementation(async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v2/account/settings') return { status: 200, data: { version, content: { t: 'plain', v: raw } } };
+      if (path === PROVIDER_CONNECTIONS_ROWS_ROUTE_V1) return { status: 200, data: { status: 'present', revision: 1,
+        content: { t: 'plain', v: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 } } };
+      if (path === `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/configurations`
+        || path === `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/purposes`
+        || path === ACP_CATALOG_ROWS_ROUTE_V1 || path === MCP_SERVER_CATALOG_ROWS_ROUTE_V1
+        || path === REMOTE_HOST_ROWS_ROUTE_V1 || path === NOTIFICATION_CHANNELS_ROUTE_V1) {
+        return { status: 200, data: { status: 'absent' } };
+      }
+      if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (path === '/v1/account/encryption/currentness') return { status: 200,
+        data: { mode: 'plain', version: 1, settingsVersion: version, signingKeyFingerprint: null, contentKeyFingerprint: null,
+          updatedAt: 1, recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } } };
+      if (path.endsWith('/reference-guard')) return { status: 200, data: { status: 'ready', revision: 'absent' } };
+      if (path.endsWith('/profiles/transfer')) return { status: 200, data: { status: 'absent' } };
+      if (path === '/v1/account/entity-rows/profiles') return { status: 200, data: { status: 'listed', rows: [], complete: true,
+        nextCursor: null, diagnostics: [], referenceGuardRevision: 'absent', transferControl: { status: 'absent' } } };
+      if (path.endsWith('/authoring-memory/lastUsedProfile')) return { status: 200, data: { status: 'absent' } };
+      if (path.endsWith('/saved-secrets/resources/materials')) return { status: 200, data: { resources: promotedResourceId ? [{
+        resourceId: promotedResourceId, encryptionMode: 'plain', recipientEnvelope: null,
+        storedContent: { t: 'plain', v: { v: 1, name: 'Retained DeepSeek', kind: 'apiKey', value: 'private-inline-key' } },
+        entry: { ref: formatSharedSavedSecretRefV1(promotedResourceId), source: 'shared_resource', relationship: 'owner',
+          ownerAccountId: 'account-auto', name: 'Retained DeepSeek', kind: 'apiKey', encryptionMode: 'plain', revision: 1, materialStatus: 'ready',
+          capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+      }] : [] } };
+      throw new Error(`Unexpected automatic migration HTTP read: ${path}`);
+    });
+    const writes: string[] = [];
+    let promotedReference: string | null = null;
+    let boundaryFailure: unknown;
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      try {
+        const path = new URL(String(url)).pathname;
+        if (path === PROFILE_PROVIDER_CONVERSION_ROUTE_V1) {
+          const mutation = ProfileProviderConversionMutationV1Schema.parse(body);
+          expect(mutation.expectedSettingsVersion).toBe(version);
+          expect(promotedReference).not.toBeNull();
+          expect(mutation.providerMutation.content).toMatchObject({ t: 'plain', v: {
+            secretBindingsByConnectionId: { 'pc-auto-deepseek': { account: { apiKey: promotedReference } } },
+          } });
+          expect(mutation.providerMutation).toMatchObject({ expectedRevision: 1, referencedSavedSecretIds: [promotedReference],
+            savedSecretRevisions: [{ resourceId: promotedResourceId, expectedRevision: 1 }] });
+          expect(mutation.nextSettings).toMatchObject({ t: 'plain', v: { unknown: { keep: true } } });
+          if (mutation.nextSettings?.t !== 'plain') throw new Error('plain Account requires plain Settings');
+          expect(mutation.nextSettings.v).not.toHaveProperty('providerSettingsV1');
+          raw = mutation.nextSettings.v;
+          version += 1;
+          writes.push('provider-catalog');
+          return { status: 200, data: { status: 'updated', settingsVersion: version, providerRevision: 2,
+            rows: [], referenceGuardRevision: 'absent' } };
+        }
+        const mutation = SharedSavedSecretPromoteInputV1Schema.parse(body);
+        expect(mutation.expectedSettingsVersion).toBe(version);
+        expect(mutation).toMatchObject({ encryptionMode: 'plain', storedContent: { t: 'plain', v: { value: 'private-inline-key' } },
+          referenceCensus: { accountMode: 'plain', profileTransferRevision: 'absent', profiles: { referenceGuardRevision: 'absent', rows: [] },
+            catalogs: { mcp: 'absent', acp: 'absent', providerConnections: 1, connectedConfigurations: 'absent', connectedPurposes: 'absent' } },
+          profileMutations: [] });
+        if (mutation.nextSettings?.t !== 'plain') throw new Error('plain Account requires plain Settings');
+        promotedReference = formatSharedSavedSecretRefV1(mutation.resourceId);
+        promotedResourceId = mutation.resourceId;
+        raw = mutation.nextSettings.v;
+        version += 1;
+        writes.push('saved-secret-promotion');
+        return { status: 200, data: { resourceId: mutation.resourceId, settingsVersion: version } };
+      } catch (error) {
+        // The real owner maps disconnected commits to unknown; preserve fixture failures for diagnosis.
+        boundaryFailure = error;
+        throw error;
+      }
+    });
+    const definition = ProviderContributionV1Schema.parse({ ...migrationContribution,
+      credential: { kind: 'apiKey', slotId: 'apiKey', required: true, transports: [{ id: 'key', protocols: ['anthropic'], uses: ['probe', 'runtime'],
+        destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } }] },
+      legacyProfileMigrations: [{ sourceProfileId: 'deepseek', credentialBinding: { legacyEnvVarName: 'DEEPSEEK_AUTH_TOKEN', credentialSlotId: 'apiKey' },
+        migratedEnvironmentVariables: [{ name: 'ANTHROPIC_BASE_URL', value: 'https://api.deepseek.com/anthropic' },
+          { name: 'DEEPSEEK_AUTH_TOKEN', value: '${DEEPSEEK_AUTH_TOKEN}' }], retainedEnvironmentVariables: [{ name: 'TEAM_FLAG', value: 'public' }] }] });
+    const accepted = resolvedMigrationRegistry();
+    const previous = accepted.contributes.providersByContributionKey.get(migrationContributionKey)!;
+    accepted.contributes.providersByContributionKey.set(migrationContributionKey, { ...previous, definition });
+    const coordinator = createLegacyProfileMigrationCoordinator({
+      acquireRegistryLease: async () => ({ registry: accepted, release: async () => undefined }),
+      migrate: (params) => migrateProviderSettings({ ...params, deps: {
+        resolveCachePath: () => '/unused/automatic-provider-migration-cache', writeCache: async () => undefined,
+      } }),
+      createConnectionId: () => 'pc-auto-deepseek', now: () => 20, processEnv: {}, resolveAddresses: async () => ['8.8.8.8'],
+    });
+    const result = await coordinator.ensureMigrated({ credentials, accountKey: resolveAccountSettingsScopeKey(credentials),
+      providersEnabled: true, machineId: 'machine-auto' });
+    if (boundaryFailure) throw boundaryFailure;
+    expect(result.status === 'complete' ? true : result).toBe(true);
+    expect(result).toMatchObject({ status: 'complete', version: 9, outcomes: [{ sourceProfileId: 'deepseek', kind: 'connection', connectionId: 'pc-auto-deepseek' }] });
+    expect(writes).toEqual(['saved-secret-promotion', 'provider-catalog']);
+    expect(raw).toMatchObject({ unknown: { keep: true }, profiles: [{ v: 2, id: 'deepseek', extraEnvironmentVariables: [{ name: 'TEAM_FLAG', value: 'public' }] }] });
+    expect(JSON.stringify(raw)).not.toContain('private-inline-key');
+    expect(JSON.stringify(result)).not.toContain('private-inline-key');
+  });
 
   it('fails closed before acquiring registry/settings when providers are disabled', async () => {
     let acquired = 0;
@@ -111,8 +270,8 @@ describe('legacy profile migration coordinator', () => {
       acquireRegistryLease: async () => ({ registry, release: async () => { releases += 1; } }),
       migrate: async (params) => {
         migrations += 1;
-        const first = await params.deriveContext({ favoriteProfiles: ['deepseek'] }, registry);
-        const second = await params.deriveContext({ lastUsedProfile: 'deepseek' }, registry);
+        const first = await params.deriveContext({ favoriteProfiles: ['deepseek'] }, registry, DEFAULT_PROVIDER_SETTINGS_V1);
+        const second = await params.deriveContext({ lastUsedProfile: 'deepseek' }, registry, DEFAULT_PROVIDER_SETTINGS_V1);
         seenIds.push(
           (first.candidates[0] as any).connection.id,
           (second.candidates[0] as any).connection.id,
@@ -153,7 +312,7 @@ describe('legacy profile migration coordinator', () => {
     const coordinator = createLegacyProfileMigrationCoordinator({
       acquireRegistryLease: async () => ({ registry, release: async () => undefined }),
       migrate: async (params) => {
-        params.deriveContext({}, registry);
+        await params.deriveContext({}, registry, DEFAULT_PROVIDER_SETTINGS_V1);
         return { version: 1, outcomes: [] };
       },
       buildContext: (input) => {
@@ -169,6 +328,9 @@ describe('legacy profile migration coordinator', () => {
   });
 
   it('releases one registry lease exactly once through the real CAS migration helper', async () => {
+    const credentials: StoredCredentials = { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } };
+    const fetchSettings = async () => ({ content: { t: 'plain' as const, v: { providerDefaultModelSelectionsByAgentTargetKeyV1: {} } }, version: 1 });
+    await installCoordinatorAccountBoundary(credentials, fetchSettings);
     let releases = 0;
     const lease = {
       registry: { contributes: { providersByContributionKey: new Map() } },
@@ -182,7 +344,7 @@ describe('legacy profile migration coordinator', () => {
       migrate: (params) => migrateProviderSettings({
         ...params,
         deps: {
-          fetchSettings: async () => ({ content: { t: 'plain', v: {} }, version: 1 }),
+          fetchSettings,
           resolveAccountEncryptionMode: resolvePlainAccountEncryptionMode,
           updateSettings: async (): Promise<AccountSettingsV2UpdateResponse> => ({ success: true, version: 2 }),
           resolveCachePath: () => '/unused/provider-migration-cache',
@@ -193,7 +355,7 @@ describe('legacy profile migration coordinator', () => {
     });
     await expect(coordinator.ensureMigrated({
       accountKey: 'account-a',
-      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
+      credentials,
       providersEnabled: true,
       machineId: 'machine-a',
     })).resolves.toMatchObject({ status: 'complete', version: 1 });
@@ -201,27 +363,26 @@ describe('legacy profile migration coordinator', () => {
   });
 
   it('resolves DNS once and returns a terminal conflict without rebuilding grants against the CAS winner', async () => {
+    const credentials: StoredCredentials = { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } };
+    const fetchSettings = async () => ({ content: { t: 'plain' as const, v: { profiles: [], favoriteProfiles: ['deepseek'] } }, version: 1 });
+    await installCoordinatorAccountBoundary(credentials, fetchSettings);
     const registry = resolvedMigrationRegistry();
     let dnsAttempt = 0;
     let updateAttempt = 0;
-    const attemptedContents: AccountSettingsStoredContentEnvelope[] = [];
+    const attemptedMutations: ReturnType<typeof ProfileProviderConversionMutationV1Schema.parse>[] = [];
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      expect(new URL(String(url)).pathname).toBe(PROFILE_PROVIDER_CONVERSION_ROUTE_V1);
+      updateAttempt += 1;
+      attemptedMutations.push(ProfileProviderConversionMutationV1Schema.parse(body));
+      return { status: 200, data: { status: 'settings-conflict', revision: 2 } };
+    });
     const coordinator = createLegacyProfileMigrationCoordinator({
       acquireRegistryLease: async () => ({ registry, release: async () => undefined }),
       migrate: (params) => migrateProviderSettings({
         ...params,
         deps: {
-          fetchSettings: async () => ({ content: { t: 'plain', v: { favoriteProfiles: ['deepseek'] } }, version: 1 }),
+          fetchSettings,
           resolveAccountEncryptionMode: resolvePlainAccountEncryptionMode,
-          updateSettings: async (request): Promise<AccountSettingsV2UpdateResponse> => {
-            updateAttempt += 1;
-            if (request.content) attemptedContents.push(request.content);
-            return {
-              success: false,
-              error: 'version-mismatch',
-              currentVersion: 2,
-              currentContent: { t: 'plain', v: { favoriteProfiles: ['deepseek'], concurrent: true } },
-            };
-          },
           resolveCachePath: () => '/unused/provider-migration-cache',
           writeCache: async () => undefined,
         },
@@ -233,16 +394,19 @@ describe('legacy profile migration coordinator', () => {
 
     await expect(coordinator.ensureMigrated({
       accountKey: 'account-a',
-      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
+      credentials,
       providersEnabled: true,
       machineId: 'machine-a',
     })).resolves.toEqual({
       status: 'deferred',
-      reason: 'Account Settings mutation did not settle: conflict',
+      reason: 'Provider settings migration refused: legacy_profile_source_changed',
     });
     expect(updateAttempt).toBe(1);
-    expect(attemptedContents).toHaveLength(1);
-    expect(attemptedContents[0]).toMatchObject({ t: 'plain', v: { providerSettingsV1: { accountGrants: [{ connectionId: 'pc_deepseek' }] } } });
+    expect(attemptedMutations).toHaveLength(1);
+    expect(attemptedMutations[0]?.providerMutation.content).toMatchObject({ t: 'plain', v: { accountGrants: [{ connectionId: 'pc_deepseek' }] } });
+    const nextSettings = attemptedMutations[0]?.nextSettings;
+    expect(nextSettings?.t).toBe('plain');
+    if (nextSettings?.t === 'plain') expect(nextSettings.v).not.toHaveProperty('providerSettingsV1');
     expect(dnsAttempt).toBe(1);
   });
 });

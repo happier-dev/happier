@@ -69,7 +69,8 @@ describe('daemon requester request-auth Account callbacks', () => {
                 agentId: 'codex', isCurrent: () => true }, purposes: [purpose], bindings: [binding] });
             try {
                 const context = {
-                    bootstrap: { serverHttpBaseUrl: 'http://localhost:3005', isCurrent: async () => current },
+                    bootstrap: { serverHttpBaseUrl: 'http://localhost:3005' },
+                    isCurrent: async () => current,
                     resolveCurrentRequestAuthBinding: bob.resolveCurrentRequestAuthBinding,
                     materializeRequestAuthBearer: bob.materializeRequestAuthBearer,
                 };

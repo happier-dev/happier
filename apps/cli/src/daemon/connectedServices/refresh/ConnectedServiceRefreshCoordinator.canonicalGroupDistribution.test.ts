@@ -145,10 +145,10 @@ describe('ConnectedServiceRefreshCoordinator canonical group distribution', () =
     });
 
     expect(current?.bindings).toContainEqual({
-      serviceId: 'openai-codex',
+      serviceId: 'happier.agent.codex/openai-codex',
       profileId: 'backup',
     });
-    expect(current?.childSelectionsByServiceId?.get('openai-codex')).toMatchObject({
+    expect(current?.childSelectionsByServiceId?.get('happier.agent.codex/openai-codex')).toMatchObject({
       activeProfileId: 'backup',
       generation: 8,
     });
@@ -297,7 +297,7 @@ describe('ConnectedServiceRefreshCoordinator canonical group distribution', () =
       runtimeRegistry
         .getByPid(505)
         ?.activeBindings.find(
-          (binding) => binding.serviceId === 'openai-codex',
+          (binding) => binding.serviceId === 'happier.agent.codex/openai-codex',
         )
         ?.credentialRevision,
     ).toBe(sourceRevision);

@@ -187,7 +187,7 @@ export function registerExternalConnectFinalizeRoute(app: Fastify) {
                         accountId: request.userId,
                         providerId,
                         runtimeFingerprint: parsedValue.securityBinding.provider.runtimeFingerprint,
-                        ...(parsedValue.securityBinding.connection?.id
+                        ...(parsedValue.securityBinding.provider.context.kind === "team" && parsedValue.securityBinding.connection?.id
                             ? { teamConnectionId: parsedValue.securityBinding.connection.id }
                             : {}),
                     })

@@ -1,4 +1,4 @@
-import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { createProviderErrorV1, ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
 import type { AgentProviderBindingLaunchMaterializationV1, BackendTargetRefV2Input, ConnectedServiceBindingsV2, PluginExecutionScopeV1, ProviderErrorV1, SessionModelSelectionV1, SessionProviderBindingMetadataV1, SessionProviderBindingSecurityChangeConfirmationV1 } from '@happier-dev/protocol';
 
 import { prepareProviderLaunch } from './prepareLaunch';
@@ -8,6 +8,7 @@ import {
   type ProviderLaunchResource,
 } from './resourceScope';
 import type { ProviderSpawnAuthorizationAttempt } from '../spawn/authorize';
+import type { ProviderSpawnAuthorization } from '../spawn/resolve';
 import { isSessionControlEnvKey } from '@/session/runtime/control/sessionControlEnvironment';
 
 type ProviderLaunchPrerequisiteContext = Readonly<{
@@ -22,6 +23,20 @@ type CreateAuthorizationAttemptContext = Readonly<{
   agentTargetKey: string;
   agentId: string;
 }>;
+
+/** Host-private acquisition for one already admitted exact consumer. The
+ * source owner retains catalog/currentness and supplies only scoped access. */
+export type DirectManagedProviderEndpointPreparer = (input: Readonly<{
+  scope: PluginExecutionScopeV1;
+  authorization: Extract<ProviderSpawnAuthorization, { deployment: { kind: 'managedLocal' } }>;
+  /** Retain acquired resources before any fallible endpoint preparation. */
+  registerCleanup: (cleanup: ProviderLaunchCleanup) => void;
+}>) => Promise<Readonly<{
+  normalizedUrl: string;
+  downstreamBearer: string | null;
+  revalidateBeforeCommit(): Promise<Readonly<{ ok: true } | { ok: false; error: ProviderErrorV1 }>>;
+  cleanup: ProviderLaunchCleanup;
+}>>;
 
 export type DirectProviderLaunchResult =
   | Readonly<{
@@ -85,9 +100,13 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
     | { ok: false; error: ProviderErrorV1 }
   >>;
   initialResources?: readonly ProviderLaunchResource[];
+  prepareManagedEndpoint?: DirectManagedProviderEndpointPreparer;
+  /** The actual runtime retains this scope even if preparation rejects. */
+  retainCleanup?: (cleanup: ProviderLaunchCleanup) => void;
 }>): Promise<DirectProviderLaunchResult> {
   const scope = createProviderLaunchResourceScope();
   try {
+    dependencies.retainCleanup?.(scope.retire);
     for (const resource of dependencies.initialResources ?? []) scope.register(resource);
     const { scope: executionScope, ...providerLaunchInput } = input;
     const prepared = await prepareProviderLaunch({
@@ -111,7 +130,7 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
     }
     if (prepared.kind === 'provider') {
       scope.register({ onFailure: prepared.attempt.cleanupOnFailure, onExit: () => {} });
-      if ('materializeManagedEndpoint' in prepared.attempt) {
+      if ('materializeManagedEndpoint' in prepared.attempt && !dependencies.prepareManagedEndpoint) {
         await scope.release();
         return {
           ok: false,
@@ -133,17 +152,22 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
     }
 
     const attempt = prepared.attempt;
-    if (!('materializeAfterHooks' in attempt)) {
-      await scope.release();
-      return {
-        ok: false,
-        error: createProviderErrorV1('provider_managed_requires_daemon', {
-          connectionId: input.selection?.ref.providerConnectionId ?? undefined,
-          ...(input.machineId ? { machineId: input.machineId } : {}),
-        }),
-      };
+    let revalidateManagedEndpoint: Awaited<ReturnType<DirectManagedProviderEndpointPreparer>>['revalidateBeforeCommit'] | null = null;
+    let materialized;
+    if ('materializeManagedEndpoint' in attempt) {
+      const current = await attempt.revalidateBeforeEffect();
+      if (!current.ok) { await scope.release(); return current; }
+      let endpointCleanupRegistered = false;
+      const endpoint = await dependencies.prepareManagedEndpoint!({
+        scope: input.scope, authorization: attempt.authorization,
+        registerCleanup: cleanup => { scope.register(cleanup); endpointCleanupRegistered = true; },
+      });
+      if (!endpointCleanupRegistered) scope.register(endpoint.cleanup);
+      revalidateManagedEndpoint = endpoint.revalidateBeforeCommit;
+      materialized = await attempt.materializeManagedEndpoint(endpoint);
+    } else {
+      materialized = await attempt.materializeAfterHooks();
     }
-    const materialized = await attempt.materializeAfterHooks();
     if (!materialized.ok) {
       await scope.release();
       return materialized;
@@ -151,6 +175,10 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
     const sanitizeDiagnosticText = materialized.redactionLease.snapshotRedactor();
     scope.setSanitizer(sanitizeDiagnosticText);
 
+    if (revalidateManagedEndpoint) {
+      const current = await revalidateManagedEndpoint();
+      if (!current.ok) { await scope.release(); return current; }
+    }
     const commitAuthorization = await attempt.revalidateBeforeCommit();
     if (!commitAuthorization.ok) {
       await scope.release();
@@ -184,6 +212,10 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
       { ok: true } | { ok: false; error: ProviderErrorV1 }
     >> => {
       try {
+        if (revalidateManagedEndpoint) {
+          const current = await revalidateManagedEndpoint();
+          if (!current.ok) { await cleanupOnExit?.(); return current; }
+        }
         const authorization = await attempt.revalidateBeforeCommit();
         if (!authorization.ok) await cleanupOnExit?.();
         return authorization;
@@ -216,6 +248,8 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
     };
   } catch (error) {
     await scope.release();
+    const providerError = ProviderErrorV1Schema.safeParse(error);
+    if (providerError.success) return { ok: false, error: providerError.data };
     const connectionId = input.selection?.ref.providerConnectionId ?? undefined;
     return {
       ok: false,

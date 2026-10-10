@@ -5,6 +5,7 @@ import {
   type ProviderRuntimeBindingBasisV1,
 } from '@happier-dev/protocol';
 import type { ProviderSpawnAuthorization } from '../spawn/resolve';
+import { CLAUDE_PROVIDER_BINDING_ADAPTER_V1 } from '@happier-dev/plugins-claude';
 import { projectProviderRuntimeBindingBasis } from '../spawn/runtimeBindingBasis';
 
 import {
@@ -39,6 +40,28 @@ function resolveApplyPolicyForObservedAuthorization(input: Readonly<{
     next: input.next,
   });
 }
+
+it.each([
+  { pins: {}, expected: 'restart_session' },
+  { pins: { fast: 'fast', default: 'default', strongest: 'strongest' }, expected: 'live' },
+])('keeps Claude helper model pins current through the existing transition policy: %j', ({ pins, expected }) => {
+  const make = (modelId: string): ManagedAuthorization => {
+    const result = managedAuthorization(modelId, 'account-a');
+    const prepared = CLAUDE_PROVIDER_BINDING_ADAPTER_V1.prepare({
+      v: 1,
+      agentTargetKey: result.binding.agentTargetKey,
+      connectionId: result.binding.selection.connectionId!,
+      model: result.binding.selection.model,
+      claudeHelperModels: pins,
+    });
+    return {
+      ...result,
+      prepared,
+      sessionBindingMetadata: { ...result.sessionBindingMetadata, adapterBindingKey: prepared.adapterBindingKey },
+    };
+  };
+  expect(resolveApplyPolicyForObservedAuthorization({ current: make('model-a'), next: make('model-b') })).toBe(expected);
+});
 
 function authorization(modelId: string): ExternalAuthorization {
   const connectionId = ProviderConnectionIdSchema.parse('pc_work');

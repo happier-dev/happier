@@ -3187,6 +3187,50 @@ describe("Team credential resource routes (SQLite integration)", () => {
         expect(unrelatedPage.statusCode, unrelatedPage.body).toBe(200);
         expect(unrelatedPage.json()).toEqual({ resources: [], nextCursor: null });
 
+        const census = await get(
+            `/v2/teams/${team.id}/credential-resources/${resource.id}/direct-material?view=census`, custodian.id,
+        );
+        expect(census.statusCode, census.body).toBe(200);
+        const rows = census.json().recipients as ReadonlyArray<{ readiness: string }>;
+        const ready = rows.filter(row => row.readiness === 'ready').length;
+        const pending = rows.length - ready;
+        expect(pending).toBeGreaterThan(0);
+        const readiness = await get(
+            `/v2/teams/${team.id}/credential-resources/${resource.id}/direct-material?view=readiness`, custodian.id,
+        );
+        expect(readiness.statusCode, readiness.body).toBe(200);
+        expect(readiness.json()).toEqual({ status: 'not_ready', reason: 'preparation_pending', counts: { ready, pending } });
+
+        // Cross the existing census page boundary: the observation must count
+        // every entitled recipient, not just the first transport page.
+        for (let index = 0; index < 101; index += 1) {
+            const account = await createAccount();
+            const membership = await db.teamMembership.create({ data: {
+                id: `zz-parity-page-${index.toString().padStart(3, '0')}`,
+                teamId: team.id, accountId: account.id, role: 'member',
+            } });
+            await db.teamCredentialMemberGrant.create({ data: {
+                resourceId: resource.id, teamMembershipId: membership.id, deliveryMode: 'direct',
+            } });
+        }
+        const pagedReadiness = await get(
+            `/v2/teams/${team.id}/credential-resources/${resource.id}/direct-material?view=readiness`, custodian.id,
+        );
+        expect(pagedReadiness.statusCode, pagedReadiness.body).toBe(200);
+        expect(pagedReadiness.json()).toEqual({
+            status: 'not_ready', reason: 'preparation_pending', counts: { ready, pending: pending + 101 },
+        });
+        const emptyAudience = await db.teamCredentialResource.create({ data: {
+            teamId: team.id, custodianAccountId: custodian.id, displayName: 'No direct recipients',
+            disclosureCeiling: 'direct_allowed', sessionUsePolicy: 'personal_allowed',
+            sourceBindingJson: JSON.stringify(source), directSourceVersionsJson: JSON.stringify({ [sourceMemberKey]: sourceVersion }),
+        } });
+        const emptyReadiness = await get(
+            `/v2/teams/${team.id}/credential-resources/${emptyAudience.id}/direct-material?view=readiness`, custodian.id,
+        );
+        expect(emptyReadiness.statusCode, emptyReadiness.body).toBe(200);
+        expect(emptyReadiness.json()).toEqual({ status: 'ready', reason: null, counts: { ready: 0, pending: 0 } });
+
         await db.team.update({
             where: { id: team.id },
             data: { authenticationPolicy: {
@@ -3202,6 +3246,12 @@ describe("Team credential resource routes (SQLite integration)", () => {
         expect({ status: unqualifiedPreparation.statusCode, body: unqualifiedPreparation.json() }).toEqual({
             status: 403,
             body: { error: "team_authentication_required" },
+        });
+        const unqualifiedReadiness = await get(
+            `/v2/teams/${team.id}/credential-resources/${resource.id}/direct-material?view=readiness`, custodian.id,
+        );
+        expect({ status: unqualifiedReadiness.statusCode, body: unqualifiedReadiness.json() }).toEqual({
+            status: 403, body: { error: 'team_authentication_required' },
         });
         await db.team.update({ where: { id: team.id }, data: { authenticationPolicy: null } });
 

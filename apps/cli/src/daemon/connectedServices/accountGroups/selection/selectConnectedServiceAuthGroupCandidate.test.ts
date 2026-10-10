@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ConnectedServiceAuthGroupPolicyV1Schema } from '@happier-dev/protocol';
+import { ConnectedServiceAuthGroupPolicyV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { ProviderAccountSubscriptionV1 } from '@happier-dev/protocol';
 import { buildConnectedServiceAuthGroupRuntimeStateFromMeters } from '../quotas/projection';
 
@@ -27,6 +27,44 @@ describe('expiry-first selection', () => {
         windowDurationMs: 604_800_000 }],
     });
   }
+
+  it('projects comparator preference separately from sticky selection and input-order exclusions', () => {
+    const input = {
+      nowMs: 1_000, quotaFreshnessMs: 300_000, activeProfileId: 'fresh',
+      allowCurrentProfileRetry: true, policy: basePolicy,
+      members: [member('fresh', 1, 1), { ...member('disabled', 0, 0), enabled: false }, member('early', 2, 2)],
+      memberStatesByProfileId: new Map([
+        ['early', state(40, 10_000)], ['fresh', state(95, 20_000)],
+      ]),
+    };
+    const result = selectConnectedServiceAuthGroupCandidate(input);
+    expect(result.selected?.profileId).toBe('fresh');
+    expect(result.decisionTrace).toMatchObject({
+      strategy: 'expiry_first', selectionBasis: 'active_stickiness', sticky: true,
+      orderedEligibleCandidates: [
+        { profileId: 'early', preferenceDeadlineMs: 10_000, leastLimitedScore: 40 },
+        { profileId: 'fresh', preferenceDeadlineMs: 20_000, leastLimitedScore: 95 },
+      ],
+    });
+    expect(result.excluded).toEqual([{ profileId: 'disabled', reason: 'disabled' }]);
+    expect(result.decisionTrace.candidates.find((candidate) => candidate.profileId === 'early')?.quotaEvidence.status).toBe('fresh');
+    const switching = selectConnectedServiceAuthGroupCandidate({ ...input, allowCurrentProfileRetry: false });
+    expect(switching.decisionTrace.orderedEligibleCandidates.map((candidate) => candidate.profileId)).toEqual(['early']);
+    expect(switching.selected?.profileId).toBe('early');
+    expect(switching.decisionTrace.sticky).toBe(false);
+  });
+
+  it('reports manual selection without inventing an eligible preference', () => {
+    const result = selectConnectedServiceAuthGroupCandidate({
+      nowMs: 1_000, quotaFreshnessMs: 300_000, activeProfileId: 'fresh',
+      policy: { ...basePolicy, strategy: 'manual' }, members: [member('fresh', 1, 1)],
+      memberStatesByProfileId: new Map([['fresh', state(95, 20_000)]]),
+    });
+    expect(result.selected).toBeNull();
+    expect(result.decisionTrace).toMatchObject({
+      strategy: 'manual', selectionBasis: 'manual_strategy', sticky: false, orderedEligibleCandidates: [],
+    });
+  });
 
   it.each([
     { name: 'earlier long allowance reset', left: 40, reset: 10_000, expected: 'early' },

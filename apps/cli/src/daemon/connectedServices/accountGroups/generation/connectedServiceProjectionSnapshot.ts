@@ -1,6 +1,9 @@
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { ConnectedAccountServiceKey } from '@happier-dev/protocol';
+import { fetchAccountProfile } from '@/api/accountProfile';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import type { RequesterSessionRuntimeContext } from '../../../sessionEncryption/requesterSessionCredentials';
 
 import type { ConnectedServiceProjectedAuthGroup } from './reconcileConnectedServiceAuthGroupGenerations';
 
@@ -23,6 +26,31 @@ export type ConnectedServiceProjectedCredentialPresence =
   | Readonly<{ status: 'absent' }>
   | Readonly<{ status: 'legacy_unfenced' }>
   | Readonly<{ status: 'present'; credentialRevision: string }>;
+
+/** The existing daemon profile read; requester selection uses the daemon's one custody resolver. */
+export async function fetchConnectedServiceProjectionForSession(input: Readonly<{
+  token: string;
+  sessionId?: string;
+  resolveSessionAccountContext?: (sessionId: string) => Promise<RequesterSessionRuntimeContext | null>;
+  assertSessionAccountCurrent?: (sessionId: string, context: RequesterSessionRuntimeContext | null) => Promise<void>;
+  signal?: AbortSignal;
+}>): Promise<Readonly<{ snapshot: ConnectedServiceProjectionSnapshot; requester: boolean }>> {
+  input.signal?.throwIfAborted();
+  if (input.sessionId && !input.resolveSessionAccountContext) throw new Error('requester_session_not_current');
+  const context = input.sessionId ? await input.resolveSessionAccountContext?.(input.sessionId) ?? null : null;
+  const assertCurrent = async () => {
+    input.signal?.throwIfAborted();
+    if (input.sessionId) await input.assertSessionAccountCurrent?.(input.sessionId, context);
+    if (context && !await context.isCurrent()) throw new Error('requester_session_not_current');
+  };
+  await assertCurrent();
+  const read = () => fetchAccountProfile({ token: context?.bootstrap.credentials.token ?? input.token,
+    ...(input.signal ? { signal: input.signal } : {}) });
+  const profile = await (context ? runWithServerHttpBaseUrl(context.bootstrap.serverHttpBaseUrl, read) : read());
+  await assertCurrent();
+  return { snapshot: parseConnectedServiceProjectionSnapshot({ connectedServicesV2: profile.connectedServicesV2,
+    connectedServiceCredentialRevisionsV1: profile.connectedServiceCredentialRevisionsV1 }), requester: context !== null };
+}
 
 /**
  * Publishes server-observed credential truth before applying it to runtime consumers.

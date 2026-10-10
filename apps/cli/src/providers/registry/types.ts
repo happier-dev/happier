@@ -7,6 +7,7 @@ import type {
   ProviderErrorCodeV1,
   ResolvedProviderManagedRuntimeDeclarationV1,
   ProviderSettingsParseDiagnosticV1,
+  ProviderSettingsV1,
   ProviderWireProtocol,
   QualifiedConnectedAccountPurposeBindingsV1,
 } from '@happier-dev/protocol';
@@ -120,6 +121,7 @@ export type ProviderConnectionResolutionInvalidReason =
   | 'invalid_machine_id'
   | 'unknown_endpoint_override'
   | 'managed_deployment_unavailable'
+  | 'managed_purpose_bindings_missing'
   | 'managed_purpose_bindings_invalid';
 
 export type ProviderConnectionEndpointUnresolvedReason =
@@ -172,7 +174,7 @@ export type ProviderConnectionResolution =
 export type ResolveProviderConnectionForMachineInput = Readonly<{
   connectionId: string;
   machineId: string;
-  accountSettings: unknown;
+  providerSettings: ProviderSettingsV1;
   registry: ProviderContributionRegistryView;
   dnsEvidenceByEndpointUrl: ProviderEndpointDnsEvidence;
   localCandidateUrlsByConnectionId?: ReadonlyMap<

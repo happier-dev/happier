@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { StoredCredentials } from '@/persistence';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { createCliConnectedServiceAction } from '@/session/actions/connectedServiceActionDeps';
 
 import {
   createConnectedAccountDaemonClient,
@@ -13,6 +16,28 @@ const credentials: StoredCredentials = {
 const service = Object.freeze({ pluginId: 'acme.accounts', localId: 'work' });
 
 describe('createConnectedAccountDaemonClient', () => {
+  it('requires canonical Action approval before revoking a connected account', async () => {
+    const callMachineRpc = vi.fn(async () => ({ status: 'outcomeUnknown' as const,
+      account: { service, accountId: 'account-1' } }));
+    const actionExecutor = createActionExecutor({
+      isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, {}, context),
+      connectedServiceAction: createCliConnectedServiceAction({ credentials,
+        resolveHeaders: () => ({ Authorization: `Bearer ${credentials.token}` }),
+        callMachineAction: callMachineRpc,
+      }),
+    });
+    const params = { credentials, machineId: 'machine-1', callMachineRpc, actionExecutor };
+    const client = createConnectedAccountDaemonClient(params);
+
+    await expect(client.control({ operation: 'revokeAccount',
+      account: { service, accountId: 'account-1' }, cleanupGroupReferences: false,
+      expectedCredentialRevision: `csr_${'a'.repeat(22)}`,
+    })).rejects.toMatchObject({ code: 'approvals_not_supported' });
+    await expect(client.authenticate({ operation: 'submitManual', attemptId: 'attempt-1',
+      fields: { token: 'private-token' },
+    })).rejects.toMatchObject({ code: 'approvals_not_supported' });
+    expect(callMachineRpc).not.toHaveBeenCalled();
+  });
   it('uses the one account-scoped machine RPC for auth and control commands', async () => {
     const callMachineRpc = vi.fn()
       .mockResolvedValueOnce({
@@ -55,6 +80,16 @@ describe('createConnectedAccountDaemonClient', () => {
       credentials,
       machineId: 'machine-1',
       callMachineRpc,
+      actionExecutor: createActionExecutor({
+        isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id,
+          { v: 1, approvalWaivedSurfaces: { 'connectedServices.authentication.beginConnect': ['cli'],
+            'connectedServices.accounts.revoke': ['cli'] } }, context),
+        connectedServiceAction: createCliConnectedServiceAction({ credentials,
+          resolveHeaders: () => ({ Authorization: `Bearer ${credentials.token}` }),
+          callMachineAction: async ({ machineId, method, request, signal }) => callMachineRpc({ credentials,
+            machineId, method, request, ...(signal ? { signal } : {}) }),
+        }),
+      }),
     });
 
     await expect(client.authenticate({
@@ -79,6 +114,7 @@ describe('createConnectedAccountDaemonClient', () => {
         accountId: 'account-1',
       },
       cleanupGroupReferences: false,
+      expectedCredentialRevision: `csr_${'a'.repeat(22)}`,
     })).resolves.toEqual({
       status: 'outcomeUnknown',
       account: {
@@ -127,6 +163,7 @@ describe('createConnectedAccountDaemonClient', () => {
             accountId: 'account-1',
           },
           cleanupGroupReferences: false,
+          expectedCredentialRevision: `csr_${'a'.repeat(22)}`,
         },
       },
     });

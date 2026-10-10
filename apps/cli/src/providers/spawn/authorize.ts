@@ -11,11 +11,12 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
-import { materializeLeasedAgentProviderBinding } from '@/plugins/runtime/providerBindings/adapter';
+import { materializeLeasedAgentProviderBinding, readLeasedAgentProviderBindingAdapter } from '@/plugins/runtime/providerBindings/adapter';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { ProviderRuntimeStateStore } from '../runtimeState';
 import { evaluateProviderModelLoadPreflight } from '../modelManagement/load';
 import { resolveProviderRuntimeCatalogSelectionObservation } from './runtimeCatalog';
+import type { ProviderRuntimeCatalogSelectionObservation, ProviderRuntimeModelProjectionReader } from './runtimeCatalog';
 
 import {
   composeProviderBindingMaterialization,
@@ -30,16 +31,19 @@ import type {
 import {
   resolveProviderSpawnAuthorization,
   resolveProviderSpawnDefinitiveRejection,
+  selectProviderSpawnClaudeHelperModels,
   type ResolveProviderSpawnAuthorizationInput,
 } from './resolve';
 import { collectProviderConnectionDnsEvidence } from '../registry/dnsEvidence';
 import {
+  awaitAbortableWithinProviderOperation,
   awaitWithinProviderOperation,
   createProviderOperationLifetime,
   ProviderOperationAbandonedError,
 } from '../operationLifetime';
 import { resolveProviderConnectionForMachine } from '../registry/resolve';
 import { readProviderSettingsForCli } from '../settings/read';
+import { prepareProviderConnectionsCatalogForCli } from '../settings/hydrate';
 import { resolveProviderCredentialPlaintext } from './credentials';
 import { revalidateProviderBindingAuthorizationTicket } from './ticket';
 import { createAccountBoundProviderSnapshotReader } from '../lifecycle/currentAccountSettingsSnapshot';
@@ -55,6 +59,7 @@ import {
 } from '../sessions/retainedManagedProviderPolicy';
 import { projectProviderRuntimeBindingBasis } from './runtimeBindingBasis';
 import { admitRuntimeProviderSavedSecret } from './runtimeCredential';
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 
 type ExternalProviderSpawnAuthorization = Extract<
   ProviderSpawnAuthorization,
@@ -527,12 +532,14 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
   runtimeModelDescriptor?:
     ResolveProviderSpawnAuthorizationInput['runtimeModelDescriptor'];
   runtimeStateStore?: Pick<ProviderRuntimeStateStore, 'read'>;
+  readModelProjection?: ProviderRuntimeModelProjectionReader;
   materializationBaseDir: string;
   sessionId?: string;
   scope?: PluginExecutionScopeV1;
   resolveAddresses?: (hostname: string) => Promise<readonly string[]>;
   resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
   managedPurposeBindingSnapshot?: QualifiedConnectedAccountPurposeBindingsV1;
+  savedSecretOperationContext?: SavedSecretOperationContextV1;
 }>): Promise<Readonly<
   | { ok: true; attempt: ProviderSpawnAuthorizationAttempt }
   | { ok: false; error: ProviderErrorV1 }
@@ -546,8 +553,8 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
   const getAccountSettingsSnapshot = createAccountBoundProviderSnapshotReader(
     input.getAccountSettingsSnapshot,
   );
-  const initialSnapshot = getAccountSettingsSnapshot();
-  if (!initialSnapshot) {
+  let initialSnapshot = getAccountSettingsSnapshot();
+  if (!initialSnapshot?.scopeKey) {
     return {
       ok: false,
       error: createProviderErrorV1('provider_connection_not_found', {
@@ -556,11 +563,27 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
       }),
     };
   }
+  let catalog;
+  try {
+    catalog = initialSnapshot.providerConnectionsCatalog?.status === 'ready'
+      ? initialSnapshot.providerConnectionsCatalog
+      : await awaitWithinProviderOperation(prepareProviderConnectionsCatalogForCli({ expectedScopeKey: initialSnapshot.scopeKey,
+          operationContext: input.savedSecretOperationContext }), admissionLifetime);
+  } catch (error) {
+    if (error instanceof ProviderOperationAbandonedError) {
+      return { ok: false, error: createProviderErrorV1('provider_endpoint_unavailable', {
+        connectionId: input.selection.ref.providerConnectionId ?? undefined, machineId: input.machineId,
+      }) };
+    }
+    throw error;
+  }
+  initialSnapshot = getAccountSettingsSnapshot();
+  if (catalog.status !== 'ready' || !initialSnapshot) return { ok: false, error: createProviderErrorV1('provider_settings_invalid') };
   const definitive = resolveProviderSpawnDefinitiveRejection({
     selection: input.selection.ref,
     agentTargetKey: input.agentTargetKey,
     agentId: input.agentId,
-    accountSettings: initialSnapshot.settings,
+    providerSettings: readProviderSettingsForCli(initialSnapshot).settings,
     registry: input.lease.registry.contributes,
   });
   if (!definitive.ok) return definitive;
@@ -610,7 +633,7 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
     admitSavedSecret = false,
   ): Promise<ProviderSpawnAuthorizationResult> => {
     let snapshot = getAccountSettingsSnapshot();
-    if (!snapshot) {
+    if (snapshot?.providerConnectionsCatalog?.status !== 'ready') {
       return {
         ok: false,
         error: createProviderErrorV1('provider_connection_not_found', {
@@ -619,7 +642,7 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
         }),
       };
     }
-    const providerSettings = readProviderSettingsForCli(snapshot.settings).settings;
+    const providerSettings = readProviderSettingsForCli(snapshot).settings;
     const connectionId = input.selection.ref.providerConnectionId;
     if (connectionId === null) {
       return { ok: false, error: createProviderErrorV1('provider_connection_not_found') };
@@ -649,7 +672,7 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
     const connectionResolution = resolveProviderConnectionForMachine({
       connectionId,
       machineId: input.machineId,
-      accountSettings: snapshot.settings,
+      providerSettings,
       registry,
       dnsEvidenceByEndpointUrl,
       ...(input.localCandidateUrlsByConnectionId
@@ -666,6 +689,7 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
         snapshot,
         getAccountSettingsSnapshot,
         lifetime,
+        ...(input.savedSecretOperationContext ? { operationContext: input.savedSecretOperationContext } : {}),
       });
       if (!admitted.ok) return admitted;
       snapshot = admitted.snapshot;
@@ -746,8 +770,23 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
         };
       }
     }
-    const runtimeModelObservation = input.runtimeStateStore
-      ? await resolveProviderRuntimeCatalogSelectionObservation({
+    let additionalModelIds: readonly string[] | undefined;
+    if (connectionResolution.status === 'resolved'
+      && connectionResolution.record.deployment.kind === 'managedLocal') {
+      try {
+        additionalModelIds = Object.values(selectProviderSpawnClaudeHelperModels({
+          adapter: readLeasedAgentProviderBindingAdapter({ lease: input.lease, agentId: input.agentId })?.adapter,
+          configuredModels: connectionResolution.record.connection.claudeHelperModels,
+        }) ?? {});
+      } catch {
+        return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent', {
+          connectionId, machineId: input.machineId,
+        }) };
+      }
+    }
+    let runtimeModelObservation: ProviderRuntimeCatalogSelectionObservation | null;
+    try {
+      runtimeModelObservation = await awaitAbortableWithinProviderOperation(signal => resolveProviderRuntimeCatalogSelectionObservation({
           selection: input.selection,
           machineId: input.machineId,
           accountSettings: snapshot.settings,
@@ -755,7 +794,10 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
           providerSettings,
           registry,
           dnsEvidenceByEndpointUrl,
-          runtimeStateStore: input.runtimeStateStore,
+          ...(input.runtimeStateStore ? { runtimeStateStore: input.runtimeStateStore } : {}),
+          ...(input.readModelProjection ? { readModelProjection: input.readModelProjection } : {}),
+          signal,
+          ...(additionalModelIds ? { additionalModelIds } : {}),
           ...(input.resolveManagedPurposeBindingIntent
             ? {
                 resolveManagedPurposeBindingIntent:
@@ -768,10 +810,20 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
           ...(input.localCandidateUrlsByConnectionId
             ? { localCandidateUrlsByConnectionId: input.localCandidateUrlsByConnectionId }
             : {}),
-        })
-      : null;
+        }), lifetime);
+    } catch (error) {
+      const parsed = ProviderErrorV1Schema.safeParse(error);
+      return { ok: false, error: parsed.success ? parsed.data : createProviderErrorV1('provider_endpoint_unavailable', {
+        connectionId, machineId: input.machineId,
+      }) };
+    }
+    const remotePlacement = connectionResolution.status === 'resolved'
+      && connectionResolution.record.deployment.kind === 'managedLocal'
+      && connectionResolution.record.connection.gatewayPlacement?.kind === 'machine'
+      && connectionResolution.record.connection.gatewayPlacement.machineId !== input.machineId;
     const runtimeModelDescriptor =
-      input.runtimeModelDescriptor ?? runtimeModelObservation?.model ?? null;
+      remotePlacement ? runtimeModelObservation?.model ?? null
+        : input.runtimeModelDescriptor ?? runtimeModelObservation?.model ?? null;
     const authorization = resolveProviderSpawnAuthorization({
       selection: input.selection,
       machineId: input.machineId,
@@ -789,6 +841,9 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
         ? { localCandidateUrlsByConnectionId: input.localCandidateUrlsByConnectionId }
         : {}),
       ...(runtimeModelDescriptor ? { runtimeModelDescriptor } : {}),
+      ...(runtimeModelObservation?.additionalModels
+        ? { runtimeAdditionalModelDescriptors: runtimeModelObservation.additionalModels }
+        : {}),
       ...(runtimeModelObservation !== null
         ? { runtimeCatalogSnapshotExists: true }
         : {}),
@@ -825,11 +880,11 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
     ManagedProviderAuthorizationCurrentnessBasis | null => {
     if (!isManagedProviderSpawnAuthorization(initial.authorization)) return null;
     const snapshot = getAccountSettingsSnapshot();
-    if (!snapshot) return null;
+    if (snapshot?.providerConnectionsCatalog?.status !== 'ready') return null;
     const current = resolveProviderConnectionForMachine({
       connectionId: initial.authorization.ticket.connectionId,
       machineId: input.machineId,
-      accountSettings: snapshot.settings,
+      providerSettings: readProviderSettingsForCli(snapshot).settings,
       registry,
       dnsEvidenceByEndpointUrl: new Map(),
     });
@@ -893,8 +948,8 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
       return false;
     }
     const snapshot = getAccountSettingsSnapshot();
-    if (!snapshot || !retainedManagedRuntimeBindingBasis) return false;
-    const providerSettings = readProviderSettingsForCli(snapshot.settings).settings;
+    if (snapshot?.providerConnectionsCatalog?.status !== 'ready' || !retainedManagedRuntimeBindingBasis) return false;
+    const providerSettings = readProviderSettingsForCli(snapshot).settings;
     return isRetainedManagedProviderSettingsGrantCurrent({
       machineId: input.machineId,
       providerSettings,
@@ -922,6 +977,7 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
           accountSettings: snapshot.settings,
           savedSecretResources: snapshot.savedSecretResources,
           settingsSecretsReadKeys: snapshot.settingsSecretsReadKeys,
+          ...(input.savedSecretOperationContext ? { isCurrent: () => input.savedSecretOperationContext?.readSnapshot() === snapshot } : {}),
           connectionId: initial.authorization.ticket.connectionId,
           machineId: input.machineId,
         });

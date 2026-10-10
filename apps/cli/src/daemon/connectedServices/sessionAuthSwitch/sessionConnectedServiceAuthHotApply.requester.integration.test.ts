@@ -24,7 +24,7 @@ import { ApiClient } from '@/api/api';
 import { readQualifiedConnectedAccountGroupV4, resolveQualifiedConnectedAccountAtomicV4Negotiation,
   resolveQualifiedConnectedAccountPeerClass } from '@/api/client/qualifiedConnectedAccountApi';
 import { createRequesterSessionRuntimeContext } from '../../sessionEncryption/createRequesterSessionRuntimeContext';
-import { admitRequesterSessionBootstrap, verifyRequesterSessionMachineAdmissionCurrent } from '../../sessionEncryption/requesterSessionCredentials';
+import { admitRequesterSessionBootstrap, resolveRequesterSessionBootstrap, verifyRequesterSessionMachineAdmissionCurrent } from '../../sessionEncryption/requesterSessionCredentials';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -58,6 +58,7 @@ describe('requester native subscription hot apply', () => {
     it('refreshes and switches a Bot subscription under requester custody across reconnect and revoke', async () => {
     let requester: Awaited<ReturnType<typeof createRequesterSessionRuntimeContext>> = null;
     let host: Awaited<ReturnType<typeof createRequesterSessionControlRuntimeFixture>> | null = null;
+    let cleanupCustody: (() => Promise<void>) | undefined;
     let current = true;
     let connected = true;
     const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' } as const;
@@ -116,6 +117,7 @@ describe('requester native subscription hot apply', () => {
           terminalPresentUserPolicy: 'allowed', nativeEmail: null, password: { status: 'not_enrolled', revision: null } }) };
       }
       if (path === '/v1/account/profile') return { status: 200, data: { id: 'bob' } };
+      if (path === '/v1/access-keys/bob-bot/machine') return { status: 200, data: { accessKey: 'retained-bob-machine-control' } };
       if (path === '/v1/machines/machine/access') {
         const custodian = { accountId: 'alice', displayName: 'Alice' };
         return current ? { status: 200, data: { machineId: 'machine', custodian,
@@ -230,16 +232,21 @@ describe('requester native subscription hot apply', () => {
           role: 'use', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: verifyCurrent } });
       if (!admitted) throw new Error(`Missing admitted requester: ${JSON.stringify(requests.map(request => request.path))}`);
       admitted.admitted.bindRuntimeMachineAdmissionCurrentness(verifyCurrent);
-      requester = await createRequesterSessionRuntimeContext({ bootstrap: admitted.admitted,
+      const custody = await admitted.admitted.bindExistingSession('bob-bot');
+      if (!custody) throw new Error('Missing retained requester custody');
+      cleanupCustody = custody.cleanup;
+      const accountHost = host.runtime;
+      const createRuntime = (bootstrap: Parameters<typeof createRequesterSessionRuntimeContext>[0]['bootstrap']) => createRequesterSessionRuntimeContext({ bootstrap,
         activeServerDir: pluginRuntime.happyHomeDir, connectedServicesMaterializationBaseDir: join(pluginRuntime.happyHomeDir, 'materialized'),
         resolveQualifiedConnectedAccountV4Support: () => resolveQualifiedConnectedAccountAtomicV4Negotiation(features),
         coordinatorInput: { machineId: 'machine', machineIdProvider: () => 'machine', runtimeId: 'runtime',
           happyHomeDir: pluginRuntime.happyHomeDir, logger: { debug() {}, info() {}, warn() {} },
           processEnv: { HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '1', HAPPIER_CONNECTED_SERVICES_QUOTAS_ENABLED: '0' },
           pidToTrackedSession: trackedSessions, connectedServiceRuntimeRegistry: runtimeRegistry,
-          connectedServiceAuthGroupPreTurnSwitchCoordinator: host.runtime.connectedServiceAuthGroupPreTurnSwitchCoordinator,
+          connectedServiceAuthGroupPreTurnSwitchCoordinator: accountHost.connectedServiceAuthGroupPreTurnSwitchCoordinator,
           resolveQualifiedConnectedAccountPeerClass: () => resolveQualifiedConnectedAccountPeerClass(features),
         } });
+      requester = await createRuntime(admitted.admitted);
       if (!requester?.connectedServiceRefreshCoordinator) throw new Error('Missing real requester refresh owner');
       const captured = requester;
       captured.connectedServiceRuntimeRegistry?.registerTarget({ pid: 123, agentId: 'claude', sessionId: 'bob-bot',
@@ -251,21 +258,22 @@ describe('requester native subscription hot apply', () => {
       expect(runtimeRegistry.getBySessionId('bob-bot')?.requesterWorkAttributionV1)
         .toEqual(captured.bootstrap.attribution);
       const root = join(requester.activeServerDir, 'bot-native');
-      const nativeHome = await createConnectedServiceRuntimeAuthNativeHome({ agentId: 'claude', root,
-        isCurrent: () => captured.bootstrap.isCurrent() });
-      if (!nativeHome) throw new Error('Missing admitted native Home');
-      const apply = createSessionConnectedServiceAuthHotApply({ isSessionCurrent: () => captured.bootstrap.isCurrent(),
-        validateGroupMutationCurrentness: input => validateConnectedServiceGroupMutationCurrentness({ input,
-          credentials, api: captured.api, readGroup: () => captured.qualifiedConnectedAccountApi.readGroup({ service, groupId: 'bob-group' }),
-          assertCurrent: async () => { if (!await captured.bootstrap.isCurrent()) throw new Error('requester_session_not_current'); },
-        }) });
       const tracked = { startedBy: 'daemon' as const, happySessionId: 'bob-bot', pid: 123,
         spawnOptions: { directory: root, identity,
             backendTarget: { kind: 'backend' as const, backendId: 'claude' as const, sourceKind: 'built_in' as const } } };
       trackedSessions.set(tracked.pid, { ...tracked, requesterWorkAttributionV1: attribution,
         requesterSessionRuntimeContext: captured });
-      const switcher = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({ token: credentials.token,
-        accountScope: captured.bootstrap.attribution, isCurrent: () => captured.bootstrap.isCurrent(),
+      const createSwitcher = async (captured: NonNullable<typeof requester>) => {
+      const nativeHome = await createConnectedServiceRuntimeAuthNativeHome({ agentId: 'claude', root,
+        isCurrent: () => captured.isCurrent() });
+      if (!nativeHome) throw new Error('Missing admitted native Home');
+      const apply = createSessionConnectedServiceAuthHotApply({ runtimeRegistry, isSessionCurrent: () => captured.isCurrent(),
+        validateGroupMutationCurrentness: input => validateConnectedServiceGroupMutationCurrentness({ input,
+          credentials, api: captured.api, readGroup: () => captured.qualifiedConnectedAccountApi.readGroup({ service, groupId: 'bob-group' }),
+          assertCurrent: async () => { if (!await captured.isCurrent()) throw new Error('requester_session_not_current'); },
+        }) });
+      return createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({ token: credentials.token,
+        accountScope: captured.bootstrap.attribution, isCurrent: () => captured.isCurrent(),
         quotaFreshnessMs: 60_000, nowMs: () => Date.now(),
         prepareCandidateForSwitch: candidate => captured.connectedServiceRefreshCoordinator!.prepareConnectedServiceAuthGroupCandidateForSwitch({
           serviceId: 'claude-subscription', profileId: candidate.profileId, reason: candidate.reason }),
@@ -292,11 +300,27 @@ describe('requester native subscription hot apply', () => {
             }]]) });
         },
       });
+      };
+      const switcher = await createSwitcher(captured);
       const switchInput = { sessionId: 'bob-bot', serviceId: service, groupId: 'bob-group', reason: 'auth_expired', observedProfileId: 'primary' };
       connected = false;
       await expect(runWithServerHttpBaseUrl(homeUrl, () => switcher.switchAfterClassifiedFailure(switchInput))).rejects.toThrow();
       connected = true;
-      const result = await runWithServerHttpBaseUrl(homeUrl, () => switcher.switchAfterClassifiedFailure(switchInput));
+      expect(await captured.isCurrent()).toBe(false);
+      const recoveredBootstrap = await resolveRequesterSessionBootstrap({ happyHomeDir: pluginRuntime.happyHomeDir,
+        sessionId: 'bob-bot', attribution, serverHttpBaseUrl: homeUrl,
+        machineAdmissionBoundary: { machineId: 'machine', daemonToken: 'alice-daemon', isHomeCurrent: () => true,
+          readInstallation: () => ({ installationId: 'installation', privateKey: installation.secretKey }) } });
+      if (!recoveredBootstrap) throw new Error('Missing canonical requester recovery');
+      await captured.dispose();
+      requester = await createRuntime(recoveredBootstrap);
+      if (!requester) throw new Error('Missing recovered requester runtime');
+      expect(await requester.isCurrent()).toBe(true);
+      expect(await captured.isCurrent()).toBe(false);
+      trackedSessions.set(tracked.pid, { ...tracked, requesterWorkAttributionV1: attribution,
+        requesterSessionRuntimeContext: requester });
+      const recoveredSwitcher = await createSwitcher(requester);
+      const result = await runWithServerHttpBaseUrl(homeUrl, () => recoveredSwitcher.switchAfterClassifiedFailure(switchInput));
       expect(result, JSON.stringify(result)).toMatchObject({ status: 'switched', activeProfileId: 'backup' });
       const providerBodies = providerRequests.map(body => typeof body === 'string' ? body
         : body instanceof Uint8Array ? new TextDecoder().decode(body) : '');
@@ -317,7 +341,7 @@ describe('requester native subscription hot apply', () => {
       current = false;
       const requestsBeforeRevoke = requests.length;
       const providerRequestsBeforeRevoke = providerRequests.length;
-      await expect(runWithServerHttpBaseUrl(homeUrl, () => switcher.switchAfterClassifiedFailure(switchInput))).rejects.toThrow();
+      await expect(runWithServerHttpBaseUrl(homeUrl, () => recoveredSwitcher.switchAfterClassifiedFailure(switchInput))).rejects.toThrow();
       expect(requests.slice(requestsBeforeRevoke).every(request =>
         request.path === '/v1/account/profile' || request.path === '/v1/machines/machine/access')).toBe(true);
       expect(providerRequests).toHaveLength(providerRequestsBeforeRevoke);
@@ -329,7 +353,8 @@ describe('requester native subscription hot apply', () => {
         try {
           await host?.dispose();
         } finally {
-          vi.restoreAllMocks(); vi.unstubAllGlobals();
+          try { await cleanupCustody?.(); }
+          finally { vi.restoreAllMocks(); vi.unstubAllGlobals(); }
         }
       }
     }
@@ -381,7 +406,8 @@ describe('requester native subscription hot apply', () => {
       const bindings: ConnectedServiceBindingsV2 = { v: 2, bindingsByServiceId: {
         [serviceId]: { source: 'connected', selection: 'group', groupId: 'bob-group', profileId: 'bob-subscription' },
       } };
-      const apply = createSessionConnectedServiceAuthHotApply({ isSessionCurrent: async () => current,
+      const apply = createSessionConnectedServiceAuthHotApply({ runtimeRegistry: new ConnectedServiceRuntimeRegistry(),
+        isSessionCurrent: async () => current,
         validateGroupMutationCurrentness: input => validateConnectedServiceGroupMutationCurrentness({ input,
           credentials, api, readGroup: () => readQualifiedConnectedAccountGroupV4({ token: credentials.token,
             group: { service, groupId: 'bob-group' } }),

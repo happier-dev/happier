@@ -8,6 +8,7 @@ import {
     QualifiedConnectedAccountRefSchema,
     QualifiedConnectedAccountServiceRefSchema,
     type ConnectedServiceId,
+    type BuiltInLegacyConnectedServiceId,
     type QualifiedConnectedAccountGroupRef,
     type QualifiedConnectedAccountRef,
     type QualifiedConnectedAccountServiceRef,
@@ -163,6 +164,14 @@ export function createServiceAccountTokenIdentityFields(params: Readonly<{
     };
 }
 
+function readLegacyConnectedAccountStorageCompatibility(serviceId: string) {
+    // Stored predecessor identities include services that closed peer APIs never admitted.
+    if (!Object.hasOwn(BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID, serviceId)) {
+        throw new Error(`Unknown historical Connected Account service '${serviceId}'`);
+    }
+    return BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[serviceId as BuiltInLegacyConnectedServiceId];
+}
+
 export function resolveLegacyServiceAccountTokenIdentityFields(
     params: Readonly<{
         serviceId: string;
@@ -170,10 +179,7 @@ export function resolveLegacyServiceAccountTokenIdentityFields(
         credentialKind?: "oauth" | "token" | null;
     }>,
 ): ServiceAccountTokenIdentityFields {
-    const serviceId =
-        ConnectedServiceIdSchema.parse(params.serviceId) satisfies ConnectedServiceId;
-    const compatibility =
-        BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[serviceId];
+    const compatibility = readLegacyConnectedAccountStorageCompatibility(params.serviceId);
     const byKind = compatibility.authenticationModeByCredentialKind;
     const unsupportedByKind =
         compatibility.unsupportedAuthenticationModeByCredentialKind;
@@ -202,7 +208,7 @@ export function resolveLegacyServiceAccountTokenIdentityFields(
             : compatibility.defaultAuthenticationModeId;
     if (!authenticationModeId) {
         throw new Error(
-            `Legacy Connected Account credential kind '${String(params.credentialKind)}' is unsupported for '${serviceId}'`,
+            `Legacy Connected Account credential kind '${String(params.credentialKind)}' is unsupported for '${params.serviceId}'`,
         );
     }
     return createServiceAccountTokenIdentityFields({
@@ -215,19 +221,15 @@ export function resolveLegacyServiceAccountTokenIdentityFields(
 }
 
 export type QualifiedConnectedAccountLegacyIdentity = Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: BuiltInLegacyConnectedServiceId;
     profileId: string;
 }>;
 
 export function resolveLegacyQualifiedConnectedAccountService(
     serviceIdInput: string,
 ): QualifiedConnectedAccountServiceRef {
-    const serviceId =
-        ConnectedServiceIdSchema.parse(serviceIdInput) satisfies ConnectedServiceId;
     return QualifiedConnectedAccountServiceRefSchema.parse(
-        BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[
-            serviceId
-        ].service,
+        readLegacyConnectedAccountStorageCompatibility(serviceIdInput).service,
     );
 }
 
@@ -236,12 +238,8 @@ export function resolveLegacyServiceIdForQualifiedConnectedAccountService(
 ): ConnectedServiceId | null {
     const service =
         QualifiedConnectedAccountServiceRefSchema.parse(serviceInput);
-    for (const [serviceId, compatibility] of Object.entries(
-        BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
-    ) as Array<[
-        ConnectedServiceId,
-        typeof BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[ConnectedServiceId],
-    ]>) {
+    for (const serviceId of ConnectedServiceIdSchema.options) {
+        const compatibility = BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[serviceId];
         if (
             compatibility.service.pluginId === service.pluginId
             && compatibility.service.localId === service.localId
@@ -264,8 +262,8 @@ export function resolveQualifiedConnectedAccountLegacyIdentity(
     for (const [serviceId, compatibility] of Object.entries(
         BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
     ) as Array<[
-        ConnectedServiceId,
-        typeof BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[ConnectedServiceId],
+        BuiltInLegacyConnectedServiceId,
+        typeof BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[BuiltInLegacyConnectedServiceId],
     ]>) {
         if (
             compatibility.service.pluginId !== ref.service.pluginId
@@ -320,10 +318,7 @@ export function resolveLegacyCredentialKindForAuthenticationMode(
         authenticationModeId: string;
     }>,
 ): "oauth" | "token" | null {
-    const serviceId =
-        ConnectedServiceIdSchema.parse(params.serviceId) satisfies ConnectedServiceId;
-    const compatibility =
-        BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[serviceId];
+    const compatibility = readLegacyConnectedAccountStorageCompatibility(params.serviceId);
     const classified = classifyLegacyAuthenticationMode({
         compatibility,
         authenticationModeId: params.authenticationModeId,
@@ -341,7 +336,7 @@ export type LegacyAuthenticationModeClassification = Readonly<{
 function classifyLegacyAuthenticationMode(params: Readonly<{
     compatibility:
         typeof BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[
-            ConnectedServiceId
+            BuiltInLegacyConnectedServiceId
         ];
     authenticationModeId: string;
 }>): LegacyAuthenticationModeClassification | null {
@@ -374,21 +369,11 @@ export function classifyQualifiedConnectedAccountLegacyAuthenticationMode(
         authenticationModeId: string;
     }>,
 ): LegacyAuthenticationModeClassification | null {
-    const serviceId =
-        resolveLegacyServiceIdForQualifiedConnectedAccountService(
-            params.service,
-        );
-    if (!serviceId) return null;
-    return classifyLegacyAuthenticationMode({
-        compatibility:
-            BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[
-                serviceId
-            ],
-        authenticationModeId:
-            PluginContributionLocalIdSchema.parse(
-                params.authenticationModeId,
-            ),
-    });
+    const service = QualifiedConnectedAccountServiceRefSchema.parse(params.service);
+    const authenticationModeId = PluginContributionLocalIdSchema.parse(params.authenticationModeId);
+    const compatibility = Object.values(BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID)
+        .find((entry) => entry.service.pluginId === service.pluginId && entry.service.localId === service.localId);
+    return compatibility ? classifyLegacyAuthenticationMode({ compatibility, authenticationModeId }) : null;
 }
 
 /**

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { isAbsolute, relative } from 'node:path';
 
 import { normalizeMaterializationKeyForPath } from '../normalizeMaterializationKeyForPath';
+import { hasLocalConnectedServiceResumeState } from '../../stateSharing/connectedServiceStateSharingManifest';
 
 /**
  * Provider-agnostic hygiene hook applied to every retained materialized-home root before
@@ -11,13 +12,14 @@ import { normalizeMaterializationKeyForPath } from '../normalizeMaterializationK
  */
 export type ConnectedServiceRetainedMaterializedHomeSanitizer = (homeRootDir: string) => Promise<void> | void;
 
-type MaterializedHomeCleanupTargetKind = 'identity_root' | 'attempt_root';
+type MaterializedHomeCleanupTargetKind = 'identity_root' | 'attempt_root' | 'isolation_root';
 
 type MaterializedHomeCleanupTarget = Readonly<{
   targetKind: MaterializedHomeCleanupTargetKind;
   segment: string;
   path: string;
   mtimeMs: number;
+  baseDir: string;
 }>;
 
 export type ConnectedServiceMaterializedHomeCleanupResult = Readonly<{
@@ -36,6 +38,7 @@ type MaterializedHomeCleanupFileOperation =
   | 'realpath'
   | 'rm'
   | 'sanitizeRetainedHome'
+  | 'readResumeState'
   | 'stat';
 
 const DEFAULT_FILE_OPERATION_TIMEOUT_MS = 5_000;
@@ -56,6 +59,7 @@ export type ConnectedServiceRetainedMaterializationKeysResult =
 
 type RetainedSegmentsSnapshot = Readonly<{
   retainedSegments: ReadonlySet<string>;
+  retainedKeys: ReadonlySet<string>;
   identityDeletionAuthority: 'confirmed' | 'unavailable';
 }>;
 
@@ -161,6 +165,7 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
 
   constructor(private readonly deps: Readonly<{
     baseDir: string;
+    isolationBaseDir?: string;
     nowMs: () => number;
     getLiveMaterializationKeys: () => Iterable<string>;
     getRetainedMaterializationKeys?: () => Promise<ConnectedServiceRetainedMaterializationKeysResult> | ConnectedServiceRetainedMaterializationKeysResult;
@@ -182,22 +187,25 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
   }
 
   async #readRetainedSegments(): Promise<RetainedSegmentsSnapshot> {
-    const liveSegments = normalizeMaterializationKeys(this.deps.getLiveMaterializationKeys());
+    const retainedKeys = new Set(this.deps.getLiveMaterializationKeys());
+    const liveSegments = normalizeMaterializationKeys(retainedKeys);
     const retainedResult = normalizeRetainedMaterializationKeysResult(
       await Promise.resolve(this.deps.getRetainedMaterializationKeys?.() ?? []),
     );
     if (retainedResult.status === 'unavailable') {
       return {
         retainedSegments: liveSegments,
+        retainedKeys,
         identityDeletionAuthority: 'unavailable',
       };
     }
-    const retainedKeys = retainedResult.keys;
+    for (const key of retainedResult.keys) retainedKeys.add(key);
     for (const segment of normalizeMaterializationKeys(retainedKeys)) {
       liveSegments.add(segment);
     }
     return {
       retainedSegments: liveSegments,
+      retainedKeys,
       identityDeletionAuthority: 'confirmed',
     };
   }
@@ -208,7 +216,8 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
     if (retainedSnapshot.identityDeletionAuthority === 'confirmed') {
       for (const entry of await readDirectoryEntries(this.#baseDir, this.#fileOperationTimeoutMs)) {
         if (entry.name === '.attempts') continue;
-        if (retainedSnapshot.retainedSegments.has(entry.name)) continue;
+        // ../0.2 may materialize directly under identity.id; current homes use its hash.
+        if (retainedSnapshot.retainedSegments.has(entry.name) || retainedSnapshot.retainedKeys.has(entry.name)) continue;
         const mtimeMs = await readDirectoryMtimeMs(entry.path, this.#fileOperationTimeoutMs);
         if (mtimeMs === null) continue;
         if (nowMs - mtimeMs < this.#orphanTtlMs) continue;
@@ -217,7 +226,28 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
           segment: entry.name,
           path: entry.path,
           mtimeMs,
+          baseDir: this.#baseDir,
         });
+      }
+      if (this.deps.isolationBaseDir) {
+        for (const agent of await readDirectoryEntries(this.deps.isolationBaseDir, this.#fileOperationTimeoutMs)) {
+          // Routing ids have one segment; qualified contribution ids have plugin/local segments.
+          // Only execution_run has a producer and Run identity in this owner.
+          const agentRoots = [agent.path, ...(await readDirectoryEntries(agent.path, this.#fileOperationTimeoutMs))
+            .filter(entry => entry.name !== 'execution_run' && entry.name !== 'ephemeral_task')
+            .map(entry => entry.path)];
+          for (const agentRoot of agentRoots) {
+            const runScope = join(agentRoot, 'execution_run');
+            if (!await this.#isContainedDirectory(runScope, this.deps.isolationBaseDir)) continue;
+            for (const entry of await readDirectoryEntries(runScope, this.#fileOperationTimeoutMs)) {
+              if (retainedSnapshot.retainedKeys.has(entry.name)) continue;
+              const mtimeMs = await readDirectoryMtimeMs(entry.path, this.#fileOperationTimeoutMs);
+              if (mtimeMs === null || nowMs - mtimeMs < this.#orphanTtlMs) continue;
+              targets.push({ targetKind: 'isolation_root', segment: entry.name, path: entry.path,
+                mtimeMs, baseDir: this.deps.isolationBaseDir });
+            }
+          }
+        }
       }
     }
 
@@ -231,6 +261,7 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
         segment: entry.name,
         path: entry.path,
         mtimeMs,
+        baseDir: this.#baseDir,
       });
     }
     return targets;
@@ -252,7 +283,7 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
     }));
   }
 
-  async #isContainedDirectory(path: string): Promise<boolean> {
+  async #isContainedDirectory(path: string, baseDir: string): Promise<boolean> {
     try {
       const targetStat = await runFileOperationWithTimeout({
         operation: 'lstat',
@@ -264,9 +295,9 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
       const [baseRealPath, targetRealPath] = await Promise.all([
         runFileOperationWithTimeout({
           operation: 'realpath',
-          path: this.#baseDir,
+          path: baseDir,
           timeoutMs: this.#fileOperationTimeoutMs,
-          run: async () => await realpath(this.#baseDir),
+          run: async () => await realpath(baseDir),
         }),
         runFileOperationWithTimeout({
           operation: 'realpath',
@@ -284,10 +315,27 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
   }
 
   async #isRetainedIdentityTarget(target: MaterializedHomeCleanupTarget): Promise<boolean> {
-    if (target.targetKind !== 'identity_root') return false;
+    if (target.targetKind === 'attempt_root') return false;
     const retainedSnapshot = await this.#readRetainedSegments();
     if (retainedSnapshot.identityDeletionAuthority !== 'confirmed') return true;
-    return retainedSnapshot.retainedSegments.has(target.segment);
+    const referenced = retainedSnapshot.retainedKeys.has(target.segment)
+      || target.targetKind === 'identity_root' && retainedSnapshot.retainedSegments.has(target.segment);
+    if (referenced) return true;
+    return await runFileOperationWithTimeout({
+      operation: 'readResumeState', path: target.path, timeoutMs: this.#fileOperationTimeoutMs,
+      run: async () => {
+        if (await hasLocalConnectedServiceResumeState(target.path)) return true;
+        if (target.targetKind !== 'identity_root') return false;
+        // Materialized identity roots contain routing-id or plugin/local Agent homes.
+        for (const agent of await readDirectoryEntries(target.path, this.#fileOperationTimeoutMs)) {
+          if (await hasLocalConnectedServiceResumeState(agent.path)) return true;
+          for (const local of await readDirectoryEntries(agent.path, this.#fileOperationTimeoutMs)) {
+            if (await hasLocalConnectedServiceResumeState(local.path)) return true;
+          }
+        }
+        return false;
+      },
+    });
   }
 
   async #removeTarget(target: MaterializedHomeCleanupTarget): Promise<ConnectedServiceMaterializedHomeCleanupResult> {
@@ -307,7 +355,7 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
         retained: true,
       };
     }
-    if (!await this.#isContainedDirectory(target.path)) {
+    if (!await this.#isContainedDirectory(target.path, target.baseDir)) {
       return {
         targetKind: target.targetKind,
         path: target.path,

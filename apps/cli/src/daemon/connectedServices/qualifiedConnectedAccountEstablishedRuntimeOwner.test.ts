@@ -10,6 +10,10 @@ import {
 } from '@happier-dev/protocol';
 
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
+import type { ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { createLoggerAndEventsAvailablePluginInvocationServiceBinding } from '@/plugins/runtime/invocation/services/factory';
+import { createConnectedAccountHostRuntimeInvoker } from '@/plugins/runtime/connectedAccounts/runtimeInvoker';
 import {
   createConnectedAccountConfigurationOwner,
   type ConnectedAccountConfigurationRecord,
@@ -24,6 +28,7 @@ import {
   readQualifiedConnectedAccountCredentialMaterial,
 } from './qualifiedConnectedAccountEstablishedRuntimeOwner';
 import { createQualifiedConnectedAccountDaemonPersistence } from './qualifiedConnectedAccountDaemonPersistence';
+import { createDaemonConnectedAccountPurposeBindingRuntime } from './purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
 
 const service = Object.freeze({
   pluginId: 'happier.agent.codex',
@@ -109,6 +114,99 @@ function plainEnvelope(kind: 'credential' | 'configuration', payload: unknown) {
 }
 
 describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
+  it('establishes the current usage basis before provider quota work, including a failed first fetch', async () => {
+    const failure = new Error('provider offline');
+    let sourceReady = false;
+    let providerCalls = 0;
+    let runtimeCurrent = true;
+    const runtime: ConnectedAccountRuntime = {
+      authentication: { modes: {} },
+      refresh: async () => ({ status: 'connected' }),
+      revoke: async () => ({ status: 'remoteUnsupported' }),
+      status: async () => ({ status: 'connected' }),
+      materialize: async () => ({ kind: 'environment', env: {} }),
+      quota: async () => {
+        providerCalls += 1;
+        expect(sourceReady).toBe(true);
+        throw failure;
+      },
+    };
+    const quotaDescriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({
+      id: service.localId,
+      title: 'Quota test',
+      authentication: { defaultModeId: 'token', modes: [{
+        id: 'token', kind: 'manual', outcomeReconciliation: 'none',
+        fields: [{ id: 'token', title: 'Token', schema: { type: 'string' }, secret: true }],
+      }] },
+    });
+    const runtimeLease = {
+      ref: service,
+      occurrenceId: 'quota-generation',
+      sourceCustody: { kind: 'managed' as const, immutableGenerationId: 'quota-artifact', installSource: 'npm' as const },
+      descriptor: quotaDescriptor,
+      runtime,
+      isCurrent: () => runtimeCurrent,
+    };
+    const invoker = createConnectedAccountHostRuntimeInvoker({
+      resolveRuntime: async () => runtimeLease,
+      resolvePlugin: () => ({ version: '1.0.0', hostAccessRequests: [] }),
+      resolveHostPolicy: () => ({ hostAccess: [], serviceBinding:
+        createLoggerAndEventsAvailablePluginInvocationServiceBinding('quota-generation', 'producer', []) }),
+      // No platform service is used by this provider leaf; the real invoker owns its context.
+      createServices: () => ({}) as PluginInvocationContext['services'],
+      registerRawForRedaction() {},
+      resolveHostOwnedConfiguredEndpoints: () => [],
+    });
+    const registry = {
+      resolveConnectedAccountRuntime: async () => runtimeLease,
+      connectedAccountRuntimeInvoker: invoker,
+    };
+    const release = vi.fn(async () => {});
+    const owner = createQualifiedConnectedAccountEstablishedRuntimeOwner({
+      reloadController: {
+        acquireRuntimeRegistry: async () => ({ registry, source: 'active', release }),
+        isRuntimeRegistryCurrent: () => true,
+      } as unknown as Pick<PluginReloadController, 'acquireRuntimeRegistry' | 'isRuntimeRegistryCurrent'>,
+      credentials: { token: 'token', encryption: null },
+      getAccountEncryptionMode: async () => 'plain',
+      readCredential: async () => QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+        ref: account, authenticationModeId: 'token', revisionSemantics: 'revisioned',
+        credentialRevision: requestAuthCredentialRevision, configurationRevision: null,
+        content: plainEnvelope('credential', { v: 1, values: { token: 'provider-token' } }),
+        metadata: { scopes: [] },
+      }),
+      configuration: { read: async () => null, secrets: {
+        admit: async () => {}, has: async () => false, read: async () => null,
+      } },
+    });
+    await expect(owner.invokeWithReceipt({
+      account,
+      operation: { kind: 'quota' },
+      beforeInvoke: async (basis) => {
+        expect(basis.credentialRevision).toBe(requestAuthCredentialRevision);
+        expect(basis.credentialConfigurationRevision).toBeNull();
+        expect(basis.isCurrent()).toBe(true);
+        sourceReady = true;
+      },
+    })).rejects.toBe(failure);
+    expect(sourceReady).toBe(true);
+    expect(release).toHaveBeenCalledOnce();
+    const cancelled = new AbortController();
+    await expect(owner.invokeWithReceipt({
+      account,
+      operation: { kind: 'quota' },
+      signal: cancelled.signal,
+      beforeInvoke: async () => { cancelled.abort(failure); },
+    })).rejects.toBe(failure);
+    expect(providerCalls).toBe(1);
+    await expect(owner.invokeWithReceipt({
+      account,
+      operation: { kind: 'quota' },
+      beforeInvoke: async () => { runtimeCurrent = false; },
+    })).rejects.toBeInstanceOf(Error);
+    expect(providerCalls).toBe(1);
+    expect(release).toHaveBeenCalledTimes(3);
+  });
   it('refuses credential material without an authentication mode before disclosing its payload', async () => {
     const snapshot = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
       ref: account,
@@ -983,12 +1081,13 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     const revisionA = 'csr_0123456789ABCDEFGHJKMNPQRS';
     const revisionB = 'csr_ZYXWVUTSRQPONMLKJHGFEDCBA1';
     let credentialRevision = revisionA;
+    let configurationRevision = 'configuration-1';
     const readCredential = vi.fn(async () => ({
       ref: account,
       authenticationModeId: 'oauth',
       revisionSemantics: 'revisioned' as const,
       credentialRevision,
-      configurationRevision: 'configuration-1',
+      configurationRevision,
       content: plainEnvelope('credential', {
         v: 1,
         values: { accessToken: credentialRevision },
@@ -1000,7 +1099,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
       authenticationModeId: 'oauth',
       revisionSemantics: 'revisioned' as const,
       credentialRevision,
-      configurationRevision: 'configuration-1',
+      configurationRevision,
       configurationContent: plainEnvelope('configuration', {
         values: { endpoint: 'https://api.example.test' },
         secretRefs: {},
@@ -1096,6 +1195,50 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     });
     expect(nextCallback.basis.credentialRevision).toBe(revisionB);
     expect(invokeEstablished).toHaveBeenCalledTimes(2);
+    // A retained machine pins its connection configuration, not the renewable
+    // bearer credential. A refreshed token still addresses the same resource.
+    const retainedConnection = await owner.invokeWithReceipt({
+      account,
+      operation: { kind: 'materialize', request: { kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['authorization'] } },
+      expectedConfigurationRevision: first.basis.credentialConfigurationRevision,
+    });
+    expect(retainedConnection.result).toEqual({ kind: 'httpHeaders', headers: { authorization: `Bearer ${revisionB}` } });
+    configurationRevision = 'configuration-2';
+    await expect(owner.invokeWithReceipt({
+      account,
+      operation: { kind: 'materialize', request: { kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['authorization'] } },
+      expectedConfigurationRevision: first.basis.credentialConfigurationRevision,
+    })).rejects.toThrow('configuration revision');
+    expect(invokeEstablished).toHaveBeenCalledTimes(3);
+    // Exercise the real managed-purpose lease and daemon adapter too: the
+    // public materialize request cannot choose or replace its retained basis.
+    const purpose = { consumer: { pluginId: 'acme.compute', localId: 'vm' }, purpose: 'coordinator' };
+    const runtime = createDaemonConnectedAccountPurposeBindingRuntime({
+      establishedRuntimeOwner: owner, resolveQualifiedConnectedAccountV4Support: () => 'advertised',
+      store: { read: async () => ({ v: 1, bindings: [] }), update: async mutate => mutate({ v: 1, bindings: [] }) },
+      qualifiedApi: {
+        listAccounts: async () => ({ service, accounts: [{ ref: account, status: 'connected', authenticationModeId: 'oauth',
+          revisionSemantics: 'revisioned', credentialRevision: revisionB, configurationReady: true,
+          configurationRevision, kind: 'token', expiresAt: null, providerIdentity: { accountId: 'retained' }, displayName: 'Retained account', scopes: [] }] }),
+        listGroups: async () => ({ groups: [] }), readGroup: async () => null,
+      },
+      runtimeRegistry: { subscribe: () => () => undefined, acquire: async () => ({
+        isCurrent: () => true, resolveService: () => ({ service, availability: 'available', authentication: descriptor.authentication }),
+        release: async () => undefined,
+      }) },
+    });
+    const bindingLease = runtime.activatePurposeBindings({
+      subject: { kind: 'managed_provider_operation', operationId: 'retained-machine', pluginId: purpose.consumer.pluginId,
+        providerLocalId: purpose.consumer.localId, isCurrent: () => true,
+        credentialConfiguration: { account, revision: first.basis.credentialConfigurationRevision } },
+      purposes: [purpose], bindings: [{ purpose, target: { kind: 'account', account } }],
+    });
+    try {
+      await expect(runtime.owner.materialize({ purpose, serviceRefs: [service], exactPurposeBindingSubjectId: bindingLease.subjectId,
+        request: { kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['authorization'] },
+        signal: new AbortController().signal })).rejects.toThrow('configuration revision');
+      expect(invokeEstablished).toHaveBeenCalledTimes(3);
+    } finally { bindingLease.dispose(); }
   });
 
   it('projects only host-normalized credential-free configured origins for one exact account', async () => {

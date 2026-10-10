@@ -192,8 +192,9 @@ describe('Team credential resource usage query', () => {
     expect(result.totals).toMatchObject({
       requestCount: 1,
       tokens: { total: 0 },
-      cost: { effectiveUsd: 0 },
+      cost: { costSource: 'none' },
     });
+    expect(result.totals.cost.effectiveUsd).toBeUndefined();
     expect(result.coverage).toMatchObject({
       requestAdmissionCount: 1,
       agentObservationCount: 0,
@@ -686,7 +687,7 @@ describe('Team credential resource usage query', () => {
     const managerView = await queryTeamCredentialUsage(manager.id, { resourceId: resource.id, ...range }, TEST_AUTHENTICATION);
     expect('ok' in managerView).toBe(false);
   });
-  it('sums each contribution\'s effective cost instead of applying precedence to merged columns', async () => {
+  it('retains monetary columns without blending kinds or pricing an incompletely priced population', async () => {
     const manager = await db.account.create({ data: { encryptionMode: 'plain' } });
     const team = await db.team.create({ data: { name: 'Mixed provenance team' } });
     await db.teamMembership.create({ data: { teamId: team.id, accountId: manager.id, role: 'admin' } });
@@ -722,16 +723,19 @@ describe('Team credential resource usage query', () => {
 
     const automatic = await queryTeamCredentialUsage(manager.id, input, TEST_AUTHENTICATION);
     if ('ok' in automatic) throw new Error('expected usage result');
-    expect(automatic.totals.cost.effectiveUsd).toBe(5);
-    expect(automatic.series[0]?.totals.cost.effectiveUsd).toBe(5);
-    expect(automatic.breakdown?.[0]?.totals.cost.effectiveUsd).toBe(5);
+    expect(automatic.totals.cost).toMatchObject({ reportedUsd: 2, estimatedUsd: 3, costSource: 'none' });
+    expect(automatic.totals.cost.effectiveUsd).toBeUndefined();
+    expect(automatic.series[0]?.totals.cost.effectiveUsd).toBeUndefined();
+    expect(automatic.breakdown?.[0]?.totals.cost.effectiveUsd).toBeUndefined();
 
     const reportedOnly = await queryTeamCredentialUsage(manager.id, { ...input, costMode: 'reported' }, TEST_AUTHENTICATION);
     if ('ok' in reportedOnly) throw new Error('expected usage result');
-    expect(reportedOnly.totals.cost.effectiveUsd).toBe(2);
+    expect(reportedOnly.totals.cost.reportedUsd).toBe(2);
+    expect(reportedOnly.totals.cost.effectiveUsd).toBeUndefined();
     const estimatedOnly = await queryTeamCredentialUsage(manager.id, { ...input, costMode: 'estimated' }, TEST_AUTHENTICATION);
     if ('ok' in estimatedOnly) throw new Error('expected usage result');
-    expect(estimatedOnly.totals.cost.effectiveUsd).toBe(3);
+    expect(estimatedOnly.totals.cost.estimatedUsd).toBe(3);
+    expect(estimatedOnly.totals.cost.effectiveUsd).toBeUndefined();
 
     const invoiceResource = await db.teamCredentialResource.create({ data: {
       id: 'usage-invoice-provenance-resource', teamId: team.id, custodianAccountId: manager.id,
@@ -744,7 +748,8 @@ describe('Team credential resource usage query', () => {
     ] });
     const invoiceView = await queryTeamCredentialUsage(manager.id, { ...input, resourceId: invoiceResource.id }, TEST_AUTHENTICATION);
     if ('ok' in invoiceView) throw new Error('expected usage result');
-    expect(invoiceView.totals.cost.effectiveUsd).toBe(3);
+    expect(invoiceView.totals.cost).toMatchObject({ invoiceUsd: 1, reportedUsd: 2, costSource: 'none' });
+    expect(invoiceView.totals.cost.effectiveUsd).toBeUndefined();
   });
 
   it.each([

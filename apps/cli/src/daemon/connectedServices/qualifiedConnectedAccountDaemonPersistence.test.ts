@@ -3,35 +3,26 @@ import { z } from 'zod';
 import {
   CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1,
   accountSettingsParse,
-  CONNECTED_ACCOUNT_SERVICE_CONFIGURATIONS_SETTINGS_KEY,
   ConnectedServiceCredentialRecordV1Schema,
-  decryptSecretValueWithKeysV1,
-  deriveSettingsSecretsKeySetV1,
-  encryptSecretStringV1,
   FeaturesResponseSchema,
   QualifiedConnectedAccountCredentialPayloadV1Schema,
   QualifiedConnectedAccountCredentialMutationV4Schema,
   QualifiedConnectedAccountConfigurationPatchV4Schema,
   QualifiedConnectedAccountConfigurationSnapshotV4Schema,
   QualifiedConnectedAccountCredentialSnapshotV4Schema,
-  SavedSecretSchema,
   sealSavedSecretResourceStoredContentV1,
   openQualifiedConnectedAccountContentEnvelope,
   openConnectedServiceCredentialCiphertext,
   sealAccountScopedBlobCiphertext,
   sealQualifiedConnectedAccountContentEnvelope,
-  type AccountSettingsStoredContentEnvelope,
 } from '@happier-dev/protocol';
 import type {
   ConnectedAccountDeviceTransactionSnapshot,
 } from '@/plugins/runtime/connectedAccounts/authenticationAttemptOwner';
 import {
-  clearActiveAccountSettingsSnapshot,
   commitActiveAccountSettingsSnapshot,
-  getActiveAccountSettingsSnapshot,
   resetActiveAccountSettingsSnapshotForTests,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import {
   QualifiedConnectedAccountCredentialConflictError,
 } from '@/api/client/qualifiedConnectedAccountApi';
@@ -67,69 +58,6 @@ function retainStringValues(
     if (typeof value === 'string') output[key] = value;
   }
   return output;
-}
-
-function savedSecret(id: string, name: string) {
-  return SavedSecretSchema.parse({
-    id,
-    name,
-    kind: 'other',
-    encryptedValue: {
-      _isSecretValue: true,
-      encryptedValue: { t: 'enc-v1', c: `ciphertext-${id}` },
-    },
-    createdAt: 1,
-    updatedAt: 1,
-  });
-}
-
-function secretReferences(input: Readonly<Record<string, string>>) {
-  return Object.freeze(
-    Object.assign(Object.create(null) as Record<string, string>, input),
-  );
-}
-
-function createServiceConfigurationPersistenceHarness(
-  initialSettings: Readonly<Record<string, unknown>>,
-  createSecretId: () => string,
-) {
-  let settings = initialSettings;
-  const updateAccountSettings = vi.fn(async (
-    mutate: (current: Readonly<Record<string, unknown>>) => Readonly<Record<string, unknown>>,
-  ) => {
-    settings = mutate(settings);
-    return settings;
-  });
-  const persistence = createQualifiedConnectedAccountDaemonPersistence({
-    credentials: {
-      token: 'token-1',
-      encryption: {
-        type: 'dataKey' as const,
-        publicKey: new Uint8Array(32),
-        machineKey: new Uint8Array(32).fill(3),
-      },
-    },
-    getAccountEncryptionMode: vi.fn(async (): Promise<'plain'> => 'plain'),
-    readCredential: vi.fn(async () => null),
-    readConfiguration: vi.fn(async () => null),
-    mutateCredential: vi.fn(),
-    mutateConfiguration: vi.fn(),
-    secrets: {
-      admit: vi.fn(async () => undefined),
-      has: vi.fn(async () => false),
-      read: vi.fn(async () => null),
-    },
-    randomBytes: (length) => new Uint8Array(length).fill(7),
-    readAccountSettings: () => settings,
-    updateAccountSettings,
-    createConfigurationRevision: () => 'configuration-next',
-    createSecretId,
-  });
-  return Object.freeze({
-    persistence,
-    updateAccountSettings,
-    settings: () => settings,
-  });
 }
 
 // Exact credential root accepted by released CLI v0.2.1
@@ -217,720 +145,7 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
     resetActiveAccountSettingsSnapshotForTests();
   });
 
-  it('does not publish a late Account A Settings settlement after Account B becomes active', async () => {
-    resetActiveAccountSettingsSnapshotForTests();
-    const credentials = {
-      token: 'account-a-token',
-      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(4) },
-    };
-    const initialCiphertext = sealAccountScopedBlobCiphertext({
-      kind: 'account_settings',
-      material: { type: 'legacy', secret: credentials.encryption.secret },
-      payload: {},
-      randomBytes: () => new Uint8Array(24).fill(2),
-    });
-    commitActiveAccountSettingsSnapshot({
-      source: 'network',
-      settings: accountSettingsParse({}),
-      rawSettings: {},
-      settingsVersion: 3,
-      loadedAtMs: 100,
-      settingsSecretsReadKeys: [],
-      scopeKey: resolveAccountSettingsScopeKey(credentials),
-    });
-    let releaseUpdate!: () => void;
-    let submittedContent: AccountSettingsStoredContentEnvelope | null | undefined;
-    const updateSettings = vi.fn(async (request: Readonly<{
-      expectedVersion: number;
-      content: AccountSettingsStoredContentEnvelope | null;
-    }>) => {
-      submittedContent = request.content;
-      await new Promise<void>((resolve) => {
-        releaseUpdate = resolve;
-      });
-      return { success: true as const, version: 4 };
-    });
-    const writeCache = vi.fn(async () => {});
-    const persistence = createQualifiedConnectedAccountDaemonPersistence({
-      credentials,
-      getAccountEncryptionMode: vi.fn(async (): Promise<'e2ee'> => 'e2ee'),
-      readCredential: vi.fn(async () => null),
-      readConfiguration: vi.fn(async () => null),
-      mutateCredential: vi.fn(),
-      mutateConfiguration: vi.fn(),
-      secrets: {
-        admit: vi.fn(async () => undefined),
-        has: vi.fn(async () => false),
-        read: vi.fn(async () => null),
-      },
-      createConfigurationRevision: () => 'configuration-a',
-      accountSettingsUpdateDeps: {
-        fetchSettings: async () => ({
-          content: { t: 'encrypted', c: initialCiphertext },
-          version: 3,
-        }),
-        updateSettings,
-        resolveAccountEncryptionMode: async () => 'e2ee',
-        resolveCachePath: () => '/tmp/account-a-settings',
-        writeCache,
-      },
-    });
-
-    const pending = persistence.configuration.replaceForControl!({
-      target: { kind: 'service', service, modeId: 'oauth' },
-      expectedRevision: null,
-      values: { endpoint: 'https://api.example.test' },
-      currentSecretRefs: {},
-      secretValues: {},
-      ...runtimeIdentity('generation-a', 'artifact-a'),
-    });
-    await vi.waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
-    expect(submittedContent?.t).toBe('encrypted');
-
-    commitActiveAccountSettingsSnapshot({
-      source: 'network',
-      settings: accountSettingsParse({ schemaVersion: 7 }),
-      settingsVersion: 9,
-      loadedAtMs: 200,
-      settingsSecretsReadKeys: [],
-      scopeKey: 'account-b-scope',
-    });
-    releaseUpdate();
-
-    await expect(pending).resolves.toEqual({
-      status: 'unavailable',
-      code: 'connected_account_configuration_settings_unavailable',
-    });
-    expect(getActiveAccountSettingsSnapshot()).toMatchObject({
-      scopeKey: 'account-b-scope',
-      settingsVersion: 9,
-    });
-    expect(writeCache).not.toHaveBeenCalled();
-    resetActiveAccountSettingsSnapshotForTests();
-  });
-
-  it('does not submit an Account Settings mutation after its active Account retires before transport', async () => {
-    resetActiveAccountSettingsSnapshotForTests();
-    const credentials = {
-      token: 'account-a-token',
-      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(4) },
-    };
-    commitActiveAccountSettingsSnapshot({
-      source: 'network',
-      settings: accountSettingsParse({}),
-      rawSettings: {},
-      settingsVersion: 3,
-      loadedAtMs: 100,
-      settingsSecretsReadKeys: [],
-      scopeKey: resolveAccountSettingsScopeKey(credentials),
-    });
-    let releaseFetch!: () => void;
-    const pendingFetch = new Promise<void>((resolve) => {
-      releaseFetch = resolve;
-    });
-    const fetchSettings = vi.fn(async () => {
-      await pendingFetch;
-      return { content: { t: 'plain' as const, v: {} }, version: 3 };
-    });
-    const updateSettings = vi.fn(async () => ({ success: true as const, version: 4 }));
-    const persistence = createQualifiedConnectedAccountDaemonPersistence({
-      credentials,
-      getAccountEncryptionMode: vi.fn(async (): Promise<'plain'> => 'plain'),
-      readCredential: vi.fn(async () => null),
-      readConfiguration: vi.fn(async () => null),
-      mutateCredential: vi.fn(),
-      mutateConfiguration: vi.fn(),
-      secrets: {
-        admit: vi.fn(async () => undefined),
-        has: vi.fn(async () => false),
-        read: vi.fn(async () => null),
-      },
-      createConfigurationRevision: () => 'configuration-a',
-      accountSettingsUpdateDeps: {
-        fetchSettings,
-        updateSettings,
-        resolveAccountEncryptionMode: async () => 'plain',
-        resolveCachePath: () => '/tmp/account-a-settings',
-        writeCache: async () => {},
-      },
-    });
-
-    const pending = persistence.configuration.replaceForControl!({
-      target: { kind: 'service', service, modeId: 'oauth' },
-      expectedRevision: null,
-      values: { endpoint: 'https://api.example.test' },
-      currentSecretRefs: {},
-      secretValues: {},
-      ...runtimeIdentity('generation-a', 'artifact-a'),
-    });
-    await vi.waitFor(() => expect(fetchSettings).toHaveBeenCalledOnce());
-    clearActiveAccountSettingsSnapshot();
-    releaseFetch();
-
-    await expect(pending).resolves.toMatchObject({ status: 'unavailable' });
-    expect(updateSettings).not.toHaveBeenCalled();
-    expect(getActiveAccountSettingsSnapshot()).toBeNull();
-    resetActiveAccountSettingsSnapshotForTests();
-  });
-
-  it('does not submit a retired Account Settings lifetime after the same Account is reinstalled', async () => {
-    resetActiveAccountSettingsSnapshotForTests();
-    const credentials = {
-      token: 'account-a-token',
-      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(4) },
-    };
-    const scopeKey = resolveAccountSettingsScopeKey(credentials);
-    commitActiveAccountSettingsSnapshot({
-      source: 'network',
-      settings: accountSettingsParse({}),
-      rawSettings: {},
-      settingsVersion: 3,
-      loadedAtMs: 100,
-      settingsSecretsReadKeys: [],
-      scopeKey,
-    });
-    let releaseFetch!: () => void;
-    const pendingFetch = new Promise<void>((resolve) => {
-      releaseFetch = resolve;
-    });
-    const fetchSettings = vi.fn(async () => {
-      await pendingFetch;
-      return { content: { t: 'plain' as const, v: {} }, version: 3 };
-    });
-    const updateSettings = vi.fn(async () => ({ success: true as const, version: 4 }));
-    const persistence = createQualifiedConnectedAccountDaemonPersistence({
-      credentials,
-      getAccountEncryptionMode: vi.fn(async (): Promise<'plain'> => 'plain'),
-      readCredential: vi.fn(async () => null),
-      readConfiguration: vi.fn(async () => null),
-      mutateCredential: vi.fn(),
-      mutateConfiguration: vi.fn(),
-      secrets: {
-        admit: vi.fn(async () => undefined),
-        has: vi.fn(async () => false),
-        read: vi.fn(async () => null),
-      },
-      createConfigurationRevision: () => 'configuration-a',
-      accountSettingsUpdateDeps: {
-        fetchSettings,
-        updateSettings,
-        resolveAccountEncryptionMode: async () => 'plain',
-        resolveCachePath: () => '/tmp/account-a-settings',
-        writeCache: async () => {},
-      },
-    });
-
-    const pending = persistence.configuration.replaceForControl!({
-      target: { kind: 'service', service, modeId: 'oauth' },
-      expectedRevision: null,
-      values: { endpoint: 'https://api.example.test' },
-      currentSecretRefs: {},
-      secretValues: {},
-      ...runtimeIdentity('generation-a', 'artifact-a'),
-    });
-    await vi.waitFor(() => expect(fetchSettings).toHaveBeenCalledOnce());
-    clearActiveAccountSettingsSnapshot();
-    commitActiveAccountSettingsSnapshot({
-      source: 'network',
-      settings: accountSettingsParse({ schemaVersion: 7 }),
-      settingsVersion: 9,
-      loadedAtMs: 200,
-      settingsSecretsReadKeys: [],
-      scopeKey,
-    });
-    releaseFetch();
-
-    await expect(pending).resolves.toMatchObject({ status: 'unavailable' });
-    expect(updateSettings).not.toHaveBeenCalled();
-    expect(getActiveAccountSettingsSnapshot()).toMatchObject({
-      scopeKey,
-      settingsVersion: 9,
-    });
-    resetActiveAccountSettingsSnapshotForTests();
-  });
-
-  it('does not cache or republish a settled write from a retired same-scope Account lifetime', async () => {
-    resetActiveAccountSettingsSnapshotForTests();
-    const credentials = {
-      token: 'account-a-token',
-      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(4) },
-    };
-    const scopeKey = resolveAccountSettingsScopeKey(credentials);
-    commitActiveAccountSettingsSnapshot({
-      source: 'network',
-      settings: accountSettingsParse({}),
-      rawSettings: {},
-      settingsVersion: 3,
-      loadedAtMs: 100,
-      settingsSecretsReadKeys: [],
-      scopeKey,
-    });
-    let releaseUpdate!: () => void;
-    const updateSettings = vi.fn(async () => {
-      await new Promise<void>((resolve) => {
-        releaseUpdate = resolve;
-      });
-      return { success: true as const, version: 4 };
-    });
-    const writeCache = vi.fn(async () => {});
-    const persistence = createQualifiedConnectedAccountDaemonPersistence({
-      credentials,
-      getAccountEncryptionMode: vi.fn(async (): Promise<'plain'> => 'plain'),
-      readCredential: vi.fn(async () => null),
-      readConfiguration: vi.fn(async () => null),
-      mutateCredential: vi.fn(),
-      mutateConfiguration: vi.fn(),
-      secrets: {
-        admit: vi.fn(async () => undefined),
-        has: vi.fn(async () => false),
-        read: vi.fn(async () => null),
-      },
-      createConfigurationRevision: () => 'configuration-a',
-      accountSettingsUpdateDeps: {
-        fetchSettings: async () => ({ content: { t: 'plain' as const, v: {} }, version: 3 }),
-        updateSettings,
-        resolveAccountEncryptionMode: async () => 'plain',
-        resolveCachePath: () => '/tmp/account-a-settings',
-        writeCache,
-      },
-    });
-
-    const pending = persistence.configuration.replaceForControl!({
-      target: { kind: 'service', service, modeId: 'oauth' },
-      expectedRevision: null,
-      values: { endpoint: 'https://api.example.test' },
-      currentSecretRefs: {},
-      secretValues: {},
-      ...runtimeIdentity('generation-a', 'artifact-a'),
-    });
-    await vi.waitFor(() => expect(updateSettings).toHaveBeenCalledOnce());
-    clearActiveAccountSettingsSnapshot();
-    commitActiveAccountSettingsSnapshot({
-      source: 'network',
-      settings: accountSettingsParse({ schemaVersion: 7 }),
-      settingsVersion: 9,
-      loadedAtMs: 200,
-      settingsSecretsReadKeys: [],
-      scopeKey,
-    });
-    releaseUpdate();
-
-    await expect(pending).resolves.toEqual({
-      status: 'unavailable',
-      code: 'connected_account_configuration_settings_unavailable',
-    });
-    expect(writeCache).not.toHaveBeenCalled();
-    expect(getActiveAccountSettingsSnapshot()).toMatchObject({
-      scopeKey,
-      settingsVersion: 9,
-    });
-    resetActiveAccountSettingsSnapshotForTests();
-  });
-
-  it('publishes authenticated secret read keys when its Account Settings write wins startup', async () => {
-    resetActiveAccountSettingsSnapshotForTests();
-    const credentials = {
-      token: 'token-1',
-      encryption: {
-        type: 'legacy' as const,
-        secret: new Uint8Array(32).fill(4),
-      },
-    };
-    commitActiveAccountSettingsSnapshot({
-      source: 'network',
-      settings: accountSettingsParse({}),
-      rawSettings: {},
-      settingsVersion: 3,
-      loadedAtMs: 100,
-      settingsSecretsReadKeys: [],
-      scopeKey: resolveAccountSettingsScopeKey(credentials),
-    });
-    const keySet = deriveSettingsSecretsKeySetV1({
-      type: 'legacy',
-      secret: credentials.encryption.secret,
-    });
-    const encryptedValue = encryptSecretStringV1(
-      'provider-secret',
-      keySet.writeKey,
-      (length) => new Uint8Array(length).fill(3),
-    );
-    const persistence = createQualifiedConnectedAccountDaemonPersistence({
-      credentials,
-      getAccountEncryptionMode: vi.fn(async (): Promise<'plain'> => 'plain'),
-      readCredential: vi.fn(async () => null),
-      readConfiguration: vi.fn(async () => null),
-      mutateCredential: vi.fn(),
-      mutateConfiguration: vi.fn(),
-      secrets: {
-        admit: vi.fn(async () => undefined),
-        has: vi.fn(async () => false),
-        read: vi.fn(async () => null),
-      },
-      createConfigurationRevision: () => 'configuration-1',
-      accountSettingsUpdateDeps: {
-        fetchSettings: async () => ({ content: { t: 'plain', v: {} }, version: 3 }),
-        resolveAccountEncryptionMode: async () => 'plain',
-        updateSettings: async () => ({ success: true, version: 4 }),
-        writeCache: async () => {},
-        resolveCachePath: () => '/tmp/connected-account-settings',
-      },
-    });
-
-    try {
-      await expect(persistence.configuration.replaceForControl!({
-        target: { kind: 'service', service, modeId: 'oauth' },
-        expectedRevision: null,
-        values: { endpoint: 'https://api.example.test' },
-        currentSecretRefs: {},
-        secretValues: {},
-        ...runtimeIdentity(),
-      })).resolves.toMatchObject({ status: 'committed' });
-
-      expect(decryptSecretValueWithKeysV1(
-        { _isSecretValue: true, encryptedValue },
-        getActiveAccountSettingsSnapshot()?.settingsSecretsReadKeys ?? [],
-      )).toBe('provider-secret');
-    } finally {
-      resetActiveAccountSettingsSnapshotForTests();
-    }
-  });
-
-  it('preserves an exhausted Account Settings CAS as a configuration-settings conflict', async () => {
-    resetActiveAccountSettingsSnapshotForTests();
-    const credentials = {
-      token: 'token-1',
-      encryption: {
-        type: 'legacy' as const,
-        secret: new Uint8Array(32).fill(4),
-      },
-    };
-    commitActiveAccountSettingsSnapshot({
-      source: 'network',
-      settings: accountSettingsParse({}),
-      rawSettings: {},
-      settingsVersion: 3,
-      loadedAtMs: 100,
-      settingsSecretsReadKeys: [],
-      scopeKey: resolveAccountSettingsScopeKey(credentials),
-    });
-    const updateSettings = vi.fn(async () => ({
-      success: false as const,
-      error: 'version-mismatch' as const,
-      currentVersion: 4,
-      currentContent: { t: 'plain' as const, v: {} },
-    }));
-    const persistence = createQualifiedConnectedAccountDaemonPersistence({
-      credentials,
-      getAccountEncryptionMode: vi.fn(async (): Promise<'plain'> => 'plain'),
-      readCredential: vi.fn(async () => null),
-      readConfiguration: vi.fn(async () => null),
-      mutateCredential: vi.fn(),
-      mutateConfiguration: vi.fn(),
-      secrets: {
-        admit: vi.fn(async () => undefined),
-        has: vi.fn(async () => false),
-        read: vi.fn(async () => null),
-      },
-      createConfigurationRevision: () => 'configuration-1',
-      accountSettingsUpdateDeps: {
-        fetchSettings: async () => ({ content: { t: 'plain', v: {} }, version: 3 }),
-        resolveAccountEncryptionMode: async () => 'plain',
-        updateSettings,
-        writeCache: async () => {},
-        resolveCachePath: () => '/tmp/connected-account-settings',
-      },
-    });
-
-    try {
-      await expect(persistence.configuration.replaceForControl!({
-        target: { kind: 'service', service, modeId: 'oauth' },
-        expectedRevision: null,
-        values: { endpoint: 'https://api.example.test' },
-        currentSecretRefs: {},
-        secretValues: {},
-        ...runtimeIdentity(),
-      })).resolves.toEqual({
-        status: 'conflict',
-        code: 'connected_account_configuration_settings_conflict',
-      });
-      expect(updateSettings).toHaveBeenCalledTimes(1);
-    } finally {
-      resetActiveAccountSettingsSnapshotForTests();
-    }
-  });
-
-  it('returns conflict without replaying a service configuration and SavedSecret callback onto a CAS winner', async () => {
-    resetActiveAccountSettingsSnapshotForTests();
-    const credentials = {
-      token: 'token-1',
-      encryption: {
-        type: 'legacy' as const,
-        secret: new Uint8Array(32).fill(4),
-      },
-    };
-    const winnerService = Object.freeze({
-      pluginId: 'acme.accounts',
-      localId: 'personal',
-    });
-    const winnerSecret = SavedSecretSchema.parse({
-      id: 'winner-secret',
-      name: 'Winner secret',
-      kind: 'other',
-      encryptedValue: {
-        _isSecretValue: true,
-        encryptedValue: encryptSecretStringV1(
-          'winner-secret-value',
-          deriveSettingsSecretsKeySetV1({
-            type: 'legacy',
-            secret: credentials.encryption.secret,
-          }).writeKey,
-          (length) => new Uint8Array(length).fill(6),
-        ),
-      },
-      createdAt: 1,
-      updatedAt: 1,
-    });
-    const winnerSettings = {
-      secrets: [winnerSecret],
-      [CONNECTED_ACCOUNT_SERVICE_CONFIGURATIONS_SETTINGS_KEY]: {
-        v: 1,
-        entries: [{
-          service: winnerService,
-          modeId: 'oauth',
-          revision: 'winner-configuration',
-          values: { endpoint: 'https://winner.example.test' },
-          secretRefs: {},
-        }],
-      },
-    };
-    commitActiveAccountSettingsSnapshot({
-      source: 'network',
-      settings: accountSettingsParse({}),
-      rawSettings: {},
-      settingsVersion: 1,
-      loadedAtMs: 100,
-      settingsSecretsReadKeys: [],
-      scopeKey: resolveAccountSettingsScopeKey(credentials),
-    });
-    const writes: Array<Readonly<{
-      expectedVersion: number;
-      content: AccountSettingsStoredContentEnvelope | null;
-    }>> = [];
-    const updateSettings = vi.fn(async (request: Readonly<{
-      expectedVersion: number;
-      content: AccountSettingsStoredContentEnvelope | null;
-    }>) => {
-      writes.push(request);
-      if (writes.length === 1) {
-        return {
-          success: false as const,
-          error: 'version-mismatch' as const,
-          currentVersion: 2,
-          currentContent: { t: 'plain' as const, v: winnerSettings },
-        };
-      }
-      return { success: true as const, version: 3 };
-    });
-    const persistence = createQualifiedConnectedAccountDaemonPersistence({
-      credentials,
-      getAccountEncryptionMode: vi.fn(async (): Promise<'plain'> => 'plain'),
-      readCredential: vi.fn(async () => null),
-      readConfiguration: vi.fn(async () => null),
-      mutateCredential: vi.fn(),
-      mutateConfiguration: vi.fn(),
-      secrets: {
-        admit: vi.fn(async () => undefined),
-        has: vi.fn(async () => false),
-        read: vi.fn(async () => null),
-      },
-      randomBytes: (length) => new Uint8Array(length).fill(7),
-      createConfigurationRevision: () => 'caller-configuration',
-      createSecretId: () => 'caller-secret',
-      accountSettingsUpdateDeps: {
-        fetchSettings: async () => ({ content: { t: 'plain', v: {} }, version: 1 }),
-        resolveAccountEncryptionMode: async () => 'plain',
-        updateSettings,
-        writeCache: async () => {},
-        resolveCachePath: () => '/tmp/connected-account-settings',
-      },
-    });
-
-    try {
-      await expect(persistence.configuration.replaceForControl!({
-        target: { kind: 'service', service, modeId: 'oauth' },
-        expectedRevision: null,
-        values: { endpoint: 'https://caller.example.test' },
-        currentSecretRefs: {},
-        secretValues: { clientSecret: 'caller-secret-value' },
-        ...runtimeIdentity(),
-      })).resolves.toEqual({
-        status: 'conflict',
-        code: 'connected_account_configuration_settings_conflict',
-      });
-
-      expect(writes).toHaveLength(1);
-      const finalContent = writes[0]?.content;
-      expect(finalContent?.t).toBe('plain');
-      if (finalContent?.t !== 'plain') {
-        throw new Error('Expected the one-shot Account Settings write to remain plain');
-      }
-      expect(finalContent.v[CONNECTED_ACCOUNT_SERVICE_CONFIGURATIONS_SETTINGS_KEY])
-        .toMatchObject({
-          v: 1,
-          entries: [expect.objectContaining({
-            service,
-            modeId: 'oauth',
-            revision: 'caller-configuration',
-            secretRefs: { clientSecret: 'caller-secret' },
-          })],
-        });
-      expect(finalContent.v.secrets).toEqual([
-        expect.objectContaining({ id: 'caller-secret' }),
-      ]);
-    } finally {
-      resetActiveAccountSettingsSnapshotForTests();
-    }
-  });
-
-  it('retires an unreferenced generated service-configuration SavedSecret while preserving a user-authored secret', async () => {
-    const generated = savedSecret('generated-old', 'Connected Account clientSecret');
-    const userAuthored = savedSecret('user-authored', 'My manually saved credential');
-    const harness = createServiceConfigurationPersistenceHarness({
-      secrets: [generated, userAuthored],
-      [CONNECTED_ACCOUNT_SERVICE_CONFIGURATIONS_SETTINGS_KEY]: {
-        v: 1,
-        entries: [{
-          service,
-          modeId: 'oauth',
-          revision: 'configuration-current',
-          values: { endpoint: 'https://old.example.test' },
-          secretRefs: { clientSecret: generated.id },
-        }],
-      },
-    }, () => 'generated-next');
-
-    await expect(harness.persistence.configuration.replaceForControl!({
-      target: { kind: 'service', service, modeId: 'oauth' },
-      expectedRevision: 'configuration-current',
-      values: { endpoint: 'https://new.example.test' },
-      currentSecretRefs: secretReferences({ clientSecret: generated.id }),
-      secretValues: { clientSecret: 'replacement-value' },
-      ...runtimeIdentity(),
-    })).resolves.toMatchObject({
-      status: 'committed',
-      record: { secretRefs: { clientSecret: 'generated-next' } },
-    });
-
-    expect((harness.settings().secrets as readonly { id: string }[])
-      .map((candidate) => candidate.id))
-      .toEqual(['generated-next', userAuthored.id]);
-  });
-
-  it('preserves a generated service-configuration SavedSecret that remains referenced elsewhere', async () => {
-    const generated = savedSecret('generated-shared', 'Connected Account clientSecret');
-    const siblingService = Object.freeze({
-      pluginId: 'acme.accounts',
-      localId: 'personal',
-    });
-    const harness = createServiceConfigurationPersistenceHarness({
-      secrets: [generated],
-      [CONNECTED_ACCOUNT_SERVICE_CONFIGURATIONS_SETTINGS_KEY]: {
-        v: 1,
-        entries: [{
-          service,
-          modeId: 'oauth',
-          revision: 'configuration-current',
-          values: {},
-          secretRefs: { clientSecret: generated.id },
-        }, {
-          service: siblingService,
-          modeId: 'oauth',
-          revision: 'configuration-sibling',
-          values: {},
-          secretRefs: { clientSecret: generated.id },
-        }],
-      },
-    }, () => 'generated-next');
-
-    await expect(harness.persistence.configuration.replaceForControl!({
-      target: { kind: 'service', service, modeId: 'oauth' },
-      expectedRevision: 'configuration-current',
-      values: {},
-      currentSecretRefs: secretReferences({ clientSecret: generated.id }),
-      secretValues: { clientSecret: 'replacement-value' },
-      ...runtimeIdentity(),
-    })).resolves.toMatchObject({ status: 'committed' });
-
-    expect((harness.settings().secrets as readonly { id: string }[])
-      .map((candidate) => candidate.id))
-      .toEqual(['generated-next', generated.id]);
-  });
-
-  it('does not create an orphan SavedSecret when service configuration CAS is stale', async () => {
-    let settings: Readonly<Record<string, unknown>> = {
-      secrets: [],
-      connectedAccountServiceConfigurationsV1: {
-        v: 1,
-        entries: [{
-          service,
-          modeId: 'oauth',
-          revision: 'configuration-current',
-          values: {},
-          secretRefs: {},
-        }],
-      },
-    };
-    const persistence = createQualifiedConnectedAccountDaemonPersistence({
-      credentials: {
-        token: 'token-1',
-        encryption: {
-          type: 'dataKey',
-          publicKey: new Uint8Array(32),
-          machineKey: new Uint8Array(32).fill(3),
-        },
-      },
-      getAccountEncryptionMode: vi.fn(async (): Promise<'plain'> => 'plain'),
-      readCredential: vi.fn(async () => null),
-      readConfiguration: vi.fn(async () => null),
-      mutateCredential: vi.fn(),
-      mutateConfiguration: vi.fn(),
-      secrets: {
-        admit: vi.fn(async () => undefined),
-        has: vi.fn(async () => false),
-        read: vi.fn(async () => null),
-      },
-      randomBytes: (length) => new Uint8Array(length).fill(7),
-      readAccountSettings: () => settings,
-      updateAccountSettings: vi.fn(async (mutate) => {
-        settings = mutate(settings);
-        return settings;
-      }),
-      createConfigurationRevision: () => 'configuration-must-not-commit',
-      createSecretId: () => 'secret-must-not-commit',
-    });
-
-    await expect(persistence.configuration.replaceForControl!({
-      target: {
-        kind: 'service',
-        service,
-        modeId: 'oauth',
-      },
-      expectedRevision: 'configuration-stale',
-      values: {},
-      currentSecretRefs: {},
-      secretValues: { clientSecret: 'must-not-persist' },
-      ...runtimeIdentity(),
-    })).resolves.toEqual({
-      status: 'conflict',
-      code: 'connected_account_configuration_changed',
-    });
-    expect(settings.secrets).toEqual([]);
-    expect(JSON.stringify(settings)).not.toContain('must-not-persist');
-    expect(JSON.stringify(settings)).not.toContain('secret-must-not-commit');
-  });
-
   it('keeps attempt secrets inline, target-bound, and inaccessible after destruction', async () => {
-    const updateAccountSettings = vi.fn();
     const hasSavedSecret = vi.fn(async () => false);
     const readSavedSecret = vi.fn(async () => null);
     let revision = 0;
@@ -953,8 +168,6 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
         has: hasSavedSecret,
         read: readSavedSecret,
       },
-      readAccountSettings: () => ({}),
-      updateAccountSettings,
       createConfigurationRevision: () => `configuration-${++revision}`,
     });
     const target = Object.freeze({
@@ -1027,128 +240,8 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
 
     await persistence.configuration.destroyAttempt(target.attemptId);
     await expect(persistence.configuration.read(target)).resolves.toBeNull();
-    expect(updateAccountSettings).not.toHaveBeenCalled();
     expect(hasSavedSecret).not.toHaveBeenCalled();
     expect(readSavedSecret).not.toHaveBeenCalled();
-  });
-
-  it('persists service configuration in Account Settings and bounds attempt staging to daemon lifecycle', async () => {
-    let settings: Readonly<Record<string, unknown>> = {};
-    const updateAccountSettings = vi.fn(async (
-      mutate: (
-        current: Readonly<Record<string, unknown>>,
-      ) => Readonly<Record<string, unknown>>,
-    ) => {
-      settings = mutate(settings);
-      return settings;
-    });
-    let revision = 0;
-    let secret = 0;
-    const persistence = createQualifiedConnectedAccountDaemonPersistence({
-      credentials: {
-        token: 'token-1',
-        encryption: {
-          type: 'dataKey',
-          publicKey: new Uint8Array(32),
-          machineKey: new Uint8Array(32).fill(3),
-        },
-      },
-      getAccountEncryptionMode: vi.fn(async (): Promise<'plain'> => 'plain'),
-      readCredential: vi.fn(async () => null),
-      readConfiguration: vi.fn(async () => null),
-      mutateCredential: vi.fn(),
-      mutateConfiguration: vi.fn(),
-      secrets: {
-        admit: vi.fn(async () => undefined),
-        has: vi.fn(async () => false),
-        read: vi.fn(async () => null),
-      },
-      randomBytes: (length) => new Uint8Array(length).fill(7),
-      readAccountSettings: () => settings,
-      updateAccountSettings,
-      createConfigurationRevision: () => `configuration-${++revision}`,
-      createSecretId: () => `connected-account-secret-${++secret}`,
-    });
-    const serviceTarget = Object.freeze({
-      kind: 'service' as const,
-      service,
-      modeId: 'oauth',
-    });
-    await expect(persistence.configuration.replaceForControl!({
-      target: serviceTarget,
-      expectedRevision: null,
-      values: { endpoint: 'https://api.example.test' },
-      currentSecretRefs: {},
-      secretValues: { clientSecret: 'never-return-this' },
-      ...runtimeIdentity(),
-    })).resolves.toEqual({
-      status: 'committed',
-      record: {
-        revision: 'configuration-1',
-        values: { endpoint: 'https://api.example.test' },
-        secretRefs: {
-          clientSecret: 'connected-account-secret-1',
-        },
-      },
-    });
-    await expect(persistence.configuration.read(serviceTarget)).resolves.toEqual({
-      revision: 'configuration-1',
-      values: { endpoint: 'https://api.example.test' },
-      secretRefs: {
-        clientSecret: 'connected-account-secret-1',
-      },
-    });
-    expect(settings[CONNECTED_ACCOUNT_SERVICE_CONFIGURATIONS_SETTINGS_KEY]).toEqual({
-      v: 1,
-      entries: [{
-        service,
-        modeId: 'oauth',
-        revision: 'configuration-1',
-        values: { endpoint: 'https://api.example.test' },
-        secretRefs: { clientSecret: 'connected-account-secret-1' },
-      }],
-    });
-    // This harness replaces the Account Settings owner with an in-memory stub, so the
-    // only thing it can witness is what the adapter hands that owner. A plaintext
-    // Account is genuinely keyless (`docs/encryption.md`, Account-mode invariant), so
-    // the adapter must pass the canonical SavedSecret input through and must not
-    // fabricate Account encryption material of its own. Which persisted form the owner
-    // then writes is proven against the real seam by 'writes Connected Account service
-    // configuration secrets for a plaintext Account'.
-    const stagedSecrets = settings.secrets as readonly Readonly<{
-      id: string;
-      encryptedValue: Readonly<{ value?: unknown; encryptedValue?: unknown }>;
-    }>[];
-    expect(stagedSecrets).toHaveLength(1);
-    expect(stagedSecrets[0]).toMatchObject({
-      id: 'connected-account-secret-1',
-      encryptedValue: { _isSecretValue: true, value: 'never-return-this' },
-    });
-    expect(stagedSecrets[0]?.encryptedValue.encryptedValue).toBeUndefined();
-
-    const attemptTarget = Object.freeze({
-      kind: 'attempt' as const,
-      attemptId: 'attempt-1',
-      service,
-      modeId: 'oauth',
-    });
-    await expect(persistence.configuration.replace({
-      target: attemptTarget,
-      expectedRevision: null,
-      replacement: {
-        values: { endpoint: 'https://attempt.example.test' },
-        secretRefs: {},
-      },
-      ...runtimeIdentity(),
-    })).resolves.toMatchObject({
-      status: 'committed',
-      record: { revision: 'configuration-2' },
-    });
-    await expect(persistence.configuration.read(attemptTarget)).resolves.toMatchObject({
-      revision: 'configuration-2',
-    });
-    await persistence.configuration.destroyAttempt('attempt-1');
-    await expect(persistence.configuration.read(attemptTarget)).resolves.toBeNull();
   });
 
   it('keeps restart-safe OAuth state and PKCE in daemon custody and consumes completion once', async () => {
@@ -1742,7 +835,6 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
   );
 
   it('fails closed when first-connect configuration settlement does not return an atomic configuration revision', async () => {
-    const updateAccountSettings = vi.fn();
     const mutateConfiguration = vi.fn();
     const mutateCredential = vi.fn(async () => ({
       success: true as const,
@@ -1768,8 +860,6 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
         has: vi.fn(async () => false),
         read: vi.fn(async () => null),
       },
-      readAccountSettings: () => ({}),
-      updateAccountSettings,
     });
 
     await expect(persistence.attempts.settlement.settle({
@@ -1794,11 +884,9 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
     );
     expect(mutateCredential).toHaveBeenCalledOnce();
     expect(mutateConfiguration).not.toHaveBeenCalled();
-    expect(updateAccountSettings).not.toHaveBeenCalled();
   });
 
   it('returns a stale settlement conflict without a configuration or Account Settings side effect', async () => {
-    const updateAccountSettings = vi.fn();
     const mutateConfiguration = vi.fn();
     const mutateCredential = vi.fn(async () => {
       const conflict = new Error('stale credential');
@@ -1824,8 +912,6 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
         has: vi.fn(async () => false),
         read: vi.fn(async () => null),
       },
-      readAccountSettings: () => ({}),
-      updateAccountSettings,
     });
 
     await expect(persistence.attempts.settlement.settle({
@@ -1846,7 +932,6 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
     });
     expect(mutateCredential).toHaveBeenCalledOnce();
     expect(mutateConfiguration).not.toHaveBeenCalled();
-    expect(updateAccountSettings).not.toHaveBeenCalled();
   });
 
   it('preserves the server-named credential refusal instead of one settlement conflict', async () => {
@@ -1862,7 +947,6 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
         { status: 'conflict', code: 'connected_account_authentication_mode_mismatch' },
       ],
     ] as const) {
-      const updateAccountSettings = vi.fn();
       const mutateConfiguration = vi.fn();
       const readCredential = vi.fn(async () => null);
       const mutateCredential = vi.fn(async () => {
@@ -1887,8 +971,6 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
           has: vi.fn(async () => false),
           read: vi.fn(async () => null),
         },
-        readAccountSettings: () => ({}),
-        updateAccountSettings,
       });
 
       await expect(persistence.attempts.settlement.settle({
@@ -1909,13 +991,11 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
       // configuration write and no Account Settings effect.
       expect(readCredential).not.toHaveBeenCalled();
       expect(mutateConfiguration).not.toHaveBeenCalled();
-      expect(updateAccountSettings).not.toHaveBeenCalled();
     }
   });
 
   it('rejects reconnect staging and account SavedSecret references before any credential effect', async () => {
     const mutateCredential = vi.fn();
-    const updateAccountSettings = vi.fn();
     const persistence = createQualifiedConnectedAccountDaemonPersistence({
       credentials: {
         token: 'token-1',
@@ -1935,8 +1015,6 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
         has: vi.fn(async () => false),
         read: vi.fn(async () => null),
       },
-      readAccountSettings: () => ({}),
-      updateAccountSettings,
     });
     const common = {
       service,
@@ -1976,7 +1054,6 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
       code: 'connected_account_settlement_configuration_invalid',
     });
     expect(mutateCredential).not.toHaveBeenCalled();
-    expect(updateAccountSettings).not.toHaveBeenCalled();
   });
 
   it('reconciles a lost settlement acknowledgement from the exact committed credential and initial configuration', async () => {
@@ -2017,7 +1094,6 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
     const mutateCredential = vi.fn(async () => {
       throw new Error('acknowledgement lost after commit');
     });
-    const updateAccountSettings = vi.fn();
     const persistence = createQualifiedConnectedAccountDaemonPersistence({
       credentials: {
         token: 'token-1',
@@ -2037,8 +1113,6 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
         has: vi.fn(async () => false),
         read: vi.fn(async () => null),
       },
-      readAccountSettings: () => ({}),
-      updateAccountSettings,
     });
 
     await expect(persistence.attempts.settlement.settle({
@@ -2067,7 +1141,6 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
     expect(mutateCredential).toHaveBeenCalledTimes(1);
     expect(readCredential).toHaveBeenCalledTimes(1);
     expect(readConfiguration).toHaveBeenCalledTimes(1);
-    expect(updateAccountSettings).not.toHaveBeenCalled();
   });
 
   it('reconciles an outcome-unknown retry conflict from the exact committed reconnect row', async () => {
@@ -2436,7 +1509,6 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
           configurationContent: storedConfigurationContent,
         });
       });
-      const updateAccountSettings = vi.fn();
       const hasSavedSecret = vi.fn(async () => false);
       const readSavedSecret = vi.fn(async () => null);
       const persistence = createQualifiedConnectedAccountDaemonPersistence({
@@ -2453,8 +1525,6 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
           read: readSavedSecret,
         },
         randomBytes: (length) => new Uint8Array(length).fill(7),
-        readAccountSettings: () => ({}),
-        updateAccountSettings,
       });
       const target = Object.freeze({
         kind: 'account' as const,
@@ -2495,7 +1565,6 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
         ...target,
         modeId: 'manual',
       })).resolves.toBeNull();
-      expect(updateAccountSettings).not.toHaveBeenCalled();
       expect(hasSavedSecret).not.toHaveBeenCalled();
       expect(readSavedSecret).not.toHaveBeenCalled();
 
@@ -2556,7 +1625,6 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
         code: 'connected_account_configuration_persistence_unavailable',
       });
       expect(mutateConfiguration).toHaveBeenCalledOnce();
-      expect(updateAccountSettings).not.toHaveBeenCalled();
     },
   );
   it.each([
@@ -2845,82 +1913,4 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
     expect(registerPlain).not.toHaveBeenCalled();
   });
 
-  it('writes Connected Account service configuration secrets for a plaintext Account', async () => {
-    resetActiveAccountSettingsSnapshotForTests();
-    // A plaintext Account correctly holds no client Account data-encryption material.
-    // The adapter must hand the raw secret to the canonical Account Settings owner and let
-    // that owner apply the Account's actual encryption mode.
-    // A plaintext Account's stored credential genuinely carries no Account
-    // data-encryption material; `encryption: null` is that fact, not a stub.
-    const credentials = { token: 'plain-account-token', encryption: null };
-    commitActiveAccountSettingsSnapshot({
-      source: 'network',
-      settings: accountSettingsParse({}),
-      rawSettings: {},
-      settingsVersion: 1,
-      loadedAtMs: 100,
-      settingsSecretsReadKeys: [],
-      scopeKey: resolveAccountSettingsScopeKey(credentials),
-    });
-    let submittedContent: AccountSettingsStoredContentEnvelope | null | undefined;
-    const updateSettings = vi.fn(async (request: Readonly<{
-      expectedVersion: number;
-      content: AccountSettingsStoredContentEnvelope | null;
-    }>) => {
-      submittedContent = request.content;
-      return { success: true as const, version: 2 };
-    });
-    const persistence = createQualifiedConnectedAccountDaemonPersistence({
-      credentials,
-      getAccountEncryptionMode: vi.fn(async (): Promise<'plain'> => 'plain'),
-      readCredential: vi.fn(async () => null),
-      readConfiguration: vi.fn(async () => null),
-      mutateCredential: vi.fn(),
-      mutateConfiguration: vi.fn(),
-      secrets: {
-        admit: vi.fn(async () => undefined),
-        has: vi.fn(async () => false),
-        read: vi.fn(async () => null),
-      },
-      randomBytes: (length) => new Uint8Array(length).fill(7),
-      createConfigurationRevision: () => 'configuration-plain',
-      createSecretId: () => 'secret-plain-1',
-      accountSettingsUpdateDeps: {
-        fetchSettings: async () => ({ content: { t: 'plain' as const, v: {} }, version: 1 }),
-        updateSettings,
-        resolveAccountEncryptionMode: async () => 'plain',
-        resolveCachePath: () => '/tmp/plain-account-settings',
-        writeCache: async () => {},
-      },
-    });
-
-    const result = await persistence.configuration.replaceForControl!({
-      target: { kind: 'service', service, modeId: 'oauth' },
-      expectedRevision: null,
-      values: { endpoint: 'https://api.example.test' },
-      currentSecretRefs: {},
-      secretValues: { clientSecret: 'plain-client-secret' },
-      ...runtimeIdentity('generation-plain', 'artifact-plain'),
-    });
-
-    expect(result).toMatchObject({
-      status: 'committed',
-      record: {
-        revision: 'configuration-plain',
-        secretRefs: { clientSecret: 'secret-plain-1' },
-      },
-    });
-    expect(updateSettings).toHaveBeenCalledTimes(1);
-    expect(submittedContent?.t).toBe('plain');
-    const persisted = submittedContent?.t === 'plain'
-      ? submittedContent.v as Readonly<{ secrets?: readonly Readonly<{
-        id: string;
-        encryptedValue: Readonly<{ value?: string; encryptedValue?: unknown }>;
-      }>[] }>
-      : null;
-    const written = persisted?.secrets?.find((entry) => entry.id === 'secret-plain-1');
-    expect(written?.encryptedValue.value).toBe('plain-client-secret');
-    expect(written?.encryptedValue.encryptedValue).toBeUndefined();
-    resetActiveAccountSettingsSnapshotForTests();
-  });
 });

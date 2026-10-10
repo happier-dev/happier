@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inspect } from 'node:util';
@@ -41,6 +41,31 @@ function createDescriptor(params: Readonly<{
 }
 
 describe('applyConnectedServiceStateSharingDescriptor', () => {
+  it.each(['shared', 'isolated'] as const)('prepares declared missing history directories only for effective shared state: %s', async (stateMode) => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-first-shared-state-'));
+    const sourceRoot = join(root, 'native');
+    const targetRoot = join(root, 'private');
+    const entries = [{ path: 'antigravity-acp/conversations', mode: 'linked', createIfMissing: 'directory' }] as const;
+    try {
+      await applyConnectedServiceStateSharingDescriptor({
+        descriptor: { ...createDescriptor({ stateEntries: entries }), state: {
+          supported: true, modes: ['shared', 'isolated'], entries, symlinkUnavailableDegradePolicy: 'block_continuity',
+        } },
+        nativeSourceContext: { sourceRoot, sourceEnv: {} },
+        target: { targetMaterializedRoot: targetRoot, targetMaterializedEnv: {} },
+        configMode: 'isolated', requestedStateMode: stateMode, effectiveStateMode: stateMode, cwd: root,
+      });
+      if (stateMode === 'shared') {
+        expect(await realpath(join(targetRoot, entries[0].path))).toBe(join(sourceRoot, entries[0].path));
+        expect((await lstat(join(targetRoot, 'antigravity-acp'))).isSymbolicLink()).toBe(false);
+      } else {
+        await expect(lstat(sourceRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it.each(['linked', 'copied', 'isolated'] as const)('shares native Agent configuration and rebases hook decisions in %s mode', async (configMode) => {
     const root = await mkdtemp(join(tmpdir(), 'happier-native-config-'));
     const sourceRoot = join(root, 'native');

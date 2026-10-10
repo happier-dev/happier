@@ -7,6 +7,7 @@ import type {
   ProviderLocalInstallationSummaryV1,
   QualifiedConnectedAccountPurposeBindingsV1,
   SavedSecret,
+  ProviderSettingsV1,
 } from '@happier-dev/protocol';
 import type { ManagedProviderStartRequest } from '@happier-dev/plugin-sdk/providers';
 import type {
@@ -81,8 +82,10 @@ export type ProviderModelSettingsMutationIntent =
 
 export type ProviderConnectionServiceSnapshot = Readonly<{
   accountSettings: AccountSettings;
-  /** Retained source bytes for Provider legacy/malformed-subtree recovery. */
+  /** Genuine Account preference/material bytes; never a Provider catalog overlay. */
   rawAccountSettings: Readonly<Record<string, unknown>>;
+  providerSettings: ProviderSettingsV1;
+  providerSettingsDiagnostics?: readonly Readonly<{ path: string; reason: string }>[];
   /**
    * Immutable Provider projection captured from one authoritative runtime
    * generation. A mutation may reload Account Settings, but must not replace
@@ -102,12 +105,14 @@ export type ProviderConnectionRegistryProjection = Readonly<{
 
 /**
  * A Provider description projects runtime facts from the same resolved
- * Account-settings snapshot as its connection facts.
+ * captured Provider domain view as its connection facts.
  */
 export type ProviderConnectionRuntimeSummaryInput = Readonly<{
   connectionId: string;
   machineId: string;
   accountSettings: ProviderConnectionServiceSnapshot['accountSettings'];
+  providerSettings: ProviderSettingsV1;
+  savedSecretResources?: ProviderConnectionServiceSnapshot['savedSecretResources'];
   registry: ProviderConnectionServiceSnapshot['registry'];
   dnsEvidence: ProviderEndpointDnsEvidence;
   resolution: Extract<ProviderConnectionResolution, { status: 'resolved' }>;
@@ -116,18 +121,24 @@ export type ProviderConnectionRuntimeSummaryInput = Readonly<{
 }>;
 
 export type ProviderConnectionServiceDeps = Readonly<{
+  /** Account compatibility dispatch delegates the shared Protocol writer; never a legacy fallback. */
+  accountProviderActionExecute?(
+    request: import('@happier-dev/protocol/providers/providerActionsV1').ProviderActionRequestV1,
+    preparedSavedSecret?: ProviderConnectionCreateInput['preparedSavedSecret'],
+  ): Promise<import('@happier-dev/protocol/actions/actionExecutionResult').ActionExecuteResult>;
   machineId: string;
   featureGate: Readonly<{ isEnabled(featureId: 'providers' | 'providers.localDiscovery'): boolean }>;
   loadSnapshot(
     registryProjection?: ProviderConnectionRegistryProjection,
   ): Promise<ProviderConnectionServiceSnapshot>;
-  updateAccountSettings(
+  updateProviderSettings(
     mutate: (
-      raw: Readonly<Record<string, unknown>>,
-    ) => Readonly<Record<string, unknown>>,
-  ): Promise<Readonly<Record<string, unknown>> | void>;
+      settings: ProviderSettingsV1,
+    ) => ProviderSettingsV1,
+    options?: Readonly<{ preparedSavedSecret?: ProviderConnectionCreateInput['preparedSavedSecret'] }>,
+  ): Promise<ProviderSettingsV1 | void>;
   collectDnsEvidence(input: Readonly<{
-    accountSettings: Readonly<Record<string, unknown>>;
+    providerSettings: ProviderSettingsV1;
     connectionId: string;
     machineId: string;
     registry: ProviderContributionRegistryView;
@@ -135,7 +146,7 @@ export type ProviderConnectionServiceDeps = Readonly<{
     lifetime: ProviderOperationLifetime;
   }>): Promise<ProviderEndpointDnsEvidence>;
   resolveConnection(input: Readonly<{
-    accountSettings: Readonly<Record<string, unknown>>;
+    providerSettings: ProviderSettingsV1;
     connectionId: string;
     machineId: string;
     registry: ProviderContributionRegistryView;
@@ -162,6 +173,8 @@ export type ProviderConnectionServiceDeps = Readonly<{
    */
   acquireManagedProviderRuntimeRegistryLease?(): Promise<PluginRuntimeRegistryLease>;
   startManagedProviderRuntime?(input: Readonly<{
+    connectionId?: string;
+    sharedGateway?: import('@/plugins/runtime/invocation/services/managedServicesAdapter').SharedManagedProviderGatewayBinding;
     contributionKey: string;
     identity: PluginContributionIdentityV1;
     request: Extract<ManagedProviderStartRequest, { reason: 'explicitStartLocal' }>;

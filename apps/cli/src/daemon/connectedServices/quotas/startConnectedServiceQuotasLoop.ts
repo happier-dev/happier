@@ -2,6 +2,7 @@ export type ConnectedServiceQuotasLoopHandle = Readonly<{
   stop: () => Promise<void>;
   pause: () => void;
   resume: () => void;
+  subscribeAfterTick: (listener: () => void | Promise<void>) => () => void;
 }>;
 
 export function startConnectedServiceQuotasLoop(params: Readonly<{
@@ -23,12 +24,14 @@ export function startConnectedServiceQuotasLoop(params: Readonly<{
   let inFlight: Promise<void> | null = null;
   let paused = false;
   let stopPromise: Promise<void> | null = null;
+  const settledTickListeners = new Set<() => void | Promise<void>>();
   const intervalHandle = setIntervalImpl(() => {
     if (stopped || inFlight) return;
     if (paused) return;
     inFlight = (async () => {
       try {
         await params.coordinator.tickOnce();
+        if (!stopped) await Promise.all([...settledTickListeners].map(listener => listener()));
       } catch (error) {
         params.onTickError(error);
       } finally {
@@ -45,6 +48,7 @@ export function startConnectedServiceQuotasLoop(params: Readonly<{
         return;
       }
       stopped = true;
+      settledTickListeners.clear();
       clearIntervalImpl(intervalHandle);
       stopPromise = (async () => {
         await inFlight;
@@ -56,6 +60,10 @@ export function startConnectedServiceQuotasLoop(params: Readonly<{
     },
     resume: () => {
       paused = false;
+    },
+    subscribeAfterTick: listener => {
+      if (!stopped) settledTickListeners.add(listener);
+      return () => { settledTickListeners.delete(listener); };
     },
   };
 }

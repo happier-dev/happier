@@ -8,6 +8,7 @@ import {
     type QualifiedConnectedAccountServiceRef,
 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
+import { ConnectedServicePoolSelectionGetResponseV1Schema } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 
 import { QualifiedConnectedAccountGroupConflictError } from '@/api/client/qualifiedConnectedAccountApi';
 import { applyConnectedAccountRequestAuthRecovery } from '../requestAuth/ConnectedAccountRequestAuthRecovery';
@@ -157,6 +158,7 @@ describe('createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator', () =
             probeQuotaSnapshotsForGroup: forbiddenEffect,
         });
         const result = await coordinator.readSelection({ serviceId: service, groupId: 'fallbacks' });
+        expect(ConnectedServicePoolSelectionGetResponseV1Schema.parse({ group: currentGroup.ref, ...result })).toEqual({ group: currentGroup.ref, ...result });
         expect(result.observedAtMs).toBe(1_000);
         expect(result.selection.selected?.profileId).toBe('primary');
         expect(result.selection.decisionTrace.orderedEligibleCandidates.map((candidate) => candidate.profileId)).toEqual(['backup', 'primary']);

@@ -8,6 +8,7 @@ describe('legacy profile migration RPC error mapping', () => {
   it('maps source drift, conflicts, size limits, missing sources, and malformed settings to stable redacted errors', () => {
     const cases = [
       [new ProviderSettingsMigrationError('legacy_profile_source_changed'), 'provider_profile_migration_source_changed'],
+      [new ProviderSettingsMigrationError('migration_outcome_unknown'), 'provider_rpc_mutation_outcome_unknown'],
       [new ProviderSettingsMigrationError('migration_conflict'), 'provider_profile_migration_conflict'],
       [new ProviderSettingsMigrationError('migration_conflict_changed'), 'provider_profile_migration_source_changed'],
       [new ProviderSettingsMigrationError('migration_conflict_resolution_invalid'), 'provider_profile_migration_conflict'],

@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import * as persistence from '@/persistence';
+// Composed first-party test: exercise the native materializer, not a replacement
+// for the internal binding logic. No production host/plugin import is introduced.
+import { OPENCODE_PROVIDER_BINDING_ADAPTER_V1 } from '../../../../../packages/plugins/opencode/src/agent/providerBinding/adapter';
 
 import {
   DEFAULT_PROVIDER_SETTINGS_V1,
@@ -44,6 +47,11 @@ import { hydrateSavedSecretCatalog } from '@/settings/secrets/hydrateSavedSecret
 import type {
   ResolveManagedProviderPurposeBindingIntent,
 } from '@/providers/managed/resolvePurposeBindingSnapshot';
+import { composeProviderSettingsV1, DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { prepareProviderConnectionImportV1 } from '@happier-dev/protocol/providers/connections/providerConnectionsCatalogV1';
+import { normalizeCustomProviderTemplateV1 } from '@happier-dev/protocol/providers/connections/normalizeCustomTemplateV1';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { DaemonProviderModelProjectionResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 
 import { resolveProviderConnectionForMachine } from '../registry';
 import { resolveProviderModelCompatibility } from '../catalog/compatibility';
@@ -174,7 +182,7 @@ function grantedSettings(
 ): ProviderSettingsV1 {
   const initial = providerSettings();
   const resolution = resolveProviderConnectionForMachine({
-    connectionId, machineId: 'machine-a', accountSettings: { providerSettingsV1: initial },
+    connectionId, machineId: 'machine-a', providerSettings: initial,
     registry: providerRegistry, dnsEvidenceByEndpointUrl: dns,
   });
   if (resolution.status !== 'resolved') throw new Error('Expected connection');
@@ -202,7 +210,7 @@ function grantedSettingsForConnection(connectionIdOverride: string): ProviderSet
   const resolution = resolveProviderConnectionForMachine({
     connectionId: parsedConnectionId,
     machineId: 'machine-a',
-    accountSettings: { providerSettingsV1: initial },
+    providerSettings: initial,
     registry,
     dnsEvidenceByEndpointUrl: dns,
   });
@@ -226,6 +234,7 @@ function managedGrantedSettings(
     providersByContributionKey:
       ReadonlyMap<string, ResolvedProviderContribution>;
   }> = managedRegistry,
+  gatewayMachineId?: string,
 ): ProviderSettingsV1 {
   const initial = ProviderSettingsV1Schema.parse({
     ...DEFAULT_PROVIDER_SETTINGS_V1,
@@ -237,6 +246,7 @@ function managedGrantedSettings(
       displayName: 'Gateway',
       displayNameMode: 'automatic',
       deployment: { kind: 'managedLocal' },
+      ...(gatewayMachineId ? { gatewayPlacement: { kind: 'machine', machineId: gatewayMachineId } } : {}),
       purposeBindingDefaults: {
         upstream: {
           kind: 'account',
@@ -257,7 +267,7 @@ function managedGrantedSettings(
   const resolution = resolveProviderConnectionForMachine({
     connectionId,
     machineId: 'machine-a',
-    accountSettings: { providerSettingsV1: initial },
+    providerSettings: initial,
     registry: providerRegistry,
     dnsEvidenceByEndpointUrl: new Map(),
   });
@@ -322,6 +332,7 @@ function lease(
     registry.providersByContributionKey,
   supportsNoAuth = false,
   retainedGenerationCurrent: () => boolean = () => true,
+  supportsClaudeHelperModels = false,
 ): PluginRuntimeRegistryLease {
   const support = agentProviderSupport(
     supportsFreeformModelIds,
@@ -342,6 +353,7 @@ function lease(
       generation: 'fixture-generation',
       providerBinding: {
         v: 1, adapterVersion: 3, prepare,
+        ...(supportsClaudeHelperModels ? { supportsClaudeHelperModels: true } : {}),
         materialize: vi.fn(async () => ({ v: 1, kind: 'engineConfig', env: [], engineConfig: {} })),
       },
       isCurrent: () => true,
@@ -453,11 +465,11 @@ describe('provider spawn authorization resolver', () => {
       const token = 'provider-admission-account';
       const resourceId = 'provider-admission-resource';
       const ref = `happier:shared-secret:v1:${resourceId}`;
+      const providerSettings = ProviderSettingsV1Schema.parse({
+        ...grantedSettings(), secretBindingsByConnectionId: { pc_gateway: { account: { apiKey: ref } } },
+      });
       const settings = AccountSettingsSchema.parse({
-        providerSettingsV1: {
-          ...grantedSettings(),
-          secretBindingsByConnectionId: { pc_gateway: { account: { apiKey: ref } } },
-        },
+        providerDefaultModelSelectionsByAgentTargetKeyV1: providerSettings.defaultsByAgentTargetKey,
         // An unrelated Profile contributes no shared refs. Provider admission
         // must own its credential independently of Profile selection.
         ...(profileCase === 'Provider-only shared binding'
@@ -466,6 +478,7 @@ describe('provider spawn authorization resolver', () => {
       });
       setActiveAccountSettingsSnapshot({
         source: 'network', settings, settingsVersion: 1, loadedAtMs: 1,
+        providerConnectionsCatalog: { status: 'ready', revision: 1, catalog: splitProviderSettingsV1(providerSettings).catalog },
         settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKeyForToken(token),
       });
       const features = FeaturesResponseSchema.parse({ features: { teams: { enabled: true } }, capabilities: {} });
@@ -541,25 +554,7 @@ describe('provider spawn authorization resolver', () => {
         selection: definitiveSelection(),
         agentTargetKey: 'agent:happier.agent.codex/codex',
         agentId: 'codex',
-        accountSettings: accountSettings(settings),
-        registry: staticPreflightRegistry(),
-      });
-
-      expect(result).toMatchObject({
-        ok: false,
-        error: { code: 'provider_connection_not_found' },
-      });
-    });
-
-    it('rejects a malformed persisted Provider connection before activation', () => {
-      const result = resolveProviderSpawnDefinitiveRejection({
-        selection: definitiveSelection(),
-        agentTargetKey: 'agent:happier.agent.codex/codex',
-        agentId: 'codex',
-        accountSettings: accountSettings({
-          ...DEFAULT_PROVIDER_SETTINGS_V1,
-          connections: [{ id: connectionId }],
-        }),
+        providerSettings: settings,
         registry: staticPreflightRegistry(),
       });
 
@@ -574,7 +569,7 @@ describe('provider spawn authorization resolver', () => {
         selection: definitiveSelection('not-in-the-static-catalog'),
         agentTargetKey: 'agent:happier.agent.codex/codex',
         agentId: 'codex',
-        accountSettings: accountSettings(providerSettings()),
+        providerSettings: providerSettings(),
         // The Agent refuses ids it cannot verify against a catalog, so the
         // two-sided freeform policy is closed and membership is decisive.
         registry: staticPreflightRegistry(
@@ -597,7 +592,7 @@ describe('provider spawn authorization resolver', () => {
         selection: definitiveSelection('glm-5.3-preview'),
         agentTargetKey: 'agent:happier.agent.codex/codex',
         agentId: 'codex',
-        accountSettings: accountSettings(providerSettings()),
+        providerSettings: providerSettings(),
         registry: staticPreflightRegistry(
           new Map([[canonicalContributionKey, probelessContribution]]),
           true,
@@ -612,7 +607,7 @@ describe('provider spawn authorization resolver', () => {
         selection: definitiveSelection('glm-5.3-preview'),
         agentTargetKey: 'agent:happier.agent.codex/codex',
         agentId: 'codex',
-        accountSettings: accountSettings(providerSettings()),
+        providerSettings: providerSettings(),
         registry: staticPreflightRegistry(
           new Map([[canonicalContributionKey, probelessCatalogOnlyContribution]]),
           true,
@@ -636,7 +631,7 @@ describe('provider spawn authorization resolver', () => {
         selection: definitiveSelection('manual-only'),
         agentTargetKey: 'agent:happier.agent.codex/codex',
         agentId: 'codex',
-        accountSettings: accountSettings(settings),
+        providerSettings: settings,
         registry: staticPreflightRegistry(
           new Map([[canonicalContributionKey, probelessContribution]]),
         ),
@@ -650,7 +645,7 @@ describe('provider spawn authorization resolver', () => {
         selection: definitiveSelection('probe-only'),
         agentTargetKey: 'agent:happier.agent.codex/codex',
         agentId: 'codex',
-        accountSettings: accountSettings(providerSettings()),
+        providerSettings: providerSettings(),
         // The Gateway declares a catalog probe, so its live catalog can report a
         // model the manifest never listed.  Even with the two-sided freeform
         // policy refused, this cold phase has proven nothing about that id.
@@ -665,7 +660,7 @@ describe('provider spawn authorization resolver', () => {
         selection: definitiveSelection(),
         agentTargetKey: 'agent:happier.agent.codex/codex',
         agentId: 'codex',
-        accountSettings: accountSettings(providerSettings()),
+        providerSettings: providerSettings(),
         registry: staticPreflightRegistry(),
       });
 
@@ -750,7 +745,7 @@ describe('provider spawn authorization resolver', () => {
     const ungranted = resolveProviderConnectionForMachine({
       connectionId: ollamaConnectionId,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: initialSettings },
+      providerSettings: initialSettings,
       registry: ollamaRegistry,
       dnsEvidenceByEndpointUrl: dnsEvidence,
       localCandidateUrlsByConnectionId,
@@ -773,7 +768,7 @@ describe('provider spawn authorization resolver', () => {
     const resolved = resolveProviderConnectionForMachine({
       connectionId: ollamaConnectionId,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: grantedSettings },
+      providerSettings: grantedSettings,
       registry: ollamaRegistry,
       dnsEvidenceByEndpointUrl: dnsEvidence,
       localCandidateUrlsByConnectionId,
@@ -861,7 +856,8 @@ describe('provider spawn authorization resolver', () => {
     };
     const snapshot: ActiveAccountSettingsSnapshot = {
       source: 'network',
-      settings: { providerSettingsV1: ollamaSettings } as never,
+      settings: AccountSettingsSchema.parse({ providerDefaultModelSelectionsByAgentTargetKeyV1: ollamaSettings.defaultsByAgentTargetKey }),
+      providerConnectionsCatalog: { status: 'ready', revision: 1, catalog: splitProviderSettingsV1(ollamaSettings).catalog },
       settingsVersion: 1,
       loadedAtMs: 1,
       settingsSecretsReadKeys: [],
@@ -927,6 +923,52 @@ describe('provider spawn authorization resolver', () => {
     await expect(authorize(mismatchedState)).resolves.toMatchObject({
       ok: false,
       error: { code: 'provider_compatibility_unverified' },
+    });
+  });
+
+  it('carries connection-owned model settings through authorization into native config and refuses an unsupported adapter', async () => {
+    const base = grantedSettings();
+    const settings = ProviderSettingsV1Schema.parse({ ...base, connections: base.connections.map(connection => ({
+      ...connection, modelSettings: { 'model-a': { temperature: 0.4, maxTokens: 2048 },
+        'other-model': { temperature: 0.8, maxTokens: 4096 } },
+    })) });
+    const runtimeLease = lease();
+    const native = runtimeLease.registry.agentRuntimesByAgentId.get('codex')!;
+    const definition = runtimeLease.registry.contributes.agentDefinitionsById.get('codex')!;
+    const nativeLease: PluginRuntimeRegistryLease = { ...runtimeLease, registry: {
+      ...runtimeLease.registry,
+      agentRuntimesByAgentId: new Map([['codex', { ...native, providerBinding: OPENCODE_PROVIDER_BINDING_ADAPTER_V1 }]]),
+      contributes: { ...runtimeLease.registry.contributes, agentDefinitionsById: new Map([['codex', {
+        ...definition, definition: { ...definition.definition, providerRequirements: {
+          ...definition.definition.providerRequirements!, materialization: 'configFile' as const,
+        } },
+      }]]) },
+    } };
+    const input = {
+      selection: { v: 1 as const, updatedAt: 1, ref: {
+        agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: connectionId, modelId: 'model-a',
+      } },
+      machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex',
+      accountSettings: accountSettings(settings), providerSettings: settings, registry, dnsEvidenceByEndpointUrl: dns,
+    };
+    expect(resolveProviderSpawnAuthorization({ ...input, lease: runtimeLease })).toMatchObject({
+      ok: false, error: { code: 'provider_incompatible_with_agent' },
+    });
+    const resolved = resolveProviderSpawnAuthorization({ ...input, lease: nativeLease });
+    if (!resolved.ok || resolved.authorization.deployment.kind !== 'external') throw new Error('expected native binding authorization');
+    const { binding, prepared } = resolved.authorization;
+    const endpoint = binding.endpoint;
+    if (!('normalizedUrl' in endpoint) || typeof endpoint.normalizedUrl !== 'string') throw new Error('expected external endpoint');
+    expect(binding.modelSettings).toEqual({ temperature: 0.4, maxTokens: 2048 });
+    const output = await OPENCODE_PROVIDER_BINDING_ADAPTER_V1.materialize({
+      v: 1, binding: { ...binding, endpoint: { ...endpoint, normalizedUrl: endpoint.normalizedUrl } }, prepared, credential: {
+        kind: 'apiKey', transport: binding.runtimeCredentialTransport!, value: 'test-provider-key',
+      },
+    });
+    if (output.kind !== 'configFile') throw new Error('expected native config file');
+    expect(JSON.parse(output.files[0]!.utf8)).toMatchObject({
+      agent: { build: { temperature: 0.4 }, plan: { temperature: 0.4 } },
+      provider: { [prepared.adapterBindingKey!]: { models: { 'model-a': { limit: { output: 2048 } } } } },
     });
   });
 
@@ -1142,7 +1184,7 @@ describe('provider spawn authorization resolver', () => {
       const ungranted = resolveProviderConnectionForMachine({
         connectionId,
         machineId: 'machine-a',
-        accountSettings: { providerSettingsV1: initial },
+        providerSettings: initial,
         registry: localRegistry,
         dnsEvidenceByEndpointUrl: new Map(),
       });
@@ -1164,7 +1206,7 @@ describe('provider spawn authorization resolver', () => {
       const authorizedConnection = resolveProviderConnectionForMachine({
         connectionId,
         machineId: 'machine-a',
-        accountSettings: { providerSettingsV1: settings },
+        providerSettings: settings,
         registry: localRegistry,
         dnsEvidenceByEndpointUrl: new Map(),
       });
@@ -1231,7 +1273,8 @@ describe('provider spawn authorization resolver', () => {
       });
       const snapshot: ActiveAccountSettingsSnapshot = {
         source: 'network',
-        settings: accountSettings(settings) as never,
+        settings: AccountSettingsSchema.parse(accountSettings(settings)),
+        providerConnectionsCatalog: { status: 'ready', revision: 1, catalog: splitProviderSettingsV1(settings).catalog },
         settingsVersion: 1,
         loadedAtMs: 1,
         settingsSecretsReadKeys: [key],
@@ -1314,8 +1357,15 @@ describe('provider spawn authorization resolver', () => {
 
   });
 
-  it('authorizes a managed deployment logically without realizing or persisting a loopback endpoint', () => {
+  it.each([
+    { claudeHelperModels: { fast: 'model-a', default: 'model-a' }, accepted: true, consumesHelpers: true },
+    { claudeHelperModels: {}, accepted: true, consumesHelpers: true },
+    { claudeHelperModels: { fast: 'probe-helper' }, accepted: true, consumesHelpers: true },
+    { claudeHelperModels: { fast: 'missing-helper' }, accepted: false, consumesHelpers: true },
+    { claudeHelperModels: { fast: 'missing-helper' }, accepted: true, consumesHelpers: false },
+  ])('admits managed helper models with the existing model catalog: %j', ({ claudeHelperModels, accepted, consumesHelpers }) => {
     const settings = managedGrantedSettings();
+    settings.connections[0] = { ...settings.connections[0]!, claudeHelperModels };
     const result = resolveProviderSpawnAuthorization({
       selection: {
         v: 1,
@@ -1333,7 +1383,9 @@ describe('provider spawn authorization resolver', () => {
       providerSettings: settings,
       registry: managedRegistry,
       dnsEvidenceByEndpointUrl: new Map(),
-      lease: lease(),
+      lease: lease(undefined, false, undefined, undefined, undefined, undefined, consumesHelpers),
+      runtimeCatalogSnapshotExists: true,
+      runtimeAdditionalModelDescriptors: [{ id: 'probe-helper', name: 'Probe helper' }],
       managedProviderRuntime: exactManagedProviderRuntime(),
       managedPurposeBindingSnapshot: {
         v: 1,
@@ -1356,6 +1408,10 @@ describe('provider spawn authorization resolver', () => {
       },
     });
 
+    if (!accepted) {
+      expect(result).toMatchObject({ ok: false, error: { code: 'provider_model_not_found' } });
+      return;
+    }
     expect(result).toMatchObject({
       ok: true,
       authorization: {
@@ -1382,6 +1438,7 @@ describe('provider spawn authorization resolver', () => {
           },
         },
         binding: {
+          ...(consumesHelpers ? { claudeHelperModels } : {}),
           selection: {
             connectionId,
             model: expect.objectContaining({ id: 'model-a', name: 'Model A' }),
@@ -1427,8 +1484,96 @@ describe('provider spawn authorization resolver', () => {
         },
       },
     });
+    if (result.ok && !consumesHelpers) expect(result.authorization.binding.claudeHelperModels).toBeUndefined();
     expect(JSON.stringify(result)).not.toContain('127.0.0.1');
     expect(JSON.stringify(result)).not.toContain('localhost');
+  });
+
+  it.each([
+    { consumesHelpers: false, helperState: 'incompatible' },
+    { consumesHelpers: false, helperState: 'stale' },
+    { consumesHelpers: true, helperState: 'incompatible' },
+    { consumesHelpers: true, helperState: 'stale' },
+  ] as const)('observes only consumed helper models during remote hub authorization: %j', async ({ consumesHelpers, helperState }) => {
+    const sharedContribution: ResolvedProviderContribution = {
+      ...managedContribution,
+      definition: ProviderContributionV1Schema.parse({
+        ...managedContribution.definition,
+        managedRuntime: { ...managedContribution.definition.managedRuntime, sharing: 'connectionMachine' },
+      }),
+    };
+    const sharedRegistry = {
+      providersByContributionKey: new Map([[canonicalContributionKey, sharedContribution]]),
+    };
+    const settings = managedGrantedSettings(sharedRegistry, 'machine-hub');
+    settings.connections[0] = { ...settings.connections[0]!, claudeHelperModels: { fast: 'helper-model' } };
+    const resolution = resolveProviderConnectionForMachine({
+      connectionId, machineId: 'machine-a', providerSettings: settings,
+      registry: sharedRegistry, dnsEvidenceByEndpointUrl: new Map(),
+    });
+    if (resolution.status !== 'resolved') throw new Error('Expected remote gateway connection');
+    const snapshot: ActiveAccountSettingsSnapshot = {
+      source: 'network', settings: AccountSettingsSchema.parse({ providerSettingsV1: settings }),
+      providerConnectionsCatalog: { status: 'ready', revision: 1, catalog: splitProviderSettingsV1(settings).catalog },
+      settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'account-a',
+    };
+    const result = await createRuntimeProviderSpawnAuthorizationAttempt({
+      selection: { v: 1, updatedAt: 1, ref: {
+        agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: connectionId, modelId: 'model-a',
+      } },
+      machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex',
+      lease: lease(undefined, false, undefined, sharedRegistry.providersByContributionKey, false, undefined, consumesHelpers),
+      getAccountSettingsSnapshot: () => snapshot,
+      materializationBaseDir: '/unused',
+      resolveManagedPurposeBindingIntent: async (input) => ({ purpose: input.purpose, target: input.target }),
+      // The hub RPC is the system boundary; compatibility and admission remain real.
+      readModelProjection: async (request, signal) => {
+        signal.throwIfAborted();
+        expect(request).toMatchObject({ machineId: 'machine-hub', refreshPolicy: 'current_only' });
+        const rows = [
+          { id: 'model-a', name: 'Model A', capabilities: { toolRoundTrips: 'supported' as const } },
+          { id: 'helper-model', name: 'Helper model', capabilities: {
+            toolRoundTrips: helperState === 'incompatible' ? 'unsupported' as const : 'supported' as const,
+          } },
+        ].map((descriptor) => {
+          const compatibility = resolveProviderModelCompatibility({
+            record: resolution.record, providerSettings: settings, agentTargetKey: request.agentTargetKey,
+            support: agentProviderSupport(false), model: descriptor, adapterVersion: 3,
+          });
+          return {
+            ref: { agentTargetKey: request.agentTargetKey, providerConnectionId: connectionId, modelId: descriptor.id },
+            descriptor, compatibility,
+            ...(compatibility.result.status !== 'incompatible' ? {
+              application: { agentTargetKey: request.agentTargetKey, implementationIdentity: sharedContribution.identity,
+                endpointTemplateId: 'responses', protocol: compatibility.result.selectedProtocol },
+            } : {}),
+            sources: { manual: false, static: false, probe: true }, confidence: 'probe',
+            endpointHealth: 'not_checked', catalog: { stale: descriptor.id === 'helper-model' && helperState === 'stale' },
+            loadState: 'unknown', visibility: 'visible',
+          };
+        });
+        return DaemonProviderModelProjectionResponseV1Schema.parse({
+          status: 'success', agentTargetKey: request.agentTargetKey,
+          groups: [{ connectionId, providerName: 'Gateway', connectionName: 'Gateway', connectionRole: 'default',
+            connectionDisplayNameMode: 'automatic', connectionRevision: 7,
+            sourceAuthority: { provider: { identity: sharedContribution.identity, definitionRevision: 1 },
+              connectionSecurityFingerprint: resolution.record.connectionSecurityFingerprint },
+            authorization: { authorized: true }, modelLoadAction: 'descriptor_absent', manualModelPolicy: 'allowed',
+            supportsFreeformModelIds: false, suppressedConnectedServiceIds: [], rows }],
+        });
+      },
+    });
+    if (consumesHelpers) {
+      expect(result).toMatchObject({ ok: false, error: { code: 'provider_endpoint_unavailable' } });
+    } else {
+      expect(result).toMatchObject({ ok: true, attempt: { authorization: {
+        binding: { selection: { model: { id: 'model-a' } } },
+      } } });
+      if (result.ok) {
+        expect(result.attempt.authorization.binding.claudeHelperModels).toBeUndefined();
+        result.attempt.cleanupOnFailure();
+      }
+    }
   });
 
   it('authorizes a credential-free managed Provider without fabricating a bearer', () => {
@@ -1609,7 +1754,8 @@ describe('provider spawn authorization resolver', () => {
     };
     const snapshot: ActiveAccountSettingsSnapshot = {
       source: 'network',
-      settings: { providerSettingsV1: settings } as never,
+      settings: AccountSettingsSchema.parse({ providerDefaultModelSelectionsByAgentTargetKeyV1: settings.defaultsByAgentTargetKey }),
+      providerConnectionsCatalog: { status: 'ready', revision: 1, catalog: splitProviderSettingsV1(settings).catalog },
       settingsVersion: 1,
       loadedAtMs: 1,
       settingsSecretsReadKeys: [],
@@ -1753,7 +1899,8 @@ describe('provider spawn authorization resolver', () => {
     };
     const currentSnapshot: ActiveAccountSettingsSnapshot = {
       source: 'network',
-      settings: { providerSettingsV1: settings } as never,
+      settings: AccountSettingsSchema.parse({ providerDefaultModelSelectionsByAgentTargetKeyV1: settings.defaultsByAgentTargetKey }),
+      providerConnectionsCatalog: { status: 'ready', revision: 1, catalog: splitProviderSettingsV1(settings).catalog },
       settingsVersion: 1,
       loadedAtMs: 1,
       settingsSecretsReadKeys: [],
@@ -1816,7 +1963,7 @@ describe('provider spawn authorization resolver', () => {
     const resolution = resolveProviderConnectionForMachine({
       connectionId,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: unconfirmedSettings },
+      providerSettings: unconfirmedSettings,
       registry: experimentalRegistry,
       dnsEvidenceByEndpointUrl: new Map(),
     });
@@ -1856,7 +2003,8 @@ describe('provider spawn authorization resolver', () => {
       settingsVersion: number,
     ): ActiveAccountSettingsSnapshot => ({
       source: 'network',
-      settings: { providerSettingsV1: settings } as never,
+      settings: AccountSettingsSchema.parse({ providerDefaultModelSelectionsByAgentTargetKeyV1: settings.defaultsByAgentTargetKey }),
+      providerConnectionsCatalog: { status: 'ready', revision: settingsVersion, catalog: splitProviderSettingsV1(settings).catalog },
       settingsVersion,
       loadedAtMs: settingsVersion,
       settingsSecretsReadKeys: [],
@@ -2232,6 +2380,48 @@ describe('provider spawn authorization resolver', () => {
     expect(prepare).not.toHaveBeenCalled();
   });
 
+  it('keeps imported predecessor Voice Chat models ungranted for executable OpenCode admission', async () => {
+    // Genuine predecessor fields: ../0.2 OpenAiCompatVoiceAgentClient reads
+    // chatBaseUrl/chatApiKey and directly sends chatModel/commitModel over HTTP.
+    // This vector is shared with the Protocol explicit-import owner regression.
+    const legacyChat = { chatBaseUrl: 'https://chat.compatibility.test/v1',
+      chatModel: 'compatibility-chat', commitModel: 'compatibility-commit' };
+    const id = ProviderConnectionIdSchema.parse('voice-openai-compatible-chat');
+    const imported = prepareProviderConnectionImportV1(DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, {
+      connection: { v: 1, id, role: 'named', displayName: 'Voice OpenAI-compatible Chat',
+        displayNameMode: 'custom', deployment: { kind: 'external' }, revision: 0, createdAt: 0, updatedAt: 0,
+        source: { kind: 'custom', template: normalizeCustomProviderTemplateV1({
+          name: 'Voice OpenAI-compatible Chat', protocol: 'openai-chat', baseUrl: legacyChat.chatBaseUrl,
+          credentialStyle: 'bearer', catalog: 'manual',
+        }) } },
+      secretBindings: { account: { apiKey: formatSharedSavedSecretRefV1('legacy-chat-resource') } },
+      manualModels: [legacyChat.chatModel, legacyChat.commitModel].map(modelId => ({ id: modelId, addedAt: 0 })),
+    });
+    expect(imported.status).toBe('prepared');
+    if (imported.status !== 'prepared') throw new Error('Expected the canonical Chat import');
+    const providerSettings = composeProviderSettingsV1(imported.catalog, {});
+    expect(providerSettings.accountGrants).toEqual([]);
+    expect(providerSettings.machineGrants).toEqual([]);
+    const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({
+      pluginIds: ['happier.agent.opencode'],
+      resolveDevelopmentSourceAuthority: ({ pluginId, rootPath }) => ({
+        kind: 'development', registeredRootId: `provider-spawn-fixture:${pluginId}`,
+        canonicalRoot: rootPath, observedRevision: 1,
+      }),
+    });
+    executableRegistries.push(runtimeRegistry);
+    const agentTargetKey = 'agent:happier.agent.opencode/opencode';
+    for (const modelId of [legacyChat.chatModel, legacyChat.commitModel]) {
+      expect(resolveProviderSpawnAuthorization({
+        selection: { v: 1, updatedAt: 1, ref: { agentTargetKey, providerConnectionId: id, modelId } },
+        machineId: 'machine-a', agentTargetKey, agentId: 'opencode', accountSettings: {}, providerSettings,
+        registry: { providersByContributionKey: runtimeRegistry.contributes.providersByContributionKey ?? new Map() },
+        dnsEvidenceByEndpointUrl: new Map([[legacyChat.chatBaseUrl, ['1.1.1.1']]]),
+        lease: { registry: runtimeRegistry, source: 'active', durableRevision: -1, release: async () => {} },
+      })).toMatchObject({ ok: false, error: { code: 'provider_connection_disabled' } });
+    }
+  });
+
   it('uses the canonical account grant fingerprint in the ticket', () => {
     const settings = grantedSettings();
     const result = resolveProviderSpawnAuthorization({
@@ -2383,8 +2573,8 @@ describe('provider spawn authorization resolver', () => {
 });
 
 describe('shared provider probe authorization resolver', () => {
-  it('authorizes the exact credential-free managed catalog source without a realized endpoint', () => {
-    const settings = managedGrantedSettings();
+  it.each(['machine-a', 'machine-b'])('G1 authorizes the managed catalog only on the saved gateway machine %s', gatewayMachineId => {
+    const settings = managedGrantedSettings(managedRegistry, gatewayMachineId);
     const purposeBindings = {
       v: 1 as const,
       bindings: [{
@@ -2441,6 +2631,11 @@ describe('shared provider probe authorization resolver', () => {
       dnsEvidenceByEndpointUrl: new Map(),
       managedPurposeBindingSnapshot: purposeBindings,
     });
+
+    if (gatewayMachineId !== request.machineId) {
+      expect(result).toMatchObject({ ok: false, error: { code: 'provider_not_enabled_on_machine' } });
+      return;
+    }
 
     expect(result).toMatchObject({
       ok: true,
@@ -2649,7 +2844,7 @@ describe('shared provider probe authorization resolver', () => {
     const ungranted = resolveProviderConnectionForMachine({
       connectionId,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: initial },
+      providerSettings: initial,
       registry: ambiguousRegistry,
       dnsEvidenceByEndpointUrl: dns,
     });
@@ -2760,7 +2955,7 @@ describe('provider model-load authorization resolver', () => {
     const resolution = resolveProviderConnectionForMachine({
       connectionId: 'pc_local',
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: initial },
+      providerSettings: initial,
       registry: localRegistry,
       dnsEvidenceByEndpointUrl: new Map(),
     });

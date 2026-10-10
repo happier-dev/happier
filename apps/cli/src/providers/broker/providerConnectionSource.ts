@@ -1,6 +1,7 @@
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
-import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
-import type { ProviderCredentialTransportV1, ProviderErrorV1, ProviderWireProtocol } from '@happier-dev/protocol';
+import type { ProviderCredentialTransportV1, ProviderErrorV1, ProviderWireProtocol, ProviderSettingsV1 } from '@happier-dev/protocol';
+import { readProviderSettingsForCli } from '@/providers/settings/read';
+import { prepareProviderConnectionsCatalogForCli } from '@/providers/settings/hydrate';
 import type {
   TeamCredentialBrokerPlacementV1,
   TeamCredentialSourceBindingV1,
@@ -61,6 +62,7 @@ export type ResolveProviderConnectionBrokerSourceInput = Readonly<{
   protocol: ProviderWireProtocol;
   expectedCredentialTransport?: ProviderCredentialTransportV1;
   accountSettings: unknown;
+  providerSettings: ProviderSettingsV1;
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
   registry: ProviderContributionRegistryView;
   dnsEvidenceByEndpointUrl: ProviderEndpointDnsEvidence;
@@ -147,7 +149,7 @@ export function resolveProviderConnectionBrokerSource(
   const resolution = resolveProviderConnectionForMachine({
     connectionId: input.source.connectionId,
     machineId: input.machineId,
-    accountSettings: input.accountSettings,
+    providerSettings: input.providerSettings,
     registry: input.registry,
     dnsEvidenceByEndpointUrl: input.dnsEvidenceByEndpointUrl,
     ...(input.localCandidateUrlsByConnectionId
@@ -189,9 +191,8 @@ export function resolveProviderConnectionBrokerSource(
   if (!credential || credential.slotId !== input.source.credentialSlotId) {
     return fail('provider_credential_transport_unavailable', input.source, input.machineId);
   }
-  const providerSettings = readProviderSettingsFromAccountSettingsV1(input.accountSettings).settings;
   const reference = resolveProviderCredentialReference({
-    providerSettings,
+    providerSettings: input.providerSettings,
     accountSettings: input.accountSettings,
     ...(input.savedSecretResources
       ? { savedSecretResources: input.savedSecretResources }
@@ -249,6 +250,7 @@ export function resolveProviderConnectionDirectSourceSnapshot(input: Readonly<{
   source: ProviderConnectionSource;
   machineId: string;
   accountSettings: unknown;
+  providerSettings: ProviderSettingsV1;
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
   registry: ProviderContributionRegistryView;
   dnsEvidenceByEndpointUrl: ProviderEndpointDnsEvidence;
@@ -256,7 +258,7 @@ export function resolveProviderConnectionDirectSourceSnapshot(input: Readonly<{
   const resolution = resolveProviderConnectionForMachine({
     connectionId: input.source.connectionId,
     machineId: input.machineId,
-    accountSettings: input.accountSettings,
+    providerSettings: input.providerSettings,
     registry: input.registry,
     dnsEvidenceByEndpointUrl: input.dnsEvidenceByEndpointUrl,
   });
@@ -302,14 +304,18 @@ export async function resolveAdmittedProviderConnectionDirectSourceSnapshot(inpu
   getAccountSettingsSnapshot: () => ActiveAccountSettingsSnapshot | null;
   signal?: AbortSignal;
 }>): Promise<ResolveResult> {
-  const resolveFrom = (snapshot: ActiveAccountSettingsSnapshot) => resolveProviderConnectionDirectSourceSnapshot({
+  const resolveFrom = (snapshot: ActiveAccountSettingsSnapshot) => snapshot.providerConnectionsCatalog?.status !== 'ready'
+    ? fail('provider_authorization_changed', input.source, input.machineId) : resolveProviderConnectionDirectSourceSnapshot({
     source: input.source,
     machineId: input.machineId,
     accountSettings: snapshot.settings,
+    providerSettings: readProviderSettingsForCli(snapshot).settings,
     ...(snapshot.savedSecretResources ? { savedSecretResources: snapshot.savedSecretResources } : {}),
     registry: input.registry,
     dnsEvidenceByEndpointUrl: input.dnsEvidenceByEndpointUrl,
   });
+  const catalog = await prepareProviderConnectionsCatalogForCli({ expectedScopeKey: input.expectedScopeKey, signal: input.signal });
+  if (catalog.status !== 'ready') return fail('provider_authorization_changed', input.source, input.machineId);
   const current = input.getAccountSettingsSnapshot();
   if (!current) return fail('provider_authorization_changed', input.source, input.machineId);
   const resolved = resolveFrom(current);
@@ -364,6 +370,7 @@ export async function isProviderConnectionBrokerSourceCurrent(input: Readonly<{
       protocol: input.expected.endpoint.protocol,
       expectedCredentialTransport: input.expected.credentialRef.transport,
       accountSettings: accountSnapshot.settings,
+      providerSettings: readProviderSettingsForCli(accountSnapshot).settings,
       ...(accountSnapshot.savedSecretResources
         ? { savedSecretResources: accountSnapshot.savedSecretResources }
         : {}),
@@ -400,6 +407,7 @@ export async function isProviderConnectionDirectSourceCurrent(input: Readonly<{
       protocol: input.expected.endpoint.protocol,
       expectedCredentialTransport: input.expected.credentialRef.transport,
       accountSettings: accountSnapshot.settings,
+      providerSettings: readProviderSettingsForCli(accountSnapshot).settings,
       ...(accountSnapshot.savedSecretResources
         ? { savedSecretResources: accountSnapshot.savedSecretResources }
         : {}),
@@ -434,7 +442,7 @@ export async function materializeProviderConnectionDirectCredential(input: Reado
   getAccountSettingsSnapshot: () => ActiveAccountSettingsSnapshot | null;
 }>): Promise<ProviderCredentialPlaintextResultForSpawn> {
   const accountSnapshot = input.getAccountSettingsSnapshot();
-  if (!accountSnapshot) {
+  if (accountSnapshot?.providerConnectionsCatalog?.status !== 'ready') {
     return {
       ok: false,
       error: createProviderErrorV1('provider_authorization_changed', {
@@ -450,6 +458,7 @@ export async function materializeProviderConnectionDirectCredential(input: Reado
     protocol: input.expected.endpoint.protocol,
     expectedCredentialTransport: input.expected.credentialRef.transport,
     accountSettings: accountSnapshot.settings,
+    providerSettings: readProviderSettingsForCli(accountSnapshot).settings,
     ...(accountSnapshot.savedSecretResources
       ? { savedSecretResources: accountSnapshot.savedSecretResources }
       : {}),
@@ -505,7 +514,7 @@ export async function materializeProviderConnectionBrokerSource(input: Readonly<
   getAccountSettingsSnapshot: () => ActiveAccountSettingsSnapshot | null;
 }>): Promise<Awaited<ReturnType<typeof resolveRuntimeProviderCredential>>> {
   const accountSnapshot = input.getAccountSettingsSnapshot();
-  if (!accountSnapshot) {
+  if (accountSnapshot?.providerConnectionsCatalog?.status !== 'ready') {
     return {
       ok: false,
       error: createProviderErrorV1('provider_authorization_changed', {
@@ -525,6 +534,7 @@ export async function materializeProviderConnectionBrokerSource(input: Readonly<
     // here and no request can be brokered.
     expectedCredentialTransport: input.expected.credentialRef.transport,
     accountSettings: accountSnapshot.settings,
+    providerSettings: readProviderSettingsForCli(accountSnapshot).settings,
     ...(accountSnapshot.savedSecretResources
       ? { savedSecretResources: accountSnapshot.savedSecretResources }
       : {}),
@@ -674,8 +684,13 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
       && exactSelection.protocol !== request.application.protocol) return null;
 
     const expected = await input.withRegistry(async (registry) => {
+      const captured = input.getAccountSettingsSnapshot();
+      if (!captured?.scopeKey) return null;
+      const catalog = captured.providerConnectionsCatalog?.status === 'ready'
+        ? captured.providerConnectionsCatalog
+        : await prepareProviderConnectionsCatalogForCli({ expectedScopeKey: captured.scopeKey, signal: request.signal });
       const accountSnapshot = input.getAccountSettingsSnapshot();
-      if (!accountSnapshot) return null;
+      if (catalog.status !== 'ready' || accountSnapshot?.scopeKey !== captured.scopeKey) return null;
       const dnsEvidenceByEndpointUrl = await input.collectDnsEvidence({
         source: request.source,
         registry,
@@ -684,7 +699,7 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
       const resolution = resolveProviderConnectionForMachine({
         connectionId: request.source.connectionId,
         machineId: input.machineId,
-        accountSettings: accountSnapshot.settings,
+        providerSettings: readProviderSettingsForCli(accountSnapshot).settings,
         registry,
         dnsEvidenceByEndpointUrl,
         ...(input.localCandidateUrlsByConnectionId
@@ -713,6 +728,7 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
           ? { expectedCredentialTransport: exactSelection.credentialTransport }
           : {}),
         accountSettings: accountSnapshot.settings,
+        providerSettings: readProviderSettingsForCli(accountSnapshot).settings,
         ...(accountSnapshot.savedSecretResources
           ? { savedSecretResources: accountSnapshot.savedSecretResources }
           : {}),

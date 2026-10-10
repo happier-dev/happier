@@ -1,4 +1,10 @@
 import type { StoredCredentials } from '@/persistence';
+import { isDeepStrictEqual } from 'node:util';
+import { composeProviderSettingsV1, splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import type { ProviderActionRequestV1 } from '@happier-dev/protocol/providers/providerActionsV1';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { createCliAccountProviderActionExecuteV1 } from './accountActions';
 import {
   resolveProviderContributionRegistryView,
   resolveProviderConnectionForMachine,
@@ -6,17 +12,12 @@ import {
 } from '@/providers/registry';
 import { collectProviderConnectionDnsEvidence } from '@/providers/registry/dnsEvidence';
 import { readProviderSettingsForCli } from '@/providers/settings/read';
+import { createCliProviderConnectionsStore } from '@/providers/settings/catalogStore';
+import { refreshActiveProviderConnectionsCatalog } from '@/providers/settings/hydrate';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
-import {
-  updateAccountSettingsV2OnceAgainstLatest,
-} from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
-
-import {
-  requireProviderConnectionAccountSettingsMutationSuccess,
-} from './accountSettingsMutationRefusal';
-
+import { promoteSavedSecretWithProviderConnectionsCatalog } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { createProviderConnectionRpcAdapter } from './rpcAdapter';
 import { createPublicManagedProviderRuntimeStartOperation } from './publicManagedRuntimeStart';
 import {
@@ -44,14 +45,15 @@ export type RuntimeProviderConnectionServices = Readonly<
 >;
 
 /**
- * Daemon composition for provider-connection settings. Account-settings CAS,
- * DNS classification, security fingerprints, and grants remain daemon owned;
- * RPC and CLI callers submit intent only.
+ * Daemon composition for provider connections. Canonical row CAS,
+ * Account mutations delegate to the same Protocol semantics as standalone CLI
+ * Actions. DNS, machine grants, discovery and executable state stay here.
  */
 export function createRuntimeProviderConnectionServices(input: Readonly<{
   machineId: string;
   credentials: StoredCredentials;
   happyHomeDir: string;
+  resolveSharedGateway?: import('@/plugins/runtime/invocation/services/managedServicesAdapter').ResolveSharedManagedProviderGatewayBinding;
   featureGate: Readonly<{ isEnabled(featureId: 'providers' | 'providers.localDiscovery'): boolean }>;
   runtimeSummary(input: ProviderConnectionRuntimeSummaryInput): Promise<
     | Readonly<{
@@ -111,6 +113,7 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
       };
   const startManagedProviderRuntime = input.startManagedProviderRuntime
     ?? createPublicManagedProviderRuntimeStartOperation({
+      ...(input.resolveSharedGateway ? { resolveSharedGateway: input.resolveSharedGateway } : {}),
       machineId: input.machineId,
       happyHomeDir: input.happyHomeDir,
     });
@@ -120,21 +123,51 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
   // registry acquisition.
   const useAuthoritativeManagedStartLease = !input.resolveRegistry
     && !input.startManagedProviderRuntime;
+  const serverHttpBaseUrl = resolveServerHttpBaseUrl();
+  const executeAccount = async (request: ProviderActionRequestV1,
+    preparedSavedSecret?: Parameters<typeof createCliAccountProviderActionExecuteV1>[0]['preparedSavedSecret']) => {
+    if (!input.featureGate.isEnabled('providers')) return { ok: false as const, errorCode: 'provider_feature_disabled',
+      error: 'provider_feature_disabled', details: createProviderErrorV1('provider_feature_disabled', { machineId: input.machineId }) };
+    if ('machineId' in request.input && request.input.machineId !== input.machineId) {
+      return { ok: false as const, errorCode: 'provider_not_enabled_on_machine', error: 'provider_not_enabled_on_machine',
+        details: createProviderErrorV1('provider_not_enabled_on_machine', { machineId: request.input.machineId }) };
+    }
+    return createCliAccountProviderActionExecuteV1({ credentials: input.credentials, serverHttpBaseUrl,
+      preparedSavedSecret, now: input.now,
+      readDefinitions: async () => [...(await loadRegistryProjection()).registry.providersByContributionKey]
+        .map(([contributionKey, contribution]) => ({ contributionKey, definition: contribution.definition,
+          provenance: contribution.provenance })),
+    })(request, { surface: 'cli' });
+  };
   const service = createProviderConnectionService({
+    accountProviderActionExecute: executeAccount,
     machineId: input.machineId,
     featureGate: input.featureGate,
     loadSnapshot: async (registryProjection) => {
       const current = getActiveAccountSettingsSnapshot();
-      const active = current?.scopeKey === resolveAccountSettingsScopeKey(input.credentials)
+      let active = current?.scopeKey === resolveAccountSettingsScopeKey(input.credentials)
         ? current
         : await refreshAccountSettingsForMinimumVersion({
           credentials: input.credentials,
           minSettingsVersion: null,
           mode: 'blocking',
         });
+      const capturedStore = createCliProviderConnectionsStore({ credentials: input.credentials });
+      if (!active.providerConnectionsCatalog || active.providerConnectionsCatalog.status === 'loading'
+        || active.providerConnectionsCatalog.status === 'unavailable') {
+        await refreshActiveProviderConnectionsCatalog({ credentials: input.credentials });
+        capturedStore.assertCurrent();
+        const refreshed = getActiveAccountSettingsSnapshot();
+        if (!refreshed || refreshed.scopeKey !== active.scopeKey) throw createProviderErrorV1('provider_settings_invalid');
+        active = refreshed;
+      }
+      const providerRead = readProviderSettingsForCli(active, { purpose: 'display' });
       const projection = registryProjection ?? await loadRegistryProjection();
+      capturedStore.assertCurrent();
       return {
         accountSettings: active.settings,
+        providerSettings: providerRead.settings,
+        providerSettingsDiagnostics: providerRead.diagnostics,
         rawAccountSettings: active.rawSettings ?? active.settings,
         registry: projection.registry,
         ...(projection.generation ? { registryGeneration: projection.generation } : {}),
@@ -142,29 +175,56 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
         ...(active.savedSecretCatalogState ? { savedSecretCatalogState: active.savedSecretCatalogState } : {}),
       };
     },
-    updateAccountSettings: async (mutate) => {
-      const result = requireProviderConnectionAccountSettingsMutationSuccess(
-        await updateAccountSettingsV2OnceAgainstLatest({ credentials: input.credentials, mutate }),
-        { machineId: input.machineId },
-      );
-      const refreshed = await refreshAccountSettingsForMinimumVersion({
-        credentials: input.credentials,
-        minSettingsVersion: result.version,
-        mode: 'blocking',
-        forceRefresh: true,
-      });
-      return refreshed.settings;
+    updateProviderSettings: async (mutate, options) => {
+      const store = createCliProviderConnectionsStore({ credentials: input.credentials });
+      const captured = await store.readCatalog();
+      if (captured.status !== 'ready') throw createProviderErrorV1('provider_settings_invalid');
+      const active = getActiveAccountSettingsSnapshot();
+      store.assertCurrent();
+      if (!active) throw createProviderErrorV1('provider_settings_invalid');
+      const basis = composeProviderSettingsV1(captured.catalog, active.settings.providerDefaultModelSelectionsByAgentTargetKeyV1);
+      const next = mutate(basis);
+      const { catalog } = splitProviderSettingsV1(next);
+      if (isDeepStrictEqual(catalog, captured.catalog)) return basis;
+      try {
+        if (options?.preparedSavedSecret) {
+          const result = await promoteSavedSecretWithProviderConnectionsCatalog({
+            credentials: input.credentials, preparedSavedSecret: options.preparedSavedSecret,
+            providerConnections: { expectedRevision: captured.revision, catalog },
+          });
+          if (result.status !== 'applied') {
+            const code = result.status === 'outcome_unknown' ? 'provider_rpc_mutation_outcome_unknown'
+              : result.status === 'conflict' ? 'provider_connection_changed'
+              : result.status === 'unavailable' ? 'provider_secret_unavailable' : 'provider_connection_invalid';
+            throw createProviderErrorV1(code, { machineId: input.machineId });
+          }
+        } else {
+          const result = await store.mutateCatalog({ expectedRevision: captured.revision, catalog });
+          if (result.status === 'conflict' || result.status === 'settings-conflict') {
+            throw createProviderErrorV1('provider_connection_changed', { machineId: input.machineId });
+          }
+          if (result.status === 'invalid-reference') throw createProviderErrorV1('provider_secret_missing', { machineId: input.machineId });
+          if (result.status !== 'updated') throw createProviderErrorV1('provider_settings_invalid');
+        }
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'outcome_unknown') {
+          throw createProviderErrorV1('provider_rpc_mutation_outcome_unknown', { machineId: input.machineId });
+        }
+        throw error;
+      }
+      await refreshActiveProviderConnectionsCatalog({ credentials: input.credentials }, { afterChange: true });
+      return next;
     },
-    collectDnsEvidence: ({ accountSettings, connectionId, machineId, registry, lifetime }) =>
+    collectDnsEvidence: ({ providerSettings, connectionId, machineId, registry, lifetime }) =>
       collectProviderConnectionDnsEvidence({
-        providerSettings: readProviderSettingsForCli(accountSettings).settings,
+        providerSettings,
         connectionId, machineId, registry,
         ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
         lifetime,
       }),
-    resolveConnection: ({ accountSettings, connectionId, machineId, registry, dnsEvidence }) =>
+    resolveConnection: ({ providerSettings, connectionId, machineId, registry, dnsEvidence }) =>
       resolveProviderConnectionForMachine({
-        accountSettings, connectionId, machineId, registry,
+        providerSettings, connectionId, machineId, registry,
         dnsEvidenceByEndpointUrl: dnsEvidence,
       }),
     runtimeSummary: async (request) => {

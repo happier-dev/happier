@@ -285,11 +285,9 @@ export async function openExactSessionTeamCredentialProviderBinding(
               materializationReleased = true;
             }
           } finally {
-            // The retirement DELETE travels over this tunnel, so the transport
-            // outlives the attempt: closing it on a failed retirement destroys
-            // the only way to reach the target and strands the operation it
-            // still holds. A failure leaves `closed` false, so the caller's
-            // next cleanup retries over the same transport.
+            // The carrier withdraws the public listener before retirement and
+            // retains only the exact signed claim for a private control dial.
+            // A failure leaves cleanup retryable, never inference reachable.
             await tunnel.retire();
             await tunnel.close();
           }

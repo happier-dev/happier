@@ -1,5 +1,4 @@
 import type {
-  IrohProviderBrokerHandshakeV1,
   ProviderBrokerAdmissionFailureCodeV1,
   ProviderBrokerApplicationBindingV1,
   ProviderBrokerRelayApplicationBindingV1,
@@ -8,13 +7,15 @@ import type {
   SignedProviderBrokerRouteGrantV1,
   UsageObservationTokens,
 } from '@happier-dev/protocol';
-import { encodeProviderBrokerAuthorityV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { encodeProviderBrokerAuthorityV1, encodeProviderBrokerAuthorityV2, SignedProviderBrokerRouteGrantV1Schema, SignedProviderBrokerRouteGrantV2Schema, type IrohProviderBrokerHandshake, type SignedProviderBrokerRouteGrantV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 import type { DaemonProviderTeamCredentialBrokerEligibilityRequestV1, DaemonProviderTeamCredentialBrokerEligibilityResponseV1 } from '@happier-dev/protocol/rpc/providers';
 
 import {
   providerBrokerRouteGrantExpectedBindingV1 as expectedBinding,
   verifyProviderBrokerRouteGrantV1,
+  verifyProviderBrokerRouteGrantV2,
+  providerBrokerRouteGrantExpectedBindingV2,
   type ProviderBrokerRouteGrantVerificationResultV1,
 } from '@/daemon/peer/mediation/verifyProviderBrokerRouteGrantV1';
 import type { DirectRouteGrantTrustRoot } from '@/daemon/peer/mediation/verifyRouteGrantSignature';
@@ -82,11 +83,18 @@ type VerifiedAuthority = Extract<
 >;
 
 type ProviderBrokerApplicationTargetInput = Readonly<{
-  handshake: IrohProviderBrokerHandshakeV1;
-  authority: SignedProviderBrokerRouteGrantV1;
+  handshake: IrohProviderBrokerHandshake;
+  authority: SignedProviderBrokerRouteGrantV1 | SignedProviderBrokerRouteGrantV2;
   authenticatedRemoteEndpointId: string;
   localEndpointId: string;
   signal: AbortSignal;
+}>;
+
+export type ProviderBrokerAccountConnectionAccess = Readonly<{
+  access: ManagedProviderEndpointHttpAccess;
+  revalidate(signal?: AbortSignal): Promise<boolean>;
+  cleanup(): Promise<void>;
+  retire(): Promise<void>;
 }>;
 
 /** Receiver-side resource check for the exact daemon addressed by the signed
@@ -176,6 +184,7 @@ export async function resolveRunnerCredentialSelectionCurrentness(
 }
 
 export type DaemonProviderBrokerRuntime = Readonly<{
+  accountConnectionIngress: boolean;
   checkRunnerCredentialSelectionCurrentness(
     input: Readonly<{
       selection: RunnerCredentialSelectionBindingV1;
@@ -435,6 +444,14 @@ export function createPrivateProviderBrokerStreamLifetime(input: Readonly<{
  */
 export async function startDaemonProviderBrokerRuntime(input: Readonly<{
   machineId: string;
+  /** Captured canonical Home/Account identity; personal ingress stays absent
+   * until the private catalog and shared-custody producer are installed. */
+  accountConnection?: Readonly<{
+    homeId: string;
+    accountId: string;
+    open(request: Readonly<{ authority: SignedProviderBrokerRouteGrantV2; signal: AbortSignal }>): Promise<ProviderBrokerAccountConnectionAccess | null>;
+    retire(request: Readonly<{ authority: SignedProviderBrokerRouteGrantV2 }>): Promise<void>;
+  }>;
   resolveTrustRoots: () => readonly DirectRouteGrantTrustRoot[];
   nowMs: () => number;
   verifyAuthority?: (input: Readonly<{
@@ -785,6 +802,7 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
   const application = await startProviderBrokerApplicationServer({ handler });
 
   return Object.freeze({
+    accountConnectionIngress: input.accountConnection !== undefined,
     async checkRunnerCredentialSelectionCurrentness(currentness, signal) {
       return await input.checkRunnerCredentialSelectionCurrentness?.({ ...currentness, signal }) ?? 'update_required';
     },
@@ -802,13 +820,61 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
     },
     async resolveProviderBrokerApplicationTarget(request) {
       request.signal.throwIfAborted();
+      if (request.handshake.v === 2) {
+        const parsed = SignedProviderBrokerRouteGrantV2Schema.safeParse(request.authority);
+        const owner = input.accountConnection;
+        if (!parsed.success || !owner) return null;
+        const authority = parsed.data;
+        if (encodeProviderBrokerAuthorityV2(authority) !== encodeProviderBrokerAuthorityV2(request.handshake.authority)
+          || authority.payload.homeId !== owner.homeId || authority.payload.accountId !== owner.accountId
+          || authority.payload.target.machineId !== input.machineId
+          || authority.payload.target.endpointId !== request.localEndpointId) return null;
+        const verification = verifyProviderBrokerRouteGrantV2({
+          authority, trustRoots: input.resolveTrustRoots(), nowMs: input.nowMs(),
+          expected: providerBrokerRouteGrantExpectedBindingV2(authority),
+          authenticatedRemoteEndpointId: request.authenticatedRemoteEndpointId,
+          enforceExpiry: false,
+        });
+        if (!verification.valid) return null;
+        if (request.handshake.intent === 'release' || authority.payload.expiresAt <= input.nowMs()) {
+          return await application.createStreamTarget({
+            kind: 'account_connection', authority, releaseOnly: true,
+            authenticatedRemoteEndpointId: request.authenticatedRemoteEndpointId,
+            access: { endpointUrl: () => null, request: async () => { throw new Error('expired broker source unavailable'); } },
+            revalidate: async () => false,
+            streamLifetime: { close: async () => {}, retire: async () => await owner.retire({ authority }) },
+          }, request.signal);
+        }
+        // The canonical target owner rechecks Home admission and opens its own
+        // current private catalog before this endpoint can be published.
+        const opened = await owner.open({ authority, signal: request.signal });
+        if (!opened) return null;
+        try {
+          if (!await opened.revalidate(request.signal)) {
+            await opened.cleanup();
+            return null;
+          }
+          request.signal.throwIfAborted();
+          return await application.createStreamTarget({
+            kind: 'account_connection', authority,
+            authenticatedRemoteEndpointId: request.authenticatedRemoteEndpointId,
+            access: opened.access, revalidate: opened.revalidate,
+            streamLifetime: { close: opened.cleanup, retire: opened.retire },
+          }, request.signal);
+        } catch (error) {
+          await opened.cleanup().catch(() => undefined);
+          throw error;
+        }
+      }
+      const legacyAuthority = SignedProviderBrokerRouteGrantV1Schema.safeParse(request.authority);
+      if (!legacyAuthority.success) return null;
       if (
         encodeProviderBrokerAuthorityV1(request.handshake.authority)
-          !== encodeProviderBrokerAuthorityV1(request.authority)
+          !== encodeProviderBrokerAuthorityV1(legacyAuthority.data)
         || request.authority.payload.target.machineId !== input.machineId
         || request.authority.payload.target.endpointId !== request.localEndpointId
       ) return null;
-      const expected = expectedBinding(request.authority);
+      const expected = expectedBinding(legacyAuthority.data);
       const verified: ProviderBrokerRouteGrantVerificationResultV1 = verify({
         authority: request.authority,
         authenticatedRemoteEndpointId: request.authenticatedRemoteEndpointId,

@@ -22,6 +22,7 @@ export type WorkosProviderModuleInput = Readonly<{
     redirectUrl: string;
     externalReference: Readonly<WorkosTeamExternalReferenceV1>;
     platform: WorkosPlatformConfigResolution;
+    connectionBinding?: Readonly<{ id: string; revision: number }>;
     /**
      * The exact Team connection this module signs in through. Directory sources
      * hang off that same connection, so it is also the only scope in which a
@@ -31,7 +32,7 @@ export type WorkosProviderModuleInput = Readonly<{
 }>;
 
 export function resolveWorkosAuthProviderFeatures(
-    input: Readonly<{ displayName: string; enabled: boolean; configured: boolean }>,
+    input: Readonly<{ displayName: string; enabled: boolean; configured: boolean; scope?: "home" | "team" }>,
     policy: AuthPolicy,
 ): AuthProviderFeatures {
     return {
@@ -48,7 +49,7 @@ export function resolveWorkosAuthProviderFeatures(
             orgMatch: "any",
         },
         offboarding: {
-            enabled: policy.offboarding.enabled,
+            enabled: input.scope !== "home" && policy.offboarding.enabled,
             intervalSeconds: policy.offboarding.intervalSeconds,
             mode: policy.offboarding.mode,
             source: "workos_sso",
@@ -61,11 +62,11 @@ export function resolveWorkosAuthProviderFeatures(
  * This leaf deliberately needs neither provider secrets nor an active Team connection,
  * so linked identities remain presentable after a provider is disabled or offboarded.
  */
-export const extractWorkosLinkedProvider: IdentityProvider["extractLinkedProvider"] = ({ providerLogin }) => ({
-    displayName: providerLogin,
-    avatarUrl: null,
-    profileUrl: null,
-});
+export function extractWorkosLinkedProvider(
+    { providerLogin }: Parameters<IdentityProvider["extractLinkedProvider"]>[0],
+): ReturnType<IdentityProvider["extractLinkedProvider"]> {
+    return { displayName: providerLogin, avatarUrl: null, profileUrl: null };
+}
 
 export function createWorkosProviderModule(input: WorkosProviderModuleInput): ProviderModule {
     const oauthAdapter = createWorkosOAuthAdapter(input);
@@ -147,6 +148,7 @@ export function createWorkosProviderModule(input: WorkosProviderModuleInput): Pr
             displayName: input.displayName,
             enabled: status.enabled,
             configured: status.configured,
+            scope: input.teamConnection ? "team" : "home",
         }, policy),
         requiresOAuth: true,
         isConfigured: () => status.configured,
@@ -155,6 +157,8 @@ export function createWorkosProviderModule(input: WorkosProviderModuleInput): Pr
 
     const oauth: OAuthFlowProvider = Object.freeze({
             id: input.providerInstanceId,
+            ...(input.connectionBinding ? { connectionBinding: input.connectionBinding } : {}),
+            accessTokenCustody: "identity_proof_only",
             resolveStatus: () => oauthAdapter.resolveStatus(),
             isConfigured: () => oauthAdapter.resolveStatus().configured,
             resolveRedirectUrl: () => oauthAdapter.resolveRedirectUrl(),

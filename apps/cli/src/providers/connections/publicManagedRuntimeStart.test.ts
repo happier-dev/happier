@@ -1,3 +1,4 @@
+import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { describe, expect, it, vi } from 'vitest';
 
@@ -14,6 +15,8 @@ import {
 } from '@happier-dev/protocol';
 
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
+import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 import {
   createPluginReloadController,
   type PluginReloadController,
@@ -97,6 +100,11 @@ function runtimeRegistry(input: Readonly<{
   ) => Promise<ManagedProviderExplicitStartJoinResult>;
 }>): ResolvedExecutablePluginRuntimeRegistry {
   return {
+    projectManagedServices: createManagedServicesOwner({
+      processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon' }),
+      dependencies: createUnavailablePluginServices().managedServices.dependencies,
+      resolveScope: () => null,
+    }),
     contributes: {
       agents: Object.freeze([]),
       actions: Object.freeze([]),
@@ -121,6 +129,7 @@ function runtimeRegistry(input: Readonly<{
       ? { runManagedProviderExplicitStart: input.runManagedProviderExplicitStart }
       : {}),
     resolveCaptureSource: unexpectedCaptureSourceResolution,
+    resolveProjectNativeAdapter: unexpectedProjectNativeAdapterResolution,
     resolvePromptAssetBlocks: async () => [],
     addRuntimeDisposable: input.addRuntimeDisposable,
     createAgentInvocationServices: async () => createUnavailablePluginServices(),

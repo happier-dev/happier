@@ -62,6 +62,31 @@ describe('connectedServicesLaunchAuth', () => {
     })).toThrow('connected_service_auth_not_found:cs:missing');
   });
 
+  it.each(['needs_reauth', 'refreshing', 'refresh_failed_retryable'])(
+    'resolves an existing %s profile so the daemon owns credential admission',
+    (status) => {
+      expect(resolveConnectedServicesLaunchAuth({
+        intent: parseConnectedServicesLaunchAuth(`cs:${CODEX_SERVICE_KEY}:profile:work`),
+        supportedServiceIds: [CODEX_SERVICE_KEY],
+        inventory: {
+          ...codexInventory,
+          profileOptionsByServiceId: {
+            [CODEX_SERVICE_KEY]: [{ profileId: 'work', status }],
+          },
+        },
+      })).toEqual({
+        v: 2,
+        bindingsByServiceId: {
+          [CODEX_SERVICE_KEY]: {
+            source: 'connected',
+            selection: 'profile',
+            profileId: 'work',
+          },
+        },
+      });
+    },
+  );
+
   it('reports qualified alternatives when an exact id is ambiguous', () => {
     expect(() => resolveConnectedServicesLaunchAuth({
       intent: parseConnectedServicesLaunchAuth('cs:same'),

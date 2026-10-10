@@ -9,6 +9,8 @@ import { db } from "@/storage/db";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { resolveOauthStateAttemptTtlMsFromEnv } from "./oauthExternalConfig";
 import type { TeamOAuthAdmissionSeed } from "./teamAdmissionStartBinding";
+import { resolveOAuthSecurityBinding } from "./oauthSecurityBinding";
+import { AUTH_PROVIDER_CONFIGURATION_CHANGED_ERROR } from "./oauthExternalErrors";
 
 type ExternalAuthorizeFlowParams =
     | Readonly<{
@@ -92,10 +94,23 @@ export async function createExternalAuthorizeAttempt(
     const teamAdmissionSeed: TeamOAuthAdmissionSeed = params.purpose === "team_admission"
         ? params.admission ?? null
         : null;
+    const runtimeConnection = params.provider.connectionBinding;
     const boundConnection: Readonly<{ id: string; revision: number }> | null =
-        params.purpose === "team_admission" || params.purpose === "identity_connection_test"
+        runtimeConnection ?? (params.purpose === "team_admission" || params.purpose === "identity_connection_test"
             ? params.connection ?? null
-            : null;
+            : null);
+    if (runtimeConnection && "reference" in params) {
+        if ((params.connection && (
+            params.connection.id !== runtimeConnection.id
+            || params.connection.revision !== runtimeConnection.revision
+        )) || !await resolveOAuthSecurityBinding({
+            env: params.env,
+            providerId: params.providerId,
+            binding: { provider: params.reference, connection: boundConnection, admission: null, purpose: params.purpose ?? null },
+            purpose: params.purpose ?? null,
+            stage: "oauth_start",
+        })) throw new Error(AUTH_PROVIDER_CONFIGURATION_CHANGED_ERROR);
+    }
 
     let sid = "";
     for (let i = 0; i < 3; i++) {

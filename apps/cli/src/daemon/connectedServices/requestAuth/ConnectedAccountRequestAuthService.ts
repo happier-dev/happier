@@ -26,6 +26,8 @@ export class ConnectedAccountRequestAuthError extends Error {
 export type ConnectedAccountRequestAuthSubject = Readonly<{
     /** Diagnostic identity only. Authorization is the subject's exact live capability object. */
     subjectId: string;
+    /** Host-issued captured Session identity; never read from caller bodies or subjectId. */
+    parentSessionId?: string;
     /**
      * Private issuance proof for the bounded service-keyed compatibility adapter. Only a
      * catalog-Agent foreground issuer may set this; absence fails closed to qualified ownership.
@@ -91,11 +93,13 @@ export type ConnectedAccountRequestAuthServiceDependencies = Readonly<{
         }>,
     ) => Promise<BearerMaterial>;
     refreshAfterAuthFailure: (input: Readonly<{
+        subject: ConnectedAccountRequestAuthSubject;
         resolved: ConnectedAccountRequestAuthResolvedBinding;
         failure: ConnectedAccountAuthFailureRequestV1['normalizedFailure'];
         signal: AbortSignal;
     }>) => Promise<RequestAuthFailureOutcomeV1>;
     reportQuotaFailure: (input: Readonly<{
+        subject: ConnectedAccountRequestAuthSubject;
         resolved: ConnectedAccountRequestAuthResolvedBinding;
         failure: ConnectedAccountQuotaFailureRequestV1['normalizedFailure'];
         signal: AbortSignal;
@@ -263,8 +267,10 @@ function accountKey(account: QualifiedConnectedAccountRef): string {
 function leaseKey(
     resolved: ConnectedAccountRequestAuthResolvedBinding,
     materialization: QualifiedConnectedAccountRequestAuthUseV1['materialization'],
+    subject: ConnectedAccountRequestAuthSubject,
 ): string {
     return JSON.stringify([
+        subject.parentSessionId ?? null,
         resolved.account.service.pluginId,
         resolved.account.service.localId,
         resolved.account.accountId,
@@ -483,7 +489,7 @@ export function createConnectedAccountRequestAuthService(
         signal: AbortSignal,
     ): Promise<CachedBearerMaterial> => {
         pruneExpiredLeases();
-        const key = leaseKey(resolved, materialization);
+        const key = leaseKey(resolved, materialization, subject);
         const existing = leases.get(key);
         if (existing && !isExpired(existing, nowMs())) {
             leases.delete(key);
@@ -573,7 +579,7 @@ export function createConnectedAccountRequestAuthService(
                     input.purpose,
                     lifetime.signal,
                 );
-                const beforeKey = leaseKey(before.resolved, before.use.materialization);
+                const beforeKey = leaseKey(before.resolved, before.use.materialization, input.subject);
                 const material = await getCachedOrFill(
                     input.subject,
                     before.binding,
@@ -587,7 +593,7 @@ export function createConnectedAccountRequestAuthService(
                     lifetime.signal,
                 );
                 if (
-                    leaseKey(after.resolved, after.use.materialization) !== beforeKey
+                    leaseKey(after.resolved, after.use.materialization, input.subject) !== beforeKey
                     || !sameResolvedBinding(before.resolved, after.resolved)
                 ) continue;
                 if (isExpired(material, nowMs())) {
@@ -659,7 +665,7 @@ export function createConnectedAccountRequestAuthService(
             if (!subject.isCurrent()) return null;
             if (!resolved || !resolvedMatchesBinding(currentUse.binding, resolved)) continue;
             if (!contextMatchesResolved(context, resolved)) continue;
-            const cacheKey = leaseKey(resolved, currentUse.use.materialization);
+            const cacheKey = leaseKey(resolved, currentUse.use.materialization, subject);
             return {
                 resolved,
                 cacheKey,
@@ -801,6 +807,7 @@ export function createConnectedAccountRequestAuthService(
                 const outcome = await startRequestAuthOperation(
                     ownerSignal,
                     () => dependencies.refreshAfterAuthFailure({
+                        subject: input.subject,
                         resolved: context.resolved,
                         failure: request.normalizedFailure,
                         signal: ownerSignal,
@@ -866,6 +873,7 @@ export function createConnectedAccountRequestAuthService(
             const outcome = await startRequestAuthOperation(
                 lifetime.signal,
                 () => dependencies.reportQuotaFailure({
+                    subject: input.subject,
                     resolved: context.resolved,
                     failure: request.normalizedFailure,
                     signal: lifetime.signal,

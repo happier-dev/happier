@@ -1368,6 +1368,7 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                     source: { status: "linked" },
                 });
 
+
                 const encodedSource =
                     encodeQualifiedConnectedAccountV4StructuredQueryValue(
                         QualifiedConnectedServiceUsageSourceV4Schema,

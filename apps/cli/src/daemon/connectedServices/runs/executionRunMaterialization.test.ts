@@ -328,7 +328,7 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             bindings: [expect.objectContaining({
                 target: expect.objectContaining({ kind: 'account' }),
             })],
-        });
+        }, { parentSessionId: 'session-1' });
         expect(requestAuthRegistry.activate).toHaveBeenCalledWith({
             subject: expect.objectContaining({
                 subjectId: purposeLease.subjectId,
@@ -448,7 +448,7 @@ describe('createExecutionRunConnectedServicesBridge', () => {
                 purpose: 'primary',
             }],
             bindings: [],
-        });
+        }, { parentSessionId: 'session-1' });
         expect(requestAuthRegistry.activate).not.toHaveBeenCalled();
     });
 
@@ -687,6 +687,7 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             runKey: 'run_abc',
             agentId: 'codex',
             materializedRoot: '/materialized/run_abc/codex',
+            parentSessionId: 'session-1',
         });
         expect(exactRootCleanup).toHaveBeenCalledOnce();
         expect(contributionRelease).toHaveBeenCalledOnce();

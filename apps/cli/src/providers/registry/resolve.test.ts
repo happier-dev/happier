@@ -11,6 +11,9 @@ import {
   resolveProviderConnectionForMachine,
 } from './index';
 import type { ProviderContributionRegistryView } from './types';
+import { createAccountProviderActionExecuteV1 } from '@happier-dev/protocol/providers/connections/accountProviderActionV1';
+import { composeProviderSettingsV1, splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { parseProviderActionRequestV1 } from '@happier-dev/protocol/providers/providerActionsV1';
 
 const contributionKey = 'acme.gateway/gateway';
 const canonicalContributionKey = 'acme.gateway/gateway';
@@ -180,6 +183,64 @@ const publicDns = new Map([
   ['https://gateway-v2.example/v1', ['8.8.8.8']],
 ]);
 
+it('resolves the admitted Provider domain basis without a Settings subtree', () => {
+  const providerSettings = settingsWith([connection('pc_catalog')]);
+  const resolved = resolveProviderConnectionForMachine({ connectionId: 'pc_catalog', machineId: 'machine-1',
+    providerSettings, registry: registry(), dnsEvidenceByEndpointUrl: publicDns });
+  expect(resolved.status).toBe('resolved');
+  if (resolved.status === 'resolved') expect(resolved.record.connection.id).toBe('pc_catalog');
+});
+
+it('admits the exact Account grant fingerprint for canonical URLs and all declared endpoint effects', async () => {
+  const base = contribution('https://GATEWAY.EXAMPLE.:443/v1');
+  const declared: ResolvedProviderContribution = { ...base, definition: ProviderContributionV1Schema.parse({
+    ...base.definition,
+    kind: 'local',
+    credential: { ...base.definition.credential, transports: [{ id: 'bearer', protocols: ['openai-responses'],
+      uses: ['runtime', 'management'], destination: { kind: 'httpHeader', name: 'Authorization', format: 'bearer' } }] },
+    catalog: { source: 'probe', manualModelPolicy: 'allowed', probes: [{ endpointTemplateId: 'responses',
+      path: '/models', parser: 'gateway-models', reportsModelLoadState: true }] },
+    discovery: { v: 1, listener: { executableBasenames: ['gateway'], defaultPorts: [] },
+      availabilityProbe: { endpointTemplateId: 'responses', path: '/available', parser: 'openai-models' },
+      catalogFallback: { endpointTemplateId: 'responses', lookupNames: ['gateway'], fixedArgs: ['models'], parser: 'gateway-models' } },
+    modelLoad: { endpointTemplateId: 'responses', path: '/load', request: 'json-model-id-v1',
+      confirmation: 'refresh-catalog-load-state', preflightPolicy: 'advisory' },
+  }) };
+  let catalog = splitProviderSettingsV1(settingsWith([connection('pc_grant')])).catalog;
+  const execute = createAccountProviderActionExecuteV1({ assertCurrent() {}, now: () => 10,
+    readCatalog: async () => ({ status: 'ready', revision: 4, catalog }),
+    readDefinitions: async () => [{ contributionKey, definition: declared.definition, provenance: declared.provenance }],
+    writeCatalog: async value => { catalog = value.catalog; return { status: 'updated' }; },
+  });
+  expect(await execute(parseProviderActionRequestV1('providers.connections.enabled.set', {
+    action: 'setEnabled', connectionId: 'pc_grant', scope: 'account', enabled: true,
+  }), { surface: 'cli' })).toMatchObject({ ok: true });
+  const resolved = resolveProviderConnectionForMachine({ connectionId: 'pc_grant', machineId: 'machine-1',
+    providerSettings: composeProviderSettingsV1(catalog, {}), registry: registry(declared), dnsEvidenceByEndpointUrl: publicDns });
+  expect(resolved.status).toBe('resolved');
+  if (resolved.status !== 'resolved') return;
+  expect(resolved.record.connectionSecurityFingerprint).toBe(catalog.accountGrants[0]?.connectionSecurityFingerprint);
+  expect(resolved.record.authorization).toMatchObject({ authorized: true });
+});
+
+it('copies a contributed static source as a host-supported custom template without executable claims', async () => {
+  const declared = ProviderContributionV1Schema.parse({ ...providerDefinition(),
+    catalog: { source: 'static', manualModelPolicy: 'catalog-only', staticModels: [{ id: 'published-model', name: 'Published model' }] } });
+  let catalog = splitProviderSettingsV1(settingsWith([connection('pc_original')])).catalog;
+  const execute = createAccountProviderActionExecuteV1({ assertCurrent() {}, now: () => 10,
+    readCatalog: async () => ({ status: 'ready', revision: 4, catalog }),
+    readDefinitions: async () => [{ contributionKey, definition: declared, provenance: 'external' }],
+    writeCatalog: async value => { catalog = value.catalog; return { status: 'updated' }; },
+  });
+  expect(await execute(parseProviderActionRequestV1('providers.connections.duplicate', {
+    action: 'duplicate', connectionId: 'pc_original', newConnectionId: 'pc_custom', displayName: 'My copy', mode: 'asCustom',
+  }), { surface: 'cli' })).toMatchObject({ ok: true });
+  expect(catalog.connections.find(value => value.id === 'pc_custom')?.source).toMatchObject({ kind: 'custom', template: {
+    name: 'My copy', catalog: { source: 'manual', manualModelPolicy: 'allowed' },
+    endpointTemplates: [{ capabilities: { streaming: 'unknown' } }],
+  } });
+});
+
 describe('machine-aware provider connection resolver', () => {
   it('resolves managed deployment as machine-scoped logical authority with an empty endpoint set', () => {
     const configured = connection('pc_managed', {
@@ -201,7 +262,7 @@ describe('machine-aware provider connection resolver', () => {
     const first = resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: baseSettings },
+      providerSettings: baseSettings,
       registry: registry(managedContribution()),
       dnsEvidenceByEndpointUrl: new Map(),
     });
@@ -261,7 +322,7 @@ describe('machine-aware provider connection resolver', () => {
     expect(resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: grantedSettings },
+      providerSettings: grantedSettings,
       registry: registry(managedContribution()),
       dnsEvidenceByEndpointUrl: new Map(),
     })).toMatchObject({
@@ -276,7 +337,7 @@ describe('machine-aware provider connection resolver', () => {
     const changed = resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: grantedSettings },
+      providerSettings: grantedSettings,
       registry: registry({
         ...changedContribution,
         definition: ProviderContributionV1Schema.parse({
@@ -323,11 +384,9 @@ describe('machine-aware provider connection resolver', () => {
     const futureDefaultEdit = resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'machine-a',
-      accountSettings: {
-        providerSettingsV1: settingsWith([defaultsEdited], {
-          machineGrants: grantedSettings.machineGrants,
-        }),
-      },
+      providerSettings: settingsWith([defaultsEdited], {
+        machineGrants: grantedSettings.machineGrants,
+      }),
       registry: registry(managedContribution()),
       dnsEvidenceByEndpointUrl: new Map(),
     });
@@ -386,7 +445,7 @@ describe('machine-aware provider connection resolver', () => {
     const first = resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: settingsWith([configured]) },
+      providerSettings: settingsWith([configured]),
       registry: registry(withHeaders({ 'X-Route': 'one' })),
       dnsEvidenceByEndpointUrl: new Map(),
     });
@@ -404,7 +463,7 @@ describe('machine-aware provider connection resolver', () => {
     expect(resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: grantedSettings },
+      providerSettings: grantedSettings,
       registry: registry(withHeaders({ 'X-Route': 'one' })),
       dnsEvidenceByEndpointUrl: new Map(),
     })).toMatchObject({
@@ -415,7 +474,7 @@ describe('machine-aware provider connection resolver', () => {
     const changed = resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: grantedSettings },
+      providerSettings: grantedSettings,
       registry: registry(withHeaders({ 'X-Route': 'two' })),
       dnsEvidenceByEndpointUrl: new Map(),
     });
@@ -448,7 +507,7 @@ describe('machine-aware provider connection resolver', () => {
     const input = {
       connectionId: configured.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: settingsWith([configured]) },
+      providerSettings: settingsWith([configured]),
       dnsEvidenceByEndpointUrl: new Map(),
     } as const;
 
@@ -496,7 +555,7 @@ describe('machine-aware provider connection resolver', () => {
     const input = {
       connectionId: configured.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: settingsWith([configured]) },
+      providerSettings: settingsWith([configured]),
       dnsEvidenceByEndpointUrl: new Map(),
     } as const;
 
@@ -512,7 +571,7 @@ describe('machine-aware provider connection resolver', () => {
       })),
     })).toMatchObject({
       status: 'invalid',
-      reason: 'managed_purpose_bindings_invalid',
+      reason: 'managed_purpose_bindings_missing',
     });
   });
 
@@ -537,7 +596,7 @@ describe('machine-aware provider connection resolver', () => {
     expect(resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: settingsWith([configured]) },
+      providerSettings: settingsWith([configured]),
       registry: registry(managedContribution()),
       dnsEvidenceByEndpointUrl: new Map(),
     })).toMatchObject({
@@ -552,7 +611,7 @@ describe('machine-aware provider connection resolver', () => {
     expect(resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: settingsWith([configured]) },
+      providerSettings: settingsWith([configured]),
       registry: {
         providersByContributionKey: new Map([[canonicalContributionKey, contribution()]]),
       },
@@ -578,7 +637,7 @@ describe('machine-aware provider connection resolver', () => {
     const first = resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: settingsWith([configured]) },
+      providerSettings: settingsWith([configured]),
       registry: mutableRegistry,
       dnsEvidenceByEndpointUrl: publicDns,
     });
@@ -602,7 +661,7 @@ describe('machine-aware provider connection resolver', () => {
     expect(resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: grantedSettings },
+      providerSettings: grantedSettings,
       registry: mutableRegistry,
       dnsEvidenceByEndpointUrl: publicDns,
     })).toMatchObject({
@@ -614,7 +673,7 @@ describe('machine-aware provider connection resolver', () => {
     expect(resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: grantedSettings },
+      providerSettings: grantedSettings,
       registry: mutableRegistry,
       dnsEvidenceByEndpointUrl: publicDns,
     })).toMatchObject({
@@ -633,14 +692,14 @@ describe('machine-aware provider connection resolver', () => {
     const machineA = resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: baseSettings },
+      providerSettings: baseSettings,
       registry: registry(),
       dnsEvidenceByEndpointUrl: publicDns,
     });
     const machineB = resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'machine-b',
-      accountSettings: { providerSettingsV1: baseSettings },
+      providerSettings: baseSettings,
       registry: registry(),
       dnsEvidenceByEndpointUrl: new Map([['http://localhost:4242/v1', ['127.0.0.1', '::1']]]),
     });
@@ -671,21 +730,21 @@ describe('machine-aware provider connection resolver', () => {
     expect(resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: grants },
+      providerSettings: grants,
       registry: registry(),
       dnsEvidenceByEndpointUrl: publicDns,
     })).toMatchObject({ status: 'resolved', record: { authorization: { authorized: true, grantKind: 'account' } } });
     expect(resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'machine-b',
-      accountSettings: { providerSettingsV1: grants },
+      providerSettings: grants,
       registry: registry(),
       dnsEvidenceByEndpointUrl: new Map([['http://localhost:4242/v1', ['127.0.0.1', '::1']]]),
     })).toMatchObject({ status: 'resolved', record: { authorization: { authorized: true, grantKind: 'machine' } } });
     expect(resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'machine-b',
-      accountSettings: { providerSettingsV1: grants },
+      providerSettings: grants,
       registry: registry(),
       dnsEvidenceByEndpointUrl: new Map([['http://localhost:4242/v1', ['127.0.0.1']]]),
     })).toMatchObject({
@@ -701,7 +760,7 @@ describe('machine-aware provider connection resolver', () => {
     expect(resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: settingsWith([configured]) },
+      providerSettings: settingsWith([configured]),
       registry: registry(),
       dnsEvidenceByEndpointUrl: new Map([
         ['https://gateway.example/v1', ['1.1.1.1']],
@@ -723,7 +782,7 @@ describe('machine-aware provider connection resolver', () => {
     const initial = resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: settingsWith([configured]) },
+      providerSettings: settingsWith([configured]),
       registry: registry(),
       dnsEvidenceByEndpointUrl: new Map([['https://override.example/v1', ['8.8.4.4']]]),
     });
@@ -743,7 +802,7 @@ describe('machine-aware provider connection resolver', () => {
     expect(resolveProviderConnectionForMachine({
       connectionId: edited.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: settingsWith([edited], { accountGrants: [accountGrant] }) },
+      providerSettings: settingsWith([edited], { accountGrants: [accountGrant] }),
       registry: registry(),
       dnsEvidenceByEndpointUrl: new Map([['https://override-v2.example/v1', ['8.8.8.8']]]),
     })).toMatchObject({
@@ -754,7 +813,7 @@ describe('machine-aware provider connection resolver', () => {
     expect(resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: settingsWith([configured], { accountGrants: [accountGrant] }) },
+      providerSettings: settingsWith([configured], { accountGrants: [accountGrant] }),
       registry: registry(),
       dnsEvidenceByEndpointUrl: new Map([['https://override.example/v1', ['192.168.1.50']]]),
     })).toMatchObject({
@@ -771,7 +830,7 @@ describe('machine-aware provider connection resolver', () => {
     expect(resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: settingsWith([configured]) },
+      providerSettings: settingsWith([configured]),
       registry: registry(localContribution()),
       dnsEvidenceByEndpointUrl: new Map([['http://localhost:4545/v1', ['127.0.0.1']]]),
       localCandidateUrlsByConnectionId: new Map([
@@ -810,7 +869,7 @@ describe('machine-aware provider connection resolver', () => {
     };
     const sharedInput = {
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: settingsWith([second, first]) },
+      providerSettings: settingsWith([second, first]),
       registry: {
         providersByContributionKey: new Map([
           [canonicalContributionKey, localContribution()],
@@ -850,7 +909,7 @@ describe('machine-aware provider connection resolver', () => {
     expect(resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: settingsWith([configured]) },
+      providerSettings: settingsWith([configured]),
       registry: registry(localContribution()),
       dnsEvidenceByEndpointUrl: new Map([['http://localhost:4545/v1', ['127.0.0.1']]]),
     })).toMatchObject({ status: 'endpoint_unresolved', reason: 'local_candidate_required' });
@@ -865,7 +924,7 @@ describe('machine-aware provider connection resolver', () => {
     expect(resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: settingsWith([configured]) },
+      providerSettings: settingsWith([configured]),
       registry: registry(),
       dnsEvidenceByEndpointUrl: new Map([['https://machine.example/v1', ['1.1.1.1']]]),
     })).toMatchObject({
@@ -880,8 +939,7 @@ describe('machine-aware provider connection resolver', () => {
 
   it('distinguishes missing, deleted, and contribution-unavailable connections without reinterpretation', () => {
     const configured = connection('pc_missing_plugin');
-    const accountSettings = {
-      providerSettingsV1: settingsWith([configured], {
+    const providerSettings = settingsWith([configured], {
         connectionTombstones: [{
           v: 1,
           id: 'pc_deleted' as ProviderSettingsV1['connectionTombstones'][number]['id'],
@@ -889,19 +947,18 @@ describe('machine-aware provider connection resolver', () => {
           lastDisplayName: 'Old Gateway',
           deletedAt: 9,
         }],
-      }),
-    };
+      });
     const emptyRegistry: ProviderContributionRegistryView = { providersByContributionKey: new Map() };
     expect(resolveProviderConnectionForMachine({
-      connectionId: 'pc_unknown', machineId: 'machine-a', accountSettings, registry: emptyRegistry,
+      connectionId: 'pc_unknown', machineId: 'machine-a', providerSettings, registry: emptyRegistry,
       dnsEvidenceByEndpointUrl: new Map(),
     })).toEqual({ status: 'missing', connectionId: 'pc_unknown', diagnostics: [] });
     expect(resolveProviderConnectionForMachine({
-      connectionId: 'pc_deleted', machineId: 'machine-a', accountSettings, registry: emptyRegistry,
+      connectionId: 'pc_deleted', machineId: 'machine-a', providerSettings, registry: emptyRegistry,
       dnsEvidenceByEndpointUrl: new Map(),
     })).toMatchObject({ status: 'deleted', connectionId: 'pc_deleted', tombstone: { lastDisplayName: 'Old Gateway' } });
     expect(resolveProviderConnectionForMachine({
-      connectionId: configured.id, machineId: 'machine-a', accountSettings, registry: emptyRegistry,
+      connectionId: configured.id, machineId: 'machine-a', providerSettings, registry: emptyRegistry,
       dnsEvidenceByEndpointUrl: new Map(),
     })).toMatchObject({
       status: 'source_unavailable',
@@ -937,13 +994,11 @@ describe('machine-aware provider connection resolver', () => {
     const result = resolveProviderConnectionForMachine({
       connectionId: custom.id,
       machineId: 'machine-a',
-      accountSettings: {
-        providerSettingsV1: settingsWith([custom], {
-          secretBindingsByConnectionId: {
-            [custom.id]: { account: { apiKey: 'secret-binding-canary' } },
-          },
-        }),
-      },
+      providerSettings: settingsWith([custom], {
+        secretBindingsByConnectionId: {
+          [custom.id]: { account: { apiKey: 'secret-binding-canary' } },
+        },
+      }),
       registry: registry(),
       dnsEvidenceByEndpointUrl: new Map([['https://company.example/v1', ['9.9.9.9']]]),
     });
@@ -965,7 +1020,7 @@ describe('machine-aware provider connection resolver', () => {
     expect(resolveProviderConnectionForMachine({
       connectionId: invalidOverride.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: settingsWith([invalidOverride]) },
+      providerSettings: settingsWith([invalidOverride]),
       registry: registry(),
       dnsEvidenceByEndpointUrl: new Map([['https://other.example/v1', ['1.0.0.1']]]),
     })).toMatchObject({ status: 'invalid', reason: 'unknown_endpoint_override' });
@@ -974,7 +1029,7 @@ describe('machine-aware provider connection resolver', () => {
     expect(resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: settingsWith([configured]) },
+      providerSettings: settingsWith([configured]),
       registry: registry(),
       dnsEvidenceByEndpointUrl: new Map(),
     })).toMatchObject({ status: 'endpoint_unresolved', reason: 'endpoint_resolution_required' });
@@ -989,17 +1044,17 @@ describe('machine-aware provider connection resolver', () => {
     expect(resolveProviderConnectionForMachine({
       connectionId: invalidOtherMachine.id,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: settingsWith([invalidOtherMachine]) },
+      providerSettings: settingsWith([invalidOtherMachine]),
       registry: registry(),
       dnsEvidenceByEndpointUrl: publicDns,
     })).toMatchObject({ status: 'invalid', reason: 'unknown_endpoint_override' });
   });
 
-  it('lets the canonical settings reader reject poison identifiers before registry lookup', () => {
+  it('rejects poison connection identifiers before registry lookup', () => {
     const result = resolveProviderConnectionForMachine({
       connectionId: '__proto__',
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: settingsWith([]) },
+      providerSettings: settingsWith([]),
       registry: registry(),
       dnsEvidenceByEndpointUrl: new Map(),
     });
@@ -1015,7 +1070,7 @@ describe('machine-aware provider connection resolver', () => {
     expect(resolveProviderConnectionForMachine({
       connectionId: configured.id,
       machineId: 'toString',
-      accountSettings: { providerSettingsV1: settingsWith([configured]) },
+      providerSettings: settingsWith([configured]),
       registry: registry(),
       dnsEvidenceByEndpointUrl: new Map([['http://localhost:4343/v1', ['127.0.0.1']]]),
     })).toMatchObject({

@@ -24,7 +24,7 @@ import type { RuntimeProviderModelManagementServices } from '@/providers/modelMa
 
 type RuntimeProviderOperationsMachineServices = MachineProviderRpcServices & Pick<
   RuntimeProviderModelManagementServices,
-  'resolveTeamCredentialBrokerSourceSelection'
+  'resolveTeamCredentialBrokerSourceSelection' | 'projectModelsForAccount'
 >;
 
 export type RuntimeProviderOperationsBinding = Readonly<{

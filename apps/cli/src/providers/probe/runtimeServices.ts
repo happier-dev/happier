@@ -30,6 +30,8 @@ import { projectProviderCatalogPresentation } from '@/providers/catalog';
 import { createProviderRuntimeStateStore, type ProviderRuntimeStateStore } from '@/providers/runtimeState';
 import { getActiveAccountSettingsSnapshot, type ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { readProviderSettingsForCli } from '@/providers/settings/read';
+import { prepareProviderConnectionsCatalogForCli } from '@/providers/settings/hydrate';
+import type { SavedSecretCatalogResourceInputV1 } from '@/settings/secrets/savedSecretCatalog';
 import {
   awaitWithinProviderOperation,
   createProviderOperationLifetime,
@@ -57,6 +59,7 @@ import {
   type ProviderProbeEndpoint,
 } from './catalog';
 import { createProviderProbeHttpClient } from './client';
+import { createProviderManagedCatalogRuntimePort } from './managedRuntime';
 import {
   createProviderProbeRpcHandler,
   createResolvedProviderProbeObservationIdentity,
@@ -125,6 +128,8 @@ export type RuntimeProviderOperationScope = ProviderProbeOperationScope & Readon
 export type RuntimeProviderPresentationResolutionBasis = Readonly<{
   accountSettings: unknown;
   settingsRead: ReturnType<typeof readProviderSettingsForCli>;
+  savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
+  resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
 }>;
 
 type RuntimeProviderSummaryInput =
@@ -282,6 +287,7 @@ export function createRuntimeProviderServices(input: Readonly<{
   machineId: string;
   featureGate?: Readonly<{ isEnabled(featureId: 'providers'): boolean }>;
   happyHomeDir?: string;
+  resolveSharedGateway?: import('@/plugins/runtime/invocation/services/managedServicesAdapter').ResolveSharedManagedProviderGatewayBinding;
   registry?: ProviderContributionRegistryView;
   resolveRegistry?: () => ProviderContributionRegistryView | Promise<ProviderContributionRegistryView>;
   getAccountSettingsSnapshot?: () => ActiveAccountSettingsSnapshot | null;
@@ -327,6 +333,7 @@ export function createRuntimeProviderServices(input: Readonly<{
     ?? ((identity: Readonly<{ pluginId: string; localId: string }>) =>
       acquireContributedProviderCatalogParsers(happyHomeDir, identity));
   const getSnapshot = input.getAccountSettingsSnapshot ?? getActiveAccountSettingsSnapshot;
+  const resolveManagedPurposeBindingIntent = input.resolveManagedPurposeBindingIntent;
   const client = input.client ?? createProviderProbeHttpClient({});
   const runtimeStore = input.runtimeStore ?? createProviderRuntimeStateStore({
     happyHomeDir,
@@ -362,9 +369,10 @@ export function createRuntimeProviderServices(input: Readonly<{
     runtimeStore,
     createObservationId: input.createObservationId ?? randomUUID,
     ...(input.localCatalogFallback ? { localCatalogFallback: input.localCatalogFallback } : {}),
-    ...(input.managedCatalogRuntime
-      ? { managedCatalogRuntime: input.managedCatalogRuntime }
-      : {}),
+    managedCatalogRuntime: input.managedCatalogRuntime ?? createProviderManagedCatalogRuntimePort({
+      happyHomeDir,
+      ...(input.resolveSharedGateway ? { resolveSharedGateway: input.resolveSharedGateway } : {}),
+    }),
   });
   const healthProbeService = createProviderHealthProbeService({
     refresh: (request) => catalogService.refresh(request),
@@ -424,17 +432,35 @@ export function createRuntimeProviderServices(input: Readonly<{
     if (!isProviderFeatureEnabled()) {
       return { ok: false as const, error: providerFeatureDisabled(identity).error };
     }
-    const snapshot = settingsBasis ? null : getSnapshot();
+    let snapshot = settingsBasis ? null : getSnapshot();
     if (!isProviderFeatureEnabled()) {
       return { ok: false as const, error: providerFeatureDisabled(identity).error };
     }
     if (!settingsBasis && !snapshot) {
       return { ok: false as const, error: createProviderErrorV1('provider_connection_not_found', identity) };
     }
+    if (!settingsBasis && snapshot?.providerConnectionsCatalog?.status !== 'ready') {
+      if (!snapshot?.scopeKey) return { ok: false as const, error: createProviderErrorV1('provider_settings_invalid', identity) };
+      let catalog;
+      try {
+        catalog = await awaitWithinProviderOperation(prepareProviderConnectionsCatalogForCli({
+          expectedScopeKey: snapshot.scopeKey, signal: scope.lifetime.signal,
+        }), scope.lifetime);
+      } catch (error) {
+        if (error instanceof ProviderOperationAbandonedError) {
+          return { ok: false as const, error: createProviderErrorV1('provider_endpoint_unavailable', identity) };
+        }
+        throw error;
+      }
+      snapshot = getSnapshot();
+      if (!isProviderFeatureEnabled()) return { ok: false as const, error: providerFeatureDisabled(identity).error };
+      if (catalog.status !== 'ready' || !snapshot) return { ok: false as const, error: createProviderErrorV1('provider_settings_invalid', identity) };
+    }
     const scopedAccountSettingsBasisIsCurrent = !settingsBasis
       && scope.accountSettingsBasis !== undefined
       && scope.accountSettingsBasis.scopeKey === snapshot!.scopeKey
-      && scope.accountSettingsBasis.settingsVersion === snapshot!.settingsVersion;
+      && scope.accountSettingsBasis.settingsVersion === snapshot!.settingsVersion
+      && scope.accountSettingsBasis.providerConnectionsCatalog === snapshot!.providerConnectionsCatalog;
     if (!settingsBasis && scope.accountSettingsBasis && !scopedAccountSettingsBasisIsCurrent) {
       return {
         ok: false as const,
@@ -448,7 +474,7 @@ export function createRuntimeProviderServices(input: Readonly<{
     const settingsRead = settingsBasis?.settingsRead
       ?? (scopedAccountSettingsBasisIsCurrent
         ? scope.accountSettingsBasis!.settingsRead
-        : readProviderSettingsForCli(accountSettings));
+        : readProviderSettingsForCli(snapshot!));
     const admittedAccountSettingsBasis = settingsBasis
       ? scope.accountSettingsBasis
       : scopedAccountSettingsBasisIsCurrent
@@ -457,6 +483,7 @@ export function createRuntimeProviderServices(input: Readonly<{
           ? {
               scopeKey: snapshot.scopeKey,
               settingsVersion: snapshot.settingsVersion,
+              providerConnectionsCatalog: snapshot.providerConnectionsCatalog,
               accountSettings: snapshot.settings,
               settingsRead,
             }
@@ -551,6 +578,8 @@ export function createRuntimeProviderServices(input: Readonly<{
         providerSettings,
         settingsRead,
         accountSettings,
+        savedSecretResources: settingsBasis ? settingsBasis.savedSecretResources : snapshot?.savedSecretResources,
+        resolveManagedPurposeBindingIntent: settingsBasis?.resolveManagedPurposeBindingIntent ?? input.resolveManagedPurposeBindingIntent,
         registry,
         dnsEvidenceByEndpointUrl,
         ...(admittedAccountSettingsBasis
@@ -571,7 +600,7 @@ export function createRuntimeProviderServices(input: Readonly<{
     identity: Readonly<{ connectionId: string; machineId: string }>,
     context: Extract<Awaited<ReturnType<typeof resolveConnectionContext>>, { ok: true }>['value'],
     mode: SavedProbeMode,
-    savedSecretSnapshot = context.snapshot,
+    savedSecretResources = context.savedSecretResources,
   ): Promise<SavedResolutionResult> {
     const {
       connection,
@@ -583,6 +612,7 @@ export function createRuntimeProviderServices(input: Readonly<{
       resolveContributedCatalogParsers: operationParserResolver,
       accountSettingsBasis,
       lifetime,
+      resolveManagedPurposeBindingIntent,
     } = context;
     if (!isProviderFeatureEnabled()) {
       return { ok: false, error: providerFeatureDisabled(identity).error };
@@ -693,8 +723,7 @@ export function createRuntimeProviderServices(input: Readonly<{
         !contribution
         || !contribution.definition.managedRuntime
         || !contributionManagedRuntime
-        || probes.length === 0
-        || sourceRegistryVersion === undefined
+        || (catalog.source !== 'static' && (probes.length === 0 || sourceRegistryVersion === undefined))
         || endpointTemplates.some((endpointTemplate) => !endpointTemplate)
         || endpointTemplates.some((endpointTemplate) =>
           !managedDeployment.managedRuntime.endpointTemplateIds.includes(
@@ -714,7 +743,7 @@ export function createRuntimeProviderServices(input: Readonly<{
           error: createProviderErrorV1('provider_probe_authorization_invalid', identity),
         };
       }
-      if (!input.resolveManagedPurposeBindingIntent) {
+      if (!resolveManagedPurposeBindingIntent) {
         return {
           ok: false,
           error: createProviderErrorV1(
@@ -733,7 +762,8 @@ export function createRuntimeProviderServices(input: Readonly<{
             managedDeployment.managedRuntime.connectedAccounts ?? [],
           purposeBindingIntents:
             managedDeployment.purposeBindingIntents,
-          resolveBindingIntent: input.resolveManagedPurposeBindingIntent,
+          resolveBindingIntent: resolveManagedPurposeBindingIntent,
+          signal: lifetime?.signal,
         });
       } catch {
         return {
@@ -746,6 +776,29 @@ export function createRuntimeProviderServices(input: Readonly<{
       }
       if (!isProviderFeatureEnabled()) {
         return { ok: false, error: providerFeatureDisabled(identity).error };
+      }
+      // Static catalogs still admit the exact managed declaration and current
+      // purpose bindings, but have no transport observation to authorize.
+      // The catalog assembler remains the authority for their declared rows.
+      if (catalog.source === 'static') {
+        return {
+          ok: true,
+          value: {
+            connection, providerSettings, registry, dnsEvidenceByEndpointUrl,
+            ...(accountSettingsBasis ? { accountSettingsBasis } : {}),
+            request: {
+              ...identity, endpoints: [], probes: [], observationAuthorizationFingerprints: [],
+              authorizationGrant: {
+                kind: connection.authorization.grantKind,
+                fingerprint: connection.authorization.grantFingerprint,
+                confirmedAt: connection.authorization.grantConfirmedAt,
+              },
+            },
+          },
+        };
+      }
+      if (sourceRegistryVersion === undefined) {
+        return { ok: false, error: createProviderErrorV1('provider_probe_authorization_invalid', identity) };
       }
       const managedSources = endpointTemplates.map((endpointTemplate) => ({
         implementationIdentity: managedDeployment.implementationIdentity,
@@ -863,7 +916,7 @@ export function createRuntimeProviderServices(input: Readonly<{
           probeRequestFingerprint,
         },
         accountSettings,
-        savedSecretResources: savedSecretSnapshot?.savedSecretResources,
+        savedSecretResources,
         providerSettings,
         settingsRead,
         registry,
@@ -943,7 +996,7 @@ export function createRuntimeProviderServices(input: Readonly<{
         });
     if (!admission.ok) return admission;
     try {
-      const resolved = await resolveSavedFromConnectionContext(identity, context.value, mode, admission.snapshot);
+      const resolved = await resolveSavedFromConnectionContext(identity, context.value, mode, admission.snapshot.savedSecretResources);
       return resolved.ok
         ? { ok: true, value: { ...resolved.value, savedSecretSnapshot: admission.snapshot } }
         : resolved;
@@ -1370,9 +1423,22 @@ export function createRuntimeProviderServices(input: Readonly<{
         'manual_refresh',
         // Draft resolution and dispatch run inside the admitted slot and are
         // shared between waiters, so the slot carries the deadline only.
-        () => draftProbeService.probe(request, {
-          wallDeadlineAtMs: now() + PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
-        }),
+        async () => {
+          const lifetime = { wallDeadlineAtMs: now() + PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs };
+          const snapshot = getSnapshot();
+          if (!snapshot?.scopeKey) return providerProbeUnavailable({ connectionId: request.draftConnectionId, machineId: request.machineId });
+          try {
+            const catalog = snapshot.providerConnectionsCatalog?.status === 'ready'
+              ? snapshot.providerConnectionsCatalog
+              : await awaitWithinProviderOperation(prepareProviderConnectionsCatalogForCli({ expectedScopeKey: snapshot.scopeKey }), lifetime);
+            if (!isProviderFeatureEnabled()) return providerFeatureDisabled({ connectionId: request.draftConnectionId, machineId: request.machineId });
+            if (catalog.status !== 'ready') return providerProbeUnavailable({ connectionId: request.draftConnectionId, machineId: request.machineId });
+            return draftProbeService.probe(request, lifetime);
+          } catch (error) {
+            if (error instanceof ProviderOperationAbandonedError) return providerProbeUnavailable({ connectionId: request.draftConnectionId, machineId: request.machineId });
+            throw error;
+          }
+        },
         {
           ...withProviderFeatureCurrentness(waiterLifetime),
           unavailable: () => providerProbeUnavailable({
@@ -1406,13 +1472,15 @@ export function createRuntimeProviderServices(input: Readonly<{
       : withOperationLifetime(undefined);
     const resolved = 'resolution' in input
       ? await (() => {
-          const settingsRead = readProviderSettingsForCli(input.accountSettings);
+          const settingsRead = { settings: input.providerSettings, diagnostics: [] };
           return resolveSavedFromConnectionContext(identity, {
             connection: input.resolution.record,
             snapshot: null,
             providerSettings: settingsRead.settings,
             settingsRead,
             accountSettings: input.accountSettings,
+            savedSecretResources: input.savedSecretResources,
+            resolveManagedPurposeBindingIntent,
             registry: input.registry,
             dnsEvidenceByEndpointUrl: input.dnsEvidence,
             lifetime: input.lifetime,

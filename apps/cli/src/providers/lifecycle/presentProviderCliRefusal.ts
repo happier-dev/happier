@@ -20,6 +20,7 @@ const ERROR_SUMMARIES = {
   provider_secret_missing: 'The Provider credential is missing.',
   provider_secret_unavailable: 'The Provider credential is temporarily unavailable.',
   provider_credential_transport_unavailable: 'The Provider credential format is unsupported.',
+  provider_run_credential_selection_required: 'This Run cannot inherit the Session’s direct credential.',
   provider_endpoint_unreachable: 'The Provider endpoint is unreachable.',
   provider_endpoint_unavailable: 'The Provider endpoint is unavailable.',
   // Host-side probe admission was full, so no endpoint request was attempted. Naming the
@@ -119,7 +120,9 @@ function presentBoundedCliContext(label: string, value: string): string {
 export function presentProviderCliRefusal(error: ProviderErrorV1): readonly string[] {
   return Object.freeze([
     `${ERROR_SUMMARIES[error.code]} (${error.code})`,
-    RECOVERY_GUIDANCE[error.action],
+    error.code === 'provider_run_credential_selection_required'
+      ? 'Select a Team credential explicitly for this Run.'
+      : RECOVERY_GUIDANCE[error.action],
     ...(error.connectionId ? [presentBoundedCliContext('Connection', error.connectionId)] : []),
     ...(error.machineId ? [presentBoundedCliContext('Machine', error.machineId)] : []),
     ...(error.sourceProfileId ? [presentBoundedCliContext('Source profile', error.sourceProfileId)] : []),

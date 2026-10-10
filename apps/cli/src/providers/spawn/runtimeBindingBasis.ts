@@ -29,6 +29,7 @@ export function projectProviderRuntimeBindingBasis(
           ...common,
           deployment: {
             kind: 'managedLocal',
+            gatewayPlacement: authorization.deployment.gatewayPlacement ?? { kind: 'sessionMachine' },
             implementationIdentity:
               authorization.deployment.implementation
                 .implementationIdentity,

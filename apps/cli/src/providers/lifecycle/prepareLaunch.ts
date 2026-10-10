@@ -1,4 +1,5 @@
-import { BackendTargetKeyV2InputSchema, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { BackendTargetKeyV2InputSchema, BackendTargetKeyV2Schema, PersistedBackendTargetRefV2Schema,
+  parseBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
 import { SessionProviderBindingSecurityChangeConfirmationV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
@@ -106,7 +107,15 @@ export async function prepareProviderLaunch(input: Readonly<{
     return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent', errorContext) };
   }
 
-  const agentTargetKey = buildBackendTargetKeyV2(readBackendTargetRefV2(input.backendTarget));
+  // Qualified Agent targets already carry their canonical contribution
+  // identity. The legacy routing reader can resolve only bundled Agents.
+  const targetKey = BackendTargetKeyV2Schema.safeParse(input.backendTarget);
+  const canonicalTarget = PersistedBackendTargetRefV2Schema.safeParse(
+    targetKey.success ? parseBackendTargetKeyV2(targetKey.data) : input.backendTarget,
+  );
+  const agentTargetKey = canonicalTarget.success && canonicalTarget.data.kind === 'agent'
+    ? buildBackendTargetKeyV2(canonicalTarget.data)
+    : buildBackendTargetKeyV2(readBackendTargetRefV2(input.backendTarget));
   const normalizedSelectionTargetKey = BackendTargetKeyV2InputSchema.safeParse(
     selection.ref.agentTargetKey,
   );

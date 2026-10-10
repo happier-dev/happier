@@ -1,9 +1,91 @@
 import { describe, expect, it, vi } from 'vitest';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
+import { projectAgentConnectedAccountLaunchCatalogEntry } from '@/plugins/projection/registry/agentCatalogEntryHooks';
+import { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
+import { createCodexConnectedAccountNativeAuthCodec, createCodexConnectedServiceRuntimeAuthAdapter } from '../../../../../../packages/plugins/codex/src/agent/auth/services/runtime/control/runtimeAuthAdapter';
 
 import type { ConnectedServiceProviderRuntimeAuthAdapter } from '../runtimeAuth/types';
 import { createSessionConnectedServiceAuthHotApply } from './sessionConnectedServiceAuthHotApply';
 
 describe('createSessionConnectedServiceAuthHotApply', () => {
+  it('keeps pending X readable, invalidates only at auth effects, and preserves retained child custody', async () => {
+    const serviceId = 'happier.agent.codex/openai-codex';
+    const registry = new ConnectedServiceRuntimeRegistry();
+    const previous = { v: 2 as const, bindingsByServiceId: {
+      [serviceId]: { source: 'connected' as const, selection: 'profile' as const, profileId: 'old' },
+    } };
+    const next = { v: 2 as const, bindingsByServiceId: {
+      [serviceId]: { source: 'connected' as const, selection: 'profile' as const, profileId: 'next' },
+    } };
+    registry.registerTarget({ pid: 123, sessionId: 'parent', agentId: 'codex', connectedServicesBindingsRaw: previous });
+    // Registration adds a `bindings` convenience projection; stored Run custody
+    // consists of the canonical target fields rather than that wrapper's identity.
+    const { bindings: _registeredBindings, ...retainedChild } = registry.registerRunTarget({ runKey: 'retained-child', pid: 123,
+      sessionId: 'parent', agentId: 'codex', connectedServicesBindingsRaw: previous });
+    let admit!: () => void;
+    let completeSdkEffect!: () => void;
+    let completeFileEffect!: () => void;
+    let enteredSdkEffect!: () => void;
+    let enteredFileEffect!: () => void;
+    const admission = new Promise<void>((resolve) => { admit = resolve; });
+    const sdkEffect = new Promise<void>((resolve) => { completeSdkEffect = resolve; });
+    const fileEffect = new Promise<void>((resolve) => { completeFileEffect = resolve; });
+    const sdkEntered = new Promise<void>((resolve) => { enteredSdkEffect = resolve; });
+    const fileEntered = new Promise<void>((resolve) => { enteredFileEffect = resolve; });
+    let nativeFiles: Readonly<Record<string, Uint8Array>> = {};
+    // Only the live SDK RPC, native filesystem, and Account-currentness IO are boundaries.
+    const nativeHome = { readFiles: async () => nativeFiles, replaceFiles: async (files: Readonly<Record<string, Uint8Array>>) => {
+      enteredFileEffect(); await fileEffect; nativeFiles = files;
+    } };
+    const applyConnectedServiceAuthGeneration = async () => {
+      enteredSdkEffect(); await sdkEffect; return { ok: true };
+    };
+    const projected = projectAgentConnectedAccountLaunchCatalogEntry({
+      pluginId: 'happier.agent.codex', agentId: 'codex', isCurrent: () => true,
+      connectedAccountLaunch: {
+        stateSharingDescriptor: {
+          providerSupportStatus: 'supported', config: { supported: false, modes: [], entries: [] },
+          state: { supported: false, modes: [], entries: [], symlinkUnavailableDegradePolicy: 'block_continuity' },
+          authIsolation: { mode: 'materialized_home', secretEntries: ['auth.json'] },
+        },
+        continuity: { nativeAuthCodec: createCodexConnectedAccountNativeAuthCodec(),
+          runtimeAuthAdapter: createCodexConnectedServiceRuntimeAuthAdapter() },
+      },
+    });
+    const apply = createSessionConnectedServiceAuthHotApply({
+      runtimeRegistry: registry,
+      isSessionCurrent: async () => { await admission; return true; },
+      resolveRuntimeAuthAdapter: async () => await projected.getConnectedServiceRuntimeAuthAdapter?.() ?? null,
+    });
+    const transition = apply({
+      tracked: { startedBy: 'daemon', happySessionId: 'parent', pid: 123,
+        spawnOptions: { directory: '/tmp/project', backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } } },
+      normalizedBindings: next,
+      runtimeAuthSelectionsByServiceId: new Map([[serviceId, {
+        serviceId, profileId: 'next', nativeHome, applyConnectedServiceAuthGeneration,
+        credential: buildConnectedServiceCredentialRecord({ now: 1, serviceId: 'openai-codex', profileId: 'next', kind: 'oauth',
+          oauth: { accessToken: 'access-placeholder', refreshToken: 'refresh-placeholder', idToken: null,
+            scope: null, tokenType: 'Bearer', providerAccountId: 'account-next', providerEmail: null } }),
+      }]]),
+    });
+    const read = () => registry.readAppliedSessionBindings({ runnerPid: 123, sessionId: 'parent', agentId: 'codex' });
+    try {
+      expect(read()).toEqual({ status: 'applied', connectedServices: previous });
+      admit(); await sdkEntered;
+      expect(read()).toEqual({ status: 'unavailable' });
+      expect(registry.getRunTargetByRunKey('retained-child')).toEqual(retainedChild);
+      completeSdkEffect(); await fileEntered;
+      expect(read()).toEqual({ status: 'unavailable' });
+      completeFileEffect(); await expect(transition).resolves.toMatchObject({ ok: true });
+      expect(read()).toEqual({ status: 'unavailable' });
+      // Only the existing authoritative success registration restores applied proof.
+      registry.registerTarget({ pid: 123, sessionId: 'parent', agentId: 'codex', connectedServicesBindingsRaw: next });
+      expect(read()).toEqual({ status: 'applied', connectedServices: next });
+      expect(registry.getRunTargetByRunKey('retained-child')).toEqual(retainedChild);
+    } finally {
+      admit(); completeSdkEffect(); completeFileEffect(); await transition;
+    }
+  });
   it('infers the provider from webhook metadata when startup-drained tracked sessions have no spawn options', async () => {
     const hotApply = vi.fn(async () => ({ applied: true }));
     const adapter = {
@@ -16,6 +98,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
     } satisfies ConnectedServiceProviderRuntimeAuthAdapter;
     const resolveRuntimeAuthAdapter = vi.fn(async () => adapter);
     const apply = createSessionConnectedServiceAuthHotApply({
+      runtimeRegistry: new ConnectedServiceRuntimeRegistry(),
       resolveRuntimeAuthAdapter,
     });
 
@@ -57,6 +140,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       refreshActiveProfile: async () => ({}),
     } satisfies ConnectedServiceProviderRuntimeAuthAdapter;
     const apply = createSessionConnectedServiceAuthHotApply({
+      runtimeRegistry: new ConnectedServiceRuntimeRegistry(),
       resolveRuntimeAuthAdapter: async () => adapter,
     });
 
@@ -78,13 +162,13 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       },
     })).resolves.toEqual({ ok: true });
 
-    expect(hotApply).toHaveBeenCalledWith({
+    expect(hotApply).toHaveBeenCalledWith(expect.objectContaining({
       target: { agentId: 'codex' },
       selection: expect.objectContaining({
         serviceId: 'happier.agent.codex/openai-codex',
         profileId: 'work',
       }),
-    });
+    }));
   });
 
   it('returns exact accepted verification from provider runtime hot-apply proof', async () => {
@@ -104,6 +188,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       refreshActiveProfile: async () => ({}),
     } satisfies ConnectedServiceProviderRuntimeAuthAdapter;
     const apply = createSessionConnectedServiceAuthHotApply({
+      runtimeRegistry: new ConnectedServiceRuntimeRegistry(),
       resolveRuntimeAuthAdapter: async () => adapter,
     });
 
@@ -164,7 +249,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       probeQuota: async () => ({}),
       refreshActiveProfile: async () => ({}),
     } satisfies ConnectedServiceProviderRuntimeAuthAdapter;
-    const apply = createSessionConnectedServiceAuthHotApply({ resolveRuntimeAuthAdapter: async () => adapter });
+    const apply = createSessionConnectedServiceAuthHotApply({ runtimeRegistry: new ConnectedServiceRuntimeRegistry(), resolveRuntimeAuthAdapter: async () => adapter });
 
     await expect(apply({
       tracked: {
@@ -216,6 +301,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       refreshActiveProfile: async () => ({}),
     } satisfies ConnectedServiceProviderRuntimeAuthAdapter;
     const apply = createSessionConnectedServiceAuthHotApply({
+      runtimeRegistry: new ConnectedServiceRuntimeRegistry(),
       resolveRuntimeAuthAdapter: async () => adapter,
       validateGroupMutationCurrentness,
     });
@@ -271,6 +357,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       refreshActiveProfile: async () => ({}),
     } satisfies ConnectedServiceProviderRuntimeAuthAdapter;
     const apply = createSessionConnectedServiceAuthHotApply({
+      runtimeRegistry: new ConnectedServiceRuntimeRegistry(),
       resolveRuntimeAuthAdapter: async () => adapter,
     });
 
@@ -303,6 +390,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       refreshActiveProfile: async () => ({}),
     } satisfies ConnectedServiceProviderRuntimeAuthAdapter;
     const apply = createSessionConnectedServiceAuthHotApply({
+      runtimeRegistry: new ConnectedServiceRuntimeRegistry(),
       resolveRuntimeAuthAdapter: async () => adapter,
     });
 
@@ -346,6 +434,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       refreshActiveProfile: async () => ({}),
     } satisfies ConnectedServiceProviderRuntimeAuthAdapter;
     const apply = createSessionConnectedServiceAuthHotApply({
+      runtimeRegistry: new ConnectedServiceRuntimeRegistry(),
       resolveRuntimeAuthAdapter: async () => adapter,
     });
 
@@ -392,6 +481,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       refreshActiveProfile: async () => ({}),
     } satisfies ConnectedServiceProviderRuntimeAuthAdapter;
     const apply = createSessionConnectedServiceAuthHotApply({
+      runtimeRegistry: new ConnectedServiceRuntimeRegistry(),
       resolveRuntimeAuthAdapter: async () => adapter,
     });
 
@@ -432,6 +522,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       refreshActiveProfile: async () => ({}),
     } satisfies ConnectedServiceProviderRuntimeAuthAdapter;
     const apply = createSessionConnectedServiceAuthHotApply({
+      runtimeRegistry: new ConnectedServiceRuntimeRegistry(),
       resolveRuntimeAuthAdapter: async () => adapter,
     });
     const selection = {
@@ -460,13 +551,13 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       runtimeAuthSelectionsByServiceId: new Map([['happier.agent.codex/openai-codex', selection]]),
     })).resolves.toEqual({ ok: true });
 
-    expect(hotApply).toHaveBeenCalledWith({
+    expect(hotApply).toHaveBeenCalledWith(expect.objectContaining({
       target: { agentId: 'codex' },
       selection: {
         serviceId: 'happier.agent.codex/openai-codex',
         profileId: 'work',
       },
-    });
+    }));
   });
 
   it('applies only requested connected service bindings when a switch scope is provided', async () => {
@@ -480,6 +571,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       refreshActiveProfile: async () => ({}),
     } satisfies ConnectedServiceProviderRuntimeAuthAdapter;
     const apply = createSessionConnectedServiceAuthHotApply({
+      runtimeRegistry: new ConnectedServiceRuntimeRegistry(),
       resolveRuntimeAuthAdapter: async () => adapter,
     });
 
@@ -527,6 +619,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       refreshActiveProfile: async () => ({}),
     } satisfies ConnectedServiceProviderRuntimeAuthAdapter;
     const apply = createSessionConnectedServiceAuthHotApply({
+      runtimeRegistry: new ConnectedServiceRuntimeRegistry(),
       resolveRuntimeAuthAdapter: async () => adapter,
     });
 

@@ -1,4 +1,3 @@
-import { CustomProviderTemplateV1Schema } from '@happier-dev/protocol/providers/connections/customTemplateV1';
 import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
 import { ProviderConnectionV1Schema } from '@happier-dev/protocol/providers/connections/v1';
 import { ProviderSettingsLimitError, ProviderSettingsV1Schema } from '@happier-dev/protocol/providers/settings/v1';
@@ -6,14 +5,13 @@ import { compareProviderCanonicalStringsV1 } from '@happier-dev/protocol/provide
 import { createProviderDiscoveryCandidateIdV1 } from '@happier-dev/protocol/providers/detection/v1';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { createProviderFingerprintV1 } from '@happier-dev/protocol/providers/fingerprints';
-import { isBundledProviderCatalogParserV1 } from '@happier-dev/protocol/providers/catalog/descriptorV1';
-import { readOwnRecordValue } from '@happier-dev/protocol/providers/ownRecordValue';
 import { areProviderContributionKeysEqualV1, canonicalizeProviderContributionKeyV1 } from '@happier-dev/protocol/providers/contribution-identity';
 import type { ProviderConnectionV1, ProviderDiscoveryCandidateV1, ProviderEndpointOverrideV1, ProviderSettingsV1 } from '@happier-dev/protocol';
-import type { DaemonProviderConnectionMutationRequestV1, DaemonProviderContributionAuthoringPreviewV1 } from '@happier-dev/protocol/rpc/providers';
+import type { DaemonProviderContributionAuthoringPreviewV1 } from '@happier-dev/protocol/rpc/providers';
 
 import { buildProviderDiscoveryEndpointOverrides } from '@/providers/discovery/bridge';
 import {
+  awaitWithinProviderOperation,
   createProviderOperationLifetime,
   type ProviderOperationLifetime,
 } from '@/providers/operationLifetime';
@@ -22,20 +20,14 @@ import {
   getProviderContribution,
   resolveProviderContributionRegistryEntry,
 } from '@/providers/registry/lookup';
-import {
-  addCustomProviderConnection,
-  addProviderContributionConnection,
-  deleteProviderConnectionV1,
-} from './authoring';
+import { prepareProviderConnectionCreationV1 } from '@happier-dev/protocol/providers/connections/creationV1';
 import { errorForProviderResolution, type ProviderConnectionServiceContext } from './context';
-import { bindProviderConnectionSecret, setProviderConnectionGrant } from './grants';
-import { addInitialProviderManualModels } from './models';
+import { setProviderConnectionGrant } from './grants';
 import {
   ProviderConnectionValidationError,
-  addPreparedSavedSecret,
   parseProviderError,
   readSettings,
-  replaceSettings,
+  readSnapshotSettings,
   requireSavedSecretReferenceReady,
 } from './settings';
 import type {
@@ -62,19 +54,6 @@ type ProviderAuthoringCandidateSelection = Readonly<{
   endpointOverrideScope: 'account' | 'machine';
 }>;
 
-type ProviderConnectionUpdateInput = Readonly<{
-  action: 'update';
-  machineId: string;
-  connectionId: string;
-  expectedRevision: number;
-  displayName?: string;
-  displayNameMode?: 'automatic' | 'custom';
-  deployment?: Extract<
-    DaemonProviderConnectionMutationRequestV1,
-    { action: 'update' }
-  >['deployment'];
-}>;
-
 type PreparedProviderContributionAuthoringPreview = Readonly<{
   preview: DaemonProviderContributionAuthoringPreviewV1;
   selectedEndpointOverrides: readonly ProviderEndpointOverrideV1[];
@@ -86,75 +65,21 @@ function createConnectionMutation(
   input: ProviderConnectionCreateInput,
   registry: ProviderContributionRegistryView,
   now: number,
-): Readonly<{ settings: ProviderSettingsV1; connection: ProviderConnectionV1; created: boolean }> {
-  if (input.action === 'createContribution') {
-    const resolved = resolveProviderContributionRegistryEntry(registry, input.contributionKey);
-    if (!resolved) throw createProviderErrorV1('provider_contribution_unavailable', {
-      connectionId: input.connectionId, machineId: input.machineId,
-    });
-    return addProviderContributionConnection({
-      settings,
-      contributionKey: resolved.contributionKey,
-      contributionName: resolved.contribution.definition.name,
-      connectionId: input.connectionId,
-      displayName: input.displayName,
-      now,
-    });
-  }
-  const template = CustomProviderTemplateV1Schema.parse(input.template);
-  if (template.catalog.manualModelPolicy === 'catalog-only' && (input.manualModels?.length ?? 0) > 0) {
-    throw createProviderErrorV1('provider_connection_invalid', {
-      connectionId: input.connectionId, machineId: input.machineId,
-    });
-  }
-  const result = addCustomProviderConnection({ settings, connectionId: input.connectionId, template, now });
-  return {
-    ...result,
-    settings: addInitialProviderManualModels({
-      settings: result.settings,
-      connectionId: result.connection.id,
-      models: input.manualModels ?? [],
-      addedAt: now,
-    }),
-    created: true,
-  };
-}
-
-function applyCreatedEndpointOverrides(input: Readonly<{
-  mutation: ReturnType<typeof createConnectionMutation>;
-  machineId: string;
-  endpointOverrides: readonly ProviderEndpointOverrideV1[];
-  scope: 'account' | 'machine';
-  now: number;
-}>): ReturnType<typeof createConnectionMutation> {
-  if (!input.mutation.created || input.endpointOverrides.length === 0) return input.mutation;
-  const endpointOverrides = [...input.endpointOverrides]
-    .sort((left, right) => compareProviderCanonicalStringsV1(
-      left.endpointTemplateId,
-      right.endpointTemplateId,
-    ));
-  const connection = ProviderConnectionV1Schema.parse({
-    ...input.mutation.connection,
-    ...(input.scope === 'account'
-      ? { endpointOverrides }
-      : {
-          endpointOverridesByMachineId: {
-            ...(input.mutation.connection.endpointOverridesByMachineId ?? {}),
-            [input.machineId]: endpointOverrides,
-          },
-        }),
-    revision: input.mutation.connection.revision + 1,
-    updatedAt: input.now,
+  endpointOverrides?: Readonly<{ values: readonly ProviderEndpointOverrideV1[]; machineId?: string }>,
+) {
+  const contribution = input.action === 'createContribution'
+    ? resolveProviderContributionRegistryEntry(registry, input.contributionKey) : null;
+  if (input.action === 'createContribution' && !contribution) throw createProviderErrorV1('provider_contribution_unavailable', {
+    connectionId: input.connectionId, machineId: input.machineId,
   });
-  return {
-    ...input.mutation,
-    connection,
-    settings: ProviderSettingsV1Schema.parse({
-      ...input.mutation.settings,
-      connections: input.mutation.settings.connections.map((entry) =>
-        entry.id === connection.id ? connection : entry),
-    }),
-  };
+  return prepareProviderConnectionCreationV1({ settings, connectionId: input.connectionId,
+    source: input.action === 'createCustom' ? { kind: 'custom', template: input.template }
+      : { kind: 'contribution', contributionKey: contribution!.contributionKey,
+        definition: contribution!.contribution.definition, displayName: input.displayName },
+    savedSecretId: input.savedSecretId,
+    ...(input.action === 'createCustom' ? { manualModels: input.manualModels ?? [] } : {}),
+    endpointOverrides, now,
+  });
 }
 
 function candidateSelections(input: Readonly<{
@@ -310,28 +235,19 @@ async function resolvedContributionAuthoringPreview(input: Readonly<{
     savedSecretId: null,
     enable: false,
   };
-  const mutation = applyCreatedEndpointOverrides({
-    mutation: createConnectionMutation(
-      readSettings(input.snapshot.rawAccountSettings),
-      createInput,
-      input.snapshot.registry,
-      now,
-    ),
-    machineId: input.request.machineId,
-    endpointOverrides: input.selection.endpointOverrides,
-    scope: input.selection.endpointOverrideScope,
-    now,
-  });
-  const previewRaw = replaceSettings(input.snapshot.rawAccountSettings, mutation.settings);
+  const mutation = createConnectionMutation(readSnapshotSettings(input.snapshot), createInput,
+    input.snapshot.registry, now, { values: input.selection.endpointOverrides,
+      ...(input.selection.endpointOverrideScope === 'machine' ? { machineId: input.request.machineId } : {}) });
+  const previewRaw = mutation.settings;
   const dnsEvidence = await input.deps.collectDnsEvidence({
-    accountSettings: previewRaw,
+    providerSettings: previewRaw,
     connectionId: mutation.connection.id,
     machineId: input.request.machineId,
     registry: input.snapshot.registry,
     lifetime: input.lifetime,
   });
   const resolution = input.deps.resolveConnection({
-    accountSettings: previewRaw,
+    providerSettings: previewRaw,
     connectionId: mutation.connection.id,
     machineId: input.request.machineId,
     registry: input.snapshot.registry,
@@ -461,47 +377,23 @@ async function prepareContributionAuthoringPreview(input: Readonly<{
   };
 }
 
-function validateConnectionCredentialTransport(
+/** Runtime credential readiness is admission evidence, not Account configuration semantics. */
+function validateCreatedConnectionSecret(
   input: ProviderConnectionCreateInput,
   connection: ProviderConnectionV1,
-  registry: ProviderContributionRegistryView,
+  snapshot: ProviderConnectionServiceSnapshot,
 ) {
   const credential = connection.source.kind === 'contribution'
-    ? getProviderContribution(registry, connection.source.contributionKey)?.definition.credential
+    ? getProviderContribution(snapshot.registry, connection.source.contributionKey)?.definition.credential
     : connection.source.template.credential;
-  if (credential === undefined && input.savedSecretId !== null) {
-    throw createProviderErrorV1('provider_credential_transport_unavailable', { connectionId: connection.id, machineId: input.machineId });
-  }
-  return credential;
-}
-
-function bindCreatedConnectionSecret(
-  settings: ProviderSettingsV1,
-  input: ProviderConnectionCreateInput,
-  connection: ProviderConnectionV1,
-  raw: Readonly<Record<string, unknown>>,
-  registry: ProviderContributionRegistryView,
-  savedSecretCatalog: Pick<ProviderConnectionServiceSnapshot, 'savedSecretResources' | 'savedSecretCatalogState'>,
-): ProviderSettingsV1 {
-  const credential = validateConnectionCredentialTransport(input, connection, registry);
   if (input.enable && credential?.required === true && input.savedSecretId === null) {
     throw createProviderErrorV1('provider_secret_missing', { connectionId: connection.id, machineId: input.machineId });
   }
-  if (input.savedSecretId !== null) {
-    requireSavedSecretReferenceReady({
-      rawAccountSettings: raw,
-      savedSecretId: input.savedSecretId,
-      savedSecretResources: savedSecretCatalog.savedSecretResources,
-      savedSecretCatalogState: savedSecretCatalog.savedSecretCatalogState,
-      connectionId: connection.id,
-      machineId: input.machineId,
-    });
-  }
-  return input.savedSecretId === null
-    ? settings
-    : bindProviderConnectionSecret({
-        settings, connectionId: connection.id, slotId: 'apiKey', savedSecretId: input.savedSecretId,
-      });
+  if (input.savedSecretId !== null) requireSavedSecretReferenceReady({
+    rawAccountSettings: snapshot.rawAccountSettings, savedSecretId: input.savedSecretId,
+    savedSecretResources: snapshot.savedSecretResources, savedSecretCatalogState: snapshot.savedSecretCatalogState,
+    connectionId: connection.id, machineId: input.machineId, preparedSavedSecret: input.preparedSavedSecret,
+  });
 }
 
 export function createProviderAuthoringOperations(context: ProviderConnectionServiceContext) {
@@ -604,18 +496,14 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
       const createMutation = (
         settings: ProviderSettingsV1,
         now: number,
-      ) => applyCreatedEndpointOverrides({
-        mutation: createConnectionMutation(settings, input, snapshot.registry, now),
-        machineId: input.machineId,
-        endpointOverrides: reviewedEndpointOverrides,
-        scope: reviewedEndpointOverrideScope,
-        now,
+      ) => createConnectionMutation(settings, input, snapshot.registry, now, {
+        values: reviewedEndpointOverrides,
+        ...(reviewedEndpointOverrideScope === 'machine' ? { machineId: input.machineId } : {}),
       });
       if (input.preparedSavedSecret && input.savedSecretId !== input.preparedSavedSecret.id) {
         throw new ProviderConnectionValidationError('The prepared SavedSecret must be the exact bound secret');
       }
-      const initialMutation = createMutation(readSettings(snapshot.rawAccountSettings), deps.now());
-      validateConnectionCredentialTransport(input, initialMutation.connection, snapshot.registry);
+      const initialMutation = createMutation(readSnapshotSettings(snapshot), deps.now());
       if (!initialMutation.created) {
         const described = await describe({
           machineId: input.machineId,
@@ -632,20 +520,19 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
               machineId: input.machineId,
             }) };
       }
-      const previewBase = addPreparedSavedSecret(snapshot.rawAccountSettings, input.preparedSavedSecret);
-      const preview = createMutation(readSettings(previewBase), deps.now());
-      const previewSettings = bindCreatedConnectionSecret(preview.settings, input, preview.connection, previewBase, snapshot.registry, snapshot);
-      const previewRaw = replaceSettings(previewBase, previewSettings);
+      const preview = createMutation(readSnapshotSettings(snapshot), deps.now());
+      validateCreatedConnectionSecret(input, preview.connection, snapshot);
+      const previewRaw = preview.settings;
       const dnsEvidence = input.enable
         ? await deps.collectDnsEvidence({
-            accountSettings: previewRaw, connectionId: preview.connection.id,
+            providerSettings: previewRaw, connectionId: preview.connection.id,
             machineId: input.machineId, registry: snapshot.registry,
             lifetime,
           })
         : new Map();
       const previewResolution = input.enable
         ? deps.resolveConnection({
-            accountSettings: previewRaw, connectionId: preview.connection.id,
+            providerSettings: previewRaw, connectionId: preview.connection.id,
             machineId: input.machineId, registry: snapshot.registry, dnsEvidence,
           })
         : null;
@@ -654,8 +541,8 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
       }
       let persistedConnectionId: string | null = null;
       let created = preview.created;
-      await deps.updateAccountSettings((raw) => {
-        const mutation = createMutation(readSettings(raw), deps.now());
+      await deps.updateProviderSettings((providerSettings) => {
+        const mutation = createMutation(readSettings(providerSettings), deps.now());
         persistedConnectionId = mutation.connection.id;
         created = mutation.created;
         if (!mutation.created) {
@@ -665,14 +552,14 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
               machineId: input.machineId,
             });
           }
-          return { ...raw };
+          return providerSettings;
         }
-        const rawWithPreparedSecret = addPreparedSavedSecret(raw, input.preparedSavedSecret);
-        let next = bindCreatedConnectionSecret(mutation.settings, input, mutation.connection, rawWithPreparedSecret, snapshot.registry, snapshot);
+        validateCreatedConnectionSecret(input, mutation.connection, snapshot);
+        let next = mutation.settings;
         if (input.enable) {
-          const candidateRaw = replaceSettings(rawWithPreparedSecret, next);
+          const candidateRaw = next;
           const resolution = deps.resolveConnection({
-            accountSettings: candidateRaw, connectionId: mutation.connection.id,
+            providerSettings: candidateRaw, connectionId: mutation.connection.id,
             machineId: input.machineId, registry: snapshot.registry, dnsEvidence,
           });
           if (resolution.status !== 'resolved') throw errorForProviderResolution(resolution, input.machineId);
@@ -694,8 +581,8 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
             now: deps.now(),
           });
         }
-        return replaceSettings(rawWithPreparedSecret, next);
-      });
+        return next;
+      }, { preparedSavedSecret: input.preparedSavedSecret });
       if (!persistedConnectionId) throw new TypeError('Provider connection mutation did not commit');
       if (created && input.enable && deps.refreshOnEnable) {
         await deps.refreshOnEnable(
@@ -728,167 +615,6 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
     }
   }
 
-  async function deleteConnection(input: Readonly<{
-    action: 'delete'; machineId: string; connectionId: string;
-  }>): Promise<ProviderConnectionServiceResult<Readonly<{ connectionId: string }>>> {
-    if (!deps.featureGate.isEnabled('providers')) return { status: 'error', error: featureError(input.connectionId) };
-    const machineError = assertMachine(input.machineId, input.connectionId);
-    if (machineError) return { status: 'error', error: machineError };
-    await deps.updateAccountSettings((raw) => replaceSettings(
-      raw,
-      deleteProviderConnectionV1(readSettings(raw), input.connectionId, deps.now()),
-    ));
-    return { status: 'success', connectionId: input.connectionId };
-  }
-
-  async function update(
-    input: ProviderConnectionUpdateInput,
-  ): Promise<ProviderConnectionServiceResult<ProviderConnectionView>> {
-    if (!deps.featureGate.isEnabled('providers')) return { status: 'error', error: featureError(input.connectionId) };
-    const machineError = assertMachine(input.machineId, input.connectionId);
-    if (machineError) return { status: 'error', error: machineError };
-    const lifetime = createProviderOperationLifetime({
-      wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
-    });
-    const snapshot = await deps.loadSnapshot();
-    const registryProjection = {
-      registry: snapshot.registry,
-      ...(snapshot.registryGeneration ? { generation: snapshot.registryGeneration } : {}),
-    };
-    const buildUpdate = (
-      settings: ProviderSettingsV1,
-      current: ProviderConnectionV1,
-    ): Readonly<{
-      candidate: ProviderConnectionV1;
-      settings: ProviderSettingsV1;
-    }> => {
-      const source = current.source.kind === 'contribution'
-        ? getProviderContribution(
-            snapshot.registry,
-            current.source.contributionKey,
-          )
-        : null;
-      const displayNameMode =
-        input.displayNameMode ?? current.displayNameMode;
-      const deployment = input.deployment;
-      const deploymentChanged =
-        deployment !== undefined
-        && deployment.kind !== current.deployment.kind;
-      const candidate = ProviderConnectionV1Schema.parse({
-        ...current,
-        displayName: displayNameMode === 'automatic'
-          ? source?.definition.name ?? current.displayName
-          : input.displayName ?? current.displayName,
-        displayNameMode,
-        ...(deployment?.kind === 'managedLocal'
-          ? {
-              deployment: { kind: 'managedLocal' as const },
-              purposeBindingDefaults:
-                deployment.purposeBindingDefaults,
-              endpointOverrides: undefined,
-              endpointOverridesByMachineId: undefined,
-            }
-          : deployment?.kind === 'external'
-            ? {
-                deployment: { kind: 'external' as const },
-                purposeBindingDefaults: undefined,
-              }
-            : {}),
-        revision: current.revision + 1,
-        updatedAt: deps.now(),
-      });
-      const secretBindingsByConnectionId = {
-        ...settings.secretBindingsByConnectionId,
-      };
-      if (candidate.deployment.kind === 'managedLocal') {
-        delete secretBindingsByConnectionId[current.id];
-      }
-      return {
-        candidate,
-        settings: ProviderSettingsV1Schema.parse({
-          ...settings,
-          connections: settings.connections.map((entry) =>
-            entry.id === input.connectionId ? candidate : entry),
-          ...(candidate.deployment.kind === 'managedLocal'
-            ? { secretBindingsByConnectionId }
-            : {}),
-          ...(deploymentChanged
-            ? {
-                accountGrants: settings.accountGrants.filter((grant) =>
-                  grant.connectionId !== current.id),
-                machineGrants: settings.machineGrants.filter((grant) =>
-                  grant.connectionId !== current.id),
-              }
-            : {}),
-        }),
-      };
-    };
-    const requireValidDeployment = (
-      accountSettings: Readonly<Record<string, unknown>>,
-      dnsEvidence: Awaited<
-        ReturnType<ProviderConnectionServiceDeps['collectDnsEvidence']>
-      >,
-    ): void => {
-      if (input.deployment?.kind !== 'managedLocal') return;
-      const resolution = deps.resolveConnection({
-        accountSettings,
-        connectionId: input.connectionId,
-        machineId: input.machineId,
-        registry: snapshot.registry,
-        dnsEvidence,
-      });
-      if (
-        resolution.status !== 'resolved'
-        || resolution.record.deployment.kind !== input.deployment.kind
-      ) {
-        throw createProviderErrorV1('provider_connection_invalid', {
-          connectionId: input.connectionId,
-          machineId: input.machineId,
-        });
-      }
-    };
-    let deploymentDnsEvidence:
-      Awaited<
-        ReturnType<ProviderConnectionServiceDeps['collectDnsEvidence']>
-      > = new Map();
-    if (input.deployment?.kind === 'managedLocal') {
-      const previewSettings = readSettings(snapshot.rawAccountSettings);
-      const previewCurrent = previewSettings.connections.find((entry) =>
-        entry.id === input.connectionId);
-      if (previewCurrent?.revision === input.expectedRevision) {
-        const preview = buildUpdate(previewSettings, previewCurrent);
-        const previewRaw = replaceSettings(
-          snapshot.rawAccountSettings,
-          preview.settings,
-        );
-        deploymentDnsEvidence = await deps.collectDnsEvidence({
-          accountSettings: previewRaw,
-          connectionId: input.connectionId,
-          machineId: input.machineId,
-          registry: snapshot.registry,
-          lifetime,
-        });
-        requireValidDeployment(previewRaw, deploymentDnsEvidence);
-      }
-    }
-    let conflict = false;
-    await deps.updateAccountSettings((raw) => {
-      const settings = readSettings(raw);
-      const current = settings.connections.find((entry) => entry.id === input.connectionId);
-      if (!current) throw createProviderErrorV1('provider_connection_not_found', { connectionId: input.connectionId, machineId: input.machineId });
-      if (current.revision !== input.expectedRevision) {
-        conflict = true;
-        return raw;
-      }
-      const updated = buildUpdate(settings, current);
-      const nextRaw = replaceSettings(raw, updated.settings);
-      requireValidDeployment(nextRaw, deploymentDnsEvidence);
-      return nextRaw;
-    });
-    if (conflict) return { status: 'error', error: createProviderErrorV1('provider_connection_changed', { connectionId: input.connectionId, machineId: input.machineId }) };
-    return describeOne(context, input.machineId, input.connectionId, { registryProjection, lifetime });
-  }
-
   async function setEndpointOverride(input: Readonly<{
     action: 'setEndpointOverride'; machineId: string; connectionId: string; expectedRevision: number;
     scope: 'account' | 'machine'; endpointTemplateId: string; baseUrl: string | null;
@@ -896,6 +622,9 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
     if (!deps.featureGate.isEnabled('providers')) return { status: 'error', error: featureError(input.connectionId) };
     const machineError = assertMachine(input.machineId, input.connectionId);
     if (machineError) return { status: 'error', error: machineError };
+    if (input.scope !== 'machine') return { status: 'error', error: createProviderErrorV1('provider_connection_invalid', {
+      connectionId: input.connectionId, machineId: input.machineId,
+    }) };
     const lifetime = createProviderOperationLifetime({
       wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
     });
@@ -905,13 +634,13 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
       ...(snapshot.registryGeneration ? { generation: snapshot.registryGeneration } : {}),
     };
     let conflict = false;
-    await deps.updateAccountSettings((raw) => {
-      const settings = readSettings(raw);
+    await deps.updateProviderSettings((providerSettings) => {
+      const settings = readSettings(providerSettings);
       const current = settings.connections.find((entry) => entry.id === input.connectionId);
       if (!current) throw createProviderErrorV1('provider_connection_not_found', { connectionId: input.connectionId, machineId: input.machineId });
       if (current.revision !== input.expectedRevision) {
         conflict = true;
-        return raw;
+        return providerSettings;
       }
       const endpointIds = new Set(current.source.kind === 'custom'
         ? current.source.template.endpointTemplates.map((endpoint) => endpoint.id)
@@ -926,133 +655,26 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
         return next.sort((a, b) => compareProviderCanonicalStringsV1(a.endpointTemplateId, b.endpointTemplateId));
       };
       const endpointOverridesByMachineId = { ...(current.endpointOverridesByMachineId ?? {}) };
-      if (input.scope === 'machine') {
-        const next = upsert(endpointOverridesByMachineId[input.machineId]);
-        if (next.length === 0) delete endpointOverridesByMachineId[input.machineId];
-        else endpointOverridesByMachineId[input.machineId] = next;
-      }
-      const accountEndpointOverrides = input.scope === 'account' ? upsert(current.endpointOverrides) : current.endpointOverrides;
+      const next = upsert(endpointOverridesByMachineId[input.machineId]);
+      if (next.length === 0) delete endpointOverridesByMachineId[input.machineId];
+      else endpointOverridesByMachineId[input.machineId] = next;
       const candidate = ProviderConnectionV1Schema.parse({
         ...current,
-        ...(input.scope === 'account'
-          ? accountEndpointOverrides?.length === 0 ? { endpointOverrides: undefined } : { endpointOverrides: accountEndpointOverrides }
-          : {}),
-        ...(input.scope === 'machine'
-          ? Object.keys(endpointOverridesByMachineId).length === 0
-            ? { endpointOverridesByMachineId: undefined }
-            : { endpointOverridesByMachineId }
-          : {}),
+        ...(Object.keys(endpointOverridesByMachineId).length === 0
+          ? { endpointOverridesByMachineId: undefined } : { endpointOverridesByMachineId }),
         revision: current.revision + 1,
         updatedAt: deps.now(),
       });
-      return replaceSettings(raw, ProviderSettingsV1Schema.parse({
+      return ProviderSettingsV1Schema.parse({
         ...settings,
         connections: settings.connections.map((entry) => entry.id === input.connectionId ? candidate : entry),
-      }));
+      });
     });
     if (conflict) return { status: 'error', error: createProviderErrorV1('provider_connection_changed', { connectionId: input.connectionId, machineId: input.machineId }) };
     return describeOne(context, input.machineId, input.connectionId, { registryProjection, lifetime });
   }
 
-  async function duplicate(input: Readonly<{
-    action: 'duplicate'; machineId: string; connectionId: string; newConnectionId: string;
-    displayName: string; mode: 'sameSource' | 'asCustom';
-  }>): Promise<ProviderConnectionServiceResult<ProviderConnectionView>> {
-    if (!deps.featureGate.isEnabled('providers')) return { status: 'error', error: featureError(input.connectionId) };
-    const machineError = assertMachine(input.machineId, input.connectionId);
-    if (machineError) return { status: 'error', error: machineError };
-    const lifetime = createProviderOperationLifetime({
-      wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
-    });
-    const snapshot = await deps.loadSnapshot();
-    const registryProjection = {
-      registry: snapshot.registry,
-      ...(snapshot.registryGeneration ? { generation: snapshot.registryGeneration } : {}),
-    };
-    await deps.updateAccountSettings((raw) => {
-      const settings = readSettings(raw);
-      const sourceConnection = settings.connections.find((entry) => entry.id === input.connectionId);
-      if (!sourceConnection) throw createProviderErrorV1('provider_connection_not_found', { connectionId: input.connectionId, machineId: input.machineId });
-      if (settings.connections.some((entry) => entry.id === input.newConnectionId)
-        || settings.connectionTombstones.some((entry) => entry.id === input.newConnectionId)) {
-        throw new ProviderConnectionValidationError('Allocated duplicate provider connection id is already used');
-      }
-      let source = sourceConnection.source;
-      if (input.mode === 'asCustom') {
-        if (sourceConnection.source.kind === 'custom') {
-          source = { kind: 'custom', template: { ...sourceConnection.source.template, name: input.displayName } };
-        } else {
-          const contribution = getProviderContribution(snapshot.registry, sourceConnection.source.contributionKey);
-          if (!contribution) throw createProviderErrorV1('provider_contribution_unavailable', { connectionId: input.connectionId, machineId: input.machineId });
-          const transports = (contribution.definition.credential?.transports ?? []).flatMap((transport) => {
-            if (transport.destination.kind !== 'httpHeader'
-              || (transport.destination.format !== 'raw' && transport.destination.format !== 'bearer')) return [];
-            const uses = transport.uses.filter((use): use is 'probe' | 'runtime' => use === 'probe' || use === 'runtime');
-            return uses.length === 0 ? [] : [{ ...transport, uses, destination: transport.destination }];
-          });
-          if (contribution.definition.credential && transports.length === 0) {
-            throw createProviderErrorV1('provider_credential_transport_unavailable', { connectionId: input.connectionId, machineId: input.machineId });
-          }
-          const endpointOverrides = new Map((sourceConnection.endpointOverrides ?? [])
-            .map((entry) => [entry.endpointTemplateId, entry.baseUrl]));
-          const endpointTemplates = contribution.definition.endpointTemplates.map((endpoint) => {
-            const baseUrl = endpointOverrides.get(endpoint.id) ?? endpoint.baseUrl
-              ?? (endpoint.localUrlCandidates?.length === 1 ? endpoint.localUrlCandidates[0] : null);
-            if (!baseUrl) throw new ProviderConnectionValidationError('Duplicate-as-custom requires one concrete URL per endpoint');
-            return {
-              id: endpoint.id, protocol: endpoint.protocol, baseUrl,
-              ...(endpoint.publicHeaders ? { publicHeaders: endpoint.publicHeaders } : {}),
-              capabilities: {
-                streaming: 'unknown' as const, toolRoundTrips: 'unknown' as const,
-                statefulResponses: 'unknown' as const, reasoningControls: 'unknown' as const,
-              },
-            };
-          });
-          const contributionCatalog = contribution.definition.catalog;
-          const contributionProbes = 'probes' in contributionCatalog ? contributionCatalog.probes : [];
-          for (const probe of contributionProbes) {
-            // A custom template has no plugin behind it, so only a catalog
-            // format the host bundles can ever serve its probes. Copying a
-            // contributed format id would persist a probe nothing can run and
-            // silently leave the copy without a catalog.
-            if (!isBundledProviderCatalogParserV1(probe.parser)) {
-              throw new ProviderConnectionValidationError(
-                'Duplicate-as-custom requires a bundled catalog format for every probe',
-              );
-            }
-          }
-          const catalog = contributionProbes.length > 0
-            ? { source: 'probe' as const, manualModelPolicy: contributionCatalog.manualModelPolicy, probes: contributionProbes }
-            : { source: 'manual' as const, manualModelPolicy: 'allowed' as const };
-          source = { kind: 'custom', template: CustomProviderTemplateV1Schema.parse({
-            v: 1, name: input.displayName, endpointTemplates,
-            ...(contribution.definition.credential ? { credential: { ...contribution.definition.credential, transports } } : {}),
-            catalog,
-          }) };
-        }
-      }
-      const connection = ProviderConnectionV1Schema.parse({
-        v: 1, id: input.newConnectionId, source, role: 'named',
-        displayName: input.displayName, displayNameMode: 'custom', revision: 0,
-        createdAt: deps.now(), updatedAt: deps.now(),
-        ...(input.mode === 'sameSource' && sourceConnection.endpointOverrides
-          ? { endpointOverrides: sourceConnection.endpointOverrides }
-          : {}),
-      });
-      const copiedManualModels = readOwnRecordValue(settings.manualModelsByConnectionId, input.connectionId);
-      return replaceSettings(raw, ProviderSettingsV1Schema.parse({
-        ...settings,
-        connections: [...settings.connections, connection],
-        ...(copiedManualModels ? { manualModelsByConnectionId: {
-          ...settings.manualModelsByConnectionId,
-          [input.newConnectionId]: copiedManualModels,
-        } } : {}),
-      }));
-    });
-    return describeOne(context, input.machineId, input.newConnectionId, { registryProjection, lifetime });
-  }
-
-  return Object.freeze({ previewCreateContribution, create, delete: deleteConnection, update, setEndpointOverride, duplicate });
+  return Object.freeze({ previewCreateContribution, create, setEndpointOverride });
 }
 
 async function describeOne(

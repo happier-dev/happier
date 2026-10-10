@@ -42,6 +42,7 @@ import type { MachinePoolCandidateSnapshot } from '@/app/machines/pools/machineP
 import { verifyRunnerBrokerOpenSelectionInTx } from '@/app/ephemeralRunner/runnerBrokerOpenSelection';
 import { readRunnerActivationAuthentication } from '@/app/ephemeralRunner/activationAuthentication';
 import { readRunnerCreatorCurrentnessInTx } from '@/app/ephemeralRunner/activationCurrentness';
+import { admitProviderBrokerConsumerInTx } from '@/app/providers/brokerConsumerAdmission';
 
 type ProviderProjectionReader = (input: Readonly<{
     custodianAccountId: string;
@@ -645,21 +646,11 @@ async function authorizeTeamCredentialProviderBrokerOpenDurableInTx(
     } else {
         sessionId = request.consumer.sessionId;
     }
-    if (sessionId !== null) {
-        const session = await tx.session.findUnique({
-            where: { id: sessionId },
-            select: { accountId: true, active: true },
-        });
-        if (!session || session.accountId !== input.actorAccountId || !session.active) {
-            return failure('session_not_active');
-        }
-        if (!await hasCurrentSessionScopedMachineAccessInTx({
-            tx,
-            accountId: input.actorAccountId,
-            machineId: request.initiatorMachineId,
-            sessionId,
-        })) return failure('resource_forbidden');
-    }
+    const consumerAdmission = await admitProviderBrokerConsumerInTx(tx, {
+        accountId: input.actorAccountId, initiatorMachineId: request.initiatorMachineId,
+        consumer: request.consumer, executionRun,
+    });
+    if (!consumerAdmission.ok) return consumerAdmission;
     // This operation's broker Machine, when it already has one: a refresh
     // renews the target its original open selected, and a Runner renews the
     // one its reviewed activation froze. Both are resolved before admission so

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
     deriveConnectedServiceCredentialStatus,
+    QualifiedConnectedServiceCredentialStoredMetadataV4Schema,
     parseQualifiedConnectedServiceCredentialStoredMetadataV4,
     withQualifiedConnectedServiceCredentialHealth,
 } from "./credentialHealthMetadata";
@@ -41,18 +42,29 @@ describe("qualified Connected Account credential health metadata", () => {
         );
     });
 
-    it("fails closed on unknown clear metadata and malformed health", () => {
-        expect(() =>
-            parseQualifiedConnectedServiceCredentialStoredMetadataV4({
+    it("drops unknown stored metadata recursively without echoing clear credential fields", () => {
+        const raw = {
                 v: 4,
                 storage: "stored_envelope_v1",
                 credentialRevision,
                 values: {
                     scopes: [],
                     accessToken: "must-not-be-clear",
+                    providerIdentity: { email: "operator@example.test", future: true },
                 },
-            }),
-        ).toThrow();
+                future: true,
+                health: { v: 1, status: "connected", reconnectRequired: false, future: true },
+        };
+        const parsed = parseQualifiedConnectedServiceCredentialStoredMetadataV4(raw);
+        expect(parsed).toEqual({ v: 4, storage: "stored_envelope_v1", credentialRevision,
+            values: { scopes: [], providerIdentity: { email: "operator@example.test" } },
+            health: { v: 1, status: "connected", reconnectRequired: false } });
+        expect(() => QualifiedConnectedServiceCredentialStoredMetadataV4Schema.parse(raw)).toThrow();
+        expect(withQualifiedConnectedServiceCredentialHealth(parsed, { v: 1, status: "needs_reauth", reconnectRequired: true }))
+            .not.toHaveProperty("future");
+    });
+
+    it("fails closed on malformed known health", () => {
         expect(() =>
             parseQualifiedConnectedServiceCredentialStoredMetadataV4({
                 v: 4,
