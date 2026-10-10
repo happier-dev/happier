@@ -278,6 +278,10 @@ export type AgentConnectedAccountResumeFileCandidateV1 = Readonly<{
 }>;
 
 export type AgentConnectedAccountResumeFileLookupV1 = Readonly<{
+  /** Verifies required relative files beneath declared state roots without exposing host paths. */
+  verifyDeclaredPaths(input: Readonly<{
+    paths: readonly Readonly<{ path: string; kind: 'file' | 'json_object' | 'directory' }>[];
+  }>): Promise<Readonly<{ found: boolean }>>;
   findDeclaredCandidate(input: Readonly<{
     matchesCandidate(candidate: AgentConnectedAccountResumeFileCandidateV1): boolean;
   }>): Promise<Readonly<{ found: boolean }>>;
@@ -300,6 +304,8 @@ export type AgentConnectedAccountResumeReachabilityResultV1 =
   | Readonly<{ ok: false; reason: string }>;
 
 export type AgentConnectedAccountContinuityV1 = Readonly<{
+  /** Credential adoption authority: writing a home alone never proves process adoption. */
+  generationApplicationScope?: 'per_session_runtime' | 'shared_group_auth_surface';
   nativeAuthCodec?: AgentConnectedAccountNativeAuthCodecV1;
   runtimeAuthAdapter?: AgentConnectedAccountRuntimeAuthAdapterV1;
   verifyResumeReachable?: (

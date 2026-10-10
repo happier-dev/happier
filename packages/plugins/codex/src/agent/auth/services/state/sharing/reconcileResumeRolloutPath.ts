@@ -13,6 +13,7 @@ import {
 } from '../../../../rollout/discovery/sessionFileSearch.js';
 import { resolveConfiguredCodexHomePath } from '../../../../rollout/discovery/homeEntries.js';
 import { readExactCodexVendorResumeId } from '../../home/sync/sessionFiles.js';
+import { readExactCodexProviderSessionId } from '../../../../../protocol/runtimeDescriptorV1.js';
 import { resolveCodexRuntimeHomeEnvironment } from './files.js';
 
 const CODEX_STATE_DATABASE_FILE_NAME = 'state_5.sqlite';
@@ -34,6 +35,57 @@ function readRolloutPath(database: SqliteDatabaseSync, vendorResumeId: string): 
   return typeof rolloutPath === 'string' && rolloutPath.trim().length > 0
     ? rolloutPath.trim()
     : null;
+}
+
+async function isExistingFile(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isFile();
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR')) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+/** Observes native resume authority without creating or repairing its index. */
+export async function resolveExistingCodexIndexedRolloutPath(params: Readonly<{
+  processEnv: Readonly<Record<string, string | undefined>>;
+  cwd: string;
+  vendorResumeId: string;
+  signal: AbortSignal;
+}>): Promise<string | null> {
+  params.signal.throwIfAborted();
+  const vendorResumeId = readExactCodexProviderSessionId(params.vendorResumeId);
+  if (!vendorResumeId) return null;
+  const codexHome = resolve(resolveConfiguredCodexHomePath(params.processEnv));
+  const homeDir = resolveHomeDirFromEnvironment(params.processEnv);
+  const runtimeHome = resolveCodexRuntimeHomeEnvironment({
+    env: params.processEnv,
+    codexHome,
+    cwd: params.cwd,
+    expandHomePath: rawPath => expandHomePath(rawPath, homeDir),
+  });
+  const databasePath = join(runtimeHome.CODEX_SQLITE_HOME, CODEX_STATE_DATABASE_FILE_NAME);
+  const databaseExists = await isExistingFile(databasePath);
+  params.signal.throwIfAborted();
+  if (!databaseExists) return null;
+
+  const database = openSqliteDatabaseSync(databasePath, { readOnly: true });
+  try {
+    params.signal.throwIfAborted();
+    const table = database
+      .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'threads'")
+      .get();
+    if (!table) return null;
+    const indexedPath = readRolloutPath(database, vendorResumeId);
+    if (!indexedPath) return null;
+    const rolloutExists = await isExistingFile(indexedPath);
+    params.signal.throwIfAborted();
+    return rolloutExists ? indexedPath : null;
+  } finally {
+    database.close();
+  }
 }
 
 /**

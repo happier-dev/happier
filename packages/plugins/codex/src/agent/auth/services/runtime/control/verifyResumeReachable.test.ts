@@ -5,6 +5,7 @@ import { verifyResumeReachableCodex } from './verifyResumeReachable.js';
 
 function createLookup(candidates: readonly AgentConnectedAccountResumeFileCandidateV1[]) {
   return {
+    verifyDeclaredPaths: async () => ({ found: false }),
     findDeclaredCandidate: vi.fn(async (input: Readonly<{
       matchesCandidate(candidate: AgentConnectedAccountResumeFileCandidateV1): boolean;
     }>) => ({ found: candidates.some(input.matchesCandidate) })),

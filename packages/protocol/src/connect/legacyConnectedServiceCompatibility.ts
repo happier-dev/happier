@@ -1,7 +1,9 @@
 import * as z from 'zod/mini';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 import {
     ConnectedServiceCredentialRecordV1Schema,
+    ConnectedServiceIdSchema,
     ConnectedServiceQuotaConfidenceV1Schema,
     ConnectedServiceQuotaRecoveryCreditsV1Schema,
     ConnectedServiceQuotaSnapshotV1Schema,
@@ -308,6 +310,22 @@ function findLegacyCompatibilityForRef(
     return null;
 }
 
+// Persisted predecessor ids include storage-only mappings that never belonged
+// to the public peer enum. Derive every other field from its credential owner;
+// this private read validator grants no public write or peer admission.
+const BuiltInLegacyStoredCredentialRecordV1Schema = z.lazy(() => {
+    const serviceId = z.enum(Object.keys(
+        BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
+    ) as BuiltInLegacyConnectedServiceId[]);
+    const [oauth, token] = ConnectedServiceCredentialRecordV1Schema.options;
+    return z.discriminatedUnion('kind', [
+        oauth.extend({ serviceId }),
+        token.extend({ serviceId }),
+    ]);
+});
+
+type BuiltInLegacyStoredCredentialRecordV1 = z.infer<typeof BuiltInLegacyStoredCredentialRecordV1Schema>;
+
 function readNonEmptyValue(
     values: Readonly<Record<string, string>>,
     key: string,
@@ -372,7 +390,7 @@ export function projectQualifiedConnectedAccountCredentialPlaintextV1(params: Re
     const payload =
         QualifiedConnectedAccountCredentialPayloadV1Schema.parse(params.payload);
     const legacy = findLegacyCompatibilityForRef(params.ref);
-    if (!legacy) return payload;
+    if (!legacy || !ConnectedServiceIdSchema.safeParse(legacy.serviceId).success) return payload;
 
     const credentialKinds = Object.entries(
         legacy.compatibility.authenticationModeByCredentialKind,
@@ -466,7 +484,7 @@ function throwLegacyAssertionMismatch(): never {
 }
 
 function assertLegacyVisibleCredentialMatchesEmbeddedPayload(
-    record: ConnectedServiceCredentialRecordV1,
+    record: BuiltInLegacyStoredCredentialRecordV1,
     payload: QualifiedConnectedAccountCredentialPayloadV1,
     metadata: QualifiedCredentialMetadata | undefined,
 ): void {
@@ -528,7 +546,7 @@ function assertLegacyVisibleCredentialMatchesEmbeddedPayload(
 }
 
 function normalizeHistoricalLegacyCredentialPayload(
-    record: ConnectedServiceCredentialRecordV1,
+    record: BuiltInLegacyStoredCredentialRecordV1,
     authenticationModeId: string,
 ): QualifiedConnectedAccountCredentialPayloadV1 {
     if (record.kind === 'token') {
@@ -558,10 +576,19 @@ function normalizeHistoricalLegacyCredentialPayload(
     }
 
     const oauthMetadata = normalizeConnectedServiceOauthCredentialRawMetadata(record.oauth.raw);
+    // 0.2 at 37a6541 (dirty Antigravity support) persisted only this selected
+    // project field; never promote the rest of its provider-native raw bag.
+    const raw = record.oauth.raw;
+    const projectId = record.serviceId === 'antigravity'
+        && raw && typeof raw === 'object' && !Array.isArray(raw)
+        && 'project_id' in raw && typeof raw.project_id === 'string'
+        ? raw.project_id.trim()
+        : null;
     return QualifiedConnectedAccountCredentialPayloadV1Schema.parse({
         v: 1,
         values: {
             ...oauthMetadata?.claudeAiOauth,
+            ...(projectId ? { projectId } : {}),
             accessToken: record.oauth.accessToken,
             refreshToken: record.oauth.refreshToken,
             ...(record.oauth.idToken
@@ -598,12 +625,12 @@ export function parseQualifiedConnectedAccountCredentialPlaintextV1(params: Read
     metadata?: QualifiedCredentialMetadata;
 }>): QualifiedConnectedAccountCredentialPayloadV1 {
     const qualified =
-        QualifiedConnectedAccountCredentialPayloadV1Schema.safeParse(
+        createStoredReadSchema(QualifiedConnectedAccountCredentialPayloadV1Schema).safeParse(
             params.plaintext,
         );
     if (qualified.success) return qualified.data;
 
-    const record = ConnectedServiceCredentialRecordV1Schema.safeParse(
+    const record = createStoredReadSchema(BuiltInLegacyStoredCredentialRecordV1Schema).safeParse(
         params.plaintext,
     );
     if (!record.success) {
@@ -627,8 +654,12 @@ export function parseQualifiedConnectedAccountCredentialPlaintextV1(params: Read
         ? record.data.oauth.raw
         : record.data.token.raw;
     const embedded =
-        QualifiedCredentialPayloadInLegacyRecordV1Schema.safeParse(raw);
+        createStoredReadSchema(QualifiedCredentialPayloadInLegacyRecordV1Schema).safeParse(raw);
     if (!embedded.success) {
+        if (raw && typeof raw === 'object'
+            && Object.hasOwn(raw, 'happierQualifiedConnectedAccountCredentialV1')) {
+            throw new BuiltInLegacyConnectedServiceCompatibilityError('connected_service_credential_invalid');
+        }
         return normalizeHistoricalLegacyCredentialPayload(
             record.data,
             params.authenticationModeId,

@@ -6,7 +6,6 @@ import type { PluginContributionIdentityV1 } from '../plugins/contributionIdenti
 
 import { StoredJsonContentEnvelopeSchema } from '../storage/storedJsonContentEnvelope.js';
 import type { AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
-import { SealedProviderAccountSubscriptionV1Schema } from './accountSubscription.js';
 import {
   CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1,
   type PluginConnectedAccountAuthenticationV2,
@@ -32,6 +31,8 @@ import {
   type QualifiedConnectedAccountRef,
 } from './qualifiedConnectedAccountPersistence.js';
 import {
+  QualifiedConnectedServiceUsageSourceV4Schema,
+  ProviderAccountUsageEncryptedContentV4Schema,
   QualifiedConnectedAccountConfigurationSnapshotV4Schema,
   QualifiedConnectedAccountConfigurationTargetV4Schema,
   QualifiedConnectedAccountGroupIncarnationV4Schema,
@@ -49,6 +50,8 @@ import {
 } from './qualifiedConnectedAccountProjectionsV4.js';
 
 export {
+  QualifiedConnectedServiceUsageSourceV4Schema,
+  QualifiedProviderAccountUsageRecordResponseV4Schema,
   QualifiedConnectedAccountConfigurationSnapshotV4Schema,
   QualifiedConnectedAccountConfigurationTargetV4Schema,
   QualifiedConnectedAccountCredentialMetadataV4Schema,
@@ -242,19 +245,6 @@ export {
   QualifiedConnectedAccountGroupResponseV4Schema,
 } from './qualifiedConnectedAccountProjectionsV4.js';
 
-export const QualifiedConnectedServiceUsageSourceV4Schema = lazyZodSchema(() => z.discriminatedUnion('bindingKind', [
-  z.object({
-    ref: asProtocolZod(QualifiedConnectedAccountRefSchema),
-    bindingKind: z.literal('account'),
-  }).strict(),
-  z.object({
-    ref: asProtocolZod(QualifiedConnectedAccountRefSchema),
-    bindingKind: z.literal('group_member'),
-    groupId: ConnectedServiceAuthGroupIdSchema,
-    groupGeneration: z.number().int().nonnegative().optional(),
-  }).strict(),
-]));
-
 export const QualifiedConnectedServiceUsageSourceResolveV4Schema =
   QualifiedConnectedServiceUsageSourceV4Schema;
 
@@ -305,12 +295,6 @@ export const QualifiedConnectedAccountQuotaSnapshotV4Schema =
     .omit({ serviceId: true, profileId: true })
     .extend({ ref: asProtocolZod(QualifiedConnectedAccountRefSchema) })
     .strict());
-
-const ProviderAccountUsageEncryptedContentV4Schema = lazyZodSchema(() => z.object({
-  t: z.literal('encrypted'),
-  c: z.string().min(1),
-  subscription: SealedProviderAccountSubscriptionV1Schema.optional(),
-}).strict());
 
 export const QualifiedConnectedServiceUsageSourceResolutionV4Schema = lazyZodSchema(() => z.object({
   source: QualifiedConnectedServiceUsageSourceV4Schema,
@@ -476,20 +460,6 @@ export const QualifiedProviderAccountUsageWriteSuccessV4Schema = lazyZodSchema((
  * its own — the record GET, DELETE and refresh owners all read this array, so a
  * bound here would make a stored record unreadable through its own routes.
  */
-export const QualifiedProviderAccountUsageRecordResponseV4Schema = lazyZodSchema(() => z.object({
-  content: z.discriminatedUnion('t', [
-    StoredJsonContentEnvelopeSchema.options[0],
-    ProviderAccountUsageEncryptedContentV4Schema,
-  ]),
-  metadata: z.object({
-    fetchedAt: z.number().int().nonnegative(),
-    staleAfterMs: z.number().int().nonnegative(),
-    status: z.enum(['ok', 'unavailable', 'estimated', 'error']),
-    refreshRequestedAt: z.number().int().nonnegative().optional(),
-  }).strict(),
-  sources: z.array(QualifiedConnectedServiceUsageSourceV4Schema),
-}).strict());
-
 export type QualifiedConnectedAccountServiceRef = PluginContributionIdentityV1;
 export type QualifiedConnectedAccountGroupRef = z.infer<
   typeof QualifiedConnectedAccountGroupRefSchema

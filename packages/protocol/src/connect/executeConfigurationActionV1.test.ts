@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { executeConnectedServiceConfigurationActionV1, type ConnectedServiceConfigurationActionHostV1 } from './executeConfigurationActionV1.js';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1, reorderConnectedServicePoolMembersV1 } from './configurationActionsV1.js';
 import { buildAgentDefaultChoices } from './agentDefaultChoices.js';
-import { resolveQualifiedConnectedAccountLabel } from './connectedServiceProfilePreferences.js';
 import { accountSettingsParse } from '../account/settings/accountSettings.js';
 import { QualifiedConnectedAccountGroupV4Schema, QualifiedConnectedAccountGroupMemberDeleteV4Schema, QualifiedConnectedAccountGroupMemberMutationV4Schema, QualifiedConnectedAccountGroupRefSchema } from './qualifiedConnectedAccountsV4.js';
 import { parseQualifiedConnectedAccountV4StructuredQueryValue } from './qualifiedConnectedAccountsV4QueryCodec.js';
@@ -13,6 +12,10 @@ import { getActionSpec, PublicActionIdSchema } from '../actions/actionSpecs.js';
 import { ActionsSettingsV1Schema } from '../actions/actionSettings.js';
 import type { QualifiedConnectedAccountPurposeBindingsV1 } from './connectedAccountPurposeBindings.js';
 import { isApprovalRequiredByActionsSettings } from '../actions/actionApprovalPolicy.js';
+import { PluginConnectedAccountAuthenticationModeV2Schema } from './pluginConnectedAccountAuthenticationV2.js';
+import type { ConnectedConfigurationCatalogV1 } from './connectedAccountConfigurationRowsV1.js';
+import type { ConnectedServiceConfigurationCatalogWriteV1 } from './connectedServiceConfigurationCatalogV1.js';
+import { formatSharedSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
 
 const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
 const agent = { agentId: 'codex', title: 'Codex', identity: { pluginId: 'happier.agent.codex', localId: 'codex' }, connectedAccounts: [{ purpose: 'model', service }] };
@@ -31,12 +34,447 @@ function purposeCatalogBoundary(read: () => Record<string, unknown>, apply: (del
 }
 
 describe('connected-service configuration Action owner', () => {
+    it('changes only the selected declared Agent purpose and preserves another purpose on the same service', async () => {
+        const catalog = purposeCatalogBoundary(() => ({}), () => {});
+        const scopedAgent = { ...agent, connectedAccounts: [{ purpose: 'model', service }, { purpose: 'review', service }] };
+        const host: ConnectedServiceConfigurationActionHostV1 = { assertCurrent() {}, async request() { throw new Error('unexpected_http'); },
+            mutatePurposeBindings: catalog.mutatePurposeBindings, async resolveAgent() { return scopedAgent; }, async resetQuota() {} };
+        const executor = createActionExecutor({ connectedServiceAction: ({ actionId, input }) =>
+            executeConnectedServiceConfigurationActionV1(host, actionId, input) } as unknown as ActionExecutorDeps);
+        const id = ActionIdSchema.parse('connectedServices.accounts.purposeDefault.set');
+        const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'home', runtimeAccountId: 'account' };
+        expect(await executor.execute(id, { agentId: 'codex', service, selection: { source: 'connected', profileId: 'work' } }, context))
+            .toEqual({ ok: true, result: { applied: true } });
+        expect(await executor.execute(id, { agentId: 'codex', service, purpose: 'review', selection: { source: 'native' } }, context))
+            .toEqual({ ok: true, result: { applied: true } });
+        expect(catalog.value.bindings).toEqual([{ purpose: { consumer: agent.identity, purpose: 'model' },
+            target: { kind: 'account', account: { service, accountId: 'work' } } }]);
+        expect(await executor.execute(id, { agentId: 'codex', service, purpose: 'undeclared', selection: { source: 'native' } }, context))
+            .toMatchObject({ ok: false });
+        expect(catalog.value.bindings).toHaveLength(1);
+    });
+    it.each(['account', 'attempt'] as const)('routes %s configuration through the approved exact machine owner', async kind => {
+        const exactTarget = kind === 'account'
+            ? { kind, account: { service, accountId: 'work' } }
+            : { kind, attemptId: 'attempt-1' };
+        const mode = PluginConnectedAccountAuthenticationModeV2Schema.parse({ id: 'manual', kind: 'manual',
+            outcomeReconciliation: 'none', fields: [], configuration: { scope: 'account', changeBehavior: 'reconnect',
+                fields: [{ id: 'endpoint', title: 'Endpoint', schema: { type: 'string' }, secret: false }] } });
+        const commands: unknown[] = [];
+        const host: ConnectedServiceConfigurationActionHostV1 = { assertCurrent() {},
+            async request() { throw new Error('unexpected_http'); }, async mutatePurposeBindings() {},
+            async resolveAgent() { return null; }, async resetQuota() {},
+            async controlCommand(machineId, command) {
+                commands.push({ machineId, command });
+                return { status: 'configurationCommitted',
+                    target: kind === 'account' ? { ...exactTarget, modeId: 'manual' }
+                        : { ...exactTarget, service, modeId: 'manual' },
+                    mode, occurrenceId: 'occurrence-1', sourceCustody: { kind: 'managed', immutableGenerationId: 'artifact-1', installSource: 'archive' },
+                    configuration: { status: 'ready', revision: 'revision-2', values: {}, configuredSecretFieldIds: [], missingFieldIds: [] } };
+            },
+        };
+        const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
+            'connectedServices.configuration.replace': ['cli'],
+        } });
+        const executor = createActionExecutor({
+            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
+            connectedServiceAction: ({ actionId, input }) => executeConnectedServiceConfigurationActionV1(host, actionId, input),
+        });
+        const input = { machineId: 'machine-1', target: exactTarget, expectedRevision: 'revision-1', values: {}, secretValues: {} };
+        const unapproved = createActionExecutor({
+            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, {}, context),
+            connectedServiceAction: ({ actionId, input }) => executeConnectedServiceConfigurationActionV1(host, actionId, input),
+        });
+        expect(await unapproved.execute('connectedServices.configuration.replace', input, { surface: 'cli' }))
+            .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+        expect(commands).toEqual([]);
+        expect(await executor.execute('connectedServices.configuration.replace', input, { surface: 'cli' }))
+            .toEqual({ ok: true, result: { applied: true, revision: 'revision-2' } });
+        expect(commands).toEqual([{ machineId: 'machine-1', command: { operation: 'replaceConfiguration',
+            target: exactTarget, expectedRevision: 'revision-1', values: {}, secretValues: {} } }]);
+        expect(getActionSpec('connectedServices.configuration.replace').executionPlacementForInput?.(input)).toBe('machine');
+    });
+    it('admits an exact Resource purpose choice before its canonical catalog CAS and rejects retired declaration authority', async () => {
+        const catalog = purposeCatalogBoundary(() => ({}), () => {});
+        const purpose = { consumer: { pluginId: 'example.resource', localId: 'models' }, purpose: 'model' };
+        const account = { service, accountId: 'work' };
+        let current = true;
+        const host = { assertCurrent() {}, async request() { throw new Error('unexpected_http'); },
+            mutatePurposeBindings: catalog.mutatePurposeBindings, async resolveAgent() { return null; }, async resetQuota() {},
+            // The daemon's installed Resource declaration is a genuine machine authority boundary.
+            async admitResourcePurposeTarget(input: unknown) {
+                if (JSON.stringify(input) !== JSON.stringify({ machineId: 'machine', purpose, target: { kind: 'account', account } })) return null;
+                return () => { if (!current) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' }); };
+            },
+        };
+        const executor = createActionExecutor({ connectedServiceAction: ({ actionId, input }) =>
+            executeConnectedServiceConfigurationActionV1(host, actionId, input) } as unknown as ActionExecutorDeps);
+        const id = ActionIdSchema.parse('connectedServices.purposes.default.set');
+        const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'home', runtimeAccountId: 'account' };
+        expect(await executor.execute(id, { machineId: 'machine', purpose, target: { kind: 'account', account } }, context))
+            .toEqual({ ok: true, result: { applied: true } });
+        expect(catalog.value.bindings).toEqual([{ purpose, target: { kind: 'account', account } }]);
+        current = false;
+        expect(await executor.execute(id, { machineId: 'machine', purpose, target: { kind: 'account', account } }, context)).toMatchObject({ ok: false });
+        expect(await executor.execute(id, { machineId: 'machine', purpose: { ...purpose, purpose: 'undeclared' },
+            target: { kind: 'account', account } }, context)).toMatchObject({ ok: false });
+        expect(catalog.value.bindings).toEqual([{ purpose, target: { kind: 'account', account } }]);
+    });
+    it('does not overwrite an intervening Agent default when accepting a new-account suggestion', async () => {
+        const catalog = purposeCatalogBoundary(() => ({}), () => {});
+        const host: ConnectedServiceConfigurationActionHostV1 = { assertCurrent() {}, async request() { throw new Error('unexpected_http'); },
+            mutatePurposeBindings: catalog.mutatePurposeBindings, async resolveAgent() { return agent; }, async resetQuota() {} };
+        const executor = createActionExecutor({ connectedServiceAction: ({ actionId, input }) =>
+            executeConnectedServiceConfigurationActionV1(host, actionId, input) } as unknown as ActionExecutorDeps);
+        const id = ActionIdSchema.parse('connectedServices.accounts.purposeDefault.set');
+        const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'home', runtimeAccountId: 'account' };
+        expect(await executor.execute(id, { agentId: 'codex', service, selection: { source: 'connected', profileId: 'intervening' } }, context))
+            .toEqual({ ok: true, result: { applied: true } });
+        expect(await executor.execute(id, { agentId: 'codex', service, selection: { source: 'connected', profileId: 'new' }, onlyIfUnset: true }, context))
+            .toEqual({ ok: true, result: { applied: true, changed: false } });
+        expect(catalog.value.bindings[0]?.target).toEqual({ kind: 'account', account: { service, accountId: 'intervening' } });
+    });
+    it('sets shared-resource and own-login defaults through the exact declared Agent purpose operation', async () => {
+        const catalog = purposeCatalogBoundary(() => ({}), () => {});
+        const host: ConnectedServiceConfigurationActionHostV1 = {
+            assertCurrent() {}, async request() { throw new Error('unexpected_pool_transport'); },
+            mutatePurposeBindings: catalog.mutatePurposeBindings,
+            async resolveAgent() { return agent; }, async resetQuota() { throw new Error('unexpected_quota_reset'); },
+        };
+        const executor = createActionExecutor({ connectedServiceAction: ({ actionId, input }) =>
+            executeConnectedServiceConfigurationActionV1(host, actionId, input) } as unknown as ActionExecutorDeps);
+        const actionId = ActionIdSchema.parse('connectedServices.accounts.purposeDefault.set');
+        const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'home', runtimeAccountId: 'account' };
+        const purpose = { consumer: agent.identity, purpose: 'model' };
+        const selection = { source: 'team_resource', resourceId: 'shared-model-account', deliveryMode: 'brokered' };
+        expect(await executor.execute(actionId, { agentId: 'codex', service, selection, teamId: 'team-work' }, context))
+            .toEqual({ ok: true, result: { applied: true } });
+        expect(catalog.value.teamResourceSelections).toEqual([{ purpose, teamId: 'team-work', selection }]);
+        expect(await executor.execute(actionId, { agentId: 'codex', service, selection: { source: 'native' } }, context))
+            .toEqual({ ok: true, result: { applied: true } });
+        expect(catalog.value.bindings).toEqual([]);
+        expect(catalog.value.teamResourceSelections ?? []).toEqual([]);
+        expect(await executor.execute(actionId, { agentId: 'codex', service,
+            selection, }, context)).toMatchObject({ ok: false });
+        expect(catalog.value.teamResourceSelections ?? []).toEqual([]);
+    });
+    it('admits exact authentication Actions through the incumbent machine command boundary and preserves human approval and secret custody', async () => {
+        const commands = [
+            { operation: 'beginConnect', service, modeId: 'manual', expectedConfigurationRevision: 'revision-1' },
+            { operation: 'beginReconnect', account: { service, accountId: 'work' } },
+            { operation: 'continueConnect', attemptId: 'attempt-1', expectedConfigurationRevision: 'revision-2' },
+            { operation: 'submitManual', attemptId: 'attempt-1', fields: { token: 'private-token' } },
+            { operation: 'completeOAuth', attemptId: 'attempt-1', completion: { code: 'private-code', state: 'private-state', callbackUrl: 'https://callback.test/' } },
+            { operation: 'pollDevice', attemptId: 'attempt-1' },
+            { operation: 'resumeDevice', attemptId: 'attempt-1' },
+            { operation: 'reconcile', attemptId: 'attempt-1' },
+            { operation: 'cancel', attemptId: 'attempt-1' },
+            { operation: 'read', attemptId: 'attempt-1', restoreKind: 'oauth' },
+        ] as const;
+        let issued: unknown = null;
+        const response = { status: 'awaitingOAuth', attemptId: 'attempt-1', authorizationUrl: 'https://oauth.test/?state=private-state', callbackUrl: 'https://callback.test/' };
+        const host = { assertCurrent() {}, async request() { throw new Error('unexpected_http'); },
+            async mutatePurposeBindings() {}, async resolveAgent() { return null; }, async resetQuota() {},
+            // Substitutes only the daemon RPC transport; canonical Action admission and command codecs are real.
+            async authenticationCommand(machineId: string, command: unknown) { issued = { machineId, command }; return response; },
+        };
+        for (const command of commands) {
+            const id = ActionIdSchema.parse(`connectedServices.authentication.${command.operation}`);
+            const spec = getActionSpec(id);
+            const { operation: _operation, ...operands } = command;
+            const input = { machineId: 'controller', ...operands };
+            expect(spec).toMatchObject({ executionPlacement: 'machine', approvalResultCustody: 'live_only' });
+            expect(spec.projectObservationOutput?.(response)).toEqual({ status: 'awaitingOAuth', attemptId: 'attempt-1' });
+            const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [id]: ['ui'] } });
+            const observations: unknown[] = [];
+            const approvalBoundary = {
+                approvalsCreate: async () => ({ artifactId: 'approval-1' }),
+                approvalsWaitForDecision: async ({ request }) => ({ decision: 'reject' as const, request }),
+                approvalsUpdate: async () => ({ ok: true as const }),
+            } satisfies Pick<ActionExecutorDeps, 'approvalsCreate' | 'approvalsWaitForDecision' | 'approvalsUpdate'>;
+            const executor = createActionExecutor({ isActionApprovalRequired: (action, context, admitted) =>
+                isApprovalRequiredByActionsSettings(action, settings, context, undefined, undefined, admitted),
+                ...approvalBoundary,
+                connectedServiceAction: ({ actionId, input }) => executeConnectedServiceConfigurationActionV1(host, actionId, input),
+                observeActionExecution: async observation => { observations.push(observation); },
+            } as unknown as ActionExecutorDeps);
+            issued = null;
+            if (command.operation !== 'read') {
+                expect(await executor.execute(id, input, { surface: 'mcp', authority: 'account_automation', actionCaller: { kind: 'host' },
+                    serverId: 'home', runtimeAccountId: 'account', actionRequestId: 'request-1' }))
+                    .toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+                expect(issued).toBeNull();
+            }
+            observations.length = 0;
+            const approvalOrigin = { kind: 'transcript_tool_call' as const, sessionId: 'session-1', toolCallId: 'call-1', toolInput: input };
+            expect(await executor.execute(id, input, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+                approvalOrigin }))
+                .toEqual({ ok: true, result: response });
+            expect(issued).toEqual({ machineId: 'controller', command });
+            expect(observations).toMatchObject([{ input: spec.projectObservationInput?.(input) ?? input,
+                context: { approvalOrigin: { kind: 'transcript_tool_call', sessionId: 'session-1', toolCallId: 'call-1' } },
+                result: { ok: true, result: { status: 'awaitingOAuth', attemptId: 'attempt-1' } } }]);
+            expect(approvalOrigin.toolInput).toEqual(input);
+            expect(JSON.stringify(observations)).not.toContain('private-');
+            expect(spec.inputSchema.safeParse({ ...input, operation: 'cancel' }).success).toBe(false);
+            if (command.operation === 'submitManual' || command.operation === 'completeOAuth') {
+                expect(spec.approvalInputCustody).toBe('live_only');
+                expect(JSON.stringify(spec.projectObservationInput?.(input))).not.toContain('private-');
+            }
+        }
+    });
+    it('keeps secret authentication input out of durable approval provenance while retaining the exact target and transcript correlation', async () => {
+        const id = ActionIdSchema.parse('connectedServices.authentication.submitManual');
+        const input = { machineId: 'controller', attemptId: 'attempt-1', fields: { token: 'private-token' } };
+        const persisted: unknown[] = [];
+        const approvalBoundary = {
+            // These substitute only the durable Artifact and human-decision boundaries.
+            approvalsCreate: async ({ request }) => { persisted.push(request); return { artifactId: 'approval-1' }; },
+            approvalsWaitForDecision: async ({ request }) => ({ decision: 'reject' as const, request }),
+            approvalsUpdate: async ({ request }) => { persisted.push(request); return { ok: true as const }; },
+        } satisfies Pick<ActionExecutorDeps, 'approvalsCreate' | 'approvalsWaitForDecision' | 'approvalsUpdate'>;
+        const executor = createActionExecutor({ isActionApprovalRequired: () => true,
+            ...approvalBoundary } as unknown as ActionExecutorDeps);
+        expect(await executor.execute(id, input, { surface: 'mcp', serverId: 'home', runtimeAccountId: 'account',
+            authority: 'account_automation', actionCaller: { kind: 'host' }, actionRequestId: 'request-1',
+            approvalOrigin: { kind: 'transcript_tool_call', sessionId: 'session-1', toolCallId: 'call-1', toolInput: input } }))
+            .toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+        expect(persisted).toMatchObject([{ actionId: id,
+            actionArgs: { machineId: 'controller', attemptId: 'attempt-1' },
+            origin: { kind: 'transcript_tool_call', sessionId: 'session-1', toolCallId: 'call-1' },
+            executionOriginV1: { serverId: 'home', machineId: 'controller', accountId: 'account' },
+        }, {}]);
+        expect(JSON.stringify(persisted)).not.toContain('private-');
+    });
+    it('lists pending authentication attempts without beginning or resuming one and preserves typed daemon refusals', async () => {
+        const id = ActionIdSchema.parse('connectedServices.authentication.pending.list');
+        let response: unknown = { status: 'pendingAttempts', attempts: [{ attemptId: 'attempt-1', kind: 'device', modeId: 'device',
+            intent: 'connect', phase: 'awaitingDeviceAuthorization', createdAtMs: 1, expiresAtMs: 100 }] };
+        const host = { assertCurrent() {}, async request() { throw new Error('unexpected_http'); },
+            async mutatePurposeBindings() {}, async resolveAgent() { return null; }, async resetQuota() {},
+            async controlCommand(machineId: string, command: unknown) {
+                expect({ machineId, command }).toEqual({ machineId: 'controller', command: { operation: 'listPendingAttempts', service } });
+                return response;
+            },
+        };
+        const spec = getActionSpec(id);
+        expect(spec).toMatchObject({ safety: 'safe', executionPlacement: 'machine' });
+        const executor = createActionExecutor({ connectedServiceAction: ({ actionId, input }) =>
+            executeConnectedServiceConfigurationActionV1(host, actionId, input) } as unknown as ActionExecutorDeps);
+        const input = { machineId: 'controller', service };
+        expect(await executor.execute(id, input, { surface: 'mcp', authority: 'account_automation', actionCaller: { kind: 'host' } }))
+            .toEqual({ ok: true, result: response });
+        response = { status: 'unavailable', code: 'connected_account_daemon_runtime_unavailable' };
+        expect(await executor.execute(id, input, { surface: 'mcp', authority: 'account_automation', actionCaller: { kind: 'host' } }))
+            .toEqual({ ok: true, result: response });
+    });
+    it('admits subscription price writes with ordinary approval and refuses retired authority before the owner', async () => {
+        const account = { service, accountId: 'personal' };
+        let applied: unknown = null;
+        let current = true;
+        const host = { assertCurrent() { if (!current) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' }); },
+            async request() { throw new Error('unexpected_transport'); }, async mutatePurposeBindings() {},
+            async resolveAgent() { return null; }, async resetQuota() {},
+            async setSubscriptionPrice(value: unknown) { applied = value; },
+        };
+        const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'connectedServices.subscription.price.set': ['ui'] } });
+        const executor = createActionExecutor({ isActionApprovalRequired: (id, context, admittedInput) =>
+            isApprovalRequiredByActionsSettings(id, settings, context, undefined, undefined, admittedInput),
+            connectedServiceAction: ({ actionId, input }) => executeConnectedServiceConfigurationActionV1(host, actionId, input),
+        } as unknown as ActionExecutorDeps);
+        const input = { account, price: { amount: 17, currency: 'EUR' } };
+        expect(getActionSpec('connectedServices.subscription.price.set')).toMatchObject({ safety: 'danger', executionPlacement: 'account' });
+        expect(await executor.execute('connectedServices.subscription.price.set', input, { surface: 'mcp', authority: 'account_automation', actionCaller: { kind: 'host' } }))
+            .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+        expect(applied).toBeNull();
+        expect(await executor.execute('connectedServices.subscription.price.set', input, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } }))
+            .toMatchObject({ ok: true, result: { applied: true } });
+        expect(applied).toEqual(input);
+        applied = null; current = false;
+        expect(await executor.execute('connectedServices.subscription.price.set', input, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } }))
+            .toMatchObject({ ok: false });
+        expect(applied).toBeNull();
+    });
+    it('reads and replaces service configuration through Account catalog CAS without a machine', async () => {
+        const mode = PluginConnectedAccountAuthenticationModeV2Schema.parse({ id: 'oauth', kind: 'oauthAuthorizationCode' as const, pkce: 'required' as const,
+            outcomeReconciliation: 'none' as const, configuration: { scope: 'service' as const, changeBehavior: 'reconnect' as const,
+                fields: [{ id: 'origin', title: 'Origin', schema: { type: 'string' as const, minLength: 1 }, required: true, semantic: 'connectedAccountOrigin' as const },
+                    { id: 'token', title: 'Token', secret: true, schema: { type: 'string', minLength: 10 } }] } });
+        let revision = 3;
+        let value: ConnectedConfigurationCatalogV1 = { v: 1 as const, entries: [{ service, modeId: 'oauth', revision: 'before',
+            values: { origin: 'https://before.test' }, secretRefs: {} }] };
+        let conflict = false;
+        let current = true;
+        let uncertain = false;
+        let writes = 0;
+        const secretMaterial = new Map<string, string>();
+        const host = {
+            assertCurrent() { if (!current) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' }); },
+            async request() { throw new Error('unexpected_request'); }, async mutatePurposeBindings() {},
+            async resolveAgent() { return null; }, async resetQuota() { throw new Error('unexpected_reset'); },
+            async controlCommand() { throw new Error('account_configuration_must_not_use_machine'); },
+            configurationCatalog: {
+                async resolveMode() { return mode; },
+                async read() { return { status: 'ready' as const, revision, record: { key: 'configurations' as const, value } }; },
+                createRevision() { return 'after'; }, async hasSecret(reference: string) { return secretMaterial.has(reference); },
+                async write(input: ConnectedServiceConfigurationCatalogWriteV1) {
+                    if (conflict || input.expectedRevision !== revision) return { status: 'conflict' as const, revision };
+                    // This persistence boundary emulates the existing atomic SavedSecret transaction.
+                    value = { ...input.record.value, entries: input.record.value.entries.map(entry => ({ ...entry,
+                        secretRefs: Object.fromEntries(Object.entries(entry.secretRefs).map(([field, ref]) => {
+                            const secret = input.newSecrets.find(candidate => candidate.id === ref);
+                            if (!secret) return [field, ref];
+                            const resourceRef = formatSharedSavedSecretRefV1(secret.id);
+                            secretMaterial.set(resourceRef, secret.value);
+                            return [field, resourceRef];
+                        })),
+                    })) };
+                    writes += 1;
+                    revision += 1;
+                    if (uncertain) throw Object.assign(new Error('lost-receipt'), { code: 'outcome_unknown' });
+                    return { status: 'updated' as const, revision, cursor: revision };
+                },
+            },
+        };
+        const settings = ActionsSettingsV1Schema.parse({ v: 1,
+            approvalWaivedSurfaces: { 'connectedServices.configuration.replace': ['ui'] } });
+        const executor = createActionExecutor({ isActionApprovalRequired: (id, context, admittedInput) =>
+            isApprovalRequiredByActionsSettings(id, settings, context, undefined, undefined, admittedInput),
+            connectedServiceAction: ({ actionId, input }) =>
+            executeConnectedServiceConfigurationActionV1(host, actionId, input) } as unknown as ActionExecutorDeps);
+        const context = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } };
+        const input = { service, modeId: 'oauth' };
+        expect(await executor.execute('connectedServices.configuration.get', input, context)).toMatchObject({ ok: true,
+            result: { configuration: { revision: 'before', values: { origin: 'https://before.test' } } } });
+        const replacement = { ...input, expectedRevision: 'before', values: { origin: 'https://after.test' }, secretValues: {} };
+        conflict = true;
+        expect(await executor.execute('connectedServices.configuration.replace', replacement, context))
+            .toMatchObject({ ok: false, errorCode: 'connected_account_configuration_changed' });
+        expect(value.entries[0]?.revision).toBe('before');
+        conflict = false;
+        expect(await executor.execute('connectedServices.configuration.replace', replacement, context)).toMatchObject({ ok: true,
+            result: { applied: true, revision: 'after' } });
+        expect(await executor.execute('connectedServices.configuration.get', input, context)).toMatchObject({ ok: true,
+            result: { configuration: { revision: 'after', values: { origin: 'https://after.test' } } } });
+        expect(await executor.execute('connectedServices.configuration.replace', replacement, context))
+            .toMatchObject({ ok: false, errorCode: 'connected_account_configuration_changed' });
+        expect(getActionSpec('connectedServices.configuration.replace')).toMatchObject({ safety: 'danger', executionPlacement: 'account' });
+        expect(await executor.execute('connectedServices.configuration.replace', { ...replacement, expectedRevision: 'after',
+            secretValues: { token: 'short' } }, context)).toMatchObject({ ok: false, errorCode: 'connected_account_configuration_invalid' });
+        expect(writes).toBe(1);
+        const secretReplacement = { ...replacement, expectedRevision: 'after', secretValues: { token: 'replacement-private-value' } };
+        uncertain = true;
+        expect(await executor.execute('connectedServices.configuration.replace', secretReplacement, context))
+            .toMatchObject({ ok: false, errorCode: 'outcome_unknown' });
+        expect(writes).toBe(2);
+        const observed = await executor.execute('connectedServices.configuration.get', input, context);
+        expect(observed).toMatchObject({ ok: true, result: { configuration: { configuredSecretFieldIds: ['token'] } } });
+        expect(JSON.stringify(observed)).not.toContain('replacement-private-value');
+        expect(JSON.stringify(value)).not.toContain('replacement-private-value');
+        expect(secretMaterial.get(formatSharedSavedSecretRefV1('after'))).toBe('replacement-private-value');
+        secretMaterial.clear();
+        uncertain = false;
+        expect(await executor.execute('connectedServices.configuration.replace', secretReplacement, context))
+            .toMatchObject({ ok: true, result: { applied: true } });
+        expect(writes).toBe(3);
+        secretMaterial.clear();
+        expect(await executor.execute('connectedServices.configuration.replace', { ...secretReplacement, secretValues: {} }, context))
+            .toMatchObject({ ok: false, errorCode: 'connected_account_configuration_invalid' });
+        expect(writes).toBe(3);
+        current = false;
+        await expect(executeConnectedServiceConfigurationActionV1(host, 'connectedServices.configuration.get', input))
+            .rejects.toMatchObject({ code: 'scope-retired' });
+    });
+    it('opens only the admitted descriptor billing destination and refuses absent or retired account evidence', async () => {
+        let current = true;
+        const opened: string[] = [];
+        const account = { service, accountId: 'default' };
+        const described = { status: 'described', service, occurrenceId: 'runtime', sourceCustody: { kind: 'bundled_first_party', packagedRuntime: { kind: 'cli_version_root', versionRootId: 'cli-1' } },
+            descriptor: { id: service.localId, title: 'ChatGPT', billingUrl: 'https://provider.test/billing',
+                authentication: { defaultModeId: 'oauth', modes: [{ id: 'oauth', kind: 'oauthAuthorizationCode', pkce: 'required', outcomeReconciliation: 'none' }] } },
+            accounts: [{ ref: account, status: 'connected', authenticationModeId: 'oauth', configurationReady: true,
+                configurationRevision: null, scopes: [], revisionSemantics: 'legacy_unfenced', credentialRevision: null }] };
+        const host: ConnectedServiceConfigurationActionHostV1 = {
+            assertCurrent() { if (!current) throw new Error('account_changed'); },
+            async request() { throw new Error('billing_must_not_write'); }, async mutatePurposeBindings() {},
+            async resolveAgent() { return null; }, async resetQuota() { throw new Error('billing_must_not_reset'); },
+            async controlCommand() { return described; },
+            async openBillingDestination(url) { opened.push(url); },
+        };
+        const input = { account, machineId: 'machine' };
+        const spec = getActionSpec('connectedServices.billing.open');
+        expect(spec).toMatchObject({ safety: 'safe', sideEffectClass: 'read', executionPlacement: 'client', approval: { result: 'none' },
+            surfaces: { ui: true, agent: true, cli: false, mcp: false } });
+        expect(spec.inputSchema.safeParse({ ...input, url: 'https://attacker.test' }).success).toBe(false);
+        expect(await executeConnectedServiceConfigurationActionV1(host, 'connectedServices.billing.open', input))
+            .toEqual({ opened: true });
+        expect(opened).toEqual(['https://provider.test/billing']);
+        expect(await executeConnectedServiceConfigurationActionV1({ ...host, async controlCommand() { return { ...described,
+            service: { ...service, pluginId: 'acme.other' } }; } }, 'connectedServices.billing.open', input))
+            .toMatchObject({ ok: false, errorCode: 'connected_service_billing_unavailable' });
+        expect(await executeConnectedServiceConfigurationActionV1({ ...host, async controlCommand() { return { ...described, accounts: [] }; } },
+            'connectedServices.billing.open', input)).toMatchObject({ ok: false, errorCode: 'connected_service_billing_unavailable' });
+        expect(await executeConnectedServiceConfigurationActionV1({ ...host, async controlCommand() { return { ...described,
+            descriptor: { ...described.descriptor, billingUrl: undefined } }; } }, 'connectedServices.billing.open', input))
+            .toMatchObject({ ok: false, errorCode: 'connected_service_billing_unavailable' });
+        await expect(executeConnectedServiceConfigurationActionV1({ ...host, async controlCommand() { current = false; return described; } },
+            'connectedServices.billing.open', input)).rejects.toThrow('account_changed');
+        expect(opened).toEqual(['https://provider.test/billing']);
+    });
+    it('reads quota through the captured host and withholds a result after authority changes', async () => {
+        let current = true;
+        const input = { source: { bindingKind: 'account' as const, ref: { service, accountId: 'default' } } };
+        const output = { source: input.source, current: null, pace: [], targets: [{ id: 'personal-advice',
+            scope: { kind: 'personal' }, utilizationFraction: 1.2 }], waitingWork: { status: 'available', entries: [] } };
+        const host: ConnectedServiceConfigurationActionHostV1 = {
+            assertCurrent() { if (!current) throw new Error('account_changed'); },
+            async request() { throw new Error('read_must_not_write'); }, async mutatePurposeBindings() {},
+            async resolveAgent() { return null; }, async resetQuota() { throw new Error('read_must_not_reset'); },
+            async readQuota() { return output; },
+        };
+        expect(await executeConnectedServiceConfigurationActionV1(host, 'connectedServices.quota.get', input)).toEqual(output);
+        await expect(executeConnectedServiceConfigurationActionV1({ ...host, async readQuota() { current = false; return output; } }, 'connectedServices.quota.get', input))
+            .rejects.toThrow('account_changed');
+    });
+    it('rejects a read-only selector response for a different qualified pool', async () => {
+        const host: ConnectedServiceConfigurationActionHostV1 = {
+            assertCurrent() {}, async request() { throw new Error('read_must_not_write'); }, async mutatePurposeBindings() {},
+            async resolveAgent() { return null; }, async resetQuota() { throw new Error('read_must_not_reset'); },
+            async readPoolSelection() { return { group: { service, groupId: 'other' }, observedAtMs: 10, selection: {
+                selected: null, reason: 'manual_strategy', excluded: [], decisionTrace: { activeProfileId: null,
+                    reason: 'manual_strategy', strategy: 'manual', selectionBasis: 'manual_strategy', sticky: false,
+                    orderedEligibleCandidates: [], candidates: [] },
+            } }; },
+        };
+        await expect(executeConnectedServiceConfigurationActionV1(host, 'connectedServices.pools.selection.get', { machineId: 'machine', group: { service, groupId: 'work' } }))
+            .rejects.toMatchObject({ code: 'qualified_connected_accounts_inconsistent_peer' });
+    });
+    it('admits quota and selector reads as safe public reads without account-switch authority', async () => {
+        const executor = createActionExecutor({ isActionApprovalRequired: () => false } as ActionExecutorDeps);
+        for (const [id, input] of [
+            ['connectedServices.quota.get', { source: { bindingKind: 'account', ref: { service, accountId: 'default' } } }],
+            ['connectedServices.pools.selection.get', { machineId: 'machine', group: { service, groupId: 'work' } }],
+        ] as const) {
+            const parsed = ActionIdSchema.safeParse(id);
+            expect(parsed.success).toBe(true);
+            if (!parsed.success) continue;
+            const spec = getActionSpec(parsed.data);
+            expect(spec.safety).toBe('safe');
+            expect(spec.sideEffectClass).toBe('read');
+            expect(spec.surfaces).toMatchObject({ ui: true, agent: true, mcp: true, cli: true, plugin: true });
+            expect(PublicActionIdSchema.safeParse(parsed.data).success).toBe(true);
+            expect(spec.approval.result).toBe('none');
+            expect(spec.inputSchema.safeParse(input).success).toBe(true);
+            expect(spec.inputSchema.safeParse({ ...input, credentials: 'caller-token' }).success).toBe(false);
+            expect(await executor.execute(parsed.data, input, { surface: 'mcp', serverId: 'home' }))
+                .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+        }
+    });
     it('captures legacy metadata before revocation and keeps the definite effect when metadata cleanup fails', async () => {
         const account = { service, accountId: 'default' };
         const effects: string[] = [];
         const host: ConnectedServiceConfigurationActionHostV1 = {
             assertCurrent() {}, async request() { throw new Error('unexpected_http'); },
-            async mutateSettings() { throw new Error('metadata_must_not_rewrite_settings'); },
             async mutatePurposeBindings() {}, async resolveAgent() { return agent; },
             async resetQuota() { throw new Error('unexpected_reset'); },
             async prepareConnectedMetadataCleanup({ subject }) {
@@ -66,7 +504,6 @@ describe('connected-service configuration Action owner', () => {
         const writes: unknown[] = [];
         const host: ConnectedServiceConfigurationActionHostV1 = {
             assertCurrent() {}, async request() { throw new Error('metadata_must_not_mutate_credentials'); },
-            async mutateSettings() { throw new Error('metadata_must_not_rewrite_settings'); },
             async mutatePurposeBindings() { throw new Error('metadata_must_not_change_grants'); },
             async resolveAgent() { throw new Error('metadata_must_not_change_agents'); },
             async resetQuota() { throw new Error('metadata_must_not_change_quota'); },
@@ -97,7 +534,6 @@ describe('connected-service configuration Action owner', () => {
         const pendingAck = new Promise<void>((resolve) => { acknowledge = resolve; });
         const host: ConnectedServiceConfigurationActionHostV1 = {
             assertCurrent() {}, async request() { throw new Error('unexpected_http'); },
-            async mutateSettings() { throw new Error('purpose_write_must_not_rewrite_settings'); },
             async mutatePurposeBindings(mutate) {
                 const next = mutate(purposeBindings, {});
                 await pendingAck;
@@ -124,9 +560,6 @@ describe('connected-service configuration Action owner', () => {
         const host = {
             assertCurrent() {},
             async request() { throw new Error('unexpected_network'); },
-            async mutateSettings(mutate: (value: Readonly<Record<string, unknown>>) => Record<string, unknown>) {
-                settings = mutate(settings) as typeof raw;
-            },
             async mutatePurposeBindings() { throw new Error('unexpected_purpose_write'); },
             async setConnectedLabel(input: { subject: import('./connectedAccountPresentationRowsV1.js').QualifiedConnectedEntityRef; label: string | null }) {
                 expect(input.subject).toEqual({ kind: 'account', account: { service, accountId: 'default' } });
@@ -168,7 +601,6 @@ describe('connected-service configuration Action owner', () => {
         const host: ConnectedServiceConfigurationActionHostV1 = {
             assertCurrent() {},
             async request() { throw new Error('unexpected_http'); },
-            async mutateSettings(mutate) { accountSettings = mutate(accountSettings); },
             mutatePurposeBindings: catalog.mutatePurposeBindings,
             async resolveAgent() { return agent; },
             async resetQuota() { throw new Error('unexpected_reset'); },
@@ -215,11 +647,15 @@ describe('connected-service configuration Action owner', () => {
         expect(await executor.execute(actionId, input, context)).toMatchObject({ ok: false, errorCode: 'qualified_connected_accounts_inconsistent_peer' });
         expect(accountSettings).toBe(beforeReview);
         response = { status: 'revoked', account, remoteStatus: 'remoteRevoked' };
-        expect(await executor.execute(actionId, input, context)).toEqual({ ok: true, result: response });
+        expect(await executor.execute(actionId, input, context)).toEqual({ ok: true, result: { status: 'revoked', account, remoteStatus: 'remoteRevoked',
+            metadataCleanup: { status: 'cleanup-pending', reason: 'connected_metadata_cleanup_pending' } } });
         const currentSettings = accountSettingsParse(accountSettings);
         expect(buildAgentDefaultChoices({ agents: [agent], settings: currentSettings, purposeBindings: catalog.value, target: { kind: 'account', account } })[0]?.isDefault).toBe(false);
-        expect(currentSettings.connectedServicesDefaultProfileByServiceId['openai-codex']).toBeUndefined();
-        expect(currentSettings.connectedServicesProfileLabelByKey[`openai-codex/${account.accountId}`]).toBeUndefined();
+        // A retained profile preference does not make the native Agent default connected.
+        expect(currentSettings.connectedServicesDefaultProfileByServiceId['openai-codex']).toBe(account.accountId);
+        // Presentation labels are retired Settings source, not current parsed Settings.
+        // A pending metadata cutover must retain that source until its owner acknowledges it.
+        expect(accountSettings).toMatchObject({ connectedServicesProfileLabelByKey: { [`openai-codex/${account.accountId}`]: 'Work' } });
         expect(accountSettings.other).toBe('retained');
     });
     it('preserves transport dispositions through the canonical Action executor', async () => {
@@ -228,7 +664,6 @@ describe('connected-service configuration Action owner', () => {
         const host: ConnectedServiceConfigurationActionHostV1 = {
             assertCurrent() {},
             async request() { throw Object.assign(new Error('transport disposition'), { code }); },
-            async mutateSettings() { throw new Error('unexpected_settings'); },
             async mutatePurposeBindings() { throw new Error('unexpected_purpose_mutation'); },
             async resolveAgent() { throw new Error('unexpected_catalog'); },
             async resetQuota() { throw new Error('unexpected_reset'); },
@@ -263,7 +698,7 @@ describe('connected-service configuration Action owner', () => {
                 if (request.method === 'GET') throw Object.assign(new Error('connect_group_not_found'), { code: 'connect_group_not_found' });
                 return request.method === 'DELETE' && request.path.startsWith('/v4/connect/qualified/group?') ? { success: deletionAcknowledged } : { group: pool };
             },
-            async mutateSettings(mutate) { settings = mutate(settings); }, async resolveAgent() { return agent; }, async resetQuota() { throw new Error('unexpected_reset'); },
+            async resolveAgent() { return agent; }, async resetQuota() { throw new Error('unexpected_reset'); },
             mutatePurposeBindings: catalog.mutatePurposeBindings,
         };
         const executor = createActionExecutor({ connectedServiceAction: ({ actionId, input }) => executeConnectedServiceConfigurationActionV1(host, actionId, input) } as unknown as ActionExecutorDeps);
@@ -296,7 +731,8 @@ describe('connected-service configuration Action owner', () => {
         expect(await executor.execute('connectedServices.pools.delete', { group: pool.ref, ...revision }, context)).toMatchObject({ ok: false });
         expect(settings).toBe(beforeRejectedDelete);
         deletionAcknowledged = true;
-        expect(await executor.execute('connectedServices.pools.delete', { group: pool.ref, ...revision }, context)).toEqual({ ok: true, result: { applied: true } });
+        expect(await executor.execute('connectedServices.pools.delete', { group: pool.ref, ...revision }, context)).toEqual({ ok: true, result: { applied: true,
+            metadataCleanup: { status: 'cleanup-pending', reason: 'connected_metadata_cleanup_pending' } } });
         const deletion = new URL(requests.findLast((request) => request.method === 'DELETE')!.path, 'https://home.test');
         expect(parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountGroupRefSchema, deletion.searchParams.get('group')!)).toEqual(pool.ref);
         expect(deletion.searchParams.get('expectedIncarnation')).toBe('pool-life');
@@ -318,7 +754,7 @@ describe('connected-service configuration Action owner', () => {
             assertCurrent() {}, async request(request) {
                 return request.method === 'DELETE' ? acknowledgement : { group: replacement };
             },
-            async mutateSettings(mutate) { settings = mutate(settings); }, async resolveAgent() { return agent; }, async resetQuota() { throw new Error('unexpected_reset'); },
+            async resolveAgent() { return agent; }, async resetQuota() { throw new Error('unexpected_reset'); },
             mutatePurposeBindings: catalog.mutatePurposeBindings,
         };
         const pending = executeConnectedServiceConfigurationActionV1(host, 'connectedServices.pools.delete', {
@@ -339,7 +775,8 @@ describe('connected-service configuration Action owner', () => {
         };
         await expect(executeConnectedServiceConfigurationActionV1(unreadableHost, 'connectedServices.pools.delete', {
             group: replacement.ref, expectedGeneration: 1, expectedIncarnation: replacement.incarnation,
-        })).rejects.toMatchObject({ code: 'transport_unavailable' });
+        })).resolves.toEqual({ applied: true,
+            metadataCleanup: { status: 'cleanup-pending', reason: 'connected_metadata_cleanup_pending' } });
         expect(buildAgentDefaultChoices({ agents: [agent], settings: accountSettingsParse(settings), purposeBindings: catalog.value, target })[0]?.isDefault).toBe(true);
     });
     it('lets an agent refresh the exact qualified account and rejects an unacknowledged refresh', async () => {
@@ -355,7 +792,6 @@ describe('connected-service configuration Action owner', () => {
         const host: ConnectedServiceConfigurationActionHostV1 = {
             assertCurrent() {},
             async request(request) { requests.push(request); return response; },
-            async mutateSettings() { throw new Error('unexpected_settings'); },
             async mutatePurposeBindings() { throw new Error('unexpected_purpose_mutation'); },
             async resolveAgent() { throw new Error('unexpected_catalog'); },
             async resetQuota() { throw new Error('unexpected_reset'); },
@@ -394,21 +830,20 @@ describe('connected-service configuration Action owner', () => {
         });
         const host: ConnectedServiceConfigurationActionHostV1 = {
             assertCurrent() {}, async request() { return { group }; },
-            async mutateSettings() { throw new Error('unexpected_settings'); }, async resolveAgent() { return null; }, async resetQuota() { throw new Error('unexpected_reset'); },
+            async resolveAgent() { return null; }, async resetQuota() { throw new Error('unexpected_reset'); },
             async mutatePurposeBindings() { throw new Error('unexpected_purpose_mutation'); },
         };
         await expect(executeConnectedServiceConfigurationActionV1(host, 'connectedServices.pools.switchNow', {
             group: { service, groupId: 'work' }, connectedAccountId: 'personal', expectedGeneration: 1,
         })).rejects.toMatchObject({ code: 'qualified_connected_accounts_inconsistent_peer' });
     });
-    it('renames predecessor labels without changing unrelated settings, writes defaults through purpose bindings, and keeps privacy local', async () => {
+    it('keeps defaults and local privacy usable when the presentation writer is unavailable', async () => {
         let settings: Record<string, unknown> = { other: { retained: true }, connectedServicesProfileLabelByKey: { 'openai-codex/personal': 'Old' } };
         const catalog = purposeCatalogBoundary(() => settings, delta => { settings = { ...settings, ...delta }; });
         let hidden = false;
         const host: ConnectedServiceConfigurationActionHostV1 = {
             assertCurrent() {},
             async request() { throw new Error('unexpected_network'); },
-            async mutateSettings(mutate) { settings = mutate(settings); },
             mutatePurposeBindings: catalog.mutatePurposeBindings,
             async resolveAgent() { return agent; },
             async resetQuota() { throw new Error('unexpected_reset'); },
@@ -417,10 +852,9 @@ describe('connected-service configuration Action owner', () => {
         // The settings/network/device boundary is injected; admission, schema parsing and domain writers remain real.
         const executor = createActionExecutor({ connectedServiceAction: ({ actionId, input }) => executeConnectedServiceConfigurationActionV1(host, actionId, input) } as unknown as ActionExecutorDeps);
         const context = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } };
-        expect(await executor.execute('connectedServices.accounts.rename', { account: { service, accountId: 'personal' }, label: ' Team ' }, context)).toEqual({ ok: true, result: { applied: true } });
-        const labels = settings.connectedServicesProfileLabelByKey as Record<string, string>;
-        expect(resolveQualifiedConnectedAccountLabel({ service, legacyServiceId: 'openai-codex', accountId: 'personal', labelsByKey: labels })).toBe('Team');
-        expect(labels['openai-codex/personal']).toBeUndefined();
+        expect(await executor.execute('connectedServices.accounts.rename', { account: { service, accountId: 'personal' }, label: ' Team ' }, context))
+            .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+        expect(settings.connectedServicesProfileLabelByKey).toEqual({ 'openai-codex/personal': 'Old' });
         expect(settings.other).toEqual({ retained: true });
         await executeConnectedServiceConfigurationActionV1(host, 'connectedServices.pools.default.set', { group: { service, groupId: 'work' }, agentId: 'codex', makeDefault: true });
         expect(buildAgentDefaultChoices({ agents: [agent], settings: accountSettingsParse(settings), purposeBindings: catalog.value, target })[0]?.isDefault).toBe(true);
@@ -468,7 +902,7 @@ describe('connected-service configuration Action owner', () => {
                 current = { ...current, generation: current.generation + 1, members: current.members.map(member => member.connectedAccountId === body.connectedAccountId ? { ...member, priority: body.priority! } : member) };
                 return { group: current };
             },
-            async mutateSettings() { throw new Error('unexpected_settings'); }, async resolveAgent() { return agent; }, async resetQuota() { throw new Error('unexpected_reset'); },
+            async resolveAgent() { return agent; }, async resetQuota() { throw new Error('unexpected_reset'); },
             async mutatePurposeBindings() { throw new Error('unexpected_purpose_mutation'); },
         };
         const executor = createActionExecutor({ connectedServiceAction: ({ actionId, input }) => executeConnectedServiceConfigurationActionV1(host, actionId, input) } as unknown as ActionExecutorDeps);

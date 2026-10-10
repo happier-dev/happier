@@ -7,7 +7,8 @@ import {
 import { PluginError } from '@happier-dev/plugin-sdk';
 import {
   CLAUDE_DEFAULT_SUBSCRIPTION_USAGE_URL,
-  parseClaudeSubscriptionUsageMeters,
+  createClaudeSubscriptionQuotaFetchError,
+  parseClaudeSubscriptionConnectedAccountQuotaLimits,
   resolveClaudeSubscriptionPlanLabelFromMetadata,
 } from '../agent/auth/services/quota/subscriptionFetcher.js';
 import {
@@ -465,34 +466,13 @@ const claudeSubscriptionRuntimeDefinition: PluginConnectedAccountRuntime = {
       redirect: 'error',
     }, { signal });
     if (response.status < 200 || response.status >= 300) {
-      throw new Error(`Claude subscription usage fetch failed (${response.status})`);
+      throw createClaudeSubscriptionQuotaFetchError({
+        status: response.status, headers: response.headers, body: new TextDecoder().decode(response.body), nowMs: Date.now(),
+      });
     }
-    const limits = parseClaudeSubscriptionUsageMeters(
+    const limits = parseClaudeSubscriptionConnectedAccountQuotaLimits(
       parseResponseBody(response.body),
-    ).map((meter) => {
-      const used = typeof meter.used === 'number' && Number.isFinite(meter.used)
-        ? meter.used
-        : typeof meter.utilizationPct === 'number' && Number.isFinite(meter.utilizationPct)
-          ? meter.utilizationPct
-          : undefined;
-      const remaining =
-        typeof meter.limit === 'number'
-        && Number.isFinite(meter.limit)
-        && used !== undefined
-          ? Math.max(0, meter.limit - used)
-          : typeof meter.utilizationPct === 'number'
-            && Number.isFinite(meter.utilizationPct)
-            ? Math.max(0, 100 - meter.utilizationPct)
-            : undefined;
-      return {
-        id: meter.meterId,
-        ...(used === undefined ? {} : { used }),
-        ...(remaining === undefined ? {} : { remaining }),
-        ...(typeof meter.resetsAt === 'number' && Number.isFinite(meter.resetsAt)
-          ? { resetsAtMs: meter.resetsAt }
-          : {}),
-      };
-    });
+    );
     const planLabel = resolveClaudeSubscriptionPlanLabelFromMetadata(await readPlanMetadata(context.credentials, options));
     return { observedAtMs: Date.now(), limits, ...(planLabel ? { planLabel } : {}) };
   },

@@ -1,13 +1,16 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ProviderConnectionIdSchema, ProviderMachineIdSchema } from './ids.js';
+import { ProfileRecordIdV1Schema } from '../profiles/v2/profileId.js';
+import { isMachineRpcTimeoutError, MACHINE_RPC_TIMEOUT_ERROR_CODE, readRpcErrorCode, RPC_ERROR_CODES } from '../rpc/errors.js';
 
-export const ProviderErrorCodeV1Schema = z.enum([
+export const ProviderErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'model_not_granted', 'permission_mode_not_granted',
   'provider_feature_disabled', 'provider_connection_not_found', 'provider_connection_changed', 'provider_contribution_unavailable', 'provider_connection_disabled',
   'provider_account_grant_stale', 'provider_not_enabled_on_machine', 'provider_machine_grant_stale',
   'provider_incompatible_with_agent', 'provider_compatibility_unverified', 'provider_secret_missing', 'provider_secret_unavailable',
-  'provider_credential_transport_unavailable', 'provider_endpoint_unreachable', 'provider_endpoint_unavailable',
+  'provider_credential_transport_unavailable', 'provider_run_credential_selection_required', 'provider_endpoint_unreachable', 'provider_endpoint_unavailable',
   'provider_machine_unavailable',
   'machine_offline', 'agent_unavailable', 'agent_timeout', 'agent_error',
   'provider_probe_capacity_exhausted',
@@ -20,16 +23,16 @@ export const ProviderErrorCodeV1Schema = z.enum([
   'provider_settings_invalid', 'provider_connection_invalid',
   'provider_profile_migration_source_changed', 'provider_profile_migration_source_not_found',
   'provider_profile_migration_conflict',
-]);
+]));
 export type ProviderErrorCodeV1 = z.infer<typeof ProviderErrorCodeV1Schema>;
 
-export const ProviderRecoveryActionV1Schema = z.enum([
+export const ProviderRecoveryActionV1Schema = lazyZodSchema(() => z.enum([
   'review_features', 'choose_connection', 'restore_plugin', 'enable_connection', 'review_account_grant', 'enable_on_machine',
   'review_machine_grant', 'review_compatibility', 'add_secret', 'review_credential_transport',
   'review_connection', 'retry', 'replace_secret', 'choose_model', 'load_model', 'review_and_restart',
   'restart_probe', 'reduce_provider_settings',
   'review_profile_migration', 'review_current_state',
-]);
+]));
 export type ProviderRecoveryActionV1 = z.infer<typeof ProviderRecoveryActionV1Schema>;
 
 const ERROR_DEFAULTS = {
@@ -48,6 +51,7 @@ const ERROR_DEFAULTS = {
   provider_secret_missing: [false, 'add_secret'],
   provider_secret_unavailable: [true, 'retry'],
   provider_credential_transport_unavailable: [false, 'review_credential_transport'],
+  provider_run_credential_selection_required: [false, 'choose_connection'],
   provider_endpoint_unreachable: [true, 'retry'],
   provider_endpoint_unavailable: [true, 'retry'],
   provider_machine_unavailable: [true, 'retry'],
@@ -81,12 +85,12 @@ const ERROR_DEFAULTS = {
   provider_profile_migration_conflict: [false, 'review_profile_migration'],
 } as const satisfies Record<ProviderErrorCodeV1, readonly [boolean, ProviderRecoveryActionV1]>;
 
-export const ProviderErrorV1Schema = z.object({
+export const ProviderErrorV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   code: ProviderErrorCodeV1Schema,
   connectionId: ProviderConnectionIdSchema.optional(),
   machineId: ProviderMachineIdSchema.optional(),
-  sourceProfileId: z.string().min(1).max(256).optional(),
+  sourceProfileId: ProfileRecordIdV1Schema.optional(),
   retryable: z.boolean(),
   retryAfterMs: z.number().int().nonnegative().max(86_400_000).optional(),
   action: ProviderRecoveryActionV1Schema,
@@ -104,7 +108,7 @@ export const ProviderErrorV1Schema = z.object({
   if (value.code !== 'provider_endpoint_rate_limited' && value.retryAfterMs !== undefined) {
     ctx.addIssue({ code: 'custom', path: ['retryAfterMs'], message: 'Retry delay is rate-limit only' });
   }
-});
+}));
 export type ProviderErrorV1 = z.infer<typeof ProviderErrorV1Schema>;
 
 export function createProviderErrorV1(
@@ -121,4 +125,55 @@ export function createProviderErrorV1(
   const { modelLoadAvailable = false, ...errorContext } = context;
   const resolvedAction = code === 'provider_model_unloaded' && modelLoadAvailable ? 'load_model' : action;
   return ProviderErrorV1Schema.parse({ v: 1, code, retryable, action: resolvedAction, ...errorContext });
+}
+
+/** Classify Provider transport/Account mutation failures without disclosing raw failure prose. */
+export function providerErrorFromRpcFailure(
+  caught: unknown,
+  context: Readonly<{ connectionId?: string; machineId?: string; sourceProfileId?: string }> = {},
+): ProviderErrorV1 {
+  const typed = ProviderErrorV1Schema.safeParse(caught);
+  if (typed.success) return typed.data;
+
+  const rpcErrorCode = readRpcErrorCode(caught);
+  const transportCode = caught && typeof caught === 'object' && 'code' in caught
+    ? (typeof caught.code === 'string' ? caught.code : undefined)
+    : undefined;
+  const message = caught instanceof Error ? caught.message : undefined;
+
+  if (transportCode === 'provider_catalog_outcome_unknown') {
+    return createProviderErrorV1('provider_rpc_mutation_outcome_unknown', context);
+  }
+  if (transportCode === 'provider_catalog_conflict') {
+    return createProviderErrorV1('provider_connection_changed', context);
+  }
+
+  if (rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE || rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND) {
+    return createProviderErrorV1('agent_unavailable', context);
+  }
+  if (isMachineRpcTimeoutError(caught)
+    || transportCode === MACHINE_RPC_TIMEOUT_ERROR_CODE
+    || transportCode === 'ETIMEDOUT'
+    || transportCode === 'TIMEOUT'
+    || rpcErrorCode === MACHINE_RPC_TIMEOUT_ERROR_CODE
+    || rpcErrorCode === 'RPC_TIMEOUT') {
+    return createProviderErrorV1('agent_timeout', context);
+  }
+  if (rpcErrorCode === 'machine_offline'
+    || rpcErrorCode === 'MACHINE_ENCRYPTION_UNAVAILABLE'
+    || transportCode === 'machine_offline'
+    || transportCode === 'ENETUNREACH'
+    || transportCode === 'EHOSTUNREACH'
+    || transportCode === 'ENETDOWN'
+    || transportCode === 'ECONNREFUSED'
+    || transportCode === 'ENOTFOUND'
+    || transportCode === 'EAI_AGAIN'
+    || transportCode === 'ECONNRESET'
+    || transportCode === 'ERR_NETWORK'
+    || transportCode === 'OFFLINE'
+    || message === 'Socket not connected'
+    || message?.includes('Machine encryption not found')) {
+    return createProviderErrorV1('machine_offline', context);
+  }
+  return createProviderErrorV1('agent_error', context);
 }

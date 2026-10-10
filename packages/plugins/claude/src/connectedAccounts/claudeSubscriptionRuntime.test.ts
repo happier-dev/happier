@@ -70,6 +70,29 @@ function readContext(
 }
 
 describe('Claude Subscription Connected Account', () => {
+  it.each([
+    { status: 401, headers: {}, code: 'auth_failure', retryAfterMs: null, resetAtMs: null },
+    { status: 403, headers: {}, code: 'auth_failure', retryAfterMs: null, resetAtMs: null },
+    { status: 429, headers: { 'Retry-After': '45' }, code: 'provider_backoff', retryAfterMs: 45_000, resetAtMs: null },
+    { status: 429, headers: { 'retry-after': 'Sun, 17 May 2026 12:00:45 GMT' }, code: 'provider_backoff', retryAfterMs: 45_000, resetAtMs: Date.parse('2026-05-17T12:00:45Z') },
+    { status: 429, headers: { 'anthropic-ratelimit-tokens-reset': '2026-05-17T12:00:45Z' }, code: 'provider_backoff', retryAfterMs: 45_000, resetAtMs: Date.parse('2026-05-17T12:00:45Z') },
+  ])('preserves typed quota failure $status and its retry facts', async ({ status, headers, code, retryAfterMs, resetAtMs }) => {
+    const runtime = activateConnectedAccountRuntime();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-05-17T12:00:00Z'));
+    try {
+      await expect(runtime.quota?.({
+        ...readContext('oauth', new Map([['accessToken', 'claude-access']])),
+        services: { http: { async request() {
+          return { status, finalUrl: 'https://api.anthropic.com/api/oauth/usage', headers, body: new TextEncoder().encode('{}') };
+        } } },
+      } as Parameters<NonNullable<PluginConnectedAccountRuntime['quota']>>[0])).rejects.toMatchObject({
+        name: 'ConnectedServiceQuotaFetchError', status, quotaFetchErrorCode: code, retryAfterMs, resetAtMs,
+      });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it('retains existing plan facts through a successful credential refresh', async () => {
     const runtime = activateConnectedAccountRuntime();
     const staged = credentialStore();
@@ -380,6 +403,7 @@ describe('Claude Subscription Connected Account', () => {
           utilization: 25,
           resets_at: '2026-02-23T00:00:00Z',
         },
+        seven_day_sonnet: { utilization: 35, model_id: 'claude-sonnet-4-5', unit: 'tokens' },
         extra_usage: {
           is_enabled: true,
           monthly_limit: 100,
@@ -406,6 +430,10 @@ describe('Claude Subscription Connected Account', () => {
       limits: expect.arrayContaining([
         {
           id: 'five_hour',
+          label: '5-hour',
+          windowDurationMs: 18_000_000,
+          unit: 'unknown',
+          status: 'ok',
           used: 10,
           remaining: 90,
           resetsAtMs: Date.parse('2026-02-16T00:00:00Z'),
@@ -417,11 +445,19 @@ describe('Claude Subscription Connected Account', () => {
           resetsAtMs: Date.parse('2026-02-23T00:00:00Z'),
         },
         {
+          id: 'seven_day_sonnet',
+          label: 'Weekly (Sonnet)',
+          windowDurationMs: 604_800_000,
+          modelId: 'claude-sonnet-4-5',
+          unit: 'tokens',
+          details: {},
+        },
+        {
           id: 'extra_usage',
           used: 20,
           remaining: 80,
         },
-      ]),
+      ].map((limit) => expect.objectContaining(limit))),
     });
     expect(request).toHaveBeenCalledWith({
       url: 'https://api.anthropic.com/api/oauth/usage',

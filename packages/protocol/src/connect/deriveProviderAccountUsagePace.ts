@@ -172,3 +172,56 @@ export function deriveProviderAccountUsageUnusedCapacity(input: Readonly<{ histo
       method: terminal ? 'terminal_observation' as const : 'linear_pace_at_last_observation' as const } };
   }) };
 }
+
+export type ProviderAccountUsageEarlierWindowCurvesV1 =
+  | Readonly<{ status: 'unavailable'; reason: 'not_loaded' | 'unknown_window' }>
+  | Readonly<{
+    status: 'available';
+    /** Newest ended window first; each point sits on the shared elapsed-share axis of its own window. */
+    curves: readonly Readonly<{ window: ProviderAccountUsagePaceWindowV1; points: readonly Readonly<{ elapsedFraction: number; usedFraction: number }>[] }>[];
+    /** Earlier windows of the same meter that cannot be drawn beside the current one, with the reason. */
+    excluded: readonly Readonly<{ window: ProviderAccountUsagePaceWindowV1; reason: 'unknown_window' | 'entitlement_changed' | 'denominator_changed' | 'reset_changed' | 'inconsistent_counters' | 'counter_reset' | 'single_reading' }>[];
+  }>;
+
+/**
+ * Earlier ended windows of the current record's meter as curves for a "usual week" comparison. Window
+ * identity and comparability are the pace owner's own; nothing is averaged or forecast here.
+ */
+export function deriveProviderAccountUsageEarlierWindowCurves(input: Readonly<{ current: ProviderAccountUsageSnapshotV1; meterId: string; history?: readonly ProviderAccountUsageSnapshotV1[] }>): ProviderAccountUsageEarlierWindowCurvesV1 {
+  if (input.history === undefined) return { status: 'unavailable', reason: 'not_loaded' };
+  const currentWindow = resolveProviderAccountUsagePaceWindow(input.current, input.meterId);
+  if (!currentWindow) return { status: 'unavailable', reason: 'unknown_window' };
+  const groups = new Map<string, { window: ProviderAccountUsagePaceWindowV1; samples: ProviderAccountUsageSnapshotV1[] }>();
+  for (const snapshot of input.history) {
+    if (snapshot.recordId !== input.current.recordId || !snapshot.meters.some(meter => meter.meterId === input.meterId)) continue;
+    const window = resolveProviderAccountUsagePaceWindow(snapshot, input.meterId);
+    if (!window || window.resetAtMs > currentWindow.windowStartAtMs) continue;
+    const key = JSON.stringify(window);
+    const group = groups.get(key) ?? { window, samples: [] };
+    group.samples.push(snapshot); groups.set(key, group);
+  }
+  const curves: { window: ProviderAccountUsagePaceWindowV1; points: { elapsedFraction: number; usedFraction: number }[] }[] = [];
+  const excluded: { window: ProviderAccountUsagePaceWindowV1; reason: Extract<ProviderAccountUsageEarlierWindowCurvesV1, { status: 'available' }>['excluded'][number]['reason'] }[] = [];
+  for (const { window, samples } of [...groups.values()].sort((a, b) => b.window.resetAtMs - a.window.resetAtMs)) {
+    const exclude = (reason: (typeof excluded)[number]['reason']) => { excluded.push({ window, reason }); };
+    if (window.windowDurationMs !== currentWindow.windowDurationMs) { exclude('reset_changed'); continue; }
+    const incompatible = samples.map(previous => readProviderAccountUsageWindowComparabilityReason({ previous, current: input.current, meterId: input.meterId })).find(Boolean);
+    if (incompatible) { exclude(incompatible); continue; }
+    const points = new Map<number, number>();
+    let failure: (typeof excluded)[number]['reason'] | null = null;
+    for (const sample of [...samples].sort((a, b) => a.observedAtMs - b.observedAtMs)) {
+      const meter = sample.meters.find(value => value.meterId === input.meterId)!;
+      if (hasInconsistentCounters(meter)) { failure = 'inconsistent_counters'; break; }
+      const used = fraction(meter);
+      const elapsedFraction = (sample.observedAtMs - window.windowStartAtMs) / window.windowDurationMs;
+      if (used == null || elapsedFraction < 0 || elapsedFraction > 1) continue;
+      const previous = [...points.values()].at(-1);
+      if (previous !== undefined && used < previous) { failure = 'counter_reset'; break; }
+      points.set(elapsedFraction, used);
+    }
+    if (failure) { exclude(failure); continue; }
+    if (points.size < 2) { exclude('single_reading'); continue; }
+    curves.push({ window, points: [...points].map(([elapsedFraction, usedFraction]) => ({ elapsedFraction, usedFraction })) });
+  }
+  return { status: 'available', curves, excluded };
+}

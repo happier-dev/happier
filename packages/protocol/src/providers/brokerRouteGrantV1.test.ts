@@ -12,6 +12,7 @@ import {
   encodeProviderBrokerAuthorityV1,
   decodeProviderBrokerAuthorityV1,
   PROVIDER_BROKER_AUTHORITY_MAX_ENCODED_BYTES,
+  ProviderBrokerAccountOpenRequestV2Schema,
 } from './brokerRouteGrantV1.js';
 import {
   TeamCredentialResourceCreateInputV1Schema,
@@ -37,6 +38,14 @@ const payload = {
 const authority = { payload, signature: { alg: 'Ed25519', keyId: 'home', valueBase64Url: 'A'.repeat(86) } };
 
 describe('Provider broker authority V1', () => {
+  it('refuses a personal hub open directed back to the initiating Machine', () => {
+    expect(ProviderBrokerAccountOpenRequestV2Schema.safeParse({
+      v: 2, source: { kind: 'account_connection', connectionId: 'personal-connection',
+        expectedConnectionSecurityFingerprint: 'connection-security:v1:test',
+        expectedManagedRuntimeBindingFingerprint: 'managed-runtime-binding:v1:test' },
+      initiatorMachineId: 'worker', targetMachineId: 'worker', consumer: payload.consumer, application: payload.application,
+    }).success).toBe(false);
+  });
   it('carries the complete target descriptor bound to the signed endpoint identity', () => {
     const endpoint = {
       endpointId: payload.target.endpointId,

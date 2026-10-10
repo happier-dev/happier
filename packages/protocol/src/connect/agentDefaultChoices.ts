@@ -1,6 +1,6 @@
 import { buildQualifiedPluginContributionKey } from '../plugins/contributionIdentity.js';
 import { resolveAgentConnectedAccountPurposeDefaults, writeAgentConnectedServiceDefault, type AgentConnectedAccountPurposeDeclaration } from '../account/settings/connectedServicesSettings.js';
-import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from './connectedAccountPurposeBindings.js';
+import type { QualifiedConnectedAccountPurposeBindingTargetV1, QualifiedConnectedAccountPurposeBindingsV1 } from './connectedAccountPurposeBindings.js';
 
 type DefaultSettings = Parameters<typeof resolveAgentConnectedAccountPurposeDefaults>[0]['settings'];
 
@@ -41,6 +41,7 @@ function sameTarget(left: QualifiedConnectedAccountPurposeBindingTargetV1, right
 export function buildAgentDefaultChoices(input: Readonly<{
     agents: readonly AgentDefaultChoiceAgent[];
     settings: DefaultSettings;
+    purposeBindings?: QualifiedConnectedAccountPurposeBindingsV1;
     target: QualifiedConnectedAccountPurposeBindingTargetV1;
 }>): AgentDefaultChoice[] {
     const service = serviceOf(input.target);
@@ -49,6 +50,7 @@ export function buildAgentDefaultChoices(input: Readonly<{
         if (!agent.connectedAccounts.some((declaration) => sameService(declaration.service, service))) return [];
         const defaults = resolveAgentConnectedAccountPurposeDefaults({
             settings: input.settings,
+            purposeBindings: input.purposeBindings,
             agentId: agent.agentId,
             consumer: agent.identity,
             declarations: agent.connectedAccounts,
@@ -63,12 +65,13 @@ export function buildAgentDefaultChoices(input: Readonly<{
 
 /**
  * Makes the target an agent's default for its service, or returns that agent to its own login there,
- * through the existing per-agent default writer. Returns the settings delta, or null when the agent
- * does not sign in through the service.
+ * through the existing per-agent default writer. Returns the purpose value and genuine legacy
+ * carrier-retirement delta to commit together, or null when the agent does not use the service.
  */
 export function writeAgentDefaultChoice(input: Readonly<{
     agents: readonly AgentDefaultChoiceAgent[];
     settings: DefaultSettings;
+    purposeBindings?: QualifiedConnectedAccountPurposeBindingsV1;
     target: QualifiedConnectedAccountPurposeBindingTargetV1;
     agentId: string;
     makeDefault: boolean;
@@ -78,6 +81,7 @@ export function writeAgentDefaultChoice(input: Readonly<{
     const target = input.target;
     return writeAgentConnectedServiceDefault({
         settings: input.settings,
+        purposeBindings: input.purposeBindings,
         agentId: agent.agentId,
         consumer: agent.identity,
         declarations: agent.connectedAccounts,

@@ -68,6 +68,16 @@ import type { JsonValue, PluginContributionRef } from './identity.js';
 import type { AgentAccountUsageMeter } from './agentRuntime/accountUsage.js';
 import type { Disposable } from './lifecycle.js';
 
+export {
+    addSafeEpochMilliseconds,
+    normalizeNonNegativeSafeMilliseconds,
+    parseCompactDurationMs,
+    parseProviderTimestampMs,
+    parseRetryAfterHeader,
+    type ProviderResetTiming,
+} from './cloud/quotaTiming.js';
+export { parseProviderResetAt, type ProviderResetTextEvidenceParser } from './cloud/quotaReset.js';
+
 /** Nonsecret native-home facts shared by the bundled Codex declaration and materialization. */
 export const CODEX_NATIVE_HOME: Readonly<{
     environmentKey: 'CODEX_HOME';
@@ -529,7 +539,7 @@ export interface ConnectedAccountRuntime {
             used?: number | null;
             remaining?: number | null;
             resetsAtMs?: number | null;
-        }> & Partial<Pick<AgentAccountUsageMeter, 'label' | 'limit' | 'remainingPct' | 'utilizationPct' | 'unit' | 'status' | 'isExhausted' | 'details' | 'confidence'>>)[];
+        }> & Partial<Pick<AgentAccountUsageMeter, 'label' | 'limit' | 'remainingPct' | 'utilizationPct' | 'unit' | 'status' | 'isExhausted' | 'details' | 'confidence' | 'windowDurationMs' | 'modelId' | 'scope' | 'limitScope'>>)[];
     }>>;
     materialize(
         request: ConnectedAccountMaterializationRequest,

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 import { AccountStoredContentCompatibilityServerRequirementsV1Schema } from '../../../clientCompatibility/accountStoredContentCompatibilityV1.js';
 
@@ -85,7 +86,9 @@ import { AccountDirectoryCapabilitiesSchema } from './accountDirectoryCapabiliti
 import { HomeSearchCapabilitiesSchema } from './homeSearchCapabilities.js';
 import { TeamCredentialCapabilitiesSchema } from './teamCredentialCapabilities.js';
 
-export const CapabilitiesSchema = z.object({
+export const CapabilitiesSchema = lazyZodSchema(() => z.object({
+  /** Operation epoch, separate from package version and product enablement. */
+  providerBroker: z.object({ protocolVersions: z.tuple([z.literal(1), z.literal(2)]) }).strict().optional(),
   homeSearch: HomeSearchCapabilitiesSchema.optional(),
   accountDirectory: AccountDirectoryCapabilitiesSchema.optional(),
   accountStoredContentCompatibility:
@@ -143,6 +146,6 @@ export const CapabilitiesSchema = z.object({
     })
     .optional()
     .default({ remoteUpdates: DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS }),
-});
+}));
 
 export type Capabilities = z.infer<typeof CapabilitiesSchema>;

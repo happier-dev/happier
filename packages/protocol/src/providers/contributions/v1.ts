@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -11,6 +12,7 @@ import {
   providerCatalogProbeReportsModelLoadStateV1,
 } from '../catalog/descriptorV1.js';
 import { ProviderApiKeyCredentialRequirementV1Schema } from '../credentials/v1.js';
+import { createProviderFingerprintV1 } from '../fingerprints.js';
 import { ProviderDetectionDescriptorV1Schema } from '../detection/descriptorV1.js';
 import { ProviderLocalIdSchema } from '../ids.js';
 import { ProviderOriginRelativePathSchema } from '../originRelativePathSchema.js';
@@ -42,11 +44,12 @@ import {
   type QualifiedConnectedAccountPurposeBindingsV1,
 } from '../../connect/connectedAccountPurposeBindings.js';
 import { compareProviderCanonicalStringsV1 } from '../canonicalOrderV1.js';
+import type { ProviderConnectionV1 } from '../connections/v1.js';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 
-const LegacyProfileEnvironmentNameSchema = z.string().regex(/^[A-Z_][A-Z0-9_]*$/u).max(128);
+const LegacyProfileEnvironmentNameSchema = lazyZodSchema(() => z.string().regex(/^[A-Z_][A-Z0-9_]*$/u).max(128));
 
-export const ProviderLegacyProfileMigrationDescriptorV1Schema = z.object({
+export const ProviderLegacyProfileMigrationDescriptorV1Schema = lazyZodSchema(() => z.object({
   sourceProfileId: z.string().trim().min(1).max(256),
   descriptorRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).default(1),
   implicitModelAliasReplacements: z.array(z.object({
@@ -82,10 +85,10 @@ export const ProviderLegacyProfileMigrationDescriptorV1Schema = z.object({
       ctx.addIssue({ code: 'custom', path: ['implicitModelAliasReplacements', index], message: 'Implicit model alias replacement must change the model id' });
     }
   });
-});
+}));
 export type ProviderLegacyProfileMigrationDescriptorV1 = z.infer<typeof ProviderLegacyProfileMigrationDescriptorV1Schema>;
 
-export const ProviderEndpointTemplateV1Schema = z.object({
+export const ProviderEndpointTemplateV1Schema = lazyZodSchema(() => z.object({
   id: ProviderLocalIdSchema,
   protocol: ProviderWireProtocolSchema,
   baseUrl: ProviderEndpointUrlSyntaxSchema.optional(),
@@ -96,30 +99,32 @@ export const ProviderEndpointTemplateV1Schema = z.object({
   if (Boolean(value.baseUrl) === Boolean(value.localUrlCandidates)) {
     ctx.addIssue({ code: 'custom', message: 'Exactly one of baseUrl or localUrlCandidates is required' });
   }
-});
+}));
 export type ProviderEndpointTemplateV1 = z.infer<typeof ProviderEndpointTemplateV1Schema>;
 
-export const ProviderModelLoadDescriptorV1Schema = z.object({
+export const ProviderModelLoadDescriptorV1Schema = lazyZodSchema(() => z.object({
   endpointTemplateId: ProviderLocalIdSchema,
   path: ProviderOriginRelativePathSchema,
   request: z.literal('json-model-id-v1'),
   confirmation: z.literal('refresh-catalog-load-state'),
   preflightPolicy: z.enum(['advisory', 'required']),
-}).strict();
+}).strict());
 export type ProviderModelLoadDescriptorV1 = z.infer<typeof ProviderModelLoadDescriptorV1Schema>;
 
-export const ProviderManagedConnectedAccountPurposeBindingPolicyV1Schema = z.object({
+export const ProviderManagedConnectedAccountPurposeBindingPolicyV1Schema = lazyZodSchema(() => z.object({
   // V1 intentionally supports only the current author need: at least one
   // declared purpose must be bound. A literal avoids inventing arbitrary
   // cardinality policy while optional Providers remain valid with zero.
   minimumBound: z.literal(1),
-}).strict();
+}).strict());
 export type ProviderManagedConnectedAccountPurposeBindingPolicyV1 = z.infer<
   typeof ProviderManagedConnectedAccountPurposeBindingPolicyV1Schema
 >;
 
-export const ProviderManagedRuntimeDeclarationV1Schema = z.object({
+export const ProviderManagedRuntimeDeclarationV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('managed'),
+  /** Opts connected-account request-auth consumers into daemon connection custody. */
+  sharing: z.literal('connectionMachine').optional(),
   dependencies: z.array(asProtocolZod(PluginContributionLocalIdSchema)).max(16).optional(),
   connectedAccounts: z.array(ConnectedAccountPurposeDeclarationV1Schema.extend({
     /** Exact managed endpoints that use this purpose; absent means no broker route. */
@@ -186,7 +191,7 @@ export const ProviderManagedRuntimeDeclarationV1Schema = z.object({
       });
     }
   }
-});
+}));
 export type ProviderManagedRuntimeDeclarationV1 = z.infer<
   typeof ProviderManagedRuntimeDeclarationV1Schema
 >;
@@ -204,6 +209,7 @@ export type ResolvedProviderManagedConnectedAccountPurposeDeclarationV1 =
 
 export type ResolvedProviderManagedRuntimeDeclarationV1 = Readonly<{
   kind: 'managed';
+  sharing?: 'connectionMachine';
   dependencies: string[];
   connectedAccounts:
     ResolvedProviderManagedConnectedAccountPurposeDeclarationV1[];
@@ -212,6 +218,29 @@ export type ResolvedProviderManagedRuntimeDeclarationV1 = Readonly<{
   requestAuthUses: ConnectedAccountRequestAuthUseV1[];
   endpointTemplateIds: string[];
 }>;
+
+/** Saved purpose intent admission shared by Account authoring and machine realization. */
+export function resolveManagedPurposeBindingIntentsV1(
+  connection: Pick<ProviderConnectionV1, 'purposeBindingDefaults'>,
+  deployment: Readonly<{ implementationIdentity: PluginContributionIdentityV1; managedRuntime: ResolvedProviderManagedRuntimeDeclarationV1 }>,
+): QualifiedConnectedAccountPurposeBindingsV1 | 'unbound' | null {
+  const defaults = connection.purposeBindingDefaults ?? {};
+  const declarationsByPurpose = new Map(deployment.managedRuntime.connectedAccounts.map(declaration => [declaration.purpose, declaration]));
+  for (const [purpose, target] of Object.entries(defaults)) {
+    const declaration = declarationsByPurpose.get(purpose);
+    const service = target.kind === 'account' ? target.account.service : target.service;
+    if (!declaration || declaration.service.pluginId !== service.pluginId || declaration.service.localId !== service.localId) return null;
+  }
+  if (Object.keys(defaults).length === 0 && (deployment.managedRuntime.connectedAccounts.some(declaration => declaration.required === true)
+    || deployment.managedRuntime.connectedAccountPurposeBindingPolicy?.minimumBound === 1)) {
+    // Empty configuration is editable, never runtime authority.
+    return 'unbound';
+  }
+  if (deployment.managedRuntime.connectedAccounts.some(declaration => declaration.required === true && defaults[declaration.purpose] === undefined)) return null;
+  const parsed = QualifiedConnectedAccountPurposeBindingsV1Schema.safeParse({ v: 1,
+    bindings: Object.entries(defaults).map(([purpose, target]) => ({ purpose: { consumer: deployment.implementationIdentity, purpose }, target })) });
+  return parsed.success ? parsed.data : null;
+}
 
 function canonicalProviderManagedPurposeBindingsV1(
   input: QualifiedConnectedAccountPurposeBindingsV1,
@@ -325,6 +354,7 @@ export function resolveProviderManagedRuntimeDeclarationV1(input: Readonly<{
   Object.freeze(endpointTemplateIds);
   return Object.freeze({
     kind: 'managed',
+    ...(parsed.sharing === undefined ? {} : { sharing: parsed.sharing }),
     dependencies,
     connectedAccounts,
     ...(connectedAccountPurposeBindingPolicy === undefined
@@ -387,7 +417,16 @@ export function createProviderManagedRuntimeBindingEqualityKeyV1(input: Readonly
   });
 }
 
-export const ProviderContributionV1Schema = z.object({
+/** The equality facts contain private purpose bindings. Only their opaque
+ * digest may leave the Account's catalog owner in signed carrier authority. */
+export function createProviderManagedRuntimeBindingFingerprintV1(
+  input: Parameters<typeof createProviderManagedRuntimeBindingEqualityKeyV1>[0],
+): string {
+  return createProviderFingerprintV1('managed-runtime-binding',
+    createProviderManagedRuntimeBindingEqualityKeyV1(input));
+}
+
+export const ProviderContributionV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   id: ProviderLocalIdSchema,
   name: z.string().trim().min(1).max(128),
@@ -513,5 +552,5 @@ export const ProviderContributionV1Schema = z.object({
       }
     });
   });
-});
+}));
 export type ProviderContributionV1 = z.infer<typeof ProviderContributionV1Schema>;

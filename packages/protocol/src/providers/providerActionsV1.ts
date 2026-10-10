@@ -12,6 +12,7 @@ import {
   DaemonProviderProfileMigrationPrepareSourceRequestV1Schema, DaemonProviderProfileMigrationPrepareSourceResponseV1Schema,
 } from '../rpc/providers.js';
 import { ProviderDefaultModelSelectionMutationV1Schema } from './selection/v1.js';
+import { ProviderConnectionIdSchema, ProviderMachineIdSchema } from './ids.js';
 import { type ProviderActionIdV1 } from './providerActionIdsV1.js';
 export { PROVIDER_ACTION_IDS_V1, isProviderActionIdV1, type ProviderActionIdV1 } from './providerActionIdsV1.js';
 
@@ -25,6 +26,18 @@ function connectionInput<A extends ConnectionAction>(action: A): ConnectionOptio
     if (!option) throw new Error(`Missing Provider connection operation: ${action}`);
     return option;
   });
+}
+type AccountOperand<T> = { [K in keyof (Omit<T, 'machineId'> & { machineId?: string })]: (Omit<T, 'machineId'> & { machineId?: string })[K] };
+type AccountCreationOperand<T extends { authoringReview: unknown }> = {
+  [K in keyof (Omit<AccountOperand<T>, 'authoringReview'> & { authoringReview?: T['authoringReview'] })]:
+    (Omit<AccountOperand<T>, 'authoringReview'> & { authoringReview?: T['authoringReview'] })[K]
+};
+function accountInput<S extends z.ZodObject>(schema: S): z.ZodType<AccountOperand<z.output<S>>, AccountOperand<z.input<S>>> {
+  // Zod's public safeExtend retains refinements at runtime; its subtype-only typing
+  // cannot express this deliberate Account-boundary widening. Keep the cast here.
+  const extend = schema.safeExtend.bind(schema) as unknown as (shape: { machineId: z.ZodOptional<typeof ProviderMachineIdSchema> }) =>
+    z.ZodType<AccountOperand<z.output<S>>, AccountOperand<z.input<S>>>;
+  return extend({ machineId: ProviderMachineIdSchema.optional() });
 }
 type ModelSettingsAction = z.output<typeof DaemonProviderModelSettingsMutationRequestV1Schema>['action'];
 type ModelSettingsOption<A extends ModelSettingsAction> = Extract<
@@ -62,27 +75,36 @@ export const PROVIDER_MODEL_SETTINGS_ACTION_ID_BY_OPERATION_V1 = {
 } as const satisfies Record<ModelSettingsAction, ProviderActionIdV1>;
 
 export const PROVIDER_ACTION_INPUT_SCHEMAS_V1 = {
-  'providers.connections.describe': DaemonProviderConnectionsDescribeRequestV1Schema,
-  'providers.connections.create_contribution': connectionInput('createContribution'),
-  'providers.connections.create_custom': connectionInput('createCustom'),
+  'providers.connections.describe': lazyZodSchema(() => accountInput(DaemonProviderConnectionsDescribeRequestV1Schema)),
+  'providers.connections.create_contribution': lazyZodSchema(() => {
+    const input = connectionInput('createContribution');
+    const extend = input.safeExtend.bind(input) as unknown as (shape: { machineId: z.ZodOptional<typeof ProviderMachineIdSchema>;
+      authoringReview: z.ZodOptional<typeof input.shape.authoringReview> }) =>
+        z.ZodType<AccountCreationOperand<z.output<typeof input>>, AccountCreationOperand<z.input<typeof input>>>;
+    return extend({ machineId: ProviderMachineIdSchema.optional(), authoringReview: input.shape.authoringReview.optional() });
+  }),
+  'providers.connections.create_custom': lazyZodSchema(() => accountInput(connectionInput('createCustom'))),
   'providers.connections.enable_detected': connectionInput('enableDetected'),
   'providers.connections.start_local': connectionInput('startLocal'),
-  'providers.connections.update': connectionInput('update'),
-  'providers.connections.endpoint.set': connectionInput('setEndpointOverride'),
-  'providers.connections.duplicate': connectionInput('duplicate'),
-  'providers.connections.delete': connectionInput('delete'),
-  'providers.connections.enabled.set': connectionInput('setEnabled'),
-  'providers.connections.secrets.bind': connectionInput('bindSecret'),
-  'providers.models.list': DaemonProviderModelsRequestV1Schema,
+  'providers.connections.update': lazyZodSchema(() => accountInput(connectionInput('update'))),
+  'providers.connections.endpoint.set': lazyZodSchema(() => accountInput(connectionInput('setEndpointOverride'))),
+  'providers.connections.duplicate': lazyZodSchema(() => accountInput(connectionInput('duplicate'))),
+  'providers.connections.delete': lazyZodSchema(() => accountInput(connectionInput('delete'))),
+  'providers.connections.enabled.set': lazyZodSchema(() => accountInput(connectionInput('setEnabled'))),
+  'providers.connections.secrets.bind': lazyZodSchema(() => accountInput(connectionInput('bindSecret'))),
+  'providers.models.list': lazyZodSchema(() => accountInput(DaemonProviderModelsRequestV1Schema)),
   // Refresh contacts external Providers and cannot be smuggled into a safe read.
-  'providers.models.projection': lazyZodSchema(() => DaemonProviderModelProjectionRequestV1Schema.safeExtend({ forceRefresh: z.never().optional() })),
+  'providers.models.projection': lazyZodSchema(() => accountInput(DaemonProviderModelProjectionRequestV1Schema.safeExtend({ forceRefresh: z.never().optional() }))),
   'providers.models.refresh': lazyZodSchema(() => DaemonProviderModelProjectionRequestV1Schema.safeExtend({ forceRefresh: z.literal(true) })),
-  'providers.models.manual.add': modelSettingsInput('manualAdd'),
-  'providers.models.manual.remove': modelSettingsInput('manualRemove'),
-  'providers.models.visibility.set': modelSettingsInput('setVisibility'),
-  'providers.models.visibility.reset': modelSettingsInput('resetVisibility'),
-  'providers.models.visibility.bulk': modelSettingsInput('bulkVisibility'),
-  'providers.models.experimental.confirm': modelSettingsInput('confirmExperimental'),
+  'providers.models.manual.add': lazyZodSchema(() => accountInput(modelSettingsInput('manualAdd'))),
+  'providers.models.manual.remove': lazyZodSchema(() => accountInput(modelSettingsInput('manualRemove'))),
+  'providers.models.visibility.set': lazyZodSchema(() => accountInput(modelSettingsInput('setVisibility'))),
+  'providers.models.source_visibility.set': lazyZodSchema(() => z.object({
+    action: z.literal('setConnectionVisibility'), connectionId: ProviderConnectionIdSchema, shown: z.boolean().nullable(),
+  }).strict()),
+  'providers.models.visibility.reset': lazyZodSchema(() => accountInput(modelSettingsInput('resetVisibility'))),
+  'providers.models.visibility.bulk': lazyZodSchema(() => accountInput(modelSettingsInput('bulkVisibility'))),
+  'providers.models.experimental.confirm': lazyZodSchema(() => accountInput(modelSettingsInput('confirmExperimental'))),
   'providers.models.load': modelLoadInput('load'),
   'providers.models.cancel_load': modelLoadInput('cancel'),
   'providers.probe': DaemonProviderProbeRequestV1Schema,
@@ -109,6 +131,7 @@ export const PROVIDER_ACTION_OUTPUT_SCHEMAS_V1 = {
   'providers.models.manual.add': DaemonProviderModelSettingsMutationResponseV1Schema,
   'providers.models.manual.remove': DaemonProviderModelSettingsMutationResponseV1Schema,
   'providers.models.visibility.set': DaemonProviderModelSettingsMutationResponseV1Schema,
+  'providers.models.source_visibility.set': lazyZodSchema(() => z.object({ status: z.literal('updated') }).strict()),
   'providers.models.visibility.reset': DaemonProviderModelSettingsMutationResponseV1Schema,
   'providers.models.visibility.bulk': DaemonProviderModelSettingsMutationResponseV1Schema,
   'providers.models.experimental.confirm': DaemonProviderModelSettingsMutationResponseV1Schema,
@@ -122,6 +145,29 @@ export const PROVIDER_ACTION_OUTPUT_SCHEMAS_V1 = {
 
 export type ProviderActionInputByIdV1 = { readonly [Id in ProviderActionIdV1]: z.output<(typeof PROVIDER_ACTION_INPUT_SCHEMAS_V1)[Id]> };
 export type ProviderActionRequestV1 = { [Id in ProviderActionIdV1]: Readonly<{ actionId: Id; input: ProviderActionInputByIdV1[Id] }> }[ProviderActionIdV1];
+/** Omitted input describes default placement; admitted input selects its exact variant. */
+export function isProviderActionMachineRequiredV1(
+  request: ProviderActionRequestV1 | Readonly<{ actionId: ProviderActionIdV1; input?: never }>,
+): boolean {
+  switch (request.actionId) {
+    case 'providers.connections.describe':
+    case 'providers.models.list':
+    case 'providers.models.projection': return request.input?.machineId !== undefined;
+    case 'providers.connections.create_contribution': return request.input?.authoringReview?.candidateId != null;
+    case 'providers.connections.endpoint.set':
+    case 'providers.connections.enabled.set':
+    case 'providers.connections.secrets.bind': return request.input?.scope === 'machine';
+    case 'providers.connections.enable_detected':
+    case 'providers.connections.start_local':
+    case 'providers.models.refresh':
+    case 'providers.models.load':
+    case 'providers.models.cancel_load':
+    case 'providers.probe':
+    case 'providers.binding.status':
+    case 'providers.legacy.prepare': return true;
+    default: return false;
+  }
+}
 export function parseProviderActionRequestV1(actionId: ProviderActionIdV1, input: unknown): ProviderActionRequestV1 {
   // Keep the ID and its parsed operand correlated without widening either contract.
   switch (actionId) {
@@ -142,6 +188,7 @@ export function parseProviderActionRequestV1(actionId: ProviderActionIdV1, input
     case 'providers.models.manual.add': return { actionId, input: PROVIDER_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input) };
     case 'providers.models.manual.remove': return { actionId, input: PROVIDER_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input) };
     case 'providers.models.visibility.set': return { actionId, input: PROVIDER_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input) };
+    case 'providers.models.source_visibility.set': return { actionId, input: PROVIDER_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input) };
     case 'providers.models.visibility.reset': return { actionId, input: PROVIDER_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input) };
     case 'providers.models.visibility.bulk': return { actionId, input: PROVIDER_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input) };
     case 'providers.models.experimental.confirm': return { actionId, input: PROVIDER_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input) };

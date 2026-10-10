@@ -11,6 +11,19 @@ function rawFromUntypedCaller(value: unknown): ConnectedServiceOauthCredentialRa
 }
 
 describe('buildConnectedServiceCredentialRecord', () => {
+  it('does not retain AGY project or issuer metadata in a Gemini credential', () => {
+    const record = buildConnectedServiceCredentialRecord({
+      now: 1000, serviceId: 'gemini', profileId: 'selected-account', kind: 'oauth',
+      oauth: {
+        accessToken: 'selected-access', refreshToken: 'selected-refresh', idToken: null,
+        scope: null, tokenType: null, providerAccountId: null, providerEmail: null,
+        raw: rawFromUntypedCaller({ project_id: ' selected-project ', client_id: 'must-not-persist' }),
+      },
+    });
+    if (record.kind !== 'oauth') throw new Error('Expected OAuth record');
+    expect(record.oauth.raw).toBeNull();
+  });
+
   it('builds an oauth record for codex tokens', () => {
     const now = 1700000000000;
     const rec = buildConnectedServiceCredentialRecord({

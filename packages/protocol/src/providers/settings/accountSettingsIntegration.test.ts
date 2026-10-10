@@ -4,7 +4,7 @@ import {
   accountSettingsParse,
 } from '../../account/settings/accountSettings.js';
 import { serializeModelVisibilityRefV1 } from '../selection/v1.js';
-import { readProviderSettingsFromAccountSettingsV1 } from './readFromAccountSettingsV1.js';
+import { readRetainedProviderConnectionsCatalogV1 } from '../connections/connectionRowsV1.js';
 import {
   ProviderSettingsLimitError,
   ProviderSettingsV1Schema,
@@ -32,16 +32,19 @@ describe('provider account settings integration', () => {
     expect(parsed.xFuture).toEqual({ preserved: true });
   });
 
-  it('keeps future and malformed provider subtrees opaque across unrelated account parse round trips', () => {
+  it('keeps future and malformed Provider source outside active Account preferences and refuses its transfer', () => {
     const cases = [
       { schemaVersion: 7, providerSettingsV1: { v: 2, opaque: { preserve: true } }, unrelated: 'x' },
       { schemaVersion: 6, providerSettingsV1: { v: 'bad', malformed: ['preserve'] }, unrelated: 'y' },
     ];
     for (const raw of cases) {
+      const retained = structuredClone(raw);
       const parsed = accountSettingsParse(raw);
-      expect(parsed.providerSettingsV1).toEqual(raw.providerSettingsV1);
+      expect(parsed.providerSettingsV1).toBeUndefined();
       expect(accountSettingsParse({ ...parsed, unrelated: `${raw.unrelated}-changed` }).providerSettingsV1)
-        .toEqual(raw.providerSettingsV1);
+        .toBeUndefined();
+      expect(readRetainedProviderConnectionsCatalogV1(raw)).toMatchObject({ status: 'unavailable' });
+      expect(raw).toEqual(retained);
     }
   });
 
@@ -61,16 +64,19 @@ describe('provider account settings integration', () => {
       },
     };
     const parsed = accountSettingsParse(raw);
-    const provider = readProviderSettingsFromAccountSettingsV1(parsed);
-    expect(provider.settings.connections.map((entry) => entry.id)).toEqual(['pc_1']);
-    expect(provider.settings.modelVisibilityByRef).toEqual({ [visibility]: 'hidden' });
+    expect(parsed.providerSettingsV1).toBeUndefined();
+    const provider = readRetainedProviderConnectionsCatalogV1(raw);
+    expect(provider.status).toBe('partial');
+    if (provider.status !== 'partial') throw new Error('Expected the canonical retained-source diagnostic');
+    expect(provider.catalog.connections.map((entry) => entry.id)).toEqual(['pc_1']);
+    expect(provider.catalog.modelVisibilityByRef).toEqual({ [visibility]: 'hidden' });
     expect(provider.diagnostics).toContainEqual({ path: 'connections[1]', reason: 'invalid_record' });
   });
 
   it('preserves a Provider-valid subtree whose cardinality exceeds the generic Account node policy', () => {
     // Provider settings own Provider cardinality: 500 manual models per connection.
-    // The Account Settings projection must not reinterpret that subtree with its own
-    // 256-entry node policy and drop an acknowledged, persisted configuration.
+    // Inactive source reads use Provider cardinality, not the active Account
+    // preferences projection's generic node policy.
     const manualModels = Array.from({ length: 300 }, (_, index) => ({ id: `model-${index}`, addedAt: 1 }));
     const providerSettingsV1 = {
       v: 1,
@@ -83,12 +89,14 @@ describe('provider account settings integration', () => {
     };
     expect(ProviderSettingsV1Schema.safeParse(providerSettingsV1).success).toBe(true);
 
-    const parsed = accountSettingsParse({ schemaVersion: 7, providerSettingsV1 });
-    expect(parsed.providerSettingsV1).toEqual(providerSettingsV1);
+    const raw = { schemaVersion: 7, providerSettingsV1 };
+    const parsed = accountSettingsParse(raw);
+    expect(parsed.providerSettingsV1).toBeUndefined();
 
-    const provider = readProviderSettingsFromAccountSettingsV1(parsed);
-    expect(provider.diagnostics).toEqual([]);
-    expect(provider.settings.manualModelsByConnectionId.pc_1).toHaveLength(300);
+    const provider = readRetainedProviderConnectionsCatalogV1(raw);
+    expect(provider.status).toBe('ready');
+    if (provider.status !== 'ready') throw new Error('Expected complete retained-source authority');
+    expect(provider.catalog.manualModelsByConnectionId.pc_1).toHaveLength(300);
   });
 
   it('refuses a Provider subtree larger than the Account-owned persistence ceiling instead of silently dropping it', () => {

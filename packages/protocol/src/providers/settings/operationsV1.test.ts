@@ -21,6 +21,7 @@ import {
   resetProviderModelVisibilityV1,
   setProviderExperimentalConfirmationV1,
   setProviderModelVisibilityV1,
+  setProviderModelPickerVisibilityV1,
 } from './operationsV1.js';
 
 function baseSettings() {
@@ -65,6 +66,17 @@ function baseSettings() {
 }
 
 describe('provider settings operations', () => {
+  it('changes only source presentation policy, resets sparsely, and deletes the connection override', () => {
+    const original = baseSettings();
+    const hidden = setProviderModelPickerVisibilityV1(original, { connectionId: 'pc_a', shown: false });
+    expect(hidden.modelPickerVisibilityByConnectionId).toEqual({ pc_a: false });
+    const { modelPickerVisibilityByConnectionId: _override, ...unchanged } = hidden;
+    expect(unchanged).toEqual(original);
+    expect(setProviderModelPickerVisibilityV1(hidden, { connectionId: 'pc_a', shown: null })
+      .modelPickerVisibilityByConnectionId).toBeUndefined();
+    expect(deleteProviderConnectionV1(hidden, 'pc_a', 2).modelPickerVisibilityByConnectionId).toEqual({});
+    expect(() => setProviderModelPickerVisibilityV1(original, { connectionId: 'pc_missing', shown: true })).toThrow();
+  });
   it('adds a manual-model batch atomically when the final settings would exceed the connection limit', () => {
     const original = ProviderSettingsV1Schema.parse({
       ...baseSettings(),

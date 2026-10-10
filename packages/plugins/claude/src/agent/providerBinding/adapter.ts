@@ -1,8 +1,10 @@
 import type {
   AgentProviderBindingAdapter,
   AgentProviderBindingMaterializeInput,
+  AgentProviderBindingPrepareInput,
   AgentProviderBindingPrepared,
 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { createHash } from 'node:crypto';
 
 type ProviderBindingMaterialization = Awaited<ReturnType<AgentProviderBindingAdapter['materialize']>>;
 type ProviderBindingEnvOverlay = Extract<ProviderBindingMaterialization, { kind: 'spawnEnv' }>['env'];
@@ -10,7 +12,7 @@ type ProviderCredentialTransport = NonNullable<
   AgentProviderBindingMaterializeInput['binding']['runtimeCredentialTransport']
 >;
 
-export const CLAUDE_PROVIDER_BINDING_ADAPTER_VERSION_V1 = 2;
+export const CLAUDE_PROVIDER_BINDING_ADAPTER_VERSION_V1 = 3;
 
 export const CLAUDE_PROVIDER_OWNED_ENV_KEYS = Object.freeze([
   'ANTHROPIC_BASE_URL',
@@ -25,8 +27,14 @@ export const CLAUDE_PROVIDER_OWNED_ENV_KEYS = Object.freeze([
   'CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY',
 ] as const);
 
+export const CLAUDE_PROVIDER_HELPER_ENV_KEYS = Object.freeze([
+  'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+  'ANTHROPIC_DEFAULT_SONNET_MODEL',
+  'ANTHROPIC_DEFAULT_OPUS_MODEL',
+] as const);
+
 const CLAUDE_PROVIDER_OWNED_ENV_IDENTITIES: ReadonlySet<string> = new Set(
-  CLAUDE_PROVIDER_OWNED_ENV_KEYS.map((name) => name.toUpperCase()),
+  [...CLAUDE_PROVIDER_OWNED_ENV_KEYS, ...CLAUDE_PROVIDER_HELPER_ENV_KEYS].map((name) => name.toUpperCase()),
 );
 
 /**
@@ -39,8 +47,37 @@ export function isClaudeProviderOwnedEnvName(name: string): boolean {
   return CLAUDE_PROVIDER_OWNED_ENV_IDENTITIES.has(name.toUpperCase());
 }
 
-function prepareClaudeProviderBindingV1(): AgentProviderBindingPrepared {
-  return { v: 1, materialization: 'spawnEnv' };
+function resolveHelperModelPins(
+  modelId: string,
+  models: NonNullable<AgentProviderBindingMaterializeInput['binding']['claudeHelperModels']>,
+) {
+  return {
+    fast: models.fast ?? modelId,
+    default: models.default ?? modelId,
+    strongest: models.strongest ?? modelId,
+  };
+}
+
+function helperModelBindingKey(
+  modelId: string,
+  models: NonNullable<AgentProviderBindingMaterializeInput['binding']['claudeHelperModels']>,
+): string {
+  // The existing binding key participates in host live/restart policy. Pin changes
+  // need a new Claude process; model-only changes with identical pins remain live.
+  return `claude-helpers-${createHash('sha256').update(JSON.stringify(resolveHelperModelPins(modelId, models))).digest('hex')}`;
+}
+
+function prepareClaudeProviderBindingV1(input?: AgentProviderBindingPrepareInput): AgentProviderBindingPrepared {
+  if (input?.claudeHelperModels !== undefined && !input.model) {
+    throw new Error('Claude helper model preparation requires the selected model');
+  }
+  return {
+    v: 1,
+    materialization: 'spawnEnv',
+    ...(input?.claudeHelperModels !== undefined && input.model ? {
+      adapterBindingKey: helperModelBindingKey(input.model.id, input.claudeHelperModels),
+    } : {}),
+  };
 }
 
 function transportsEqual(
@@ -85,8 +122,14 @@ function buildOwnedEnvironment(input: Readonly<{
   customHeaders: string | null;
   credentialKey: 'ANTHROPIC_API_KEY' | 'ANTHROPIC_AUTH_TOKEN' | null;
   credentialValue: string | null;
+  helperModels: AgentProviderBindingMaterializeInput['binding']['claudeHelperModels'];
+  sessionModelId: string;
 }>): ProviderBindingEnvOverlay {
-  return CLAUDE_PROVIDER_OWNED_ENV_KEYS.map((name) => ({
+  const pins = input.helperModels === undefined
+    ? null
+    : resolveHelperModelPins(input.sessionModelId, input.helperModels);
+  const keys = [...CLAUDE_PROVIDER_OWNED_ENV_KEYS, ...(pins ? CLAUDE_PROVIDER_HELPER_ENV_KEYS : [])];
+  return keys.map((name) => ({
     name,
     value: name === 'ANTHROPIC_BASE_URL'
       ? input.baseUrl
@@ -94,6 +137,12 @@ function buildOwnedEnvironment(input: Readonly<{
         ? input.customHeaders
       : name === input.credentialKey
         ? input.credentialValue
+        : name === 'ANTHROPIC_DEFAULT_HAIKU_MODEL' && pins !== null
+          ? pins.fast
+        : name === 'ANTHROPIC_DEFAULT_SONNET_MODEL' && pins !== null
+          ? pins.default
+        : name === 'ANTHROPIC_DEFAULT_OPUS_MODEL' && pins !== null
+          ? pins.strongest
         : null,
     source: 'provider' as const,
   }));
@@ -111,8 +160,11 @@ function renderCustomHeaders(headers: Readonly<Record<string, string>>): string 
 async function materializeClaudeProviderBindingV1(
   input: AgentProviderBindingMaterializeInput,
 ): Promise<ProviderBindingMaterialization> {
+  const expectedKey = input.binding.claudeHelperModels === undefined
+    ? undefined
+    : helperModelBindingKey(input.binding.selection.model.id, input.binding.claudeHelperModels);
   if (input.prepared.materialization !== 'spawnEnv'
-    || input.prepared.adapterBindingKey !== undefined) {
+    || input.prepared.adapterBindingKey !== expectedKey) {
     throw new Error('Claude provider binding preparation is invalid');
   }
   if (input.binding.endpoint.protocol !== 'anthropic') {
@@ -127,6 +179,8 @@ async function materializeClaudeProviderBindingV1(
       customHeaders: renderCustomHeaders(input.binding.endpoint.publicHeaders),
       credentialKey: credential.envKey,
       credentialValue: credential.value,
+      helperModels: input.binding.claudeHelperModels,
+      sessionModelId: input.binding.selection.model.id,
     }),
   };
 }
@@ -134,6 +188,7 @@ async function materializeClaudeProviderBindingV1(
 export const CLAUDE_PROVIDER_BINDING_ADAPTER_V1 = Object.freeze({
   v: 1,
   adapterVersion: CLAUDE_PROVIDER_BINDING_ADAPTER_VERSION_V1,
+  supportsClaudeHelperModels: true,
   prepare: prepareClaudeProviderBindingV1,
   materialize: materializeClaudeProviderBindingV1,
 } satisfies AgentProviderBindingAdapter);

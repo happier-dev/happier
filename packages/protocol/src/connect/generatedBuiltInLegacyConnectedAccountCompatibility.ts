@@ -169,6 +169,24 @@ export const BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID = Obje
     unsupportedAuthenticationModeByCredentialKind: Object.freeze({
     }),
   }),
+  "antigravity": Object.freeze({
+    service: Object.freeze({
+      pluginId: "happier.agent.antigravity",
+      localId: "antigravity-account",
+    }),
+    peerOperations: Object.freeze({
+      exactV0_2_1: Object.freeze([] as const),
+      revisionedV2V3: Object.freeze([] as const),
+    }),
+    exactV0_2_1ReaderQuotaProjection: false,
+    defaultAuthenticationModeId: "oauth-personal",
+    authenticationModeByCredentialKind: Object.freeze({
+      oauth: "oauth-personal",
+    }),
+    unsupportedAuthenticationModeByCredentialKind: Object.freeze({
+      token: "legacy-token-unsupported",
+    }),
+  }),
 } as const satisfies Readonly<Record<string, BuiltInLegacyConnectedAccountCompatibility>>);
 
 export type BuiltInLegacyConnectedServiceId =

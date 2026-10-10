@@ -118,6 +118,17 @@ function publicManagedDeploymentWithPurposes(purposes: readonly string[]) {
 }
 
 describe('typed provider security fingerprints', () => {
+  it('binds managed connection grants to the selected hub and preserves the omitted session-machine contract', () => {
+    const base = { ...connectionInput, endpoints: [], managedDeployment: publicManagedDeploymentWithPurposes([]) };
+    const omitted = createProviderConnectionSecurityFingerprintV1(base);
+    const local = createProviderConnectionSecurityFingerprintV1({ ...base,
+      managedDeployment: { ...base.managedDeployment, gatewayPlacement: { kind: 'sessionMachine' } } });
+    const hub = (machineId: string) => createProviderConnectionSecurityFingerprintV1({ ...base,
+      managedDeployment: { ...base.managedDeployment, gatewayPlacement: { kind: 'machine', machineId } } });
+    expect(local).toBe(omitted);
+    expect(hub('hub-a')).not.toBe(omitted);
+    expect(hub('hub-a')).not.toBe(hub('hub-b'));
+  });
   it('binds draft probe authorization to the exact credential destination', () => {
     const bearer = createProviderCredentialDestinationFingerprintV1({
       kind: 'httpHeader', name: 'Authorization', format: 'bearer',

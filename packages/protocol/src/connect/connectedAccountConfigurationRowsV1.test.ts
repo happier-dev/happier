@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   ConnectedAccountCatalogRecordV1Schema, ConnectedAccountCatalogRowMutationV1Schema,
   StoredConnectedAccountCatalogRecordV1Schema, sealConnectedAccountCatalogContentV1, openConnectedAccountCatalogContentV1,
+  AccountEncryptionMigrateConnectedConfigurationsDirectiveV1Schema, AccountEncryptionMigrateConnectedPurposesDirectiveV1Schema,
+  sealConnectedAccountCatalogMigrationContentV1,
   parseStoredConnectedAccountCatalogContentV1,
   listConnectedConfigurationCatalogSavedSecretRefsV1, rewriteConnectedConfigurationCatalogSavedSecretRefsV1,
   type ConnectedAccountCatalogRecordV1,
@@ -10,6 +12,7 @@ import { loadConnectedAccountCatalogV1, readRetainedConnectedAccountCatalogRecor
 import { formatSharedSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
 import { sealAccountScopedBlobCiphertext } from '../crypto/accountScopedCipher.js';
 import { connectedAccountCatalogCipherKindV1 } from './connectedAccountConfigurationRowsV1.js';
+import type { AgentDefaultChoiceAgent } from './agentDefaultChoices.js';
 
 const service = { pluginId: 'happier.connected-account.example', localId: 'cloud' };
 const consumer = { pluginId: 'happier.agent.example', localId: 'coding' };
@@ -25,6 +28,97 @@ const purpose: ConnectedAccountCatalogRecordV1 = { key: 'purposes', value: { v: 
 ] } };
 
 describe('Connected Account private catalogs', () => {
+  it.each([configuration, purpose])('retains complete original JSON for %s conversion without authoring permissive new rows', record => {
+    const payload = { ...record, retainedWrapper: { color: 'blue' }, value: record.key === 'configurations'
+      ? { ...record.value, retainedCatalog: { color: 'green' }, entries: record.value.entries.map(entry => ({ ...entry, retainedEntry: { color: 'red' } })) }
+      : { ...record.value, retainedCatalog: { color: 'green' }, bindings: record.value.bindings.map(binding => ({ ...binding, retainedEntry: { color: 'red' } })) } };
+    const plain = { t: 'plain' as const, v: payload, retainedEnvelope: { color: 'orange' } };
+    const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(21) };
+    for (const mode of ['plain', 'e2ee'] as const) {
+      const content = mode === 'plain' ? plain : { t: 'encrypted' as const, retainedEnvelope: plain.retainedEnvelope,
+        c: sealAccountScopedBlobCiphertext({ kind: connectedAccountCatalogCipherKindV1(record.key), material, payload,
+          randomBytes: length => new Uint8Array(length).fill(9) }) };
+      const input = { key: record.key, mode, material: mode === 'plain' ? null : material, content, admission: 'migration' as const };
+      const opened = openConnectedAccountCatalogContentV1(input);
+      expect(opened).toMatchObject({ status: 'opened', record,
+        migrationSource: { content, payload } });
+      if (opened.status !== 'opened') throw new Error('Complete retained conversion source required');
+      const targetMode = mode === 'plain' ? 'e2ee' : 'plain';
+      const converted = sealConnectedAccountCatalogMigrationContentV1({ source: opened.migrationSource,
+        mode: targetMode, material: targetMode === 'plain' ? null : material, randomBytes: length => new Uint8Array(length).fill(7) });
+      expect(converted.retainedEnvelope).toEqual(plain.retainedEnvelope);
+      expect(openConnectedAccountCatalogContentV1({ key: record.key, mode: targetMode,
+        material: targetMode === 'plain' ? null : material, content: converted, admission: 'migration' }))
+        .toMatchObject({ status: 'opened', record, migrationSource: { content: converted, payload } });
+      if (targetMode === 'plain') expect(converted).toEqual(plain);
+      expect(openConnectedAccountCatalogContentV1({ ...input, content: { ...content, futureSecretId: oldRef } }).status).toBe('partial');
+    }
+    const directive = record.key === 'configurations' ? AccountEncryptionMigrateConnectedConfigurationsDirectiveV1Schema
+      : AccountEncryptionMigrateConnectedPurposesDirectiveV1Schema;
+    expect(directive.parse({ expectedRevision: 4, content: plain })).toEqual({ expectedRevision: 4, content: plain });
+    expect(ConnectedAccountCatalogRowMutationV1Schema.safeParse({ expectedRevision: 4, content: plain }).success).toBe(false);
+  });
+  it.each(['valid', 'native-only', 'missing-declarations', 'ambiguous-declarations', 'invalid-descriptor', 'malformed-source'] as const)(
+    'admits purpose authority only after genuine scalar defaults migrate through catalog declarations (%s)', async scenario => {
+      if (purpose.key !== 'purposes') throw new Error('Wrong fixture catalog');
+      const codex = { pluginId: 'happier.agent.codex', localId: 'codex' };
+      const codexService = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+      const antigravity = { pluginId: 'happier.agent.antigravity', localId: 'antigravity' };
+      const antigravityService = { pluginId: 'happier.agent.antigravity', localId: 'antigravity-account' };
+      // The existing Agent-default projection supplies identity and purpose
+      // declarations; raw predecessor Agent/service strings are not identities.
+      const agents = [
+        { agentId: 'codex', identity: codex, connectedAccounts: [{ purpose: 'model-openai', service: codexService }] },
+        { agentId: 'antigravity', identity: antigravity, connectedAccounts: [{ purpose: 'model_upstream', service: antigravityService }] },
+      ] satisfies readonly Pick<AgentDefaultChoiceAgent, 'agentId' | 'identity' | 'connectedAccounts'>[];
+      const raw = { connectedAccountPurposeBindingsV1: purpose.value,
+        connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: { codex: { v: 1, bindingsByServiceId: {
+          'openai-codex': scenario === 'native-only' ? { source: 'native' }
+            : { source: 'connected', selection: 'group', groupId: scenario === 'malformed-source' ? '' : 'codex-main' },
+        } } } },
+        connectedServicesAdditionalDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: { agy: { v: 1, bindingsByServiceId: {
+          antigravity: scenario === 'native-only' ? { source: 'native' }
+            : { source: 'connected', selection: 'profile', profileId: 'google-work' },
+        } } } }, preferredLanguage: 'de' };
+      const expected: ConnectedAccountCatalogRecordV1 = { key: 'purposes', value: { ...purpose.value, bindings: [...purpose.value.bindings,
+        { purpose: { consumer: codex, purpose: 'model-openai' }, target: { kind: 'group', service: codexService, groupId: 'codex-main' } },
+        { purpose: { consumer: antigravity, purpose: 'model_upstream' }, target: { kind: 'account', account: { service: antigravityService, accountId: 'google-work' } } },
+      ] } };
+      let initialized: ConnectedAccountCatalogRecordV1 | undefined;
+      const writes: Readonly<{ record: ConnectedAccountCatalogRecordV1; expectedRevision: 'absent'; sourceSettingsVersion: number }>[] = [];
+      const result = await loadConnectedAccountCatalogV1({ key: 'purposes', mode: 'plain', material: null,
+        readRow: async () => initialized ? { status: 'present', revision: 0, content: { t: 'plain', v: initialized } } : { status: 'absent' },
+        transfer: { readSourceSnapshot: async () => ({ raw, version: 9,
+          purposeDefaultAgents: scenario === 'missing-declarations' || scenario === 'native-only' ? null
+            : scenario === 'ambiguous-declarations' ? [...agents, { ...agents[0]!, identity: { pluginId: 'external.shadow', localId: 'codex' } }]
+              : scenario === 'invalid-descriptor' ? [{ ...agents[0]!, identity: null }, agents[1]!] : agents }),
+        initializeRecord: async input => { writes.push(input); initialized = input.record; return { status: 'updated', revision: 0, cursor: 0 }; } },
+      });
+      if (scenario === 'valid' || scenario === 'native-only') {
+        const admitted = scenario === 'native-only' ? purpose : expected;
+        expect(writes).toEqual([{ record: admitted, expectedRevision: 'absent', sourceSettingsVersion: 9 }]);
+        expect(result).toMatchObject({ status: 'ready', revision: 0, record: admitted });
+      } else {
+        expect(result).toEqual({ status: 'unavailable', reason: scenario === 'malformed-source' ? 'invalid-stored-content' : 'authority-not-confirmed' });
+        expect(writes).toEqual([]);
+      }
+    },
+  );
+  it.each(['present', 'deleted'] as const)('never reactivates predecessor intent after a purpose row is %s', async status => {
+    const malformedSource = { connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {
+      codex: { v: 1, bindingsByServiceId: { 'openai-codex': { source: 'connected', selection: 'group', groupId: '' } } },
+    } } };
+    let initializations = 0;
+    const result = await loadConnectedAccountCatalogV1({ key: 'purposes', mode: 'plain', material: null,
+      readRow: async () => status === 'present' ? { status: 'present', revision: 4, content: { t: 'plain', v: purpose } }
+        : { status: 'deleted', revision: 4 },
+      transfer: { readSourceSnapshot: async () => ({ raw: malformedSource, version: 9, purposeDefaultAgents: null }),
+        initializeRecord: async () => { initializations++; return { status: 'updated', revision: 0, cursor: 0 }; } },
+    });
+    expect(result).toMatchObject({ status: 'ready', revision: 4,
+      record: status === 'present' ? purpose : { key: 'purposes', value: { v: 1, bindings: [] } } });
+    expect(initializations).toBe(0);
+  });
   it.each(['plain', 'e2ee'] as const)('reads retained %s envelope metadata but denies outer reference authority', async mode => {
     const material = mode === 'plain' ? null : { type: 'legacy' as const, secret: new Uint8Array(32).fill(21) };
     const current = sealConnectedAccountCatalogContentV1({ record: purpose, mode, material });

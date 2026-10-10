@@ -4,6 +4,28 @@ import { PROVIDER_WIRE_PROTOCOL_LIMITS_V1 } from '../capabilities/v1.js';
 import { ProviderConnectionV1Schema } from './v1.js';
 
 describe('ProviderConnectionV1Schema endpoint overrides', () => {
+  it('retains managed gateway placement and helper pins, refusing external configuration and unknown fields', () => {
+    const base = {
+      v: 1, id: 'pc_gateway', source: { kind: 'contribution', contributionKey: 'plugin/gateway' },
+      role: 'named', displayName: 'Gateway', displayNameMode: 'custom', revision: 0, createdAt: 1, updatedAt: 1,
+      deployment: { kind: 'managedLocal' },
+    } as const;
+    const gatewayPlacement = { kind: 'machine', machineId: 'hub-a' } as const;
+    const claudeHelperModels = { fast: 'fast-model', default: 'session-default', strongest: 'strong-model' };
+    expect(ProviderConnectionV1Schema.parse({ ...base, gatewayPlacement, claudeHelperModels })).toMatchObject({
+      gatewayPlacement, claudeHelperModels,
+    });
+    expect(ProviderConnectionV1Schema.parse({ ...base, gatewayPlacement: { kind: 'sessionMachine' } }).gatewayPlacement)
+      .toEqual({ kind: 'sessionMachine' });
+    expect(ProviderConnectionV1Schema.parse(base).gatewayPlacement).toBeUndefined();
+    for (const field of [{ gatewayPlacement }, { claudeHelperModels }]) {
+      expect(ProviderConnectionV1Schema.safeParse({ ...base, deployment: { kind: 'external' }, ...field }).success).toBe(false);
+    }
+    expect(ProviderConnectionV1Schema.safeParse({ ...base, gatewayPlacement: { kind: 'machine', machineId: ' hub-a ' } }).success).toBe(false);
+    expect(ProviderConnectionV1Schema.safeParse({ ...base, claudeHelperModels: { fast: 'not a model' } }).success).toBe(false);
+    expect(ProviderConnectionV1Schema.safeParse({ ...base, claudeHelperModels: { fast: 'fast-model', force: true } }).success).toBe(false);
+  });
+
   it('defaults legacy connections to external deployment and bounds managed deployment to contribution-backed connections without endpoint overrides', () => {
     const contribution = {
       v: 1, id: 'pc_1', source: { kind: 'contribution', contributionKey: 'plugin/p' },

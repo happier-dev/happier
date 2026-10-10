@@ -7,12 +7,15 @@ import {
   ProviderConnectionIdSchema,
   buildBackendTargetKeyV2,
   deriveSettingsSecretsKeyV1,
-  openAccountScopedBlobCiphertext,
-  readProviderSettingsFromAccountSettingsV1,
   sealSecretsDeepV1,
-  type AccountSettingsStoredContentEnvelope,
   type ProviderConnectionId,
 } from '@happier-dev/protocol';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { deriveSavedSecretImportResourceIdV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, ProviderConnectionsRowReadResponseV1Schema,
+  openProviderConnectionsContentV1, type ProviderConnectionsCatalogV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { upsertEncryptedAccountSettingsV2 } from '../../src/testkit/accountSettings';
@@ -66,25 +69,22 @@ async function writeAgentLaunchSentinelExecutable(params: Readonly<{
   return executablePath;
 }
 
-async function readAccountSettings(params: Readonly<{
+async function readProviderCatalog(params: Readonly<{
   baseUrl: string;
   token: string;
   secret: Uint8Array;
-}>): Promise<JsonRecord> {
-  const response = await fetchJson<unknown>(`${params.baseUrl}/v2/account/settings`, {
+}>): Promise<ProviderConnectionsCatalogV1> {
+  const response = await fetchJson<unknown>(`${params.baseUrl}${PROVIDER_CONNECTIONS_ROWS_ROUTE_V1}`, {
     headers: { Authorization: `Bearer ${params.token}` },
     timeoutMs: 20_000,
   });
   expect(response.status).toBe(200);
-  const row = asRecord(response.data);
-  const content = row.content as AccountSettingsStoredContentEnvelope | null;
-  if (!content || content.t !== 'encrypted') throw new Error('Expected encrypted account settings');
-  const opened = openAccountScopedBlobCiphertext({
-    kind: 'account_settings',
-    material: { type: 'legacy', secret: params.secret },
-    ciphertext: content.c,
-  });
-  return asRecord(opened?.value);
+  const row = ProviderConnectionsRowReadResponseV1Schema.parse(response.data);
+  if (row.status !== 'present') throw new Error('Expected active Provider row authority');
+  const opened = openProviderConnectionsContentV1({ mode: 'e2ee',
+    material: { type: 'legacy', secret: params.secret }, content: row.content });
+  if (opened.status !== 'opened') throw new Error('Expected a complete encrypted Provider catalog');
+  return opened.catalog;
 }
 
 describe('core e2e: terminal-only Provider authoring', () => {
@@ -270,14 +270,29 @@ describe('core e2e: terminal-only Provider authoring', () => {
     expect(JSON.stringify([probe, test])).not.toContain(plaintextSecret);
     expect(JSON.stringify([probe, test])).not.toContain(replacementPlaintextSecret);
 
-    const raw = await readAccountSettings({ baseUrl: server.baseUrl, token: auth.token, secret: accountSecret });
-    const providerSettings = readProviderSettingsFromAccountSettingsV1(raw).settings;
+    const providerSettings = await readProviderCatalog({ baseUrl: server.baseUrl, token: auth.token, secret: accountSecret });
+    const profileResponse = await fetchJson<unknown>(`${server.baseUrl}/v1/account/profile`, {
+      headers: { Authorization: `Bearer ${auth.token}` }, timeoutMs: 20_000,
+    });
+    expect(profileResponse.status).toBe(200);
+    const sharedSecretRef = formatSharedSavedSecretRefV1(deriveSavedSecretImportResourceIdV1({
+      accountId: AccountProfileSchema.parse(profileResponse.data).id,
+      source: { kind: 'personal-saved-secret', secretId: savedSecretId },
+    }));
+    const materialsResponse = await fetchJson<unknown>(`${server.baseUrl}/v1/account/saved-secrets/resources/materials`, {
+      headers: { Authorization: `Bearer ${auth.token}` }, timeoutMs: 20_000,
+    });
+    expect(materialsResponse.status).toBe(200);
+    expect(SavedSecretResourceMaterialsResponseV1Schema.parse(materialsResponse.data).resources)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ entry: expect.objectContaining({
+        ref: sharedSecretRef, source: 'shared_resource', relationship: 'owner', materialStatus: 'ready',
+      }) })]));
     expect(providerSettings.connections).toHaveLength(2);
     expect(providerSettings.secretBindingsByConnectionId[customConnectionId]?.account).toEqual({
-      apiKey: savedSecretId,
+      apiKey: sharedSecretRef,
     });
     expect(providerSettings.secretBindingsByConnectionId[builtInConnectionId]?.account).toEqual({
-      apiKey: savedSecretId,
+      apiKey: sharedSecretRef,
     });
     expect(providerSettings.accountGrants).toEqual([]);
     expect(providerSettings.machineGrants).toEqual([
@@ -399,8 +414,7 @@ describe('core e2e: terminal-only Provider authoring', () => {
       },
     });
 
-    const raw = await readAccountSettings({ baseUrl: server.baseUrl, token: auth.token, secret: accountSecret });
-    const providerSettings = readProviderSettingsFromAccountSettingsV1(raw).settings;
+    const providerSettings = await readProviderCatalog({ baseUrl: server.baseUrl, token: auth.token, secret: accountSecret });
     expect(providerSettings.connections.map((connection) => connection.id)).toEqual(
       expect.arrayContaining([defaultConnectionId, namedConnectionId]),
     );

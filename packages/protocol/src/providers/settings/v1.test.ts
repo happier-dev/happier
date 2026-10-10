@@ -67,6 +67,12 @@ describe('SavedSecretSlotBindingsV1Schema', () => {
 });
 
 describe('ProviderSettingsV1Schema', () => {
+  it('retains sparse source visibility and rejects unknown connection overrides', () => {
+    const settings = { ...validSettings(), modelPickerVisibilityByConnectionId: { pc_1: false } };
+    expect(ProviderSettingsV1Schema.parse(settings)).toEqual(settings);
+    expect(parseProviderSettingsV1Narrow(settings).settings).toEqual(settings);
+    expect(ProviderSettingsV1Schema.safeParse({ ...settings, modelPickerVisibilityByConnectionId: { missing: true } }).success).toBe(false);
+  });
   it('round-trips one coherent synced owner', () => {
     expect(ProviderSettingsV1Schema.parse(validSettings())).toEqual(validSettings());
   });

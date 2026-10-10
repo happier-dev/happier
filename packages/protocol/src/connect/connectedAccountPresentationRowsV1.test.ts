@@ -6,7 +6,7 @@ import { openConnectedPresentationContentV1, sealConnectedPresentationContentV1,
     ConnectedPresentationRowReadResponseV1Schema,
     StoredConnectedPresentationContentV1Schema, StoredConnectedAcknowledgementsContentV1Schema,
     StoredConnectedPresentationRecordV1Schema, StoredConnectedAcknowledgementsRecordV1Schema,
-    projectConnectedPresentationLabelsV1, connectedEntitySubjectKeyV1,
+    projectConnectedPresentationLabelsV1, connectedEntitySubjectKeyV1, applyConnectedSubscriptionPriceMutationV1, readConnectedSubscriptionMonthlyPriceV1,
     type QualifiedConnectedEntityRef,
     CONNECTED_PRESENTATION_ACCOUNT_CIPHER_KIND_V1, CONNECTED_ACKNOWLEDGEMENTS_ACCOUNT_CIPHER_KIND_V1,
 } from './connectedAccountPresentationRowsV1.js';
@@ -19,6 +19,27 @@ const agentTargetKey = buildBackendTargetKeyV2({ kind: 'agent', identity: { plug
 const inventory = { entities: [account, group], agents: [{ agentTargetKey, legacyAgentId: 'codex' }] };
 
 describe('connected Account presentation and acknowledgement authority', () => {
+    it('persists entered price before any provider observation and retains it across label edits in both Account modes', () => {
+        const price = { amount: 17, currency: 'EUR', enteredAtMs: 100 };
+        const accountRef = { service, accountId: 'default' };
+        const record = applyConnectedSubscriptionPriceMutationV1({ v: 1, entries: [] }, { account: accountRef, price });
+        expect(projectConnectedPresentationLabelsV1(record)).toEqual({});
+        expect(readConnectedSubscriptionMonthlyPriceV1(record, accountRef)).toEqual(price);
+        expect(readConnectedSubscriptionMonthlyPriceV1(record, { ...accountRef, service: { ...service, localId: 'other' } })).toBeUndefined();
+        const renamed = applyConnectedPresentationMutationV1(record, { subject: account, label: 'Work' });
+        expect(readConnectedSubscriptionMonthlyPriceV1(renamed, accountRef)).toEqual(price);
+        expect(applyConnectedSubscriptionPriceMutationV1(renamed, { account: accountRef, price: null })).toEqual({ v: 1, entries: [{ v: 1, subject: account, label: 'Work' }] });
+        expect(applyConnectedPresentationMutationV1(record, { subject: account, label: null })).toEqual(record);
+        const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+        for (const mode of ['plain', 'e2ee'] as const) {
+            const key = mode === 'plain' ? null : material;
+            const content = sealConnectedPresentationContentV1({ mode, material: key, record });
+            expect(openConnectedPresentationContentV1({ mode, material: key, content })).toEqual({ status: 'opened', record });
+            expect(openConnectedPresentationContentV1({ mode: mode === 'plain' ? 'e2ee' : 'plain', material: key, content }).status).toBe('unavailable');
+        }
+        const content = sealConnectedPresentationContentV1({ mode: 'e2ee', material, record });
+        expect(openConnectedPresentationContentV1({ mode: 'e2ee', material: null, content }).status).toBe('unavailable');
+    });
     it('refuses visible credential carriers before stored metadata projection in both Account modes', () => {
         const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(9) };
         const record = { v: 1 as const, entries: [] };

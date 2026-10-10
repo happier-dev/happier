@@ -1,8 +1,11 @@
 import type {
+    ProviderConnectionV1,
     ProviderWireProtocol,
 } from '@happier-dev/protocol';
 
 import type { JsonValue } from '../identity.js';
+
+declare const canonicalProviderModelSettings: NonNullable<ProviderConnectionV1['modelSettings']>[string];
 
 export type AgentProviderBindingModel = Readonly<{
     id: string;
@@ -59,6 +62,8 @@ export type AgentProviderBindingSourceKey = Readonly<
 export type AgentProviderBindingPrepareInput = Readonly<{
     v: 1;
     agentTargetKey: string;
+    model?: AgentProviderBindingModel;
+    claudeHelperModels?: Readonly<{ fast?: string; default?: string; strongest?: string }>;
     reservedBindingCandidate?: Readonly<{
         contributionKey: string;
         endpointTemplateId: string;
@@ -95,6 +100,12 @@ export type AgentProviderBindingResolvedFacts = Readonly<{
         publicHeaders: Readonly<Record<string, string>>;
     }>;
     runtimeCredentialTransport: AgentProviderCredentialTransport | null;
+    /** Settings of the selected model from the canonical Provider connection. */
+    modelSettings?: typeof canonicalProviderModelSettings extends infer TSettings
+        ? { [TKey in keyof TSettings]: TSettings[TKey] }
+        : never;
+    /** Managed-gateway Claude alias configuration; omitted for external connections. */
+    claudeHelperModels?: Readonly<{ fast?: string; default?: string; strongest?: string }>;
     compatibilityFingerprint: string;
 }>;
 
@@ -108,6 +119,10 @@ export type AgentProviderBindingMaterializeInput = Readonly<{
 export type AgentProviderBindingAdapter = Readonly<{
     v: 1;
     adapterVersion: number;
+    /** Consumes managed connection Claude alias pins; other Agents leave them independent. */
+    supportsClaudeHelperModels?: true;
+    /** Consumes connection-owned selected-model generation settings. */
+    supportsModelSettings?: true;
     prepare(input: AgentProviderBindingPrepareInput): AgentProviderBindingPrepared;
     materialize(
         input: AgentProviderBindingMaterializeInput,

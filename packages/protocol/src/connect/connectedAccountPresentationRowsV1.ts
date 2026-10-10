@@ -14,6 +14,8 @@ import { connectedServiceProfileKey } from './connectedServiceProfilePreferences
 import { BackendTargetKeyV2Schema } from '../backends/targets/backendTargetRefV2.js';
 import { isAccountScopedBlobCiphertextForKind } from '../crypto/accountScopedCipherEnvelope.js';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
+import { ProviderAccountSubscriptionMonthlyPriceV1Schema, type ProviderAccountSubscriptionMonthlyPriceV1 } from './accountSubscription.js';
+import type { QualifiedConnectedAccountRef } from './qualifiedConnectedAccountPersistence.js';
 
 export const CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1 = '@happier/account/connected-presentation/v1/catalog' as const;
 export const CONNECTED_ACKNOWLEDGEMENTS_ACCOUNT_KV_KEY_V1 = '@happier/account/connected-acknowledgements/v1/catalog' as const;
@@ -253,8 +255,27 @@ export function applyConnectedPresentationMutationV1(record: ConnectedPresentati
     const key = connectedEntitySubjectKeyV1(change.subject);
     const label = change.label?.trim() ?? '';
     const entries = source.entries.filter(entry => connectedEntitySubjectKeyV1(entry.subject) !== key);
-    if (label) entries.push({ v: 1, subject: QualifiedConnectedEntityRefSchema.parse(change.subject), label });
+    const price = source.entries.find(entry => connectedEntitySubjectKeyV1(entry.subject) === key)?.subscriptionMonthlyPrice;
+    if (label || price) entries.push({ v: 1, subject: QualifiedConnectedEntityRefSchema.parse(change.subject), label,
+        ...(price ? { subscriptionMonthlyPrice: price } : {}) });
     return { v: 1, entries };
+}
+/** User price shares the exact-account personal metadata lifecycle, not provider observations. */
+export function applyConnectedSubscriptionPriceMutationV1(record: ConnectedPresentationRecordV1,
+    change: Readonly<{ account: QualifiedConnectedAccountRef; price: ProviderAccountSubscriptionMonthlyPriceV1 | null }>): ConnectedPresentationRecordV1 {
+    const source = ConnectedPresentationRecordV1Schema.parse(record);
+    const subject = QualifiedConnectedEntityRefSchema.parse({ kind: 'account', account: change.account });
+    const key = connectedEntitySubjectKeyV1(subject);
+    const label = source.entries.find(entry => connectedEntitySubjectKeyV1(entry.subject) === key)?.label ?? '';
+    const entries = source.entries.filter(entry => connectedEntitySubjectKeyV1(entry.subject) !== key);
+    const price = change.price === null ? null : ProviderAccountSubscriptionMonthlyPriceV1Schema.parse(change.price);
+    if (label || price) entries.push({ v: 1, subject, label, ...(price ? { subscriptionMonthlyPrice: price } : {}) });
+    return { v: 1, entries };
+}
+export function readConnectedSubscriptionMonthlyPriceV1(catalog: Readonly<{ entries: readonly ConnectedPresentationEntryV1[] }>,
+    account: QualifiedConnectedAccountRef): ProviderAccountSubscriptionMonthlyPriceV1 | undefined {
+    return catalog.entries.find(entry => entry.subject.kind === 'account'
+        && sameQualifiedConnectedAccountRef(entry.subject.account, account))?.subscriptionMonthlyPrice;
 }
 export function applyConnectedAcknowledgementMutationV1(record: ConnectedAcknowledgementsRecordV1, change: Readonly<{ subject: QualifiedAcknowledgementSubject; acknowledged: boolean | null }>): ConnectedAcknowledgementsRecordV1 {
     const source = ConnectedAcknowledgementsRecordV1Schema.parse(record);
@@ -267,6 +288,7 @@ export function applyConnectedAcknowledgementMutationV1(record: ConnectedAcknowl
 export function projectConnectedPresentationLabelsV1(catalog: Readonly<{ entries: readonly ConnectedPresentationEntryV1[] }>): Record<string, string> {
     const labels: Record<string, string> = {};
     for (const entry of catalog.entries) {
+        if (!entry.label) continue;
         const key = entry.subject.kind === 'account'
             ? connectedServiceProfileKey({ serviceId: buildQualifiedPluginContributionKey(entry.subject.account.service), profileId: entry.subject.account.accountId })
             : connectedEntitySubjectKeyV1(entry.subject);

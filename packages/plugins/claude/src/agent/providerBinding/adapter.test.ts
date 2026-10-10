@@ -79,11 +79,69 @@ function applyOverlay(
   return result;
 }
 
+function managedMaterializeInput(
+  claudeHelperModels: NonNullable<AgentProviderBindingMaterializeInput['binding']['claudeHelperModels']>,
+): AgentProviderBindingMaterializeInput {
+  const input = materializeInput();
+  return {
+    ...input,
+    binding: { ...input.binding, claudeHelperModels },
+    prepared: CLAUDE_PROVIDER_BINDING_ADAPTER_V1.prepare({
+      ...prepareInput(),
+      model: input.binding.selection.model,
+      claudeHelperModels,
+    }),
+  };
+}
+
 describe('Claude provider-binding adapter V1', () => {
+  it('preserves native alias environment on external Provider bindings', async () => {
+    const ambient = { ANTHROPIC_DEFAULT_HAIKU_MODEL: 'user-native-pin' };
+    const output = await CLAUDE_PROVIDER_BINDING_ADAPTER_V1.materialize(materializeInput());
+    expect(applyOverlay(ambient, output.env).ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('user-native-pin');
+  });
+
+  it('pins managed gateway helper aliases to the selected session model when unset', async () => {
+    const output = await CLAUDE_PROVIDER_BINDING_ADAPTER_V1.materialize(managedMaterializeInput({}));
+
+    expect(Object.fromEntries(output.env.filter((row) => row.name.startsWith('ANTHROPIC_DEFAULT_'))
+      .map((row) => [row.name, row.value]))).toEqual({
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'gateway-sonnet',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'gateway-sonnet',
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'gateway-sonnet',
+    });
+  });
+
+  it('applies explicit helper pins without adding a subagent override', async () => {
+    const output = await CLAUDE_PROVIDER_BINDING_ADAPTER_V1.materialize(
+      managedMaterializeInput({ fast: 'gateway-fast', strongest: 'gateway-strongest' }),
+    );
+
+    expect(Object.fromEntries(output.env.filter((row) => row.name.startsWith('ANTHROPIC_DEFAULT_'))
+      .map((row) => [row.name, row.value]))).toEqual({
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'gateway-fast',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'gateway-sonnet',
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'gateway-strongest',
+    });
+    expect(output.env.some((row) => row.name.includes('SUBAGENT'))).toBe(false);
+  });
+
+  it('changes the existing binding key only when resolved helper pins change', () => {
+    const prepare = (modelId: string, claudeHelperModels: NonNullable<AgentProviderBindingMaterializeInput['binding']['claudeHelperModels']>) => (
+      CLAUDE_PROVIDER_BINDING_ADAPTER_V1.prepare({
+        ...prepareInput(), model: { id: modelId, name: modelId }, claudeHelperModels,
+      })
+    );
+    expect(prepare('model-a', {}).adapterBindingKey).toBeDefined();
+    expect(prepare('model-a', {}).adapterBindingKey).not.toEqual(prepare('model-b', {}).adapterBindingKey);
+    const explicit = { fast: 'fast', default: 'default', strongest: 'strongest' };
+    expect(prepare('model-a', explicit).adapterBindingKey).toEqual(prepare('model-b', explicit).adapterBindingKey);
+  });
+
   it('declares static Anthropic support that exactly agrees with the executable adapter', () => {
     const support = PLUGIN_MANIFEST.contributes.agents[0]?.providerRequirements;
 
-    expect(CLAUDE_PROVIDER_BINDING_ADAPTER_V1.adapterVersion).toBe(2);
+    expect(CLAUDE_PROVIDER_BINDING_ADAPTER_V1.adapterVersion).toBe(3);
     expect(support).toEqual({
       acceptsProtocols: ['anthropic'],
       required: { streaming: true, toolRoundTrips: true },
@@ -113,6 +171,11 @@ describe('Claude provider-binding adapter V1', () => {
           'CLAUDE_CODE_OAUTH_SCOPES',
           'CLAUDE_CODE_SETUP_TOKEN',
           'CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY',
+        ],
+        optionalOwnedEnvKeys: [
+          'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+          'ANTHROPIC_DEFAULT_SONNET_MODEL',
+          'ANTHROPIC_DEFAULT_OPUS_MODEL',
         ],
       },
       materialization: 'spawnEnv',

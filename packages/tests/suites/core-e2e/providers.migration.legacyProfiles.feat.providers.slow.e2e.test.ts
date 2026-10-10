@@ -13,11 +13,17 @@ import {
   openAccountScopedBlobCiphertext,
   ProviderConnectionIdSchema,
   readAiLaunchProfileCollection,
-  readProviderSettingsFromAccountSettingsV1,
   sealSecretsDeepV1,
   SessionModelSelectionIntentV1Schema,
   type AccountSettingsStoredContentEnvelope,
 } from '@happier-dev/protocol';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { deriveSavedSecretImportResourceIdV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, ProviderConnectionsRowReadResponseV1Schema,
+  openProviderConnectionsContentV1, listProviderConnectionsCatalogSavedSecretRefsV1,
+  type ProviderConnectionsCatalogV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import {
   DaemonProviderModelProjectionResponseV1Schema,
   DaemonProviderModelSettingsMutationResponseV1Schema,
@@ -205,16 +211,47 @@ async function readEncryptedSettings(params: Readonly<{
   baseUrl: string;
   token: string;
   secret: Uint8Array;
-}>): Promise<Readonly<{ version: number; settings: JsonRecord }>> {
+}>): Promise<Readonly<{ version: number; settings: JsonRecord; providerCatalog: ProviderConnectionsCatalogV1;
+  importedSecretRef: (secretId: string) => string }>> {
   const response = await fetchJson<unknown>(`${params.baseUrl}/v2/account/settings`, {
     headers: { Authorization: `Bearer ${params.token}` },
     timeoutMs: 20_000,
   });
   expect(response.status).toBe(200);
   const parsed = AccountSettingsV2GetResponseSchema.parse(response.data);
+  const [catalogResponse, profileResponse, materialsResponse] = await Promise.all([
+    fetchJson<unknown>(`${params.baseUrl}${PROVIDER_CONNECTIONS_ROWS_ROUTE_V1}`, {
+      headers: { Authorization: `Bearer ${params.token}` }, timeoutMs: 20_000,
+    }),
+    fetchJson<unknown>(`${params.baseUrl}/v1/account/profile`, {
+      headers: { Authorization: `Bearer ${params.token}` }, timeoutMs: 20_000,
+    }),
+    fetchJson<unknown>(`${params.baseUrl}/v1/account/saved-secrets/resources/materials`, {
+      headers: { Authorization: `Bearer ${params.token}` }, timeoutMs: 20_000,
+    }),
+  ]);
+  expect(catalogResponse.status).toBe(200);
+  expect(profileResponse.status).toBe(200);
+  expect(materialsResponse.status).toBe(200);
+  const row = ProviderConnectionsRowReadResponseV1Schema.parse(catalogResponse.data);
+  if (row.status !== 'present') throw new Error('Expected active Provider row authority');
+  const opened = openProviderConnectionsContentV1({ mode: 'e2ee',
+    material: { type: 'legacy', secret: params.secret }, content: row.content });
+  if (opened.status !== 'opened') throw new Error('Expected complete Provider catalog authority');
+  const materials = SavedSecretResourceMaterialsResponseV1Schema.parse(materialsResponse.data).resources;
+  for (const reference of listProviderConnectionsCatalogSavedSecretRefsV1(opened.catalog)) {
+    expect(materials).toEqual(expect.arrayContaining([expect.objectContaining({ entry: expect.objectContaining({
+      ref: reference.secretId, source: 'shared_resource', materialStatus: 'ready', capabilities: expect.objectContaining({ use: true }),
+    }) })]));
+  }
+  const accountId = AccountProfileSchema.parse(profileResponse.data).id;
   return {
     version: parsed.version,
     settings: openEncryptedSettings(parsed.content, params.secret),
+    providerCatalog: opened.catalog,
+    importedSecretRef: secretId => formatSharedSavedSecretRefV1(deriveSavedSecretImportResourceIdV1({
+      accountId, source: { kind: 'personal-saved-secret', secretId },
+    })),
   };
 }
 
@@ -361,7 +398,7 @@ describe('core e2e: encrypted legacy profile migration', () => {
         token: auth.token,
         secret,
       });
-      const providerSettings = readProviderSettingsFromAccountSettingsV1(current.settings).settings;
+      const providerSettings = current.providerCatalog;
       const outcomes = providerSettings.migration?.completedSources ?? [];
       const deepseekOutcome = outcomes.find((entry) => entry.sourceProfileId === 'deepseek');
       const defaultEnvironmentOutcome = outcomes.find((entry) => entry.sourceProfileId === 'anthropic');
@@ -377,7 +414,7 @@ describe('core e2e: encrypted legacy profile migration', () => {
     const final = await readEncryptedSettings({ baseUrl: server.baseUrl, token: auth.token, secret });
     const finalVersion = final.version;
     const finalSettings = final.settings;
-    const providerSettings = readProviderSettingsFromAccountSettingsV1(finalSettings).settings;
+    const providerSettings = final.providerCatalog;
     const deepseekOutcomes = providerSettings.migration?.completedSources.filter(
       (entry) => entry.sourceProfileId === 'deepseek' && entry.kind === 'connection',
     ) ?? [];
@@ -402,7 +439,7 @@ describe('core e2e: encrypted legacy profile migration', () => {
       expect.objectContaining({ id: deepseekConnectionId, displayNameMode: 'automatic' }),
     ]);
     expect(providerSettings.secretBindingsByConnectionId[deepseekConnectionId]).toEqual({
-      account: { apiKey: RELEASED_CLI_V0_2_1_Q19_VECTOR.deepseek.savedSecret.id },
+      account: { apiKey: final.importedSecretRef(RELEASED_CLI_V0_2_1_Q19_VECTOR.deepseek.savedSecret.id) },
     });
     expect(providerSettings.migration?.pendingCustomProfileIds).toContain('company-gateway');
     expect(providerSettings.migration?.pendingConflicts).toEqual([]);
@@ -563,7 +600,7 @@ describe('core e2e: encrypted legacy profile migration', () => {
         error: { code: 'provider_profile_migration_source_changed' },
       });
       const afterRefusal = await readEncryptedSettings({ baseUrl: server.baseUrl, token: auth.token, secret });
-      expect(readProviderSettingsFromAccountSettingsV1(afterRefusal.settings).settings.connections)
+      expect(afterRefusal.providerCatalog.connections)
         .not.toEqual(expect.arrayContaining([expect.objectContaining({ id: companyConnectionId })]));
       expect((afterRefusal.settings.secretBindingsByProfileId as JsonRecord)['company-gateway'])
         .toEqual({ COMPANY_API_KEY: 'secret-company' });
@@ -604,12 +641,12 @@ describe('core e2e: encrypted legacy profile migration', () => {
       });
 
       const guidedFinal = await readEncryptedSettings({ baseUrl: server.baseUrl, token: auth.token, secret });
-      const guidedProviderSettings = readProviderSettingsFromAccountSettingsV1(guidedFinal.settings).settings;
+      const guidedProviderSettings = guidedFinal.providerCatalog;
       expect(guidedProviderSettings.connections).toEqual(expect.arrayContaining([
         expect.objectContaining({ id: companyConnectionId, role: 'named' }),
       ]));
       expect(guidedProviderSettings.secretBindingsByConnectionId[companyConnectionId]).toEqual({
-        account: { apiKey: 'secret-company' },
+        account: { apiKey: guidedFinal.importedSecretRef('secret-company') },
       });
       expect(guidedProviderSettings.manualModelsByConnectionId[companyConnectionId]).toEqual([
         expect.objectContaining({ id: 'company-model' }),
@@ -726,7 +763,7 @@ describe('core e2e: encrypted legacy profile migration', () => {
     let migratedConnectionId: ReturnType<typeof ProviderConnectionIdSchema.parse> | null = null;
     await waitFor(async () => {
       const current = await readEncryptedSettings({ baseUrl: server!.baseUrl, token: auth.token, secret });
-      const providerSettings = readProviderSettingsFromAccountSettingsV1(current.settings).settings;
+      const providerSettings = current.providerCatalog;
       const outcome = providerSettings.migration?.completedSources.find(
         (entry) => entry.sourceProfileId === 'deepseek',
       );
@@ -734,11 +771,11 @@ describe('core e2e: encrypted legacy profile migration', () => {
       const connectionId = outcome.connectionId;
       migratedConnectionId = connectionId;
       return providerSettings.accountGrants.some((grant) => grant.connectionId === connectionId)
-        && providerSettings.secretBindingsByConnectionId[connectionId]?.account?.apiKey === savedSecretId;
+        && providerSettings.secretBindingsByConnectionId[connectionId]?.account?.apiKey === current.importedSecretRef(savedSecretId);
     }, { timeoutMs: 180_000, context: 'migrated Provider launch account readiness' });
     if (migratedConnectionId === null) throw new Error('Expected migrated Provider connection id');
     const migrated = await readEncryptedSettings({ baseUrl: server.baseUrl, token: auth.token, secret });
-    const migratedProviderSettings = readProviderSettingsFromAccountSettingsV1(migrated.settings).settings;
+    const migratedProviderSettings = migrated.providerCatalog;
     expect(migratedProviderSettings.connections).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: migratedConnectionId,
@@ -838,9 +875,9 @@ describe('core e2e: encrypted legacy profile migration', () => {
       secret,
     });
     const restartedProviderSettings =
-      readProviderSettingsFromAccountSettingsV1(restartedReadback.settings).settings;
+      restartedReadback.providerCatalog;
     expect(restartedProviderSettings.secretBindingsByConnectionId[migratedConnectionId]).toEqual({
-      account: { apiKey: savedSecretId },
+      account: { apiKey: restartedReadback.importedSecretRef(savedSecretId) },
     });
     expect(restartedProviderSettings.migration?.completedSources).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -973,9 +1010,9 @@ describe('core e2e: encrypted legacy profile migration', () => {
     expect(afterLaunch.version).toBe(confirmedSettings.version);
     expect(afterLaunch.settings).toEqual(confirmedSettings.settings);
     const afterLaunchProviderSettings =
-      readProviderSettingsFromAccountSettingsV1(afterLaunch.settings).settings;
+      afterLaunch.providerCatalog;
     expect(afterLaunchProviderSettings.secretBindingsByConnectionId[migratedConnectionId]).toEqual({
-      account: { apiKey: savedSecretId },
+      account: { apiKey: afterLaunch.importedSecretRef(savedSecretId) },
     });
 
     await restartedDaemon.stop();
@@ -1069,7 +1106,7 @@ describe('core e2e: encrypted legacy profile migration', () => {
     let conflictFingerprint = '';
     await waitFor(async () => {
       const current = await readEncryptedSettings({ baseUrl: server!.baseUrl, token: auth.token, secret });
-      const providerSettings = readProviderSettingsFromAccountSettingsV1(current.settings).settings;
+      const providerSettings = current.providerCatalog;
       const conflict = providerSettings.migration?.pendingConflicts.find(
         (entry) => entry.sourceProfileId === 'deepseek',
       );
@@ -1086,7 +1123,7 @@ describe('core e2e: encrypted legacy profile migration', () => {
         expect.objectContaining({ sourceProfileId: 'deepseek' }),
       ]));
       expect(providerSettings.secretBindingsByConnectionId[existingConnectionId]).toEqual({
-        account: { apiKey: 'secret-existing' },
+        account: { apiKey: current.importedSecretRef('secret-existing') },
       });
       expect((current.settings.secretBindingsByProfileId as JsonRecord).deepseek).toEqual({
         DEEPSEEK_AUTH_TOKEN: 'secret-legacy',
@@ -1125,12 +1162,12 @@ describe('core e2e: encrypted legacy profile migration', () => {
     }
 
     const final = await readEncryptedSettings({ baseUrl: server.baseUrl, token: auth.token, secret });
-    const providerSettings = readProviderSettingsFromAccountSettingsV1(final.settings).settings;
+    const providerSettings = final.providerCatalog;
     expect(providerSettings.connections).toEqual([
       expect.objectContaining({ id: existingConnectionId }),
     ]);
     expect(providerSettings.secretBindingsByConnectionId[existingConnectionId]).toEqual({
-      account: { apiKey: 'secret-existing' },
+      account: { apiKey: final.importedSecretRef('secret-existing') },
     });
     expect(providerSettings.migration?.pendingConflicts).toEqual([]);
     expect(providerSettings.migration?.completedSources).toEqual(expect.arrayContaining([

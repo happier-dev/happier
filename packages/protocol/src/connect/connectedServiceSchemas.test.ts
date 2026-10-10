@@ -1173,6 +1173,41 @@ describe('connectedServiceSchemas', () => {
         })).toBeNull();
     });
 
+    it('normalizes predecessor Antigravity bindings without creating a legacy peer service', () => {
+        // Prospective ../0.2 HEAD 37a6541578749067b49d4579be8c752c9591b8c8,
+        // dirty connectedServiceBindings.ts: scalar service key and profile/group selections.
+        const normalized = BuiltInLegacyConnectedServiceBindingsV1IngressSchema.parse({
+            v: 1,
+            bindingsByServiceId: {
+                antigravity: {
+                    source: 'connected',
+                    selection: 'group',
+                    groupId: 'work-pool',
+                    profileId: 'selected-account',
+                },
+            },
+        });
+        expect(normalized).toEqual({
+            v: 1,
+            bindingsByServiceId: {
+                'happier.agent.antigravity/antigravity-account': {
+                    source: 'connected',
+                    selection: 'group',
+                    groupId: 'work-pool',
+                    profileId: 'selected-account',
+                },
+            },
+        });
+        expect(readBuiltInLegacyConnectedServiceIdForQualifiedService({
+            pluginId: 'happier.agent.antigravity',
+            localId: 'antigravity-account',
+        })).toBeNull();
+        expect(ConnectedServiceBindingsV1Schema.safeParse({
+            v: 1,
+            bindingsByServiceId: { antigravity: { source: 'native' } },
+        }).success).toBe(false);
+    });
+
     it('keeps mixed-version binding reads permissive while persisted writes reject unknown fields', () => {
         const mixedVersionBinding = {
             v: 1,

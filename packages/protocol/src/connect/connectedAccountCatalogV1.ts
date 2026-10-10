@@ -1,4 +1,5 @@
 import type { AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
+import type { AgentConnectedAccountPurposeMigrationDescriptor } from '../account/settings/connectedServicesSettings.js';
 import {
   openConnectedAccountCatalogContentV1, CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1,
   emptyConnectedAccountCatalogRecordV1, readRetainedConnectedAccountCatalogRecordV1,
@@ -21,7 +22,9 @@ export type ConnectedAccountCatalogSnapshotV1 = Readonly<{ status: 'loading' }>
     record: ConnectedAccountCatalogRecordV1; diagnostics: readonly ConnectedAccountCatalogDiagnosticV1[] }>
   | Readonly<{ status: 'ready'; record: ConnectedAccountCatalogRecordV1; revision: number; cleanup?: ConnectedAccountCatalogSourceCleanupV1 }>;
 export type ConnectedAccountCatalogSourceCutoverV1 = Readonly<{
-  readSourceSnapshot(): Promise<Readonly<{ raw: Readonly<Record<string, unknown>>; version: number }>>;
+  readSourceSnapshot(input: Readonly<{ purpose: 'initialization' | 'cleanup' }>):
+    Promise<Readonly<{ raw: Readonly<Record<string, unknown>>; version: number;
+      purposeDefaultAgents?: readonly AgentConnectedAccountPurposeMigrationDescriptor[] | null }>>;
   initializeRecord(input: Readonly<{ record: ConnectedAccountCatalogRecordV1; expectedRevision: 'absent'; sourceSettingsVersion: number }>):
     Promise<ConnectedAccountCatalogRowMutationResponseV1>;
   replaceSource?(input: Readonly<{ raw: Readonly<Record<string, unknown>>; expectedVersion: number }>): Promise<
@@ -85,7 +88,7 @@ export async function loadConnectedAccountCatalogV1(input: LoadInput): Promise<C
   if (!input.transfer) return destination.status === 'absent' ? { status: 'unavailable', reason: 'authority-not-confirmed' } : destination;
   if (destination.status === 'ready') await input.onReadyBeforeCleanup?.(destination);
   let source: Awaited<ReturnType<ConnectedAccountCatalogSourceCutoverV1['readSourceSnapshot']>>;
-  try { source = await input.transfer.readSourceSnapshot(); }
+  try { source = await input.transfer.readSourceSnapshot({ purpose: destination.status === 'absent' ? 'initialization' : 'cleanup' }); }
   catch { return destination.status === 'ready' ? { ...destination, cleanup: { status: 'cleanup-pending', reason: 'source-unavailable' } }
     : { status: 'unavailable', reason: input.signal?.aborted ? 'cancelled' : 'unreachable' }; }
   if (input.signal?.aborted) return { status: 'unavailable', reason: 'cancelled' };
@@ -93,8 +96,24 @@ export async function loadConnectedAccountCatalogV1(input: LoadInput): Promise<C
     const sourceRecord = readRetainedConnectedAccountCatalogRecordV1(source.raw, input.key);
     if (sourceRecord.status !== 'ready') return sourceRecord.status === 'partial'
       ? { ...sourceRecord, authority: 'inactive', revision: 'absent' } : sourceRecord;
+    let record = sourceRecord.record;
+    if (record.key === 'purposes') {
+      const { migrateLegacyAgentConnectedAccountPurposeDefaultsForActivation } =
+        await import('../account/settings/connectedServicesSettings.js');
+      const migrated = migrateLegacyAgentConnectedAccountPurposeDefaultsForActivation({
+        settings: {
+          connectedServicesDefaultAuthByAgentIdV1: source.raw.connectedServicesDefaultAuthByAgentIdV1,
+          connectedServicesAdditionalDefaultAuthByAgentIdV1: source.raw.connectedServicesAdditionalDefaultAuthByAgentIdV1,
+        },
+        purposeBindings: record.value,
+        agents: source.purposeDefaultAgents ?? null,
+      });
+      if (migrated.status !== 'ready') return migrated;
+      record = { key: 'purposes', value: migrated.purposeBindings };
+    }
+    if (input.signal?.aborted) return { status: 'unavailable', reason: 'cancelled' };
     let receipt: ConnectedAccountCatalogRowMutationResponseV1 | undefined;
-    try { receipt = await input.transfer.initializeRecord({ record: sourceRecord.record, expectedRevision: 'absent', sourceSettingsVersion: source.version }); }
+    try { receipt = await input.transfer.initializeRecord({ record, expectedRevision: 'absent', sourceSettingsVersion: source.version }); }
     catch { /* Ambiguous transport outcome is decided by the actual row read below. */ }
     if (input.signal?.aborted) return { status: 'unavailable', reason: 'cancelled' };
     destination = await readDestination(input);

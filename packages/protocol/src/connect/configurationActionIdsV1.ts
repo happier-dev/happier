@@ -1,7 +1,29 @@
+/** The existing daemon authentication vocabulary projected into this Action family. */
+export const CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_ID_BY_OPERATION = {
+  beginConnect: 'connectedServices.authentication.beginConnect',
+  beginReconnect: 'connectedServices.authentication.beginReconnect',
+  continueConnect: 'connectedServices.authentication.continueConnect',
+  submitManual: 'connectedServices.authentication.submitManual',
+  completeOAuth: 'connectedServices.authentication.completeOAuth',
+  pollDevice: 'connectedServices.authentication.pollDevice',
+  resumeDevice: 'connectedServices.authentication.resumeDevice',
+  reconcile: 'connectedServices.authentication.reconcile',
+  cancel: 'connectedServices.authentication.cancel',
+  read: 'connectedServices.authentication.read',
+} as const;
 /** Closed configuration vocabulary, independent of payload and Account encryption schemas. */
 export const CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1 = [
+  ...Object.values(CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_ID_BY_OPERATION),
+  'connectedServices.authentication.pending.list',
+  'connectedServices.configuration.get',
+  'connectedServices.configuration.replace',
+  'connectedServices.billing.open',
+  'connectedServices.subscription.price.set',
   'connectedServices.accounts.rename',
+  'connectedServices.accounts.revoke',
   'connectedServices.accounts.default.set',
+  'connectedServices.accounts.purposeDefault.set',
+  'connectedServices.purposes.default.set',
   'connectedServices.pools.create',
   'connectedServices.pools.patch',
   'connectedServices.pools.delete',
@@ -13,5 +35,13 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1 = [
   'connectedServices.pools.default.set',
   'connectedServices.quota.reset',
   'connectedServices.quota.refresh',
+  'connectedServices.quota.get',
+  'connectedServices.pools.selection.get',
   'connectedServices.identityPrivacy.set',
+  'connectedServices.acknowledgements.set',
+  'connectedServices.labels.set',
+  'connectedServices.labels.reset',
+  'connectedServices.acknowledgements.reset',
+  'connectedServices.disclosure.set',
+  'connectedServices.disclosure.reset',
 ] as const;

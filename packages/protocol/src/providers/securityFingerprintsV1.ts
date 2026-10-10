@@ -76,6 +76,7 @@ import {
 } from './safety/url.js';
 import { ProviderAdapterBindingKeyV1Schema } from './sessions/adapterBindingKeyV1.js';
 import { ProviderOriginRelativePathSchema } from './originRelativePathSchema.js';
+import { ProviderGatewayPlacementV1Schema, type ProviderGatewayPlacementV1 } from './connections/v1.js';
 
 type ProviderSecurityEndpointV1 = Readonly<{
   endpointTemplateId: string;
@@ -153,6 +154,7 @@ function projectManagedRuntimeDeclarationSecurityFactsV1(input: Readonly<{
     implementationIdentity,
     managedRuntime: {
       kind: 'managed' as const,
+      ...(managedRuntime.sharing ? { sharing: managedRuntime.sharing } : {}),
       dependencies: [...managedRuntime.dependencies].sort(
         compareProviderCanonicalStringsV1,
       ),
@@ -217,6 +219,7 @@ export function createProviderConnectionSecurityFingerprintV1(input: Readonly<{
   credentialTransports: readonly ProviderCredentialTransportV1[];
   modelLoad?: ProviderModelLoadDescriptorV1;
   managedDeployment?: Readonly<{
+    gatewayPlacement?: ProviderGatewayPlacementV1;
     implementationIdentity: Readonly<{ pluginId: string; localId: string }>;
     managedRuntime:
       | ProviderManagedRuntimeDeclarationV1
@@ -268,6 +271,8 @@ export function createProviderConnectionSecurityFingerprintV1(input: Readonly<{
     ...normalizedSharedFacts,
     deployment: {
       kind: 'managedLocal',
+      ...(input.managedDeployment.gatewayPlacement?.kind === 'machine'
+        ? { gatewayPlacement: ProviderGatewayPlacementV1Schema.parse(input.managedDeployment.gatewayPlacement) } : {}),
       implementationIdentity: managedDeclaration.implementationIdentity,
       logicalEndpoints: input.managedDeployment.logicalEndpoints
         .map(normalizeManagedEndpoint)
@@ -305,6 +310,7 @@ type ProviderBindingExternalEndpointIdentityV1 = Readonly<{
 type ProviderBindingManagedEndpointIdentityV1 = Readonly<{
   deployment: Readonly<{
     kind: 'managedLocal';
+    gatewayPlacement?: ProviderGatewayPlacementV1;
     implementationIdentity: Readonly<{ pluginId: string; localId: string }>;
     managedRuntime:
       | ProviderManagedRuntimeDeclarationV1
@@ -371,6 +377,8 @@ export function createProviderBindingSecurityFingerprintV1(
     ...normalizedSharedFacts,
     endpointIdentity: {
       kind: 'managedLocal',
+      ...(input.deployment.gatewayPlacement?.kind === 'machine'
+        ? { gatewayPlacement: ProviderGatewayPlacementV1Schema.parse(input.deployment.gatewayPlacement) } : {}),
       implementationIdentity: managedDeclaration.implementationIdentity,
       managedRuntime: managedDeclaration.managedRuntime,
       endpointTemplateId: ProviderLocalIdSchema.parse(input.endpointTemplateId),

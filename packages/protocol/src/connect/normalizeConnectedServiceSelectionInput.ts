@@ -15,7 +15,8 @@ import {
  * the canonical contract shared with remote-dev (kept aligned; see F4).
  *
  * Accepted input (any of):
- *  - `undefined` → no explicit selection; the run/session uses the account default.
+ *  - `undefined` → no explicit selection; launch admission decides attached
+ *    inheritance or independent Account defaults, rather than this normalizer.
  *  - `"native"` / `null` → explicitly suppress all connected-service inheritance for this run.
  *  - a string token, or an array of string tokens, each one of:
  *      - `"<serviceId>"`                     → the NAMED service's account default. This is an

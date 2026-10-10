@@ -7,6 +7,7 @@ import { QualifiedConnectedAccountRefSchema, QualifiedConnectedAccountIdSchema }
 import { ConnectedServiceAuthGroupIdSchema } from './connectedServiceBindings.js';
 import { BackendTargetKeyV2Schema } from '../backends/targets/backendTargetRefV2.js';
 import { listSavedSecretReferenceCarrierPathsV1 } from '../account/settings/savedSecretReferenceV1.js';
+import { ProviderAccountSubscriptionMonthlyPriceV1Schema } from './accountSubscription.js';
 
 
 export const QualifiedConnectedEntityRefSchema = lazyDefinition(() => z.discriminatedUnion('kind', [
@@ -32,7 +33,11 @@ export function connectedAcknowledgementSubjectKeyV1(subject: QualifiedAcknowled
     return parsed.kind === 'adoption' ? JSON.stringify(['adoption', parsed.agentTargetKey, parsed.service.pluginId, parsed.service.localId, parsed.groupId])
         : JSON.stringify(['warning', parsed.warningId, parsed.scope.kind, parsed.scope.kind === 'machine' ? parsed.scope.machineId : null]);
 }
-export const ConnectedPresentationEntryV1Schema = lazyDefinition(() => z.strictObject({ v: z.literal(1), subject: QualifiedConnectedEntityRefSchema, label: z.string() }));
+export const ConnectedPresentationEntryV1Schema = lazyDefinition(() => z.strictObject({ v: z.literal(1), subject: QualifiedConnectedEntityRefSchema, label: z.string(),
+    subscriptionMonthlyPrice: z.optional(ProviderAccountSubscriptionMonthlyPriceV1Schema),
+}).check(z.superRefine((entry, context) => {
+    if (entry.subscriptionMonthlyPrice && entry.subject.kind !== 'account') context.addIssue({ code: 'custom', path: ['subscriptionMonthlyPrice'], message: 'Subscription price requires an exact connected account' });
+})));
 export type ConnectedPresentationEntryV1 = z.infer<typeof ConnectedPresentationEntryV1Schema>;
 export const ConnectedAcknowledgementEntryV1Schema = lazyDefinition(() => z.strictObject({ v: z.literal(1), subject: QualifiedAcknowledgementSubjectSchema, acknowledged: z.boolean() }));
 export type ConnectedAcknowledgementEntryV1 = z.infer<typeof ConnectedAcknowledgementEntryV1Schema>;

@@ -17,6 +17,7 @@ import {
 } from '../agent/auth/services/openai/cloud/device.js';
 import {
   OPENAI_CODEX_DEFAULT_USAGE_URL,
+  createOpenAiCodexQuotaFetchError,
   parseOpenAiCodexConnectedAccountQuotaLimits,
 } from '../agent/auth/services/quota/openaiFetcher.js';
 import { mapCodexRateLimitResetCredits } from '../agent/auth/services/quota/rateLimitResetCredits.js';
@@ -451,7 +452,7 @@ const openAiCodexRuntimeDefinition: PluginConnectedAccountRuntime = {
       redirect: 'error',
     }, { signal });
     if (response.status < 200 || response.status >= 300) {
-      throw new Error(`OpenAI Codex usage fetch failed (${response.status})`);
+      throw createOpenAiCodexQuotaFetchError(response, Date.now());
     }
     return {
       observedAtMs: Date.now(),

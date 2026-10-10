@@ -16,6 +16,7 @@ import {
 } from './connectedServiceBindings.js';
 import { ConnectedServiceCredentialKindSchema } from './connectedServiceCredentialKind.js';
 import { ProviderAccountSubscriptionV1Schema } from './accountSubscription.js';
+import { ProviderAccountUsageDiagnosticV1Schema } from './providerAccountUsageDiagnostic.js';
 import {
     ConnectedServiceLimitCategoryV1Schema,
     type ConnectedServiceLimitCategoryV1,
@@ -525,6 +526,7 @@ export const ConnectedServiceQuotaSnapshotV1Schema = lazyZodSchema(() => z.objec
     recoveryCredits: ConnectedServiceQuotaRecoveryCreditsV1Schema.optional(),
     subscription: ProviderAccountSubscriptionV1Schema.optional(),
     meters: z.array(ConnectedServiceQuotaMeterV1Schema),
+    diagnostics: z.array(ProviderAccountUsageDiagnosticV1Schema).optional(),
 }));
 
 export type ConnectedServiceQuotaSnapshotV1 = z.infer<typeof ConnectedServiceQuotaSnapshotV1Schema>;

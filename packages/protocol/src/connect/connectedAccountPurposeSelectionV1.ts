@@ -3,6 +3,24 @@ import type { QualifiedConnectedAccountPurposeV1 } from './connectedAccountPurpo
 import { sameQualifiedConnectedAccountRef } from './qualifiedConnectedAccountPersistence.js';
 import { isQualifiedConnectedAccountProfileActiveV4, resolveQualifiedConnectedAccountGroupActiveAccountV4, type QualifiedConnectedAccountProfileV4, type QualifiedConnectedAccountGroupV4 } from './qualifiedConnectedAccountsV4.js';
 import type { PluginConnectedAccountAuthenticationV2 } from './pluginConnectedAccountAuthenticationV2.js';
+import type { PluginProjectedResourceV2, PluginProjectionInstalledPackageV2 } from '../daemon/contributionRegistryProjection.js';
+
+/** The installed Resource is the declaration authority, shared by setup and Action admission. */
+export function readDeclaredConnectedAccountResourcePurposeV1(input: Readonly<{
+  purpose: QualifiedConnectedAccountPurposeV1;
+  projection: Readonly<{
+    installedPackagesById: Readonly<Record<string, Pick<PluginProjectionInstalledPackageV2, 'enabled'>>>;
+    resourcesById: Readonly<Record<string, PluginProjectedResourceV2>>;
+  }>;
+}>) {
+  const consumer = input.purpose.consumer;
+  if (input.projection.installedPackagesById[consumer.pluginId]?.enabled !== true) return null;
+  const resources = Object.values(input.projection.resourcesById).filter(resource =>
+    resource.pluginId === consumer.pluginId && resource.id === consumer.localId);
+  const declarations = resources.length === 1 ? resources[0]!.connectedAccountPurposes?.filter(declaration =>
+    declaration.purpose === input.purpose.purpose) ?? [] : [];
+  return declarations.length === 1 ? declarations[0]! : null;
+}
 
 /** Read-only projection of one existing selected purpose, never a selection writer. */
 export function resolveConnectedAccountPurposeSelectedAccountV1(input: Readonly<{

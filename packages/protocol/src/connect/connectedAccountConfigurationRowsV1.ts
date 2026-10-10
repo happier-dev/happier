@@ -1,12 +1,19 @@
-import { z } from 'zod';
+import { ConnectedAccountCatalogKeyV1Schema, ConnectedConfigurationCatalogV1Schema, ConnectedAccountCatalogRecordV1Schema, StoredConnectedAccountCatalogContentV1Schema } from "./connectedAccountCatalogSchemasV1.js";
+import type { ConnectedAccountCatalogKeyV1, ConnectedConfigurationCatalogV1, ConnectedAccountCatalogRecordV1, ConnectedAccountCatalogContentV1, StoredConnectedAccountCatalogContentV1, ConnectedAccountCatalogDiagnosticV1, ConnectedAccountCatalogOpenResultV1 } from "./connectedAccountCatalogSchemasV1.js";
+export { ConnectedAccountCatalogKeyV1Schema, ConnectedConfigurationCatalogV1Schema, ConnectedPurposeCatalogV1Schema, ConnectedAccountCatalogRecordV1Schema, StoredConnectedAccountCatalogRecordV1Schema, ConnectedAccountCatalogContentV1Schema, StoredConnectedAccountCatalogContentV1Schema, ConnectedAccountCatalogRowFailureV1Schema, ConnectedAccountCatalogRowReadResponseV1Schema, ConnectedAccountCatalogRowMutationV1Schema, ConnectedAccountCatalogRowMutationResponseV1Schema, AccountEncryptionMigrateConnectedConfigurationsDirectiveV1Schema, AccountEncryptionMigrateConnectedPurposesDirectiveV1Schema, AccountEncryptionMigrateConnectedConfigurationsResultV1Schema, AccountEncryptionMigrateConnectedPurposesResultV1Schema } from "./connectedAccountCatalogSchemasV1.js";
+export type { ConnectedAccountCatalogKeyV1, ConnectedConfigurationCatalogV1, ConnectedPurposeCatalogV1, ConnectedAccountCatalogRecordV1, ConnectedAccountCatalogContentV1, StoredConnectedAccountCatalogContentV1, ConnectedAccountCatalogDiagnosticV1, ConnectedAccountCatalogOpenResultV1, ConnectedAccountCatalogRowReadResponseV1, ConnectedAccountCatalogRowMutationV1, ConnectedAccountCatalogRowMutationResponseV1, AccountEncryptionMigrateConnectedConfigurationsDirectiveV1, AccountEncryptionMigrateConnectedPurposesDirectiveV1, AccountEncryptionMigrateConnectedConfigurationsResultV1, AccountEncryptionMigrateConnectedPurposesResultV1 } from "./connectedAccountCatalogSchemasV1.js";
 import tweetnacl from 'tweetnacl';
-import { lazyZodSchema } from '../lazyZodSchema.js';
+import { ConnectedAccountCatalogMigrationContentV1Schema } from './connectedAccountCatalogSchemasV1.js';
+import type { ConnectedAccountCatalogMigrationSourceV1 } from './connectedAccountCatalogSchemasV1.js';
+export { ConnectedAccountCatalogMigrationContentV1Schema } from './connectedAccountCatalogSchemasV1.js';
+export type { ConnectedAccountCatalogMigrationSourceV1 } from './connectedAccountCatalogSchemasV1.js';
+import { StrictJsonValueSchema, sameStrictJsonValue } from '../json/strictJsonValue.js';
+
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
-import { ConnectedAccountServiceConfigurationCatalogV1Schema, ConnectedAccountServiceConfigurationEntryV1Schema } from '../account/settings/connectedAccountServiceConfigurationsV1.js';
-import { QualifiedConnectedAccountPurposeBindingsV1RecordSchema, QualifiedConnectedAccountPurposeBindingV1Schema,
-  QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema, qualifiedPurposeKey, readEarlierTeamResourcePurposeTargetsV1 } from './connectedAccountPurposeBindings.js';
-import { AccountSettingsStoredContentEnvelopeWriteSchema } from '../account/settings/accountSettingsStoredContentEnvelope.js';
-import { AccountRemoteAlertPolicyV1Schema } from '../account/settings/accountRemoteAlertPolicySchema.js';
+import { ConnectedAccountServiceConfigurationEntryV1Schema } from '../account/settings/connectedAccountServiceConfigurationsV1.js';
+import { QualifiedConnectedAccountPurposeBindingV1Schema, QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema, qualifiedPurposeKey, readEarlierTeamResourcePurposeTargetsV1 } from './connectedAccountPurposeBindings.js';
+
+
 import { appendSavedSecretReferencePathV1, listSavedSecretReferenceCarrierPathsV1, parseSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
 import { isAccountScopedBlobCiphertextForKind } from '../crypto/accountScopedCipherEnvelope.js';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
@@ -19,12 +26,6 @@ export const CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1 = {
 } as const;
 export const CONNECTED_CONFIGURATION_ACCOUNT_CIPHER_KIND_V1 = 'account_connected_configuration' as const;
 export const CONNECTED_PURPOSE_ACCOUNT_CIPHER_KIND_V1 = 'account_connected_purposes' as const;
-export const ConnectedAccountCatalogKeyV1Schema = lazyZodSchema(() => z.enum(['configurations', 'purposes']));
-export type ConnectedAccountCatalogKeyV1 = z.infer<typeof ConnectedAccountCatalogKeyV1Schema>;
-export const ConnectedConfigurationCatalogV1Schema = ConnectedAccountServiceConfigurationCatalogV1Schema;
-export const ConnectedPurposeCatalogV1Schema = QualifiedConnectedAccountPurposeBindingsV1RecordSchema;
-export type ConnectedConfigurationCatalogV1 = z.infer<typeof ConnectedConfigurationCatalogV1Schema>;
-export type ConnectedPurposeCatalogV1 = z.infer<typeof ConnectedPurposeCatalogV1Schema>;
 
 export function emptyConnectedAccountCatalogRecordV1(key: ConnectedAccountCatalogKeyV1): ConnectedAccountCatalogRecordV1 {
   return key === 'configurations' ? { key, value: { v: 1, entries: [] } } : { key, value: { v: 1, bindings: [] } };
@@ -50,27 +51,6 @@ export function parseConnectedAccountCatalogPhysicalKeyV1(key: string): Connecte
 export function connectedAccountCatalogCipherKindV1(key: ConnectedAccountCatalogKeyV1) {
   return key === 'configurations' ? CONNECTED_CONFIGURATION_ACCOUNT_CIPHER_KIND_V1 : CONNECTED_PURPOSE_ACCOUNT_CIPHER_KIND_V1;
 }
-export const ConnectedAccountCatalogRecordV1Schema = lazyZodSchema(() => z.discriminatedUnion('key', [
-  z.object({ key: z.literal('configurations'), value: ConnectedConfigurationCatalogV1Schema }).strict(),
-  z.object({ key: z.literal('purposes'), value: ConnectedPurposeCatalogV1Schema }).strict(),
-]));
-export type ConnectedAccountCatalogRecordV1 = z.infer<typeof ConnectedAccountCatalogRecordV1Schema>;
-export const StoredConnectedAccountCatalogRecordV1Schema = createStoredReadSchema(ConnectedAccountCatalogRecordV1Schema);
-export const ConnectedAccountCatalogContentV1Schema = lazyZodSchema(() => z.discriminatedUnion('t', [
-  z.object({ t: z.literal('plain'), v: ConnectedAccountCatalogRecordV1Schema }).strict(),
-  z.object({ t: z.literal('encrypted'), c: z.string().min(1) }).strict(),
-]));
-export type ConnectedAccountCatalogContentV1 = z.infer<typeof ConnectedAccountCatalogContentV1Schema>;
-// Keep original JSON until the domain owner classifies independent entries and references.
-export const StoredConnectedAccountCatalogContentV1Schema = lazyZodSchema(() => z.discriminatedUnion('t', [
-  z.object({ t: z.literal('plain'), v: z.unknown() }).passthrough(),
-  z.object({ t: z.literal('encrypted'), c: z.string().min(1) }).passthrough(),
-]));
-export type StoredConnectedAccountCatalogContentV1 = z.infer<typeof StoredConnectedAccountCatalogContentV1Schema>;
-export type ConnectedAccountCatalogDiagnosticV1 = Readonly<{ path: string; reason: 'invalid-stored-content' | 'unclassified-reference' }>;
-export type ConnectedAccountCatalogOpenResultV1 = Readonly<{ status: 'opened'; record: ConnectedAccountCatalogRecordV1 }>
-  | Readonly<{ status: 'partial'; record: ConnectedAccountCatalogRecordV1; diagnostics: readonly ConnectedAccountCatalogDiagnosticV1[] }>
-  | Readonly<{ status: 'unavailable'; reason: 'account-mode-mismatch' | 'encryption-material-unavailable' | 'invalid-stored-content' }>;
 
 const storedConfiguration = createStoredReadSchema(ConnectedAccountServiceConfigurationEntryV1Schema);
 const storedPurpose = createStoredReadSchema(QualifiedConnectedAccountPurposeBindingV1Schema);
@@ -178,9 +158,15 @@ export function assertConnectedAccountCatalogContentForModeV1(content: StoredCon
     throw new Error('account-mode-mismatch');
   }
 }
-export function openConnectedAccountCatalogContentV1(input: Readonly<{
+type ConnectedAccountCatalogOpenInputV1 = Readonly<{
   key: ConnectedAccountCatalogKeyV1; mode: 'plain' | 'e2ee'; material: AccountScopedCryptoMaterial | null; content: unknown;
-}>): ConnectedAccountCatalogOpenResultV1 {
+  admission?: 'migration';
+}>;
+export function openConnectedAccountCatalogContentV1(input: ConnectedAccountCatalogOpenInputV1 & Readonly<{ admission: 'migration' }>):
+  Exclude<ConnectedAccountCatalogOpenResultV1, { status: 'opened' }>
+  | Readonly<{ status: 'opened'; record: ConnectedAccountCatalogRecordV1; migrationSource: ConnectedAccountCatalogMigrationSourceV1 }>;
+export function openConnectedAccountCatalogContentV1(input: ConnectedAccountCatalogOpenInputV1): ConnectedAccountCatalogOpenResultV1;
+export function openConnectedAccountCatalogContentV1(input: ConnectedAccountCatalogOpenInputV1): ConnectedAccountCatalogOpenResultV1 {
   const parsed = StoredConnectedAccountCatalogContentV1Schema.safeParse(input.content);
   if (!parsed.success) return { status: 'unavailable', reason: 'invalid-stored-content' };
   const content = parsed.data;
@@ -198,9 +184,52 @@ export function openConnectedAccountCatalogContentV1(input: Readonly<{
   const outerDiagnostics: ConnectedAccountCatalogDiagnosticV1[] = listSavedSecretReferenceCarrierPathsV1(content)
     .filter(path => content.t !== 'plain' || !path.startsWith('v.'))
     .map(path => ({ path: `content.${path}`, reason: 'unclassified-reference' }));
-  if (!outerDiagnostics.length) return projected;
+  if (!outerDiagnostics.length) {
+    if (projected.status !== 'opened' || input.admission !== 'migration') return projected;
+    const payload = StrictJsonValueSchema.safeParse(value);
+    return payload.success && ConnectedAccountCatalogMigrationContentV1Schema.safeParse(content).success
+      ? { ...projected, migrationSource: { content, payload: payload.data } }
+      : { status: 'unavailable', reason: 'invalid-stored-content' };
+  }
   return { status: 'partial', record: projected.record,
     diagnostics: [...(projected.status === 'partial' ? projected.diagnostics : []), ...outerDiagnostics] };
+}
+/** Complete original-envelope admission is shared by conversion sources and targets. */
+export function parseConnectedAccountCatalogMigrationContentV1(value: unknown,
+  key: ConnectedAccountCatalogKeyV1): StoredConnectedAccountCatalogContentV1 | null {
+  const parsed = ConnectedAccountCatalogMigrationContentV1Schema.safeParse(value);
+  if (!parsed.success) return null;
+  try { assertConnectedAccountCatalogContentForModeV1(parsed.data, parsed.data.t === 'plain' ? 'plain' : 'e2ee', key); }
+  catch { return null; }
+  if (parsed.data.t === 'encrypted') return hasDroppedReferenceCarrier(parsed.data, { t: 'encrypted', c: parsed.data.c }) ? null : parsed.data;
+  return openConnectedAccountCatalogContentV1({ key, mode: 'plain', material: null, content: parsed.data,
+    admission: 'migration' }).status === 'opened' ? parsed.data : null;
+}
+
+/** Account conversion reseals complete original JSON; ordinary writes remain strict below. */
+export function sealConnectedAccountCatalogMigrationContentV1(input: Readonly<{
+  source: ConnectedAccountCatalogMigrationSourceV1; mode: 'plain' | 'e2ee'; material: AccountScopedCryptoMaterial | null;
+  randomBytes?: (length: number) => Uint8Array;
+}>): StoredConnectedAccountCatalogContentV1 {
+  const payload = StrictJsonValueSchema.parse(input.source.payload);
+  const key = ConnectedAccountCatalogKeyV1Schema.parse(storedObject(payload)?.key);
+  const source = parseConnectedAccountCatalogMigrationContentV1(input.source.content, key);
+  if (!source || projectStoredConnectedAccountCatalogRecordV1(payload, key).status !== 'opened'
+    || source.t === 'plain' && !sameStrictJsonValue(source.v, payload)) throw new Error('invalid-stored-content');
+  const metadata = Object.fromEntries(Object.entries(source).filter(([field]) => field !== 't' && field !== (source.t === 'plain' ? 'v' : 'c')));
+  if (Object.hasOwn(metadata, input.mode === 'plain' ? 'v' : 'c')) throw new Error('invalid-stored-content');
+  let converted: unknown;
+  if (input.mode === 'plain') {
+    if (input.material !== null) throw new Error('account-mode-mismatch');
+    converted = { ...metadata, t: 'plain', v: payload };
+  } else {
+    if (!input.material) throw new Error('encryption-material-unavailable');
+    converted = { ...metadata, t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: connectedAccountCatalogCipherKindV1(key),
+      material: input.material, payload, randomBytes: input.randomBytes ?? tweetnacl.randomBytes }) };
+  }
+  const content = parseConnectedAccountCatalogMigrationContentV1(converted, key);
+  if (!content) throw new Error('invalid-stored-content');
+  return content;
 }
 export function sealConnectedAccountCatalogContentV1(input: Readonly<{
   record: ConnectedAccountCatalogRecordV1; mode: 'plain' | 'e2ee'; material: AccountScopedCryptoMaterial | null;
@@ -216,61 +245,6 @@ export function sealConnectedAccountCatalogContentV1(input: Readonly<{
   return { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: connectedAccountCatalogCipherKindV1(record.key), material: input.material,
     payload: record, randomBytes: input.randomBytes ?? tweetnacl.randomBytes }) };
 }
-
-const revision = lazyZodSchema(() => z.number().int().nonnegative().safe());
-export const ConnectedAccountCatalogRowFailureV1Schema = lazyZodSchema(() => z.object({
-  status: z.enum(['account-not-found', 'account-inconsistent', 'account-mode-mismatch', 'invalid-stored-content', 'invalid-reference']),
-  reason: z.string().optional(),
-}).strict());
-export const ConnectedAccountCatalogRowReadResponseV1Schema = lazyZodSchema(() => z.union([
-  z.object({ status: z.literal('present'), revision, content: StoredConnectedAccountCatalogContentV1Schema }).strict(),
-  z.object({ status: z.literal('absent') }).strict(), z.object({ status: z.literal('deleted'), revision }).strict(),
-  ConnectedAccountCatalogRowFailureV1Schema,
-]));
-export type ConnectedAccountCatalogRowReadResponseV1 = z.infer<typeof ConnectedAccountCatalogRowReadResponseV1Schema>;
-export const ConnectedAccountCatalogRowMutationV1Schema = lazyZodSchema(() => z.object({
-  expectedRevision: z.union([revision, z.literal('absent')]), content: ConnectedAccountCatalogContentV1Schema.nullable(),
-  sourceSettingsVersion: revision.optional(),
-  referencedSavedSecretIds: z.array(z.string().min(1)).default([]),
-  savedSecretRevisions: z.array(z.object({ resourceId: z.string().min(1), expectedRevision: revision }).strict()).optional(),
-  settingsMutation: z.object({ expectedSettingsVersion: revision, content: AccountSettingsStoredContentEnvelopeWriteSchema.nullable(),
-    remoteAlertPolicy: AccountRemoteAlertPolicyV1Schema.nullable().optional() }).strict().optional(),
-}).strict().superRefine((mutation, context) => {
-  if (mutation.expectedRevision === 'absent' && (mutation.sourceSettingsVersion === undefined || mutation.content === null || mutation.settingsMutation)) {
-    context.addIssue({ code: 'custom', path: ['sourceSettingsVersion'], message: 'Initialization requires captured source currentness only' });
-  }
-  if (mutation.sourceSettingsVersion !== undefined && (mutation.expectedRevision !== 'absent' || mutation.content === null)) {
-    context.addIssue({ code: 'custom', path: ['sourceSettingsVersion'], message: 'Source admission initializes destination authority only' });
-  }
-  if (new Set(mutation.referencedSavedSecretIds).size !== mutation.referencedSavedSecretIds.length
-    || new Set(mutation.savedSecretRevisions?.map(item => item.resourceId)).size !== (mutation.savedSecretRevisions?.length ?? 0)) {
-    context.addIssue({ code: 'custom', path: ['referencedSavedSecretIds'], message: 'Reference captures must be unique' });
-  }
-}));
-export type ConnectedAccountCatalogRowMutationV1 = z.infer<typeof ConnectedAccountCatalogRowMutationV1Schema>;
-export const ConnectedAccountCatalogRowMutationResponseV1Schema = lazyZodSchema(() => z.union([
-  z.object({ status: z.literal('updated'), revision, cursor: revision, settingsVersion: revision.optional() }).strict(),
-  z.object({ status: z.literal('conflict'), revision: z.number().int().min(-1).safe() }).strict(),
-  z.object({ status: z.literal('settings-conflict'), revision }).strict(), ConnectedAccountCatalogRowFailureV1Schema,
-]));
-export type ConnectedAccountCatalogRowMutationResponseV1 = z.infer<typeof ConnectedAccountCatalogRowMutationResponseV1Schema>;
-
-function directiveSchema(key: ConnectedAccountCatalogKeyV1) {
-  return z.object({ expectedRevision: revision, content: ConnectedAccountCatalogContentV1Schema.nullable() }).strict().superRefine((directive, context) => {
-    if (directive.content?.t === 'plain' && directive.content.v.key !== key) {
-      context.addIssue({ code: 'custom', path: ['content'], message: 'Catalog content must match its domain' });
-    }
-  });
-}
-export const AccountEncryptionMigrateConnectedConfigurationsDirectiveV1Schema = lazyZodSchema(() => directiveSchema('configurations'));
-export const AccountEncryptionMigrateConnectedPurposesDirectiveV1Schema = lazyZodSchema(() => directiveSchema('purposes'));
-export type AccountEncryptionMigrateConnectedConfigurationsDirectiveV1 = z.infer<typeof AccountEncryptionMigrateConnectedConfigurationsDirectiveV1Schema>;
-export type AccountEncryptionMigrateConnectedPurposesDirectiveV1 = z.infer<typeof AccountEncryptionMigrateConnectedPurposesDirectiveV1Schema>;
-export const AccountEncryptionMigrateConnectedConfigurationsResultV1Schema = lazyZodSchema(() => z.object({ row: z.object({ revision,
-  content: ConnectedAccountCatalogContentV1Schema.nullable() }).strict().nullable() }).strict());
-export const AccountEncryptionMigrateConnectedPurposesResultV1Schema = AccountEncryptionMigrateConnectedConfigurationsResultV1Schema;
-export type AccountEncryptionMigrateConnectedConfigurationsResultV1 = z.infer<typeof AccountEncryptionMigrateConnectedConfigurationsResultV1Schema>;
-export type AccountEncryptionMigrateConnectedPurposesResultV1 = z.infer<typeof AccountEncryptionMigrateConnectedPurposesResultV1Schema>;
 
 export function listConnectedConfigurationCatalogSavedSecretRefsV1(catalog: ConnectedConfigurationCatalogV1): readonly Readonly<{ path: string; secretId: string }>[] {
   return catalog.entries.flatMap((entry, index) => Object.entries(entry.secretRefs).map(([field, secretId]) => ({

@@ -261,12 +261,19 @@ export type PluginConnectedAccountAuthenticationV2 =
  * Account family has a single narrow Protocol owner; the V2 contribution
  * catalog re-exports it for family registration.
  */
+/** Authored provider navigation only; callers never supply or substitute this destination. */
+export const ConnectedAccountBillingUrlSchema = lazyZodSchema(() => z.string().url().refine(value => {
+  const url = new URL(value);
+  return url.protocol === 'https:' && !url.username && !url.password;
+}, 'Billing destinations must be credential-free HTTPS URLs'));
+
 export const PluginConnectedAccountDescriptorContributionV2Schema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
   description: PluginLocalizedStringV2Schema.optional(),
   authentication: PluginConnectedAccountAuthenticationV2Schema,
   recoveryCredits: z.object({ supported: z.literal(true) }).strict().optional(),
+  billingUrl: ConnectedAccountBillingUrlSchema.optional(),
   capabilities: z.array(z.string().trim().min(1)).optional(),
   metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
 }).strict());

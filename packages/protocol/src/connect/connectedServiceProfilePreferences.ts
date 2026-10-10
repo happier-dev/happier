@@ -26,18 +26,14 @@ function qualifiedConnectedAccountPreferenceServiceKeys(params: Readonly<{
 export function resolveQualifiedConnectedAccountLabel(params: Readonly<{
   labelsByKey: Readonly<Record<string, string | undefined>>;
   service: PluginContributionIdentityV1;
-  legacyServiceId: ConnectedServiceId | null;
   accountId: string;
 }>): string | null {
-  for (const serviceId of qualifiedConnectedAccountPreferenceServiceKeys(params)) {
-    const resolved = resolveConnectedServiceProfileLabel({
-      labelsByKey: params.labelsByKey,
-      serviceId,
-      profileId: params.accountId,
-    });
-    if (resolved) return resolved;
-  }
-  return null;
+  const value = params.labelsByKey[connectedServiceProfileKey({
+    serviceId: qualifiedConnectedAccountPreferenceServiceKey(params.service),
+    profileId: params.accountId,
+  })];
+  if (typeof value !== 'string') return null;
+  return value.trim() || null;
 }
 
 export function resolveQualifiedConnectedAccountDefaultId(params: Readonly<{
@@ -97,23 +93,6 @@ export function updateQualifiedConnectedAccountProfilePreference<T>(params: Read
   return next;
 }
 
-export function updateQualifiedConnectedAccountLabel(params: Readonly<{
-  service: PluginContributionIdentityV1;
-  legacyServiceId: ConnectedServiceId | null;
-  accountId: string;
-  label: string | null;
-  labelsByKey: Readonly<Record<string, string | undefined>>;
-}>): Record<string, string> {
-  const label = params.label?.trim() ?? '';
-  return updateQualifiedConnectedAccountProfilePreference({
-    service: params.service,
-    legacyServiceId: params.legacyServiceId,
-    accountId: params.accountId,
-    valuesByKey: copyDefinedStringRecord(params.labelsByKey),
-    value: label || null,
-  });
-}
-
 export function updateQualifiedConnectedAccountDefaultId(params: Readonly<{
   service: PluginContributionIdentityV1;
   legacyServiceId: ConnectedServiceId | null;
@@ -129,40 +108,6 @@ export function updateQualifiedConnectedAccountDefaultId(params: Readonly<{
       params.accountId;
   }
   return next;
-}
-
-export function pruneQualifiedConnectedAccountPreferences(params: Readonly<{
-  service: PluginContributionIdentityV1;
-  legacyServiceId: ConnectedServiceId | null;
-  accountId: string;
-  defaultAccountByServiceKey: Readonly<Record<string, string | undefined>>;
-  labelsByKey: Readonly<Record<string, string | undefined>>;
-}>): Readonly<{
-  connectedServicesDefaultProfileByServiceId: Record<string, string>;
-  connectedServicesProfileLabelByKey: Record<string, string>;
-}> {
-  const connectedServicesDefaultProfileByServiceId = copyDefinedStringRecord(
-    params.defaultAccountByServiceKey,
-  );
-  for (const serviceKey of qualifiedConnectedAccountPreferenceServiceKeys(params)) {
-    if (
-      connectedServicesDefaultProfileByServiceId[serviceKey]
-      === params.accountId
-    ) {
-      delete connectedServicesDefaultProfileByServiceId[serviceKey];
-    }
-  }
-  return {
-    connectedServicesDefaultProfileByServiceId,
-    connectedServicesProfileLabelByKey:
-      updateQualifiedConnectedAccountLabel({
-        service: params.service,
-        legacyServiceId: params.legacyServiceId,
-        accountId: params.accountId,
-        label: null,
-        labelsByKey: params.labelsByKey,
-      }),
-  };
 }
 
 function connectedServiceProfileLegacyKey(params: Readonly<{ serviceId: string; profileId: string }>): string {
@@ -186,8 +131,7 @@ export function resolveConnectedServiceProfileLabel(params: Readonly<{
   profileId: string;
 }>): string | null {
   const key = connectedServiceProfileKey({ serviceId: params.serviceId, profileId: params.profileId });
-  const raw = params.labelsByKey[key]
-    ?? params.labelsByKey[connectedServiceProfileLegacyKey({ serviceId: params.serviceId, profileId: params.profileId })];
+  const raw = params.labelsByKey[key];
   if (typeof raw !== 'string') return null;
   const trimmed = raw.trim();
   return trimmed ? trimmed : null;

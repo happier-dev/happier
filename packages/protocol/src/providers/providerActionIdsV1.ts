@@ -8,6 +8,7 @@ export const PROVIDER_ACTION_IDS_V1 = [
   'providers.models.list', 'providers.models.projection', 'providers.models.refresh',
   'providers.models.manual.add', 'providers.models.manual.remove',
   'providers.models.visibility.set', 'providers.models.visibility.reset', 'providers.models.visibility.bulk',
+  'providers.models.source_visibility.set',
   'providers.models.experimental.confirm', 'providers.models.load', 'providers.models.cancel_load',
   'providers.probe', 'providers.binding.status', 'providers.legacy.prepare', 'providers.defaults.set',
 ] as const;

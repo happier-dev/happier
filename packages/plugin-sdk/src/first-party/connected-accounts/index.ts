@@ -1,3 +1,4 @@
+export { ANTIGRAVITY_OAUTH_PROFILE } from '../../connectedAccounts.js';
 export { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 } from '../../connectedAccounts.js';
 export { CLAUDE_SUBSCRIPTION_OAUTH_PROFILE } from '../../connectedAccounts.js';
 export { CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1 } from '../../connectedAccounts.js';

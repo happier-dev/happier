@@ -1,4 +1,5 @@
-import { removeAgentConnectedAccountDefaultsForDeletedTarget, type AgentConnectedAccountDefaultSettings } from '../account/settings/connectedServicesSettings.js';
+import { removeAgentConnectedAccountDefaultsForDeletedTarget, resolveAgentConnectedAccountPurposeDefaults, writeAgentConnectedServiceDefault, writeConnectedAccountPurposeDefault, type AgentConnectedAccountDefaultSettings } from '../account/settings/connectedServicesSettings.js';
+import { buildQualifiedPluginContributionKey } from '../plugins/contributionIdentity.js';
 import type { QualifiedConnectedAccountPurposeBindingsV1 } from './connectedAccountPurposeBindings.js';
 import { writeAgentDefaultChoice, type AgentDefaultChoiceAgent } from './agentDefaultChoices.js';
 import { sameQualifiedConnectedAccountRef } from './qualifiedConnectedAccountPersistence.js';
@@ -7,7 +8,9 @@ import type { QualifiedAcknowledgementSubject, QualifiedConnectedEntityRef, Qual
 import { encodeQualifiedConnectedAccountV4StructuredQueryValue } from './qualifiedConnectedAccountsV4QueryCodec.js';
 import { buildQualifiedConnectedAccountGroupMutationRequestV4 } from './qualifiedConnectedAccountGroupRequestsV4.js';
 import { QualifiedConnectedAccountGroupRefSchema, QualifiedConnectedAccountGroupResponseV4Schema, QualifiedConnectedAccountSuccessV4Schema, sameQualifiedConnectedAccountGroupRef, type QualifiedConnectedAccountGroupRef } from './qualifiedConnectedAccountsV4.js';
-import { assertConnectedAccountOperationTransportV1, ConnectedAccountDaemonControlResponseSchema, ConnectedAccountRevokeResponseV1Schema, type ConnectedAccountDaemonControlCommand } from './connectedAccountDaemonRpcV1.js';
+import { assertConnectedAccountOperationTransportV1, ConnectedAccountDaemonCommandSchema, ConnectedAccountAttemptResponseSchema, ConnectedAccountDaemonControlResponseSchema, ConnectedAccountRevokeResponseV1Schema, type ConnectedAccountDaemonCommand, type ConnectedAccountDaemonControlCommand } from './connectedAccountDaemonRpcV1.js';
+import { CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_ID_BY_OPERATION } from './configurationActionIdsV1.js';
+import { PluginJsonValueV2Schema } from '../plugins/contributions/jsonSchema.js';
 import {
   CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 as inputs,
   CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 as outputs,
@@ -36,6 +39,8 @@ export type ConnectedServiceConfigurationActionHostV1 = Readonly<{
   /** One acknowledged catalog CAS, atomically retiring any changed predecessor default carriers. */
   mutatePurposeBindings(mutate: ConnectedAccountPurposeMutationIntentV1): Promise<void>;
   resolveAgent(agentId: string, machineId?: string): Promise<AgentDefaultChoiceAgent | null>;
+  /** The installed Resource projection admits the exact target and retains its incumbent currentness. */
+  admitResourcePurposeTarget?(input: ReturnType<(typeof inputs)['connectedServices.purposes.default.set']['parse']>): Promise<(() => void) | null>;
   resetQuota(input: QuotaResetInput): Promise<unknown>;
   /** Open B only through the captured Account's canonical reader. */
   readQuota?(input: ConnectedServiceQuotaGetInputV1): Promise<unknown>;
@@ -43,6 +48,8 @@ export type ConnectedServiceConfigurationActionHostV1 = Readonly<{
   /** Read the incumbent machine selector; never change its active account. */
   readPoolSelection?(input: ConnectedServicePoolSelectionGetRequestV1): Promise<unknown>;
   controlCommand?(machineId: string, command: ConnectedAccountDaemonControlCommand): Promise<unknown>;
+  /** The incumbent daemon authentication owner; this adapter never owns attempts. */
+  authenticationCommand?(machineId: string, command: ConnectedAccountDaemonCommand): Promise<unknown>;
   /** The executing client's OS/browser boundary, never an authenticated provider mutation. */
   openBillingDestination?(url: string): Promise<void>;
   setIdentityPrivacy?: (hidden: boolean) => void;
@@ -117,7 +124,23 @@ export async function executeConnectedServiceConfigurationActionV1(
   input: unknown,
 ): Promise<unknown> {
   host.assertCurrent();
+  for (const [operation, id] of Object.entries(CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_ID_BY_OPERATION)) {
+    if (id !== actionId) continue;
+    if (!host.authenticationCommand) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+    const { machineId, ...operands } = inputs[id].parse(input);
+    const command = ConnectedAccountDaemonCommandSchema.parse({ ...operands, operation });
+    const response = ConnectedAccountAttemptResponseSchema.parse(await host.authenticationCommand(machineId, command));
+    host.assertCurrent();
+    return response;
+  }
   switch (actionId) {
+    case 'connectedServices.authentication.pending.list': {
+      const args = inputs[actionId].parse(input);
+      if (!host.controlCommand) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+      const response = outputs[actionId].parse(await host.controlCommand(args.machineId, { operation: 'listPendingAttempts', service: args.service }));
+      host.assertCurrent();
+      return response;
+    }
     case 'connectedServices.subscription.price.set': {
       const args = inputs[actionId].parse(input);
       if (!host.setSubscriptionPrice) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
@@ -127,6 +150,36 @@ export async function executeConnectedServiceConfigurationActionV1(
     case 'connectedServices.configuration.get':
     case 'connectedServices.configuration.replace': {
       const args = inputs[actionId].parse(input);
+      if ('target' in args) {
+        if (!host.controlCommand) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+        const replacement = actionId === 'connectedServices.configuration.replace'
+          ? inputs[actionId].parse(input) : null;
+        const command: ConnectedAccountDaemonControlCommand = replacement
+          ? { operation: 'replaceConfiguration', target: args.target, expectedRevision: replacement.expectedRevision,
+              values: Object.fromEntries(Object.entries(replacement.values)
+                .map(([key, value]) => [key, PluginJsonValueV2Schema.parse(value)])),
+              secretValues: replacement.secretValues }
+          : { operation: 'readConfiguration', target: args.target };
+        const response = ConnectedAccountDaemonControlResponseSchema.parse(await host.controlCommand(args.machineId, command));
+        if (response.status !== (actionId === 'connectedServices.configuration.get' ? 'configuration' : 'configurationCommitted')) {
+          const code = 'code' in response ? response.code : 'connected_account_configuration_target_unavailable';
+          return { ok: false, errorCode: code, error: code };
+        }
+        if ((response.status !== 'configuration' && response.status !== 'configurationCommitted')
+          || response.target.kind !== args.target.kind
+          || (args.target.kind === 'account' && (response.target.kind !== 'account'
+            || !sameQualifiedConnectedAccountRef(response.target.account, args.target.account)))
+          || (args.target.kind === 'attempt' && (response.target.kind !== 'attempt' || response.target.attemptId !== args.target.attemptId))) {
+          return { ok: false, errorCode: 'qualified_connected_accounts_inconsistent_peer', error: 'qualified_connected_accounts_inconsistent_peer' };
+        }
+        if (actionId === 'connectedServices.configuration.get') {
+          host.assertCurrent();
+          return outputs[actionId].parse({ target: response.target, mode: response.mode, configuration: response.configuration });
+        }
+        if (!response.configuration.revision) return { ok: false, errorCode: 'qualified_connected_accounts_inconsistent_peer', error: 'qualified_connected_accounts_inconsistent_peer' };
+        // The daemon's acknowledged content-free receipt also survives Account retirement.
+        return outputs[actionId].parse({ applied: true, revision: response.configuration.revision });
+      }
       const owner = host.configurationCatalog;
       if (!owner) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
       const target = { kind: 'service' as const, service: args.service, modeId: args.modeId };
@@ -324,6 +377,47 @@ export async function executeConnectedServiceConfigurationActionV1(
         },
       });
       break;
+    }
+    case 'connectedServices.purposes.default.set': {
+      const args = inputs[actionId].parse(input);
+      if (!host.admitResourcePurposeTarget) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+      const assertDeclared = await host.admitResourcePurposeTarget(args);
+      host.assertCurrent();
+      if (!assertDeclared) return { ok: false, errorCode: 'connected_account_purpose_unavailable', error: 'connected_account_purpose_unavailable' };
+      assertDeclared();
+      await host.mutatePurposeBindings((purposeBindings, settings) => {
+        host.assertCurrent(); assertDeclared();
+        const { connectedAccountPurposeBindingsV1, ...legacySettingsDelta } = writeConnectedAccountPurposeDefault({
+          purposeBindings, settings, purpose: args.purpose, target: args.target,
+        });
+        return { purposeBindings: connectedAccountPurposeBindingsV1, legacySettingsDelta };
+      });
+      return { applied: true };
+    }
+    case 'connectedServices.accounts.purposeDefault.set': {
+      const args = inputs[actionId].parse(input);
+      const agent = await host.resolveAgent(args.agentId, args.machineId);
+      host.assertCurrent();
+      if (!agent?.identity) return { ok: false, errorCode: 'unknown_agent', error: 'unknown_agent' };
+      const consumer = agent.identity;
+      let changed = false;
+      await host.mutatePurposeBindings((purposeBindings, settings) => {
+        host.assertCurrent();
+        if (args.onlyIfUnset && resolveAgentConnectedAccountPurposeDefaults({ settings, purposeBindings,
+          agentId: args.agentId, consumer, declarations: agent.connectedAccounts }).some(entry =>
+            entry.service.pluginId === args.service.pluginId && entry.service.localId === args.service.localId
+              && (args.purpose === undefined || entry.purpose.purpose === args.purpose)
+              && (entry.target || entry.teamResource))) return null;
+        const written = writeAgentConnectedServiceDefault({ settings, purposeBindings, agentId: args.agentId,
+          consumer, declarations: agent.connectedAccounts, serviceKey: buildQualifiedPluginContributionKey(args.service),
+          selection: args.selection, ...(args.purpose !== undefined ? { purpose: args.purpose } : {}),
+          ...(args.teamId ? { teamId: args.teamId } : {}) });
+        if (!written) throw Object.assign(new Error('agent_connected_service_unavailable'), { code: 'agent_connected_service_unavailable' });
+        const { connectedAccountPurposeBindingsV1, ...legacySettingsDelta } = written;
+        changed = true;
+        return { purposeBindings: connectedAccountPurposeBindingsV1, legacySettingsDelta };
+      });
+      return args.onlyIfUnset && !changed ? { applied: true, changed: false } : { applied: true };
     }
     case 'connectedServices.accounts.default.set':
     case 'connectedServices.pools.default.set': {

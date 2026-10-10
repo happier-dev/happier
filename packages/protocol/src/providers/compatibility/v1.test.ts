@@ -11,6 +11,17 @@ const requirements = {
 } as const;
 
 describe('provider compatibility contracts', () => {
+  it('admits optional environment ownership without weakening or overlapping required ownership', () => {
+    const withOptionalKeys = (keys: readonly string[]) => ({
+      ...requirements,
+      authIsolation: { ...requirements.authIsolation, optionalOwnedEnvKeys: keys },
+    });
+    expect(AgentProviderRequirementsV1Schema.safeParse(withOptionalKeys(['HELPER_MODEL'])).success).toBe(true);
+    expect(AgentProviderRequirementsV1Schema.safeParse(withOptionalKeys(['OPENAI_API_KEY'])).success).toBe(false);
+    expect(AgentProviderRequirementsV1Schema.safeParse(withOptionalKeys(['HELPER_MODEL', 'HELPER_MODEL'])).success).toBe(false);
+    expect(AgentProviderRequirementsV1Schema.safeParse(withOptionalKeys(['Helper_Model'])).success).toBe(false);
+  });
+
   it('accepts only the closed compatibility reason vocabulary', () => {
     expect(ProviderBindingCompatibilityV1Schema.safeParse({
       status: 'incompatible', reasons: ['no_compatible_protocol'],

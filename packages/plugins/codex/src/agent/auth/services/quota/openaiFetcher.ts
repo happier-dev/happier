@@ -9,6 +9,7 @@ import type {
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { ConnectedAccountRuntime as PluginConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
+import { QuotaFetchError, parseProviderResetAt } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { mapCodexRateLimitResetCredits } from './rateLimitResetCredits.js';
 import { mapCodexRateLimitSnapshotToUsageMeters } from './rateLimitSnapshot.js';
@@ -38,15 +39,50 @@ export function parseOpenAiCodexConnectedAccountQuotaLimits(
 ): Awaited<
   ReturnType<NonNullable<PluginConnectedAccountRuntime['quota']>>
 >['limits'] {
-  return mapOpenAiCodexConnectedAccountUsageMeters(value).map((meter) => ({
-    id: meter.meterId,
-    ...(meter.providerLimitId ? { providerLimitId: meter.providerLimitId } : {}),
-    ...(meter.utilizationPct === null ? {} : {
-      used: meter.utilizationPct,
-      remaining: meter.remainingPct ?? Math.max(0, 100 - meter.utilizationPct),
-    }),
-    ...(meter.resetsAt === null ? {} : { resetsAtMs: meter.resetsAt }),
-  }));
+  return mapOpenAiCodexConnectedAccountUsageMeters(value).map((meter) => {
+    const used = meter.used ?? meter.utilizationPct;
+    const remaining = meter.used !== null
+      ? meter.limit === null ? null : Math.max(0, meter.limit - meter.used)
+      : meter.remainingPct ?? (meter.utilizationPct === null ? null : Math.max(0, 100 - meter.utilizationPct));
+    return {
+      id: meter.meterId,
+      label: meter.label,
+      unit: meter.unit,
+      limit: meter.limit,
+      remainingPct: meter.remainingPct,
+      utilizationPct: meter.utilizationPct,
+      status: meter.status,
+      isExhausted: meter.isExhausted,
+      details: meter.details,
+      confidence: meter.confidence,
+      windowDurationMs: meter.windowDurationMs,
+      modelId: meter.modelId,
+      scope: meter.scope,
+      limitScope: meter.limitScope,
+      ...(meter.providerLimitId ? { providerLimitId: meter.providerLimitId } : {}),
+      ...(used === null ? {} : { used }),
+      ...(remaining === null ? {} : { remaining }),
+      ...(meter.resetsAt === null ? {} : { resetsAtMs: meter.resetsAt }),
+    };
+  });
+}
+
+export function createOpenAiCodexQuotaFetchError(
+  response: Awaited<ReturnType<HttpService['request']>>,
+  nowMs: number,
+): QuotaFetchError {
+  let body: unknown;
+  try {
+    body = JSON.parse(new TextDecoder().decode(response.body));
+  } catch {
+    body = null;
+  }
+  const timing = parseProviderResetAt({ nowMs, headers: response.headers, body });
+  return new QuotaFetchError(`OpenAI usage fetch failed (${response.status}): HTTP error`, {
+    status: response.status,
+    ...timing,
+    quotaFetchErrorCode: response.status === 401 || response.status === 403 ? 'auth_failure' : 'provider_backoff',
+  });
 }
 
 function resolveConnectedServiceQuotaAccountLabel(record: OauthCredentialRecord | TokenCredentialRecord): string | null {
@@ -281,7 +317,7 @@ export function createOpenAiCodexQuotaFetcher(params?: Readonly<{
       }, { signal });
 
       if (response.status < 200 || response.status >= 300) {
-        throw new Error(`OpenAI usage fetch failed (${response.status}): HTTP error`);
+        throw createOpenAiCodexQuotaFetchError(response, now);
       }
 
       const json: unknown = JSON.parse(new TextDecoder().decode(response.body));

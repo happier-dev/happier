@@ -11,6 +11,16 @@ it('admits configuration-only native account references without inventing a cred
   expect(PluginConnectedAccountDescriptorContributionV2Schema.safeParse(descriptor).success).toBe(true);
 });
 
+it('admits only HTTPS provider billing destinations without embedded credentials', () => {
+  const descriptor = { id: 'work', title: 'Work', authentication: { defaultModeId: 'oauth', modes: [
+    { id: 'oauth', kind: 'oauthAuthorizationCode', pkce: 'required', outcomeReconciliation: 'none' },
+  ] } };
+  expect(PluginConnectedAccountDescriptorContributionV2Schema.safeParse({ ...descriptor, billingUrl: 'https://provider.test/settings/billing' }).success).toBe(true);
+  for (const billingUrl of ['javascript:alert(1)', 'http://provider.test/billing', 'https://user:secret@provider.test/billing']) {
+    expect(PluginConnectedAccountDescriptorContributionV2Schema.safeParse({ ...descriptor, billingUrl }).success).toBe(false);
+  }
+});
+
 it('admits the closed native system-tool declaration without inventing a credential mode', () => {
   const descriptor = {
     id: 'work', title: 'Work',

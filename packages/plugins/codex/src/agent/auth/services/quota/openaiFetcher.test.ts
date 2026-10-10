@@ -27,6 +27,23 @@ function systemJsonResponse(value: unknown, init?: ResponseInit): Response {
 }
 
 describe('createOpenAiCodexQuotaFetcher', () => {
+  it('preserves provider backoff evidence through the legacy quota transport', async () => {
+    const now = Date.parse('2026-05-17T12:00:00Z');
+    const record = buildConnectedServiceCredentialRecord({
+      now, serviceId: 'openai-codex', profileId: 'work', kind: 'oauth', expiresAt: now + 60_000,
+      oauth: { accessToken: 'at', refreshToken: 'rt', idToken: null, scope: null, tokenType: 'Bearer', providerAccountId: null, providerEmail: null },
+    });
+    const fetcher = createOpenAiCodexQuotaFetcher({
+      runtimeFetch: { async request() {
+        return { status: 429, finalUrl: 'https://chatgpt.com/backend-api/wham/usage',
+          headers: { 'Retry-After': '45' }, body: new TextEncoder().encode('{}') };
+      } },
+    });
+    await expect(fetcher.loadQuota({ record, now, signal: new AbortController().signal })).rejects.toMatchObject({
+      name: 'ConnectedServiceQuotaFetchError', status: 429, quotaFetchErrorCode: 'provider_backoff', retryAfterMs: 45_000,
+    });
+  });
+
   it('normalizes numeric quota resets through the shared epoch boundary', () => {
     const cases = [
       [1_700_000_000, 1_700_000_000_000],
@@ -41,8 +58,8 @@ describe('createOpenAiCodexQuotaFetcher', () => {
       expect(parseOpenAiCodexConnectedAccountQuotaLimits({
         rate_limit: { primary_window: { reset_at: resetAt } },
       })).toEqual([
-        { id: 'session', providerLimitId: 'session', resetsAtMs: expected },
-        { id: 'weekly' },
+        expect.objectContaining({ id: 'session', providerLimitId: 'session', resetsAtMs: expected }),
+        expect.objectContaining({ id: 'weekly', status: 'unavailable' }),
       ]);
     }
   });
@@ -62,8 +79,8 @@ describe('createOpenAiCodexQuotaFetcher', () => {
         },
       },
     })).toEqual(expect.arrayContaining([
-      { id: 'session', providerLimitId: 'session', used: 12, remaining: 88, resetsAtMs: 1_700_000_000_000 },
-      { id: 'codex_spark:primary', providerLimitId: 'codex_spark', used: 81, remaining: 19, resetsAtMs: 1_700_000_100_000 },
+      expect.objectContaining({ id: 'session', providerLimitId: 'session', used: 12, remaining: 88, resetsAtMs: 1_700_000_000_000 }),
+      expect.objectContaining({ id: 'codex_spark:primary', providerLimitId: 'codex_spark', used: 81, remaining: 19, resetsAtMs: 1_700_000_100_000 }),
     ]));
   });
 

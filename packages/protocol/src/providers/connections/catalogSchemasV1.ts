@@ -23,7 +23,7 @@ export type ProviderConnectionsContentV1 = z.infer<typeof ProviderConnectionsCon
 function admitProviderCatalogJson(value: unknown, context: z.core.$RefinementCtx) {
   const parsed = StrictJsonValueSchema.safeParse(value);
   if (parsed.success) return parsed.data;
-  for (const issue of parsed.error.issues) context.addIssue(issue);
+  for (const issue of parsed.error.issues) context.addIssue({ ...issue });
   return z.NEVER;
 }
 

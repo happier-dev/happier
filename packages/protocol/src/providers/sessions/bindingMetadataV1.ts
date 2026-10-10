@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -29,6 +30,7 @@ import {
 } from '../contributions/v1.js';
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
+import { ProviderGatewayPlacementV1Schema } from '../connections/v1.js';
 
 import type { AgentProviderBindingLaunchMaterialization } from '../materialization/v1.js';
 import {
@@ -44,18 +46,18 @@ export {
   type AgentSessionProviderBindingV1,
 } from './agentSessionProviderBindingV1.js';
 
-export const ProviderConnectionDisplaySnapshotV1Schema = z.object({
+export const ProviderConnectionDisplaySnapshotV1Schema = lazyZodSchema(() => z.object({
   providerName: z.string().trim().min(1).max(128),
   connectionName: z.string().trim().min(1).max(128),
   connectionRole: z.enum(['default', 'named']),
   connectionDisplayNameMode: z.enum(['automatic', 'custom']),
-}).strict();
+}).strict());
 export type ProviderConnectionDisplaySnapshotV1 = z.infer<typeof ProviderConnectionDisplaySnapshotV1Schema>;
 
 const RuntimeBindingFingerprintV1Schema =
-  z.string().trim().min(1).max(512);
+  lazyZodSchema(() => z.string().trim().min(1).max(512));
 
-const ProviderRuntimeBindingBasisCommonV1Schema = z.object({
+const ProviderRuntimeBindingBasisCommonV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   agentTargetKey: ProviderAgentTargetKeySchema,
   connectionId: ProviderConnectionIdSchema,
@@ -68,10 +70,10 @@ const ProviderRuntimeBindingBasisCommonV1Schema = z.object({
   }).strict(),
   adapterVersion: z.number().int().positive(),
   agentSupport: AgentProviderRequirementsV1Schema,
-}).strict();
+}).strict());
 
 const ProviderRuntimeExternalBindingBasisV1Schema =
-  ProviderRuntimeBindingBasisCommonV1Schema.extend({
+  lazyZodSchema(() => ProviderRuntimeBindingBasisCommonV1Schema.extend({
     deployment: z.object({ kind: z.literal('external') }).strict(),
     endpoint: z.object({
       endpointTemplateId: ProviderLocalIdSchema,
@@ -86,17 +88,19 @@ const ProviderRuntimeExternalBindingBasisV1Schema =
       selectedSecretRecordFingerprint:
         RuntimeBindingFingerprintV1Schema.nullable(),
     }).strict(),
-  }).strict();
+  }).strict());
 
 const ProviderRuntimeManagedBindingBasisV1Schema =
-  ProviderRuntimeBindingBasisCommonV1Schema.extend({
+  lazyZodSchema(() => ProviderRuntimeBindingBasisCommonV1Schema.extend({
     deployment: z.object({
       kind: z.literal('managedLocal'),
+      gatewayPlacement: ProviderGatewayPlacementV1Schema.optional(),
       implementationIdentity: asProtocolZod(PluginContributionIdentityV1Schema),
       managedRuntime: ProviderManagedRuntimeDeclarationV1Schema,
       purposeBindings: QualifiedConnectedAccountPurposeBindingsV1Schema,
     }).strict().transform((deployment) => ({
       ...deployment,
+      gatewayPlacement: deployment.gatewayPlacement ?? { kind: 'sessionMachine' as const },
       managedRuntime: resolveProviderManagedRuntimeDeclarationV1({
         implementationIdentity: deployment.implementationIdentity,
         managedRuntime: deployment.managedRuntime,
@@ -111,17 +115,17 @@ const ProviderRuntimeManagedBindingBasisV1Schema =
       connectionSecurityFingerprint: RuntimeBindingFingerprintV1Schema,
       grantFingerprint: RuntimeBindingFingerprintV1Schema,
     }).strict(),
-  }).strict();
+  }).strict());
 
-export const ProviderRuntimeBindingBasisV1Schema = z.union([
+export const ProviderRuntimeBindingBasisV1Schema = lazyZodSchema(() => z.union([
   ProviderRuntimeExternalBindingBasisV1Schema,
   ProviderRuntimeManagedBindingBasisV1Schema,
-]);
+]));
 export type ProviderRuntimeBindingBasisV1 = z.infer<
   typeof ProviderRuntimeBindingBasisV1Schema
 >;
 
-export const SessionProviderBindingMetadataV1Schema = z.object({
+export const SessionProviderBindingMetadataV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   connectionId: ProviderConnectionIdSchema,
   contributionKey: ProviderContributionKeySchema.nullable(),
@@ -135,16 +139,16 @@ export const SessionProviderBindingMetadataV1Schema = z.object({
   bindingSecurityFingerprint: z.string().trim().min(1).max(256),
   runtimeBindingBasis: ProviderRuntimeBindingBasisV1Schema.optional(),
   displaySnapshot: ProviderConnectionDisplaySnapshotV1Schema,
-}).strict();
+}).strict());
 export type SessionProviderBindingMetadataV1 = z.infer<typeof SessionProviderBindingMetadataV1Schema>;
 
-export const SessionProviderBindingSecurityChangeConfirmationV1Schema = z.object({
+export const SessionProviderBindingSecurityChangeConfirmationV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   sessionId: z.string().trim().min(1).max(256),
   connectionId: ProviderConnectionIdSchema,
   previousBindingSecurityFingerprint: z.string().trim().min(1).max(256),
   nextBindingSecurityFingerprint: z.string().trim().min(1).max(256),
-}).strict();
+}).strict());
 export type SessionProviderBindingSecurityChangeConfirmationV1 = z.infer<
   typeof SessionProviderBindingSecurityChangeConfirmationV1Schema
 >;
@@ -236,6 +240,7 @@ export function sessionProviderBindingMetadataMatchesRuntimeBasisV1(
           ...sharedFingerprintInput,
           deployment: {
             kind: 'managedLocal',
+            gatewayPlacement: basis.deployment.gatewayPlacement,
             implementationIdentity:
               basis.deployment.implementationIdentity,
             managedRuntime: basis.deployment.managedRuntime,

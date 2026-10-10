@@ -1,18 +1,23 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
+import { AcpCatalogRecordV1Schema, AcpCatalogRowMutationV1Schema } from './catalogSchemasV1.js';
 
 import {
   AcpBackendDefinitionV1Schema,
+  AcpBackendCapabilitiesV1Schema,
+  AcpConfiguredRuntimeV1Schema,
+  AcpBackendCompatibilityV1Schema,
   AcpCatalogSettingsV1Schema,
   type AcpBackendDefinitionV1,
   type AcpCatalogSettingsV1,
 } from './settingsV1.js';
 
 /**
- * The one writer of the Account's custom ACP catalog (`acpCatalogSettingsV1`). The Settings editor
+ * The semantic mutation owner of the Account's custom ACP catalog. The Settings editor
  * and the `agents.acp.backends.*` actions both apply their changes through these functions, so a
  * backend authored by hand and one authored by an agent are validated and stored identically.
- * Persistence (the Account settings writer, its encryption mode and compare-and-set) stays with
- * each caller's existing settings owner.
+ * Persistence, encryption and compare-and-set stay with each host's canonical ACP row owner;
+ * the v2 shape below is an ephemeral authoring projection, not a Settings write.
  */
 
 /** The stored catalog, or an empty one when the stored value is missing or unreadable. */
@@ -25,7 +30,7 @@ export function normalizeAcpCatalogSettingsV1(raw: unknown): AcpCatalogSettingsV
  * An authored backend: the stored definition, with timestamps optional (they are stamped on
  * write). Loosely typed at the boundary because text fields are trimmed before validation.
  */
-export const AcpBackendAuthoringInputV1Schema = z.object({
+export const AcpBackendAuthoringInputV1Schema = lazyZodSchema(() => z.object({
   id: z.string(),
   name: z.string(),
   title: z.string(),
@@ -37,18 +42,21 @@ export const AcpBackendAuthoringInputV1Schema = z.object({
     support: z.string(),
     machineLoginKey: z.string().optional(),
     docsUrl: z.string().optional(),
-    loginCommand: z.object({ command: z.string(), args: z.array(z.string()).optional() }).optional(),
+    loginCommand: z.object({ command: z.string(), args: z.array(z.string()).optional() }).strict().optional(),
     envVars: z.array(z.string()).optional(),
-  }).optional(),
+  }).strict().optional(),
+  runtime: AcpConfiguredRuntimeV1Schema.optional(),
+  compatibility: AcpBackendCompatibilityV1Schema.optional(),
   defaultMode: z.string().optional(),
   defaultModel: z.string().optional(),
-  capabilities: z.record(z.string(), z.unknown()).optional(),
+  capabilities: AcpBackendCapabilitiesV1Schema.partial().strict().optional(),
   createdAt: z.number().optional(),
   updatedAt: z.number().optional(),
-}).passthrough();
+}).strict());
 export type AcpBackendAuthoringInputV1 = z.input<typeof AcpBackendAuthoringInputV1Schema>;
 
 export type AcpCatalogMutationErrorCodeV1 =
+  | 'acp_catalog_unavailable'
   | 'acp_backend_invalid'
   | 'acp_backend_name_conflict'
   | 'acp_backend_id_conflict'
@@ -62,11 +70,19 @@ export type AcpBackendUpsertResultV1 =
   | Readonly<{ ok: true; settings: AcpCatalogSettingsV1; backend: AcpBackendDefinitionV1 }>
   | Readonly<{ ok: false; code: 'acp_backend_invalid'; message: string; fields: readonly string[] }>
   | Readonly<{ ok: false; code: 'acp_backend_name_conflict'; message: string; fields: readonly ['name'] }>
-  | Readonly<{ ok: false; code: 'acp_backend_id_conflict'; message: string; fields: readonly ['id'] }>;
+  | Readonly<{ ok: false; code: 'acp_backend_id_conflict'; message: string; fields: readonly ['id'] }>
+  | Readonly<{ ok: false; code: 'acp_catalog_unavailable'; message: string; fields: readonly ['catalog'] }>;
 
 export type AcpBackendDeleteResultV1 =
   | Readonly<{ ok: true; settings: AcpCatalogSettingsV1 }>
-  | Readonly<{ ok: false; code: 'acp_backend_not_found' }>;
+  | Readonly<{ ok: false; code: 'acp_backend_not_found' | 'acp_catalog_unavailable' }>;
+
+function readWritableCatalog(raw: unknown): AcpCatalogSettingsV1 | null {
+  if (raw === undefined) return { v: 2, backends: [] };
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const parsed = AcpCatalogSettingsV1Schema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
 
 function trimmedOrUndefined(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
@@ -90,7 +106,8 @@ export function applyAcpBackendUpsertV1(input: Readonly<{
   nowMs: number;
   mode?: 'upsert' | 'create';
 }>): AcpBackendUpsertResultV1 {
-  const settings = normalizeAcpCatalogSettingsV1(input.settings);
+  const settings = readWritableCatalog(input.settings);
+  if (!settings) return { ok: false, code: 'acp_catalog_unavailable', message: 'ACP catalog requires repair before editing', fields: ['catalog'] };
   const authored = input.backend;
   const id = authored.id.trim();
   const previous = settings.backends.find((entry) => entry.id === id) ?? null;
@@ -98,6 +115,8 @@ export function applyAcpBackendUpsertV1(input: Readonly<{
     return { ok: false, code: 'acp_backend_id_conflict', message: `Duplicate ACP backend id: ${id}`, fields: ['id'] };
   }
   const parsed = AcpBackendDefinitionV1Schema.safeParse({
+    ...(previous?.runtime ? { runtime: previous.runtime } : {}),
+    ...(previous?.compatibility ? { compatibility: previous.compatibility } : {}),
     ...authored,
     id,
     name: authored.name.trim(),
@@ -162,27 +181,62 @@ export function applyAcpBackendDeleteV1(input: Readonly<{
   settings: unknown;
   backendId: string;
 }>): AcpBackendDeleteResultV1 {
-  const settings = normalizeAcpCatalogSettingsV1(input.settings);
+  const settings = readWritableCatalog(input.settings);
+  if (!settings) return { ok: false, code: 'acp_catalog_unavailable' };
   const backendId = input.backendId.trim();
   if (!settings.backends.some((entry) => entry.id === backendId)) return { ok: false, code: 'acp_backend_not_found' };
   return { ok: true, settings: { ...settings, backends: settings.backends.filter((entry) => entry.id !== backendId) } };
 }
 
 /** `agents.acp.backends.upsert`: add or replace one custom ACP agent in the Account catalog. */
-export const AgentsAcpBackendsUpsertInputV1Schema = z.object({
+const capturedRevisionFields = () => ({
+  expectedRevision: AcpCatalogRowMutationV1Schema.shape.expectedRevision.optional(),
+  sourceSettingsVersion: AcpCatalogRowMutationV1Schema.shape.sourceSettingsVersion,
+});
+function validateCapturedRevision(input: Readonly<{ expectedRevision?: number | 'absent'; sourceSettingsVersion?: number }>, context: z.RefinementCtx): void {
+  if (input.expectedRevision === 'absent' && input.sourceSettingsVersion === undefined) {
+    context.addIssue({ code: 'custom', path: ['sourceSettingsVersion'], message: 'An absent draft requires its captured Settings version' });
+  }
+  if (input.sourceSettingsVersion !== undefined && input.expectedRevision !== 'absent') {
+    context.addIssue({ code: 'custom', path: ['sourceSettingsVersion'], message: 'Settings version is only valid for an absent catalog' });
+  }
+}
+export const AgentsAcpBackendsUpsertInputV1Schema = lazyZodSchema(() => z.object({
   backend: AcpBackendAuthoringInputV1Schema,
-}).strict();
+  ...capturedRevisionFields(),
+}).strict().superRefine(validateCapturedRevision));
 export type AgentsAcpBackendsUpsertInputV1 = z.infer<typeof AgentsAcpBackendsUpsertInputV1Schema>;
-export const AgentsAcpBackendsUpsertOutputV1Schema = z.object({
+/** Private configured definition; default execution observations redact its executable fields. */
+export const AgentsAcpBackendsGetInputV1Schema = lazyZodSchema(() => z.object({
+  backendId: z.string().trim().min(1),
+}).strict());
+export type AgentsAcpBackendsGetInputV1 = z.infer<typeof AgentsAcpBackendsGetInputV1Schema>;
+export const AgentsAcpBackendsGetOutputV1Schema = lazyZodSchema(() => z.object({
+  backend: AcpCatalogRecordV1Schema.shape.definitions.element,
+  revision: z.union([z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), z.literal('absent')]),
+}).strict());
+export type AgentsAcpBackendsGetOutputV1 = z.infer<typeof AgentsAcpBackendsGetOutputV1Schema>;
+
+export const AcpCatalogCleanupV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
+  z.object({ status: z.literal('complete') }).strict(),
+  z.object({ status: z.literal('cleanup-pending'), reason: z.literal('history-incomplete') }).strict(),
+]));
+export type AcpCatalogCleanupV1 = z.infer<typeof AcpCatalogCleanupV1Schema>;
+
+export const AgentsAcpBackendsUpsertOutputV1Schema = lazyZodSchema(() => z.object({
   backend: AcpBackendDefinitionV1Schema,
-}).strict();
+  revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  cleanup: AcpCatalogCleanupV1Schema.optional(),
+}).strict());
 
 /** `agents.acp.backends.delete`: remove one custom ACP agent from the Account catalog. */
-export const AgentsAcpBackendsDeleteInputV1Schema = z.object({
+export const AgentsAcpBackendsDeleteInputV1Schema = lazyZodSchema(() => z.object({
   backendId: z.string().trim().min(1),
-}).strict();
+  ...capturedRevisionFields(),
+}).strict().superRefine(validateCapturedRevision));
 export type AgentsAcpBackendsDeleteInputV1 = z.infer<typeof AgentsAcpBackendsDeleteInputV1Schema>;
-export const AgentsAcpBackendsDeleteOutputV1Schema = z.object({
+export const AgentsAcpBackendsDeleteOutputV1Schema = lazyZodSchema(() => z.object({
   backendId: z.string(),
   deleted: z.literal(true),
-}).strict();
+  cleanup: AcpCatalogCleanupV1Schema.optional(),
+}).strict());

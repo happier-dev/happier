@@ -86,6 +86,15 @@ export { QualifiedConnectedAccountRefJsonSchema } from '../connectedAccounts.js'
 export { QualifiedConnectedAccountRefSchema } from '../connectedAccounts.js';
 export type { QualifiedConnectedAccountServiceRef } from '../connectedAccounts.js';
 export { QuotaFetchError } from '../connectedAccounts.js';
+export {
+    addSafeEpochMilliseconds,
+    normalizeNonNegativeSafeMilliseconds,
+    parseCompactDurationMs,
+    parseProviderResetAt,
+    parseProviderTimestampMs,
+    parseRetryAfterHeader,
+} from '../connectedAccounts.js';
+export type { ProviderResetTiming, ProviderResetTextEvidenceParser } from '../connectedAccounts.js';
 export type { QuotaFetchErrorCode } from '../connectedAccounts.js';
 export type { TokenCredentialRecord } from '../connectedAccounts.js';
 export type { UnsupportedAccountUsage } from '../connectedAccounts.js';

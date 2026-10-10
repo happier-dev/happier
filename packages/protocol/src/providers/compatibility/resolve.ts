@@ -288,9 +288,22 @@ export function resolveProviderBindingCompatibilityWithFingerprintV1(
   result: ProviderBindingCompatibilityV1;
   compatibilityFingerprint: string;
 }> {
+  return resolveCompatibilityWithFingerprint(params, positiveAdapterVersion(params.adapterVersion));
+}
+
+/** Portable compatibility does not attest an executable adapter or its confirmation. */
+export function resolveProviderBindingDeclarationCompatibilityV1(
+  params: ResolveProviderBindingCompatibilityInputV1,
+): Readonly<{ result: ProviderBindingCompatibilityV1; compatibilityFingerprint: string }> {
+  return resolveCompatibilityWithFingerprint(params, null);
+}
+
+function resolveCompatibilityWithFingerprint(
+  params: ResolveProviderBindingCompatibilityInputV1,
+  adapterVersion: number | null,
+): Readonly<{ result: ProviderBindingCompatibilityV1; compatibilityFingerprint: string }> {
   if ('result' in params) throw new TypeError('Compatibility result is derived by the canonical resolver');
   const agentTargetKey = ProviderAgentTargetKeySchema.parse(params.agentTargetKey);
-  const adapterVersion = positiveAdapterVersion(params.adapterVersion);
   const endpoints = params.endpoints.map((endpoint) => ProviderEndpointTemplateV1Schema.parse(endpoint));
   if (new Set(endpoints.map((endpoint) => endpoint.protocol)).size !== endpoints.length) {
     throw new TypeError('Compatibility inputs require at most one endpoint per protocol');

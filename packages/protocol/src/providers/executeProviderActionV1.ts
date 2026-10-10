@@ -3,7 +3,7 @@ import type { ActionExecutorContext, ActionExecutorDeps } from '../actions/execu
 import { RPC_METHODS } from '../rpc/methods.js';
 import { readRecord } from '../inputs/inputRecords.js';
 import { createProviderErrorV1, ProviderErrorV1Schema, providerErrorFromRpcFailure } from './errors.js';
-import { PROVIDER_ACTION_OUTPUT_SCHEMAS_V1, type ProviderActionRequestV1 } from './providerActionsV1.js';
+import { PROVIDER_ACTION_OUTPUT_SCHEMAS_V1, isProviderActionMachineRequiredV1, type ProviderActionRequestV1 } from './providerActionsV1.js';
 import type { ProviderActionIdV1 } from './providerActionIdsV1.js';
 import type { ProviderDefaultModelSelectionMutationV1 } from './selection/v1.js';
 import type { AccountSettingsMutationResult } from '../account/settings/accountSettingMutationV1.js';
@@ -73,20 +73,20 @@ function rpcRoute(actionId: RpcActionId): Readonly<{ method: string; mutation: b
   }
 }
 
-/** Transport adapter only: the daemon remains the Provider domain mutation owner. */
+/** One dispatch owner: Account catalog semantics and exact-machine runtime effects. */
 export function createProviderActionExecuteV1(host: Readonly<{
   assertCurrent(context: ActionExecutorContext): void;
   rpc(input: Readonly<{ machineId: string; method: string; request: ProviderActionRequestV1; context: ActionExecutorContext }>): Promise<unknown>;
   setDefault(input: ProviderDefaultModelSelectionMutationV1, context: ActionExecutorContext): Promise<Pick<AccountSettingsMutationResult, 'status'>>;
-  /** Supplied by the Account catalog semantic Action owner, never by machine RPC. */
-  setSourceVisibility?(input: Extract<ProviderActionRequestV1, { actionId: 'providers.models.source_visibility.set' }>['input'],
-    context: ActionExecutorContext): Promise<ActionExecuteResult>;
+  account?(request: ProviderActionRequestV1, context: ActionExecutorContext): Promise<ActionExecuteResult>;
 }>): NonNullable<ActionExecutorDeps['providerActionExecute']> {
   return async (request, context): Promise<ActionExecuteResult> => {
     host.assertCurrent(context);
+    if (request.actionId !== 'providers.defaults.set' && !isProviderActionMachineRequiredV1(request) && host.account) {
+      return host.account(request, context);
+    }
     if (request.actionId === 'providers.models.source_visibility.set') {
-      if (!host.setSourceVisibility) return { ok: false, errorCode: 'provider_account_action_unavailable', error: 'provider_account_action_unavailable' };
-      return host.setSourceVisibility(request.input, context);
+      return { ok: false, errorCode: 'provider_account_action_unavailable', error: 'provider_account_action_unavailable' };
     }
     if (request.actionId === 'providers.defaults.set') {
       const outcome = await host.setDefault(request.input, context);
@@ -98,12 +98,16 @@ export function createProviderActionExecuteV1(host: Readonly<{
         : `account_settings_mutation_${outcome.status}`;
       return { ok: false, errorCode, error: errorCode, details: outcome };
     }
+    if (!isProviderActionMachineRequiredV1(request)) {
+      return { ok: false, errorCode: 'provider_account_action_unavailable', error: 'provider_account_action_unavailable' };
+    }
     const { method, mutation } = rpcRoute(request.actionId);
     const schema = PROVIDER_ACTION_OUTPUT_SCHEMAS_V1[request.actionId];
     const input = readRecord(request.input);
     const errorContext = rpcErrorContext(request);
     let result: unknown;
     try {
+      if (!request.input.machineId) return { ok: false, errorCode: 'provider_machine_required', error: 'provider_machine_required' };
       result = await host.rpc({ machineId: request.input.machineId, method, request, context });
     } catch (caught) {
       // Admission/currentness refusals happen before transport and are not uncertain mutations.

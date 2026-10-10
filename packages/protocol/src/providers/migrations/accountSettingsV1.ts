@@ -13,7 +13,7 @@ import {
   type ProviderSettingsMigrationSourceOutcomeV1,
 } from '../settings/v1.js';
 import { readOwnRecordValue } from '../ownRecordValue.js';
-import { composeProviderSettingsV1, splitProviderSettingsV1 } from '../connections/connectionRowsV1.js';
+import { composeProviderSettingsV1, splitProviderSettingsV1 } from '../connections/catalogSchemasV1.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { StoredLaunchProfileV2Schema, type LaunchProfileV2 } from '../../profiles/v2/schema.js';
 import { ProviderAgentTargetKeySchema, ProviderModelIdSchema } from '../ids.js';

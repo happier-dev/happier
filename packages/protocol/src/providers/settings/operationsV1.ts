@@ -165,6 +165,21 @@ export function resetProviderModelVisibilityV1(
   return assertProviderSettingsV1WithinLimits({ ...parsed, modelVisibilityByRef });
 }
 
+export function setProviderModelPickerVisibilityV1(
+  settings: ProviderSettingsV1,
+  input: Readonly<{ connectionId: string; shown: boolean | null }>,
+): ProviderSettingsV1 {
+  const parsed = assertProviderSettingsV1WithinLimits(settings);
+  const connectionId = requireProviderConnection(parsed, input.connectionId);
+  const modelPickerVisibilityByConnectionId = { ...parsed.modelPickerVisibilityByConnectionId };
+  if (input.shown === null) delete modelPickerVisibilityByConnectionId[connectionId];
+  else modelPickerVisibilityByConnectionId[connectionId] = input.shown;
+  const { modelPickerVisibilityByConnectionId: _previous, ...rest } = parsed;
+  return assertProviderSettingsV1WithinLimits({ ...rest,
+    ...(Object.keys(modelPickerVisibilityByConnectionId).length > 0 ? { modelPickerVisibilityByConnectionId } : {}),
+  });
+}
+
 export function setProviderExperimentalConfirmationV1(
   settings: ProviderSettingsV1,
   input: Readonly<{
@@ -362,6 +377,8 @@ export function deleteProviderConnectionV1(
   const manualModelsByConnectionId = { ...settings.manualModelsByConnectionId };
   delete secretBindingsByConnectionId[connectionId];
   delete manualModelsByConnectionId[connectionId];
+  const modelPickerVisibilityByConnectionId = { ...settings.modelPickerVisibilityByConnectionId };
+  delete modelPickerVisibilityByConnectionId[connectionId];
   const modelVisibilityByRef = Object.fromEntries(Object.entries(settings.modelVisibilityByRef).filter(([key]) => {
     try { return deserializeModelVisibilityRefV1(key).providerConnectionId !== connectionId; } catch { return false; }
   }));
@@ -386,6 +403,7 @@ export function deleteProviderConnectionV1(
     machineGrants: settings.machineGrants.filter((grant) => grant.connectionId !== connectionId),
     secretBindingsByConnectionId,
     manualModelsByConnectionId,
+    ...(settings.modelPickerVisibilityByConnectionId ? { modelPickerVisibilityByConnectionId } : {}),
     modelVisibilityByRef,
     experimentalBindingConfirmations: settings.experimentalBindingConfirmations.filter((confirmation) =>
       confirmation.connectionId !== connectionId),

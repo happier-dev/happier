@@ -43,7 +43,24 @@ function validContribution() {
 }
 
 describe('ProviderContributionV1Schema', () => {
-  it('requires managed purpose routes to be unique members of the managed endpoint declaration', () => {
+  it('G1 retains explicit connection-machine custody at the declaration normalizer', () => {
+    const contribution = ProviderContributionV1Schema.parse({
+      ...validContribution(),
+      managedRuntime: { kind: 'managed', sharing: 'connectionMachine', endpointTemplateIds: ['responses'] },
+      catalog: { ...validContribution().catalog, sourceRegistryVersion: 'gateway-sharing/v1' },
+    });
+    const declaration = resolveProviderManagedRuntimeDeclarationV1({
+      implementationIdentity: { pluginId: 'acme.gateway', localId: 'gateway' },
+      managedRuntime: contribution.managedRuntime!,
+    });
+    expect(declaration).toMatchObject({ sharing: 'connectionMachine' });
+    expect(() => ProviderContributionV1Schema.parse({
+      ...validContribution(),
+      managedRuntime: { kind: 'managed', sharing: 'session', endpointTemplateIds: ['responses'] },
+      catalog: { ...validContribution().catalog, sourceRegistryVersion: 'gateway-sharing/v1' },
+    })).toThrow();
+  });
+  it('admits shared downstream endpoints for distinct upstream services and rejects undeclared or duplicate routes', () => {
     const runtime = {
       kind: 'managed' as const,
       endpointTemplateIds: ['responses'],
@@ -58,7 +75,8 @@ describe('ProviderContributionV1Schema', () => {
     expect(() => resolve({ ...runtime, connectedAccounts: [
       runtime.connectedAccounts[0]!,
       { purpose: 'other-upstream', service: 'other', endpointTemplateIds: ['responses'] },
-    ] })).toThrow();
+    ] })).not.toThrow();
+    expect(() => resolve({ ...runtime, connectedAccounts: [{ ...runtime.connectedAccounts[0]!, endpointTemplateIds: ['responses', 'responses'] }] })).toThrow();
   });
 
   it('resolves relative managed connected-account references once at the public declaration owner', () => {

@@ -231,6 +231,102 @@ const remoteProviderUsageSnapshot = {
 } as const;
 
 describe('built-in legacy Connected Services compatibility', () => {
+    it('keeps AGY current writes qualified when the generated mapping admits storage migration only', () => {
+        const payload = { v: 1 as const, values: {
+            accessToken: 'selected-access', refreshToken: 'selected-refresh', projectId: 'selected-project',
+        } };
+        expect(projectQualifiedConnectedAccountCredentialPlaintextV1({
+            ref: { service: { pluginId: 'happier.agent.antigravity', localId: 'antigravity-account' }, accountId: 'selected-account' },
+            authenticationModeId: 'oauth-personal', payload, now: 1000,
+        })).toEqual(payload);
+    });
+
+    it('migrates a persisted 0.2 Antigravity OAuth record with its selected project into qualified credentials', () => {
+        // Prospective predecessor: current 0.2 buildConnectedServiceCredentialRecord and
+        // ConnectedServiceCredentialRecordV1Schema at HEAD 37a6541, with dirty AGY support.
+        const plaintext = {
+            v: 1, serviceId: 'antigravity', profileId: 'selected-account',
+            createdAt: 1000, updatedAt: 2000, expiresAt: 3601000, kind: 'oauth', token: null,
+            oauth: {
+                accessToken: 'selected-access', refreshToken: 'selected-refresh', idToken: null,
+                scope: 'cloud-platform aicode', tokenType: 'Bearer',
+                providerAccountId: 'selected-google-account', providerEmail: 'selected@example.test',
+                raw: { project_id: ' selected-project ', client_id: 'must-not-migrate', unrelated: true },
+            },
+        };
+        expect(parseQualifiedConnectedAccountCredentialPlaintextV1({
+            ref: { service: { pluginId: 'happier.agent.antigravity', localId: 'antigravity-account' }, accountId: 'selected-account' },
+            authenticationModeId: 'oauth-personal', plaintext,
+        })).toEqual({
+            v: 1,
+            values: {
+                accessToken: 'selected-access', refreshToken: 'selected-refresh',
+                scopes: 'cloud-platform aicode', tokenType: 'Bearer', expiresAtMs: '3601000',
+                providerAccountId: 'selected-google-account', providerEmail: 'selected@example.test',
+                projectId: 'selected-project',
+            },
+        });
+        // Stored ingress does not grant a scalar public credential or peer identity.
+        expect(ConnectedServiceCredentialRecordV1Schema.safeParse(plaintext).success).toBe(false);
+        expect(() => parseBuiltInLegacyConnectedServiceCredentialRecordV1(plaintext))
+            .toThrow('connected_service_credential_invalid');
+        const ref = { service: { pluginId: 'happier.agent.antigravity', localId: 'antigravity-account' }, accountId: 'selected-account' };
+        for (const invalid of [
+            { ...plaintext, createdAt: -1 },
+            { ...plaintext, oauth: { ...plaintext.oauth, refreshToken: '' } },
+            { ...plaintext, oauth: { ...plaintext.oauth, accessToken: 1 } },
+            { ...plaintext, token: { token: 'unexpected' } },
+            { ...plaintext, serviceId: 'unregistered-storage-id' },
+            { ...plaintext, oauth: { ...plaintext.oauth, raw: { happierQualifiedConnectedAccountCredentialV1: {
+                v: 1, authenticationModeId: 'oauth-personal', payload: { v: 1, values: { accessToken: 1 } },
+            } } } },
+        ]) {
+            expect(() => parseQualifiedConnectedAccountCredentialPlaintextV1({
+                ref, authenticationModeId: 'oauth-personal', plaintext: invalid,
+            })).toThrow('connected_service_credential_invalid');
+        }
+        for (const mismatch of [
+            { ...plaintext, serviceId: 'gemini' },
+            { ...plaintext, profileId: 'different-account' },
+            { ...plaintext, oauth: { ...plaintext.oauth, raw: { happierQualifiedConnectedAccountCredentialV1: {
+                v: 1, authenticationModeId: 'wrong-mode', payload: { v: 1, values: {
+                    accessToken: 'selected-access', refreshToken: 'selected-refresh',
+                } },
+            } } } },
+        ]) {
+            expect(() => parseQualifiedConnectedAccountCredentialPlaintextV1({
+                ref, authenticationModeId: 'oauth-personal', plaintext: mismatch,
+            })).toThrow('connected_account_credential_legacy_assertion_mismatch');
+        }
+        expect(() => parseQualifiedConnectedAccountCredentialPlaintextV1({
+            ref, authenticationModeId: 'wrong-mode', plaintext,
+        })).toThrow('connected_account_credential_legacy_assertion_mismatch');
+    });
+
+    it('drops additive persisted credential fields while keeping known fields and write admission strict', () => {
+        const ref = { service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, accountId: 'work' };
+        const payload = { v: 1 as const, values: { setupToken: 'setup-token' } };
+        expect(parseQualifiedConnectedAccountCredentialPlaintextV1({ ref, authenticationModeId: 'setup-token',
+            plaintext: { ...payload, future: true } })).toEqual(payload);
+        const record = ConnectedServiceCredentialRecordV1Schema.parse(projectQualifiedConnectedAccountCredentialPlaintextV1({
+            ref, authenticationModeId: 'setup-token', payload, now: 1,
+        }));
+        if (record.kind !== 'token') throw new Error('Expected token record');
+        const plaintext = { ...record, future: true, token: { ...record.token, future: true, raw: {
+            happierQualifiedConnectedAccountCredentialV1: { v: 1, authenticationModeId: 'setup-token', future: true,
+                payload: { ...payload, future: true } },
+        } } };
+        expect(parseQualifiedConnectedAccountCredentialPlaintextV1({ ref, authenticationModeId: 'setup-token', plaintext })).toEqual(payload);
+        const extendedPayload = { ...payload, future: true };
+        expect(() => projectQualifiedConnectedAccountCredentialPlaintextV1({ ref, authenticationModeId: 'setup-token',
+            payload: extendedPayload, now: 1 })).toThrow();
+        expect(() => parseQualifiedConnectedAccountCredentialPlaintextV1({ ref, authenticationModeId: 'setup-token',
+            plaintext: { ...payload, values: { setupToken: 1 } } })).toThrow('connected_service_credential_invalid');
+        expect(() => parseQualifiedConnectedAccountCredentialPlaintextV1({ ref, authenticationModeId: 'setup-token',
+            plaintext: { ...plaintext, token: { ...plaintext.token, raw: {
+                happierQualifiedConnectedAccountCredentialV1: { v: 1, authenticationModeId: 'setup-token', payload: { v: 1, values: { setupToken: 1 } } },
+            } } } })).toThrow('connected_service_credential_invalid');
+    });
     it('retains predecessor Claude OAuth plan facts when reading historical credentials', () => {
         // Native credential metadata produced by ../0.2 at ba32a228cdb99b4f6edb50d699234261a970b56b.
         const ref = { service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, accountId: 'work' };

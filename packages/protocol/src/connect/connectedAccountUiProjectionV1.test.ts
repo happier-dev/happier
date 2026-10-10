@@ -41,9 +41,11 @@ describe('ConnectedAccountUiProjectionEntryV1', () => {
       },
       capabilities: [],
       recoveryCredits: { supported: true },
+      billingUrl: 'https://provider.test/billing',
       availability: { state: 'available', reason: 'resolved' }, diagnostics: [],
     };
     expect(ConnectedAccountUiProjectionEntryV1Schema.parse(input)).toEqual(input);
+    expect(ConnectedAccountUiProjectionEntryV1Schema.safeParse({ ...input, billingUrl: undefined }).success).toBe(true);
     expect(ConnectedAccountUiProjectionEntryV1Schema.parse(input).authentication.modes).toHaveLength(2);
     expect(ConnectedAccountUiProjectionEntryV1Schema.safeParse({ ...input, hookKey: 'execute-me' }).success).toBe(false);
     expect(ConnectedAccountUiProjectionEntryV1Schema.safeParse({

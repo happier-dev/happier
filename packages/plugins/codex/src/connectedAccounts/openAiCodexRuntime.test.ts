@@ -68,6 +68,29 @@ function materializationContext(
 
 describe('OpenAI Codex Connected Account', () => {
   it.each([
+    { status: 401, headers: {}, code: 'auth_failure', retryAfterMs: null, resetAtMs: null },
+    { status: 403, headers: {}, code: 'auth_failure', retryAfterMs: null, resetAtMs: null },
+    { status: 429, headers: { 'Retry-After': '45' }, code: 'provider_backoff', retryAfterMs: 45_000, resetAtMs: null },
+    { status: 429, headers: { 'retry-after': 'Sun, 17 May 2026 12:00:45 GMT' }, code: 'provider_backoff', retryAfterMs: 45_000, resetAtMs: Date.parse('2026-05-17T12:00:45Z') },
+  ])('preserves typed quota failure $status and its retry facts', async ({ status, headers, code, retryAfterMs, resetAtMs }) => {
+    const runtime = activateConnectedAccountRuntime();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-05-17T12:00:00Z'));
+    try {
+      const context = materializationContext(credentialStore(new Map([['accessToken', 'codex-access']])).store);
+      await expect(runtime.quota?.({
+        ...context,
+        services: { http: { async request() {
+          return { status, finalUrl: 'https://chatgpt.com/backend-api/wham/usage', headers, body: new TextEncoder().encode('{}') };
+        } } },
+      } as Parameters<NonNullable<PluginConnectedAccountRuntime['quota']>>[0])).rejects.toMatchObject({
+        name: 'ConnectedServiceQuotaFetchError', status, quotaFetchErrorCode: code, retryAfterMs, resetAtMs,
+      });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it.each([
     [429, 'outcomeUnknown'], [503, 'outcomeUnknown'], [200, 'outcomeUnknown'], [401, 'reconnectRequired'],
   ] as const)('preserves stored credentials without staging when refresh returns %s (%s)', async (status, outcome) => {
     const runtime = activateConnectedAccountRuntime();
@@ -613,8 +636,14 @@ describe('OpenAI Codex Connected Account', () => {
       headers: {},
       body: new TextEncoder().encode(JSON.stringify({
         rate_limit: {
-          primary_window: { used_percent: 25, reset_at: 1_700_000_000 },
+          primary_window: { used: 50, limit: 200, used_percent: 25, reset_at: 1_700_000_000, limit_window_seconds: 18_000 },
           secondary_window: { used_percent: 60, reset_at: 1_800_000_000 },
+        },
+        additional_rate_limits: {
+          codex_spark: {
+            limit_name: 'Spark', model_id: 'gpt-5.3-codex-spark',
+            rate_limit: { primary_window: { used_percent: 81, limit_window_seconds: 18_000 } },
+          },
         },
       })),
     }));
@@ -648,10 +677,14 @@ describe('OpenAI Codex Connected Account', () => {
     } as Parameters<NonNullable<PluginConnectedAccountRuntime['quota']>>[0]))
       .resolves.toMatchObject({
         observedAtMs: expect.any(Number),
-        limits: [
-          { id: 'session', used: 25, remaining: 75, resetsAtMs: 1_700_000_000_000 },
+        limits: expect.arrayContaining([
+          { id: 'session', used: 50, limit: 200, remaining: 150, utilizationPct: 25, remainingPct: 75, resetsAtMs: 1_700_000_000_000,
+            label: 'Session', windowDurationMs: 18_000_000, scope: 'session', limitScope: 'account', confidence: 'exact' },
           { id: 'weekly', used: 60, remaining: 40, resetsAtMs: 1_800_000_000_000 },
-        ],
+          { id: 'codex_spark:primary', providerLimitId: 'codex_spark', used: 81, remaining: 19,
+            label: 'Spark · Primary', windowDurationMs: 18_000_000, modelId: 'gpt-5.3-codex-spark',
+            scope: 'primary', limitScope: 'account', confidence: 'exact', status: 'ok', unit: 'unknown' },
+        ].map((limit) => expect.objectContaining(limit))),
       });
     expect(request).toHaveBeenCalledWith({
       url: 'https://chatgpt.com/backend-api/wham/usage',

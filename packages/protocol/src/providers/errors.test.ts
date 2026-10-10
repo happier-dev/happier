@@ -1,9 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
 import { ProviderBindingCompatibilityV1Schema } from './compatibility/v1.js';
-import { createProviderErrorV1, ProviderErrorV1Schema } from './errors.js';
+import { createProviderErrorV1, ProviderErrorV1Schema, providerErrorFromRpcFailure } from './errors.js';
+import { ProfileRecordIdV1Schema } from '../profiles/v2/profileId.js';
 
 describe('provider stable errors and compatibility envelopes', () => {
+  it('distinguishes direct Run inheritance refusal from an unsupported credential format', () => {
+    expect(ProviderErrorV1Schema.safeParse({
+      v: 1, code: 'provider_run_credential_selection_required',
+      retryable: false, action: 'choose_connection',
+    }).success).toBe(true);
+    expect(createProviderErrorV1('provider_credential_transport_unavailable').action).toBe('review_credential_transport');
+  });
   it('requires evidence for verified compatibility', () => {
     expect(ProviderBindingCompatibilityV1Schema.safeParse({ status: 'verified', selectedProtocol: 'anthropic' }).success).toBe(false);
   });
@@ -76,6 +84,18 @@ describe('provider stable errors and compatibility envelopes', () => {
       retryable: false,
       action: 'review_current_state',
     });
+  });
+
+  it('preserves uncertain Account catalogue writes as non-retryable current-state review', () => {
+    const code = 'provider_catalog_outcome_unknown';
+    expect(providerErrorFromRpcFailure(Object.assign(new Error(code), { code }), { connectionId: 'pc_a' }))
+      .toEqual(createProviderErrorV1('provider_rpc_mutation_outcome_unknown', { connectionId: 'pc_a' }));
+  });
+
+  it('keeps an Account catalogue CAS conflict distinct from an Agent failure', () => {
+    expect(providerErrorFromRpcFailure(Object.assign(new Error('provider_catalog_conflict'), {
+      code: 'provider_catalog_conflict',
+    }), { connectionId: 'pc_a' })).toEqual(createProviderErrorV1('provider_connection_changed', { connectionId: 'pc_a' }));
   });
 
   it('represents an Agent runtime prerequisite refusal without overloading binding continuity', () => {
@@ -152,6 +172,16 @@ describe('provider stable errors and compatibility envelopes', () => {
       retryable: false,
       action: 'review_profile_migration',
     });
+  });
+
+  it('preserves an admitted long untrimmed Profile identity in migration failure responses', () => {
+    const sourceProfileId = `  retained-${'x'.repeat(270)}  `;
+    expect(ProfileRecordIdV1Schema.parse(sourceProfileId)).toBe(sourceProfileId);
+    const error = createProviderErrorV1('provider_profile_migration_source_changed', { sourceProfileId });
+    expect(error).toEqual({ v: 1, code: 'provider_profile_migration_source_changed', sourceProfileId,
+      retryable: false, action: 'review_profile_migration' });
+    expect(ProviderErrorV1Schema.parse(error).sourceProfileId).toBe(sourceProfileId);
+    expect(ProviderErrorV1Schema.safeParse({ ...error, sourceProfileId: '' }).success).toBe(false);
   });
 
   it('rejects wire envelopes whose retryability or recovery action contradicts their code', () => {

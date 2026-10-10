@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ProviderConnectionV1Schema, type ProviderConnectionV1 } from '../connections/v1.js';
@@ -7,20 +8,20 @@ import { ProviderAccountGrantV1Schema, ProviderMachineGrantV1Schema } from '../g
 import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderContributionKeySchema, ProviderLocalIdSchema, ProviderMachineIdSchema, ProviderModelIdSchema } from '../ids.js';
 import { deserializeModelVisibilityRefV1, ProviderBoundModelRefSchema, SessionModelSelectionV1Schema } from '../selection/v1.js';
 import { PROVIDER_SETTINGS_LIMITS_V1 } from './limits.js';
+import { ProfileRecordIdV1Schema } from '../../profiles/v2/profileId.js';
 export { PROVIDER_SETTINGS_LIMITS_V1 } from './limits.js';
 
-export const ProviderManualModelV1Schema = z.object({
+export const ProviderManualModelV1Schema = lazyZodSchema(() => z.object({
   id: ProviderModelIdSchema,
   name: z.string().trim().min(1).max(256).optional(),
   addedAt: z.number().finite().nonnegative(),
-}).strict();
+}).strict());
 export type ProviderManualModelV1 = z.infer<typeof ProviderManualModelV1Schema>;
 
-export const ProviderMigrationSourceProfileIdSchema = z.string().min(1).max(256)
-  .refine((value) => value === value.trim(), 'Source profile id must be canonical')
-  .refine((value) => !/[\u0000-\u001f\u007f]/u.test(value), 'Source profile id must not contain controls');
+/** Migration addresses an existing retained identity, never a newly authored Profile. */
+export const ProviderMigrationSourceProfileIdSchema = ProfileRecordIdV1Schema;
 
-export const ProviderSettingsMigrationSourceOutcomeV1Schema = z.discriminatedUnion('kind', [
+export const ProviderSettingsMigrationSourceOutcomeV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     sourceProfileId: ProviderMigrationSourceProfileIdSchema,
     kind: z.literal('default_environment'),
@@ -44,29 +45,29 @@ export const ProviderSettingsMigrationSourceOutcomeV1Schema = z.discriminatedUni
     sourceProfileId: ProviderMigrationSourceProfileIdSchema,
     kind: z.literal('skipped_disabled'),
   }).strict(),
-]);
+]));
 export type ProviderSettingsMigrationSourceOutcomeV1 = z.infer<typeof ProviderSettingsMigrationSourceOutcomeV1Schema>;
 
-export const ProviderSettingsMigrationConflictKindV1Schema = z.enum([
+export const ProviderSettingsMigrationConflictKindV1Schema = lazyZodSchema(() => z.enum([
   'credential_binding',
   'manual_model',
   'edited_default_connection',
-]);
+]));
 export type ProviderSettingsMigrationConflictKindV1 = z.infer<typeof ProviderSettingsMigrationConflictKindV1Schema>;
 
-export const ProviderSettingsMigrationModelChoiceV1Schema = z.object({
+export const ProviderSettingsMigrationModelChoiceV1Schema = lazyZodSchema(() => z.object({
   kind: z.enum(['legacy', 'existing']),
   selection: z.object({
     agentTargetKey: ProviderAgentTargetKeySchema,
     modelId: ProviderModelIdSchema,
   }).strict(),
   label: z.string().trim().min(1).max(256).optional(),
-}).strict();
+}).strict());
 export type ProviderSettingsMigrationModelChoiceV1 = z.infer<
   typeof ProviderSettingsMigrationModelChoiceV1Schema
 >;
 
-export const ProviderSettingsMigrationPendingConflictV1Schema = z.object({
+export const ProviderSettingsMigrationPendingConflictV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   sourceProfileId: ProviderMigrationSourceProfileIdSchema,
   contributionKey: ProviderContributionKeySchema,
@@ -87,10 +88,10 @@ export const ProviderSettingsMigrationPendingConflictV1Schema = z.object({
   if (!value.kinds.includes('manual_model') && value.modelChoices.length > 0) {
     ctx.addIssue({ code: 'custom', path: ['modelChoices'], message: 'Only model conflicts may expose model choices' });
   }
-});
+}));
 export type ProviderSettingsMigrationPendingConflictV1 = z.infer<typeof ProviderSettingsMigrationPendingConflictV1Schema>;
 
-export const ProviderSettingsMigrationStateV1Schema = z.object({
+export const ProviderSettingsMigrationStateV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   completedSources: z.array(ProviderSettingsMigrationSourceOutcomeV1Schema)
     .max(PROVIDER_SETTINGS_LIMITS_V1.migrationCompletedSources),
@@ -116,17 +117,17 @@ export const ProviderSettingsMigrationStateV1Schema = z.object({
   if (value.pendingConflicts.some((entry) => completedIds.has(entry.sourceProfileId))) {
     ctx.addIssue({ code: 'custom', path: ['pendingConflicts'], message: 'A source profile cannot be both completed and conflicted' });
   }
-});
+}));
 export type ProviderSettingsMigrationStateV1 = z.infer<typeof ProviderSettingsMigrationStateV1Schema>;
 
-export const ProviderExperimentalBindingConfirmationV1Schema = z.object({
+export const ProviderExperimentalBindingConfirmationV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   connectionId: ProviderConnectionIdSchema,
   agentTargetKey: ProviderAgentTargetKeySchema,
   modelId: ProviderModelIdSchema.nullable(),
   compatibilityFingerprint: z.string().trim().min(1).max(256),
   confirmedAt: z.number().finite().nonnegative(),
-}).strict();
+}).strict());
 
 export function isCanonicalProviderSavedSecretIdV1(value: unknown): value is string {
   return typeof value === 'string'
@@ -136,22 +137,22 @@ export function isCanonicalProviderSavedSecretIdV1(value: unknown): value is str
     && !/[\u0000-\u001f\u007f]/u.test(value);
 }
 
-const SavedSecretSlotRecordV1Schema = z.record(
+const SavedSecretSlotRecordV1Schema = lazyZodSchema(() => z.record(
   ProviderLocalIdSchema,
   z.string().refine(isCanonicalProviderSavedSecretIdV1, 'Saved-secret id must be canonical'),
 ).superRefine((value, ctx) => {
   if (Object.keys(value).length > PROVIDER_SETTINGS_LIMITS_V1.credentialSlotsPerScope) {
     ctx.addIssue({ code: 'custom', message: 'Too many credential-slot bindings' });
   }
-});
+}));
 
-export const SavedSecretSlotBindingsV1Schema = z.object({
+export const SavedSecretSlotBindingsV1Schema = lazyZodSchema(() => z.object({
   account: SavedSecretSlotRecordV1Schema.optional(),
   byMachineId: z.record(ProviderMachineIdSchema, SavedSecretSlotRecordV1Schema).optional(),
-}).strict();
+}).strict());
 export type SavedSecretSlotBindingsV1 = Readonly<z.infer<typeof SavedSecretSlotBindingsV1Schema>>;
 
-const ProviderSettingsV1BaseSchema = z.object({
+export const ProviderSettingsV1BaseSchema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   connections: z.array(ProviderConnectionV1Schema),
   connectionTombstones: z.array(ProviderConnectionTombstoneV1Schema).max(PROVIDER_SETTINGS_LIMITS_V1.connectionTombstones),
@@ -163,13 +164,14 @@ const ProviderSettingsV1BaseSchema = z.object({
     z.array(ProviderManualModelV1Schema).max(PROVIDER_SETTINGS_LIMITS_V1.manualModelsPerConnection),
   ),
   modelVisibilityByRef: z.record(z.string().startsWith('mvr1:'), z.literal('hidden')),
+  modelPickerVisibilityByConnectionId: z.record(ProviderConnectionIdSchema, z.boolean()).optional(),
   experimentalBindingConfirmations: z.array(ProviderExperimentalBindingConfirmationV1Schema)
     .max(PROVIDER_SETTINGS_LIMITS_V1.experimentalBindingConfirmations),
   defaultsByAgentTargetKey: z.record(ProviderAgentTargetKeySchema, SessionModelSelectionV1Schema),
   migration: ProviderSettingsMigrationStateV1Schema.optional(),
-}).strict();
+}).strict());
 
-export const ProviderSettingsV1Schema = ProviderSettingsV1BaseSchema.superRefine((value, ctx) => {
+export function refineProviderSettingsV1(value: z.infer<typeof ProviderSettingsV1BaseSchema>, ctx: z.RefinementCtx): void {
   const connectionIds = new Set<string>();
   const defaultContributionKeys = new Set<string>();
   value.connections.forEach((connection, index) => {
@@ -209,6 +211,7 @@ export const ProviderSettingsV1Schema = ProviderSettingsV1BaseSchema.superRefine
     machineGrantIds.add(key);
   });
   Object.keys(value.secretBindingsByConnectionId).forEach((connectionId) => assertConnectionRef(connectionId, ['secretBindingsByConnectionId', connectionId]));
+  Object.keys(value.modelPickerVisibilityByConnectionId ?? {}).forEach((connectionId) => assertConnectionRef(connectionId, ['modelPickerVisibilityByConnectionId', connectionId]));
 
   let manualModelsTotal = 0;
   for (const [connectionId, models] of Object.entries(value.manualModelsByConnectionId)) {
@@ -246,12 +249,12 @@ export const ProviderSettingsV1Schema = ProviderSettingsV1BaseSchema.superRefine
     if (selection.ref.agentTargetKey !== agentTargetKey) {
       ctx.addIssue({ code: 'custom', path: ['defaultsByAgentTargetKey', agentTargetKey], message: 'Default selection agent target does not match its key' });
     }
-    if (selection.ref.providerConnectionId !== null) assertConnectionRef(selection.ref.providerConnectionId, ['defaultsByAgentTargetKey', agentTargetKey, 'ref', 'providerConnectionId']);
   }
   if (Object.keys(value.defaultsByAgentTargetKey).length > PROVIDER_SETTINGS_LIMITS_V1.defaultsByAgentTargetKey) {
     ctx.addIssue({ code: 'custom', path: ['defaultsByAgentTargetKey'], message: 'Too many per-agent defaults' });
   }
-});
+}
+export const ProviderSettingsV1Schema = lazyZodSchema(() => ProviderSettingsV1BaseSchema.superRefine(refineProviderSettingsV1));
 export type ProviderSettingsV1 = z.infer<typeof ProviderSettingsV1Schema>;
 
 export const DEFAULT_PROVIDER_SETTINGS_V1: ProviderSettingsV1 = Object.freeze({
@@ -328,14 +331,16 @@ export function assertProviderSettingsV1WithinLimits(value: unknown): ProviderSe
 
 export type ProviderSettingsParseDiagnosticV1 = Readonly<{ path: string; reason: string }>;
 
+export type ProviderSettingsReadResultV1 = Readonly<{
+  settings: ProviderSettingsV1;
+  diagnostics: readonly ProviderSettingsParseDiagnosticV1[];
+}>;
+
 function rawRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
-export function parseProviderSettingsV1Narrow(value: unknown): Readonly<{
-  settings: ProviderSettingsV1;
-  diagnostics: readonly ProviderSettingsParseDiagnosticV1[];
-}> {
+export function parseProviderSettingsV1Narrow(value: unknown): ProviderSettingsReadResultV1 {
   const diagnostics: ProviderSettingsParseDiagnosticV1[] = [];
   const raw = rawRecord(value);
   const parseArray = <T>(key: string, schema: z.ZodType<T>, max?: number): T[] => {
@@ -451,6 +456,16 @@ export function parseProviderSettingsV1Narrow(value: unknown): Readonly<{
     remainingManual -= parsedModels.length;
   }
 
+  const modelPickerVisibilityByConnectionId: Record<string, boolean> = {};
+  if (raw.modelPickerVisibilityByConnectionId !== undefined) {
+    if (raw.modelPickerVisibilityByConnectionId === null || typeof raw.modelPickerVisibilityByConnectionId !== 'object'
+      || Array.isArray(raw.modelPickerVisibilityByConnectionId)) diagnostics.push({ path: 'modelPickerVisibilityByConnectionId', reason: 'invalid_record' });
+    for (const [connectionId, shown] of Object.entries(rawRecord(raw.modelPickerVisibilityByConnectionId))) {
+      if (ProviderConnectionIdSchema.safeParse(connectionId).success && connectionIds.has(connectionId) && typeof shown === 'boolean') {
+        modelPickerVisibilityByConnectionId[connectionId] = shown;
+      } else diagnostics.push({ path: `modelPickerVisibilityByConnectionId.${connectionId}`, reason: 'invalid_record' });
+    }
+  }
   const modelVisibilityByRef: Record<string, 'hidden'> = {};
   const visibilityEntries = Object.entries(rawRecord(raw.modelVisibilityByRef));
   if (visibilityEntries.length > PROVIDER_SETTINGS_LIMITS_V1.modelVisibilityExceptions) diagnostics.push({ path: 'modelVisibilityByRef', reason: 'limit_exceeded' });
@@ -481,8 +496,7 @@ export function parseProviderSettingsV1Narrow(value: unknown): Readonly<{
     PROVIDER_SETTINGS_LIMITS_V1.defaultsByAgentTargetKey,
   )) {
     const parsed = SessionModelSelectionV1Schema.safeParse(selection);
-    if (parsed.success && parsed.data.ref.agentTargetKey === agentTargetKey
-      && (parsed.data.ref.providerConnectionId === null || connectionIds.has(parsed.data.ref.providerConnectionId))) {
+    if (parsed.success && parsed.data.ref.agentTargetKey === agentTargetKey) {
       defaultsByAgentTargetKey[agentTargetKey] = parsed.data;
     } else diagnostics.push({ path: `defaultsByAgentTargetKey.${agentTargetKey}`, reason: 'invalid_record' });
   }
@@ -584,6 +598,7 @@ export function parseProviderSettingsV1Narrow(value: unknown): Readonly<{
     secretBindingsByConnectionId,
     manualModelsByConnectionId,
     modelVisibilityByRef,
+    ...(raw.modelPickerVisibilityByConnectionId !== undefined ? { modelPickerVisibilityByConnectionId } : {}),
     experimentalBindingConfirmations,
     defaultsByAgentTargetKey,
     ...(migration ? { migration } : {}),

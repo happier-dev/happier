@@ -7,8 +7,7 @@ import type { UsagePacingTargetsV1Schema } from '../account/settings/usagePacing
 import type { AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
 import type { ProviderAccountUsageSnapshotV1 } from './providerAccountUsagePrimitives.js';
 import { openSealedProviderAccountUsageSnapshot } from './accountUsage.js';
-import { openProviderAccountSubscriptionPriceV1 } from './accountSubscription.js';
-import { sameQualifiedConnectedAccountRef, type QualifiedConnectedAccountRef } from './qualifiedConnectedAccountPersistence.js';
+import type { ProviderAccountSubscriptionMonthlyPriceV1 } from './accountSubscription.js';
 import {
   ConnectedServiceQuotaGetResultV1Schema, OpenedProviderAccountUsageHistoryPageV1Schema,
   type ConnectedServiceQuotaGetInputV1, type ConnectedServiceQuotaGetResultV1,
@@ -37,7 +36,7 @@ export class ProviderAccountUsageReadErrorV1 extends Error {
   }
 }
 
-export function openProviderAccountUsageRecordV4(input: Readonly<{ recordId: string; account?: QualifiedConnectedAccountRef; accountMode: 'plain' | 'e2ee'; material?: AccountScopedCryptoMaterial; record: z.infer<typeof QualifiedProviderAccountUsageRecordResponseV4Schema> }>): ProviderAccountUsageSnapshotV1 {
+export function openProviderAccountUsageRecordV4(input: Readonly<{ recordId: string; enteredMonthlyPrice?: ProviderAccountSubscriptionMonthlyPriceV1; accountMode: 'plain' | 'e2ee'; material?: AccountScopedCryptoMaterial; record: z.infer<typeof QualifiedProviderAccountUsageRecordResponseV4Schema> }>): ProviderAccountUsageSnapshotV1 {
   const record = QualifiedProviderAccountUsageRecordResponseV4Schema.parse(input.record);
   if ((input.accountMode === 'plain') !== (record.content.t === 'plain')) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_mode_mismatch');
   let snapshot: ProviderAccountUsageSnapshotV1 | null;
@@ -50,16 +49,10 @@ export function openProviderAccountUsageRecordV4(input: Readonly<{ recordId: str
   }
   if (!snapshot) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_unavailable');
   if (snapshot.recordId !== input.recordId || snapshot.fetchedAtMs !== record.metadata.fetchedAt || snapshot.staleAfterMs !== record.metadata.staleAfterMs) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_identity_mismatch');
-  if (input.account) {
-    const entries = record.subscriptionPrices?.filter(entry => sameQualifiedConnectedAccountRef(entry.account, input.account!)) ?? [];
-    if (entries.length > 1) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_identity_mismatch');
-    // This user facet is independent of provider observations. The exact-source
-    // opener is its authority; provider snapshot bytes cannot supply a price.
-    if (snapshot.subscription) {
-      const { enteredMonthlyPrice: _ignored, ...subscription } = snapshot.subscription;
-      const price = entries[0] ? openProviderAccountSubscriptionPriceV1({ ...input, account: input.account, content: entries[0].content }) : undefined;
-      snapshot = { ...snapshot, subscription: { ...subscription, ...(price ? { enteredMonthlyPrice: price } : {}) } };
-    }
+  // A provider observation cannot supply the independent user-owned price.
+  if (snapshot.subscription) {
+    const { enteredMonthlyPrice: _ignored, ...subscription } = snapshot.subscription;
+    snapshot = { ...snapshot, subscription: { ...subscription, ...(input.enteredMonthlyPrice ? { enteredMonthlyPrice: input.enteredMonthlyPrice } : {}) } };
   }
   return snapshot;
 }

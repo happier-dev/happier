@@ -1,4 +1,8 @@
-import { parseTimestampMs } from '@happier-dev/plugin-sdk';
+import {
+  normalizeNonNegativeSafeMilliseconds,
+  parseProviderResetAt,
+  parseProviderTimestampMs,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 export type ClaudeRuntimeResetTiming = Readonly<{
   retryAfterMs: number | null;
@@ -10,35 +14,8 @@ export type ClaudeRuntimeResetTextEvidenceParser = (
   context: Readonly<{ nowMs: number }>,
 ) => ClaudeRuntimeResetTiming | null;
 
-const DURATION_PART_PATTERN =
-  /(\d+(?:\.\d+)?)\s*(milliseconds?|ms|seconds?|secs?|sec|s|minutes?|mins?|min|m|hours?|hrs?|hr|h|days?|d)(?=\s|\d|$|[.,;:])/giu;
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function normalizeString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
-
-function parseNonNegativeNumber(value: unknown): number | null {
-  const text = normalizeString(value);
-  const numeric = typeof value === 'number' ? value : text === null ? Number.NaN : Number(text);
-  return Number.isFinite(numeric) && numeric >= 0 ? numeric : null;
-}
-
-function normalizeNonNegativeSafeMilliseconds(value: number): number | null {
-  const milliseconds = Math.trunc(value);
-  return Number.isSafeInteger(milliseconds) && milliseconds >= 0 ? milliseconds : null;
-}
-
-function addSafeEpochMilliseconds(nowMs: number, durationMs: number): number | null {
-  const now = normalizeNonNegativeSafeMilliseconds(nowMs);
-  const duration = normalizeNonNegativeSafeMilliseconds(durationMs);
-  if (now === null || duration === null) return null;
-
-  const resetAtMs = now + duration;
-  return Number.isSafeInteger(resetAtMs) ? resetAtMs : null;
 }
 
 function readCaseInsensitive(record: Record<string, unknown> | null, name: string): unknown {
@@ -50,100 +27,12 @@ function readCaseInsensitive(record: Record<string, unknown> | null, name: strin
   return undefined;
 }
 
-function parseCompactDurationMs(value: unknown): number | null {
-  const text = normalizeString(value);
-  if (!text) return null;
-  let totalMs = 0;
-  let matched = false;
-  for (const match of text.matchAll(DURATION_PART_PATTERN)) {
-    const amount = Number(match[1]);
-    const unit = match[2]?.toLowerCase();
-    if (!Number.isFinite(amount) || amount < 0 || !unit) continue;
-    matched = true;
-    const multiplier = unit.startsWith('ms') || unit.startsWith('millisecond')
-      ? 1
-      : unit === 's' || unit.startsWith('sec')
-        ? 1_000
-        : unit === 'm' || unit.startsWith('min')
-          ? 60_000
-          : unit === 'h' || unit.startsWith('hr') || unit.startsWith('hour')
-            ? 3_600_000
-            : unit === 'd' || unit.startsWith('day')
-              ? 86_400_000
-              : Number.NaN;
-    const partMs = amount * multiplier;
-    if (!Number.isFinite(partMs)) return null;
-    totalMs += partMs;
-    if (!Number.isFinite(totalMs)) return null;
-  }
-  return matched ? normalizeNonNegativeSafeMilliseconds(totalMs) : null;
-}
-
 export function parseClaudeProviderTimestampMs(value: unknown): number | null {
   if (value instanceof Date) {
     const ms = value.getTime();
     return normalizeNonNegativeSafeMilliseconds(ms);
   }
-  if (typeof value === 'number') {
-    const parsed = parseTimestampMs(value);
-    return parsed === null ? null : normalizeNonNegativeSafeMilliseconds(parsed);
-  }
-  const numeric = parseNonNegativeNumber(value);
-  if (numeric !== null) {
-    const parsed = parseTimestampMs(numeric);
-    return parsed === null ? null : normalizeNonNegativeSafeMilliseconds(parsed);
-  }
-  const text = normalizeString(value);
-  if (!text) return null;
-  const parsed = Date.parse(text);
-  return normalizeNonNegativeSafeMilliseconds(parsed);
-}
-
-function parseRetryAfterHeader(value: unknown, options: Readonly<{ nowMs: number }>): ClaudeRuntimeResetTiming {
-  const numericSeconds = parseNonNegativeNumber(value);
-  if (numericSeconds !== null) {
-    const retryAfterMs = normalizeNonNegativeSafeMilliseconds(numericSeconds * 1_000);
-    return retryAfterMs === null
-      ? { retryAfterMs: null, resetAtMs: null }
-      : { retryAfterMs, resetAtMs: null };
-  }
-  const durationMs = parseCompactDurationMs(value);
-  if (durationMs !== null) {
-    const resetAtMs = addSafeEpochMilliseconds(options.nowMs, durationMs);
-    return resetAtMs === null
-      ? { retryAfterMs: null, resetAtMs: null }
-      : { retryAfterMs: durationMs, resetAtMs };
-  }
-  const dateMs = parseClaudeProviderTimestampMs(value);
-  const nowMs = normalizeNonNegativeSafeMilliseconds(options.nowMs);
-  if (dateMs !== null && nowMs !== null && dateMs >= nowMs) {
-    const retryAfterMs = normalizeNonNegativeSafeMilliseconds(dateMs - nowMs);
-    if (retryAfterMs !== null) return { retryAfterMs, resetAtMs: dateMs };
-  }
-  return { retryAfterMs: null, resetAtMs: null };
-}
-
-function timingFromDuration(value: unknown, nowMs: number): ClaudeRuntimeResetTiming | null {
-  const durationMs = parseCompactDurationMs(value);
-  const resetAtMs = durationMs === null ? null : addSafeEpochMilliseconds(nowMs, durationMs);
-  return durationMs === null || resetAtMs === null ? null : { retryAfterMs: durationMs, resetAtMs };
-}
-
-function timingFromSeconds(value: unknown, nowMs: number): ClaudeRuntimeResetTiming | null {
-  const text = normalizeString(value);
-  const numeric = typeof value === 'number' ? value : text === null ? Number.NaN : Number(text);
-  if (!Number.isFinite(numeric) || numeric < 0) return null;
-  const durationMs = normalizeNonNegativeSafeMilliseconds(numeric * 1_000);
-  const resetAtMs = durationMs === null ? null : addSafeEpochMilliseconds(nowMs, durationMs);
-  return durationMs === null || resetAtMs === null ? null : { retryAfterMs: durationMs, resetAtMs };
-}
-
-function timingFromMilliseconds(value: unknown): ClaudeRuntimeResetTiming | null {
-  const text = normalizeString(value);
-  const numeric = typeof value === 'number' ? value : text === null ? Number.NaN : Number(text);
-  if (!Number.isFinite(numeric) || numeric < 0) return null;
-  const retryAfterMs = normalizeNonNegativeSafeMilliseconds(numeric);
-  return retryAfterMs === null ? null : { retryAfterMs, resetAtMs: null };
+  return parseProviderTimestampMs(value);
 }
 
 function timingFromTimestamp(value: unknown, nowMs: number): ClaudeRuntimeResetTiming | null {
@@ -152,28 +41,6 @@ function timingFromTimestamp(value: unknown, nowMs: number): ClaudeRuntimeResetT
   if (resetAtMs === null || normalizedNowMs === null) return null;
   const retryAfterMs = normalizeNonNegativeSafeMilliseconds(Math.max(0, resetAtMs - normalizedNowMs));
   return retryAfterMs === null ? null : { retryAfterMs, resetAtMs };
-}
-
-function extractResetDelayText(value: unknown): string | null {
-  const text = normalizeString(value);
-  if (!text) return null;
-  const match = /\b(?:reset|resets|retry|try again)\s+(?:after|in)\s+([0-9][0-9a-zA-Z.\s]*)/iu.exec(text);
-  return match?.[1]?.trim() ?? null;
-}
-
-function collectStringCandidates(value: unknown, output: string[]): void {
-  if (typeof value === 'string') {
-    output.push(value);
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) collectStringCandidates(item, output);
-    return;
-  }
-  if (!isRecord(value)) return;
-  for (const key of ['message', 'detail', 'details', 'error', 'description']) {
-    collectStringCandidates(value[key], output);
-  }
 }
 
 function readZonedParts(dateMs: number, timeZone: string): {
@@ -308,57 +175,11 @@ export function parseClaudeUsageLimitReset(input: Readonly<{
   body?: unknown;
 }>): ClaudeRuntimeResetTiming {
   const headers = isRecord(input.headers) ? input.headers : null;
-  const body = isRecord(input.body) ? input.body : null;
-  const retryAfterMs = readCaseInsensitive(headers, 'retry-after-ms')
-    ?? body?.['retry-after-ms']
-    ?? body?.retryAfterMs;
-  const retryAfterMsTiming = timingFromMilliseconds(retryAfterMs) ?? timingFromDuration(retryAfterMs, input.nowMs);
-  if (retryAfterMsTiming) return retryAfterMsTiming;
-
-  const retryAfter = parseRetryAfterHeader(readCaseInsensitive(headers, 'retry-after') ?? body?.['retry-after'], {
-    nowMs: input.nowMs,
+  return parseProviderResetAt({
+    ...input,
+    timestampEvidence: readClaudeHeaderTimestampEvidence(headers),
+    textEvidenceParsers: [parseClaudeTuiResetText],
   });
-  if (retryAfter.retryAfterMs !== null || retryAfter.resetAtMs !== null) return retryAfter;
-
-  for (const value of [
-    readCaseInsensitive(headers, 'x-ratelimit-reset-after'),
-    body?.quotaResetDelay,
-    body?.retryDelay,
-    body?.retry_delay,
-  ]) {
-    const timing = timingFromDuration(value, input.nowMs) ?? timingFromSeconds(value, input.nowMs);
-    if (timing) return timing;
-  }
-
-  for (const value of [
-    readCaseInsensitive(headers, 'x-ratelimit-reset'),
-    ...readClaudeHeaderTimestampEvidence(headers),
-    body?.quotaResetTimeStamp,
-    body?.quotaResetTimestamp,
-    body?.quota_reset_timestamp,
-    body?.resetTime,
-    body?.reset_time,
-    body?.resetsAt,
-    body?.resets_at,
-    body?.resetAt,
-    body?.reset_at,
-  ]) {
-    const timing = timingFromTimestamp(value, input.nowMs);
-    if (timing) return timing;
-  }
-
-  const textCandidates: string[] = [];
-  collectStringCandidates(input.body, textCandidates);
-  for (const candidate of textCandidates) {
-    const textEvidenceTiming = parseClaudeTuiResetText(candidate, { nowMs: input.nowMs });
-    if (textEvidenceTiming) return textEvidenceTiming;
-    const timing = timingFromDuration(extractResetDelayText(candidate), input.nowMs);
-    if (timing) return timing;
-    const timestamp = timingFromTimestamp(candidate, input.nowMs);
-    if (timestamp) return timestamp;
-  }
-
-  return { retryAfterMs: null, resetAtMs: null };
 }
 
 export function readClaudeAnthropicHeaderResetAtMs(headers: Record<string, unknown>): number | null {

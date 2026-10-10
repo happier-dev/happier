@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ConnectedServiceIdSchema } from '../../connect/connectedServiceBindings.js';
@@ -12,7 +13,7 @@ import {
   normalizeProviderQueryParameterName,
 } from '../safety/headers.js';
 
-export const ModelSelectionApplyPolicySchema = z.enum(['live', 'next_prompt', 'restart_session', 'unsupported']);
+export const ModelSelectionApplyPolicySchema = lazyZodSchema(() => z.enum(['live', 'next_prompt', 'restart_session', 'unsupported']));
 export type ModelSelectionApplyPolicy = z.infer<typeof ModelSelectionApplyPolicySchema>;
 
 function canonicalTransportNameSchema(normalize: (value: string) => string) {
@@ -33,7 +34,7 @@ const AgentCredentialQuerySupportNameSchema = canonicalTransportNameSchema(
   normalizeProviderQueryParameterName,
 );
 
-export const AgentCredentialTransportSupportV1Schema = z.object({
+export const AgentCredentialTransportSupportV1Schema = lazyZodSchema(() => z.object({
   protocol: ProviderWireProtocolSchema,
   destination: z.discriminatedUnion('kind', [
     z.object({
@@ -57,10 +58,10 @@ export const AgentCredentialTransportSupportV1Schema = z.object({
   if (new Set(value.destination.formats).size !== value.destination.formats.length) {
     ctx.addIssue({ code: 'custom', path: ['destination', 'formats'], message: 'Transport formats must be unique' });
   }
-});
+}));
 export type AgentCredentialTransportSupportV1 = z.infer<typeof AgentCredentialTransportSupportV1Schema>;
 
-export const AgentProviderRequirementsV1Schema = z.object({
+export const AgentProviderRequirementsV1Schema = lazyZodSchema(() => z.object({
   acceptsProtocols: z.array(ProviderWireProtocolSchema).min(1).max(PROVIDER_WIRE_PROTOCOL_LIMITS_V1.maxProtocolsPerDeclaration),
   required: z.object({
     streaming: z.literal(true).optional(),
@@ -86,6 +87,8 @@ export const AgentProviderRequirementsV1Schema = z.object({
   authIsolation: z.object({
     suppressConnectedServiceIds: z.array(ConnectedServiceIdSchema).max(32),
     ownedEnvKeys: z.array(z.string().min(1).max(256).regex(/^[A-Z_][A-Z0-9_]*$/u)).max(64),
+    /** Declared session configuration keys emitted only when this binding consumes them. */
+    optionalOwnedEnvKeys: z.array(z.string().min(1).max(256).regex(/^[A-Z_][A-Z0-9_]*$/u)).max(64).optional(),
   }).strict(),
   materialization: z.enum(['spawnEnv', 'engineConfig', 'configFile']),
   applyPolicy: ModelSelectionApplyPolicySchema,
@@ -99,6 +102,10 @@ export const AgentProviderRequirementsV1Schema = z.object({
   }
   if (new Set(value.authIsolation.ownedEnvKeys).size !== value.authIsolation.ownedEnvKeys.length) {
     ctx.addIssue({ code: 'custom', path: ['authIsolation', 'ownedEnvKeys'], message: 'Owned environment keys must be unique' });
+  }
+  const allOwnedEnvKeys = [...value.authIsolation.ownedEnvKeys, ...(value.authIsolation.optionalOwnedEnvKeys ?? [])];
+  if (new Set(allOwnedEnvKeys).size !== allOwnedEnvKeys.length) {
+    ctx.addIssue({ code: 'custom', path: ['authIsolation', 'optionalOwnedEnvKeys'], message: 'Optional environment keys must be unique and disjoint from required keys' });
   }
   const noAuthProtocols = value.credentialSupport.noAuthProtocols;
   if (noAuthProtocols) {
@@ -114,7 +121,7 @@ export const AgentProviderRequirementsV1Schema = z.object({
       }
     });
   }
-});
+}));
 
 /**
  * The single decision for "can this Agent drive this wire protocol with no
@@ -160,10 +167,10 @@ export const PROVIDER_COMPATIBILITY_REASON_CODES_V1 = [
   'adapter_contract_invalid',
 ] as const;
 
-export const ProviderCompatibilityReasonCodeV1Schema = z.enum(PROVIDER_COMPATIBILITY_REASON_CODES_V1);
+export const ProviderCompatibilityReasonCodeV1Schema = lazyZodSchema(() => z.enum(PROVIDER_COMPATIBILITY_REASON_CODES_V1));
 export type ProviderCompatibilityReasonCodeV1 = z.infer<typeof ProviderCompatibilityReasonCodeV1Schema>;
 
-export const ProviderBindingCompatibilityV1Schema = z.discriminatedUnion('status', [
+export const ProviderBindingCompatibilityV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('verified'),
     selectedProtocol: ProviderWireProtocolSchema,
@@ -183,5 +190,5 @@ export const ProviderBindingCompatibilityV1Schema = z.discriminatedUnion('status
     status: z.literal('incompatible'),
     reasons: z.array(ProviderCompatibilityReasonCodeV1Schema).min(1),
   }).strict(),
-]);
+]));
 export type ProviderBindingCompatibilityV1 = z.infer<typeof ProviderBindingCompatibilityV1Schema>;

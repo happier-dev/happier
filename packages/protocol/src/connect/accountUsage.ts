@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -39,31 +40,31 @@ import {
 
 export * from './providerAccountUsagePrimitives.js';
 
-export const SealedProviderAccountUsageSnapshotV1Schema = z.object({
+export const SealedProviderAccountUsageSnapshotV1Schema = lazyZodSchema(() => z.object({
     format: ConnectedServiceCredentialFormatSchema,
     ciphertext: z.string().min(1),
     subscription: SealedProviderAccountSubscriptionV1Schema.optional(),
-});
+}));
 export type SealedProviderAccountUsageSnapshotV1 = z.infer<typeof SealedProviderAccountUsageSnapshotV1Schema>;
 
-export const ProviderAccountUsagePayloadModeV1Schema = z.enum([
+export const ProviderAccountUsagePayloadModeV1Schema = lazyZodSchema(() => z.enum([
     'plain_json_v1',
     'sealed_account_scoped_v1',
-]);
+]));
 
-export const ProviderAccountUsageWriteStatusV1Schema = z.enum([
+export const ProviderAccountUsageWriteStatusV1Schema = lazyZodSchema(() => z.enum([
     'ok',
     'unavailable',
     'estimated',
     'error',
     'refresh_requested',
-]);
+]));
 
-export const ProviderAccountUsageRecordMetadataV1Schema = z.object({
+export const ProviderAccountUsageRecordMetadataV1Schema = lazyZodSchema(() => z.object({
     materialFingerprint: z.string().trim().min(1).max(256).optional(),
-}).strict();
+}).strict());
 
-export const ProviderAccountUsageRecordWriteFieldsV1Schema = z.object({
+export const ProviderAccountUsageRecordWriteFieldsV1Schema = lazyZodSchema(() => z.object({
     recordId: ProviderAccountUsageRecordIdSchema,
     recordKey: ProviderAccountUsageRecordKeyV1Schema,
     payloadMode: ProviderAccountUsagePayloadModeV1Schema,
@@ -74,10 +75,10 @@ export const ProviderAccountUsageRecordWriteFieldsV1Schema = z.object({
     staleAfterMs: z.number().int().nonnegative().optional(),
     refreshRequestedAt: z.number().int().nonnegative().optional(),
     metadata: ProviderAccountUsageRecordMetadataV1Schema.optional(),
-}).strict();
+}).strict());
 
 export const ProviderAccountUsageRecordWriteV1Schema =
-    ProviderAccountUsageRecordWriteFieldsV1Schema.superRefine((write, context) => {
+    lazyZodSchema(() => ProviderAccountUsageRecordWriteFieldsV1Schema.superRefine((write, context) => {
         if (write.recordId !== buildProviderAccountUsageRecordId(write.recordKey)) {
             context.addIssue({
                 code: 'custom',
@@ -119,7 +120,7 @@ export const ProviderAccountUsageRecordWriteV1Schema =
                 message: 'Sealed provider account usage records require exactly one sealed payload',
             });
         }
-    });
+    }));
 export type ProviderAccountUsageRecordWriteV1 = z.infer<
     typeof ProviderAccountUsageRecordWriteV1Schema
 >;
@@ -171,6 +172,7 @@ export function projectProviderAccountUsageSnapshotToQuotaFieldsV1(
         ...(parsed.recoveryCredits ? { recoveryCredits: parsed.recoveryCredits satisfies ConnectedServiceQuotaRecoveryCreditsV1 } : {}),
         ...(parsed.subscription ? { subscription: parsed.subscription } : {}),
         meters: parsed.meters,
+        ...(parsed.diagnostics ? { diagnostics: parsed.diagnostics } : {}),
     };
 }
 
@@ -222,11 +224,11 @@ export function openProviderAccountUsageSnapshotCiphertext(params: Readonly<{
     });
 }
 
-const ProviderAccountUsageSubscriptionFacetV1Schema = z.object({
+const ProviderAccountUsageSubscriptionFacetV1Schema = lazyZodSchema(() => z.object({
     v: z.literal(1),
     recordId: ProviderAccountUsageRecordIdSchema,
     subscription: ProviderAccountSubscriptionV1Schema,
-}).strict();
+}).strict());
 
 export function sealProviderAccountUsageSnapshot(params: Readonly<{
     material: AccountScopedCryptoMaterial;

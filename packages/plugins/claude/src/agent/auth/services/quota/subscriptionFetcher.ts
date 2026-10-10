@@ -4,6 +4,7 @@ import type {
     AgentAccountUsageSnapshot,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
+    ConnectedAccountRuntime,
     OauthCredentialRecord,
     TokenCredentialRecord,
 } from '@happier-dev/plugin-sdk/connected-accounts';
@@ -43,6 +44,66 @@ type ClaudeRuntimeFetchResponse = Readonly<{
 }>;
 
 type ClaudeRuntimeFetch = (request: ClaudeRuntimeFetchRequest) => Promise<ClaudeRuntimeFetchResponse>;
+
+export function createClaudeSubscriptionQuotaFetchError(input: Readonly<{
+    status: number;
+    statusText?: string;
+    headers: Readonly<Record<string, string>>;
+    body: string;
+    nowMs: number;
+}>): ConnectedServiceQuotaFetchError {
+    let body: unknown;
+    try {
+        body = JSON.parse(input.body);
+    } catch {
+        body = input.body.trim();
+    }
+    const timing = parseClaudeUsageLimitReset({ nowMs: input.nowMs, headers: input.headers, body });
+    if (input.status === 403) {
+        const requiredScope = input.body.match(/scope requirement\s+([a-z0-9:_-]+)/i)?.[1]?.trim();
+        if (requiredScope) {
+            return new ConnectedServiceQuotaFetchError(
+                `Claude quota fetch requires OAuth scope '${requiredScope}'. Reconnect Claude in Happier and retry.`,
+                { status: 403, ...timing, quotaFetchErrorCode: 'auth_failure', providerCode: 'missing_claude_code_scope' },
+            );
+        }
+    }
+    return new ConnectedServiceQuotaFetchError(
+        `Anthropic usage fetch failed (${input.status}): ${input.statusText || 'HTTP error'}`,
+        { status: input.status, ...timing, quotaFetchErrorCode: input.status === 401 || input.status === 403 ? 'auth_failure' : 'provider_backoff' },
+    );
+}
+
+export function parseClaudeSubscriptionConnectedAccountQuotaLimits(
+    value: unknown,
+): Awaited<ReturnType<NonNullable<ConnectedAccountRuntime['quota']>>>['limits'] {
+    return parseClaudeSubscriptionUsageMeters(value).map((meter) => {
+        const used = meter.used ?? meter.utilizationPct;
+        const remaining = meter.limit !== null && used !== null
+            ? Math.max(0, meter.limit - used)
+            : meter.utilizationPct !== null ? Math.max(0, 100 - meter.utilizationPct) : null;
+        return {
+            id: meter.meterId,
+            providerLimitId: meter.providerLimitId,
+            label: meter.label,
+            limit: meter.limit,
+            unit: meter.unit,
+            remainingPct: meter.remainingPct,
+            utilizationPct: meter.utilizationPct,
+            status: meter.status,
+            isExhausted: meter.isExhausted,
+            details: meter.details,
+            confidence: meter.confidence,
+            windowDurationMs: meter.windowDurationMs,
+            modelId: meter.modelId,
+            scope: meter.scope,
+            limitScope: meter.limitScope,
+            ...(used === null ? {} : { used }),
+            ...(remaining === null ? {} : { remaining }),
+            ...(meter.resetsAt === null ? {} : { resetsAtMs: meter.resetsAt }),
+        };
+    });
+}
 
 type ClaudeQuotaFetcher = Readonly<{
     serviceId: string;
@@ -719,48 +780,11 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
         });
     }
 
-    function parseQuotaErrorBodyEvidence(text: string): unknown {
-        const trimmed = text.trim();
-        if (!trimmed) return null;
-        try {
-            return JSON.parse(trimmed) as unknown;
-        } catch {
-            return trimmed;
-        }
-    }
-
     async function throwUsageError(response: ClaudeRuntimeFetchResponse, now: number): Promise<never> {
         const body = await response.text().catch(() => '');
-        const timing = parseClaudeUsageLimitReset({
-            nowMs: now,
-            headers: response.headers,
-            body: parseQuotaErrorBodyEvidence(body),
+        throw createClaudeSubscriptionQuotaFetchError({
+            status: response.status, statusText: response.statusText, headers: response.headers, body, nowMs: now,
         });
-        if (response.status === 403) {
-            const scopeMatch = body.match(/scope requirement\s+([a-z0-9:_-]+)/i);
-            const requiredScope = scopeMatch?.[1] ? String(scopeMatch[1]).trim() : '';
-            if (requiredScope) {
-                throw new ConnectedServiceQuotaFetchError(
-                    `Claude quota fetch requires OAuth scope '${requiredScope}'. Reconnect Claude in Happier and retry.`,
-                    {
-                        status: 403,
-                        quotaFetchErrorCode: 'auth_failure',
-                        providerCode: 'missing_claude_code_scope',
-                    },
-                );
-            }
-        }
-        throw new ConnectedServiceQuotaFetchError(
-            `Anthropic usage fetch failed (${response.status}): ${response.statusText || 'HTTP error'}`,
-            {
-                status: response.status,
-                retryAfterMs: timing.retryAfterMs,
-                resetAtMs: timing.resetAtMs,
-                quotaFetchErrorCode: response.status === 401 || response.status === 403
-                    ? 'auth_failure'
-                    : 'provider_backoff',
-            },
-        );
     }
 
     return {

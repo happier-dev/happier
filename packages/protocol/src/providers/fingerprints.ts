@@ -7,6 +7,7 @@ import { encodeBase64 } from '../crypto/base64.js';
 export type ProviderFingerprintDomainV1 =
   | 'connection-security'
   | 'binding-security'
+  | 'managed-runtime-binding'
   | 'endpoint-set'
   | 'endpoint-observation'
   | 'probe-request'
@@ -35,6 +36,7 @@ export const ProviderConnectionSecurityFingerprintV1Schema = canonicalFingerprin
 export type ProviderConnectionSecurityFingerprintV1 = z.infer<
   typeof ProviderConnectionSecurityFingerprintV1Schema
 >;
+export const ProviderManagedRuntimeBindingFingerprintV1Schema = canonicalFingerprintSchema('managed-runtime-binding:v1:');
 
 export const ProviderProbeRequestFingerprintV1Schema = canonicalFingerprintSchema('probe-request:v1:')
   .brand<'ProviderProbeRequestFingerprintV1'>();
