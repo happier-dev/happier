@@ -14,12 +14,15 @@ describe('Session role RPC provenance', () => {
     let inSubtree = true;
     const rpc = new RpcHandlerManager({ scopePrefix: 'child', encryptionMode: 'plain', logger: () => {} });
     const roleActionExecute = createRoleActionExecutor({ sessionId: 'child', readSessionMetadata: () => metadata,
+      readSettingsOverrides: () => ({ status: 'ready', overrides: {} }),
       readRoleSources: createRoleSourceReaderV1({}),
       stageSessionStateMutation: async (mutation) => { metadata = applyRegisteredSessionStateFieldMutationToMetadata(metadata, mutation); } });
     const deps = { roleActionExecute,
       resolveAgentStartContext: async (context) => resolveCliAgentStartContextV1({ sessionId: 'lead', machineId: 'source-machine',
         directory: '/repo', backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         metadata: createTestMetadata(), starterDepth: 2, turnDepth: 3, settings: null,
+        accountRoleOverrides: { status: 'ready', overrides: {} },
+        roleSourceInventory: await createRoleSourceReaderV1({})(),
         callerPermissionMode: context.callerPermissionMode ?? null }),
       sessionList: async () => ({ queryVersion: 1, sessions: inSubtree ? [{ id: 'child', createdAt: 1, updatedAt: 1,
         active: true, activeAt: 1, encryption: null }] : [], nextCursor: null, hasNext: false,
@@ -43,6 +46,7 @@ describe('Session role RPC provenance', () => {
     let metadata = createTestMetadata();
     const rpc = new RpcHandlerManager({ scopePrefix: 'child', encryptionMode: 'plain', logger: () => {} });
     const roleActionExecute = createRoleActionExecutor({ sessionId: 'child', readSessionMetadata: () => metadata,
+      readSettingsOverrides: () => ({ status: 'ready', overrides: {} }),
       readRoleSources: createRoleSourceReaderV1({}),
       stageSessionStateMutation: async (mutation) => { metadata = applyRegisteredSessionStateFieldMutationToMetadata(metadata, mutation); } });
     // Only the reachable role effect and storage boundary are installed. The

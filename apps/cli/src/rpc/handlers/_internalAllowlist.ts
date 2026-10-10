@@ -52,6 +52,11 @@ export const INTERNAL_ONLY_RPC_METHODS = Object.freeze([
         ownerPacket: 'providers-first-class-1.9',
     })),
     {
+        method: RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS,
+        rationale: 'Home-origin access-loss custody cleans only the exact requester Sessions under the current custodian installation; it is not a public cancellation Action or revoked-actor Use bypass.',
+        ownerPacket: 'teams-lane-12/41s2',
+    },
+    {
         method: RPC_METHODS.STOP_DAEMON,
         rationale: 'Daemon lifecycle shutdown transport; not a plugin-exposed action surface.',
         ownerPacket: 'A.12.0',
@@ -100,16 +105,6 @@ export const INTERNAL_ONLY_RPC_METHODS = Object.freeze([
         method: RPC_METHODS.DAEMON_EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE,
         rationale: 'Exact-Machine daemon-owned Run currentness proof for Home broker admission; no Run mirror or credential authority.',
         ownerPacket: 'teams-lane-10',
-    },
-    {
-        method: RPC_METHODS.DAEMON_MEMORY_STATUS,
-        rationale: 'PMS-5 direct-eligible daemon read projection; remains internal transport, not a public action surface.',
-        ownerPacket: 'PMS-5',
-    },
-    {
-        method: RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET,
-        rationale: 'PMS-5 direct-eligible daemon read projection; remains internal transport, not a public action surface.',
-        ownerPacket: 'PMS-5',
     },
     {
         method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS,

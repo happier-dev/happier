@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { SessionRolesConfigurationSetRpcV1Schema, readSessionRolesV1, writeSessionRoleConfigurationV1ToMetadata } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import { readSessionWorkspaceWritesV1, resolveRoleSelectionV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
-import type { RoleInstructionsOverrideV1, ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
+import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
+import type { AccountRoleOverridesReadV1 } from '@happier-dev/protocol/prompts/roles/roleOverrideRecordV1';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveActionAgentStartContextV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { admitAgentStartV1 } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
 import { SessionAgentSpawnPolicyV1StrictSchema } from '@happier-dev/protocol/account/settings/sessionAgentSpawnPolicyV1';
@@ -18,15 +21,19 @@ export function registerSessionRoleConfigurationHandler(params: Readonly<{
   sessionId: string;
   readSessionMetadata: () => unknown;
   stageSessionStateMutation?: (mutation: RegisteredSessionStateFieldMutationV1) => Promise<void>;
-  readRoleSources?: RoleSourceReader;
+  readRoleSources: RoleSourceReader;
   prepareWorkspaceWritesPolicy?: RoleWorkspaceWritesPolicyPreparer;
-  readSettingsOverrides?: () => Readonly<Record<string, RoleInstructionsOverrideV1>> | Promise<Readonly<Record<string, RoleInstructionsOverrideV1>>>;
+  readSettingsOverrides?: () => AccountRoleOverridesReadV1 | Promise<AccountRoleOverridesReadV1>;
   resolveAgentStartContext?: ActionExecutorDeps['resolveAgentStartContext'];
   sessionList?: ActionExecutorDeps['sessionList'];
   /** Current Home relation, not the copied configuration's descriptive inheritedFrom field. */
   readCurrentReportLead?: (signal: AbortSignal) => Promise<string | null>;
   readCallerWorkspaceWrites?: (context: ActionExecutorContext) => Promise<'allow' | 'deny' | null>;
 }>): void {
+  const accountScope = getActiveAccountSettingsSnapshot()?.scopeKey;
+  const readOverrides = params.readSettingsOverrides ?? (accountScope
+    ? createActionSettingsProvider({ scopeKey: accountScope }).getAccountRoleOverrides
+    : () => ({ status: 'unavailable' as const, reason: 'source-unavailable' }));
   params.rpcHandlerManager.registerHandler(SESSION_RPC_METHODS.SESSION_ROLES_CONFIGURATION_SET, async (input: unknown, context) => {
     const request = SessionRolesConfigurationSetRpcV1Schema.parse(input);
     if (request.sessionId !== params.sessionId || !params.stageSessionStateMutation) {
@@ -64,21 +71,24 @@ export function registerSessionRoleConfigurationHandler(params: Readonly<{
     }
     // The metadata owner validates both the existing shape and the replacement before enqueue.
     const nextMetadata = writeSessionRoleConfigurationV1ToMetadata(metadata as Record<string, unknown>, request.configuration);
-    const entries = await params.readRoleSources?.(context?.signal) ?? [];
-    const settingsRoles = Object.fromEntries(entries.map((entry) => [entry.roleId, entry.role]));
-    const settingsOverrides = await params.readSettingsOverrides?.();
+    const roleSourceInventory = await params.readRoleSources(context?.signal);
+    const overridesRead = await readOverrides();
+    if (overridesRead.status !== 'ready') {
+      return { ok: false, errorCode: 'account_role_overrides_unavailable', error: 'account_role_overrides_unavailable' };
+    }
+    const settingsOverrides = overridesRead.overrides;
     if (authority !== 'present_user') {
       const current = readSessionRolesV1(metadata);
-      if ((callerWrites === 'deny' || readSessionWorkspaceWritesV1(metadata, { settingsRoles, settingsOverrides }) === 'deny')
-        && readSessionWorkspaceWritesV1(nextMetadata, { settingsRoles, settingsOverrides }) !== 'deny') {
+      if ((callerWrites === 'deny' || readSessionWorkspaceWritesV1(metadata, { roleSourceInventory, settingsOverrides }) === 'deny')
+        && readSessionWorkspaceWritesV1(nextMetadata, { roleSourceInventory, settingsOverrides }) !== 'deny') {
         return { ok: false, errorCode: 'role_policy_denied', error: 'role_policy_denied' };
       }
       const roleIds = new Set([...Object.keys(request.configuration.overrides), ...Object.keys(request.configuration.sessionRoles),
         ...Object.keys(current?.overrides ?? {}), ...Object.keys(current?.sessionRoles ?? {}),
         ...(current?.roleId ? [current.roleId] : [])]);
       for (const roleId of roleIds) {
-        const before = resolveRoleSelectionV1({ roleId, settingsRoles, settingsOverrides, sessionRoles: current ?? undefined });
-        const after = resolveRoleSelectionV1({ roleId, settingsRoles, settingsOverrides, sessionRoles: request.configuration });
+        const before = resolveRoleSelectionV1({ roleId, roleSourceInventory, settingsOverrides, sessionRoles: current ?? undefined });
+        const after = resolveRoleSelectionV1({ roleId, roleSourceInventory, settingsOverrides, sessionRoles: request.configuration });
         if (callerWrites === 'deny' && after.ok && after.selection.workspaceWrites === 'allow') {
           return { ok: false, errorCode: 'role_policy_denied', error: 'role_policy_denied' };
         }
@@ -88,8 +98,8 @@ export function registerSessionRoleConfigurationHandler(params: Readonly<{
       }
     }
     context?.signal.throwIfAborted();
-    const workspaceWrites = readSessionWorkspaceWritesV1(nextMetadata, { settingsRoles, settingsOverrides });
-    const previousWorkspaceWrites = readSessionWorkspaceWritesV1(metadata, { settingsRoles, settingsOverrides });
+    const workspaceWrites = readSessionWorkspaceWritesV1(nextMetadata, { roleSourceInventory, settingsOverrides });
+    const previousWorkspaceWrites = readSessionWorkspaceWritesV1(metadata, { roleSourceInventory, settingsOverrides });
     // Never relax native policy until the registered metadata owner has accepted
     // the new configuration and the host synchronizes at prompt admission.
     if (workspaceWrites === 'deny' && previousWorkspaceWrites !== 'deny' && params.prepareWorkspaceWritesPolicy) {

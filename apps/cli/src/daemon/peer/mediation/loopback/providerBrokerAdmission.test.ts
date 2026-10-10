@@ -11,6 +11,7 @@ import {
   type SignedProviderBrokerRouteGrantV1,
 } from '@happier-dev/protocol';
 import { createPeerMediationLoopbackApp } from './server';
+import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 
 const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(11));
 const sourceEndpoint = 'a'.repeat(64);
@@ -63,6 +64,43 @@ function createApp(
 }
 
 describe('provider-broker machine/1 admission', () => {
+  it('admits a Home-signed personal connection epoch without inventing a Team resource', async () => {
+    const payload = {
+      v: 2, grantId: 'personal-grant', aud: 'happier-provider-broker-route-v2',
+      issuedAt: 100, expiresAt: 10_000, homeId: 'home-1', accountId: 'account-b',
+      source: { kind: 'account_connection', connectionId: 'gateway-1',
+        expectedConnectionSecurityFingerprint: 'connection-security:v1:test',
+        expectedManagedRuntimeBindingFingerprint: 'managed-runtime-binding:v1:test' },
+      initiatorTokenEpoch: 0,
+      initiator: { accountId: 'account-b', machineId: 'machine-a', endpointId: sourceEndpoint },
+      target: { custodianAccountId: 'account-b', machineId: 'machine-b', endpointId: targetEndpoint },
+      consumer: { kind: 'session', sessionId: 'session-1' },
+      application: signedAuthority().payload.application,
+    };
+    const authority = { payload, signature: {
+      alg: 'Ed25519', keyId: 'home', valueBase64Url: Buffer.from(tweetnacl.sign.detached(
+        Buffer.from(createCanonicalJsonSigningInput(payload)), key.secretKey,
+      )).toString('base64url'),
+    } };
+    const resolveTarget = vi.fn(async () => ({ port: 46_123 }));
+    const app = createApp(resolveTarget);
+    try {
+      const response = await app.inject({
+        method: 'POST', url: IROH_MACHINE_ADMISSION_PATH,
+        headers: { [IROH_MACHINE_REMOTE_ENDPOINT_HEADER]: sourceEndpoint },
+        payload: { v: 2, kind: 'provider_broker', authority },
+      });
+      expect(response.statusCode).toBe(204);
+      expect(resolveTarget.mock.calls).toHaveLength(1);
+      const substitution = await app.inject({
+        method: 'POST', url: IROH_MACHINE_ADMISSION_PATH,
+        headers: { [IROH_MACHINE_REMOTE_ENDPOINT_HEADER]: 'c'.repeat(64) },
+        payload: { v: 2, kind: 'provider_broker', authority },
+      });
+      expect(substitution.statusCode).toBe(403);
+      expect(resolveTarget.mock.calls).toHaveLength(1);
+    } finally { await app.close(); }
+  });
   it('cancels target resolution when the admission client disconnects and admits an immediate retry', async () => {
     let attempts = 0;
     let observedSignal: AbortSignal | undefined;

@@ -1,22 +1,34 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, PluginInstallationManifestPublisherHeaderV1Schema, PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1, WorkflowActionFailureV1Schema, WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
+import { emptyPromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
+import { PromptLibraryCatalogKeyV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
+import { callSocketRpc } from '@happier-dev/sync-client';
+import { Server } from 'socket.io';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import type { RpcRequest } from '@/api/rpc/types';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { updateSettings } from '@/persistence';
 import { configuration } from '@/configuration';
 import { bootstrapAccountSettingsContext, resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { clearActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { resolveBuiltInContributions } from '@/plugins/projection/registry/resolveBuiltInContributions';
 import { registerActionSpecRpcHandlers } from './registerActionSpecRpcHandlers';
+import { createDeferred } from '@/testkit/async/deferred';
+import { refreshActivePromptLibraryCatalog } from '@/settings/prompts/hydratePromptLibraryCatalog';
+import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 
 const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
 const machineRpc = vi.hoisted(() => vi.fn());
@@ -26,6 +38,15 @@ vi.mock('axios', () => ({ default: { get: http.get, post: http.post,
 vi.mock('@/session/transport/rpc/machineRpc', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/session/transport/rpc/machineRpc')>(), callMachineRpc: machineRpc,
 }));
+// Prisma is the server's persistence boundary. Keep Machine availability and
+// RPC forwarding policy real without connecting to or mutating any database.
+vi.mock('../../../../server/sources/storage/db', () => ({ db: {
+    machine: { findFirst: async () => ({ revokedAt: null, replacedByMachineId: null }) },
+} }));
+const forwardingModulePath = '../../../../server/sources/app/api/socket/rpc/forwardRpcCall';
+const { forwardRpcCall }: { forwardRpcCall: (params: Readonly<{
+    io: Server; targetUserId: string; method: string; callParams: unknown; callerAuthority: 'present_user';
+}>) => Promise<unknown> } = await import(forwardingModulePath);
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
     resetInMemoryAccountSettingsContextForTests();
@@ -38,7 +59,7 @@ afterEach(async () => {
 
 const runId = '11111111-1111-4111-8111-111111111111';
 const definitionId = '22222222-2222-4222-8222-222222222222';
-const waitDefinition = { version: 1, defaults: {}, blocks: [{ kind: 'wait', id: 'continue',
+const waitDefinition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'wait', id: 'continue',
     document: { text: 'Continue when ready', references: [], attachments: [] } }] };
 const semanticInput = {
     runId,
@@ -79,7 +100,7 @@ const run = { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId
     updatedAt: '2026-01-01T00:00:00.000Z',
 };
 
-async function createBoundaryHarness() {
+async function createBoundaryHarness(holdRetainedSource?: () => Promise<void>, savedDefinition: WorkflowDefinitionV1 = waitDefinition) {
     resetInMemoryAccountSettingsContextForTests();
     const directory = await mkdtemp(join(tmpdir(), 'workflow-rpc-project-'));
     temporaryDirectories.push(directory);
@@ -102,20 +123,34 @@ async function createBoundaryHarness() {
         },
     }));
     const handlers = new Map<string, (input: unknown) => Promise<unknown>>();
+    const rpcHandlerManager = new RpcHandlerManager({
+        scopePrefix: project.machineId, encryptionMode: 'plain', logger: () => {},
+    });
     let acceptedEnvelope: string | undefined;
     const storageOperations: Readonly<Record<string, unknown>>[] = [];
     const boundaryObservations: string[] = [];
-    http.get.mockImplementation(async (url: string, config?: Readonly<{ headers?: Readonly<Record<string, string>> }>) => {
+    const boundaryTimings: Array<Readonly<{ phase: string; durationMs: number }>> = [];
+    let promptRowsObserved = false;
+    const readHttp = async (url: string, config?: Readonly<{ headers?: Readonly<Record<string, string>> }>) => {
         const target = new URL(url);
         const path = target.pathname;
         boundaryObservations.push(`GET ${path}`);
         if (path === '/v1/account/profile') return { status: 200, data: { id: 'account-1' } };
-        if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+        if (path === '/v2/account/settings') {
+            if (promptRowsObserved) await holdRetainedSource?.();
+            return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+        }
         if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
         if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
-            mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+            mode: 'plain', version: 1, settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
             recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
         } };
+        if (path === '/v1/account/entity-rows/prompt-library') { promptRowsObserved = true; return { status: 200, data: {
+            status: 'listed', rows: PromptLibraryCatalogKeyV1Schema.options.map((key) => ({ key, revision: 1,
+                content: { t: 'plain', v: emptyPromptLibraryRecordV1(key) } })),
+        } }; }
+        if (path === '/v1/account/entity-rows/profiles/transfer') return { status: 200, data: { status: 'absent' } };
+        if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
         if (path === '/v1/artifacts') {
             // The real role-source owner inventories saved roles even when the
             // Workflow selects an Agent directly. This Account has no saved
@@ -132,14 +167,19 @@ async function createBoundaryHarness() {
             id: definitionId, ownerAccountId: 'account-1', access: 'owner', encryptionMode: 'plain',
             header: encodePlainArtifactStoredContent({ kind: 'workflow-definition.v1', definitionId,
                 revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Saved Wait' } }),
-            body: encodePlainArtifactStoredContent({ body: JSON.stringify({ kind: 'workflow-definition.v1', definition: waitDefinition }) }),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify({ kind: 'workflow-definition.v1', definition: savedDefinition }) }),
             dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1,
             seq: 1, createdAt: 1, updatedAt: 1,
         } };
         if (path === '/v2/sessions/cli-global') return { status: 404, data: { error: 'session_not_found' } };
         throw new Error(`unexpected_get:${path}`);
+    };
+    http.get.mockImplementation(async (...args: Parameters<typeof readHttp>) => {
+        const startedAt = performance.now();
+        try { return await readHttp(...args); }
+        finally { boundaryTimings.push({ phase: `GET ${new URL(args[0]).pathname}`, durationMs: performance.now() - startedAt }); }
     });
-    http.post.mockImplementation(async (url: string, operation: Readonly<Record<string, unknown>>, config: Readonly<{ headers: Record<string, string> }>) => {
+    const writeHttp = async (url: string, operation: Readonly<Record<string, unknown>>, config: Readonly<{ headers: Record<string, string> }>) => {
         expect(new URL(url).pathname).toBe('/v3/automations/runs/workflow-storage');
         storageOperations.push(operation);
         boundaryObservations.push(`POST ${new URL(url).pathname} ${String(operation.operation)}`);
@@ -160,6 +200,11 @@ async function createBoundaryHarness() {
             return { data: { run, acceptedEnvelope, checkpointEnvelope: null, resultEnvelope: null, keyCensus } };
         }
         throw new Error(`unexpected:${String(operation.operation)}`);
+    };
+    http.post.mockImplementation(async (...args: Parameters<typeof writeHttp>) => {
+        const startedAt = performance.now();
+        try { return await writeHttp(...args); }
+        finally { boundaryTimings.push({ phase: `storage ${String(args[1].operation)}`, durationMs: performance.now() - startedAt }); }
     });
     machineRpc.mockImplementation(async ({ machineId, method }) => {
         boundaryObservations.push(`Machine ${String(method)}`);
@@ -168,10 +213,15 @@ async function createBoundaryHarness() {
             protocolVersion: 1, projection: { v: 2, generation: 1, agentsById: { test: {
                 id: 'test', identity: semanticInput.source.definition.defaults.agentTarget.identity,
                 capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+            }, claude: { id: 'claude', identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+                capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
             } } },
         };
         if (method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: {
             'cli.test': { ok: true, data: { installed: true, version: '1', latestVersion: null,
+                update: { supported: false, command: null }, signIn: { status: 'unknown', loginSupport: 'unsupported' },
+                platform: { supported: true }, install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [] } },
+            'cli.claude': { ok: true, data: { installed: true, version: '1', latestVersion: null,
                 update: { supported: false, command: null }, signIn: { status: 'unknown', loginSupport: 'unsupported' },
                 platform: { supported: true }, install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [] } },
             'tool.executionRuns': { ok: true, data: { available: true, features: { detachedScope: true }, backends: { test: { available: true } } } },
@@ -200,16 +250,19 @@ async function createBoundaryHarness() {
     registerActionSpecRpcHandlers({
         rpcHandlerManager: {
             registerHandler(method, handler) {
+                rpcHandlerManager.registerHandler(method, handler);
                 // The authenticated RPC transport supplies authority separately
                 // from the decrypted public payload, as in the real ingress.
-                handlers.set(method, async (input) => await handler(input, { signal: new AbortController().signal, callerAuthority: 'present_user' }));
+                handlers.set(method, async (input) => await rpcHandlerManager.handleRequest({
+                    method: `${project.machineId}:${method}`, params: input, callerAuthority: 'present_user',
+                }));
             },
         },
         actionExecutor: executor,
         actionIds: ['workflow.run.start'],
         targetMachineId: 'machine-1',
     });
-    return { handlers, received, storageOperations, project, boundaryObservations, readCommittedEnvelope: () => acceptedEnvelope };
+    return { handlers, rpcHandlerManager, received, storageOperations, project, credentials, serverUrl, boundaryObservations, boundaryTimings, readCommittedEnvelope: () => acceptedEnvelope };
 }
 
 describe('UI Workflow targeted Action RPC boundary', () => {
@@ -237,13 +290,113 @@ describe('UI Workflow targeted Action RPC boundary', () => {
         await pluginReloadController.shutdown();
     });
 
+    it('delivers a late saved-Workflow refusal through UI, server and daemon instead of abandoning a missing Run', async () => {
+        const boundary = await createBoundaryHarness();
+        const readHttp = http.get.getMockImplementation()!;
+        let releaseDefinition!: () => void;
+        const definitionRead = new Promise<void>((resolve) => { releaseDefinition = resolve; });
+        let notifyDefinitionRead!: () => void;
+        const reachedDefinition = new Promise<void>((resolve) => { notifyDefinitionRead = resolve; });
+        http.get.mockImplementation(async (...args: Parameters<typeof readHttp>) => {
+            if (new URL(String(args[0])).pathname === `/v1/artifacts/${definitionId}`) {
+                notifyDefinitionRead();
+                await definitionRead;
+                // The Artifact store deliberately accepts HTTP statuses and
+                // classifies absence itself, just as real Axios does here.
+                return { status: 404, data: { error: 'Artifact not found' } };
+            }
+            return await readHttp(...args);
+        });
+        const { createUiWorkflowActionTransport } = await import('../../../../ui/sources/sync/ops/actions/workflowActionTransport');
+        const { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } = await import(
+            '../../../../ui/sources/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes'
+        );
+        // Attach the Engine.IO owner so Socket.IO has a real lifecycle to close;
+        // no listening port or external server is needed for adapter delivery.
+        const sockets = new Server(createServer());
+        vi.useFakeTimers();
+        try {
+            // Only Socket.IO's adapter delivery is substituted. Its actual
+            // acknowledgement deadline, server relay, RPC codec and daemon
+            // Action/materialization owners all execute their production logic.
+            vi.spyOn(sockets.of('/').adapter, 'broadcastWithAck').mockImplementation(
+                (packet, _options, clientCount, acknowledgement) => {
+                    clientCount(1);
+                    if (packet.data?.[0] !== SOCKET_RPC_EVENTS.REQUEST) throw new Error('unexpected_socket_event');
+                    // Socket.IO's packet is untyped; it carries the real relay's RpcRequest.
+                    void boundary.rpcHandlerManager.handleRequest(packet.data[1] as RpcRequest).then(acknowledgement);
+                },
+            );
+            const target = {
+                id: 'daemon-socket',
+                data: { clientType: 'machine-scoped', machineId: boundary.project.machineId },
+                timeout: (ms: number) => ({ emitWithAck: async (event: string, request: unknown) => {
+                    const responses = await sockets.to('daemon-socket').timeout(ms).emitWithAck(event, request);
+                    return responses[0];
+                } }),
+            };
+            const fetchSockets = async () => [target];
+            // Socket discovery is the other adapter boundary; the selected
+            // target still emits through Socket.IO's real acknowledgement owner.
+            vi.spyOn(sockets, 'in').mockReturnValue({
+                timeout: () => ({ fetchSockets }), fetchSockets,
+            } as unknown as ReturnType<Server['in']>);
+            const action = createUiWorkflowActionTransport({
+                account: { serverId: 'server-1', accountId: 'account-1', assertCurrent: () => {} },
+                resolveFallbackMachineId: () => null,
+                transport: async (request) => await callSocketRpc({
+                    socket: { connected: true, emit: () => {}, emitWithAck: async (_event, payload) => {
+                        // This network fixture receives callSocketRpc's actual wire payload.
+                        const call = payload as SocketRpcRequestPayload;
+                        return await forwardRpcCall({ io: sockets, targetUserId: 'account-1',
+                            method: call.method, callParams: call.params,
+                            callerAuthority: 'present_user' });
+                    } },
+                    target: { kind: 'machine', id: request.machineId }, method: request.method,
+                    params: request.payload, content: { mode: 'plain' }, signal: request.signal,
+                    timeoutMs: request.operationTimeoutMs === null ? null : DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS,
+                }),
+            });
+            let outcome: unknown;
+            let settled = false;
+            const attempt = action({ actionId: 'workflow.run.start', input: {
+                runId, source: { kind: 'saved', definitionId, revision: { headerVersion: 1, bodyVersion: 1 } },
+            }, context: { surface: 'ui', authority: 'present_user', serverId: 'server-1', runtimeAccountId: 'account-1',
+                externalActionTarget: { kind: 'machine', machineId: boundary.project.machineId, project: boundary.project } } })
+                .then((result) => { outcome = result; }, (error: unknown) => { outcome = error; })
+                .finally(() => { settled = true; });
+            const reached = await Promise.race([reachedDefinition.then(() => true), attempt.then(() => false)]);
+            expect(reached, JSON.stringify({ outcome, observations: boundary.boundaryObservations })).toBe(true);
+            await vi.advanceTimersByTimeAsync(DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS + 5_000);
+            const settledBeforeRefusal = settled;
+            releaseDefinition();
+            await attempt;
+            expect(outcome).toMatchObject({ ok: false, errorCode: 'content_unavailable' });
+            expect(settledBeforeRefusal).toBe(false);
+            // The canonical owner checks for a racing immutable admission again
+            // before surfacing the mutable saved-source refusal.
+            expect(boundary.storageOperations.map((operation) => operation.operation)).toEqual(['get', 'get']);
+            expect(boundary.readCommittedEnvelope()).toBeUndefined();
+            expect(vi.getTimerCount()).toBe(0);
+        } finally {
+            releaseDefinition();
+            await boundary.rpcHandlerManager.waitForIdle();
+            vi.useRealTimers();
+            await sockets.close();
+        }
+    });
+
     it('admits a direct saved fieldless Wait on the selected Machine without an invented origin Session or Agent', async () => {
         const boundary = await createBoundaryHarness();
+        const startedAt = performance.now();
         const response = await boundary.handlers.get('workflow.run.start')!({
             v: 1, kind: 'targeted_action_rpc',
             input: { runId, source: { kind: 'saved', definitionId, revision: { headerVersion: 1, bodyVersion: 1 } }, inputs: {} },
             target: { kind: 'machine', machineId: boundary.project.machineId, project: boundary.project },
         });
+        if (process.env.FF_ADMIT_MEASURE_ADMISSION === '1') console.info('FF-ADMIT2 admission timing', JSON.stringify({
+            totalMs: performance.now() - startedAt, phases: boundary.boundaryTimings,
+        }));
         expect(response, JSON.stringify(boundary.boundaryObservations)).toEqual({ run, admission: 'created' });
         const envelope = parseWorkflowStoredContentEnvelopeV1(boundary.readCommittedEnvelope()!);
         expect(envelope).not.toBeNull();
@@ -256,6 +409,85 @@ describe('UI Workflow targeted Action RPC boundary', () => {
             materializedLeaves: [{ kind: 'wait', selection: {} }] });
         expect(accepted.content).not.toHaveProperty('origin.originSessionId');
         expect(machineRpc).not.toHaveBeenCalled();
+    });
+
+    it('admits the R20b Agent model and connected profile through UI transport and the real daemon handler', async () => {
+        const selection = { acpSessionModeId: 'default', connectedServices: { v: 2 as const, bindingsByServiceId: {
+            'happier.agent.claude/claude-subscription': { source: 'connected' as const, selection: 'profile' as const,
+                profileId: '00ae5eea-6286-48bc-b82a-30a5f8492864' },
+            'happier.agent.claude/anthropic': { source: 'native' as const },
+        } }, engine: { agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+            modelSelection: { v: 1 as const, ref: { agentTargetKey: 'agent:happier.agent.claude/claude',
+                providerConnectionId: null, modelId: 'claude-haiku-4-5' }, updatedAt: 1791577000000 }, effort: 'low' } };
+        const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: { agentTarget: selection.engine.agentTarget },
+            blocks: [{ kind: 'step', id: 'reply', name: 'QA-FIN20 Reply', document: {
+                text: 'Reply exactly QA_FIN20_AGENT_READY. Do not use tools, edit files, or run commands.', references: [], attachments: [] },
+                execution: selection, input: [], result: { kind: 'text' } }] };
+        const boundary = await createBoundaryHarness(undefined, definition);
+        const { createUiWorkflowActionTransport } = await import('../../../../ui/sources/sync/ops/actions/workflowActionTransport');
+        const action = createUiWorkflowActionTransport({ account: { serverId: 'server-1', accountId: 'account-1', assertCurrent: () => {} },
+            resolveFallbackMachineId: () => null,
+            transport: async ({ payload }) => boundary.handlers.get('workflow.run.start')!(payload),
+        });
+        const startedAt = performance.now();
+        const response = await action({ actionId: 'workflow.run.start', input: {
+            runId, source: { kind: 'saved', definitionId, revision: { headerVersion: 1, bodyVersion: 1 } }, inputs: {} },
+            context: { surface: 'ui', authority: 'present_user', serverId: 'server-1', runtimeAccountId: 'account-1',
+                externalActionTarget: { kind: 'machine', machineId: boundary.project.machineId, project: boundary.project } } });
+        if (process.env.FF_ADMIT_MEASURE_ADMISSION === '1') console.info('FF-AGENTADMIT source admission', JSON.stringify({ totalMs: performance.now() - startedAt,
+            outcome: WorkflowActionFailureV1Schema.safeParse(response).success ? response : 'created', phases: boundary.boundaryTimings }));
+        expect(response, JSON.stringify(boundary.boundaryObservations)).toEqual({ run, admission: 'created' });
+        const accepted = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+            envelope: parseWorkflowStoredContentEnvelopeV1(boundary.readCommittedEnvelope()!)!,
+            binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId } });
+        expect(accepted).toMatchObject({ kind: 'available', content: { materializedLeaves: [{ kind: 'step', selection: {
+            agentTarget: selection.engine.agentTarget, modelSelection: selection.engine.modelSelection,
+            connectedServices: selection.connectedServices,
+            sessionConfigOptionOverrides: { overrides: { reasoning_effort: { value: 'low' } } },
+        } }] } });
+    });
+
+    it('admits through the real handler while observed Prompt rows await retained-source maintenance', async () => {
+        const sourceIssued = createDeferred<void>();
+        const source = createDeferred<void>();
+        let sourceReleased = false;
+        const boundary = await createBoundaryHarness(async () => { sourceIssued.resolve(); await source.promise; });
+        const startedAt = performance.now();
+        const attempt = boundary.handlers.get('workflow.run.start')!({
+            v: 1, kind: 'targeted_action_rpc',
+            input: { runId, source: { kind: 'saved', definitionId, revision: { headerVersion: 1, bodyVersion: 1 } }, inputs: {} },
+            target: { kind: 'machine', machineId: boundary.project.machineId, project: boundary.project },
+        });
+        try {
+            await sourceIssued.promise;
+            expect(await attempt, JSON.stringify(boundary.boundaryObservations)).toEqual({ run, admission: 'created' });
+            expect(sourceReleased).toBe(false);
+            if (process.env.FF_ADMIT_MEASURE_ADMISSION === '1') console.info('FF-LATENCY admission timing', JSON.stringify({
+                totalMs: performance.now() - startedAt, retainedSourcePending: !sourceReleased, phases: boundary.boundaryTimings,
+            }));
+        } finally {
+            sourceReleased = true;
+            source.resolve();
+            await attempt;
+            await runWithServerHttpBaseUrl(boundary.serverUrl, () => refreshActivePromptLibraryCatalog({ credentials: boundary.credentials }));
+        }
+    });
+
+    it('refuses admission if its Account lifetime retires while reading the role Artifact inventory', async () => {
+        const boundary = await createBoundaryHarness();
+        const readHttp = http.get.getMockImplementation()!;
+        http.get.mockImplementation(async (...args: Parameters<typeof readHttp>) => {
+            const response = await readHttp(...args);
+            if (new URL(String(args[0])).pathname === '/v1/artifacts') clearActiveAccountSettingsSnapshot();
+            return response;
+        });
+        const response = await boundary.handlers.get('workflow.run.start')!({
+            v: 1, kind: 'targeted_action_rpc',
+            input: { runId, source: { kind: 'saved', definitionId, revision: { headerVersion: 1, bodyVersion: 1 } } },
+            target: { kind: 'machine', machineId: boundary.project.machineId, project: boundary.project },
+        });
+        expect(response).toMatchObject({ ok: false });
+        expect(boundary.readCommittedEnvelope()).toBeUndefined();
     });
 
     it('admits and response-loss rejoins with the selected project kept out of semantic input', async () => {

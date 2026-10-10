@@ -25,6 +25,12 @@ import { resolveRedisAdapterValidationRedisUrl } from "../../../../../../../scri
 
 import { createPeerTcpTunnelRelayCoordinator } from "./relayCoordinator";
 import type { PeerTcpTunnelRelayCoordinator } from "./relayCoordinator";
+import { TEST_MACHINE_INSTALLATION_ID } from '../../../../testkit/machineAdmissionPersistenceBoundary';
+
+vi.mock('@/storage/db', async () => {
+    const { createMachineAdmissionPersistenceBoundary } = await import('../../../../testkit/machineAdmissionPersistenceBoundary');
+    return { db: createMachineAdmissionPersistenceBoundary('relay-cluster-account').db };
+});
 
 const ACCOUNT_ID = "relay-cluster-account";
 const MACHINE_ID = "relay-cluster-machine";
@@ -175,7 +181,10 @@ function registerRelayServer(
         const machineId = clientType === "machine-scoped" ? MACHINE_ID : undefined;
         socket.data.userId = ACCOUNT_ID;
         socket.data.clientType = clientType;
-        if (machineId) socket.data.machineId = machineId;
+        if (machineId) {
+            socket.data.machineId = machineId;
+            socket.data.verifiedMachineInstallationId = TEST_MACHINE_INSTALLATION_ID;
+        }
         void socket.join(getSocketRooms({
             userId: ACCOUNT_ID,
             clientType,

@@ -1,9 +1,8 @@
-import { mkdir, readdir, stat } from 'fs/promises';
+import { readdir, stat } from 'fs/promises';
 import { basename, join } from 'path';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { logger } from '@/ui/logger';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { ActionId } from '@happier-dev/protocol';
 
 import { listDirectoryEntries } from './directoryListing/listDirectoryEntries';
@@ -11,12 +10,7 @@ import { validatePath } from '../pathSecurity';
 import type { FilesystemAccessPolicy } from './accessPolicy/filesystemAccessPolicy';
 import { registerActionSpecRpcHandlers } from '../registerActionSpecRpcHandlers';
 import type { RpcActionExecutor } from '../_actionDispatchAdapter';
-
-type CreateDirectoryRequest = Readonly<{ path: string }>;
-
-type CreateDirectoryResponse =
-  | Readonly<{ success: true }>
-  | Readonly<{ success: false; error: string }>;
+import { registerFilesystemMutationActionHandlers, type FilesystemMutationActionIngress } from './pathMutationHandlers';
 
 type ListDirectoryRequest = Readonly<{ path: string; includeGitIgnore?: boolean }>;
 
@@ -217,28 +211,9 @@ function createDirectoryRpcActionExecutor(deps: DirectoryHandlerDeps): RpcAction
 
 export function registerDirectoryHandlers(
   rpcHandlerManager: RpcHandlerRegistrar,
-  deps: DirectoryHandlerDeps & Readonly<{ actionExecutor?: RpcActionExecutor }>,
+  deps: DirectoryHandlerDeps & FilesystemMutationActionIngress,
 ): void {
-  rpcHandlerManager.registerHandler<CreateDirectoryRequest, CreateDirectoryResponse>(
-    RPC_METHODS.CREATE_DIRECTORY,
-    async (data) => {
-      const path = typeof data?.path === 'string' ? data.path : '';
-      logger.debug('Create directory request:', path);
-
-      const validation = validatePath(path, deps.workingDirectory, deps.getAdditionalAllowedWriteDirs(), deps.accessPolicy);
-      if (!validation.valid || !validation.resolvedPath) {
-        return { success: false, error: validation.error ?? 'Access denied' };
-      }
-
-      try {
-        await mkdir(validation.resolvedPath, { recursive: true });
-        return { success: true };
-      } catch (error) {
-        logger.debug('Failed to create directory:', error);
-        return { success: false, error: error instanceof Error ? error.message : 'Failed to create directory' };
-      }
-    },
-  );
+  registerFilesystemMutationActionHandlers(rpcHandlerManager, deps, ['daemon.filesystem.createDirectory']);
 
   registerActionSpecRpcHandlers({
     rpcHandlerManager,

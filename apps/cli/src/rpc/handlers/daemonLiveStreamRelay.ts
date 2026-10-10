@@ -1,8 +1,8 @@
 import { DaemonMachineLiveStreamRelayStartRequestV1Schema, DaemonMachineLiveStreamRelayStartResponseV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/relayStartRpcV1';
-import type { DaemonMachineLiveStreamRelayStartResponseV1, MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol';
+import type { ActionExecutorContext, DaemonMachineLiveStreamRelayStartResponseV1, MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
-import type { RpcHandlerRegistrar } from '@/api/rpc/types';
+import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 
 /**
  * Viewer-triggered server-relay start (SIM-P0-1 fix). The relay socket handler only accepts
@@ -14,7 +14,7 @@ import type { RpcHandlerRegistrar } from '@/api/rpc/types';
  * verification stays server-owned.
  */
 export type DaemonLiveStreamRelayRoutes = Readonly<{
-    start: (startRequest: MachineLiveStreamStartRequestV1) => Promise<
+    start: (startRequest: MachineLiveStreamStartRequestV1, callerAuthority?: ActionExecutorContext['authority']) => Promise<
         Readonly<{ ok: true; streamId: string } | { ok: false; reasonCode: string }>
     >;
 }>;
@@ -29,7 +29,7 @@ export function registerDaemonLiveStreamRelayHandlers(
 ): void {
     rpc.registerHandler(
         RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START,
-        async (raw: unknown): Promise<DaemonMachineLiveStreamRelayStartResponseV1> => {
+        async (raw: unknown, context?: RpcHandlerContext): Promise<DaemonMachineLiveStreamRelayStartResponseV1> => {
             const request = DaemonMachineLiveStreamRelayStartRequestV1Schema.parse(raw);
             if (!options.relay) {
                 return DaemonMachineLiveStreamRelayStartResponseV1Schema.parse({
@@ -37,7 +37,7 @@ export function registerDaemonLiveStreamRelayHandlers(
                     result: { ok: false, reasonCode: 'live_stream_relay_unavailable' },
                 });
             }
-            const started = await options.relay.start(request.startRequest);
+            const started = await options.relay.start(request.startRequest, context?.callerAuthority ?? 'account_automation');
             return DaemonMachineLiveStreamRelayStartResponseV1Schema.parse({
                 protocolVersion: 1,
                 result: started.ok

@@ -5,7 +5,7 @@ import { registerReadFileHandler } from './readFileHandler';
 import type { ExactAllowedReadFile } from './accessPolicy/exactAllowedReadFile';
 import { registerWriteFileHandler } from './writeFileHandler';
 import { registerDirectoryHandlers } from './directoryHandlers';
-import { registerPathMutationHandlers } from './pathMutationHandlers';
+import { registerPathMutationHandlers, type FilesystemMutationActionIngress } from './pathMutationHandlers';
 import { resolveServerRoutedTransferMaxBytes } from '@/transfers/policy/serverRoutedTransferPolicy';
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 import type { ComposerMediaStageUploadTargetDeps } from '@/transfers/targets/resolveComposerMediaStageUploadTarget';
@@ -41,6 +41,8 @@ export function registerFileSystemHandlers(
     composerMediaStage?: ComposerMediaStageUploadTargetDeps;
     resolveSessionWorkingDirectory?: (sessionId: string) => Promise<string | null>;
     actionExecutor?: RpcActionExecutor;
+    resolveMutationActionExecutor?: FilesystemMutationActionIngress['resolveMutationActionExecutor'];
+    mutationMachineId?: string;
     directoryLimits?: Readonly<{
       listMaxEntries?: number;
       treeMaxDepth?: number;
@@ -84,6 +86,8 @@ export function registerFileSystemHandlers(
     getAdditionalAllowedReadDirs: resolveReadDirs,
     getAdditionalAllowedWriteDirs: resolveWriteDirs,
     actionExecutor: opts?.actionExecutor,
+    resolveMutationActionExecutor: opts?.resolveMutationActionExecutor,
+    mutationMachineId: opts?.mutationMachineId,
     limits: {
       listMaxEntries: opts?.directoryLimits?.listMaxEntries ?? configuration.filesDirectoryListMaxEntries,
       treeMaxDepth: opts?.directoryLimits?.treeMaxDepth ?? configuration.filesDirectoryTreeMaxDepth,
@@ -95,6 +99,9 @@ export function registerFileSystemHandlers(
     accessPolicy,
     getAdditionalAllowedReadDirs: resolveReadDirs,
     getAdditionalAllowedWriteDirs: resolveWriteDirs,
+    actionExecutor: opts?.actionExecutor,
+    resolveMutationActionExecutor: opts?.resolveMutationActionExecutor,
+    mutationMachineId: opts?.mutationMachineId,
   });
   const transferSessionStore = new TransferSessionStore({ ttlMs: configuration.filesTransferSessionTtlMs });
 

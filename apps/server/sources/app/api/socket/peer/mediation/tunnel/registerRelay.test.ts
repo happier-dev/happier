@@ -9,6 +9,12 @@ import {
 import tweetnacl from 'tweetnacl';
 import { describe, expect, it, vi } from 'vitest';
 import * as registerRelayModule from './registerRelay';
+import { TEST_MACHINE_INSTALLATION_ID } from '../../../../testkit/machineAdmissionPersistenceBoundary';
+
+vi.mock('@/storage/db', async () => {
+    const { createMachineAdmissionPersistenceBoundary } = await import('../../../../testkit/machineAdmissionPersistenceBoundary');
+    return { db: createMachineAdmissionPersistenceBoundary('user_1').db };
+});
 
 import {
     createRelayTestCoordinator,
@@ -32,6 +38,7 @@ function createSocket(overrides?: Readonly<{ id?: string; clientType?: string; m
         id: overrides?.id ?? 'socket_1',
         data: {
             clientType: overrides?.clientType ?? 'user-scoped',
+            ...(overrides?.clientType === 'machine-scoped' ? { verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID } : {}),
             ...(overrides?.machineId ? { machineId: overrides.machineId } : {}),
         },
         on: vi.fn((event: string, handler: (payload?: unknown) => void) => {

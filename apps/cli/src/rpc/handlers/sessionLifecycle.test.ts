@@ -86,13 +86,16 @@ const SESSION_LIFECYCLE_RPC_CASES = [
 ] as const;
 
 describe('session lifecycle RPC handlers', () => {
-    it('admits only the prepared native handoff identity and persists resume custody before physical launch', async () => {
+    it.each([['transfer', true], ['existing', true], ['existing', false]] as const)('admits only the prepared native handoff identity and persists resume custody before physical launch (%s protected=%s)', async (stateTransfer, protectedResume) => {
         await withTempDir('handoff-native-resume-custody-', async activeServerDir => {
             const sessionId = `c${'a'.repeat(24)}`;
             const prepareJobStore = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
             const status = { handoffId: 'exact-handoff', jobId: 'prepare_exact-handoff', status: 'ready_for_cutover' as const,
                 phase: 'staging_target' as const, recoveryActions: [] };
             await prepareJobStore.write({ jobId: status.jobId, handoffId: status.handoffId, createdAtMs: 1, updatedAtMs: 1, status,
+                ...(stateTransfer === 'existing' ? { prepareTargetRequest: { handoffId: status.handoffId, sessionId,
+                    sourceMachineId: 'source', targetMachineId: 'target', targetPath: '/target', stateTransfer,
+                    sourceSessionStorageMode: 'persisted' as const, negotiatedTransportStrategy: 'direct_peer' as const, endpointCandidates: [] } } : {}),
                 prepareTargetResult: { handoffId: status.handoffId, status, remoteSessionId: 'native-original',
                     directSource: { kind: 'claudeConfig', configDir: null, projectId: null }, resume: { directory: '/target',
                         agent: 'claude', resume: 'native-original', transcriptStorage: 'persisted', approvedNewDirectoryCreation: true } } });
@@ -107,12 +110,13 @@ describe('session lifecycle RPC handlers', () => {
             } };
             const launches: string[] = [];
             const { handlers, rpcHandlerManager } = createRpcHarness();
-            registerPrivateSpawnSessionRpcHandlers({ rpcHandlerManager, handoffTargetResume: { prepareJobStore },
+            registerPrivateSpawnSessionRpcHandlers({ rpcHandlerManager, handoffTargetResume: { prepareJobStore, machineId: 'target' },
                 spawnLifecycleHandler: createSpawnNewSessionLifecycleActionHandler({ spawnSession: async options => {
+                    if (stateTransfer === 'existing' && options.resume === 'native-original') expect(options.handoffStateTransfer).toBe('existing');
                     const before = Reflect.get(options, 'beforeSessionRunnerLaunch');
                     if (typeof before === 'function' && !await before()) return { type: 'error',
                         errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE, errorMessage: 'Resume custody unavailable' };
-                    if (options.resume === 'native-original') {
+                    if (protectedResume && options.resume === 'native-original') {
                         expect(await prepareJobStore.findByHandoffId(status.handoffId)).toMatchObject({ schemaVersion: 2,
                             resume: { status: 'attempted', attemptId: 'admitted-spawn-nonce' } });
                     }
@@ -121,14 +125,19 @@ describe('session lifecycle RPC handlers', () => {
                 } }) });
             const input = { type: 'resume-session' as const, sessionId, directory: '/target', spawnNonce: 'admitted-spawn-nonce',
                 backendTarget: { kind: 'backend' as const, backendId: 'claude', sourceKind: 'built_in' as const },
-                resume: 'native-original', transcriptStorage: 'persisted' };
-            const context = { signal: new AbortController().signal, callerInputAuthorization: authorization };
-            await expect(handlers.get(RPC_METHODS.SPAWN_HAPPY_SESSION)?.({ ...input, resume: 'swapped-native' }, context))
+                resume: 'native-original', transcriptStorage: 'persisted', executionAuthorization: { provenance: 'user_request' as const, requestId: status.handoffId } };
+            const context = { signal: new AbortController().signal, ...(protectedResume ? { callerInputAuthorization: authorization } : {}) };
+            for (const replacement of [
+                { resume: 'swapped-native' },
+                { backendTarget: { kind: 'backend' as const, backendId: 'codex', sourceKind: 'built_in' as const } },
+                { transcriptStorage: 'direct' },
+                { runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: { providerSessionId: 'swapped-native' } } },
+            ]) await expect(handlers.get(RPC_METHODS.SPAWN_HAPPY_SESSION)?.({ ...input, ...replacement }, context))
                 .resolves.toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST });
             expect(launches).toEqual([]);
             await expect(handlers.get(RPC_METHODS.SPAWN_HAPPY_SESSION)?.(input, context)).resolves.toMatchObject({ type: 'success' });
             expect(launches).toEqual(['native-original']);
-            expect(await prepareJobStore.findByHandoffId(status.handoffId)).toMatchObject({ schemaVersion: 2,
+            if (protectedResume) expect(await prepareJobStore.findByHandoffId(status.handoffId)).toMatchObject({ schemaVersion: 2,
                 recordKind: 'prepared_target', sessionId, resume: { status: 'attempted', attemptId: input.spawnNonce } });
         });
     });

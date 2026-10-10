@@ -1,4 +1,5 @@
 import type {
+  ActionExecutorContext,
   MachineLiveStreamCapsV1,
   MachineLiveStreamControlSidebandV1,
   MachineLiveStreamControlV1,
@@ -70,6 +71,8 @@ export type MachineLiveStreamCaptureSession = Readonly<{
 }>;
 
 export type MachineLiveStreamCaptureStartInput = Readonly<{
+  /** Host-verified RPC authority, never a field from the public start request. */
+  callerAuthority?: ActionExecutorContext['authority'];
   streamId: string;
   streamFamily: string;
   sourceMachineId: string;

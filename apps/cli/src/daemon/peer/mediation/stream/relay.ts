@@ -3,7 +3,7 @@ import { isMachineLiveStreamTerminalReceiptV1 } from '@happier-dev/protocol/mach
 import { MachineLiveStreamStartRequestV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
 import { validateMachineLiveStreamControlLeaseV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
-import type { MachineLiveStreamControlLeaseV1, MachineLiveStreamControlSourceV1, MachineLiveStreamCaptureSourceKindV1, MachineLiveStreamControlV1, MachineLiveStreamFrameV1, MachineLiveStreamRelayEnvelopeV1, MachineLiveStreamReceiptV1, MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol';
+import type { ActionExecutorContext, MachineLiveStreamControlLeaseV1, MachineLiveStreamControlSourceV1, MachineLiveStreamCaptureSourceKindV1, MachineLiveStreamControlV1, MachineLiveStreamFrameV1, MachineLiveStreamRelayEnvelopeV1, MachineLiveStreamReceiptV1, MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol';
 
 import { startMachineLiveStreamFramePump } from './framePump';
 import {
@@ -22,7 +22,7 @@ import {
 } from '../observability/events';
 
 export type MachineLiveStreamRelayTerminator = Readonly<{
-    start: (startRequest: MachineLiveStreamStartRequestV1) => Promise<
+    start: (startRequest: MachineLiveStreamStartRequestV1, callerAuthority?: ActionExecutorContext['authority']) => Promise<
         Readonly<{ ok: true; streamId: string } | { ok: false; reasonCode: string }>
     >;
     applyControl: (envelope: MachineLiveStreamRelayEnvelopeV1) => Readonly<{ ok: true } | { ok: false; reasonCode: string }>;
@@ -220,7 +220,7 @@ export function createMachineLiveStreamRelayTerminator(input: Readonly<{
     }
 
     return {
-        start: async (startRequest) => {
+        start: async (startRequest, callerAuthority = 'account_automation') => {
             if (disposed) {
                 emitObservability({ kind: 'flow.denied', startRequest, reasonCode: 'relay_disposed' });
                 return { ok: false, reasonCode: 'relay_disposed' };
@@ -355,6 +355,7 @@ export function createMachineLiveStreamRelayTerminator(input: Readonly<{
             let capture: MachineLiveStreamCaptureStartResult;
             try {
                 capture = await captureAdapter.start({
+                    callerAuthority,
                     streamId: session.session.streamId,
                     streamFamily: startRequest.streamFamily,
                     sourceMachineId: startRequest.sourceMachineId,

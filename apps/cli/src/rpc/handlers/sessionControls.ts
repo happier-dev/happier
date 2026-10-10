@@ -29,6 +29,9 @@ import {
 } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryOperationResult';
 
 export type SessionRuntimeControls = {
+  /** Safe identities from this generation's applied model and auth owners. */
+  readAppliedChildSelection?: () => import('@/agent/runtime/bridges/executionRun/runtime/openInputs').ExecutionRunAppliedParentSelection
+    | Promise<import('@/agent/runtime/bridges/executionRun/runtime/openInputs').ExecutionRunAppliedParentSelection>;
   /** Current prepared coding policy, projected by the Session prompt-plan owner. */
   readCodingPromptBehavior?: () => import('@happier-dev/protocol').CodingPromptBehaviorV1 | null;
   /** Host-owned effective configuration, not caller metadata or provider guesses. */
@@ -43,6 +46,7 @@ export type SessionRuntimeControls = {
   resolveComposerReference?: StructuredInputComposerReferenceResolver['resolve'];
   /** Current-generation Composer attachment resolver, scoped by the owning Session runtime. */
   resolveComposerAttachmentForDispatch?: ComposerAttachmentDispatchResolver;
+  managedProviderRunServices?: import('@/agent/runtime/session/process/agentRuntimeDaemonServiceAuthorityClient').RunnerManagedProviderRunServices;
   prepareRunTeamCredentialProviderBinding?: (request: Readonly<{
     runId: string;
     /** The Run's own Agent, which need not be its parent Session's. */

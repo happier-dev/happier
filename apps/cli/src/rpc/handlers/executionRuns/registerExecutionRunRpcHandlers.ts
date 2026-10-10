@@ -144,6 +144,9 @@ export type ExecutionRunRpcHandlerContext = Readonly<{
   resolveAccountSettings?: () => Promise<Record<string, unknown> | null> | Record<string, unknown> | null;
   /** Settings snapshot bound to the runtime owner's Account/Home, never ambient active state. */
   resolveAccountSettingsSnapshot?: () => Promise<ActiveAccountSettingsSnapshot | null>;
+  resolveManagedPurposeBindingIntent?: ConstructorParameters<typeof ExecutionRunHostBridge>[0]['resolveManagedPurposeBindingIntent'];
+  readModelProjection?: ConstructorParameters<typeof ExecutionRunHostBridge>[0]['readModelProjection'];
+  prepareManagedEndpoint?: ConstructorParameters<typeof ExecutionRunHostBridge>[0]['prepareManagedEndpoint'];
   /** Same invocation holder initialized by the Session owner's Settings admission. */
   savedSecretOperationContext?: SavedSecretOperationContextV1;
   executionRunProfileCatalog?: ExecutionRunProfileContributionCatalog;
@@ -360,6 +363,9 @@ export function registerExecutionRunRpcHandlers(
     ...(ctx.resolveAccountSettingsSnapshot
       ? { resolveAccountSettingsSnapshot: ctx.resolveAccountSettingsSnapshot }
       : {}),
+    ...(ctx.resolveManagedPurposeBindingIntent ? { resolveManagedPurposeBindingIntent: ctx.resolveManagedPurposeBindingIntent } : {}),
+    ...(ctx.readModelProjection ? { readModelProjection: ctx.readModelProjection } : {}),
+    ...(ctx.prepareManagedEndpoint ? { prepareManagedEndpoint: ctx.prepareManagedEndpoint } : {}),
     ...(ctx.machineId ? { machineId: ctx.machineId } : {}),
     resolveProvidersFeatureEnabled: () => {
       const serverSnapshot = ctx.getServerFeaturesSnapshot?.();

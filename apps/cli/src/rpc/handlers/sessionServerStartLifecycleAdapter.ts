@@ -1,9 +1,6 @@
 import type { SessionLifecycleActionHandler } from '@/session/actions/lifecycle/sessionLifecycleTypes';
 import type { SessionSpawnDirectTargetTransport } from '@/session/actions/createCliActionDeps';
-import {
-    prepareSessionCreationTarget,
-    rollbackSessionCreationTargetCheckout,
-} from '@/session/creation/prepareSessionCreationTarget';
+import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
 import type { SpawnSessionNonceResolver } from '@/session/services/awaitSpawnedSessionId';
 import type { DirectSpawnedSessionTransport } from '@/session/services/createSpawnedSession';
 
@@ -74,7 +71,6 @@ export function createMachineSessionDirectTargetTransport(
                 request,
                 ...(prepareOptions?.signal ? { signal: prepareOptions.signal } : {}),
             }),
-        rollbackCheckout: rollbackSessionCreationTargetCheckout,
         spawnedSession: createMachineSessionServerStartSpawnLifecycleTransport({
             spawnLifecycleHandler: options.spawnLifecycleHandler,
             ...(options.resolveSpawnSessionByNonce

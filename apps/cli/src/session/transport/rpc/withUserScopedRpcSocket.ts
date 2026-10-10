@@ -38,6 +38,9 @@ export async function readRpcObservation(params: Readonly<{
     // The RPC transport owns issued/not-sent cancellation evidence. Race only
     // output backpressure, not its in-flight read, against the caller lifetime.
     const result = await params.read(request);
+    // A one-shot call can be a write: do not discard its decoded receipt.
+    // Passive observation/backpressure retains cancellation withdrawal below.
+    if (!params.observation) return result;
     params.signal?.throwIfAborted();
     if (!params.observation?.onResult
       || await withinCallerLifetime(Promise.resolve(params.observation.onResult(result)))) return result;

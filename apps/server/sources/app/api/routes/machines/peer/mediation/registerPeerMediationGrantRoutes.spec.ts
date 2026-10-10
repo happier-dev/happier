@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import tweetnacl from "tweetnacl";
 
 import { FEATURE_ENV_KEYS } from "@/app/features/catalog/featureEnvSchema";
@@ -14,6 +14,17 @@ import { RPC_METHODS } from "@happier-dev/protocol/rpc";
 import { registerPeerMediationGrantRoutes } from "./registerPeerMediationGrantRoutes";
 import { registerPeerTcpTunnelRelaySocketHandler } from "@/app/api/socket/peer/mediation/tunnel/registerRelay";
 import { createRelayTestCoordinator } from "@/app/api/socket/peer/mediation/tunnel/relayCoordinator.testkit";
+
+const machineAvailabilityFixture = vi.hoisted(() => ({
+    read: async (_machineId: string): Promise<'available' | 'revoked' | 'replaced' | 'missing'> => 'available',
+}));
+vi.mock('@/storage/db', async () => {
+    const { createMachineAdmissionPersistenceBoundary } = await import('@/app/api/testkit/machineAdmissionPersistenceBoundary');
+    const boundary = createMachineAdmissionPersistenceBoundary('account_1');
+    boundary.setAvailabilityReader((machineId) => machineAvailabilityFixture.read(machineId));
+    return { db: boundary.db };
+});
+beforeEach(() => { machineAvailabilityFixture.read = async () => 'available'; });
 
 function toBase64Url(bytes: Uint8Array): string {
     return Buffer.from(bytes).toString("base64url");
@@ -57,17 +68,17 @@ function createRoute() {
                 [FEATURE_ENV_KEYS.peerMediationRouteGrantSigningPrivateKey]: toBase64Url(keyPair.secretKey),
             },
             nowMs: () => 1_000,
-            readMachineOwnershipState: async () => "available",
             readMachineIrohEndpointAuthority: readCurrentMachineIrohEndpointAuthority,
         }),
     });
 }
 
-function createRouteWithOwnership(
-    readMachineOwnershipState: (params: Readonly<{ accountId: string; machineId: string }>) => Promise<
+function createRouteWithAvailability(
+    readPersistedAvailability: (params: Readonly<{ accountId: string; machineId: string }>) => Promise<
         "available" | "revoked" | "replaced" | "missing"
     >,
 ) {
+    machineAvailabilityFixture.read = (machineId) => readPersistedAvailability({ accountId: 'account_1', machineId });
     const keyPair = tweetnacl.sign.keyPair();
     return createRouteTestBuilder({
         method: "POST",
@@ -81,7 +92,6 @@ function createRouteWithOwnership(
                 [FEATURE_ENV_KEYS.peerMediationRouteGrantSigningPrivateKey]: toBase64Url(keyPair.secretKey),
             },
             nowMs: () => 1_000,
-            readMachineOwnershipState,
             readMachineIrohEndpointAuthority: readCurrentMachineIrohEndpointAuthority,
         }),
     });
@@ -105,13 +115,41 @@ function createRouteWithIrohEndpointAuthority(
                 [FEATURE_ENV_KEYS.peerMediationRouteGrantSigningPrivateKey]: toBase64Url(keyPair.secretKey),
             },
             nowMs: () => 1_000,
-            readMachineOwnershipState: async () => "available",
             readMachineIrohEndpointAuthority,
         }),
     });
 }
 
 describe("registerPeerMediationGrantRoutes", () => {
+    it.each(["present_user", "account_automation"] as const)("signs verified %s authority only for the private continuation", async (authority) => {
+        const route = createRoute();
+        const request = route.createAuthenticatedRequest({ userId: "account_1" });
+        request.authAuthority = authority;
+        request.body = { v: 2, kind: "ephemeral_ed25519", ephemeralPublicKeyBase64Url: toBase64Url(new Uint8Array(32).fill(11)),
+            machineId: "machine_1", flowKind: "machine_rpc", routeKind: "loopback_direct", endpointFingerprint: "loopback_endpoint_1",
+            ttlMs: 60_000, scope: { kind: "machine_rpc", rpcScopeId: "rpc_scope_1",
+                allowedMethods: ["daemon.approval.request.secretContinue.v1"], maxCalls: 1, maxIdleMs: 1_000 } };
+        const response = await route.handler(request, route.createReply());
+        expect(response).toMatchObject({ ok: true, grant: { payload: { callerAuthority: authority } } });
+    });
+    it.each([
+        { method: RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START, authority: 'present_user' },
+        { method: RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START, authority: 'account_automation' },
+        { method: RPC_METHODS.DAEMON_BROWSER_VIEW_LIST, authority: 'present_user' },
+        { method: RPC_METHODS.DAEMON_BROWSER_VIEW_LIST, authority: 'account_automation' },
+        { method: RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH, authority: 'present_user' },
+        { method: RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH, authority: 'account_automation' },
+    ] as const)("signs verified $authority authority for direct $method without elevating automation", async ({ authority, method }) => {
+        const route = createRoute();
+        const request = route.createAuthenticatedRequest({ userId: "account_1" });
+        request.authAuthority = authority;
+        request.body = { v: 2, kind: "ephemeral_ed25519", ephemeralPublicKeyBase64Url: toBase64Url(new Uint8Array(32).fill(11)),
+            machineId: "machine_1", flowKind: "machine_rpc", routeKind: "loopback_direct", endpointFingerprint: "loopback_endpoint_1",
+            ttlMs: 60_000, scope: { kind: "machine_rpc", rpcScopeId: "rpc_scope_1",
+                allowedMethods: [method], maxCalls: 1, maxIdleMs: 1_000 } };
+        const response = await route.handler(request, route.createReply());
+        expect(response).toMatchObject({ ok: true, grant: { payload: { callerAuthority: authority } } });
+    });
     it("registers the canonical authenticated request throttle before minting signed grants", () => {
         const route = createRoute();
 
@@ -159,6 +197,7 @@ describe("registerPeerMediationGrantRoutes", () => {
                 },
             },
         });
+        expect(response).not.toHaveProperty('grant.payload.callerAuthority');
 
         const malformed = await route.invoke({
             userId: "account_1",
@@ -335,7 +374,7 @@ describe("registerPeerMediationGrantRoutes", () => {
 
     it("uses Home authentication as Account-client authority and verifies only the target Machine", async () => {
         const checkedMachineIds: string[] = [];
-        const route = createRouteWithOwnership(async ({ machineId }) => {
+        const route = createRouteWithAvailability(async ({ machineId }) => {
             checkedMachineIds.push(machineId);
             return "available";
         });
@@ -349,7 +388,7 @@ describe("registerPeerMediationGrantRoutes", () => {
     });
 
     it("rejects an unavailable target Machine for Account-client and Machine initiators", async () => {
-        const targetRevoked = createRouteWithOwnership(async ({ machineId }) =>
+        const targetRevoked = createRouteWithAvailability(async ({ machineId }) =>
             machineId === "machine_1" ? "revoked" : "available");
         const { response: targetResponse } = await targetRevoked.invoke({
             userId: "account_1",
@@ -357,11 +396,11 @@ describe("registerPeerMediationGrantRoutes", () => {
         });
         expect(targetResponse).toMatchObject({
             ok: false,
-            reasonCode: "machine_revoked",
+            reasonCode: "machine_unavailable",
             receipt: "peer.route_grant.rejected",
         });
 
-        const machineInitiated = createRouteWithOwnership(async ({ machineId }) =>
+        const machineInitiated = createRouteWithAvailability(async ({ machineId }) =>
             machineId === "machine_source" ? "missing" : "available");
         const { response: sourceResponse } = await machineInitiated.invoke({
             userId: "account_1",
@@ -379,7 +418,7 @@ describe("registerPeerMediationGrantRoutes", () => {
         });
         expect(sourceResponse).toMatchObject({
             ok: false,
-            reasonCode: "machine_not_owned",
+            reasonCode: "access_denied",
             receipt: "peer.route_grant.rejected",
         });
     });
@@ -517,7 +556,6 @@ describe("registerPeerMediationGrantRoutes", () => {
                     [FEATURE_ENV_KEYS.peerMediationRouteGrantSigningPrivateKey]: toBase64Url(keyPair.secretKey),
                 },
                 nowMs: () => 1_000,
-                readMachineOwnershipState: async () => "available",
                 verifyViewerSocketOwnership: async (input) => {
                     seenRelaySocketOwnership.push(input);
                     return input.socketId === "relay_socket_1";
@@ -610,7 +648,6 @@ describe("registerPeerMediationGrantRoutes", () => {
                     [FEATURE_ENV_KEYS.peerMediationRouteGrantSigningPrivateKey]: toBase64Url(keyPair.secretKey),
                 },
                 nowMs: () => 1_000,
-                readMachineOwnershipState: async () => "available",
                 verifyViewerSocketOwnership: async ({ socketId }) => socketId === "relay_socket_1",
             }),
         });
@@ -666,7 +703,6 @@ describe("registerPeerMediationGrantRoutes", () => {
                     [FEATURE_ENV_KEYS.peerMediationRouteGrantSigningPrivateKey]: toBase64Url(keyPair.secretKey),
                 },
                 nowMs: () => 1_000,
-                readMachineOwnershipState: async () => "available",
                 verifyViewerSocketOwnership: async ({ socketId }) => socketId === "relay_socket_1",
             }),
         });
@@ -723,7 +759,6 @@ describe("registerPeerMediationGrantRoutes", () => {
                     [FEATURE_ENV_KEYS.peerMediationRouteGrantSigningPrivateKey]: toBase64Url(keyPair.secretKey),
                 },
                 nowMs: () => 1_000,
-                readMachineOwnershipState: async () => "available",
                 verifyViewerSocketOwnership: async ({ socketId }) => socketId === "relay_socket_1",
             }),
         });
@@ -877,8 +912,6 @@ describe("registerPeerMediationGrantRoutes", () => {
                     [FEATURE_ENV_KEYS.peerMediationRouteGrantSigningPrivateKey]: toBase64Url(keyPair.secretKey),
                 },
                 nowMs: () => 1_000,
-                readMachineOwnershipState: async ({ accountId, machineId }) =>
-                    accountId === "account_1" && machineId === "machine_1" ? "available" : "missing",
                 verifyViewerSocketOwnership: async ({ socketId }) => socketId === "relay_socket_1",
             }),
         });
@@ -900,7 +933,7 @@ describe("registerPeerMediationGrantRoutes", () => {
         } });
         expect(tcp.response).toMatchObject({ ok: false, reasonCode: "destination_port_not_allowed" });
         const foreignAccount = await route.invoke({ userId: "account_2" });
-        expect(foreignAccount.response).toMatchObject({ ok: false, reasonCode: "machine_not_owned" });
+        expect(foreignAccount.response).toMatchObject({ ok: false, reasonCode: "access_denied" });
     });
 
     it("rejects machine RPC grants for server-required methods", async () => {
@@ -1040,51 +1073,45 @@ describe("registerPeerMediationGrantRoutes", () => {
 
     it("rejects a loopback grant when the machine is not owned by the account (C2)", async () => {
         // "A profile id is never accepted as a machine id": a non-owned id resolves to `missing`.
-        const route = createRouteWithOwnership(async () => "missing");
+        const route = createRouteWithAvailability(async () => "missing");
 
         const { response } = await route.invoke({ userId: "account_1" });
 
         expect(response).toMatchObject({
             ok: false,
-            reasonCode: "machine_not_owned",
+            reasonCode: "access_denied",
             receipt: "peer.route_grant.rejected",
         });
     });
 
     it("rejects a loopback grant when the machine is revoked (C2)", async () => {
-        const route = createRouteWithOwnership(async () => "revoked");
+        const route = createRouteWithAvailability(async () => "revoked");
 
         const { response } = await route.invoke({ userId: "account_1" });
 
         expect(response).toMatchObject({
             ok: false,
-            reasonCode: "machine_revoked",
+            reasonCode: "machine_unavailable",
             receipt: "peer.route_grant.rejected",
         });
     });
 
     it("rejects a loopback grant when the machine was replaced (C2)", async () => {
-        const route = createRouteWithOwnership(async () => "replaced");
+        const route = createRouteWithAvailability(async () => "replaced");
 
         const { response } = await route.invoke({ userId: "account_1" });
 
         expect(response).toMatchObject({
             ok: false,
-            reasonCode: "machine_replaced",
+            reasonCode: "machine_unavailable",
             receipt: "peer.route_grant.rejected",
         });
     });
 
-    it("checks ownership against the authenticated account, not a client-supplied id (C2)", async () => {
-        const seen: Array<{ accountId: string; machineId: string }> = [];
-        const route = createRouteWithOwnership(async (params) => {
-            seen.push(params);
-            return "available";
+    it("does not mint another Account's available Machine", async () => {
+        expect((await createRoute().invoke({ userId: 'account_2' })).response).toMatchObject({
+            ok: false, reasonCode: 'access_denied',
         });
-
-        await route.invoke({ userId: "account_1" });
-
-        expect(seen).toEqual([{ accountId: "account_1", machineId: "machine_1" }]);
     });
 });
 
@@ -1119,7 +1146,6 @@ describe("direct voice_media peer mediation grant gating", () => {
                     [FEATURE_ENV_KEYS.peerMediationRouteGrantSigningPrivateKey]: toBase64Url(keyPair.secretKey),
                 },
                 nowMs: () => 1_000,
-                readMachineOwnershipState: async () => "available",
             }),
         });
     }

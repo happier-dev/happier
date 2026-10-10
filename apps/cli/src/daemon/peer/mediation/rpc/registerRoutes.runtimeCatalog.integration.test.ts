@@ -27,6 +27,20 @@ import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 
 import { registerPeerMediationMachineRpcDirectRoutes } from './registerRoutes';
+import type { PeerMachineRpcDirectHandlerManager } from './registerRoutes';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { registerApprovalRpcHandlers } from '@/rpc/handlers/approvals';
+import { registerDaemonLiveStreamRelayHandlers } from '@/rpc/handlers/daemonLiveStreamRelay';
+import { registerDaemonBrowserControlHandler } from '@/rpc/handlers/daemonBrowserControl';
+import { createSurfaceInputControl } from '../../../surfaces/inputControl';
+import { createBrowserDaemonControlBroker } from '../../../browser/control/broker';
+import { createBrowserDaemonControlRoutes } from '../../../browser/control/routes';
+import { createBrowserSidecarCdpControlAdapter, type BrowserSidecarCdpEventSubscriber } from '../../../browser/sidecar/controlAdapter';
+import { createBrowserCdpScreencastProducer } from '../../../browser/capture/cdpScreencast';
+import { registerBrowserLiveCapture } from '../../../browser/capture/registration';
+import { createMachineLiveStreamCaptureRegistry } from '../stream/captureRegistry';
+import { createMachineLiveStreamRelayTerminator } from '../stream/relay';
+import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 
 const serverKeyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
 
@@ -40,6 +54,7 @@ function createGrant(input: Readonly<{
     exp?: number;
     ephemeralSeed?: number;
     method?: string;
+    callerAuthority?: 'present_user' | 'account_automation';
 }> = {}): Readonly<{
     grant: SignedDirectRouteGrantV2;
     ephemeralSecretKey: Uint8Array;
@@ -54,6 +69,7 @@ function createGrant(input: Readonly<{
         grantFamilyId: 'family_rpc_v2',
         accountId: 'account_1',
         machineId: 'machine_1',
+        ...(input.callerAuthority ? { callerAuthority: input.callerAuthority } : {}),
         flowKind: 'machine_rpc',
         routeKind: 'loopback_direct',
         scope: {
@@ -127,11 +143,7 @@ function createRequest(input: Readonly<{
 
 function createApp(input: Readonly<{
     nowMs: () => number;
-    invokeLocal: (
-        method: string,
-        params: unknown,
-        options?: Readonly<{ signal?: AbortSignal }>,
-    ) => Promise<unknown>;
+    invokeLocal: PeerMachineRpcDirectHandlerManager['invokeLocal'];
     localPerPeerMaxConcurrentCalls?: number;
 }>) {
     const app = fastify({ logger: false });
@@ -194,6 +206,112 @@ async function settleWithin<T>(promise: Promise<T>, timeoutMs: number): Promise<
 }
 
 describe('registerPeerMediationMachineRpcDirectRoutes V2 grant admission', () => {
+    it.each(['present_user', 'account_automation', undefined] as const)('uses signed direct authority for held Browser list and control %s', async callerAuthority => {
+        const rpc = new RpcHandlerManager({ scopePrefix: 'machine_1', encryptionMode: 'plain', logger: () => {} });
+        const control = createSurfaceInputControl();
+        const commands: string[] = [];
+        // Only CDP is substituted; signed admission, RPC, broker, routes and input control are real.
+        const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: 'browser', sidecarId: 'sidecar',
+            resolveInputControl: () => control, transport: {
+                openPage: async () => ({ targetId: 'page', sessionId: 'cdp-page' }),
+                dispatchPageCommand: async () => ({}),
+                dispatchBrowserCommand: async command => { commands.push(command.method); return { success: true }; },
+            } });
+        const broker = createBrowserDaemonControlBroker();
+        broker.registerAdapter(adapter);
+        const browserControl = createBrowserDaemonControlRoutes({ broker, resolveInputControl: () => control });
+        registerDaemonBrowserControlHandler(rpc, { browserControl });
+        const app = createApp({ nowMs: () => 2_000, invokeLocal: rpc.invokeLocal.bind(rpc) });
+        const view = { browserSessionId: 'browser', viewId: 'view' };
+        const invoke = async (method: string, params: unknown, nonceByte: number) => {
+            const signed = createGrant({ method, callerAuthority, grantId: `browser:${method}` });
+            return (await app.inject({ method: 'POST', url: PEER_MACHINE_RPC_DIRECT_PATH_V2,
+                payload: createRequest({ requestId: `request:${method}`, method, params, grant: signed.grant,
+                    proof: createProof({ ...signed, nonceByte }) }),
+            })).json();
+        };
+        try {
+            await browserControl.dispatchCommand({ kind: 'openView', commandId: 'open', ...view, platform: 'web',
+                target: { kind: 'externalUrl', targetId: 'external', url: 'https://example.test/' } }, { authority: 'present_user' });
+            await control.beginConfidentialityHold();
+            commands.length = 0;
+            const listed = await invoke(RPC_METHODS.DAEMON_BROWSER_VIEW_LIST,
+                { machineId: 'machine_1', browserSessionId: 'browser' }, 15);
+            expect.soft(listed).toMatchObject({ ok: true, result: { protocolVersion: 1,
+                views: callerAuthority === 'present_user' ? [expect.objectContaining(view)] : [] } });
+            const dispatched = await invoke(RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH,
+                { machineId: 'machine_1', command: { kind: 'focusView', commandId: 'focus', ...view } }, 16);
+            expect.soft(dispatched).toMatchObject({ ok: true, result: { protocolVersion: 1,
+                result: callerAuthority === 'present_user' ? { status: 'dispatched' }
+                    : { status: 'failed', error: { code: 'permission_denied' } } } });
+            expect(commands).toEqual(callerAuthority === 'present_user' ? ['Target.activateTarget'] : []);
+        } finally { await app.close(); adapter.dispose(); }
+    });
+    it.each(['present_user', 'account_automation', undefined] as const)('admits a held browser viewer only from signed direct authority %s', async callerAuthority => {
+        const method = RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START;
+        const signed = createGrant({ method, callerAuthority });
+        const rpc = new RpcHandlerManager({ scopePrefix: 'machine_1', encryptionMode: 'plain', logger: () => {} });
+        const control = createSurfaceInputControl();
+        // CDP is the physical boundary; the signed direct route and all browser owners are real.
+        const transport = {
+            openPage: async () => ({ targetId: 'page', sessionId: 'cdp-page' }),
+            dispatchPageCommand: async () => ({}),
+            dispatchBrowserCommand: async () => ({ success: true }),
+            subscribeCdpEvents: (_listener: BrowserSidecarCdpEventSubscriber) => () => {},
+        };
+        const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: 'browser', sidecarId: 'sidecar', transport });
+        const contextCapture = { transport, resolvePageHandle: adapter.resolvePageHandle,
+            subscribeCdpEvents: transport.subscribeCdpEvents, subscribeViewLifecycle: adapter.subscribeViewLifecycle };
+        const producer = createBrowserCdpScreencastProducer({ contextCapture, resolveInputControl: () => control });
+        const registry = createMachineLiveStreamCaptureRegistry();
+        const registration = registerBrowserLiveCapture({ registry, contextCapture, producer, automation: () => null,
+            resolveInputControl: () => control });
+        const relay = createMachineLiveStreamRelayTerminator({ registry, machineId: 'machine_1', nowMs: () => 2_000, emitEnvelope: () => {} });
+        registerDaemonLiveStreamRelayHandlers(rpc, { relay });
+        const app = createApp({ nowMs: () => 2_000, invokeLocal: rpc.invokeLocal.bind(rpc) });
+        const view = { browserSessionId: 'browser', viewId: 'view' };
+        const sourceId = browserViewKey(view);
+        try {
+            await adapter.dispatchCommand({ kind: 'openView', commandId: 'open', focus: true, ...view, platform: 'web',
+                target: { kind: 'externalUrl', targetId: 'external', url: 'https://example.test/' } });
+            await control.beginConfidentialityHold();
+            const streamId = 'direct-browser-stream';
+            const response = (await app.inject({ method: 'POST', url: PEER_MACHINE_RPC_DIRECT_PATH_V2,
+                payload: createRequest({ requestId: 'viewer-request', method, grant: signed.grant,
+                    proof: createProof({ ...signed, nonceByte: 14 }), params: { protocolVersion: 1, machineId: 'machine_1',
+                        startRequest: { v: 1, streamId, streamFamily: 'browser.streamed', sourceId,
+                            sourceMachineId: 'machine_1', targetMachineId: 'viewer', routeKind: 'server_relay',
+                            callerAuthority: 'present_user',
+                            authorization: { payload: { v: 1, grantId: 'relay-grant', accountId: 'account', flowKind: 'live_stream',
+                                routeKind: 'server_relay', sourceMachineId: 'machine_1', targetMachineId: 'viewer', streamId,
+                                streamFamily: 'browser.streamed', sourceId, iat: 1_000, exp: 61_000,
+                                aud: 'happier-live-stream-relay-authorization' },
+                                signature: { keyId: 'key', alg: 'Ed25519', valueBase64Url: 'AQID' } } } } }),
+            })).json();
+            expect(response).toMatchObject({ ok: true, result: { protocolVersion: 1,
+                result: callerAuthority === 'present_user' ? { ok: true, streamId } : { ok: false } } });
+        } finally {
+            await app.close(); await relay.dispose(); registration.dispose(); await producer.dispose(); adapter.dispose();
+        }
+    });
+    it.each(['present_user', 'account_automation', undefined] as const)('uses only signed private continuation authority %s', async callerAuthority => {
+        const method = RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE;
+        const signed = createGrant({ method, callerAuthority });
+        const rpc = new RpcHandlerManager({ scopePrefix: 'machine_1', encryptionMode: 'plain', logger: () => {} });
+        registerApprovalRpcHandlers({ rpcHandlerManager: rpc });
+        const app = createApp({ nowMs: () => 2_000, invokeLocal: rpc.invokeLocal.bind(rpc) });
+        try {
+            const response = (await app.inject({ method: 'POST', url: PEER_MACHINE_RPC_DIRECT_PATH_V2,
+                payload: createRequest({ requestId: 'private-request', method, grant: signed.grant,
+                    proof: createProof({ ...signed, nonceByte: 12 }),
+                    params: { authority: 'present_user', choice: { kind: 'once', value: 'private-test-value' } } }),
+            })).json();
+            expect(response).toMatchObject({ ok: true, result: { status: 'refused',
+                code: callerAuthority === 'present_user' ? 'approval_changed' : 'approval_required' } });
+            expect(response).not.toHaveProperty('commandReceipt');
+            expect(JSON.stringify(response)).not.toContain('private-test-value');
+        } finally { await app.close(); }
+    });
     it('consumes one signed grant even when a replay uses an independently valid nonce and signature', async () => {
         const signed = createGrant();
         const app = createApp({ nowMs: () => 2_000, invokeLocal: async () => ({ ok: true }) });

@@ -1,9 +1,9 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { IrohEndpointIdV1Schema } from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
 import { IrohMachineHandshakeV1Schema } from '@happier-dev/protocol/connectivity/iroh/machineHandshakeV1';
-import { IrohProviderBrokerHandshakeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { IrohProviderBrokerHandshakeSchema, type IrohProviderBrokerHandshake } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { RunnerBrokerReadinessRequestV1Schema } from '@happier-dev/protocol/ephemeralRunner/brokerReadinessRequestV1';
-import type { IrohMachineCarrierFlowV1, IrohMachineHandshakeV1, IrohProviderBrokerHandshakeV1, RunnerBrokerReadinessRequestV1 } from '@happier-dev/protocol';
+import type { IrohMachineCarrierFlowV1, IrohMachineHandshakeV1, RunnerBrokerReadinessRequestV1 } from '@happier-dev/protocol';
 import {
   IROH_MACHINE_ADMISSION_PATH,
   IROH_MACHINE_APPLICATION_CAPABILITY_HEADER,
@@ -18,6 +18,8 @@ import {
 import {
   providerBrokerRouteGrantExpectedBindingV1,
   verifyProviderBrokerRouteGrantV1,
+  verifyProviderBrokerRouteGrantV2,
+  providerBrokerRouteGrantExpectedBindingV2,
 } from '../verifyProviderBrokerRouteGrantV1';
 import type { DirectRouteGrantTrustRoot } from '../verifyDirectRouteGrant';
 import {
@@ -61,10 +63,10 @@ export type PeerMediationLoopbackIrohMachineAdmissionOptions = Readonly<{
    * selects a destination.
    */
   resolveProviderBrokerApplicationTarget?: (input: Readonly<{
-    handshake: IrohProviderBrokerHandshakeV1;
+    handshake: IrohProviderBrokerHandshake;
     authenticatedRemoteEndpointId: string;
     localEndpointId: string;
-    authority: IrohProviderBrokerHandshakeV1['authority'];
+    authority: IrohProviderBrokerHandshake['authority'];
     signal: AbortSignal;
   }>) => Readonly<{ port: number; localCapability?: string }> | null
     | Promise<Readonly<{ port: number; localCapability?: string }> | null>;
@@ -143,7 +145,7 @@ export function registerPeerMediationIrohMachineAdmissionRoute(
     // the admitted operation flow. The pure verifier below re-validates the same body
     // through that one schema, so there is no second handshake parser or grant verifier.
     const parsedHandshake = IrohMachineHandshakeV1Schema.safeParse(request.body);
-    const parsedProviderBrokerHandshake = IrohProviderBrokerHandshakeV1Schema.safeParse(request.body);
+    const parsedProviderBrokerHandshake = IrohProviderBrokerHandshakeSchema.safeParse(request.body);
     const parsedRunnerReadiness = RunnerBrokerReadinessRequestV1Schema.safeParse(request.body);
     const isProviderBroker = parsedProviderBrokerHandshake.success;
     if (
@@ -228,7 +230,14 @@ export function registerPeerMediationIrohMachineAdmissionRoute(
         // callback's decision: an expired authority may still open a stream
         // that can only release the exact claim it already holds (L10/04
         // §5.6, L10/11 A3), which cannot be told apart before the request.
-        const verification = verifyProviderBrokerRouteGrantV1({
+        const verification = providerHandshake.v === 2 ? verifyProviderBrokerRouteGrantV2({
+          authority: providerHandshake.authority,
+          trustRoots: options.admission.resolveTrustRoots?.() ?? options.trustRoots,
+          nowMs: options.nowMs(),
+          enforceExpiry: false,
+          expected: providerBrokerRouteGrantExpectedBindingV2(providerHandshake.authority),
+          authenticatedRemoteEndpointId,
+        }) : verifyProviderBrokerRouteGrantV1({
           authority: providerHandshake.authority,
           trustRoots: options.admission.resolveTrustRoots?.() ?? options.trustRoots,
           nowMs: options.nowMs(),

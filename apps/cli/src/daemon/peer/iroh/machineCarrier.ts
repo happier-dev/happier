@@ -1,8 +1,8 @@
 import type { PeerTcpTunnelStreamConnection } from '@happier-dev/peer-transport';
 import { MACHINE_ALPN } from '@happier-dev/iroh-native/node';
 import { IrohMachineHandshakeV1Schema } from '@happier-dev/protocol/connectivity/iroh/machineHandshakeV1';
-import { IrohProviderBrokerHandshakeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
-import type { IrohMachineCarrierFlowV1, PeerFlowKindV1, IrohProviderBrokerHandshakeV1, RunnerBrokerReadinessRequestV1 } from '@happier-dev/protocol';
+import type { IrohProviderBrokerHandshake } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import type { IrohMachineCarrierFlowV1, PeerFlowKindV1, RunnerBrokerReadinessRequestV1 } from '@happier-dev/protocol';
 import {
     verifyDirectRouteGrantV2,
     type DirectRouteGrantTrustRoot,
@@ -132,8 +132,8 @@ export type ProviderBrokerMachineCarrierTransportOpenInput = Readonly<{
     alpn: typeof MACHINE_CARRIER_ALPN_V1;
     remoteEndpointId: string;
     flow: 'provider_broker';
-    handshake: IrohProviderBrokerHandshakeV1;
-    handshakeProvider?: () => Promise<IrohProviderBrokerHandshakeV1>;
+    handshake: IrohProviderBrokerHandshake;
+    handshakeProvider?: () => Promise<IrohProviderBrokerHandshake>;
 }>;
 
 /** Pre-Session, content-free readiness uses the same carrier but a distinct

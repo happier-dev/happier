@@ -44,7 +44,11 @@ describe('forwardRpcCall', () => {
         });
     });
 
-    it('preserves a twenty-minute nonce observation through the real Socket.IO acknowledgement timer', async () => {
+    it.each([
+        { method: RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE, timeoutMs: 20 * 60_000 },
+        { method: RPC_METHODS.CAPABILITIES_INVOKE, timeoutMs: undefined },
+        { method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, timeoutMs: null },
+    ])('preserves a waiting $method through the real Socket.IO acknowledgement timer', async ({ method, timeoutMs }) => {
         vi.useFakeTimers();
         const io = new Server();
         try {
@@ -70,9 +74,9 @@ describe('forwardRpcCall', () => {
             const forwarded = forwardRpcCall({
                 io,
                 targetUserId: 'user-one',
-                method: `machine-one:${RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE}`,
+                method: `machine-one:${method}`,
                 callParams: 'encrypted-nonce-observer-request',
-                timeoutMs: 20 * 60_000,
+                timeoutMs,
             }).finally(() => { settled = true; });
 
             await vi.advanceTimersByTimeAsync(11 * 60_000);
@@ -486,7 +490,7 @@ describe('forwardRpcCall', () => {
         }
     });
 
-    it('keeps a submitted external Action relay open for the daemon cancellation response', async () => {
+    it.each([EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, RPC_METHODS.CAPABILITIES_INVOKE])('keeps a submitted %s relay open for the daemon cancellation response', async (method) => {
         const controller = new AbortController();
         let resolveDaemonResponse!: (value: unknown) => void;
         let markSubmitted!: () => void;
@@ -516,7 +520,7 @@ describe('forwardRpcCall', () => {
         const forwarded = forwardRpcCall({
             io,
             targetUserId: 'user-1',
-            method: `machine-1:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`,
+            method: `machine-1:${method}`,
             callParams: { actionId: 'session.wait.idle' },
             cancellation: {
                 targetRequestId: 'relay-request-1',

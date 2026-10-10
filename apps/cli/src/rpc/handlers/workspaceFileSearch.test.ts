@@ -1,7 +1,8 @@
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as ripgrep from '@/integrations/ripgrep/index';
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { RPC_METHODS, resolveSocketRpcSessionAuthorization } from '@happier-dev/protocol/rpc';
 import { DaemonWorkspaceFileSearchResponseSchema, WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES } from '@happier-dev/protocol';
@@ -20,7 +21,25 @@ describe('workspace file content search through the registered daemon owner', ()
         const registered = handlers.get(RPC_METHODS.DAEMON_WORKSPACE_FILES_SEARCH)!;
         handler = (request, context) => registered(request, { signal: lifetime.signal, ...context });
     });
-    afterEach(async () => { lifetime.abort(); await rm(root, { recursive: true, force: true }); });
+    afterEach(async () => { lifetime.abort(); vi.restoreAllMocks(); await rm(root, { recursive: true, force: true }); });
+
+    it('preserves completed text matches with partial coverage when another subtree fails traversal', async () => {
+        // Native process output is the boundary; the handler parses real rg records.
+        vi.spyOn(ripgrep, 'run').mockImplementationOnce(async (_args, options) => {
+            for (const record of [
+                { type: 'begin', data: { path: { text: 'readable.txt' } } },
+                { type: 'match', data: { path: { text: 'readable.txt' }, lines: { text: 'needle\n' }, line_number: 1,
+                    submatches: [{ match: { text: 'needle' }, start: 0, end: 6 }] } },
+                { type: 'end', data: { path: { text: 'readable.txt' }, binary_offset: null } },
+                { type: 'summary', data: {} },
+            ]) options?.onStdoutLine?.(JSON.stringify(record));
+            return { stdout: '', stderr: 'private: Permission denied (os error 13)', exitCode: 2 };
+        });
+        expect(await handler({ rootPath: root, query: 'needle' })).toEqual({ ok: true, hasMore: false, coverage: 'partial',
+            files: [{ path: 'readable.txt', matches: [{ line: 1, column16: 1, length16: 6, text: 'needle', before: [], after: [] }] }] });
+        vi.spyOn(ripgrep, 'run').mockResolvedValueOnce({ stdout: '', stderr: 'private: Permission denied (os error 13)', exitCode: 2 });
+        expect(await handler({ rootPath: root, query: 'needle' })).toEqual({ ok: false, code: 'ripgrep_failed' });
+    });
 
     it('finds literal metacharacters by default, case insensitively, with UTF-16 positions and CRLF context', async () => {
         await writeFile(join(root, 'a.txt'), 'before\r\né😀 A.B A.B\r\nafter\r\n');

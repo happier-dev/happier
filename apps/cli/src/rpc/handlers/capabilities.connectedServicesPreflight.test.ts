@@ -1,13 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { chmodSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
+import axios from 'axios';
 
 import {
   buildConnectedServiceCredentialRecord,
   sealAccountScopedBlobCiphertext,
+  QualifiedConnectedAccountListResponseV4Schema,
+  QualifiedConnectedAccountCredentialSnapshotV4Schema,
+  type TeamResourceConnectedServiceSelectionV2,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
@@ -23,8 +27,12 @@ type ActivatePurposeBindingsInput = Parameters<
 
 const originalEnv = { ...process.env };
 let tempDir: string | null = null;
+let releaseRuntime: (() => Promise<void>) | null = null;
 
-afterEach(() => {
+afterEach(async () => {
+  await releaseRuntime?.();
+  releaseRuntime = null;
+  vi.restoreAllMocks();
   vi.doUnmock('@/persistence');
   vi.doUnmock('@/settings/accountSettings/bootstrapAccountSettingsContext');
   vi.doUnmock('@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn');
@@ -37,10 +45,72 @@ afterEach(() => {
 });
 
 describe('capabilities.invoke connected-service preflight', () => {
-  it('materializes the authoritative Codex group selection before the provider probe', async () => {
+  it.each([
+    { source: 'team_resource', resourceId: 'team-resource-brokered', deliveryMode: 'brokered' },
+    {
+      source: 'team_resource', resourceId: 'team-resource-direct', deliveryMode: 'direct',
+      disclosedMember: {
+        service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+        accountId: 'disclosed-team-member',
+      },
+    },
+  ] satisfies TeamResourceConnectedServiceSelectionV2[])(
+    'refuses $deliveryMode Team operation probes before accessing personal credentials',
+    async (selection) => {
+      vi.resetModules();
+      tempDir = mkdtempSync(join(tmpdir(), 'happier-capability-team-preflight-'));
+      process.env = {
+        ...originalEnv,
+        HAPPIER_HOME_DIR: tempDir,
+        OPENAI_API_KEY: 'ambient-key-must-not-be-used',
+      };
+      // The credential store and Account API are external boundaries. Team probes
+      // have no admitted Session authority and must not read or mutate either.
+      const readStoredCredentials = vi.fn(async () => null);
+      const createApiClient = vi.fn(async () => { throw new Error('unexpected Account API access'); });
+      vi.doMock('@/persistence', async (importOriginal) => ({
+        ...(await importOriginal<typeof import('@/persistence')>()),
+        readStoredCredentials,
+      }));
+
+      const { reloadConfiguration } = await import('@/configuration');
+      reloadConfiguration();
+      const { registerCapabilitiesHandlers } = await import('./capabilities');
+      const { createEncryptedRpcTestClient } = await import('./encryptedRpc.testkit');
+      const { call } = createEncryptedRpcTestClient({
+        scopePrefix: 'machine-test', encryptionKey: new Uint8Array(32).fill(7),
+        logger: () => undefined,
+        registerHandlers: (manager) => registerCapabilitiesHandlers(manager, { createApiClient }),
+      });
+      for (const method of ['probeModels', 'probeConfigOptions', 'probeModes', 'probeCatalogs']) {
+        const response = await call(RPC_METHODS.CAPABILITIES_INVOKE, {
+          id: 'cli.codex', method,
+          params: {
+            cwd: tempDir,
+            connectedServices: { v: 2, bindingsByServiceId: { 'happier.agent.codex/openai-codex': selection } },
+          },
+        });
+        expect(response, method).toMatchObject({ ok: false, error: { code: 'connected-service-preflight-failed' } });
+      }
+      expect(readStoredCredentials).not.toHaveBeenCalled();
+      expect(createApiClient).not.toHaveBeenCalled();
+    },
+  );
+
+  it('materializes the selected personal Codex account and isolates history despite an explicit shared-state setting before the model probe', async () => {
     vi.resetModules();
     tempDir = mkdtempSync(join(tmpdir(), 'happier-capability-connected-preflight-'));
-    const fixture = fileURLToPath(new URL('./__fixtures__/fakeCodexPreflightAppServer.mjs', import.meta.url));
+    const nativeHome = join(tempDir, 'native-codex');
+    mkdirSync(join(nativeHome, 'sessions'), { recursive: true });
+    const fixture = join(tempDir, 'codex.mjs');
+    const fixtureSource = readFileSync(fileURLToPath(new URL('./__fixtures__/fakeCodexPreflightAppServer.mjs', import.meta.url)), 'utf8');
+    // The real declared-tool launch clears PATH; the simulated OS executable
+    // must name this test runtime directly, as native catalog fixtures do.
+    writeFileSync(fixture, fixtureSource.replace(/^#![^\n]*/, `#!${process.execPath}`)
+      .replace("existsSync, writeFileSync", "existsSync, mkdirSync, writeFileSync")
+      .replace("    captureMaterializedEnvironment();", `    captureMaterializedEnvironment();
+    mkdirSync(join(process.env.CODEX_HOME, 'sessions'), { recursive: true });
+    writeFileSync(join(process.env.CODEX_HOME, 'sessions', 'probe.jsonl'), 'probe');`));
     chmodSync(fixture, 0o755);
     const captureFile = join(tempDir, 'captured-env.json');
     process.env = {
@@ -49,7 +119,7 @@ describe('capabilities.invoke connected-service preflight', () => {
       HAPPIER_CODEX_PATH: fixture,
       OPENAI_API_KEY: undefined,
       CODEX_API_KEY: undefined,
-      CODEX_HOME: undefined,
+      CODEX_HOME: nativeHome,
       CODEX_SQLITE_HOME: undefined,
     };
 
@@ -80,39 +150,96 @@ describe('capabilities.invoke connected-service preflight', () => {
       payload: record,
       randomBytes: (length) => randomBytes(length),
     });
-    const getConnectedServiceCredentialSealed = vi.fn(async () => ({
-      revisionSemantics: 'revisioned' as const,
-      credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
-      sealed: { format: 'account_scoped_v1' as const, ciphertext },
-      metadata: {
-        kind: 'oauth' as const,
-        providerEmail: null,
-        providerAccountId: 'acct_selected',
-        expiresAt: null,
-      },
-    }));
+    const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' } as const;
+    const account = { service, accountId: 'leeroy' };
+    const revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
+    const accounts = QualifiedConnectedAccountListResponseV4Schema.parse({
+      service,
+      accounts: [{ ref: account, authenticationModeId: 'oauth', status: 'connected',
+        revisionSemantics: 'revisioned', credentialRevision: revision,
+        configurationReady: true, configurationRevision: null, scopes: [] }],
+    });
+    const snapshot = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+      ref: account, authenticationModeId: 'oauth', revisionSemantics: 'revisioned',
+      credentialRevision: revision, configurationRevision: null,
+      content: { t: 'encrypted', c: ciphertext }, metadata: { scopes: [] },
+    });
+    // HTTP is the external boundary. V4 parsing, encrypted credential opening,
+    // purpose authority, plugin invocation and launch-file materialization stay real.
+    const credentialReads: string[] = [];
+    vi.spyOn(axios, 'get').mockImplementation(async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v2/account/settings') return { status: 200, data: { version: 1, content: { t: 'plain', v: {
+        schemaVersion: 6, connectedServicesProviderStateSharingSettingsV1: {
+          v: 1, defaults: { configMode: 'linked', stateMode: 'shared' }, byAgentId: { codex: { stateMode: 'shared' } },
+        },
+      } } } };
+      if (path === '/v4/connect/qualified/accounts') return { status: 200, data: accounts };
+      if (path === '/v4/connect/qualified/credential') {
+        credentialReads.push(path);
+        return { status: 200, data: snapshot };
+      }
+      throw new Error(`Unexpected capability HTTP read: ${path}`);
+    });
     const api = {
-      getServerFeaturesSnapshot: async () => undefined,
       getAccountEncryptionMode: async () => 'e2ee' as const,
-      getConnectedServiceCredentialSealed,
-      listConnectedServiceProfiles: async () => ({
-        serviceId: 'openai-codex' as const,
-        profiles: [{ profileId: 'leeroy', status: 'connected' as const }],
-      }),
     } as unknown as ApiClient;
 
     vi.doMock('@/persistence', async (importOriginal) => ({
       ...(await importOriginal<typeof import('@/persistence')>()),
       readStoredCredentials: vi.fn(async () => credentials),
     }));
-    vi.doMock('@/settings/accountSettings/bootstrapAccountSettingsContext', () => ({
-      bootstrapAccountSettingsContext: vi.fn(async () => ({
-        settings: { codexBackendMode: 'appServer' },
-      })),
-    }));
-
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
+    const { pluginReloadController } = await import('@/plugins/runtime/reload/singleton');
+    const { resolveExecutablePluginRuntimeRegistry } = await import('@/plugins/runtime/resolveExecutablePluginRuntimeRegistry');
+    const { getResolvedContributionRegistry } = await import('@/plugins/projection/registry/createResolvedContributionRegistry');
+    const { createQualifiedConnectedAccountEstablishedRuntimeOwner } = await import('@/daemon/connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner');
+    const { createDaemonConnectedAccountPurposeBindingRuntime } = await import('@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime');
+    const established = createQualifiedConnectedAccountEstablishedRuntimeOwner({
+      reloadController: pluginReloadController, credentials,
+      getAccountEncryptionMode: async () => 'e2ee',
+      configuration: {
+        read: async () => null,
+        secrets: { admit: async () => undefined, has: async () => false, read: async () => null },
+      },
+    });
+    const purposeRuntime = createDaemonConnectedAccountPurposeBindingRuntime({
+      reloadController: pluginReloadController, establishedRuntimeOwner: established,
+      resolveQualifiedConnectedAccountV4Support: () => 'advertised',
+      qualifiedApi: {
+        listAccounts: async () => accounts,
+        listGroups: async () => ({ groups: [] }), readGroup: async () => null,
+      },
+      store: {
+        read: async () => ({ v: 1, bindings: [] }),
+        update: async (mutate) => mutate({ v: 1, bindings: [] }),
+        subscribe: () => ({ dispose() {} }),
+      },
+    });
+    const lease = await pluginReloadController.acquireRuntimeRegistry({
+      resolveRuntimeRegistry: () => resolveExecutablePluginRuntimeRegistry({
+        contributes: getResolvedContributionRegistry(), pluginIds: ['happier.agent.codex'],
+        // Account plugin settings are persistent storage. An absent record uses
+        // the real declaration defaults without attempting a real Account read.
+        accountSettingsRecordAdapter: {
+          async bindOperation() {
+            return {
+              async readRecord() { return { status: 'absent' }; },
+              async writeRecord() { return { status: 'unavailable' }; },
+            };
+          },
+        },
+        resolveDevelopmentSourceAuthority: ({ pluginId, rootPath }) => ({
+          kind: 'development', registeredRootId: `capability-account:${pluginId}`, canonicalRoot: rootPath, observedRevision: 1,
+        }),
+        connectedAccounts: purposeRuntime.owner, qualifiedConnectedAccountEstablishedRuntimeOwner: established,
+      }),
+    });
+    releaseRuntime = async () => {
+      await lease.release();
+      await pluginReloadController.shutdown();
+    };
     const { registerCapabilitiesHandlers } = await import('./capabilities');
     const { createEncryptedRpcTestClient } = await import('./encryptedRpc.testkit');
     const { call } = createEncryptedRpcTestClient({
@@ -121,15 +248,17 @@ describe('capabilities.invoke connected-service preflight', () => {
       logger: () => undefined,
       registerHandlers: (manager) => registerCapabilitiesHandlers(manager, {
         createApiClient: async () => api,
-      } as never),
+        activatePurposeBindings: purposeRuntime.activatePurposeBindings,
+      }),
     });
 
     const response = await call(RPC_METHODS.CAPABILITIES_INVOKE, {
       id: 'cli.codex',
-      method: 'probePassiveRealtimeSetup',
+      method: 'probeModels',
       params: {
         cwd: tempDir,
         timeoutMs: 5_000,
+        runtimeKindOverride: 'appServer',
         connectedServices: {
           v: 1,
           bindingsByServiceId: {
@@ -143,15 +272,18 @@ describe('capabilities.invoke connected-service preflight', () => {
       },
     });
 
-    expect(response).toEqual({ ok: true, result: { v: 1, status: 'ready' } });
-    expect(getConnectedServiceCredentialSealed).toHaveBeenCalledWith({
-      serviceId: 'openai-codex',
-      profileId: 'leeroy',
+    expect(response).toMatchObject({
+      ok: true,
+      result: { source: 'dynamic', availableModels: expect.arrayContaining([expect.objectContaining({ id: 'gpt-5.4' })]) },
     });
+    expect(credentialReads).not.toHaveLength(0);
     const captured = JSON.parse(readFileSync(captureFile, 'utf8')) as Record<string, unknown>;
     expect(captured.CODEX_HOME).toEqual(expect.any(String));
+    expect(captured.CODEX_AUTH_FILE_PRESENT).toBe(true);
+    expect(readdirSync(join(nativeHome, 'sessions'))).toEqual([]);
+    expect(captured.CODEX_HOME).not.toBe(nativeHome);
     const methods = JSON.parse(readFileSync(join(tempDir, 'captured-methods.json'), 'utf8')) as string[];
-    expect(methods).toEqual(['initialize', 'account/read', 'experimentalFeature/list']);
+    expect(methods).toContain('model/list');
     expect(methods.some((method) => method.startsWith('thread/') || method.startsWith('realtime/'))).toBe(false);
   }, 90_000);
 

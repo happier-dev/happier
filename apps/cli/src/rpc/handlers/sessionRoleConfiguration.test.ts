@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { BUILT_IN_ROLES_V1, readSessionWorkspaceWritesV1 } from '@happier-dev/protocol';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { accountSettingsParse, BUILT_IN_ROLES_V1, createRoleSourceReaderV1, readSessionWorkspaceWritesV1 } from '@happier-dev/protocol';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { Metadata } from '@/api/types';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
@@ -9,11 +10,33 @@ import { registerSessionRoleConfigurationHandler } from './sessionRoleConfigurat
 import { resolveCliAgentStartContextV1 } from '@/session/actions/resolveCliAgentStartContextV1';
 
 describe('session role configuration RPC', () => {
+  beforeEach(() => {
+    resetActiveAccountSettingsSnapshotForTests();
+    setActiveAccountSettingsSnapshot({ scopeKey: 'roles-test', source: 'network', settingsVersion: 1, settings: accountSettingsParse({}),
+      rawSettings: {}, settingsSecretsReadKeys: [], loadedAtMs: 1,
+      promptLibraryCatalog: { status: 'ready', rows: [], tombstones: [], diagnostics: [] } });
+  });
+  afterEach(() => resetActiveAccountSettingsSnapshotForTests());
+  it('refuses configuration effects when Account override authority is unavailable', async () => {
+    let metadata = createTestMetadata();
+    const handlers = new Map<string, RpcHandler>();
+    registerSessionRoleConfigurationHandler({ rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } },
+      sessionId: 'child', readSessionMetadata: () => metadata,
+      readRoleSources: createRoleSourceReaderV1({}),
+      readSettingsOverrides: () => ({ status: 'unavailable', reason: 'catalog-loading' }),
+      stageSessionStateMutation: async (mutation) => { metadata = applyRegisteredSessionStateFieldMutationToMetadata(metadata, mutation); } });
+    expect(await handlers.get(SESSION_RPC_METHODS.SESSION_ROLES_CONFIGURATION_SET)!({ sessionId: 'child',
+      configuration: { overrides: {}, sessionRoles: {}, notes: 'Unobserved authority' } },
+    { signal: new AbortController().signal, callerAuthority: 'present_user' }))
+      .toMatchObject({ ok: false, errorCode: 'account_role_overrides_unavailable' });
+    expect(metadata.work?.sessionRolesV1?.notes).not.toBe('Unobserved authority');
+  });
   it('refuses an older Home dropping the Session origin even for a non-relaxing report copy', async () => {
     let metadata = createTestMetadata();
     const handlers = new Map<string, RpcHandler>();
     registerSessionRoleConfigurationHandler({ rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } },
       sessionId: 'child', readSessionMetadata: () => metadata,
+      readRoleSources: createRoleSourceReaderV1({}),
       stageSessionStateMutation: async (mutation) => { metadata = applyRegisteredSessionStateFieldMutationToMetadata(metadata, mutation); } });
     expect(await handlers.get(SESSION_RPC_METHODS.SESSION_ROLES_CONFIGURATION_SET)!({ sessionId: 'child',
       configuration: { inheritedFrom: 'lead', overrides: {}, sessionRoles: {}, notes: 'Unproved copy' } },
@@ -29,12 +52,15 @@ describe('session role configuration RPC', () => {
     const handlers = new Map<string, RpcHandler>();
     registerSessionRoleConfigurationHandler({ rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } },
       sessionId: 'child', readSessionMetadata: () => target,
+      readRoleSources: createRoleSourceReaderV1({}),
       // Storage/transport snapshots are the boundary; the real caller resolver,
       // subtree parser, admission policy and registered mutation owner run below.
       resolveAgentStartContext: async (context) => resolveCliAgentStartContextV1({
         sessionId: 'lead', machineId: 'source-machine', directory: '/repo',
         backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         metadata: source, starterDepth: 2, turnDepth: 3, callerPermissionMode: context.callerPermissionMode ?? null, settings: null,
+        accountRoleOverrides: { status: 'ready', overrides: {} },
+        roleSourceInventory: await createRoleSourceReaderV1({})(),
       }),
       sessionList: async ({ query }) => ({ queryVersion: 1, sessions: inSubtree && query?.storage === 'active' ? [{
         id: 'child', createdAt: 1, updatedAt: 1, active: true, activeAt: 1, encryption: null,
@@ -69,6 +95,7 @@ describe('session role configuration RPC', () => {
     const handlers = new Map<string, RpcHandler>();
     registerSessionRoleConfigurationHandler({ rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } },
       sessionId: 'child', readSessionMetadata: () => metadata,
+      readRoleSources: createRoleSourceReaderV1({}),
       stageSessionStateMutation: async (mutation) => { metadata = applyRegisteredSessionStateFieldMutationToMetadata(metadata, mutation); },
     });
     const handler = handlers.get(SESSION_RPC_METHODS.SESSION_ROLES_CONFIGURATION_SET)!;
@@ -86,6 +113,7 @@ describe('session role configuration RPC', () => {
     const handlers = new Map<string, RpcHandler>();
     registerSessionRoleConfigurationHandler({ rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } },
       sessionId: 'child', readSessionMetadata: () => metadata,
+      readRoleSources: createRoleSourceReaderV1({}),
       prepareWorkspaceWritesPolicy: async (policy) => { nativePolicy = policy; return { ok: true }; },
       stageSessionStateMutation: async () => { throw new Error('Durable enqueue failed'); },
     });
@@ -102,6 +130,7 @@ describe('session role configuration RPC', () => {
     const handlers = new Map<string, RpcHandler>();
     registerSessionRoleConfigurationHandler({ rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } },
       sessionId: 'child', readSessionMetadata: () => metadata,
+      readRoleSources: createRoleSourceReaderV1({}),
       prepareWorkspaceWritesPolicy: async () => ({ ok: true }),
       stageSessionStateMutation: async (mutation) => { metadata = applyRegisteredSessionStateFieldMutationToMetadata(metadata, mutation); } });
     const handler = handlers.get(SESSION_RPC_METHODS.SESSION_ROLES_CONFIGURATION_SET)!;

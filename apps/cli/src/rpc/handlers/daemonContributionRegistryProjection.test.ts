@@ -1,3 +1,4 @@
+import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { access, mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -152,6 +153,7 @@ function createRuntimeRegistry(
         activatedPluginIds: new Set(),
         activateContributionsOnDemand: async () => [],
         resolveCaptureSource: async () => null,
+        resolveProjectNativeAdapter: unexpectedProjectNativeAdapterResolution,
         addRuntimeDisposable: (_pluginId, disposable) => disposable,
         createAgentInvocationServices: async () => createUnavailablePluginServices(),
         readPluginOccurrenceId: (pluginId) => occurrenceIdsByPluginId[pluginId] ?? null,
@@ -517,6 +519,50 @@ function createHostedWebPreviewProjectionRegistry() {
 }
 
 describe('daemon contribution registry projection rpc handler', () => {
+    it('reads the Agent selection without projecting unrelated contribution families', async () => {
+        const loaded = loadBundledPluginLocatorResult(BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.filter(
+            ({ pluginId }) => pluginId === 'happier.agent.claude' || pluginId === 'happier.agent.codex',
+        ));
+        expect(loaded.pluginFailures).toEqual([]);
+        let registry = createResolvedContributionRegistry(projectLoadedPluginContributes({
+            loadResult: { loadedPlugins: loaded.loadedPlugins, diagnosticsByPluginId: {} },
+            provenance: 'first_party',
+        }));
+        const { registerDaemonContributionRegistryProjectionHandler } = await import('./daemonContributionRegistryProjection');
+        const { handlers, registrar } = createRegistrar();
+        let generation = 1;
+        let serverFeatureReads = 0;
+        registerDaemonContributionRegistryProjectionHandler(registrar, {
+            resolveGeneration: async () => generation,
+            resolveRegistry: async () => registry,
+            resolveInstalledPackages: async () => [],
+            // The Home feature fetch is a network boundary. Roster discovery
+            // must remain independent of UI-feature availability and latency.
+            resolveServerFeaturesSnapshot: async () => { serverFeatureReads += 1; return undefined; },
+        });
+        const handler = handlers.get(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)!;
+        const full = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(await handler({ machineId: 'm1' }));
+        expect(Object.keys(full.projection.agentsById)).toEqual(['claude', 'codex']);
+        expect(Object.keys(full.projection.familiesById).length).toBeGreaterThan(0);
+        expect(serverFeatureReads).toBe(1);
+        serverFeatureReads = 0;
+        const selected = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(await handler({
+            machineId: 'm1', selection: 'agents',
+        }));
+        expect(selected.projection.agentsById).toEqual(full.projection.agentsById);
+        expect(selected.projection.familiesById).toEqual({});
+        expect(selected.automationEligibleEvents).toBeUndefined();
+        expect(selected.composerSurfaceCatalog).toBeUndefined();
+        expect(serverFeatureReads).toBe(0);
+        registry = createResolvedContributionRegistry({ agents: [] });
+        generation = 2;
+        const empty = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(await handler({
+            machineId: 'm1', selection: 'agents',
+        }));
+        expect(empty.projection.agentsById).toEqual({});
+        expect(empty.projection.generation).toBe(2);
+    });
+
     it('describes the admitted bundled Triage app page', async () => {
         const locator = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find((entry) => entry.pluginId === 'happier.triage');
         expect(locator).toBeDefined();
@@ -5521,7 +5567,6 @@ describe('daemon contribution registry projection rpc handler', () => {
                 digest: artifactDigest,
                 byteSize: entryBytes.byteLength,
             },
-            bytesBase64: Buffer.from(entryBytes).toString('base64'),
             files: [
                 {
                     relativePath: entryPath,
@@ -5644,7 +5689,6 @@ describe('daemon contribution registry projection rpc handler', () => {
                 format: 'plainJs',
                 byteSize: entryBytes.byteLength,
             },
-            bytesBase64: Buffer.from(entryBytes).toString('base64'),
             files: [{
                 relativePath: entryPath,
                 digest: computePluginUiArtifactSha256DigestV1(entryBytes),
@@ -5877,7 +5921,6 @@ describe('daemon contribution registry projection rpc handler', () => {
                 format: 'plainJs',
                 byteSize: entryBytes.byteLength,
             },
-            bytesBase64: Buffer.from(entryBytes).toString('base64'),
             files: [{
                 relativePath: entryPath,
                 digest: computePluginUiArtifactSha256DigestV1(entryBytes),
@@ -6754,11 +6797,16 @@ describe('daemon contribution registry projection rpc handler', () => {
             const handler = handlers.get(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE);
             expect(handler).toBeDefined();
 
-            const first = await handler!({ machineId: 'machine-generation-cache' });
+            const request = () => ({
+                machineId: 'machine-generation-cache',
+                locale: 'en',
+                hostedWebFrameCapability: { platform: 'web', adapter: 'domIframe' },
+            });
+            const first = await handler!(request());
             const modelReadsAfterBuild = readPluginOccurrenceId.mock.calls.length;
             expect(modelReadsAfterBuild).toBeGreaterThan(0);
             nowMs += 3_600_000;
-            const later = await handler!({ machineId: 'machine-generation-cache' });
+            const later = await handler!(request());
 
             // Same generation and client: the same body, with no catalog read
             // and no declarative-model rebuild however much time has passed.
@@ -6767,7 +6815,7 @@ describe('daemon contribution registry projection rpc handler', () => {
             expect(readPluginOccurrenceId.mock.calls.length).toBe(modelReadsAfterBuild);
 
             generation = 14;
-            const next = await handler!({ machineId: 'machine-generation-cache' });
+            const next = await handler!(request());
             expect(next).not.toBe(first);
             expect(resolveInstalledPackages).toHaveBeenCalledTimes(2);
         } finally {

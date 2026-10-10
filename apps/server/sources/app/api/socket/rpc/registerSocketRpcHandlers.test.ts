@@ -225,6 +225,19 @@ function createRoomAwareIo() {
 }
 
 describe("registerSocketRpcHandlers", () => {
+    it.each([RPC_METHODS.DAEMON_FILESYSTEM_LIST_ROOTS, RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY])(
+        'relays ordinary filesystem reads without a signed workspace continuation: %s', async (rpcMethod) => {
+            const method = `machine-1:${rpcMethod}`;
+            const target = { id: 'filesystem-daemon', data: { clientType: 'machine-scoped', machineId: 'machine-1' },
+                timeout: () => ({ emitWithAck: async () => 'filesystem-result' }) };
+            const { io } = createTargetRoutingIo({ [`rpc:user-1:${method}`]: [target], [target.id]: [target] });
+            const socket = createFakeSocket({ id: 'browser', data: { clientType: 'user-scoped' } });
+            registerSocketRpcHandlers({ userId: 'user-1', socket: socket as unknown as Socket, io });
+            const acknowledge = vi.fn();
+            await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method, params: 'opaque-listing-request' }, acknowledge);
+            expect(acknowledge).toHaveBeenCalledWith({ ok: true, result: 'filesystem-result' });
+        },
+    );
     it.each([undefined, 'old-installation', 'current-installation'])('registers current-service admission only on the current verified installation: %s', async (installationId) => {
         machineFindFirstMock.mockResolvedValue({ revokedAt: null, replacedByMachineId: null, installationId: 'current-installation' });
         const join = vi.fn(async () => {});

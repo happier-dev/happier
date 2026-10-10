@@ -216,7 +216,12 @@ export async function openPeerTcpTunnel(input: OpenPeerTcpTunnelInput): Promise<
         trustRoots: input.trustRoots,
         nowMs: input.nowMs,
         expected: {
-            accountId: input.expected.accountId,
+            // A source-qualified native preview capability names the authenticated viewer,
+            // not this listener's custodian. Its Home signature/proof are still verified here,
+            // and the exact current stored grant/control lease is required below before IO.
+            accountId: open.routeKind === 'iroh_peer' && requestedScope.kind === 'tcp_tunnel'
+                && requestedScope.preview?.serviceTarget && requestedScope.preview.sessionId === undefined
+                ? open.grant.payload.accountId : input.expected.accountId,
             machineId: input.expected.machineId,
             flowKind: requestedFlowKind,
             ...(requestedScope.kind === 'voice_media' ? {

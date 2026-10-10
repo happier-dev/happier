@@ -9,6 +9,38 @@ import { getSocketRooms } from "@/app/api/socketRooms";
 import { createPeerTcpTunnelRelayCoordinator } from "./relayCoordinator";
 
 describe("createPeerTcpTunnelRelayCoordinator", () => {
+    it("attaches only the installation admitted by the server, ignoring a still-connected predecessor", async () => {
+        const accountId = 'installation-account';
+        const machineId = 'installation-machine';
+        const makeSocket = (id: string, verifiedMachineInstallationId: string) => Object.assign(new EventEmitter(), {
+            id, connected: true, data: { userId: accountId, clientType: 'machine-scoped', machineId, verifiedMachineInstallationId },
+            rooms: new Set(getSocketRooms({ userId: accountId, clientType: 'machine-scoped', machineId })),
+        });
+        const stale = makeSocket('stale-installation-socket', 'old-installation');
+        const current = makeSocket('current-installation-socket', 'current-installation');
+        const sockets = new Map([[stale.id, stale]]);
+        const deliveredSocketIds: string[] = [];
+        // Socket.IO is the network boundary; grant consumption and attachment remain real.
+        const io = Object.assign(new EventEmitter(), { sockets: { sockets }, to: (id: string) => ({ emit: () => { deliveredSocketIds.push(id); } }) });
+        const coordinator = createPeerTcpTunnelRelayCoordinator({ io: io as unknown as Server, config: { mode: 'memory' } });
+        const request = {
+            accountId, machineId, expectedInstallationId: 'current-installation', tunnelKey: 'installation-tunnel', grantId: 'installation-grant',
+            grantExpiresAt: 61_000, nowMs: 1000, onMachineEnvelope: () => undefined, onMachineDisconnect: () => undefined,
+        };
+        const envelope = {
+            v: 1, scopeUserId: accountId, sender: { kind: 'user', socketId: 'viewer' }, recipient: { kind: 'machine', machineId },
+            frame: { v: 1, kind: 'close', tunnelId: 'installation-tunnel', halfClose: false, reasonCode: 'test' },
+        } as const satisfies PeerTcpTunnelRelayEnvelope;
+        try {
+            expect(await coordinator.admit(request)).toEqual({ status: 'rejected', reason: 'machine_unavailable' });
+            sockets.set(current.id, current);
+            expect(await coordinator.admit(request)).toEqual({ status: 'attached' });
+            expect(coordinator.routeOwnerEnvelope({ tunnelKey: request.tunnelKey, envelope })).toBe(true);
+            expect(deliveredSocketIds).toEqual([current.id]);
+        } finally {
+            await coordinator.close();
+        }
+    });
     it("retains an admitted machine attachment until the consumer releases it", async () => {
         vi.useFakeTimers();
         const machineSocket = {

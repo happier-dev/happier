@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import tweetnacl from 'tweetnacl';
 
 import {
@@ -9,6 +11,7 @@ import {
 } from '@happier-dev/protocol';
 import { createProviderBrokerMachineCarrierTunnelOpen } from './providerBrokerMachineCarrierTunnelOpen';
 import type { DaemonMachineIrohRuntime } from './daemonMachineIrohRuntime';
+import { PROVIDER_BROKER_PRIVATE_CLOSE_PATH } from '@/providers/broker/providerBrokerPrivateProtocol';
 
 const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
 const root = { keyId: 'home', publicKey: Buffer.from(key.publicKey).toString('base64url') };
@@ -116,7 +119,56 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
     expect(refreshBrokerOpen).toHaveBeenCalledOnce();
   });
 
-  it('retires the signed broker stream through the authenticated tunnel before native close', async () => {
+  it('withdraws the Team bearer listener while exact signed retirement is pending', async () => {
+    let finishRetirement!: () => void;
+    const retirement = new Promise<void>(resolve => { finishRetirement = resolve; });
+    let retirementStarted!: () => void;
+    const started = new Promise<void>(resolve => { retirementStarted = resolve; });
+    const listeners: Array<() => Promise<void>> = [];
+    const openHttpTunnel: DaemonMachineIrohRuntime['openHttpTunnel'] = async () => {
+      const localCapability = (listeners.length === 0 ? 'c' : 'd').repeat(64);
+      const server = createServer(async (request, response) => {
+        if (request.headers['x-happier-machine-local-capability'] !== localCapability) {
+          response.writeHead(403).end();
+          return;
+        }
+        if (request.method === 'DELETE') {
+          retirementStarted();
+          await retirement;
+          response.writeHead(204).end();
+        } else response.end('reachable');
+      });
+      server.listen(0, '127.0.0.1');
+      await once(server, 'listening');
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('listener unavailable');
+      let closing: Promise<void> | null = null;
+      const close = () => closing ??= new Promise<void>(resolve => { server.close(() => resolve()); });
+      listeners.push(close);
+      return { localPort: address.port, localCapability, remoteEndpointId: targetEndpoint, observedPath: 'relay', close };
+    };
+    const open = createProviderBrokerMachineCarrierTunnelOpen({ accountId: 'account-worker', localMachineId: 'machine-worker',
+      // Native HTTP is the genuine OS boundary; route signing, peer checks and
+      // retirement remain the canonical carrier implementation.
+      runtime: { endpoint: { endpointId: initiatorEndpoint }, openHttpTunnel } as never,
+      resolveTrustRoots: () => [root], nowMs: () => 200 });
+    const tunnel = await open({ brokerOpen: brokerOpen() });
+    const endpointUrl = `http://127.0.0.1:${tunnel.localPort}/v1`;
+    const headers = { authorization: `Bearer ${tunnel.localCapability}`, 'x-happier-machine-local-capability': tunnel.localCapability };
+    let retiring: Promise<void> | null = null;
+    try {
+      expect(await (await fetch(endpointUrl, { headers })).text()).toBe('reachable');
+      retiring = tunnel.retire();
+      await started;
+      await expect(fetch(endpointUrl, { headers })).rejects.toBeDefined();
+    } finally {
+      finishRetirement();
+      await retiring;
+      await Promise.all(listeners.map(close => close()));
+    }
+  });
+
+  it('retires the signed broker stream on an unpublished capability after withdrawing the consumer', async () => {
     const order: string[] = [];
     const close = vi.fn(async () => { order.push('transport-close'); });
     const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
@@ -126,14 +178,15 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
         redirect: 'error',
         headers: expect.objectContaining({
           authorization: expect.stringMatching(/^Bearer /),
-          'x-happier-machine-local-capability': 'c'.repeat(64),
+          'x-happier-machine-local-capability': 'd'.repeat(64),
         }),
       });
       return new Response(null, { status: 204 });
     });
+    let opened = 0;
     const openHttpTunnel = vi.fn<DaemonMachineIrohRuntime['openHttpTunnel']>(async () => ({
-      localPort: 41_001,
-      localCapability: 'c'.repeat(64),
+      localPort: 41_001 + opened,
+      localCapability: (opened++ === 0 ? 'c' : 'd').repeat(64),
       remoteEndpointId: targetEndpoint,
       observedPath: 'relay' as const,
       close,
@@ -153,8 +206,8 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
     await tunnel.close();
 
     expect(fetchImpl).toHaveBeenCalledOnce();
-    expect(close).toHaveBeenCalledOnce();
-    expect(order).toEqual(['retire-ack', 'transport-close']);
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe(`http://127.0.0.1:41002${PROVIDER_BROKER_PRIVATE_CLOSE_PATH}`);
+    expect(order).toEqual(['transport-close', 'retire-ack', 'transport-close']);
   });
 
   it('releases its own claim on the retained authority, without a fresh Home admission and after cancellation', async () => {
@@ -173,7 +226,7 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
       retireAttempt += 1;
       // The stream the DELETE travels over is dialled by the transport, which
       // runs the handshake provider for every accepted local connection.
-      const transport = openHttpTunnel.mock.calls[0]?.[0];
+      const transport = openHttpTunnel.mock.calls.at(-1)?.[0];
       await expect(transport?.handshakeProvider?.()).resolves.toEqual({
         v: 1,
         kind: 'provider_broker',
@@ -197,10 +250,12 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
     binding.abort();
 
     await expect(tunnel.retire()).rejects.toThrow();
-    // The transport was not discarded, so the retry reaches the exact target.
+    // The public transport stays withdrawn; a new private control channel
+    // retries only the same signed claim at the exact target.
     await expect(tunnel.retire()).resolves.toBeUndefined();
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(refreshBrokerOpen).not.toHaveBeenCalled();
+    await expect(openHttpTunnel.mock.calls[0]?.[0].handshakeProvider?.()).rejects.toMatchObject({ code: 'broker_consumer_closed' });
   });
 
   it('fails a new stream closed when Home returns a changed sealed binding', async () => {
@@ -222,6 +277,32 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
     });
     const transport = openHttpTunnel.mock.calls[0]?.[0];
     await expect(transport?.handshakeProvider?.()).rejects.toMatchObject({ code: 'broker_binding_changed' });
+  });
+
+  it('retries a failed private control close without repeating acknowledged retirement', async () => {
+    let opened = 0;
+    let controlClosed = false;
+    let closeFailed = false;
+    let releases = 0;
+    const openHttpTunnel: DaemonMachineIrohRuntime['openHttpTunnel'] = async () => {
+      const control = opened++ !== 0;
+      return { localPort: control ? 41002 : 41001, localCapability: (control ? 'd' : 'c').repeat(64),
+        remoteEndpointId: targetEndpoint, observedPath: 'relay', close: async () => {
+          if (!control) return;
+          if (!closeFailed) { closeFailed = true; throw new Error('native release failed'); }
+          controlClosed = true;
+        } };
+    };
+    const open = createProviderBrokerMachineCarrierTunnelOpen({ accountId: 'account-worker', localMachineId: 'machine-worker',
+      runtime: { endpoint: { endpointId: initiatorEndpoint }, openHttpTunnel } as never,
+      resolveTrustRoots: () => [root], nowMs: () => 200,
+      fetchImpl: async () => { releases++; return new Response(null, { status: 204 }); } });
+    const tunnel = await open({ brokerOpen: brokerOpen() });
+    await expect(tunnel.retire()).rejects.toThrow('native release failed');
+    await expect(tunnel.retire()).resolves.toBeUndefined();
+    expect(controlClosed).toBe(true);
+    expect(releases).toBe(1);
+    expect(opened).toBe(2);
   });
 
   it('requests Home again and rejects an expired witness before a later stream opens', async () => {
@@ -273,22 +354,29 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
     expect(openHttpTunnel).not.toHaveBeenCalled();
   });
 
-  it('closes a tunnel whose authenticated remote identity does not match the signed target', async () => {
+  it.each(['consumer', 'control'] as const)('closes a %s tunnel whose authenticated remote identity does not match the signed target', async (phase) => {
     const close = vi.fn(async () => undefined);
+    let opened = 0;
     const openHttpTunnel = vi.fn(async () => ({
       localPort: 41_002,
       localCapability: 'd'.repeat(64),
-      remoteEndpointId: 'c'.repeat(64),
+      remoteEndpointId: phase === 'control' && opened++ === 0 ? targetEndpoint : 'c'.repeat(64),
       observedPath: 'direct' as const,
       close,
     }));
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
     const open = createProviderBrokerMachineCarrierTunnelOpen({
       accountId: 'account-worker', localMachineId: 'machine-worker',
       runtime: { endpoint: { endpointId: initiatorEndpoint }, openHttpTunnel } as never,
       resolveTrustRoots: () => [root], nowMs: () => 200,
+      fetchImpl,
     });
-    await expect(open({ brokerOpen: brokerOpen() })).rejects.toMatchObject({ code: 'transport_identity_mismatch' });
-    expect(close).toHaveBeenCalledOnce();
+    if (phase === 'control') {
+      const tunnel = await open({ brokerOpen: brokerOpen() });
+      await expect(tunnel.retire()).rejects.toMatchObject({ code: 'transport_identity_mismatch' });
+    } else await expect(open({ brokerOpen: brokerOpen() })).rejects.toMatchObject({ code: 'transport_identity_mismatch' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(phase === 'control' ? 2 : 1);
   });
 
   it('rechecks signed authority currentness immediately before dialing', async () => {

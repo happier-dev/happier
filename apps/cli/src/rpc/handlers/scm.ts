@@ -82,21 +82,24 @@ import type {
 import type { ScmCommitUndoLastRequest, ScmCommitUndoLastResponse, ScmConflictAcceptSideRequest, ScmConflictMarkResolvedRequest } from '@happier-dev/protocol/scm';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import { ScmLogListRequestSchema } from '@happier-dev/protocol/scm';
+import { ScmHistoryEntriesRequestSchema, type ScmHistoryEntriesRequest, type ScmHistoryEntriesResponse } from '@happier-dev/protocol/scm/entriesHistoryV1';
 import type { ScmStatusSnapshotTransportResponse } from '@happier-dev/protocol/scm';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
-import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
+import type { RpcHandler, RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import {
     executeScmActionOperation,
 } from '@/scm/actions/executeScmActionOperation';
 import { resolveFilesystemAccessPolicy, type FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { ScmBackendRegistry } from '@/scm/registry';
+import type { ResolvedScmHostingProviderRegistry } from '@/scm/hostingProviders/registry';
+import type { ScmHostingRepositoryResolveAddressRequestV1, ScmHostingRepositoryResolveAddressResponseV1 } from '@happier-dev/protocol/scm/repositoryClone';
 import type { RpcActionExecutor } from './_actionDispatchAdapter';
 import { registerActionSpecRpcHandlers } from './registerActionSpecRpcHandlers';
 import { readStoredCredentials } from '@/persistence';
 
-const scmRpcOperationSignalStorage = new AsyncLocalStorage<AbortSignal>();
+const scmRpcOperationContextStorage = new AsyncLocalStorage<RpcHandlerContext>();
 
 export function registerScmHandlers(
     rpcHandlerManager: RpcHandlerRegistrar,
@@ -104,6 +107,7 @@ export function registerScmHandlers(
     deps?: Readonly<{
         accessPolicy?: FilesystemAccessPolicy;
         registry?: ScmBackendRegistry;
+        hostingProviderRegistry?: ResolvedScmHostingProviderRegistry;
         machineId?: string;
         actionExecutor?: RpcActionExecutor;
     }>,
@@ -116,8 +120,8 @@ export function registerScmHandlers(
             rpcHandlerManager.registerHandler(method, (request, context) => {
                 const operationContext = context ?? Object.freeze({ signal: new AbortController().signal });
                 return (
-                scmRpcOperationSignalStorage.run(
-                    operationContext.signal,
+                scmRpcOperationContextStorage.run(
+                    operationContext,
                     () => handler(request, operationContext),
                 )
                 );
@@ -128,10 +132,16 @@ export function registerScmHandlers(
         workingDirectory,
         accessPolicy: deps?.accessPolicy,
         registry: deps?.registry,
+        hostingProviderRegistry: deps?.hostingProviderRegistry,
         get signal(): AbortSignal | undefined {
-            return scmRpcOperationSignalStorage.getStore();
+            return scmRpcOperationContextStorage.getStore()?.signal;
         },
     } as const;
+    const authorizeWorkSession = async (sessionId: string): Promise<boolean> => {
+        const ingress = scmRpcOperationContextStorage.getStore();
+        return ingress?.signal.aborted === false && ingress.authorization?.kind === 'session.write'
+            && ingress.authorization.sessionId === sessionId;
+    };
     registerActionSpecRpcHandlers({
         rpcHandlerManager: scmRpcHandlerManager,
         actionIds: ['scm.diffSummary.capture', 'scm.diffSummary.generate',
@@ -144,6 +154,7 @@ export function registerScmHandlers(
             'scm.diffSummary.commitPlan.recover', 'scm.commit.resolveOutcome',
             'scm.diffSummary.reviewed.mark', 'scm.diffSummary.reviewed.unmark'],
         ...(deps?.machineId ? { targetMachineId: deps.machineId } : {}),
+        defaultMachineTarget: true,
         ...(deps?.actionExecutor ? { actionExecutor: deps.actionExecutor } : {}),
         resolveActionExecutor: async () => {
             const credentials = await readStoredCredentials().catch(() => null);
@@ -348,12 +359,25 @@ export function registerScmHandlers(
         },
     );
 
+    scmRpcHandlerManager.registerHandler<ScmHistoryEntriesRequest, ScmHistoryEntriesResponse>(
+        RPC_METHODS.SCM_HISTORY_ENTRIES,
+        async request => {
+            const parsed = ScmHistoryEntriesRequestSchema.safeParse(request);
+            if (!parsed.success) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST, error: 'Invalid SCM entry-history request' };
+            // This new wire operation has no predecessor reader. Preserve its closed
+            // result and typed witness errors rather than applying released-read projection.
+            return await executeScmActionOperation({ actionId: 'scm.history.entries', input: parsed.data,
+                ...routeBase }) as ScmHistoryEntriesResponse;
+        },
+    );
+
     scmRpcHandlerManager.registerHandler<ScmBranchListRequest, ScmBranchListResponse>(
         RPC_METHODS.SCM_BRANCH_LIST,
         async (request) => await executeScmActionOperation({
             actionId: 'scm.branch.list',
             input: request,
             ...routeBase,
+            authorizeSession: authorizeWorkSession,
             rpcCompatibility: true,
         }) as ScmBranchListResponse,
     );
@@ -595,6 +619,7 @@ export function registerScmHandlers(
             actionId: 'scm.pullRequest.list',
             input: request,
             ...routeBase,
+            authorizeSession: authorizeWorkSession,
             rpcCompatibility: true,
         }) as ScmPullRequestListResponse,
     );
@@ -605,6 +630,7 @@ export function registerScmHandlers(
             actionId: 'scm.pullRequest.get',
             input: request,
             ...routeBase,
+            authorizeSession: authorizeWorkSession,
             rpcCompatibility: true,
         }) as ScmPullRequestGetResponse,
     );
@@ -683,6 +709,13 @@ export function registerScmHandlers(
             rpcCompatibility: true,
             runMutation: runWithStatusSnapshotCacheInvalidation,
         }) as ScmRepositoryCloneOutput,
+    );
+
+    scmRpcHandlerManager.registerHandler<ScmHostingRepositoryResolveAddressRequestV1, ScmHostingRepositoryResolveAddressResponseV1>(
+        RPC_METHODS.SCM_HOSTING_REPOSITORY_RESOLVE_ADDRESS,
+        async (request) => await executeScmActionOperation({
+            actionId: 'scm.hostingRepository.resolveAddress', input: request, ...routeBase,
+        }) as ScmHostingRepositoryResolveAddressResponseV1,
     );
 
     scmRpcHandlerManager.registerHandler<ScmHostingRepositoryDescribePublishTargetsRequest, ScmHostingRepositoryDescribePublishTargetsResponse>(

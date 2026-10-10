@@ -34,6 +34,13 @@ and rejects an identity mismatch or equal-revision conflict instead of creating 
 authority. The server persists one outer `{ revision, contentKey }` continuity fact so an
 Iroh-to-HTTPS-only transition cannot regress across restart.
 
+Daemon startup also records this authenticated observation for a saved profile with
+no descriptor or only advisory authority. The canonical CLI profile owner supplies
+the exact binding before target-qualified operations are exposed, independent of
+how the credential was provisioned. A public fallback cannot establish that binding;
+older URL-only Homes retain standard networking while exact-target operations stay
+unavailable.
+
 In 0.3 development, the canonical server publisher
 `homeConnectionDescriptorPublication.ts#httpsEndpointFromIngress` publishes an explicit
 ingress as a `kind: 'https'` endpoint when it uses HTTPS or loopback HTTP. The Protocol

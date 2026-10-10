@@ -905,6 +905,11 @@ export class RpcHandlerManager {
         });
     }
 
+    /** Whether the existing relay has acknowledged this handler's registration. */
+    isHandlerRegistrationAcknowledged(method: string): boolean {
+        return this.acknowledgedRegistrationMethods.has(this.getPrefixedMethod(method));
+    }
+
     /**
      * Check if a handler is registered
      * @param method - The method name (without prefix)

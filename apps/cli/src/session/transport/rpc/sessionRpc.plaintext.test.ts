@@ -10,6 +10,7 @@ import { io } from 'socket.io-client';
 import axios from 'axios';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
+import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 
 let nextRpcAck: any = null;
@@ -200,6 +201,119 @@ describe('execution-run caller authority at the Socket.IO boundary', () => {
       && (authority === 'account_automation'
         ? 'authorityCeiling' in auth && auth.authorityCeiling === 'account_automation'
         : !('authorityCeiling' in auth)))).toBe(true);
+  });
+});
+
+describe('current-turn cancellation through the CLI Action owner', () => {
+  const sessionId = 'c000000000000000000000000';
+  const home = { serverId: 'cancel-home', serverHttpBaseUrl: 'https://cancel-home.test' };
+  const credentials = { token: 'account-token', encryption: null };
+  const currentness = { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 };
+  const session = { id: sessionId, seq: 0, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
+    encryptionMode: 'plain', metadata: '{}', metadataVersion: 0, dataEncryptionKey: null,
+    agentState: null, agentStateVersion: 0 };
+  const harness = () => createCliActionExecutorHarness({ token: credentials.token, credentials,
+    sessionId: 'construction-session', mode: 'plain', ctx: null, ...home });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    nextRpcAck = null;
+    nextSocket = null;
+    configureNextSocket = null;
+  });
+
+  it.each([
+    { authority: 'account_automation', surface: 'agent' },
+    { authority: 'present_user', surface: 'cli' },
+  ] as const)('cancels only the selected turn while retaining $authority at the real socket boundary', async ({ authority, surface }) => {
+    // Only Home HTTP and Socket.IO are replaced; resolution, admission and codecs stay real.
+    const http = vi.spyOn(axios, 'get').mockRejectedValue(new Error('Unexpected Home HTTP boundary'));
+    http.mockResolvedValueOnce({ status: 200, data: currentness })
+      .mockResolvedValueOnce({ status: 200, data: { session } });
+    nextRpcAck = { ok: true, result: { cancelled: true } };
+    const signal = new AbortController().signal;
+    expect(await harness().executor.execute('session.turn.cancel', { sessionId }, {
+      authority, surface, signal, ...(surface === 'agent' ? { defaultSessionId: sessionId } : {}),
+    }))
+      .toEqual({ ok: true, result: { cancelled: true } });
+    expect(http.mock.calls.map(([url]) => url)).toEqual([
+      `${home.serverHttpBaseUrl}/v1/account/encryption/currentness`,
+      `${home.serverHttpBaseUrl}/v2/sessions/${sessionId}`,
+    ]);
+    expect(http.mock.calls[0]?.[1]?.signal).toBe(signal);
+    expect(http.mock.calls[1]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+    expect(nextSocket?.emitted.filter(call => call.event === 'rpc-call').map(call => call.data))
+      .toEqual([expect.objectContaining({ method: `${sessionId}:abort`, params: { reason: expect.any(String) } })]);
+    expect(vi.mocked(io).mock.calls.at(-1)?.[0]).toBe(home.serverHttpBaseUrl);
+    expect(vi.mocked(io).mock.calls.at(-1)?.[1]?.auth).toMatchObject({ token: credentials.token,
+      ...(authority === 'account_automation' ? { authorityCeiling: 'account_automation' } : {}) });
+    if (authority === 'present_user') expect(vi.mocked(io).mock.calls.at(-1)?.[1]?.auth).not.toHaveProperty('authorityCeiling');
+  });
+
+  it('withdraws before RPC dispatch when cancellation occurs during Home resolution', async () => {
+    const controller = new AbortController();
+    const http = vi.spyOn(axios, 'get').mockImplementationOnce(async () => {
+      controller.abort();
+      return { status: 200, data: currentness };
+    });
+    expect(await harness().executor.execute('session.turn.cancel', { sessionId }, {
+      surface: 'agent', authority: 'account_automation', defaultSessionId: sessionId, signal: controller.signal,
+    })).toMatchObject({ ok: false });
+    expect(http.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+    expect(io).not.toHaveBeenCalled();
+  });
+
+  it('carries the admitted external cancellation proof to the exact abort payload', async () => {
+    const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
+    const target = { kind: 'session' as const, sessionId };
+    const authorization = { v: 1 as const, token: 'home-proof', binding: {
+      serverIdentityId: 'home', accountId: 'account', principalId: 'account',
+      credentialId: '11111111-1111-4111-8111-111111111111', machineId: 'machine',
+      actionId: 'session.turn.cancel', requestId: 'cancel-request', requestEnvelopeDigest: 'A'.repeat(43),
+      target, grant: API_TOKEN_FULL_GRANT_V1,
+    } };
+    const context: ActionExecutorContext = { authority: 'account_automation', surface: 'api',
+      externalActionTarget: target, externalActionExecutionAuthorization: authorization };
+    const http = vi.spyOn(axios, 'get').mockRejectedValue(new Error('Unexpected Home HTTP boundary'));
+    http.mockResolvedValueOnce({ status: 200, data: currentness })
+      .mockResolvedValueOnce({ status: 200, data: { session } });
+    nextRpcAck = { ok: true, result: { cancelled: true } };
+    const owner = createCliActionExecutorHarness({ token: credentials.token, credentials,
+      sessionId: 'construction-session', mode: 'plain', ctx: null, ...home, serverIdentityId: 'home',
+      externalActionMachineRequestPrivateKey: key.secretKey, externalActionMachineInstallationId: 'installation' });
+    expect(await owner.deps.sessionTurnCancel?.({ sessionId, serverId: home.serverId, context }))
+      .toEqual({ cancelled: true });
+    const payload = nextSocket?.emitted.find(call => call.event === 'rpc-call')?.data;
+    expect(payload).toMatchObject({ method: `${sessionId}:abort`, externalActionExecution: {
+      authorization, target, effectActionId: 'session.turn.cancel',
+    } });
+    const signed = { authorizationToken: authorization.token, effectActionId: 'session.turn.cancel', target,
+      installationId: 'installation', event: 'rpc-call', method: payload.method, requestId: payload.requestId,
+      params: payload.params, publicKey: key.publicKey, signature: payload.externalActionExecution.machineSignature };
+    expect(verifyExternalActionMachineRpcRequestV1(signed)).toBe(true);
+    expect(verifyExternalActionMachineRpcRequestV1({ ...signed, params: { reason: 'tampered' } })).toBe(false);
+    expect(http.mock.calls.every(([, config]) => config?.headers?.Authorization !== `Bearer ${credentials.token}`)).toBe(true);
+  });
+
+  it('refuses another Home and an unsigned external effect before reading or dispatching', async () => {
+    const http = vi.spyOn(axios, 'get').mockRejectedValue(new Error('Unexpected Home HTTP boundary'));
+    const cancel = harness().deps.sessionTurnCancel;
+    expect(cancel).toBeTypeOf('function');
+    expect(await cancel!({ sessionId, serverId: 'other-home', context: { authority: 'account_automation' } }))
+      .toMatchObject({ ok: false, errorCode: 'server_scope_mismatch' });
+    const target = { kind: 'session' as const, sessionId };
+    expect(await cancel!({ sessionId, serverId: home.serverId, context: {
+      authority: 'account_automation', surface: 'api', externalActionTarget: target,
+      externalActionExecutionAuthorization: { v: 1, token: 'home-proof', binding: {
+        serverIdentityId: 'home', accountId: 'account', principalId: 'account',
+        credentialId: '11111111-1111-4111-8111-111111111111', machineId: 'machine',
+        actionId: 'session.turn.cancel', requestId: 'cancel-request', requestEnvelopeDigest: 'A'.repeat(43),
+        target, grant: API_TOKEN_FULL_GRANT_V1,
+      } },
+    } })).toMatchObject({ ok: false, errorCode: 'not_authenticated' });
+    expect(http).not.toHaveBeenCalled();
+    expect(io).not.toHaveBeenCalled();
   });
 });
 

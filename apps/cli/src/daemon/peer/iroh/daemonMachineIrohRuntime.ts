@@ -138,6 +138,8 @@ export type UnavailableDaemonMachineIrohRuntime =
  */
 export async function createDaemonMachineIrohRuntime(input: Readonly<{
   happyHomeDir: string;
+  /** Finite Account clients have no persisted Machine transport identity. */
+  identity?: 'persistent_machine' | 'ephemeral';
   relayConfig: DaemonMachineIrohRelayConfig;
   native?: NodeIrohNativeModule;
   connectTcp?: typeof connectPeerTcpTunnelTcp;
@@ -156,7 +158,7 @@ export async function createDaemonMachineIrohRuntime(input: Readonly<{
   let created: Awaited<ReturnType<NodeIrohNativeModule['createEndpoint']>>;
   try {
     created = await native.createEndpoint({
-      keyPath: resolveCliIrohEndpointKeyPath(input.happyHomeDir),
+      ...(input.identity === 'ephemeral' ? {} : { keyPath: resolveCliIrohEndpointKeyPath(input.happyHomeDir) }),
       relayPolicy: input.relayConfig.relayPolicy,
       ...(input.relayConfig.relayUrls.length > 0 ? { relayUrls: input.relayConfig.relayUrls } : {}),
       capProfile: 'machineBulk',

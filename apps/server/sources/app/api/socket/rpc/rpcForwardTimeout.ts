@@ -1,11 +1,8 @@
 import { RPC_METHODS, SESSION_RPC_METHODS } from "@happier-dev/protocol/rpc";
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from "@happier-dev/protocol/actions";
-
-function parsePositiveIntOrDefault(value: string | undefined, fallback: number): number {
-    if (typeof value !== "string") return fallback;
-    const parsed = Number.parseInt(value, 10);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
+import { MANAGED_FINITE_WAKE_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
+import { readServerConfig, SERVER_CONFIG } from '@happier-dev/protocol';
+import { readStartupHomeEnv } from '@/app/home/settings/startupHomeEnv';
 
 function parsePositiveInt(value: unknown): number | null {
     if (typeof value === "number" && Number.isFinite(value) && value > 0) {
@@ -16,23 +13,20 @@ function parsePositiveInt(value: unknown): number | null {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-const RPC_FORWARD_TIMEOUT_MS = parsePositiveIntOrDefault(process.env.HAPPIER_RPC_FORWARD_TIMEOUT_MS, 30_000);
-const RPC_FORWARD_CAPABILITIES_TIMEOUT_MS = parsePositiveIntOrDefault(
-    process.env.HAPPIER_RPC_FORWARD_CAPABILITIES_TIMEOUT_MS,
-    120_000,
-);
-const RPC_FORWARD_MAX_TIMEOUT_MS = parsePositiveIntOrDefault(
-    process.env.HAPPIER_RPC_FORWARD_MAX_TIMEOUT_MS,
-    300_000,
-);
 // Socket.IO cluster acknowledgements require a finite timer. Use its maximum
 // supported delay for reads whose termination is owned by their caller and
 // lifecycle rather than the generic RPC request lifetime.
 const RPC_FORWARD_CALLER_LIFECYCLE_TIMEOUT_MS = 2_147_483_647;
 const RPC_FORWARD_CALLER_LIFECYCLE_METHODS = new Set<string>([
+    // Admission owns its outcome; a late refusal must still reach its caller.
+    'workflow.run.start',
     EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
+    MANAGED_FINITE_WAKE_RPC_METHOD,
+    RPC_METHODS.CAPABILITIES_INVOKE,
+    RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
     RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE,
     RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE,
+    RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_ADMISSION,
     SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_WATCH,
     SESSION_RPC_METHODS.SESSION_MANAGED_SERVICE_ENDPOINT_READ_NEXT_V1,
     SESSION_RPC_METHODS.EXECUTION_RUN_START,
@@ -55,28 +49,28 @@ export function isRpcForwardCallerLifecycleOwned(method: string): boolean {
     return RPC_FORWARD_CALLER_LIFECYCLE_METHODS.has(normalizedMethod);
 }
 
-function resolveRpcDefaultForwardTimeoutMs(method: string): number {
-    if (isRpcForwardCallerLifecycleOwned(method)) {
-        return RPC_FORWARD_CALLER_LIFECYCLE_TIMEOUT_MS;
-    }
-    return method.endsWith(":capabilities.invoke") || method.endsWith(":capabilities.detect") || method.endsWith(":capabilities.describe")
-        ? RPC_FORWARD_CAPABILITIES_TIMEOUT_MS
-        : RPC_FORWARD_TIMEOUT_MS;
-}
-
 export function resolveRpcForwardTimeoutMs(method: string, requestedTimeoutMs?: unknown): number {
     const parsedRequestedTimeoutMs = parsePositiveInt(requestedTimeoutMs);
-    // Waiting reads omit an acknowledgement deadline. Finite stream callers
-    // retain their explicit transport budget through the existing generic floor.
-    const isFiniteStreamRead = parsedRequestedTimeoutMs !== null
+    // Waiting reads and capability invocations can omit an acknowledgement deadline.
+    // Explicit finite budgets retain their configured floor and ceiling.
+    const preservesFiniteBudget = parsedRequestedTimeoutMs !== null
         && (method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ
-            || method.endsWith(`:${SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ}`));
-    const baseTimeoutMs = isFiniteStreamRead ? RPC_FORWARD_TIMEOUT_MS : resolveRpcDefaultForwardTimeoutMs(method);
+            || method.endsWith(`:${SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ}`)
+            || method === RPC_METHODS.CAPABILITIES_INVOKE
+            || method.endsWith(`:${RPC_METHODS.CAPABILITIES_INVOKE}`));
+    const env = readStartupHomeEnv()?.env ?? process.env;
+    const baseTimeoutMs = isRpcForwardCallerLifecycleOwned(method) && !preservesFiniteBudget
+        ? RPC_FORWARD_CALLER_LIFECYCLE_TIMEOUT_MS
+        : readServerConfig(env, method.endsWith(`:${RPC_METHODS.CAPABILITIES_INVOKE}`)
+            || method.endsWith(`:${RPC_METHODS.CAPABILITIES_DETECT}`)
+            || method.endsWith(`:${RPC_METHODS.CAPABILITIES_DESCRIBE}`)
+            ? SERVER_CONFIG.HAPPIER_RPC_FORWARD_CAPABILITIES_TIMEOUT_MS
+            : SERVER_CONFIG.HAPPIER_RPC_FORWARD_TIMEOUT_MS);
     if (parsedRequestedTimeoutMs === null) {
         return baseTimeoutMs;
     }
     if (baseTimeoutMs === RPC_FORWARD_CALLER_LIFECYCLE_TIMEOUT_MS) {
         return baseTimeoutMs;
     }
-    return Math.min(RPC_FORWARD_MAX_TIMEOUT_MS, Math.max(baseTimeoutMs, parsedRequestedTimeoutMs));
+    return Math.min(readServerConfig(env, SERVER_CONFIG.HAPPIER_RPC_FORWARD_MAX_TIMEOUT_MS), Math.max(baseTimeoutMs, parsedRequestedTimeoutMs));
 }

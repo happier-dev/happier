@@ -32,6 +32,7 @@ type AttachRequest = Readonly<{
     tunnelKey: string;
     machineId: string;
     machineSocketId: string;
+    expectedInstallationId?: string;
 }>;
 
 type AttachResponse =
@@ -107,6 +108,7 @@ export type PeerTcpTunnelRelayCoordinator = Readonly<{
         grantId: string;
         grantExpiresAt: number;
         machineId: string;
+        expectedInstallationId?: string;
         nowMs: number;
         onMachineEnvelope(envelope: PeerTcpTunnelRelayEnvelope, machineSocketId: string): void | Promise<void>;
         onMachineDisconnect(): void | Promise<void>;
@@ -145,6 +147,7 @@ function isExactMachineSocket(socket: Socket, request: AttachRequest): boolean {
         && socket.data.userId === request.accountId
         && socket.data.clientType === "machine-scoped"
         && socket.data.machineId === request.machineId
+        && (request.expectedInstallationId === undefined || socket.data.verifiedMachineInstallationId === request.expectedInstallationId)
         && socket.rooms.has(machineRoom(request.accountId, request.machineId));
 }
 
@@ -194,6 +197,7 @@ export function createPeerTcpTunnelRelayCoordinator(input: Readonly<{
         const tunnelKey = readBoundedString(record.tunnelKey);
         const machineId = readBoundedString(record.machineId);
         const machineSocketId = readBoundedString(record.machineSocketId);
+        const expectedInstallationId = record.expectedInstallationId === undefined ? undefined : readBoundedString(record.expectedInstallationId);
         if (
             !attachmentId
             || !requestOwnerRouteId
@@ -201,6 +205,7 @@ export function createPeerTcpTunnelRelayCoordinator(input: Readonly<{
             || !tunnelKey
             || !machineId
             || !machineSocketId
+            || expectedInstallationId === null
         ) {
             return null;
         }
@@ -211,6 +216,7 @@ export function createPeerTcpTunnelRelayCoordinator(input: Readonly<{
             tunnelKey,
             machineId,
             machineSocketId,
+            ...(expectedInstallationId !== undefined ? { expectedInstallationId } : {}),
         };
     }
 
@@ -619,7 +625,8 @@ export function createPeerTcpTunnelRelayCoordinator(input: Readonly<{
                 socket.connected === true
                 && socket.data.userId === params.accountId
                 && socket.data.clientType === "machine-scoped"
-                && socket.data.machineId === params.machineId,
+                && socket.data.machineId === params.machineId
+                && (params.expectedInstallationId === undefined || socket.data.verifiedMachineInstallationId === params.expectedInstallationId),
             );
             if (localExactSockets.length > 1) {
                 return { status: "rejected", reason: "machine_unavailable" } as const;
@@ -653,7 +660,8 @@ export function createPeerTcpTunnelRelayCoordinator(input: Readonly<{
                         exactSockets = sockets.filter((socket) =>
                             socket.data.userId === params.accountId
                             && socket.data.clientType === "machine-scoped"
-                            && socket.data.machineId === params.machineId,
+                            && socket.data.machineId === params.machineId
+                            && (params.expectedInstallationId === undefined || socket.data.verifiedMachineInstallationId === params.expectedInstallationId),
                         );
                     } catch {
                         exactSockets = [];
@@ -692,6 +700,7 @@ export function createPeerTcpTunnelRelayCoordinator(input: Readonly<{
                 tunnelKey: params.tunnelKey,
                 machineId: params.machineId,
                 machineSocketId: exactMachineSocketId,
+                ...(params.expectedInstallationId !== undefined ? { expectedInstallationId: params.expectedInstallationId } : {}),
             });
             if (attached.status !== "attached") {
                 detachOwnerAttachment(params.tunnelKey, attachmentId);

@@ -5,6 +5,7 @@ import {
   parseExternalActionDaemonDispatchResultV1,
   type ExternalActionDaemonDispatchRequest,
   type ExternalActionDaemonDispatchRequestV1,
+  createActionExecutor,
 } from '@happier-dev/protocol';
 import tweetnacl from 'tweetnacl';
 import {
@@ -12,6 +13,8 @@ import {
   isSocketRpcActionApiServerOriginAuthorizationContext,
 } from '@happier-dev/protocol/rpc';
 import { describe, expect, it, vi } from 'vitest';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 
 import type { RpcHandler, RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 
@@ -29,6 +32,10 @@ const SESSION_SPAWN_PENDING_RESULT = {
   outcome: 'accepted',
 } as const;
 const installationIdentity = tweetnacl.sign.keyPair();
+const currentInstallationBoundary = {
+  resolveInstallationId: () => 'installation-1',
+  verifyExecutionAuthorization: async () => true,
+};
 
 function authorizedDispatch<T extends ExternalActionDaemonDispatchRequest>(request: T): T & {
   executionAuthorization: NonNullable<ExternalActionDaemonDispatchRequest['executionAuthorization']>;
@@ -45,6 +52,8 @@ function authorizedDispatch<T extends ExternalActionDaemonDispatchRequest>(reque
         credentialId: request.principal.credentialId,
         grant: request.principal.grant,
         machineId: request.placement.machineId,
+        custodianAccountId: request.principal.accountId,
+        installationId: 'installation-1',
         actionId: request.actionId,
         requestId: request.envelope.requestId ?? 'server-generated-request-id',
         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
@@ -73,6 +82,73 @@ function expectPreparedRelayResponse(raw: unknown, response: unknown): void {
 }
 
 describe('registerExternalActionRpcHandler', () => {
+  it('refuses a replaced installation during the final awaited Home check', async () => {
+    const { handlers, registrar } = registerHandlerForTest();
+    const sessionSpawnNew = vi.fn(async () => SESSION_SPAWN_PENDING_RESULT);
+    let installationId = 'installation-1';
+    registerExternalActionRpcHandler(registrar, {
+      machineId: 'machine-1', currentServerId: 'home-profile',
+      resolveAccountId: async () => 'account-1', resolveInstallationId: () => installationId,
+      resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'daemon-token' } }),
+      executor: createActionExecutor({ ...createUnavailableActionTransportDeps(), sessionSpawnNew }),
+      externalActionMachineRequestPrivateKey: installationIdentity.secretKey,
+      // Home verification is the network boundary. Installation replacement
+      // while it is awaited must still prevent the reached host effect.
+      verifyExecutionAuthorization: async () => { installationId = 'replacement'; return true; },
+    });
+    const request = authorizedDispatch({
+      actionId: 'session.spawn_new', envelope: { v: 1, requestId: 'installation-replaced',
+        target: { kind: 'machine', machineId: 'machine-1' },
+        input: { creationKey: 'own-start', agentTarget: { kind: 'agent',
+          identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, directory: { kind: 'managed' } } },
+      principal: { accountId: 'account-1', principalId: 'principal-1', credentialId: 'credential-1',
+        grant: API_TOKEN_FULL_GRANT_V1, authority: 'account_automation' },
+      placement: { machineId: 'machine-1', target: { kind: 'machine', machineId: 'machine-1' } },
+    });
+    const result = await handlers.get(EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1)?.(request, {
+      authorization: ACTION_API_SERVER_ORIGIN, signal: new AbortController().signal,
+    });
+    expectPreparedRelayResponse(result, { v: 1, actionId: 'session.spawn_new', requestId: 'installation-replaced',
+      execution: { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' } });
+    expect(sessionSpawnNew).not.toHaveBeenCalled();
+  });
+
+  it('keeps Bob as actor while admitting Alice exact installation through the current Home proof', async () => {
+    const { handlers, registrar } = registerHandlerForTest();
+    const sessionSpawnNew = vi.fn(async () => SESSION_SPAWN_PENDING_RESULT);
+    registerExternalActionRpcHandler(registrar, {
+      machineId: 'machine-1', currentServerId: 'home-profile',
+      resolveAccountId: async () => 'alice', resolveInstallationId: () => 'alice-installation',
+      resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'alice-daemon-token' } }),
+      executor: createActionExecutor({ ...createUnavailableActionTransportDeps(), sessionSpawnNew }),
+      externalActionMachineRequestPrivateKey: installationIdentity.secretKey,
+      verifyExecutionAuthorization: async () => true,
+    });
+    const request = authorizedDispatch({
+      actionId: 'session.spawn_new', envelope: { v: 1, requestId: 'bob-start',
+        target: { kind: 'machine', machineId: 'machine-1' },
+        input: { creationKey: 'shared-start', agentTarget: { kind: 'agent',
+          identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, directory: { kind: 'managed' } } },
+      principal: { accountId: 'bob', principalId: 'bob', credentialId: 'bob-pat',
+        grant: API_TOKEN_FULL_GRANT_V1, authority: 'account_automation' },
+      placement: { machineId: 'machine-1', target: { kind: 'machine', machineId: 'machine-1' } },
+    });
+    const dispatch = { ...request, executionAuthorization: { ...request.executionAuthorization,
+      binding: { ...request.executionAuthorization.binding, custodianAccountId: 'alice', installationId: 'alice-installation' } } };
+    const result = await handlers.get(EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1)?.(dispatch, {
+      authorization: ACTION_API_SERVER_ORIGIN, signal: new AbortController().signal,
+    });
+    expectPreparedRelayResponse(result, { v: 1, actionId: 'session.spawn_new', requestId: 'bob-start',
+      execution: { ok: true, result: SESSION_SPAWN_PENDING_RESULT } });
+    expect(sessionSpawnNew).toHaveBeenCalledTimes(1);
+    const wrongInstallation = { ...dispatch, executionAuthorization: { ...dispatch.executionAuthorization,
+      binding: { ...dispatch.executionAuthorization.binding, installationId: 'replacement' } } };
+    await handlers.get(EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1)?.(wrongInstallation, {
+      authorization: ACTION_API_SERVER_ORIGIN, signal: new AbortController().signal,
+    });
+    expect(sessionSpawnNew).toHaveBeenCalledTimes(1);
+  });
+
   it('admits only the server-stamped exact-machine dispatch into the canonical ingress', async () => {
     const { handlers, registrar } = registerHandlerForTest();
     const resolveTarget = vi.fn<ResolveExternalActionTarget>(async () => (
@@ -86,6 +162,7 @@ describe('registerExternalActionRpcHandler', () => {
       machineId: 'machine-1',
       currentServerId: 'server-reserved-rpc',
       resolveAccountId: async () => 'account-1',
+      ...currentInstallationBoundary,
       resolveTarget,
       executor,
       externalActionMachineRequestPrivateKey: installationIdentity.secretKey,
@@ -147,6 +224,7 @@ describe('registerExternalActionRpcHandler', () => {
       machineId: 'machine-1',
       currentServerId: 'server-reserved-rpc',
       resolveAccountId: async () => 'account-1',
+      ...currentInstallationBoundary,
       resolveTarget,
       executor: { execute },
       externalActionMachineRequestPrivateKey: installationIdentity.secretKey,
@@ -215,6 +293,7 @@ describe('registerExternalActionRpcHandler', () => {
       machineId: 'machine-1',
       currentServerId: 'server-reserved-rpc',
       resolveAccountId: async () => 'account-1',
+      ...currentInstallationBoundary,
       resolveTarget: async () => ({ kind: 'machine', machineId: 'machine-1' }),
       executor,
       externalActionMachineRequestPrivateKey: installationIdentity.secretKey,
@@ -256,6 +335,7 @@ describe('registerExternalActionRpcHandler', () => {
       machineId: 'machine-1',
       currentServerId: 'server-reserved-rpc',
       resolveAccountId: async () => 'account-1',
+      ...currentInstallationBoundary,
       resolveTarget,
       executor,
       externalActionMachineRequestPrivateKey: installationIdentity.secretKey,
@@ -292,6 +372,7 @@ describe('registerExternalActionRpcHandler', () => {
       machineId: 'machine-1',
       currentServerId: 'server-reserved-rpc',
       resolveAccountId: async () => 'account-1',
+      ...currentInstallationBoundary,
       resolveTarget: async () => ({ kind: 'machine', machineId: 'machine-1' }),
       executor: { execute },
       externalActionMachineRequestPrivateKey: installationIdentity.secretKey,

@@ -92,6 +92,7 @@ export type MintDirectRouteGrantV1Input = Readonly<{
 }>;
 
 export type MintDirectRouteGrantV2Input = Omit<MintDirectRouteGrantV1Input, "scope" | "ttlMs"> & Readonly<{
+    callerAuthority?: "present_user" | "account_automation";
     scope: DirectRouteGrantScopeV2;
     ttlMs: number | null;
     /** Required for `iroh_peer` grants: the signed machine/1 initiator/target relationship. */
@@ -365,6 +366,7 @@ export function mintDirectRouteGrantV2(input: MintDirectRouteGrantV2Input): Mint
         flowKind: input.flowKind,
         routeKind: input.routeKind,
         scope: validated.scope,
+        ...(input.callerAuthority ? { callerAuthority: input.callerAuthority } : {}),
         iat: input.nowMs,
         exp: validated.grantExpiresAt,
         aud: "happier-daemon-route-grant",

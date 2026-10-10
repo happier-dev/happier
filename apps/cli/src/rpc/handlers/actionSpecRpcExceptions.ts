@@ -39,7 +39,6 @@ const SCM_HOSTING_RETIREMENT =
     'Retire when SCM hosting-provider write flows land and register this ActionSpec RPC method through the generic registrar.';
 
 const A12_VOICE_TARGETED_STATUS_METHODS = Object.freeze([
-    RPC_METHODS.DAEMON_MEMORY_STATUS,
     RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS,
     RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_LIST,
     RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_STATUS,
@@ -101,6 +100,16 @@ const A12_VOICE_TRANSPORT_EXCEPTIONS = A12_VOICE_TRANSPORT_METHODS.map((method) 
 } satisfies ActionSpecRpcException));
 
 export const ACTION_SPEC_RPC_EXCEPTIONS = Object.freeze([
+    ...([
+        [RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET, 'search.settings.get'],
+        [RPC_METHODS.DAEMON_MEMORY_SETTINGS_SET, 'search.settings.set'],
+        [RPC_METHODS.DAEMON_MEMORY_STATUS, 'memory.status'],
+        [RPC_METHODS.DAEMON_MEMORY_CLEAR_INDEX, 'memory.clear_index'],
+    ] as const).map(([method, actionId]) => ({
+        method, actionId, reason: 'custom_context_extraction', ownerPacket: 'find-search-prompts-X5-C',
+        rationale: 'The daemon-local memory owner receives the Machine from the authenticated RPC target; its request omits the Action machineId, and settings.set receives the settings document directly.',
+        permanence: 'Retain the machine-local transport ABI while the canonical Action executor supplies machineId, authority and approval.',
+    } satisfies ActionSpecRpcException)),
     {
         method: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2,
         actionId: 'execution.run.stream.start',

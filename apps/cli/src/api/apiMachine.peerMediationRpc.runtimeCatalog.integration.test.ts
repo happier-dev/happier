@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import type { Machine } from '@/api/types';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { createRequesterMachineSessionAccessLossCleanup } from '@/daemon/sessions/requesterMachineAccessLoss';
+import { createStopSession } from '@/daemon/sessions/stopSession';
+import type { TrackedSession } from '@/daemon/types';
 
 import { ApiMachineClient } from './apiMachine';
 
@@ -39,6 +44,27 @@ async function settleWithin<T>(promise: Promise<T>, timeoutMs: number): Promise<
 }
 
 describe('ApiMachineClient peer mediation RPC invoker', () => {
+    it('registers installation access-loss custody without giving peer callers registration authority', async () => {
+        const client = new ApiMachineClient('token', createMachine());
+        const tracked = new Map<number, TrackedSession>();
+        try {
+            client.registerMachineAccessLossReceiver({
+                resolveInstallationId: () => 'installation_1',
+                cleanupRequesterMachineSessions: createRequesterMachineSessionAccessLossCleanup({
+                    serverId: 'home', machineId: 'machine_1', pidToTrackedSession: tracked,
+                    stopSession: createStopSession({ pidToTrackedSession: tracked }),
+                }),
+            });
+            const peerInvoker = client.getPeerMediationMachineRpcHandlerManager();
+            expect('registerHandler' in peerInvoker).toBe(false);
+            await expect(peerInvoker.invokeLocal(RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS, {
+                v: 1, subjectAccountId: 'requester',
+            })).resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+        } finally {
+            await client.shutdown();
+        }
+    });
+
     it('forwards a direct peer request lifetime to its registered local handler', async () => {
         const client = new ApiMachineClient('token', createMachine());
         const handlerStarted = createDeferred<void>();

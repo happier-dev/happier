@@ -16,6 +16,8 @@ import { SessionInputRequestSchema, SessionMessageProvenanceSchema } from '@happ
 import { SessionUserMessageSendRequestSchema } from '@happier-dev/protocol/sessions/userMessageRpc';
 import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
 import { SessionReportsToV1Schema } from '@happier-dev/protocol/sessions/relations/sessionReportsToV1';
+import { SessionIdentityAdditionsV1Schema } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
+import { SessionPromptStackV1Schema } from '@happier-dev/protocol/sessions/context/sessionContextV1';
 import { SessionRolesV1Schema } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import { SessionInitialGoalRequestV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 import { SessionIdSchema, ExecutionRunIdSchema } from '@happier-dev/protocol/sessions/idsV1';
@@ -84,6 +86,12 @@ export type SpawnDaemonSessionRequest = Omit<
   | 'providerBindingMetadataV1'
   | 'creationAuthorization'
   | 'callerInputConstraints'
+  | 'requesterWorkAttributionV1'
+  | 'verifyRequesterMachineAdmissionCurrent'
+  | 'beforeSessionRunnerLaunch'
+  | 'requesterSessionCredentialFile'
+  | 'requesterSessionBootstrap'
+  | 'requesterSessionRuntimeContext'
 > & {
   /** Private machine transport discriminator retained for lifecycle routing. */
   type?: 'spawn-in-directory' | 'resume-session';
@@ -191,6 +199,9 @@ const SpawnDaemonSessionRequestCompatSchema = z.preprocess(canonicalizeSpawnDaem
   sessionCreationCorrespondence: SessionCreationCorrespondenceV1Schema.optional(),
   placementOrigin: MachinePoolSelectionOriginV1Schema.optional(),
   initialTitle: z.string().trim().min(1).optional(),
+  identity: asHostProtocolZod(SessionIdentityAdditionsV1Schema).optional(),
+  memoryEnabled: z.boolean().optional(),
+  promptStack: asHostProtocolZod(SessionPromptStackV1Schema).optional(),
   initialAccess: SessionInitialAccessDraftV1Schema.optional(),
   initialTriggers: z.array(asHostProtocolZod(SessionInitialTriggerAdmissionV1Schema)).optional(),
   reportsTo: SessionReportsToV1Schema.optional(),
@@ -226,6 +237,7 @@ const SpawnDaemonSessionRequestCompatSchema = z.preprocess(canonicalizeSpawnDaem
   attachMetadataIdentityPolicy: SessionAttachMetadataIdentityPolicySchema.optional(),
   /** Agent-issued and opaque: admitted for presence, carried byte for byte. */
   resume: NonBlankOpaqueIdentifierSchema.optional(),
+  handoffStateTransfer: z.enum(['transfer', 'existing']).optional(),
   nativeForkSource: NativeForkSourceSchema.optional(),
   agentSessionStartupInstructionsV1:
     AgentSessionStartupInstructionsV1Schema.optional(),
@@ -258,6 +270,11 @@ const SpawnDaemonSessionRequestCompatSchema = z.preprocess(canonicalizeSpawnDaem
 
 export const SpawnDaemonSessionRequestSchema = SpawnDaemonSessionRequestCompatSchema.transform((request, ctx) => {
   refineSessionCreateOriginFieldsV1(request, ctx);
+  if ((request.identity !== undefined || request.memoryEnabled !== undefined || request.promptStack !== undefined)
+    && (request.existingSessionId || request.type === 'resume-session')) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['identity'], message: 'Initial identity, memory choice and context require fresh Session creation' });
+    return z.NEVER;
+  }
   if (request.initialGoal && !request.existingSessionId && request.type !== 'resume-session') {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -402,14 +419,20 @@ const SPAWN_SESSION_OPTION_KEYS = [
   'sessionCreationCorrespondence',
   'placementOrigin',
   'initialTitle',
+  'identity',
+  'memoryEnabled',
+  'promptStack',
   'initialAccess',
+  'initialTriggers',
   'reportsTo',
+  'initialSessionRolesV1',
   'primaryTeamId',
   'teamCredentialBindings',
   'pendingFirstInput',
   'accountSettingsVersionHint',
   'sessionId',
   'resume',
+  'handoffStateTransfer',
   'nativeForkSource',
   'agentSessionStartupInstructionsV1',
   'runtimeDescriptorV1',

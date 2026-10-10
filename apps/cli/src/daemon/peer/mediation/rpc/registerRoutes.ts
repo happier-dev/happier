@@ -4,6 +4,7 @@ import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/med
 import { createPeerMachineRpcResultHashV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/commandReceiptV1';
 import type { PeerMachineRpcCommandReceiptSuccessV1, PeerMachineRpcDirectResponseV2 } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { DaemonPeerMediationDirectFlowObserver } from '../observability/events';
 import type { DirectRouteGrantTrustRoot } from '../verifyDirectRouteGrant';
@@ -29,7 +30,7 @@ export type PeerMachineRpcDirectHandlerManager = Readonly<{
     invokeLocal(
         method: string,
         params: unknown,
-        options?: Readonly<{ signal?: AbortSignal }>,
+        options?: Readonly<{ signal?: AbortSignal; verifiedPeerAuthority?: 'present_user' | 'account_automation' }>,
     ): Promise<unknown>;
 }>;
 
@@ -192,7 +193,8 @@ export function registerPeerMediationMachineRpcDirectRoutes(
                 result = await options.rpcHandlerManager.invokeLocal(
                     validation.request.method,
                     validation.request.params,
-                    { signal },
+                    { signal, ...(validation.request.method === RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE
+                        ? { verifiedPeerAuthority: validation.grant.callerAuthority ?? 'account_automation' } : {}) },
                 );
             } catch (error) {
                 observe({

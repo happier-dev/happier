@@ -25,6 +25,7 @@ describe("mintDirectRouteGrantV1", () => {
         const ephemeralKeyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(8));
         const minted = mintDirectRouteGrantV2({
             accountId: "account_1",
+            callerAuthority: "present_user",
             machineId: "machine_1",
             flowKind: "machine_rpc",
             routeKind: "loopback_direct",
@@ -48,6 +49,7 @@ describe("mintDirectRouteGrantV1", () => {
             grant: {
                 payload: {
                     v: 2,
+                    callerAuthority: "present_user",
                     proofKind: "ephemeral_ed25519",
                     ephemeralPublicKeyBase64Url: toBase64Url(ephemeralKeyPair.publicKey),
                 },

@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { CallerInputConstraintsV1Schema } from '@happier-dev/protocol/auth/callerInputConstraintsV1';
+import { isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { WorkspaceSyncSourceContextV1Schema } from '@happier-dev/protocol/socketRpc';
 
 import {
     buildActionExecutorContextForRpc,
@@ -7,6 +10,22 @@ import {
 } from './_actionDispatchAdapter';
 
 describe('RPC action dispatch adapter', () => {
+    it('retains the admitted caller permission constraints when building physical SOURCE authority', () => {
+        const models = [{ agentTargetKey: 'agent:codex', providerConnectionId: null, modelId: 'admitted-model' }];
+        const callerInputConstraints = CallerInputConstraintsV1Schema.parse({ models, permissionModes: ['read-only'] });
+        const machineAdmission = { actorAccountId: 'shared-actor', custodianAccountId: 'owner', machineId: 'child',
+            installationId: 'child-installation', role: 'use' as const, encryptionMode: 'plain' as const };
+        const admitted = { callerAuthority: 'account_automation' as const, machineAdmission, callerInputConstraints };
+        const context = buildActionExecutorContextForRpc(admitted);
+        const sourceContext = WorkspaceSyncSourceContextV1Schema.parse({ machineAdmission: context.machineAdmission,
+            callerAuthority: context.authority, callerInputConstraints: context.callerInputConstraints });
+        const inheritedConstraints = sourceContext.callerInputConstraints ?? { models: null, permissionModes: null };
+        expect(isPermissionModeGrantedV1(inheritedConstraints, 'acceptEdits')).toBe(false);
+        expect(isPermissionModeGrantedV1(inheritedConstraints, 'read-only')).toBe(true);
+        expect(sourceContext.machineAdmission.actorAccountId).toBe('shared-actor');
+        expect(sourceContext.callerInputConstraints?.models).toEqual(models);
+    });
+
     it('uses verified forwarded authority and refuses an unstamped forwarded caller', () => {
         expect(buildActionExecutorContextForRpc({ callerAuthority: 'present_user' }))
             .toMatchObject({ authority: 'present_user' });

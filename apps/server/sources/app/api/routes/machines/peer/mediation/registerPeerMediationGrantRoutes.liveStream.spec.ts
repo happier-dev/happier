@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import tweetnacl from "tweetnacl";
 
 import { FEATURE_ENV_KEYS } from "@/app/features/catalog/featureEnvSchema";
@@ -9,10 +9,32 @@ import {
     type MachineLiveStreamWireFrameV1 as MachineLiveStreamFrameV1,
 } from "@happier-dev/protocol";
 import { machineLiveStreamRelayHandler } from "../../../../socket/machineLiveStreamRelayHandler";
-import { createFakeSocket, getSocketHandler } from "../../../../testkit/socketHarness";
+import { createFakeSocket as createSocketFixture, getSocketHandler } from "../../../../testkit/socketHarness";
+import { TEST_MACHINE_INSTALLATION_ID } from "../../../../testkit/machineAdmissionPersistenceBoundary";
 import { createRouteTestBuilder } from "../../../../testkit/routeTestBuilder";
 
 import { registerPeerMediationGrantRoutes } from "./registerPeerMediationGrantRoutes";
+
+const machineAvailabilityFixture = vi.hoisted(() => ({
+    custodianAccountId: 'account_1',
+    read: async (_machineId: string): Promise<'available' | 'revoked' | 'replaced' | 'missing'> => 'available',
+}));
+vi.mock('@/storage/db', async () => {
+    const { createMachineAdmissionPersistenceBoundary } = await import('../../../../testkit/machineAdmissionPersistenceBoundary');
+    const boundary = createMachineAdmissionPersistenceBoundary(() => machineAvailabilityFixture.custodianAccountId);
+    boundary.setAvailabilityReader((machineId) => machineAvailabilityFixture.read(machineId));
+    return { db: boundary.db };
+});
+beforeEach(() => {
+    machineAvailabilityFixture.read = async () => 'available';
+    machineAvailabilityFixture.custodianAccountId = 'account_1';
+});
+
+function createFakeSocket(...args: Parameters<typeof createSocketFixture>) {
+    const socket = createSocketFixture(...args);
+    if (socket.data?.clientType === 'machine-scoped') socket.data.verifiedMachineInstallationId ??= TEST_MACHINE_INSTALLATION_ID;
+    return socket;
+}
 
 function toBase64Url(bytes: Uint8Array): string {
     return Buffer.from(bytes).toString("base64url");
@@ -31,12 +53,13 @@ const liveStreamRelayCaps = {
 
 function createRelayRoute(
     keyPair: ReturnType<typeof tweetnacl.sign.keyPair>,
-    readMachineOwnershipState: (params: Readonly<{ accountId: string; machineId: string }>) => Promise<
+    readPersistedAvailability: (params: Readonly<{ accountId: string; machineId: string }>) => Promise<
         "available" | "revoked" | "replaced" | "missing"
     > = async () => "available",
     verifyViewerSocketOwnership?: (params: Readonly<{ accountId: string; socketId: string }>) => boolean | Promise<boolean>,
     envOverrides: NodeJS.ProcessEnv = {},
 ) {
+    machineAvailabilityFixture.read = (machineId) => readPersistedAvailability({ accountId: 'account_1', machineId });
     return createRouteTestBuilder({
         method: "POST",
         path: "/v1/machines/peer/mediation/route-grants",
@@ -76,7 +99,6 @@ function createRelayRoute(
                 ...envOverrides,
             },
             nowMs: () => 1_000,
-            readMachineOwnershipState,
             verifyViewerSocketOwnership,
         }),
     });
@@ -248,6 +270,7 @@ describe("live-stream peer mediation grant route", () => {
     });
 
     it("mints a viewer-bound grant the relay delivers to the exact tab via io.to(viewerSocketId) (C1)", async () => {
+        machineAvailabilityFixture.custodianAccountId = 'account_view';
         // Distinct account / machine / stream ids so this stream does not collide with the
         // module-level relay state another test in this file leaves behind (per-machine cap).
         const keyPair = tweetnacl.sign.keyPair();
@@ -407,7 +430,7 @@ describe("live-stream peer mediation grant route", () => {
 
         expect(response).toMatchObject({
             ok: false,
-            reasonCode: "machine_not_owned",
+            reasonCode: "access_denied",
             receipt: "peer.route_grant.rejected",
         });
     });
@@ -422,25 +445,15 @@ describe("live-stream peer mediation grant route", () => {
 
         expect(response).toMatchObject({
             ok: false,
-            reasonCode: "machine_not_owned",
+            reasonCode: "access_denied",
             receipt: "peer.route_grant.rejected",
         });
     });
 
-    it("checks ownership of both source and target against the authenticated account (C2)", async () => {
-        const keyPair = tweetnacl.sign.keyPair();
-        const seen: Array<{ accountId: string; machineId: string }> = [];
-        const route = createRelayRoute(keyPair, async (params) => {
-            seen.push(params);
-            return "available";
+    it("does not mint another Account's available source and target", async () => {
+        const route = createRelayRoute(tweetnacl.sign.keyPair());
+        expect((await route.invoke({ userId: 'account_2' })).response).toMatchObject({
+            ok: false, reasonCode: 'access_denied',
         });
-
-        await route.invoke({ userId: "account_1" });
-
-        expect(seen).toEqual(expect.arrayContaining([
-            { accountId: "account_1", machineId: "machine-source" },
-            { accountId: "account_1", machineId: "machine-target" },
-        ]));
-        expect(seen.every((entry) => entry.accountId === "account_1")).toBe(true);
     });
 });

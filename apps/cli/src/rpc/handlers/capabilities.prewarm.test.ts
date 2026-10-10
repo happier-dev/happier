@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { CapabilitiesDescribeResponse } from '@happier-dev/protocol';
+import { CHECKLIST_IDS } from '@happier-dev/protocol/checklists';
+import type { CapabilitiesDetectResponse } from '@/capabilities/types';
 
 import { reloadConfiguration } from '@/configuration';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
@@ -62,6 +64,22 @@ describe('registerCapabilitiesHandlers prewarm', () => {
         );
         const before = await describeCapabilities();
         expect(before.capabilities).toContainEqual(expect.objectContaining({ id: `cli.${firstAgent.id}` }));
+        expect(before.checklists[CHECKLIST_IDS.NEW_SESSION]).toContainEqual({ id: `cli.${firstAgent.id}` });
+        const ordinary = await call<CapabilitiesDetectResponse, { checklistId: string }>(
+            RPC_METHODS.CAPABILITIES_DETECT, { checklistId: CHECKLIST_IDS.NEW_SESSION },
+        );
+        const focused = await call<CapabilitiesDetectResponse, { requests: Array<{ id: string }> }>(
+            RPC_METHODS.CAPABILITIES_DETECT, { requests: [{ id: `cli.${firstAgent.id}` }] },
+        );
+        const focusedResult = focused.results[`cli.${firstAgent.id}`];
+        if (!focusedResult) throw new Error('Expected the focused Agent detection result');
+        // The fixture has no installed executable. Both entry points must retain
+        // its real outcome, including a probe refusal, rather than drop its row.
+        expect(ordinary.results[`cli.${firstAgent.id}`]).toMatchObject(
+            focusedResult.ok
+                ? { ok: true, data: focusedResult.data }
+                : { ok: false, error: focusedResult.error },
+        );
 
         // Source admission alone does not replace this daemon's published runtime.
         const successor = await createAuthoredAdmittedPluginRuntimeFixture({
@@ -85,5 +103,8 @@ describe('registerCapabilitiesHandlers prewarm', () => {
         const after = await describeCapabilities();
         expect(after.capabilities).toContainEqual(expect.objectContaining({ id: `cli.${firstAgent.id}` }));
         expect(after.capabilities).toContainEqual(expect.objectContaining({ id: `cli.${secondAgent.id}` }));
+        expect(after.checklists[CHECKLIST_IDS.NEW_SESSION]).toEqual(expect.arrayContaining([
+            { id: `cli.${firstAgent.id}` }, { id: `cli.${secondAgent.id}` },
+        ]));
     });
 });

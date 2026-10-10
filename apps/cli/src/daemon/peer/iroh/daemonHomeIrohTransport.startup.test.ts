@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_MANAGED_CONNECTION_POLICY } from '@happier-dev/connection-supervisor';
 import type { ServerProfile } from '@/server/serverProfiles';
+import { resolveServerProfileApiUrl } from '@/configuration/serverSelection';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 const axiosGet = vi.hoisted(() => vi.fn());
 vi.mock('axios', () => ({ default: { get: axiosGet } }));
@@ -29,6 +31,76 @@ afterEach(() => {
 });
 
 describe('daemon Home startup verification', () => {
+  it.each(['automatic', 'standard_only'] as const)('verifies and publishes the same-Home profile API origin under %s', async (applicationCarrierEligibility) => {
+    const forwardedProfile: ServerProfile = {
+      ...profile,
+      serverUrl: 'https://HOME.example.test:443/',
+      localServerUrl: ' http://127.0.0.1:50259/ ',
+    };
+    const apiUrl = resolveServerProfileApiUrl(forwardedProfile);
+    const fetchMock = vi.fn<typeof fetch>(async (url) => features(
+      url === `${apiUrl}/v1/features` ? 'srv_expected' : 'srv_wrong',
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    axiosGet.mockResolvedValue({ status: 200 });
+
+    const transport = await prepareDaemonHomeIrohTransport({
+      runtime: null, profile: forwardedProfile, applicationCarrierEligibility,
+    });
+    try {
+      expect(transport.carrier).toBe('standard');
+      expect(resolveServerHttpBaseUrl()).toBe(apiUrl);
+      expect(axiosGet).not.toHaveBeenCalled();
+      await expect(transport.verifyAuthenticated('fixture-home-token')).resolves.toEqual({ status: 'ready' });
+      expect(axiosGet).toHaveBeenCalledWith(`${apiUrl}/v1/auth/ping`, expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer fixture-home-token' }),
+      }));
+      expect(fetchMock.mock.calls.every(([url]) => url === `${apiUrl}/v1/features`)).toBe(true);
+    } finally {
+      await transport.release();
+    }
+  });
+
+  it('reacquires the refreshed same-Home local API origin without changing credential authority', async () => {
+    const forwardedProfile: ServerProfile = { ...profile, localServerUrl: 'http://127.0.0.1:50259' };
+    let currentProfile = forwardedProfile;
+    vi.stubGlobal('fetch', vi.fn(async () => features()));
+    axiosGet.mockResolvedValue({ status: 200 });
+    const transport = await prepareDaemonHomeIrohTransport({
+      runtime: null, profile: forwardedProfile, token: 'fixture-home-token',
+      readProfile: async () => currentProfile,
+    });
+    try {
+      expect(resolveServerHttpBaseUrl()).toBe(forwardedProfile.localServerUrl);
+      currentProfile = { ...forwardedProfile, localServerUrl: 'http://127.0.0.1:50260' };
+      await expect(transport.reacquire()).resolves.toEqual({ status: 'ready' });
+      expect(resolveServerHttpBaseUrl()).toBe(currentProfile.localServerUrl);
+      expect(axiosGet).toHaveBeenLastCalledWith(`${currentProfile.localServerUrl}/v1/auth/ping`, expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer fixture-home-token' }),
+      }));
+    } finally {
+      await transport.release();
+    }
+  });
+
+  it('keeps the descriptor endpoint when the local URL belongs to a different Home profile', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (url) => features(
+      url === 'https://ingress.example.test/v1/features' ? 'srv_expected' : 'srv_wrong',
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    axiosGet.mockResolvedValue({ status: 200 });
+    const transport = await prepareDaemonHomeIrohTransport({
+      runtime: null, token: 'fixture-home-token',
+      profile: { ...profile, serverUrl: 'https://other-home.example.test', localServerUrl: 'http://127.0.0.1:50259' },
+    });
+    try {
+      expect(resolveServerHttpBaseUrl()).toBe('https://ingress.example.test');
+      expect(axiosGet).toHaveBeenCalledWith('https://ingress.example.test/v1/auth/ping', expect.anything());
+    } finally {
+      await transport.release();
+    }
+  });
+
   it.each(['timeout', 'connection_refused', '503'] as const)('waits through %s before publishing a verified Home', async (failure) => {
     vi.useFakeTimers();
     const fetchMock = vi.fn<typeof fetch>()
@@ -62,11 +134,13 @@ describe('daemon Home startup verification', () => {
     expect(fetchMock).toHaveBeenCalledTimes(verifiedAttempts);
   });
 
-  it('refuses a mismatched Home before sending the credential or publishing an origin', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => features('srv_wrong')));
+  it.each([undefined, 'http://127.0.0.1:50259'])('refuses a mismatched Home before sending the credential or publishing an origin (local URL: %s)', async (localServerUrl) => {
+    const fetchMock = vi.fn(async () => features('srv_wrong'));
+    vi.stubGlobal('fetch', fetchMock);
     const publish = vi.fn(() => vi.fn());
-    await expect(prepareDaemonHomeIrohTransport({ runtime: null, profile, token: 'home-token', publishRuntimeOrigin: publish }))
+    await expect(prepareDaemonHomeIrohTransport({ runtime: null, profile: { ...profile, localServerUrl }, token: 'home-token', publishRuntimeOrigin: publish }))
       .rejects.toThrow(/identity/i);
+    expect(fetchMock).toHaveBeenCalledWith(`${localServerUrl ?? 'https://ingress.example.test'}/v1/features`, expect.anything());
     expect(axiosGet).not.toHaveBeenCalled();
     expect(publish).not.toHaveBeenCalled();
   });
@@ -124,7 +198,7 @@ describe('daemon Home startup verification', () => {
   it('cancels an in-flight identity request on shutdown without publishing its late success', async () => {
     vi.useFakeTimers();
     let respond: (response: Response) => void = () => undefined;
-    const requestSignals: AbortSignal[] = [];
+    const requestSignals: NonNullable<NonNullable<Parameters<typeof fetch>[1]>['signal']>[] = [];
     vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (_url, init) => await new Promise<Response>((resolve) => {
       if (init?.signal) requestSignals.push(init.signal);
       respond = resolve;

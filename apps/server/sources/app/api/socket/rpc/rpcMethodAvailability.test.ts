@@ -39,4 +39,21 @@ describe("resolveRpcMethodAvailabilityGraceMs", () => {
         expect(resolveRpcMethodAvailabilityGraceMs(`machine-1:${RPC_METHODS.STOP_SESSION}`)).toBe(1_500);
         expect(resolveRpcMethodAvailabilityGraceMs("sess_1:execution.run.stream.start")).toBe(750);
     });
+
+    it("uses the effective startup overlay loaded after import", async () => {
+        const subject = await importSubject();
+        const { loadStartupHomeEnv } = await import('@/app/home/settings/startupHomeEnv');
+        await loadStartupHomeEnv({ env: {}, readStored: async () => ({ values: {
+            HAPPIER_RPC_METHOD_AVAILABILITY_GRACE_MS: 900,
+            HAPPIER_RPC_METHOD_AVAILABILITY_POLL_MS: 50,
+            HAPPIER_RPC_CLUSTER_FETCH_TIMEOUT_MS: 2000,
+            HAPPIER_STOP_SESSION_RPC_METHOD_AVAILABILITY_GRACE_MS: 12_000,
+            HAPPIER_DIRECT_SESSIONS_RPC_METHOD_AVAILABILITY_GRACE_MS: 20_000,
+        }, secrets: {} }), log: () => {} });
+        expect(subject.resolveRpcMethodAvailabilityGraceMs('session-one:unrelated')).toBe(900);
+        expect(subject.resolveRpcMethodAvailabilityPollMs()).toBe(50);
+        expect(subject.resolveRpcClusterFetchTimeoutMs('session-one:unrelated')).toBe(2000);
+        expect(subject.resolveRpcMethodAvailabilityGraceMs(`machine-one:${RPC_METHODS.STOP_SESSION}`)).toBe(12_000);
+        expect(subject.resolveRpcMethodAvailabilityGraceMs(`machine-one:${RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST}`)).toBe(20_000);
+    });
 });

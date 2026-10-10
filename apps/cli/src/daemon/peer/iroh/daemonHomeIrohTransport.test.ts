@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { IrohError } from '@happier-dev/iroh-native/node';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { configuration, reloadConfiguration } from '@/configuration';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { withTempDir } from '@/testkit/fs/tempDir';
+import { addServerProfile, getServerProfile, useServerProfile } from '@/server/serverProfiles';
+import { resolveCurrentCliHomeTarget } from '@/server/homeTarget';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 import {
   applyDaemonHomeDescriptorRefresh,
@@ -15,6 +22,85 @@ const descriptor = {
 };
 
 describe('prepareDaemonHomeIrohTransport', () => {
+  it('does not attach an env-only daemon Home descriptor to the focused profile or manufacture a saved profile', async () => {
+    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL',
+      'HAPPIER_LOCAL_SERVER_URL', 'HAPPIER_PUBLIC_SERVER_URL', 'HAPPIER_WEBAPP_URL']);
+    try {
+      await withTempDir('happier-daemon-manual-home-', async (homeDir) => {
+        envScope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_ACTIVE_SERVER_ID: 'manual-daemon',
+          HAPPIER_SERVER_URL: descriptor.canonicalServerUrl, HAPPIER_LOCAL_SERVER_URL: undefined,
+          HAPPIER_PUBLIC_SERVER_URL: undefined, HAPPIER_WEBAPP_URL: undefined });
+        reloadConfiguration();
+        const reconnect = vi.fn();
+        await expect(applyDaemonHomeDescriptorRefresh({
+          features: FeaturesResponseSchema.parse({ features: {},
+            capabilities: { serverIdentity: { serverIdentityId: descriptor.homeServerIdentityId } },
+            homeConnectionDescriptor: descriptor }),
+          requestReconnect: reconnect,
+        })).resolves.toBe('ignored');
+        expect((await getServerProfile('cloud')).homeConnectionDescriptor).toBeUndefined();
+        await expect(getServerProfile('manual-daemon')).rejects.toThrow('not found');
+        expect(reconnect).not.toHaveBeenCalled();
+      });
+    } finally {
+      envScope.restore();
+      reloadConfiguration();
+    }
+  });
+  it('keeps descriptor refresh and transport reacquisition on the daemon invocation profile when the focused Home changes', async () => {
+    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL',
+      'HAPPIER_LOCAL_SERVER_URL', 'HAPPIER_PUBLIC_SERVER_URL', 'HAPPIER_WEBAPP_URL']);
+    try {
+      await withTempDir('happier-daemon-profile-scope-', async (homeDir) => {
+        const scopedDescriptor = { ...descriptor, endpoints: [{ kind: 'https' as const, url: descriptor.canonicalServerUrl }] };
+        envScope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_ACTIVE_SERVER_ID: undefined,
+          HAPPIER_SERVER_URL: undefined, HAPPIER_LOCAL_SERVER_URL: undefined,
+          HAPPIER_PUBLIC_SERVER_URL: undefined, HAPPIER_WEBAPP_URL: undefined });
+        reloadConfiguration();
+        const selected = await addServerProfile({ name: 'daemon-home', serverUrl: descriptor.canonicalServerUrl,
+          webappUrl: descriptor.canonicalServerUrl, use: false });
+        const focused = await addServerProfile({ name: 'focused-home', serverUrl: 'https://focused.example.test',
+          webappUrl: 'https://focused.example.test', use: true });
+        envScope.patch({ HAPPIER_ACTIVE_SERVER_ID: selected.id, HAPPIER_SERVER_URL: selected.serverUrl });
+        reloadConfiguration();
+        expect(configuration.activeServerId).toBe(selected.id);
+        const homeTarget = await resolveCurrentCliHomeTarget();
+        const reconnect = vi.fn();
+        await applyDaemonHomeDescriptorRefresh({
+          features: FeaturesResponseSchema.parse({ features: {},
+            capabilities: { serverIdentity: { serverIdentityId: descriptor.homeServerIdentityId } },
+            homeConnectionDescriptor: scopedDescriptor }),
+          requestReconnect: reconnect,
+        });
+        expect((await getServerProfile(selected.id)).homeConnectionDescriptor).toEqual(scopedDescriptor);
+        expect((await getServerProfile(focused.id)).homeConnectionDescriptor).toBeUndefined();
+        envScope.patch({ HAPPIER_ACTIVE_SERVER_ID: focused.id, HAPPIER_SERVER_URL: focused.serverUrl });
+        reloadConfiguration();
+        await expect(applyDaemonHomeDescriptorRefresh({
+          homeTarget,
+          features: FeaturesResponseSchema.parse({ features: {},
+            capabilities: { serverIdentity: { serverIdentityId: descriptor.homeServerIdentityId } },
+            homeConnectionDescriptor: scopedDescriptor }),
+          requestReconnect: reconnect,
+        })).resolves.toBe('unchanged');
+        const probedIdentities: string[] = [];
+        const transport = await prepareDaemonHomeIrohTransport({
+          runtime: null, profile: await getServerProfile(selected.id), token: 'fixture-home-token',
+          applicationCarrierEligibility: 'standard_only',
+          probe: async input => { probedIdentities.push(input.expectedServerIdentityId); return { status: 'ready' }; },
+        });
+        expect(resolveServerHttpBaseUrl()).toBe(descriptor.canonicalServerUrl);
+        await useServerProfile(focused.id);
+        await expect(transport.reacquire()).resolves.toEqual({ status: 'ready' });
+        expect(resolveServerHttpBaseUrl()).toBe(descriptor.canonicalServerUrl);
+        await transport.release();
+        expect(probedIdentities).toEqual([descriptor.homeServerIdentityId, descriptor.homeServerIdentityId]);
+      });
+    } finally {
+      envScope.restore();
+      reloadConfiguration();
+    }
+  });
   it('uses the declared standard endpoint without touching native Iroh under Standard only', async () => {
     const runtime = { ensureHomeTunnel: vi.fn() };
     const probe = vi.fn(async () => ({ status: 'ready' as const }));
@@ -114,7 +200,11 @@ describe('prepareDaemonHomeIrohTransport', () => {
 
     const result = await prepareDaemonHomeIrohTransport({
       runtime: runtime as never,
-      profile: { serverUrl: descriptor.canonicalServerUrl, homeConnectionDescriptor: descriptor } as never,
+      profile: {
+        serverUrl: descriptor.canonicalServerUrl,
+        localServerUrl: 'http://127.0.0.1:50259',
+        homeConnectionDescriptor: descriptor,
+      },
       token: 'account-token',
       readProfile: async () => ({
         serverUrl: descriptor.canonicalServerUrl,

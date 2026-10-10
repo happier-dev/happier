@@ -1,3 +1,4 @@
+import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -19,6 +20,7 @@ import type { ResolvedContributionRegistry } from '@/plugins/projection/registry
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 
 import {
@@ -198,10 +200,17 @@ function createRegistrar(): Readonly<{
 }
 
 function createRuntimeRegistry(): ResolvedExecutablePluginRuntimeRegistry {
+  const unavailableDependency = async () => { throw new Error('No native dependency installation is available in this fixture'); };
   return {
+    projectManagedServices: createManagedServicesOwner({
+      processSupervisorHost: { custodyOwner: 'daemon', bind: () => { throw new Error('No native service process is available in this fixture'); } },
+      dependencies: { status: unavailableDependency, ensure: unavailableDependency, update: unavailableDependency, remove: unavailableDependency },
+      resolveScope: () => null,
+    }),
     contributes: emptyContributions,
     resolvePromptAssetBlocks: async () => [],
     resolveCaptureSource: async () => { throw new Error('Capture-source resolution is unavailable in this fixture'); },
+    resolveProjectNativeAdapter: unexpectedProjectNativeAdapterResolution,
     hookHandlersByHookId: new Map(),
     agentRuntimesByAgentId: new Map(),
     scmHostingProvidersById: new Map(),

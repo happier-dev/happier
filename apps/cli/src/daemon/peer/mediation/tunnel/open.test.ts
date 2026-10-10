@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
+import { PassThrough } from 'node:stream';
+import { once } from 'node:events';
 
 import {
     createPeerRouteNonceSigningInputV1,
@@ -13,6 +15,10 @@ import {
     type PeerTcpTunnelOpenV2,
 } from '@happier-dev/protocol';
 import { createAtomicRouteGrantConsumption } from './grantConsumption';
+import { createLocalServicePreviewRegistry, registerLocalServicePreview } from '../../../local/services/preview/registry';
+import { createLocalServicePreviewRoutes } from '../../../local/services/preview/routes';
+import { localServicePreviewDirectBindingV1 } from '@happier-dev/protocol/local/services/preview/v1';
+import { LocalServicePreviewNativeRegistrationRequestV1Schema } from '@happier-dev/protocol/local/services/preview/nativeDirect';
 
 type OpenModule = typeof import('./open');
 
@@ -123,6 +129,78 @@ function createOpen(overrides: Partial<PeerTcpTunnelOpenV2> = {}): PeerTcpTunnel
 }
 
 describe('openPeerTcpTunnel', () => {
+    it('admits a signed sessionless iroh viewer only with its exact current native control lease', async () => {
+        const mod = await loadOpenModule();
+        if (!mod) throw new Error('open owner unavailable');
+        const registry = createLocalServicePreviewRegistry();
+        const registered = registerLocalServicePreview(registry, {
+            previewId: 'project-preview', machineId: 'machine_1', owner: { kind: 'user', id: 'starter' },
+            serviceTarget: { kind: 'managed_service', managedServiceId: 'actual-instance', machineId: 'machine_1', cwd: '/workspace/app',
+                declaration: { workspaceRefId: 'workspace_1', selection: { kind: 'manifest', name: 'web' } } },
+            target: { scheme: 'http', host: '127.0.0.1', port: 5173 },
+            initialPath: { pathname: '/', search: '' }, display: { title: 'Web', addressLabel: 'localhost:5173' }, originMode: 'host',
+        });
+        if (!registered.ok) throw new Error(registered.reasonCode);
+        const binding = localServicePreviewDirectBindingV1(registered.resource);
+        const control = new PassThrough();
+        let currentGrant = true;
+        const routes = createLocalServicePreviewRoutes({
+            machineId: 'machine_1', accountId: 'custodian', registry,
+            // The Home HTTP control lease is the genuine network boundary. Local binding,
+            // native adapter lifetime, signatures and tunnel admission remain real.
+            server: { token: 'custodian-token', serverBaseUrl: 'https://home.example.test', http: {
+                async post(_url, body) {
+                    const request = LocalServicePreviewNativeRegistrationRequestV1Schema.parse(body);
+                    expect(request).toEqual({ ...binding, grantId: 'viewer-grant' });
+                    if (!currentGrant) throw new Error('native grant retired');
+                    queueMicrotask(() => control.write(`${JSON.stringify({ v: 1, kind: 'preview_registration_admitted', previewId: binding.previewId })}\n`));
+                    return { data: control };
+                },
+                async delete() { return { data: { ok: true } }; },
+            } },
+        });
+        const handle = createEphemeralPeerRouteProofHandleV2({ randomBytes: (length) => new Uint8Array(length).fill(5) });
+        const payload: DirectRouteGrantPayloadV2 = {
+            v: 2, grantId: 'viewer-grant', accountId: 'shared-viewer', machineId: 'machine_1',
+            flowKind: 'tcp_tunnel', routeKind: 'iroh_peer',
+            scope: { kind: 'tcp_tunnel', tunnelId: 'viewer-tunnel', allowedPorts: [5173], preview: binding },
+            iat: 1_000, exp: null, aud: 'happier-daemon-route-grant', endpointFingerprint: 'b'.repeat(64),
+            iroh: { initiator: { kind: 'account_client', endpointId: 'a'.repeat(64) }, target: { machineId: 'machine_1', endpointId: 'b'.repeat(64) }, operationKind: 'tcp_tunnel' },
+            proofKind: 'ephemeral_ed25519', ephemeralPublicKeyBase64Url: handle.publicKeyBase64Url,
+        };
+        const grant = { payload, signature: { keyId: 'key_1', alg: 'Ed25519' as const,
+            valueBase64Url: toBase64Url(tweetnacl.sign.detached(Buffer.from(createDirectRouteGrantSigningInputV2(payload)), signingKeyPair.secretKey)) } };
+        const input = {
+            open: { v: 2, kind: 'open', tunnelId: 'viewer-tunnel', targetMachineId: 'machine_1', routeKind: 'iroh_peer',
+                destination: { host: '127.0.0.1', port: 5173 }, grant, proof: handle.sign(grant) },
+            nowMs: 2_000, expected: { accountId: 'custodian', machineId: 'machine_1', endpointFingerprint: 'endpoint_1', irohEndpointId: 'b'.repeat(64) },
+            trustRoots: [{ keyId: 'key_1', publicKey: toBase64Url(signingKeyPair.publicKey) }],
+            acquirePreviewApplication: routes.acquireNativeApplication,
+        };
+        const consumption = () => createAtomicRouteGrantConsumption({ activationFailurePolicy: 'release' });
+        let admitted: Awaited<ReturnType<OpenModule['openPeerTcpTunnel']>> | undefined;
+        try {
+            admitted = await mod.openPeerTcpTunnel({ ...input, grantConsumption: consumption() });
+            expect(admitted).toMatchObject({ ok: true, routeKind: 'iroh_peer' });
+            if (!admitted.ok || !admitted.previewApplication) throw new Error('native application missing');
+            const retired = once(admitted.previewApplication.signal, 'abort');
+            control.end();
+            await retired;
+            expect(admitted.previewApplication.signal.aborted).toBe(true);
+            currentGrant = false;
+            expect(await mod.openPeerTcpTunnel({ ...input, grantConsumption: consumption() }))
+                .toMatchObject({ ok: false, reasonCode: 'preview_registration_unavailable' });
+            expect(await mod.openPeerTcpTunnel({ ...input, acquirePreviewApplication: undefined, grantConsumption: consumption() }))
+                .toMatchObject({ ok: false, reasonCode: 'preview_registration_unavailable' });
+            expect(await mod.openPeerTcpTunnel({ ...input, open: { ...input.open, grant: { ...grant,
+                payload: { ...payload, accountId: 'forged-viewer' } } }, grantConsumption: consumption() }))
+                .toMatchObject({ ok: false, reasonCode: 'grant_bad_signature' });
+        } finally {
+            control.destroy();
+            if (admitted?.ok) await admitted.previewApplication?.close();
+            handle.dispose();
+        }
+    });
     it('refuses a signed preview when its canonical registration authority is absent', async () => {
         const mod = await loadOpenModule();
         if (!mod) throw new Error('open owner unavailable');

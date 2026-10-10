@@ -84,8 +84,6 @@ describe('INTERNAL_ONLY_RPC_METHODS', () => {
     it('classifies PMS-5 direct-eligible daemon read methods as internal-only', () => {
         const expected = [
             RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST,
-            RPC_METHODS.DAEMON_MEMORY_STATUS,
-            RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET,
             RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS,
             RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_LIST,
             RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_STATUS,

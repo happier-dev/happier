@@ -45,6 +45,8 @@ import { readStoredCredentials } from '@/persistence';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import type { sendSessionMessage } from '@/session/services/sendSessionMessage';
 import type { SessionStructuredInputAdmissionPolicyV1 } from '@/session/services/admitSessionStructuredInputV1';
+import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
+import type { DaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 export {
     readCanonicalSpawnRuntimeSelection,
     readSpawnRuntimeDescriptorV1,
@@ -144,6 +146,8 @@ export function registerSessionHandlers(
         }) => Promise<void> | void) | null;
         sessionRuntimeControls?: SessionRuntimeControls | null;
         accessPolicy?: FilesystemAccessPolicy;
+        executionBudgetRegistry?: ExecutionBudgetRegistry;
+        admissionDrain?: DaemonAdmissionDrain;
         transcriptActionExecutor?: RpcActionExecutor | null;
         localServicesPreview?: LocalServicePreviewRoutes | null;
         browserControl?: BrowserDaemonControlRoutes | null;
@@ -200,7 +204,7 @@ export function registerSessionHandlers(
         });
     }
 
-    registerBashHandler(rpcHandlerManager, workingDirectory, { accessPolicy });
+    registerBashHandler(rpcHandlerManager, workingDirectory, { accessPolicy, executionBudgetRegistry: opts?.executionBudgetRegistry, admissionDrain: opts?.admissionDrain });
     // Checklist-based machine capability registry (replaces legacy detect-cli / detect-capabilities / dep-status).
     registerCapabilitiesHandlers(rpcHandlerManager, {
         ...(opts?.getAgentCatalogObservation

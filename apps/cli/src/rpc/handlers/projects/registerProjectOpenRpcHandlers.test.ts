@@ -45,6 +45,7 @@ import { logger } from '@/ui/logger';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { prepareDaemonHomeIrohTransport } from '@/daemon/peer/iroh/daemonHomeIrohTransport';
 import { getServerProfile } from '@/server/serverProfiles';
+import { resolvePublishedMachineEncryptionContext } from '@/api/machine/machineDataEncryptionKey';
 
 const socketIo = vi.hoisted(() => vi.fn());
 vi.mock('socket.io-client', () => ({ io: socketIo }));
@@ -373,6 +374,7 @@ describe('Project Open RPC', () => {
 
   it.each(['plain', 'e2ee'] as const)('accepts a scoped requester Source and ref through its admitted private ports without reading custodian credentials (%s)', async mode => {
     const root = await mkdtemp(join(tmpdir(), 'happier-requester-open-'));
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'bob' })).toString('base64url')}.signature`;
     const material = mode === 'e2ee' ? { type: 'legacy' as const, secret: new Uint8Array(32).fill(8) } : null;
     const cipher = createProjectAccountRowCipherV1({ mode, material, randomBytes: n => new Uint8Array(n) });
     const key = { kind: 'workspace-ref' as const, serverId: 'home', id: 'bob-checkout' };
@@ -390,6 +392,9 @@ describe('Project Open RPC', () => {
       requestId: 'requester-open', requestEnvelopeDigest: 'A'.repeat(43), target: { kind: 'machine', machineId: 'machine' } },
       requesterAccountProjection: { accountId: 'bob', serverId: 'home', accountEncryptionMode: mode, projectAccountRowCipher: cipher,
         projectTrustRowCipher: createProjectSetupTrustRowCipher({ mode, material }),
+        resolveMachineContentEncryptionContext: machine =>
+          resolvePublishedMachineEncryptionContext({ credentials: { token, encryption: material }, machineId: machine.id,
+            publishedDataEncryptionKey: machine.dataEncryptionKey, expectedAccountMode: machine.storageMode ?? mode }),
         isCurrent: async () => current, readArtifact: async () => null },
       requesterHttpProjection: { accountId: 'bob', serverId: 'home', serverIdentityId: 'identity', serverHttpBaseUrl: 'https://home.example',
         accountEncryptionMode: mode, isCurrent: async () => current,
@@ -398,6 +403,13 @@ describe('Project Open RPC', () => {
     vi.spyOn(axios, 'request').mockImplementation(async request => {
       expect(request.headers).toMatchObject({ 'x-requester-proof': 'bob' });
       return { status: 200, data: { ok: true, source, canManage: false } };
+    });
+    vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+      expect(config?.headers).toMatchObject({ 'x-requester-proof': 'bob' });
+      expect(config?.headers).not.toHaveProperty('Authorization');
+      const response = await plainMachineRead(url);
+      if (!('machine' in response.data)) throw new Error('Requester should only read the selected Machine');
+      return { ...response, data: { machine: { ...response.data.machine, storageMode: 'plain' } } };
     });
     const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
       expect(config?.headers).toMatchObject({ 'x-requester-proof': 'bob' });

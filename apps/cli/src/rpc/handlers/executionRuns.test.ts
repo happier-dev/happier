@@ -2564,6 +2564,7 @@ describe('executionRuns session RPC handlers', () => {
     const committedUserTurns: Array<Readonly<{ text: string; localId: string }>> = [];
     const client = createEncryptedRpcTestClient({
       scopePrefix: 'sess_1',
+      callerAuthority: 'present_user',
       registerHandlers: (rpc) => {
         registerExecutionRunHandlers(rpc, {
           sessionId: 'sess_1',
@@ -2618,6 +2619,39 @@ describe('executionRuns session RPC handlers', () => {
     expect(committedUserTurns).toEqual([
       { text: 'Predecessor display text', localId: 'predecessor-local-id' },
     ]);
+  });
+
+  it.each([undefined, 'account_automation'] as const)('rejects %s transcript commit authority before writing Voice user text', async (callerAuthority) => {
+    const committedUserTurns: Array<Readonly<{ text: string; localId: string }>> = [];
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      ...(callerAuthority ? { callerAuthority } : {}),
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1', cwd: process.cwd(), parentProvider: 'claude',
+          createBackend: () => createStaticBackend('Unused reply'),
+          sendAcp: async () => {},
+          transcriptWriter: {
+            appendUserTextCommitted: async (text, options) => {
+              committedUserTurns.push({ text, localId: options.localId });
+              return { persisted: true, delivered: true };
+            },
+            commitVoiceAgentTranscriptTurn: async () => ({ persisted: true, delivered: true }),
+          },
+        });
+      },
+    });
+    const started = await client.call<Readonly<{ runId: string }>, unknown>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'voice_agent', backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
+      chatModelId: 'chat', commitModelId: 'commit', idleTtlSeconds: 60, initialContext: 'ctx', verbosity: 'short',
+      transcript: { persistenceMode: 'persistent', epoch: 4 },
+    });
+    expect(started.runId).toEqual(expect.any(String));
+    await expect(client.call(SESSION_RPC_METHODS.EXECUTION_RUN_USER_TRANSCRIPT_COMMIT_V1, {
+      runId: started.runId, message: 'Unadmitted user text', localId: 'unadmitted-local-id',
+    })).resolves.toMatchObject({ ok: false, errorCode: 'execution_run_not_allowed' });
+    expect(committedUserTurns).toEqual([]);
   });
 
   it('supports voice_agent stream resume via execution.run.stream.start(resume=true) after stop when backend supports loadSession', async () => {

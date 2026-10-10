@@ -12,8 +12,8 @@ import type { PluginCatalogEntry } from '@/plugins/projection/catalog/installed'
 import { readCurrentDaemonPluginCatalog } from '@/plugins/daemon/currentCatalog';
 import { DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonPluginUiTargetedContributionsReadRequestSchema, DaemonContributionRegistryProjectionAutomationEligibleEventsV1Schema, DaemonPluginUiTargetedSurfaceMountV1Schema, DaemonPluginSettingsGetRequestSchema, DaemonPluginSettingsGetResponseSchema, DaemonPluginSettingsSetRequestSchema, DaemonPluginSettingsSetResponseSchema, DAEMON_PLUGIN_UI_RESOURCE_WATCH_DEFAULT_WAIT_MS, DaemonPluginSecretStatusRequestSchema, DaemonPluginSecretStatusResponseSchema, DaemonPluginSecretSetRequestSchema, DaemonPluginSecretSetResponseSchema, DaemonPluginSecretDeleteRequestSchema, DaemonPluginSecretDeleteResponseSchema, DaemonPluginUiResourceReadRequestSchema, DaemonPluginUiResourceReadResponseSchema, DaemonPluginUiResourceWatchOpenRequestSchema, DaemonPluginUiResourceWatchOpenResponseSchema, DaemonPluginUiResourceWatchNextRequestSchema, DaemonPluginUiResourceWatchNextResponseSchema, DaemonPluginUiResourceWatchCloseRequestSchema, DaemonPluginUiResourceWatchCloseResponseSchema, DaemonPluginStructuredMessageActionExecuteResponseSchema, DaemonPluginActionFormConnectedAccountOptionsResolveRequestSchema, DaemonPluginActionSchemasReadRequestSchema, DaemonPluginActionSchemasReadResponseSchema, DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema, DaemonPluginComposerReferenceSearchRequestSchema, DaemonPluginComposerReferenceSearchResponseSchema, DaemonPluginUiArtifactBytesReadRequestSchema, DaemonPluginUiArtifactBytesReadResponseSchema, PluginUiResourceBindingCapabilityV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { DaemonPluginStructuredMessageActionExecuteRequestSchema } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
-import type { DaemonPluginSettingsSnapshot, FeatureDecision, DaemonHostedWebFrameCapabilityV1, DaemonReactNativeHostRuntimeIdentityV1, ActionOperationDeclarationV1, DaemonContributionRegistryProjectionDescribeRequest, DaemonContributionRegistryProjectionDescribeResponse, DaemonPluginUiTargetedContributionsReadRequest, DaemonPluginUiTargetedContributionsReadResponse, PluginSettingFieldV2, DaemonPluginUiArtifactBytesReadResponse, DaemonPluginUiTargetedSurfaceMountV1, DaemonPluginStructuredMessageActionInvocationV1, MessageActionReferenceV1, MessageActionResolutionV1, PluginMachineExecutionOriginV1, PluginProjectionBrandAssetV2, PluginProjectionV2 } from '@happier-dev/protocol';
-import { PluginMachineExecutionOriginV1Schema, arePluginMachineMaterializationRefsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import type { DaemonPluginSettingsSnapshot, FeatureDecision, DaemonHostedWebFrameCapabilityV1, DaemonReactNativeHostRuntimeIdentityV1, ActionOperationDeclarationV1, DaemonContributionRegistryProjectionDescribeRequest, DaemonContributionRegistryProjectionDescribeResponse, DaemonPluginUiTargetedContributionsReadRequest, DaemonPluginUiTargetedContributionsReadResponse, PluginSettingFieldV2, DaemonPluginUiArtifactBytesReadResponse, DaemonPluginUiTargetedSurfaceMountV1, DaemonPluginStructuredMessageActionInvocationV1, MessageActionReferenceV1, MessageActionResolutionV1, PluginMachineMaterializationExecutionOriginV1, PluginProjectionBrandAssetV2, PluginProjectionV2 } from '@happier-dev/protocol';
+import { PluginMachineMaterializationExecutionOriginV1Schema, arePluginMachineMaterializationRefsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readPluginSettingSecretCustody } from '@happier-dev/protocol/plugins/contributions/settings';
 import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
@@ -47,7 +47,7 @@ import type {
     AdmittedTargetedContributionSnapshot,
     ResolvedContributionRegistry,
 } from '@/plugins/projection/registry/types';
-import { buildPluginProjectionV2 } from '@/plugins/projection/registry/projection/v2';
+import { buildAgentsById, buildPluginProjectionV2 } from '@/plugins/projection/registry/projection/v2';
 import {
     projectDaemonEmbeddedPluginUiRenderer,
     projectDaemonComposerSurfaceCatalog,
@@ -149,6 +149,7 @@ export type DaemonContributionRegistryProjectionRegistrationOptions = Readonly<{
         input: unknown;
         requestId?: string;
         sessionId?: string;
+        rpcContext?: RpcHandlerContext;
         execute: (context: Readonly<{
             signal: AbortSignal;
             operationProgress: Readonly<{ update(progress: Readonly<{
@@ -174,7 +175,7 @@ type ProjectionBuild = Readonly<{
     projection: ReturnType<typeof buildPluginProjectionV2>;
     pluginUiHostRuntime: ReturnType<typeof resolvePluginUiProjectionHostRuntime>;
     modelsByRendererKey: Readonly<Record<string, import('@/plugins/runtime/invocation/services/declarativeModel').StablePluginDeclarativeModel | undefined>>;
-    pluginExecutionOriginsByPluginId: Readonly<Record<string, PluginMachineExecutionOriginV1>>;
+    pluginExecutionOriginsByPluginId: Readonly<Record<string, PluginMachineMaterializationExecutionOriginV1>>;
 }>;
 
 /**
@@ -295,7 +296,7 @@ function createProjectionCacheKeyParts(input: Readonly<{
     registryCacheToken: string;
     pluginUiHostRuntime: ReturnType<typeof resolvePluginUiProjectionHostRuntime>;
     brandAssetsByPluginId: Readonly<Record<string, PluginProjectionBrandAssetV2>>;
-    pluginExecutionOriginsByPluginId: Readonly<Record<string, PluginMachineExecutionOriginV1>>;
+    pluginExecutionOriginsByPluginId: Readonly<Record<string, PluginMachineMaterializationExecutionOriginV1>>;
     pluginFinalPolicyCurrentRuntimesById?: ReadonlyMap<string, PluginFinalPolicyCurrentRuntime>;
     /**
      * The projected translation bundles depend on it, so two clients with
@@ -550,7 +551,7 @@ function readMountedTargetedSurfaceMountsProjection(input: Readonly<{
     projection: ReturnType<typeof buildPluginProjectionV2>;
     pluginUiHostRuntime: ReturnType<typeof resolvePluginUiProjectionHostRuntime>;
     modelsByRendererKey: Readonly<Record<string, import('@/plugins/runtime/invocation/services/declarativeModel').StablePluginDeclarativeModel | undefined>>;
-    pluginExecutionOriginsByPluginId: Readonly<Record<string, PluginMachineExecutionOriginV1>>;
+    pluginExecutionOriginsByPluginId: Readonly<Record<string, PluginMachineMaterializationExecutionOriginV1>>;
 }>): readonly DaemonPluginUiTargetedSurfaceMountV1[] {
     const entriesById = input.projection.familiesById.pluginUi?.entriesById ?? {};
     const mounts: DaemonPluginUiTargetedSurfaceMountV1[] = [];
@@ -660,7 +661,7 @@ function readMountedTargetedSurfaceMountsProjection(input: Readonly<{
 async function resolvePluginExecutionOriginsForProjection(
     opts: DaemonContributionRegistryProjectionRegistrationOptions | undefined,
     registry: ResolvedContributionRegistry,
-): Promise<Readonly<Record<string, PluginMachineExecutionOriginV1>>> {
+): Promise<Readonly<Record<string, PluginMachineMaterializationExecutionOriginV1>>> {
     let context: Readonly<{ serverIdentityId: string; machineId: string }> | null = null;
     try {
         context = await opts?.resolvePluginProjectionExecutionOriginContext?.() ?? null;
@@ -671,9 +672,9 @@ async function resolvePluginExecutionOriginsForProjection(
     }
     if (!context) return Object.freeze({});
 
-    const originsByPluginId: Record<string, PluginMachineExecutionOriginV1> = {};
+    const originsByPluginId: Record<string, PluginMachineMaterializationExecutionOriginV1> = {};
     for (const [pluginId, materializationId] of Object.entries(registry.materializationIdsByPluginId ?? {})) {
-        const parsed = PluginMachineExecutionOriginV1Schema.safeParse({
+        const parsed = PluginMachineMaterializationExecutionOriginV1Schema.safeParse({
             serverIdentityId: context.serverIdentityId,
             materializationRef: {
                 machineId: context.machineId,
@@ -1502,7 +1503,7 @@ type ProjectionBuildInputs = Readonly<{
     generation: number;
     resolvedPluginUiHostRuntime: ReturnType<typeof resolvePluginUiProjectionHostRuntime>;
     brandAssetsByPluginId: Readonly<Record<string, PluginProjectionBrandAssetV2>>;
-    pluginExecutionOriginsByPluginId: Readonly<Record<string, PluginMachineExecutionOriginV1>>;
+    pluginExecutionOriginsByPluginId: Readonly<Record<string, PluginMachineMaterializationExecutionOriginV1>>;
     pluginFinalPolicyCurrentRuntimesById?: ReadonlyMap<string, PluginFinalPolicyCurrentRuntime>;
     locale?: string;
 }>;
@@ -1710,6 +1711,32 @@ async function describeProjection(
     opts: DaemonContributionRegistryProjectionRegistrationOptions | undefined,
     request: DaemonContributionRegistryProjectionDescribeRequest,
 ): Promise<DaemonContributionRegistryProjectionDescribeResponse> {
+    if (request.selection === 'agents') {
+        const generation = await (opts?.resolveGeneration ?? defaultResolveGeneration)();
+        const lease = await acquireProjectionContributionRegistryLease(opts, generation);
+        try {
+            // Use the same Agent producer and registry lease as the full catalog,
+            // without resolving UI features, assets, origins or other families.
+            return {
+                protocolVersion: 1,
+                projection: {
+                    v: 2,
+                    generation,
+                    familiesById: {},
+                    agentsById: buildAgentsById(lease.registry, generation),
+                    installedPackagesById: {},
+                    actionsById: {},
+                    toolsById: {},
+                    commandsById: {},
+                    resourcesById: {},
+                    settingsById: {},
+                    diagnostics: [],
+                },
+            };
+        } finally {
+            await lease.release();
+        }
+    }
     logger.debug('[PLUGIN PROJECTION] Describe', {
         clientKind: projectionClientKind(request),
         locale: request.locale ?? null,
@@ -1828,8 +1855,8 @@ async function readVerifiedGeneratedPluginUiArtifactGraph(params: Readonly<{
     | Readonly<{
         ok: true;
         digest: PluginUiArtifactDigestV1;
-        entry: Readonly<{ relativePath: string; bytes: Uint8Array }>;
-        files: readonly Readonly<{ relativePath: string; bytes: Uint8Array }>[];
+        entry: Readonly<{ relativePath: string; bytes: Uint8Array; digest: PluginUiArtifactDigestV1 }>;
+        files: readonly Readonly<{ relativePath: string; bytes: Uint8Array; digest: PluginUiArtifactDigestV1 }>[];
     }>
     | Readonly<{ ok: false; response: DaemonPluginUiArtifactBytesReadResponse }>
 > {
@@ -1848,7 +1875,7 @@ async function readVerifiedGeneratedPluginUiArtifactGraph(params: Readonly<{
         });
     }
     const installedRoot = join(pluginRootPath, GENERATED_PLUGIN_UI_ARTIFACTS_ROOT_RELATIVE_PATH);
-    const loadedFiles: Array<Readonly<{ relativePath: string; bytes: Uint8Array }>> = [];
+    const loadedFiles: Array<Readonly<{ relativePath: string; bytes: Uint8Array; digest: PluginUiArtifactDigestV1 }>> = [];
     for (const file of params.graph.files) {
         const resolved = await resolveContainedPluginResourcePath({
             pluginRootPath: installedRoot,
@@ -1862,13 +1889,14 @@ async function readVerifiedGeneratedPluginUiArtifactGraph(params: Readonly<{
         }
         try {
             const bytes = await (params.readArtifactFile ?? readFile)(resolved.absolutePath);
-            if (bytes.byteLength !== file.byteSize || computePluginUiArtifactSha256DigestV1(bytes) !== file.digest) {
+            const digest = bytes.byteLength === file.byteSize ? computePluginUiArtifactSha256DigestV1(bytes) : null;
+            if (digest === null || digest !== file.digest) {
                 return Object.freeze({
                     ok: false,
                     response: artifactBytesError('artifact_integrity_failed', [params.diagnostics.fileIntegrityFailed]),
                 });
             }
-            loadedFiles.push(Object.freeze({ relativePath: file.relativePath, bytes }));
+            loadedFiles.push(Object.freeze({ relativePath: file.relativePath, bytes, digest }));
         } catch {
             return Object.freeze({
                 ok: false,
@@ -1955,7 +1983,7 @@ async function readGeneratedReactNativeArtifactBytesByCacheIdentity(
     }
     const files = loaded.files.map((file) => Object.freeze({
         relativePath: file.relativePath,
-        digest: computePluginUiArtifactSha256DigestV1(file.bytes),
+        digest: file.digest,
         byteSize: file.bytes.byteLength,
         bytesBase64: Buffer.from(file.bytes).toString('base64'),
     }));
@@ -1970,7 +1998,6 @@ async function readGeneratedReactNativeArtifactBytesByCacheIdentity(
             format: 'plainJs',
             byteSize: loaded.entry.bytes.byteLength,
         },
-        bytesBase64: Buffer.from(loaded.entry.bytes).toString('base64'),
         files,
     };
     return DaemonPluginUiArtifactBytesReadResponseSchema.parse(response);
@@ -2012,10 +2039,9 @@ async function readGeneratedHostedWebArtifactBytesByCacheIdentity(params: Readon
             digest: loaded.digest,
             byteSize: loaded.entry.bytes.byteLength,
         },
-        bytesBase64: Buffer.from(loaded.entry.bytes).toString('base64'),
         files: loaded.files.map((file) => Object.freeze({
             relativePath: file.relativePath,
-            digest: computePluginUiArtifactSha256DigestV1(file.bytes),
+            digest: file.digest,
             byteSize: file.bytes.byteLength,
             bytesBase64: Buffer.from(file.bytes).toString('base64'),
         })),
@@ -2856,6 +2882,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
                     title,
                     operation: trackedOperation,
                     input: request.data.input,
+                    ...(context ? { rpcContext: context } : {}),
                     ...(request.data.requestId ? { requestId: request.data.requestId } : {}),
                     ...(request.data.sessionId ? { sessionId: request.data.sessionId } : {}),
                     execute: async ({ operationProgress }) => {

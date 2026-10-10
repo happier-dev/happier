@@ -1,4 +1,6 @@
-import { SignedProviderBrokerRouteGrantV1Schema, createProviderBrokerRouteGrantSigningInputV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { isDeepStrictEqual } from 'node:util';
+import { SignedProviderBrokerRouteGrantV1Schema, SignedProviderBrokerRouteGrantV2Schema, createProviderBrokerRouteGrantSigningInputV1, createProviderBrokerRouteGrantSigningInputV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import type { SignedProviderBrokerRouteGrantV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { ProviderBrokerRouteGrantPayloadV1, SignedProviderBrokerRouteGrantV1 } from '@happier-dev/protocol';
 import { findRouteGrantTrustRoot, verifyRouteGrantSignature, type DirectRouteGrantTrustRoot } from './verifyRouteGrantSignature';
 
@@ -88,5 +90,38 @@ export function verifyProviderBrokerRouteGrantV1(input: Readonly<{
     if (input.authenticatedRemoteEndpointId !== payload.initiator.endpointId) {
         return { valid: false, reasonCode: 'transport_identity_mismatch' };
     }
+    return { valid: true, authority };
+}
+
+export type ProviderBrokerRouteGrantExpectedBindingV2 = Omit<SignedProviderBrokerRouteGrantV2['payload'],
+    'v' | 'grantId' | 'aud' | 'issuedAt' | 'expiresAt'>;
+
+export function providerBrokerRouteGrantExpectedBindingV2(authority: SignedProviderBrokerRouteGrantV2): ProviderBrokerRouteGrantExpectedBindingV2 {
+    const { v: _v, grantId: _grantId, aud: _aud, issuedAt: _issuedAt, expiresAt: _expiresAt, ...binding } = authority.payload;
+    return binding;
+}
+
+/** The same signature/transport owner, with a distinct closed authority epoch.
+ * The Account catalog is deliberately not interpreted at this boundary. */
+export function verifyProviderBrokerRouteGrantV2(input: Readonly<{
+    authority: unknown;
+    trustRoots: readonly DirectRouteGrantTrustRoot[];
+    nowMs: number;
+    enforceExpiry?: boolean;
+    expected: ProviderBrokerRouteGrantExpectedBindingV2;
+    authenticatedRemoteEndpointId: string;
+}>): Readonly<{ valid: true; authority: SignedProviderBrokerRouteGrantV2 }> | Extract<ProviderBrokerRouteGrantVerificationResultV1, { valid: false }> {
+    const parsed = SignedProviderBrokerRouteGrantV2Schema.safeParse(input.authority);
+    if (!parsed.success) return { valid: false, reasonCode: 'grant_invalid' };
+    const authority = parsed.data;
+    const publicKey = findRouteGrantTrustRoot(input.trustRoots, authority.signature.keyId, input.nowMs);
+    if (!publicKey) return { valid: false, reasonCode: 'grant_unknown_key' };
+    if (!verifyRouteGrantSignature({ signingInput: createProviderBrokerRouteGrantSigningInputV2(authority.payload), signatureBase64Url: authority.signature.valueBase64Url, publicKey })) {
+        return { valid: false, reasonCode: 'grant_bad_signature' };
+    }
+    if (input.enforceExpiry !== false && input.nowMs >= authority.payload.expiresAt) return { valid: false, reasonCode: 'grant_expired' };
+    if (input.nowMs < authority.payload.issuedAt) return { valid: false, reasonCode: 'grant_not_yet_valid' };
+    if (!isDeepStrictEqual(providerBrokerRouteGrantExpectedBindingV2(authority), input.expected)) return { valid: false, reasonCode: 'grant_binding_mismatch' };
+    if (input.authenticatedRemoteEndpointId !== authority.payload.initiator.endpointId) return { valid: false, reasonCode: 'transport_identity_mismatch' };
     return { valid: true, authority };
 }

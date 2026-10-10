@@ -1,3 +1,4 @@
+import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { describe, expect, it, vi } from 'vitest';
 
 import { type PluginUiArtifactDigestV1 } from '@happier-dev/protocol';
@@ -97,6 +98,7 @@ describe('portable plugin brand projection handler', () => {
             createAgentInvocationServices: async () => createUnavailablePluginServices(),
             resolvePromptAssetBlocks: async () => [],
             resolveCaptureSource: async () => null,
+            resolveProjectNativeAdapter: unexpectedProjectNativeAdapterResolution,
             resolveStructuredMessage: async () => {
                 throw new Error('Structured-message resolution is unavailable in this fixture');
             },

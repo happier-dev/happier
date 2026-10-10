@@ -5,23 +5,27 @@ import {
   type ReadinessProbeResult,
 } from '@happier-dev/connection-supervisor';
 import type { FeaturesResponse, HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
+import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
 import {
   acquireHomeCarrierByPolicy,
   readHomeApplicationCarrierEligibilityFromEnv,
   type HomeApplicationCarrierEligibility,
   type HomeCarrierAcquisitionMode,
 } from '@happier-dev/cli-common/homeEnrollment';
-import { assertResolvedHomeTargetIdentity, resolveHomeTarget } from '@happier-dev/cli-common/homeTarget';
+import { assertResolvedHomeTargetIdentity, resolveHomeTarget, type ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 
 import {
   createLoopbackHomeIdentityProbe,
   createLoopbackReadinessProbe,
 } from '@/api/connection/createLoopbackReadinessProbe';
 import { publishServerHttpRuntimeOrigin } from '@/api/client/serverHttpBaseUrl';
+import { resolveServerProfileApiUrl } from '@/configuration/serverSelection';
 import { logger } from '@/ui/logger';
+import { resolveCurrentCliHomeTarget } from '@/server/homeTarget';
 import {
-  getActiveServerProfile,
-  reconcileActiveServerProfileHomeConnectionDescriptor,
+  getServerProfile,
+  adoptServerProfileHomeConnectionDescriptor,
+  refreshServerProfileHomeConnectionDescriptor,
   type ServerProfile,
 } from '@/server/serverProfiles';
 
@@ -61,12 +65,14 @@ class DaemonHomeReadinessError extends Error {
   }
 }
 
+type DaemonHomeProfile = Pick<ServerProfile, 'serverUrl' | 'localServerUrl' | 'homeConnectionDescriptor' | 'homeConnectionDescriptorAuthority'> & Readonly<{ id?: string }>;
+
 type PrepareDaemonHomeIrohTransportInput = Readonly<{
   runtime: DaemonMachineIrohRuntime | null;
-  profile: ServerProfile;
+  profile: DaemonHomeProfile;
   applicationCarrierEligibility?: HomeApplicationCarrierEligibility;
   token?: string;
-  readProfile?: () => Promise<ServerProfile>;
+  readProfile?: () => Promise<DaemonHomeProfile>;
   identityProbe?: (input: IdentityProbeInput) => Promise<ReadinessProbeResult>;
   probe?: (input: ProbeInput) => Promise<ReadinessProbeResult>;
   publishRuntimeOrigin?: typeof publishServerHttpRuntimeOrigin;
@@ -170,7 +176,9 @@ function withReacquisition(
       if (reacquireInFlight) return await reacquireInFlight;
       reacquireInFlight = (async (): Promise<ReadinessProbeResult> => {
         try {
-          const currentProfile = await (input.readProfile ?? getActiveServerProfile)();
+          const currentProfile = await (input.readProfile ?? (async () => input.profile.id
+            ? await getServerProfile(input.profile.id)
+            : input.profile))();
           if (active.carrier === 'iroh' && !currentProfile.homeConnectionDescriptor) {
             return {
               status: 'server_unreachable',
@@ -259,18 +267,30 @@ async function defaultProbe(input: ProbeInput): Promise<ReadinessProbeResult> {
 
 async function prepareDaemonHomeIrohTransportOnce(
   input: PrepareDaemonHomeIrohTransportInput,
-  profile: ServerProfile,
+  profile: DaemonHomeProfile,
   mode: HomeCarrierAcquisitionMode,
   relayOnlyRecovery = false,
   superviseReadiness = false,
 ): Promise<ActiveDaemonHomeTransport> {
   const descriptor = profile.homeConnectionDescriptor;
+  let needsHomeBinding = !descriptor || profile.homeConnectionDescriptorAuthority === 'advisory';
+  const observeHomeBinding = async (serverUrl: string, token: string) => {
+    if (profile.id && needsHomeBinding) {
+      const outcome = await refreshServerProfileHomeConnectionDescriptor({
+        profileId: profile.id, serverUrl, token, signal: input.signal,
+      });
+      if (outcome !== 'unavailable') needsHomeBinding = false;
+    }
+  };
   if (!descriptor) {
     return {
       carrier: 'standard',
       observedPath: 'unknown',
       release: noRelease,
-      verifyAuthenticated: async () => ({ status: 'ready' }),
+      verifyAuthenticated: async token => {
+        await observeHomeBinding(resolveServerProfileApiUrl(profile), token);
+        return { status: 'ready' };
+      },
     };
   }
   const resolvedTarget = await resolveHomeTarget({
@@ -294,11 +314,11 @@ async function prepareDaemonHomeIrohTransportOnce(
     ? await waitForDaemonHomeReadiness(check, input.signal)
     : await check();
   const publish = input.publishRuntimeOrigin ?? publishServerHttpRuntimeOrigin;
-  const verifyTrustedFallback = async (serverUrl: string, token: string) => await probe({
-    serverUrl,
-    token,
-    expectedServerIdentityId: expectedHomeServerIdentityId,
-  });
+  const verifyAuthenticatedConnection = async (serverUrl: string, token: string) => {
+    const readiness = await probe({ serverUrl, token, expectedServerIdentityId: expectedHomeServerIdentityId });
+    if (readiness.status === 'ready') await observeHomeBinding(serverUrl, token);
+    return readiness;
+  };
   const activateTrustedFallback = (serverUrl: string): ActiveDaemonHomeTransport => {
     if (input.signal?.aborted || input.isCancelled?.()) {
       throw new DaemonHomeReadinessError({ status: 'server_unreachable', errorMessage: 'Home transport is released' });
@@ -308,7 +328,7 @@ async function prepareDaemonHomeIrohTransportOnce(
       carrier: 'standard',
       observedPath: 'unknown',
       release: async () => unpublish(),
-      verifyAuthenticated: async (token) => await verifyTrustedFallback(serverUrl, token),
+      verifyAuthenticated: async (token) => await verifyAuthenticatedConnection(serverUrl, token),
     };
   };
   const acquireNativeLease = async () => {
@@ -342,11 +362,7 @@ async function prepareDaemonHomeIrohTransportOnce(
         }
         if (input.token) {
           const token = input.token;
-          const authenticatedReadiness = await checkReadiness(async () => await probe({
-            serverUrl: nativeLease.runtimeOrigin,
-            token,
-            expectedServerIdentityId: expectedHomeServerIdentityId,
-          }));
+          const authenticatedReadiness = await checkReadiness(async () => await verifyAuthenticatedConnection(nativeLease.runtimeOrigin, token));
           if (authenticatedReadiness.status !== 'ready') {
             throw new DaemonHomeReadinessError({
               ...authenticatedReadiness,
@@ -380,10 +396,16 @@ async function prepareDaemonHomeIrohTransportOnce(
     throw selection.error;
   }
   if (selection.kind === 'https') {
+    // A saved same-Home local route (for example an SSH forward) changes only
+    // where this process reaches the Home, not its descriptor or auth audience.
+    const runtimeOrigin = profile.localServerUrl?.trim()
+      && createServerUrlComparableKey(profile.serverUrl) === createServerUrlComparableKey(descriptor.canonicalServerUrl)
+      ? resolveServerProfileApiUrl(profile)
+      : selection.runtimeOrigin;
     const standardReadiness = await checkReadiness(async () => input.token
-      ? await verifyTrustedFallback(selection.runtimeOrigin, input.token)
+      ? await verifyAuthenticatedConnection(runtimeOrigin, input.token)
       : await identityProbe({
-          serverUrl: selection.runtimeOrigin,
+          serverUrl: runtimeOrigin,
           expectedServerIdentityId: expectedHomeServerIdentityId,
         }));
     if (standardReadiness.status !== 'ready') {
@@ -392,7 +414,7 @@ async function prepareDaemonHomeIrohTransportOnce(
         errorMessage: `Trusted HTTPS Home verification failed: ${standardReadiness.errorMessage ?? standardReadiness.status}`,
       });
     }
-    return activateTrustedFallback(selection.runtimeOrigin);
+    return activateTrustedFallback(runtimeOrigin);
   }
 
   const nativeLease = selection.carrier.value;
@@ -419,11 +441,7 @@ async function prepareDaemonHomeIrohTransportOnce(
       await selection.release();
       released = true;
     },
-    verifyAuthenticated: async (token) => await probe({
-      serverUrl: nativeLease.runtimeOrigin,
-      token,
-      expectedServerIdentityId: expectedHomeServerIdentityId,
-    }),
+    verifyAuthenticated: async (token) => await verifyAuthenticatedConnection(nativeLease.runtimeOrigin, token),
   };
 }
 
@@ -438,6 +456,7 @@ export async function prepareDaemonHomeIrohTransport(
 
 export async function applyDaemonHomeDescriptorRefresh(input: Readonly<{
   features: FeaturesResponse;
+  homeTarget?: ResolvedHomeTarget;
   reconcileDescriptor?: (descriptor: HomeConnectionDescriptorV1) => Promise<Readonly<{
     outcome: 'updated' | 'unchanged' | 'stale';
   }>>;
@@ -451,11 +470,18 @@ export async function applyDaemonHomeDescriptorRefresh(input: Readonly<{
     readSavedProfile: async () => null,
   });
   assertResolvedHomeTargetIdentity(resolvedTarget, observedIdentity ?? '');
+  const target = input.reconcileDescriptor ? null : input.homeTarget ?? await resolveCurrentCliHomeTarget();
+  // An env-only invocation has no saved profile to mutate. In particular,
+  // its descriptor must never be assigned to the user's focused Home.
+  if (!input.reconcileDescriptor && !target?.profileId) return 'ignored';
+  if (target) assertResolvedHomeTargetIdentity(target, observedIdentity ?? '');
   const reconciliation = await (
     input.reconcileDescriptor
-    ?? (async (nextDescriptor) => await reconcileActiveServerProfileHomeConnectionDescriptor(
-      nextDescriptor,
-    ))
+    ?? (async (nextDescriptor) => await adoptServerProfileHomeConnectionDescriptor({
+      descriptor: nextDescriptor,
+      expectedProfileId: target!.profileId!,
+      observation: 'exact',
+    }))
   )(descriptor);
   if (reconciliation.outcome === 'updated') await input.requestReconnect();
   return reconciliation.outcome;

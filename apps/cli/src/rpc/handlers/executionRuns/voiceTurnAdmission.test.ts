@@ -160,7 +160,7 @@ describe('Voice run caller-turn admission', () => {
           target: { kind: 'global' }, conversationSessionAddress: { serverId: 'home', sessionId: scope },
           targetSessionAddress: null, canStart: false, canStop: true, canMute: true, canCommitInput: true,
           canHoldToTalk: true, muted: false, canDismissFailedAttempt: false, canDismissEnded: false,
-          recoveryAction: null, availability: 'ready',
+          recoveryAction: null, availability: 'ready', inUseVoice: null,
         } } };
       },
     });
@@ -234,5 +234,30 @@ describe('Voice run caller-turn admission', () => {
     expect(stream).not.toHaveBeenCalled();
     await handler({ runId: 'voice-run', message: 'Human input', userTranscript: { mode: 'suppress' } }, { ...context, callerAuthority: 'present_user' });
     expect(stream).toHaveBeenCalledWith('voice-run', expect.objectContaining({ message: 'Human input', userTranscript: { mode: 'suppress' } }));
+  });
+
+  it('refuses transcript commit to a retained run outside the registered Session even for a human', async () => {
+    await retainRun('voice_agent', 'another-session');
+    const handlers = new Map<string, RpcHandler<unknown, unknown>>();
+    let manager: ExecutionRunHostBridge | undefined;
+    registerExecutionRunRpcHandlers({ registerHandler(method, handler) {
+      handlers.set(method, handler as RpcHandler<unknown, unknown>);
+    } }, {
+      sessionId: scope, cwd: directory, parentProvider: 'claude', sendAcp: async () => {},
+      executionRunProfileCatalog: buildExecutionRunProfileCatalog(),
+      getServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({ features: { voice: { enabled: true } } }) }),
+      onManagerCreated(created) { manager = created; managers.push(created); },
+    });
+    if (!manager) throw new Error('Voice RPC manager was not created');
+    await manager.recoverRetainedRuns();
+    const before = structuredClone(manager.get('voice-run'));
+    const commit = vi.spyOn(manager, 'commitUserTranscript');
+    const handler = handlers.get(SESSION_RPC_METHODS.EXECUTION_RUN_USER_TRANSCRIPT_COMMIT_V1);
+    if (!handler) throw new Error('Voice transcript commit handler was not registered');
+    await expect(handler({ runId: 'voice-run', message: 'Human input', localId: 'scoped-local-id' }, {
+      signal: new AbortController().signal, callerAuthority: 'present_user',
+    })).resolves.toMatchObject({ ok: false, errorCode: 'execution_run_not_found' });
+    expect(manager.get('voice-run')).toEqual(before);
+    expect(commit).not.toHaveBeenCalled();
   });
 });

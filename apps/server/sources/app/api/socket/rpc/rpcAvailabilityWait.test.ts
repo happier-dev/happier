@@ -57,4 +57,31 @@ describe("waitForRpcTargetAvailability", () => {
         });
         expect(discoverTargets).toHaveBeenCalledTimes(3);
     });
+
+    it('keeps an admitted wake invocation until its exact guest registers beyond ordinary discovery grace', async () => {
+        vi.useFakeTimers();
+        const target = createCandidate('reconnected-guest');
+        let registered = false;
+        const pending = waitForRpcTargetAvailability({ graceMs: 10, pollMs: 5,
+            discoverTargets: async () => registered ? [target] : [],
+            ...{ callerLifetime: { signal: new AbortController().signal, isCurrent: async () => true } },
+        });
+        await vi.advanceTimersByTimeAsync(30);
+        registered = true;
+        await vi.advanceTimersByTimeAsync(5);
+        await expect(pending).resolves.toMatchObject({ type: 'target', target });
+    });
+
+    it.each(['cancel', 'retire'] as const)('ends an undispatched wake wait on original %s without selecting later work', async reason => {
+        vi.useFakeTimers();
+        const cancel = new AbortController();
+        let current = true;
+        const pending = waitForRpcTargetAvailability({ graceMs: 10, pollMs: 5, discoverTargets: async () => [],
+            ...{ callerLifetime: { signal: cancel.signal, isCurrent: async () => current } },
+        });
+        await vi.advanceTimersByTimeAsync(30);
+        if (reason === 'cancel') cancel.abort(); else current = false;
+        await vi.advanceTimersByTimeAsync(5);
+        await expect(pending).resolves.toEqual({ type: 'not-available' });
+    });
 });

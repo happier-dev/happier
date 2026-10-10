@@ -8,6 +8,8 @@ import type {
   ExternalActionExecutor,
   ResolveExternalActionTarget,
   ResolveExternalActionEncryption,
+  VerifyExternalActionExecutionAuthorization,
+  PrepareExternalActionRequesterAccountContext,
 } from '@/daemon/externalActions/executeExternalAction';
 import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
 
@@ -16,10 +18,14 @@ export type ExternalActionRpcRegistrationOptions = Readonly<{
   /** Set only by a receiver that executes inside exactly one Session. */
   sessionId?: string;
   currentServerId: string;
+  currentServerHttpBaseUrl?: string;
   resolveAccountId: (signal?: AbortSignal) => Promise<string | null>;
+  resolveInstallationId: () => string | null;
+  verifyExecutionAuthorization: VerifyExternalActionExecutionAuthorization;
   resolveTarget: ResolveExternalActionTarget;
   executor: ExternalActionExecutor;
   resolveEncryption?: ResolveExternalActionEncryption;
+  prepareRequesterAccountContext?: PrepareExternalActionRequesterAccountContext;
   externalActionMachineRequestPrivateKey?: string | Uint8Array;
 }>;
 
@@ -27,6 +33,8 @@ export type ExternalActionRpcRegistrationOptions = Readonly<{
 export type ExternalActionIngressOwner = Readonly<Pick<
   ExternalActionRpcRegistrationOptions,
   | 'currentServerId'
+  | 'currentServerHttpBaseUrl'
+  | 'prepareRequesterAccountContext'
   | 'resolveTarget'
   | 'executor'
   | 'resolveEncryption'
@@ -111,7 +119,16 @@ export function registerExternalActionRpcHandler(
     } catch {
       accountId = null;
     }
-    if (signal?.aborted || accountId !== request.principal.accountId) {
+    const installationId = options.resolveInstallationId();
+    if (
+      signal?.aborted
+      || accountId !== request.executionAuthorization.binding.custodianAccountId
+      || installationId !== request.executionAuthorization.binding.installationId
+      // Shared execution remains closed until its Account-scoped dependency
+      // ports preserve the actor independently of the daemon custodian.
+      || (accountId !== request.principal.accountId
+        && (!request.executionAuthorization.requesterAccountContext || !options.prepareRequesterAccountContext))
+    ) {
       return targetNotLocal(request);
     }
 
@@ -122,6 +139,14 @@ export function registerExternalActionRpcHandler(
       currentMachineId: options.machineId,
       ...(options.sessionId === undefined ? {} : { currentSessionId: options.sessionId }),
       currentServerId: options.currentServerId,
+      currentServerHttpBaseUrl: options.currentServerHttpBaseUrl,
+      prepareRequesterAccountContext: options.prepareRequesterAccountContext,
+      currentInstallationId: installationId,
+      verifyExecutionAuthorization: async (input) => {
+        if (options.resolveInstallationId() !== installationId) return false;
+        const current = await options.verifyExecutionAuthorization(input);
+        return current && options.resolveInstallationId() === installationId;
+      },
       resolveEncryption: options.resolveEncryption,
       resolveTarget: options.resolveTarget,
       executor: options.executor,

@@ -1,5 +1,5 @@
 import { tmpdir } from 'node:os';
-import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -7,6 +7,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 
 import { registerBashHandler } from './bash';
+import { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
+import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 
 function createRegistrar() {
     const handlers = new Map<string, (payload: unknown, context?: RpcHandlerContext) => Promise<unknown>>();
@@ -46,6 +48,78 @@ async function settleWithin<T>(
 }
 
 describe('registerBashHandler', () => {
+    it.each(['argv', 'shell'] as const)('refuses fresh %s work before native execution while the canonical daemon drain is closed', async mode => {
+        const { handlers, registrar } = createRegistrar();
+        const admissionDrain = createDaemonAdmissionDrain();
+        const executionBudgetRegistry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null });
+        registerBashHandler(registrar as never, process.cwd(), { executionBudgetRegistry, admissionDrain });
+        const directory = await mkdtemp(join(tmpdir(), 'happier-bash-admission-'));
+        const context: RpcHandlerContext = { signal: new AbortController().signal,
+            localActionContext: { requesterWorkAttributionV1: {
+                serverId: 'home', accountId: 'requester', machineId: 'machine', installationId: 'installation',
+            } } };
+        const invoke = (marker: string) => {
+            const script = "require('node:fs').writeFileSync(process.argv[1], 'executed')";
+            return handlers.get(RPC_METHODS.BASH)!({ ...(mode === 'argv'
+                ? { argv: [process.execPath, '-e', script, marker] }
+                : { command: `"${process.execPath}" -e "${script}" "${marker}"` }), timeout: 0 }, context);
+        };
+        try {
+            const initial = join(directory, 'initial');
+            await expect(invoke(initial)).resolves.toMatchObject({ success: true });
+            expect(await readFile(initial, 'utf8')).toBe('executed');
+            admissionDrain.beginUnusedStopDrain();
+            const refused = join(directory, 'refused');
+            await expect(invoke(refused)).resolves.toMatchObject({ success: false });
+            await expect(readFile(refused)).rejects.toMatchObject({ code: 'ENOENT' });
+            expect(executionBudgetRegistry.getLiveWorkProducer().read()).toEqual({ coverage: 'complete', items: [] });
+            admissionDrain.resumeUnusedStop();
+            const resumed = join(directory, 'resumed');
+            await expect(invoke(resumed)).resolves.toMatchObject({ success: true });
+            expect(await readFile(resumed, 'utf8')).toBe('executed');
+        } finally {
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+    it.each(['native', 'windows'] as const)('applies explicit environment values with %s key identity through a real process', async mode => {
+        const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+        const nativePlatform = process.platform;
+        vi.stubEnv('HAPPIER_COMMAND_VALUE', 'ambient');
+        try {
+            // Platform selection is an OS boundary. Process execution/capture,
+            // environment merging and the RPC handler remain real.
+            if (mode === 'windows') Object.defineProperty(process, 'platform', { value: 'win32' });
+            const { handlers, registrar } = createRegistrar();
+            registerBashHandler(registrar as never, process.cwd());
+            const response = await handlers.get(RPC_METHODS.BASH)!({
+                argv: [process.execPath, '-e', "const keys = Object.keys(process.env).filter(k => k.toUpperCase() === 'HAPPIER_COMMAND_VALUE'); process.stdout.write(JSON.stringify({ values: keys.map(k => process.env[k]).sort(), authoredToken: process.env.HAPPIER_TOKEN }));"],
+                env: { happier_command_value: 'explicit', HAPPIER_TOKEN: 'authored-test-value' }, timeout: 0,
+            });
+            expect(response).toMatchObject({ success: true, exitCode: 0,
+                stdout: JSON.stringify({ values: mode === 'windows' || nativePlatform === 'win32' ? ['explicit'] : ['ambient', 'explicit'],
+                    authoredToken: 'authored-test-value' }) });
+        } finally {
+            Object.defineProperty(process, 'platform', platformDescriptor);
+            vi.unstubAllEnvs();
+        }
+    });
+    it.each([0, 7])('retains explicitly requested output suffixes without changing command exit %s', async exitCode => {
+        const { handlers, registrar } = createRegistrar();
+        registerBashHandler(registrar as never, process.cwd());
+        const outputTailMaxBytes = 128;
+        const output = await handlers.get(RPC_METHODS.BASH)!({
+            argv: [process.execPath, '-e', `process.stdout.write('old-out:' + '😀'.repeat(1024) + ':stdout-end😀'); process.stderr.write('old-error:' + 'é'.repeat(1024) + ':stderr-end😀'); process.exitCode = ${exitCode};`],
+            outputTailMaxBytes,
+        });
+        expect(output).toMatchObject({ success: exitCode === 0, exitCode, stdoutTruncated: true, stderrTruncated: true });
+        const stdout: unknown = Reflect.get(output as object, 'stdout');
+        const stderr: unknown = Reflect.get(output as object, 'stderr');
+        if (typeof stdout !== 'string' || typeof stderr !== 'string') throw new Error('Expected command output strings');
+        expect(Buffer.byteLength(stdout)).toBeLessThanOrEqual(outputTailMaxBytes);
+        expect(Buffer.byteLength(stderr)).toBeLessThanOrEqual(outputTailMaxBytes);
+        expect(stdout.endsWith(':stdout-end😀')).toBe(true);
+        expect(stderr.endsWith(':stderr-end😀')).toBe(true);
+    });
     it('passes env values verbatim into argv execution while retaining the machine environment', async () => {
         const { handlers, registrar } = createRegistrar();
         registerBashHandler(registrar as never, process.cwd());
@@ -74,10 +148,12 @@ describe('registerBashHandler', () => {
 
     it.each(['argv', 'shell'] as const)('cancels running %s work through the RPC signal and retains partial output', async (mode) => {
         const { handlers, registrar } = createRegistrar();
-        registerBashHandler(registrar as never, process.cwd());
+        const executionBudgetRegistry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null });
+        registerBashHandler(registrar as never, process.cwd(), { executionBudgetRegistry });
         const directory = await mkdtemp(join(tmpdir(), 'happier-bash-cancel-'));
         const marker = join(directory, 'started');
         const controller = new AbortController();
+        const attribution = { serverId: 'home', accountId: 'requester', machineId: 'machine', installationId: 'installation' };
         try {
             const script = "process.stdout.write('partial'); require('node:fs').writeFileSync(process.argv[1], 'ready'); setTimeout(() => {}, 2000)";
             const pending = handlers.get(RPC_METHODS.BASH)!({
@@ -85,11 +161,45 @@ describe('registerBashHandler', () => {
                     ? { argv: [process.execPath, '-e', script, marker] }
                     : { command: `"${process.execPath}" -e "${script}" "${marker}"` }),
                 timeout: 0,
-            }, { signal: controller.signal });
+            }, { signal: controller.signal, localActionContext: { requesterWorkAttributionV1: attribution } });
             await vi.waitFor(async () => expect(await readFile(marker, 'utf8')).toBe('ready'));
+            expect(executionBudgetRegistry.getLiveWorkProducer().read()).toMatchObject({ coverage: 'complete', items: [{
+                category: 'finite', attribution, state: 'active',
+            }] });
             controller.abort();
             await expect(pending).resolves.toMatchObject({ success: false, stdout: 'partial', error: 'Command cancelled' });
+            expect(executionBudgetRegistry.getLiveWorkProducer().read()).toEqual({ coverage: 'complete', items: [] });
         } finally {
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+
+    it.skipIf(process.platform === 'win32')('retains command custody after abort signalling until the real process exits', async () => {
+        const { handlers, registrar } = createRegistrar();
+        const executionBudgetRegistry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null });
+        registerBashHandler(registrar as never, process.cwd(), { executionBudgetRegistry });
+        const directory = await mkdtemp(join(tmpdir(), 'happier-bash-custody-'));
+        const ready = join(directory, 'ready');
+        const stopping = join(directory, 'stopping');
+        const release = join(directory, 'release');
+        const controller = new AbortController();
+        let pending: Promise<unknown> | undefined;
+        try {
+            // A real native child deliberately delays SIGTERM settlement. The
+            // filesystem markers characterize its OS lifetime without mocking exec.
+            const script = "const fs = require('node:fs'); process.on('SIGTERM', () => fs.writeFileSync(process.argv[2], 'stopping')); fs.writeFileSync(process.argv[1], 'ready'); setInterval(() => { if (fs.existsSync(process.argv[3])) process.exit(0); }, 10);";
+            pending = handlers.get(RPC_METHODS.BASH)!({ argv: [process.execPath, '-e', script, ready, stopping, release], timeout: 0 }, { signal: controller.signal });
+            await vi.waitFor(async () => expect(await readFile(ready, 'utf8')).toBe('ready'));
+            controller.abort();
+            await vi.waitFor(async () => expect(await readFile(stopping, 'utf8')).toBe('stopping'));
+            expect(executionBudgetRegistry.getLiveWorkProducer().read()).toMatchObject({ items: [{ category: 'finite', state: 'active' }] });
+            await writeFile(release, 'release');
+            await expect(pending).resolves.toMatchObject({ success: false, error: 'Command cancelled' });
+            expect(executionBudgetRegistry.getLiveWorkProducer().read()).toEqual({ coverage: 'complete', items: [] });
+        } finally {
+            controller.abort();
+            await writeFile(release, 'release');
+            await pending;
             await rm(directory, { recursive: true, force: true });
         }
     });
