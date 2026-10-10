@@ -48,6 +48,27 @@ const result = {
 };
 
 describe('workspace.sync.relationship.create Action', () => {
+  it('keeps worker-copy purpose and the chosen folder in the existing destination approval', async () => {
+    const exactInput = { ...input, mode: 'keep_synced' as const, destinationIntent: 'materialize_from_source_workspace' as const,
+      targetPath: '/chosen-worker', purpose: 'worker_clean_copy' as const };
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'worker-approval' }));
+    const create = vi.fn(async () => result);
+    const executor = createActionExecutor({
+      sessionHandoffTargetReplacementApprovalPreflight: async () => ({ type: 'approval_required' as const, approval: {
+        v: 1 as const, consequences: ['replace_nonempty_workspace_target'] as const, serverId: 'server-a', machineId: 'target-machine',
+        canonicalRoot: '/chosen-worker', rootFingerprint: 'a'.repeat(64), operationId: 'worker-create',
+      } }),
+      workspaceSyncRelationshipCreate: create,
+      isActionApprovalRequired: () => false,
+      approvalsCreate,
+    } satisfies ActionExecutorDeps);
+    const outcome = await executor.execute('workspace.sync.relationship.create', exactInput, {
+      surface: 'ui', authority: 'present_user', machineId: 'source-machine', actionRequestId: 'worker-create', serverId: 'server-a',
+    });
+    expect(outcome).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'worker-approval' } });
+    expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({ actionId: 'workspace.sync.relationship.create', actionArgs: exactInput }) }));
+    expect(create).not.toHaveBeenCalled();
+  });
   it('passes existing-folder intent through target preflight and starts without a Session', async () => {
     const preflight = vi.fn(async () => ({ type: 'not_required' as const }));
     const create = vi.fn(async () => result);
@@ -76,7 +97,7 @@ describe('workspace.sync.relationship.create Action', () => {
     }));
   });
 
-  it('requires a confirmed Action approval for continuing exact-mirror deletion, even on an empty target', async () => {
+  it.each([false, true])('requires an exact confirmed target proof for continuing mirror deletion (changed=%s)', async (targetChanged) => {
     const approvals = new Map<string, Record<string, unknown>>();
     const approval = {
       v: 1 as const,
@@ -87,9 +108,10 @@ describe('workspace.sync.relationship.create Action', () => {
       rootFingerprint: 'a'.repeat(64),
       operationId: 'link-request-2',
     };
+    let currentApproval = approval;
     const create = vi.fn(async () => result);
     const executor = createActionExecutor({
-      sessionHandoffTargetReplacementApprovalPreflight: async () => ({ type: 'approval_required', approval }),
+      sessionHandoffTargetReplacementApprovalPreflight: async () => ({ type: 'approval_required', approval: currentApproval }),
       workspaceSyncRelationshipCreate: create,
       isActionApprovalRequired: () => false,
       approvalsCreate: async ({ request }) => {
@@ -119,10 +141,18 @@ describe('workspace.sync.relationship.create Action', () => {
       executionOriginV1: { authority: 'present_user', requestId: 'link-request-2' },
     });
 
+    if (targetChanged) currentApproval = { ...approval, rootFingerprint: 'b'.repeat(64) };
     const approved = await executor.execute('approval.request.decide', {
       artifactId: 'approval-1', decision: 'approve',
     }, { surface: 'ui', authority: 'present_user', serverId: 'home-1' });
-    expect(approved).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+    if (targetChanged) {
+      expect(approved, JSON.stringify(approved)).toMatchObject({ ok: true, result: {
+        status: 'failed', execution: { ok: false, errorCode: 'approval_stale' },
+      } });
+      expect(create).not.toHaveBeenCalled();
+      return;
+    }
+    expect(approved, JSON.stringify(approved)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
     expect(create).toHaveBeenCalledWith(expect.objectContaining({
       input: exactInput,
       operationId: 'link-request-2',

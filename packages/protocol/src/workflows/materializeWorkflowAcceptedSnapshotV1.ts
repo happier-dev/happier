@@ -3,6 +3,7 @@ import type { AgentStartAdmissionV1, AgentStartRefusalV1, MaterializedWorkflowLe
 import { isAgentStartActionV1, resolveActionAgentStartRequestsV1 } from '../actions/executor/agentStartAdmission.js';
 import { MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES } from '../automations/automationStoredContentEnvelopeV1.js';
 import type { JsonValue } from '../json/strictJsonValue.js';
+import { WorkspaceAddressV1Schema } from '../workspaces/workspaceRefV1.js';
 import type { ActionCaller } from '../actions/executor/types.js';
 import { compilePluginJsonSchema, describePluginJsonSchemaValueIssues } from '../plugins/actions/jsonSchemaValidation.js';
 import { isLaunchProfileV2, type AiLaunchProfile } from '../profiles/read.js';
@@ -15,7 +16,7 @@ import { WorkflowAcceptedSnapshotV1Schema, WorkflowMaterializedLeafV1Schema, Wor
   type WorkflowMaterializedLeafV1, type WorkflowResolvedInputsV1, type WorkflowRoleOverridesV1,
   type WorkflowReplayAgentOverrideV1,
   type WorkflowRunExecutionTargetV1 } from './workflowDefinitionV1.js';
-import { resolveWorkflowStepSelectionV1, WorkflowStepSelectionErrorV1, type WorkflowResolvedStepSelectionV1 } from './workflowStepSelectionV1.js';
+import { resolveWorkflowStepSelectionV1, WorkflowStepSelectionErrorV1, type WorkflowResolvedStepSelectionV1, type WorkflowStepSelectionRefusalV1 } from './workflowStepSelectionV1.js';
 import { validateWorkflowDefinition } from './workflowValidationV1.js';
 import { WorkflowStepExecutionSelectionSchema, type WorkflowBlock, type WorkflowDefinitionV1,
   type WorkflowIngressContextV1, type WorkflowLeafV1, type WorkflowStepSelectionV1,
@@ -71,7 +72,7 @@ export type MaterializeWorkflowAcceptedSnapshotV1Input = Readonly<{
   roleSelection?: Omit<ResolveRoleSelectionV1Input, 'roleId' | 'workflowRoles' | 'runOverrides'>;
   admission: WorkflowMaterializationAdmissionV1; effects: WorkflowMaterializationEffectsV1;
 }>;
-export type WorkflowMaterializationErrorV1 = AgentStartRefusalV1 | Readonly<{
+export type WorkflowMaterializationErrorV1 = AgentStartRefusalV1 | (WorkflowStepSelectionRefusalV1 & Readonly<{ blockId: string }>) | Readonly<{
   code: 'invalid_input' | 'source_unavailable' | 'target_unavailable'; blockId?: string; issues?: readonly WorkflowValidationIssue[];
 }>;
 export type WorkflowReadyAcceptedSnapshotV1 = WorkflowAcceptedSnapshotV1;
@@ -118,7 +119,7 @@ function invalidDefinition(issues: readonly WorkflowValidationIssue[], blockId?:
   if (targetIssue && !issues.some((issue) => issue.severity === 'error' && issue.code !== 'target_unavailable')) {
     return unavailable(targetIssue.blockId!);
   }
-  return invalidInput(blockId, issues);
+  return invalidInput(blockId ?? issues.find((entry) => entry.blockId !== undefined)?.blockId, issues);
 }
 
 /** Portable defaults belong to admission; detached execution never rereads a live profile. */
@@ -172,6 +173,8 @@ function agentLeaf(snapshot: Pick<WorkflowAcceptedSnapshotV1, 'machineId' | 'wor
       permissionMode: parseAgentPermissionIntentV1Alias(selection.permissionMode ?? 'default') ?? { kind: 'unresolved' },
       ...(selection.acpSessionModeId === undefined ? {} : { agentModeId: selection.acpSessionModeId }),
       ...(selection.profileId === undefined ? {} : { profileId: selection.profileId }),
+      ...(selection.launchEnvironment === undefined ? {} : { hasEnvironmentVariables:
+        Object.keys(selection.launchEnvironment.values).length > 0 || selection.launchEnvironment.unset.length > 0 }),
       ...(selection.connectedServices !== undefined ? { connectedServices: selection.connectedServices } : {}),
       ...(selection.mcpSelection !== undefined ? { mcpSelection: selection.mcpSelection } : {}),
       ...(selection.transcriptStorage ? { transcriptStorage: selection.transcriptStorage } : {}),
@@ -197,10 +200,32 @@ export class WorkflowMaterializationFailureV1 extends Error {
   constructor(readonly error: WorkflowMaterializationErrorV1) { super(error.code); this.code = error.code; }
 }
 
+/** The accepted Machine supplies only a default; authored choices keep their own admission path. */
+export function projectWorkflowFiniteActionInputV1(input: Readonly<{
+  machineId: string; actionId: string; input: Record<string, JsonValue>;
+}>): Record<string, JsonValue> {
+  if ((input.actionId !== 'projects.script.run' && input.actionId !== 'projects.compute.exec')
+    || Object.hasOwn(input.input, 'choice')) return input.input;
+  const workspace = WorkspaceAddressV1Schema.safeParse(input.input.workspace);
+  // Deferred bindings resolve at invocation. Do not invent their primary/worker classification.
+  if (!workspace.success) return input.input;
+  return {
+    ...input.input,
+    choice: workspace.data.machineId === input.machineId
+      ? { kind: 'primary' }
+      : { kind: 'workers', destination: { kind: 'machine', machineId: input.machineId } },
+  };
+}
+
 function projectActionStart(snapshot: Pick<WorkflowAcceptedSnapshotV1, 'machineId' | 'workspaceTarget'>, leaf: WorkflowMaterializedLeafV1,
   overrideEngine = leaf.role !== undefined, deferAuthorityErrors = hasUnresolvedValue(leaf.actionInput)): Readonly<{
   leaves: readonly MaterializedWorkflowLeafV1[]; effectiveInput?: WorkflowMaterializedLeafV1['actionInput'];
 }> {
+  if (leaf.actionId === 'projects.script.run' || leaf.actionId === 'projects.compute.exec') {
+    return { leaves: [], effectiveInput: projectWorkflowFiniteActionInputV1({
+      machineId: snapshot.machineId, actionId: leaf.actionId, input: leaf.actionInput ?? {},
+    }) };
+  }
   if (!leaf.actionId || !isAgentStartActionV1(leaf.actionId)) return { leaves: [] };
   const selection = leaf.selection;
   const baseline = { machineId: snapshot.machineId, directory: snapshot.workspaceTarget.project.directory };
@@ -464,6 +489,12 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
       }
       const executionTarget = resolved.executionTarget ?? input.context.executionTarget;
       let selection = resolved.selection;
+      if (leaf.kind !== 'step') {
+        const { launchEnvironment: _launchEnvironment, providerSessionResume: _providerSessionResume, ...nonAgentSelection } = selection;
+        selection = nonAgentSelection;
+      }
+      if (leaf.kind === 'step' && executionTarget.kind === 'detached_run'
+        && (selection.launchEnvironment !== undefined || selection.providerSessionResume !== undefined)) return unavailable(leaf.id);
       // Choosing a role's engine does not also choose that role's profile.
       if (frozen && agentOverride && frozen.selection.profileId === undefined) delete selection.profileId;
       if (purpose === 'run' && selection.conversation?.kind === 'origin_session' && !input.context.origin?.originSessionId) return invalidInput(leaf.id);

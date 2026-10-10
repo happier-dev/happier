@@ -1,10 +1,14 @@
 import { resolveSocketRpcSessionAuthorization, SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS } from '@happier-dev/protocol/socketRpc';
 import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/socketRpc';
-import { SOCKET_RPC_EVENTS, SessionTransferRoutingV1Schema, SocketRpcSessionActionAuthorizationContextSchema, isSessionActionRpcMethodV1 } from '@happier-dev/protocol/socketRpc';
-import type { SessionTransferRoutingV1, SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
+import { SOCKET_RPC_EVENTS, SessionTransferRoutingV1Schema, SocketRpcSessionActionAuthorizationContextSchema, WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema, isSessionActionRpcMethodV1 } from '@happier-dev/protocol/socketRpc';
+import type { SessionTransferRoutingV1, SocketRpcRequestPayload, WorkspaceSyncSourceRoutingV1, WorkspaceSyncTargetRoutingV1, WorkspaceSyncSourceWriterTargetRoutingV1 } from '@happier-dev/protocol/socketRpc';
 import { socketRpcCodec, type SocketRpcContent } from './socketRpcCodec.js';
 import { markRpcRequestDisposition, readRpcRequestDisposition } from './rpcDisposition.js';
 import { createSocketRpcAbortError, createSocketRpcRequestId, issueSocketRpcCallWithCancellation, raceSocketIoAckTimeout } from './socketRpcCancellation.js';
+import { ExternalActionRequestEnvelopeSchema, type ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { WorkspaceSyncSourceExecutionV1Schema, WorkspaceSyncSeedRoutingV1Schema,
+  type WorkspaceSyncSourceExecutionV1, type WorkspaceSyncSeedRoutingV1 } from '@happier-dev/protocol/socketRpc';
 
 export type SocketRpcAckScope = Readonly<{
   emit?(event: string, ...args: unknown[]): unknown;
@@ -55,6 +59,12 @@ export async function callSocketRpc<R>(params: Readonly<{
   method: string; params: unknown; content: SocketRpcContent;
   authorization?: SocketRpcAuthorizationContext; timeoutMs?: number | null;
   transferRouting?: SessionTransferRoutingV1;
+  workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
+  workspaceSyncTargetRouting?: WorkspaceSyncTargetRoutingV1;
+  workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
+  workspaceSyncSourceExecution?: WorkspaceSyncSourceExecutionV1;
+  workspaceSyncSeedRouting?: WorkspaceSyncSeedRoutingV1;
+  originalActionEnvelope?: ExternalActionRequestEnvelope;
   signal?: AbortSignal; onIssued?: () => void; requestId?: string;
   randomBytes?: (length: number) => Uint8Array;
   transportResponseEnvelopeVersion?: SocketRpcRequestPayload['transportResponseEnvelopeVersion'];
@@ -70,6 +80,25 @@ export async function callSocketRpc<R>(params: Readonly<{
       throw new Error('Session Action authorization does not match the RPC target');
     }
     const transferRouting = params.transferRouting === undefined ? undefined : SessionTransferRoutingV1Schema.parse(params.transferRouting);
+    const workspaceSyncSourceRouting = params.workspaceSyncSourceRouting === undefined
+      ? undefined : WorkspaceSyncSourceRoutingV1Schema.parse(params.workspaceSyncSourceRouting);
+    const workspaceSyncTargetRouting = params.workspaceSyncTargetRouting === undefined
+      ? undefined : WorkspaceSyncTargetRoutingV1Schema.parse(params.workspaceSyncTargetRouting);
+    const workspaceSyncSourceWriterTargetRouting = params.workspaceSyncSourceWriterTargetRouting === undefined
+      ? undefined : WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse(params.workspaceSyncSourceWriterTargetRouting);
+    const originalActionEnvelope = params.originalActionEnvelope === undefined
+      ? undefined : ExternalActionRequestEnvelopeSchema.parse(params.originalActionEnvelope);
+    const workspaceSyncSourceExecution = params.workspaceSyncSourceExecution === undefined
+      ? undefined : WorkspaceSyncSourceExecutionV1Schema.parse(params.workspaceSyncSourceExecution);
+    const workspaceSyncSeedRouting = params.workspaceSyncSeedRouting === undefined
+      ? undefined : WorkspaceSyncSeedRoutingV1Schema.parse(params.workspaceSyncSeedRouting);
+    if (workspaceSyncSeedRouting && (params.target.kind !== 'machine' || params.method !== RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE
+      || !params.createExternalActionExecution || !workspaceSyncSourceExecution || workspaceSyncSourceRouting
+      || workspaceSyncTargetRouting || workspaceSyncSourceWriterTargetRouting || originalActionEnvelope || transferRouting)) {
+      throw new Error('Seed routing does not match its installed Project export carrier');
+    }
+    if (originalActionEnvelope && (params.target.kind !== 'machine' || params.method !== RPC_METHODS.PROJECTS_OPEN
+      || !params.createExternalActionExecution)) throw new Error('Original Project envelope does not match its signed carrier');
     if (transferRouting && (params.target.kind !== 'session'
       || transferRouting.sessionId !== params.target.id || transferRouting.method !== params.method)) {
       throw new Error('Session transfer routing does not match the RPC target');
@@ -89,6 +118,12 @@ export async function callSocketRpc<R>(params: Readonly<{
     const payload: SocketRpcRequestPayload = {
       method, params: encoded,
       ...(transferRouting ? { transferRouting } : {}),
+      ...(workspaceSyncSourceRouting ? { workspaceSyncSourceRouting } : {}),
+      ...(workspaceSyncTargetRouting ? { workspaceSyncTargetRouting } : {}),
+      ...(workspaceSyncSourceWriterTargetRouting ? { workspaceSyncSourceWriterTargetRouting } : {}),
+      ...(workspaceSyncSourceExecution ? { workspaceSyncSourceExecution } : {}),
+      ...(workspaceSyncSeedRouting ? { workspaceSyncSeedRouting } : {}),
+      ...(originalActionEnvelope ? { originalActionEnvelope } : {}),
       ...(requestId ? { requestId } : {}),
       ...(typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? { timeoutMs: params.timeoutMs } : {}),
       ...(authorization ? { authorization } : {}),
@@ -98,7 +133,8 @@ export async function callSocketRpc<R>(params: Readonly<{
     const ack = await emitWithAckCancellable({ ...params, event: SOCKET_RPC_EVENTS.CALL, payload, requestId });
     acknowledged = true;
     const result = await socketRpcCodec.decodeResult(params.content, ack, callId);
-    if (params.signal?.aborted) throw markRpcRequestDisposition(createSocketRpcAbortError(), 'outcomeUnknown');
+    // Pending-call cancellation is settled by the ACK owner. A valid decoded
+    // acknowledgement remains authoritative even if cancellation arrives later.
     return result as R;
   } catch (error) {
     throw readRpcRequestDisposition(error) === null ? markRpcRequestDisposition(error, acknowledged ? 'outcomeUnknown' : 'notSent') : error;

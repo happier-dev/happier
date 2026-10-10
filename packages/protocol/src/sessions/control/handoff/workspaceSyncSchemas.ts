@@ -3,6 +3,9 @@ import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { HandoffTargetReplacementApprovalV1Schema } from './handoffTargetReplacementApprovalV1.js';
+import { MachineInstallationPublicIdentityV1Schema } from '../../../machines/identity/installationKeySchemas.js';
+import { WorkspaceRefV1Schema } from '../../../workspaces/workspaceRefV1.js';
+import { createStoredReadSchema, defineStoredReadProjection } from '../../../json/storedReadSchema.js';
 
 const MAX_RELATIONSHIP_ID_LENGTH = 256;
 const MAX_MACHINE_ID_LENGTH = 256;
@@ -47,6 +50,16 @@ export const WorkspaceContentPolicyV1Schema = lazyZodSchema(() => WorkspaceConte
 }));
 export type WorkspaceContentPolicyV1 = z.infer<typeof WorkspaceContentPolicyV1Schema>;
 
+/** Existing finite seed-export body, shared by its installed and Account ingress. */
+export const WorkspaceSyncSeedExportPrepareV1Schema = lazyZodSchema(() => z.object({
+  t: z.literal('workspace_sync_seed_v1'),
+  operationId: z.string().min(1),
+  sourceWorkspaceRefId: z.string().min(1),
+  targetMachineId: z.string().min(1),
+  contentPolicy: WorkspaceContentPolicyV1Schema,
+}).strict());
+export type WorkspaceSyncSeedExportPrepareV1 = z.infer<typeof WorkspaceSyncSeedExportPrepareV1Schema>;
+
 /**
  * Computes the stable policy fingerprint shared by UI, daemon and sidecar
  * boundaries.  Keep the canonical field order here so callers never invent a
@@ -67,6 +80,21 @@ export function computeWorkspaceSyncPolicyDigest(
   return bytesToHex(sha256(utf8ToBytes(canonical)));
 }
 
+export const WorkspaceSyncWorkerCopyProvenanceV1Schema = lazyZodSchema(() => z.object({
+  kind: z.literal('worker_clean_copy'),
+  sourceWorkspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH),
+  targetWorkspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH),
+}).strict());
+export type WorkspaceSyncWorkerCopyProvenanceV1 = z.infer<typeof WorkspaceSyncWorkerCopyProvenanceV1Schema>;
+
+const OptionalWorkspaceSyncWorkerCopyProvenanceV1Schema = defineStoredReadProjection(
+  WorkspaceSyncWorkerCopyProvenanceV1Schema.optional(),
+  () => z.preprocess((value) => (
+    typeof value === 'object' && value !== null && 'kind' in value && value.kind === 'worker_clean_copy'
+      ? value : undefined
+  ), createStoredReadSchema(WorkspaceSyncWorkerCopyProvenanceV1Schema).optional()),
+);
+
 export const WorkspaceSyncRelationshipV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
@@ -76,6 +104,7 @@ export const WorkspaceSyncRelationshipV1Schema = lazyZodSchema(() => z
     betaWorkspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH),
     mode: WorkspaceSyncPersistentModeV1Schema,
     contentPolicy: WorkspaceContentPolicyV1Schema,
+    provenance: OptionalWorkspaceSyncWorkerCopyProvenanceV1Schema,
     enabled: z.boolean(),
     createdAtMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     updatedAtMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
@@ -89,8 +118,35 @@ export const WorkspaceSyncRelationshipV1Schema = lazyZodSchema(() => z
         message: 'alphaWorkspaceRefId and betaWorkspaceRefId must be distinct',
       });
     }
+    if (value.provenance && (value.provenance.sourceWorkspaceRefId === value.provenance.targetWorkspaceRefId
+      || ![value.alphaWorkspaceRefId, value.betaWorkspaceRefId].includes(value.provenance.sourceWorkspaceRefId)
+      || ![value.alphaWorkspaceRefId, value.betaWorkspaceRefId].includes(value.provenance.targetWorkspaceRefId))) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ['provenance'], message: 'worker copy provenance must bind distinct relationship endpoints' });
+    }
   }));
 export type WorkspaceSyncRelationshipV1 = z.infer<typeof WorkspaceSyncRelationshipV1Schema>;
+
+/** Only dedicated creation provenance identifies a worker copy; Sync use and receipts do not. */
+export function getWorkspaceSyncWorkerCopyV1(
+  relationship: WorkspaceSyncRelationshipV1,
+): WorkspaceSyncWorkerCopyProvenanceV1 | null {
+  const provenance = relationship.provenance;
+  if (!provenance || provenance.kind !== 'worker_clean_copy' || provenance.sourceWorkspaceRefId === provenance.targetWorkspaceRefId
+    || ![relationship.alphaWorkspaceRefId, relationship.betaWorkspaceRefId].includes(provenance.sourceWorkspaceRefId)
+    || ![relationship.alphaWorkspaceRefId, relationship.betaWorkspaceRefId].includes(provenance.targetWorkspaceRefId)) return null;
+  return provenance;
+}
+
+/** Provenance is immutable creation evidence, independent of Mutagen runtime identity. */
+export function areWorkspaceSyncWorkerCopyProvenancesEqual(
+  left: WorkspaceSyncRelationshipV1,
+  right: WorkspaceSyncRelationshipV1,
+): boolean {
+  const a = getWorkspaceSyncWorkerCopyV1(left);
+  const b = getWorkspaceSyncWorkerCopyV1(right);
+  return a === null ? b === null : b !== null
+    && a.sourceWorkspaceRefId === b.sourceWorkspaceRefId && a.targetWorkspaceRefId === b.targetWorkspaceRefId;
+}
 
 type WorkspaceSyncRelationshipDefinitionV1 = Pick<
   WorkspaceSyncRelationshipV1,
@@ -118,6 +174,8 @@ export function areWorkspaceSyncRelationshipDefinitionsEqual(
     && left.contentPolicy.policyDigest === right.contentPolicy.policyDigest;
 }
 
+// Finite copy locators may belong to different Accounts. Endpoint qualification,
+// not opaque ID inequality, establishes whether their execution roots differ.
 export const WorkspaceSyncCopyOnceV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   operationId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
@@ -125,15 +183,7 @@ export const WorkspaceSyncCopyOnceV1Schema = lazyZodSchema(() => z.object({
   alphaWorkspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH),
   betaWorkspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH),
   contentPolicy: WorkspaceContentPolicyV1Schema,
-}).strict().superRefine((value, context) => {
-  if (value.alphaWorkspaceRefId === value.betaWorkspaceRefId) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['betaWorkspaceRefId'],
-      message: 'alphaWorkspaceRefId and betaWorkspaceRefId must be distinct',
-    });
-  }
-}));
+}).strict());
 export type WorkspaceSyncCopyOnceV1 = z.infer<typeof WorkspaceSyncCopyOnceV1Schema>;
 
 export const WorkspaceSyncEndpointEntryKindV1Schema = lazyZodSchema(() => z.enum(['missing', 'file', 'directory', 'symlink']));
@@ -580,10 +630,13 @@ export const HandoffTargetReplacementPreflightV1Schema = lazyZodSchema(() => z.o
 export type HandoffTargetReplacementPreflightV1 = z.infer<typeof HandoffTargetReplacementPreflightV1Schema>;
 
 export const HandoffTargetReplacementPreflightResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('type', [
-  z.object({ type: z.literal('not_required') }).strict(),
+  z.object({ type: z.literal('not_required'), physicalEndpoint: MachineInstallationPublicIdentityV1Schema.optional(),
+    targetWorkspace: WorkspaceRefV1Schema.optional() }).strict(),
   z.object({
     type: z.literal('approval_required'),
     approval: HandoffTargetReplacementApprovalV1Schema,
+    physicalEndpoint: MachineInstallationPublicIdentityV1Schema.optional(),
+    targetWorkspace: WorkspaceRefV1Schema.optional(),
   }).strict(),
 ]));
 export type HandoffTargetReplacementPreflightResultV1 = z.infer<typeof HandoffTargetReplacementPreflightResultV1Schema>;
@@ -694,6 +747,9 @@ export const WorkspaceSyncTargetBootstrapPrepareResultV1Schema = lazyZodSchema((
   created: z.boolean(),
   rootFingerprint: WorkspaceSyncHexDigestV1Schema,
   policyDigest: WorkspaceSyncHexDigestV1Schema,
+  physicalEndpoint: MachineInstallationPublicIdentityV1Schema.optional(),
+  /** Existing physical owner row, carried only for an admitted finite copy. */
+  targetWorkspace: WorkspaceRefV1Schema.optional(),
 }).strict());
 export type WorkspaceSyncTargetBootstrapPrepareResultV1 = z.infer<typeof WorkspaceSyncTargetBootstrapPrepareResultV1Schema>;
 
@@ -990,6 +1046,8 @@ export const WorkspaceSyncStatusV1Schema = lazyZodSchema(() => z.object({
   }).strict(),
   conflictCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   lastCycleObservedAtMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable(),
+  /** Known clean flush completion; absent/null on older producers or after runtime history is lost. */
+  lastCleanSyncAtMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable().optional(),
   errorCode: z.string().trim().min(1).max(MAX_ERROR_CODE_LENGTH).optional(),
 }).strict());
 export type WorkspaceSyncStatusV1 = z.infer<typeof WorkspaceSyncStatusV1Schema>;
@@ -1153,6 +1211,7 @@ export const WorkspaceSyncRelationshipCreateActionInputV1Schema = lazyZodSchema(
   mode: WorkspaceSyncPersistentModeV1Schema,
   contentPolicy: WorkspaceContentPolicyV1Schema,
   destinationIntent: WorkspaceSyncDestinationIntentV1Schema,
+  purpose: z.literal('worker_clean_copy').optional(),
 }).strict());
 export type WorkspaceSyncRelationshipCreateActionInputV1 = z.infer<
   typeof WorkspaceSyncRelationshipCreateActionInputV1Schema
@@ -1228,17 +1287,16 @@ export const WorkspaceSyncRuntimeReadinessV1Schema = lazyZodSchema(() => z.objec
 export type WorkspaceSyncRuntimeReadinessV1 = z.infer<typeof WorkspaceSyncRuntimeReadinessV1Schema>;
 
 /**
- * One bounded readiness/status publication carried by the existing Machine
+ * One bounded readiness publication carried by the existing Machine
  * daemon-state channel. Readiness is always present so a client never infers
- * engine or carrier availability from paths or machine metadata; relationship
- * status is present only when the daemon has one to project. The enclosing
+ * engine or carrier availability from paths or machine metadata. Private
+ * relationship status remains at admitted relationship reads. The enclosing
  * daemon-state version provides ordering and this event carries no independent
  * cursor or persisted history.
  */
 export const WorkspaceSyncRuntimeEventV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   readiness: WorkspaceSyncRuntimeReadinessV1Schema,
-  status: WorkspaceSyncStatusV1Schema.optional(),
 }).strict());
 export type WorkspaceSyncRuntimeEventV1 = z.infer<typeof WorkspaceSyncRuntimeEventV1Schema>;
 
@@ -1351,3 +1409,59 @@ export const WorkspaceSyncPrepareBetweenResultV1Schema = lazyZodSchema(() => z.d
   }).strict(),
 ]));
 export type WorkspaceSyncPrepareBetweenResultV1 = z.infer<typeof WorkspaceSyncPrepareBetweenResultV1Schema>;
+
+/** Private source workspace phases retain the admitted child namespace, not physical aliases. */
+export const WorkspaceSyncHandoffSourceInputV1Schema = lazyZodSchema(() => z.object({
+  operationId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
+  accountServerId: z.string().trim().min(1),
+  sourceSessionId: z.string().trim().min(1).optional(),
+  action: HandoffWorkspaceActionV1Schema.refine(action => action.kind === 'copy_once' || action.kind === 'create_relationship'),
+  sourceMachineId: z.string().trim().min(1).max(MAX_MACHINE_ID_LENGTH),
+  targetMachineId: z.string().trim().min(1).max(MAX_MACHINE_ID_LENGTH),
+  sourceWorkspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH).optional(),
+  targetWorkspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH).optional(),
+  sourceRootPath: z.string().trim().min(1).max(MAX_PATH_LENGTH),
+  targetRootPath: z.string().trim().min(1).max(MAX_PATH_LENGTH),
+  targetReplacementApproval: HandoffTargetReplacementApprovalV1Schema.optional(),
+  targetReplacementApprovalReceiptId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH).optional(),
+  // The incumbent receipt authorizer parses this original Action, never the physical mapping.
+  targetReplacementApprovalActionInput: z.unknown().optional(),
+}).strict());
+export type WorkspaceSyncHandoffSourceInputV1 = z.infer<typeof WorkspaceSyncHandoffSourceInputV1Schema>;
+
+export const WorkspaceSyncHandoffPreparedV1Schema = lazyZodSchema(() => z.object({
+  kind: z.enum(['none', 'copy_once', 'create_relationship', 'relationship', 'linked_workspace']),
+  operationId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
+  relationshipId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH).optional(),
+  relationshipCreated: z.boolean().optional(),
+  action: HandoffWorkspaceActionV1Schema,
+  status: WorkspaceSyncStatusV1Schema.optional(),
+  traversed: z.array(WorkspaceSyncTraversedRelationshipV1Schema).max(2).readonly().optional(),
+}).strict().refine(value => value.kind === value.action.kind));
+export type WorkspaceSyncHandoffPreparedV1 = z.infer<typeof WorkspaceSyncHandoffPreparedV1Schema>;
+export const WorkspaceSyncHandoffSettledV1Schema = lazyZodSchema(() => z.object({
+  kind: z.enum(['none', 'copy_once', 'create_relationship', 'relationship', 'linked_workspace']),
+  operationId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
+  relationshipId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH).optional(),
+  relationshipCreated: z.boolean().optional(),
+  status: WorkspaceSyncStatusV1Schema.optional(),
+  traversed: z.array(WorkspaceSyncTraversedRelationshipV1Schema).max(2).readonly().optional(),
+}).strict());
+export type WorkspaceSyncHandoffSettledV1 = z.infer<typeof WorkspaceSyncHandoffSettledV1Schema>;
+export const WorkspaceSyncHandoffSourcePhaseRequestV1Schema = lazyZodSchema(() => z.discriminatedUnion('phase', [
+  z.object({ v: z.literal(1), phase: z.literal('prepare'), input: WorkspaceSyncHandoffSourceInputV1Schema }).strict(),
+  z.object({ v: z.literal(1), phase: z.literal('finalize'), input: WorkspaceSyncHandoffSourceInputV1Schema,
+    prepared: WorkspaceSyncHandoffPreparedV1Schema }).strict(),
+  z.object({ v: z.literal(1), phase: z.literal('commit'), input: WorkspaceSyncHandoffSourceInputV1Schema,
+    prepared: WorkspaceSyncHandoffPreparedV1Schema }).strict(),
+  z.object({ v: z.literal(1), phase: z.literal('abort'), input: WorkspaceSyncHandoffSourceInputV1Schema,
+    prepared: WorkspaceSyncHandoffPreparedV1Schema.optional() }).strict(),
+]));
+export type WorkspaceSyncHandoffSourcePhaseRequestV1 = z.infer<typeof WorkspaceSyncHandoffSourcePhaseRequestV1Schema>;
+export const WorkspaceSyncHandoffSourcePhaseResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('phase', [
+  z.object({ v: z.literal(1), phase: z.literal('prepared'), prepared: WorkspaceSyncHandoffPreparedV1Schema }).strict(),
+  z.object({ v: z.literal(1), phase: z.literal('finalized'), result: WorkspaceSyncHandoffSettledV1Schema }).strict(),
+  z.object({ v: z.literal(1), phase: z.literal('committed'), result: WorkspaceSyncHandoffSettledV1Schema }).strict(),
+  z.object({ v: z.literal(1), phase: z.literal('aborted') }).strict(),
+]));
+export type WorkspaceSyncHandoffSourcePhaseResultV1 = z.infer<typeof WorkspaceSyncHandoffSourcePhaseResultV1Schema>;

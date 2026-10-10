@@ -1,13 +1,19 @@
 import type { ArtifactCallerAccessV1 } from './artifactAccessV1.js';
+import type { ArtifactAccessGrantsListResponseV1 } from './artifactAccessV1.js';
+import type { ArtifactPublicAudienceV1 } from './artifactActionsV1.js';
 import type { ArtifactBodyV1 } from './artifactBinaryV1.js';
 import { APPROVAL_ARTIFACT_KINDS_V1 } from '../approvals/approvalArtifactKindV1.js';
-import { WIDGET_SURFACE_ARTIFACT_KIND_V1 } from '../widgets/widgetSurfaceArtifactV1.js';
+import { WIDGET_SURFACE_ARTIFACT_KIND_V1, readWidgetSurfaceArtifactV1 } from '../widgets/widgetSurfaceArtifactV1.js';
 import { HOME_HUB_ARTIFACT_KIND_V1 } from '../home/homeHubArtifactV1.js';
+import { WIDGET_LAYOUT_FRAGMENT_ARTIFACT_KIND_V1 } from '../widgets/widgetLayoutFragmentArtifactV1.js';
+import { USAGE_NOTICE_ARTIFACT_KIND_V1 } from '../activity/usageNoticeArtifactV1.js';
 import { WorkflowDefinitionArtifactHeaderV1ReadSchema } from '../workflows/workflowDefinitionV1.js';
 import { roleArtifactSharingAdapterV1 } from '../prompts/roles/roleArtifactSharingV1.js';
 import { launchProfileArtifactSharingAdapterV1 } from '../launchProfiles/launchProfileArtifactV1.js';
 import { readWorkBoardArtifactV1 } from '../boards/workBoardArtifactV1.js';
+import { getWidgetSharedInputIssuesV1 } from '../widgets/widgetSharedInputAdmissionV1.js';
 import { PromptDocArtifactHeaderV1Schema, PromptDocBodyV1Schema } from '../prompts/library/promptDocV2.js';
+import { MemoryDocArtifactHeaderV1StoredSchema, MemoryDocBodyV1StoredSchema } from '../prompts/library/memoryDocV1.js';
 import { PromptBundleBodyV1Schema, PromptBundleSchemaIdV1Schema,
   validatePromptBundleBodyV1AgainstSchemaId } from '../prompts/library/promptBundleSchemas.js';
 
@@ -17,9 +23,32 @@ export type ArtifactSharingResourceV1 = Readonly<{
   body?: ArtifactBodyV1 | null;
   ownerAccountId?: string;
   access?: ArtifactCallerAccessV1;
+  publicAudience?: ArtifactPublicAudienceV1;
   headerVersion?: number;
   revision?: Readonly<{ headerVersion: number; bodyVersion: number }>;
 }>;
+
+/** Admitted audience facts, not header metadata or the public-sharing availability bit. */
+export async function readArtifactSharedAudienceV1(params: Readonly<{
+  current: ArtifactSharingResourceV1;
+  readGrants: () => Promise<ArtifactAccessGrantsListResponseV1>;
+  signal?: AbortSignal;
+}>): Promise<boolean> {
+  params.signal?.throwIfAborted();
+  if (params.current.access === 'view' || params.current.access === 'edit' || params.current.access === 'admin'
+    || params.current.publicAudience === 'retained') return true;
+  const audience = await params.readGrants();
+  params.signal?.throwIfAborted();
+  if (audience.artifactId !== params.current.artifactId
+    || params.current.ownerAccountId !== undefined && audience.ownerAccountId !== params.current.ownerAccountId) {
+    throw Object.assign(new Error('artifact_content_unavailable'), { code: 'content_unavailable' });
+  }
+  if (audience.access !== 'owner' || audience.grants.length > 0) return true;
+  if (params.current.publicAudience === 'none') return false;
+  // Missing predecessor or unavailable exposure facts cannot prove privacy,
+  // including kinds that no longer permit creating new public publications.
+  throw Object.assign(new Error('artifact_content_unavailable'), { code: 'content_unavailable' });
+}
 
 /**
  * Kind policy delegates to the document owner; the host owns transport and keys.
@@ -32,7 +61,7 @@ export type ArtifactSharingKindAdapterV1 = Readonly<{
 /** Recipient intent and content admission only. Grants and content opening belong to the store. */
 export type ArtifactUseTargetV1 = Readonly<{
   artifactId: string;
-  kind: 'open' | 'prompt_doc' | 'prompt_bundle' | 'workflow' | 'role' | 'launch_profile' | 'board';
+  kind: 'open' | 'prompt_doc' | 'prompt_bundle' | 'memory' | 'workflow' | 'role' | 'launch_profile' | 'board';
   canShare: boolean;
   browserListed: boolean;
   publicLinkAllowed: boolean;
@@ -84,12 +113,52 @@ export const promptBundleArtifactSharingAdapterV1 = {
   },
 } as const satisfies ArtifactSharingKindAdapterV1;
 
+export const memoryDocArtifactSharingAdapterV1 = {
+  kind: 'memory_doc.v1',
+  canShare(resource: ArtifactSharingResourceV1) {
+    try {
+      return MemoryDocArtifactHeaderV1StoredSchema.safeParse(resource.header).success
+        && MemoryDocBodyV1StoredSchema.safeParse(readBody(resource)).success;
+    } catch { return false; }
+  },
+} as const satisfies ArtifactSharingKindAdapterV1;
+
 export const workBoardArtifactSharingAdapterV1 = {
   kind: 'work-board.v1',
   canShare(resource: ArtifactSharingResourceV1) {
     try {
-      return readWorkBoardArtifactV1({ artifactId: resource.artifactId, header: resource.header,
-        body: resource.body ?? null }) !== null;
+      const board = readWorkBoardArtifactV1({ artifactId: resource.artifactId, header: resource.header,
+        body: resource.body ?? null });
+      return board !== null && !storedWidgetContentHasPrivateInputs(readBody(resource), 'widgets');
+    } catch { return false; }
+  },
+} as const satisfies ArtifactSharingKindAdapterV1;
+
+/** Inspect original stored values before additive projection can drop a private pin. */
+function storedWidgetContentHasPrivateInputs(body: unknown, list: 'widgets' | 'items'): boolean {
+  if (!body || typeof body !== 'object' || !(list in body)) return false;
+  const entries = (body as Record<string, unknown>)[list];
+  if (!Array.isArray(entries)) return false;
+  const pending: unknown[] = [...entries];
+  while (pending.length) {
+    const entry = pending.pop();
+    if (!entry || typeof entry !== 'object') continue;
+    if (list === 'items' && getWidgetSharedInputIssuesV1(entry).length > 0) return true;
+    if ('instance' in entry && getWidgetSharedInputIssuesV1(entry.instance).length > 0) return true;
+    // Groups are presentation only; every child still receives the same source/privacy admission.
+    if (list === 'items' && 'kind' in entry && entry.kind === 'group' && 'children' in entry && Array.isArray(entry.children)) {
+      for (const child of entry.children) pending.push(child);
+    }
+  }
+  return false;
+}
+
+export const widgetSurfaceArtifactSharingAdapterV1 = {
+  kind: WIDGET_SURFACE_ARTIFACT_KIND_V1,
+  canShare(resource: ArtifactSharingResourceV1) {
+    try {
+      return readWidgetSurfaceArtifactV1({ artifactId: resource.artifactId, header: resource.header, body: resource.body ?? null }) !== null
+        && !storedWidgetContentHasPrivateInputs(readBody(resource), 'items');
     } catch { return false; }
   },
 } as const satisfies ArtifactSharingKindAdapterV1;
@@ -106,13 +175,16 @@ const kindPolicies: readonly Readonly<ArtifactKindPolicyV1 & {
     { adapter: roleArtifactSharingAdapterV1, useKind: 'role' as const },
     { adapter: launchProfileArtifactSharingAdapterV1, useKind: 'launch_profile' as const },
     { adapter: promptDocArtifactSharingAdapterV1, useKind: 'prompt_doc' as const },
+    { adapter: memoryDocArtifactSharingAdapterV1, useKind: 'memory' as const },
     { adapter: promptBundleArtifactSharingAdapterV1, useKind: 'prompt_bundle' as const },
     { adapter: workBoardArtifactSharingAdapterV1, useKind: 'board' as const },
   ].map(policy => ({ ...documentPolicy, ...policy, kind: policy.adapter.kind, requiresTextBody: true })),
   ...Object.values(APPROVAL_ARTIFACT_KINDS_V1).map(kind => ({ ...privatePolicy, kind, useKind: 'open' as const, requiresTextBody: true })),
-  { ...documentPolicy, kind: WIDGET_SURFACE_ARTIFACT_KIND_V1, useKind: 'open', requiresTextBody: false,
+  { ...documentPolicy, kind: WIDGET_SURFACE_ARTIFACT_KIND_V1, adapter: widgetSurfaceArtifactSharingAdapterV1, useKind: 'open', requiresTextBody: false,
     browserListed: false, publicLinkAllowed: false },
   { ...privatePolicy, kind: HOME_HUB_ARTIFACT_KIND_V1, useKind: 'open', requiresTextBody: false },
+  { ...privatePolicy, kind: WIDGET_LAYOUT_FRAGMENT_ARTIFACT_KIND_V1, useKind: 'open', requiresTextBody: true },
+  { ...privatePolicy, kind: USAGE_NOTICE_ARTIFACT_KIND_V1, useKind: 'open', requiresTextBody: true },
 ];
 
 /** Unknown and untyped ordinary documents retain generic document behavior. */
@@ -123,6 +195,12 @@ export function getArtifactKindPolicyV1(kind: unknown): ArtifactKindPolicyV1 {
 /** The current specialized kind owners all require a JSON text document, never a blob reference. */
 export function artifactKindRequiresTextBodyV1(kind: unknown): boolean {
   return kindPolicies.find(policy => policy.kind === kind)?.requiresTextBody ?? false;
+}
+
+/** Only these existing content adapters own shared widget-input admission. */
+export function artifactKindHasSharedWidgetInputsV1(kind: unknown): boolean {
+  const adapter = kindPolicies.find(policy => policy.kind === kind)?.adapter;
+  return adapter === workBoardArtifactSharingAdapterV1 || adapter === widgetSurfaceArtifactSharingAdapterV1;
 }
 
 export function getArtifactUseTargetV1(resource: ArtifactSharingResourceV1): ArtifactUseTargetV1 {

@@ -4,13 +4,17 @@ import { NonBlankOpaqueIdentifierSchema, readNonBlankOpaqueIdentifier } from '..
 import { z } from 'zod';
 import { SessionPermissionApprovalReviewerClaimV1Schema } from '../permissions/v1.js';
 import { SessionForkFilesNotCopiedV1Schema } from '../creation/sessionSpawnNewResultV1.js';
+import { SessionForkVisualCopyV1Schema, SessionForkVisualsV1Schema } from '../board/forkVisualCopies.js';
 
 import type { AccountEncryptionMode } from '../../features/payload/capabilities/encryptionCapabilities.js';
 import { readAccountScopedCiphertextKindByte } from '../../crypto/accountScopedCipherEnvelope.js';
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import { AgentModelOptionOverrideRuleSchema } from '../../models/descriptor.js';
 import { AgentNativeResumeIdentityV1Schema } from '../../agents/nativeResumeIdentityV1.js';
-import { resolveGeneratedSessionPresentationAgentIdV1 } from '../../agents/generated/sessionPresentationCompatV1.js';
+import {
+  GENERATED_SESSION_PRESENTATION_COMPAT_V1,
+  resolveGeneratedSessionPresentationAgentIdV1,
+} from '../../agents/generated/sessionPresentationCompatV1.js';
 import {
   ConnectedServiceIdSchema,
   ConnectedServiceBindingsV2IngressSchema,
@@ -40,6 +44,9 @@ import {
 } from '../external/linkedSessionMetadata.js';
 import { readRuntimeDescriptorV1 } from './runtimeDescriptorV1.js';
 import { SessionDirectoryV1Schema } from './sessionDirectoryV1.js';
+import { SessionBotV1Schema, readSessionBotV1 } from '../identity/sessionBotV1.js';
+import { SessionVoicePreferenceV1Schema } from '../instructions/sessionVoicePreferenceV1.js';
+import { SessionPromptStackV1Schema, SessionDisabledInheritedEntryIdsV1Schema, migrateRetainedSessionWorkContextV1, migrateRetainedSessionMetadataContextV1 } from '../context/sessionContextV1.js';
 import { SessionRunnerRuntimeStateV1Schema } from '../control/sessionRunnerRuntimeV1.js';
 import {
   SessionRuntimeActivityProjectionSchema,
@@ -59,6 +66,7 @@ import { MachinePoolSelectionOriginV1Schema } from '../../machines/pools/v1.js';
 import { SessionDiscussionSelectionSourceV1Schema } from '../discussions/content.js';
 import { SessionActionConfirmationsV1Schema } from './sessionActionConfirmationsV1.js';
 import { SessionRolesV1Schema } from '../../prompts/roles/sessionRolesSnapshot.js';
+import { PluginUiNewSessionSeedOriginV1Schema } from '../../plugins/ui/newSessionSeedOrigin.js';
 import { createSessionTerminalMetadataSchema } from './terminalMetadata.js';
 
 export const SESSION_METADATA_LAYOUT_VERSION_V1 = 1 as const;
@@ -401,21 +409,38 @@ export type SessionPublicAgentStateV1 = z.infer<
  */
 export const SessionSharedMetadataV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(SESSION_SHARED_METADATA_VERSION_V1),
+  bot: SessionBotV1Schema.optional(),
   summary: SessionSharedSummaryV1Schema.optional(),
   agentPresentation: SessionSharedAgentPresentationV1Schema.optional(),
   externalSessionOperationPresentationV1:
     ExternalSessionOperationSharedPresentationV1Schema.optional(),
   publicAgentState: SessionPublicAgentStateV1Schema.optional(),
   actionConfirmationsV1: SessionActionConfirmationsV1Schema.optional(),
+  forkVisualsV1: SessionForkVisualsV1Schema.optional(),
 }).strict());
 export type SessionSharedMetadataV1 = z.infer<
   typeof SessionSharedMetadataV1Schema
 >;
 
+/** Stored reads discard unknown extensions while validating every known field. */
+export const StoredSessionSharedMetadataV1Schema = createStoredReadSchema(SessionSharedMetadataV1Schema);
+export const StoredSessionOwnerMetadataEnvelopeV1Schema = createStoredReadSchema(SessionOwnerMetadataEnvelopeV1Schema);
+
 const OptionalOwnerStringSchema = lazyZodSchema(() => z.string().max(100_000).nullable());
 const OptionalOwnerIdentifierSchema = lazyZodSchema(() => z.string().trim().min(1).max(2_000).nullable());
 const OptionalOwnerOpaqueIdentifierSchema =
   lazyZodSchema(() => NonBlankOpaqueIdentifierSchema.max(2_000).nullable());
+
+/** The closed bundled-Agent resume fields emitted by the canonical plugin projection. */
+export type SessionNativeVendorResumeIdFieldV1 = NonNullable<
+  (typeof GENERATED_SESSION_PRESENTATION_COMPAT_V1)[number]['vendorResumeIdField']
+>;
+
+const SESSION_NATIVE_VENDOR_RESUME_ID_FIELDS_V1 = Object.freeze(
+  GENERATED_SESSION_PRESENTATION_COMPAT_V1
+    .map((entry) => entry.vendorResumeIdField)
+    .filter((field): field is SessionNativeVendorResumeIdFieldV1 => field !== null),
+);
 
 const SessionOwnerWorkspaceV1Schema = lazyZodSchema(() => z.object({
   path: OptionalOwnerStringSchema.optional(),
@@ -576,24 +601,13 @@ const SessionOwnerCompatibilityDirectSessionLinkV1Schema =
 const SessionOwnerNativeSessionV1Schema = lazyZodSchema(() => z.object({
   runtimeDescriptorV1: SessionOwnerRuntimeDescriptorV1Schema.optional(),
   nativeResumeIdentityV1: AgentNativeResumeIdentityV1Schema.optional(),
-  claudeSessionId: OptionalOwnerOpaqueIdentifierSchema.optional(),
-  codexSessionId: OptionalOwnerOpaqueIdentifierSchema.optional(),
-  geminiSessionId: OptionalOwnerOpaqueIdentifierSchema.optional(),
-  grokSessionId: OptionalOwnerOpaqueIdentifierSchema.optional(),
-  opencodeSessionId: OptionalOwnerOpaqueIdentifierSchema.optional(),
-  auggieSessionId: OptionalOwnerOpaqueIdentifierSchema.optional(),
-  qwenSessionId: OptionalOwnerOpaqueIdentifierSchema.optional(),
-  kimiSessionId: OptionalOwnerOpaqueIdentifierSchema.optional(),
-  kiloSessionId: OptionalOwnerOpaqueIdentifierSchema.optional(),
-  kiroSessionId: OptionalOwnerOpaqueIdentifierSchema.optional(),
-  ohMyPiSessionId: OptionalOwnerOpaqueIdentifierSchema.optional(),
-  piSessionId: OptionalOwnerOpaqueIdentifierSchema.optional(),
-  copilotSessionId: OptionalOwnerOpaqueIdentifierSchema.optional(),
-  cursorSessionId: OptionalOwnerOpaqueIdentifierSchema.optional(),
-  antigravitySessionId: OptionalOwnerOpaqueIdentifierSchema.optional(),
-  devinSessionId: OptionalOwnerOpaqueIdentifierSchema.optional(),
-  droidSessionId: OptionalOwnerOpaqueIdentifierSchema.optional(),
-  fxSessionId: OptionalOwnerOpaqueIdentifierSchema.optional(),
+  // Object.fromEntries loses literal keys; this mapping contains exactly the generated closed set.
+  ...(Object.fromEntries(SESSION_NATIVE_VENDOR_RESUME_ID_FIELDS_V1.map((field) => [
+    field,
+    OptionalOwnerOpaqueIdentifierSchema.optional(),
+  ])) as {
+    [Field in SessionNativeVendorResumeIdFieldV1]: z.ZodOptional<typeof OptionalOwnerOpaqueIdentifierSchema>;
+  }),
   claudeTranscriptPath: OptionalOwnerStringSchema.optional(),
   claudeLastCheckpointId: OptionalOwnerIdentifierSchema.optional(),
   claudeLastAssistantUuid: OptionalOwnerIdentifierSchema.optional(),
@@ -933,6 +947,8 @@ const SessionOwnerRuntimeV1Schema = lazyZodSchema(() => z.object({
   approvalReviewerEnabled: z.boolean().optional(),
   permissionModeUpdatedAt: TimestampSchema.optional(),
   hostPid: z.number().int().nonnegative().optional(),
+  hostProcessStartTimeMs: TimestampSchema.optional(),
+  hostProcessInstanceFingerprint: OptionalOwnerStringSchema.optional(),
   startedFromDaemon: z.boolean().optional(),
   startedBy: z.enum(['daemon', 'terminal']).optional(),
   sessionLogPath: OptionalOwnerStringSchema.optional(),
@@ -1048,6 +1064,7 @@ const SessionOwnerHistoryV1Schema = lazyZodSchema(() => z.object({
     strategy: z.string().trim().min(1).max(256),
     requestId: OptionalOwnerIdentifierSchema.optional(),
     filesNotCopied: SessionForkFilesNotCopiedV1Schema.optional(),
+    visualCopies: z.array(SessionForkVisualCopyV1Schema).optional(),
     agentHint: z.object({
       agentId: BoundedIdentifierSchema.optional(),
       backendMode: BoundedIdentifierSchema.optional(),
@@ -1183,7 +1200,15 @@ const SessionOwnerAgentActivityEntryV1Schema = lazyZodSchema(() => z.object({
 }).strict());
 
 const SessionOwnerWorkV1Schema = lazyZodSchema(() => z.object({
+  bot: SessionBotV1Schema.optional(),
+  createdAsBot: z.literal(true).optional(),
+  memoryEnabled: z.boolean().optional(),
+  voicePreference: SessionVoicePreferenceV1Schema.optional(),
+  promptStack: SessionPromptStackV1Schema.optional(),
+  disabledInheritedEntryIds: SessionDisabledInheritedEntryIdsV1Schema.optional(),
+  viewPreferences: z.object({ showToolCalls: z.boolean().optional() }).strict().optional(),
   sessionRolesV1: SessionRolesV1Schema.optional(),
+  authoringOriginV1: PluginUiNewSessionSeedOriginV1Schema.optional(),
   sessionWorkStateV1: SessionOwnerWorkStateV1Schema.optional(),
   sessionWorkflowActivityHeadlineV1: z.object({
     v: z.literal(1),
@@ -1216,11 +1241,16 @@ const SessionOwnerWorkV1Schema = lazyZodSchema(() => z.object({
   }).strict().optional(),
 }).strict());
 
-const SessionOwnerRoleWorkV1Schema = lazyZodSchema(() => SessionOwnerWorkV1Schema.pick({ sessionRolesV1: true }));
-const {
-  sessionRolesV1: _sessionOwnerRoleSnapshot,
-  ...SessionOwnerCompatibilityFlatWorkShapeV1
-} = SessionOwnerWorkV1Schema.shape;
+// Runtime headlines retain their incumbent flat domain projection. Private work
+// facts stay under work so every registered field shares the same conversion.
+const SessionOwnerPrivateWorkV1Schema = lazyZodSchema(() => SessionOwnerWorkV1Schema.omit({
+  bot: true, createdAsBot: true, sessionWorkStateV1: true,
+  sessionWorkflowActivityHeadlineV1: true, sessionAgentActivityHeadlineV1: true,
+}));
+const SessionOwnerCompatibilityFlatWorkShapeV1 = SessionOwnerWorkV1Schema.pick({
+  bot: true, createdAsBot: true, sessionWorkStateV1: true,
+  sessionWorkflowActivityHeadlineV1: true, sessionAgentActivityHeadlineV1: true,
+}).shape;
 
 const SessionOwnerBackendTargetV1Schema = lazyZodSchema(() => z.union([
   z.object({
@@ -1397,7 +1427,7 @@ export const SessionOwnerCompatibilityViewV1Schema = lazyZodSchema(() => z.objec
   ...SessionOwnerHandoffV1Schema.shape,
   ...SessionOwnerCursorsV1Schema.shape,
   ...SessionOwnerCompatibilityFlatWorkShapeV1,
-  work: SessionOwnerRoleWorkV1Schema.optional(),
+  work: SessionOwnerPrivateWorkV1Schema.optional(),
   ...SessionOwnerSystemV1Schema.shape,
 }).strict().superRefine((value, context) => {
   if (
@@ -1633,6 +1663,7 @@ export function projectSessionSharedMetadataV1(params: Readonly<{
   agentState?: unknown;
 }>): SessionSharedMetadataV1 {
   const metadata = readRecord(params.metadata) ?? {};
+  const bot = readSessionBotV1(metadata.bot);
   const summary = projectSummary(metadata);
   const agentPresentation = projectAgentPresentation(metadata);
   const externalSessionOperationPresentationV1 =
@@ -1641,9 +1672,14 @@ export function projectSessionSharedMetadataV1(params: Readonly<{
   const actionConfirmationsV1 = SessionActionConfirmationsV1Schema.safeParse(
     metadata.actionConfirmationsV1,
   );
+  const fork = readRecord(metadata.forkV1);
+  const forkVisualsV1 = SessionForkVisualsV1Schema.safeParse(
+    fork?.visualCopies === undefined ? metadata.forkVisualsV1 : { v: 1, copies: fork.visualCopies },
+  );
 
   return SessionSharedMetadataV1Schema.parse({
     v: SESSION_SHARED_METADATA_VERSION_V1,
+    ...(bot ? { bot } : {}),
     ...(summary ? { summary } : {}),
     ...(agentPresentation ? { agentPresentation } : {}),
     ...(externalSessionOperationPresentationV1
@@ -1653,6 +1689,7 @@ export function projectSessionSharedMetadataV1(params: Readonly<{
     ...(actionConfirmationsV1.success
       ? { actionConfirmationsV1: actionConfirmationsV1.data }
       : {}),
+    ...(forkVisualsV1.success ? { forkVisualsV1: forkVisualsV1.data } : {}),
   });
 }
 
@@ -1669,11 +1706,11 @@ export function projectSessionOwnerCompatibilityViewV1(
     ownerMetadata: unknown;
   }>,
 ): SessionOwnerCompatibilityViewV1 {
-  const sharedMetadata = SessionSharedMetadataV1Schema.parse(
+  const sharedMetadata = StoredSessionSharedMetadataV1Schema.parse(
     params.sharedMetadata,
   );
-  const ownerMetadata = SessionOwnerMetadataV1Schema.parse(
-    params.ownerMetadata,
+  const ownerMetadata = createStoredReadSchema(SessionOwnerMetadataV1Schema).parse(
+    migrateRetainedSessionMetadataContextV1(params.ownerMetadata),
   );
   const descriptor = ownerMetadata.nativeSession?.runtimeDescriptorV1;
   const runtimeDescriptorV1 = descriptor;
@@ -1716,7 +1753,8 @@ export function projectSessionOwnerCompatibilityViewV1(
     runtimeActivity,
     ...runtime
   } = ownerMetadata.runtime ?? {};
-  const { sessionRolesV1, ...flatWork } = ownerMetadata.work ?? {};
+  const { bot, createdAsBot, sessionWorkStateV1, sessionWorkflowActivityHeadlineV1,
+    sessionAgentActivityHeadlineV1, ...privateWork } = ownerMetadata.work ?? {};
 
   const canonical = SessionOwnerCompatibilityViewV1Schema.parse({
     ...(sharedMetadata.summary
@@ -1761,8 +1799,12 @@ export function projectSessionOwnerCompatibilityViewV1(
     ...(ownerMetadata.history ?? {}),
     ...(ownerMetadata.handoff ?? {}),
     ...(ownerMetadata.cursors ?? {}),
-    ...flatWork,
-    ...(sessionRolesV1 ? { work: { sessionRolesV1 } } : {}),
+    ...(bot ? { bot } : {}),
+    ...(createdAsBot ? { createdAsBot } : {}),
+    ...(sessionWorkStateV1 ? { sessionWorkStateV1 } : {}),
+    ...(sessionWorkflowActivityHeadlineV1 ? { sessionWorkflowActivityHeadlineV1 } : {}),
+    ...(sessionAgentActivityHeadlineV1 ? { sessionAgentActivityHeadlineV1 } : {}),
+    ...(Object.keys(privateWork).length > 0 ? { work: privateWork } : {}),
     ...(ownerMetadata.system ?? {}),
   });
   return projectSessionMetadataAgentVocabularyWriteCompatibilityV1(canonical);
@@ -1796,24 +1838,7 @@ const WORKSPACE_OWNER_KEYS = [
 ] as const;
 const NATIVE_SESSION_SCALAR_OWNER_KEYS = [
   'nativeResumeIdentityV1',
-  'claudeSessionId',
-  'codexSessionId',
-  'geminiSessionId',
-  'grokSessionId',
-  'opencodeSessionId',
-  'auggieSessionId',
-  'qwenSessionId',
-  'kimiSessionId',
-  'kiloSessionId',
-  'kiroSessionId',
-  'ohMyPiSessionId',
-  'piSessionId',
-  'copilotSessionId',
-  'cursorSessionId',
-  'antigravitySessionId',
-  'devinSessionId',
-  'droidSessionId',
-  'fxSessionId',
+  ...SESSION_NATIVE_VENDOR_RESUME_ID_FIELDS_V1,
   'claudeTranscriptPath',
   'claudeLastCheckpointId',
   'claudeLastAssistantUuid',
@@ -1855,6 +1880,8 @@ const RUNTIME_OWNER_KEYS = [
   'approvalReviewerEnabled',
   'permissionModeUpdatedAt',
   'hostPid',
+  'hostProcessStartTimeMs',
+  'hostProcessInstanceFingerprint',
   'startedFromDaemon',
   'startedBy',
   'sessionLogPath',
@@ -1911,6 +1938,8 @@ const HISTORY_OWNER_KEYS = [
   'sessionMediaContinuityV1',
 ] as const;
 const WORK_OWNER_KEYS = [
+  'bot',
+  'createdAsBot',
   'sessionWorkStateV1',
   'sessionWorkflowActivityHeadlineV1',
   'sessionAgentActivityHeadlineV1',
@@ -2310,17 +2339,23 @@ export function createSessionOwnerMetadataV1(params: Readonly<{
     }
   }
   const workInput = copyPresentKeys(metadata, [
+    'bot',
+    'createdAsBot',
     'sessionWorkStateV1',
     'sessionWorkflowActivityHeadlineV1',
     'sessionAgentActivityHeadlineV1',
   ]);
   if (Object.hasOwn(metadata, 'work')) {
-    const roleWork = SessionOwnerRoleWorkV1Schema.safeParse(metadata.work);
-    if (roleWork.success) {
-      Object.assign(workInput, roleWork.data);
-    } else {
-      unsupportedFields.push(...roleWork.error.issues.map((issue) =>
-        `work.${issue.path.join('.') || '$'}`));
+    try {
+      const roleWork = SessionOwnerPrivateWorkV1Schema.safeParse(migrateRetainedSessionWorkContextV1(metadata.work));
+      if (roleWork.success) {
+        Object.assign(workInput, roleWork.data);
+      } else {
+        unsupportedFields.push(...roleWork.error.issues.map((issue) =>
+          `work.${issue.path.join('.') || '$'}`));
+      }
+    } catch {
+      unsupportedFields.push('work.sessionRolesV1.memoryDocRef');
     }
   }
   const legacyGoalInput = metadata.sessionGoalV1 ?? metadata.codexGoalV1;
@@ -2539,8 +2574,14 @@ export function parseSessionOwnerMetadataEnvelopeV1(
   } catch {
     return null;
   }
-  const parsed = createStoredReadSchema(SessionOwnerMetadataEnvelopeV1Schema).safeParse(value);
-  return parsed.success ? parsed.data : null;
+  try {
+    const envelope = readRecord(value);
+    const normalized = envelope?.t === 'plain' ? { ...envelope, v: migrateRetainedSessionMetadataContextV1(envelope.v) } : value;
+    const parsed = createStoredReadSchema(SessionOwnerMetadataEnvelopeV1Schema).safeParse(normalized);
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
 }
 
 export function validateSessionOwnerMetadataEnvelopeForAccountModeV1(

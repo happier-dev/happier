@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { AnchoredListPositionV1Schema, resolveAnchoredListMoveV1, type AnchoredListPositionV1 } from '../actions/anchoredListOrderV1.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
@@ -7,18 +8,42 @@ import {
   QualifiedConnectedAccountGroupCreateV4Schema, QualifiedConnectedAccountGroupPatchV4Schema,
   QualifiedConnectedAccountGroupDeleteV4Schema, QualifiedConnectedAccountGroupMemberMutationV4Schema,
   QualifiedConnectedAccountGroupMemberDeleteV4Schema, QualifiedConnectedAccountGroupResponseV4Schema,
-} from './qualifiedConnectedAccountsV4.js';
+} from './qualifiedConnectedAccountProjectionsV4.js';
 import { ConnectedServiceIdSchema, ConnectedServiceProfileIdSchema } from './connectedServiceBindings.js';
 import { ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema } from '../sessions/work/state/sessionWorkStateRpc.js';
+import { ConnectedAccountRevokeCommandV1Schema, ConnectedAccountRevokeResponseV1Schema, ConnectedAccountRevokedResponseV1Schema } from './connectedAccountDaemonRpcV1.js';
+import { ConnectedAccountServiceConfigurationEntryV1Schema } from '../account/settings/connectedAccountServiceConfigurationsV1.js';
+import { PluginConnectedAccountAuthenticationModeV2Schema } from './pluginConnectedAccountAuthenticationV2.js';
+import { ConnectedMetadataCleanupV1Schema } from './connectedAccountPresentationSchemasV1.js';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1 } from './configurationActionIdsV1.js';
+import { ConnectedServiceQuotaGetInputV1Schema, ConnectedServiceQuotaGetResultV1Schema } from './providerAccountUsageHistorySchemasV1.js';
+import { ConnectedServicePoolSelectionGetRequestV1Schema, ConnectedServicePoolSelectionGetResponseV1Schema } from './connectedServicePoolSelection.js';
+import { QualifiedAcknowledgementSubjectSchema, QualifiedConnectedDisclosureSubjectSchema, QualifiedConnectedEntityRefSchema } from './connectedAccountPresentationSchemasV1.js';
+import { ProviderAccountSubscriptionMonthlyPriceV1Schema } from './accountSubscription.js';
 export { CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1 } from './configurationActionIdsV1.js';
 
-export const ConnectedServiceConfigurationActionIdV1Schema = z.enum(CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1);
+export const ConnectedServiceConfigurationActionIdV1Schema = lazyZodSchema(() => z.enum(CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1));
 export type ConnectedServiceConfigurationActionIdV1 = z.infer<typeof ConnectedServiceConfigurationActionIdV1Schema>;
 
 const Success = z.object({ applied: z.literal(true) }).strict();
+const MetadataCleanupSuccess = Success.extend({ metadataCleanup: z.optional(ConnectedMetadataCleanupV1Schema) });
+const RevokeActionResponse = lazyZodSchema(() => z.union([
+  ConnectedAccountRevokeResponseV1Schema,
+  ConnectedAccountRevokedResponseV1Schema.extend({ metadataCleanup: z.optional(ConnectedMetadataCleanupV1Schema) }),
+]));
+const ConfigurationTarget = ConnectedAccountServiceConfigurationEntryV1Schema.pick({ service: true, modeId: true });
+const ConfigurationView = z.object({ status: z.enum(['ready', 'configurationRequired']), revision: z.string().nullable(),
+  values: ConnectedAccountServiceConfigurationEntryV1Schema.shape.values, configuredSecretFieldIds: z.array(z.string()),
+  missingFieldIds: z.array(z.string()) }).strict();
 export const CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 = {
+  'connectedServices.configuration.get': ConfigurationTarget,
+  'connectedServices.configuration.replace': ConfigurationTarget.extend({ expectedRevision: z.string().min(1).max(256).nullable(),
+    values: ConnectedAccountServiceConfigurationEntryV1Schema.shape.values,
+    secretValues: z.record(z.string(), z.string().min(1).max(64 * 1024)) }).strict(),
+  'connectedServices.billing.open': z.object({ account: asProtocolZod(QualifiedConnectedAccountRefSchema), machineId: z.string().trim().min(1) }).strict(),
+  'connectedServices.subscription.price.set': z.object({ account: asProtocolZod(QualifiedConnectedAccountRefSchema), price: ProviderAccountSubscriptionMonthlyPriceV1Schema.omit({ enteredAtMs: true }).nullable() }).strict(),
   'connectedServices.accounts.rename': z.object({ account: asProtocolZod(QualifiedConnectedAccountRefSchema), label: z.string().nullable() }).strict(),
+  'connectedServices.accounts.revoke': ConnectedAccountRevokeCommandV1Schema.omit({ operation: true }).extend({ machineId: z.string().trim().min(1) }),
   'connectedServices.accounts.default.set': z.object({ account: asProtocolZod(QualifiedConnectedAccountRefSchema), agentId: z.string().trim().min(1), makeDefault: z.boolean(), machineId: z.string().trim().min(1).optional() }).strict(),
   'connectedServices.pools.create': QualifiedConnectedAccountGroupCreateV4Schema.extend({ group: QualifiedConnectedAccountGroupCreateV4Schema.shape.group.omit({ state: true }) }),
   'connectedServices.pools.patch': QualifiedConnectedAccountGroupPatchV4Schema.omit({ state: true, overrideRuntimeCooldown: true }),
@@ -34,14 +59,28 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 = {
   'connectedServices.pools.default.set': z.object({ group: QualifiedConnectedAccountGroupRefSchema, agentId: z.string().trim().min(1), makeDefault: z.boolean(), machineId: z.string().trim().min(1).optional() }).strict(),
   'connectedServices.quota.reset': z.object({ machineId: z.string().trim().min(1), serviceId: ConnectedServiceIdSchema, profileId: ConnectedServiceProfileIdSchema, providerCreditId: z.string().trim().min(1).optional(), sourceSnapshotFetchedAtMs: z.number().int().nonnegative().nullable().optional() }).strict(),
   'connectedServices.quota.refresh': z.object({ account: asProtocolZod(QualifiedConnectedAccountRefSchema), machineId: z.string().trim().min(1) }).strict(),
+  'connectedServices.quota.get': ConnectedServiceQuotaGetInputV1Schema,
+  'connectedServices.pools.selection.get': ConnectedServicePoolSelectionGetRequestV1Schema,
   'connectedServices.identityPrivacy.set': z.object({ hidden: z.boolean() }).strict(),
+  'connectedServices.acknowledgements.set': z.object({ subject: QualifiedAcknowledgementSubjectSchema, acknowledged: z.boolean() }).strict(),
+  'connectedServices.labels.set': z.object({ subject: QualifiedConnectedEntityRefSchema, label: z.string() }).strict(),
+  'connectedServices.labels.reset': z.object({ subject: QualifiedConnectedEntityRefSchema }).strict(),
+  'connectedServices.acknowledgements.reset': z.object({ subject: QualifiedAcknowledgementSubjectSchema }).strict(),
+  'connectedServices.disclosure.set': z.object({ subject: QualifiedConnectedDisclosureSubjectSchema, collapsed: z.boolean() }).strict(),
+  'connectedServices.disclosure.reset': z.object({ subject: QualifiedConnectedDisclosureSubjectSchema }).strict(),
 } as const;
 export const CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 = {
+  'connectedServices.configuration.get': z.object({ target: ConfigurationTarget.extend({ kind: z.literal('service') }),
+    mode: PluginConnectedAccountAuthenticationModeV2Schema, configuration: ConfigurationView }).strict(),
+  'connectedServices.configuration.replace': Success.extend({ revision: z.string().min(1).max(256) }),
+  'connectedServices.billing.open': z.object({ opened: z.literal(true) }).strict(),
+  'connectedServices.subscription.price.set': Success,
   'connectedServices.accounts.rename': Success,
+  'connectedServices.accounts.revoke': RevokeActionResponse,
   'connectedServices.accounts.default.set': Success,
   'connectedServices.pools.create': QualifiedConnectedAccountGroupResponseV4Schema,
   'connectedServices.pools.patch': QualifiedConnectedAccountGroupResponseV4Schema,
-  'connectedServices.pools.delete': Success,
+  'connectedServices.pools.delete': MetadataCleanupSuccess,
   'connectedServices.pools.members.add': QualifiedConnectedAccountGroupResponseV4Schema,
   'connectedServices.pools.members.patch': QualifiedConnectedAccountGroupResponseV4Schema,
   'connectedServices.pools.members.remove': QualifiedConnectedAccountGroupResponseV4Schema,
@@ -50,7 +89,15 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 = {
   'connectedServices.pools.default.set': Success,
   'connectedServices.quota.reset': ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema,
   'connectedServices.quota.refresh': Success,
+  'connectedServices.quota.get': ConnectedServiceQuotaGetResultV1Schema,
+  'connectedServices.pools.selection.get': ConnectedServicePoolSelectionGetResponseV1Schema,
   'connectedServices.identityPrivacy.set': Success,
+  'connectedServices.acknowledgements.set': Success,
+  'connectedServices.labels.set': Success,
+  'connectedServices.labels.reset': Success,
+  'connectedServices.acknowledgements.reset': Success,
+  'connectedServices.disclosure.set': Success,
+  'connectedServices.disclosure.reset': Success,
 } as const;
 
 /** The member ladder shared by add, UI drag/keyboard reorder and Action reorder. */

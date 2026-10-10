@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
@@ -11,15 +12,19 @@ export const ARTIFACT_ACTION_IDS_V1 = [
   'artifact.publish_from_file', 'artifact.revisions.list', 'artifact.revisions.restore', 'artifact.storage.usage',
   'artifact.public_link.create', 'artifact.public_link.list', 'artifact.public_link.revoke', 'artifact.public_link.audit',
 ] as const;
-export const ArtifactActionIdV1Schema = z.enum(ARTIFACT_ACTION_IDS_V1);
+export const ArtifactActionIdV1Schema = lazyZodSchema(() => z.enum(ARTIFACT_ACTION_IDS_V1));
 export type ArtifactActionIdV1 = z.infer<typeof ArtifactActionIdV1Schema>;
 
-export const ArtifactRevisionV1Schema = z.object({
+export const ArtifactRevisionV1Schema = lazyZodSchema(() => z.object({
   headerVersion: z.number().int().positive(), bodyVersion: z.number().int().positive(),
-}).strict();
+}).strict());
 export type ArtifactRevisionV1 = z.infer<typeof ArtifactRevisionV1Schema>;
+/** Authenticated read fact: omitted or unfamiliar values never establish privacy. */
+export const ArtifactPublicAudienceV1ReadSchema = lazyZodSchema(() => z.enum(['retained', 'none', 'unknown'])
+  .optional().default('unknown').catch('unknown'));
+export type ArtifactPublicAudienceV1 = z.output<typeof ArtifactPublicAudienceV1ReadSchema>;
 // Headers belong to their content-kind owners. Preserve JSON metadata; it never supplies authority.
-export const ArtifactHeaderMetadataV1Schema = z.record(z.string(), StrictJsonValueSchema);
+export const ArtifactHeaderMetadataV1Schema = lazyZodSchema(() => z.record(z.string(), StrictJsonValueSchema));
 
 const subject = z.object({ artifactId: z.string().min(1) }).strict();
 const htmlPreview = {
@@ -32,56 +37,64 @@ export const ArtifactPublicLinkCreateInputV1Schema = subject.extend(StoredConten
 }).shape).strict();
 export const ArtifactPublicLinkRevokeInputV1Schema = subject.extend({ shareId: z.string().min(1) }).strict();
 const upload = { uploadPath: z.string().min(1), mime: z.string().min(1).optional() };
-export const ArtifactCreateInputV1Schema = z.union([
+export const ArtifactCreateInputV1Schema = lazyZodSchema(() => z.union([
   z.object({ artifactId: z.string().uuid().optional(), header: ArtifactHeaderMetadataV1Schema, body: z.string() }).strict(),
   z.object({ artifactId: z.string().uuid().optional(), header: ArtifactHeaderMetadataV1Schema, ...upload }).strict(),
-]);
-export const ArtifactListInputV1Schema = z.object({
+]));
+export const ArtifactListInputV1Schema = lazyZodSchema(() => z.object({
   search: z.string().optional(), kind: z.string().min(1).optional(),
   sort: z.enum(['updated_desc', 'created_desc', 'title_asc']).optional(),
   limit: z.number().int().positive().optional(), cursor: z.string().min(1).optional(),
-}).strict();
-export const ArtifactUpdateInputV1Schema = z.union([
+}).strict());
+export const ArtifactUpdateInputV1Schema = lazyZodSchema(() => z.union([
   subject.extend({ expectedRevision: ArtifactRevisionV1Schema, header: ArtifactHeaderMetadataV1Schema, body: z.string() }).strict(),
   subject.extend({ expectedRevision: ArtifactRevisionV1Schema, header: ArtifactHeaderMetadataV1Schema, ...upload }).strict(),
-]);
+]));
 export const ArtifactDeleteInputV1Schema = subject.extend({ expectedRevision: ArtifactRevisionV1Schema }).strict();
-export const ArtifactPublishFromFileInputV1Schema = z.object({
+export const ArtifactPublishFromFileInputV1Schema = lazyZodSchema(() => z.object({
   path: z.string().min(1), title: z.string().optional(), mime: z.string().min(1).optional(), kind: z.string().min(1).optional(),
-}).strict();
+}).strict());
 export const ArtifactRestoreInputV1Schema = subject.extend({
   bodyVersion: z.number().int().positive(), expectedRevision: ArtifactRevisionV1Schema,
 }).strict();
 export const ArtifactHeaderV1Schema = subject.extend({
   ownerAccountId: z.string().min(1), access: ArtifactCallerAccessV1Schema,
+  publicAudience: ArtifactPublicAudienceV1ReadSchema,
   header: ArtifactHeaderMetadataV1Schema, headerVersion: z.number().int().positive(),
   seq: z.number().int().nonnegative(), createdAt: z.number().int().nonnegative(), updatedAt: z.number().int().nonnegative(),
 }).strict();
-export const ArtifactDocumentV1Schema = ArtifactHeaderV1Schema.omit({ headerVersion: true }).extend({
+
+/** Project admitted native document rows onto the ordinary Action's strict header DTO. */
+export function projectArtifactHeaderV1(value: unknown): z.output<typeof ArtifactHeaderV1Schema> {
+  return ArtifactHeaderV1Schema.strip().parse(value);
+}
+export const ArtifactDocumentV1Schema = lazyZodSchema(() => ArtifactHeaderV1Schema.omit({ headerVersion: true }).extend({
   body: ArtifactBodyV1Schema.nullable(), revision: ArtifactRevisionV1Schema,
   provenance: ArtifactRevisionProvenanceV1Schema.optional(),
-}).strict();
-export const ArtifactQuotaExceededV1Schema = z.object({
+  /** Diagnostic projection from an admitted current audience, not caller authority. */
+  shared: z.boolean().optional(),
+}).strict());
+export const ArtifactQuotaExceededV1Schema = lazyZodSchema(() => z.object({
   error: z.literal('quota_exceeded'), budget: z.enum(['document', 'account']),
   limitBytes: z.number().int().nonnegative(), usedBytes: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 export type ArtifactQuotaExceededV1 = z.infer<typeof ArtifactQuotaExceededV1Schema>;
-export const ArtifactStorageUsageV1Schema = z.object({
+export const ArtifactStorageUsageV1Schema = lazyZodSchema(() => z.object({
   usedBytes: z.number().int().nonnegative(), limitBytes: z.number().int().nonnegative().nullable(),
   documentLimitBytes: z.number().int().nonnegative().nullable(), revisionRetentionCount: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 export type ArtifactStorageUsageV1 = z.infer<typeof ArtifactStorageUsageV1Schema>;
-export const ArtifactStoredBodyRevisionV1Schema = z.object({
+export const ArtifactStoredBodyRevisionV1Schema = lazyZodSchema(() => z.object({
   bodyVersion: z.number().int().positive(), body: z.string(), createdAt: z.number().int().nonnegative(),
   sizeBytes: z.number().int().nonnegative(),
   provenance: z.string().nullable().optional(),
-}).strict();
-export const ArtifactRevisionListResponseV1Schema = z.object({
+}).strict());
+export const ArtifactRevisionListResponseV1Schema = lazyZodSchema(() => z.object({
   revisions: z.array(ArtifactStoredBodyRevisionV1Schema), retentionCount: z.number().int().nonnegative(),
-}).strict();
-export const ArtifactBodyRevisionV1Schema = ArtifactStoredBodyRevisionV1Schema.extend({
+}).strict());
+export const ArtifactBodyRevisionV1Schema = lazyZodSchema(() => ArtifactStoredBodyRevisionV1Schema.extend({
   body: ArtifactBodyV1Schema.nullable(), provenance: ArtifactRevisionProvenanceV1Schema.optional(),
-}).strict();
+}).strict());
 
 export const ArtifactActionInputSchemasV1 = {
   'artifact.create': ArtifactCreateInputV1Schema,

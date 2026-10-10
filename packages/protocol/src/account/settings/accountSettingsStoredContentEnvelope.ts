@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { getAccountScopedBlobCiphertextBase64LengthV1 } from '../../crypto/accountScopedCipherEnvelope.js';
@@ -9,7 +10,7 @@ const textEncoder = new TextEncoder();
 export const ACCOUNT_SETTINGS_MAX_ENCRYPTED_CIPHERTEXT_UTF8_BYTES =
   getAccountScopedBlobCiphertextBase64LengthV1(ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES);
 
-const AccountSettingsEncryptedCiphertextWriteSchema = z.string().min(1).superRefine(
+const AccountSettingsEncryptedCiphertextWriteSchema = lazyZodSchema(() => z.string().min(1).superRefine(
   (ciphertext, context) => {
     if (textEncoder.encode(ciphertext).byteLength > ACCOUNT_SETTINGS_MAX_ENCRYPTED_CIPHERTEXT_UTF8_BYTES) {
       context.addIssue({
@@ -18,9 +19,9 @@ const AccountSettingsEncryptedCiphertextWriteSchema = z.string().min(1).superRef
       });
     }
   },
-);
+));
 
-const AccountSettingsPlainDocumentWriteSchema = AccountSettingsPersistedObjectSchema.superRefine(
+const AccountSettingsPlainDocumentWriteSchema = lazyZodSchema(() => AccountSettingsPersistedObjectSchema.superRefine(
   (document, context) => {
     let serializedDocument: string | undefined;
     try {
@@ -48,9 +49,9 @@ const AccountSettingsPlainDocumentWriteSchema = AccountSettingsPersistedObjectSc
       });
     }
   },
-);
+));
 
-export const AccountSettingsStoredContentEnvelopeSchema = z.discriminatedUnion('t', [
+export const AccountSettingsStoredContentEnvelopeSchema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.object({
     t: z.literal('plain'),
     v: AccountSettingsPersistedObjectSchema,
@@ -59,14 +60,14 @@ export const AccountSettingsStoredContentEnvelopeSchema = z.discriminatedUnion('
     t: z.literal('encrypted'),
     c: z.string().min(1),
   }),
-]);
+]));
 
 /**
  * The V2 write path enforces its derived ciphertext ceiling. Reads retain the
  * shared envelope schema so an oversized predecessor snapshot remains
  * available to the bounded migration reader.
  */
-export const AccountSettingsStoredContentEnvelopeWriteSchema = z.discriminatedUnion('t', [
+export const AccountSettingsStoredContentEnvelopeWriteSchema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.object({
     t: z.literal('plain'),
     v: AccountSettingsPlainDocumentWriteSchema,
@@ -75,6 +76,13 @@ export const AccountSettingsStoredContentEnvelopeWriteSchema = z.discriminatedUn
     t: z.literal('encrypted'),
     c: AccountSettingsEncryptedCiphertextWriteSchema,
   }),
-]);
+]));
 
 export type AccountSettingsStoredContentEnvelope = z.infer<typeof AccountSettingsStoredContentEnvelopeSchema>;
+
+/** Captured Settings replacement committed atomically with an owning entity-row mutation. */
+export const AccountSettingsCleanupV1Schema = lazyZodSchema(() => z.object({
+  expectedSettingsVersion: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  nextSettings: AccountSettingsStoredContentEnvelopeSchema.nullable(),
+}).strict());
+export type AccountSettingsCleanupV1 = z.infer<typeof AccountSettingsCleanupV1Schema>;

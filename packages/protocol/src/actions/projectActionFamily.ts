@@ -1,8 +1,7 @@
 import { z } from 'zod';
 import { lazyZodSchema, lazyDefinition } from '../lazyZodSchema.js';
 import { WorkspaceAddressV1Schema } from '../workspaces/workspaceRefV1.js';
-import { ProjectExecutionChoiceV1Schema, WorkspaceWorkerPreferenceV1Schema } from '../workspaces/projectWorkerPreferencesV1.js';
-import { ProjectWorkerNoAcceptanceReasonV1Schema } from '../workspaces/projectWorkerExecutionV1.js';
+import { ProjectExecutionChoiceV1Schema } from '../workspaces/projectWorkerPreferencesV1.js';
 import { ProjectNativeRefV1Schema, ProjectMemoryDemandV1Schema } from '../workspaces/projectSetup/projectManifestV1.js';
 import { QualifiedProjectTrustProjectV1Schema, ProjectTrustValueV1Schema } from '../workspaces/projectSetup/projectTrustRowV1.js';
 import { ProjectCommandActionOutputV1Schema, createProjectCommandActionCompletionV1 } from './actionCompletion.js';
@@ -15,6 +14,8 @@ export { ProjectSetupConsentFailureDetailsV1Schema, ProjectSetupConsentScopeV1Sc
   type ProjectSetupConsentFailureDetailsV1, type ProjectSetupConsentScopeV1 } from './projectSetupConsentFailure.js';
 import { PROJECT_ACTION_IDS_V1, type ProjectActionIdV1 } from './projectActionIdsV1.js';
 export { PROJECT_ACTION_IDS_V1, isProjectActionIdV1, type ProjectActionIdV1 } from './projectActionIdsV1.js';
+export { ProjectWorkerNoAcceptanceFailureDetailsV1Schema, readProjectWorkerNoAcceptanceFailureV1,
+  type ProjectWorkerNoAcceptanceFailureDetailsV1 } from './projectWorkerRefusal.js';
 
 export const PROJECT_FINITE_ACTION_RPC_METHODS_V1 = {
   'projects.prepare': RPC_METHODS.DAEMON_PROJECTS_PREPARE,
@@ -29,24 +30,6 @@ export function isRequesterProjectExecutionActionV1(actionId: string): actionId 
 
 const nonempty = lazyZodSchema(() => z.string().min(1));
 const workspace = WorkspaceAddressV1Schema;
-/** Pre-acceptance refusal facts, not permission to run on a different Machine. */
-export const ProjectWorkerNoAcceptanceFailureDetailsV1Schema = lazyZodSchema(() => z.object({
-  kind: z.literal('no_worker_can_accept'),
-  unavailable: WorkspaceWorkerPreferenceV1Schema.options[0].shape.unavailable,
-  reason: ProjectWorkerNoAcceptanceReasonV1Schema,
-}).strict());
-export type ProjectWorkerNoAcceptanceFailureDetailsV1 = z.infer<typeof ProjectWorkerNoAcceptanceFailureDetailsV1Schema>;
-
-export function readProjectWorkerNoAcceptanceFailureV1(value: unknown):
-  Readonly<{ ok: false; errorCode: string; error: string; details: ProjectWorkerNoAcceptanceFailureDetailsV1 }> | null {
-  const failure = ActionExecuteFailureSchema.safeParse(value);
-  if (!failure.success) return null;
-  const details = ProjectWorkerNoAcceptanceFailureDetailsV1Schema.safeParse(failure.data.details);
-  if (!details.success || failure.data.errorCode !== details.data.reason
-    && (details.data.unavailable === 'fail' || failure.data.errorCode !== 'choice_required')) return null;
-  return { ok: false, errorCode: failure.data.errorCode, error: failure.data.errorCode, details: details.data };
-}
-
 export const ProjectSetupConsentRequiredV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('pendingApproval'), code: z.enum(['project_setup_consent_required', 'project_setup_effect_changed']), reviewedEffectDigest: nonempty,
   consentScope: ProjectSetupConsentScopeV1Schema.optional(),
@@ -136,11 +119,24 @@ export const PROJECT_ACTION_OUTPUT_SCHEMAS_V1 = {
   'projects.compute.exec': finiteResult,
 } as const;
 
+// What a person reads in Settings, approvals and the form. Agents read `description`.
+const PROJECT_ACTION_COPY = {
+  'projects.trust.list': ['List trusted projects', 'See which projects you have allowed to run their setup on your machines.'],
+  'projects.trust.revoke': ['Stop trusting a project', 'Take back a project\'s permission to run its setup. It asks again next time.'],
+  'projects.prepare': ['Set up a project', 'Run a project\'s setup on a machine, so it is ready to work in.'],
+  'projects.script.run': ['Run a project script', 'Run one of the scripts a project declares, on a machine you choose.'],
+  'projects.compute.exec': ['Run a command in a project', 'Run a command you give in a project\'s folder on a machine.'],
+} as const satisfies Record<ProjectActionIdV1, readonly [title: string, summary: string]>;
+
 function row<const Id extends ProjectActionIdV1>(id: Id) {
   const read = id === 'projects.trust.list';
   return {
-    id, title: id,
-    description: 'Use the authenticated Account and exact Project workspace. Setup-effect human consent is separate from configurable Action invocation approval.',
+    id, title: PROJECT_ACTION_COPY[id][0],
+    description: id === 'projects.script.run'
+      ? 'Run the selected Script on the exact qualified checkout through current declaration and worker policy. Read projects.inspect and projects.worker.preferences.get first; primary-only declarations cannot run on workers. An explicit invocation choice precedes the per-script override and saved checkout default; Ask requires a deliberate exact target choice. Setup-effect human consent is separate from configurable Action approval. Acceptance returns an exact-target operation, not completion: inspect action.operations.get and projects.execution.output.read for queue, copy, setup, output and exit facts. After possible acceptance or unknown outcome inspect that same target; do not repeat Run or fall back because it is busy, offline, failed or Stop is unconfirmed.'
+      : id === 'projects.compute.exec'
+      ? 'Run an explicitly requested ad-hoc command on the exact qualified checkout. Read projects.worker.preferences.get first: allowAdHoc must be enabled in ready current preferences; opted-out and unavailable settings are distinct refusals. Commands follow configurable Action approval and reviewed setup consent, and arbitrary shell commands are not automatically offloaded. Observe the chosen target through projects.worker.status or finite-purpose machines.pools.resolve. Acceptance is an inspectable operation, not completion; read its exact-target state and output, and never repeat or change targets after possible acceptance without renewed explicit intent.'
+      : 'Use the authenticated Account and exact Project workspace. Setup-effect human consent is separate from configurable Action invocation approval.',
     safety: read ? 'safe' : 'danger', sideEffectClass: read ? 'read' : id === 'projects.trust.revoke' ? 'write' : 'external',
     requiredAuthority: 'account_automation', executionPlacement: id.startsWith('projects.trust.') ? 'account' : 'machine',
     placements: [], surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: !id.startsWith('projects.trust.') },
@@ -156,7 +152,7 @@ function row<const Id extends ProjectActionIdV1>(id: Id) {
       completion: lazyDefinition(() => id === 'projects.prepare'
       ? createProjectCommandActionCompletionV1({ immediateResultSchema: ProjectPrepareNoLaunchResultV1Schema })
       : createProjectCommandActionCompletionV1()) } : {}),
-    inputHints: { title: id, fields: [] },
+    inputHints: { title: PROJECT_ACTION_COPY[id][0], description: PROJECT_ACTION_COPY[id][1], fields: [] },
   } satisfies PreNormalizedActionSpec;
 }
 export const PROJECT_ACTION_SPECS_V1 = PROJECT_ACTION_IDS_V1.map(id => row(id));

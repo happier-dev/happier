@@ -1,5 +1,99 @@
 import type { WorkspaceSyncRelationshipV1 } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 import type { WorkspaceRefV1 } from './workspaceRefV1.js';
+import { normalizeWorkspaceRootPathV1, resolveWorkspaceRefV1, type WorkspaceRefResolutionContextV1 } from './workspaceRefResolutionV1.js';
+import { isManagedDevcontainerChildProjectionCurrentV1,
+  type DevcontainerChildProjectionV1 } from '../machines/managed/devcontainerV1.js';
+import type { ManagedMachineV1 } from '../machines/managed/managedMachineV1.js';
+
+/** Current reads of the existing managed row and ordinary Machine projection, never stored mapping state. */
+export type WorkspaceSyncChildMachineFacts = Readonly<{
+  serverId: string;
+  machineId: string;
+  installationId: string;
+  projection: DevcontainerChildProjectionV1;
+  managedMachine: ManagedMachineV1;
+  controller: Readonly<{ machineId: string; installationId: string; available: boolean }>;
+}>;
+
+type WorkspaceSyncEndpointContext = Readonly<{
+  workspaceRefs: readonly WorkspaceRefV1[];
+  childMachines?: readonly WorkspaceSyncChildMachineFacts[];
+  context?: WorkspaceRefResolutionContextV1;
+  /** Pre-purpose addressing only; effect owners still require physical_sync. */
+  purpose?: 'physical_sync' | 'admitted_mapping';
+}>;
+type WorkspaceSyncEndpointUnavailable = Readonly<{ ok: false; code: 'workspace_sync_child_unavailable' }>;
+type WorkspaceSyncNamespace = Pick<WorkspaceRefV1, 'serverId' | 'machineId' | 'rootPath' | 'projectKey'>;
+
+/** One current retained bind decision, shared by transport addressing and physical-ref resolution. */
+function readCurrentWorkspaceSyncChild(input: Readonly<{
+  namespace: WorkspaceSyncNamespace;
+  workspace?: WorkspaceRefV1;
+  childMachines?: readonly WorkspaceSyncChildMachineFacts[];
+  context?: WorkspaceRefResolutionContextV1;
+}>): Readonly<{ ok: true; fact?: WorkspaceSyncChildMachineFacts }> | WorkspaceSyncEndpointUnavailable {
+  const workspace = input.namespace;
+  const unavailable = { ok: false as const, code: 'workspace_sync_child_unavailable' as const };
+  const facts = input.childMachines?.filter(fact => fact.serverId === workspace.serverId && fact.machineId === workspace.machineId) ?? [];
+  if (facts.length === 0) return { ok: true };
+  if (facts.length !== 1) return unavailable;
+  const fact = facts[0]!;
+  const { observation } = fact.projection;
+  const row = fact.managedMachine;
+  const normalizeRoot = input.context?.normalizeRootPath ?? normalizeWorkspaceRootPathV1;
+  const actualRoot = normalizeRoot(workspace.rootPath, input.workspace);
+  const nativeRoot = normalizeRoot(observation.workspaceFolder);
+  if (!fact.installationId || !isManagedDevcontainerChildProjectionCurrentV1({ homeId: workspace.serverId,
+      machineId: workspace.machineId, managedMachine: row, projection: fact.projection })
+    || !actualRoot || !nativeRoot || !(input.context?.rootsEqual
+      ? input.context.rootsEqual(actualRoot, nativeRoot) : actualRoot === nativeRoot)) return unavailable;
+  if (observation.storage.kind === 'bind' && (fact.controller.machineId !== row.controller.machineId
+    || fact.controller.installationId !== row.controller.installationId)) return unavailable;
+  return { ok: true, fact };
+}
+
+/** Admitted addressing selects an installed RPC recipient, never a WorkspaceRef or filesystem authority. */
+export function resolveWorkspaceSyncTransportAddress(input: Readonly<{
+  namespace: WorkspaceSyncNamespace;
+  childMachines?: readonly WorkspaceSyncChildMachineFacts[];
+  context?: WorkspaceRefResolutionContextV1;
+}>): Readonly<{ ok: true; address: Readonly<{ machineId: string; installationId?: string }> }> | WorkspaceSyncEndpointUnavailable {
+  const current = readCurrentWorkspaceSyncChild(input);
+  if (!current.ok) return current;
+  const fact = current.fact;
+  return { ok: true, address: fact?.projection.observation.storage.kind === 'bind'
+    ? { machineId: fact.controller.machineId, installationId: fact.controller.installationId }
+    : { machineId: input.namespace.machineId, ...(fact ? { installationId: fact.installationId } : {}) } };
+}
+
+/** Copy/flush custody follows native bind storage; every execution consumer keeps workspace itself. */
+export function resolveWorkspaceSyncEndpoint(input: WorkspaceSyncEndpointContext & Readonly<{ workspace: WorkspaceRefV1 }>):
+  Readonly<{ ok: true; workspace: WorkspaceRefV1; endpoint: WorkspaceRefV1 }> | WorkspaceSyncEndpointUnavailable;
+/** Admitted native namespaces need no logical row in the physical writer's Account graph. */
+export function resolveWorkspaceSyncEndpoint(input: WorkspaceSyncEndpointContext & Readonly<{
+  namespace: WorkspaceSyncNamespace;
+}>): Readonly<{ ok: true; endpoint: WorkspaceRefV1 }> | WorkspaceSyncEndpointUnavailable;
+export function resolveWorkspaceSyncEndpoint(input: WorkspaceSyncEndpointContext & (
+  Readonly<{ workspace: WorkspaceRefV1 }> | Readonly<{ namespace: WorkspaceSyncNamespace }>
+)): Readonly<{ ok: true; workspace?: WorkspaceRefV1; endpoint: WorkspaceRefV1 }> | WorkspaceSyncEndpointUnavailable {
+  const workspace = 'workspace' in input ? input.workspace : input.namespace;
+  const unavailable = { ok: false as const, code: 'workspace_sync_child_unavailable' as const };
+  const unchanged = 'workspace' in input ? { ok: true as const, workspace: input.workspace, endpoint: input.workspace } : unavailable;
+  const current = readCurrentWorkspaceSyncChild({ namespace: workspace, childMachines: input.childMachines, context: input.context,
+    ...('workspace' in input ? { workspace: input.workspace } : {}) });
+  if (!current.ok) return current;
+  const fact = current.fact;
+  if (!fact) return unchanged;
+  const { observation } = fact.projection;
+  const row = fact.managedMachine;
+  if (observation.storage.kind === 'child') return unchanged;
+  if (input.purpose !== 'admitted_mapping' && !fact.controller.available) return unavailable;
+  const parent = resolveWorkspaceRefV1(input.workspaceRefs, { serverId: workspace.serverId,
+    machineId: row.controller.machineId, rootPath: observation.storage.hostPath }, input.context);
+  if (parent.kind !== 'resolved' || ('workspace' in input && parent.ref.id === input.workspace.id)
+    || (parent.ref.projectKey && workspace.projectKey && parent.ref.projectKey !== workspace.projectKey)) return unavailable;
+  return { ok: true, ...('workspace' in input ? { workspace: input.workspace } : {}), endpoint: parent.ref };
+}
 
 export type WorkspaceSyncEndpointRole = 'alpha' | 'beta';
 
@@ -20,7 +114,7 @@ export type DerivedWorkspaceSyncSet = Readonly<{
 }>;
 
 export type WorkspaceSyncTopologyIssue = Readonly<{
-  code: 'missing_workspace_ref' | 'invalid_controller' | 'duplicate_endpoint_pair' | 'unsupported_component';
+  code: 'missing_workspace_ref' | 'ambiguous_workspace_ref' | 'invalid_workspace_ref' | 'invalid_controller' | 'duplicate_endpoint_pair' | 'unsupported_component';
   relationshipIds: readonly string[];
   workspaceRefIds: readonly string[];
 }>;
@@ -41,7 +135,7 @@ export type WorkspaceSyncTransferRoute =
     }>
   | Readonly<{
       ok: false;
-      code: 'workspace_ref_not_ready' | 'route_not_found' | 'topology_invalid';
+      code: 'workspace_ref_not_ready' | 'route_not_found' | 'topology_invalid' | 'workspace_sync_child_unavailable';
       workspaceRefId?: string;
     }>
   | Readonly<{
@@ -127,10 +221,21 @@ function componentRelationships(
 }
 
 export function deriveWorkspaceSyncTopology(input: Readonly<{
+  serverId?: string;
+  context?: WorkspaceRefResolutionContextV1;
   workspaceRefs: readonly WorkspaceRefV1[];
   relationships: readonly WorkspaceSyncRelationshipV1[];
 }>): WorkspaceSyncTopology {
-  const refs = new Map(input.workspaceRefs.map((ref) => [ref.id, ref] as const));
+  const refs = new Map<string, WorkspaceRefV1>();
+  const unresolvedRefs = new Map<string, 'missing' | 'ambiguous' | 'invalid'>();
+  const endpointIds = new Set(input.relationships.flatMap((relationship) => [
+    relationship.alphaWorkspaceRefId, relationship.betaWorkspaceRefId,
+  ]));
+  for (const id of endpointIds) {
+    const resolution = resolveWorkspaceRefV1(input.workspaceRefs, { id, serverId: input.serverId }, input.context);
+    if (resolution.kind === 'resolved') refs.set(id, resolution.ref);
+    else unresolvedRefs.set(id, resolution.kind);
+  }
   const issues: WorkspaceSyncTopologyIssue[] = [];
   const sets: DerivedWorkspaceSyncSet[] = [];
   const seenPairs = new Map<string, WorkspaceSyncRelationshipV1>();
@@ -158,17 +263,17 @@ export function deriveWorkspaceSyncTopology(input: Readonly<{
       relationship.alphaWorkspaceRefId,
       relationship.betaWorkspaceRefId,
     ]))];
-    const missingWorkspaceRefIds = [...new Set(component.flatMap((relationship) => (
-      [relationship.alphaWorkspaceRefId, relationship.betaWorkspaceRefId].filter((refId) => !refs.has(refId))
-    )))];
-    if (missingWorkspaceRefIds.length > 0) {
-      issues.push({
-        code: 'missing_workspace_ref',
-        relationshipIds,
-        workspaceRefIds: missingWorkspaceRefIds,
-      });
-      continue;
+    for (const kind of ['missing', 'ambiguous', 'invalid'] as const) {
+      const unresolvedWorkspaceRefIds = workspaceRefIds.filter((id) => unresolvedRefs.get(id) === kind);
+      if (unresolvedWorkspaceRefIds.length > 0) {
+        issues.push({
+          code: `${kind}_workspace_ref`,
+          relationshipIds,
+          workspaceRefIds: unresolvedWorkspaceRefIds,
+        });
+      }
     }
+    if (workspaceRefIds.some((id) => unresolvedRefs.has(id))) continue;
     const resolved = component.map((relationship) => {
       const alpha = refs.get(relationship.alphaWorkspaceRefId);
       const beta = refs.get(relationship.betaWorkspaceRefId);
@@ -231,25 +336,37 @@ function relationshipContainsRef(relationship: WorkspaceSyncRelationshipV1, work
  * component, rewrites endpoint ids, or relaxes one-way direction.
  */
 export function resolveWorkspaceSyncTransferRoute(input: Readonly<{
+  serverId?: string;
+  context?: WorkspaceRefResolutionContextV1;
   workspaceRefs: readonly WorkspaceRefV1[];
   relationships: readonly WorkspaceSyncRelationshipV1[];
   sourceWorkspaceRefId: string;
   targetWorkspaceRefId: string;
+  childMachines?: readonly WorkspaceSyncChildMachineFacts[];
 }>): WorkspaceSyncTransferRoute {
-  const sourceWorkspaceRefId = input.sourceWorkspaceRefId.trim();
-  const targetWorkspaceRefId = input.targetWorkspaceRefId.trim();
-  const refIds = new Set(input.workspaceRefs.map((ref) => ref.id));
-  if (!refIds.has(sourceWorkspaceRefId)) {
+  let sourceWorkspaceRefId = input.sourceWorkspaceRefId.trim();
+  let targetWorkspaceRefId = input.targetWorkspaceRefId.trim();
+  const source = resolveWorkspaceRefV1(input.workspaceRefs, { id: sourceWorkspaceRefId, serverId: input.serverId }, input.context);
+  if (source.kind !== 'resolved') {
     return { ok: false, code: 'workspace_ref_not_ready', workspaceRefId: sourceWorkspaceRefId };
   }
-  if (!refIds.has(targetWorkspaceRefId)) {
+  const target = resolveWorkspaceRefV1(input.workspaceRefs, { id: targetWorkspaceRefId, serverId: input.serverId }, input.context);
+  if (target.kind !== 'resolved') {
     return { ok: false, code: 'workspace_ref_not_ready', workspaceRefId: targetWorkspaceRefId };
   }
+  const sourceEndpoint = resolveWorkspaceSyncEndpoint({ ...input, workspace: source.ref });
+  const targetEndpoint = resolveWorkspaceSyncEndpoint({ ...input, workspace: target.ref });
+  if (!sourceEndpoint.ok) return sourceEndpoint;
+  if (!targetEndpoint.ok) return targetEndpoint;
+  sourceWorkspaceRefId = sourceEndpoint.endpoint.id;
+  targetWorkspaceRefId = targetEndpoint.endpoint.id;
   if (sourceWorkspaceRefId === targetWorkspaceRefId) {
     return { ok: true, kind: 'same_workspace', relationships: [] };
   }
 
   const topology = deriveWorkspaceSyncTopology({
+    serverId: input.serverId,
+    context: input.context,
     workspaceRefs: input.workspaceRefs,
     relationships: input.relationships,
   });

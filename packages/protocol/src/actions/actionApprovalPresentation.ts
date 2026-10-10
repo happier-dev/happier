@@ -206,7 +206,12 @@ export function describeApprovalActionFields(input: Readonly<{
       const declaredNull = values.length > 0
         && values.every((entry) => entry === null)
         && actionInputFieldAcceptsNull(spec, field.path);
-      if (field.required && !declaredNull) {
+      // Live-only input deliberately leaves required private fields out of the
+      // durable observation projection. Their presence is guaranteed by the
+      // admitted invocation that retains the raw input; omission here means
+      // withheld, not missing approval context.
+      const withheldByLiveOnlyCustody = spec.approvalInputCustody === 'live_only';
+      if (field.required && !declaredNull && !withheldByLiveOnlyCustody) {
         const reason = 'missing_required_context' as const;
         unrepresentable ??= { path: field.path, reason };
         rows.push({ kind: 'unrepresentable', path: field.path, title: field.title, reason });

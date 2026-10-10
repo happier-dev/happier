@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import {
   SessionPermissionDecisionActorV1Schema,
   type SessionPermissionDecisionActorV1,
@@ -7,13 +8,15 @@ import type { ActionId } from '../actions/actionIds.js';
 import type { SessionFollowSourceKeyPrepareAuthorizationV1 } from '../sessions/follow/sessionFollowSourceKeyPreparationV1.js';
 import {
   CURRENT_SESSION_PRESENTATION_ACK_RPC_METHOD,
+  CURRENT_SESSION_PRESENTATION_APPLY_RPC_METHOD,
   CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD,
   CURRENT_SESSION_PRESENTATION_UNBIND_RPC_METHOD,
 } from '../sessions/presentation/currentSessionPresentationV1.js';
 
 import { z } from 'zod';
-import type { ActionRequiredAuthority } from '../actions/metadata.js';
-import type { CallerInputConstraintsV1 } from '../auth/apiTokenGrant.js';
+import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
+import { ActionRequiredAuthoritySchema, type ActionRequiredAuthority } from '../actions/metadata.js';
+import { CallerInputConstraintsV1Schema, type CallerInputConstraintsV1 } from '../auth/callerInputConstraintsV1.js';
 import { RPC_METHODS, SESSION_RPC_METHODS } from './methods.js';
 import { SessionIdSchema } from '../sessions/idsV1.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
@@ -22,7 +25,11 @@ import { AgentPermissionIntentV1Schema } from '../runtime/permissionIntentV1.js'
 import { SessionInputCausalPermissionAuthorityV1Schema } from '../sessions/messages/sessionInputAdmission.js';
 import { isRoleActionIdV1 } from '../prompts/roles/roleActionIdsV1.js';
 
-import type { ExternalActionMachineRpcExecutionV1, ExternalActionExecutionAuthorizationV1 } from '../actions/externalActionApi.js';
+import type { ExternalActionMachineRpcExecutionV1, ExternalActionExecutionAuthorizationV1, ExternalActionRequestEnvelope } from '../actions/externalActionApi.js';
+import { ExternalActionMachineRpcExecutionV1Schema, ExternalActionRequestEnvelopeSchema } from '../actions/externalActionApi.js';
+import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
+import { SocketRpcMachineAdmissionContextV1Schema, type SocketRpcMachineAdmissionContextV1 } from '../machines/machineAccessV1.js';
+export { SocketRpcMachineAdmissionContextV1Schema, type SocketRpcMachineAdmissionContextV1 } from '../machines/machineAccessV1.js';
 
 export const SOCKET_RPC_EVENTS = {
   REGISTER: 'rpc-register',
@@ -45,10 +52,10 @@ export const SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1 = 1 as const;
  * reaches an RPC target, so a caller-local collision cannot cancel another
  * caller's request at that target.
  */
-export const SocketRpcRequestIdSchema = z.string().trim().min(1).max(160);
+export const SocketRpcRequestIdSchema = lazyZodSchema(() => z.string().trim().min(1).max(160));
 
 /** Original host-admitted Action facts, distinct from relay request correlation. Every object is closed. */
-export const SessionActionRpcOriginV1Schema = z.object({
+export const SessionActionRpcOriginV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   caller: AgentStartSessionCallerV1Schema,
   sourceTurnId: z.string().trim().min(1),
@@ -56,46 +63,132 @@ export const SessionActionRpcOriginV1Schema = z.object({
   causalPermissionAuthority: SessionInputCausalPermissionAuthorityV1Schema.nullable().optional(),
   workspaceWrites: z.enum(['allow', 'deny']).optional(),
   requestId: z.string().trim().min(1),
-}).strict();
+}).strict());
 export type SessionActionRpcOriginV1 = Readonly<z.infer<typeof SessionActionRpcOriginV1Schema>>;
 
-export const SocketRpcSessionActionAuthorizationContextSchema = z.object({
+export const SocketRpcSessionActionAuthorizationContextSchema = lazyZodSchema(() => z.object({
   kind: z.literal('session.action'),
   sessionId: AgentStartSessionCallerV1Schema.shape.sessionId,
   origin: SessionActionRpcOriginV1Schema,
-}).strict();
+}).strict());
 export type SocketRpcSessionActionAuthorizationContext = Readonly<z.infer<typeof SocketRpcSessionActionAuthorizationContextSchema>>;
 
-/** The existing role Action family is the only Session-origin RPC corridor. */
+/** Role Actions and the exact Home-admitted private workspace phases retain Session origin. */
 export function isSessionActionRpcMethodV1(method: string): boolean {
   const unscoped = method.slice(method.lastIndexOf(':') + 1);
   return (unscoped.startsWith('session.') && isRoleActionIdV1(unscoped))
-    || unscoped === SESSION_RPC_METHODS.SESSION_ROLES_CONFIGURATION_SET;
+    || unscoped === SESSION_RPC_METHODS.SESSION_ROLES_CONFIGURATION_SET
+    || unscoped === RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE
+    || unscoped === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT
+    || unscoped === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE
+    || unscoped === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE;
 }
 
-export const SocketRpcCancellationPayloadSchema = z.object({
+export const SocketRpcCancellationPayloadSchema = lazyZodSchema(() => z.object({
   requestId: SocketRpcRequestIdSchema,
-}).strict();
+}).strict());
 
 export type SocketRpcCancellationPayload = z.infer<typeof SocketRpcCancellationPayloadSchema>;
 
 /** Non-secret routing metadata; file names, bytes and handles remain in the Session payload. */
-export const SessionTransferRpcMethodV1Schema = z.enum([
+export const SessionTransferRpcMethodV1Schema = lazyZodSchema(() => z.enum([
     RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT, RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK,
     RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE, RPC_METHODS.DAEMON_TRANSFER_UPLOAD_ABORT,
     RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT, RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_CHUNK,
     RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_FINALIZE, RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_ABORT,
-  ]);
-export const SessionTransferRoutingV1Schema = z.object({
+  ]));
+export const SessionTransferRoutingV1Schema = lazyZodSchema(() => z.object({
   method: SessionTransferRpcMethodV1Schema,
   t: z.enum(['session_attachment_upload_v1', 'session_attachment_download_v1']),
   sessionId: asProtocolZod(SessionIdSchema),
 }).strict().refine(value => ([RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT, RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK,
   RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE, RPC_METHODS.DAEMON_TRANSFER_UPLOAD_ABORT] as readonly string[]).includes(value.method)
   ? value.t === 'session_attachment_upload_v1'
-  : value.t !== 'session_attachment_upload_v1');
+  : value.t !== 'session_attachment_upload_v1'));
 
 export type SessionTransferRoutingV1 = Readonly<z.infer<typeof SessionTransferRoutingV1Schema>>;
+
+/** Exact private source workspace phase routing; the Home verifies the child socket before forwarding. */
+export const WorkspaceSyncSourceContextV1Schema = lazyZodSchema(() => z.object({
+  machineAdmission: SocketRpcMachineAdmissionContextV1Schema,
+  callerAuthority: ActionRequiredAuthoritySchema,
+  sessionActionOrigin: SessionActionRpcOriginV1Schema.optional(),
+  callerInputConstraints: CallerInputConstraintsV1Schema.optional(),
+  callerPermissionMode: asProtocolZod(AgentPermissionIntentV1Schema).nullable().optional(),
+  causalPermissionAuthority: SessionInputCausalPermissionAuthorityV1Schema.nullable().optional(),
+  workspaceWrites: z.enum(['allow', 'deny']).optional(),
+}).strict());
+export type WorkspaceSyncSourceContextV1 = Readonly<z.infer<typeof WorkspaceSyncSourceContextV1Schema>>;
+export const WorkspaceSyncSourceRoutingV1Schema = lazyZodSchema(() => z.object({
+  v: z.literal(1),
+  phase: z.enum(['prepare', 'finalize', 'commit', 'abort']),
+  operationId: z.string().trim().min(1),
+  accountServerId: z.string().trim().min(1),
+  sourceMachineId: z.string().trim().min(1),
+  sourceRootPath: z.string().trim().min(1),
+  sourceSessionId: z.string().trim().min(1).optional(),
+  sourceContext: WorkspaceSyncSourceContextV1Schema.optional(),
+  originalActionEnvelope: z.lazy(() => ExternalActionRequestEnvelopeSchema).optional(),
+}).strict());
+export type WorkspaceSyncSourceRoutingV1 = Readonly<z.infer<typeof WorkspaceSyncSourceRoutingV1Schema>>;
+
+/** Original installed target packet, retained beside routing rather than inside its signed snapshot. */
+export const WorkspaceSyncSourceExecutionV1Schema = lazyZodSchema(() => z.object({
+  method: z.string().min(1),
+  requestId: SocketRpcRequestIdSchema,
+  params: StrictJsonValueSchema.optional(),
+  externalActionExecution: z.lazy(() => ExternalActionMachineRpcExecutionV1Schema),
+}).strict());
+export type WorkspaceSyncSourceExecutionV1 = Readonly<z.infer<typeof WorkspaceSyncSourceExecutionV1Schema>>;
+
+/** Target custody has its own phase binding; the moved Session need not live on this child. */
+export const WorkspaceSyncTargetRoutingV1Schema = lazyZodSchema(() => z.object({
+  v: z.literal(1),
+  phase: z.enum(['preflight', 'prepare', 'release']),
+  operationId: z.string().trim().min(1),
+  accountServerId: z.string().trim().min(1),
+  targetMachineId: z.string().trim().min(1),
+  targetRootPath: z.string().trim().min(1),
+  targetContext: WorkspaceSyncSourceContextV1Schema,
+}).strict());
+export type WorkspaceSyncTargetRoutingV1 = Readonly<z.infer<typeof WorkspaceSyncTargetRoutingV1Schema>>;
+
+/** The installed physical source writer retains the original child root for exact target custody phases. */
+export const WorkspaceSyncSourceWriterTargetRoutingV1Schema = lazyZodSchema(() => z.object({
+  v: z.literal(1),
+  source: WorkspaceSyncSourceRoutingV1Schema.extend({ sourceContext: WorkspaceSyncSourceContextV1Schema }),
+  target: WorkspaceSyncTargetRoutingV1Schema.omit({ targetContext: true }),
+  sourceWriter: SocketRpcMachineAdmissionContextV1Schema.pick({ machineId: true, installationId: true }),
+}).strict().superRefine((routing, ctx) => {
+  if (routing.source.accountServerId !== routing.target.accountServerId) {
+    ctx.addIssue({ code: 'custom', path: ['target', 'accountServerId'], message: 'Workspace phases must retain the same Home' });
+  }
+  if (routing.source.sourceMachineId !== routing.source.sourceContext.machineAdmission.machineId) {
+    ctx.addIssue({ code: 'custom', path: ['source', 'sourceContext', 'machineAdmission', 'machineId'], message: 'Source context must retain its original child' });
+  }
+}));
+export type WorkspaceSyncSourceWriterTargetRoutingV1 = Readonly<z.infer<typeof WorkspaceSyncSourceWriterTargetRoutingV1Schema>>;
+
+/** Installed P2 may request only the seed of its already admitted Target prepare. */
+export const WorkspaceSyncSeedRoutingV1Schema = lazyZodSchema(() => z.object({
+  v: z.literal(1),
+  sourceWriterTarget: WorkspaceSyncSourceWriterTargetRoutingV1Schema,
+  target: WorkspaceSyncTargetRoutingV1Schema,
+}).strict().superRefine((routing, ctx) => {
+  const sourceContext = routing.sourceWriterTarget.source.sourceContext;
+  const { targetContext, ...phase } = routing.target;
+  if (routing.target.phase !== 'prepare' || routing.sourceWriterTarget.target.phase !== 'prepare'
+    || createCanonicalJsonSigningInput(phase) !== createCanonicalJsonSigningInput(routing.sourceWriterTarget.target)) {
+    ctx.addIssue({ code: 'custom', path: ['target'], message: 'Seed must retain the exact Target prepare snapshot' });
+  }
+  if (targetContext.machineAdmission.machineId !== routing.target.targetMachineId
+    || targetContext.machineAdmission.actorAccountId !== sourceContext.machineAdmission.actorAccountId
+    || createCanonicalJsonSigningInput({ ...targetContext, machineAdmission: sourceContext.machineAdmission })
+      !== createCanonicalJsonSigningInput(sourceContext)) {
+    ctx.addIssue({ code: 'custom', path: ['target', 'targetContext'], message: 'Seed must retain the original actor and ceilings' });
+  }
+}));
+export type WorkspaceSyncSeedRoutingV1 = Readonly<z.infer<typeof WorkspaceSyncSeedRoutingV1Schema>>;
 
 export type SocketRpcRequestPayload = Readonly<{
   method: string;
@@ -106,7 +199,14 @@ export type SocketRpcRequestPayload = Readonly<{
   callerInputConstraints?: CallerInputConstraintsV1;
   /** Server-issued invocation proof; the relay never forwards caller-authored material here. */
   callerInputAuthorization?: ExternalActionExecutionAuthorizationV1;
+  /** Exact Project envelope bound by the verified Home Root; not an authority by itself. */
+  originalActionEnvelope?: ExternalActionRequestEnvelope;
   transferRouting?: SessionTransferRoutingV1;
+  workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
+  workspaceSyncTargetRouting?: WorkspaceSyncTargetRoutingV1;
+  workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
+  workspaceSyncSourceExecution?: WorkspaceSyncSourceExecutionV1;
+  workspaceSyncSeedRouting?: WorkspaceSyncSeedRoutingV1;
   params: unknown;
   /**
    * Ephemeral transport correlation. Issuers use it to cancel their own
@@ -114,29 +214,31 @@ export type SocketRpcRequestPayload = Readonly<{
    */
   requestId?: string;
   authorization?: SocketRpcAuthorizationContext;
+  /** Current Home admission for the exact Machine receiver, distinct from Session authority. */
+  machineAdmission?: SocketRpcMachineAdmissionContextV1;
   externalActionExecution?: ExternalActionMachineRpcExecutionV1;
   timeoutMs?: number;
   transportResponseEnvelopeVersion?: typeof SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1;
 }>;
 
-export const SocketRpcTransportAcknowledgementV1Schema = z.discriminatedUnion('kind', [
+export const SocketRpcTransportAcknowledgementV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('session.stop'),
     status: z.literal('stopped'),
   }).strict(),
-]);
+]));
 
 export type SocketRpcTransportAcknowledgementV1 =
   z.infer<typeof SocketRpcTransportAcknowledgementV1Schema>;
 
-export const SocketRpcTransportResponseEnvelopeV1Schema = z.object({
+export const SocketRpcTransportResponseEnvelopeV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1),
   result: z.unknown(),
   acknowledgement: SocketRpcTransportAcknowledgementV1Schema.optional(),
 }).strict().refine(
   (value) => Object.prototype.hasOwnProperty.call(value, 'result'),
   { message: 'result is required', path: ['result'] },
-);
+));
 
 export type SocketRpcTransportResponseEnvelopeV1 =
   z.infer<typeof SocketRpcTransportResponseEnvelopeV1Schema>;
@@ -148,6 +250,8 @@ export const SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS = {
   AUTOMATION_REPLY_HANDOFF_SERVER_ORIGIN: 'automation.replyHandoff.serverOrigin',
   SESSION_SERVER_START_SERVER_ORIGIN: 'session.serverStart.serverOrigin',
   ACTION_API_SERVER_ORIGIN: 'action.api.serverOrigin',
+  MACHINE_ACCESS_LOSS_SERVER_ORIGIN: 'machine.accessLoss.serverOrigin',
+  LOCAL_SERVICES_PREVIEW_ADMISSION_SERVER_ORIGIN: 'localServices.preview.admission.serverOrigin',
   CURRENT_SESSION_PRESENTATION_ORIGIN: 'session.presentation.origin',
 } as const;
 
@@ -197,6 +301,22 @@ export type SocketRpcActionApiServerOriginAuthorizationContext = Readonly<{
   kind: typeof SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.ACTION_API_SERVER_ORIGIN;
 }>;
 
+/** Exact internal access-loss delivery from the Home to its current custodian installation. */
+export type SocketRpcMachineAccessLossServerOriginAuthorizationContext = Readonly<{
+  kind: typeof SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.MACHINE_ACCESS_LOSS_SERVER_ORIGIN;
+}>;
+export const MACHINE_ACCESS_LOSS_SERVER_ORIGIN: SocketRpcMachineAccessLossServerOriginAuthorizationContext = Object.freeze({
+  kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.MACHINE_ACCESS_LOSS_SERVER_ORIGIN,
+});
+
+/** Home-only admission for one selected service on its current custodian installation. */
+export type SocketRpcLocalServicesPreviewAdmissionServerOriginAuthorizationContext = Readonly<{
+  kind: typeof SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.LOCAL_SERVICES_PREVIEW_ADMISSION_SERVER_ORIGIN;
+}>;
+export const LOCAL_SERVICES_PREVIEW_ADMISSION_SERVER_ORIGIN: SocketRpcLocalServicesPreviewAdmissionServerOriginAuthorizationContext = Object.freeze({
+  kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.LOCAL_SERVICES_PREVIEW_ADMISSION_SERVER_ORIGIN,
+});
+
 /**
  * Server-minted custody for one authenticated socket connection presenting an
  * exact Session. Public callers cannot provide or parse this authority.
@@ -229,6 +349,8 @@ export type SocketRpcAuthorizationContext =
   | SocketRpcAutomationReplyHandoffServerOriginAuthorizationContext
   | SocketRpcSessionServerStartServerOriginAuthorizationContext
   | SocketRpcActionApiServerOriginAuthorizationContext
+  | SocketRpcMachineAccessLossServerOriginAuthorizationContext
+  | SocketRpcLocalServicesPreviewAdmissionServerOriginAuthorizationContext
   | SocketRpcCurrentSessionPresentationOriginAuthorizationContext;
 
 const SOCKET_RPC_AUTHORIZATION_SESSION_ID_MAX_LENGTH = 512;
@@ -243,6 +365,8 @@ export type SocketRpcSessionWriteAuthorityV1 = SessionCapabilityV1 | 'sessionOwn
 export type SocketRpcSessionWriteClassificationV1 = Readonly<{
   method: string;
   authority: SocketRpcSessionWriteAuthorityV1;
+  /** Machine/root admission is independent; supplied Session scope must be verified, never inferred from params. */
+  optionalSessionScope?: true;
   /** Token calls are admitted only when the canonical row declares an Action. */
   actionId?: ActionId;
   serverMintedContext?: 'session.permission.respond' | 'session.presentation.origin';
@@ -255,10 +379,10 @@ export type SocketRpcSessionWriteClassificationV1 = Readonly<{
 }>;
 
 /**
- * Closed matrix of every currently registered Session RPC plus the retained
- * machine-routed Session controls. Registration and final dispatch consume this
- * same map; a method absent here is unavailable rather than inheriting authority
- * from a prefix or from its daemon handler.
+ * Closed matrix of Session RPCs, machine-routed Session controls and optional
+ * Session proof on workspace SCM operations. Registration and final dispatch
+ * consume this map; unclassified Session namespaces are unavailable rather than
+ * inheriting authority from a prefix or daemon handler.
  */
 type DeclaredSessionRpcMethod = (typeof SESSION_RPC_METHODS)[keyof typeof SESSION_RPC_METHODS];
 
@@ -271,6 +395,7 @@ const SESSION_RPC_DECLARED_AUTHORITIES = Object.freeze({
   [SESSION_RPC_METHODS.SESSION_WORKFLOW_STEP_WITHDRAW]: 'sessionOwner',
   [SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND]: { authority: 'submitAgentInput', actionId: 'session.message.send' },
   [SESSION_RPC_METHODS.SESSION_AGENT_TOOL_CALL_V1]: 'sessionOwner',
+  [SESSION_RPC_METHODS.SESSION_PLUGIN_CATALOG_INVALIDATE_V1]: 'sessionOwner',
   [SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_PREPARE_V1]: 'submitAgentInput',
   [SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_ACCEPTED_V1]: 'submitAgentInput',
   [SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_ABANDONED_V1]: 'submitAgentInput',
@@ -363,6 +488,7 @@ const ADDITIONAL_SESSION_RPC_AUTHORIZATION_ROWS = [
   { method: CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD, authority: 'sessionOwner', routeToSessionOwnerDaemon: true, serverMintedContext: 'session.presentation.origin' },
   { method: CURRENT_SESSION_PRESENTATION_ACK_RPC_METHOD, authority: 'sessionOwner', routeToSessionOwnerDaemon: true, serverMintedContext: 'session.presentation.origin' },
   { method: CURRENT_SESSION_PRESENTATION_UNBIND_RPC_METHOD, authority: 'sessionOwner', routeToSessionOwnerDaemon: true, serverMintedContext: 'session.presentation.origin' },
+  { method: CURRENT_SESSION_PRESENTATION_APPLY_RPC_METHOD, authority: 'sessionOwner', routeToSessionOwnerDaemon: true, serverMintedContext: 'session.presentation.origin' },
   { method: 'session.permission_mode.set', authority: 'submitAgentInput', routeToSessionOwnerDaemon: true },
   { method: RPC_METHODS.SESSION_PERMISSION_RESPOND, authority: 'approveRuntimePermissions', actionId: 'session.permission.respond', routeToSessionOwnerDaemon: true, serverMintedContext: 'session.permission.respond' },
   { method: 'permission', authority: 'approveRuntimePermissions', actionId: 'session.permission.respond', routeToSessionOwnerDaemon: true, serverMintedContext: 'session.permission.respond' },
@@ -378,6 +504,30 @@ const SOCKET_RPC_SESSION_WRITE_AUTHORIZATION: ReadonlyMap<string, SocketRpcSessi
   ([
     ...SESSION_RPC_AUTHORIZATION_ROWS,
     ...ADDITIONAL_SESSION_RPC_AUTHORIZATION_ROWS,
+    ...[
+      RPC_METHODS.SCM_PULL_REQUEST_LIST,
+      RPC_METHODS.SCM_PULL_REQUEST_GET,
+      RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE,
+      RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_LIST,
+      RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_READ,
+      RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_EDIT,
+      RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_UNDO,
+      RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_DELETE,
+      RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_CLEAR,
+      RPC_METHODS.SCM_DIFF_SUMMARY_REVIEWED_MARK,
+      RPC_METHODS.SCM_DIFF_SUMMARY_REVIEWED_UNMARK,
+      'scm.diffSummary.commitPlan.accept',
+      'scm.diffSummary.commitPlan.stop',
+      'scm.diffSummary.commitPlan.includeHookChanges',
+      'scm.diffSummary.commitPlan.cancel',
+      'scm.diffSummary.commitPlan.recover',
+    ].map((method) => ({ method, authority: 'readTranscript' as const, optionalSessionScope: true as const, routeToSessionOwnerDaemon: false })),
+    ...[
+      RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE,
+      RPC_METHODS.SCM_DIFF_SUMMARY_REFINE,
+      RPC_METHODS.SCM_DIFF_SUMMARY_DISCUSS,
+      RPC_METHODS.SCM_DIFF_SUMMARY_ADD_OUTPUTS,
+    ].map((method) => ({ method, authority: 'submitAgentInput' as const, optionalSessionScope: true as const, routeToSessionOwnerDaemon: false })),
     { method: RPC_METHODS.STOP_SESSION, authority: 'sessionOwner', routeToSessionOwnerDaemon: false },
     { method: RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART, authority: 'submitAgentInput', routeToSessionOwnerDaemon: false },
     { method: RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_V2, authority: 'submitAgentInput', routeToSessionOwnerDaemon: false },
@@ -491,6 +641,26 @@ export function isSocketRpcActionApiServerOriginAuthorizationContext(
     && candidate.kind === SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.ACTION_API_SERVER_ORIGIN;
 }
 
+export function isSocketRpcMachineAccessLossServerOriginAuthorizationContext(
+  value: unknown,
+): value is SocketRpcMachineAccessLossServerOriginAuthorizationContext {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as { kind?: unknown };
+  return Object.hasOwn(candidate, 'kind')
+    && Object.keys(candidate).length === 1
+    && candidate.kind === SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.MACHINE_ACCESS_LOSS_SERVER_ORIGIN;
+}
+
+export function isSocketRpcLocalServicesPreviewAdmissionServerOriginAuthorizationContext(
+  value: unknown,
+): value is SocketRpcLocalServicesPreviewAdmissionServerOriginAuthorizationContext {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as { kind?: unknown };
+  return Object.hasOwn(candidate, 'kind')
+    && Object.keys(candidate).length === 1
+    && candidate.kind === SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.LOCAL_SERVICES_PREVIEW_ADMISSION_SERVER_ORIGIN;
+}
+
 export function isSocketRpcCurrentSessionPresentationOriginAuthorizationContext(
   value: unknown,
 ): value is SocketRpcCurrentSessionPresentationOriginAuthorizationContext {
@@ -518,13 +688,15 @@ export function isSocketRpcCurrentSessionPresentationOriginAuthorizationContext(
 }
 
 export function parseSocketRpcAuthorizationContext(value: unknown): SocketRpcSessionAuthorizationContext | null {
-  if (!value || typeof value !== 'object') return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const candidate = value as { kind?: unknown; sessionId?: unknown; actor?: unknown };
   if (candidate.kind === SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_ACTION) {
     const parsed = SocketRpcSessionActionAuthorizationContextSchema.safeParse(value);
     return parsed.success ? parsed.data : null;
   }
   if (candidate.kind === SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE) {
+    if (!Object.hasOwn(candidate, 'kind') || !Object.hasOwn(candidate, 'sessionId')
+      || Object.keys(candidate).some((key) => key !== 'kind' && key !== 'sessionId')) return null;
     if (typeof candidate.sessionId !== 'string') return null;
     const sessionId = candidate.sessionId.trim();
     if (!sessionId || sessionId.length > SOCKET_RPC_AUTHORIZATION_SESSION_ID_MAX_LENGTH) return null;

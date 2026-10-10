@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -15,48 +16,48 @@ import {
   ScmHostingProviderRefSchema,
 } from './pullRequests.js';
 
-export const ScmHostingRepositoryOwnerKindSchema = z.enum(['user', 'org']);
+export const ScmHostingRepositoryOwnerKindSchema = lazyZodSchema(() => z.enum(['user', 'org']));
 export type ScmHostingRepositoryOwnerKind =
   z.infer<typeof ScmHostingRepositoryOwnerKindSchema>;
 
-export const ScmHostingRepositoryVisibilitySchema = z.enum([
+export const ScmHostingRepositoryVisibilitySchema = lazyZodSchema(() => z.enum([
   'private',
   'public',
   'internal',
-]);
+]));
 export type ScmHostingRepositoryVisibility =
   z.infer<typeof ScmHostingRepositoryVisibilitySchema>;
 
-export const ScmHostingRepositoryRemoteUrlKindSchema = z.enum(['https', 'ssh']);
+export const ScmHostingRepositoryRemoteUrlKindSchema = lazyZodSchema(() => z.enum(['https', 'ssh']));
 export type ScmHostingRepositoryRemoteUrlKind =
   z.infer<typeof ScmHostingRepositoryRemoteUrlKindSchema>;
 
-export const ScmHostingRepositoryRemoteConflictStrategySchema = z.enum([
+export const ScmHostingRepositoryRemoteConflictStrategySchema = lazyZodSchema(() => z.enum([
   'fail',
   'set-url',
-]);
+]));
 export type ScmHostingRepositoryRemoteConflictStrategy =
   z.infer<typeof ScmHostingRepositoryRemoteConflictStrategySchema>;
 
-export const ScmHostingRepositoryAuthProfileKindSchema = z.enum([
+export const ScmHostingRepositoryAuthProfileKindSchema = lazyZodSchema(() => z.enum([
   'connected_account',
   'provider_cli',
   'no_auth',
   'unknown',
-]);
+]));
 export type ScmHostingRepositoryAuthProfileKind =
   z.infer<typeof ScmHostingRepositoryAuthProfileKindSchema>;
 
-export const ScmHostingRepositoryAuthStateSchema = z.enum([
+export const ScmHostingRepositoryAuthStateSchema = lazyZodSchema(() => z.enum([
   'authenticated',
   'authentication_required',
   'unsupported',
   'unknown',
-]);
+]));
 export type ScmHostingRepositoryAuthState =
   z.infer<typeof ScmHostingRepositoryAuthStateSchema>;
 
-export const ScmRepositoryProvisioningRemediationKindSchema = z.enum([
+export const ScmRepositoryProvisioningRemediationKindSchema = lazyZodSchema(() => z.enum([
   'commit_required',
   'set_url_required',
   'auth_required',
@@ -64,43 +65,44 @@ export const ScmRepositoryProvisioningRemediationKindSchema = z.enum([
   'unsupported_provider',
   'confirmation_required',
   'retry',
-]);
+]));
 export type ScmRepositoryProvisioningRemediationKind =
   z.infer<typeof ScmRepositoryProvisioningRemediationKindSchema>;
 
-export const ScmRepositoryProvisioningRemediationSchema = z
+export const ScmRepositoryProvisioningRemediationSchema = lazyZodSchema(() => z
   .object({
     kind: ScmRepositoryProvisioningRemediationKindSchema,
     label: z.string().min(1).optional(),
     action: z.string().min(1).optional(),
     url: z.string().url().optional(),
   })
-  .passthrough();
+  .passthrough());
 export type ScmRepositoryProvisioningRemediation =
   z.infer<typeof ScmRepositoryProvisioningRemediationSchema>;
 
-export const ScmRepositoryProvisioningFailureResponseSchema = z
+export const ScmRepositoryProvisioningFailureResponseSchema = lazyZodSchema(() => z
   .object({
     success: z.literal(false),
     outcome: ScmOperationOutcomeSchema.optional(),
     error: z.string().min(1),
     errorCode: ScmOperationErrorCodeSchema.optional(),
     remediation: ScmRepositoryProvisioningRemediationSchema.optional(),
+    retryNotBeforeMs: z.number().finite().nonnegative().optional(),
     stdout: z.string().optional(),
     stderr: z.string().optional(),
   })
-  .passthrough();
+  .passthrough());
 export type ScmRepositoryProvisioningFailureResponse =
   z.infer<typeof ScmRepositoryProvisioningFailureResponseSchema>;
 
 // Repository provisioning requests inherit the shared `cwd` convention from ScmRequestBaseSchema.
-export const ScmRepositoryInitRequestSchema = ScmRequestBaseSchema.extend({
+export const ScmRepositoryInitRequestSchema = lazyZodSchema(() => ScmRequestBaseSchema.extend({
   initialBranch: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough());
 export type ScmRepositoryInitRequest =
   z.infer<typeof ScmRepositoryInitRequestSchema>;
 
-export const ScmRepositoryInitResponseSchema = z.union([
+export const ScmRepositoryInitResponseSchema = lazyZodSchema(() => z.union([
   z
     .object({
       success: z.literal(true),
@@ -112,7 +114,7 @@ export const ScmRepositoryInitResponseSchema = z.union([
     })
     .passthrough(),
   ScmRepositoryProvisioningFailureResponseSchema,
-]);
+]));
 export type ScmRepositoryInitResponse =
   z.infer<typeof ScmRepositoryInitResponseSchema>;
 
@@ -123,21 +125,21 @@ export type ScmRepositoryInitResponse =
 // `lockPath`/`indexLockPath`/etc. so backend resolution remains authoritative.
 export const REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN = 'remove-stale-index-lock' as const;
 
-export const ScmRepositoryRemoveIndexLockRequestSchema = ScmRequestBaseSchema.extend({
+export const ScmRepositoryRemoveIndexLockRequestSchema = lazyZodSchema(() => ScmRequestBaseSchema.extend({
   confirmed: z.literal(true),
   confirmationToken: z.literal(REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN),
-}).strict();
+}).strict());
 export type ScmRepositoryRemoveIndexLockRequest =
   z.infer<typeof ScmRepositoryRemoveIndexLockRequestSchema>;
 
-export const ScmRepositoryRemoveIndexLockReasonSchema = z.enum([
+export const ScmRepositoryRemoveIndexLockReasonSchema = lazyZodSchema(() => z.enum([
   'removed',
   'absent',
-]);
+]));
 export type ScmRepositoryRemoveIndexLockReason =
   z.infer<typeof ScmRepositoryRemoveIndexLockReasonSchema>;
 
-export const ScmRepositoryRemoveIndexLockResponseSchema = z.union([
+export const ScmRepositoryRemoveIndexLockResponseSchema = lazyZodSchema(() => z.union([
   z
     .object({
       success: z.literal(true),
@@ -151,11 +153,11 @@ export const ScmRepositoryRemoveIndexLockResponseSchema = z.union([
     })
     .passthrough(),
   ScmRepositoryProvisioningFailureResponseSchema,
-]);
+]));
 export type ScmRepositoryRemoveIndexLockResponse =
   z.infer<typeof ScmRepositoryRemoveIndexLockResponseSchema>;
 
-export const ScmHostingRepositoryAuthSummarySchema = z
+export const ScmHostingRepositoryAuthSummarySchema = lazyZodSchema(() => z
   .object({
     state: ScmHostingRepositoryAuthStateSchema,
     profileKind: ScmHostingRepositoryAuthProfileKindSchema,
@@ -163,11 +165,11 @@ export const ScmHostingRepositoryAuthSummarySchema = z
     label: z.string().min(1).optional(),
     remediation: ScmRepositoryProvisioningRemediationSchema.optional(),
   })
-  .passthrough();
+  .passthrough());
 export type ScmHostingRepositoryAuthSummary =
   z.infer<typeof ScmHostingRepositoryAuthSummarySchema>;
 
-export const ScmHostingRepositoryPublishTargetSchema = z
+export const ScmHostingRepositoryPublishTargetSchema = lazyZodSchema(() => z
   .object({
     provider: ScmHostingProviderRefSchema,
     owner: z.string().min(1),
@@ -179,11 +181,11 @@ export const ScmHostingRepositoryPublishTargetSchema = z
     auth: ScmHostingRepositoryAuthSummarySchema.optional(),
     diagnostics: z.array(z.string().min(1)).optional(),
   })
-  .passthrough();
+  .passthrough());
 export type ScmHostingRepositoryPublishTarget =
   z.infer<typeof ScmHostingRepositoryPublishTargetSchema>;
 
-export const ScmHostingRepositorySummarySchema = z
+export const ScmHostingRepositorySummarySchema = lazyZodSchema(() => z
   .object({
     provider: ScmHostingProviderRefSchema,
     nameWithOwner: z.string().min(1),
@@ -193,19 +195,19 @@ export const ScmHostingRepositorySummarySchema = z
     visibility: ScmHostingRepositoryVisibilitySchema,
     defaultBranch: z.string().min(1).nullable().optional(),
   })
-  .passthrough();
+  .passthrough());
 export type ScmHostingRepositorySummary =
   z.infer<typeof ScmHostingRepositorySummarySchema>;
 
 export const ScmHostingRepositoryDescribePublishTargetsRequestSchema =
-  ScmRequestBaseSchema.extend({
+  lazyZodSchema(() => ScmRequestBaseSchema.extend({
     providerId: z.string().trim().min(1).optional(),
     providerKind: ScmHostingProviderKindSchema.optional(),
-  }).passthrough();
+  }).passthrough());
 export type ScmHostingRepositoryDescribePublishTargetsRequest =
   z.infer<typeof ScmHostingRepositoryDescribePublishTargetsRequestSchema>;
 
-export const ScmHostingRepositoryDescribePublishTargetsResponseSchema = z.union([
+export const ScmHostingRepositoryDescribePublishTargetsResponseSchema = lazyZodSchema(() => z.union([
   z
     .object({
       success: z.literal(true),
@@ -216,11 +218,11 @@ export const ScmHostingRepositoryDescribePublishTargetsResponseSchema = z.union(
     })
     .passthrough(),
   ScmRepositoryProvisioningFailureResponseSchema,
-]);
+]));
 export type ScmHostingRepositoryDescribePublishTargetsResponse =
   z.infer<typeof ScmHostingRepositoryDescribePublishTargetsResponseSchema>;
 
-export const ScmHostingRepositoryPublishRequestSchema = ScmRequestBaseSchema.extend({
+export const ScmHostingRepositoryPublishRequestSchema = lazyZodSchema(() => ScmRequestBaseSchema.extend({
   providerId: z.string().trim().min(1).optional(),
   providerKind: ScmHostingProviderKindSchema,
   owner: z.string().min(1),
@@ -232,11 +234,11 @@ export const ScmHostingRepositoryPublishRequestSchema = ScmRequestBaseSchema.ext
   remoteUrlKind: ScmHostingRepositoryRemoteUrlKindSchema.optional(),
   remoteConflictStrategy: ScmHostingRepositoryRemoteConflictStrategySchema.optional(),
   pushCurrentBranch: z.boolean().optional(),
-}).passthrough();
+}).passthrough());
 export type ScmHostingRepositoryPublishRequest =
   z.infer<typeof ScmHostingRepositoryPublishRequestSchema>;
 
-export const ScmHostingRepositoryPublishResponseSchema = z.union([
+export const ScmHostingRepositoryPublishResponseSchema = lazyZodSchema(() => z.union([
   z
     .object({
       success: z.literal(true),
@@ -250,6 +252,6 @@ export const ScmHostingRepositoryPublishResponseSchema = z.union([
     })
     .passthrough(),
   ScmRepositoryProvisioningFailureResponseSchema,
-]);
+]));
 export type ScmHostingRepositoryPublishResponse =
   z.infer<typeof ScmHostingRepositoryPublishResponseSchema>;

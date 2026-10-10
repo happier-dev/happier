@@ -9,6 +9,7 @@ import { MANAGED_MACHINE_ACTION_IDS_V1 } from '../../../managed/actionIdsV1.js';
 import type { ExternalActionExecutionAuthorizationV1 } from '../../../../actions/externalActionApi.js';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '../../../../actions/projectActionFamily.js';
 import { USAGE_SOURCE_ACTION_IDS } from '../../../../usage/usageSources.js';
+import { LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS } from '../../../../actions/specs/localServices.js';
 
 export type { MachineRpcGovernanceClassification } from './governanceV1.js';
 
@@ -559,6 +560,7 @@ const LOCAL_MUTATION_METHODS = [
   RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT,
   RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE,
   RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE,
+  RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_REMOVE,
   RPC_METHODS.SCM_CHANGE_INCLUDE,
   RPC_METHODS.SCM_CHANGE_EXCLUDE,
   RPC_METHODS.SCM_CHANGE_DISCARD,
@@ -642,6 +644,8 @@ const AMBIGUOUS_READ_OR_EXTERNAL_METHODS = [
   RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_FILE_READ,
   RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_ENTRY_OBSERVE,
   RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_SELECTION_DIAGNOSE,
+  RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT,
+  RPC_METHODS.DAEMON_PROJECT_WORKER_DEPENDENCIES,
   RPC_METHODS.DAEMON_WORKSPACE_SYNC_LEGACY_INSPECT,
   RPC_METHODS.DIFFTASTIC,
   RPC_METHODS.DAEMON_SESSION_LOG_TAIL,
@@ -679,6 +683,8 @@ const AMBIGUOUS_READ_OR_EXTERNAL_METHODS = [
 ] as const;
 
 const SERVER_PERSISTENCE_METHODS = [
+  RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3,
+  RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET,
   RPC_METHODS.DAEMON_SESSION_HANDOFF_START,
   RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET,
   RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET,
@@ -748,6 +754,7 @@ const MACHINE_CUSTODIAN_ONLY_METHODS = new Set<string>([
   RPC_METHODS.DAEMON_CONNECTED_SERVICE_POOL_SELECTION_GET,
   ...VOICE_CLIENT_CREDENTIAL_METHODS,
   RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS,
+  RPC_METHODS.DAEMON_PROJECT_WORKER_DEPENDENCIES,
   RPC_METHODS.SPAWN_HAPPY_SESSION,
   RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
   RPC_METHODS.SESSION_SPAWN_NEW,
@@ -780,12 +787,14 @@ function withSharedMachineAccess(policy: MachineRpcRoutePolicyV1): MachineRpcRou
   // Private relationship and work inventories keep their custodian authority.
   // These terminal routes establish exact requester custody at their canonical owner.
   const requesterTerminal = MACHINE_REQUESTER_TERMINAL_METHODS.has(policy.method);
+  const handoffRead = policy.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3
+    || policy.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET;
   const custodianOnly = MACHINE_CUSTODIAN_ONLY_METHODS.has(policy.method)
     || policy.method.startsWith('daemon.workspaceSync.')
     || policy.method.startsWith('daemon.terminal.') && !requesterTerminal
     || policy.method.startsWith('daemon.spawnSession.')
     || policy.method.startsWith('daemon.sessionCreation.')
-    || policy.method.startsWith('daemon.sessionHandoff.')
+    || policy.method.startsWith('daemon.sessionHandoff.') && !handoffRead
     || policy.method.startsWith('daemon.externalSessions.')
     || policy.method.startsWith('daemon.directSessions.');
   return {
@@ -822,6 +831,8 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
   actionSpecServerRequired(RPC_METHODS.PROJECTS_OPEN, 'auth', 'Project Open requires current requester Account and exact Machine admission before SCM/Sync realization and Account ref acceptance.', 'projects.open'),
   ...Object.entries(PROJECT_FINITE_ACTION_RPC_METHODS_V1).map(([actionId, method]) => actionSpecServerRequired(method, 'auth',
     'Finite Project execution requires its original admitted Action and exact Machine authority before the incumbent finite operation accepts work.', actionId)),
+  ...Object.entries(LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS).map(([actionId, method]) => actionSpecServerRequired(method, 'auth',
+    'Local service control requires its admitted Action and exact Machine authority before the daemon-local service owner accepts the effect.', actionId)),
   actionSpecServerRequired(RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN, 'auth', 'Source-host materialization is the same admitted Project Open effect under the incumbent Sync controller custody; target acceptance remains at Open.', 'projects.open'),
   serverRequired(RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS, 'auth', 'Machine access-loss cleanup is a server-origin notification to the current custodian installation; the body subject is never caller authority and this method has no direct or peer route.'),
   serverRequired(RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_ADMISSION, 'auth', 'The Home reads or retires disclosure for one selected service through the current custodian installation and Machine admission; this method has no client or direct route.'),
@@ -968,6 +979,16 @@ export function resolveMachineRpcRoutePolicy(method: string): MachineRpcRoutePol
 export function resolveMachineRpcExternalActionEffectV1(method: string,
   binding?: ExternalActionExecutionAuthorizationV1['binding'],
   selectedTarget?: Readonly<{ machineId: string; installationId: string }>): string | null {
+  if (binding?.handoffPreflight) {
+    const admission = binding.handoffAdmission;
+    if (!admission || binding.actionId !== 'session.handoff' || binding.handoffContinuation
+      || binding.target.kind !== 'machine' || binding.target.machineId !== binding.machineId) return null;
+    const target = binding.machineId === admission.targetMachineId && binding.installationId === admission.targetInstallationId;
+    const source = binding.machineId === admission.sourceMachineId && binding.installationId === admission.sourceInstallationId;
+    return method === RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3 && target
+      || method === RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET && (source || target)
+      ? 'session.handoff' : null;
+  }
   const declared = resolveMachineRpcRoutePolicy(method).actionSpecId;
   if (declared) return declared;
   if (method === MANAGED_ACTIVITY_READ_RPC_METHOD || method === MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD) {
