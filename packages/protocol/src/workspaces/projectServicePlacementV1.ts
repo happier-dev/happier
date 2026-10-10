@@ -6,7 +6,7 @@ import { DaemonLocalServiceLauncherSnapshotRequestV1Schema, DaemonLocalServiceLa
   LocalServiceLaunchTargetV1Schema, type DaemonLocalServiceLauncherSnapshotRequestV1 } from '../local/services/launcher/v1.js';
 import type { WorkspaceSyncRelationshipV1 } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 import type { WorkspaceRefV1 } from './workspaceRefV1.js';
-import { deriveWorkspaceSyncTopology } from './workspaceSyncTopology.js';
+import { deriveWorkspaceSyncTopology, resolveWorkspaceSyncEndpoint, type WorkspaceSyncChildMachineFacts } from './workspaceSyncTopology.js';
 import { resolveWorkspaceRefV1, type WorkspaceRefResolutionContextV1 } from './workspaceRefResolutionV1.js';
 import { createProjectServiceDeclarationTargetIdV1 } from '../local/services/actions/v1.js';
 import { ProjectExecutionChoiceV1Schema, WorkspaceExecutionConfigAddressV1Schema,
@@ -96,6 +96,7 @@ export function compareProjectServicePlacementMutationV1(input: Readonly<{
 export async function observeProjectServicePlacementActualV1(input: Readonly<{
   workspace: ProjectServicePlacementGetV1['workspace']; serviceName: string;
   workspaceRefs: readonly WorkspaceRefV1[]; relationships: readonly WorkspaceSyncRelationshipV1[];
+  childMachines?: readonly WorkspaceSyncChildMachineFacts[];
   context?: WorkspaceRefResolutionContextV1;
   readSnapshot(request: DaemonLocalServiceLauncherSnapshotRequestV1): Promise<unknown>;
   isCurrent(): boolean | Promise<boolean>;
@@ -104,15 +105,25 @@ export async function observeProjectServicePlacementActualV1(input: Readonly<{
   if (!await input.isCurrent()) return unavailable;
   const source = resolveWorkspaceRefV1(input.workspaceRefs, { serverId: input.workspace.serverId, id: input.workspace.refId }, input.context);
   if (source.kind !== 'resolved') return unavailable;
-  const incidentIds = new Set(input.relationships.filter(edge => edge.alphaWorkspaceRefId === source.ref.id
-    || edge.betaWorkspaceRefId === source.ref.id).map(edge => edge.relationshipId));
+  const sourceEndpoint = resolveWorkspaceSyncEndpoint({ ...input, workspace: source.ref, purpose: 'admitted_mapping' });
+  if (!sourceEndpoint.ok) return unavailable;
+  const incidentIds = new Set(input.relationships.filter(edge => edge.alphaWorkspaceRefId === sourceEndpoint.endpoint.id
+    || edge.betaWorkspaceRefId === sourceEndpoint.endpoint.id).map(edge => edge.relationshipId));
   const topology = deriveWorkspaceSyncTopology({ serverId: input.workspace.serverId, context: input.context,
     workspaceRefs: input.workspaceRefs, relationships: input.relationships });
-  if (topology.issues.some(issue => issue.workspaceRefIds.includes(source.ref.id)
+  if (topology.issues.some(issue => issue.workspaceRefIds.includes(sourceEndpoint.endpoint.id)
     || issue.relationshipIds.some(id => incidentIds.has(id)))) return unavailable;
   const component = topology.sets.find(set => set.relationships.some(edge => incidentIds.has(edge.relationshipId)));
   // Paused and one-way links still qualify an existing native occurrence for observation.
-  const ids = new Set([source.ref.id, ...(component?.relationships.flatMap(edge => [edge.alphaWorkspaceRefId, edge.betaWorkspaceRefId]) ?? [])]);
+  const physicalIds = new Set([sourceEndpoint.endpoint.id,
+    ...(component?.relationships.flatMap(edge => [edge.alphaWorkspaceRefId, edge.betaWorkspaceRefId]) ?? [])]);
+  const ids = new Set<string>();
+  for (const workspace of input.workspaceRefs) {
+    if (workspace.serverId !== input.workspace.serverId) continue;
+    const endpoint = resolveWorkspaceSyncEndpoint({ ...input, workspace, purpose: 'admitted_mapping' });
+    if (!endpoint.ok) return unavailable;
+    if (physicalIds.has(endpoint.endpoint.id)) ids.add(workspace.id);
+  }
   const targets: z.infer<typeof LocalServiceLaunchTargetV1Schema>[] = [];
   try {
     for (const id of ids) {
