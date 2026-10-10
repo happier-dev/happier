@@ -1744,23 +1744,33 @@ export function createConnectedAccountPurposeBindingOwner(
         [...authorizedByConsumerKey.keys()],
       );
       try {
-        input.signal.throwIfAborted();
-        await dependencies.store.update((currentLike) => {
-            const current = ConnectedPurposeCatalogV1Schema.parse(currentLike);
-            return ConnectedPurposeCatalogV1Schema.parse({
-              ...current,
-              bindings: current.bindings.filter((binding) => {
-                const authorizedPurposeKeys =
-                  authorizedByConsumerKey.get(
-                    contributionKey(binding.purpose.consumer),
-                  );
-                if (!authorizedPurposeKeys) return true;
-                // Only removal of the purpose retires its durable intent. A service-scope
-                // change refuses disclosure without reopening native fallback.
-                return authorizedPurposeKeys.has(qualifiedPurposeKey(binding.purpose));
-              }),
-            });
-        }, input.signal);
+        while (true) {
+          input.signal.throwIfAborted();
+          try {
+            await dependencies.store.update((currentLike) => {
+              const current = ConnectedPurposeCatalogV1Schema.parse(currentLike);
+              return ConnectedPurposeCatalogV1Schema.parse({
+                ...current,
+                bindings: current.bindings.filter((binding) => {
+                  const authorizedPurposeKeys =
+                    authorizedByConsumerKey.get(
+                      contributionKey(binding.purpose.consumer),
+                    );
+                  if (!authorizedPurposeKeys) return true;
+                  // Only removal of the purpose retires its durable intent. A service-scope
+                  // change refuses disclosure without reopening native fallback.
+                  return authorizedPurposeKeys.has(qualifiedPurposeKey(binding.purpose));
+                }),
+              });
+            }, input.signal);
+            break;
+          } catch (error) {
+            // Automatic pruning can reapply its current declaration set to a
+            // freshly observed row. User selections still surface CAS conflicts.
+            if (!(error instanceof PluginError)
+              || error.code !== 'plugin_connected_account_settings_conflict' || !error.retryable) throw error;
+          }
+        }
         input.publish();
         release();
       } catch (error) {
@@ -1943,9 +1953,16 @@ export function createActiveAccountSettingsConnectedAccountPurposeBindingStore(i
         if (code === 'scope-retired') throw unavailable('scope-retired');
         throw error;
       });
-      if (result.status === 'conflict' || result.status === 'settings-conflict') throw new PluginError({
-        code: 'plugin_connected_account_settings_conflict', message: 'Connected Account purpose catalog changed', retryable: true,
-        details: { currentVersion: String(result.revision) } });
+      if (result.status === 'conflict' || result.status === 'settings-conflict') {
+        // Retain the current winner before a caller re-applies automatic
+        // reconciliation; replaying against the stale snapshot cannot converge.
+        await refreshActiveConnectedAccountCatalog({ credentials, key: 'purposes', signal,
+          operationContext: input.operationContext }, true);
+        await operation.verifyCurrent();
+        throw new PluginError({
+          code: 'plugin_connected_account_settings_conflict', message: 'Connected Account purpose catalog changed', retryable: true,
+          details: { currentVersion: String(result.revision) } });
+      }
       if (result.status !== 'updated') throw unavailable(result.status);
       const acknowledgedUnavailable = (reason: string) => new PluginError({
         code: 'plugin_connected_account_settings_unavailable',
