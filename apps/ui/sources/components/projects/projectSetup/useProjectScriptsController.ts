@@ -268,7 +268,8 @@ export function useProjectScriptsController(
   React.useEffect(() => {
     if (lifetime.signal.aborted || !binding?.isCurrent() || enrollment?.status !== 'ready') return;
     for (const creation of Object.values(managedCreations)) {
-      if (creation.progress.kind !== 'enrollment_pending' && creation.progress.kind !== 'setup_pending') continue;
+      if (creation.progress.kind !== 'acquiring' && creation.progress.kind !== 'enrollment_pending'
+        && creation.progress.kind !== 'setup_pending') continue;
       if (enrollment.machines.some(machine => machine.id === creation.acquisition.managedId
         && machine.enrolledMachineId && machine.creationState === 'active'
         && machine.environmentSetup?.state !== 'pending' && machine.environmentSetup?.state !== 'running')) void resumeManagedRun(creation.key);

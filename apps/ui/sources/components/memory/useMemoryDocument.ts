@@ -50,7 +50,8 @@ export type MemoryDocumentSource = Readonly<{
   stale: boolean;
   /** The reviewed write target for exactly the version on screen. */
   target: MemoryDocumentTarget | null;
-  refresh: () => Promise<void>;
+  /** Returns only the freshly admitted write target, never a retained display snapshot. */
+  refresh: () => Promise<MemoryDocumentTarget | null>;
 }>;
 
 type Loaded = Readonly<{
@@ -63,7 +64,13 @@ type Loaded = Readonly<{
   stale: boolean;
 }>;
 
-const NO_REFRESH = async () => {};
+const NO_REFRESH = async () => null;
+
+function reviewedWriteTarget(view: MemoryDocumentView, serverId: string, topic?: string): MemoryDocumentTarget | null {
+  if (view.access === null || view.access === 'view') return null;
+  return { ref: view.ref, serverId, expectedRevision: view.revision,
+    ...(topic === undefined ? {} : { topic }) };
+}
 const LOCKED_CODES = new Set([
   'content_unavailable',
   'artifact_content_unavailable',
@@ -110,11 +117,11 @@ export function useMemoryDocument(
   const pending = React.useRef<Readonly<{
     key: string;
     controller: AbortController;
-    promise: Promise<void>;
+    promise: Promise<MemoryDocumentTarget | null>;
   }> | null>(null);
 
-  const refresh = React.useCallback((): Promise<void> => {
-    if (!enabled || !artifactId) return Promise.resolve();
+  const refresh = React.useCallback((): Promise<MemoryDocumentTarget | null> => {
+    if (!enabled || !artifactId) return Promise.resolve(null);
     pending.current?.controller.abort();
     const controller = new AbortController();
     const currentness = captureActiveServerAccountScopeCurrentness();
@@ -150,7 +157,7 @@ export function useMemoryDocument(
           },
           { serverId: homeId, signal: controller.signal, accountContext: account },
         );
-        if (controller.signal.aborted || !currentness.isCurrent()) return;
+        if (controller.signal.aborted || !currentness.isCurrent()) return null;
         const view: MemoryDocumentView =
           'topic' in read
             ? {
@@ -179,8 +186,9 @@ export function useMemoryDocument(
         setLoaded({ key, identity, accountId: account.accountId,
           isCurrent: () => currentness.isCurrent() && capturedLifetime.isCurrent(),
           status: 'ready', view, stale: false });
+        return capturedLifetime.isCurrent() ? reviewedWriteTarget(view, homeId, topic) : null;
       } catch (error) {
-        if (controller.signal.aborted || !currentness.isCurrent()) return;
+        if (controller.signal.aborted || !currentness.isCurrent()) return null;
         const failure = (status: MemoryDocumentStatus): Loaded => ({ key, identity, accountId: null,
           isCurrent: currentness.isCurrent, status, view: null, stale: false });
         const code: unknown =
@@ -205,6 +213,7 @@ export function useMemoryDocument(
               isCurrent: view && previous ? previous.isCurrent : currentness.isCurrent };
           });
         }
+        return null;
       } finally {
         if (account && displayedAccount.current !== account) account.dispose();
         if (pending.current?.controller === controller) pending.current = null;
@@ -265,13 +274,8 @@ export function useMemoryDocument(
       view,
       stale: current.stale,
       target:
-        view && view.access !== null && view.access !== 'view' && current.status === 'ready' && current.key === key
-          ? {
-              ref,
-              serverId: homeId,
-              expectedRevision: view.revision,
-              ...(topic === undefined ? {} : { topic }),
-            }
+        view && current.status === 'ready' && current.key === key
+          ? reviewedWriteTarget(view, homeId, topic)
           : null,
       refresh,
     };
